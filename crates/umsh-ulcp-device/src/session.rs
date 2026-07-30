@@ -9,6 +9,7 @@ use umsh_crypto::replay::{ReplayVerdict, ReplayWindow};
 use umsh_crypto::{AesProvider, CryptoEngine, PairwiseKeys, Sha256Provider};
 use umsh_ulcp::Status;
 use umsh_ulcp::airtime::lora_airtime_ms;
+use umsh_ulcp::alert::AlertState;
 use umsh_ulcp::battery::{self, BatteryStatus};
 use umsh_ulcp::frame::{self, Cmd, Frame, PropPayload, StreamPayload, TID_UNSOLICITED};
 use umsh_ulcp::ids::{self, cap, prop, stream};
@@ -92,6 +93,23 @@ impl BatteryFields {
     }
 }
 
+/// How this board serves `PROP_ALERT`.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct AlertConfig {
+    /// How long `ALERT_LOCATE` runs before the device returns itself to
+    /// `ALERT_NONE`. The spec requires *some* bound and recommends a few
+    /// minutes: a lost radio is usually a nearly-flat radio, and the host
+    /// that armed the alert is by definition somewhere else.
+    pub timeout_ms: u32,
+}
+
+impl AlertConfig {
+    /// The recommended bound — five minutes.
+    pub const DEFAULT: Self = Self {
+        timeout_ms: 5 * 60 * 1000,
+    };
+}
+
 /// Fixed properties of the device this session runs on.
 #[derive(Clone, Copy, Debug)]
 pub struct SessionConfig {
@@ -127,6 +145,10 @@ pub struct SessionConfig {
     /// `PROP_BATTERY` is unknown. `Some`: the capability is advertised
     /// and the fields say which measurements the platform reports.
     pub battery: Option<BatteryFields>,
+    /// `None`: the board has no way to make itself conspicuous;
+    /// `CAP_ALERT` is absent and `PROP_ALERT` is unknown. `Some`: the
+    /// capability is advertised and the config carries the deadline.
+    pub alert: Option<AlertConfig>,
 }
 
 /// Physical-radio outcome of the transmit started by
@@ -199,6 +221,11 @@ pub enum Effect {
     /// reported before the identity is durably stored (spec
     /// §PROP_DEV_PRIVATE_KEY).
     ProvisionIdentity { tid: u8 },
+    /// The locate alert changed; start or stop the board's physical
+    /// indication. Carries the authoritative new state, so a board can
+    /// treat it as idempotent — it is emitted for a host write, a local
+    /// cancellation, and the deadline alike.
+    ApplyAlert(AlertState),
     /// `CMD_FACTORY_RESET`: erase ALL mutable state — every persisted
     /// journal (saved snapshot, device identity, frame-counter
     /// boundaries, BLE bonds, pairing PIN) — and reboot. The platform
@@ -1663,6 +1690,17 @@ pub struct Session<A: AesProvider, S: Sha256Provider, const TX: usize = 1> {
     /// 3); the session stays authoritative for the property surface and
     /// the firmware applies the change to its `MacHandle`.
     dev_domain_version: u32,
+    /// `PROP_ALERT`: what the device is currently doing to make itself
+    /// conspicuous, and when it gives up.
+    ///
+    /// Deliberately neither device-domain nor session state. Not the
+    /// former because it is live physical behavior that is never saved
+    /// and that `CMD_RST` must not silence; not the latter because a
+    /// detach is exactly when an alert matters — the link to the
+    /// searching host drops as soon as the searcher walks out of range.
+    /// The deadline is the only thing that stops it unattended.
+    alert: AlertState,
+    alert_deadline_ms: Option<u64>,
     scratch: [u8; SCRATCH],
 }
 
@@ -1686,6 +1724,8 @@ impl<A: AesProvider, S: Sha256Provider, const TX: usize> Session<A, S, TX> {
             dev_key_persisted: None,
             last_status: boot_status,
             dev_domain_version: 0,
+            alert: AlertState::None,
+            alert_deadline_ms: None,
             scratch: [0; SCRATCH],
         }
     }
@@ -2545,6 +2585,67 @@ impl<A: AesProvider, S: Sha256Provider, const TX: usize> Session<A, S, TX> {
         self.device.dev_discoverable
     }
 
+    /// `PROP_ALERT`: what the device is currently doing to draw
+    /// attention to itself.
+    pub fn alert(&self) -> AlertState {
+        self.alert
+    }
+
+    /// When the running alert gives itself up, as a monotonic
+    /// millisecond deadline on the caller's clock, or `None` when no
+    /// alert is running.
+    ///
+    /// The driver arms a timer on this and calls [`Session::poll_alert`]
+    /// when it fires. Enforcing the bound centrally is what keeps the
+    /// spec's "a device **MUST** bound how long it will remain in
+    /// `ALERT_LOCATE`" from being a promise each board has to remember
+    /// to keep.
+    pub fn alert_deadline_ms(&self) -> Option<u64> {
+        self.alert_deadline_ms
+    }
+
+    /// Expire a running alert whose deadline has passed, returning the
+    /// effect that stops the board's indication.
+    ///
+    /// Safe to call at any time: it does nothing until the deadline is
+    /// actually reached, so a driver that polls it on every loop
+    /// iteration behaves identically to one that arms a precise timer.
+    pub fn poll_alert(&mut self, now_ms: u64, emit: &mut impl FnMut(&[u8])) -> Option<Effect> {
+        match self.alert_deadline_ms {
+            Some(deadline) if now_ms >= deadline => self.clear_alert(emit),
+            _ => None,
+        }
+    }
+
+    /// Cancel a running alert from the device itself — the button press
+    /// of whoever found the radio.
+    ///
+    /// Returns the effect that stops the indication, or `None` when no
+    /// alert was running (so a board can use the return to decide
+    /// whether the press was consumed).
+    pub fn cancel_alert(&mut self, emit: &mut impl FnMut(&[u8])) -> Option<Effect> {
+        self.clear_alert(emit)
+    }
+
+    /// Return to `ALERT_NONE` for a reason the host did not command,
+    /// announcing it with an unsolicited `CMD_PROP_IS`.
+    fn clear_alert(&mut self, emit: &mut impl FnMut(&[u8])) -> Option<Effect> {
+        if !self.alert.is_active() {
+            return None;
+        }
+        self.alert = AlertState::None;
+        self.alert_deadline_ms = None;
+        // Every transition the host did not ask for is published; a host
+        // that is not attached simply reads the current value when it
+        // comes back.
+        if self.attached {
+            let mut value = [0u8; pui::MAX_LEN];
+            let len = pui::encode(AlertState::None.code(), &mut value).unwrap_or(0);
+            self.announce_prop_is(prop::ALERT, &value[..len], emit);
+        }
+        Some(Effect::ApplyAlert(AlertState::None))
+    }
+
     /// Publish an unsolicited `PROP_BATTERY` snapshot (spec
     /// §PROP_BATTERY, *Asynchronous Updates: Yes*).
     ///
@@ -2883,6 +2984,34 @@ impl<A: AesProvider, S: Sha256Provider, const TX: usize> Session<A, S, TX> {
             }
             self.send_prop_is(tid, key, value, emit);
             return None;
+        }
+        // The locate alert drives physical hardware rather than session
+        // state, so it completes with its own effect instead of going
+        // through `apply_prop_set`.
+        if key == prop::ALERT {
+            let Some(config) = self.config.alert else {
+                self.complete(tid, Status::PROP_NOT_FOUND, emit);
+                return None;
+            };
+            let state = match pui::decode(value) {
+                Ok((code, consumed)) if consumed == value.len() => AlertState::from_code(code),
+                _ => None,
+            };
+            let Some(state) = state else {
+                self.complete(tid, Status::INVALID_ARGUMENT, emit);
+                return None;
+            };
+            self.alert = state;
+            // Re-arming an alert that is already running restarts the
+            // deadline rather than failing: that is how a host holds one
+            // open for a search longer than the board's own bound.
+            self.alert_deadline_ms = state
+                .is_active()
+                .then(|| now_ms.saturating_add(u64::from(config.timeout_ms)));
+            let mut echo = [0u8; pui::MAX_LEN];
+            let len = pui::encode(state.code(), &mut echo).unwrap_or(0);
+            self.send_prop_is(tid, key, &echo[..len], emit);
+            return Some(Effect::ApplyAlert(state));
         }
         if key == prop::DEV_NAME {
             if !valid_device_name(value) {
@@ -3382,6 +3511,9 @@ impl<A: AesProvider, S: Sha256Provider, const TX: usize> Session<A, S, TX> {
         if key == prop::BATTERY {
             return self.config.battery.is_some();
         }
+        if key == prop::ALERT {
+            return self.config.alert.is_some();
+        }
         matches!(
             key,
             prop::LAST_STATUS
@@ -3465,6 +3597,9 @@ impl<A: AesProvider, S: Sha256Provider, const TX: usize> Session<A, S, TX> {
                 if self.config.battery.is_some() {
                     len += pui::encode(cap::BATTERY, &mut out[len..]).unwrap_or(0);
                 }
+                if self.config.alert.is_some() {
+                    len += pui::encode(cap::ALERT, &mut out[len..]).unwrap_or(0);
+                }
                 len
             }
             prop::PHY_ENABLED => {
@@ -3531,6 +3666,9 @@ impl<A: AesProvider, S: Sha256Provider, const TX: usize> Session<A, S, TX> {
             prop::DEV_DISCOVERABLE => {
                 out[0] = self.device.dev_discoverable as u8;
                 1
+            }
+            prop::ALERT if self.config.alert.is_some() => {
+                pui::encode(self.alert.code(), out).unwrap_or(0)
             }
             prop::MAC_REPEATER_REGIONS => put(out, self.device.repeater_regions.as_slice()),
             prop::MAC_REPEATER_DEFAULT_REGION => match &self.device.repeater_default_region {
@@ -3857,6 +3995,7 @@ mod tests {
                 level: false,
                 charge_state: true,
             }),
+            alert: Some(AlertConfig::DEFAULT),
         }
     }
 
@@ -3997,7 +4136,8 @@ mod tests {
                 cap::DEV_IDENTITY,
                 cap::REPEATER,
                 cap::IDENT,
-                cap::BATTERY
+                cap::BATTERY,
+                cap::ALERT
             ]
         );
     }
@@ -4697,6 +4837,190 @@ mod tests {
         let len = frame::prop_remove(&mut buf, 4, prop::BATTERY, &[0]).unwrap();
         let (emitted, _) = dispatch(&mut session, &buf[..len], 0);
         expect_status(&emitted[0], 4, Status::INVALID_ARGUMENT);
+    }
+
+    /// `CMD_PROP_SET` of `PROP_ALERT` at a chosen clock reading.
+    fn set_alert_at(
+        session: &mut TestSession,
+        state: AlertState,
+        now_ms: u64,
+    ) -> (Vec<Vec<u8>>, Option<Effect>) {
+        let mut value = [0u8; pui::MAX_LEN];
+        let value_len = pui::encode(state.code(), &mut value).unwrap();
+        let mut buf = [0u8; 16];
+        let len = frame::prop_set(&mut buf, 2, prop::ALERT, &value[..value_len]).unwrap();
+        dispatch(session, &buf[..len], now_ms)
+    }
+
+    #[test]
+    fn alert_starts_and_reports_the_new_state() {
+        let mut session = test_session();
+        assert_eq!(get(&mut session, prop::ALERT), vec![0]);
+
+        let (emitted, effect) = set_alert_at(&mut session, AlertState::Locate, 1_000);
+        assert_eq!(effect, Some(Effect::ApplyAlert(AlertState::Locate)));
+        let (tid, key, value) = parse_prop_is(&emitted[0]);
+        assert_eq!((tid, key, value), (2, prop::ALERT, vec![1]));
+        assert_eq!(session.alert(), AlertState::Locate);
+        assert_eq!(get(&mut session, prop::ALERT), vec![1]);
+    }
+
+    #[test]
+    fn alert_rejects_unknown_states() {
+        let mut session = test_session();
+        let (emitted, effect) = set(&mut session, prop::ALERT, &[2]);
+        assert!(effect.is_none());
+        expect_status(&emitted[0], 2, Status::INVALID_ARGUMENT);
+        // An empty value names no state at all.
+        let (emitted, effect) = set(&mut session, prop::ALERT, &[]);
+        assert!(effect.is_none());
+        expect_status(&emitted[0], 2, Status::INVALID_ARGUMENT);
+        assert_eq!(session.alert(), AlertState::None);
+    }
+
+    #[test]
+    fn alert_expires_at_its_deadline() {
+        let mut session = test_session();
+        let started = 10_000;
+        set_alert_at(&mut session, AlertState::Locate, started);
+        let deadline = started + u64::from(AlertConfig::DEFAULT.timeout_ms);
+        assert_eq!(session.alert_deadline_ms(), Some(deadline));
+
+        // One millisecond early is still an alert.
+        let mut emitted = Vec::new();
+        let effect = session.poll_alert(deadline - 1, &mut |bytes: &[u8]| {
+            emitted.push(bytes.to_vec())
+        });
+        assert!(effect.is_none());
+        assert!(emitted.is_empty());
+        assert_eq!(session.alert(), AlertState::Locate);
+
+        let effect = session.poll_alert(deadline, &mut |bytes: &[u8]| emitted.push(bytes.to_vec()));
+        assert_eq!(effect, Some(Effect::ApplyAlert(AlertState::None)));
+        assert_eq!(session.alert(), AlertState::None);
+        assert_eq!(session.alert_deadline_ms(), None);
+        // The transition the host did not command is announced.
+        let (tid, key, value) = parse_prop_is(&emitted[0]);
+        assert_eq!((tid, key, value), (TID_UNSOLICITED, prop::ALERT, vec![0]));
+    }
+
+    #[test]
+    fn re_arming_an_alert_restarts_the_deadline() {
+        let mut session = test_session();
+        set_alert_at(&mut session, AlertState::Locate, 1_000);
+        let first = session.alert_deadline_ms().unwrap();
+
+        // The host holds the alert open for a longer search.
+        let (_, effect) = set_alert_at(&mut session, AlertState::Locate, 60_000);
+        assert_eq!(effect, Some(Effect::ApplyAlert(AlertState::Locate)));
+        assert_eq!(
+            session.alert_deadline_ms(),
+            Some(60_000 + u64::from(AlertConfig::DEFAULT.timeout_ms))
+        );
+        assert!(session.alert_deadline_ms().unwrap() > first);
+        // The originally scheduled expiry no longer ends it.
+        let mut emitted = Vec::new();
+        assert!(
+            session
+                .poll_alert(first, &mut |bytes: &[u8]| emitted.push(bytes.to_vec()))
+                .is_none()
+        );
+        assert_eq!(session.alert(), AlertState::Locate);
+    }
+
+    #[test]
+    fn local_cancel_clears_and_announces_once() {
+        let mut session = test_session();
+        set_alert_at(&mut session, AlertState::Locate, 0);
+
+        let mut emitted = Vec::new();
+        let effect = session.cancel_alert(&mut |bytes: &[u8]| emitted.push(bytes.to_vec()));
+        assert_eq!(effect, Some(Effect::ApplyAlert(AlertState::None)));
+        let (tid, key, value) = parse_prop_is(&emitted[0]);
+        assert_eq!((tid, key, value), (TID_UNSOLICITED, prop::ALERT, vec![0]));
+
+        // A second press has nothing to cancel and says nothing.
+        emitted.clear();
+        let effect = session.cancel_alert(&mut |bytes: &[u8]| emitted.push(bytes.to_vec()));
+        assert!(effect.is_none());
+        assert!(emitted.is_empty());
+    }
+
+    #[test]
+    fn alert_survives_detach_and_reset() {
+        let mut session = test_session();
+        set_alert_at(&mut session, AlertState::Locate, 0);
+
+        // Detach must not silence it: the link drops as soon as the
+        // searcher walks out of range, which is when it matters most.
+        session.detach();
+        assert_eq!(session.alert(), AlertState::Locate);
+        assert!(session.alert_deadline_ms().is_some());
+
+        // Nor may CMD_RST, which resets session state and not the
+        // device's physical behavior.
+        session.attach(true);
+        let mut buf = [0u8; 16];
+        let len = frame::reset(&mut buf, 7).unwrap();
+        dispatch(&mut session, &buf[..len], 0);
+        assert_eq!(session.alert(), AlertState::Locate);
+        assert_eq!(get(&mut session, prop::ALERT), vec![1]);
+    }
+
+    #[test]
+    fn cancelling_while_detached_emits_nothing() {
+        let mut session = test_session();
+        set_alert_at(&mut session, AlertState::Locate, 0);
+        session.detach();
+
+        let mut emitted = Vec::new();
+        let effect = session.cancel_alert(&mut |bytes: &[u8]| emitted.push(bytes.to_vec()));
+        // The indication still stops; there is simply nobody to tell.
+        assert_eq!(effect, Some(Effect::ApplyAlert(AlertState::None)));
+        assert!(emitted.is_empty());
+        assert_eq!(session.alert(), AlertState::None);
+    }
+
+    #[test]
+    fn alert_is_absent_without_the_capability() {
+        let mut config = test_config();
+        config.alert = None;
+        let mut session: TestSession = Session::new(config, Status::RESET_POWER_ON, test_engine());
+        session.attach(true);
+
+        let mut buf = [0u8; 16];
+        let len = frame::prop_get(&mut buf, 1, prop::ALERT).unwrap();
+        let (emitted, _) = dispatch(&mut session, &buf[..len], 0);
+        expect_status(&emitted[0], 1, Status::PROP_NOT_FOUND);
+
+        let (emitted, effect) = set(&mut session, prop::ALERT, &[1]);
+        assert!(effect.is_none());
+        expect_status(&emitted[0], 2, Status::PROP_NOT_FOUND);
+
+        let raw = get(&mut session, prop::CAPS);
+        let mut offset = 0;
+        while offset < raw.len() {
+            let (value, used) = pui::decode(&raw[offset..]).unwrap();
+            assert_ne!(value, cap::ALERT);
+            offset += used;
+        }
+    }
+
+    #[test]
+    fn alert_is_not_saved() {
+        let mut session = test_session();
+        set_alert_at(&mut session, AlertState::Locate, 0);
+        let mut buf = [0u8; SNAPSHOT_MAX];
+        let len = session.encode_snapshot(&mut buf).unwrap();
+
+        // Restoring a snapshot taken mid-alert onto a quiet device must
+        // not start one: the alert is live state, not configuration.
+        let mut fresh: TestSession =
+            Session::new(test_config(), Status::RESET_POWER_ON, test_engine());
+        fresh.attach(true);
+        fresh.restore_at_boot(&buf[..len]).unwrap();
+        assert_eq!(fresh.alert(), AlertState::None);
+        assert_eq!(fresh.alert_deadline_ms(), None);
     }
 
     #[test]

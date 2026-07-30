@@ -26,6 +26,7 @@ use umsh_crypto::software::{SoftwareAes, SoftwareSha256};
 use umsh_hal::{CadPolicy, Radio, RxInfo, Snr, TxError, TxOptions};
 use umsh_ulcp::Status;
 use umsh_ulcp::airtime::lora_airtime_ms;
+use umsh_ulcp::alert::AlertState;
 use umsh_ulcp::battery::BatteryStatus;
 use umsh_ulcp::frame::{self, Cmd, Frame, StreamPayload, TID_UNSOLICITED};
 use umsh_ulcp::hdlc;
@@ -1157,6 +1158,38 @@ where
             Ok(status) => Ok(Some(status)),
             Err(_) => Err(UlcpError::Protocol("malformed PROP_BATTERY")),
         }
+    }
+
+    /// Read the device's locate-alert state (`PROP_ALERT`).
+    ///
+    /// `Ok(None)` means the device does not advertise `CAP_ALERT` — it has
+    /// no way to make itself conspicuous.
+    pub async fn alert(&mut self) -> Result<Option<AlertState>, UlcpError> {
+        if !self.capabilities().await?.contains(&cap::ALERT) {
+            return Ok(None);
+        }
+        let value = self.get_prop(prop::ALERT).await?;
+        Ok(Some(decode_alert(&value)?))
+    }
+
+    /// Start or stop the device's locate alert (`PROP_ALERT`).
+    ///
+    /// Setting [`AlertState::Locate`] while an alert is already running
+    /// restarts the device's deadline rather than failing, so a host that
+    /// wants an alert to outlast the board's own bound re-sends this.
+    /// Returns the authoritative state the device reported.
+    ///
+    /// The alert also ends when someone cancels it at the device or the
+    /// deadline expires; both arrive as an unsolicited `PROP_ALERT`
+    /// update rather than as a response to this call.
+    ///
+    /// A device without `CAP_ALERT` answers `STATUS_PROP_NOT_FOUND`.
+    pub async fn set_alert(&mut self, state: AlertState) -> Result<AlertState, UlcpError> {
+        let mut value = [0u8; pui::MAX_LEN];
+        let len = pui::encode(state.code(), &mut value)
+            .map_err(|_| UlcpError::Protocol("PROP_ALERT encode"))?;
+        let authoritative = self.set_prop(prop::ALERT, &value[..len]).await?;
+        decode_alert(&authoritative)
     }
 
     /// Reset cause reported by the device immediately after transport attach.
@@ -2331,6 +2364,16 @@ fn decode_opt_i8(value: &[u8]) -> Option<Option<i8>> {
         [byte] => Some(Some(*byte as i8)),
         _ => None,
     }
+}
+
+/// Decode a `PROP_ALERT` value: exactly one PUI naming a known state.
+fn decode_alert(value: &[u8]) -> Result<AlertState, UlcpError> {
+    const MALFORMED: &str = "malformed PROP_ALERT";
+    let (code, consumed) = pui::decode(value).map_err(|_| UlcpError::Protocol(MALFORMED))?;
+    if consumed != value.len() {
+        return Err(UlcpError::Protocol(MALFORMED));
+    }
+    AlertState::from_code(code).ok_or(UlcpError::Protocol(MALFORMED))
 }
 
 /// Decode a digest table of fixed-size items.

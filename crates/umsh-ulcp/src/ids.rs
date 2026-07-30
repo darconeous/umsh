@@ -94,6 +94,11 @@ pub mod prop {
     /// (`PROP_DEV_DISCOVERABLE`) — BOOL, default 1. Requires
     /// `CAP_DEV_IDENTITY`.
     pub const DEV_DISCOVERABLE: u32 = 78;
+    /// Locate-alert state (`PROP_ALERT`) — what the device is currently
+    /// doing to draw attention to where it physically is. Volatile: never
+    /// saved, unaffected by `CMD_RST`, `ALERT_NONE` after every reset.
+    /// Requires `CAP_ALERT`.
+    pub const ALERT: u32 = 79;
     /// Tethered host identity public key (`PROP_HOST_KEY`).
     pub const HOST_KEY: u32 = 96;
     /// Host channel keys (`PROP_HOST_CHANNEL_KEYS`).
@@ -171,6 +176,10 @@ pub mod cap {
     /// node identity (`PROP_IDENT`, `PROP_IDENT_ROLE`,
     /// `PROP_IDENT_MOBILE`). Requires `CAP_DEV_IDENTITY`.
     pub const IDENT: u32 = 41;
+    /// `CAP_ALERT` — the device has some means of making itself
+    /// physically conspicuous on demand (`PROP_ALERT`). It says nothing
+    /// about *which* means, so a host must not assume audibility.
+    pub const ALERT: u32 = 42;
 }
 
 /// Value used in `PROP_PHY_DUTY_LIMIT` to disable duty-cycle limiting.

@@ -859,6 +859,27 @@ final class CoreBluetoothRadioConnection: NSObject, RadioConnection, @unchecked 
         return DevicePeerError.failed(error.statusName)
     }
 
+    func setAlert(_ state: RadioAlertState) async throws {
+        try await withCheckedThrowingContinuation { (result: CheckedContinuation<Void, any Error>) in
+            bluetoothQueue.async { [self] in
+                guard let peripheral, peripheral.state == .connected else {
+                    result.resume(throwing: RadioConnectionError.radioNotFound)
+                    return
+                }
+                Self.logger.notice("action: user set locate alert to \(state.rawValue)")
+                do {
+                    try applySessionUpdate(
+                        ulcpSession.setAlert(state: state.wire),
+                        from: peripheral
+                    )
+                    result.resume()
+                } catch {
+                    result.resume(throwing: RadioConnectionError.incompatibleProtocol)
+                }
+            }
+        }
+    }
+
     func factoryReset() async throws {
         try await withCheckedThrowingContinuation { (result: CheckedContinuation<Void, any Error>) in
             bluetoothQueue.async { [self] in
@@ -1610,6 +1631,10 @@ final class CoreBluetoothRadioConnection: NSObject, RadioConnection, @unchecked 
             snapshot.isExternallyPowered = battery.isExternallyPowered
             snapshot.batteryReadAt = .now
         }
+        // Unlike battery, carried on every update: the radio ends an
+        // alert on its own — a button press or its deadline — and the
+        // button has to follow the radio, not what we last asked for.
+        snapshot.alert = update.snapshot.alert.map(RadioAlertState.init)
         snapshot.provisioning = update.snapshot.provisioning.map {
             RadioProvisioningSummary(
                 capabilityCount: Int($0.capabilityCount),

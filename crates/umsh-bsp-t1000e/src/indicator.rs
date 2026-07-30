@@ -29,3 +29,11 @@ pub fn clear_attention() {
         INDICATOR_CHANGED.signal(());
     }
 }
+
+/// Locate-alert (`PROP_ALERT`) edges for the buzzer task: `true` starts
+/// the alert melody, `false` stops it.
+///
+/// The authoritative flag lives in the firmware, which owns the session
+/// and drives both the buzzer and the LED from it; this signal is only
+/// how the edge reaches the buzzer task.
+pub static BUZZER_ALERT_SET: Signal<ThreadModeRawMutex, bool> = Signal::new();

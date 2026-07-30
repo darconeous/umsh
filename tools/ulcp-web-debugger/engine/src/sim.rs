@@ -10,8 +10,8 @@ use umsh_crypto::{
 use umsh_ulcp::battery::{BatteryChargeState, BatteryStatus};
 use umsh_ulcp::{Status, hdlc};
 use umsh_ulcp_device::{
-    BatteryFields, DutyLedger, Effect, IdentitySource, RadioSettings, SNAPSHOT_MAX, Session,
-    SessionConfig, TxOutcome,
+    AlertConfig, BatteryFields, DutyLedger, Effect, IdentitySource, RadioSettings, SNAPSHOT_MAX,
+    Session, SessionConfig, TxOutcome,
 };
 
 const WIRE_CAPACITY: usize = umsh_ulcp::gatt::MAX_FRAME;
@@ -136,7 +136,12 @@ impl SimulatedDevice {
     fn execute(&mut self, effect: Option<Effect>, emitted: &mut Vec<Vec<u8>>) {
         let mut emit = |frame: &[u8]| emitted.push(frame.to_vec());
         match effect {
-            None | Some(Effect::ApplyRadio(_)) | Some(Effect::DeviceNameChanged) => {}
+            // The simulated board has no buzzer or LED to drive, so the
+            // alert is purely the property value the session already holds.
+            None
+            | Some(Effect::ApplyRadio(_))
+            | Some(Effect::DeviceNameChanged)
+            | Some(Effect::ApplyAlert(_)) => {}
             Some(Effect::StartTransmit) => {
                 self.air.push(self.session.tx_data().to_vec());
                 self.session
@@ -257,6 +262,9 @@ fn session_config() -> SessionConfig {
             level: true,
             charge_state: true,
         }),
+        // Advertised so the property surface is explorable, even though
+        // a browser tab has nothing to actually flash or beep.
+        alert: Some(AlertConfig::DEFAULT),
     }
 }
 

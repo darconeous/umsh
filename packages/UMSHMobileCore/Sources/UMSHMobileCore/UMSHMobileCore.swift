@@ -2120,6 +2120,22 @@ public protocol MobileUlcpSessionProtocol: AnyObject, Sendable {
     func reset()  -> UlcpSessionUpdateRecord
 
     /**
+     * Start or stop the radio's locate alert (`PROP_ALERT`) so a
+     * misplaced radio can be found.
+     *
+     * Not part of `configure_device`, and never saved: this is live
+     * behavior rather than configuration, and it deliberately survives
+     * the phone walking out of BLE range — which is precisely when a
+     * search needs it. What ends it is this call, a button press at the
+     * radio, or the radio's own deadline; the latter two arrive as an
+     * unsolicited `PROP_ALERT` carried on the session snapshot.
+     *
+     * Re-sending `Locate` while an alert is running restarts that
+     * deadline, which is how a longer search keeps the alert alive.
+     */
+    func setAlert(state: UlcpAlertState) throws  -> UlcpSessionUpdateRecord
+
+    /**
      * Queue one complete raw UMSH frame on `STR_PHY_RAW`.
      *
      * The platform adapter supplies only opaque bytes from `MobileMeshSession`;
@@ -2395,6 +2411,30 @@ open func reset() -> UlcpSessionUpdateRecord  {
         uniffiCallStatus in
     uniffi_umsh_mobile_core_fn_method_mobileulcpsession_reset(
             self.uniffiCloneHandle(),uniffiCallStatus
+    )
+})
+}
+
+    /**
+     * Start or stop the radio's locate alert (`PROP_ALERT`) so a
+     * misplaced radio can be found.
+     *
+     * Not part of `configure_device`, and never saved: this is live
+     * behavior rather than configuration, and it deliberately survives
+     * the phone walking out of BLE range — which is precisely when a
+     * search needs it. What ends it is this call, a button press at the
+     * radio, or the radio's own deadline; the latter two arrive as an
+     * unsolicited `PROP_ALERT` carried on the session snapshot.
+     *
+     * Re-sending `Locate` while an alert is running restarts that
+     * deadline, which is how a longer search keeps the alert alive.
+     */
+open func setAlert(state: UlcpAlertState)throws  -> UlcpSessionUpdateRecord  {
+    return try  FfiConverterTypeUlcpSessionUpdateRecord_lift(try rustCallWithError(FfiConverterTypeMobileError_lift) {
+        uniffiCallStatus in
+    uniffi_umsh_mobile_core_fn_method_mobileulcpsession_set_alert(
+            self.uniffiCloneHandle(),
+        FfiConverterTypeUlcpAlertState_lower(state),uniffiCallStatus
     )
 })
 }
@@ -4850,17 +4890,35 @@ public struct UlcpSessionSnapshotRecord: Equatable, Hashable {
     public var deviceKey: Data?
     public var deviceName: String?
     public var battery: UlcpBatteryRecord?
+    /**
+     * `PROP_ALERT`, or `None` on a radio without `CAP_ALERT`.
+     *
+     * Unlike `battery`, this is carried on *every* snapshot rather than
+     * reported once: it is state the UI mirrors, and the radio ends an
+     * alert on its own — a button press or its deadline — so the button
+     * must follow the radio rather than what the phone last asked for.
+     */
+    public var alert: UlcpAlertState?
     public var provisioning: UlcpSyncRecord?
 
     // Default memberwise initializers are never public by default, so we
     // declare one manually.
-    public init(generation: UInt64, phase: UlcpSessionPhase, hostOwnership: UlcpHostOwnership, deviceKey: Data?, deviceName: String?, battery: UlcpBatteryRecord?, provisioning: UlcpSyncRecord?) {
+    public init(generation: UInt64, phase: UlcpSessionPhase, hostOwnership: UlcpHostOwnership, deviceKey: Data?, deviceName: String?, battery: UlcpBatteryRecord?,
+        /**
+         * `PROP_ALERT`, or `None` on a radio without `CAP_ALERT`.
+         *
+         * Unlike `battery`, this is carried on *every* snapshot rather than
+         * reported once: it is state the UI mirrors, and the radio ends an
+         * alert on its own — a button press or its deadline — so the button
+         * must follow the radio rather than what the phone last asked for.
+         */alert: UlcpAlertState?, provisioning: UlcpSyncRecord?) {
         self.generation = generation
         self.phase = phase
         self.hostOwnership = hostOwnership
         self.deviceKey = deviceKey
         self.deviceName = deviceName
         self.battery = battery
+        self.alert = alert
         self.provisioning = provisioning
     }
 
@@ -4886,6 +4944,7 @@ public struct FfiConverterTypeUlcpSessionSnapshotRecord: FfiConverterRustBuffer 
                 deviceKey: FfiConverterOptionData.read(from: &buf),
                 deviceName: FfiConverterOptionString.read(from: &buf),
                 battery: FfiConverterOptionTypeUlcpBatteryRecord.read(from: &buf),
+                alert: FfiConverterOptionTypeUlcpAlertState.read(from: &buf),
                 provisioning: FfiConverterOptionTypeUlcpSyncRecord.read(from: &buf)
         )
     }
@@ -4897,6 +4956,7 @@ public struct FfiConverterTypeUlcpSessionSnapshotRecord: FfiConverterRustBuffer 
         FfiConverterOptionData.write(value.deviceKey, into: &buf)
         FfiConverterOptionString.write(value.deviceName, into: &buf)
         FfiConverterOptionTypeUlcpBatteryRecord.write(value.battery, into: &buf)
+        FfiConverterOptionTypeUlcpAlertState.write(value.alert, into: &buf)
         FfiConverterOptionTypeUlcpSyncRecord.write(value.provisioning, into: &buf)
     }
 }
@@ -5876,6 +5936,10 @@ enum MobileError: Swift.Error, Equatable, Hashable, Foundation.LocalizedError {
      * not exactly two octets.
      */
     case InvalidRegionCode
+    /**
+     * The operation needs a capability this radio does not advertise.
+     */
+    case UnsupportedCapability
 
 
 
@@ -5918,6 +5982,7 @@ public struct FfiConverterTypeMobileError: FfiConverterRustBuffer {
         case 11: return .InvalidGattSegment
         case 12: return .AdministrativeSession
         case 13: return .InvalidRegionCode
+        case 14: return .UnsupportedCapability
 
          default: throw UniffiInternalError.unexpectedEnumCase
         }
@@ -5980,6 +6045,10 @@ public struct FfiConverterTypeMobileError: FfiConverterRustBuffer {
 
         case .InvalidRegionCode:
             writeInt(&buf, Int32(13))
+
+
+        case .UnsupportedCapability:
+            writeInt(&buf, Int32(14))
 
         }
     }
@@ -6375,6 +6444,82 @@ public func FfiConverterTypeSavedSnapshotRecord_lift(_ buf: RustBuffer) throws -
 #endif
 public func FfiConverterTypeSavedSnapshotRecord_lower(_ value: SavedSnapshotRecord) -> RustBuffer {
     return FfiConverterTypeSavedSnapshotRecord.lower(value)
+}
+
+
+
+/**
+ * `PROP_ALERT`: what the radio is doing to make itself findable.
+ */
+
+public enum UlcpAlertState: Equatable, Hashable {
+
+    /**
+     * Nothing; the nominal state.
+     */
+    case none
+    /**
+     * The radio is making itself as conspicuous as its hardware allows
+     * — beeping, flashing, or both, depending on the board.
+     */
+    case locate
+
+
+
+
+
+}
+
+#if compiler(>=6)
+extension UlcpAlertState: Sendable {}
+#endif
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public struct FfiConverterTypeUlcpAlertState: FfiConverterRustBuffer {
+    typealias SwiftType = UlcpAlertState
+
+    public static func read(from buf: inout (data: Data, offset: Data.Index)) throws -> UlcpAlertState {
+        let variant: Int32 = try readInt(&buf)
+        switch variant {
+
+        case 1: return .none
+
+        case 2: return .locate
+
+        default: throw UniffiInternalError.unexpectedEnumCase
+        }
+    }
+
+    public static func write(_ value: UlcpAlertState, into buf: inout [UInt8]) {
+        switch value {
+
+
+        case .none:
+            writeInt(&buf, Int32(1))
+
+
+        case .locate:
+            writeInt(&buf, Int32(2))
+
+        }
+    }
+}
+
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public func FfiConverterTypeUlcpAlertState_lift(_ buf: RustBuffer) throws -> UlcpAlertState {
+    return try FfiConverterTypeUlcpAlertState.lift(buf)
+}
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public func FfiConverterTypeUlcpAlertState_lower(_ value: UlcpAlertState) -> RustBuffer {
+    return FfiConverterTypeUlcpAlertState.lower(value)
 }
 
 
@@ -7191,6 +7336,30 @@ fileprivate struct FfiConverterOptionTypeSavedSnapshotRecord: FfiConverterRustBu
 #if swift(>=5.8)
 @_documentation(visibility: private)
 #endif
+fileprivate struct FfiConverterOptionTypeUlcpAlertState: FfiConverterRustBuffer {
+    typealias SwiftType = UlcpAlertState?
+
+    public static func write(_ value: SwiftType, into buf: inout [UInt8]) {
+        guard let value = value else {
+            writeInt(&buf, Int8(0))
+            return
+        }
+        writeInt(&buf, Int8(1))
+        FfiConverterTypeUlcpAlertState.write(value, into: &buf)
+    }
+
+    public static func read(from buf: inout (data: Data, offset: Data.Index)) throws -> SwiftType {
+        switch try readInt(&buf) as Int8 {
+        case 0: return nil
+        case 1: return try FfiConverterTypeUlcpAlertState.read(from: &buf)
+        default: throw UniffiInternalError.unexpectedOptionalTag
+        }
+    }
+}
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
 fileprivate struct FfiConverterOptionSequenceData: FfiConverterRustBuffer {
     typealias SwiftType = [Data]?
 
@@ -7798,6 +7967,17 @@ public func renderRouterHint(bytes: Data)throws  -> RouterHintRecord  {
 })
 }
 /**
+ * Validate and reduce a `PROP_ALERT` value.
+ */
+public func inspectUlcpAlert(value: Data)throws  -> UlcpAlertState  {
+    return try  FfiConverterTypeUlcpAlertState_lift(try rustCallWithError(FfiConverterTypeMobileError_lift) {
+        uniffiCallStatus in
+    uniffi_umsh_mobile_core_fn_func_inspect_ulcp_alert(
+        FfiConverterData.lower(value),uniffiCallStatus
+    )
+})
+}
+/**
  * Validate and reduce a `PROP_BATTERY` value to fields used by mobile UI.
  */
 public func inspectUlcpBattery(value: Data)throws  -> UlcpBatteryRecord  {
@@ -8014,6 +8194,9 @@ private let initializationResult: InitializationResult = {
     if (uniffi_umsh_mobile_core_checksum_func_render_router_hint() != 41050) {
         return InitializationResult.apiChecksumMismatch
     }
+    if (uniffi_umsh_mobile_core_checksum_func_inspect_ulcp_alert() != 25982) {
+        return InitializationResult.apiChecksumMismatch
+    }
     if (uniffi_umsh_mobile_core_checksum_func_inspect_ulcp_battery() != 22194) {
         return InitializationResult.apiChecksumMismatch
     }
@@ -8177,6 +8360,9 @@ private let initializationResult: InitializationResult = {
         return InitializationResult.apiChecksumMismatch
     }
     if (uniffi_umsh_mobile_core_checksum_method_mobileulcpsession_reset() != 55594) {
+        return InitializationResult.apiChecksumMismatch
+    }
+    if (uniffi_umsh_mobile_core_checksum_method_mobileulcpsession_set_alert() != 38831) {
         return InitializationResult.apiChecksumMismatch
     }
     if (uniffi_umsh_mobile_core_checksum_method_mobileulcpsession_transmit_raw() != 57973) {

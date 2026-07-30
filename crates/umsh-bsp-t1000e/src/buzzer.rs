@@ -9,7 +9,7 @@
 //! [`run`] steps the [`BuzzerEngine`] state machine and re-arms PWM
 //! between notes.
 
-use embassy_futures::select::{Either, Either3, select, select3};
+use embassy_futures::select::{Either4, select4};
 use embassy_nrf::gpio::Output;
 use embassy_nrf::pwm::{DutyCycle, SimplePwm};
 use embassy_sync::blocking_mutex::raw::ThreadModeRawMutex;
@@ -93,20 +93,22 @@ pub async fn run(
                     continue;
                 }
                 pwm.set_duty(0, DutyCycle::normal(half));
-                match select3(
+                match select4(
                     BUZZER_SIGNAL.wait(),
                     BUZZER_SILENCE_SET.wait(),
+                    crate::indicator::BUZZER_ALERT_SET.wait(),
                     Timer::at(Instant::from_millis(next_deadline_ms)),
                 )
                 .await
                 {
-                    Either3::First(melody) => {
+                    Either4::First(melody) => {
                         engine.play(melody, Instant::now().as_millis());
                     }
-                    Either3::Second(silenced) => {
+                    Either4::Second(silenced) => {
                         apply_silence_state(&mut engine, &mut silence_pending, silenced)
                     }
-                    Either3::Third(()) => {}
+                    Either4::Third(active) => apply_alert_state(&mut engine, active),
+                    Either4::Fourth(()) => {}
                 }
             }
             BuzzerDecision::Silent => {
@@ -115,16 +117,58 @@ pub async fn run(
                     enable.set_low();
                     driving = false;
                 }
-                match select(BUZZER_SIGNAL.wait(), BUZZER_SILENCE_SET.wait()).await {
-                    Either::First(melody) => {
+                // A repeating alert is silent *between* passes, so the
+                // engine still has a deadline to wake for; without it the
+                // alert would chirp once and sleep forever. An idle
+                // engine reports none and this parks on the signals.
+                let next = engine.next_deadline_ms(Instant::now().as_millis());
+                let resume = async {
+                    match next {
+                        Some(deadline) => Timer::at(Instant::from_millis(deadline)).await,
+                        None => core::future::pending().await,
+                    }
+                };
+                match select4(
+                    BUZZER_SIGNAL.wait(),
+                    BUZZER_SILENCE_SET.wait(),
+                    crate::indicator::BUZZER_ALERT_SET.wait(),
+                    resume,
+                )
+                .await
+                {
+                    Either4::First(melody) => {
                         engine.play(melody, Instant::now().as_millis());
                     }
-                    Either::Second(silenced) => {
+                    Either4::Second(silenced) => {
                         apply_silence_state(&mut engine, &mut silence_pending, silenced)
                     }
+                    Either4::Third(active) => apply_alert_state(&mut engine, active),
+                    Either4::Fourth(()) => {}
                 }
             }
         }
+    }
+}
+
+/// How often the locate melody repeats. Long enough that the chirps read
+/// as distinct events a searcher can walk toward, short enough not to
+/// lose them between sweeps of a room.
+const ALERT_PERIOD: Duration = Duration::from_millis(3_000);
+
+/// Start or stop the locate alert (`PROP_ALERT`).
+///
+/// The alert plays through silence, and stopping it leaves the persisted
+/// silence preference exactly as it was — the engine suspends that
+/// preference rather than clearing it.
+fn apply_alert_state(engine: &mut BuzzerEngine, active: bool) {
+    if active {
+        engine.play_alert(
+            &melodies::LOCATE,
+            Instant::now().as_millis(),
+            ALERT_PERIOD.as_millis(),
+        );
+    } else {
+        engine.stop_alert();
     }
 }
 

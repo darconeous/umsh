@@ -945,6 +945,7 @@ Code | Name                      | Requires                             | Define
 39   | `CAP_BATTERY`             | —                                    | [Device Domain](ulcp-device.md#capabilities)
 40   | `CAP_REPEATER`            | `CAP_DEV_IDENTITY`                   | [Device Domain](ulcp-device.md#capabilities)
 41   | `CAP_IDENT`               | `CAP_DEV_IDENTITY`                   | [Device Domain](ulcp-device.md#capabilities)
+42   | `CAP_ALERT`               | —                                    | [Device Domain](ulcp-device.md#capabilities)
 515  | `CAP_PHY_LORA`            | —                                    | [Radio Control](ulcp-radio.md#capabilities)
 
 A device **MUST NOT** advertise a capability without also advertising the

@@ -11,6 +11,11 @@ struct RadioSnapshot: Equatable, Sendable {
     var deviceIdentity: MeshPublicIdentity?
     var hostState: RadioHostState
     var provisioning: RadioProvisioningSummary?
+    /// `PROP_ALERT`, or `nil` on a radio that cannot make itself
+    /// conspicuous (no `CAP_ALERT`) — the Find control is hidden then
+    /// rather than shown disabled. Defaulted so the many
+    /// no-radio-attached snapshots stay unchanged.
+    var alert: RadioAlertState? = nil
     var problemDescription: String?
 
     static let idle = Self(
@@ -77,6 +82,7 @@ struct RadioSnapshot: Equatable, Sendable {
             supportsDeviceIdentity: true,
             devPeerAddresses: []
         ),
+        alert: RadioAlertState.none,
         problemDescription: nil
     )
 
@@ -152,6 +158,28 @@ enum RadioLinkState: String, Equatable, Sendable {
         default: "antenna.radiowaves.left.and.right.slash"
         }
     }
+}
+
+/// What the radio is doing to make itself findable (`PROP_ALERT`).
+enum RadioAlertState: String, Equatable, Sendable {
+    case none
+    case locating
+
+    init(_ state: UlcpAlertState) {
+        self = switch state {
+        case .none: .none
+        case .locate: .locating
+        }
+    }
+
+    var wire: UlcpAlertState {
+        switch self {
+        case .none: .none
+        case .locating: .locate
+        }
+    }
+
+    var isLocating: Bool { self == .locating }
 }
 
 enum RadioHostState: String, Equatable, Sendable {

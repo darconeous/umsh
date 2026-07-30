@@ -34,10 +34,11 @@ pub use mobile_mesh::{
     MobileMeshSessionUpdateRecord,
 };
 pub use ulcp::{
-    GattSegmentRecord, MobileGattReassembler, MobileUlcpSession, UlcpAttachMode, UlcpBatteryRecord,
-    UlcpDeviceConfigRecord, UlcpHostOwnership, UlcpOperationErrorRecord, UlcpPropertyFrameRecord,
-    UlcpRadioSettingsRecord, UlcpReceivedFrameRecord, UlcpRepeaterSettingsRecord, UlcpSessionPhase,
-    UlcpSessionSnapshotRecord, UlcpSessionUpdateRecord, UlcpSyncRecord, inspect_ulcp_battery,
+    GattSegmentRecord, MobileGattReassembler, MobileUlcpSession, UlcpAlertState, UlcpAttachMode,
+    UlcpBatteryRecord, UlcpDeviceConfigRecord, UlcpHostOwnership, UlcpOperationErrorRecord,
+    UlcpPropertyFrameRecord, UlcpRadioSettingsRecord, UlcpReceivedFrameRecord,
+    UlcpRepeaterSettingsRecord, UlcpSessionPhase, UlcpSessionSnapshotRecord,
+    UlcpSessionUpdateRecord, UlcpSyncRecord, inspect_ulcp_alert, inspect_ulcp_battery,
     inspect_ulcp_property_frame, inspect_ulcp_status, inspect_ulcp_sync, region_code_description,
     region_code_from_string, ulcp_gatt_segments, ulcp_inspection_properties, ulcp_prop_get,
     ulcp_prop_set, ulcp_save,
@@ -70,6 +71,8 @@ pub enum MobileError {
     /// Text could not be read as a region code, or a supplied code was
     /// not exactly two octets.
     InvalidRegionCode,
+    /// The operation needs a capability this radio does not advertise.
+    UnsupportedCapability,
 }
 
 impl MobileError {
@@ -89,6 +92,7 @@ impl MobileError {
             Self::InvalidGattSegment => "mobile.error.ulcp.invalid_gatt_segment",
             Self::AdministrativeSession => "mobile.error.ulcp.administrative_session",
             Self::InvalidRegionCode => "mobile.error.region_code.invalid",
+            Self::UnsupportedCapability => "mobile.error.ulcp.unsupported_capability",
         }
     }
 
@@ -108,6 +112,7 @@ impl MobileError {
             Self::InvalidGattSegment => "ULCP_INVALID_GATT_SEGMENT",
             Self::AdministrativeSession => "ULCP_ADMINISTRATIVE_SESSION",
             Self::InvalidRegionCode => "REGION_CODE_INVALID",
+            Self::UnsupportedCapability => "ULCP_UNSUPPORTED_CAPABILITY",
         }
     }
 }

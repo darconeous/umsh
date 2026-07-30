@@ -5,7 +5,7 @@ use std::{
 
 use umsh_core::RegionCode;
 use umsh_ulcp::{
-    BatteryChargeState, BatteryStatus, Cmd, Frame, StreamPayload, frame,
+    AlertState, BatteryChargeState, BatteryStatus, Cmd, Frame, StreamPayload, frame,
     gatt::{self, MAX_FRAME, Reassembler},
     host::{PropertyNotification, PropertyNotificationKind, TidAllocator},
     ids::{INTERFACE_TYPE, PROTOCOL_MAJOR_VERSION, PROTOCOL_MINOR_VERSION, cap, prop, saved},
@@ -200,6 +200,32 @@ pub struct UlcpDeviceConfigRecord {
     pub repeater: Option<UlcpRepeaterSettingsRecord>,
 }
 
+/// `PROP_ALERT`: what the radio is doing to make itself findable.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, uniffi::Enum)]
+pub enum UlcpAlertState {
+    /// Nothing; the nominal state.
+    None,
+    /// The radio is making itself as conspicuous as its hardware allows
+    /// — beeping, flashing, or both, depending on the board.
+    Locate,
+}
+
+impl UlcpAlertState {
+    fn from_wire(state: AlertState) -> Self {
+        match state {
+            AlertState::None => Self::None,
+            AlertState::Locate => Self::Locate,
+        }
+    }
+
+    fn to_wire(self) -> AlertState {
+        match self {
+            Self::None => AlertState::None,
+            Self::Locate => AlertState::Locate,
+        }
+    }
+}
+
 /// Authoritative comparison of `PROP_HOST_KEY` with the selected phone identity.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, uniffi::Enum)]
 pub enum UlcpHostOwnership {
@@ -220,6 +246,13 @@ pub struct UlcpSessionSnapshotRecord {
     pub device_key: Option<Vec<u8>>,
     pub device_name: Option<String>,
     pub battery: Option<UlcpBatteryRecord>,
+    /// `PROP_ALERT`, or `None` on a radio without `CAP_ALERT`.
+    ///
+    /// Unlike `battery`, this is carried on *every* snapshot rather than
+    /// reported once: it is state the UI mirrors, and the radio ends an
+    /// alert on its own — a button press or its deadline — so the button
+    /// must follow the radio rather than what the phone last asked for.
+    pub alert: Option<UlcpAlertState>,
     pub provisioning: Option<UlcpSyncRecord>,
 }
 
@@ -345,6 +378,10 @@ struct UlcpSessionState {
     /// timestamps what it receives would otherwise restamp a minutes-old
     /// reading on every unrelated update and report it as current.
     battery: Option<UlcpBatteryRecord>,
+    /// The radio's live `PROP_ALERT`, or `None` until one is read (and
+    /// permanently on a radio without `CAP_ALERT`). Held rather than
+    /// taken: it is a state to mirror, not an event to report once.
+    alert: Option<UlcpAlertState>,
     provisioning: Option<UlcpSyncRecord>,
     stage_failure_pending: bool,
 }
@@ -366,6 +403,7 @@ impl Default for UlcpSessionState {
             device_key: None,
             device_name: None,
             battery: None,
+            alert: None,
             provisioning: None,
             stage_failure_pending: false,
         }
@@ -501,6 +539,37 @@ impl MobileUlcpSession {
         // waiting_for_responses = false and the caller does not block.
         let frame = ulcp_factory_reset(tid)?;
         Ok(state.update(vec![frame]))
+    }
+
+    /// Start or stop the radio's locate alert (`PROP_ALERT`) so a
+    /// misplaced radio can be found.
+    ///
+    /// Not part of `configure_device`, and never saved: this is live
+    /// behavior rather than configuration, and it deliberately survives
+    /// the phone walking out of BLE range — which is precisely when a
+    /// search needs it. What ends it is this call, a button press at the
+    /// radio, or the radio's own deadline; the latter two arrive as an
+    /// unsolicited `PROP_ALERT` carried on the session snapshot.
+    ///
+    /// Re-sending `Locate` while an alert is running restarts that
+    /// deadline, which is how a longer search keeps the alert alive.
+    pub fn set_alert(&self, state: UlcpAlertState) -> Result<UlcpSessionUpdateRecord, MobileError> {
+        let mut session = self.inner.lock().expect("ULCP session mutex poisoned");
+        if session.stage != SessionStage::Attached {
+            return Err(MobileError::InvalidUlcpFrame);
+        }
+        if !session.has_capability(cap::ALERT)? {
+            return Err(MobileError::UnsupportedCapability);
+        }
+        let mut value = [0u8; pui::MAX_LEN];
+        let len = pui::encode(state.to_wire().code(), &mut value)
+            .map_err(|_| MobileError::InvalidUlcpFrame)?;
+        let tid = session.allocate_tid();
+        session
+            .expected
+            .insert(tid, ExpectedResponse::Property(prop::ALERT));
+        let frame = ulcp_prop_set(tid, prop::ALERT, value[..len].to_vec())?;
+        Ok(session.update(vec![frame]))
     }
 
     /// Apply, verify, and persist a complete radio-settings snapshot.
@@ -1084,6 +1153,7 @@ impl UlcpSessionState {
                 // Taken, not cloned: reported once, on the update that
                 // actually carries a new measurement.
                 battery: self.battery.take(),
+                alert: self.alert,
                 provisioning: self.provisioning.clone(),
             },
             waiting_for_responses: !self.expected.is_empty(),
@@ -1117,6 +1187,11 @@ impl UlcpSessionState {
             }
             prop::BATTERY => {
                 self.battery = Some(inspect_ulcp_battery(response.value.clone())?);
+            }
+            prop::ALERT => {
+                // Arrives both as the answer to a write and unsolicited,
+                // when the radio ends the alert itself.
+                self.alert = Some(inspect_ulcp_alert(response.value.clone())?);
             }
             prop::HOST_KEY => {
                 if !response.value.is_empty() && response.value.len() != items::PUBLIC_KEY_LEN {
@@ -1446,6 +1521,11 @@ pub fn ulcp_inspection_properties(capabilities: Vec<u8>) -> Result<Vec<u32>, Mob
     }
     if has(cap::DEV_IDENTITY) {
         properties.extend([prop::DEV_PEERS, prop::DEV_DISCOVERABLE]);
+    }
+    if has(cap::ALERT) {
+        // Read at attach so a phone reconnecting mid-search finds the
+        // alert it left running rather than a stale "off".
+        properties.push(prop::ALERT);
     }
     Ok(properties)
 }
@@ -2154,6 +2234,18 @@ pub fn inspect_ulcp_battery(value: Vec<u8>) -> Result<UlcpBatteryRecord, MobileE
             )
         }),
     })
+}
+
+/// Validate and reduce a `PROP_ALERT` value.
+#[uniffi::export]
+pub fn inspect_ulcp_alert(value: Vec<u8>) -> Result<UlcpAlertState, MobileError> {
+    let (code, consumed) = pui::decode(&value).map_err(|_| MobileError::InvalidUlcpFrame)?;
+    if consumed != value.len() {
+        return Err(MobileError::InvalidUlcpFrame);
+    }
+    AlertState::from_code(code)
+        .map(UlcpAlertState::from_wire)
+        .ok_or(MobileError::InvalidUlcpFrame)
 }
 
 /// Read a region code from what someone typed, yielding the two wire
@@ -3775,6 +3867,104 @@ mod tests {
             again.snapshot.battery.expect("second push").percentage,
             Some(50)
         );
+    }
+
+    /// Attach an alert-capable device sitting in the attached phase.
+    fn attached_alert_session() -> std::sync::Arc<MobileUlcpSession> {
+        let session = MobileUlcpSession::new();
+        let begin = session.begin(None).unwrap();
+        let inspection =
+            answer_requests(&session, begin.outbound_frames, |property| match property {
+                prop::LAST_STATUS => (property, vec![0]),
+                prop::PROTOCOL_VERSION => (property, vec![6, 0]),
+                prop::CAPS => (property, encoded_capabilities(&[cap::ALERT])),
+                prop::DEV_KEY | prop::DEV_NAME | prop::BATTERY => (property, Vec::new()),
+                prop::HOST_KEY => (prop::LAST_STATUS, vec![2]),
+                _ => unreachable!(),
+            });
+        let attached =
+            answer_requests(
+                &session,
+                inspection.outbound_frames,
+                |property| match property {
+                    prop::INTERFACE_TYPE => (property, vec![INTERFACE_TYPE as u8]),
+                    prop::PHY_ENABLED => (property, vec![1]),
+                    prop::PHY_FREQ => (property, 915_000u32.to_le_bytes().to_vec()),
+                    prop::PHY_TX_POWER => (property, vec![14]),
+                    prop::ALERT => (property, vec![0]),
+                    _ => unreachable!(),
+                },
+            );
+        assert_eq!(attached.snapshot.phase, UlcpSessionPhase::Attached);
+        assert_eq!(attached.snapshot.alert, Some(UlcpAlertState::None));
+        session
+    }
+
+    #[test]
+    fn alert_state_follows_the_radio_not_the_request() {
+        let session = attached_alert_session();
+
+        let request = session.set_alert(UlcpAlertState::Locate).unwrap();
+        let [frame] = &request.outbound_frames[..] else {
+            panic!("one CMD_PROP_SET");
+        };
+        let parsed = Frame::parse(frame).unwrap();
+        assert_eq!(parsed.command(), Some(Cmd::PropSet));
+        let payload = PropPayload::parse(parsed.payload).unwrap();
+        assert_eq!((payload.key, payload.value), (prop::ALERT, &[1u8][..]));
+
+        let started = session
+            .consume(property_response(parsed.header.tid(), prop::ALERT, &[1]))
+            .unwrap();
+        assert_eq!(started.snapshot.alert, Some(UlcpAlertState::Locate));
+
+        // Unlike battery, the state persists across unrelated updates —
+        // the UI mirrors it rather than reacting to it once.
+        let unrelated = session
+            .consume(property_response(
+                frame::TID_UNSOLICITED,
+                prop::DEV_NAME,
+                b"Ridge repeater",
+            ))
+            .unwrap();
+        assert_eq!(unrelated.snapshot.alert, Some(UlcpAlertState::Locate));
+
+        // Someone presses the button on the radio (or its deadline
+        // expires): the unsolicited update is what the phone believes.
+        let cancelled = session
+            .consume(property_response(frame::TID_UNSOLICITED, prop::ALERT, &[0]))
+            .unwrap();
+        assert_eq!(cancelled.snapshot.alert, Some(UlcpAlertState::None));
+        assert_eq!(cancelled.snapshot.phase, UlcpSessionPhase::Attached);
+    }
+
+    #[test]
+    fn alert_needs_the_capability() {
+        let session = attached_battery_session();
+        assert_eq!(
+            session.set_alert(UlcpAlertState::Locate).unwrap_err(),
+            MobileError::UnsupportedCapability
+        );
+        // And a radio that never reported one leaves the field empty, so
+        // the UI can hide the control rather than show a dead button.
+        let update = session
+            .consume(property_response(
+                frame::TID_UNSOLICITED,
+                prop::BATTERY,
+                &[0b111, 0x10, 0x10, 45, 1],
+            ))
+            .unwrap();
+        assert_eq!(update.snapshot.alert, None);
+    }
+
+    #[test]
+    fn malformed_alert_values_are_rejected() {
+        assert_eq!(inspect_ulcp_alert(vec![0]).unwrap(), UlcpAlertState::None);
+        assert_eq!(inspect_ulcp_alert(vec![1]).unwrap(), UlcpAlertState::Locate);
+        // Unknown state, trailing bytes, and the empty value.
+        assert!(inspect_ulcp_alert(vec![2]).is_err());
+        assert!(inspect_ulcp_alert(vec![1, 0]).is_err());
+        assert!(inspect_ulcp_alert(Vec::new()).is_err());
     }
 
     #[test]

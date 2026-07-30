@@ -37,6 +37,15 @@ protocol RadioConnection: AnyObject, Sendable {
     /// state. Requires a live connection; the radio drops the link on reset.
     /// The app also abandons its binding to the radio.
     func factoryReset() async throws
+    /// Start or stop the radio's locate alert (`PROP_ALERT`) so a
+    /// misplaced radio announces itself. What the radio does is up to its
+    /// hardware — a buzzer, an indicator LED, or both — and the alert
+    /// overrides a silenced buzzer.
+    ///
+    /// It deliberately keeps running when the phone walks out of range;
+    /// the radio ends it on a button press or its own deadline, reported
+    /// back through `RadioSnapshot.alert`.
+    func setAlert(_ state: RadioAlertState) async throws
     func refresh() async throws -> RadioSnapshot
     func configure(_ settings: RadioSettings) async throws
     /// Store a peer public key on the radio's device identity

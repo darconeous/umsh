@@ -194,7 +194,9 @@ mod firmware {
     use umsh_crypto::CryptoEngine;
     use umsh_crypto::software::{SoftwareAes, SoftwareSha256};
     use umsh_ulcp::{Status, gatt, hdlc};
-    use umsh_ulcp_device::{BatteryFields, MAX_DEVICE_NAME_LEN, RadioSettings, SessionConfig};
+    use umsh_ulcp_device::{
+        AlertConfig, BatteryFields, MAX_DEVICE_NAME_LEN, RadioSettings, SessionConfig,
+    };
 
     /// The ULCP session instantiated with this firmware's crypto
     /// providers (software AES/SHA; Ed25519 comes in only through the
@@ -356,6 +358,11 @@ mod firmware {
             }),
             #[cfg(not(feature = "cap-battery-saadc"))]
             battery: Some(BatteryFields::NONE),
+            // Every board here can make itself conspicuous: the T-1000E
+            // with its buzzer, the T-Echo and SenseCAP with their
+            // indicator LEDs. `CAP_ALERT` says only that *something*
+            // happens, so the difference stays a board matter.
+            alert: Some(AlertConfig::DEFAULT),
         }
     }
 
@@ -929,6 +936,34 @@ mod firmware {
     /// 0 = normal heartbeat, 1 = pairing mode, 2 = BLE state wiped.
     static BLE_LED_MODE: AtomicU8 = AtomicU8::new(0);
 
+    /// Whether a locate alert (`PROP_ALERT`) is running. The session is
+    /// authoritative; this is its board-side mirror, read by the LED
+    /// task to drive the blink and by the button task, which swallows
+    /// the press that cancels an alert.
+    static ALERT_ACTIVE: AtomicBool = AtomicBool::new(false);
+    /// Wakes the LED task on a locate-alert edge.
+    static ALERT_CHANGED: Signal<ThreadModeRawMutex, ()> = Signal::new();
+
+    /// Apply a `PROP_ALERT` transition to the board's indicators.
+    ///
+    /// Idempotent — the session emits the effect on every transition,
+    /// including ones that change nothing.
+    fn set_alert_indication(active: bool) {
+        if ALERT_ACTIVE.swap(active, Ordering::AcqRel) == active {
+            return;
+        }
+        ALERT_CHANGED.signal(());
+        // The T-1000E is the only board here with a buzzer; on the
+        // others the LED blink is the whole alert.
+        #[cfg(feature = "t1000e")]
+        umsh_bsp_t1000e::indicator::BUZZER_ALERT_SET.signal(active);
+    }
+
+    /// Whether a locate alert is running.
+    fn alert_active() -> bool {
+        ALERT_ACTIVE.load(Ordering::Acquire)
+    }
+
     /// USB protocol attachment suppresses BLE advertising. The signal wakes a
     /// pending advertiser/connection so it can apply the atomic policy.
     static ADV_ALLOWED: AtomicBool = AtomicBool::new(true);
@@ -1303,6 +1338,10 @@ mod firmware {
             // Mark the load for the battery level estimator (the radio
             // runner transmits within milliseconds of this).
             board_power::note_external_load();
+        }
+
+        fn set_alert(&mut self, state: umsh_ulcp::alert::AlertState) {
+            set_alert_indication(state.is_active());
         }
 
         fn trace(&mut self, args: core::fmt::Arguments<'_>) {
@@ -2686,6 +2725,14 @@ mod firmware {
                 }
             };
 
+            // Cancelling a locate alert consumes the press, so whoever
+            // found the radio does not also navigate its menus. The
+            // deliberate four-second power-off hold still gets through.
+            if event.is_some() && alert_active() && !matches!(event, Some(ButtonEvent::VeryLong)) {
+                INPUT_CH.send(InEvent::CancelAlert).await;
+                continue;
+            }
+
             let input = match event {
                 Some(ButtonEvent::Single) => Some(UiInput::Forward),
                 Some(ButtonEvent::Double) => Some(UiInput::Select),
@@ -2784,6 +2831,17 @@ mod firmware {
                 }
             };
 
+            // Whoever found the beeping radio gets to silence it with
+            // whatever they press first, and that press does nothing
+            // else — fumbling for an alarm must not fire off a beacon or
+            // flip the silence preference. The long press is the
+            // exception the spec allows: powering the radio off is
+            // deliberate enough to mean it, and it ends the alert anyway.
+            if event.is_some() && alert_active() && !matches!(event, Some(ButtonEvent::Long)) {
+                INPUT_CH.send(InEvent::CancelAlert).await;
+                continue;
+            }
+
             match event {
                 Some(ButtonEvent::Single) => {
                     // Primary action: beacon from the device identity. The
@@ -2878,7 +2936,14 @@ mod firmware {
             // Power off only if held past HOLD_OFF; release before that is a
             // short press with no power action.
             match select(button.wait_for_high(), Timer::after(HOLD_OFF)).await {
-                Either::First(()) => {}
+                // A short press is otherwise inert on this board, which
+                // makes it exactly the right way to silence a locate
+                // alert. The power-off hold below still works during one.
+                Either::First(()) => {
+                    if alert_active() {
+                        INPUT_CH.send(InEvent::CancelAlert).await;
+                    }
+                }
                 Either::Second(()) => {
                     // Hold accepted: blink LED_A (white, active-high) to
                     // acknowledge, then request the System OFF teardown.
@@ -3886,8 +3951,17 @@ mod firmware {
         loop {
             wdt.pet();
             super::panic::breadcrumb_beat();
+            // The locate alert outranks every other use of the LED,
+            // including the pairing blink: someone is looking for this
+            // board right now, and on a board with no buzzer the blink
+            // is the entire alert.
+            if alert_active() {
+                engine.start_alert(Instant::now().as_millis());
+            } else {
+                engine.stop_alert();
+            }
             let ble_mode = BLE_LED_MODE.load(Ordering::Acquire);
-            if ble_mode != 0 {
+            if ble_mode != 0 && !alert_active() {
                 let phase = Instant::now().as_millis() % 2_000;
                 let on = if ble_mode == 1 {
                     phase < 100 || (500..600).contains(&phase)
@@ -3924,7 +3998,13 @@ mod firmware {
             } else {
                 led.set_low()
             }
-            Timer::at(Instant::from_millis(decision.next_deadline_ms)).await;
+            // An alert edge must reach the LED without waiting out the
+            // heartbeat's multi-second deadline.
+            let _ = select(
+                Timer::at(Instant::from_millis(decision.next_deadline_ms)),
+                ALERT_CHANGED.wait(),
+            )
+            .await;
         }
     }
 
@@ -3940,9 +4020,17 @@ mod firmware {
             let battery = umsh_bsp_t1000e::battery_state();
             engine.set_battery(battery);
             engine.set_attention(umsh_bsp_t1000e::indicator::attention_requested());
+            // Outranks the pairing blink, the battery states, and the
+            // one-shot sequences alike (see `T1000eLedEngine::tick`).
+            if alert_active() {
+                engine.start_alert(Instant::now().as_millis());
+            } else {
+                engine.stop_alert();
+            }
 
             let ble_mode = BLE_LED_MODE.load(Ordering::Acquire);
             if ble_mode != 0
+                && !alert_active()
                 && matches!(
                     battery,
                     umsh_ux_tracker::battery::BatteryState::BatteryOnly
@@ -3966,14 +4054,17 @@ mod firmware {
                 ((u32::from(led.max_duty()) * u32::from(decision.brightness)) / 1_000) as u16;
             led.set_duty(0, DutyCycle::inverted(duty));
             match select4(
-                Timer::at(Instant::from_millis(decision.next_deadline_ms)),
+                select(
+                    Timer::at(Instant::from_millis(decision.next_deadline_ms)),
+                    ALERT_CHANGED.wait(),
+                ),
                 umsh_bsp_t1000e::BATTERY_STATE_CHANGED.wait(),
                 umsh_bsp_t1000e::indicator::INDICATOR_CHANGED.wait(),
                 umsh_bsp_t1000e::indicator::LED_SEQUENCE_SIGNAL.wait(),
             )
             .await
             {
-                Either4::First(()) | Either4::Second(_) | Either4::Third(()) => {}
+                Either4::First(_) | Either4::Second(_) | Either4::Third(()) => {}
                 Either4::Fourth(sequence) => {
                     engine.play(sequence, Instant::now().as_millis());
                 }

@@ -16,6 +16,7 @@ use umsh::core::{PublicKey, RegionCode};
 use umsh::ulcp::{
     FrameLink, HostOwnership, HostProvisioning, SavedSnapshot, UlcpDevice, UlcpDeviceConfig,
 };
+use umsh::ulcp_wire::alert::AlertState;
 use umsh::ulcp_wire::battery::{BatteryChargeState, BatteryStatus};
 use umsh::ulcp_wire::ids::{DUTY_LIMIT_DISABLED, cap, prop};
 use umsh::ulcp_wire::items::{Filter, PeerKeyEntry};
@@ -79,6 +80,13 @@ Commands:
   dev-peer [list]       list device-identity peer public keys
   dev-peer add <KEY>       add a device peer public key
   dev-peer remove <KEY>    remove a device peer public key
+  alert                 print the locate-alert state (PROP_ALERT)
+  alert locate          make the radio conspicuous so it can be found:
+                        it beeps, flashes, or whatever its hardware
+                        allows, overriding a local silence setting. Ends
+                        on `alert none`, a button press at the radio, or
+                        the radio's own deadline; re-send to extend it
+  alert none            stop the locate alert
 
 --scan-ble lists nearby companion radios (id, name, RSSI) without
 connecting; the id works as a --ble= selector.
@@ -126,6 +134,7 @@ const COMMANDS: &[&str] = &[
     "repeater",
     "dev-channel",
     "dev-peer",
+    "alert",
 ];
 
 #[derive(Debug, PartialEq, Eq)]
@@ -163,6 +172,9 @@ enum Command {
     Repeater(RepeaterOp),
     DevChannel(TableOp),
     DevPeer(TableOp),
+    /// `alert` (report) / `alert locate` / `alert none`. Never saved:
+    /// the alert is live behavior, not configuration.
+    Alert(Option<AlertState>),
     /// `--ble-scan` (a transport mode more than a command; carried here
     /// so the invocation stays one shape).
     BleScan,
@@ -602,6 +614,16 @@ fn parse_invocation(args: &[String]) -> Result<Invocation, String> {
                 Command::Duty(Some(parse_duty_limit(value)?))
             }
             Some(other) => return Err(format!("duty does not take {other:?}")),
+        },
+        "alert" => match positionals.first().map(String::as_str) {
+            None => Command::Alert(None),
+            Some("locate" | "on" | "find") if positionals.len() == 1 => {
+                Command::Alert(Some(AlertState::Locate))
+            }
+            Some("none" | "off" | "stop") if positionals.len() == 1 => {
+                Command::Alert(Some(AlertState::None))
+            }
+            _ => return Err("alert takes at most one argument: `locate` or `none`".into()),
         },
         "phy" => Command::Phy(parse_phy_op(&positionals)?),
         "repeater" => Command::Repeater(parse_repeater_op(&positionals)?),
@@ -1224,9 +1246,45 @@ async fn dispatch<L: FrameLink>(
             dev_table(&mut radio, prop::DEV_CHANNEL_KEYS, "channel", op, no_save).await
         }
         Command::DevPeer(op) => dev_table(&mut radio, prop::DEV_PEERS, "peer", op, no_save).await,
+        Command::Alert(desired) => alert(&mut radio, desired).await,
         // --ble-scan never dispatches: it is handled before any link is
         // opened.
         Command::BleScan => unreachable!("scan handled in run()"),
+    }
+}
+
+/// Report or drive the locate alert (`PROP_ALERT`).
+///
+/// Deliberately outside the auto-save path: the alert is live behavior
+/// that no snapshot carries, so there is nothing to persist.
+async fn alert<L: FrameLink>(
+    radio: &mut UlcpDevice<L>,
+    desired: Option<AlertState>,
+) -> Result<(), Box<dyn std::error::Error>> {
+    let Some(state) = desired else {
+        match radio.alert().await? {
+            Some(state) => println!("{:<14}{}", "alert:", alert_display(state)),
+            None => println!("{:<14}unsupported (no CAP_ALERT)", "alert:"),
+        }
+        return Ok(());
+    };
+    let authoritative = radio.set_alert(state).await?;
+    match authoritative {
+        AlertState::Locate => println!(
+            "locate alert started. It stops when you send `alert none`, when someone \
+             cancels it at the radio, or when the radio's own deadline expires — \
+             re-send `alert locate` to keep it going."
+        ),
+        AlertState::None => println!("locate alert stopped"),
+    }
+    Ok(())
+}
+
+/// Human-readable rendering of a `PROP_ALERT` state.
+fn alert_display(state: AlertState) -> &'static str {
+    match state {
+        AlertState::None => "none",
+        AlertState::Locate => "locate (the radio is making itself conspicuous)",
     }
 }
 

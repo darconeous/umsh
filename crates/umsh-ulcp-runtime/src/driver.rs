@@ -22,10 +22,10 @@
 
 use core::sync::atomic::{AtomicU32, Ordering};
 
-use embassy_futures::select::{Either4, select4};
+use embassy_futures::select::{Either, Either4, select, select4};
 use embassy_sync::blocking_mutex::raw::RawMutex;
 use embassy_sync::channel::Channel;
-use embassy_time::Instant;
+use embassy_time::{Instant, Timer};
 
 use umsh_crypto::software::SoftwareIdentity;
 use umsh_crypto::{AesProvider, NodeIdentity as _, Sha256Provider};
@@ -85,9 +85,14 @@ pub enum InEvent {
     Attached(Transport),
     Detached(Transport),
     Frame(Transport, FrameBuf),
+    /// Someone cancelled a running locate alert at the device — the
+    /// button press of whoever found the radio. Ignored when no alert is
+    /// running, so a board may report the press unconditionally.
+    CancelAlert,
 }
 
-/// The inbound event channel every transport task feeds.
+/// The inbound event channel the board's tasks feed: every transport
+/// task, and whatever owns the buttons on a board with `CAP_ALERT`.
 pub type InputChannel<M> = Channel<M, InEvent, 8>;
 
 /// One raw ULCP frame in a transport output queue, stamped with the
@@ -270,6 +275,17 @@ pub trait DeviceEnv {
     async fn publish_device_name(&mut self, name: &str);
     /// Deliver a device-domain mirror to the board's device node.
     fn publish_dev_domain(&mut self, snapshot: DevDomainSnapshot);
+    /// Start or stop the board's locate indication (`PROP_ALERT`).
+    ///
+    /// Carries the authoritative state and is called for every
+    /// transition — host write, local cancellation, and deadline — so an
+    /// implementation can treat it as idempotent and needs no notion of
+    /// *why* the alert ended. `AlertState::Locate` must override a local
+    /// silence setting without clearing it (spec §PROP_ALERT); boards
+    /// without `CAP_ALERT` never see this and keep the default.
+    fn set_alert(&mut self, state: umsh_ulcp::alert::AlertState) {
+        let _ = state;
+    }
     /// A covered frame was queued for an attached-or-future host
     /// (T-1000E: request the attention LED).
     fn request_attention(&mut self) {}
@@ -438,6 +454,9 @@ async fn apply_effect<A, S, const TXQ: usize, M, const RX: usize, const TX: usiz
         }
         Some(Effect::DeviceNameChanged) => {
             env.publish_device_name(session.device_name()).await;
+        }
+        Some(Effect::ApplyAlert(state)) => {
+            env.set_alert(state);
         }
         // Deferred effects needing `&mut Session` + the emitter are
         // handled inline in the run loop rather than here.
@@ -642,11 +661,24 @@ where
                     core::future::pending().await
                 }
             };
+            // The locate alert's deadline. Enforced here rather than by
+            // each board so that "a device MUST bound how long it will
+            // remain in ALERT_LOCATE" holds for every board that
+            // advertises CAP_ALERT, including ones whose UX layer has no
+            // timer of its own. Idle (never completes) while no alert is
+            // running. It borrows `session` immutably, alongside
+            // `tx_done` — only `battery_event` touches `env`.
+            let alert_deadline = async {
+                match session.alert_deadline_ms() {
+                    Some(deadline) => Timer::at(Instant::from_millis(deadline)).await,
+                    None => core::future::pending().await,
+                }
+            };
             select4(
                 rt.input.receive(),
                 rt.radio.rx.receive(),
                 tx_done,
-                env.battery_event(),
+                select(env.battery_event(), alert_deadline),
             )
             .await
         };
@@ -677,6 +709,15 @@ where
                     env.set_advertising_allowed(true);
                     session.detach();
                 }
+            }
+            Either4::First(InEvent::CancelAlert) => {
+                // Whoever found the radio silenced it. Publishing the
+                // transition is not conditional on a host being
+                // attached — `cancel_alert` handles that — and a press
+                // with no alert running is simply nothing.
+                let effect = session.cancel_alert(&mut |frame: &[u8]| emitter.push(frame));
+                emitter.flush(arbitration.destination(), rt.out).await;
+                apply_effect(&session, effect, &rt, &mut env).await;
             }
             Either4::First(InEvent::Frame(transport, frame_bytes)) => {
                 if arbitration.accepts_frame(transport) {
@@ -879,13 +920,23 @@ where
                 emitter.flush(arbitration.destination(), rt.out).await;
                 apply_effect(&session, effect, &rt, &mut env).await;
             }
-            Either4::Fourth(sample) => {
+            Either4::Fourth(Either::First(sample)) => {
                 // The board decided this measurement is worth
                 // announcing; publish it as an unsolicited PROP_BATTERY.
                 // Dropped silently while no host is attached, and no
                 // effect can result — a publication is not an operation.
                 session.publish_battery(sample, &mut |frame: &[u8]| emitter.push(frame));
                 emitter.flush(arbitration.destination(), rt.out).await;
+            }
+            Either4::Fourth(Either::Second(())) => {
+                // The alert outlived its deadline: stop the indication
+                // and publish the transition the host did not command.
+                let effect = session
+                    .poll_alert(Instant::now().as_millis(), &mut |frame: &[u8]| {
+                        emitter.push(frame)
+                    });
+                emitter.flush(arbitration.destination(), rt.out).await;
+                apply_effect(&session, effect, &rt, &mut env).await;
             }
         }
         // Any of the arms may have moved the device-domain tables

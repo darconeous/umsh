@@ -279,6 +279,12 @@ actor FakeRadioConnection: RadioConnection {
         publish(.disconnected)
     }
 
+    func setAlert(_ state: RadioAlertState) async throws {
+        var updated = snapshot
+        updated.alert = state
+        publish(updated)
+    }
+
     func publish(_ newSnapshot: RadioSnapshot) {
         snapshot = newSnapshot
         for continuation in continuations.values {

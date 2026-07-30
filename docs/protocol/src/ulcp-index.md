@@ -63,6 +63,7 @@ Id   | Mnemonic                                                                 
 76   | [`PROP_MAC_REPEATER_MIN_RSSI`](ulcp-device.md#prop-mac-repeater-min-rssi)  | Get, Set                 | `CAP_REPEATER`
 77   | [`PROP_MAC_REPEATER_MIN_SNR`](ulcp-device.md#prop-mac-repeater-min-snr)    | Get, Set                 | `CAP_REPEATER`
 78   | [`PROP_DEV_DISCOVERABLE`](ulcp-device.md#prop-dev-discoverable)            | Get, Set                 | `CAP_DEV_IDENTITY`
+79   | [`PROP_ALERT`](ulcp-device.md#prop-alert)                                  | Get, Set, Is             | `CAP_ALERT`
 96   | [`PROP_HOST_KEY`](ulcp-host.md#prop-host-key)                              | Get, Set                 | `CAP_HOST_FILTER`
 97   | [`PROP_HOST_CHANNEL_KEYS`](ulcp-host.md#prop-host-channel-keys)            | Get, Set, Insert, Remove | `CAP_HOST_KEYS`
 98   | [`PROP_HOST_PEER_KEYS`](ulcp-host.md#prop-host-peer-keys)                  | Get, Set, Insert, Remove | `CAP_HOST_KEYS`
@@ -95,6 +96,7 @@ Code | Name                      | Defined in
 39   | `CAP_BATTERY`             | [Device Domain](ulcp-device.md#capabilities)
 40   | `CAP_REPEATER`            | [Device Domain](ulcp-device.md#capabilities)
 41   | `CAP_IDENT`               | [Device Domain](ulcp-device.md#capabilities)
+42   | `CAP_ALERT`               | [Device Domain](ulcp-device.md#capabilities)
 515  | `CAP_PHY_LORA`            | [Radio Control](ulcp-radio.md#capabilities)
 
 ## Status Codes
@@ -136,5 +138,6 @@ Enumeration | Values | Defined in
 `PROP_SAVED` | 0 none, 1 current, 2 fallback, 3 unreadable | [`PROP_SAVED`](ulcp-saved-state.md#prop-saved)
 Filter types | 0 `FILTER_DEST_HINT`, 1 `FILTER_CHANNEL_ID`, 2 `FILTER_PKT_TYPE` | [`PROP_HOST_RX_FILTERS`](ulcp-host.md#prop-host-rx-filters)
 Charge states | 0 discharging, 1 charging, 2 charged | [`PROP_BATTERY`](ulcp-device.md#prop-battery)
+Alert states | 0 `ALERT_NONE`, 1 `ALERT_LOCATE` | [`PROP_ALERT`](ulcp-device.md#prop-alert)
 Transmit flags | bit 0 `TX_FLAG_NOCCA`, bit 1 `TX_FLAG_NODUTY` | [`STR_PHY_RAW`](ulcp-transport.md#str-radio-raw)
 Receive flags | bit 0 `RX_FLAG_BUFFERED`, bit 1 `RX_FLAG_ACKED` | [Buffered-Frame Metadata](ulcp-transport.md#buffered-metadata)

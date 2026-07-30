@@ -291,6 +291,7 @@ struct RadioDetailView: View {
     let disconnect: () async -> Void
     var forget: () async -> Void = {}
     var factoryReset: () async throws -> Void = {}
+    var setAlert: (RadioAlertState) async throws -> Void = { _ in }
     let discoverRadios: () async -> AsyncStream<[DiscoveredRadio]>
     let selectRadio: (UUID) async throws -> Void
     let stopDiscovery: () async -> Void
@@ -309,6 +310,8 @@ struct RadioDetailView: View {
     @State private var confirmsFactoryReset = false
     @State private var factoryResetProblem: String?
     @State private var showsRadioPicker = false
+    @State private var alertProblem: String?
+    @State private var alertRequestInFlight = false
 
     var body: some View {
         List {
@@ -364,6 +367,9 @@ struct RadioDetailView: View {
                         .font(.caption)
                         .foregroundStyle(.secondary)
                 }
+            }
+            if let alert = snapshot.alert {
+                findSection(alert)
             }
             Section("Configuration") {
                 if let provisioning = snapshot.provisioning, canEditConfiguration {
@@ -643,6 +649,60 @@ struct RadioDetailView: View {
             return "Finish connecting and reading the radio's current settings first"
         }
         return "Connect the companion radio to edit its settings"
+    }
+
+    /// "Find This Radio": make a misplaced radio announce itself.
+    ///
+    /// Shown only when the radio advertises `CAP_ALERT`, and reflects
+    /// `PROP_ALERT` rather than what was last asked for — the radio ends
+    /// an alert on its own when someone presses its button or its
+    /// deadline runs out, and the button follows.
+    @ViewBuilder
+    private func findSection(_ alert: RadioAlertState) -> some View {
+        Section("Find") {
+            Button {
+                let desired: RadioAlertState = alert.isLocating ? .none : .locating
+                alertProblem = nil
+                alertRequestInFlight = true
+                Task {
+                    do {
+                        try await setAlert(desired)
+                    } catch {
+                        alertProblem = "The radio did not answer. It may be out of range."
+                    }
+                    alertRequestInFlight = false
+                }
+            } label: {
+                Label(
+                    alert.isLocating ? "Stop Alert" : "Find This Radio",
+                    systemImage: alert.isLocating ? "bell.slash" : "bell.and.waves.left.and.right"
+                )
+            }
+            .disabled(alertRequestInFlight || !canUseRadio)
+
+            if alert.isLocating {
+                Text("The radio is announcing itself. It stops when you tap Stop Alert, when someone presses the button on the radio, or after a few minutes — tap Find again to keep it going.")
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+            } else {
+                Text("Makes the radio beep or flash — whichever its hardware can do — even if its buzzer is silenced. Keeps going if you walk out of Bluetooth range.")
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+            }
+            if let alertProblem {
+                Label(alertProblem, systemImage: "exclamationmark.circle")
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+            }
+        }
+    }
+
+    /// Whether the link is far enough along to carry a command.
+    private var canUseRadio: Bool {
+        switch snapshot.linkState {
+        case .attached, .ready: true
+        default: false
+        }
     }
 
     @ViewBuilder

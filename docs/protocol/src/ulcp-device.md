@@ -53,13 +53,15 @@ Code | Name               | Requires           | Grants
 39   | `CAP_BATTERY`      | —                  | Battery-powered operation and `PROP_BATTERY`
 40   | `CAP_REPEATER`     | `CAP_DEV_IDENTITY` | Autonomous repeater forwarding by the device identity: `PROP_MAC_REPEATER_ENABLED`, `PROP_MAC_REPEATER_REGIONS`, `PROP_MAC_REPEATER_DEFAULT_REGION`, `PROP_MAC_REPEATER_MIN_RSSI`, `PROP_MAC_REPEATER_MIN_SNR`
 41   | `CAP_IDENT`        | `CAP_DEV_IDENTITY` | `PROP_IDENT`, `PROP_IDENT_ROLE`, `PROP_IDENT_MOBILE` — serving and configuring the device identity's advertised node identity
+42   | `CAP_ALERT`        | —                  | Some means of making the device physically conspicuous on demand, and `PROP_ALERT`
 
 ## Properties
 
 The device domain occupies property identifiers 64–95. Identifiers 70–95
-are the device-behavior settings: 70–79 cover repeater policy and the
-advertised node identity, and 80–95 are reserved for future definition
-(periodic advertisement in 80–87, positioning in 88–95).
+are the device-behavior range: 70–78 are the repeater policy and
+advertised node identity settings, 79 is the locate alert, and 80–95 are
+reserved for future definition (periodic advertisement in 80–87,
+positioning in 88–95).
 
 Id | Mnemonic                    | Commands                 | Description
 ---|-----------------------------|--------------------------|-------------
@@ -78,6 +80,7 @@ Id | Mnemonic                    | Commands                 | Description
 76 | `PROP_MAC_REPEATER_MIN_RSSI` | Get, Set                | Minimum received RSSI for flood forwarding
 77 | `PROP_MAC_REPEATER_MIN_SNR` | Get, Set                 | Minimum received SNR for flood forwarding
 78 | `PROP_DEV_DISCOVERABLE`     | Get, Set                 | Whether the device identity answers Identity Requests
+79 | `PROP_ALERT`                | Get, Set, Is             | Locate alert state
 
 The RF configuration is also device-domain state, but is specified in
 [Radio Control](ulcp-radio.md); so is the transport configuration in
@@ -321,7 +324,7 @@ does not produce excessive ULCP traffic.
 * Value Type: BOOL
 * Post-Reset Value: Persisted
 
-The first of the device-behavior settings (property identifiers 70–95),
+The first of the device-behavior settings (property identifiers 70–78),
 and the master switch for the repeater policy in
 `PROP_MAC_REPEATER_REGIONS`, `PROP_MAC_REPEATER_DEFAULT_REGION`,
 `PROP_MAC_REPEATER_MIN_RSSI`, and `PROP_MAC_REPEATER_MIN_SNR`, which are
@@ -538,3 +541,74 @@ volunteer its identity to arbitrary nearby askers.
 Affects only Identity Request responses. Unsolicited advertisements,
 beacons, and the device's participation in forwarding are governed
 elsewhere and are unchanged by this property.
+
+### PROP 79: `PROP_ALERT` {#prop-alert}
+
+* Type: Single-Value, Read-Write
+* Asynchronous Updates: Yes
+* Required: `CAP_ALERT`
+* Value Type: PUI
+* Post-Reset Value: 0 (`ALERT_NONE`)
+
+What the device is currently doing to draw a person's attention to where
+it physically is. A radio that has been set down in the wrong place is
+found by making it announce itself.
+
+Value | Name
+------|----------------
+0     | `ALERT_NONE`
+1     | `ALERT_LOCATE`
+
+`ALERT_NONE`
+: The nominal state. The device draws no attention to itself beyond
+  whatever its ordinary operation involves.
+
+`ALERT_LOCATE`
+: The device makes itself as conspicuous as its hardware allows, and
+  keeps doing so until the alert is cleared.
+
+Values other than these are rejected with `STATUS_INVALID_ARGUMENT`.
+
+**The presentation is board-defined.** The property carries intent, not
+presentation: a device with a buzzer sounds it, a device with only an
+indicator LED flashes it, a device with a display can say so on the
+screen. `CAP_ALERT` states that the device has *some* means of making
+itself conspicuous and nothing more, so a host **MUST NOT** assume that
+an alert is audible, or that two devices alert alike. Because the alert
+runs unattended on a device that may already be low, it is expected to be
+intermittent rather than continuous, and it does not defer or inhibit a
+protective shutdown.
+
+**The alert overrides local quiet settings.** A device whose buzzer has
+been silenced through a local control still sounds `ALERT_LOCATE`:
+locating a misplaced radio is precisely the case that silencing must not
+defeat. The alert *suspends* the local setting rather than changing it,
+so clearing the alert leaves the device as quiet as it was before.
+
+A device returns to `ALERT_NONE` three ways:
+
+1. The host writes `ALERT_NONE`.
+2. Local user input cancels it. A device with any user input at all
+   **MUST** offer a way to cancel an alert from the device itself —
+   whoever finds the radio is rarely holding the phone that set it off.
+   The input that cancels performs none of its other functions, so that
+   fumbling for a beeping radio cannot change its configuration; a
+   deliberate gesture such as hold-to-power-off **MAY** remain
+   reachable while an alert is active.
+3. The deadline expires. A device **MUST** bound how long it will remain
+   in `ALERT_LOCATE`; a few minutes is **RECOMMENDED**. Writing
+   `ALERT_LOCATE` while it is already in effect succeeds and restarts the
+   deadline, which is how a host holds an alert open for a longer search.
+
+Every transition to `ALERT_NONE` that the host did not command **MUST**
+be reported with an unsolicited `CMD_PROP_IS`.
+
+The deadline is the only bound. In particular, the alert is **not**
+cleared on detach: the link to the searching host drops as soon as the
+searcher walks out of range, which is the moment the alert becomes most
+useful. It is likewise unaffected by `CMD_RST`, which resets session
+state and not the physical behavior of the device.
+
+The property is live device-domain state. It is never included in a saved
+snapshot, is not changed by `CMD_RESTORE`, and is `ALERT_NONE` after
+every reset — a device that loses power mid-alert comes back quiet.

@@ -89,6 +89,8 @@ pub struct T1000eLedEngine {
     battery: BatteryState,
     attention: bool,
     active: Option<ActiveSequence>,
+    /// A running locate alert; see [`LedEngine::start_alert`].
+    alert_since_ms: Option<u64>,
 }
 
 impl T1000eLedEngine {
@@ -99,7 +101,25 @@ impl T1000eLedEngine {
             battery: BatteryState::BatteryOnly,
             attention: false,
             active: None,
+            alert_since_ms: None,
         }
+    }
+
+    /// Start the locate alert. Idempotent, like [`LedEngine::start_alert`].
+    pub fn start_alert(&mut self, now_ms: u64) {
+        if self.alert_since_ms.is_none() {
+            self.alert_since_ms = Some(now_ms);
+        }
+    }
+
+    /// Stop the locate alert.
+    pub fn stop_alert(&mut self) {
+        self.alert_since_ms = None;
+    }
+
+    /// Whether the locate alert is running.
+    pub fn alert_active(&self) -> bool {
+        self.alert_since_ms.is_some()
     }
 
     pub fn set_battery(&mut self, battery: BatteryState) {
@@ -118,6 +138,27 @@ impl T1000eLedEngine {
     }
 
     pub fn tick(&mut self, now_ms: u64) -> BrightnessDecision {
+        // The alert outranks every other LED duty, including the
+        // battery-critical blackout: a radio being searched for shows
+        // itself while it still has the charge to.
+        if let Some(started_at_ms) = self.alert_since_ms {
+            let elapsed = now_ms.saturating_sub(started_at_ms);
+            let cycle_start_ms = now_ms - (elapsed % LedEngine::ALERT_PERIOD_MS);
+            let blink = ActiveSequence {
+                pattern: &patterns::LOCATE,
+                started_at_ms: cycle_start_ms,
+            };
+            return match blink.resolve(now_ms) {
+                Some((on, deadline)) => BrightnessDecision {
+                    brightness: if on { 1_000 } else { 0 },
+                    next_deadline_ms: deadline,
+                },
+                None => BrightnessDecision {
+                    brightness: 0,
+                    next_deadline_ms: cycle_start_ms + LedEngine::ALERT_PERIOD_MS,
+                },
+            };
+        }
         if let Some(sequence) = &self.active {
             if let Some((on, deadline)) = sequence.resolve(now_ms) {
                 return BrightnessDecision {
@@ -272,6 +313,20 @@ mod patterns {
             Duration::from_millis(50),
         ],
     };
+
+    /// Locate alert: an urgent triple-blink, replayed on a period by
+    /// [`LedEngine::start_alert`](super::LedEngine::start_alert). On a
+    /// board with no buzzer this *is* the alert, so it is deliberately
+    /// brighter and busier than any other sequence.
+    pub static LOCATE: Pattern = Pattern {
+        steps: &[
+            Duration::from_millis(120),
+            Duration::from_millis(120),
+            Duration::from_millis(120),
+            Duration::from_millis(120),
+            Duration::from_millis(120),
+        ],
+    };
 }
 
 #[derive(Debug)]
@@ -304,6 +359,10 @@ pub struct LedEngine {
     timings: LedTimings,
     heartbeat_anchor_ms: u64,
     active: Option<ActiveSequence>,
+    /// When a locate alert started, if one is running. Outranks both the
+    /// one-shot sequences and the heartbeat, and repeats until stopped:
+    /// on a board with no buzzer this is the whole alert.
+    alert_since_ms: Option<u64>,
 }
 
 impl LedEngine {
@@ -314,7 +373,31 @@ impl LedEngine {
             timings,
             heartbeat_anchor_ms: start_ms,
             active: None,
+            alert_since_ms: None,
         }
+    }
+
+    /// How often the locate blink repeats.
+    const ALERT_PERIOD_MS: u64 = 1_500;
+
+    /// Start the locate alert. Idempotent: re-starting a running alert
+    /// keeps its existing rhythm rather than restarting the blink, so a
+    /// host re-arming the deadline does not produce a visible stutter.
+    pub fn start_alert(&mut self, now_ms: u64) {
+        if self.alert_since_ms.is_none() {
+            self.alert_since_ms = Some(now_ms);
+        }
+    }
+
+    /// Stop the locate alert, returning the LED to sequences and the
+    /// heartbeat.
+    pub fn stop_alert(&mut self) {
+        self.alert_since_ms = None;
+    }
+
+    /// Whether the locate alert is running.
+    pub fn alert_active(&self) -> bool {
+        self.alert_since_ms.is_some()
     }
 
     /// Start a one-shot sequence, preempting any currently active
@@ -328,6 +411,27 @@ impl LedEngine {
 
     /// Compute the LED state to apply at `now_ms` and the next deadline.
     pub fn tick(&mut self, now_ms: u64) -> LedDecision {
+        // The alert outranks everything: someone is looking for this
+        // board right now.
+        if let Some(started_at_ms) = self.alert_since_ms {
+            let elapsed = now_ms.saturating_sub(started_at_ms);
+            let cycle_start_ms = now_ms - (elapsed % Self::ALERT_PERIOD_MS);
+            let blink = ActiveSequence {
+                pattern: &patterns::LOCATE,
+                started_at_ms: cycle_start_ms,
+            };
+            return match blink.resolve(now_ms) {
+                Some((on, end_ms)) => LedDecision {
+                    on,
+                    next_deadline_ms: end_ms,
+                },
+                // Past the blink: dark until the next period.
+                None => LedDecision {
+                    on: false,
+                    next_deadline_ms: cycle_start_ms + Self::ALERT_PERIOD_MS,
+                },
+            };
+        }
         if let Some(seq) = &self.active {
             if let Some((on, end_ms)) = seq.resolve(now_ms) {
                 return LedDecision {
@@ -602,6 +706,48 @@ mod tests {
     }
 
     #[test]
+    fn alert_blinks_on_its_period_until_stopped() {
+        // LOCATE is ON/OFF/ON/OFF/ON at 120 ms, repeating every 1500 ms.
+        let mut e = engine(0);
+        e.start_alert(0);
+        assert!(e.alert_active());
+        assert_eq!(e.tick(0).on, true);
+        assert_eq!(e.tick(120).on, false);
+        assert_eq!(e.tick(240).on, true);
+        // Dark for the rest of the period...
+        assert_eq!(e.tick(600).on, false);
+        assert_eq!(e.tick(1_499).on, false);
+        // ...then again, indefinitely.
+        assert_eq!(e.tick(1_500).on, true);
+        assert_eq!(e.tick(1_500 * 100).on, true);
+
+        e.stop_alert();
+        assert!(!e.alert_active());
+    }
+
+    #[test]
+    fn alert_outranks_sequences_and_the_heartbeat() {
+        let mut e = engine(0);
+        e.start_alert(0);
+        // A one-shot fired mid-alert must not show through.
+        e.play(LedSequence::PowerOn, 0);
+        assert_eq!(e.tick(600).on, false, "alert gap, not the 1 s PowerOn hold");
+
+        // Stopping the alert releases the LED to what was underneath.
+        e.stop_alert();
+        assert_eq!(e.tick(600).on, true, "the preempted PowerOn resumes");
+    }
+
+    #[test]
+    fn re_starting_a_running_alert_keeps_its_rhythm() {
+        let mut e = engine(0);
+        e.start_alert(0);
+        // A host re-arming the deadline must not restart the blink.
+        e.start_alert(700);
+        assert_eq!(e.tick(1_500).on, true, "still on the original period");
+    }
+
+    #[test]
     fn attention_replaces_each_heartbeat_with_smooth_300ms_pulse() {
         let mut e = T1000eLedEngine::new(0);
         e.set_attention(true);
@@ -611,6 +757,22 @@ mod tests {
         assert!(e.tick(225).brightness > 0);
         assert_eq!(e.tick(300).brightness, 0);
         assert_eq!(e.tick(4_150).brightness, 1_000);
+    }
+
+    #[test]
+    fn t1000e_alert_outranks_even_a_critical_battery() {
+        let mut e = T1000eLedEngine::new(0);
+        e.set_battery(BatteryState::BatteryCritical);
+        assert_eq!(e.tick(0).brightness, 0, "critical is dark");
+
+        e.start_alert(0);
+        assert_eq!(e.tick(0).brightness, 1_000);
+        assert_eq!(e.tick(120).brightness, 0);
+        assert_eq!(e.tick(240).brightness, 1_000);
+        assert_eq!(e.tick(1_500).brightness, 1_000, "and again next period");
+
+        e.stop_alert();
+        assert_eq!(e.tick(0).brightness, 0, "back to the critical blackout");
     }
 
     #[test]

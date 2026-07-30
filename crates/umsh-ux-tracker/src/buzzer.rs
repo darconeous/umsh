@@ -91,6 +91,30 @@ pub mod melodies {
         },
     ]);
 
+    /// Locate alert: a two-tone warble, deliberately unlike any
+    /// notification the device makes in normal operation, so it reads as
+    /// "come find me" rather than "you have mail". Played on repeat by
+    /// [`BuzzerEngine::play_alert`](super::BuzzerEngine::play_alert),
+    /// which supplies the gap between passes.
+    pub static LOCATE: Melody = Melody::new(&[
+        Tone {
+            frequency_hz: 2_600,
+            duration: Duration::from_millis(150),
+        },
+        Tone {
+            frequency_hz: 1_900,
+            duration: Duration::from_millis(150),
+        },
+        Tone {
+            frequency_hz: 2_600,
+            duration: Duration::from_millis(150),
+        },
+        Tone {
+            frequency_hz: 1_900,
+            duration: Duration::from_millis(150),
+        },
+    ]);
+
     /// Bright blip played when the buzzer is un-silenced.
     pub static UNSILENCE: Melody = Melody::new(&[Tone {
         frequency_hz: 2_000,
@@ -124,6 +148,15 @@ pub enum BuzzerDecision {
 struct ActiveMelody {
     melody: &'static Melody,
     started_at_ms: u64,
+    /// Replay the melody on this period instead of ending after one
+    /// pass. The gap between repeats is `period_ms` minus the melody's
+    /// own length, so a period shorter than the melody plays it back to
+    /// back.
+    repeat_every_ms: Option<u64>,
+    /// Play even while the buzzer is silenced. Reserved for the locate
+    /// alert: silencing is for not being a nuisance, and a radio nobody
+    /// can find is a different problem (spec §PROP_ALERT).
+    overrides_silence: bool,
 }
 
 impl ActiveMelody {
@@ -131,15 +164,38 @@ impl ActiveMelody {
     /// if the melody is still playing, `None` if it has completed.
     fn resolve(&self, now_ms: u64) -> Option<(Tone, u64)> {
         let elapsed = now_ms.saturating_sub(self.started_at_ms);
+        // A repeating melody folds the clock into one period; the
+        // remainder of the period past the last note is the rest before
+        // the next pass.
+        let (elapsed, cycle_start_ms) = match self.repeat_every_ms {
+            Some(period) if period > 0 => {
+                let cycle = elapsed / period;
+                (
+                    elapsed % period,
+                    self.started_at_ms
+                        .saturating_add(cycle.saturating_mul(period)),
+                )
+            }
+            _ => (elapsed, self.started_at_ms),
+        };
         let mut cumulative_ms: u64 = 0;
         for &tone in self.melody.notes {
             let dur_ms = tone.duration.as_millis() as u64;
             cumulative_ms = cumulative_ms.saturating_add(dur_ms);
             if elapsed < cumulative_ms {
-                return Some((tone, self.started_at_ms + cumulative_ms));
+                return Some((tone, cycle_start_ms + cumulative_ms));
             }
         }
-        None
+        // Past the last note. A one-shot melody is done; a repeating one
+        // rests until the next period boundary.
+        let period = self.repeat_every_ms?;
+        Some((
+            Tone {
+                frequency_hz: 0,
+                duration: Duration::from_millis(0),
+            },
+            cycle_start_ms.saturating_add(period),
+        ))
     }
 }
 
@@ -171,12 +227,19 @@ impl BuzzerEngine {
 
     /// Toggle silence. Engaging silence stops any in-flight melody so
     /// the user's request is honored without waiting for the sequence
-    /// to finish.
+    /// to finish — except a locate alert, which outranks it.
     pub fn set_silenced(&mut self, silenced: bool) {
         self.silenced = silenced;
-        if silenced {
+        if silenced && !self.alert_active() {
             self.active = None;
         }
+    }
+
+    /// Whether a silence-overriding locate alert is playing.
+    pub fn alert_active(&self) -> bool {
+        self.active
+            .as_ref()
+            .is_some_and(|active| active.overrides_silence)
     }
 
     /// Toggle silence on/off and return the new state. Convenience for
@@ -201,20 +264,64 @@ impl BuzzerEngine {
         }
     }
 
-    /// Start a melody. No-op if silenced.
+    /// Start a melody. No-op if silenced, and no-op while a locate alert
+    /// is running — an ordinary notification must not displace the alarm
+    /// someone is currently homing in on.
     pub fn play(&mut self, melody: &'static Melody, now_ms: u64) {
-        if self.silenced {
+        if self.silenced || self.alert_active() {
             return;
         }
         self.active = Some(ActiveMelody {
             melody,
             started_at_ms: now_ms,
+            repeat_every_ms: None,
+            overrides_silence: false,
         });
+    }
+
+    /// Start the locate alert: `melody` on repeat every `period_ms`,
+    /// playing through silence, until [`Self::stop_alert`].
+    ///
+    /// Intermittent by construction rather than a continuous tone — a
+    /// lost radio is usually a nearly-flat radio, and a periodic chirp is
+    /// easier to home in on than a constant one.
+    pub fn play_alert(&mut self, melody: &'static Melody, now_ms: u64, period_ms: u64) {
+        self.active = Some(ActiveMelody {
+            melody,
+            started_at_ms: now_ms,
+            repeat_every_ms: Some(period_ms),
+            overrides_silence: true,
+        });
+    }
+
+    /// Stop a locate alert. Leaves an ordinary melody alone, so this is
+    /// safe to call unconditionally when the alert clears.
+    pub fn stop_alert(&mut self) {
+        if self.alert_active() {
+            self.active = None;
+        }
+    }
+
+    /// When the engine next changes state, if it will.
+    ///
+    /// [`BuzzerDecision::Silent`] carries no deadline, but a repeating
+    /// alert is silent *between* passes and must be woken for the next
+    /// one — a driver that only re-ticks on `Tone` deadlines would play
+    /// the alert once and stop. Drivers arm a timer on this whenever the
+    /// decision is `Silent`.
+    pub fn next_deadline_ms(&self, now_ms: u64) -> Option<u64> {
+        if self.silenced && !self.alert_active() {
+            return None;
+        }
+        self.active
+            .as_ref()
+            .and_then(|active| active.resolve(now_ms))
+            .map(|(_, end_ms)| end_ms)
     }
 
     /// Compute the buzzer state to apply at `now_ms`.
     pub fn tick(&mut self, now_ms: u64) -> BuzzerDecision {
-        if self.silenced {
+        if self.silenced && !self.alert_active() {
             return BuzzerDecision::Silent;
         }
         let Some(active) = &self.active else {
@@ -371,6 +478,116 @@ mod tests {
         assert_eq!(e.is_silenced(), true);
         assert_eq!(e.toggle_silenced(), false);
         assert_eq!(e.is_silenced(), false);
+    }
+
+    /// Total playing time of one pass of a melody.
+    fn melody_len_ms(melody: &Melody) -> u64 {
+        melody
+            .notes
+            .iter()
+            .map(|tone| tone.duration.as_millis() as u64)
+            .sum()
+    }
+
+    #[test]
+    fn alert_sounds_through_silence() {
+        let mut e = BuzzerEngine::new();
+        e.set_silenced(true);
+        // An ordinary melody stays suppressed.
+        e.play(&melodies::POWER_ON, 0);
+        assert_eq!(e.tick(0), BuzzerDecision::Silent);
+
+        e.play_alert(&melodies::LOCATE, 0, 3_000);
+        assert!(e.alert_active());
+        assert!(matches!(e.tick(0), BuzzerDecision::Tone { .. }));
+    }
+
+    #[test]
+    fn silencing_does_not_stop_a_running_alert() {
+        let mut e = BuzzerEngine::new();
+        e.play_alert(&melodies::LOCATE, 0, 3_000);
+        e.set_silenced(true);
+        assert!(e.alert_active());
+        assert!(matches!(e.tick(10), BuzzerDecision::Tone { .. }));
+    }
+
+    #[test]
+    fn stopping_an_alert_restores_the_previous_silence() {
+        let mut e = BuzzerEngine::new();
+        e.set_silenced(true);
+        e.play_alert(&melodies::LOCATE, 0, 3_000);
+        e.stop_alert();
+        assert!(!e.alert_active());
+        // The silence preference was suspended, not cleared.
+        assert!(e.is_silenced());
+        assert_eq!(e.tick(0), BuzzerDecision::Silent);
+    }
+
+    #[test]
+    fn alert_repeats_on_its_period_with_a_rest_between() {
+        let mut e = BuzzerEngine::new();
+        let period = 3_000;
+        let length = melody_len_ms(&melodies::LOCATE);
+        e.play_alert(&melodies::LOCATE, 0, period);
+
+        // Sounding during the melody, resting after it.
+        assert!(matches!(e.tick(0), BuzzerDecision::Tone { .. }));
+        assert_eq!(
+            e.tick(length + 1),
+            BuzzerDecision::Silent,
+            "the gap between passes is silent"
+        );
+        // And sounding again at the top of the next period, indefinitely.
+        assert!(matches!(e.tick(period), BuzzerDecision::Tone { .. }));
+        assert!(matches!(e.tick(period * 20), BuzzerDecision::Tone { .. }));
+        assert!(e.alert_active());
+    }
+
+    #[test]
+    fn the_gap_between_alert_passes_still_reports_a_deadline() {
+        // Regression: BuzzerDecision::Silent carries no deadline, so a
+        // driver that only re-ticks on Tone deadlines would sleep through
+        // the rest and play the alert exactly once.
+        let mut e = BuzzerEngine::new();
+        let period = 3_000;
+        let length = melody_len_ms(&melodies::LOCATE);
+        e.play_alert(&melodies::LOCATE, 0, period);
+
+        let resting = length + 1;
+        assert_eq!(e.tick(resting), BuzzerDecision::Silent);
+        assert_eq!(
+            e.next_deadline_ms(resting),
+            Some(period),
+            "wakes for the next pass"
+        );
+    }
+
+    #[test]
+    fn an_idle_engine_has_no_deadline() {
+        let mut e = BuzzerEngine::new();
+        assert_eq!(e.next_deadline_ms(0), None);
+        e.play(&melodies::POWER_ON, 0);
+        assert!(e.next_deadline_ms(0).is_some());
+        // A silenced ordinary melody is not going to make a sound, so
+        // there is nothing to wake for.
+        e.set_silenced(true);
+        assert_eq!(e.next_deadline_ms(0), None);
+    }
+
+    #[test]
+    fn an_alert_is_not_displaced_by_an_ordinary_melody() {
+        let mut e = BuzzerEngine::new();
+        e.play_alert(&melodies::LOCATE, 0, 3_000);
+        e.play(&melodies::BEACON_ACK, 10);
+        assert!(e.alert_active(), "the alarm outranks a notification");
+    }
+
+    #[test]
+    fn stop_alert_leaves_an_ordinary_melody_alone() {
+        let mut e = BuzzerEngine::new();
+        e.play(&melodies::POWER_ON, 0);
+        e.stop_alert();
+        assert!(matches!(e.tick(0), BuzzerDecision::Tone { .. }));
     }
 
     #[test]

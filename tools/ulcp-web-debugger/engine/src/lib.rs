@@ -162,6 +162,8 @@ const CR_CHOICES: &[PropertyChoice] = &[
     choice("8", "4/8"),
 ];
 
+const ALERT_CHOICES: &[PropertyChoice] = &[choice("0", "ALERT_NONE"), choice("1", "ALERT_LOCATE")];
+
 const fn choice(value: &'static str, label: &'static str) -> PropertyChoice {
     PropertyChoice { value, label }
 }
@@ -408,6 +410,16 @@ const PROPERTY_SPECS: &[PropertySpec] = &[
         Some(umsh_ulcp::ids::cap::BATTERY),
     ),
     spec(
+        prop::ALERT,
+        "Device",
+        "Locate alert: make the device conspicuous so it can be found",
+        true,
+        true,
+        "choice",
+        None,
+        Some(umsh_ulcp::ids::cap::ALERT),
+    ),
+    spec(
         prop::HOST_KEY,
         "Host",
         "Attached host identity",
@@ -526,6 +538,7 @@ const fn spec(
             prop::PHY_LORA_BW => BW_CHOICES,
             prop::PHY_LORA_SF => SF_CHOICES,
             prop::PHY_LORA_CR => CR_CHOICES,
+            prop::ALERT => ALERT_CHOICES,
             _ => &[],
         },
     }
@@ -1233,6 +1246,17 @@ fn decode_property(key: u32, value: &[u8]) -> Option<DecodedValue> {
                 interface.to_string()
             };
             ("enum", display)
+        }
+        prop::ALERT => {
+            let (code, used) = pui::decode(value).ok()?;
+            if used != value.len() {
+                return None;
+            }
+            let display = match umsh_ulcp::alert::AlertState::from_code(code)? {
+                umsh_ulcp::alert::AlertState::None => "ALERT_NONE",
+                umsh_ulcp::alert::AlertState::Locate => "ALERT_LOCATE",
+            };
+            ("enum", display.to_string())
         }
         prop::CAPS => {
             let mut rest = value;
