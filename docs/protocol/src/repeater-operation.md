@@ -93,17 +93,18 @@ Each cache entry is small (equal to the cache key size — typically 4 to 16 byt
      - This preserves provenance: downstream nodes can still determine that the packet arrived via explicit source routing rather than by pure flooding.
    - If this repeater matched a source-route hint, it is forwarding a source-routed hop. Skip directly to step 10 (trace route processing), **including when the hint just removed was the last one**. Steps 7 through 9 describe flood forwarding and MUST NOT be applied to a source-routed hop.
 
-7. **Region policy** (flood forwarding only)
-   - If the repeater has a non-empty configured region list and the packet carries one or more region code options, none of which appear in that list, do not forward. A repeater with no configured regions applies no regional restriction and forwards a tagged packet whatever its region.
-   - If the packet has no region code option, the repeater MAY insert its configured default region before flood-forwarding. A repeater with no default region configured forwards the packet untagged; the default region is not implied by the configured region list.
-   - If one or more region codes are already present, the repeater MUST preserve them unchanged.
-   - A repeater MUST NOT add a second region code to a packet that already carries at least one region code.
+7. **Region policy** *(flood forwarding only!)*
+   - If the router has no region configuration at all, skip this section. A repeater with no configured regions applies no regional restriction and forwards a tagged packet whatever its region.
+   - If none of the region codes in the packet match those configured on the repeater, do not forward.
+   - If the packet has no region code option, the repeater SHOULD insert its configured default region before flood-forwarding. A repeater with no default region configured forwards the packet untagged; the default region is not implied by the configured region list.
+     - If one or more region codes are already present, the repeater MUST preserve them unchanged.
+     - A repeater MUST NOT add a second region code to a packet that already carries at least one region code.
 
-8. **Flood hop accounting** (flood forwarding only)
+8. **Flood hop accounting** *(flood forwarding only!)*
    - If the packet has a flood hop count field with `FHOPS_REM > 0`, decrement `FHOPS_REM` and increment `FHOPS_ACC`.
    - Otherwise, do not forward.
 
-9. **Signal-quality thresholds** (flood forwarding only)
+9. **Signal-quality thresholds** *(flood forwarding only!)*
    - If either the packet or repeater imposes a minimum RSSI, the effective threshold is the higher of the two. If the received RSSI is below the effective threshold, do not forward.
    - If either the packet or repeater imposes a minimum SNR, the effective threshold is the higher of the two. If the received SNR is below the effective threshold, do not forward.
 
@@ -111,11 +112,12 @@ Each cache entry is small (equal to the cache key size — typically 4 to 16 byt
    - If the packet contains a trace-route option, prepend this repeater's hint. If prepending the hint would cause the packet to exceed the maximum frame size, drop the packet.
 
 11. **Retransmit**
-   - Forward the modified packet.
+   - If this is a flood forward, implement the [flood forwarding contention window](channel-access.md#flood-forwarding-contention-window)
+   - Forward the modified packet according to normal [channel access rules](channel-access.md).
 
 A packet that arrives carrying an **empty** source-route option matched no hint at this repeater, so it takes the flood path: steps 7 through 9 apply in full. This is how a hybrid route transitions to flooding — the transition is observed by the repeater *after* the one that emptied the route, not performed by it.
 
-Bridges follow the same packet-rewrite rules as repeaters. A bridge that tunnels traffic to a physically different location generally should not forward flood packets that lack a region code.
+Bridges follow the same packet-rewrite rules as repeaters.
 
 ## Forwarding Confirmation
 
