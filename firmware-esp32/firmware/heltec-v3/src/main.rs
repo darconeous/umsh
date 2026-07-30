@@ -223,6 +223,11 @@ fn session_config() -> SessionConfig {
             level: true,
             charge_state: false,
         }),
+        // No locate alert. The board's only conspicuous output is the OLED,
+        // and its permanent wired attach means a second host can be present
+        // while the alert runs — neither is worth the wiring for a bench
+        // board that never leaves a desk.
+        alert: None,
     }
 }
 
