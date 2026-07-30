@@ -11,6 +11,7 @@
 //! - USB-CDC handles (over the nRF native USB peripheral)
 //! - blue LED (P0.14, active-low)
 //! - e-paper SPI bus + control pins for the SSD1681 display
+//! - battery voltage / charge state (SAADC on AIN2/P0.04)
 //!
 //! Future expansion (LoRa, GNSS, I²C peripherals, QSPI flash, buttons,
 //! Plus-only back-panel) is welcome but is not yet implemented. The

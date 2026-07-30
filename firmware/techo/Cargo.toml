@@ -9,7 +9,7 @@ repository.workspace = true
 [features]
 # ─── Board identity (irreducibly per-board: concrete pins, BSP module,
 #     USB/identity strings, peripheral-init blocks). Exactly one is on. ───
-board-techo = ["has-display", "button-techo", "system-off-techo", "led-active-low"]
+board-techo = ["has-display", "button-techo", "system-off-techo", "led-active-low", "cap-battery-saadc"]
 board-t1000e = ["t1000e", "cap-battery-saadc"]
 board-sensecap-solar = ["cap-battery-saadc", "power-button"]
 
@@ -20,7 +20,7 @@ board-sensecap-solar = ["cap-battery-saadc", "power-button"]
 # implied by `board-t1000e`. Capabilities a NEW board can share are broken
 # out below so they can be mixed independently.
 t1000e = []
-# SAADC battery monitor (T-1000E and SenseCAP Solar). Gates the shared
+# SAADC battery monitor (every board in this family). Gates the shared
 # battery snapshot / load-hint code; the concrete SAADC pins + BSP module
 # are still board-selected.
 cap-battery-saadc = []
@@ -80,7 +80,7 @@ path = "../nrf52-tracker/src/main.rs"
 
 [dependencies]
 umsh-bsp-nrf52840 = { path = "../../crates/umsh-bsp-nrf52840", default-features = false }
-umsh-bsp-techo = { path = "../../crates/umsh-bsp-techo", default-features = false, features = ["display"] }
+umsh-bsp-techo = { path = "../../crates/umsh-bsp-techo", default-features = false, features = ["display", "power", "battery"] }
 umsh-radio-loraphy = { path = "../../crates/umsh-radio-loraphy", default-features = false }
 umsh-ulcp = { path = "../../crates/umsh-ulcp" }
 umsh-ulcp-device = { path = "../../crates/umsh-ulcp-device" }

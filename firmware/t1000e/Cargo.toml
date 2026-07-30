@@ -11,7 +11,7 @@ repository.workspace = true
 # rationale; this block is kept identical across the device boards, only the
 # `default` differs. Default build = T-1000E.
 default = ["board-t1000e"]
-board-techo = ["has-display", "button-techo", "system-off-techo", "led-active-low"]
+board-techo = ["has-display", "button-techo", "system-off-techo", "led-active-low", "cap-battery-saadc"]
 board-t1000e = ["t1000e", "cap-battery-saadc"]
 board-sensecap-solar = ["cap-battery-saadc", "power-button"]
 t1000e = []

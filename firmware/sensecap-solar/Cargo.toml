@@ -16,7 +16,7 @@ repository.workspace = true
 # therefore enables `cap-battery-saadc` but NOT `t1000e` / `has-display`
 # / `button-techo` / `system-off-techo` / `led-active-low`.
 default = ["board-sensecap-solar"]
-board-techo = ["has-display", "button-techo", "system-off-techo", "led-active-low"]
+board-techo = ["has-display", "button-techo", "system-off-techo", "led-active-low", "cap-battery-saadc"]
 board-t1000e = ["t1000e", "cap-battery-saadc"]
 board-sensecap-solar = ["cap-battery-saadc", "power-button"]
 t1000e = []

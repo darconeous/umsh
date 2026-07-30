@@ -284,6 +284,27 @@ So the formula is:
 battery_mV = raw_adc * 2.0 * 3000 / 4096
 ```
 
+### The reference term does not carry over to our firmware
+
+That `3000 mV / 4096` assumes the SAADC is running at a 3.0 V full scale.
+Our firmware uses `embassy-nrf`'s default single-ended configuration —
+12-bit, `Gain1_6`, 0.6 V internal reference — which puts full scale at
+**3.6 V** at the pin. The divider is a hardware fact and is unchanged;
+only the reference term differs:
+
+```text
+battery_mV = raw_adc * 2.0 * 3600 / 4096
+           = raw_adc * 7200 / 4096
+```
+
+This is the constant `umsh-bsp-techo::power::DIVIDER_MICRO` carries.
+Copying the 3000-based figure into a build using our SAADC settings would
+under-read the pack by 17 %.
+
+Unlike the T-1000E and SenseCAP Solar boards, this divider has no gate
+pin: the 300 kΩ leg sits across the pack permanently and draws ~12 µA
+regardless of firmware state.
+
 ## Low-battery cutoff / battery protection
 
 There are two different levels to consider.
@@ -425,9 +446,9 @@ nRF52840
 - Do not assume USB-C to USB-C powering works reliably; LilyGO explicitly warns that USB-A to USB-C may be required.
 - Do not treat charger status as firmware-visible unless you verify a charger IC/status pin in the schematic.
 - Use the charger LED for human-visible charge state.
-- Battery ADC can be wrong while USB is plugged in.
-- Treat battery voltage above 4.2 V as a likely USB/charging indication, per LilyGO.
-- For the battery ADC, use the 2× compensation path used by Meshtastic and MeshCore’s `TechoBoard` helper. Treat the 4.90× MeshCore variant macro as stale/inapplicable unless proven otherwise in the active code path.
+- Battery ADC can be wrong while USB is plugged in, so a sample taken on USB is not a resting cell voltage.
+- LilyGO suggests treating battery voltage above 4.2 V as a likely USB/charging indication. That heuristic is unnecessary here: `POWER.usbregstatus.vbusdetect` reports the true VBUS pin state directly, and this board charges only from USB. Note it has to be *polled* — the `POWER` USB interrupts are unavailable to firmware sharing the `CLOCK_POWER` vector with MPSL.
+- For the battery ADC, use the 2× compensation path used by Meshtastic and MeshCore’s `TechoBoard` helper, but pair it with your own SAADC's full-scale voltage rather than MeshCore's 3000 mV — see [Battery voltage measurement](#battery-voltage-measurement). Treat the 4.90× MeshCore variant macro as stale/inapplicable unless proven otherwise in the active code path.
 - Put e-paper control pins into high impedance before deep sleep to avoid leakage.
 - DIO2 on the SX1262 is used internally for RF switching; DIO3 is used for TCXO power at 1.8 V.
 - T-Echo Plus adds back-panel peripherals on the same I²C bus; code should tolerate missing DRV2605/BHI260 devices on non-Plus boards.

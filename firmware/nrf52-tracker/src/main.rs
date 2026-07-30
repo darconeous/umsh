@@ -186,6 +186,8 @@ mod firmware {
     use umsh_bsp_sensecap_solar::power as board_power;
     #[cfg(all(feature = "cap-battery-saadc", feature = "t1000e"))]
     use umsh_bsp_t1000e::power as board_power;
+    #[cfg(all(feature = "cap-battery-saadc", feature = "board-techo"))]
+    use umsh_bsp_techo::power as board_power;
     use umsh_crypto::CryptoEngine;
     use umsh_crypto::software::{SoftwareAes, SoftwareSha256};
     use umsh_ulcp::{Status, gatt, hdlc};
@@ -354,10 +356,9 @@ mod firmware {
             },
             default_duty_limit: umsh_ulcp::ids::DUTY_LIMIT_DISABLED,
             duty: &DUTY_LEDGER,
-            // Both boards are battery powered. The T-1000E's power
-            // monitor reports voltage, charge state, and the rest-gated
-            // OCV level estimate; the T-Echo reports nothing until its
-            // P0.04 divider readings are hardware-validated.
+            // Every board here is battery powered, and every one now has
+            // a SAADC monitor reporting voltage, charge state, and the
+            // rest-gated OCV level estimate.
             #[cfg(feature = "cap-battery-saadc")]
             battery: Some(BatteryFields {
                 voltage: true,
@@ -3049,6 +3050,15 @@ mod firmware {
         umsh_bsp_sensecap_solar::power::run_battery_monitor(saadc, divider_gate).await;
     }
 
+    /// T-Echo battery monitor task: SAADC only. The divider is hard-wired
+    /// (no gate) and the charger exposes no status pin, so external power
+    /// comes from usbregstatus (see BSP `power` module).
+    #[cfg(feature = "board-techo")]
+    #[embassy_executor::task]
+    async fn techo_power_task(saadc: Saadc<'static, 1>) {
+        umsh_bsp_techo::power::run_battery_monitor(saadc).await;
+    }
+
     /// Dedicated power-button (P1.01, active-low) state machine for the
     /// SenseCAP Solar Node. This board has a button reserved for power, so —
     /// unlike the single-button boards that overload one button into a
@@ -3117,6 +3127,16 @@ mod firmware {
     #[cfg(feature = "system-off-techo")]
     #[embassy_executor::task]
     async fn shutdown_task(peripheral_power: Output<'static>) -> ! {
+        // Two producers on the T-Echo: the button's 2 s hold (the local
+        // signal) and the battery monitor's protective low-voltage cutoff
+        // (the BSP's). Either one runs the same teardown.
+        #[cfg(feature = "board-techo")]
+        let _ = select(
+            SHUTDOWN_SIGNAL.wait(),
+            umsh_bsp_techo::power::SHUTDOWN_SIGNAL.wait(),
+        )
+        .await;
+        #[cfg(not(feature = "board-techo"))]
         SHUTDOWN_SIGNAL.wait().await;
 
         DISPLAY_SHUTDOWN.signal(());
@@ -4057,6 +4077,21 @@ mod firmware {
             );
             let divider_gate = Output::new(p.P0_14, Level::High, OutputDrive::Standard);
             spawner.spawn(sensecap_power_task(saadc, divider_gate).unwrap());
+        }
+
+        // T-Echo battery monitor: SAADC on AIN2/P0.04. Same SAADC
+        // configuration as the other two boards (12-bit, GAIN1_6, 0.6 V
+        // ref), so only the BSP divider constant differs — this board's
+        // 150k/150k bridge is hard-wired, with no gate pin to own.
+        #[cfg(feature = "board-techo")]
+        {
+            let saadc = Saadc::new(
+                p.SAADC,
+                Irqs,
+                SaadcConfig::default(),
+                [ChannelConfig::single_ended(p.P0_04)],
+            );
+            spawner.spawn(techo_power_task(saadc).unwrap());
         }
 
         // Dedicated power button (enclosure "PWR", P1.01) + System OFF

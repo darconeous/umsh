@@ -3329,6 +3329,7 @@ name = "umsh-bsp-techo"
 version = "0.1.0"
 dependencies = [
  "cortex-m",
+ "embassy-futures",
  "embassy-nrf",
  "embassy-sync 0.8.0",
  "embassy-time",
@@ -3338,6 +3339,7 @@ dependencies = [
  "umsh-hal",
  "umsh-mac",
  "umsh-radio-loraphy",
+ "umsh-ux-tracker",
 ]
 
 [[package]]
