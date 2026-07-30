@@ -831,20 +831,31 @@ mod firmware {
     /// the monitor having exited for critical-battery shutdown.
     #[cfg(feature = "cap-battery-saadc")]
     async fn sample_battery_snapshot() -> Result<umsh_ulcp::battery::BatteryStatus, ()> {
-        use umsh_ulcp::battery::{BatteryChargeState, BatteryStatus};
-        use umsh_ux_tracker::battery::BatteryState;
         let sample =
             embassy_time::with_timeout(Duration::from_secs(2), board_power::sample_battery())
                 .await
                 .map_err(|_| ())?;
-        // Low and critical are UX presentation policy, not charge
-        // states; all three unpowered classifications are Discharging.
-        let charge_state = match sample.state {
-            BatteryState::BatteryCharging => BatteryChargeState::Charging,
-            BatteryState::BatteryCharged => BatteryChargeState::Charged,
-            BatteryState::BatteryOnly
-            | BatteryState::BatteryLow
-            | BatteryState::BatteryCritical => BatteryChargeState::Discharging,
+        battery_snapshot(sample)
+    }
+
+    /// Reduce one BSP battery sample to the protocol snapshot this board's
+    /// `SessionConfig::battery` advertises.
+    ///
+    /// Shared by the on-demand read (`Effect::SampleBattery`) and the
+    /// asynchronous publication (`DeviceEnv::battery_event`) so the two can
+    /// never report the same measurement differently.
+    #[cfg(feature = "cap-battery-saadc")]
+    fn battery_snapshot(
+        sample: board_power::BatterySample,
+    ) -> Result<umsh_ulcp::battery::BatteryStatus, ()> {
+        use umsh_ulcp::battery::{BatteryChargeState, BatteryStatus};
+        use umsh_ux_tracker::battery::ChargeClass;
+        // Low and critical are UX presentation policy, not charge states;
+        // `charge_class` collapses all three unpowered classifications.
+        let charge_state = match umsh_ux_tracker::battery::charge_class(sample.state) {
+            ChargeClass::Charging => BatteryChargeState::Charging,
+            ChargeClass::Charged => BatteryChargeState::Charged,
+            ChargeClass::Discharging => BatteryChargeState::Discharging,
         };
         // The estimator seeds on the monitor's first sample, so a reply
         // always carries a level; failing closed here keeps the
@@ -1134,6 +1145,11 @@ mod firmware {
         identity_store: ProtoStore,
         identity_rng: IdentityRng,
         node_counters: &'static NodeCountersMutex,
+        /// Announce-worthy battery measurements from the BSP monitor, for
+        /// unsolicited `PROP_BATTERY` publication. The monitor owns the
+        /// cadence and the change policy; this only forwards.
+        #[cfg(feature = "cap-battery-saadc")]
+        battery: embassy_sync::watch::DynReceiver<'static, board_power::BatterySample>,
     }
 
     impl DeviceEnv for BoardDeviceEnv {
@@ -1186,6 +1202,24 @@ mod firmware {
 
         async fn sample_battery(&mut self) -> Result<umsh_ulcp::battery::BatteryStatus, ()> {
             sample_battery_snapshot().await
+        }
+
+        /// Forward the monitor's announce-worthy samples. A sample that
+        /// cannot be reduced to this board's advertised field set is
+        /// skipped rather than published — the same fail-closed rule the
+        /// on-demand read applies.
+        ///
+        /// `Watch::changed` is cancellation-safe (the receiver remembers
+        /// which value it last observed), which this hook requires: the
+        /// driver's select drops the future whenever another arm wins.
+        #[cfg(feature = "cap-battery-saadc")]
+        async fn battery_event(&mut self) -> umsh_ulcp::battery::BatteryStatus {
+            loop {
+                let sample = self.battery.changed().await;
+                if let Ok(snapshot) = battery_snapshot(sample) {
+                    return snapshot;
+                }
+            }
         }
 
         async fn apply_pairing_pin(&mut self, pin: Option<u32>) -> bool {
@@ -2411,6 +2445,12 @@ mod firmware {
                 identity_store,
                 identity_rng,
                 node_counters,
+                // The driver is the only receiver; the slot count is
+                // sized for exactly that, so this cannot fail.
+                #[cfg(feature = "cap-battery-saadc")]
+                battery: board_power::BATTERY_ANNOUNCE
+                    .dyn_receiver()
+                    .expect("BATTERY_ANNOUNCE receiver slot"),
             },
         )
         .await

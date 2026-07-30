@@ -23,6 +23,36 @@ impl BatteryState {
     }
 }
 
+/// The charge-state distinction reported to something outside the UX —
+/// a protocol property, a companion app — as opposed to the five-way
+/// presentation classification.
+///
+/// Low and Critical are presentation policy layered over one physical
+/// condition: the cell is discharging. Consumers that report charge state
+/// rather than warning about it collapse all three unpowered
+/// classifications into [`ChargeClass::Discharging`].
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum ChargeClass {
+    Discharging,
+    Charging,
+    Charged,
+}
+
+/// The [`ChargeClass`] behind a five-way [`BatteryState`].
+///
+/// One definition so every consumer of the same monitor — an on-demand
+/// read and an asynchronous notification, in particular — reports the
+/// same charge state for the same sample.
+pub const fn charge_class(state: BatteryState) -> ChargeClass {
+    match state {
+        BatteryState::BatteryCharging => ChargeClass::Charging,
+        BatteryState::BatteryCharged => ChargeClass::Charged,
+        BatteryState::BatteryOnly | BatteryState::BatteryLow | BatteryState::BatteryCritical => {
+            ChargeClass::Discharging
+        }
+    }
+}
+
 /// Default state thresholds for a single-cell Li-ion tracker.
 #[derive(Clone, Copy, Debug)]
 pub struct BatteryThresholds {
@@ -119,6 +149,18 @@ const LEVEL_QUANT: u8 = 5;
 /// level when the very first sample arrives with the charger active.
 const CHARGE_ELEVATION_MV: u16 = 180;
 
+/// How long after a transient load a terminal-voltage reading is still
+/// treated as possibly sagged rather than as resting OCV.
+///
+/// A property of the cell's recovery, not of the monitor's schedule.
+/// Deciding sag by "was there a load since the previous sample" instead
+/// couples it to the sampling cadence: at a multi-minute cadence an
+/// ordinary duty cycle puts one transmission in nearly every interval,
+/// every sample looks sagged, and the anchor window never fills — so the
+/// level would silently stop tracking on exactly the busy nodes that
+/// matter most.
+pub const SAG_WINDOW_MS: u32 = 30_000;
+
 /// One estimator input: the monitor's measurement plus its context.
 #[derive(Clone, Copy, Debug)]
 pub struct LevelSample {
@@ -126,11 +168,25 @@ pub struct LevelSample {
     pub battery_mv: u16,
     /// The classification for the same instant (see [`classify`]).
     pub state: BatteryState,
-    /// A significant load (e.g. a radio transmission) ran since the
-    /// previous sample, so this voltage may be sagged.
-    pub load_since_last: bool,
+    /// A significant load (e.g. a radio transmission) ran within
+    /// [`SAG_WINDOW_MS`] of this reading, so the voltage may be sagged
+    /// rather than resting.
+    pub load_recent: bool,
     /// Monotonic milliseconds; any epoch, wrapping arithmetic.
     pub now_ms: u32,
+}
+
+/// Whether a reading taken at `now_ms` falls inside the sag window of the
+/// most recent reported load.
+///
+/// `last_load_ms` is `None` when no load has ever been reported. Shared
+/// by every monitor so the sag rule is one definition rather than one per
+/// board.
+pub const fn load_recent(now_ms: u32, last_load_ms: Option<u32>) -> bool {
+    match last_load_ms {
+        Some(load_ms) => now_ms.wrapping_sub(load_ms) < SAG_WINDOW_MS,
+        None => false,
+    }
 }
 
 /// Approximate state-of-charge estimator for gauge-less boards:
@@ -198,7 +254,7 @@ impl LevelEstimator {
             BatteryState::BatteryOnly
             | BatteryState::BatteryLow
             | BatteryState::BatteryCritical => {
-                if s.load_since_last {
+                if s.load_recent {
                     // Sagged sample: not OCV, restart the quiet window.
                     self.disturb(s.now_ms);
                     return;
@@ -290,7 +346,7 @@ mod tests {
         LevelSample {
             battery_mv: mv,
             state: BatteryState::BatteryOnly,
-            load_since_last: false,
+            load_recent: false,
             now_ms,
         }
     }
@@ -346,12 +402,29 @@ mod tests {
         estimator.sample(LevelSample {
             battery_mv: 3_600,
             state: BatteryState::BatteryOnly,
-            load_since_last: true,
+            load_recent: true,
             now_ms: 280_000,
         });
         estimator.sample(quiet(3_700, 310_000));
         // No anchor happened: the bootstrap value is still in force.
         assert_eq!(estimator.level(), Some(60));
+    }
+
+    #[test]
+    fn sag_window_is_a_recovery_time_not_a_sample_gap() {
+        // Never loaded.
+        assert!(!load_recent(500_000, None));
+        // Inside the window.
+        assert!(load_recent(500_000, Some(500_000)));
+        assert!(load_recent(500_000, Some(500_000 - SAG_WINDOW_MS + 1)));
+        // At and past the boundary the cell is considered recovered —
+        // this is what lets a multi-minute sampling cadence still find
+        // quiet samples on a node that transmits regularly.
+        assert!(!load_recent(500_000, Some(500_000 - SAG_WINDOW_MS)));
+        assert!(!load_recent(500_000, Some(200_000)));
+        // The millisecond counter wraps; a load just before the wrap is
+        // still recent just after it.
+        assert!(load_recent(10, Some(u32::MAX - 10)));
     }
 
     #[test]
@@ -362,14 +435,14 @@ mod tests {
         estimator.sample(LevelSample {
             battery_mv: 4_050,
             state: BatteryState::BatteryCharging,
-            load_since_last: false,
+            load_recent: false,
             now_ms: 30_000,
         });
         assert_eq!(estimator.level(), Some(30), "charging voltage must not map");
         estimator.sample(LevelSample {
             battery_mv: 4_200,
             state: BatteryState::BatteryCharged,
-            load_since_last: false,
+            load_recent: false,
             now_ms: 60_000,
         });
         assert_eq!(estimator.level(), Some(100));
@@ -387,7 +460,7 @@ mod tests {
         estimator.sample(LevelSample {
             battery_mv: 4_060,
             state: BatteryState::BatteryCharging,
-            load_since_last: false,
+            load_recent: false,
             now_ms: 0,
         });
         // 4060 - 180 = 3880 mV -> 64% -> 65 quantized.

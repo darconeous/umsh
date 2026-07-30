@@ -1600,6 +1600,11 @@ final class CoreBluetoothRadioConnection: NSObject, RadioConnection, @unchecked 
         } else {
             snapshot.deviceIdentity = nil
         }
+        // Present only on the update that carries a new measurement — from
+        // a read we asked for, or from the radio publishing one on its own
+        // (a charge-state change, or the level moving). Absent means no
+        // news, so the previous reading and its timestamp stand rather than
+        // a minutes-old value being restamped as current.
         if let battery = update.snapshot.battery {
             snapshot.batteryPercentage = battery.percentage.map(Int.init)
             snapshot.isExternallyPowered = battery.isExternallyPowered

@@ -336,6 +336,14 @@ struct UlcpSessionState {
     configuration_queue: VecDeque<(u32, Vec<u8>)>,
     device_key: Option<Vec<u8>>,
     device_name: Option<String>,
+    /// A battery snapshot this session has received and not yet reported.
+    ///
+    /// Deliberately *not* a cache: it is taken when an update record is
+    /// built, so `UlcpSessionSnapshotRecord::battery` means "a fresh
+    /// measurement arrived with this update" rather than "the last
+    /// measurement ever seen". Battery is live telemetry — a consumer that
+    /// timestamps what it receives would otherwise restamp a minutes-old
+    /// reading on every unrelated update and report it as current.
     battery: Option<UlcpBatteryRecord>,
     provisioning: Option<UlcpSyncRecord>,
     stage_failure_pending: bool,
@@ -682,7 +690,7 @@ impl MobileUlcpSession {
             }
             let metadata = BufferedRxMeta::decode(payload.metadata)
                 .map_err(|_| MobileError::InvalidUlcpFrame)?;
-            let state = self.inner.lock().expect("ULCP session mutex poisoned");
+            let mut state = self.inner.lock().expect("ULCP session mutex poisoned");
             if state.stage == SessionStage::Idle {
                 return Err(MobileError::InvalidUlcpFrame);
             }
@@ -709,7 +717,7 @@ impl MobileUlcpSession {
                     .insert(response.property_id, response.clone());
             }
             state.apply_property(&response)?;
-            state.refresh_attached_snapshot()?;
+            state.refresh_attached_snapshot(Some(response.property_id))?;
             return Ok(state.update(outbound));
         }
 
@@ -877,7 +885,7 @@ impl MobileUlcpSession {
                     // the cache truthful even though the operation "failed".
                     if error.status_code == umsh_ulcp::Status::ALREADY.0 {
                         state.patch_dev_peers(&item, true);
-                        state.refresh_attached_snapshot()?;
+                        state.refresh_attached_snapshot(None)?;
                     }
                     operation_error = Some(error);
                 } else {
@@ -893,7 +901,7 @@ impl MobileUlcpSession {
                         state.expected.insert(tid, ExpectedResponse::SaveDevPeers);
                         outbound.push(ulcp_save(tid)?);
                     }
-                    state.refresh_attached_snapshot()?;
+                    state.refresh_attached_snapshot(None)?;
                 }
             }
             ExpectedResponse::DevPeerRemove(item) => {
@@ -906,7 +914,7 @@ impl MobileUlcpSession {
                     // which is the state the caller asked for.
                     if error.status_code == umsh_ulcp::Status::ITEM_NOT_FOUND.0 {
                         state.patch_dev_peers(&item, false);
-                        state.refresh_attached_snapshot()?;
+                        state.refresh_attached_snapshot(None)?;
                     }
                     operation_error = Some(error);
                 } else {
@@ -922,7 +930,7 @@ impl MobileUlcpSession {
                         state.expected.insert(tid, ExpectedResponse::SaveDevPeers);
                         outbound.push(ulcp_save(tid)?);
                     }
-                    state.refresh_attached_snapshot()?;
+                    state.refresh_attached_snapshot(None)?;
                 }
             }
             ExpectedResponse::SaveDevPeers => {
@@ -1042,19 +1050,19 @@ impl UlcpSessionState {
         }
     }
 
-    fn update(&self, outbound_frames: Vec<Vec<u8>>) -> UlcpSessionUpdateRecord {
+    fn update(&mut self, outbound_frames: Vec<Vec<u8>>) -> UlcpSessionUpdateRecord {
         self.update_with(outbound_frames, Vec::new(), None, None)
     }
 
     fn update_with_received(
-        &self,
+        &mut self,
         received_frames: Vec<UlcpReceivedFrameRecord>,
     ) -> UlcpSessionUpdateRecord {
         self.update_with(Vec::new(), received_frames, None, None)
     }
 
     fn update_with(
-        &self,
+        &mut self,
         outbound_frames: Vec<Vec<u8>>,
         received_frames: Vec<UlcpReceivedFrameRecord>,
         raw_transmit_result: Option<UlcpRawTransmitResultRecord>,
@@ -1073,7 +1081,9 @@ impl UlcpSessionState {
                 host_ownership: self.ownership(),
                 device_key: self.device_key.clone(),
                 device_name: self.device_name.clone(),
-                battery: self.battery.clone(),
+                // Taken, not cloned: reported once, on the update that
+                // actually carries a new measurement.
+                battery: self.battery.take(),
                 provisioning: self.provisioning.clone(),
             },
             waiting_for_responses: !self.expected.is_empty(),
@@ -1355,13 +1365,32 @@ impl UlcpSessionState {
         Ok(())
     }
 
-    fn refresh_attached_snapshot(&mut self) -> Result<(), MobileError> {
+    /// Recompute the attached provisioning snapshot after device state
+    /// changed under an established session.
+    ///
+    /// `changed_property` is the property the triggering notification
+    /// carried, or `None` for a change this session made itself.
+    ///
+    /// Re-opening the host decision is deliberately limited to a
+    /// `PROP_HOST_KEY` change. Another phone claiming the radio out from
+    /// under an attached session is a question only the user can answer,
+    /// so that case still returns to the host prompt. Every *other*
+    /// published value is news, not a decision: a session attached to a
+    /// radio owned by another identity (a tethered claim that did not
+    /// take, which attaches deliberately — see the `Claim` arm) would
+    /// otherwise be thrown back to the prompt by any unsolicited update at
+    /// all. `PROP_BATTERY` makes that concrete, being the one notification
+    /// that arrives on its own schedule for the life of the session.
+    fn refresh_attached_snapshot(
+        &mut self,
+        changed_property: Option<u32>,
+    ) -> Result<(), MobileError> {
         if self.stage != SessionStage::Attached {
             return Ok(());
         }
         let responses = self.responses.values().cloned().collect();
         self.provisioning = Some(inspect_ulcp_sync(responses)?);
-        if !self.attaches_without_host_decision() {
+        if changed_property == Some(prop::HOST_KEY) && !self.attaches_without_host_decision() {
             self.stage = SessionStage::AwaitingHost;
         }
         Ok(())
@@ -3665,6 +3694,199 @@ mod tests {
         assert_eq!(
             session.insert_device_peer(vec![0xC1; 31]).unwrap_err(),
             MobileError::InvalidPublicKeyLength
+        );
+    }
+
+    /// Attach a battery-reporting device and return the session sitting in
+    /// the attached phase.
+    fn attached_battery_session() -> std::sync::Arc<MobileUlcpSession> {
+        let session = MobileUlcpSession::new();
+        let begin = session.begin(None).unwrap();
+        let inspection =
+            answer_requests(&session, begin.outbound_frames, |property| match property {
+                prop::LAST_STATUS => (property, vec![0]),
+                prop::PROTOCOL_VERSION => (property, vec![6, 0]),
+                prop::CAPS => (property, encoded_capabilities(&[cap::BATTERY])),
+                // Voltage + level + charge state, discharging at 60 %.
+                prop::BATTERY => (property, vec![0b111, 0x74, 0x0E, 60, 0]),
+                prop::DEV_KEY | prop::DEV_NAME => (property, Vec::new()),
+                prop::HOST_KEY => (prop::LAST_STATUS, vec![2]),
+                _ => unreachable!(),
+            });
+        let attached =
+            answer_requests(
+                &session,
+                inspection.outbound_frames,
+                |property| match property {
+                    prop::INTERFACE_TYPE => (property, vec![INTERFACE_TYPE as u8]),
+                    prop::PHY_ENABLED => (property, vec![1]),
+                    prop::PHY_FREQ => (property, 915_000u32.to_le_bytes().to_vec()),
+                    prop::PHY_TX_POWER => (property, vec![14]),
+                    _ => unreachable!(),
+                },
+            );
+        assert_eq!(attached.snapshot.phase, UlcpSessionPhase::Attached);
+        session
+    }
+
+    #[test]
+    fn battery_is_reported_once_per_measurement_not_on_every_update() {
+        let session = attached_battery_session();
+
+        // An unsolicited snapshot is carried by the update that receives
+        // it: 45 %, now charging.
+        let pushed = session
+            .consume(property_response(
+                frame::TID_UNSOLICITED,
+                prop::BATTERY,
+                &[0b111, 0x10, 0x10, 45, 1],
+            ))
+            .unwrap();
+        let battery = pushed.snapshot.battery.expect("push carries the snapshot");
+        assert_eq!(battery.percentage, Some(45));
+        assert_eq!(battery.is_externally_powered, Some(true));
+
+        // A later update that carries no measurement must not repeat it.
+        // Consumers timestamp what they receive, so a repeat would report
+        // a stale reading as a fresh one.
+        let unrelated = session
+            .consume(property_response(
+                frame::TID_UNSOLICITED,
+                prop::DEV_NAME,
+                b"Ridge repeater",
+            ))
+            .unwrap();
+        assert!(unrelated.snapshot.battery.is_none());
+        assert_eq!(
+            unrelated.snapshot.device_name.as_deref(),
+            Some("Ridge repeater"),
+            "unrelated state still propagates"
+        );
+
+        // The next measurement is reported again.
+        let again = session
+            .consume(property_response(
+                frame::TID_UNSOLICITED,
+                prop::BATTERY,
+                &[0b111, 0x20, 0x10, 50, 1],
+            ))
+            .unwrap();
+        assert_eq!(
+            again.snapshot.battery.expect("second push").percentage,
+            Some(50)
+        );
+    }
+
+    #[test]
+    fn battery_push_does_not_move_an_attached_session_out_of_phase() {
+        let session = attached_battery_session();
+        let pushed = session
+            .consume(property_response(
+                frame::TID_UNSOLICITED,
+                prop::BATTERY,
+                &[0b111, 0x10, 0x10, 45, 1],
+            ))
+            .unwrap();
+        assert_eq!(pushed.snapshot.phase, UlcpSessionPhase::Attached);
+        assert!(!pushed.waiting_for_responses);
+        assert!(pushed.outbound_frames.is_empty());
+    }
+
+    #[test]
+    fn battery_push_to_a_tethered_session_on_another_phones_radio_stays_attached() {
+        // A tethered claim that did not take is an answer, not a failure:
+        // synchronization completes and the session attaches while
+        // `ownership()` reports `OtherHost` (see the `Claim` arm). Battery
+        // is the first unsolicited notification that arrives *routinely*,
+        // so this is the path that turns a latent re-decision into one the
+        // user would actually see — a settled session must not bounce back
+        // to awaiting-host every time the radio reports its charge.
+        let session = MobileUlcpSession::new();
+        let ours = vec![0x11; 32];
+        let theirs = vec![0x22; 32];
+        let begin = session.begin(Some(ours.clone())).unwrap();
+        let synchronized =
+            answer_requests(&session, begin.outbound_frames, |property| match property {
+                prop::LAST_STATUS => (property, vec![0]),
+                prop::PROTOCOL_VERSION => (property, vec![6, 0]),
+                // A readable `PROP_HOST_KEY` requires `CAP_HOST_FILTER`
+                // and vice versa (`advance_completed_stage` enforces it).
+                prop::CAPS => (
+                    property,
+                    encoded_capabilities(&[cap::BATTERY, cap::HOST_FILTER]),
+                ),
+                prop::BATTERY => (property, vec![0b111, 0x74, 0x0E, 60, 0]),
+                prop::DEV_KEY | prop::DEV_NAME => (property, Vec::new()),
+                // The radio already belongs to another identity.
+                prop::HOST_KEY => (property, theirs.clone()),
+                _ => unreachable!(),
+            });
+        assert_eq!(
+            synchronized.snapshot.host_ownership,
+            UlcpHostOwnership::OtherHost
+        );
+        assert_eq!(synchronized.snapshot.phase, UlcpSessionPhase::AwaitingHost);
+
+        // The user takes the radio; the device refuses the write and keeps
+        // reporting the other identity's key. No `CAP_SAVE`, so the claim
+        // answer runs straight into inspection.
+        let claim = session.claim(ours).unwrap();
+        let claim_tid = Frame::parse(&claim.outbound_frames[0])
+            .unwrap()
+            .header
+            .tid();
+        let claimed = session
+            .consume(property_response(claim_tid, prop::HOST_KEY, &theirs))
+            .unwrap();
+        let attached = answer_requests(
+            &session,
+            claimed.outbound_frames,
+            |property| match property {
+                prop::INTERFACE_TYPE => (property, vec![INTERFACE_TYPE as u8]),
+                prop::PHY_ENABLED => (property, vec![1]),
+                prop::PHY_FREQ => (property, 915_000u32.to_le_bytes().to_vec()),
+                prop::PHY_TX_POWER => (property, vec![14]),
+                prop::HOST_RX_FILTERS => (property, Vec::new()),
+                _ => unreachable!(),
+            },
+        );
+        assert_eq!(attached.snapshot.phase, UlcpSessionPhase::Attached);
+        assert_eq!(
+            attached.snapshot.host_ownership,
+            UlcpHostOwnership::OtherHost,
+            "the claim did not take"
+        );
+
+        let pushed = session
+            .consume(property_response(
+                frame::TID_UNSOLICITED,
+                prop::BATTERY,
+                &[0b111, 0x10, 0x10, 45, 1],
+            ))
+            .unwrap();
+        assert_eq!(
+            pushed.snapshot.battery.expect("push carries it").percentage,
+            Some(45)
+        );
+        assert_eq!(
+            pushed.snapshot.phase,
+            UlcpSessionPhase::Attached,
+            "a battery report is not an attach decision"
+        );
+
+        // The decision itself is still re-opened by the one change that
+        // warrants it: the radio reporting a different owner.
+        let reclaimed = session
+            .consume(property_response(
+                frame::TID_UNSOLICITED,
+                prop::HOST_KEY,
+                &[0x33; 32],
+            ))
+            .unwrap();
+        assert_eq!(
+            reclaimed.snapshot.phase,
+            UlcpSessionPhase::AwaitingHost,
+            "a third phone taking the radio is the user's call"
         );
     }
 }

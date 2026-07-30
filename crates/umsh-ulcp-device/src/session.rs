@@ -2545,6 +2545,38 @@ impl<A: AesProvider, S: Sha256Provider, const TX: usize> Session<A, S, TX> {
         self.device.dev_discoverable
     }
 
+    /// Publish an unsolicited `PROP_BATTERY` snapshot (spec
+    /// §PROP_BATTERY, *Asynchronous Updates: Yes*).
+    ///
+    /// The platform decides *when* a measurement is worth announcing —
+    /// it owns the sampling cadence and the charge-state edges, and it
+    /// is the only layer that sees every sample. This publishes what it
+    /// hands over, so the session keeps its rule that it never caches a
+    /// reading: nothing here can answer a later `CMD_PROP_GET`.
+    ///
+    /// Returns whether a frame was emitted. Nothing is published while
+    /// no host is attached (there is nobody to notify), and a snapshot
+    /// whose populated fields do not match the configured
+    /// [`BatteryFields`] is dropped rather than sent — the advertised
+    /// field flags must not vary within a session, and an unsolicited
+    /// notification has no transaction to fail.
+    pub fn publish_battery(&mut self, sample: BatteryStatus, emit: &mut impl FnMut(&[u8])) -> bool {
+        if !self.attached {
+            return false;
+        }
+        let Some(fields) = self.config.battery else {
+            return false;
+        };
+        if !fields.matches(&sample) {
+            return false;
+        }
+        let mut value = [0u8; battery::MAX_ENCODED_LEN];
+        let Ok(len) = sample.encode(&mut value) else {
+            return false;
+        };
+        self.announce_prop_is(prop::BATTERY, &value[..len], emit)
+    }
+
     /// Complete a deferred `PROP_BATTERY` read requested via
     /// [`Effect::SampleBattery`]. `sample` is the platform's snapshot, or
     /// `Err` if the measurement failed. Quote the same `tid` the effect
@@ -3583,6 +3615,24 @@ impl<A: AesProvider, S: Sha256Provider, const TX: usize> Session<A, S, TX> {
         let mut buf = [0u8; PROP_BUF + 16];
         if let Ok(len) = frame::prop_is(&mut buf, tid, key, value) {
             emit(&buf[..len]);
+        }
+    }
+
+    /// Emit an *unsolicited* `CMD_PROP_IS` (TID 0) for `key`: the device
+    /// publishing a new authoritative value for a reason the host did not
+    /// initiate. The counterpart to [`Self::send_prop_is`], which
+    /// deliberately suppresses TID 0 because a correlated response to a
+    /// fire-and-forget command is not owed.
+    ///
+    /// Returns whether the frame was emitted.
+    fn announce_prop_is(&mut self, key: u32, value: &[u8], emit: &mut impl FnMut(&[u8])) -> bool {
+        let mut buf = [0u8; PROP_BUF + 16];
+        match frame::prop_is(&mut buf, TID_UNSOLICITED, key, value) {
+            Ok(len) => {
+                emit(&buf[..len]);
+                true
+            }
+            Err(_) => false,
         }
     }
 
@@ -4662,6 +4712,107 @@ mod tests {
         let (emitted, effect) = dispatch(&mut session, &buf[..len], 0);
         assert!(emitted.is_empty());
         assert_eq!(effect, Some(Effect::SampleBattery { tid: 5 }));
+    }
+
+    /// Drive `publish_battery` and collect emitted frames.
+    fn publish(session: &mut TestSession, sample: BatteryStatus) -> (bool, Vec<Vec<u8>>) {
+        let mut out = Vec::new();
+        let published =
+            session.publish_battery(sample, &mut |bytes: &[u8]| out.push(bytes.to_vec()));
+        (published, out)
+    }
+
+    fn matching_sample() -> BatteryStatus {
+        BatteryStatus {
+            voltage_mv: Some(3987),
+            level_percent: None,
+            charge_state: Some(battery::BatteryChargeState::Charging),
+        }
+    }
+
+    #[test]
+    fn battery_publishes_unsolicited_snapshot() {
+        let mut session = test_session();
+        let (published, out) = publish(&mut session, matching_sample());
+        assert!(published);
+        let (tid, key, value) = parse_prop_is(&out[0]);
+        // TID 0 marks it unsolicited: no transaction to correlate with.
+        assert_eq!(tid, TID_UNSOLICITED);
+        assert_eq!(key, prop::BATTERY);
+        // The same wire form a GET response carries.
+        assert_eq!(value, [0b101, 0x93, 0x0F, 1]);
+    }
+
+    #[test]
+    fn battery_publish_needs_an_attached_host() {
+        let mut session = test_session();
+        session.detach();
+        let (published, out) = publish(&mut session, matching_sample());
+        assert!(!published, "nobody to notify while detached");
+        assert!(out.is_empty());
+
+        // Re-attaching restores publication without any rearming.
+        session.attach(true);
+        assert!(publish(&mut session, matching_sample()).0);
+    }
+
+    #[test]
+    fn battery_publish_enforces_configured_fields() {
+        let mut session = test_session();
+        // A level the profile never advertised would change the field
+        // flags mid-session. An unsolicited notification has no
+        // transaction to fail, so it is dropped outright.
+        let (published, out) = publish(
+            &mut session,
+            BatteryStatus {
+                voltage_mv: Some(4200),
+                level_percent: Some(80),
+                charge_state: Some(battery::BatteryChargeState::Charged),
+            },
+        );
+        assert!(!published);
+        assert!(out.is_empty());
+
+        // Likewise a configured field the sample omits.
+        let (published, out) = publish(
+            &mut session,
+            BatteryStatus {
+                voltage_mv: Some(4200),
+                level_percent: None,
+                charge_state: None,
+            },
+        );
+        assert!(!published);
+        assert!(out.is_empty());
+    }
+
+    #[test]
+    fn battery_publish_is_silent_without_the_capability() {
+        let mut config = test_config();
+        config.battery = None;
+        let mut session: TestSession = Session::new(config, Status::RESET_POWER_ON, test_engine());
+        session.attach(true);
+
+        let (published, out) = publish(&mut session, matching_sample());
+        assert!(!published);
+        assert!(out.is_empty());
+    }
+
+    #[test]
+    fn battery_publish_does_not_disturb_last_status_or_reads() {
+        let mut session = test_session();
+        // A publication is not an operation: PROP_LAST_STATUS must still
+        // hold the boot reason a freshly attached host needs to see.
+        publish(&mut session, matching_sample());
+        let status = get(&mut session, prop::LAST_STATUS);
+        assert_eq!(pui::decode(&status).unwrap().0, Status::RESET_POWER_ON.0);
+
+        // And it caches nothing: the next GET still defers to a sample.
+        let mut buf = [0u8; 16];
+        let len = frame::prop_get(&mut buf, 3, prop::BATTERY).unwrap();
+        let (emitted, effect) = dispatch(&mut session, &buf[..len], 0);
+        assert!(emitted.is_empty());
+        assert_eq!(effect, Some(Effect::SampleBattery { tid: 3 }));
     }
 
     #[test]

@@ -12,7 +12,8 @@
 //!
 //! - **This module** owns the protocol loop: transport arbitration, frame
 //!   handling, radio RX/TX-completion processing, every deferred `Effect`
-//!   arm (save/clear/wipe/provision/PIN/RSSI/battery/drain), and the
+//!   arm (save/clear/wipe/provision/PIN/RSSI/battery/drain), asynchronous
+//!   property publication ([`DeviceEnv::battery_event`]), and the
 //!   device-domain mirror.
 //! - **The board** owns the edges: transport tasks feeding [`InEvent`]s and
 //!   draining [`TransportChannels`], the radio runner + mux serving the
@@ -21,7 +22,7 @@
 
 use core::sync::atomic::{AtomicU32, Ordering};
 
-use embassy_futures::select::{Either3, select3};
+use embassy_futures::select::{Either4, select4};
 use embassy_sync::blocking_mutex::raw::RawMutex;
 use embassy_sync::channel::Channel;
 use embassy_time::Instant;
@@ -218,6 +219,26 @@ pub trait DeviceEnv {
     /// fields, so the default refuses.
     async fn sample_battery(&mut self) -> Result<umsh_ulcp::battery::BatteryStatus, ()> {
         Err(())
+    }
+    /// Wait for a battery measurement the board considers worth
+    /// announcing, for publication as an unsolicited `PROP_BATTERY`
+    /// (`Session::publish_battery`).
+    ///
+    /// The board owns the whole policy: the sampling cadence, the
+    /// charge-state edges, and which changes matter. It is the only layer
+    /// that sees every sample, so filtering there keeps the session free
+    /// of cached readings and keeps this hook's contract simple — every
+    /// value it yields is published.
+    ///
+    /// Cancellation-safe: the driver drops and re-creates this future on
+    /// every other loop iteration, so an implementation must not lose an
+    /// update it was cancelled on (an `embassy_sync::watch::Watch`
+    /// receiver behaves correctly here; a bare `Signal` does not).
+    ///
+    /// The default never completes, so boards without battery push add
+    /// nothing to the select.
+    async fn battery_event(&mut self) -> umsh_ulcp::battery::BatteryStatus {
+        core::future::pending().await
     }
     /// Build and sign the device identity's node-identity blob into
     /// `out` (`Effect::SignIdentity`), returning its length.
@@ -607,18 +628,31 @@ where
     }
 
     loop {
-        // Only wait for a TX completion while one is outstanding,
-        // so a spurious tx_done can never be consumed early.
-        let tx_done = async {
-            if session.has_pending_tx() {
-                rt.radio.tx_done.wait().await
-            } else {
-                core::future::pending().await
-            }
+        // Resolve the next event in its own statement so the select's
+        // futures — one of which mutably borrows `env` — are dropped
+        // before the arms below use `env` again. A `match select4(..)`
+        // scrutinee would hold them for the whole match.
+        let event = {
+            // Only wait for a TX completion while one is outstanding,
+            // so a spurious tx_done can never be consumed early.
+            let tx_done = async {
+                if session.has_pending_tx() {
+                    rt.radio.tx_done.wait().await
+                } else {
+                    core::future::pending().await
+                }
+            };
+            select4(
+                rt.input.receive(),
+                rt.radio.rx.receive(),
+                tx_done,
+                env.battery_event(),
+            )
+            .await
         };
 
-        match select3(rt.input.receive(), rt.radio.rx.receive(), tx_done).await {
-            Either3::First(InEvent::Attached(transport)) => {
+        match event {
+            Either4::First(InEvent::Attached(transport)) => {
                 // Fresh session state for the new host session; the
                 // device domain (PHY configuration and enable state,
                 // device name, duty accounting) is deliberately
@@ -635,7 +669,7 @@ where
                 // link.
                 session.attach(true);
             }
-            Either3::First(InEvent::Detached(transport)) => {
+            Either4::First(InEvent::Detached(transport)) => {
                 // Only the active transport's detach ends the
                 // session; a displaced transport's stale detach
                 // must not clear the successor's session state.
@@ -644,7 +678,7 @@ where
                     session.detach();
                 }
             }
-            Either3::First(InEvent::Frame(transport, frame_bytes)) => {
+            Either4::First(InEvent::Frame(transport, frame_bytes)) => {
                 if arbitration.accepts_frame(transport) {
                     let now_ms = Instant::now().as_millis();
                     let effect =
@@ -815,7 +849,7 @@ where
                     }
                 }
             }
-            Either3::Second(RxFrame { data, info }) => {
+            Either4::Second(RxFrame { data, info }) => {
                 // While detached this may stage a delegated MAC
                 // acknowledgement (Effect::StartTransmit).
                 let queued_before = session.queued_frame_count();
@@ -833,7 +867,7 @@ where
                 emitter.flush(arbitration.destination(), rt.out).await;
                 apply_effect(&session, effect, &rt, &mut env).await;
             }
-            Either3::Third(result) => {
+            Either4::Third(result) => {
                 let now_ms = Instant::now().as_millis();
                 let outcome = match result {
                     Ok(()) => TxOutcome::Sent,
@@ -844,6 +878,14 @@ where
                     session.on_tx_result(outcome, now_ms, &mut |frame: &[u8]| emitter.push(frame));
                 emitter.flush(arbitration.destination(), rt.out).await;
                 apply_effect(&session, effect, &rt, &mut env).await;
+            }
+            Either4::Fourth(sample) => {
+                // The board decided this measurement is worth
+                // announcing; publish it as an unsolicited PROP_BATTERY.
+                // Dropped silently while no host is attached, and no
+                // effect can result — a publication is not an operation.
+                session.publish_battery(sample, &mut |frame: &[u8]| emitter.push(frame));
+                emitter.flush(arbitration.destination(), rt.out).await;
             }
         }
         // Any of the arms may have moved the device-domain tables

@@ -53,6 +53,7 @@ use embassy_sync::channel::Channel;
 use embassy_sync::mutex::Mutex;
 use embassy_sync::once_lock::OnceLock;
 use embassy_sync::signal::Signal;
+use embassy_sync::watch::Watch;
 use embassy_time::{Delay, Duration, Instant, Timer, with_timeout};
 use embedded_graphics::mono_font::MonoTextStyle;
 use embedded_graphics::mono_font::ascii::FONT_6X10;
@@ -406,6 +407,11 @@ static BATTERY_MV: AtomicU16 = AtomicU16::new(0);
 /// task, which owns the ADC.
 static BATTERY_REQUEST: Signal<CriticalSectionRawMutex, ()> = Signal::new();
 static BATTERY_REPLY: Signal<CriticalSectionRawMutex, u16> = Signal::new();
+/// Voltage readings worth announcing to a remote observer, for
+/// unsolicited `PROP_BATTERY` publication. A `Watch` rather than a
+/// `Signal`: the driver's select drops and re-creates the wait on every
+/// other iteration, and a receiver must not lose an update to that.
+static BATTERY_ANNOUNCE: Watch<CriticalSectionRawMutex, u16, 1> = Watch::new();
 
 #[cfg(feature = "ble-debug")]
 type DebugLine = heapless::String<192>;
@@ -486,10 +492,23 @@ async fn clear_node_counters(counters: &'static NodeCountersMutex) {
 
 // ─── Battery sampling ────────────────────────────────────────────────────
 
+/// Smallest level movement worth announcing, in percentage points.
+///
+/// This board's level is a direct OCV-table lookup rather than the
+/// quantized `LevelEstimator` output, so it drifts by a point or two on
+/// every reading and needs an explicit threshold. Matched to the
+/// estimator's five-point step so every board announces level movement at
+/// the same granularity.
+const BATTERY_LEVEL_STEP: u8 = 5;
+
 /// Owns the ADC divider. Samples on a slow cadence for the OLED and
 /// immediately on session request (`Effect::SampleBattery`).
 #[embassy_executor::task]
 async fn battery_task(mut sampler: BatterySampler) {
+    let announce = BATTERY_ANNOUNCE.sender();
+    // Level last announced; `None` until the first sample, which always
+    // announces.
+    let mut announced: Option<u8> = None;
     loop {
         let requested = matches!(
             select(Timer::after_secs(60), BATTERY_REQUEST.wait()).await,
@@ -499,6 +518,20 @@ async fn battery_task(mut sampler: BatterySampler) {
         BATTERY_MV.store(mv, Ordering::Release);
         if requested {
             BATTERY_REPLY.signal(mv);
+        }
+        // Announce a level that has moved far enough to be worth a frame.
+        // On-demand reads pass through here too, so a read that reveals a
+        // move rebaselines rather than leaving a duplicate behind it.
+        // There is no charge-state trigger on this board: the charge LED
+        // is charger-driven and invisible to the MCU.
+        let level = soc_from_ocv(mv);
+        let moved = match announced {
+            Some(previous) => level.abs_diff(previous) >= BATTERY_LEVEL_STEP,
+            None => true,
+        };
+        if moved {
+            announced = Some(level);
+            announce.send(mv);
         }
     }
 }
@@ -513,11 +546,21 @@ async fn sample_battery_snapshot() -> Result<umsh_ulcp::battery::BatteryStatus, 
     let mv = with_timeout(Duration::from_secs(2), BATTERY_REPLY.wait())
         .await
         .map_err(|_| ())?;
-    Ok(umsh_ulcp::battery::BatteryStatus {
+    Ok(battery_snapshot(mv))
+}
+
+/// Reduce one voltage reading to the protocol snapshot this board's
+/// `SessionConfig::battery` advertises.
+///
+/// Shared by the on-demand read (`Effect::SampleBattery`) and the
+/// asynchronous publication (`DeviceEnv::battery_event`) so the two can
+/// never report the same reading differently.
+fn battery_snapshot(mv: u16) -> umsh_ulcp::battery::BatteryStatus {
+    umsh_ulcp::battery::BatteryStatus {
         voltage_mv: Some(mv),
         level_percent: Some(soc_from_ocv(mv)),
         charge_state: None,
-    })
+    }
 }
 
 // ─── Pairing runtime plumbing (port of the nRF firmware's) ────────────────────
@@ -620,6 +663,9 @@ struct BoardDeviceEnv {
     identity_store: ProtoStore,
     identity_rng: IdentityRng,
     node_counters: &'static NodeCountersMutex,
+    /// Announce-worthy voltage readings from [`battery_task`], for
+    /// unsolicited `PROP_BATTERY` publication.
+    battery: embassy_sync::watch::DynReceiver<'static, u16>,
 }
 
 impl DeviceEnv for BoardDeviceEnv {
@@ -668,6 +714,13 @@ impl DeviceEnv for BoardDeviceEnv {
 
     async fn sample_battery(&mut self) -> Result<umsh_ulcp::battery::BatteryStatus, ()> {
         sample_battery_snapshot().await
+    }
+
+    /// Publish the reading [`battery_task`] flagged, reduced the same way
+    /// the on-demand read reduces it.
+    async fn battery_event(&mut self) -> umsh_ulcp::battery::BatteryStatus {
+        let mv = self.battery.changed().await;
+        battery_snapshot(mv)
     }
 
     async fn apply_pairing_pin(&mut self, pin: Option<u32>) -> bool {
@@ -1521,6 +1574,11 @@ async fn device_task(
             identity_store,
             identity_rng,
             node_counters,
+            // The driver is the only receiver; the slot count is sized
+            // for exactly that, so this cannot fail.
+            battery: BATTERY_ANNOUNCE
+                .dyn_receiver()
+                .expect("BATTERY_ANNOUNCE receiver slot"),
         },
     )
     .await

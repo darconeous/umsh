@@ -16,9 +16,11 @@ use embassy_nrf::pac;
 use embassy_nrf::saadc::Saadc;
 use embassy_sync::blocking_mutex::raw::ThreadModeRawMutex;
 use embassy_sync::signal::Signal;
+use embassy_sync::watch::Watch;
 use embassy_time::{Duration, Timer};
 use umsh_ux_tracker::battery::{
-    BatteryState, BatteryThresholds, LevelEstimator, LevelSample, classify,
+    BatteryState, BatteryThresholds, ChargeClass, LevelEstimator, LevelSample, charge_class,
+    classify, load_recent,
 };
 
 /// Single-consumer shutdown trigger. Fired by [`PowerSignaler::request_power_off`]
@@ -63,6 +65,28 @@ pub struct BatterySample {
     /// `Some` from the monitor's first sample onward.
     pub level_percent: Option<u8>,
 }
+
+/// Battery measurements the monitor considers worth announcing to a
+/// remote observer, for `PROP_BATTERY` asynchronous updates.
+///
+/// Multi-receiver, unlike [`BATTERY_STATE_CHANGED`], and filtered on a
+/// different question: that signal tracks the five-way *presentation*
+/// classification for the LED, while this one fires when the reported
+/// **charge class** or **level** moves — the two fields a remote observer
+/// can act on. Voltage rides along on whichever sample triggered the
+/// publication but never triggers one itself: it moves by a few
+/// millivolts on every reading, so it would make every sample an event.
+///
+/// The level needs no threshold of its own: [`LevelEstimator`] already
+/// quantizes to five-point steps, so "the level changed" is exactly "the
+/// level moved by 5 %".
+pub static BATTERY_ANNOUNCE: Watch<ThreadModeRawMutex, BatterySample, BATTERY_ANNOUNCE_RECEIVERS> =
+    Watch::new();
+
+/// Receivers of [`BATTERY_ANNOUNCE`]: the ULCP session driver. A `Watch`
+/// (rather than a second `Signal`) both admits more than one and survives
+/// the driver's select dropping the future on every other iteration.
+pub const BATTERY_ANNOUNCE_RECEIVERS: usize = 1;
 
 /// Millisecond timestamp of the most recent externally reported load
 /// (see [`note_external_load`]); `u32::MAX` sentinel = never.
@@ -140,13 +164,28 @@ pub async fn run_battery_monitor(
     mut charge_active: Input<'static>,
 ) {
     const CONSECUTIVE_NEEDED: u8 = 10;
-    const SAMPLE_INTERVAL: Duration = Duration::from_secs(30);
+    /// Normal cadence. The cell discharges over days and the level
+    /// estimator quantizes to 5 %, so nothing is learned by sampling the
+    /// SAADC faster than this; the charge-state edges are interrupts and
+    /// do not wait for it.
+    const SAMPLE_INTERVAL: Duration = Duration::from_secs(300);
+    /// Cadence while the cell is Low or Critical. The protective cutoff
+    /// counts [`CONSECUTIVE_NEEDED`] consecutive critical samples, so its
+    /// latency is a multiple of the interval in force — at the normal
+    /// cadence that would be most of an hour of deep-discharge exposure.
+    /// Sampling faster once the voltage is already alarming keeps the
+    /// cutoff at its intended ~5 minutes without paying for it in the
+    /// other 99 % of the battery's life.
+    const LOW_SAMPLE_INTERVAL: Duration = Duration::from_secs(30);
     const EDGE_DEBOUNCE: Duration = Duration::from_millis(20);
 
     let mut low_count: u8 = 0;
     let mut reply_pending = false;
     let mut estimator = LevelEstimator::new();
-    let mut previous_sample_ms = embassy_time::Instant::now().as_millis() as u32;
+    let announce = BATTERY_ANNOUNCE.sender();
+    // Last announced (charge class, level); `None` until the first
+    // sample, which always announces.
+    let mut announced: Option<(ChargeClass, Option<u8>)> = None;
 
     loop {
         // Gate the sensor rail, settle, sample, then drop the rail.
@@ -166,30 +205,42 @@ pub async fn run_battery_monitor(
         );
         publish_battery_state(state);
 
-        // Feed the level estimator. A reported load since the previous
-        // iteration marks this voltage as potentially sagged.
+        // Feed the level estimator. A load within the sag window marks
+        // this voltage as potentially sagged rather than resting.
         let now_ms = embassy_time::Instant::now().as_millis() as u32;
-        let load_ms = LAST_LOAD_MS.load(Ordering::Acquire);
-        let load_since_last =
-            load_ms != u32::MAX && load_ms.wrapping_sub(previous_sample_ms) < u32::MAX / 2;
-        previous_sample_ms = now_ms;
+        let last_load_ms = match LAST_LOAD_MS.load(Ordering::Acquire) {
+            u32::MAX => None,
+            timestamp => Some(timestamp),
+        };
         estimator.sample(LevelSample {
             battery_mv,
             state,
-            load_since_last,
+            load_recent: load_recent(now_ms, last_load_ms),
             now_ms,
         });
+
+        let sample = BatterySample {
+            battery_mv,
+            state,
+            level_percent: estimator.level(),
+        };
 
         // Service an on-demand measurement request with this iteration's
         // sample. A request landing mid-iteration shares the sample that
         // was just taken rather than queueing a second rail cycle.
         if reply_pending || BATTERY_SAMPLE_REQUEST.try_take().is_some() {
             reply_pending = false;
-            BATTERY_SAMPLE_REPLY.signal(BatterySample {
-                battery_mv,
-                state,
-                level_percent: estimator.level(),
-            });
+            BATTERY_SAMPLE_REPLY.signal(sample);
+        }
+
+        // Announce the sample when the fields a remote observer acts on
+        // have moved. On-demand reads go through this path too, so a
+        // GET that reveals a change also rebaselines and does not leave
+        // a duplicate publication queued behind it.
+        let key = (charge_class(state), sample.level_percent);
+        if announced != Some(key) {
+            announced = Some(key);
+            announce.send(sample);
         }
 
         if matches!(
@@ -212,8 +263,18 @@ pub async fn run_battery_monitor(
             low_count = 0;
         }
 
+        // A cell already reading Low or Critical is watched closely; the
+        // cutoff's latency depends on it.
+        let interval = if matches!(
+            state,
+            BatteryState::BatteryLow | BatteryState::BatteryCritical
+        ) {
+            LOW_SAMPLE_INTERVAL
+        } else {
+            SAMPLE_INTERVAL
+        };
         match select4(
-            Timer::after(SAMPLE_INTERVAL),
+            Timer::after(interval),
             external_power.wait_for_any_edge(),
             charge_active.wait_for_any_edge(),
             BATTERY_SAMPLE_REQUEST.wait(),

@@ -38,7 +38,9 @@ pub use buzzer::{BUZZER_SIGNAL, BUZZER_SILENCE_SET};
 #[cfg(target_os = "none")]
 pub use platform::{T1000EMac, T1000EPlatform};
 #[cfg(target_os = "none")]
-pub use power::{BATTERY_STATE_CHANGED, PowerSignaler, SHUTDOWN_SIGNAL, battery_state};
+pub use power::{
+    BATTERY_ANNOUNCE, BATTERY_STATE_CHANGED, PowerSignaler, SHUTDOWN_SIGNAL, battery_state,
+};
 #[cfg(target_os = "none")]
 pub use radio::RF_SWITCH;
 

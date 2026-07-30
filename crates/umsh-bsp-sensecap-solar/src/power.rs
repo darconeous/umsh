@@ -69,9 +69,11 @@ mod monitor {
     use embassy_nrf::saadc::Saadc;
     use embassy_sync::blocking_mutex::raw::ThreadModeRawMutex;
     use embassy_sync::signal::Signal;
+    use embassy_sync::watch::Watch;
     use embassy_time::{Duration, Timer};
     use umsh_ux_tracker::battery::{
-        BatteryState, BatteryThresholds, LevelEstimator, LevelSample, classify,
+        BatteryState, BatteryThresholds, ChargeClass, LevelEstimator, LevelSample, charge_class,
+        classify, load_recent,
     };
 
     /// VBAT scaling, chosen so integer math stays exact:
@@ -117,6 +119,20 @@ mod monitor {
         /// `Some` from the monitor's first sample onward.
         pub level_percent: Option<u8>,
     }
+
+    /// Battery measurements worth announcing to a remote observer, for
+    /// `PROP_BATTERY` asynchronous updates. Multi-receiver, and filtered
+    /// on charge class plus level rather than the five-way presentation
+    /// classification — see the T1000-E BSP's equivalent for the
+    /// reasoning, which is identical.
+    pub static BATTERY_ANNOUNCE: Watch<
+        ThreadModeRawMutex,
+        BatterySample,
+        BATTERY_ANNOUNCE_RECEIVERS,
+    > = Watch::new();
+
+    /// Receivers of [`BATTERY_ANNOUNCE`]: the ULCP session driver.
+    pub const BATTERY_ANNOUNCE_RECEIVERS: usize = 1;
 
     /// Millisecond timestamp of the most recent externally reported load;
     /// `u32::MAX` sentinel = never.
@@ -165,14 +181,36 @@ mod monitor {
         mut divider_gate: Output<'static>,
     ) {
         const CONSECUTIVE_NEEDED: u8 = 10;
-        const SAMPLE_INTERVAL: Duration = Duration::from_secs(30);
+        /// Normal cadence. Nothing is learned by reading the divider
+        /// faster: the pack discharges over days and the level estimator
+        /// quantizes to 5 %. External-power changes do not wait for it —
+        /// [`VBUS_POLL_INTERVAL`] catches those.
+        const SAMPLE_INTERVAL: Duration = Duration::from_secs(300);
+        /// Cadence while the pack reads Low or Critical, so the protective
+        /// cutoff (`CONSECUTIVE_NEEDED` consecutive critical samples) keeps
+        /// its intended ~5-minute latency instead of scaling with the
+        /// normal interval.
+        const LOW_SAMPLE_INTERVAL: Duration = Duration::from_secs(30);
+        /// How often VBUS is checked between voltage samples.
+        ///
+        /// This board has no charger-status GPIO — external power is
+        /// `POWER.usbregstatus` only — and the `POWER` USB interrupts are
+        /// unavailable to this firmware (MPSL owns the shared CLOCK_POWER
+        /// vector; enabling them is the post-DFU watchdog freeze). So the
+        /// charge-state edge has to be polled. It costs one register read,
+        /// with no divider gating and no SAADC, which is why it can run
+        /// far more often than the voltage sample.
+        const VBUS_POLL_INTERVAL: Duration = Duration::from_secs(5);
         // Active-low divider gate: HIGH = disconnected (idle, no draw).
         divider_gate.set_high();
 
         let mut low_count: u8 = 0;
         let mut reply_pending = false;
         let mut estimator = LevelEstimator::new();
-        let mut previous_sample_ms = embassy_time::Instant::now().as_millis() as u32;
+        let announce = BATTERY_ANNOUNCE.sender();
+        // Last announced (charge class, level); `None` until the first
+        // sample, which always announces.
+        let mut announced: Option<(ChargeClass, Option<u8>)> = None;
 
         loop {
             // Connect the divider (gate LOW), settle ≥10 ms, sample, then
@@ -187,33 +225,49 @@ mod monitor {
             let battery_mv = ((raw * DIVIDER_MICRO) / 4_096).min(u32::from(u16::MAX)) as u16;
 
             let usb = usb_power_present();
-            // No charge-detect pin: use VBUS presence as a coarse "charging"
-            // proxy (provisional). classify() still separates charged vs
-            // charging vs discharging from voltage + these flags.
+            // No charge-detect pin: VBUS presence stands in for "charging"
+            // (provisional). Passing it as both flags means Charged is
+            // unreachable on this board — with external power the state is
+            // always Charging — so a remote observer sees charging start
+            // and stop but never charge *completion*. Distinguishing it
+            // would mean inferring termination from voltage, i.e.
+            // inventing charger state the hardware does not report.
             let state = classify(battery_mv, usb, usb, BatteryThresholds::default());
             publish_battery_state(state);
 
-            // Feed the level estimator; a load since the previous iteration
-            // marks this voltage as potentially sagged.
+            // Feed the level estimator; a load within the sag window marks
+            // this voltage as potentially sagged rather than resting.
             let now_ms = embassy_time::Instant::now().as_millis() as u32;
-            let load_ms = LAST_LOAD_MS.load(Ordering::Acquire);
-            let load_since_last =
-                load_ms != u32::MAX && load_ms.wrapping_sub(previous_sample_ms) < u32::MAX / 2;
-            previous_sample_ms = now_ms;
+            let last_load_ms = match LAST_LOAD_MS.load(Ordering::Acquire) {
+                u32::MAX => None,
+                timestamp => Some(timestamp),
+            };
             estimator.sample(LevelSample {
                 battery_mv,
                 state,
-                load_since_last,
+                load_recent: load_recent(now_ms, last_load_ms),
                 now_ms,
             });
 
+            let sample = BatterySample {
+                battery_mv,
+                state,
+                level_percent: estimator.level(),
+            };
+
             if reply_pending || BATTERY_SAMPLE_REQUEST.try_take().is_some() {
                 reply_pending = false;
-                BATTERY_SAMPLE_REPLY.signal(BatterySample {
-                    battery_mv,
-                    state,
-                    level_percent: estimator.level(),
-                });
+                BATTERY_SAMPLE_REPLY.signal(sample);
+            }
+
+            // Announce when the fields a remote observer acts on moved.
+            // On-demand reads pass through here too, so a GET that reveals
+            // a change rebaselines rather than leaving a duplicate
+            // publication behind it.
+            let key = (charge_class(state), sample.level_percent);
+            if announced != Some(key) {
+                announced = Some(key);
+                announce.send(sample);
             }
 
             // Protective cell cutoff: sustained critical voltage while on
@@ -230,15 +284,41 @@ mod monitor {
                 low_count = 0;
             }
 
-            match embassy_futures::select::select(
-                Timer::after(SAMPLE_INTERVAL),
+            // A pack already reading Low or Critical is watched closely;
+            // the cutoff's latency depends on it.
+            let interval = if matches!(
+                state,
+                BatteryState::BatteryLow | BatteryState::BatteryCritical
+            ) {
+                LOW_SAMPLE_INTERVAL
+            } else {
+                SAMPLE_INTERVAL
+            };
+            // Watch VBUS between voltage samples so plugging or unplugging
+            // is reflected within seconds instead of within `interval`.
+            // Returns as soon as it disagrees with this iteration's
+            // reading, and the loop re-samples from the top.
+            let vbus_changed = async {
+                loop {
+                    Timer::after(VBUS_POLL_INTERVAL).await;
+                    if usb_power_present() != usb {
+                        return;
+                    }
+                }
+            };
+            match embassy_futures::select::select3(
+                Timer::after(interval),
                 BATTERY_SAMPLE_REQUEST.wait(),
+                vbus_changed,
             )
             .await
             {
-                embassy_futures::select::Either::First(()) => {}
+                embassy_futures::select::Either3::First(()) => {}
                 // An on-demand request: sample immediately from the top.
-                embassy_futures::select::Either::Second(()) => reply_pending = true,
+                embassy_futures::select::Either3::Second(()) => reply_pending = true,
+                // External power appeared or vanished: re-sample now so
+                // the charge-state change is published promptly.
+                embassy_futures::select::Either3::Third(()) => {}
             }
         }
     }
