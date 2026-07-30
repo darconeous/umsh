@@ -16,37 +16,33 @@ struct PersistenceSmokeTest {
 
         try await store.insertIdentity(id: "alice", publicAddress: "alice-public")
 
-        // A user-initiated import is saved; a contact is saved by definition.
+        // A user-initiated import is saved.
         try await store.upsertPeer(
             ownerIdentityID: "alice",
-            publicAddress: "peer-contact",
+            publicAddress: "peer-saved",
             alias: "Ridge Medic",
-            isContact: true
+            isSaved: true
         )
         // An over-the-air advertisement lands in the transient tier.
         try await store.upsertPeer(
             ownerIdentityID: "alice",
             publicAddress: "peer-transient",
             alias: nil,
-            advertisedName: "Roaming Node",
-            isContact: false
+            advertisedName: "Roaming Node"
         )
         var nodes = try await store.listNodes(ownerIdentityID: "alice")
-        precondition(node(nodes, "peer-contact").isSaved)
-        precondition(node(nodes, "peer-contact").isContact)
+        precondition(node(nodes, "peer-saved").isSaved)
         precondition(!node(nodes, "peer-transient").isSaved)
 
         // A background advertisement upsert must never demote a saved peer.
         try await store.upsertPeer(
             ownerIdentityID: "alice",
-            publicAddress: "peer-contact",
+            publicAddress: "peer-saved",
             alias: nil,
-            advertisedName: "Ridge Medic Node",
-            isContact: false
+            advertisedName: "Ridge Medic Node"
         )
         nodes = try await store.listNodes(ownerIdentityID: "alice")
-        precondition(node(nodes, "peer-contact").isSaved)
-        precondition(node(nodes, "peer-contact").isContact)
+        precondition(node(nodes, "peer-saved").isSaved)
 
         // Promote a transient; favorite it (favoriting implies saved).
         try await store.promotePeerToSaved(ownerIdentityID: "alice", publicAddress: "peer-transient")
@@ -60,19 +56,18 @@ struct PersistenceSmokeTest {
         nodes = try await store.listNodes(ownerIdentityID: "alice")
         precondition(node(nodes, "peer-transient").isFavorite)
 
-        // Demote clears contact/favorite/alias but keeps the row.
-        try await store.demotePeerToTransient(ownerIdentityID: "alice", publicAddress: "peer-contact")
+        // Demote clears favorite and alias but keeps the row.
+        try await store.demotePeerToTransient(ownerIdentityID: "alice", publicAddress: "peer-saved")
         nodes = try await store.listNodes(ownerIdentityID: "alice")
-        precondition(!node(nodes, "peer-contact").isSaved)
-        precondition(!node(nodes, "peer-contact").isContact)
-        precondition(node(nodes, "peer-contact").alias == nil)
-        try await store.promotePeerToSaved(ownerIdentityID: "alice", publicAddress: "peer-contact")
+        precondition(!node(nodes, "peer-saved").isSaved)
+        precondition(node(nodes, "peer-saved").alias == nil)
+        try await store.promotePeerToSaved(ownerIdentityID: "alice", publicAddress: "peer-saved")
 
         // Delete refuses a peer with a conversation; the combined delete works
         // and removes both.
         let conversationID = try await store.ensureDirectConversation(
             ownerIdentityID: "alice",
-            peerAddress: "peer-contact"
+            peerAddress: "peer-saved"
         )
         try await store.updateDraft(
             ownerIdentityID: "alice",
@@ -82,15 +77,15 @@ struct PersistenceSmokeTest {
         let conversations = try await store.listDirectConversations(ownerIdentityID: "alice")
         precondition(conversations.count == 1)
         precondition(conversations[0].draftText == "Draft survives relaunch")
-        let refused = try await store.deletePeer(ownerIdentityID: "alice", publicAddress: "peer-contact")
+        let refused = try await store.deletePeer(ownerIdentityID: "alice", publicAddress: "peer-saved")
         precondition(!refused)
         let removed = try await store.deletePeerAndConversation(
             ownerIdentityID: "alice",
-            publicAddress: "peer-contact"
+            publicAddress: "peer-saved"
         )
         precondition(removed)
         nodes = try await store.listNodes(ownerIdentityID: "alice")
-        precondition(!nodes.contains { $0.publicAddress == "peer-contact" })
+        precondition(!nodes.contains { $0.publicAddress == "peer-saved" })
         let remainingConversations = try await store.listDirectConversations(ownerIdentityID: "alice")
         precondition(remainingConversations.isEmpty)
 
@@ -118,8 +113,7 @@ struct PersistenceSmokeTest {
             try await store.upsertPeer(
                 ownerIdentityID: "alice",
                 publicAddress: address,
-                alias: nil,
-                isContact: false
+                alias: nil
             )
             try await store.touchLastHeard(
                 ownerIdentityID: "alice",
@@ -179,7 +173,7 @@ struct PersistenceSmokeTest {
             ownerIdentityID: "primary",
             publicAddress: "legacy-peer",
             alias: "Legacy Peer",
-            isContact: true
+            isSaved: true
         )
         try await store.migrateLegacyPrimaryIdentity(
             to: "legacy-public",
@@ -188,8 +182,9 @@ struct PersistenceSmokeTest {
         let migratedNodes = try await store.listNodes(ownerIdentityID: "legacy-public")
         precondition(migratedNodes.map(\.publicAddress) == ["legacy-peer"])
 
-        // v12 → v13 upgrade on a populated database: strip the v13 columns and
-        // stamp user_version 12, then reopen. Nothing may vanish, and every
+        // v12 → current upgrade on a populated database: restore the v12 shape
+        // — v13's columns gone, v14's dropped `is_contact` back — and stamp
+        // user_version 12, then reopen. Nothing may vanish, and every
         // pre-existing row must upgrade as saved.
         store = try SQLiteApplicationStore(path: databaseURL.path)
         try await store.demotePeerToTransient(ownerIdentityID: "alice", publicAddress: "flood-0")
@@ -223,6 +218,7 @@ struct PersistenceSmokeTest {
             ALTER TABLE node DROP COLUMN is_saved;
             ALTER TABLE node DROP COLUMN is_favorite;
             ALTER TABLE node DROP COLUMN on_dev_identity;
+            ALTER TABLE node ADD COLUMN is_contact INTEGER NOT NULL DEFAULT 0;
             PRAGMA user_version = 12;
             """
         precondition(

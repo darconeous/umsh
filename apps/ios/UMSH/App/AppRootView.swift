@@ -330,7 +330,6 @@ struct AppRootView: View {
                 publicAddress: advertisement.peerAddress,
                 alias: nil,
                 advertisedName: identity.name,
-                isContact: false,
                 // The node's own statement of what it is, refreshed on every
                 // bundle so the recorded role tracks the node.
                 nodeKind: PeerRole(roleCode: identity.roleCode).rawValue,
@@ -549,7 +548,6 @@ struct AppRootView: View {
                 publicAddress: identity.canonicalAddress,
                 alias: details.alias,
                 advertisedName: preview.identity?.name,
-                isContact: details.isContact,
                 // The role comes from the bundle, not the operator. An
                 // imported payload is only ever handed over with a verified
                 // signature, so it needs no MAC authentication to be believed.
@@ -573,9 +571,9 @@ struct AppRootView: View {
 
     /// Record a device the phone has been configuring as an ordinary peer.
     ///
-    /// Deliberately not a contact and not a chat peer: a repeater is
-    /// infrastructure the operator wants to find again, not someone to talk
-    /// to. Promoting it to either remains an ordinary Network action.
+    /// Deliberately not a chat peer: a repeater is infrastructure the operator
+    /// wants to find again, not someone to talk to. Starting a conversation
+    /// with it remains an ordinary Network action.
     private func saveAdministeredDevice(
         _ identity: MeshPublicIdentity,
         name: String?,
@@ -588,7 +586,6 @@ struct AppRootView: View {
                 publicAddress: identity.canonicalAddress,
                 alias: nil,
                 advertisedName: name,
-                isContact: false,
                 isSaved: true,
                 nodeKind: role.rawValue
             )
@@ -1299,7 +1296,6 @@ struct AppRootView: View {
                     identity: identity,
                     alias: stored.alias,
                     advertisedName: stored.advertisedName,
-                    isContact: stored.isContact,
                     systemRole: stored.systemRole,
                     storedRole: stored.nodeKind.flatMap(PeerRole.init(rawValue:)) ?? .unknown,
                     advertisedIdentity: advertisedIdentity,

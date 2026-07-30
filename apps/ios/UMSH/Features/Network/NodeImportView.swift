@@ -13,7 +13,6 @@ struct NodeImportView: View {
     @State private var problem: String?
     @State private var isInspecting = false
     @State private var name = ""
-    @State private var isContact = true
 
     var body: some View {
         Form {
@@ -53,7 +52,6 @@ struct NodeImportView: View {
                 }
                 Section("Local details") {
                     TextField("Name (optional)", text: $name)
-                    Toggle("Save as contact", isOn: $isContact)
                     // What the node *is* is not a local detail: it comes from
                     // the identity above and updates itself when the node says
                     // otherwise, so there is nothing to pick here.
@@ -66,7 +64,7 @@ struct NodeImportView: View {
                         Task { await save(preview, details, true) }
                     }
                     .buttonStyle(.borderedProminent)
-                    Button(isContact ? "Save Contact" : "Save Peer") {
+                    Button("Save Peer") {
                         Task { await save(preview, details, false) }
                     }
                 }
@@ -106,10 +104,7 @@ struct NodeImportView: View {
 
     private var details: PeerImportDetails {
         let trimmed = name.trimmingCharacters(in: .whitespacesAndNewlines)
-        return PeerImportDetails(
-            alias: trimmed.isEmpty ? nil : trimmed,
-            isContact: isContact
-        )
+        return PeerImportDetails(alias: trimmed.isEmpty ? nil : trimmed)
     }
 
     private var previewCaption: String {

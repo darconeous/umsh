@@ -157,16 +157,8 @@ struct NetworkView: View {
                         ForEach(favorites) { peer in peerRow(peer) }
                     }
                 }
-                let contacts = arranged(
-                    visiblePeers.filter { !$0.isUlcpDevice && !$0.isFavorite && $0.isContact }
-                )
-                if !contacts.isEmpty {
-                    Section("Contacts") {
-                        ForEach(contacts) { peer in peerRow(peer) }
-                    }
-                }
                 let saved = arranged(
-                    visiblePeers.filter { !$0.isUlcpDevice && !$0.isFavorite && !$0.isContact }
+                    visiblePeers.filter { !$0.isUlcpDevice && !$0.isFavorite }
                 )
                 if !saved.isEmpty {
                     Section("Saved nodes") {
@@ -397,8 +389,6 @@ struct NetworkView: View {
             return peer.role == .sensor || peer.role == .tracker
         case .repeatersAndBridges:
             return peer.role == .bridge || peer.isLikelyRepeater
-        case .savedContacts:
-            return peer.isContact
         }
     }
 
@@ -448,7 +438,6 @@ private enum NetworkRoleFilter: String, CaseIterable, Identifiable {
     case peopleAndText
     case sensors
     case repeatersAndBridges
-    case savedContacts
 
     var id: Self { self }
 
@@ -458,7 +447,6 @@ private enum NetworkRoleFilter: String, CaseIterable, Identifiable {
         case .peopleAndText: "People & text"
         case .sensors: "Sensors"
         case .repeatersAndBridges: "Repeaters & bridges"
-        case .savedContacts: "Saved contacts"
         }
     }
 }

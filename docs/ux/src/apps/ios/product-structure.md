@@ -249,7 +249,7 @@ or `EMERGENCY`. Directly above the transcript, a compact audience line says
 **Everyone with the channel key** for a symmetric private channel. The composer
 placeholder names the destination, for example **Message Trail Crew channel**.
 An Info button or tapping the title opens Channel Detail. Sender labels in the
-transcript link to Peer Detail without automatically saving contacts.
+transcript link to Peer Detail without automatically saving the sender.
 
 Incoming messages show the sender's resolved name above the bubble because a
 channel contains multiple speakers. The user's own messages align and style
@@ -298,13 +298,14 @@ Navigation title: **Network**. A native search field and filter menu support:
 - All;
 - People/Text;
 - Sensors;
-- Repeaters and bridges;
-- Rooms; and
-- Saved contacts.
+- Repeaters and bridges; and
+- Rooms.
 
-The default list groups **Contacts**, **Recent**, and **Nearby/Observed** when
-those groups contain items. Duplicate addresses appear once even if learned by
-several paths. Rows show role/capabilities, last observation, and a concise
+The default list groups **Favorites** and **Saved nodes** when those groups
+contain items; a node the user starred is one they want at the top, and there is
+no second tier of saved node below that. Nodes heard on the air but not saved
+stay out of the list and surface through search and the discovery session.
+Duplicate addresses appear once even if learned by several paths. Rows show role/capabilities, last observation, and a concise
 source label. RSSI/SNR may appear in detail, not as a fake distance.
 
 Toolbar actions: **Scan code**, **Paste URI**, and an overflow action for
@@ -374,8 +375,8 @@ to chat preserves the draft and transcript position.
 When a saved companion radio exposes its own UMSH public identity, that
 identity is also represented by exactly one `NodeRecord` and appears in the
 Network list as a peer. Peer Detail labels it **Companion radio identity** and
-links to Radio Detail. The record is system-managed: ordinary contact or peer
-removal is unavailable while the associated radio remains saved. This does not
+links to Radio Detail. The record is system-managed: ordinary peer removal is
+unavailable while the associated radio remains saved. This does not
 make the radio identity the phone's identity or grant infrastructure-management
 authority.
 
@@ -396,7 +397,7 @@ algorithm. Primary actions are capability-driven:
 - **View data** for supported sensor/CoAP resources;
 - **Manage** only when authorization and implemented management operations are
   known; and
-- **Save contact** or **Edit contact**.
+- **Save Peer**, or rename and favorite one already saved.
 
 When the node is a known directly addressable peer, this content is presented
 through Peer Detail rather than as a second competing detail screen. Sensor,
@@ -506,7 +507,7 @@ exposes no identity says so rather than showing an empty row.
 
 That screen offers **Save Peer**, which records the node locally so it can be
 found in Network afterwards. Saving is local only: nothing is transmitted to the
-node, it does not become a contact, and it is not registered for messaging. This
+node, and it is not registered for messaging. This
 is the one durable trace a setup session may leave, and only when the user asks
 for it.
 
@@ -605,7 +606,7 @@ invitation**, **Public named channel**, or **UMSH resource**. It includes:
 - metadata/routing recommendations; and
 - conflict or duplicate information.
 
-The confirmation button names the result: **Message**, **Save contact**, **Join
+The confirmation button names the result: **Message**, **Save Peer**, **Join
 channel**, or **Open resource**. **Cancel** is always available. Scanning never
 adds state before this sheet.
 

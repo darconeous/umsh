@@ -43,8 +43,8 @@ do not mistake it for disconnecting a radio.
 Acceptance criteria:
 
 - The confirmation names the identity and exposes its complete Base58 address.
-- It distinguishes phone identity, messages/contacts, BLE bonds, and radio
-  settings.
+- It distinguishes phone identity, messages and saved nodes, BLE bonds, and
+  radio settings.
 - Cancel is the default action.
 - A failed or unconfirmed message can never silently re-send under a
   replacement identity; retry re-validates the current identity first.
@@ -158,15 +158,14 @@ Acceptance criteria:
 ### IOS-RAD-04A: Recognize the radio as a peer
 
 **As a user with a radio-owned UMSH identity,** I want that identity to appear
-consistently in the peer model without being removable like an ordinary
-contact.
+consistently in the peer model without being removable like an ordinary peer.
 
 Acceptance criteria:
 
 - When a saved radio exposes a complete device public key, Network contains
   exactly one peer for that key.
 - The peer is labeled **Companion radio identity** and links to Radio Detail.
-- Ordinary peer/contact removal is unavailable while the radio remains saved.
+- Ordinary peer removal is unavailable while the radio remains saved.
 - The peer is distinct from the active phone identity and does not imply
   management authorization.
 - Forgetting the radio removes the association and protection but does not
@@ -204,7 +203,7 @@ Acceptance criteria:
   node identity screen used elsewhere, including its complete address and
   shareable code; a device that exposes no identity says so.
 - Saving that node to Network is available and explicitly local: nothing is sent
-  to the node and it does not become a contact or a messaging peer.
+  to the node and it does not become a messaging peer.
 - The app claims nothing: after setup the device has no new relationship to this
   phone beyond the Bluetooth pairing it already required.
 - Nothing about the device is remembered after the sheet closes unless the user
@@ -251,7 +250,7 @@ Acceptance criteria:
 - After adoption the device is subject to the ordinary companion rules,
   including host identity provisioning.
 
-## Import, discovery, and contacts
+## Import, discovery, and saved nodes
 
 ### IOS-DIS-01: Scan another person's node URI
 
@@ -283,7 +282,7 @@ Acceptance criteria:
 ### IOS-DIS-03: Review observed nodes
 
 **As a user,** I want to see nodes learned from the mesh without having them all
-become contacts.
+land in my saved list.
 
 Acceptance criteria:
 
@@ -315,7 +314,7 @@ Acceptance criteria:
 - The app says discovery listens for identity-bearing traffic and cannot find
   every silent node.
 - Results stream in, deduplicate by public key, and remain known nodes rather
-  than automatic contacts.
+  than automatically saved ones.
 - The session has a visible end and can be stopped.
 - Announce My Identity previews audience, flood scope, and included location.
 - Refreshing a known node may use a unicast Identity Request; discovering an
@@ -393,8 +392,8 @@ Acceptance criteria:
 - A solid or broken outer ring surrounds the stable NodeHint avatar as a
   redundant cue; no security badge overlaps the avatar, and status is not
   communicated by color alone.
-- Active traffic remains associated with the stable peer rather than creating
-  a contact for an ephemeral address.
+- Active traffic remains associated with the stable peer rather than saving
+  a node for an ephemeral address.
 - **End PFS session**, expiration, or either device reboot returns the UI to
   standard encryption and explains the transition.
 - Current PFS status does not retroactively label older messages as PFS
@@ -572,7 +571,7 @@ Acceptance criteria:
 
 - Successful local transmission says **Sent over radio** in details.
 - No Delivered check appears without recipient-specific evidence.
-- Sender identity links to Peer Detail without auto-saving a contact.
+- Sender identity links to Peer Detail without auto-saving the sender.
 
 ### IOS-CHN-05: Inspect channel membership honestly
 

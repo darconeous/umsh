@@ -271,9 +271,9 @@ struct PeerDetailView: View {
                     if savePeerFailed {
                         Text("This node could not be saved. Its identity is unchanged either way.")
                     } else if isPeerSaved || didSavePeer {
-                        Text("This node is recorded on this phone. Rename it, make it a contact, or remove it from Network.")
+                        Text("This node is recorded on this phone. Rename it, favorite it, or remove it from Network.")
                     } else {
-                        Text("Records this node on this phone so it can be found in Network later. Nothing is sent to the node, and it is not made a contact.")
+                        Text("Records this node on this phone so it can be found in Network later. Nothing is sent to the node.")
                     }
                 }
             }

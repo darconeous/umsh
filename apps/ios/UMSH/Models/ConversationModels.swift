@@ -5,7 +5,6 @@ struct PeerSummary: Identifiable, Hashable, Sendable {
     let identity: MeshPublicIdentity
     let alias: String?
     let advertisedName: String?
-    let isContact: Bool
     let systemRole: String?
     /// The role last recorded for this node, so the answer survives a restart
     /// and so a device configured through this phone reads correctly before it
@@ -132,7 +131,6 @@ enum PeerRole: String, CaseIterable, Hashable, Sendable, Identifiable {
 
 struct PeerImportDetails: Sendable {
     let alias: String?
-    let isContact: Bool
 }
 
 struct DirectConversationSummary: Identifiable, Hashable, Sendable {

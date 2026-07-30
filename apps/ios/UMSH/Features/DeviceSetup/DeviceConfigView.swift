@@ -410,7 +410,6 @@ struct DeviceConfigView: View {
             identity: identity,
             alias: nil,
             advertisedName: controller.snapshot.name,
-            isContact: false,
             systemRole: nil,
             storedRole: advertisedPeerRole
         )

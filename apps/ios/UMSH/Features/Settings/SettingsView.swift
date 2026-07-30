@@ -465,7 +465,6 @@ struct RadioDetailView: View {
                                 identity: deviceIdentity,
                                 alias: nil,
                                 advertisedName: snapshot.name,
-                                isContact: false,
                                 systemRole: "companion_radio",
                                 storedRole: .unknown
                             ),

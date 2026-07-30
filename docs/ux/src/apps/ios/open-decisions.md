@@ -52,7 +52,7 @@ identity-owned state (conversations, messages, channel keys, counters, PFS
 state, radio provisioning) to an owning identity from the first version.
 Before the multi-identity experience ships, decide:
 
-- whether contacts and observed nodes are shared across identities or held
+- whether saved and observed nodes are shared across identities or held
   per identity;
 - how switching interacts with the radio, whose provisioned host identity is
   singular — switching likely reuses the host-replacement takeover flow;

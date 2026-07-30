@@ -47,7 +47,6 @@ struct StoredNode: Equatable, Sendable {
     let publicAddress: String
     let alias: String?
     let advertisedName: String?
-    let isContact: Bool
     let systemRole: String?
     let nodeKind: String?
     /// Raw advertised-identity payload bytes (node-identity.md wire form),
@@ -127,7 +126,7 @@ actor SQLiteApplicationStore {
     /// store refuses to open any database above this constant, so a stale value
     /// lets the new schema apply once and then locks the user out of their own
     /// data on the next launch. ``migrate(_:)`` checks the two agree.
-    static let currentSchemaVersion: Int32 = 13
+    static let currentSchemaVersion: Int32 = 14
 
     nonisolated(unsafe) private let database: OpaquePointer
 
@@ -282,7 +281,6 @@ actor SQLiteApplicationStore {
         publicAddress: String,
         alias: String?,
         advertisedName: String? = nil,
-        isContact: Bool,
         isSaved: Bool = false,
         nodeKind: String? = nil,
         systemRole: String? = nil,
@@ -294,15 +292,14 @@ actor SQLiteApplicationStore {
             """
             INSERT INTO node (
                 owner_identity_id, public_address, alias, alias_search,
-                advertised_name, is_contact, is_saved, system_role, radio_identifier,
+                advertised_name, is_saved, system_role, radio_identifier,
                 node_kind, advertisement, advertisement_authenticated
-            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
             ON CONFLICT(owner_identity_id, public_address) DO UPDATE SET
                 alias = COALESCE(excluded.alias, node.alias),
                 alias_search = CASE WHEN excluded.alias IS NULL
                     THEN node.alias_search ELSE excluded.alias_search END,
                 advertised_name = COALESCE(excluded.advertised_name, node.advertised_name),
-                is_contact = MAX(node.is_contact, excluded.is_contact),
                 -- A background advertisement upsert must never demote a saved
                 -- peer to the transient tier; only the explicit demote/delete
                 -- setters move a row downward.
@@ -325,14 +322,12 @@ actor SQLiteApplicationStore {
         try bindOptional(alias, to: statement, at: 3)
         try bind(Self.normalizeSearch(alias ?? advertisedName ?? ""), to: statement, at: 4)
         try bindOptional(advertisedName, to: statement, at: 5)
-        try check(sqlite3_bind_int(statement, 6, isContact ? 1 : 0))
-        // A contact is by definition saved; the flag never lags the checkbox.
-        try check(sqlite3_bind_int(statement, 7, (isSaved || isContact) ? 1 : 0))
-        try bindOptional(systemRole, to: statement, at: 8)
-        try bindOptional(radioIdentifier, to: statement, at: 9)
-        try bindOptional(nodeKind, to: statement, at: 10)
-        try bindOptional(advertisement, to: statement, at: 11)
-        try check(sqlite3_bind_int(statement, 12, advertisementAuthenticated ? 1 : 0))
+        try check(sqlite3_bind_int(statement, 6, isSaved ? 1 : 0))
+        try bindOptional(systemRole, to: statement, at: 7)
+        try bindOptional(radioIdentifier, to: statement, at: 8)
+        try bindOptional(nodeKind, to: statement, at: 9)
+        try bindOptional(advertisement, to: statement, at: 10)
+        try check(sqlite3_bind_int(statement, 11, advertisementAuthenticated ? 1 : 0))
         try stepDone(statement)
     }
 
@@ -391,26 +386,6 @@ actor SQLiteApplicationStore {
         }
     }
 
-    func setPeerContact(
-        ownerIdentityID: String,
-        publicAddress: String,
-        isContact: Bool
-    ) throws {
-        let statement = try prepare(
-            """
-            UPDATE node SET is_contact = ?,
-                is_saved = CASE WHEN ? = 1 THEN 1 ELSE is_saved END
-            WHERE owner_identity_id = ? AND public_address = ?
-            """
-        )
-        defer { sqlite3_finalize(statement) }
-        try check(sqlite3_bind_int(statement, 1, isContact ? 1 : 0))
-        try check(sqlite3_bind_int(statement, 2, isContact ? 1 : 0))
-        try bind(ownerIdentityID, to: statement, at: 3)
-        try bind(publicAddress, to: statement, at: 4)
-        try stepDone(statement)
-    }
-
     func setPeerFavorite(
         ownerIdentityID: String,
         publicAddress: String,
@@ -450,8 +425,8 @@ actor SQLiteApplicationStore {
 
     /// Remove a node from the local identity without touching its history:
     /// the row stays as a transient (searchable, discoverable) and any
-    /// conversation keeps working. Contact, favorite, and alias are local
-    /// statements about a saved peer, so they clear with it. Refuses the
+    /// conversation keeps working. Favorite and alias are local statements
+    /// about a saved peer, so they clear with it. Refuses the
     /// companion radio, whose row is system-managed.
     func demotePeerToTransient(ownerIdentityID: String, publicAddress: String) throws {
         try transaction {
@@ -470,7 +445,7 @@ actor SQLiteApplicationStore {
 
             let update = try prepare(
                 """
-                UPDATE node SET is_saved = 0, is_contact = 0, is_favorite = 0,
+                UPDATE node SET is_saved = 0, is_favorite = 0,
                     alias = NULL, alias_search = ?
                 WHERE owner_identity_id = ? AND public_address = ?
                 """
@@ -746,7 +721,6 @@ actor SQLiteApplicationStore {
                 publicAddress: publicAddress,
                 alias: nil,
                 advertisedName: advertisedName,
-                isContact: false,
                 isSaved: true,
                 systemRole: "companion_radio",
                 radioIdentifier: radioIdentifier
@@ -758,12 +732,11 @@ actor SQLiteApplicationStore {
         let statement = try prepare(
             """
             SELECT id, owner_identity_id, public_address, alias, advertised_name,
-                   is_contact, system_role, node_kind, advertisement,
+                   system_role, node_kind, advertisement,
                    advertisement_authenticated, last_heard_at,
                    is_saved, is_favorite, on_dev_identity
             FROM node WHERE owner_identity_id = ?
-            ORDER BY (system_role IS NOT NULL) DESC, is_contact DESC,
-                     alias_search, id
+            ORDER BY (system_role IS NOT NULL) DESC, alias_search, id
             """
         )
         defer { sqlite3_finalize(statement) }
@@ -808,7 +781,7 @@ actor SQLiteApplicationStore {
         let statement = try prepare(
             """
             SELECT c.id, n.id, n.owner_identity_id, n.public_address, n.alias,
-                   n.advertised_name, n.is_contact, n.system_role, n.node_kind,
+                   n.advertised_name, n.system_role, n.node_kind,
                    n.advertisement, n.advertisement_authenticated, n.last_heard_at,
                    n.is_saved, n.is_favorite, n.on_dev_identity,
                    c.draft_text
@@ -826,7 +799,7 @@ actor SQLiteApplicationStore {
                     StoredDirectConversation(
                         id: sqlite3_column_int64(statement, 0),
                         node: storedNode(statement, offset: 1),
-                        draftText: Self.stringColumn(statement, at: 15)
+                        draftText: Self.stringColumn(statement, at: 14)
                     )
                 )
             case SQLITE_DONE:
@@ -1197,15 +1170,14 @@ actor SQLiteApplicationStore {
             publicAddress: Self.stringColumn(statement, at: offset + 2),
             alias: Self.optionalStringColumn(statement, at: offset + 3),
             advertisedName: Self.optionalStringColumn(statement, at: offset + 4),
-            isContact: sqlite3_column_int(statement, offset + 5) != 0,
-            systemRole: Self.optionalStringColumn(statement, at: offset + 6),
-            nodeKind: Self.optionalStringColumn(statement, at: offset + 7),
-            advertisement: Self.optionalDataColumn(statement, at: offset + 8),
-            advertisementAuthenticated: sqlite3_column_int(statement, offset + 9) != 0,
-            lastHeardAt: Self.optionalDateColumn(statement, at: offset + 10),
-            isSaved: sqlite3_column_int(statement, offset + 11) != 0,
-            isFavorite: sqlite3_column_int(statement, offset + 12) != 0,
-            onDeviceIdentity: sqlite3_column_int(statement, offset + 13) != 0
+            systemRole: Self.optionalStringColumn(statement, at: offset + 5),
+            nodeKind: Self.optionalStringColumn(statement, at: offset + 6),
+            advertisement: Self.optionalDataColumn(statement, at: offset + 7),
+            advertisementAuthenticated: sqlite3_column_int(statement, offset + 8) != 0,
+            lastHeardAt: Self.optionalDateColumn(statement, at: offset + 9),
+            isSaved: sqlite3_column_int(statement, offset + 10) != 0,
+            isFavorite: sqlite3_column_int(statement, offset + 11) != 0,
+            onDeviceIdentity: sqlite3_column_int(statement, offset + 12) != 0
         )
     }
 
@@ -1889,6 +1861,30 @@ actor SQLiteApplicationStore {
                     CREATE INDEX node_owner_transient_heard_idx
                         ON node (owner_identity_id, is_saved, last_heard_at);
                     PRAGMA user_version = 13;
+                    """
+                )
+                try execute(database, sql: "COMMIT")
+            } catch {
+                try? execute(database, sql: "ROLLBACK")
+                throw error
+            }
+        }
+
+        if version < 14 {
+            try execute(database, sql: "BEGIN IMMEDIATE")
+            do {
+                // `is_contact` distinguished two kinds of saved node and did
+                // nothing else: same storage, same messaging, same retention,
+                // one section header apart. Favorites says "peers I care
+                // about" and can be changed at any time, which is what the
+                // flag was reaching for. Contacts stay saved nodes; the flag
+                // is not promoted to a favorite, because it defaulted on at
+                // import and would star nearly everything.
+                try execute(
+                    database,
+                    sql: """
+                    ALTER TABLE node DROP COLUMN is_contact;
+                    PRAGMA user_version = 14;
                     """
                 )
                 try execute(database, sql: "COMMIT")

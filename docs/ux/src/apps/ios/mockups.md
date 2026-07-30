@@ -257,7 +257,7 @@ this stable peer.
 │             Creek Gauge             │
 │             Sensor                  │
 │                                     │
-│ [View data]      [Save contact]     │
+│ [View data]      [Save Peer]        │
 │                                     │
 │ IDENTITY                            │
 │ Advertised name       Creek Gauge   │
