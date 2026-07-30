@@ -37,8 +37,9 @@
 //                        pairing policy, generation-tagged OUT_CH.ble, and
 //                        MPSL-coordinated PIN/bond persistence
 //   - button_task:       resolves the side button into display-menu gestures
-//   - display_task:      owns the e-paper BLE menu
-//   - touch_task:        preserves the touch button's backlight control
+//   - display_task:      owns the e-paper BLE menu and its attention policy
+//   - touch_task:        publishes the touch button's backlight demand
+//   - backlight_task:    arbitrates backlight demand (locate alert wins)
 //   - shutdown_task:     tri-states peripheral pins, drops the rail,
 //                        enters System OFF
 //
@@ -94,9 +95,6 @@ mod ble_store;
 #[cfg(target_os = "none")]
 mod device_node;
 mod proto_store;
-#[cfg_attr(not(target_os = "none"), allow(dead_code))]
-#[cfg_attr(not(feature = "has-display"), allow(dead_code))]
-mod ui;
 
 // The #[panic_handler] must live in the binary crate.
 #[cfg(target_os = "none")]
@@ -123,9 +121,6 @@ mod firmware {
     use super::ble_store::{self, Snapshot, StoredBond};
     use super::proto_store;
     use super::transport_policy::{Transport, generation_checked};
-    use super::ui::UiNotice;
-    #[cfg(feature = "has-display")]
-    use super::ui::{MenuItem, Page, UiEffect, UiInput, UiModel};
     #[cfg(feature = "ble-debug")]
     use core::fmt::Write as _;
     use core::sync::atomic::{AtomicBool, AtomicU8, AtomicU16, AtomicU32, Ordering};
@@ -216,8 +211,21 @@ mod firmware {
     use umsh_ulcp_runtime::driver::{
         self, DeviceEnv, DeviceRuntime, InEvent, InputChannel, OutFrame, TransportChannels,
     };
+    #[cfg(feature = "has-display")]
+    use umsh_ux_display_tracker::attention::{
+        Attention, AttentionConfig, DisplayKind, HoldReason, Transition,
+    };
+    #[cfg(feature = "button-techo")]
+    use umsh_ux_display_tracker::gate::{Disposition, Gate, GateReason};
+    use umsh_ux_display_tracker::menu::UiNotice;
+    #[cfg(feature = "has-display")]
+    use umsh_ux_display_tracker::menu::{MenuItem, MenuItems, Page, UiEffect, UiInput, UiModel};
     #[cfg(any(feature = "button-techo", feature = "t1000e"))]
-    use umsh_ux_tracker::button::{ButtonEdge, ButtonEvent, ButtonFsm, ButtonTimings};
+    use umsh_ux_tracker::button::{ButtonEdge, ButtonEvent, ButtonFsm};
+    // The display trackers take their timings from the shared class
+    // policy; only the headless T-1000E still names its own.
+    #[cfg(feature = "t1000e")]
+    use umsh_ux_tracker::button::ButtonTimings;
     #[cfg(feature = "t1000e")]
     use umsh_ux_tracker::buzzer::melodies as buzzer_melodies;
     #[cfg(not(feature = "t1000e"))]
@@ -943,6 +951,10 @@ mod firmware {
     static ALERT_ACTIVE: AtomicBool = AtomicBool::new(false);
     /// Wakes the LED task on a locate-alert edge.
     static ALERT_CHANGED: Signal<ThreadModeRawMutex, ()> = Signal::new();
+    /// The same edge, for the display task. A `Signal` has one useful
+    /// consumer, so each task that must react promptly gets its own.
+    #[cfg(feature = "has-display")]
+    static UI_ALERT_CHANGED: Signal<ThreadModeRawMutex, ()> = Signal::new();
 
     /// Apply a `PROP_ALERT` transition to the board's indicators.
     ///
@@ -957,7 +969,23 @@ mod firmware {
         // others the LED blink is the whole alert.
         #[cfg(feature = "t1000e")]
         umsh_bsp_t1000e::indicator::BUZZER_ALERT_SET.signal(active);
+        #[cfg(feature = "has-display")]
+        {
+            UI_ALERT_CHANGED.signal(());
+            BACKLIGHT_CHANGED.signal(());
+        }
     }
+
+    /// Whether the capacitive touch button is currently held.
+    ///
+    /// The touch button and the locate alert both want the backlight, so
+    /// neither drives the pin directly; they publish their demand here
+    /// and [`backlight_task`] arbitrates.
+    #[cfg(feature = "has-display")]
+    static BACKLIGHT_TOUCH: AtomicBool = AtomicBool::new(false);
+    /// Wakes [`backlight_task`] when either demand changes.
+    #[cfg(feature = "has-display")]
+    static BACKLIGHT_CHANGED: Signal<ThreadModeRawMutex, ()> = Signal::new();
 
     /// Whether a locate alert is running.
     fn alert_active() -> bool {
@@ -1058,7 +1086,8 @@ mod firmware {
         debug_log(format_args!("trouble security {event:?}"));
     }
 
-    /// Fired by button_task on a 2 s hold; consumed by shutdown_task.
+    /// Fired by button_task on a 2 s hold; consumed by shutdown_task,
+    /// which also watches the BSP's own signal (the low-battery cutoff).
     #[cfg(feature = "system-off-techo")]
     static SHUTDOWN_SIGNAL: Signal<ThreadModeRawMutex, ()> = Signal::new();
 
@@ -2520,6 +2549,7 @@ mod firmware {
             Page::Menu(item) => {
                 line(match item {
                     MenuItem::Status => "> Status",
+                    MenuItem::CheckIn => "> Check in",
                     MenuItem::StartPairing => "> Start pairing",
                     MenuItem::ClearBonds => "> Clear bonds",
                 });
@@ -2543,26 +2573,34 @@ mod firmware {
                 line(pairing);
                 line(match item {
                     MenuItem::Status => match model.notice() {
+                        Some(UiNotice::CheckInRequested) => "Checking in...",
                         Some(UiNotice::PairingStarted) => "Pairing started",
                         Some(UiNotice::PairingUnavailable) => "Pair unavailable",
                         Some(UiNotice::BondsCleared) => "Bonds cleared",
                         Some(UiNotice::ClearFailed) => "CLEAR FAILED",
                         None => "2x: no action",
                     },
+                    MenuItem::CheckIn => "2x: check in",
                     MenuItem::StartPairing => "2x: start",
                     MenuItem::ClearBonds => "2x: continue",
                 });
                 line("1x: next");
                 line("hold: back");
             }
-            Page::ConfirmClear { clear_selected } => {
+            Page::Confirm {
+                confirm_selected, ..
+            } => {
                 line("Clear all bonds?");
-                line(if clear_selected {
+                line(if confirm_selected {
                     "  Cancel"
                 } else {
                     "> Cancel"
                 });
-                line(if clear_selected { "> CLEAR" } else { "  CLEAR" });
+                line(if confirm_selected {
+                    "> CLEAR"
+                } else {
+                    "  CLEAR"
+                });
                 line("1x/hold: toggle");
                 line("2x: confirm");
             }
@@ -2593,9 +2631,21 @@ mod firmware {
         .draw(&mut fb);
     }
 
+    /// Everything this board's menu can do. The e-paper panel and the
+    /// side button between them cover the whole class vocabulary.
+    #[cfg(feature = "has-display")]
+    fn techo_menu_items() -> MenuItems {
+        MenuItems::all()
+    }
+
     /// Owns the e-paper bus and renders the BLE menu. Input is serialized
     /// through the full-refresh cycle so Select can never activate an item the
     /// user has not yet seen on the panel.
+    ///
+    /// The panel is bistable, so attention lapsing never turns it off —
+    /// it drops whatever the user was in the middle of and returns to
+    /// the status page, so a press after walking away starts somewhere
+    /// whose meaning is on screen.
     #[cfg(feature = "has-display")]
     #[embassy_executor::task]
     async fn display_task(
@@ -2605,7 +2655,12 @@ mod firmware {
         mut rst: Output<'static>,
         mut busy: Input<'static>,
     ) {
-        let mut model = UiModel::new();
+        let mut model = UiModel::new(techo_menu_items());
+        let mut attention = Attention::new(
+            DisplayKind::Persistent,
+            AttentionConfig::PERSISTENT,
+            Instant::now().as_millis(),
+        );
         let mut shown = [0xff; display::BUF_SIZE];
         let mut next = [0xff; display::BUF_SIZE];
         render_ui_frame(&mut next, model);
@@ -2613,93 +2668,125 @@ mod firmware {
         display::render(&mut spi, &mut cs, &mut dc, &mut busy, &next).await;
         shown.copy_from_slice(&next);
 
+        // The panel borrows five peripherals mutably; a closure capturing
+        // all of them would conflict with the `next` buffer it draws
+        // into, so the push stays a macro.
+        macro_rules! push {
+            () => {
+                display::render_partial(&mut spi, &mut cs, &mut dc, &mut busy, &mut shown, &next)
+                    .await
+            };
+        }
+
         loop {
+            // Both holds are edge-published by other tasks, but re-deriving
+            // them here each pass is idempotent and cannot miss an edge.
+            let now = Instant::now().as_millis();
+            attention.set_hold(
+                HoldReason::Pairing,
+                PAIRING_MODE.load(Ordering::Acquire),
+                now,
+            );
+            attention.set_hold(HoldReason::Alert, alert_active(), now);
+
+            let lapse = async {
+                match attention.next_deadline() {
+                    Some(deadline) => Timer::at(Instant::from_millis(deadline)).await,
+                    None => core::future::pending().await,
+                }
+            };
+
+            // True unless the arm already pushed its own frame.
+            let mut redraw = true;
             match select4(
                 UI_INPUT_CH.receive(),
-                UI_REFRESH.wait(),
-                UI_NOTICE.wait(),
+                select3(UI_REFRESH.wait(), UI_NOTICE.wait(), UI_ALERT_CHANGED.wait()),
                 DISPLAY_SHUTDOWN.wait(),
+                lapse,
             )
             .await
             {
                 Either4::First(input) => {
                     debug_log(format_args!("ui input={input:?}"));
-                    let effect = model.apply(input);
-                    match effect {
+                    attention.wake(Instant::now().as_millis());
+                    match model.apply(input) {
+                        Some(UiEffect::CheckIn) => {
+                            super::device_node::request_beacon(
+                                super::device_node::BeaconTrigger::Button,
+                            );
+                            model.set_notice(UiNotice::CheckInRequested);
+                        }
                         Some(UiEffect::StartPairing) => {
                             render_message_frame(&mut next, "Starting", "pairing mode...");
-                            display::render_partial(
-                                &mut spi, &mut cs, &mut dc, &mut busy, &mut shown, &next,
-                            )
-                            .await;
+                            push!();
+                            redraw = false;
                             PAIRING_MODE_REQUEST.signal(());
                         }
                         Some(UiEffect::ClearBonds) => {
                             render_message_frame(&mut next, "Clearing", "bonds + PIN...");
-                            display::render_partial(
-                                &mut spi, &mut cs, &mut dc, &mut busy, &mut shown, &next,
-                            )
-                            .await;
+                            push!();
+                            redraw = false;
                             BLE_WIPE_REQUEST.signal(());
                         }
-                        None => {
-                            render_ui_frame(&mut next, model);
-                            display::render_partial(
-                                &mut spi, &mut cs, &mut dc, &mut busy, &mut shown, &next,
-                            )
-                            .await;
+                        None => {}
+                    }
+                }
+                // Every one of these is a consequence of something the
+                // user or their phone just did, so all of them count as
+                // attention. Nothing on this board redraws on a timer.
+                Either4::Second(refresh) => {
+                    attention.wake(Instant::now().as_millis());
+                    match refresh {
+                        Either3::First(()) => model.clear_notice(),
+                        Either3::Second(notice) => model.set_notice(notice),
+                        Either3::Third(()) => {
+                            if alert_active() {
+                                render_message_frame(&mut next, "Locate alert", "Press to stop");
+                                push!();
+                                redraw = false;
+                            }
                         }
                     }
                 }
-                Either4::Second(()) => {
-                    model.clear_notice();
-                    render_ui_frame(&mut next, model);
-                    display::render_partial(
-                        &mut spi, &mut cs, &mut dc, &mut busy, &mut shown, &next,
-                    )
-                    .await;
-                }
-                Either4::Third(notice) => {
-                    model.set_notice(notice);
-                    render_ui_frame(&mut next, model);
-                    display::render_partial(
-                        &mut spi, &mut cs, &mut dc, &mut busy, &mut shown, &next,
-                    )
-                    .await;
-                }
-                Either4::Fourth(()) => {
+                Either4::Third(()) => {
                     render_message_frame(&mut next, "Sleeping", "Good night");
-                    display::render_partial(
-                        &mut spi, &mut cs, &mut dc, &mut busy, &mut shown, &next,
-                    )
-                    .await;
+                    push!();
                     display::sleep(&mut spi, &mut cs, &mut dc).await;
                     DISPLAY_SHUTDOWN_DONE.signal(());
                     core::future::pending::<()>().await;
                 }
+                Either4::Fourth(()) => {
+                    redraw = matches!(
+                        attention.poll(Instant::now().as_millis()),
+                        Some(Transition::Lapsed)
+                    ) && !model.is_home();
+                    if redraw {
+                        model.go_home();
+                    }
+                }
+            }
+
+            if redraw {
+                render_ui_frame(&mut next, model);
+                push!();
             }
         }
     }
 
-    #[cfg(feature = "button-techo")]
-    fn techo_button_timings() -> ButtonTimings {
-        ButtonTimings {
-            max_click_hold: core::time::Duration::from_millis(500),
-            inter_click_gap: core::time::Duration::from_millis(400),
-            long_press: core::time::Duration::from_secs(1),
-            very_long_press: Some(core::time::Duration::from_secs(4)),
-        }
-    }
-
-    /// Resolves the P1.10 side button (active-low, pull-up) through the same
-    /// tested state machine used by T-1000E. Single advances, double selects,
-    /// a 1–4 second hold released by the user goes back, and a continuing
+    /// Resolves the P1.10 side button (active-low, pull-up) into the
+    /// display-tracker vocabulary: single advances, double selects, a
+    /// 1–4 second hold released by the user goes back, and a continuing
     /// four-second hold always powers off.
+    ///
+    /// What a gesture means is decided by [`Gate`] at the press that
+    /// starts it, not at the event that ends it, so a chord begun while
+    /// something else owned the button is judged as a whole.
     #[cfg(feature = "button-techo")]
     #[embassy_executor::task]
     async fn button_task(mut button: Input<'static>) {
         const DEBOUNCE: Duration = Duration::from_millis(10);
-        let mut fsm = ButtonFsm::new(techo_button_timings());
+        let mut fsm = ButtonFsm::new(umsh_ux_display_tracker::button_timings());
+        let mut gate = Gate::new();
         let mut pressed = button.is_low();
         loop {
             let event = {
@@ -2719,44 +2806,61 @@ mod firmware {
                 match select(edge_fut, Timer::at(Instant::from_millis(deadline))).await {
                     Either::First(edge) => {
                         pressed = matches!(edge, ButtonEdge::Press);
+                        if pressed {
+                            // Read on the press edge, not at the last loop
+                            // iteration: this task can park for a minute
+                            // awaiting an edge, and an alert that started
+                            // during the park must claim the press.
+                            gate.set(GateReason::AlertActive, alert_active());
+                            gate.on_press();
+                        }
                         fsm.on_edge(edge, Instant::now().as_millis())
                     }
                     Either::Second(()) => fsm.poll(Instant::now().as_millis()),
                 }
             };
 
-            // Cancelling a locate alert consumes the press, so whoever
-            // found the radio does not also navigate its menus. The
-            // deliberate four-second power-off hold still gets through.
-            if event.is_some() && alert_active() && !matches!(event, Some(ButtonEvent::VeryLong)) {
-                INPUT_CH.send(InEvent::CancelAlert).await;
-                continue;
+            if let Some(event) = event {
+                match gate.disposition(event) {
+                    // Whoever found the radio meant to silence it, not to
+                    // navigate its menus.
+                    Disposition::CancelAlert => INPUT_CH.send(InEvent::CancelAlert).await,
+                    Disposition::ConsumedByWake | Disposition::Discard => {}
+                    Disposition::Deliver => {
+                        let input = match event {
+                            ButtonEvent::Single => Some(UiInput::Forward),
+                            ButtonEvent::Double => Some(UiInput::Select),
+                            ButtonEvent::Long => Some(UiInput::Backward),
+                            ButtonEvent::VeryLong => {
+                                pressed = false;
+                                fsm = ButtonFsm::new(umsh_ux_display_tracker::button_timings());
+                                SHUTDOWN_SIGNAL.signal(());
+                                None
+                            }
+                            ButtonEvent::Triple | ButtonEvent::Quad => None,
+                        };
+                        if let Some(input) = input {
+                            UI_INPUT_CH.send(input).await;
+                        }
+                    }
+                }
             }
 
-            let input = match event {
-                Some(ButtonEvent::Single) => Some(UiInput::Forward),
-                Some(ButtonEvent::Double) => Some(UiInput::Select),
-                Some(ButtonEvent::Long) => Some(UiInput::Backward),
-                Some(ButtonEvent::VeryLong) => {
-                    pressed = false;
-                    fsm = ButtonFsm::new(techo_button_timings());
-                    SHUTDOWN_SIGNAL.signal(());
-                    None
-                }
-                Some(ButtonEvent::Triple | ButtonEvent::Quad) | None => None,
-            };
-            if let Some(input) = input {
-                UI_INPUT_CH.send(input).await;
-            }
+            gate.settle(fsm.next_deadline().is_none());
         }
     }
 
     /// The capacitive touch button remains dedicated to the unusual e-paper
     /// backlight. T-Echo defines P0.11 as active-low with a pull-up: illuminate
     /// on a debounced low level and turn it off on the corresponding release.
+    ///
+    /// Deliberately outside the attention and gate models: this is a
+    /// plain momentary light for reading a bistable panel in the dark,
+    /// not a navigation control, so holding it neither counts as
+    /// activity nor consumes a gesture.
     #[cfg(feature = "has-display")]
     #[embassy_executor::task]
-    async fn touch_task(mut touch: Input<'static>, mut backlight: Output<'static>) {
+    async fn touch_task(mut touch: Input<'static>) {
         const DEBOUNCE: Duration = Duration::from_millis(20);
         loop {
             touch.wait_for_low().await;
@@ -2764,12 +2868,52 @@ mod firmware {
             if !touch.is_low() {
                 continue;
             }
-            backlight.set_high();
-            debug_log(format_args!("backlight on=true"));
+            BACKLIGHT_TOUCH.store(true, Ordering::Release);
+            BACKLIGHT_CHANGED.signal(());
+            debug_log(format_args!("backlight touch=true"));
             touch.wait_for_high().await;
             Timer::after(DEBOUNCE).await;
-            backlight.set_low();
-            debug_log(format_args!("backlight on=false"));
+            BACKLIGHT_TOUCH.store(false, Ordering::Release);
+            BACKLIGHT_CHANGED.signal(());
+            debug_log(format_args!("backlight touch=false"));
+        }
+    }
+
+    /// Arbitrates the one bright output this board has.
+    ///
+    /// A locate alert outranks the touch button: the backlight is by far
+    /// the most conspicuous thing on a T-Echo, and being conspicuous is
+    /// the entire point of an alert. The indicator LED keeps its own
+    /// alert blink — this adds a channel rather than moving one — and
+    /// the touch button behaves exactly as before whenever no alert is
+    /// running.
+    ///
+    /// The alert pattern is a double flash per second, which no other
+    /// use of this pin resembles.
+    #[cfg(feature = "has-display")]
+    #[embassy_executor::task]
+    async fn backlight_task(mut backlight: Output<'static>) {
+        const PERIOD_MS: u64 = 1_000;
+        const STEP: Duration = Duration::from_millis(25);
+        loop {
+            if alert_active() {
+                let phase = Instant::now().as_millis() % PERIOD_MS;
+                backlight.set_level(if phase < 100 || (200..300).contains(&phase) {
+                    Level::High
+                } else {
+                    Level::Low
+                });
+                // Poll rather than sleep to the next edge: the alert can
+                // end at any moment and the pin must not be left lit.
+                let _ = select(Timer::after(STEP), BACKLIGHT_CHANGED.wait()).await;
+            } else {
+                backlight.set_level(if BACKLIGHT_TOUCH.load(Ordering::Acquire) {
+                    Level::High
+                } else {
+                    Level::Low
+                });
+                BACKLIGHT_CHANGED.wait().await;
+            }
         }
     }
 
@@ -3834,13 +3978,16 @@ mod firmware {
         }
         super::panic::breadcrumb_mark(8);
 
-        // The touch button only controls the e-paper backlight. Menu input is
-        // exclusively the side button below.
+        // The touch button only asks for the e-paper backlight; a locate
+        // alert can ask for it too, so the pin belongs to the arbiter
+        // rather than to either caller. Menu input is exclusively the
+        // side button below.
         #[cfg(feature = "board-techo")]
         {
             let touch = Input::new(p.P0_11, Pull::Up);
             let backlight = Output::new(p.P1_11, Level::Low, OutputDrive::Standard);
-            spawner.spawn(touch_task(touch, backlight).unwrap());
+            spawner.spawn(touch_task(touch).unwrap());
+            spawner.spawn(backlight_task(backlight).unwrap());
 
             let mut display_config = SpimConfig::default();
             display_config.frequency = Frequency::M4;

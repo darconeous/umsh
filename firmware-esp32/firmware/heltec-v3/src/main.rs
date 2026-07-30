@@ -47,7 +47,7 @@ use core::sync::atomic::{AtomicBool, AtomicU8, AtomicU16, AtomicU32, Ordering};
 use bt_hci::controller::ExternalController;
 use embassy_executor::Spawner;
 use embassy_futures::join::join;
-use embassy_futures::select::{Either, Either3, select, select3};
+use embassy_futures::select::{Either, Either3, Either4, select, select3, select4};
 use embassy_sync::blocking_mutex::raw::{CriticalSectionRawMutex, NoopRawMutex};
 use embassy_sync::channel::Channel;
 use embassy_sync::mutex::Mutex;
@@ -66,6 +66,7 @@ use esp_hal::clock::CpuClock;
 use esp_hal::gpio::{Input, InputConfig, Level, Output, OutputConfig, Pull};
 use esp_hal::i2c::master::{Config as I2cConfig, I2c};
 use esp_hal::interrupt::software::SoftwareInterruptControl;
+use esp_hal::rtc_cntl::sleep::{Ext0WakeupSource, LowPower};
 use esp_hal::rtc_cntl::{Rtc, RwdtStage, SocResetReason};
 use esp_hal::spi::Mode;
 use esp_hal::spi::master::{Config as SpiConfig, Spi};
@@ -82,7 +83,7 @@ use trouble_host::prelude::*;
 use umsh_bsp_esp32::flash_store;
 use umsh_bsp_esp32::rng::EspCryptoRng;
 use umsh_bsp_heltec_lora32_v3::battery::BatterySampler;
-use umsh_bsp_heltec_lora32_v3::display::{self, Display, DisplayConfigAsync as _};
+use umsh_bsp_heltec_lora32_v3::display::{self, Brightness, Display, DisplayConfigAsync as _};
 use umsh_bsp_heltec_lora32_v3::radio as board_radio;
 use umsh_bsp_heltec_lora32_v3::vext::Vext;
 use umsh_crypto::CryptoEngine;
@@ -95,7 +96,13 @@ use umsh_ulcp_runtime::driver::{
     self, DeviceEnv, DeviceRuntime, InEvent, InputChannel, OutFrame, TransportChannels,
 };
 use umsh_ulcp_runtime::{radio_mux, transport_policy};
+use umsh_ux_display_tracker::attention::{
+    Attention, AttentionConfig, DisplayKind, HoldReason, Transition,
+};
+use umsh_ux_display_tracker::gate::{Disposition, Gate, GateReason};
+use umsh_ux_display_tracker::menu::{MenuItem, MenuItems, Page, UiEffect, UiInput, UiModel, UiNotice};
 use umsh_ux_tracker::battery::soc_from_ocv;
+use umsh_ux_tracker::button::{ButtonEdge, ButtonEvent, ButtonFsm};
 
 use transport_policy::{Transport, generation_checked};
 
@@ -400,8 +407,32 @@ static BLE_WIPE_REQUEST: Signal<CriticalSectionRawMutex, ()> = Signal::new();
 static ADV_ALLOWED: AtomicBool = AtomicBool::new(true);
 static ADV_POLICY_CHANGED: Signal<CriticalSectionRawMutex, ()> = Signal::new();
 
-/// OLED redraw trigger; the display task also refreshes periodically.
+/// OLED redraw trigger for content that changed without the user asking
+/// — a battery sample, a bond count. Deliberately *not* a wake event:
+/// the battery is sampled on a timer, so a redraw that woke the panel
+/// would keep it lit forever.
 static UI_REFRESH: Signal<CriticalSectionRawMutex, ()> = Signal::new();
+/// The user is here, or wants to be: a button press, a BLE link
+/// transition. Restarts the display-attention timeout and relights a
+/// panel that has gone dark.
+static UI_WAKE: Signal<CriticalSectionRawMutex, ()> = Signal::new();
+/// Resolved menu gestures, button task → display task.
+static UI_INPUT_CH: Channel<CriticalSectionRawMutex, UiInput, 8> = Channel::new();
+/// Result of a menu action, to be shown on the status page.
+static UI_NOTICE: Signal<CriticalSectionRawMutex, UiNotice> = Signal::new();
+/// Whether the panel is currently powered off. Published by the display
+/// task; read by the button task, which gates a gesture on the state at
+/// the press that began it.
+static SCREEN_OFF: AtomicBool = AtomicBool::new(false);
+/// The four-second power-off hold fired: button task → heartbeat task,
+/// which owns the `Rtc` that deep sleep is entered through.
+static SHUTDOWN_REQUEST: Signal<CriticalSectionRawMutex, ()> = Signal::new();
+/// Shutdown sequence → display task. Distinct from `SHUTDOWN_REQUEST`
+/// so the two consumers cannot race for one signal: whichever awaited
+/// first would consume it and leave the other waiting forever.
+static DISPLAY_SHUTDOWN: Signal<CriticalSectionRawMutex, ()> = Signal::new();
+/// The display task has rendered its farewell and dropped `Vext`.
+static DISPLAY_SHUTDOWN_DONE: Signal<CriticalSectionRawMutex, ()> = Signal::new();
 /// 0 = normal heartbeat, 1 = pairing mode (fast LED blink).
 static BLE_LED_MODE: AtomicU8 = AtomicU8::new(0);
 /// 0 = idle/advertising, 1 = connected, 2 = attached. Display only.
@@ -1007,6 +1038,7 @@ async fn gatt_connection<C: Controller, P: PacketPool>(
     ));
     BLE_LINK.store(1, Ordering::Release);
     UI_REFRESH.signal(());
+    UI_WAKE.signal(());
     let mut attached = false;
     let mut reassembler: gatt::Reassembler<{ gatt::MAX_FRAME }> = gatt::Reassembler::new();
 
@@ -1216,6 +1248,7 @@ async fn gatt_connection<C: Controller, P: PacketPool>(
                             attached = true;
                             BLE_LINK.store(2, Ordering::Release);
                             UI_REFRESH.signal(());
+                            UI_WAKE.signal(());
                             INPUT_CH.send(InEvent::Attached(Transport::Ble)).await;
                         }
                         (true, false) => {
@@ -1224,6 +1257,7 @@ async fn gatt_connection<C: Controller, P: PacketPool>(
                             reassembler.reset();
                             BLE_LINK.store(1, Ordering::Release);
                             UI_REFRESH.signal(());
+                            UI_WAKE.signal(());
                             INPUT_CH.send(InEvent::Detached(Transport::Ble)).await;
                         }
                         _ => {}
@@ -1271,6 +1305,7 @@ async fn gatt_connection<C: Controller, P: PacketPool>(
     }
     BLE_LINK.store(0, Ordering::Release);
     UI_REFRESH.signal(());
+    UI_WAKE.signal(());
     if attached {
         INPUT_CH.send(InEvent::Detached(Transport::Ble)).await;
     }
@@ -1596,9 +1631,21 @@ fn draw_line(display: &mut Display, text: &str, row: i32, style: MonoTextStyle<'
     let _ = Text::new(text, Point::new(0, 10 + row * 12), style).draw(display);
 }
 
-/// Render the status screen. Best-effort — a display error just leaves
+/// The whole class vocabulary: this board can beacon, pair, and clear
+/// its bonds. Clearing is a menu item rather than a bare gesture because
+/// the confirmation page in front of it is what makes it safe.
+fn heltec_menu_items() -> MenuItems {
+    MenuItems::all()
+}
+
+/// Render the current page. Best-effort — a display error just leaves
 /// the panel stale; it never blocks the protocol paths.
-async fn render_status(display: &mut Display) {
+///
+/// Five rows of `FONT_6X10` fit the 64 px panel. Row 0 always names the
+/// device and row 1 always shows the menu cursor, so the user can tell
+/// where they are without remembering; the remaining three rows belong
+/// to the page.
+async fn render_frame(display: &mut Display, model: UiModel) {
     let style = MonoTextStyle::new(&FONT_6X10, BinaryColor::On);
     display.clear_buffer();
 
@@ -1611,106 +1658,413 @@ async fn render_status(display: &mut Display) {
     );
 
     let mut line: heapless::String<24> = heapless::String::new();
-    let pin = PAIRING_PIN.load(Ordering::Acquire);
-    if PAIRING_MODE.load(Ordering::Acquire) && pin != u32::MAX {
-        let _ = write!(line, "PIN {pin:06}");
-    } else if PAIRING_MODE.load(Ordering::Acquire) {
-        let _ = write!(line, "pairing (no PIN)");
-    } else {
-        let _ = write!(line, "paired");
-    }
-    draw_line(display, &line, 1, style);
+    match model.page() {
+        Page::Menu(item) => {
+            draw_line(
+                display,
+                match item {
+                    MenuItem::Status => "> Status",
+                    MenuItem::CheckIn => "> Check in",
+                    MenuItem::StartPairing => "> Start pairing",
+                    MenuItem::ClearBonds => "> Clear bonds",
+                },
+                1,
+                style,
+            );
 
-    line.clear();
-    let _ = write!(
-        line,
-        "bonds {}/{}{}",
-        BLE_BOND_COUNT.load(Ordering::Acquire),
-        ble_store::MAX_BONDS,
-        if PAIRING_LOCKED_OUT.load(Ordering::Acquire) {
-            " LOCK"
-        } else {
-            ""
-        },
-    );
-    draw_line(display, &line, 2, style);
+            if item == MenuItem::Status {
+                // Row 2 is the most valuable line on the page, so a
+                // pending result outranks the pairing state there; the
+                // PIN comes back as soon as the notice clears.
+                match model.notice() {
+                    Some(notice) => draw_line(
+                        display,
+                        match notice {
+                            UiNotice::CheckInRequested => "checking in...",
+                            UiNotice::PairingStarted => "pairing started",
+                            UiNotice::PairingUnavailable => "pair unavailable",
+                            UiNotice::BondsCleared => "bonds cleared",
+                            UiNotice::ClearFailed => "CLEAR FAILED",
+                        },
+                        2,
+                        style,
+                    ),
+                    None => {
+                        let pin = PAIRING_PIN.load(Ordering::Acquire);
+                        if PAIRING_MODE.load(Ordering::Acquire) && pin != u32::MAX {
+                            let _ = write!(line, "PIN {pin:06}");
+                        } else if PAIRING_MODE.load(Ordering::Acquire) {
+                            let _ = write!(line, "pairing (no PIN)");
+                        } else {
+                            let _ = write!(line, "paired");
+                        }
+                        draw_line(display, &line, 2, style);
+                    }
+                }
 
-    line.clear();
-    let _ = write!(
-        line,
-        "ble {}",
-        match BLE_LINK.load(Ordering::Acquire) {
-            2 => "attached",
-            1 => "connected",
-            _ if ADV_ALLOWED.load(Ordering::Acquire) => "advertising",
-            _ => "off (wired)",
+                line.clear();
+                let _ = write!(
+                    line,
+                    "{} b{}/{}{}",
+                    match BLE_LINK.load(Ordering::Acquire) {
+                        2 => "attached",
+                        1 => "connected",
+                        _ if ADV_ALLOWED.load(Ordering::Acquire) => "advertising",
+                        _ => "off (wired)",
+                    },
+                    BLE_BOND_COUNT.load(Ordering::Acquire),
+                    ble_store::MAX_BONDS,
+                    if PAIRING_LOCKED_OUT.load(Ordering::Acquire) {
+                        " LOCK"
+                    } else {
+                        ""
+                    },
+                );
+                draw_line(display, &line, 3, style);
+
+                line.clear();
+                let mv = BATTERY_MV.load(Ordering::Acquire);
+                if mv == 0 {
+                    let _ = write!(line, "batt --");
+                } else {
+                    let _ = write!(line, "batt {mv} mV {}%", soc_from_ocv(mv));
+                }
+                draw_line(display, &line, 4, style);
+            } else {
+                draw_line(
+                    display,
+                    match item {
+                        MenuItem::CheckIn => "2x: check in",
+                        MenuItem::StartPairing => "2x: start",
+                        MenuItem::ClearBonds => "2x: continue",
+                        MenuItem::Status => "",
+                    },
+                    2,
+                    style,
+                );
+                draw_line(display, "1x: next", 3, style);
+                draw_line(display, "hold: back", 4, style);
+            }
         }
-    );
-    draw_line(display, &line, 3, style);
-
-    line.clear();
-    let mv = BATTERY_MV.load(Ordering::Acquire);
-    if mv == 0 {
-        let _ = write!(line, "batt --");
-    } else {
-        let _ = write!(line, "batt {mv} mV {}%", soc_from_ocv(mv));
+        Page::Confirm {
+            confirm_selected, ..
+        } => {
+            draw_line(display, "Clear all bonds?", 1, style);
+            draw_line(
+                display,
+                if confirm_selected {
+                    "  Cancel"
+                } else {
+                    "> Cancel"
+                },
+                2,
+                style,
+            );
+            draw_line(
+                display,
+                if confirm_selected { "> CLEAR" } else { "  CLEAR" },
+                3,
+                style,
+            );
+            draw_line(display, "2x: confirm", 4, style);
+        }
     }
-    draw_line(display, &line, 4, style);
 
     let _ = display.flush().await;
 }
 
+/// Center a short message on an otherwise blank panel.
+async fn render_message(display: &mut Display, title: &str, detail: &str) {
+    let style = MonoTextStyle::new(&FONT_6X10, BinaryColor::On);
+    display.clear_buffer();
+    draw_line(display, title, 1, style);
+    draw_line(display, detail, 2, style);
+    let _ = display.flush().await;
+}
+
+/// Owns the OLED, the `Vext` rail that powers it, and the display
+/// attention policy.
+///
+/// The panel is emissive, so attention lapsing actually turns it off:
+/// dimmed as a warning at 7 s, dark at 10 s. It stays lit for as long as
+/// a pairing window is open, because its PIN is the only place that
+/// number is shown.
 #[embassy_executor::task]
-async fn display_task(mut display: Display) {
+async fn display_task(mut display: Display, mut vext: Vext) {
+    let mut model = UiModel::new(heltec_menu_items());
+    let mut attention = Attention::new(
+        DisplayKind::Emissive,
+        AttentionConfig::EMISSIVE,
+        Instant::now().as_millis(),
+    );
+    let _ = display.set_brightness(Brightness::NORMAL).await;
+    render_frame(&mut display, model).await;
+
     loop {
-        render_status(&mut display).await;
-        let _ = select(UI_REFRESH.wait(), Timer::after_secs(30)).await;
+        let now = Instant::now().as_millis();
+        attention.set_hold(
+            HoldReason::Pairing,
+            PAIRING_MODE.load(Ordering::Acquire),
+            now,
+        );
+        SCREEN_OFF.store(attention.is_lapsed(), Ordering::Release);
+
+        let lapse = async {
+            match attention.next_deadline() {
+                Some(deadline) => Timer::at(Instant::from_millis(deadline)).await,
+                None => core::future::pending().await,
+            }
+        };
+
+        let mut redraw = false;
+        let mut transition = None;
+        match select4(
+            UI_INPUT_CH.receive(),
+            select3(UI_REFRESH.wait(), UI_NOTICE.wait(), UI_WAKE.wait()),
+            DISPLAY_SHUTDOWN.wait(),
+            lapse,
+        )
+        .await
+        {
+            Either4::First(input) => {
+                let now = Instant::now().as_millis();
+                transition = attention.wake(now);
+                redraw = true;
+                match model.apply(input) {
+                    Some(UiEffect::CheckIn) => {
+                        device_node::request_beacon(device_node::BeaconTrigger::Button);
+                        model.set_notice(UiNotice::CheckInRequested);
+                    }
+                    Some(UiEffect::StartPairing) => PAIRING_MODE_REQUEST.signal(()),
+                    Some(UiEffect::ClearBonds) => BLE_WIPE_REQUEST.signal(()),
+                    None => {}
+                }
+            }
+            Either4::Second(event) => match event {
+                // Content the user did not ask for: redraw if the panel
+                // is already lit, but never light it.
+                Either3::First(()) => redraw = true,
+                Either3::Second(notice) => {
+                    model.set_notice(notice);
+                    transition = attention.wake(Instant::now().as_millis());
+                    redraw = true;
+                }
+                // A wake on its own changes no content — a lit panel is
+                // already showing the truth, and the events that do
+                // change something raise `UI_REFRESH` alongside this.
+                Either3::Third(()) => {
+                    transition = attention.wake(Instant::now().as_millis());
+                    redraw = transition.is_some();
+                }
+            },
+            Either4::Third(()) => {
+                render_message(&mut display, "Powering off", "hold to wake").await;
+                let _ = display.set_display_on(true).await;
+                Timer::after_millis(1_200).await;
+                let _ = display.set_display_on(false).await;
+                vext.disable();
+                DISPLAY_SHUTDOWN_DONE.signal(());
+                core::future::pending::<()>().await;
+            }
+            Either4::Fourth(()) => transition = attention.poll(Instant::now().as_millis()),
+        }
+
+        match transition {
+            Some(Transition::Lapsed) => {
+                // Waking always lands on the status page rather than on
+                // whatever was abandoned here.
+                model.go_home();
+                let _ = display.set_display_on(false).await;
+                redraw = false;
+            }
+            Some(Transition::Dimmed) => {
+                let _ = display.set_brightness(Brightness::DIM).await;
+                redraw = false;
+            }
+            Some(Transition::Woke) | None => {}
+        }
+
+        if redraw && attention.accepts_redraw() {
+            render_frame(&mut display, model).await;
+        }
+        // Ordered after the redraw so the panel never lights on a stale
+        // frame.
+        if matches!(transition, Some(Transition::Woke)) {
+            let _ = display.set_brightness(Brightness::NORMAL).await;
+            let _ = display.set_display_on(true).await;
+        }
     }
 }
 
-/// PRG button (GPIO0, active low): a short press opens the pairing
-/// window (or requests a device-node beacon when one is held ≥2 s).
-/// Security wipes stay tool-driven (`umsh-ulcpctl`) — no
-/// destructive gesture on a button this easy to lean on.
+/// PRG button (GPIO0, active low), resolved into the display-tracker
+/// vocabulary: single advances the menu, double selects, a 1–4 second
+/// hold released by the user goes back, and a continuing four-second
+/// hold powers the board off.
+///
+/// A gesture that begins against a dark panel only relights it: the user
+/// cannot have meant to act on something they could not see. The
+/// power-off hold is the sole exception, since a device that has gone
+/// dark still has to be switchable-off.
 #[embassy_executor::task]
 async fn button_task(mut button: Input<'static>) {
+    const DEBOUNCE: Duration = Duration::from_millis(30);
+    let mut fsm = ButtonFsm::new(umsh_ux_display_tracker::button_timings());
+    let mut gate = Gate::new();
+    let mut pressed = button.is_low();
     loop {
-        button.wait_for_low().await;
-        Timer::after_millis(30).await;
-        if button.is_high() {
-            continue;
+        let event = {
+            let now_ms = Instant::now().as_millis();
+            let edge_fut = async {
+                if pressed {
+                    button.wait_for_high().await;
+                    Timer::after(DEBOUNCE).await;
+                    ButtonEdge::Release
+                } else {
+                    button.wait_for_low().await;
+                    Timer::after(DEBOUNCE).await;
+                    ButtonEdge::Press
+                }
+            };
+            let deadline = fsm.next_deadline().unwrap_or(now_ms.saturating_add(60_000));
+            match select(edge_fut, Timer::at(Instant::from_millis(deadline))).await {
+                Either::First(edge) => {
+                    pressed = matches!(edge, ButtonEdge::Press);
+                    if pressed {
+                        // Latch the pre-wake screen state, read on the
+                        // press edge — this task can park for a minute
+                        // awaiting an edge, and the panel lapses dark
+                        // during exactly such a park. Then wake on the
+                        // press, not on the resolved gesture, so the
+                        // panel is already lit while the user is still
+                        // deciding what the press will become.
+                        gate.set(GateReason::ScreenOff, SCREEN_OFF.load(Ordering::Acquire));
+                        gate.on_press();
+                        UI_WAKE.signal(());
+                    }
+                    fsm.on_edge(edge, Instant::now().as_millis())
+                }
+                Either::Second(()) => fsm.poll(Instant::now().as_millis()),
+            }
+        };
+
+        if let Some(event) = event {
+            match gate.disposition(event) {
+                Disposition::ConsumedByWake | Disposition::CancelAlert | Disposition::Discard => {}
+                Disposition::Deliver => {
+                    let input = match event {
+                        ButtonEvent::Single => Some(UiInput::Forward),
+                        ButtonEvent::Double => Some(UiInput::Select),
+                        ButtonEvent::Long => Some(UiInput::Backward),
+                        ButtonEvent::VeryLong => {
+                            pressed = false;
+                            fsm = ButtonFsm::new(umsh_ux_display_tracker::button_timings());
+                            SHUTDOWN_REQUEST.signal(());
+                            None
+                        }
+                        ButtonEvent::Triple | ButtonEvent::Quad => None,
+                    };
+                    if let Some(input) = input {
+                        UI_INPUT_CH.send(input).await;
+                    }
+                }
+            }
         }
-        let pressed_at = Instant::now();
-        button.wait_for_high().await;
-        let held = pressed_at.elapsed();
-        if held >= Duration::from_secs(2) {
-            device_node::request_beacon(device_node::BeaconTrigger::Button);
-        } else {
-            PAIRING_MODE_REQUEST.signal(());
-        }
-        Timer::after_millis(30).await;
+
+        gate.settle(fsm.next_deadline().is_none());
     }
 }
 
 /// Heartbeat LED plus the RWDT feed. Sharing one task keeps the
 /// watchdog tied to something visibly alive: if the LED stops, the
 /// reset follows. Pairing mode switches to a fast blink.
+///
+/// It also owns the shutdown sequence, because it owns the `Rtc` that
+/// deep sleep is entered through.
 #[embassy_executor::task]
-async fn heartbeat_task(mut led: Output<'static>, mut rtc: Rtc<'static>) -> ! {
+async fn heartbeat_task(
+    mut led: Output<'static>,
+    mut rtc: Rtc<'static>,
+    mut low_power: LowPower<'static>,
+) -> ! {
     loop {
         rtc.rwdt.feed();
-        if BLE_LED_MODE.load(Ordering::Acquire) == 1 {
-            led.set_high();
-            Timer::after_millis(100).await;
-            led.set_low();
-            Timer::after_millis(300).await;
+        // The idle blink spends two seconds dark, so the shutdown hold
+        // has to interrupt the wait rather than be noticed after it.
+        let (on_ms, off_ms) = if BLE_LED_MODE.load(Ordering::Acquire) == 1 {
+            (100, 300)
         } else {
-            led.set_high();
-            Timer::after_millis(40).await;
-            led.set_low();
-            Timer::after_secs(2).await;
+            (40, 2_000)
+        };
+        led.set_high();
+        if with_timeout(Duration::from_millis(on_ms), SHUTDOWN_REQUEST.wait())
+            .await
+            .is_ok()
+        {
+            shutdown(&mut led, &mut rtc, &mut low_power).await;
+        }
+        led.set_low();
+        if with_timeout(Duration::from_millis(off_ms), SHUTDOWN_REQUEST.wait())
+            .await
+            .is_ok()
+        {
+            shutdown(&mut led, &mut rtc, &mut low_power).await;
         }
     }
+}
+
+/// Quiesce the board and enter deep sleep, waking on the PRG button.
+///
+/// Ordering matters at every step:
+///
+/// - The radio goes to chip sleep first. It is powered from the board's
+///   main rail rather than from `Vext`, so it survives deep sleep and
+///   would otherwise sit in receive and dominate the sleeping current.
+/// - The display task renders its farewell and drops `Vext` on its own,
+///   since it owns both; a bounded wait keeps a wedged panel from
+///   stranding a board the user has asked to turn off.
+/// - The wake source is armed only after the button is released.
+///   Arming it under a still-held button wakes the board immediately
+///   from the very press that put it to sleep.
+///
+/// Counter persistence needs nothing here: `MacHandle::next_event`
+/// flushes it as it goes, so there is no buffered state to lose.
+async fn shutdown(
+    led: &mut Output<'static>,
+    rtc: &mut Rtc<'static>,
+    low_power: &mut LowPower<'static>,
+) -> ! {
+    debug_log(format_args!("shutdown: power-off hold"));
+    DEVICE_CTL.shutdown();
+    DISPLAY_SHUTDOWN_DONE.reset();
+    DISPLAY_SHUTDOWN.signal(());
+    let _ = with_timeout(Duration::from_secs(2), DISPLAY_SHUTDOWN_DONE.wait()).await;
+    led.set_low();
+
+    // GPIO0 is stolen rather than handed over: `button_task` holds an
+    // `Input` on it for the life of the board, and the wake source wants
+    // the bare pin. Both uses are read-only, nothing drives the pin, and
+    // `sleep_deep` never returns — so no other task observes the
+    // duplicate.
+    {
+        let button = Input::new(
+            unsafe { esp_hal::peripherals::GPIO0::steal() },
+            InputConfig::default().with_pull(Pull::Up),
+        );
+        // Feed the watchdog across the release wait: a user may lean on
+        // the button for longer than the 8 s timeout, and rebooting the
+        // board they just asked to switch off is the one outcome worse
+        // than a slow shutdown.
+        while button.is_low() {
+            rtc.rwdt.feed();
+            Timer::after_millis(50).await;
+        }
+        Timer::after_millis(50).await;
+        rtc.rwdt.feed();
+    }
+
+    rtc.rwdt.disable();
+    let wake = Ext0WakeupSource::new(unsafe { esp_hal::peripherals::GPIO0::steal() }, Level::Low);
+    low_power.sleep_deep(&[&wake]);
 }
 
 // ─── Boot ────────────────────────────────────────────────────────────────
@@ -1783,7 +2137,8 @@ async fn main(spawner: Spawner) {
     let boot_reason = boot_reason(panic_report.is_some());
 
     let led = Output::new(peripherals.GPIO35, Level::Low, OutputConfig::default());
-    spawner.spawn(heartbeat_task(led, rtc).unwrap());
+    let low_power = LowPower::new(peripherals.LPWR);
+    spawner.spawn(heartbeat_task(led, rtc, low_power).unwrap());
 
     // ── BLE controller first: transport AND the RF entropy source ────────
     let connector = BleConnector::new(peripherals.BT, Default::default())
@@ -1976,6 +2331,9 @@ async fn main(spawner: Spawner) {
     spawner.spawn(button_task(button).unwrap());
 
     // ── OLED (Vext up → reset → init), then hand the panel to its task ───
+    // The panel and the rail that powers it move together: the display
+    // task switches the panel off when attention lapses and drops the
+    // rail entirely on the way into deep sleep.
     let mut vext = Vext::new(peripherals.GPIO36);
     let mut oled_reset = Output::new(peripherals.GPIO21, Level::High, OutputConfig::default());
     let i2c = I2c::new(
@@ -1990,7 +2348,7 @@ async fn main(spawner: Spawner) {
     vext.enable().await;
     display::reset(&mut oled_reset).await;
     if oled.init().await.is_ok() {
-        spawner.spawn(display_task(oled).unwrap());
+        spawner.spawn(display_task(oled, vext).unwrap());
     }
 
     // ── BLE app: runs the pairing lattice + GATT transport forever ───────

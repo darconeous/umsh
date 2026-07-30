@@ -30,7 +30,10 @@ and hardware testing.
 
 ## E-paper trackers
 
-- Should status screens refresh on events, on a bounded schedule, or only on
-  user input to balance truthfulness, latency, ghosting, and battery use?
+Refresh scheduling is settled for display trackers: screens refresh on events,
+never on a timer, and display attention lapses back to the home page after
+thirty seconds. See
+[Power and Attention](interaction-model/power-and-attention.md#display-attention).
+
 - When the displayed radio state can become stale during sleep, what wording or
   timestamp makes that limitation clear?

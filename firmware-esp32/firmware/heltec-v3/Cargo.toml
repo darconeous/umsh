@@ -36,6 +36,7 @@ umsh-hal = { path = "../../../crates/umsh-hal", default-features = false, featur
 umsh-journal-store = { path = "../../../crates/umsh-journal-store" }
 umsh-radio-loraphy = { path = "../../../crates/umsh-radio-loraphy", default-features = false }
 umsh-ux-tracker = { path = "../../../crates/umsh-ux-tracker" }
+umsh-ux-display-tracker = { path = "../../../crates/umsh-ux-display-tracker" }
 # The device node: a full on-board MAC/node stack for the device
 # identity (device_node.rs), sharing the radio through the mux.
 umsh-core = { path = "../../../crates/umsh-core", default-features = false }

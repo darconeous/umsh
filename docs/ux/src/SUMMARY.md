@@ -35,6 +35,7 @@
 
 - [SenseCAP T1000-E](hardware/t1000e.md)
 - [LilyGO T-Echo](hardware/t-echo.md)
+- [Heltec WiFi LoRa 32 V3](hardware/heltec-lora32-v3.md)
 - [LilyGO T-LoRa Pager](hardware/t-lora-pager.md)
 - [LilyGO T-Deck](hardware/t-deck.md)
 

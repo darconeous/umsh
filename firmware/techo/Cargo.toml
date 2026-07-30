@@ -91,6 +91,7 @@ umsh-crypto = { path = "../../crates/umsh-crypto", default-features = false, fea
 umsh-hal = { path = "../../crates/umsh-hal", default-features = false }
 umsh-journal-store = { path = "../../crates/umsh-journal-store" }
 umsh-ux-tracker = { path = "../../crates/umsh-ux-tracker", default-features = false }
+umsh-ux-display-tracker = { path = "../../crates/umsh-ux-display-tracker", default-features = false }
 heapless = { version = "0.8", default-features = false }
 # trouble-host's GATT value implementations use heapless 0.9.
 heapless09 = { package = "heapless", version = "0.9", default-features = false }

@@ -32,6 +32,7 @@
 #![no_std]
 #![allow(async_fn_in_trait)]
 
+use core::sync::atomic::{AtomicBool, Ordering};
 use core::task::{Context, Poll};
 
 use embassy_futures::select::{Either, select};
@@ -337,6 +338,7 @@ pub struct DeviceControl<M: RawMutex> {
     settings: Signal<M, DeviceSettings>,
     rssi_req: Signal<M, ()>,
     rssi_resp: Signal<M, Result<i16, ()>>,
+    shutdown: AtomicBool,
 }
 
 impl<M: RawMutex> DeviceControl<M> {
@@ -345,7 +347,30 @@ impl<M: RawMutex> DeviceControl<M> {
             settings: Signal::new(),
             rssi_req: Signal::new(),
             rssi_resp: Signal::new(),
+            shutdown: AtomicBool::new(false),
         }
+    }
+
+    /// Put the radio into chip sleep and stop the runner.
+    ///
+    /// Terminal, and meant for the board's own power-off path: the
+    /// runner parks forever once it observes this, so nothing after it
+    /// can transmit or receive. The SX1262 keeps its own supply while
+    /// the host MCU is in deep sleep, so skipping this would leave the
+    /// chip receiving and dominate the sleeping board's current draw.
+    ///
+    /// The flag is what the runner acts on; the settings signal only
+    /// exists to break it out of RX so it can look.
+    pub fn shutdown(&self) {
+        self.shutdown.store(true, Ordering::Release);
+        self.settings.signal(DeviceSettings {
+            enabled: false,
+            freq_hz: UMSH_FREQUENCY_HZ,
+            sf: SpreadingFactor::_7,
+            bw: Bandwidth::_125KHz,
+            cr: CodingRate::_4_5,
+            power_dbm: 0,
+        });
     }
 
     /// Apply new settings. The runner picks them up at its next await
@@ -466,6 +491,17 @@ where
     'reconfigure: loop {
         // Idle until we have an enabled configuration.
         let active = loop {
+            // Checked here rather than in the selects below because every
+            // path that observes new settings passes through this loop:
+            // `shutdown` wakes an RX-parked runner with a settings signal,
+            // and an already-idle one leaves `wait_settings_while_idle`
+            // for the same reason.
+            if ctl.shutdown.load(Ordering::Acquire) {
+                let _ = lora.sleep(false).await;
+                loop {
+                    core::future::pending::<()>().await;
+                }
+            }
             match settings {
                 Some(current) if current.enabled => break current,
                 _ => settings = Some(wait_settings_while_idle(ctl).await),

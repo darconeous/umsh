@@ -32,6 +32,7 @@ costs of migration before considering implementing it.
   - `umsh-radio-loraphy` — `umsh-hal::Radio` over any `lora-phy` RadioKind
   - `umsh-bsp-*` — board support: `nrf52840` (shared base), `t1000e`, `techo`, `wio-tracker-l1`, `sensecap-solar`
   - `umsh-ux-tracker` — single-button/LED/buzzer UX for tracker boards
+  - `umsh-ux-display-tracker` — menu + display-attention + input-gate UX shared by display trackers (t-echo, heltec-v3, wio-tracker-l1)
   - `umsh-cli` / `umsh-app-ulcp-cli` — host CLI + CLI-console firmware logic
 - `umsh/` — umbrella crate re-exporting the workspace; defines the `Platform` trait + Tokio/Embassy adapters. Host binaries: `umsh-capture`, `umsh-ulcpctl`.
 - `firmware/` — nRF52840 firmware (thumbv7em, UF2/DFU). **One shipping image per board** (t1000e / techo / sensecap-solar) — there is no separate repeater build; role is configuration. The `*-console` builds are per-board bringup harnesses, not products. **Wio Tracker L1 is parked** at bringup Phases 0–1 and has a CLI harness only.

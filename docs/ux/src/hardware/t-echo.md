@@ -5,12 +5,12 @@ button, a capacitive touch control used for the display light, and an RGB LED.
 The standard model has no buzzer. The phone remains the primary UMSH interface,
 but the display makes status and sensitive device actions visible.
 
-## Current firmware BLE menu
+## Implemented behavior
 
-The current e-paper BLE menu contains Status, Start pairing, and Clear bonds.
-It shows bond count and whether pairing is open, closed, or locked.
+The e-paper menu contains Status, Check in, Start pairing, and Clear bonds. It
+shows bond count and whether pairing is open, closed, or locked.
 
-| Input | Current meaning |
+| Input | Meaning |
 |---|---|
 | Single side-button click | Move forward to the next visible item |
 | Double click | Select the visible item |
@@ -24,9 +24,31 @@ task serializes input with e-paper refresh, preventing Select from activating an
 item that has not yet appeared. Before shutdown it renders “Sleeping / Good
 night” and puts the panel to sleep.
 
+The panel is persistent, so display attention lapsing never blanks it: thirty
+seconds after the last input the menu returns to Status, dropping any open
+confirmation. The panel itself stays readable.
+
+A running locate alert both flashes the indicator LED and strobes the e-paper
+backlight twice a second, and the screen says so. The backlight is by far the
+most conspicuous output on this board, which is the whole point of an alert; it
+is arbitrated, so the touch control behaves normally whenever no alert is
+running. Any press during an alert cancels it instead of navigating — except the
+four-second power-off hold, which always powers off.
+
+The capacitive touch control sits outside the attention and gate models
+entirely. It is a momentary light for reading a bistable panel in the dark, not
+a navigation control, so holding it neither counts as activity nor consumes a
+gesture.
+
 These are strong precedents for the general guidelines: use the display instead
 of hidden pairing gestures, default destructive choices to Cancel, preserve an
 always-available long power hold, and account for display latency.
+
+Implemented in [`firmware/nrf52-tracker/src/main.rs`][techo-src] over the shared
+[`umsh-ux-display-tracker`][ux-crate] menu, attention, and gate modules.
+
+[techo-src]: https://github.com/darconeous/umsh/blob/main/firmware/nrf52-tracker/src/main.rs
+[ux-crate]: https://github.com/darconeous/umsh/tree/main/crates/umsh-ux-display-tracker
 
 ## Recommended evolution
 

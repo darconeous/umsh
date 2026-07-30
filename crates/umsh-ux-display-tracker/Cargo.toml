@@ -1,0 +1,29 @@
+[package]
+name = "umsh-ux-display-tracker"
+description = "User-experience mechanism for display-tracker-class UMSH boards (small display, one button or a D-pad)"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+repository.workspace = true
+
+# Mechanism-only UX layer for "display-tracker-class" UMSH devices:
+#
+#   * a small display — emissive (OLED) or persistent (e-paper)
+#   * one button, or a button plus a D-pad / joystick
+#   * battery powered, no keyboard
+#
+# Boards in this class (T-Echo, Heltec LoRa32 V3, Wio Tracker L1,
+# T-Beam Supreme) differ in panel technology and input richness but share
+# one interaction model, so the menu, the display-attention policy, and
+# the input gate all live here rather than in each firmware.
+#
+# This crate sits alongside `umsh-ux-tracker` (headless single-button
+# boards) and borrows its button-gesture recognizer; it does not replace
+# it. See docs/firmware-architecture.md for the BSP / UX / App / Binary
+# layering, and docs/ux/ for the user-facing rules these modules encode.
+
+[features]
+default = []
+
+[dependencies]
+umsh-ux-tracker = { path = "../umsh-ux-tracker" }

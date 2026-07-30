@@ -83,10 +83,15 @@ firmware/
   a similar physical UX. For example, `umsh-ux-tracker` covers boards with
   one button, one LED, one piezo buzzer, USB-CDC, and a battery — providing
   a button-gesture FSM, an LED-heartbeat engine with overlay sequences, a
-  buzzer melody sequencer, and a low-battery detector. A device class with
-  a screen + speaker + keyboard would have its own (totally different)
-  `umsh-ux-handheld` crate; sharing app code across UX classes is rarely
-  worthwhile because the abstractions don't generalize.
+  buzzer melody sequencer, and a low-battery detector.
+  `umsh-ux-display-tracker` covers boards that add a small display and
+  possibly a D-pad (T-Echo, Heltec V3, Wio Tracker L1, T-Beam Supreme) —
+  providing the on-screen menu, the display-attention policy, and the input
+  gate, and borrowing the button recognizer from `umsh-ux-tracker` rather
+  than duplicating it. A device class with a speaker + keyboard would have
+  its own (totally different) `umsh-ux-handheld` crate; sharing app code
+  across UX classes is rarely worthwhile because the abstractions don't
+  generalize.
 - An **App crate** is `no_std`, hardware-agnostic, and generic over a
   Platform plus a UX class. It defines *policy* on top of the UX
   mechanism: which button event maps to which action, which CLI commands
@@ -123,7 +128,7 @@ class → one new UX-class crate plus the apps that target it.
 |---|---|---|
 | `crates/umsh-bsp-<chip>/` | Chip-level BSP, board-agnostic. Owns peripherals and patterns that any board using that chip needs. | `umsh-bsp-nrf52840`, `umsh-bsp-esp32s3` |
 | `crates/umsh-bsp-<board>/` | Board-level BSP. Composes a chip-BSP with board-specific pinout, sensors, radios. Implements `Platform`. | `umsh-bsp-t1000e`, `umsh-bsp-solar-p1`, `umsh-bsp-tdeck` |
-| `crates/umsh-ux-<class>/` | UX-class mechanism. Pure-logic engines shared by every app on every board of that device class. | `umsh-ux-tracker` (single button + single LED + piezo buzzer + USB-CDC), future `umsh-ux-handheld`, `umsh-ux-headless` |
+| `crates/umsh-ux-<class>/` | UX-class mechanism. Pure-logic engines shared by every app on every board of that device class. | `umsh-ux-tracker` (single button + single LED + piezo buzzer + USB-CDC), `umsh-ux-display-tracker` (small display + button or D-pad), future `umsh-ux-handheld` |
 | `crates/umsh-app-<firmware>/` | App-specific policy, hardware-agnostic. Generic over a Platform and a UX class. | `umsh-app-ulcp-cli`, `umsh-app-repeater`, `umsh-app-uart-cli-debug` |
 | `firmware/<firmware>-<board>/` | Binary glue crate. Pinned to a target triple. | `firmware/t1000e-console`, `firmware/repeater-t1000e`, `firmware/repeater-tdeck` |
 

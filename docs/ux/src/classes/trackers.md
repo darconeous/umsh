@@ -36,11 +36,25 @@ enough to remember, and can be confirmed unambiguously.
 
 ## Display trackers
 
-Use the display to make local state and sensitive actions explicit. One-button
-navigation may use single = next, double = select, and hold-release = back if
-the mapping is printed on every relevant screen. A separate, longer hold can
-remain available for sleep. Do not accept input against a screen that has not
-finished refreshing.
+Use the display to make local state and sensitive actions explicit.
+
+Display trackers share one interaction model regardless of panel technology or
+input richness, because a user who learns one should already know the others.
+One-button navigation uses single = next, double = select, and hold-release =
+back, with the mapping printed on every relevant screen; a longer, continuing
+hold always powers the device off. A board with a D-pad maps its own controls
+onto the same three actions rather than inventing a second vocabulary.
+
+The menu is a wrapping list with a home page, and each board enables the subset
+of entries it can actually perform. Destructive entries open a confirmation
+that defaults to Cancel — the confirmation is what makes them safe to expose on
+the menu at all, so a board should not hide such an action behind an
+undocumented gesture instead.
+
+Display attention, including what a lapse does on each panel technology and how
+input against a lapsed panel is treated, is specified in
+[Power and Attention](../interaction-model/power-and-attention.md#display-attention).
+Do not accept input against a screen that has not finished refreshing.
 
 ## Headless trackers
 

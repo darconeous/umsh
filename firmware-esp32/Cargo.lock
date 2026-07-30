@@ -1349,6 +1349,7 @@ dependencies = [
  "umsh-ulcp",
  "umsh-ulcp-device",
  "umsh-ulcp-runtime",
+ "umsh-ux-display-tracker",
  "umsh-ux-tracker",
 ]
 
@@ -2821,6 +2822,13 @@ dependencies = [
  "umsh-sync",
  "umsh-ulcp",
  "umsh-ulcp-device",
+]
+
+[[package]]
+name = "umsh-ux-display-tracker"
+version = "0.1.0"
+dependencies = [
+ "umsh-ux-tracker",
 ]
 
 [[package]]
