@@ -31,7 +31,6 @@ members = [
     "firmware/t1000e",
     "firmware/techo",
     "firmware/sensecap-solar",
-    "firmware/ble-spike-techo",
     "tools/ulcp-web-debugger/engine",
     "tools/uniffi-bindgen",
     "umsh",

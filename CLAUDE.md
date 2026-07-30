@@ -34,7 +34,7 @@ costs of migration before considering implementing it.
   - `umsh-ux-tracker` — single-button/LED/buzzer UX for tracker boards
   - `umsh-cli` / `umsh-app-ulcp-cli` — host CLI + CLI-console firmware logic
 - `umsh/` — umbrella crate re-exporting the workspace; defines the `Platform` trait + Tokio/Embassy adapters. Host binaries: `umsh-capture`, `umsh-ulcpctl`.
-- `firmware/` — nRF52840 firmware (thumbv7em, UF2/DFU). **One shipping image per board** (t1000e / techo / sensecap-solar) — there is no separate repeater build; role is configuration. The `*-console` builds are per-board bringup harnesses, not products; `ble-spike-techo` likewise. **Wio Tracker L1 is parked** at bringup Phases 0–1 and has a CLI harness only.
+- `firmware/` — nRF52840 firmware (thumbv7em, UF2/DFU). **One shipping image per board** (t1000e / techo / sensecap-solar) — there is no separate repeater build; role is configuration. The `*-console` builds are per-board bringup harnesses, not products. **Wio Tracker L1 is parked** at bringup Phases 0–1 and has a CLI harness only.
 - `firmware-esp32/` — **separate cargo workspace** for Xtensa boards (Heltec LoRa32 V2 parked, V3 active). Own `rust-toolchain.toml` pinning `channel = "esp"`.
 - `apps/ios/` — SwiftUI app; `packages/UMSHMobileCore` — UniFFI Swift package.
 - `docs/` — protocol spec (`protocol/`), per-board hardware docs, firmware/feature plans, UX.
@@ -56,7 +56,7 @@ nRF52840 (UF2/DFU via `scripts/flash.py`; device must be in DFU mode: 1200-baud 
 - `make flash-sensecap-solar` (shipping image) or `make flash-sensecap-solar-console`
 
 ESP32 (build from `firmware-esp32/`; needs espup toolchain: `cargo install espup espflash && espup install`). Flash via ROM serial bootloader — cannot be bricked, stays attached as monitor:
-- `make flash-hello-heltec-v3`, `make flash-heltec-v3`, `make flash-heltec-v3-console` (override `ESPFLASH_PORT=...`)
+- `make flash-heltec-v3`, `make flash-heltec-v3-console` (override `ESPFLASH_PORT=...`)
 - ESP32 flashes rewrite the partition table (`partitions-umsh.csv`, carries the 64 KB `umsh` data partition) — reflashing loses data past the old factory partition.
 
 Docs: `make docs` (mdBook), `make rust-docs`, `make docs-serve`, `make web-debugger` (wasm).

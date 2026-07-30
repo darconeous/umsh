@@ -1292,30 +1292,6 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "5baebc0774151f905a1a2cc41989300b1e6fbb29aff0ceffa1064fdd3088d582"
 
 [[package]]
-name = "firmware-ble-spike-techo"
-version = "0.1.0"
-dependencies = [
- "cortex-m",
- "cortex-m-rt",
- "defmt 0.3.100",
- "embassy-executor 0.10.0",
- "embassy-futures",
- "embassy-nrf",
- "embassy-time",
- "embassy-usb",
- "embedded-hal-bus",
- "heapless 0.9.3",
- "lora-phy",
- "nrf-mpsl",
- "nrf-sdc",
- "panic-halt",
- "static_cell",
- "trouble-host",
- "umsh-bsp-nrf52840",
- "umsh-ulcp",
-]
-
-[[package]]
 name = "firmware-sensecap-solar"
 version = "0.1.0"
 dependencies = [
@@ -2370,12 +2346,6 @@ dependencies = [
  "elliptic-curve",
  "primeorder",
 ]
-
-[[package]]
-name = "panic-halt"
-version = "1.0.0"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "a513e167849a384b7f9b746e517604398518590a9142f4846a32e3c2a4de7b11"
 
 [[package]]
 name = "parking_lot_core"

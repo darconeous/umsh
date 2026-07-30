@@ -77,10 +77,8 @@ jobs:
       fail-fast: false
       matrix:
         include:
-          # `make_target` maps to a Makefile target where one exists, so CI
-          # reuses the exact same build recipe developers use locally. Only
-          # ble-spike-techo has no Makefile target (it's a throwaway bring-up
-          # spike, not a product image) so it's built directly.
+          # `make_target` is the Makefile target, so CI reuses the exact same
+          # build recipe developers use locally.
           - board: techo
             make_target: build-techo
           - board: techo-console
@@ -95,8 +93,6 @@ jobs:
             make_target: build-sensecap-solar-console
           - board: wio-tracker-l1-console
             make_target: build-wio-tracker-l1-console
-          - board: ble-spike-techo
-            make_target: ""
     steps:
       - uses: actions/checkout@v4
 
@@ -124,12 +120,7 @@ jobs:
 
       # nRF52840 firmware only links in --release (dev overflows flash).
       - name: Build (release)
-        run: |
-          if [ -n "${{ matrix.make_target }}" ]; then
-            make ${{ matrix.make_target }}
-          else
-            cd firmware/${{ matrix.board }} && cargo build --release
-          fi
+        run: make ${{ matrix.make_target }}
 
   apple:
     name: iOS / mobile-core

@@ -6,9 +6,7 @@
 //! The task layout and the reasons behind it are the same; only the
 //! transport differs (UART0/CP2102 rather than USB-CDC), so the nRF
 //! firmware's USB flow-control machinery collapses into a simpler drain
-//! loop. `hello-heltec-v3` remains the bringup/diagnostic binary with the
-//! button gestures and the panic/RWDT test hooks — this one is the
-//! functional node.
+//! loop.
 //!
 //! Task layout (steady state):
 //! - `main`:        boot sequencing, then parks on the display loop
@@ -91,8 +89,8 @@ esp_bootloader_esp_idf::esp_app_desc!();
 const WDT_TIMEOUT: esp_hal::time::Duration = esp_hal::time::Duration::from_secs(8);
 /// Battery resample + OLED redraw cadence.
 const REFRESH_PERIOD: Duration = Duration::from_secs(30);
-/// Bringup TX power, matching `hello-heltec-v3`. The MeshCore 22 dBm
-/// default is a ceiling, not a starting point.
+/// Bringup TX power. The MeshCore 22 dBm default is a ceiling, not a
+/// starting point.
 const TX_POWER_DBM: i32 = 2;
 
 /// MAC capacities, mirrored from [`HeltecV3Mac`]. Repeating them is

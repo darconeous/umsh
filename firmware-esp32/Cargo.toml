@@ -11,11 +11,7 @@ members = [
     "crates/umsh-bsp-esp32",
     "crates/umsh-bsp-heltec-lora32-v2",
     "crates/umsh-bsp-heltec-lora32-v3",
-    "firmware/hello-heltec-v2",
-    "firmware/ble-spike-heltec-v2",
-    "firmware/hello-heltec-v3",
     "firmware/heltec-v3-console",
-    "firmware/ble-spike-heltec-v3",
     "firmware/heltec-v3",
 ]
 resolver = "2"

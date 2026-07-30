@@ -1057,9 +1057,7 @@ dependencies = [
  "esp-hal",
  "esp-metadata-generated",
  "esp-sync",
- "esp-wifi-sys-esp32",
  "esp-wifi-sys-esp32s3",
- "esp32",
  "esp32s3",
 ]
 
@@ -1098,9 +1096,7 @@ dependencies = [
  "esp-radio-rtos-driver",
  "esp-rom-sys",
  "esp-sync",
- "esp-wifi-sys-esp32",
  "esp-wifi-sys-esp32s3",
- "esp32",
  "esp32s3",
  "heapless 0.9.3",
  "instability",
@@ -1195,12 +1191,6 @@ dependencies = [
  "riscv",
  "xtensa-lx",
 ]
-
-[[package]]
-name = "esp-wifi-sys-esp32"
-version = "0.2.0"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "2556f38f5292d9735d4e156e276815fc001c9a0a2be0544a575c5fb867129d24"
 
 [[package]]
 name = "esp-wifi-sys-esp32s3"
@@ -1319,107 +1309,6 @@ name = "find-msvc-tools"
 version = "0.1.9"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "5baebc0774151f905a1a2cc41989300b1e6fbb29aff0ceffa1064fdd3088d582"
-
-[[package]]
-name = "firmware-ble-spike-heltec-v2"
-version = "0.1.0"
-dependencies = [
- "bt-hci",
- "embassy-executor",
- "embassy-futures",
- "embassy-time",
- "esp-alloc",
- "esp-bootloader-esp-idf",
- "esp-hal",
- "esp-println",
- "esp-radio",
- "esp-rtos",
- "heapless 0.9.3",
- "static_cell",
- "trouble-host",
- "umsh-bsp-esp32",
- "umsh-bsp-heltec-lora32-v2",
-]
-
-[[package]]
-name = "firmware-ble-spike-heltec-v3"
-version = "0.1.0"
-dependencies = [
- "bt-hci",
- "embassy-executor",
- "embassy-futures",
- "embassy-sync 0.8.0",
- "embassy-time",
- "embedded-graphics",
- "esp-alloc",
- "esp-bootloader-esp-idf",
- "esp-hal",
- "esp-println",
- "esp-radio",
- "esp-rtos",
- "esp-storage",
- "heapless 0.8.0",
- "heapless 0.9.3",
- "static_cell",
- "trouble-host",
- "umsh-bsp-esp32",
- "umsh-bsp-heltec-lora32-v3",
- "umsh-crypto",
- "umsh-journal-store",
- "umsh-ulcp",
- "umsh-ulcp-device",
- "umsh-ulcp-runtime",
-]
-
-[[package]]
-name = "firmware-hello-heltec-v2"
-version = "0.1.0"
-dependencies = [
- "embassy-executor",
- "embassy-futures",
- "embassy-sync 0.8.0",
- "embassy-time",
- "embedded-graphics",
- "embedded-hal-bus",
- "esp-bootloader-esp-idf",
- "esp-hal",
- "esp-println",
- "esp-rtos",
- "heapless 0.8.0",
- "lora-phy",
- "umsh-bsp-esp32",
- "umsh-bsp-heltec-lora32-v2",
- "umsh-hal",
- "umsh-radio-loraphy",
- "umsh-ux-tracker",
-]
-
-[[package]]
-name = "firmware-hello-heltec-v3"
-version = "0.1.0"
-dependencies = [
- "embassy-executor",
- "embassy-futures",
- "embassy-sync 0.8.0",
- "embassy-time",
- "embedded-graphics",
- "embedded-hal-bus",
- "esp-alloc",
- "esp-bootloader-esp-idf",
- "esp-hal",
- "esp-println",
- "esp-radio",
- "esp-rtos",
- "heapless 0.8.0",
- "lora-phy",
- "static_cell",
- "umsh-bsp-esp32",
- "umsh-bsp-heltec-lora32-v3",
- "umsh-crypto",
- "umsh-hal",
- "umsh-radio-loraphy",
- "umsh-ux-tracker",
-]
 
 [[package]]
 name = "firmware-heltec-v3"

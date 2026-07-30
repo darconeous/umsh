@@ -25,12 +25,10 @@ environment file (that is only for esp-idf/std builds).
 From the repo root, via the Makefile (preferred):
 
 ```sh
-make build-hello-heltec-v3
-make flash-hello-heltec-v3       # espflash over the CP2102, then monitor
-make flash-ble-spike-heltec-v3 ESPFLASH_PORT=/dev/cu.usbserial-0001
+make build-heltec-v3
+make flash-heltec-v3             # espflash over the CP2102, then monitor
+make flash-heltec-v3-console ESPFLASH_PORT=/dev/cu.usbserial-0001
 ```
-
-(`*-heltec-v2` targets are the parked classic-ESP32 equivalents.)
 
 The workspace `.cargo/config.toml` carries only chip-agnostic settings
 (espflash runner, linker flags, build-std); each firmware selects its
