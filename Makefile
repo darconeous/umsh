@@ -136,6 +136,13 @@ flash-heltec-v3: build-heltec-v3
 	espflash flash --monitor $(ESPFLASH_PORT_ARG) $(ESPFLASH_PARTITIONS) \
 		$(ESP32S3_TARGET_DIR)/firmware-heltec-v3
 
+
+install-umshctl:
+	cargo install --path umsh \
+		--features tokio-support \
+		--features serial-radio \
+		--features ble-radio
+
 # ─── Docs ────────────────────────────────────────────────────────────────────
 
 web-debugger:
