@@ -91,6 +91,8 @@ jobs:
             make_target: build-sensecap-solar
           - board: sensecap-solar-console
             make_target: build-sensecap-solar-console
+          - board: wio-tracker-l1
+            make_target: build-wio-tracker-l1
           - board: wio-tracker-l1-console
             make_target: build-wio-tracker-l1-console
     steps:
