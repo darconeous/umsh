@@ -35,10 +35,10 @@
             const path_to_root = "";
             const default_light_theme = "light";
             const default_dark_theme = "ayu";
-            window.path_to_searchindex_js = "searchindex-ba78ed8f.js";
+            window.path_to_searchindex_js = "searchindex-5216ea72.js";
         </script>
         <!-- Start loading toc.js asap -->
-        <script src="toc-6c1064ad.js"></script>
+        <script src="toc-ca16b95c.js"></script>
     </head>
     <body>
     <div id="mdbook-help-container">
@@ -219,6 +219,7 @@ rather than a broadcast advertisement.</p>
 <li><strong>Trace route</strong>: if the packet contains a trace-route option, the node caches that trace route as a source route for future packets back to the sender. Because the trace route is accumulated most-recent first, it already describes the return path from the receiver back toward the original sender. This is the primary mechanism for learning precise multi-hop paths.</li>
 <li><strong>Flood hop count</strong>: if the packet contains a flood hop count, the node caches the sender’s <code>FHOPS_ACC</code> value together with any region-code options that arrived on the packet. When no source route is available, these cached flood parameters can be reused for flood responses — scoping the flood to approximately the right radius and regional domain rather than flooding the entire network.</li>
 </ul>
+<p>A packet that arrives carrying a source-route option — including one whose hints are all consumed — spends flood hops only after the route runs out, so its <code>FHOPS_ACC</code> counts the tail of the path rather than its length. Such a packet SHOULD NOT be used to derive a flood-distance estimate.</p>
 <p>This routing state applies to all subsequent communication with the sender — replies, acknowledgments, and new messages alike. A node MAY replace a cached route when a newer packet provides a fresher trace route, and SHOULD discard cached routes that have proven unreachable.</p>
 <p>In practice, “proven unreachable” usually means that an ack-requested packet sent using the cached source route exhausted its retry budget without end-to-end success. In that case, the sender should stop trusting the stale route and return to route-discovery behavior:</p>
 <ul>
@@ -228,6 +229,14 @@ rather than a broadcast advertisement.</p>
 <li>set the <a href="packet-options.html#route-retry-option-6">Route Retry option</a> so intermediate repeaters treat the rerouted attempt as a new forwarding opportunity even though the packet’s MIC and frame counter are unchanged</li>
 </ul>
 <p>Once the peer replies and a fresher trace route is learned, the sender can resume normal source-routed transmission using the replacement route.</p>
+<h2 id="scoping-flood-hops-to-a-known-route"><a class="header" href="#scoping-flood-hops-to-a-known-route">Scoping Flood Hops to a Known Route</a></h2>
+<p>A wide flood hop count is a first-contact cost. Once routing state exists for a destination, the sender SHOULD scope <code>FHOPS_REM</code> to what the known path actually costs, plus a small margin:</p>
+<ul>
+<li><strong>Source route</strong>: the route constrains every hop until it empties, and only the final repeater spends flood budget, so one hop covers the route itself.</li>
+<li><strong>Flood distance</strong>: the cached <code>FHOPS_ACC</code> is the radius at which the destination was last heard.</li>
+<li><strong>Direct link</strong>: no forwarding hop is needed at all.</li>
+</ul>
+<p>The margin — one hop is a reasonable default — keeps delivery self-healing when the path has grown by a hop since it was learned, without paying for a mesh-wide flood on every packet. A route that has failed outright is repaired through the route-retry behavior above, which floods at the sender’s full budget rather than the narrowed one.</p>
 <h2 id="potential-improvement-proactive-route-refresh"><a class="header" href="#potential-improvement-proactive-route-refresh">Potential Improvement: Proactive Route Refresh</a></h2>
 <p>The recovery behavior above is reactive: a node continues using a cached source route until that route appears to have failed. In mobile scenarios, this may mean the sender does not attempt to discover a fresher route until after packets have already stopped flowing end-to-end.</p>
 <p>One possible future improvement would be to allow a sender to occasionally perform a low-rate exploratory route refresh even when there is no strong indication of failure. This behavior is <strong>not part of the current specified protocol behavior</strong> and has <strong>not been validated with real-world measurements</strong>. It is described here only as a possible future optimization.</p>

@@ -1,0 +1,1 @@
+window.SIDEBAR_ITEMS = {"constant":["ENCODED_MAX","MAX_ENTRIES","MAX_KEY_LEN"],"struct":["CounterMap","MapFull"]};

@@ -1,0 +1,41 @@
+<!DOCTYPE html><html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1.0"><meta name="generator" content="rustdoc"><meta name="description" content="Button event recognition state machine."><title>umsh_ux_tracker::button - Rust</title><script>if(window.location.protocol!=="file:")document.head.insertAdjacentHTML("beforeend","SourceSerif4-Regular-6b053e98.ttf.woff2,FiraSans-Italic-81dc35de.woff2,FiraSans-Regular-0fe48ade.woff2,FiraSans-MediumItalic-ccf7e434.woff2,FiraSans-Medium-e1aa3f0a.woff2,SourceCodePro-Regular-8badfe75.ttf.woff2,SourceCodePro-Semibold-aa29a496.ttf.woff2".split(",").map(f=>`<link rel="preload" as="font" type="font/woff2"href="../../static.files/${f}">`).join(""))</script><link rel="stylesheet" href="../../static.files/normalize-9960930a.css"><link rel="stylesheet" href="../../static.files/rustdoc-80aa586b.css"><meta name="rustdoc-vars" data-root-path="../../" data-static-root-path="../../static.files/" data-current-crate="umsh_ux_tracker" data-themes="" data-resource-suffix="" data-rustdoc-version="1.94.0-nightly (fcf67da03 2025-12-18)" data-channel="nightly" data-search-js="search-9e2438ea.js" data-stringdex-js="stringdex-a3946164.js" data-settings-js="settings-c38705f0.js" ><script src="../../static.files/storage-e2aeef58.js"></script><script defer src="../sidebar-items.js"></script><script defer src="../../static.files/main-3e30299d.js"></script><noscript><link rel="stylesheet" href="../../static.files/noscript-ffcac47a.css"></noscript><link rel="alternate icon" type="image/png" href="../../static.files/favicon-32x32-eab170b8.png"><link rel="icon" type="image/svg+xml" href="../../static.files/favicon-044be391.svg"></head><body class="rustdoc mod"><!--[if lte IE 11]><div class="warning">This old browser is unsupported and will most likely display funky things.</div><![endif]--><rustdoc-topbar><h2><a href="#">Module button</a></h2></rustdoc-topbar><nav class="sidebar"><div class="sidebar-crate"><h2><a href="../../umsh_ux_tracker/index.html">umsh_<wbr>ux_<wbr>tracker</a><span class="version">0.1.0</span></h2></div><div class="sidebar-elems"><section id="rustdoc-toc"><h2 class="location"><a href="#">Module button</a></h2><h3><a href="#">Sections</a></h3><ul class="block top-toc"><li><a href="#recognition-rules" title="Recognition rules">Recognition rules</a></li></ul><h3><a href="#structs">Module Items</a></h3><ul class="block"><li><a href="#structs" title="Structs">Structs</a></li><li><a href="#enums" title="Enums">Enums</a></li></ul></section><div id="rustdoc-modnav"><h2 class="in-crate"><a href="../index.html">In crate umsh_<wbr>ux_<wbr>tracker</a></h2></div></div></nav><div class="sidebar-resizer" title="Drag to resize sidebar"></div><main><div class="width-limiter"><section id="main-content" class="content"><div class="main-heading"><div class="rustdoc-breadcrumbs"><a href="../index.html">umsh_ux_tracker</a></div><h1>Module <span>button</span>&nbsp;<button id="copy-path" title="Copy item path to clipboard">Copy item path</button></h1><rustdoc-toolbar></rustdoc-toolbar><span class="sub-heading"><a class="src" href="../../src/umsh_ux_tracker/button.rs.html#1-532">Source</a> </span></div><details class="toggle top-doc" open><summary class="hideme"><span>Expand description</span></summary><div class="docblock"><p>Button event recognition state machine.</p>
+<p>Resolves a stream of raw <a href="enum.ButtonEdge.html" title="enum umsh_ux_tracker::button::ButtonEdge"><code>ButtonEdge</code></a> events plus a monotonic
+millisecond clock into the high-level <a href="enum.ButtonEvent.html" title="enum umsh_ux_tracker::button::ButtonEvent"><code>ButtonEvent</code></a>s the UX is
+defined in terms of: single, double, triple, and quadruple clicks,
+plus long-press and an optional very-long-press.</p>
+<p>The machine is <strong>pure logic</strong> — no embassy, no hardware, no I/O — so
+it can be exhaustively unit-tested with synthetic time. Callers are
+expected to:</p>
+<ol>
+<li>Call <a href="struct.ButtonFsm.html#method.on_edge" title="method umsh_ux_tracker::button::ButtonFsm::on_edge"><code>ButtonFsm::on_edge</code></a> for each debounced press / release.</li>
+<li>Call <a href="struct.ButtonFsm.html#method.poll" title="method umsh_ux_tracker::button::ButtonFsm::poll"><code>ButtonFsm::poll</code></a> when the deadline reported by
+<a href="struct.ButtonFsm.html#method.next_deadline" title="method umsh_ux_tracker::button::ButtonFsm::next_deadline"><code>ButtonFsm::next_deadline</code></a> elapses.</li>
+</ol>
+<p>Both methods can produce a <a href="enum.ButtonEvent.html" title="enum umsh_ux_tracker::button::ButtonEvent"><code>ButtonEvent</code></a> when one becomes
+resolvable.</p>
+<h2 id="recognition-rules"><a class="doc-anchor" href="#recognition-rules">§</a>Recognition rules</h2>
+<ul>
+<li>A “click” is a press-then-release where the hold duration is at
+most <code>max_click_hold</code>.</li>
+<li>One to four clicks within <code>inter_click_gap</code> of each other produce
+<a href="enum.ButtonEvent.html#variant.Single" title="variant umsh_ux_tracker::button::ButtonEvent::Single"><code>ButtonEvent::Single</code></a>, <a href="enum.ButtonEvent.html#variant.Double" title="variant umsh_ux_tracker::button::ButtonEvent::Double"><code>ButtonEvent::Double</code></a>,
+<a href="enum.ButtonEvent.html#variant.Triple" title="variant umsh_ux_tracker::button::ButtonEvent::Triple"><code>ButtonEvent::Triple</code></a>, or <a href="enum.ButtonEvent.html#variant.Quad" title="variant umsh_ux_tracker::button::ButtonEvent::Quad"><code>ButtonEvent::Quad</code></a> respectively.
+Quad fires immediately on the fourth release without waiting for
+the gap; single / double / triple fire after the gap elapses with
+no further press.</li>
+<li>By default, holding the button continuously for <code>long_press</code> produces
+<a href="enum.ButtonEvent.html#variant.Long" title="variant umsh_ux_tracker::button::ButtonEvent::Long"><code>ButtonEvent::Long</code></a> <em>while the button is still pressed</em> and consumes
+any clicks accumulated before the hold began.</li>
+<li>When <code>very_long_press</code> is configured, releasing between <code>long_press</code>
+and <code>very_long_press</code> produces <a href="enum.ButtonEvent.html#variant.Long" title="variant umsh_ux_tracker::button::ButtonEvent::Long"><code>ButtonEvent::Long</code></a>. Remaining held
+through <code>very_long_press</code> produces <a href="enum.ButtonEvent.html#variant.VeryLong" title="variant umsh_ux_tracker::button::ButtonEvent::VeryLong"><code>ButtonEvent::VeryLong</code></a> without
+first emitting <code>Long</code>. This supports a navigational hold plus a distinct
+always-available sleep hold.</li>
+<li>Releases longer than <code>max_click_hold</code> but shorter than
+<code>long_press</code> are <em>discarded clicks</em>; if there are accumulated
+prior clicks they are emitted, otherwise nothing fires. This
+matches the rule: a press that’s “too long to be a click but too
+short to be a long-press” is a user error and should not silently
+become either.</li>
+</ul>
+</div></details><h2 id="structs" class="section-header">Structs<a href="#structs" class="anchor">§</a></h2><dl class="item-table"><dt><a class="struct" href="struct.ButtonFsm.html" title="struct umsh_ux_tracker::button::ButtonFsm">Button<wbr>Fsm</a></dt><dd>Button event recognition state machine.</dd><dt><a class="struct" href="struct.ButtonTimings.html" title="struct umsh_ux_tracker::button::ButtonTimings">Button<wbr>Timings</a></dt><dd>Tunable timings; tune on real hardware.</dd></dl><h2 id="enums" class="section-header">Enums<a href="#enums" class="anchor">§</a></h2><dl class="item-table"><dt><a class="enum" href="enum.ButtonEdge.html" title="enum umsh_ux_tracker::button::ButtonEdge">Button<wbr>Edge</a></dt><dd>Raw debounced button transition.</dd><dt><a class="enum" href="enum.ButtonEvent.html" title="enum umsh_ux_tracker::button::ButtonEvent">Button<wbr>Event</a></dt><dd>High-level button event recognized by the FSM.</dd></dl></section></div></main></body></html>

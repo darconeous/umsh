@@ -1,0 +1,1 @@
+window.SIDEBAR_ITEMS = {"fn":["journal_write_target"],"struct":["ProtoStore"],"trait":["JournalFlash"],"type":["BootPayload","SharedFlash"]};

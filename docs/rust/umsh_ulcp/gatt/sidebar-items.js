@@ -1,0 +1,1 @@
+window.SIDEBAR_ITEMS = {"constant":["FRAME_IN_UUID","FRAME_OUT_UUID","MAX_FRAME","SAR_COMPLETE","SAR_CONT","SAR_FIRST","SAR_LAST","SERVICE_UUID"],"enum":["DecodeError","EncodeError"],"fn":["segments","uuid"],"struct":["Reassembler","Segment","Segments"]};

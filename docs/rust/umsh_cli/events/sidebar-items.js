@@ -1,0 +1,1 @@
+window.SIDEBAR_ITEMS = {"constant":["EVENT_LINE_MAX","EVENT_PAYLOAD_MAX","EVENT_RAW_MAX"],"enum":["CliEvent"]};

@@ -35,10 +35,10 @@
             const path_to_root = "";
             const default_light_theme = "light";
             const default_dark_theme = "ayu";
-            window.path_to_searchindex_js = "searchindex-ba78ed8f.js";
+            window.path_to_searchindex_js = "searchindex-5216ea72.js";
         </script>
         <!-- Start loading toc.js asap -->
-        <script src="toc-6c1064ad.js"></script>
+        <script src="toc-ca16b95c.js"></script>
     </head>
     <body>
     <div id="mdbook-help-container">
@@ -191,7 +191,9 @@
 </table>
 </div>
 <h2 id="channel-sensing"><a class="header" href="#channel-sensing">Channel Sensing</a></h2>
-<p>Before transmitting any packet, a node MUST perform Channel Activity Detection (CAD). CAD is a LoRa hardware primitive that detects preamble energy on the channel with minimal power draw.</p>
+<p>In general, before transmitting any packet, a node SHOULD perform Channel Activity Detection (CAD),
+or whatever the appropriate analogous mechanism is for the given physical layer.
+CAD is a LoRa hardware primitive that detects preamble energy on the channel with minimal power draw.</p>
 <ul>
 <li>If CAD indicates the channel is idle, proceed to transmit.</li>
 <li>If CAD indicates the channel is busy, enter the backoff procedure.</li>
@@ -205,7 +207,7 @@
 <li>If the channel remains busy after all attempts, drop the packet silently.</li>
 </ol>
 <h2 id="flood-forwarding-contention-window"><a class="header" href="#flood-forwarding-contention-window">Flood Forwarding Contention Window</a></h2>
-<p>When a repeater is eligible to flood-forward a packet, it SHOULD NOT transmit immediately. Instead, it waits a contention delay inversely proportional to the quality of the received signal. Nodes that heard the packet most clearly transmit first; nodes that barely met the signal threshold wait longer. When a well-positioned repeater transmits, others overhear it, recognize the packet via duplicate suppression, and usually defer or abandon their own pending forwarding.</p>
+<p>When a repeater is eligible to flood-forward a packet, it SHOULD NOT just transmit like it would any other packet. Instead, it waits a contention delay inversely proportional to the quality of the received signal. Nodes that heard the packet most clearly transmit first; nodes that barely met the signal threshold wait longer. When a well-positioned repeater transmits, others overhear it, recognize the packet via duplicate suppression, and usually defer or abandon their own pending forwarding.</p>
 <blockquote class="blockquote-tag blockquote-tag-note">
 <p class="blockquote-tag-title"><svg viewbox="0 0 16 16" width="18" height="18"><path d="M0 8a8 8 0 1 1 16 0A8 8 0 0 1 0 8Zm8-6.5a6.5 6.5 0 1 0 0 13 6.5 6.5 0 0 0 0-13ZM6.5 7.75A.75.75 0 0 1 7.25 7h1a.75.75 0 0 1 .75.75v2.75h.25a.75.75 0 0 1 0 1.5h-2a.75.75 0 0 1 0-1.5h.25v-2h-.25a.75.75 0 0 1-.75-.75ZM8 6a1 1 0 1 1 0-2 1 1 0 0 1 0 2Z"></path></svg>Note</p>
 <p>This guidance is still provisional and should be treated as a starting point until it is validated with real-world measurements.</p>
@@ -226,8 +228,8 @@ delay   = D_ack + uniform_random(0, W)
 <li><code>D_ack</code> is the <a href="#ack-protection-interval">ACK protection interval</a>: a guard delay that applies when the forwarded packet may elicit an immediate ACK from its destination, and zero otherwise.</li>
 </ul>
 <p>If SNR is unavailable but RSSI is, the same formula MAY be applied with RSSI values substituted for SNR, using appropriate threshold and range parameters.</p>
-<p>After computing the delay, the repeater waits.</p>
-<p>If it overhears the same packet forwarded by another node (identified by MIC in the duplicate cache) before the delay expires, it SHOULD defer rather than transmit immediately. A safe default is to resample a delay using the same <code>W_min</code>/<code>W_max</code> limits — including <code>D_ack</code> when it applies, since the overheard copy may itself elicit an immediate ACK from the destination — and restart the waiting period. A repeater SHOULD NOT do this more than 3 times; after the third such deferral it SHOULD abandon the pending forward.</p>
+<p>After computing the delay, the repeater waits. Other packets SHOULD continue to be be forwarded while waiting, assuming the channel is clear.</p>
+<p>If the repeater overhears the same packet forwarded by another node (identified by MIC in the duplicate cache) before the delay expires, it SHOULD defer rather than transmit. A safe default is to resample a delay using the same <code>W_min</code>/<code>W_max</code> limits — including <code>D_ack</code> when it applies, since the overheard copy may itself elicit an immediate ACK from the destination — and restart the waiting period. A repeater SHOULD NOT do this more than 3 times; after the third such deferral it SHOULD abandon the pending forward.</p>
 <p>This deferral behavior is intended only for the first local forwarding decision after reception. Once a repeater has actually transmitted its own copy, any later retransmission behavior is governed by <a href="repeater-operation.html#forwarding-confirmation">Repeater Operation</a>.</p>
 <p>Nodes waiting for implicit forwarding confirmation MUST size their confirmation timeout to include this full forwarding-delay window. A safe default is to allow:</p>
 <ul>

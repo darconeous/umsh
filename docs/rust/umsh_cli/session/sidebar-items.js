@@ -1,0 +1,1 @@
+window.SIDEBAR_ITEMS = {"enum":["CliError"],"struct":["ChannelEntry","CliSession","PeerEntry"]};

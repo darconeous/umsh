@@ -1,1 +1,0 @@
-window.SIDEBAR_ITEMS = {"enum":["CompanionRadioError","HostOwnership","PropEvent","RestoreCompletion","TraceDirection"],"fn":["describe_frame"],"struct":["BleFrameLink","BleFrameLinkConfig","BleScanResult","CompanionRadio","CompanionRadioConfig","HostProvisioning","NcpSync","ProvisionReport","SerialFrameLink"],"trait":["FrameLink"],"type":["FrameTrace"]};

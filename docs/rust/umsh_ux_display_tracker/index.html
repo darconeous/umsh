@@ -1,0 +1,31 @@
+<!DOCTYPE html><html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1.0"><meta name="generator" content="rustdoc"><meta name="description" content="UX mechanism for display-tracker-class UMSH boards."><title>umsh_ux_display_tracker - Rust</title><script>if(window.location.protocol!=="file:")document.head.insertAdjacentHTML("beforeend","SourceSerif4-Regular-6b053e98.ttf.woff2,FiraSans-Italic-81dc35de.woff2,FiraSans-Regular-0fe48ade.woff2,FiraSans-MediumItalic-ccf7e434.woff2,FiraSans-Medium-e1aa3f0a.woff2,SourceCodePro-Regular-8badfe75.ttf.woff2,SourceCodePro-Semibold-aa29a496.ttf.woff2".split(",").map(f=>`<link rel="preload" as="font" type="font/woff2"href="../static.files/${f}">`).join(""))</script><link rel="stylesheet" href="../static.files/normalize-9960930a.css"><link rel="stylesheet" href="../static.files/rustdoc-80aa586b.css"><meta name="rustdoc-vars" data-root-path="../" data-static-root-path="../static.files/" data-current-crate="umsh_ux_display_tracker" data-themes="" data-resource-suffix="" data-rustdoc-version="1.94.0-nightly (fcf67da03 2025-12-18)" data-channel="nightly" data-search-js="search-9e2438ea.js" data-stringdex-js="stringdex-a3946164.js" data-settings-js="settings-c38705f0.js" ><script src="../static.files/storage-e2aeef58.js"></script><script defer src="../crates.js"></script><script defer src="../static.files/main-3e30299d.js"></script><noscript><link rel="stylesheet" href="../static.files/noscript-ffcac47a.css"></noscript><link rel="alternate icon" type="image/png" href="../static.files/favicon-32x32-eab170b8.png"><link rel="icon" type="image/svg+xml" href="../static.files/favicon-044be391.svg"></head><body class="rustdoc mod crate"><!--[if lte IE 11]><div class="warning">This old browser is unsupported and will most likely display funky things.</div><![endif]--><rustdoc-topbar><h2><a href="#">Crate umsh_ux_display_tracker</a></h2></rustdoc-topbar><nav class="sidebar"><div class="sidebar-crate"><h2><a href="../umsh_ux_display_tracker/index.html">umsh_<wbr>ux_<wbr>display_<wbr>tracker</a><span class="version">0.1.0</span></h2></div><div class="sidebar-elems"><ul class="block"><li><a id="all-types" href="all.html">All Items</a></li></ul><section id="rustdoc-toc"><h3><a href="#modules">Crate Items</a></h3><ul class="block"><li><a href="#modules" title="Modules">Modules</a></li><li><a href="#functions" title="Functions">Functions</a></li></ul></section><div id="rustdoc-modnav"></div></div></nav><div class="sidebar-resizer" title="Drag to resize sidebar"></div><main><div class="width-limiter"><section id="main-content" class="content"><div class="main-heading"><h1>Crate <span>umsh_<wbr>ux_<wbr>display_<wbr>tracker</span>&nbsp;<button id="copy-path" title="Copy item path to clipboard">Copy item path</button></h1><rustdoc-toolbar></rustdoc-toolbar><span class="sub-heading"><a class="src" href="../src/umsh_ux_display_tracker/lib.rs.html#1-109">Source</a> </span></div><details class="toggle top-doc" open><summary class="hideme"><span>Expand description</span></summary><div class="docblock"><p>UX mechanism for display-tracker-class UMSH boards.</p>
+<p>This crate is the user-experience layer for boards whose physical UX
+is a small display plus a button — optionally with a D-pad — and no
+keyboard: T-Echo, Heltec LoRa32 V3, Wio Tracker L1, T-Beam Supreme.
+They differ in panel technology and input richness, but a user who
+learns one should already know the others, so the interaction model
+lives here rather than in each firmware.</p>
+<p>Like [<code>umsh_ux_tracker</code>], this crate provides only <strong>mechanism</strong>:</p>
+<ul>
+<li><a href="menu/index.html" title="mod umsh_ux_display_tracker::menu"><code>menu</code></a> — the on-screen menu: a wrapping item list narrowed
+per-board, with confirmation in front of the destructive entries.</li>
+<li><a href="attention/index.html" title="mod umsh_ux_display_tracker::attention"><code>attention</code></a> — when to stop assuming the user is looking, and what
+that means for an emissive panel (power it off) versus a persistent
+one (send the menu home).</li>
+<li><a href="gate/index.html" title="mod umsh_ux_display_tracker::gate"><code>gate</code></a> — what a gesture means when the screen is dark, an alert
+is running, or the panel is mid-refresh.</li>
+</ul>
+<p>Button gestures themselves come from
+[<code>umsh_ux_tracker::button::ButtonFsm</code>]; this crate adds only the
+shared timing policy, <a href="fn.button_timings.html" title="fn umsh_ux_display_tracker::button_timings"><code>button_timings</code></a>. Policy that depends on the
+board — which effects the menu items map to, how a frame is drawn,
+what shutting down entails — belongs in the firmware.</p>
+<p>Rendering is deliberately absent. Every panel in this class is an
+<code>embedded-graphics</code> <code>DrawTarget</code>, but their geometries are far enough
+apart (128×64 OLED versus 200×200 e-paper) that layout is board work.</p>
+<p>See <code>docs/ux/</code> for the user-facing rules these modules encode and
+<code>docs/firmware-architecture.md</code> for the BSP / UX / App / Binary
+layering.</p>
+</div></details><h2 id="modules" class="section-header">Modules<a href="#modules" class="anchor">§</a></h2><dl class="item-table"><dt><a class="mod" href="attention/index.html" title="mod umsh_ux_display_tracker::attention">attention</a></dt><dd>Display-attention policy: when the device should stop assuming the
+user is looking at it.</dd><dt><a class="mod" href="gate/index.html" title="mod umsh_ux_display_tracker::gate">gate</a></dt><dd>Input gating: when a button gesture means something other than what
+it would normally mean.</dd><dt><a class="mod" href="menu/index.html" title="mod umsh_ux_display_tracker::menu">menu</a></dt><dd>On-screen menu policy shared by every display tracker.</dd></dl><h2 id="functions" class="section-header">Functions<a href="#functions" class="anchor">§</a></h2><dl class="item-table"><dt><a class="fn" href="fn.button_timings.html" title="fn umsh_ux_display_tracker::button_timings">button_<wbr>timings</a></dt><dd>The gesture timing shared by every display tracker.</dd></dl></section></div></main></body></html>

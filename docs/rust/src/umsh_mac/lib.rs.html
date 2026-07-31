@@ -98,201 +98,224 @@
 <a href=#98 id=98 data-nosnippet>98</a>//! - [`DuplicateCache`] — a fixed-size FIFO ring that records recently-seen
 <a href=#99 id=99 data-nosnippet>99</a>//!   [`DupCacheKey`] values. Before forwarding or delivering any received frame, the
 <a href=#100 id=100 data-nosnippet>100</a>//!   coordinator checks this cache; matching entries are silently dropped. Prevents
-<a href=#101 id=101 data-nosnippet>101</a>//!   re-delivery of frames that echoed back via multiple repeater paths.
-<a href=#102 id=102 data-nosnippet>102</a>//! - [`DupCacheKey`] — keyed on the truncated MIC for authenticated packets (unforgeable
-<a href=#103 id=103 data-nosnippet>103</a>//!   and compact) or a 32-bit hash of the frame body for unauthenticated ones (broadcast).
-<a href=#104 id=104 data-nosnippet>104</a>//! - [`ReplayWindow`] — per-peer, per-identity sliding window over frame counters. Rejects
-<a href=#105 id=105 data-nosnippet>105</a>//!   exact counter replays and frames older than the backtrack window, while tolerating
-<a href=#106 id=106 data-nosnippet>106</a>//!   a small amount of out-of-order delivery. Backed by a [`RecentMic`] ring for
-<a href=#107 id=107 data-nosnippet>107</a>//!   backward-window disambiguation.
-<a href=#108 id=108 data-nosnippet>108</a>//! - [`ReplayVerdict`] — outcome of a replay check: `Accept`, `Duplicate`, or `Replay`.
-<a href=#109 id=109 data-nosnippet>109</a>//!
-<a href=#110 id=110 data-nosnippet>110</a>//! ## [`peers`] — remote peer and channel registries
+<a href=#101 id=101 data-nosnippet>101</a>//!   re-delivery of frames that echoed back via multiple repeater paths. Entries
+<a href=#102 id=102 data-nosnippet>102</a>//!   leave after [`DUP_CACHE_TTL_MS`] or when the ring recycles, whichever is first;
+<a href=#103 id=103 data-nosnippet>103</a>//!   a hashed key repeats for the life of the sender, so age is what releases it.
+<a href=#104 id=104 data-nosnippet>104</a>//! - [`DupCacheKey`] — keyed on the truncated MIC for authenticated packets (unforgeable
+<a href=#105 id=105 data-nosnippet>105</a>//!   and compact) or a 32-bit hash of the frame body for unauthenticated ones (broadcast).
+<a href=#106 id=106 data-nosnippet>106</a>//! - [`ReplayWindow`] — per-peer, per-identity sliding window over frame counters. Rejects
+<a href=#107 id=107 data-nosnippet>107</a>//!   exact counter replays and frames older than the backtrack window, while tolerating
+<a href=#108 id=108 data-nosnippet>108</a>//!   a small amount of out-of-order delivery. Backed by a [`RecentMic`] ring for
+<a href=#109 id=109 data-nosnippet>109</a>//!   backward-window disambiguation.
+<a href=#110 id=110 data-nosnippet>110</a>//! - [`ReplayVerdict`] — outcome of a replay check: `Accept`, `Duplicate`, or `Replay`.
 <a href=#111 id=111 data-nosnippet>111</a>//!
-<a href=#112 id=112 data-nosnippet>112</a>//! - [`PeerRegistry`] — a flat list of [`PeerInfo`] records (public key + last-seen time +
-<a href=#113 id=113 data-nosnippet>113</a>//!   cached route). Looked up by hint or full key when matching inbound packets and routing
-<a href=#114 id=114 data-nosnippet>114</a>//!   outbound sends.
-<a href=#115 id=115 data-nosnippet>115</a>//! - [`PeerId`] — opaque index into the peer registry.
-<a href=#116 id=116 data-nosnippet>116</a>//! - [`CachedRoute`] — a direct link, an explicit source route, or a flood-distance
-<a href=#117 id=117 data-nosnippet>117</a>//!   estimate, learned from successfully received packets and used to route future sends
-<a href=#118 id=118 data-nosnippet>118</a>//!   without unnecessary flooding.
-<a href=#119 id=119 data-nosnippet>119</a>//! - [`PeerCryptoMap`] — per-identity map from [`PeerId`] to [`PeerCryptoState`]
-<a href=#120 id=120 data-nosnippet>120</a>//!   (established pairwise keys + replay window). One map per [`IdentitySlot`].
-<a href=#121 id=121 data-nosnippet>121</a>//! - [`ChannelTable`] — flat list of registered multicast channels. Each entry stores the
-<a href=#122 id=122 data-nosnippet>122</a>//!   raw channel key, the derived `k_enc`/`k_mic` keys (precomputed at registration time),
-<a href=#123 id=123 data-nosnippet>123</a>//!   and the 2-byte channel ID (also precomputed). Looked up by channel ID when
-<a href=#124 id=124 data-nosnippet>124</a>//!   authenticating inbound multicast and blind-unicast frames.
-<a href=#125 id=125 data-nosnippet>125</a>//!
-<a href=#126 id=126 data-nosnippet>126</a>//! ## [`handle`] — shared-ownership coordinator access
+<a href=#112 id=112 data-nosnippet>112</a>//! ## [`peers`] — remote peer and channel registries
+<a href=#113 id=113 data-nosnippet>113</a>//!
+<a href=#114 id=114 data-nosnippet>114</a>//! - [`PeerRegistry`] — a flat list of [`PeerInfo`] records (public key + last-seen time +
+<a href=#115 id=115 data-nosnippet>115</a>//!   cached route). Looked up by hint or full key when matching inbound packets and routing
+<a href=#116 id=116 data-nosnippet>116</a>//!   outbound sends.
+<a href=#117 id=117 data-nosnippet>117</a>//! - [`PeerId`] — opaque index into the peer registry.
+<a href=#118 id=118 data-nosnippet>118</a>//! - [`CachedRoute`] — a direct link, an explicit source route, or a flood-distance
+<a href=#119 id=119 data-nosnippet>119</a>//!   estimate, learned from successfully received packets and used to route future sends
+<a href=#120 id=120 data-nosnippet>120</a>//!   without unnecessary flooding.
+<a href=#121 id=121 data-nosnippet>121</a>//! - [`PeerCryptoMap`] — per-identity map from [`PeerId`] to [`PeerCryptoState`]
+<a href=#122 id=122 data-nosnippet>122</a>//!   (established pairwise keys + replay window). One map per [`IdentitySlot`].
+<a href=#123 id=123 data-nosnippet>123</a>//! - [`ChannelTable`] — flat list of registered multicast channels. Each entry stores the
+<a href=#124 id=124 data-nosnippet>124</a>//!   raw channel key, the derived `k_enc`/`k_mic` keys (precomputed at registration time),
+<a href=#125 id=125 data-nosnippet>125</a>//!   and the 2-byte channel ID (also precomputed). Looked up by channel ID when
+<a href=#126 id=126 data-nosnippet>126</a>//!   authenticating inbound multicast and blind-unicast frames.
 <a href=#127 id=127 data-nosnippet>127</a>//!
-<a href=#128 id=128 data-nosnippet>128</a>//! - [`MacHandle`] — a `Copy`-able, lifetime-bounded reference to a `RefCell&lt;Mac&lt;P&gt;&gt;`.
-<a href=#129 id=129 data-nosnippet>129</a>//!   Designed for multi-task environments (e.g., `tokio` or RTOS task pairs) where one
-<a href=#130 id=130 data-nosnippet>130</a>//!   task runs the `next_event` loop while another enqueues sends or updates configuration
-<a href=#131 id=131 data-nosnippet>131</a>//!   without holding a long-lived mutable borrow.
-<a href=#132 id=132 data-nosnippet>132</a>//!
-<a href=#133 id=133 data-nosnippet>133</a>//! # Platform trait
+<a href=#128 id=128 data-nosnippet>128</a>//! ## [`handle`] — shared-ownership coordinator access
+<a href=#129 id=129 data-nosnippet>129</a>//!
+<a href=#130 id=130 data-nosnippet>130</a>//! - [`MacHandle`] — a `Copy`-able, lifetime-bounded reference to a `RefCell&lt;Mac&lt;P&gt;&gt;`.
+<a href=#131 id=131 data-nosnippet>131</a>//!   Designed for multi-task environments (e.g., `tokio` or RTOS task pairs) where one
+<a href=#132 id=132 data-nosnippet>132</a>//!   task runs the `next_event` loop while another enqueues sends or updates configuration
+<a href=#133 id=133 data-nosnippet>133</a>//!   without holding a long-lived mutable borrow.
 <a href=#134 id=134 data-nosnippet>134</a>//!
-<a href=#135 id=135 data-nosnippet>135</a>//! [`Platform`] is the single integration point. Implement it once per deployment target to
-<a href=#136 id=136 data-nosnippet>136</a>//! supply concrete driver types for all hardware abstractions:
-<a href=#137 id=137 data-nosnippet>137</a>//!
-<a href=#138 id=138 data-nosnippet>138</a>//! ```rust,ignore
-<a href=#139 id=139 data-nosnippet>139</a>//! struct MyPlatform;
-<a href=#140 id=140 data-nosnippet>140</a>//!
-<a href=#141 id=141 data-nosnippet>141</a>//! impl umsh_mac::Platform for MyPlatform {
-<a href=#142 id=142 data-nosnippet>142</a>//!     type Identity = MyHsmIdentity;
-<a href=#143 id=143 data-nosnippet>143</a>//!     type Aes      = MyAesDriver;
-<a href=#144 id=144 data-nosnippet>144</a>//!     type Sha      = MyShaDriver;
-<a href=#145 id=145 data-nosnippet>145</a>//!     type Radio    = MySx1262Driver;
-<a href=#146 id=146 data-nosnippet>146</a>//!     type Delay    = MyDelay;
-<a href=#147 id=147 data-nosnippet>147</a>//!     type Clock    = MyMonotonicClock;
-<a href=#148 id=148 data-nosnippet>148</a>//!     type Rng      = MyTrng;
-<a href=#149 id=149 data-nosnippet>149</a>//!     type CounterStore = MyFlashStore;
-<a href=#150 id=150 data-nosnippet>150</a>//!     type KeyValueStore = MyNvmStore;
-<a href=#151 id=151 data-nosnippet>151</a>//! }
-<a href=#152 id=152 data-nosnippet>152</a>//! ```
-<a href=#153 id=153 data-nosnippet>153</a>//!
-<a href=#154 id=154 data-nosnippet>154</a>//! The `umsh` workspace crate provides a `std`/`tokio`-backed implementation
-<a href=#155 id=155 data-nosnippet>155</a>//! (`tokio_support::StdPlatform`) suitable for desktop development and testing.
-<a href=#156 id=156 data-nosnippet>156</a>//!
-<a href=#157 id=157 data-nosnippet>157</a>//! # Frame-counter persistence
+<a href=#135 id=135 data-nosnippet>135</a>//! # Platform trait
+<a href=#136 id=136 data-nosnippet>136</a>//!
+<a href=#137 id=137 data-nosnippet>137</a>//! [`Platform`] is the single integration point. Implement it once per deployment target to
+<a href=#138 id=138 data-nosnippet>138</a>//! supply concrete driver types for all hardware abstractions:
+<a href=#139 id=139 data-nosnippet>139</a>//!
+<a href=#140 id=140 data-nosnippet>140</a>//! ```rust,ignore
+<a href=#141 id=141 data-nosnippet>141</a>//! struct MyPlatform;
+<a href=#142 id=142 data-nosnippet>142</a>//!
+<a href=#143 id=143 data-nosnippet>143</a>//! impl umsh_mac::Platform for MyPlatform {
+<a href=#144 id=144 data-nosnippet>144</a>//!     type Identity = MyHsmIdentity;
+<a href=#145 id=145 data-nosnippet>145</a>//!     type Aes      = MyAesDriver;
+<a href=#146 id=146 data-nosnippet>146</a>//!     type Sha      = MyShaDriver;
+<a href=#147 id=147 data-nosnippet>147</a>//!     type Radio    = MySx1262Driver;
+<a href=#148 id=148 data-nosnippet>148</a>//!     type Delay    = MyDelay;
+<a href=#149 id=149 data-nosnippet>149</a>//!     type Clock    = MyMonotonicClock;
+<a href=#150 id=150 data-nosnippet>150</a>//!     type Rng      = MyTrng;
+<a href=#151 id=151 data-nosnippet>151</a>//!     type CounterStore = MyFlashStore;
+<a href=#152 id=152 data-nosnippet>152</a>//!     type KeyValueStore = MyNvmStore;
+<a href=#153 id=153 data-nosnippet>153</a>//! }
+<a href=#154 id=154 data-nosnippet>154</a>//! ```
+<a href=#155 id=155 data-nosnippet>155</a>//!
+<a href=#156 id=156 data-nosnippet>156</a>//! The `umsh` workspace crate provides a `std`/`tokio`-backed implementation
+<a href=#157 id=157 data-nosnippet>157</a>//! (`tokio_support::StdPlatform`) suitable for desktop development and testing.
 <a href=#158 id=158 data-nosnippet>158</a>//!
-<a href=#159 id=159 data-nosnippet>159</a>//! UMSH uses a monotonic frame counter (not a timestamp) for replay protection. Because the
-<a href=#160 id=160 data-nosnippet>160</a>//! counter must never reuse a value, it must be committed to non-volatile storage before the
-<a href=#161 id=161 data-nosnippet>161</a>//! corresponding value is used on-air, or after a power cycle the counter could reset to a
-<a href=#162 id=162 data-nosnippet>162</a>//! previously-seen value, allowing old ciphertexts to replay. The coordinator manages this
-<a href=#163 id=163 data-nosnippet>163</a>//! automatically:
-<a href=#164 id=164 data-nosnippet>164</a>//!
-<a href=#165 id=165 data-nosnippet>165</a>//! 1. On startup, call [`Mac::load_persisted_counter`] for each long-term identity to read
-<a href=#166 id=166 data-nosnippet>166</a>//!    the last-committed boundary from the [`umsh_hal::CounterStore`] and set the live
-<a href=#167 id=167 data-nosnippet>167</a>//!    counter to the next safe starting point.
-<a href=#168 id=168 data-nosnippet>168</a>//! 2. At runtime, the coordinator schedules a persist whenever the live counter crosses a
-<a href=#169 id=169 data-nosnippet>169</a>//!    block boundary (every [`COUNTER_PERSIST_BLOCK_SIZE`] frames, default 128). While a
-<a href=#170 id=170 data-nosnippet>170</a>//!    persist is pending, sends will eventually block with [`SendError::CounterPersistenceLag`]
-<a href=#171 id=171 data-nosnippet>171</a>//!    if the store is not flushed in time.
-<a href=#172 id=172 data-nosnippet>172</a>//! 3. The application calls [`Mac::service_counter_persistence`] (typically from the
-<a href=#173 id=173 data-nosnippet>173</a>//!    `next_event` callback or a background task) to drain the pending write queue.
-<a href=#174 id=174 data-nosnippet>174</a>//!
-<a href=#175 id=175 data-nosnippet>175</a>//! # `no_std` usage
+<a href=#159 id=159 data-nosnippet>159</a>//! # Frame-counter persistence
+<a href=#160 id=160 data-nosnippet>160</a>//!
+<a href=#161 id=161 data-nosnippet>161</a>//! UMSH uses a monotonic frame counter (not a timestamp) for replay protection. Because the
+<a href=#162 id=162 data-nosnippet>162</a>//! counter must never reuse a value, it must be committed to non-volatile storage before the
+<a href=#163 id=163 data-nosnippet>163</a>//! corresponding value is used on-air, or after a power cycle the counter could reset to a
+<a href=#164 id=164 data-nosnippet>164</a>//! previously-seen value, allowing old ciphertexts to replay. The coordinator manages this
+<a href=#165 id=165 data-nosnippet>165</a>//! automatically:
+<a href=#166 id=166 data-nosnippet>166</a>//!
+<a href=#167 id=167 data-nosnippet>167</a>//! 1. On startup, call [`Mac::load_persisted_counter`] for each long-term identity to read
+<a href=#168 id=168 data-nosnippet>168</a>//!    the last-committed boundary from the [`umsh_hal::CounterStore`] and set the live
+<a href=#169 id=169 data-nosnippet>169</a>//!    counter to the next safe starting point.
+<a href=#170 id=170 data-nosnippet>170</a>//! 2. At runtime, the coordinator schedules a persist whenever the live counter crosses a
+<a href=#171 id=171 data-nosnippet>171</a>//!    block boundary (every [`COUNTER_PERSIST_BLOCK_SIZE`] frames, default 128). While a
+<a href=#172 id=172 data-nosnippet>172</a>//!    persist is pending, sends will eventually block with [`SendError::CounterPersistenceLag`]
+<a href=#173 id=173 data-nosnippet>173</a>//!    if the store is not flushed in time.
+<a href=#174 id=174 data-nosnippet>174</a>//! 3. The application calls [`Mac::service_counter_persistence`] (typically from the
+<a href=#175 id=175 data-nosnippet>175</a>//!    `next_event` callback or a background task) to drain the pending write queue.
 <a href=#176 id=176 data-nosnippet>176</a>//!
-<a href=#177 id=177 data-nosnippet>177</a>//! Enable `default-features = false` in `Cargo.toml`. The crate compiles without the
-<a href=#178 id=178 data-nosnippet>178</a>//! standard library. All capacity limits are compile-time const generics. The `std` feature
-<a href=#179 id=179 data-nosnippet>179</a>//! enables [`test_support`], which provides software-backed driver stubs for unit testing.
-<a href=#180 id=180 data-nosnippet>180</a>
-<a href=#181 id=181 data-nosnippet>181</a></span><span class="kw">use </span>embedded_hal_async::delay::DelayNs;
+<a href=#177 id=177 data-nosnippet>177</a>//! # `no_std` usage
+<a href=#178 id=178 data-nosnippet>178</a>//!
+<a href=#179 id=179 data-nosnippet>179</a>//! Enable `default-features = false` in `Cargo.toml`. The crate compiles without the
+<a href=#180 id=180 data-nosnippet>180</a>//! standard library. All capacity limits are compile-time const generics. The `std` feature
+<a href=#181 id=181 data-nosnippet>181</a>//! enables [`test_support`], which provides software-backed driver stubs for unit testing.
 <a href=#182 id=182 data-nosnippet>182</a>
-<a href=#183 id=183 data-nosnippet>183</a><span class="attr">#[cfg(test)]
-<a href=#184 id=184 data-nosnippet>184</a></span><span class="kw">pub</span>(<span class="kw">crate</span>) <span class="kw">use </span>umsh_crypto::replay::{RECENT_MIC_CAPACITY, REPLAY_STALE_MS};
-<a href=#185 id=185 data-nosnippet>185</a><span class="kw">pub</span>(<span class="kw">crate</span>) <span class="kw">const </span>MAX_SOURCE_ROUTE_HOPS: usize = <span class="number">15</span>;
-<a href=#186 id=186 data-nosnippet>186</a><span class="kw">pub</span>(<span class="kw">crate</span>) <span class="kw">const </span>MAX_RESEND_FRAME_LEN: usize = <span class="number">256</span>;
-<a href=#187 id=187 data-nosnippet>187</a><span class="kw">pub</span>(<span class="kw">crate</span>) <span class="kw">const </span>DEFAULT_DUP_CACHE_SIZE: usize = <span class="number">64</span>;
-<a href=#188 id=188 data-nosnippet>188</a><span class="kw">pub</span>(<span class="kw">crate</span>) <span class="kw">const </span>MAX_FORWARD_RETRIES: u8 = <span class="number">3</span>;
-<a href=#189 id=189 data-nosnippet>189</a><span class="kw">pub</span>(<span class="kw">crate</span>) <span class="kw">const </span>MAX_CAD_ATTEMPTS: u8 = <span class="number">5</span>;
-<a href=#190 id=190 data-nosnippet>190</a>
-<a href=#191 id=191 data-nosnippet>191</a><span class="doccomment">/// Default identity-slot capacity for the common `Mac&lt;P&gt;` configuration.
-<a href=#192 id=192 data-nosnippet>192</a></span><span class="kw">pub const </span>DEFAULT_IDENTITIES: usize = <span class="number">4</span>;
-<a href=#193 id=193 data-nosnippet>193</a><span class="doccomment">/// Default remote-peer capacity for the common `Mac&lt;P&gt;` configuration.
-<a href=#194 id=194 data-nosnippet>194</a></span><span class="kw">pub const </span>DEFAULT_PEERS: usize = <span class="number">16</span>;
-<a href=#195 id=195 data-nosnippet>195</a><span class="doccomment">/// Default shared-channel capacity for the common `Mac&lt;P&gt;` configuration.
-<a href=#196 id=196 data-nosnippet>196</a></span><span class="kw">pub const </span>DEFAULT_CHANNELS: usize = <span class="number">8</span>;
-<a href=#197 id=197 data-nosnippet>197</a><span class="doccomment">/// Default pending-ACK capacity for the common `Mac&lt;P&gt;` configuration.
-<a href=#198 id=198 data-nosnippet>198</a></span><span class="kw">pub const </span>DEFAULT_ACKS: usize = <span class="number">16</span>;
-<a href=#199 id=199 data-nosnippet>199</a><span class="doccomment">/// Default transmit-queue depth for the common `Mac&lt;P&gt;` configuration.
-<a href=#200 id=200 data-nosnippet>200</a></span><span class="kw">pub const </span>DEFAULT_TX: usize = <span class="number">16</span>;
-<a href=#201 id=201 data-nosnippet>201</a><span class="doccomment">/// Default frame-buffer capacity for the common `Mac&lt;P&gt;` configuration.
-<a href=#202 id=202 data-nosnippet>202</a></span><span class="kw">pub const </span>DEFAULT_FRAME: usize = MAX_RESEND_FRAME_LEN;
-<a href=#203 id=203 data-nosnippet>203</a><span class="doccomment">/// Default duplicate-cache capacity for the common `Mac&lt;P&gt;` configuration.
-<a href=#204 id=204 data-nosnippet>204</a></span><span class="kw">pub const </span>DEFAULT_DUP: usize = DEFAULT_DUP_CACHE_SIZE;
-<a href=#205 id=205 data-nosnippet>205</a><span class="doccomment">/// Default per-channel full-key replay-window capacity (senders tracked
-<a href=#206 id=206 data-nosnippet>206</a>/// per channel). Replay windows are ~330 bytes each, so these two
-<a href=#207 id=207 data-nosnippet>207</a>/// capacities dominate the MAC's channel-table footprint; small targets
-<a href=#208 id=208 data-nosnippet>208</a>/// shrink them. A full map fail-closes: frames from additional senders
-<a href=#209 id=209 data-nosnippet>209</a>/// are dropped, never accepted unchecked.
-<a href=#210 id=210 data-nosnippet>210</a></span><span class="kw">pub const </span>DEFAULT_CHANNEL_REPLAY: usize = <span class="number">8</span>;
-<a href=#211 id=211 data-nosnippet>211</a><span class="doccomment">/// Default per-channel hint-only replay-window capacity.
-<a href=#212 id=212 data-nosnippet>212</a></span><span class="kw">pub const </span>DEFAULT_CHANNEL_HINT_REPLAY: usize = <span class="number">8</span>;
-<a href=#213 id=213 data-nosnippet>213</a>
-<a href=#214 id=214 data-nosnippet>214</a><span class="doccomment">/// Error returned when a fixed-capacity MAC data structure is full.
-<a href=#215 id=215 data-nosnippet>215</a></span><span class="attr">#[derive(Clone, Copy, Debug, PartialEq, Eq)]
-<a href=#216 id=216 data-nosnippet>216</a></span><span class="kw">pub struct </span>CapacityError;
-<a href=#217 id=217 data-nosnippet>217</a>
-<a href=#218 id=218 data-nosnippet>218</a><span class="doccomment">/// Error returned when adding a peer to the MAC peer registry.
-<a href=#219 id=219 data-nosnippet>219</a></span><span class="attr">#[derive(Clone, Copy, Debug, PartialEq, Eq)]
-<a href=#220 id=220 data-nosnippet>220</a></span><span class="kw">pub enum </span>AddPeerError {
-<a href=#221 id=221 data-nosnippet>221</a>    <span class="doccomment">/// The peer-registry table is full.
-<a href=#222 id=222 data-nosnippet>222</a>    </span>Capacity,
-<a href=#223 id=223 data-nosnippet>223</a>    <span class="doccomment">/// The public-key bytes do not decode to a valid Ed25519 point on the curve.
-<a href=#224 id=224 data-nosnippet>224</a>    </span>InvalidPublicKey,
-<a href=#225 id=225 data-nosnippet>225</a>}
-<a href=#226 id=226 data-nosnippet>226</a>
-<a href=#227 id=227 data-nosnippet>227</a><span class="kw">impl </span>From&lt;CapacityError&gt; <span class="kw">for </span>AddPeerError {
-<a href=#228 id=228 data-nosnippet>228</a>    <span class="kw">fn </span>from(<span class="kw">_</span>: CapacityError) -&gt; <span class="self">Self </span>{
-<a href=#229 id=229 data-nosnippet>229</a>        AddPeerError::Capacity
-<a href=#230 id=230 data-nosnippet>230</a>    }
-<a href=#231 id=231 data-nosnippet>231</a>}
-<a href=#232 id=232 data-nosnippet>232</a>
-<a href=#233 id=233 data-nosnippet>233</a><span class="doccomment">/// Error returned when adding a named channel to the MAC channel table.
-<a href=#234 id=234 data-nosnippet>234</a></span><span class="attr">#[derive(Clone, Copy, Debug, PartialEq, Eq)]
-<a href=#235 id=235 data-nosnippet>235</a></span><span class="kw">pub enum </span>AddChannelError {
-<a href=#236 id=236 data-nosnippet>236</a>    <span class="doccomment">/// The channel table is full.
-<a href=#237 id=237 data-nosnippet>237</a>    </span>Capacity,
-<a href=#238 id=238 data-nosnippet>238</a>    <span class="doccomment">/// The channel name failed canonicalization (non-ASCII or too long).
-<a href=#239 id=239 data-nosnippet>239</a>    </span>InvalidName(umsh_crypto::ChannelNameError),
-<a href=#240 id=240 data-nosnippet>240</a>}
-<a href=#241 id=241 data-nosnippet>241</a>
-<a href=#242 id=242 data-nosnippet>242</a><span class="kw">impl </span>From&lt;CapacityError&gt; <span class="kw">for </span>AddChannelError {
-<a href=#243 id=243 data-nosnippet>243</a>    <span class="kw">fn </span>from(<span class="kw">_</span>: CapacityError) -&gt; <span class="self">Self </span>{
-<a href=#244 id=244 data-nosnippet>244</a>        AddChannelError::Capacity
-<a href=#245 id=245 data-nosnippet>245</a>    }
+<a href=#183 id=183 data-nosnippet>183</a></span><span class="kw">use </span>embedded_hal_async::delay::DelayNs;
+<a href=#184 id=184 data-nosnippet>184</a>
+<a href=#185 id=185 data-nosnippet>185</a><span class="attr">#[cfg(test)]
+<a href=#186 id=186 data-nosnippet>186</a></span><span class="kw">pub</span>(<span class="kw">crate</span>) <span class="kw">use </span>umsh_crypto::replay::{RECENT_MIC_CAPACITY, REPLAY_STALE_MS};
+<a href=#187 id=187 data-nosnippet>187</a><span class="kw">pub</span>(<span class="kw">crate</span>) <span class="kw">const </span>MAX_SOURCE_ROUTE_HOPS: usize = <span class="number">15</span>;
+<a href=#188 id=188 data-nosnippet>188</a><span class="kw">pub</span>(<span class="kw">crate</span>) <span class="kw">const </span>MAX_RESEND_FRAME_LEN: usize = <span class="number">256</span>;
+<a href=#189 id=189 data-nosnippet>189</a><span class="kw">pub</span>(<span class="kw">crate</span>) <span class="kw">const </span>DEFAULT_DUP_CACHE_SIZE: usize = <span class="number">64</span>;
+<a href=#190 id=190 data-nosnippet>190</a><span class="kw">pub</span>(<span class="kw">crate</span>) <span class="kw">const </span>MAX_FORWARD_RETRIES: u8 = <span class="number">3</span>;
+<a href=#191 id=191 data-nosnippet>191</a><span class="kw">pub</span>(<span class="kw">crate</span>) <span class="kw">const </span>MAX_CAD_ATTEMPTS: u8 = <span class="number">5</span>;
+<a href=#192 id=192 data-nosnippet>192</a>
+<a href=#193 id=193 data-nosnippet>193</a><span class="doccomment">/// Default identity-slot capacity for the common `Mac&lt;P&gt;` configuration.
+<a href=#194 id=194 data-nosnippet>194</a></span><span class="kw">pub const </span>DEFAULT_IDENTITIES: usize = <span class="number">4</span>;
+<a href=#195 id=195 data-nosnippet>195</a><span class="doccomment">/// Default remote-peer capacity for the common `Mac&lt;P&gt;` configuration.
+<a href=#196 id=196 data-nosnippet>196</a></span><span class="kw">pub const </span>DEFAULT_PEERS: usize = <span class="number">16</span>;
+<a href=#197 id=197 data-nosnippet>197</a><span class="doccomment">/// Default shared-channel capacity for the common `Mac&lt;P&gt;` configuration.
+<a href=#198 id=198 data-nosnippet>198</a></span><span class="kw">pub const </span>DEFAULT_CHANNELS: usize = <span class="number">8</span>;
+<a href=#199 id=199 data-nosnippet>199</a><span class="doccomment">/// Default pending-ACK capacity for the common `Mac&lt;P&gt;` configuration.
+<a href=#200 id=200 data-nosnippet>200</a></span><span class="kw">pub const </span>DEFAULT_ACKS: usize = <span class="number">16</span>;
+<a href=#201 id=201 data-nosnippet>201</a><span class="doccomment">/// Default transmit-queue depth for the common `Mac&lt;P&gt;` configuration.
+<a href=#202 id=202 data-nosnippet>202</a></span><span class="kw">pub const </span>DEFAULT_TX: usize = <span class="number">16</span>;
+<a href=#203 id=203 data-nosnippet>203</a><span class="doccomment">/// Default frame-buffer capacity for the common `Mac&lt;P&gt;` configuration.
+<a href=#204 id=204 data-nosnippet>204</a></span><span class="kw">pub const </span>DEFAULT_FRAME: usize = MAX_RESEND_FRAME_LEN;
+<a href=#205 id=205 data-nosnippet>205</a><span class="doccomment">/// Default duplicate-cache capacity for the common `Mac&lt;P&gt;` configuration.
+<a href=#206 id=206 data-nosnippet>206</a></span><span class="kw">pub const </span>DEFAULT_DUP: usize = DEFAULT_DUP_CACHE_SIZE;
+<a href=#207 id=207 data-nosnippet>207</a><span class="doccomment">/// Default per-channel full-key replay-window capacity (senders tracked
+<a href=#208 id=208 data-nosnippet>208</a>/// per channel). Replay windows are ~330 bytes each, so these two
+<a href=#209 id=209 data-nosnippet>209</a>/// capacities dominate the MAC's channel-table footprint; small targets
+<a href=#210 id=210 data-nosnippet>210</a>/// shrink them. A full map fail-closes: frames from additional senders
+<a href=#211 id=211 data-nosnippet>211</a>/// are dropped, never accepted unchecked.
+<a href=#212 id=212 data-nosnippet>212</a></span><span class="kw">pub const </span>DEFAULT_CHANNEL_REPLAY: usize = <span class="number">8</span>;
+<a href=#213 id=213 data-nosnippet>213</a><span class="doccomment">/// Default per-channel hint-only replay-window capacity.
+<a href=#214 id=214 data-nosnippet>214</a></span><span class="kw">pub const </span>DEFAULT_CHANNEL_HINT_REPLAY: usize = <span class="number">8</span>;
+<a href=#215 id=215 data-nosnippet>215</a>
+<a href=#216 id=216 data-nosnippet>216</a><span class="doccomment">/// Largest value the `FHOPS_REM` nibble can carry.
+<a href=#217 id=217 data-nosnippet>217</a>///
+<a href=#218 id=218 data-nosnippet>218</a>/// A larger budget cannot be encoded, so requests above it are clamped rather
+<a href=#219 id=219 data-nosnippet>219</a>/// than truncated — [`PacketBuilder::flood_hops`](umsh_core::PacketBuilder)
+<a href=#220 id=220 data-nosnippet>220</a>/// drops the whole field for an out-of-range value, which would turn "flood
+<a href=#221 id=221 data-nosnippet>221</a>/// further" into "do not flood at all".
+<a href=#222 id=222 data-nosnippet>222</a></span><span class="kw">pub const </span>MAX_FLOOD_HOPS: u8 = <span class="number">15</span>;
+<a href=#223 id=223 data-nosnippet>223</a>
+<a href=#224 id=224 data-nosnippet>224</a><span class="doccomment">/// Flood-hop slack granted on top of what an established route to a peer
+<a href=#225 id=225 data-nosnippet>225</a>/// already needs.
+<a href=#226 id=226 data-nosnippet>226</a>///
+<a href=#227 id=227 data-nosnippet>227</a>/// A route learned from inbound traffic tells the sender how far away the peer
+<a href=#228 id=228 data-nosnippet>228</a>/// was, so a unicast that follows it does not need the wide flood budget of a
+<a href=#229 id=229 data-nosnippet>229</a>/// first-contact packet. Sending with exactly the route's own cost would make
+<a href=#230 id=230 data-nosnippet>230</a>/// every stale route fail outright, so sends keep this much extra budget: a
+<a href=#231 id=231 data-nosnippet>231</a>/// path that has grown one hop longer — a repeater moved, a link that now needs
+<a href=#232 id=232 data-nosnippet>232</a>/// one more relay — still gets through and re-teaches the correct route.
+<a href=#233 id=233 data-nosnippet>233</a></span><span class="kw">pub const </span>ESTABLISHED_ROUTE_EXTRA_HOPS: u8 = <span class="number">1</span>;
+<a href=#234 id=234 data-nosnippet>234</a>
+<a href=#235 id=235 data-nosnippet>235</a><span class="doccomment">/// Error returned when a fixed-capacity MAC data structure is full.
+<a href=#236 id=236 data-nosnippet>236</a></span><span class="attr">#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+<a href=#237 id=237 data-nosnippet>237</a></span><span class="kw">pub struct </span>CapacityError;
+<a href=#238 id=238 data-nosnippet>238</a>
+<a href=#239 id=239 data-nosnippet>239</a><span class="doccomment">/// Error returned when adding a peer to the MAC peer registry.
+<a href=#240 id=240 data-nosnippet>240</a></span><span class="attr">#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+<a href=#241 id=241 data-nosnippet>241</a></span><span class="kw">pub enum </span>AddPeerError {
+<a href=#242 id=242 data-nosnippet>242</a>    <span class="doccomment">/// The peer-registry table is full.
+<a href=#243 id=243 data-nosnippet>243</a>    </span>Capacity,
+<a href=#244 id=244 data-nosnippet>244</a>    <span class="doccomment">/// The public-key bytes do not decode to a valid Ed25519 point on the curve.
+<a href=#245 id=245 data-nosnippet>245</a>    </span>InvalidPublicKey,
 <a href=#246 id=246 data-nosnippet>246</a>}
 <a href=#247 id=247 data-nosnippet>247</a>
-<a href=#248 id=248 data-nosnippet>248</a><span class="doccomment">/// Bundle of platform-specific associated types used by the higher layers.
-<a href=#249 id=249 data-nosnippet>249</a></span><span class="kw">pub trait </span>Platform {
-<a href=#250 id=250 data-nosnippet>250</a>    <span class="doccomment">/// Local identity implementation.
-<a href=#251 id=251 data-nosnippet>251</a>    </span><span class="kw">type </span>Identity: umsh_crypto::NodeIdentity;
-<a href=#252 id=252 data-nosnippet>252</a>    <span class="doccomment">/// AES provider implementation.
-<a href=#253 id=253 data-nosnippet>253</a>    </span><span class="kw">type </span>Aes: umsh_crypto::AesProvider;
-<a href=#254 id=254 data-nosnippet>254</a>    <span class="doccomment">/// SHA/HMAC provider implementation.
-<a href=#255 id=255 data-nosnippet>255</a>    </span><span class="kw">type </span>Sha: umsh_crypto::Sha256Provider;
-<a href=#256 id=256 data-nosnippet>256</a>    <span class="doccomment">/// Radio implementation.
-<a href=#257 id=257 data-nosnippet>257</a>    </span><span class="kw">type </span>Radio: umsh_hal::Radio;
-<a href=#258 id=258 data-nosnippet>258</a>    <span class="doccomment">/// Async delay implementation.
-<a href=#259 id=259 data-nosnippet>259</a>    </span><span class="kw">type </span>Delay: DelayNs;
-<a href=#260 id=260 data-nosnippet>260</a>    <span class="doccomment">/// Monotonic clock implementation.
-<a href=#261 id=261 data-nosnippet>261</a>    </span><span class="kw">type </span>Clock: umsh_hal::Clock;
-<a href=#262 id=262 data-nosnippet>262</a>    <span class="doccomment">/// Random-number generator implementation.
-<a href=#263 id=263 data-nosnippet>263</a>    </span><span class="kw">type </span>Rng: rand::CryptoRng;
-<a href=#264 id=264 data-nosnippet>264</a>    <span class="doccomment">/// Persistent frame-counter store implementation.
-<a href=#265 id=265 data-nosnippet>265</a>    </span><span class="kw">type </span>CounterStore: umsh_hal::CounterStore;
-<a href=#266 id=266 data-nosnippet>266</a>    <span class="doccomment">/// General-purpose persistent key-value store implementation.
-<a href=#267 id=267 data-nosnippet>267</a>    </span><span class="kw">type </span>KeyValueStore: umsh_hal::KeyValueStore;
-<a href=#268 id=268 data-nosnippet>268</a>}
-<a href=#269 id=269 data-nosnippet>269</a>
-<a href=#270 id=270 data-nosnippet>270</a><span class="kw">mod </span>cache;
-<a href=#271 id=271 data-nosnippet>271</a><span class="kw">mod </span>coordinator;
-<a href=#272 id=272 data-nosnippet>272</a><span class="kw">mod </span>handle;
-<a href=#273 id=273 data-nosnippet>273</a><span class="kw">mod </span>peers;
-<a href=#274 id=274 data-nosnippet>274</a><span class="kw">mod </span>send;
-<a href=#275 id=275 data-nosnippet>275</a>
-<a href=#276 id=276 data-nosnippet>276</a><span class="kw">pub use </span>cache::{DupCacheKey, DuplicateCache, RecentMic, ReplayVerdict, ReplayWindow};
-<a href=#277 id=277 data-nosnippet>277</a><span class="kw">pub use </span>coordinator::{
-<a href=#278 id=278 data-nosnippet>278</a>    AmateurRadioMode, ChannelPolicy, CounterPersistenceError, IdentitySlot, LocalIdentity,
-<a href=#279 id=279 data-nosnippet>279</a>    LocalIdentityId, Mac, MacError, OperatingPolicy, RepeaterConfig, SendError, WakeReason,
-<a href=#280 id=280 data-nosnippet>280</a>};
-<a href=#281 id=281 data-nosnippet>281</a><span class="kw">pub use </span>handle::MacHandle;
-<a href=#282 id=282 data-nosnippet>282</a><span class="kw">pub use </span>peers::{
-<a href=#283 id=283 data-nosnippet>283</a>    CachedRoute, ChannelState, ChannelTable, HintReplayState, PeerCryptoMap, PeerCryptoState,
-<a href=#284 id=284 data-nosnippet>284</a>    PeerId, PeerInfo, PeerRegistry,
-<a href=#285 id=285 data-nosnippet>285</a>};
-<a href=#286 id=286 data-nosnippet>286</a><span class="kw">pub use </span>send::{
-<a href=#287 id=287 data-nosnippet>287</a>    AckState, ChannelInfoRef, MacEventRef, PacketFamily, PendingAck, PendingAckError, QueuedTx,
-<a href=#288 id=288 data-nosnippet>288</a>    ReceivedPacketRef, ResendRecord, RouteHops, RxMetadata, SendOptions, SendReceipt, TxPriority,
-<a href=#289 id=289 data-nosnippet>289</a>    TxQueue,
-<a href=#290 id=290 data-nosnippet>290</a>};
-<a href=#291 id=291 data-nosnippet>291</a><span class="kw">pub use </span>umsh_hal::Snr;
-<a href=#292 id=292 data-nosnippet>292</a>
-<a href=#293 id=293 data-nosnippet>293</a><span class="attr">#[cfg(feature = <span class="string">"std"</span>)]
-<a href=#294 id=294 data-nosnippet>294</a></span><span class="kw">pub mod </span>test_support;
-<a href=#295 id=295 data-nosnippet>295</a>
-<a href=#296 id=296 data-nosnippet>296</a><span class="attr">#[cfg(test)]
-<a href=#297 id=297 data-nosnippet>297</a></span><span class="kw">mod </span>tests;
+<a href=#248 id=248 data-nosnippet>248</a><span class="kw">impl </span>From&lt;CapacityError&gt; <span class="kw">for </span>AddPeerError {
+<a href=#249 id=249 data-nosnippet>249</a>    <span class="kw">fn </span>from(<span class="kw">_</span>: CapacityError) -&gt; <span class="self">Self </span>{
+<a href=#250 id=250 data-nosnippet>250</a>        AddPeerError::Capacity
+<a href=#251 id=251 data-nosnippet>251</a>    }
+<a href=#252 id=252 data-nosnippet>252</a>}
+<a href=#253 id=253 data-nosnippet>253</a>
+<a href=#254 id=254 data-nosnippet>254</a><span class="doccomment">/// Error returned when adding a named channel to the MAC channel table.
+<a href=#255 id=255 data-nosnippet>255</a></span><span class="attr">#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+<a href=#256 id=256 data-nosnippet>256</a></span><span class="kw">pub enum </span>AddChannelError {
+<a href=#257 id=257 data-nosnippet>257</a>    <span class="doccomment">/// The channel table is full.
+<a href=#258 id=258 data-nosnippet>258</a>    </span>Capacity,
+<a href=#259 id=259 data-nosnippet>259</a>    <span class="doccomment">/// The channel name failed canonicalization (non-ASCII or too long).
+<a href=#260 id=260 data-nosnippet>260</a>    </span>InvalidName(umsh_crypto::ChannelNameError),
+<a href=#261 id=261 data-nosnippet>261</a>}
+<a href=#262 id=262 data-nosnippet>262</a>
+<a href=#263 id=263 data-nosnippet>263</a><span class="kw">impl </span>From&lt;CapacityError&gt; <span class="kw">for </span>AddChannelError {
+<a href=#264 id=264 data-nosnippet>264</a>    <span class="kw">fn </span>from(<span class="kw">_</span>: CapacityError) -&gt; <span class="self">Self </span>{
+<a href=#265 id=265 data-nosnippet>265</a>        AddChannelError::Capacity
+<a href=#266 id=266 data-nosnippet>266</a>    }
+<a href=#267 id=267 data-nosnippet>267</a>}
+<a href=#268 id=268 data-nosnippet>268</a>
+<a href=#269 id=269 data-nosnippet>269</a><span class="doccomment">/// Bundle of platform-specific associated types used by the higher layers.
+<a href=#270 id=270 data-nosnippet>270</a></span><span class="kw">pub trait </span>Platform {
+<a href=#271 id=271 data-nosnippet>271</a>    <span class="doccomment">/// Local identity implementation.
+<a href=#272 id=272 data-nosnippet>272</a>    </span><span class="kw">type </span>Identity: umsh_crypto::NodeIdentity;
+<a href=#273 id=273 data-nosnippet>273</a>    <span class="doccomment">/// AES provider implementation.
+<a href=#274 id=274 data-nosnippet>274</a>    </span><span class="kw">type </span>Aes: umsh_crypto::AesProvider;
+<a href=#275 id=275 data-nosnippet>275</a>    <span class="doccomment">/// SHA/HMAC provider implementation.
+<a href=#276 id=276 data-nosnippet>276</a>    </span><span class="kw">type </span>Sha: umsh_crypto::Sha256Provider;
+<a href=#277 id=277 data-nosnippet>277</a>    <span class="doccomment">/// Radio implementation.
+<a href=#278 id=278 data-nosnippet>278</a>    </span><span class="kw">type </span>Radio: umsh_hal::Radio;
+<a href=#279 id=279 data-nosnippet>279</a>    <span class="doccomment">/// Async delay implementation.
+<a href=#280 id=280 data-nosnippet>280</a>    </span><span class="kw">type </span>Delay: DelayNs;
+<a href=#281 id=281 data-nosnippet>281</a>    <span class="doccomment">/// Monotonic clock implementation.
+<a href=#282 id=282 data-nosnippet>282</a>    </span><span class="kw">type </span>Clock: umsh_hal::Clock;
+<a href=#283 id=283 data-nosnippet>283</a>    <span class="doccomment">/// Random-number generator implementation.
+<a href=#284 id=284 data-nosnippet>284</a>    </span><span class="kw">type </span>Rng: rand::CryptoRng;
+<a href=#285 id=285 data-nosnippet>285</a>    <span class="doccomment">/// Persistent frame-counter store implementation.
+<a href=#286 id=286 data-nosnippet>286</a>    </span><span class="kw">type </span>CounterStore: umsh_hal::CounterStore;
+<a href=#287 id=287 data-nosnippet>287</a>    <span class="doccomment">/// General-purpose persistent key-value store implementation.
+<a href=#288 id=288 data-nosnippet>288</a>    </span><span class="kw">type </span>KeyValueStore: umsh_hal::KeyValueStore;
+<a href=#289 id=289 data-nosnippet>289</a>}
+<a href=#290 id=290 data-nosnippet>290</a>
+<a href=#291 id=291 data-nosnippet>291</a><span class="kw">mod </span>cache;
+<a href=#292 id=292 data-nosnippet>292</a><span class="kw">mod </span>coordinator;
+<a href=#293 id=293 data-nosnippet>293</a><span class="kw">mod </span>handle;
+<a href=#294 id=294 data-nosnippet>294</a><span class="kw">mod </span>peers;
+<a href=#295 id=295 data-nosnippet>295</a><span class="kw">mod </span>send;
+<a href=#296 id=296 data-nosnippet>296</a>
+<a href=#297 id=297 data-nosnippet>297</a><span class="kw">pub use </span>cache::{
+<a href=#298 id=298 data-nosnippet>298</a>    DUP_CACHE_TTL_MS, DupCacheKey, DuplicateCache, RecentMic, ReplayVerdict, ReplayWindow,
+<a href=#299 id=299 data-nosnippet>299</a>};
+<a href=#300 id=300 data-nosnippet>300</a><span class="kw">pub use </span>coordinator::{
+<a href=#301 id=301 data-nosnippet>301</a>    AmateurRadioMode, ChannelPolicy, CounterPersistenceError, IdentitySlot, LocalIdentity,
+<a href=#302 id=302 data-nosnippet>302</a>    LocalIdentityId, Mac, MacError, OperatingPolicy, RepeaterConfig, SendError, WakeReason,
+<a href=#303 id=303 data-nosnippet>303</a>};
+<a href=#304 id=304 data-nosnippet>304</a><span class="kw">pub use </span>handle::MacHandle;
+<a href=#305 id=305 data-nosnippet>305</a><span class="kw">pub use </span>peers::{
+<a href=#306 id=306 data-nosnippet>306</a>    CachedRoute, ChannelState, ChannelTable, HintReplayState, PeerCryptoMap, PeerCryptoState,
+<a href=#307 id=307 data-nosnippet>307</a>    PeerId, PeerInfo, PeerRegistry, PeerRemoval,
+<a href=#308 id=308 data-nosnippet>308</a>};
+<a href=#309 id=309 data-nosnippet>309</a><span class="kw">pub use </span>send::{
+<a href=#310 id=310 data-nosnippet>310</a>    AckState, ChannelInfoRef, MacEventRef, PacketFamily, PendingAck, PendingAckError, QueuedTx,
+<a href=#311 id=311 data-nosnippet>311</a>    ReceivedPacketRef, ResendRecord, RouteHops, RxMetadata, SendOptions, SendReceipt, TxPriority,
+<a href=#312 id=312 data-nosnippet>312</a>    TxQueue,
+<a href=#313 id=313 data-nosnippet>313</a>};
+<a href=#314 id=314 data-nosnippet>314</a><span class="kw">pub use </span>umsh_hal::Snr;
+<a href=#315 id=315 data-nosnippet>315</a>
+<a href=#316 id=316 data-nosnippet>316</a><span class="attr">#[cfg(feature = <span class="string">"std"</span>)]
+<a href=#317 id=317 data-nosnippet>317</a></span><span class="kw">pub mod </span>test_support;
+<a href=#318 id=318 data-nosnippet>318</a>
+<a href=#319 id=319 data-nosnippet>319</a><span class="attr">#[cfg(test)]
+<a href=#320 id=320 data-nosnippet>320</a></span><span class="kw">mod </span>tests;
 </code></pre></div></section></main></body></html>

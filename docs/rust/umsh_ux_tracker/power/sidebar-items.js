@@ -1,0 +1,1 @@
+window.SIDEBAR_ITEMS = {"enum":["PowerIntent","PowerIntentSource"],"struct":["LowBatteryDetector"]};

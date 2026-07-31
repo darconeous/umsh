@@ -1,0 +1,804 @@
+<!DOCTYPE HTML>
+<html lang="en" class="light sidebar-visible" dir="ltr">
+    <head>
+        <!-- Book generated using mdBook -->
+        <meta charset="UTF-8">
+        <title>Device Domain - UMSH Protocol Specification</title>
+
+
+        <!-- Custom HTML head -->
+
+        <meta name="description" content="">
+        <meta name="viewport" content="width=device-width, initial-scale=1">
+        <meta name="theme-color" content="#ffffff">
+
+        <link rel="icon" href="favicon-de23e50b.svg">
+        <link rel="shortcut icon" href="favicon-8114d1fc.png">
+        <link rel="stylesheet" href="css/variables-8adf115d.css">
+        <link rel="stylesheet" href="css/general-2459343d.css">
+        <link rel="stylesheet" href="css/chrome-ae938929.css">
+        <link rel="stylesheet" href="css/print-9e4910d8.css" media="print">
+
+        <!-- Fonts -->
+        <link rel="stylesheet" href="fonts/fonts-9644e21d.css">
+
+        <!-- Highlight.js Stylesheets -->
+        <link rel="stylesheet" id="mdbook-highlight-css" href="highlight-493f70e1.css">
+        <link rel="stylesheet" id="mdbook-tomorrow-night-css" href="tomorrow-night-4c0ae647.css">
+        <link rel="stylesheet" id="mdbook-ayu-highlight-css" href="ayu-highlight-3fdfc3ac.css">
+
+        <!-- Custom theme stylesheets -->
+
+
+        <!-- Provide site root and default themes to javascript -->
+        <script>
+            const path_to_root = "";
+            const default_light_theme = "light";
+            const default_dark_theme = "ayu";
+            window.path_to_searchindex_js = "searchindex-5216ea72.js";
+        </script>
+        <!-- Start loading toc.js asap -->
+        <script src="toc-ca16b95c.js"></script>
+    </head>
+    <body>
+    <div id="mdbook-help-container">
+        <div id="mdbook-help-popup">
+            <h2 class="mdbook-help-title">Keyboard shortcuts</h2>
+            <div>
+                <p>Press <kbd>←</kbd> or <kbd>→</kbd> to navigate between chapters</p>
+                <p>Press <kbd>S</kbd> or <kbd>/</kbd> to search in the book</p>
+                <p>Press <kbd>?</kbd> to show this help</p>
+                <p>Press <kbd>Esc</kbd> to hide this help</p>
+            </div>
+        </div>
+    </div>
+    <div id="mdbook-body-container">
+        <!-- Work around some values being stored in localStorage wrapped in quotes -->
+        <script>
+            try {
+                let theme = localStorage.getItem('mdbook-theme');
+                let sidebar = localStorage.getItem('mdbook-sidebar');
+
+                if (theme.startsWith('"') && theme.endsWith('"')) {
+                    localStorage.setItem('mdbook-theme', theme.slice(1, theme.length - 1));
+                }
+
+                if (sidebar.startsWith('"') && sidebar.endsWith('"')) {
+                    localStorage.setItem('mdbook-sidebar', sidebar.slice(1, sidebar.length - 1));
+                }
+            } catch (e) { }
+        </script>
+
+        <!-- Set the theme before any content is loaded, prevents flash -->
+        <script>
+            const default_theme = window.matchMedia("(prefers-color-scheme: dark)").matches ? default_dark_theme : default_light_theme;
+            let theme;
+            try { theme = localStorage.getItem('mdbook-theme'); } catch(e) { }
+            if (theme === null || theme === undefined) { theme = default_theme; }
+            const html = document.documentElement;
+            html.classList.remove('light')
+            html.classList.add(theme);
+            html.classList.add("js");
+        </script>
+
+        <input type="checkbox" id="mdbook-sidebar-toggle-anchor" class="hidden">
+
+        <!-- Hide / unhide sidebar before it is displayed -->
+        <script>
+            let sidebar = null;
+            const sidebar_toggle = document.getElementById("mdbook-sidebar-toggle-anchor");
+            if (document.body.clientWidth >= 1080) {
+                try { sidebar = localStorage.getItem('mdbook-sidebar'); } catch(e) { }
+                sidebar = sidebar || 'visible';
+            } else {
+                sidebar = 'hidden';
+                sidebar_toggle.checked = false;
+            }
+            if (sidebar === 'visible') {
+                sidebar_toggle.checked = true;
+            } else {
+                html.classList.remove('sidebar-visible');
+            }
+        </script>
+
+        <nav id="mdbook-sidebar" class="sidebar" aria-label="Table of contents">
+            <!-- populated by js -->
+            <mdbook-sidebar-scrollbox class="sidebar-scrollbox"></mdbook-sidebar-scrollbox>
+            <noscript>
+                <iframe class="sidebar-iframe-outer" src="toc.html"></iframe>
+            </noscript>
+            <div id="mdbook-sidebar-resize-handle" class="sidebar-resize-handle">
+                <div class="sidebar-resize-indicator"></div>
+            </div>
+        </nav>
+
+        <div id="mdbook-page-wrapper" class="page-wrapper">
+
+            <div class="page">
+                <div id="mdbook-menu-bar-hover-placeholder"></div>
+                <div id="mdbook-menu-bar" class="menu-bar sticky">
+                    <div class="left-buttons">
+                        <label id="mdbook-sidebar-toggle" class="icon-button" for="mdbook-sidebar-toggle-anchor" title="Toggle Table of Contents" aria-label="Toggle Table of Contents" aria-controls="mdbook-sidebar">
+                            <span class=fa-svg><svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 448 512"><!--! Font Awesome Free 6.2.0 by @fontawesome - https://fontawesome.com License - https://fontawesome.com/license/free (Icons: CC BY 4.0, Fonts: SIL OFL 1.1, Code: MIT License) Copyright 2022 Fonticons, Inc. --><path d="M0 96C0 78.3 14.3 64 32 64H416c17.7 0 32 14.3 32 32s-14.3 32-32 32H32C14.3 128 0 113.7 0 96zM0 256c0-17.7 14.3-32 32-32H416c17.7 0 32 14.3 32 32s-14.3 32-32 32H32c-17.7 0-32-14.3-32-32zM448 416c0 17.7-14.3 32-32 32H32c-17.7 0-32-14.3-32-32s14.3-32 32-32H416c17.7 0 32 14.3 32 32z"/></svg></span>
+                        </label>
+                        <button id="mdbook-theme-toggle" class="icon-button" type="button" title="Change theme" aria-label="Change theme" aria-haspopup="true" aria-expanded="false" aria-controls="mdbook-theme-list">
+                            <span class=fa-svg><svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 576 512"><!--! Font Awesome Free 6.2.0 by @fontawesome - https://fontawesome.com License - https://fontawesome.com/license/free (Icons: CC BY 4.0, Fonts: SIL OFL 1.1, Code: MIT License) Copyright 2022 Fonticons, Inc. --><path d="M371.3 367.1c27.3-3.9 51.9-19.4 67.2-42.9L600.2 74.1c12.6-19.5 9.4-45.3-7.6-61.2S549.7-4.4 531.1 9.6L294.4 187.2c-24 18-38.2 46.1-38.4 76.1L371.3 367.1zm-19.6 25.4l-116-104.4C175.9 290.3 128 339.6 128 400c0 3.9 .2 7.8 .6 11.6c1.8 17.5-10.2 36.4-27.8 36.4H96c-17.7 0-32 14.3-32 32s14.3 32 32 32H240c61.9 0 112-50.1 112-112c0-2.5-.1-5-.2-7.5z"/></svg></span>
+                        </button>
+                        <ul id="mdbook-theme-list" class="theme-popup" aria-label="Themes" role="menu">
+                            <li role="none"><button role="menuitem" class="theme" id="mdbook-theme-default_theme">Auto</button></li>
+                            <li role="none"><button role="menuitem" class="theme" id="mdbook-theme-light">Light</button></li>
+                            <li role="none"><button role="menuitem" class="theme" id="mdbook-theme-rust">Rust</button></li>
+                            <li role="none"><button role="menuitem" class="theme" id="mdbook-theme-coal">Coal</button></li>
+                            <li role="none"><button role="menuitem" class="theme" id="mdbook-theme-navy">Navy</button></li>
+                            <li role="none"><button role="menuitem" class="theme" id="mdbook-theme-ayu">Ayu</button></li>
+                        </ul>
+                        <button id="mdbook-search-toggle" class="icon-button" type="button" title="Search (`/`)" aria-label="Toggle Searchbar" aria-expanded="false" aria-keyshortcuts="/ s" aria-controls="mdbook-searchbar">
+                            <span class=fa-svg><svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 512 512"><!--! Font Awesome Free 6.2.0 by @fontawesome - https://fontawesome.com License - https://fontawesome.com/license/free (Icons: CC BY 4.0, Fonts: SIL OFL 1.1, Code: MIT License) Copyright 2022 Fonticons, Inc. --><path d="M416 208c0 45.9-14.9 88.3-40 122.7L502.6 457.4c12.5 12.5 12.5 32.8 0 45.3s-32.8 12.5-45.3 0L330.7 376c-34.4 25.2-76.8 40-122.7 40C93.1 416 0 322.9 0 208S93.1 0 208 0S416 93.1 416 208zM208 352c79.5 0 144-64.5 144-144s-64.5-144-144-144S64 128.5 64 208s64.5 144 144 144z"/></svg></span>
+                        </button>
+                    </div>
+
+                    <h1 class="menu-title">UMSH Protocol Specification</h1>
+
+                    <div class="right-buttons">
+                        <a href="print.html" title="Print this book" aria-label="Print this book">
+                            <span class=fa-svg id="print-button"><svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 512 512"><!--! Font Awesome Free 6.2.0 by @fontawesome - https://fontawesome.com License - https://fontawesome.com/license/free (Icons: CC BY 4.0, Fonts: SIL OFL 1.1, Code: MIT License) Copyright 2022 Fonticons, Inc. --><path d="M128 0C92.7 0 64 28.7 64 64v96h64V64H354.7L384 93.3V160h64V93.3c0-17-6.7-33.3-18.7-45.3L400 18.7C388 6.7 371.7 0 354.7 0H128zM384 352v32 64H128V384 368 352H384zm64 32h32c17.7 0 32-14.3 32-32V256c0-35.3-28.7-64-64-64H64c-35.3 0-64 28.7-64 64v96c0 17.7 14.3 32 32 32H64v64c0 35.3 28.7 64 64 64H384c35.3 0 64-28.7 64-64V384zm-16-88c-13.3 0-24-10.7-24-24s10.7-24 24-24s24 10.7 24 24s-10.7 24-24 24z"/></svg></span>
+                        </a>
+
+                    </div>
+                </div>
+
+                <div id="mdbook-search-wrapper" class="hidden">
+                    <form id="mdbook-searchbar-outer" class="searchbar-outer">
+                        <div class="search-wrapper">
+                            <input type="search" id="mdbook-searchbar" name="searchbar" placeholder="Search this book ..." aria-controls="mdbook-searchresults-outer" aria-describedby="searchresults-header">
+                            <div class="spinner-wrapper">
+                                <span class=fa-svg id="fa-spin"><svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 512 512"><!--! Font Awesome Free 6.2.0 by @fontawesome - https://fontawesome.com License - https://fontawesome.com/license/free (Icons: CC BY 4.0, Fonts: SIL OFL 1.1, Code: MIT License) Copyright 2022 Fonticons, Inc. --><path d="M304 48c0-26.5-21.5-48-48-48s-48 21.5-48 48s21.5 48 48 48s48-21.5 48-48zm0 416c0-26.5-21.5-48-48-48s-48 21.5-48 48s21.5 48 48 48s48-21.5 48-48zM48 304c26.5 0 48-21.5 48-48s-21.5-48-48-48s-48 21.5-48 48s21.5 48 48 48zm464-48c0-26.5-21.5-48-48-48s-48 21.5-48 48s21.5 48 48 48s48-21.5 48-48zM142.9 437c18.7-18.7 18.7-49.1 0-67.9s-49.1-18.7-67.9 0s-18.7 49.1 0 67.9s49.1 18.7 67.9 0zm0-294.2c18.7-18.7 18.7-49.1 0-67.9S93.7 56.2 75 75s-18.7 49.1 0 67.9s49.1 18.7 67.9 0zM369.1 437c18.7 18.7 49.1 18.7 67.9 0s18.7-49.1 0-67.9s-49.1-18.7-67.9 0s-18.7 49.1 0 67.9z"/></svg></span>
+                            </div>
+                        </div>
+                    </form>
+                    <div id="mdbook-searchresults-outer" class="searchresults-outer hidden">
+                        <div id="mdbook-searchresults-header" class="searchresults-header"></div>
+                        <ul id="mdbook-searchresults">
+                        </ul>
+                    </div>
+                </div>
+
+                <!-- Apply ARIA attributes after the sidebar and the sidebar toggle button are added to the DOM -->
+                <script>
+                    document.getElementById('mdbook-sidebar-toggle').setAttribute('aria-expanded', sidebar === 'visible');
+                    document.getElementById('mdbook-sidebar').setAttribute('aria-hidden', sidebar !== 'visible');
+                    Array.from(document.querySelectorAll('#mdbook-sidebar a')).forEach(function(link) {
+                        link.setAttribute('tabIndex', sidebar === 'visible' ? 0 : -1);
+                    });
+                </script>
+
+                <div id="mdbook-content" class="content">
+                    <main>
+                        <h1 id="ulcp-device-domain"><a class="header" href="#ulcp-device-domain">ULCP: Device Domain</a></h1>
+<p>The device domain is everything that belongs to the radio itself: its own
+node identity, the settings that make it behave the way its operator
+commissioned it, and the telemetry it can report about its own hardware.
+None of it is keyed by the attached host, and none of it is disturbed when
+one host replaces another (see
+<a href="ulcp-core.html#state-classes">State Classes</a>).</p>
+<p>Commissioning a repeater is exactly this: writing device-domain state and
+saving it. It is also the reason a host that is merely <em>administering</em> a
+device writes nothing in the
+<a href="ulcp-host.html">host domain</a> — see
+<a href="ulcp.html#attach-relationships">Two Kinds of Attach</a>.</p>
+<h2 id="device-identity"><a class="header" href="#device-identity">The Device Identity</a></h2>
+<p>The device hosts a node belonging to the device itself, used for in-band
+management, diagnostics, repeater forwarding (see
+<a href="ulcp-device.html#prop-mac-repeater-enabled"><code>PROP_MAC_REPEATER_ENABLED</code></a>),
+and (in future revisions) periodic advertisement behavior. Its Ed25519
+private key is held by the device and is never readable through this
+protocol.</p>
+<p><strong>A device identity always exists.</strong> A device advertising
+<code>CAP_DEV_IDENTITY</code> that finds no stored keypair at power-on <strong>MUST</strong>
+generate one from a cryptographic random source and persist it before
+processing any host command; <code>PROP_DEV_KEY</code> therefore never reports an
+empty value on a running device. Provisioning an identity is not a
+commissioning step: a factory-fresh radio is already a node, and
+<a href="ulcp-device.html#prop-dev-private-key"><code>PROP_DEV_PRIVATE_KEY</code></a> exists to install
+a <em>particular</em> identity — restoring a known repeater onto replacement
+hardware — not to bring one into being.</p>
+<p>The corollary is that a radio holds a throwaway identity from first
+power-on until a specific one is installed. This is safe because it never
+reaches the air: <code>PROP_PHY_ENABLED</code> is false post-reset, and a radio with
+nothing saved boots with the PHY disabled. It is not safe automatically on
+the restore path — see <a href="ulcp-saved-state.html#cmd-restore"><code>CMD_RESTORE</code></a>.</p>
+<p>Because the device holds this identity’s private key, it performs its own
+key agreement and needs only peer <em>public</em> keys (see <a href="ulcp-device.html#prop-dev-peers"><code>PROP_DEV_PEERS</code></a>).
+That is the opposite of the host identity, for which the device holds no
+private key and every pairwise key must be provisioned explicitly (see
+<a href="ulcp-host.html">Tethered Host Services</a>).</p>
+<h2 id="capabilities"><a class="header" href="#capabilities">Capabilities</a></h2>
+<div class="table-wrapper">
+<table>
+<thead>
+<tr><th>Code</th><th>Name</th><th>Requires</th><th>Grants</th></tr>
+</thead>
+<tbody>
+<tr><td>37</td><td><code>CAP_DEV_IDENTITY</code></td><td>—</td><td>The device identity: <code>PROP_DEV_KEY</code>, <code>PROP_DEV_PRIVATE_KEY</code>, <code>PROP_DEV_CHANNEL_KEYS</code>, <code>PROP_DEV_PEERS</code></td></tr>
+<tr><td>38</td><td><code>CAP_DEV_NAME</code></td><td>—</td><td><code>PROP_DEV_NAME</code></td></tr>
+<tr><td>39</td><td><code>CAP_BATTERY</code></td><td>—</td><td>Battery-powered operation and <code>PROP_BATTERY</code></td></tr>
+<tr><td>40</td><td><code>CAP_REPEATER</code></td><td><code>CAP_DEV_IDENTITY</code></td><td>Autonomous repeater forwarding by the device identity: <code>PROP_MAC_REPEATER_ENABLED</code>, <code>PROP_MAC_REPEATER_REGIONS</code>, <code>PROP_MAC_REPEATER_DEFAULT_REGION</code>, <code>PROP_MAC_REPEATER_MIN_RSSI</code>, <code>PROP_MAC_REPEATER_MIN_SNR</code></td></tr>
+<tr><td>41</td><td><code>CAP_IDENT</code></td><td><code>CAP_DEV_IDENTITY</code></td><td><code>PROP_IDENT</code>, <code>PROP_IDENT_ROLE</code>, <code>PROP_IDENT_MOBILE</code> — serving and configuring the device identity’s advertised node identity</td></tr>
+<tr><td>42</td><td><code>CAP_ALERT</code></td><td>—</td><td>Some means of making the device physically conspicuous on demand, and <code>PROP_ALERT</code></td></tr>
+</tbody>
+</table>
+</div>
+<h2 id="properties"><a class="header" href="#properties">Properties</a></h2>
+<p>The device domain occupies property identifiers 64–95. Identifiers 70–95
+are the device-behavior range: 70–78 are the repeater policy and
+advertised node identity settings, 79 is the locate alert, and 80–95 are
+reserved for future definition (periodic advertisement in 80–87,
+positioning in 88–95).</p>
+<div class="table-wrapper">
+<table>
+<thead>
+<tr><th>Id</th><th>Mnemonic</th><th>Commands</th><th>Description</th></tr>
+</thead>
+<tbody>
+<tr><td>64</td><td><code>PROP_DEV_KEY</code></td><td>Get</td><td>Device identity public key</td></tr>
+<tr><td>65</td><td><code>PROP_DEV_PRIVATE_KEY</code></td><td>Set</td><td>Device identity private key (write-only)</td></tr>
+<tr><td>66</td><td><code>PROP_DEV_CHANNEL_KEYS</code></td><td>Get, Set, Insert, Remove</td><td>Device identity channel keys</td></tr>
+<tr><td>67</td><td><code>PROP_DEV_PEERS</code></td><td>Get, Set, Insert, Remove</td><td>Device identity peer list</td></tr>
+<tr><td>68</td><td><code>PROP_DEV_NAME</code></td><td>Get, Set</td><td>Human-readable device name</td></tr>
+<tr><td>69</td><td><code>PROP_BATTERY</code></td><td>Get, Is</td><td>Battery status snapshot</td></tr>
+<tr><td>70</td><td><code>PROP_MAC_REPEATER_ENABLED</code></td><td>Get, Set</td><td>Autonomous repeater forwarding enable</td></tr>
+<tr><td>71</td><td><code>PROP_IDENT</code></td><td>Get</td><td>Signed node identity of the device identity</td></tr>
+<tr><td>72</td><td><code>PROP_IDENT_ROLE</code></td><td>Get, Set</td><td>Advertised node role, or empty to derive it</td></tr>
+<tr><td>73</td><td><code>PROP_IDENT_MOBILE</code></td><td>Get, Set</td><td>Advertise the mobile capability bit</td></tr>
+<tr><td>74</td><td><code>PROP_MAC_REPEATER_REGIONS</code></td><td>Get, Set</td><td>Region codes the device forwards for</td></tr>
+<tr><td>75</td><td><code>PROP_MAC_REPEATER_DEFAULT_REGION</code></td><td>Get, Set</td><td>Region code inserted into untagged flood packets</td></tr>
+<tr><td>76</td><td><code>PROP_MAC_REPEATER_MIN_RSSI</code></td><td>Get, Set</td><td>Minimum received RSSI for flood forwarding</td></tr>
+<tr><td>77</td><td><code>PROP_MAC_REPEATER_MIN_SNR</code></td><td>Get, Set</td><td>Minimum received SNR for flood forwarding</td></tr>
+<tr><td>78</td><td><code>PROP_DEV_DISCOVERABLE</code></td><td>Get, Set</td><td>Whether the device identity answers Identity Requests</td></tr>
+<tr><td>79</td><td><code>PROP_ALERT</code></td><td>Get, Set, Is</td><td>Locate alert state</td></tr>
+</tbody>
+</table>
+</div>
+<p>The RF configuration is also device-domain state, but is specified in
+<a href="ulcp-radio.html">Radio Control</a>; so is the transport configuration in
+<a href="ulcp-ble.html">ULCP over BLE</a>.</p>
+<h3 id="prop-dev-key"><a class="header" href="#prop-dev-key">PROP 64: <code>PROP_DEV_KEY</code></a></h3>
+<ul>
+<li>Type: Single-Value, Read-Only</li>
+<li>Asynchronous Updates: No</li>
+<li>Required: <code>CAP_DEV_IDENTITY</code></li>
+<li>Value Type: 32 octets, or empty</li>
+<li>Post-Reset Value: Persisted</li>
+</ul>
+<p>The Ed25519 public key of the <strong>device identity</strong>
+(see <a href="ulcp-device.html#device-identity">The Device Identity</a>). The public key is also emitted as the success
+response when the private key is installed or generated (see
+<a href="ulcp-device.html#prop-dev-private-key"><code>PROP_DEV_PRIVATE_KEY</code></a>).</p>
+<p>An empty value means the device has no device identity. A conforming device does
+not report one in normal operation — an identity is generated at first
+boot if none is stored — so hosts <strong>SHOULD</strong> treat an empty value as a
+fault to surface rather than as an invitation to provision one.</p>
+<p>Frames addressed to the device identity are processed by the device itself.
+They are additionally delivered or queued to the host only if they
+independently match the host’s receive filtering (see <a href="ulcp-host.html#receive-filtering">Receive Filtering</a>).</p>
+<h3 id="prop-dev-private-key"><a class="header" href="#prop-dev-private-key">PROP 65: <code>PROP_DEV_PRIVATE_KEY</code></a></h3>
+<ul>
+<li>Type: Single-Value, Write-Only</li>
+<li>Asynchronous Updates: No</li>
+<li>Required: <code>CAP_DEV_IDENTITY</code></li>
+<li>Value Type: 32 octets, or empty</li>
+<li>Post-Reset Value: Persisted</li>
+</ul>
+<p>Installs or generates the device identity private key. An identity always
+exists already (see <a href="ulcp-device.html#device-identity">The Device Identity</a>), so both forms <strong>replace</strong> one:</p>
+<ul>
+<li>Setting a 32-octet value installs it as the device identity’s Ed25519
+private key. This is the recovery path — moving a known repeater’s
+identity onto replacement hardware — not a commissioning step.</li>
+<li>Setting an <strong>empty</strong> value commands the device to generate a fresh private
+key entirely on-device from its cryptographically secure random number
+generator. On-device generation is <strong>RECOMMENDED</strong> over installation,
+since a generated key never exists anywhere but the radio.</li>
+</ul>
+<p>In both cases, success is reported by emitting <code>CMD_PROP_IS</code> for
+<strong><code>PROP_DEV_KEY</code></strong> — carrying the resulting <em>public</em> key — with the
+command’s TID. The private key itself is never emitted. Success <strong>MUST NOT</strong>
+be reported before the new identity is in effect and durably stored.
+Replacing an existing device identity is permitted; implementations
+<strong>SHOULD</strong> treat the device identity’s peer list and channel keys as
+still valid, since they are not derived from the identity key.</p>
+<p>This property is write-only: <code>CMD_PROP_GET</code> <strong>MUST</strong> fail with
+<code>STATUS_UNIMPLEMENTED</code> and <strong>MUST NOT</strong> disclose the value or whether an
+identity is configured (use <code>PROP_DEV_KEY</code> for that).</p>
+<p>The device identity is <strong>not</strong> part of the saved snapshot (see
+<a href="ulcp-saved-state.html#saved-state">Saved State</a>): it is durably persisted as soon as it is installed or
+generated, and it is changed only by another set of this property or by
+<code>CMD_CLEAR</code>. <code>CMD_RESTORE</code> never reverts it — though it does read the
+identity a snapshot was taken under, and refuses to enable the PHY when
+it does not match (see <a href="ulcp-saved-state.html#cmd-restore"><code>CMD_RESTORE</code></a>).</p>
+<p>Replacing the identity takes effect for the property surface immediately
+and for anything the device built around the old key at the next boot. The
+old key stops being one the device claims at once, so a device running a
+device node <strong>MUST</strong> stop originating traffic under it rather than
+continue until the reboot.</p>
+<p>Installing a private key is subject to the same transport security
+requirements as all key provisioning (see <a href="ulcp-core.html#provisioning-security">Provisioning Security</a>).</p>
+<h3 id="prop-dev-channel-keys"><a class="header" href="#prop-dev-channel-keys">PROP 66: <code>PROP_DEV_CHANNEL_KEYS</code></a></h3>
+<ul>
+<li>Type: Multiple-Value, Read-Write</li>
+<li>Has Item Length Prefix: No</li>
+<li>Asynchronous Updates: No</li>
+<li>Required: <code>CAP_DEV_IDENTITY</code></li>
+<li>Item Form: 32 octets (the channel key)</li>
+<li>Digest Form: 2 octets (the derived channel identifier)</li>
+<li>Remove Selector: the 32-octet channel key</li>
+<li>Post-Reset Value: Empty, or restored from saved state</li>
+</ul>
+<p>The set of <a href="multicast-channels.html#channel-keys">channel keys</a> belonging to
+the <strong>device identity</strong> — channels the radio’s own node participates in
+(for example, a site-infrastructure management channel). These are
+independent of the host domain: they survive host replacement and are
+distinct from <code>PROP_HOST_CHANNEL_KEYS</code>.</p>
+<p>For each key the device derives the 2-byte
+<a href="packet-types.html#channel-identifier-derivation">channel identifier</a> and the
+channel’s <code>K_enc</code>/<code>K_mic</code>
+(see <a href="security.html#multicast-packet-keys">Multicast Packet Keys</a>). The
+digest form reported for each entry is that derived channel identifier;
+the key itself is never read back.</p>
+<p>Device channel keys do <strong>not</strong> create implicit host receive filters:
+frames on these channels are consumed by the device node and reach the
+host only through the host’s own filtering.</p>
+<h3 id="prop-dev-peers"><a class="header" href="#prop-dev-peers">PROP 67: <code>PROP_DEV_PEERS</code></a></h3>
+<ul>
+<li>Type: Multiple-Value, Read-Write</li>
+<li>Has Item Length Prefix: No</li>
+<li>Asynchronous Updates: No</li>
+<li>Required: <code>CAP_DEV_IDENTITY</code></li>
+<li>Item Form: 32 octets (the peer’s Ed25519 public key)</li>
+<li>Remove Selector: the 32-octet public key</li>
+<li>Post-Reset Value: Empty, or restored from saved state</li>
+</ul>
+<p>The <strong>device identity’s</strong> peer list: the set of peer public keys the
+device node recognizes and may communicate with securely. Because the device
+holds the device identity’s private key, it performs its own key agreement
+(<a href="security.html#unicast-key-agreement">Unicast Key Agreement</a>) for these
+peers — no symmetric keys are provisioned, and the entries contain no
+secret material.</p>
+<p>How the device node uses this list (management access control, secure
+diagnostics, and so on) is application behavior outside the scope of this
+protocol.</p>
+<h3 id="prop-dev-name"><a class="header" href="#prop-dev-name">PROP 68: <code>PROP_DEV_NAME</code></a></h3>
+<ul>
+<li>Type: Single-Value, Read-Write</li>
+<li>Asynchronous Updates: No</li>
+<li>Required: <code>CAP_DEV_NAME</code></li>
+<li>Value Type: 1–64 octets of UTF-8, without U+0000</li>
+<li>Post-Reset Value: Implementation-defined default, or restored from saved state</li>
+</ul>
+<p>The operator-assigned, human-readable name of the physical
+device. It is independent of the device and host cryptographic identities and
+<strong>MUST NOT</strong> be derived from a bonded host or other host-domain state.</p>
+<p>Setting the property changes the live name immediately. Like other ordinary
+device-domain configuration, it is included in a <code>CMD_SAVE</code> snapshot but is
+not independently persisted merely by being set. Applications and transports
+that present the device to a person <strong>SHOULD</strong> use this value when practical.
+They <strong>MAY</strong> shorten it to fit a constrained presentation, but <strong>MUST NOT</strong>
+split a UTF-8 code point when doing so.</p>
+<p>The name is intentionally public metadata. Operators should assume that any
+value used in discovery advertisements can be observed by nearby devices.</p>
+<h3 id="prop-battery"><a class="header" href="#prop-battery">PROP 69: <code>PROP_BATTERY</code></a></h3>
+<ul>
+<li>Type: Single-Value, Read-Only</li>
+<li>Asynchronous Updates: Yes</li>
+<li>Required: <code>CAP_BATTERY</code></li>
+<li>Value Type: Battery status snapshot (see below), or empty</li>
+<li>Post-Reset Value: Current measurement, or empty if reporting is
+unsupported</li>
+</ul>
+<p>A device advertising <code>CAP_BATTERY</code> has a battery capable of powering its
+operation and recognizes this property. The capability does not require the
+hardware to support reporting any measurement: an implementation that cannot
+report battery status at all answers <code>CMD_PROP_GET</code> successfully with an
+<strong>empty value</strong>.</p>
+<p>A non-empty value is a snapshot of the battery measurements the platform
+supports, taken as one measurement event:</p>
+<div class="table-wrapper">
+<table>
+<thead>
+<tr><th>Octets</th><th>Field</th></tr>
+</thead>
+<tbody>
+<tr><td>1</td><td>Field flags</td></tr>
+<tr><td>0 or 2</td><td>Battery voltage, UINT16_LE, millivolts</td></tr>
+<tr><td>0 or 1</td><td>Battery level, UINT8, percent (0–100)</td></tr>
+<tr><td>0+</td><td>Charge state, PUI</td></tr>
+</tbody>
+</table>
+</div>
+<p>Bits 0 (voltage), 1 (level), and 2 (charge state) of the field flags octet
+indicate which fields are present; present fields follow in the order above.
+Bits 3–7 are reserved and <strong>MUST</strong> be zero; a host <strong>MUST</strong> treat a value
+with a reserved bit set, or whose length does not match its field flags, as
+malformed.</p>
+<p>Which fields are reported is fixed for a given hardware and firmware
+configuration: the field flags do not change while a session is attached. An
+absent field indicates only that the implementation cannot report that
+measurement. It <strong>MUST NOT</strong> be used to indicate a depleted, disconnected,
+or temporarily unreadable battery: an implementation that normally reports a
+field but cannot currently obtain a measurement fails the <code>CMD_PROP_GET</code>
+with <code>STATUS_FAILURE</code> rather than omitting the field or returning an empty
+value.</p>
+<p>The value returned by <code>CMD_PROP_GET</code> reflects a measurement performed when
+the request is serviced, not a previously cached reading; concurrent
+requests <strong>MAY</strong> share one measurement. How each field is produced is
+platform-defined — in particular, the level estimate is not necessarily
+derived from the voltage measurement, and a platform with a fuel gauge may
+report a level without reporting a voltage at all.</p>
+<p>The fields:</p>
+<dl>
+<dt id="battery-voltage"><a class="header" href="#battery-voltage"><strong>Battery voltage</strong></a></dt>
+<dd>The measured voltage at the battery terminals, in millivolts. This is the
+battery voltage, not an external-power input or regulated system voltage;
+it may therefore reflect the normal voltage elevation that occurs while
+the battery is charging.</dd>
+<dt id="battery-level"><a class="header" href="#battery-level"><strong>Battery level</strong></a></dt>
+<dd>The implementation’s estimate of the battery’s state of charge, as an
+integer percentage from 0 through 100 inclusive. A host <strong>MUST NOT</strong>
+derive this value from the voltage field or assume that successive
+estimates change monotonically.</dd>
+<dt id="charge-state"><a class="header" href="#charge-state"><strong>Charge state</strong></a></dt>
+<dd>The current battery charge state:</dd>
+</dl>
+<div class="table-wrapper">
+<table>
+<thead>
+<tr><th>Value</th><th>Name</th></tr>
+</thead>
+<tbody>
+<tr><td>0</td><td><code>BATTERY_CHARGE_STATE_DISCHARGING</code></td></tr>
+<tr><td>1</td><td><code>BATTERY_CHARGE_STATE_CHARGING</code></td></tr>
+<tr><td>2</td><td><code>BATTERY_CHARGE_STATE_CHARGED</code></td></tr>
+</tbody>
+</table>
+</div>
+<dl>
+<dt id="battery_charge_state_discharging"><a class="header" href="#battery_charge_state_discharging"><code>BATTERY_CHARGE_STATE_DISCHARGING</code></a></dt>
+<dd>The charging system reports neither active charging nor charge completion.
+This is the charge state used for a disconnected battery when the
+implementation can detect that condition; an absent field remains reserved
+exclusively for unsupported reporting.</dd>
+<dt id="battery_charge_state_charging"><a class="header" href="#battery_charge_state_charging"><code>BATTERY_CHARGE_STATE_CHARGING</code></a></dt>
+<dd>The charging system reports that the battery is actively receiving charge.</dd>
+<dt id="battery_charge_state_charged"><a class="header" href="#battery_charge_state_charged"><code>BATTERY_CHARGE_STATE_CHARGED</code></a></dt>
+<dd>External power is present and the charging system reports that charging has
+completed. A battery at 100 percent while operating without external power
+remains in <code>BATTERY_CHARGE_STATE_DISCHARGING</code>.</dd>
+</dl>
+<p>The property contains live, read-only state. It is never included in a
+saved snapshot and is not changed by <code>CMD_RESTORE</code>. A device <strong>MAY</strong> emit
+unsolicited <code>CMD_PROP_IS</code> updates when the reported snapshot changes. Such
+updates <strong>SHOULD</strong> be coalesced or rate-limited so that measurement noise
+does not produce excessive ULCP traffic.</p>
+<h3 id="prop-mac-repeater-enabled"><a class="header" href="#prop-mac-repeater-enabled">PROP 70: <code>PROP_MAC_REPEATER_ENABLED</code></a></h3>
+<ul>
+<li>Type: Single-Value, Read-Write</li>
+<li>Asynchronous Updates: No</li>
+<li>Required: <code>CAP_REPEATER</code></li>
+<li>Value Type: BOOL</li>
+<li>Post-Reset Value: Persisted</li>
+</ul>
+<p>The first of the device-behavior settings (property identifiers 70–78),
+and the master switch for the repeater policy in
+<code>PROP_MAC_REPEATER_REGIONS</code>, <code>PROP_MAC_REPEATER_DEFAULT_REGION</code>,
+<code>PROP_MAC_REPEATER_MIN_RSSI</code>, and <code>PROP_MAC_REPEATER_MIN_SNR</code>, which are
+configurable while forwarding is disabled and take effect when it is
+enabled. When true, the <strong>device identity</strong> acts as an
+autonomous mesh repeater: its on-board node forwards overheard routable
+frames according to <a href="repeater-operation.html">Repeater Operation</a>, and it
+sets the repeater capability bit in its <a href="node-identity.html">node
+identity</a>. When false, the device identity does not
+forward and the bit is clear.</p>
+<p>The capability bit is a statement of fact and <strong>MUST</strong> track the live
+forwarding state. The advertised <em>role</em> is a separate matter: it is
+configuration, set through <a href="ulcp-device.html#prop-ident-role"><code>PROP_IDENT_ROLE</code></a>,
+and defaults to being derived from this flag rather than being fixed by
+it. A mobile repeater and a fixed tracker are both expressible.</p>
+<p>This property governs only the <em>forwarding behavior</em> of the device
+identity. It is independent of <code>PROP_MAC_PROMISCUOUS</code> (a session-scoped
+host-delivery mode) and of the host identity, which never forwards.</p>
+<p>The flag is device-domain state: it is part of the saved snapshot, so a
+<code>CMD_SAVE</code> arms an unattended repeater across power cycles, and it
+survives a change of host.</p>
+<p>Flood-contention tuning — the forwarding delay window, deferral count,
+and similar timing parameters — is not exposed; a repeater applies its
+local defaults.</p>
+<h3 id="prop-ident"><a class="header" href="#prop-ident">PROP 71: <code>PROP_IDENT</code></a></h3>
+<ul>
+<li>Type: Single-Value, Read-Only</li>
+<li>Asynchronous Updates: No</li>
+<li>Required: <code>CAP_IDENT</code></li>
+<li>Value Type: Signed node-identity payload</li>
+</ul>
+<p>The device identity’s complete signed <a href="node-identity.html">node
+identity</a>: the canonical payload encoding — role,
+capabilities, and the descriptive options the device advertises —
+followed by its 64-octet detached EdDSA signature over that encoding.</p>
+<p>This is the same statement the device makes over the air, in its
+standalone framing. A device <strong>MUST</strong> build it from the same values it
+would advertise in an Identity Request response, so a host reading it
+locally and a peer hearing it on the mesh cannot disagree about what the
+device is. It differs from that response in exactly two ways, both
+structural: it carries no request nonce, and it is authenticated by the
+signature rather than by an enclosing authenticated unicast.</p>
+<p>The contents are nonce-free and timestamp-free, so the value is a
+function of the device’s configuration alone. A device <strong>MAY</strong> cache it,
+but is not required to: reading this property is an operator-scale
+event.</p>
+<h3 id="prop-ident-role"><a class="header" href="#prop-ident-role">PROP 72: <code>PROP_IDENT_ROLE</code></a></h3>
+<ul>
+<li>Type: Single-Value, Read-Write</li>
+<li>Asynchronous Updates: No</li>
+<li>Required: <code>CAP_IDENT</code></li>
+<li>Value Type: UINT8, or empty</li>
+<li>Post-Reset Value: Empty, or restored from saved state</li>
+</ul>
+<p>The <code>ROLE</code> byte the device identity advertises (see <a href="node-identity.html#node-primary-role">Node
+Primary Role</a>).</p>
+<p>An <strong>empty</strong> value — the factory default — means the device derives the
+role from what it is actually doing: <code>Repeater</code> while
+<code>PROP_MAC_REPEATER_ENABLED</code> is set, <code>Tracker</code> otherwise. Any other value
+is advertised verbatim.</p>
+<p>Role and forwarding are deliberately separate. Forwarding is a fact,
+reported through the repeater capability bit; the role is how the device
+presents itself, which is the operator’s choice. Deriving it by default
+keeps the common cases right without a configuration step, and setting
+it explicitly expresses the ones derivation cannot reach — a repeater
+that is also mobile, a fixed node that is not a repeater.</p>
+<p><strong>Tethering does not appear here, or anywhere in a node identity.</strong>
+Whether some host is currently attached over the local control link is a
+transient local relationship, not a durable characteristic of the node,
+and the mesh has no business knowing it.</p>
+<h3 id="prop-ident-mobile"><a class="header" href="#prop-ident-mobile">PROP 73: <code>PROP_IDENT_MOBILE</code></a></h3>
+<ul>
+<li>Type: Single-Value, Read-Write</li>
+<li>Asynchronous Updates: No</li>
+<li>Required: <code>CAP_IDENT</code></li>
+<li>Value Type: BOOL</li>
+<li>Post-Reset Value: 0 (false), or restored from saved state</li>
+</ul>
+<p>Whether the device identity advertises the mobile capability bit: true
+for a device that moves, false for one installed in a fixed location.</p>
+<p>Orthogonal to <code>PROP_IDENT_ROLE</code> and to <code>PROP_MAC_REPEATER_ENABLED</code>, and
+orthogonal to whether a host is tethered. A hand-carried repeater and a
+pole-mounted sensor are both ordinary configurations.</p>
+<h3 id="prop-mac-repeater-regions"><a class="header" href="#prop-mac-repeater-regions">PROP 74: <code>PROP_MAC_REPEATER_REGIONS</code></a></h3>
+<ul>
+<li>Type: Single-Value, Read-Write</li>
+<li>Asynchronous Updates: No</li>
+<li>Required: <code>CAP_REPEATER</code></li>
+<li>Value Type: Concatenated 2-octet <a href="packet-options.html#region-code-encoding">region codes</a></li>
+<li>Post-Reset Value: Empty, or restored from saved state</li>
+</ul>
+<p>The set of regions the device identity flood-forwards for, as the codes
+themselves concatenated with no delimiter — byte-for-byte the encoding of
+the <a href="node-identity.html#supported-regions-option-4">Supported Regions</a>
+identity option. The value length is therefore always even; a device
+<strong>MUST</strong> reject an odd-length write with <code>STATUS_INVALID_ARGUMENT</code>, and
+<strong>MAY</strong> reject a write that exceeds the number of entries it can hold.</p>
+<p>The list is the filter applied at the region-policy step of the <a href="repeater-operation.html#forwarding-procedure">forwarding
+procedure</a>: a flood packet
+carrying region codes is forwarded only if at least one of them appears
+here. An <strong>empty</strong> list — the factory default — imposes no regional
+restriction, so a tagged packet is forwarded whatever its region.</p>
+<p>A device with forwarding enabled and a non-empty list <strong>SHOULD</strong> advertise
+the same codes in its node identity, so that a peer choosing a route can
+see what a repeater will carry. A device that is not forwarding makes no
+such claim and omits the option.</p>
+<p>Whether an untagged packet is tagged on the way out is a separate
+decision, governed by <code>PROP_MAC_REPEATER_DEFAULT_REGION</code>.</p>
+<h3 id="prop-mac-repeater-default-region"><a class="header" href="#prop-mac-repeater-default-region">PROP 75: <code>PROP_MAC_REPEATER_DEFAULT_REGION</code></a></h3>
+<ul>
+<li>Type: Single-Value, Read-Write</li>
+<li>Asynchronous Updates: No</li>
+<li>Required: <code>CAP_REPEATER</code></li>
+<li>Value Type: One 2-octet <a href="packet-options.html#region-code-encoding">region code</a>, or empty</li>
+<li>Post-Reset Value: Empty, or restored from saved state</li>
+</ul>
+<p>The region code the device inserts into a flood packet that carries none,
+as permitted at the region-policy step of the <a href="repeater-operation.html#forwarding-procedure">forwarding
+procedure</a>. An <strong>empty</strong>
+value — the factory default — means the device never tags: untagged
+packets are forwarded untagged. Any other value <strong>MUST</strong> be exactly two
+octets; a device rejects other lengths with <code>STATUS_INVALID_ARGUMENT</code>.</p>
+<p>Tagging is opt-in because it is a claim about where the packet is, not
+merely about where the repeater is willing to forward. A repeater that
+filters on a region list without asserting one leaves the decision to
+whoever originated the packet.</p>
+<p>The configured code <strong>SHOULD</strong> be one of the codes in
+<code>PROP_MAC_REPEATER_REGIONS</code> when that list is non-empty, so that the
+repeater will itself forward what it tags. A device does not enforce this
+across the two writes, and the two properties may be set in either order.</p>
+<p>Only untagged packets are affected: an already-tagged packet is forwarded
+with its codes unchanged, and a second code is never added.</p>
+<h3 id="prop-mac-repeater-min-rssi"><a class="header" href="#prop-mac-repeater-min-rssi">PROP 76: <code>PROP_MAC_REPEATER_MIN_RSSI</code></a></h3>
+<ul>
+<li>Type: Single-Value, Read-Write</li>
+<li>Asynchronous Updates: No</li>
+<li>Required: <code>CAP_REPEATER</code></li>
+<li>Value Type: INT16 in dBm, or empty</li>
+<li>Post-Reset Value: Empty, or restored from saved state</li>
+</ul>
+<p>The weakest signal the device will flood-forward, in dBm. An <strong>empty</strong>
+value — the factory default — imposes no threshold. Any other value
+<strong>MUST</strong> be exactly two octets.</p>
+<p>The threshold is the repeater’s half of step 7 of the <a href="repeater-operation.html#forwarding-procedure">forwarding
+procedure</a>: where the packet
+also carries a minimum, the higher of the two applies. Raising it trades
+reach for a quieter mesh, which is what a dense deployment wants from a
+repeater sitting at the edge of everyone’s range.</p>
+<p>Applies to flood forwarding only. Source-routed packets are forwarded on
+the strength of the route, not the link.</p>
+<h3 id="prop-mac-repeater-min-snr"><a class="header" href="#prop-mac-repeater-min-snr">PROP 77: <code>PROP_MAC_REPEATER_MIN_SNR</code></a></h3>
+<ul>
+<li>Type: Single-Value, Read-Write</li>
+<li>Asynchronous Updates: No</li>
+<li>Required: <code>CAP_REPEATER</code></li>
+<li>Value Type: INT8 in whole dB, or empty</li>
+<li>Post-Reset Value: Empty, or restored from saved state</li>
+</ul>
+<p>The lowest signal-to-noise ratio the device will flood-forward, in whole
+dB. An <strong>empty</strong> value — the factory default — imposes no threshold. Any
+other value <strong>MUST</strong> be exactly one octet.</p>
+<p>The threshold is the repeater’s half of step 8 of the <a href="repeater-operation.html#forwarding-procedure">forwarding
+procedure</a>, combined with any
+packet-imposed minimum the same way <code>PROP_MAC_REPEATER_MIN_RSSI</code> is. On
+spreading factors that decode well below the noise floor, this is the
+more meaningful of the two thresholds.</p>
+<p>Applies to flood forwarding only.</p>
+<h3 id="prop-dev-discoverable"><a class="header" href="#prop-dev-discoverable">PROP 78: <code>PROP_DEV_DISCOVERABLE</code></a></h3>
+<ul>
+<li>Type: Single-Value, Read-Write</li>
+<li>Asynchronous Updates: No</li>
+<li>Required: <code>CAP_DEV_IDENTITY</code></li>
+<li>Value Type: BOOL</li>
+<li>Post-Reset Value: 1 (true), or restored from saved state</li>
+</ul>
+<p>Whether the device identity answers <a href="mac-commands.html#identity-request-command-1">Identity
+Requests</a> addressed to it,
+including broadcast solicitations whose filters select it. When false,
+the device identity ignores every Identity Request.</p>
+<p>Discoverability defaults on: a deployed device is infrastructure, and
+being askable is most of what makes it administrable in the field. The
+property is the opt-out for deployments where the device should not
+volunteer its identity to arbitrary nearby askers.</p>
+<p>Affects only Identity Request responses. Unsolicited advertisements,
+beacons, and the device’s participation in forwarding are governed
+elsewhere and are unchanged by this property.</p>
+<h3 id="prop-alert"><a class="header" href="#prop-alert">PROP 79: <code>PROP_ALERT</code></a></h3>
+<ul>
+<li>Type: Single-Value, Read-Write</li>
+<li>Asynchronous Updates: Yes</li>
+<li>Required: <code>CAP_ALERT</code></li>
+<li>Value Type: PUI</li>
+<li>Post-Reset Value: 0 (<code>ALERT_NONE</code>)</li>
+</ul>
+<p>What the device is currently doing to draw a person’s attention to where
+it physically is. A radio that has been set down in the wrong place is
+found by making it announce itself.</p>
+<div class="table-wrapper">
+<table>
+<thead>
+<tr><th>Value</th><th>Name</th></tr>
+</thead>
+<tbody>
+<tr><td>0</td><td><code>ALERT_NONE</code></td></tr>
+<tr><td>1</td><td><code>ALERT_LOCATE</code></td></tr>
+</tbody>
+</table>
+</div>
+<dl>
+<dt id="alert_none"><a class="header" href="#alert_none"><code>ALERT_NONE</code></a></dt>
+<dd>The nominal state. The device draws no attention to itself beyond
+whatever its ordinary operation involves.</dd>
+<dt id="alert_locate"><a class="header" href="#alert_locate"><code>ALERT_LOCATE</code></a></dt>
+<dd>The device makes itself as conspicuous as its hardware allows, and
+keeps doing so until the alert is cleared.</dd>
+</dl>
+<p>Values other than these are rejected with <code>STATUS_INVALID_ARGUMENT</code>.</p>
+<p><strong>The presentation is board-defined.</strong> The property carries intent, not
+presentation: a device with a buzzer sounds it, a device with only an
+indicator LED flashes it, a device with a display can say so on the
+screen. <code>CAP_ALERT</code> states that the device has <em>some</em> means of making
+itself conspicuous and nothing more, so a host <strong>MUST NOT</strong> assume that
+an alert is audible, or that two devices alert alike. Because the alert
+runs unattended on a device that may already be low, it is expected to be
+intermittent rather than continuous, and it does not defer or inhibit a
+protective shutdown.</p>
+<p><strong>The alert overrides local quiet settings.</strong> A device whose buzzer has
+been silenced through a local control still sounds <code>ALERT_LOCATE</code>:
+locating a misplaced radio is precisely the case that silencing must not
+defeat. The alert <em>suspends</em> the local setting rather than changing it,
+so clearing the alert leaves the device as quiet as it was before.</p>
+<p>A device returns to <code>ALERT_NONE</code> three ways:</p>
+<ol>
+<li>The host writes <code>ALERT_NONE</code>.</li>
+<li>Local user input cancels it. A device with any user input at all
+<strong>MUST</strong> offer a way to cancel an alert from the device itself —
+whoever finds the radio is rarely holding the phone that set it off.
+The input that cancels performs none of its other functions, so that
+fumbling for a beeping radio cannot change its configuration; a
+deliberate gesture such as hold-to-power-off <strong>MAY</strong> remain
+reachable while an alert is active.</li>
+<li>The deadline expires. A device <strong>MUST</strong> bound how long it will remain
+in <code>ALERT_LOCATE</code>; a few minutes is <strong>RECOMMENDED</strong>. Writing
+<code>ALERT_LOCATE</code> while it is already in effect succeeds and restarts the
+deadline, which is how a host holds an alert open for a longer search.</li>
+</ol>
+<p>Every transition to <code>ALERT_NONE</code> that the host did not command <strong>MUST</strong>
+be reported with an unsolicited <code>CMD_PROP_IS</code>.</p>
+<p>The deadline is the only bound. In particular, the alert is <strong>not</strong>
+cleared on detach: the link to the searching host drops as soon as the
+searcher walks out of range, which is the moment the alert becomes most
+useful. It is likewise unaffected by <code>CMD_RST</code>, which resets session
+state and not the physical behavior of the device.</p>
+<p>The property is live device-domain state. It is never included in a saved
+snapshot, is not changed by <code>CMD_RESTORE</code>, and is <code>ALERT_NONE</code> after
+every reset — a device that loses power mid-alert comes back quiet.</p>
+
+                    </main>
+
+                    <nav class="nav-wrapper" aria-label="Page navigation">
+                        <!-- Mobile navigation buttons -->
+                            <a rel="prev" href="ulcp-transport.html" class="mobile-nav-chapters previous" title="Previous chapter" aria-label="Previous chapter" aria-keyshortcuts="Left">
+                                <span class=fa-svg><svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 320 512"><!--! Font Awesome Free 6.2.0 by @fontawesome - https://fontawesome.com License - https://fontawesome.com/license/free (Icons: CC BY 4.0, Fonts: SIL OFL 1.1, Code: MIT License) Copyright 2022 Fonticons, Inc. --><path d="M41.4 233.4c-12.5 12.5-12.5 32.8 0 45.3l160 160c12.5 12.5 32.8 12.5 45.3 0s12.5-32.8 0-45.3L109.3 256 246.6 118.6c12.5-12.5 12.5-32.8 0-45.3s-32.8-12.5-45.3 0l-160 160z"/></svg></span>
+                            </a>
+
+                            <a rel="next prefetch" href="ulcp-saved-state.html" class="mobile-nav-chapters next" title="Next chapter" aria-label="Next chapter" aria-keyshortcuts="Right">
+                                <span class=fa-svg><svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 320 512"><!--! Font Awesome Free 6.2.0 by @fontawesome - https://fontawesome.com License - https://fontawesome.com/license/free (Icons: CC BY 4.0, Fonts: SIL OFL 1.1, Code: MIT License) Copyright 2022 Fonticons, Inc. --><path d="M278.6 233.4c12.5 12.5 12.5 32.8 0 45.3l-160 160c-12.5 12.5-32.8 12.5-45.3 0s-12.5-32.8 0-45.3L210.7 256 73.4 118.6c-12.5-12.5-12.5-32.8 0-45.3s32.8-12.5 45.3 0l160 160z"/></svg></span>
+                            </a>
+
+                        <div style="clear: both"></div>
+                    </nav>
+                </div>
+            </div>
+
+            <nav class="nav-wide-wrapper" aria-label="Page navigation">
+                    <a rel="prev" href="ulcp-transport.html" class="nav-chapters previous" title="Previous chapter" aria-label="Previous chapter" aria-keyshortcuts="Left">
+                        <span class=fa-svg><svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 320 512"><!--! Font Awesome Free 6.2.0 by @fontawesome - https://fontawesome.com License - https://fontawesome.com/license/free (Icons: CC BY 4.0, Fonts: SIL OFL 1.1, Code: MIT License) Copyright 2022 Fonticons, Inc. --><path d="M41.4 233.4c-12.5 12.5-12.5 32.8 0 45.3l160 160c12.5 12.5 32.8 12.5 45.3 0s12.5-32.8 0-45.3L109.3 256 246.6 118.6c12.5-12.5 12.5-32.8 0-45.3s-32.8-12.5-45.3 0l-160 160z"/></svg></span>
+                    </a>
+
+                    <a rel="next prefetch" href="ulcp-saved-state.html" class="nav-chapters next" title="Next chapter" aria-label="Next chapter" aria-keyshortcuts="Right">
+                        <span class=fa-svg><svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 320 512"><!--! Font Awesome Free 6.2.0 by @fontawesome - https://fontawesome.com License - https://fontawesome.com/license/free (Icons: CC BY 4.0, Fonts: SIL OFL 1.1, Code: MIT License) Copyright 2022 Fonticons, Inc. --><path d="M278.6 233.4c12.5 12.5 12.5 32.8 0 45.3l-160 160c-12.5 12.5-32.8 12.5-45.3 0s-12.5-32.8 0-45.3L210.7 256 73.4 118.6c-12.5-12.5-12.5-32.8 0-45.3s32.8-12.5 45.3 0l160 160z"/></svg></span>
+                    </a>
+            </nav>
+
+        </div>
+
+        <template id=fa-eye><span class=fa-svg><svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 576 512"><!--! Font Awesome Free 6.2.0 by @fontawesome - https://fontawesome.com License - https://fontawesome.com/license/free (Icons: CC BY 4.0, Fonts: SIL OFL 1.1, Code: MIT License) Copyright 2022 Fonticons, Inc. --><path d="M288 32c-80.8 0-145.5 36.8-192.6 80.6C48.6 156 17.3 208 2.5 243.7c-3.3 7.9-3.3 16.7 0 24.6C17.3 304 48.6 356 95.4 399.4C142.5 443.2 207.2 480 288 480s145.5-36.8 192.6-80.6c46.8-43.5 78.1-95.4 93-131.1c3.3-7.9 3.3-16.7 0-24.6c-14.9-35.7-46.2-87.7-93-131.1C433.5 68.8 368.8 32 288 32zM432 256c0 79.5-64.5 144-144 144s-144-64.5-144-144s64.5-144 144-144s144 64.5 144 144zM288 192c0 35.3-28.7 64-64 64c-11.5 0-22.3-3-31.6-8.4c-.2 2.8-.4 5.5-.4 8.4c0 53 43 96 96 96s96-43 96-96s-43-96-96-96c-2.8 0-5.6 .1-8.4 .4c5.3 9.3 8.4 20.1 8.4 31.6z"/></svg></span></template>
+        <template id=fa-eye-slash><span class=fa-svg><svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 640 512"><!--! Font Awesome Free 6.2.0 by @fontawesome - https://fontawesome.com License - https://fontawesome.com/license/free (Icons: CC BY 4.0, Fonts: SIL OFL 1.1, Code: MIT License) Copyright 2022 Fonticons, Inc. --><path d="M38.8 5.1C28.4-3.1 13.3-1.2 5.1 9.2S-1.2 34.7 9.2 42.9l592 464c10.4 8.2 25.5 6.3 33.7-4.1s6.3-25.5-4.1-33.7L525.6 386.7c39.6-40.6 66.4-86.1 79.9-118.4c3.3-7.9 3.3-16.7 0-24.6c-14.9-35.7-46.2-87.7-93-131.1C465.5 68.8 400.8 32 320 32c-68.2 0-125 26.3-169.3 60.8L38.8 5.1zM223.1 149.5C248.6 126.2 282.7 112 320 112c79.5 0 144 64.5 144 144c0 24.9-6.3 48.3-17.4 68.7L408 294.5c5.2-11.8 8-24.8 8-38.5c0-53-43-96-96-96c-2.8 0-5.6 .1-8.4 .4c5.3 9.3 8.4 20.1 8.4 31.6c0 10.2-2.4 19.8-6.6 28.3l-90.3-70.8zm223.1 298L373 389.9c-16.4 6.5-34.3 10.1-53 10.1c-79.5 0-144-64.5-144-144c0-6.9 .5-13.6 1.4-20.2L83.1 161.5C60.3 191.2 44 220.8 34.5 243.7c-3.3 7.9-3.3 16.7 0 24.6c14.9 35.7 46.2 87.7 93 131.1C174.5 443.2 239.2 480 320 480c47.8 0 89.9-12.9 126.2-32.5z"/></svg></span></template>
+        <template id=fa-copy><span class=fa-svg><svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 512 512"><!--! Font Awesome Free 6.2.0 by @fontawesome - https://fontawesome.com License - https://fontawesome.com/license/free (Icons: CC BY 4.0, Fonts: SIL OFL 1.1, Code: MIT License) Copyright 2022 Fonticons, Inc. --><path d="M502.6 70.63l-61.25-61.25C435.4 3.371 427.2 0 418.7 0H255.1c-35.35 0-64 28.66-64 64l.0195 256C192 355.4 220.7 384 256 384h192c35.2 0 64-28.8 64-64V93.25C512 84.77 508.6 76.63 502.6 70.63zM464 320c0 8.836-7.164 16-16 16H255.1c-8.838 0-16-7.164-16-16L239.1 64.13c0-8.836 7.164-16 16-16h128L384 96c0 17.67 14.33 32 32 32h47.1V320zM272 448c0 8.836-7.164 16-16 16H63.1c-8.838 0-16-7.164-16-16L47.98 192.1c0-8.836 7.164-16 16-16H160V128H63.99c-35.35 0-64 28.65-64 64l.0098 256C.002 483.3 28.66 512 64 512h192c35.2 0 64-28.8 64-64v-32h-47.1L272 448z"/></svg></span></template>
+        <template id=fa-play><span class=fa-svg><svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 384 512"><!--! Font Awesome Free 6.2.0 by @fontawesome - https://fontawesome.com License - https://fontawesome.com/license/free (Icons: CC BY 4.0, Fonts: SIL OFL 1.1, Code: MIT License) Copyright 2022 Fonticons, Inc. --><path d="M73 39c-14.8-9.1-33.4-9.4-48.5-.9S0 62.6 0 80V432c0 17.4 9.4 33.4 24.5 41.9s33.7 8.1 48.5-.9L361 297c14.3-8.7 23-24.2 23-41s-8.7-32.2-23-41L73 39z"/></svg></span></template>
+        <template id=fa-clock-rotate-left><span class=fa-svg><svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 512 512"><!--! Font Awesome Free 6.2.0 by @fontawesome - https://fontawesome.com License - https://fontawesome.com/license/free (Icons: CC BY 4.0, Fonts: SIL OFL 1.1, Code: MIT License) Copyright 2022 Fonticons, Inc. --><path d="M75 75L41 41C25.9 25.9 0 36.6 0 57.9V168c0 13.3 10.7 24 24 24H134.1c21.4 0 32.1-25.9 17-41l-30.8-30.8C155 85.5 203 64 256 64c106 0 192 86 192 192s-86 192-192 192c-40.8 0-78.6-12.7-109.7-34.4c-14.5-10.1-34.4-6.6-44.6 7.9s-6.6 34.4 7.9 44.6C151.2 495 201.7 512 256 512c141.4 0 256-114.6 256-256S397.4 0 256 0C185.3 0 121.3 28.7 75 75zm181 53c-13.3 0-24 10.7-24 24V256c0 6.4 2.5 12.5 7 17l72 72c9.4 9.4 24.6 9.4 33.9 0s9.4-24.6 0-33.9l-65-65V152c0-13.3-10.7-24-24-24z"/></svg></span></template>
+
+
+
+        <script>
+            window.playground_copyable = true;
+        </script>
+
+
+        <script src="elasticlunr-ef4e11c1.min.js"></script>
+        <script src="mark-09e88c2c.min.js"></script>
+        <script src="searcher-c2a407aa.js"></script>
+
+        <script src="clipboard-1626706a.min.js"></script>
+        <script src="highlight-abc7f01d.js"></script>
+        <script src="book-a0b12cfe.js"></script>
+
+        <!-- Custom JS scripts -->
+
+
+
+    </div>
+    </body>
+</html>

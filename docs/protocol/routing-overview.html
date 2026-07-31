@@ -35,10 +35,10 @@
             const path_to_root = "";
             const default_light_theme = "light";
             const default_dark_theme = "ayu";
-            window.path_to_searchindex_js = "searchindex-ba78ed8f.js";
+            window.path_to_searchindex_js = "searchindex-5216ea72.js";
         </script>
         <!-- Start loading toc.js asap -->
-        <script src="toc-6c1064ad.js"></script>
+        <script src="toc-ca16b95c.js"></script>
     </head>
     <body>
     <div id="mdbook-help-container">
@@ -218,8 +218,9 @@ of packets which transit the bridge.</p>
 </blockquote>
 <h2 id="forwarding-confirmation-and-recovery"><a class="header" href="#forwarding-confirmation-and-recovery">Forwarding Confirmation and Recovery</a></h2>
 <p>UMSH provides hop-by-hop forwarding confirmation for both source-routed and flood-originated packets. After transmitting, a node listens for the next hop to retransmit the same packet. If no retransmission is heard within a timeout, the node retries with exponential backoff (up to 3 retries). The original sender does not currently receive any notification of a forwarding failure when source routing.</p>
-<p>If a cached source route fails entirely (noticed because of a timeout), the sender can fall back to flood routing for the same logical packet using the <strong>route retry option</strong>, which allows repeaters to forward it even if they already suppressed the original source-routed attempt.</p>
-<p>See <a href="repeater-operation.html#forwarding-confirmation">Repeater Operation § Forwarding Confirmation</a> and <a href="repeater-operation.html#source-route-failure-recovery">Repeater Operation § Source-Route Failure Recovery</a>.</p>
+<p>If a cached route fails entirely (noticed because of a timeout), the sender can fall back to flood routing for the same logical packet using the <strong>route retry option</strong>, which allows repeaters to forward it even if they already suppressed the original attempt.</p>
+<p>A cached source route is the visible case, but not the only one. A sender that believes the destination is directly reachable, or reachable within a known flood distance, narrows <code>FHOPS</code> accordingly and carries no option recording that it did so. When such a packet goes unacknowledged, the cached distance is as stale as a dead source-route hint, and the recovery transmission restores the flood budget the sending application originally allowed. A radius the application itself chose is not a stale assumption and is not widened.</p>
+<p>See <a href="repeater-operation.html#forwarding-confirmation">Repeater Operation § Forwarding Confirmation</a> and <a href="repeater-operation.html#route-failure-recovery">Repeater Operation § Route Failure Recovery</a>.</p>
 <h2 id="channel-access"><a class="header" href="#channel-access">Channel Access</a></h2>
 <p>Before any transmission — original, forwarded, or acknowledgment — a node performs Channel Activity Detection (CAD) and backs off if the channel is busy. Flood-forwarding repeaters additionally use a contention window based on received SNR, so that better-positioned repeaters transmit first and weaker ones can suppress their retransmission if they overhear an earlier forward.</p>
 <p>See <a href="channel-access.html">Channel Access</a>.</p>

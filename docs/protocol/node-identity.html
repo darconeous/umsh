@@ -35,10 +35,10 @@
             const path_to_root = "";
             const default_light_theme = "light";
             const default_dark_theme = "ayu";
-            window.path_to_searchindex_js = "searchindex-ba78ed8f.js";
+            window.path_to_searchindex_js = "searchindex-5216ea72.js";
         </script>
         <!-- Start loading toc.js asap -->
-        <script src="toc-6c1064ad.js"></script>
+        <script src="toc-ca16b95c.js"></script>
     </head>
     <body>
     <div id="mdbook-help-container">
@@ -197,7 +197,7 @@
 <li><code>0</code> — Unspecified</li>
 <li><code>1</code> — Repeater</li>
 <li><code>2</code> — Chat</li>
-<li><code>3</code> — Tracker/Companion-Radio</li>
+<li><code>3</code> — Tracker</li>
 <li><code>4</code> — Sensor</li>
 <li><code>5</code> — Bridge</li>
 <li><code>6</code> — Chat Room</li>
@@ -374,6 +374,7 @@
 <li>broadcasts</li>
 </ul>
 <p>When the enclosing packet already carries a MIC, the EdDSA signature MAY be omitted.</p>
+<p>A signature is checkable only against the sending node’s public key, so a signed broadcast <a href="beacons.html#advertisements">advertisement</a> MUST carry its source address in full-key form. A hint-only advertisement can be verified only by a receiver that already holds the key, which is not the audience an advertisement is for.</p>
 
                     </main>
 

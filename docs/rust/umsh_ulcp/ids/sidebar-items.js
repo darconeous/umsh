@@ -1,0 +1,1 @@
+window.SIDEBAR_ITEMS = {"constant":["DUTY_LIMIT_DISABLED","INTERFACE_TYPE","PROTOCOL_MAJOR_VERSION","PROTOCOL_MINOR_VERSION"],"mod":["cap","prop","saved","stream"]};

@@ -35,10 +35,10 @@
             const path_to_root = "";
             const default_light_theme = "light";
             const default_dark_theme = "ayu";
-            window.path_to_searchindex_js = "searchindex-ba78ed8f.js";
+            window.path_to_searchindex_js = "searchindex-5216ea72.js";
         </script>
         <!-- Start loading toc.js asap -->
-        <script src="toc-6c1064ad.js"></script>
+        <script src="toc-ca16b95c.js"></script>
     </head>
     <body>
     <div id="mdbook-help-container">
@@ -207,7 +207,7 @@
 <tbody>
 <tr><td>Empty payload</td><td style="text-align: center">Yes</td><td style="text-align: center">Yes</td><td style="text-align: center">Yes</td></tr>
 <tr><td>Node Identity</td><td style="text-align: center">Yes</td><td style="text-align: center">Yes</td><td style="text-align: center">Yes</td></tr>
-<tr><td>MAC Command</td><td style="text-align: center">Yes</td><td style="text-align: center">Note 1</td><td style="text-align: center">No</td></tr>
+<tr><td>MAC Command</td><td style="text-align: center">Yes</td><td style="text-align: center">Note 1</td><td style="text-align: center">Note 2</td></tr>
 <tr><td>Text Message</td><td style="text-align: center">Yes</td><td style="text-align: center">Yes</td><td style="text-align: center">No</td></tr>
 <tr><td>Chat-Room Message</td><td style="text-align: center">Yes</td><td style="text-align: center">No</td><td style="text-align: center">No</td></tr>
 <tr><td>CoAP-over-UMSH</td><td style="text-align: center">Yes</td><td style="text-align: center">Yes</td><td style="text-align: center">No</td></tr>
@@ -215,8 +215,9 @@
 </tbody>
 </table>
 </div>
-<p>Unless explicitly configured otherwise, the only payload types allowed for broadcast are empty payloads and node identities.</p>
+<p>Unless explicitly configured otherwise, the only payload types allowed for broadcast are empty payloads, node identities, and the broadcast-permitted MAC commands (Note 2).</p>
 <p><strong>Note 1:</strong> Some MAC commands may be permitted on specific channels. For example, a private channel might allow echo requests to all members and receive echo responses from everyone. Whether a given MAC command is accepted over multicast is deployment-defined and not yet specified by the protocol.</p>
+<p><strong>Note 2:</strong> MAC commands are admitted to broadcast individually: a command may be carried in a broadcast only when its definition says so, and any such definition must weigh the solicitation load a broadcast can create. Currently only the <a href="mac-commands.html#identity-request-1">Identity Request</a> permits broadcast carriage, under the flood-management restrictions defined there. Receivers drop any other MAC command arriving by broadcast.</p>
 <h2 id="in-band-node-management"><a class="header" href="#in-band-node-management">In-Band Node Management</a></h2>
 <p>Nodes may optionally support remote management via <strong>Node Management Command</strong> payloads.</p>
 <p>Support for in-band management is protocol-defined but implementation-optional.</p>

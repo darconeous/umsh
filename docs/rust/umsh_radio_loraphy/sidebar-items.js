@@ -1,0 +1,1 @@
+window.SIDEBAR_ITEMS = {"constant":["MAX_PAYLOAD","MESHCORE_US_FREQUENCY_HZ","UMSH_FREQUENCY_HZ"],"enum":["CadPolicy","TxError"],"fn":["airtime_ms","bandwidth_from_hz","coding_rate_from_denom","default_params","device_runner","meshcore_us_params","runner","spreading_factor_from_u8"],"struct":["Channels","DeviceControl","DeviceSettings","LoraphyRadio","RxFrame","TxRequest"]};

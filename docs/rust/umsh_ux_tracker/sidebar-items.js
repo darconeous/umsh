@@ -1,0 +1,1 @@
+window.SIDEBAR_ITEMS = {"mod":["battery","button","buzzer","led","power","state"]};

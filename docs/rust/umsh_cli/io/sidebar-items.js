@@ -1,0 +1,1 @@
+window.SIDEBAR_ITEMS = {"fn":["stdio_split"],"struct":["StdioInput","StdioOutput"],"trait":["CliInput","CliOutput"]};

@@ -1,0 +1,1 @@
+window.SIDEBAR_ITEMS = {"constant":["ALIAS_HEADER_LEN","MAX_ALIAS_LEN","MAX_CHANNELS","MAX_CHANNEL_NAME_LEN","MAX_KEY_LEN","MAX_PEERS","MAX_PEER_RECORD_LEN","SCRATCH_LEN"],"enum":["Error"],"struct":["ChannelView","CounterView","FlashStore","KeyValueView","PeerView"]};

@@ -1,0 +1,1 @@
+window.SIDEBAR_ITEMS = {"fn":["debug_log","set_debug_log"]};

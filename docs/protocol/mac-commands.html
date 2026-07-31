@@ -35,10 +35,10 @@
             const path_to_root = "";
             const default_light_theme = "light";
             const default_dark_theme = "ayu";
-            window.path_to_searchindex_js = "searchindex-ba78ed8f.js";
+            window.path_to_searchindex_js = "searchindex-5216ea72.js";
         </script>
         <!-- Start loading toc.js asap -->
-        <script src="toc-6c1064ad.js"></script>
+        <script src="toc-ca16b95c.js"></script>
     </head>
     <body>
     <div id="mdbook-help-container">
@@ -216,6 +216,16 @@ request so the peer can reply directly.</p>
 <li>A repeater MAY decline to forward a broadcast Identity Request, particularly
 when its filters are broad enough to solicit a large number of replies.</li>
 </ul>
+<p>In order to manage the potential flood of responses, the following rules MUST be applied for broadcast (always) and (by default) multicast:</p>
+<ul>
+<li>The FHOPS byte must either be absent or set to 0x00, otherwise the request should be dropped.</li>
+<li>The Route option must either be absent or empty, otherwise the request should be dropped.</li>
+<li>Responses must be delayed by a random amount of time of up to 5 seconds, so
+that the selected nodes do not all answer at once. A delayed response that
+then fails channel-activity assessment follows the responder’s normal
+bounded CCA backoff-and-retry before being dropped.</li>
+</ul>
+<p>These requirements MAY be relaxed for specific private channels, but MUST remain in place for all public channels. Note that these requirements are specifically designed to allow discovering identities from a specific repeater location on the mesh network.</p>
 <p>An Identity Request is answered with a targeted unicast identity response, never
 by flooding an <a href="beacons.html#advertisements">advertisement</a> to the whole network.</p>
 <h3 id="identity-request-options"><a class="header" href="#identity-request-options">Identity Request Options</a></h3>

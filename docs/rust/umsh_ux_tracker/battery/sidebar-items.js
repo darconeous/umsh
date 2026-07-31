@@ -1,0 +1,1 @@
+window.SIDEBAR_ITEMS = {"constant":["SAG_WINDOW_MS"],"enum":["BatteryState","ChargeClass"],"fn":["charge_class","classify","load_recent","soc_from_ocv"],"struct":["BatteryThresholds","LevelEstimator","LevelSample"]};

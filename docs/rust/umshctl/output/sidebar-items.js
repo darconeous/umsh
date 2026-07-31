@@ -1,0 +1,1 @@
+window.SIDEBAR_ITEMS = {"constant":["LABEL_WIDTH"],"enum":["ColorChoice"],"fn":["color","field","hex","note","set_color","styled","subfield","warn"],"static":["COLOR"]};

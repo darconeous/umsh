@@ -1,0 +1,1 @@
+window.SIDEBAR_ITEMS = {"enum":["PropertyNotificationError","PropertyNotificationKind"],"struct":["PropertyNotification","TidAllocator"]};

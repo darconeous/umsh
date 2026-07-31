@@ -1,0 +1,1 @@
+window.SIDEBAR_ITEMS = {"constant":["ESCAPE","ESCAPE_XOR","FLAG"],"enum":["DecodeError","EncodeError"],"fn":["crc16","encode_frame","max_encoded_len"],"struct":["Decoder"]};

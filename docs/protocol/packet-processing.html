@@ -35,10 +35,10 @@
             const path_to_root = "";
             const default_light_theme = "light";
             const default_dark_theme = "ayu";
-            window.path_to_searchindex_js = "searchindex-ba78ed8f.js";
+            window.path_to_searchindex_js = "searchindex-5216ea72.js";
         </script>
         <!-- Start loading toc.js asap -->
-        <script src="toc-6c1064ad.js"></script>
+        <script src="toc-ca16b95c.js"></script>
     </head>
     <body>
     <div id="mdbook-help-container">
@@ -203,7 +203,7 @@
 <li>If the packet carries a channel hint matching a configured channel, continue.</li>
 <li>Otherwise, stop.</li>
 </ul>
-<p>A node always attempts to handle a packet that matches its destination hint, even if the packet has remaining source-route hops. This differs from systems like MeshCore and allows two nodes that are suddenly in direct range of each other to recover quickly without waiting for the packet to traverse the full source route. The packet may also be forwarded according to the normal <a href="repeater-operation.html#forwarding-procedure">forwarding procedure</a> if the node is acting as a repeater.</p>
+<p>A node always attempts to handle a packet that matches its destination hint, even if the packet has remaining source-route hops. This differs from systems like MeshCore and allows two nodes that are suddenly in direct range of each other to recover quickly without waiting for the packet to traverse the full source route. A node acting as a repeater does not also forward such a packet: it is the destination, and the packet has arrived (see <a href="repeater-operation.html#routing-invariants">Routing Invariants</a>).</p>
 </li>
 <li>
 <p><strong>Channel processing</strong> (multicast and blind unicast)</p>

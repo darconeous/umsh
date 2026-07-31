@@ -1,0 +1,1 @@
+window.SIDEBAR_ITEMS = {"constant":["COMMIT_OFFSET","MAX_BONDS","PAGE0","PAGE1","PAGE_SIZE","SLOT_SIZE"],"enum":["BondUpsert","CommitError"],"fn":["consider_snapshot","crc32","erase_journal_page","generation_is_newer","touch_bond","upsert_bond","write_committed_record"],"struct":["Snapshot","StoredBond"],"trait":["PageEraser","RecordReader","RecordWriter"]};

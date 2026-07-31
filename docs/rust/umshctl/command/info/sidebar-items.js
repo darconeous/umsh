@@ -1,0 +1,1 @@
+window.SIDEBAR_ITEMS = {"fn":["battery_display","cap_name","filter_list","run"],"struct":["InfoArgs"]};

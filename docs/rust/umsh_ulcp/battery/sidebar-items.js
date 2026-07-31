@@ -1,0 +1,1 @@
+window.SIDEBAR_ITEMS = {"constant":["FLAG_CHARGE_STATE","FLAG_LEVEL","FLAG_VOLTAGE","MAX_ENCODED_LEN"],"enum":["BatteryChargeState","BatteryError"],"struct":["BatteryStatus"]};

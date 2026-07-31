@@ -35,10 +35,10 @@
             const path_to_root = "";
             const default_light_theme = "light";
             const default_dark_theme = "ayu";
-            window.path_to_searchindex_js = "searchindex-ba78ed8f.js";
+            window.path_to_searchindex_js = "searchindex-5216ea72.js";
         </script>
         <!-- Start loading toc.js asap -->
-        <script src="toc-6c1064ad.js"></script>
+        <script src="toc-ca16b95c.js"></script>
     </head>
     <body>
     <div id="mdbook-help-container">
@@ -249,6 +249,7 @@
 <li>If removing its own hint leaves zero remaining hints, the repeater still preserves the source-route option with an empty value.
 <ul>
 <li>This is important: the forwarded packet still carries the information that it was explicitly source-routed, even though the route is now exhausted.</li>
+<li>Removing the last hint does not change what kind of hop this is. The repeater was named, so it forwards as a source-routed hop and leaves <a href="packet-structure.html#flood-hop-count"><code>FHOPS</code></a>, region policy, and signal-quality thresholds alone. The next repeater sees the empty option and is the first to flood.</li>
 </ul>
 </li>
 <li>Repeaters that do not match the first hint must not forward the packet.</li>
@@ -275,20 +276,20 @@
 <h3 id="route-retry-option-6"><a class="header" href="#route-retry-option-6">Route Retry (option 6)</a></h3>
 <ul>
 <li>Type: zero-length flag</li>
-<li>Semantics: indicates that the originator is re-attempting forwarding of the same logical packet after a previously chosen source route was considered failed.</li>
+<li>Semantics: indicates that the originator is re-attempting forwarding of the same logical packet after a route it had assumed was considered failed.</li>
 <li>If more than one option with this number is present, the packet MUST be dropped.</li>
 <li>This option is intended for sender-originated route recovery, not for ordinary first transmission.</li>
+<li>The failed assumption need not be a source route. A sender that narrowed <code>FHOPS</code> because it believed the destination was directly reachable, or reachable within a known flood distance, has made the same kind of assumption; nothing on the wire distinguishes that packet from an ordinary short-radius flood, and the recovery is the same.</li>
 <li>When present, repeaters treat the packet as a distinct forwarding attempt for duplicate-suppression purposes even though the MIC and frame counter are unchanged.</li>
 <li>The destination does <strong>not</strong> treat this option as creating a new logical packet. Replay acceptance and duplicate application delivery remain governed by the packet’s normal security state, especially its frame counter.</li>
 <li>A sender using this option for route recovery typically:
 <ul>
-<li>removes the stale source-route option</li>
-<li>adds or refreshes flood hops</li>
+<li>removes the stale source-route option, if one was present</li>
+<li>adds or refreshes flood hops, up to but not beyond the budget the sending application was willing to spend</li>
 <li>includes a trace-route option to learn a replacement route</li>
 <li>preserves the same frame counter and payload</li>
 </ul>
 </li>
-<li>This option is non-critical and dynamic so that legacy repeaters may ignore it harmlessly, though they will also not provide the intended retry behavior.</li>
 </ul>
 <h3 id="station-callsign-option-7"><a class="header" href="#station-callsign-option-7">Station Callsign (option 7)</a></h3>
 <ul>
@@ -325,13 +326,13 @@
 <ul>
 <li>Type: 2-byte region identifier</li>
 <li>Semantics: restricts flood-routing to repeaters configured for the specified region.</li>
-<li>A repeater that does not recognize or is not configured for the region MUST NOT forward the packet when flooding.</li>
-<li>This option MUST NOT be enforced until the source route list is exhausted.</li>
+<li>A repeater configured for one or more regions MUST NOT flood-forward a packet whose region is none of them. A repeater configured for no regions makes no regional claim and applies no such restriction.</li>
+<li>This option MUST NOT be enforced on a <a href="repeater-operation.html#routing-invariants">source-routed hop</a>, which includes the hop that removes the last remaining hint. A repeater named in the route forwards regardless of region.</li>
 <li>Multiple region-code options may appear on the same packet. In that case, a repeater MAY flood-forward the packet if any one of the listed regions matches local policy.</li>
 <li>Because this option is dynamic, repeaters may insert it while flood-forwarding a packet that currently has no region code.</li>
 <li>A repeater must never rewrite an existing region code and must never add a second region code to a packet that already has one or more region-code options.</li>
 <li>Region insertion is a local policy decision. When no explicit local policy exists, a reasonable default is the IATA code of the closest regional commercial airport.</li>
-<li>Region insertion applies only during flood forwarding. A source-routed packet without a region does not gain one until its source route is exhausted and it transitions to flooding.</li>
+<li>Region insertion applies only during flood forwarding. An untagged source-routed packet is first tagged by the repeater that flood-forwards it — the one that receives it with an already-empty source route — not by the repeater that emptied the route.</li>
 </ul>
 <h4 id="region-code-encoding"><a class="header" href="#region-code-encoding">Region Code Encoding</a></h4>
 <p>Region codes are 2-byte identifiers derived by one of two methods, depending on the type of region:</p>

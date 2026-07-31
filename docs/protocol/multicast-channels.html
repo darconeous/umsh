@@ -35,10 +35,10 @@
             const path_to_root = "";
             const default_light_theme = "light";
             const default_dark_theme = "ayu";
-            window.path_to_searchindex_js = "searchindex-ba78ed8f.js";
+            window.path_to_searchindex_js = "searchindex-5216ea72.js";
         </script>
         <!-- Start loading toc.js asap -->
-        <script src="toc-6c1064ad.js"></script>
+        <script src="toc-ca16b95c.js"></script>
     </head>
     <body>
     <div id="mdbook-help-container">
@@ -241,8 +241,9 @@
 <p>The <code>public</code> channel (derived from <code>umsh:cs:public</code>) is the default flooded group chat channel. It provides a shared communication space analogous to an open town square — any node that knows the name can participate.</p>
 <ul>
 <li>Maximum flood hops: <strong>5</strong> without a region code, <strong>7</strong> with a region code.</li>
-<li>Traffic <strong>may</strong> be encrypted (E=1).</li>
-<li>Chat messages that do not include the full source key (<code>S=1</code>) <strong>must not</strong> be displayed in the user interface. This ensures that users can always verify sender identity on the public channel, even though the channel key itself is public knowledge.</li>
+<li>Traffic <strong>may</strong> be encrypted (E=1), but the key is known so this doesn’t really offer privacy.</li>
+<li>Blind unicast on this channel is forbidden.</li>
+<li>Chat messages that do not include the full source key (<code>S=1</code>) <strong>MUST NOT</strong> be displayed in the user interface. This ensures that users can always verify sender identity on the public channel, even though the channel key itself is public knowledge.</li>
 </ul>
 <h3 id="emergency"><a class="header" href="#emergency"><code>EMERGENCY</code></a></h3>
 <p>The emergency channel (written <code>EMERGENCY</code> here for emphasis, but derived from <code>umsh:cs:emergency</code> after the ASCII case-folding described in <a href="#named-channels">Named Channels</a>, so <code>umsh:cs:EMERGENCY</code> and <code>umsh:cs:emergency</code> derive the same key) is reserved for emergency communications. Repeaters should prioritize forwarding packets on this channel.</p>

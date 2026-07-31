@@ -1,0 +1,1 @@
+window.SIDEBAR_ITEMS = {"constant":["MAX_PAIRING_FAILURES"],"enum":["PairingFailureClass"],"fn":["pairing_enabled","record_pairing_failure"],"struct":["PairingRuntime"]};

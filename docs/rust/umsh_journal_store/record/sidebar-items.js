@@ -1,0 +1,1 @@
+window.SIDEBAR_ITEMS = {"constant":["PAGE_SIZE"],"enum":["CommitError"],"fn":["crc32","erase_journal_page","generation_is_newer","write_committed_record"],"trait":["PageEraser","RecordReader","RecordWriter"]};

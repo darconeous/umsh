@@ -1,0 +1,1 @@
+window.SIDEBAR_ITEMS = {"constant":["COMMIT_OFFSET","MAX_BONDS","SLOT_SIZE"],"enum":["BondUpsert"],"fn":["consider_snapshot","touch_bond","upsert_bond"],"struct":["Snapshot","StoredBond"]};

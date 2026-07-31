@@ -1,0 +1,1 @@
+window.SIDEBAR_ITEMS = {"enum":["Transport"],"fn":["generation_checked"],"struct":["GenerationChecked","SessionArbitration"]};

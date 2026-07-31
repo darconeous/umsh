@@ -1,0 +1,1 @@
+window.SIDEBAR_ITEMS = {"constant":["COMMIT_OFFSET","COUNTER_PAGE0","IDENTITY_PAGE0","IDENTITY_PAYLOAD_LEN","MAX_PAYLOAD","PAGE0","PAGE1","PAGE_SIZE","SLOT_SIZE","UX_PAGE0"],"enum":["Record","RecordRef"],"fn":["consider_older_record","consider_record","decode_identity","encode_identity","encode_record","write_record"],"struct":["Stored"]};
