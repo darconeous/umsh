@@ -9,7 +9,8 @@
 	build-t1000e flash-t1000e-serial \
 	build-techo flash-techo \
 	build-heltec-v3-console flash-heltec-v3-console \
-	build-heltec-v3 flash-heltec-v3
+	build-heltec-v3 flash-heltec-v3 \
+	install-umshctl install-dissector
 
 # ─── Firmware build / flash ──────────────────────────────────────────────────
 #
@@ -142,6 +143,19 @@ install-umshctl:
 		--features tokio-support \
 		--features serial-radio \
 		--features ble-radio
+
+# Symlinked, so "install" also covers "update" — the plugin dir always
+# points at the working tree, no copy step to fall out of date.
+UNAME_S := $(shell uname -s)
+ifeq ($(UNAME_S),Darwin)
+	WIRESHARK_PLUGIN_DIR := $(HOME)/.config/wireshark/plugins
+else
+	WIRESHARK_PLUGIN_DIR := $(HOME)/.local/lib/wireshark/plugins
+endif
+
+install-dissector:
+	mkdir -p $(WIRESHARK_PLUGIN_DIR)
+	ln -sf "$(CURDIR)/dissectors/umsh" $(WIRESHARK_PLUGIN_DIR)/umsh
 
 # ─── Docs ────────────────────────────────────────────────────────────────────
 
