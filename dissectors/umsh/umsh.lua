@@ -191,12 +191,25 @@ local _registered_port = 0
 -- _ack_by_mic:   ack_mic_hex → {frame=N, timestamp=T, src_label=S,
 --                               dst_label=D, exp_tag_hex=<4B hex or nil>}
 -- _ack_by_frame: frame_num → {ack_frame=N, rsp_time=delta_seconds} (back-annotation)
-local _ack_by_mic   = {}
-local _ack_by_frame = {}
+-- _ack_origin:   ack frame_num → the _ack_by_mic entry that ack resolved to
+--
+-- _ack_by_mic holds only the most recent packet published under a given
+-- ack_mic, which is all a *new* ack needs. It is not what an already-seen
+-- ack needs: a retransmission publishes the same MIC prefix and takes the
+-- entry over, so an ack resolved against it once cannot resolve against it
+-- again. Wireshark re-dissects a frame whenever it is selected, and the
+-- packet list keeps the first pass's Info column — which is why the
+-- symptom is a detail pane disagreeing with the summary line above it,
+-- and a response time that runs backwards. _ack_origin records what each
+-- ack actually resolved to, on the one pass where the answer is right.
+local _ack_by_mic    = {}
+local _ack_by_frame  = {}
+local _ack_origin    = {}
 
 function umsh.init()
   _ack_by_mic   = {}
   _ack_by_frame = {}
+  _ack_origin   = {}
 end
 
 -- ──────────────────────────────────────────────────────────────────────────
@@ -408,8 +421,20 @@ local function dissect_uack(buf, pinfo, tree, off)
 
   -- ACK correlation: look up the public ack_mic. This needs no keys —
   -- the acknowledged packet's MIC prefix is visible on the wire.
+  --
+  -- The lookup is only meaningful while the capture is being read in
+  -- order; afterwards the recorded answer stands in for it. Entries are
+  -- replaced rather than mutated when a MIC prefix repeats, so holding
+  -- the entry keeps this ack pointing at the packet it arrived for even
+  -- once a later one has claimed the prefix.
   local mic_hex = bytes_to_hex(mic_bytes)
-  local origin = _ack_by_mic[mic_hex]
+  local origin
+  if pinfo.visited then
+    origin = _ack_origin[pinfo.number]
+  else
+    origin = _ack_by_mic[mic_hex]
+    _ack_origin[pinfo.number] = origin
+  end
   if origin then
     -- If a key let us precompute the expected keyed tag, verify it. A public
     -- ack_mic match establishes only correlation; when a configured key proves
