@@ -661,7 +661,8 @@ impl<M: MacBackend> LocalNode<M> {
     /// requester can always ask again.
     /// The widest random hold applied to a reply to a broadcast/multicast
     /// solicitation, per the Identity Request flood-management rules.
-    const IDENTITY_RESPONSE_MAX_DELAY_MS: u16 = 5_000;
+    const IDENTITY_RESPONSE_MAX_DELAY_MS: u16 = 30_000;
+    const IDENTITY_RESPONSE_MIN_DELAY_MS: u16 = 500;
 
     pub(crate) async fn send_identity_response(&self, plan: IdentityResponsePlan) {
         let mut options = SendOptions::default();
@@ -675,7 +676,9 @@ impl<M: MacBackend> LocalNode<M> {
             // CCA backoff-and-retry.
             let mut jitter = [0u8; 2];
             self.mac.fill_random(&mut jitter).await;
-            let delay = u16::from_be_bytes(jitter) % (Self::IDENTITY_RESPONSE_MAX_DELAY_MS + 1);
+            let delay = u16::from_be_bytes(jitter)
+                % (Self::IDENTITY_RESPONSE_MAX_DELAY_MS - Self::IDENTITY_RESPONSE_MIN_DELAY_MS + 1)
+                + Self::IDENTITY_RESPONSE_MIN_DELAY_MS;
             options = options.with_tx_delay_ms(delay);
         }
         // A broadcast solicitation's source is not auto-registered on

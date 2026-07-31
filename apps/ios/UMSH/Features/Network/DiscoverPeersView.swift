@@ -51,7 +51,7 @@ struct DiscoverPeersView: View {
 
     /// Minimum spacing between solicitations — one ask is one broadcast,
     /// and mashing the button must not become airtime.
-    static let solicitCooldown: TimeInterval = 10
+    static let solicitCooldown: TimeInterval = 40
 
     var body: some View {
         NavigationStack {
