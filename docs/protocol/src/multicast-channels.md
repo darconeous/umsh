@@ -96,8 +96,9 @@ Implementations should recognize two well-known named channels with specific beh
 The `public` channel (derived from `umsh:cs:public`) is the default flooded group chat channel. It provides a shared communication space analogous to an open town square — any node that knows the name can participate.
 
 - Maximum flood hops: **5** without a region code, **7** with a region code.
-- Traffic **may** be encrypted (E=1).
-- Chat messages that do not include the full source key (`S=1`) **must not** be displayed in the user interface. This ensures that users can always verify sender identity on the public channel, even though the channel key itself is public knowledge.
+- Traffic **may** be encrypted (E=1), but the key is known so this doesn't really offer privacy.
+- Blind unicast on this channel is forbidden.
+- Chat messages that do not include the full source key (`S=1`) **MUST NOT** be displayed in the user interface. This ensures that users can always verify sender identity on the public channel, even though the channel key itself is public knowledge.
 
 ### `EMERGENCY`
 

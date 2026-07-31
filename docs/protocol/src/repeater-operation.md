@@ -121,7 +121,7 @@ Bridges follow the same packet-rewrite rules as repeaters.
 
 ## Forwarding Confirmation
 
-Repeaters do not generate MAC acks — acks are generated only by the [final destination](packet-types.md#mac-ack-packet). Instead, a node can passively confirm that a transmitted or forwarded packet was received by listening for a subsequent retransmission of the same packet.
+Repeaters do not generate MAC acks — acks are generated only by the [final destination](packet-types.md#mac-ack-packet). Instead, a node can passively confirm that a transmitted or forwarded packet was received by listening for a subsequent retransmission of the same packet (or it's ack).
 
 This applies to:
 

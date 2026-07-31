@@ -15,7 +15,9 @@ For reference, typical T_frame values for a maximum-length (255-byte) packet usi
 
 ## Channel Sensing
 
-Before transmitting any packet, a node MUST perform Channel Activity Detection (CAD). CAD is a LoRa hardware primitive that detects preamble energy on the channel with minimal power draw.
+In general, before transmitting any packet, a node SHOULD perform Channel Activity Detection (CAD),
+or whatever the appropriate analogous mechanism is for the given physical layer.
+CAD is a LoRa hardware primitive that detects preamble energy on the channel with minimal power draw.
 
 - If CAD indicates the channel is idle, proceed to transmit.
 - If CAD indicates the channel is busy, enter the backoff procedure.
@@ -31,7 +33,7 @@ When CAD indicates the channel is busy:
 
 ## Flood Forwarding Contention Window
 
-When a repeater is eligible to flood-forward a packet, it SHOULD NOT transmit immediately. Instead, it waits a contention delay inversely proportional to the quality of the received signal. Nodes that heard the packet most clearly transmit first; nodes that barely met the signal threshold wait longer. When a well-positioned repeater transmits, others overhear it, recognize the packet via duplicate suppression, and usually defer or abandon their own pending forwarding.
+When a repeater is eligible to flood-forward a packet, it SHOULD NOT just transmit like it would any other packet. Instead, it waits a contention delay inversely proportional to the quality of the received signal. Nodes that heard the packet most clearly transmit first; nodes that barely met the signal threshold wait longer. When a well-positioned repeater transmits, others overhear it, recognize the packet via duplicate suppression, and usually defer or abandon their own pending forwarding.
 
 > [!NOTE]
 > This guidance is still provisional and should be treated as a starting point until it is validated with real-world measurements.
@@ -57,9 +59,9 @@ Where:
 
 If SNR is unavailable but RSSI is, the same formula MAY be applied with RSSI values substituted for SNR, using appropriate threshold and range parameters.
 
-After computing the delay, the repeater waits.
+After computing the delay, the repeater waits. Other packets SHOULD continue to be be forwarded while waiting, assuming the channel is clear.
 
-If it overhears the same packet forwarded by another node (identified by MIC in the duplicate cache) before the delay expires, it SHOULD defer rather than transmit immediately. A safe default is to resample a delay using the same `W_min`/`W_max` limits — including `D_ack` when it applies, since the overheard copy may itself elicit an immediate ACK from the destination — and restart the waiting period. A repeater SHOULD NOT do this more than 3 times; after the third such deferral it SHOULD abandon the pending forward.
+If the repeater overhears the same packet forwarded by another node (identified by MIC in the duplicate cache) before the delay expires, it SHOULD defer rather than transmit. A safe default is to resample a delay using the same `W_min`/`W_max` limits — including `D_ack` when it applies, since the overheard copy may itself elicit an immediate ACK from the destination — and restart the waiting period. A repeater SHOULD NOT do this more than 3 times; after the third such deferral it SHOULD abandon the pending forward.
 
 This deferral behavior is intended only for the first local forwarding decision after reception. Once a repeater has actually transmitted its own copy, any later retransmission behavior is governed by [Repeater Operation](repeater-operation.md#forwarding-confirmation).
 
