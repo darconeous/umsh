@@ -60,16 +60,21 @@ impl<'d> Sh1106<'d> {
     pub async fn init(&mut self) {
         self.cmds(&[
             0xAE, // display off
-            0xA8, 0x3F, // multiplex ratio = 64
-            0xD3, 0x00, // display offset = 0
+            0xA8,
+            0x3F, // multiplex ratio = 64
+            0xD3,
+            0x00, // display offset = 0
             0x40, // display start line = 0
             0xA1, // segment remap: col 127 → SEG0
             0xC8, // COM scan: remapped (top-to-bottom)
-            0xDA, 0x12, // COM pins: alternative, no LR remap (128×64)
-            0x81, CONTRAST_NORMAL, // contrast
-            0xA4, // display from GDDRAM
-            0xA6, // normal (non-inverted)
-            0xD5, 0x80, // clock: div=1, fosc=8
+            0xDA,
+            0x12, // COM pins: alternative, no LR remap (128×64)
+            0x81,
+            CONTRAST_NORMAL, // contrast
+            0xA4,            // display from GDDRAM
+            0xA6,            // normal (non-inverted)
+            0xD5,
+            0x80, // clock: div=1, fosc=8
         ])
         .await;
         self.cmds(&[

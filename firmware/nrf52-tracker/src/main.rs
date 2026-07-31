@@ -127,11 +127,7 @@ mod firmware {
     use embassy_executor::Spawner;
     use embassy_futures::join::join;
     use embassy_futures::select::{Either, Either3, select, select3};
-    #[cfg(any(
-        feature = "has-display",
-        feature = "button-nav",
-        feature = "t1000e"
-    ))]
+    #[cfg(any(feature = "has-display", feature = "button-nav", feature = "t1000e"))]
     use embassy_futures::select::{Either4, select4};
     use embassy_nrf::bind_interrupts;
     use embassy_nrf::gpio::{Input, Level, Output, OutputDrive, Pull};
@@ -184,12 +180,12 @@ mod firmware {
     use umsh_bsp_nrf52840::system_off::Port;
     #[cfg(feature = "t1000e")]
     use umsh_bsp_nrf52840::system_off::drive_pin_low;
+    #[cfg(feature = "system-off-wio")]
+    use umsh_bsp_nrf52840::system_off::drive_pin_low;
     #[cfg(any(feature = "system-off-techo", feature = "system-off-wio"))]
     use umsh_bsp_nrf52840::system_off::{WakePin, WakeSense, power_off, tristate_pin};
     #[cfg(any(feature = "system-off-techo", feature = "system-off-wio"))]
     use umsh_bsp_nrf52840::system_off::{WakePull, connect_input, read_pin};
-    #[cfg(feature = "system-off-wio")]
-    use umsh_bsp_nrf52840::system_off::drive_pin_low;
     #[cfg(feature = "t1000e")]
     use umsh_bsp_t1000e::RF_SWITCH;
     #[cfg(feature = "display-epd")]
@@ -3124,7 +3120,11 @@ mod firmware {
                 );
                 draw_oled_line(
                     fb,
-                    if confirm_selected { "> CLEAR" } else { "  CLEAR" },
+                    if confirm_selected {
+                        "> CLEAR"
+                    } else {
+                        "  CLEAR"
+                    },
                     3,
                     style,
                 );
