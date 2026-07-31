@@ -987,9 +987,18 @@ end
 -- ──────────────────────────────────────────────────────────────────────────
 -- Main dissector
 -- ──────────────────────────────────────────────────────────────────────────
+
+-- Assigned below, once the packet-shape checks it needs are in scope.
+-- Declared here so the dissector can decline a packet that is not ours:
+-- the LoRa sync word UMSH runs under is shared with every other private
+-- LoRa network, so being registered for it is not proof of ownership.
+local looks_like_umsh
+
 function umsh.dissector(buf, pinfo, tree)
   local buf_len = buf:len()
   if buf_len < 1 then return 0 end
+  -- Returning zero leaves the payload to whoever else wants it.
+  if not looks_like_umsh(buf) then return 0 end
 
   local fcf_val   = buf(0, 1):uint()
   local ver       = (fcf_val >> 6) & 0x03
@@ -1082,11 +1091,16 @@ local function validate_min_length(fcf, buf_len)
   return buf_len >= min
 end
 
-local function heuristic(buf, pinfo, tree)
+-- Fills the forward declaration made above the dissector.
+looks_like_umsh = function(buf)
   if buf:len() < 4 then return false end
   local fcf = buf(0, 1):uint()
   if not is_umsh_fcf(fcf) then return false end
-  if not validate_min_length(fcf, buf:len()) then return false end
+  return validate_min_length(fcf, buf:len())
+end
+
+local function heuristic(buf, pinfo, tree)
+  if not looks_like_umsh(buf) then return false end
   umsh.dissector(buf, pinfo, tree)
   return true
 end
@@ -1132,10 +1146,17 @@ apply_prefs()  -- apply initial preferences at load time
 -- Heuristic over UDP (always active; claims only validated packets)
 umsh:register_heuristic("udp", heuristic)
 
--- Heuristic over LoRaTAP (DLT 270 — standard LoRa capture encapsulation)
--- Use heuristic so non-UMSH LoRa frames fall through to other dissectors.
+-- LoRaTAP (DLT 270), which `umshctl`'s Wireshark extcap interface writes.
+--
+-- LoRaTAP hands its payload to a table keyed on the sync word rather than
+-- offering a heuristic list, so this claims the private-LoRa sync word
+-- UMSH runs under. That word is shared with other private networks, which
+-- is why `umsh.dissector` declines a payload that is not shaped like a
+-- UMSH packet instead of claiming everything under it. "Decode As" can
+-- still point another sync word here.
+local LORA_SYNCWORD_PRIVATE = 0x12
 pcall(function()
-  umsh:register_heuristic("loratap", heuristic)
+  DissectorTable.get("loratap.syncword"):add(LORA_SYNCWORD_PRIVATE, umsh)
 end)
 
 -- Synthetic UDP encapsulation used by the `umshctl capture` command for raw

@@ -24,6 +24,32 @@ ln -s "$(pwd)/dissectors/umsh" ~/.config/wireshark/plugins/umsh
 
 Restart Wireshark (or **Analyze > Reload Lua Plugins**) to load the dissector.
 
+From a checkout, `make install-dissector` does the same thing with the right
+path for the platform.
+
+## Live Capture from a Radio
+
+`make install-extcap` installs `umshctl` as a Wireshark
+[extcap](https://www.wireshark.org/docs/man-pages/extcap.html) interface, so a
+radio appears in Wireshark's interface list and a capture is a double-click.
+It also installs `umshctl` and the dissector, since a capture is useless
+without both.
+
+The interface's gear icon opens the capture options: which radio to attach to
+(**Reload** scans for BLE radios), a serial port to use instead, and live-only
+RF overrides. The RF override fields are empty by default and left empty mean
+"capture on whatever the radio is already tuned to" — filling one in changes
+the live PHY for the duration of the capture, and is never saved to the device.
+
+Frames arrive as [LoRaTap](https://github.com/eriknl/LoRaTap) (`LINKTYPE` 270),
+which carries the frequency, bandwidth, spreading factor, sync word, RSSI, and
+SNR the radio reported, so the reception metadata survives into the capture.
+
+> On macOS, Wireshark.app declares no Bluetooth usage description, so a BLE
+> capture started from the Wireshark GUI may be denied by the OS with no
+> prompt. Name a serial port in the capture options to sidestep it, or run
+> `tshark -i umsh` from a terminal.
+
 ## Capturing from the UDP Multicast Pseudo-Radio
 
 The `UdpMulticastRadio` transport sends raw UMSH frames over IPv4 multicast
@@ -193,7 +219,9 @@ treated as diagnostic secrets when stored or shared.
 
 `--pcap-raw --pcap-linktype=N` writes exact LoRa frame bytes under a caller-selected pcap
 `LINKTYPE`; it requires `--capture=radio`. This is intended for private/experimental link types
-whose Wireshark encapsulation is configured outside this plugin.
+whose Wireshark encapsulation is configured outside this plugin. For a raw capture that needs
+no such configuration, prefer the extcap interface above: LoRaTap is a registered link type
+this dissector already recognizes, and it carries the reception metadata a bare frame cannot.
 
 ## Running Unit Tests
 

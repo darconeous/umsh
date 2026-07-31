@@ -18,6 +18,7 @@
 
 mod command;
 mod connection;
+mod extcap;
 mod output;
 mod repl;
 
@@ -150,6 +151,25 @@ impl App {
         }
     }
 
+    /// An attached, non-interactive app for the Wireshark extcap
+    /// interface.
+    ///
+    /// `interactive` is false in both its senses here: there is no
+    /// prompt to return to, and nobody to answer a question. That is
+    /// also what lets a dropped BLE link be recovered underneath a
+    /// running capture.
+    pub fn for_extcap(session: Session, prefs: Prefs, baud: u32) -> Self {
+        Self {
+            session: Some(session),
+            prefs,
+            interactive: false,
+            trace: false,
+            no_save: true,
+            baud,
+            last_scan: Vec::new(),
+        }
+    }
+
     pub async fn attach(&mut self, target: Target) -> Result<()> {
         let session = connection::connect(target, false, self.trace).await?;
         announce_attached(&session);
@@ -275,7 +295,15 @@ async fn run(args: ToolArgs) -> Result<()> {
 
 #[tokio::main(flavor = "current_thread")]
 async fn main() {
-    if let Err(error) = run(ToolArgs::parse()).await {
+    // Wireshark drives this binary through its own argument vocabulary,
+    // which is checked before the tool's parser so the two never have to
+    // agree on a shared grammar.
+    let result = if extcap::is_extcap_invocation() {
+        extcap::run().await
+    } else {
+        run(ToolArgs::parse()).await
+    };
+    if let Err(error) = result {
         eprintln!("error: {error:#}");
         std::process::exit(1);
     }

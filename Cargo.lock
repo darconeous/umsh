@@ -3471,6 +3471,7 @@ dependencies = [
  "futures-util",
  "hamaddr",
  "heapless 0.8.0",
+ "libc",
  "rand 0.10.1",
  "rand_core 0.6.4",
  "rustyline",

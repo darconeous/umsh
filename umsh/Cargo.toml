@@ -22,6 +22,7 @@ tokio-support = [
     "dep:clap",
     "dep:rustyline",
     "dep:shlex",
+    "dep:libc",
 ]
 serial-radio = ["tokio-support", "dep:tokio-serial"]
 ble-radio = ["tokio-support", "dep:btleplug", "dep:futures-util", "dep:uuid"]
@@ -58,6 +59,9 @@ btleplug = { version = "0.11", optional = true }
 futures-util = { version = "0.3", optional = true }
 uuid = { version = "1", optional = true }
 socket2 = { version = "0.6", optional = true }
+# Only for pointing stdout at stderr in the Wireshark extcap capture
+# path, where a print into an undrained pipe would park the capture.
+libc = { version = "0.2", optional = true }
 umsh-cli = { path = "../crates/umsh-cli", optional = true, features = ["tokio-stdio"] }
 
 [dev-dependencies]

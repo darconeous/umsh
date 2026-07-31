@@ -5,11 +5,19 @@
 //! so stock Wireshark opens a capture containing both layers. Raw LoRa
 //! bytes are also available, at the cost of a link type the user has to
 //! name.
+//!
+//! LoRaTap carries the radio frame under a header describing the
+//! channel it arrived on, so the RSSI and SNR the receiver reported
+//! survive into the capture instead of being dropped on the floor. It
+//! is the encapsulation the Wireshark extcap interface uses, because it
+//! invents none of the addressing the Ethernet form has to.
 
 use std::fs::File;
 use std::io::{BufWriter, Write};
 use std::path::Path;
 use std::time::{SystemTime, UNIX_EPOCH};
+
+use umsh::hal::RxInfo;
 
 /// Which layers a pcap file records.
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq, clap::ValueEnum)]
@@ -40,18 +48,40 @@ pub enum PcapDirection {
 }
 
 const PCAP_LINKTYPE_ETHERNET: u32 = 1;
+const PCAP_LINKTYPE_LORATAP: u32 = 270;
 const RADIO_UDP_PORT: u16 = 4242;
 const ULCP_HOST_UDP_PORT: u16 = 4243;
 const ULCP_DEVICE_UDP_PORT: u16 = 4244;
+
+/// Fixed part of a LoRaTap v0 header, in bytes.
+const LORATAP_V0_LEN: u16 = 15;
+
+/// LoRaTap reports signal strength as an unsigned byte biased by this
+/// much, so -139 dBm is zero.
+const LORATAP_RSSI_BIAS: i32 = 139;
 
 #[derive(Clone, Copy, Debug)]
 pub enum PcapEncapsulation {
     Ethernet,
     RawLoRa { linktype: u32 },
+    LoRaTap,
+}
+
+/// The channel a capture is listening on, read back from the device.
+///
+/// LoRaTap describes every frame in terms of the channel it arrived on,
+/// so these travel with each record even though the radio holds them
+/// still for the whole capture.
+#[derive(Clone, Copy, Debug, Default)]
+pub struct RfParams {
+    pub freq_hz: u32,
+    pub bw_hz: u32,
+    pub sf: u8,
+    pub sync_word: u8,
 }
 
 pub struct PcapWriter {
-    output: BufWriter<File>,
+    output: BufWriter<Box<dyn Write>>,
     layers: CaptureLayers,
     encapsulation: PcapEncapsulation,
     packet_id: u16,
@@ -63,7 +93,19 @@ impl PcapWriter {
         layers: CaptureLayers,
         encapsulation: PcapEncapsulation,
     ) -> std::io::Result<Self> {
-        let mut output = BufWriter::new(File::create(path)?);
+        Self::to_writer(Box::new(File::create(path)?), layers, encapsulation)
+    }
+
+    /// Write the capture into an arbitrary sink.
+    ///
+    /// The extcap interface hands us the FIFO Wireshark is reading, which
+    /// is opened for writing rather than created.
+    pub fn to_writer(
+        sink: Box<dyn Write>,
+        layers: CaptureLayers,
+        encapsulation: PcapEncapsulation,
+    ) -> std::io::Result<Self> {
+        let mut output = BufWriter::new(sink);
         output.write_all(&0xa1b2_c3d4u32.to_le_bytes())?;
         output.write_all(&2u16.to_le_bytes())?;
         output.write_all(&4u16.to_le_bytes())?;
@@ -73,6 +115,7 @@ impl PcapWriter {
         let linktype = match encapsulation {
             PcapEncapsulation::Ethernet => PCAP_LINKTYPE_ETHERNET,
             PcapEncapsulation::RawLoRa { linktype } => linktype,
+            PcapEncapsulation::LoRaTap => PCAP_LINKTYPE_LORATAP,
         };
         output.write_all(&linktype.to_le_bytes())?;
         output.flush()?;
@@ -94,9 +137,51 @@ impl PcapWriter {
                     frame,
                 )?,
                 PcapEncapsulation::RawLoRa { .. } => self.write_record(frame)?,
+                // Without reception metadata the header would be all
+                // zeroes, which reads as a real -139 dBm measurement.
+                PcapEncapsulation::LoRaTap => {
+                    return Err(std::io::Error::other(
+                        "LoRaTap capture requires per-frame reception metadata",
+                    ));
+                }
             }
         }
         Ok(())
+    }
+
+    /// Record a radio frame along with how the receiver heard it.
+    ///
+    /// Only LoRaTap has somewhere to put the metadata; the other
+    /// encapsulations quietly ignore it and record the frame alone.
+    pub fn write_radio_with_info(
+        &mut self,
+        rf: &RfParams,
+        info: &RxInfo,
+        frame: &[u8],
+    ) -> std::io::Result<()> {
+        if !self.layers.radio() {
+            return Ok(());
+        }
+        if !matches!(self.encapsulation, PcapEncapsulation::LoRaTap) {
+            return self.write_radio(frame);
+        }
+
+        let mut packet = Vec::with_capacity(usize::from(LORATAP_V0_LEN) + frame.len());
+        packet.push(0); // version
+        packet.push(0); // padding
+        packet.extend_from_slice(&LORATAP_V0_LEN.to_be_bytes());
+        packet.extend_from_slice(&rf.freq_hz.to_be_bytes());
+        packet.push(loratap_bandwidth(rf.bw_hz));
+        packet.push(rf.sf);
+        let rssi = loratap_rssi(i32::from(info.rssi));
+        packet.push(rssi); // packet RSSI
+        packet.push(rssi); // max RSSI
+        packet.push(rssi); // current RSSI
+        packet.push(loratap_snr(info.snr.as_centibels()));
+        packet.push(rf.sync_word);
+        packet.extend_from_slice(frame);
+
+        self.write_record(&packet)
     }
 
     pub fn write_ulcp(&mut self, direction: PcapDirection, frame: &[u8]) -> std::io::Result<()> {
@@ -190,6 +275,40 @@ impl PcapWriter {
     }
 }
 
+/// Map a bandwidth to LoRaTap's enumerated byte.
+///
+/// The field is an enumeration of the three classic LoRa bandwidths
+/// rather than a scale factor, so it cannot express the 62.5 kHz UMSH
+/// normally runs at. Anything it cannot name is reported as zero, which
+/// Wireshark renders as "Unknown" — a narrower bandwidth silently
+/// labelled as one of the three would misdescribe the radio.
+fn loratap_bandwidth(bw_hz: u32) -> u8 {
+    match bw_hz {
+        125_000 => 1,
+        250_000 => 2,
+        500_000 => 4,
+        _ => 0,
+    }
+}
+
+/// Bias a dBm reading into LoRaTap's unsigned byte, saturating rather
+/// than wrapping so an implausible reading stays at the rail.
+fn loratap_rssi(dbm: i32) -> u8 {
+    (dbm + LORATAP_RSSI_BIAS).clamp(0, u8::MAX as i32) as u8
+}
+
+/// Convert centibels to LoRaTap's signed quarter-dB byte, rounding to
+/// nearest.
+fn loratap_snr(centibels: i16) -> u8 {
+    let scaled = i32::from(centibels) * 4;
+    let quarters = if scaled >= 0 {
+        (scaled + 5) / 10
+    } else {
+        (scaled - 5) / 10
+    };
+    quarters.clamp(i8::MIN as i32, i8::MAX as i32) as i8 as u8
+}
+
 fn ipv4_checksum(header: &[u8]) -> u16 {
     let mut sum = 0u32;
     for word in header.chunks_exact(2) {
@@ -260,6 +379,110 @@ mod tests {
             ULCP_DEVICE_UDP_PORT,
         );
         assert_eq!(&packet[42..], &[0x81, 0x02, 0x26]);
+    }
+
+    /// A sink the test can read back after the writer has been dropped.
+    #[derive(Clone, Default)]
+    struct SharedSink(std::rc::Rc<std::cell::RefCell<Vec<u8>>>);
+
+    impl Write for SharedSink {
+        fn write(&mut self, buf: &[u8]) -> std::io::Result<usize> {
+            self.0.borrow_mut().extend_from_slice(buf);
+            Ok(buf.len())
+        }
+        fn flush(&mut self) -> std::io::Result<()> {
+            Ok(())
+        }
+    }
+
+    fn sample_rf() -> RfParams {
+        RfParams {
+            freq_hz: 910_525_000,
+            bw_hz: 125_000,
+            sf: 7,
+            sync_word: 0x2b,
+        }
+    }
+
+    fn sample_info(len: usize, rssi: i16, snr_centibels: i16) -> RxInfo {
+        RxInfo {
+            len,
+            rssi,
+            snr: umsh::hal::Snr::from_centibels(snr_centibels),
+            lqi: None,
+        }
+    }
+
+    /// The scalings here are the ones Wireshark's LoRaTap dissector
+    /// actually applies: RSSI is biased by 139 and SNR is in quarter-dB
+    /// steps, both verified against `tshark -V` output.
+    #[test]
+    fn loratap_records_channel_and_reception_metadata() {
+        let sink = SharedSink::default();
+        let bytes = sink.0.clone();
+        let mut writer = PcapWriter::to_writer(
+            Box::new(sink),
+            CaptureLayers::Radio,
+            PcapEncapsulation::LoRaTap,
+        )
+        .unwrap();
+        let frame = [0xc0, 0xa1, 0xb2, 0x03, 0x11, 0x22];
+        writer
+            .write_radio_with_info(&sample_rf(), &sample_info(frame.len(), -52, 95), &frame)
+            .unwrap();
+        drop(writer);
+
+        let bytes = bytes.borrow();
+        assert_eq!(
+            u32::from_le_bytes(bytes[20..24].try_into().unwrap()),
+            PCAP_LINKTYPE_LORATAP,
+        );
+        let packet = &bytes[40..];
+        assert_eq!(packet.len(), 15 + frame.len());
+        assert_eq!(packet[0], 0, "version");
+        assert_eq!(u16::from_be_bytes(packet[2..4].try_into().unwrap()), 15);
+        assert_eq!(
+            u32::from_be_bytes(packet[4..8].try_into().unwrap()),
+            910_525_000,
+        );
+        assert_eq!(packet[8], 1, "125 kHz in 125 kHz steps");
+        assert_eq!(packet[9], 7, "spreading factor");
+        assert_eq!(packet[10], 87, "-52 dBm biased by 139");
+        assert_eq!(packet[13], 38, "9.5 dB in quarter-dB steps");
+        assert_eq!(packet[14], 0x2b, "sync word");
+        assert_eq!(&packet[15..], &frame);
+    }
+
+    /// Wireshark reads this field as an enumeration, so a bandwidth it
+    /// has no name for must not borrow the nearest one.
+    #[test]
+    fn loratap_bandwidth_is_an_enumeration_not_a_scale() {
+        assert_eq!(loratap_bandwidth(125_000), 1);
+        assert_eq!(loratap_bandwidth(250_000), 2);
+        assert_eq!(loratap_bandwidth(500_000), 4);
+        assert_eq!(loratap_bandwidth(62_500), 0, "UMSH's default is unnameable");
+        assert_eq!(loratap_bandwidth(200_000), 0, "not rounded down to 125 kHz");
+    }
+
+    #[test]
+    fn loratap_encodes_negative_snr_as_a_signed_byte() {
+        assert_eq!(loratap_snr(-75) as i8, -30, "-7.5 dB");
+        assert_eq!(loratap_snr(0), 0);
+        assert_eq!(loratap_rssi(-52), 87);
+        assert_eq!(loratap_rssi(-200), 0, "saturates rather than wrapping");
+    }
+
+    /// The metadata-free entry point cannot fabricate a LoRaTap header,
+    /// so it must refuse rather than emit a plausible-looking -139 dBm.
+    #[test]
+    fn loratap_rejects_frames_without_metadata() {
+        let mut writer = PcapWriter::to_writer(
+            Box::new(SharedSink::default()),
+            CaptureLayers::Radio,
+            PcapEncapsulation::LoRaTap,
+        )
+        .unwrap();
+        assert!(writer.write_radio(&[0xc0, 0xa1]).is_err());
     }
 
     #[test]

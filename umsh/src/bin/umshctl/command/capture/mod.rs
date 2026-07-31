@@ -13,7 +13,7 @@ use umsh::hal::Radio as _;
 use umsh::ulcp::{UlcpDevice, UlcpError};
 use umsh::ulcp_wire::ids::prop;
 
-use self::pcap::{CaptureLayers, PcapEncapsulation, PcapWriter};
+use self::pcap::{CaptureLayers, PcapEncapsulation, PcapWriter, RfParams};
 use super::values::HexU16Arg;
 use super::{decode_u32, phy};
 use crate::App;
@@ -83,6 +83,16 @@ pub struct CaptureArgs {
         help_heading = "RF overrides"
     )]
     pub tx_power: Option<i8>,
+
+    /// Decode nothing for a human: whatever reads the capture dissects
+    /// it itself.
+    ///
+    /// Not a command-line flag — it belongs to the extcap interface,
+    /// where Wireshark is the consumer. Narrating each frame there would
+    /// decode every packet twice and fill Wireshark's log with output
+    /// that reads like dissection but is not.
+    #[arg(skip)]
+    pub quiet: bool,
 }
 
 impl CaptureArgs {
@@ -161,36 +171,75 @@ impl Stats {
 
 /// Why a capture stopped.
 enum Stop {
-    /// The user asked for it to stop; the tool is not in trouble.
+    /// The capture was asked to stop; the tool is not in trouble.
+    ///
+    /// Either the user interrupted it, or whoever was reading the
+    /// capture went away — Wireshark closing an extcap FIFO is a normal
+    /// end to a capture, not a failure worth recovering from.
     Interrupted,
+}
+
+/// Whether an error is really "the reader hung up".
+///
+/// The tap writes through [`SessionLink`], so a closed sink can also
+/// surface wrapped in a `UlcpError` that otherwise looks like the link
+/// itself failed.
+///
+/// [`SessionLink`]: crate::connection::SessionLink
+fn is_broken_pipe(error: &anyhow::Error) -> bool {
+    error.chain().any(|cause| {
+        cause
+            .downcast_ref::<std::io::Error>()
+            .is_some_and(|io| io.kind() == std::io::ErrorKind::BrokenPipe)
+    })
 }
 
 pub async fn run(app: &mut App, args: CaptureArgs) -> Result<()> {
     args.validate()?;
 
-    if let Some(path) = &args.pcap {
-        let writer = PcapWriter::create(path, args.layers, args.encapsulation())?;
-        field(
-            "capture",
-            format!(
-                "{} layers={:?} encoding={}",
-                path.display(),
-                args.layers,
-                if args.pcap_raw {
-                    "raw LoRa"
-                } else {
-                    "Ethernet/IPv4/UDP"
-                },
-            ),
-        );
+    let writer = match &args.pcap {
+        Some(path) => {
+            let writer = PcapWriter::create(path, args.layers, args.encapsulation())?;
+            field(
+                "capture",
+                format!(
+                    "{} layers={:?} encoding={}",
+                    path.display(),
+                    args.layers,
+                    if args.pcap_raw {
+                        "raw LoRa"
+                    } else {
+                        "Ethernet/IPv4/UDP"
+                    },
+                ),
+            );
+            Some(writer)
+        }
+        None => None,
+    };
+
+    run_with_writer(app, &args, writer).await
+}
+
+/// Capture into an already-built sink.
+///
+/// The extcap interface owns its own writer over Wireshark's FIFO, so
+/// the two entry points differ only in where the sink came from.
+pub(crate) async fn run_with_writer(
+    app: &mut App,
+    args: &CaptureArgs,
+    writer: Option<PcapWriter>,
+) -> Result<()> {
+    let tapped = writer.is_some();
+    if let Some(writer) = writer {
         *app.session()?.tap.borrow_mut() = Some(writer);
     }
 
-    let outcome = capture_with_recovery(app, &args).await;
+    let outcome = capture_with_recovery(app, args).await;
 
     // Both cleanups run whatever happened: a half-written pcap and a
     // device left promiscuous are each worse than the original failure.
-    if args.pcap.is_some()
+    if tapped
         && let Ok(session) = app.session()
     {
         session.tap.borrow_mut().take();
@@ -216,6 +265,11 @@ async fn capture_with_recovery(app: &mut App, args: &CaptureArgs) -> Result<()> 
             Ok(Stop::Interrupted) => return Ok(()),
             Err(error) => error,
         };
+        // Rediscovering the radio because the *capture reader* went away
+        // would leave a process holding the link with nowhere to write.
+        if is_broken_pipe(&failure) {
+            return Ok(());
+        }
         if !reconnect {
             return Err(failure);
         }
@@ -248,6 +302,9 @@ async fn capture_once(app: &mut App, args: &CaptureArgs, stats: &mut Stats) -> R
         note("the radio's live RF configuration was changed for this session (never saved)");
     }
     report_rf(&mut session.device).await;
+    // Read once per session: the radio holds these still for the whole
+    // capture, but every LoRaTap record has to restate them.
+    let rf = read_rf_params(&mut session.device).await;
 
     // A capture is a promiscuous listener. A device with a provisioned
     // (or saved-and-restored) host domain filters receptions, so the
@@ -266,26 +323,28 @@ async fn capture_once(app: &mut App, args: &CaptureArgs, stats: &mut Stats) -> R
     }
 
     let color = output::color();
-    if color {
-        decode::print_legend();
+    if !args.quiet {
+        if color {
+            decode::print_legend();
+        }
+        println!("dumping packets (ctrl-c to {}) ...", {
+            if interactive { "stop" } else { "exit" }
+        });
     }
-    println!("dumping packets (ctrl-c to {}) ...", {
-        if interactive { "stop" } else { "exit" }
-    });
 
     if interactive {
         // Ctrl-C is the way out of a capture that is going nowhere. In
         // the REPL that must return to the prompt, not kill the tool, so
         // the dump future is cancelled rather than the process.
         tokio::select! {
-            result = dump(session, args, stats, color) => result,
+            result = dump(session, args, stats, color, &rf) => result,
             _ = tokio::signal::ctrl_c() => {
                 println!();
                 Ok(Stop::Interrupted)
             }
         }
     } else {
-        dump(session, args, stats, color).await
+        dump(session, args, stats, color, &rf).await
     }
 }
 
@@ -296,6 +355,7 @@ async fn dump(
     args: &CaptureArgs,
     stats: &mut Stats,
     color: bool,
+    rf: &RfParams,
 ) -> Result<Stop> {
     use std::fmt::Write as _;
 
@@ -310,28 +370,32 @@ async fn dump(
                 let [rssi] = value.as_slice() else {
                     bail!("idle health probe returned malformed PHY_RSSI value: {value:02x?}");
                 };
-                println!(
-                    "idle +{:.3}s  received={}  displayed={}  filtered={}  session={}  \
-                     link=ok  channel RSSI={} dBm",
-                    stats.started.elapsed().as_secs_f64(),
-                    stats.sequence,
-                    stats.displayed,
-                    stats.filtered,
-                    stats.sessions,
-                    *rssi as i8,
-                );
+                // The probe itself is the point: it proves the link is
+                // still answering. Only the narration is suppressed.
+                if !args.quiet {
+                    println!(
+                        "idle +{:.3}s  received={}  displayed={}  filtered={}  session={}  \
+                         link=ok  channel RSSI={} dBm",
+                        stats.started.elapsed().as_secs_f64(),
+                        stats.sequence,
+                        stats.displayed,
+                        stats.filtered,
+                        stats.sessions,
+                        *rssi as i8,
+                    );
+                }
                 stats.last_progress = Instant::now();
                 continue;
             }
         };
         stats.sequence += 1;
         let packet = &buf[..info.len];
-        if let Some(writer) = session.tap.borrow_mut().as_mut() {
-            writer.write_radio(packet)?;
-        }
+        // `--umsh-only` gates the recording as well as the display: a
+        // filtered capture that still carries every frame it claimed to
+        // drop is not what the flag says it is.
         if !decode::should_display(packet, args.umsh_only) {
             stats.filtered += 1;
-            if stats.last_progress.elapsed() >= idle_probe_interval {
+            if !args.quiet && stats.last_progress.elapsed() >= idle_probe_interval {
                 println!(
                     "filter +{:.3}s  received={}  displayed={}  filtered={}  session={}  link=ok",
                     stats.started.elapsed().as_secs_f64(),
@@ -344,7 +408,21 @@ async fn dump(
             }
             continue;
         }
+        if let Some(writer) = session.tap.borrow_mut().as_mut() {
+            match writer.write_radio_with_info(rf, &info, packet) {
+                Ok(()) => {}
+                // Whoever was reading the capture closed it. That ends
+                // the capture, but nothing about the radio is wrong.
+                Err(error) if error.kind() == std::io::ErrorKind::BrokenPipe => {
+                    return Ok(Stop::Interrupted);
+                }
+                Err(error) => return Err(error.into()),
+            }
+        }
         stats.displayed += 1;
+        if args.quiet {
+            continue;
+        }
         let mut meta = format!(
             "\n#{} +{:.3}s  {} B  RSSI {} dBm  SNR {}",
             stats.sequence,
@@ -410,6 +488,51 @@ async fn report_rf(device: &mut UlcpDevice<SessionLink>) {
     field("radio", parts.join(", "));
 }
 
+/// The same channel `report_rf` narrates, in a form a capture file can
+/// carry.
+///
+/// A device that will not report a parameter leaves it zero: LoRaTap has
+/// no way to say "unknown", and a wrong-looking zero is easier to spot
+/// than a plausible invented value.
+async fn read_rf_params(device: &mut UlcpDevice<SessionLink>) -> RfParams {
+    let freq_khz = device
+        .get_prop(prop::PHY_FREQ)
+        .await
+        .ok()
+        .and_then(|value| decode_u32(&value))
+        .unwrap_or(0);
+    let bw_hz = device
+        .get_prop(prop::PHY_LORA_BW)
+        .await
+        .ok()
+        .and_then(|value| decode_u32(&value))
+        .unwrap_or(0);
+    let sf = device
+        .get_prop(prop::PHY_LORA_SF)
+        .await
+        .ok()
+        .and_then(|value| value.first().copied())
+        .unwrap_or(0);
+    // LoRa carries a 16-bit sync word whose nibbles interleave the
+    // legacy 8-bit form (0x1424 is 0x12), which is all LoRaTap has room
+    // for.
+    let sync_word = device
+        .get_prop(prop::PHY_LORA_SW)
+        .await
+        .ok()
+        .and_then(|value| <[u8; 2]>::try_from(value.as_slice()).ok())
+        .map(u16::from_le_bytes)
+        .map(|sw| (((sw >> 8) as u8) & 0xf0) | (((sw >> 4) as u8) & 0x0f))
+        .unwrap_or(0);
+
+    RfParams {
+        freq_hz: freq_khz.saturating_mul(1_000),
+        bw_hz,
+        sf,
+        sync_word,
+    }
+}
+
 /// Leave the device as it was found.
 ///
 /// One-shot mode gets this for free: the session detaches when the
@@ -448,6 +571,7 @@ mod tests {
             cr: None,
             sync_word: None,
             tx_power: None,
+            quiet: false,
         }
     }
 

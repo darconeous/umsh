@@ -10,7 +10,7 @@
 	build-techo flash-techo \
 	build-heltec-v3-console flash-heltec-v3-console \
 	build-heltec-v3 flash-heltec-v3 \
-	install-umshctl install-dissector
+	install-umshctl install-dissector install-extcap
 
 # ─── Firmware build / flash ──────────────────────────────────────────────────
 #
@@ -144,8 +144,17 @@ install-umshctl:
 		--features serial-radio \
 		--features ble-radio
 
-# Symlinked, so "install" also covers "update" — the plugin dir always
-# points at the working tree, no copy step to fall out of date.
+# ─── Wireshark ───────────────────────────────────────────────────────────────
+#
+# Both targets symlink rather than copy, so "install" also covers
+# "update" and the installed tree can never drift from this checkout.
+#
+# The two directories are NOT siblings, and the difference is not
+# guessable: Wireshark's Lua loader still reads the legacy personal
+# config dir, but extcap only ever looks in the XDG one, so an extcap
+# placed next to the dissector silently never appears. Ask Wireshark
+# where it actually looks instead of hardcoding a guess.
+
 UNAME_S := $(shell uname -s)
 ifeq ($(UNAME_S),Darwin)
 	WIRESHARK_PLUGIN_DIR := $(HOME)/.config/wireshark/plugins
@@ -153,9 +162,27 @@ else
 	WIRESHARK_PLUGIN_DIR := $(HOME)/.local/lib/wireshark/plugins
 endif
 
+TSHARK ?= $(shell command -v tshark 2>/dev/null || echo /Applications/Wireshark.app/Contents/MacOS/tshark)
+WIRESHARK_EXTCAP_DIR := $(shell $(TSHARK) -G folders 2>/dev/null \
+	| awk -F'\t' '/^Personal Extcap path:/ {print $$NF}')
+ifeq ($(WIRESHARK_EXTCAP_DIR),)
+	WIRESHARK_EXTCAP_DIR := $(HOME)/.local/lib/wireshark/extcap
+endif
+
+# `-n` matters on a re-run: without it `ln -s` follows the symlink left by
+# the previous install and plants a second one *inside* the dissector
+# directory, pointing at its own parent.
 install-dissector:
 	mkdir -p $(WIRESHARK_PLUGIN_DIR)
-	ln -sf "$(CURDIR)/dissectors/umsh" $(WIRESHARK_PLUGIN_DIR)/umsh
+	ln -sfn "$(CURDIR)/dissectors/umsh" $(WIRESHARK_PLUGIN_DIR)/umsh
+
+# The dissector is a prerequisite, not a convenience: a live capture
+# arriving with no dissector installed renders as undissected bytes.
+# The filename here becomes the preference key prefix Wireshark saves
+# the capture options under, so it must not be renamed later.
+install-extcap: install-umshctl install-dissector
+	mkdir -p $(WIRESHARK_EXTCAP_DIR)
+	ln -sfn "$(HOME)/.cargo/bin/umshctl" $(WIRESHARK_EXTCAP_DIR)/umshctl
 
 # ─── Docs ────────────────────────────────────────────────────────────────────
 
