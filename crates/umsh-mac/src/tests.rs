@@ -1695,17 +1695,63 @@ fn transmit_next_drops_frame_after_five_busy_cad_attempts() {
         mac.radio_mut().cad_responses.push_back(true).unwrap();
     }
     mac.tx_queue_mut()
-        .enqueue(TxPriority::Application, b"app", Some(SendReceipt(3)), None)
+        .enqueue(
+            TxPriority::Application,
+            b"app",
+            Some(SendReceipt(3)),
+            Some(LocalIdentityId(0)),
+        )
         .unwrap();
 
+    let mut abandoned = std::vec::Vec::new();
     for _ in 0..crate::MAX_CAD_ATTEMPTS {
-        let _ = block_on(mac.transmit_next(&mut |_, _| {})).unwrap();
+        let _ = block_on(mac.transmit_next(&mut |id, event| {
+            if let crate::MacEventRef::TxAbandoned {
+                identity_id,
+                receipt,
+            } = event
+            {
+                abandoned.push((id, identity_id, receipt));
+            }
+        }))
+        .unwrap();
         mac.clock().advance_ms(1_000);
     }
 
     assert!(mac.tx_queue().is_empty());
     assert_eq!(mac.radio().cad_calls, crate::MAX_CAD_ATTEMPTS as u32);
     assert!(mac.radio().transmitted.is_empty());
+    // The drop is accounted: exactly one TxAbandoned, on the final attempt.
+    assert_eq!(
+        abandoned.as_slice(),
+        &[(
+            LocalIdentityId(0),
+            LocalIdentityId(0),
+            Some(SendReceipt(3))
+        )]
+    );
+}
+
+#[test]
+fn transmit_next_drops_identityless_frame_without_event_after_cad_exhaustion() {
+    let mut mac = make_mac();
+    for _ in 0..crate::MAX_CAD_ATTEMPTS {
+        mac.radio_mut().cad_responses.push_back(true).unwrap();
+    }
+    // No identity: a forwarded frame. Best-effort, dropped silently.
+    mac.tx_queue_mut()
+        .enqueue(TxPriority::Forward, b"fwd", None, None)
+        .unwrap();
+
+    let mut events = 0usize;
+    for _ in 0..crate::MAX_CAD_ATTEMPTS {
+        let _ = block_on(mac.transmit_next(&mut |_, _| events += 1)).unwrap();
+        mac.clock().advance_ms(1_000);
+    }
+
+    assert!(mac.tx_queue().is_empty());
+    assert!(mac.radio().transmitted.is_empty());
+    assert_eq!(events, 0);
 }
 
 #[test]

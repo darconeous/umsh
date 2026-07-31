@@ -12,6 +12,10 @@
 //! 1. **[`runner`]** — an Embassy task that owns the `lora_phy::LoRa` instance.
 //!    It loops between continuous RX and TX: when a TX request arrives on the
 //!    TX channel it exits RX, transmits, signals the result, then re-enters RX.
+//!    A request that arrives while a frame is being received is refused with
+//!    [`TxError::CadTimeout`] (up to [`RX_GATE_MAX_STRIKES`] times) instead of
+//!    tearing down the reception — the channel is busy either way, and the MAC
+//!    already backs off and retries on that error.
 //!
 //! 2. **[`LoraphyRadio`]** — a lightweight handle used by the MAC coordinator.
 //!    It borrows `&'static Channels` for `transmit()` (sends request, awaits
@@ -181,6 +185,18 @@ fn copy_frame(frame: RxFrame, buf: &mut [u8]) -> RxInfo {
 
 // ─── Runner ──────────────────────────────────────────────────────────────────
 
+/// Maximum consecutive TX requests refused with [`TxError::CadTimeout`] while
+/// a reception appears to be in progress (preamble seen, frame not finished).
+///
+/// Refusing without touching the radio keeps the in-flight frame receivable —
+/// tearing down RX for the CAD gate would lose it, and the gate would report
+/// busy anyway. The chip raises no IRQ when a detected preamble turns out to
+/// be noise, so the flag can go stale; after this many refusals the next
+/// request falls through to the radio's own CAD, which either confirms the
+/// channel is busy or clears the way (the TX path re-prepares RX afterwards,
+/// resetting the gate).
+pub const RX_GATE_MAX_STRIKES: u8 = 3;
+
 /// Execute one transmit request: CAD gate (listen-before-talk) per the
 /// request's [`CadPolicy`], then transmit.
 ///
@@ -271,6 +287,8 @@ where
         // Inner loop: stay in continuous RX, handling partial-packet IRQs
         // (PreambleReceived) without re-preparing. Break back to the outer
         // loop to re-prepare RX after a completed frame, an error, or a TX.
+        let mut rx_in_progress = false;
+        let mut rx_gate_strikes: u8 = 0;
         loop {
             match select(lora.wait_for_irq(), ch.tx.receive()).await {
                 Either::First(Ok(())) => {
@@ -300,12 +318,25 @@ where
                             }
                             continue 'outer; // re-prepare RX for the next frame
                         }
-                        Ok(_) => continue, // PreambleReceived / no-op: stay in RX
+                        Ok(Some(IrqState::PreambleReceived)) => {
+                            rx_in_progress = true; // gate TX until the frame resolves
+                            continue;
+                        }
+                        Ok(_) => continue, // no-op IRQ: stay in RX
                         Err(_) => continue 'outer, // CRC / header error: full re-prepare
                     }
                 }
                 Either::First(Err(_)) => continue 'outer,
                 Either::Second(tx_req) => {
+                    // A reception is in flight: refuse instead of tearing down
+                    // RX for the CAD gate (which would lose the frame and
+                    // report busy anyway). The MAC treats this like any other
+                    // busy verdict and retries after backoff.
+                    if rx_in_progress && rx_gate_strikes < RX_GATE_MAX_STRIKES {
+                        rx_gate_strikes += 1;
+                        ch.tx_done.signal(Err(TxError::CadTimeout));
+                        continue;
+                    }
                     // TX is also NOT cancel-safe — run the CAD gate and
                     // prepare_for_tx + tx to completion outside any select.
                     let result =
@@ -543,6 +574,8 @@ where
                 continue;
             }
 
+            let mut rx_in_progress = false;
+            let mut rx_gate_strikes: u8 = 0;
             loop {
                 match select4(
                     lora.wait_for_irq(),
@@ -577,12 +610,23 @@ where
                                 }
                                 continue 'rx;
                             }
+                            Ok(Some(IrqState::PreambleReceived)) => {
+                                rx_in_progress = true; // gate TX until the frame resolves
+                                continue;
+                            }
                             Ok(_) => continue,
                             Err(_) => continue 'rx,
                         }
                     }
                     Either4::First(Err(_)) => continue 'rx,
                     Either4::Second(tx_req) => {
+                        // Same RX gate as `runner`: don't tear down an
+                        // in-flight reception for the CAD gate.
+                        if rx_in_progress && rx_gate_strikes < RX_GATE_MAX_STRIKES {
+                            rx_gate_strikes += 1;
+                            ch.tx_done.signal(Err(TxError::CadTimeout));
+                            continue;
+                        }
                         let result =
                             perform_tx(&mut lora, &mdltn, &mut tx_pkt, active.power_dbm, &tx_req)
                                 .await;

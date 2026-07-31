@@ -190,6 +190,10 @@ impl<M: MacBackend> Host<M> {
                         node.dispatch_transmitted(wire_bytes);
                     }
                     umsh_mac::MacEventRef::Forwarded { .. } => {}
+                    // Ticket resolution (failed + finished) is handled by
+                    // dispatch_ticket_state above; there is no peer to
+                    // notify since the frame never aired.
+                    umsh_mac::MacEventRef::TxAbandoned { .. } => {}
                 }
             })
             .await

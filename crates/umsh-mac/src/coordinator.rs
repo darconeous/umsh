@@ -689,8 +689,11 @@ pub enum MacError<RadioError> {
     /// channel-sense operation. The inner type is platform-specific (e.g., SPI fault on
     /// embedded hardware, socket error on a UDP transport).
     Radio(RadioError),
-    /// A transmit-phase error from the radio, such as channel-activity-detection (CAD)
-    /// exhaustion after [`MAX_CAD_ATTEMPTS`] retries. The frame was not sent.
+    /// A transmit-phase error from the radio. The frame was not sent.
+    ///
+    /// Channel-busy (CAD) verdicts are not surfaced here: they are retried
+    /// with backoff, and exhausting the retry budget emits
+    /// [`MacEventRef::TxAbandoned`](crate::MacEventRef::TxAbandoned) instead.
     Transmit(TxError<RadioError>),
     /// An internal capacity invariant was violated: the coordinator needed to enqueue a
     /// control frame (MAC ACK, forwarded packet) but the transmit queue was full.
@@ -1804,6 +1807,20 @@ impl<
             Err(TxError::CadTimeout) => {
                 let next_attempt = queued.cad_attempts.saturating_add(1);
                 if next_attempt >= MAX_CAD_ATTEMPTS {
+                    // Drop with accounting: locally-originated frames report
+                    // the abandonment to the owning identity (an ACK-requested
+                    // send will never see AckReceived/AckTimeout, so this is
+                    // its terminal state). Forwarded frames (no identity) are
+                    // best-effort and dropped without an event.
+                    if let Some(identity_id) = identity_id {
+                        on_event(
+                            identity_id,
+                            crate::MacEventRef::TxAbandoned {
+                                identity_id,
+                                receipt,
+                            },
+                        );
+                    }
                     return Ok(None);
                 }
                 let backoff_ms = u64::from(

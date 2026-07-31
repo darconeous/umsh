@@ -68,6 +68,18 @@ impl EventDispatcher {
                     state.finished = true;
                 });
             }
+            MacEventRef::TxAbandoned {
+                identity_id: tx_id,
+                receipt,
+            } => {
+                if let Some(receipt) = receipt {
+                    let token = SendToken::new(tx_id, receipt);
+                    self.update_ticket(&token, |state| {
+                        state.failed = true;
+                        state.finished = true;
+                    });
+                }
+            }
             _ => {}
         }
     }

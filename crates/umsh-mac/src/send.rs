@@ -1055,4 +1055,15 @@ pub enum MacEventRef<'a> {
         receipt: SendReceipt,
         hint: Option<RouterHint>,
     },
+    /// The frame was dropped before it ever aired: every channel-activity
+    /// -detection attempt found the channel busy and the retry budget ran
+    /// out.
+    ///
+    /// `receipt` is `Some` for ACK-requested sends; since the frame was
+    /// never transmitted, no `AckReceived`/`AckTimeout` will follow — this
+    /// event is the send's terminal state.
+    TxAbandoned {
+        identity_id: LocalIdentityId,
+        receipt: Option<SendReceipt>,
+    },
 }
