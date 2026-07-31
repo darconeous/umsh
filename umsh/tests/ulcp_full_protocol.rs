@@ -69,6 +69,9 @@ fn session_config() -> SessionConfig {
             level: true,
             charge_state: true,
         }),
+        // A simulated device has nothing to flash or beep with, so it
+        // does not advertise CAP_ALERT.
+        alert: None,
     }
 }
 
@@ -111,7 +114,10 @@ impl SimDevice {
     fn execute(&mut self, effect: Option<Effect>, emitted: &mut Vec<Vec<u8>>) {
         let mut emit = |frame: &[u8]| emitted.push(frame.to_vec());
         match effect {
-            None | Some(Effect::ApplyRadio(_)) | Some(Effect::DeviceNameChanged) => {}
+            None
+            | Some(Effect::ApplyRadio(_))
+            | Some(Effect::DeviceNameChanged)
+            | Some(Effect::ApplyAlert(_)) => {}
             // The simulator has no platform to wipe and reboot; a
             // factory reset is exercised against real firmware.
             Some(Effect::FactoryReset) => panic!("simulator does not implement CMD_FACTORY_RESET"),
