@@ -69,8 +69,14 @@ tables, no clock synchronization. The Rust implementation is `no_std` (although 
 | Path | Description |
 |---|---|
 | [`docs/protocol/`](docs/protocol/) | Full mdBook specification for the protocol, including comparisons and test vectors |
+| [`docs/hardware/`](docs/hardware/) | Per-board hardware references — pin maps, power, radio and display wiring |
 | [`crates/`](crates/) | Layered `no_std` Rust library crates implementing the protocol stack |
-| [`umsh/`](umsh/) | Integration crate with runtime adapters and runnable examples |
+| [`umsh/`](umsh/) | Integration crate with runtime adapters and runnable examples; builds the `umshctl` host tool |
+| [`firmware/`](firmware/) | nRF52840 device firmware — one shipping image per board, plus per-board bringup consoles |
+| [`firmware-esp32/`](firmware-esp32/) | Separate workspace for Espressif boards, which need the Xtensa toolchain |
+| [`apps/ios/`](apps/ios/) | SwiftUI iOS application |
+| [`packages/UMSHMobileCore`](packages/) | UniFFI Swift package wrapping the Rust core for the app |
+| [`tools/`](tools/) | Browser-based ULCP protocol debugger and the UniFFI binding generator |
 | [`dissectors/`](dissectors/) | Wireshark Lua dissector, fixtures, and dissector-specific tests |
 
 ### Protocol specification
@@ -89,6 +95,44 @@ the MAC layer, node state, and application protocols. The [`umsh/`](umsh/) integ
 bundles these together and adds Tokio and Embassy runtime adapters, along with examples
 including a two-node desktop chat and a simulated multi-hop mesh. Published Rust API docs
 are available at <https://darconeous.github.io/umsh/docs/rust/>.
+
+### `umshctl`, the host tool
+
+`umshctl` is the command-line tool for working with a UMSH radio over BLE or USB serial:
+inspection, provisioning, device identity, persistence, pairing, radio configuration, and
+packet capture. It attaches administratively, so pointing it at an autonomously operating
+board never disturbs that board. It runs one-shot commands or opens an interactive shell,
+and it is built from the [`umsh/`](umsh/) crate — see
+[Manage a radio with `umshctl`](#manage-a-radio-with-umshctl) below.
+
+### Device firmware
+
+The [`firmware/`](firmware/) directory holds the nRF52840 device firmware. There is **one
+shipping image per board** — a repeater and a companion radio are the same image holding
+different configuration, applied over the local control protocol — alongside a per-board
+console harness used during bringup. Espressif boards live in
+[`firmware-esp32/`](firmware-esp32/), a separate workspace because the Xtensa targets need
+their own Rust toolchain.
+
+| Board | MCU | Flash with |
+|---|---|---|
+| Seeed SenseCAP T1000-E | nRF52840 | `make flash-t1000e` |
+| LilyGO T-Echo | nRF52840 | `make flash-techo` |
+| SenseCAP Solar Node P1 / P1-Pro | nRF52840 | `make flash-sensecap-solar` |
+| Seeed Wio Tracker L1 / L1 Pro | nRF52840 | `make flash-wio-tracker-l1` |
+| Heltec WiFi LoRa 32 V3 | ESP32-S3 | `make flash-heltec-v3` |
+
+Board pin maps and electrical details are in [`docs/hardware/`](docs/hardware/); the
+architecture and the recipe for adding a board are in
+[docs/firmware-architecture.md](docs/firmware-architecture.md). Build and flash through the
+Makefile rather than invoking cargo and the image converters by hand — nRF52840 firmware
+links only in release mode, and each image needs its board's UF2 base address.
+
+### iOS application
+
+[`apps/ios/`](apps/ios/) is a SwiftUI application that pairs with a companion radio over
+BLE for direct messaging and network inspection. It talks to the same Rust implementation
+through [`packages/UMSHMobileCore`](packages/), a UniFFI-generated Swift package.
 
 ### Wireshark dissector
 
@@ -244,47 +288,41 @@ grammar uses.
 
 ### Capture live LoRa and ULCP traffic
 
-`umshctl capture` connects to a T-Echo or T-1000E radio over BLE and prints every received
-frame with elapsed time, RSSI, SNR, raw bytes, and an attempted UMSH header decode. Traffic
-from another protocol is retained and labeled as not a valid UMSH packet rather than
-discarded. With no RF flags it listens on whatever the radio is already configured for, so
-pointing it at a working node does not disturb that node.
+`umshctl capture` prints every frame a radio receives, with elapsed time, RSSI, SNR, raw
+bytes, and an attempted UMSH header decode. Traffic from another protocol is retained and
+labeled as not a valid UMSH packet rather than discarded. With no RF flags it listens on
+whatever the radio is already configured for, so pointing it at a working node does not
+disturb that node.
 
-On the T-Echo, choose **Start Pairing** from the BLE menu before connecting a computer for the
-first time. Stop any serial ULCP tool and disconnect other BLE-central apps such as
-nRF Connect; only one host session can own the radio at a time. Then run, from the repository
-root:
+Before connecting a computer to a board for the first time, put that board into pairing
+mode — on boards with a display, from its BLE menu. Stop any serial ULCP tool and
+disconnect other BLE-central apps such as nRF Connect; only one host session can own the
+radio at a time. Then run, from the repository root:
 
 ```sh
 cargo run -p umsh --bin umshctl --features ble-radio -- capture
 ```
 
-With no connection flag the tool discovers a radio over BLE itself: one match is used, and
-several offer a numbered choice.
-
-If more than one ULCP device is nearby, select the board by its advertised name:
+With no connection flag the tool discovers a radio itself: one match is used, and several
+offer a numbered choice. If more than one ULCP device is nearby, select the board by its
+advertised name — each advertises as `UMSH <board>`, such as `UMSH T-Echo`:
 
 ```sh
 cargo run -p umsh --bin umshctl --features ble-radio -- \
     --ble="UMSH T-1000E" capture
 ```
 
-The T-Echo advertises as `UMSH T-Echo`.
-
-To verify advertising without connecting or provoking pairing, use the bounded passive scanner:
+Pairing is mediated by the operating system; enter the device's six-digit BLE PIN if
+prompted. On Linux, enable a `bluetoothctl` agent and pair/trust the device beforehand if
+the automatic subscription is rejected. To verify advertising without connecting or
+provoking pairing, use the bounded passive scanner:
 
 ```sh
 cargo run -p umsh --example ulcp_probe --features ble-radio -- --scan-ble
 ```
 
-Pairing is mediated by the operating system. Enter the device's configured six-digit BLE PIN
-if prompted. The protected subscription allows up to 90 seconds for the pairing UI and PIN
-entry, independently of the shorter timeout used by ordinary GATT operations. On Linux, enable
-a `bluetoothctl` agent and pair/trust the device before running the dumper if the automatic
-subscription is rejected.
-
-Capture listens on the radio's current configuration. Naming any RF parameter overrides it
-for the session — written live, never saved, and reported as a change:
+Naming any RF parameter overrides the radio's configuration for the session — written live,
+never saved, and reported as a change:
 
 ```sh
 cargo run -p umsh --bin umshctl --features ble-radio -- \
@@ -292,25 +330,15 @@ cargo run -p umsh --bin umshctl --features ble-radio -- \
     --freq-khz=910525 --bw-hz=62500 --sf=7 --cr=5 --sync-word=0x1424
 ```
 
-While no frames arrive, the dumper performs a live channel-RSSI probe every 10 seconds and
-prints an `idle ... link=ok` line. This is expected during RF silence and confirms that the BLE
-connection, ULCP command session, and radio runner are still responding. If one of those layers
-stalls or disconnects, the probe reports a specific error instead of leaving a packet count
-apparently frozen. On a BLE write failure, the diagnostic includes the platform backend's
-`is_connected` result and bounded disconnect-cleanup result. The dumper then rediscovers and
-reconnects after two seconds by default, preserves cumulative time/packet counters, and prints a
-new session number plus the device's retained boot status. This recovery is deliberately local to
-the diagnostic tool; normal stateful users of `UlcpDevice` still receive the failure.
+During RF silence the tool probes channel RSSI every 10 seconds and prints an
+`idle ... link=ok` line, confirming the BLE connection, command session, and radio runner
+are all still responding rather than leaving a packet count apparently frozen. On failure it
+reconnects and preserves cumulative counters. Use `--umsh-only` to suppress per-frame output
+for traffic that does not parse as a UMSH packet.
 
-Change the probe interval with `--idle-probe-secs=N`, change recovery delay with
-`--reconnect-delay-secs=N`, or use `--no-reconnect` to exit on the first failed session.
-Use `--umsh-only` to suppress per-frame output for traffic that does not parse as a UMSH
-packet; idle/recovery diagnostics and periodic received/displayed/filtered progress counters
-remain visible even when the channel is busy with foreign traffic.
-
-Write a Wireshark-readable pcap with `--pcap=PATH`. The default captures
-over-the-air radio frames; `--layers=ulcp` instead records the complete
-Spinel-inspired host/device frame exchange, while `--layers=both` records both layers:
+Write a Wireshark-readable pcap with `--pcap=PATH`. The default captures over-the-air radio
+frames; `--layers=ulcp` instead records the complete Spinel-inspired host/device frame
+exchange, and `--layers=both` records both:
 
 ```sh
 cargo run -p umsh --bin umshctl --features ble-radio -- \
@@ -324,23 +352,17 @@ IDs, commands, properties, stream envelopes, radio metadata, and nested UMSH pac
 ULCP captures are diagnostic artifacts and may contain sensitive property values or
 application traffic; handle them accordingly before sharing.
 
-For an exact byte-for-byte LoRa payload capture under a private or experimental pcap link type,
-select radio-only raw mode and supply the numeric `LINKTYPE` value (decimal or `0x` hex):
+For a byte-for-byte LoRa payload capture under a private pcap link type, add `--pcap-raw`
+with `--layers=radio` and a numeric `--pcap-linktype`. Raw mode adds no per-packet header
+and does not mix capture layers, so Wireshark must have a dissector configured for that
+link type.
 
-```sh
-cargo run -p umsh --bin umshctl --features ble-radio -- \
-    capture --pcap=raw-lora.pcap --layers=radio \
-    --pcap-raw --pcap-linktype=147
-```
-
-Raw mode adds no per-packet header and deliberately does not mix capture layers. Wireshark must
-have a dissector configured for the chosen private `LINKTYPE` value.
-
-Use `capture --help` for the complete option list. Press Ctrl-C to stop the dump — inside
-the shell that returns to the prompt, having flushed the pcap and left promiscuous mode. A timeout while
-subscribing to Frame Out usually means the computer is not bonded and the T-Echo's pairing
-window is closed; select **Start Pairing** and retry. If discovery finds no device, ensure the
-T-Echo is awake and that neither a serial host session nor another BLE central is attached.
+Use `capture --help` for the complete option list, including the idle-probe interval and
+reconnect behavior. Press Ctrl-C to stop the dump — inside the shell that returns to the
+prompt, having flushed the pcap and left promiscuous mode. A timeout while subscribing to
+Frame Out usually means the computer is not bonded and the board's pairing window has
+closed; reopen pairing and retry. If discovery finds no device, ensure the board is awake
+and that neither a serial host session nor another BLE central is attached.
 
 ### Inspecting packets with Wireshark
 
