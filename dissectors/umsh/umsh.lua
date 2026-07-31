@@ -230,6 +230,31 @@ local function hint_hex(s)
   return string.format("%02X:%02X:%02X", s:byte(1), s:byte(2), s:byte(3))
 end
 
+-- The destination shown for a packet addressed to everyone.
+local BROADCAST_LABEL = "*"
+
+-- Put the mesh's own addressing in the address columns.
+--
+-- These are set as strings rather than as `pinfo.src`/`pinfo.dst`
+-- addresses because wslua only constructs the address types it knows
+-- (ether, ip, ipv4, ipv6), and a 3-byte node hint is none of them.
+-- Describing a hint as an Ethernet address to gain the Conversations and
+-- Endpoints tables would put a fiction in every one of those rows, so the
+-- tables stay empty instead.
+--
+-- Setting the columns as strings only reaches frames whose transport has
+-- no addresses of its own: over LoRaTAP that is every frame, but under
+-- the synthetic UDP encapsulation the IP layer's own addresses win, and
+-- those rows keep showing the loopback pair the encapsulation invents.
+--
+-- A hint is three bytes and can collide, so what lands here is what the
+-- packet claims rather than a proven identity — the same caveat the
+-- names resolved from the keystore carry.
+local function set_endpoints(pinfo, src, dst)
+  if src then pinfo.cols.src = src end
+  if dst then pinfo.cols.dst = dst end
+end
+
 -- ──────────────────────────────────────────────────────────────────────────
 -- parse_secinfo
 -- Parses the SECINFO field starting at `off` in `buf` and adds to `tree`.
@@ -385,17 +410,16 @@ local function dissect_broadcast(buf, pinfo, tree, off, full_src, fcf_byte, stat
   off = parse_options(buf, off, buf_len, tree, static_opts)
 
   local payload_len = buf_len - off
-  local suffix = src_name and (" from " .. src_name)
-              or (" from " .. hint_hex(src_bytes:sub(1, 3)))
+  set_endpoints(pinfo, src_name or hint_hex(src_bytes:sub(1, 3)), BROADCAST_LABEL)
   if payload_len > 0 then
     local payload_bytes = tvb_bytes(buf, off, payload_len)
     tree:add(f.payload_raw, buf(off, payload_len))
-    pinfo.cols.info = "UMSH BCST" .. suffix
+    pinfo.cols.info = "UMSH BCST"
     if app then
       pcall(app.dissect, payload_bytes, tree, pinfo, keystore, crypto)
     end
   else
-    pinfo.cols.info = "UMSH BCST [Beacon]" .. suffix
+    pinfo.cols.info = "UMSH BCST [Beacon]"
   end
 end
 
@@ -456,6 +480,12 @@ local function dissect_uack(buf, pinfo, tree, off)
     else
       tree:add(f.ack_req_frame, buf(off, 4), origin.frame)
       pinfo.cols.info = "UMSH UACK (ack for #" .. origin.frame .. ")"
+      -- A MAC ack carries no addresses of its own. These are the
+      -- acknowledged packet's endpoints, reversed: the ack travels back
+      -- the way the packet came. Only filled once the ack is claimed as
+      -- genuine, so a tag mismatch below leaves the columns empty rather
+      -- than asserting a conversation that did not happen.
+      set_endpoints(pinfo, origin.dst_label, origin.src_label)
       -- Store back-reference so the UNAR/BUAR frame can show "Acknowledged in frame N"
       if not pinfo.visited then
         _ack_by_frame[origin.frame] = {
@@ -522,7 +552,8 @@ local function dissect_unicast(buf, pinfo, tree, off, full_src, fcf_byte, static
   -- Info column
   local sl = src_name or hint_hex(src_bytes:sub(1, 3))
   local dl = dst_name or hint_hex(dst_bytes)
-  pinfo.cols.info = (ack_req and "UMSH UNAR" or "UMSH UNIC") .. " " .. sl .. " -> " .. dl
+  set_endpoints(pinfo, sl, dl)
+  pinfo.cols.info = ack_req and "UMSH UNAR" or "UMSH UNIC"
 
   -- ACK correlation (keyless): an ack-requested packet publishes its MIC on
   -- the wire, and the returning MAC ack echoes the first 4 bytes as its
@@ -656,11 +687,9 @@ local function dissect_multicast(buf, pinfo, tree, off, full_src, fcf_byte, stat
   -- Info column
   local chan_hex = bytes_to_hex(chan_bytes)
   local ch_label = (ch_entry and ch_entry.name ~= "" and ch_entry.name) or chan_hex
-  if src_name then
-    pinfo.cols.info = "UMSH MCST [" .. ch_label .. "] from " .. src_name
-  else
-    pinfo.cols.info = "UMSH MCST [" .. ch_label .. "]"
-  end
+  -- The channel is who the packet is addressed to.
+  set_endpoints(pinfo, src_name, ch_label)
+  pinfo.cols.info = "UMSH MCST"
 
   -- Crypto
   if not crypto then return end
@@ -695,7 +724,9 @@ local function dissect_multicast(buf, pinfo, tree, off, full_src, fcf_byte, stat
         local dec_label = dec_name or bytes_to_hex(dec_src)
         tree:add(f.dec_src, buf(body_start, src_len)):set_text(
           "Decrypted SRC: " .. dec_label)
-        pinfo.cols.info = "UMSH MCST [" .. ch_label .. "] from " .. dec_label
+        -- The sender was inside the ciphertext; now that it is readable it
+        -- belongs in the address column like any other.
+        set_endpoints(pinfo, dec_label, nil)
       end
       if #payload > 0 then
         tree:add(f.payload_dec, buf(body_start + src_len, body_len - src_len)):set_text(
@@ -826,7 +857,7 @@ local function dissect_blind_unicast(buf, pinfo, tree, off, full_src, fcf_byte, 
                             or keystore.lookup_node(dec_src)
         tree:add(f.dec_src, buf(addr_start + 3, src_disp_len)):set_text(
           "Decrypted SRC: " .. (s_name or bytes_to_hex(dec_src)))
-        if s_name then pinfo.cols.info = type_label .. " [" .. ch_label .. "] from " .. s_name end
+        if s_name then set_endpoints(pinfo, s_name, nil) end
       end
       if #payload > 0 then
         tree:add(f.payload_dec, buf(body_start, body_len)):set_text(
@@ -904,7 +935,10 @@ local function dissect_blind_unicast(buf, pinfo, tree, off, full_src, fcf_byte, 
 
     local sl = src_name or hint_hex(src_bytes:sub(1, 3))
     local dl = dst_name or hint_hex(dst_bytes)
-    pinfo.cols.info = type_label .. " [" .. ch_label .. "] " .. sl .. " -> " .. dl
+    -- The channel stays in Info: for a blind unicast it is the envelope
+    -- the packet was addressed under, not the endpoint it is bound for.
+    set_endpoints(pinfo, sl, dl)
+    pinfo.cols.info = type_label .. " [" .. ch_label .. "]"
 
     -- ACK correlation (keyless): endpoints are already in cleartext here.
     if ack_req and mic_len >= 4 and not pinfo.visited then
