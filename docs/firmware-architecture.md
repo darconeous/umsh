@@ -311,7 +311,7 @@ If the chip is new, you also need a chip-BSP. Otherwise just a board-BSP.
    [Adding a new UX class](#adding-a-new-ux-class).
 4. **Document the board** with a hardware reconstruction or schematic
    summary alongside the BSP, similar to
-   [t1000e-hardware.md](t1000e-hardware.md).
+   [t1000e-hardware.md](hardware/t1000e-hardware.md).
 5. **For each app that should run on this board**, follow the
    "Adding a new firmware type" recipe to create the binary crate.
 

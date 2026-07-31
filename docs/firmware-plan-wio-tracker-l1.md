@@ -16,7 +16,7 @@ package" in the device pile.
 This plan deliberately reuses the T-Echo phasing where it applies and
 shortens or skips phases where the chip-level work is already done.
 
-See [seeed-wio-tracker-l1-pro-hardware.md](seeed-wio-tracker-l1-pro-hardware.md)
+See [seeed-wio-tracker-l1-pro-hardware.md](hardware/seeed-wio-tracker-l1-pro-hardware.md)
 for the hardware reference. See
 [firmware-plan-techo.md](archive/firmware-plan-techo.md) for the precedent
 this plan rides on. See
@@ -192,7 +192,7 @@ Triggered UF2 mode on a stock Wio Tracker L1, mounted `TRACKER L1`,
 read `INFO_UF2.TXT`, and cross-referenced against the MeshCore
 board JSON and linker script. Full bootloader / flash-layout
 details are recorded in
-[seeed-wio-tracker-l1-pro-hardware.md](seeed-wio-tracker-l1-pro-hardware.md).
+[seeed-wio-tracker-l1-pro-hardware.md](hardware/seeed-wio-tracker-l1-pro-hardware.md).
 
 | Fact | Value |
 |---|---|

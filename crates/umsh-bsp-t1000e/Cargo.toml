@@ -12,7 +12,7 @@ repository.workspace = true
 # switched power rails), and implements the `umsh::Platform` trait plus
 # board-capability traits.
 #
-# See docs/t1000e-hardware.md for the firmware-derived hardware reference.
+# See docs/hardware/t1000e-hardware.md for the firmware-derived hardware reference.
 
 [features]
 default = []

@@ -8,7 +8,7 @@ outdoor router-class node**. The end state is not a bench toy — it is a
 (beacon, duty ledger, Advertisement/Identity Request responder) on a roof
 or pole, recharging itself.
 
-See [sensecap-solar-node-p1-pro-hardware.md](sensecap-solar-node-p1-pro-hardware.md)
+See [sensecap-solar-node-p1-pro-hardware.md](../hardware/sensecap-solar-node-p1-pro-hardware.md)
 for the hardware reconstruction. See
 [firmware-plan-wio-tracker-l1.md](firmware-plan-wio-tracker-l1.md) for the
 closest precedent (same MCU, same radio chip, same Seeed UF2 bootloader

@@ -19,7 +19,7 @@
 //! arrives, it should be designed against a new `umsh-ux-handheld` (or
 //! similar) class rather than `umsh-ux-tracker`.
 //!
-//! See `docs/lilygo-techo-hardware.md` for the firmware-derived
+//! See `docs/hardware/lilygo-techo-hardware.md` for the firmware-derived
 //! hardware reference.
 
 #[cfg(all(target_os = "none", feature = "display"))]

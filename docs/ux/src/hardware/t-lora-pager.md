@@ -6,7 +6,7 @@ identifies a 480×222 landscape non-touch display, a 31-key keyboard, rotary
 encoder with push, keyboard backlight, haptic driver, speaker/audio codec, and
 GNSS. No UMSH pager UI is implemented yet; this chapter is a proposed mapping.
 
-See `docs/lilygo-t-lora-pager-hardware.md` before writing board code. In
+See `docs/hardware/lilygo-t-lora-pager-hardware.md` before writing board code. In
 particular, treat the display as non-touch and do not inherit T-Deck Pro pins.
 
 ## Proposed control mapping

@@ -29,7 +29,7 @@
 //! ```
 //!
 //! Note this differs from the `2.0 * 3000 / 4096` formula quoted in
-//! `docs/lilygo-techo-hardware.md`: that figure comes from Arduino-side
+//! `docs/hardware/lilygo-techo-hardware.md`: that figure comes from Arduino-side
 //! firmware running the SAADC at a 3.0 V full scale, not the 3.6 V our
 //! configuration produces. The divider ratio is the same; only the
 //! reference term changes.

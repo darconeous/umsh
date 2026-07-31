@@ -8,7 +8,7 @@
 //! power rails — and exposes a `Board::init()` entry point that returns a
 //! struct implementing `umsh::Platform` and the board-capability traits.
 //!
-//! See `docs/t1000e-hardware.md` for the firmware-derived hardware reference.
+//! See `docs/hardware/t1000e-hardware.md` for the firmware-derived hardware reference.
 
 pub use umsh_bsp_nrf52840::panic_persist;
 

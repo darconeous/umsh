@@ -8,7 +8,7 @@
  * starts at 0x27000 instead of 0x26000.
  *
  * See docs/firmware-plan-wio-tracker-l1.md and
- * docs/seeed-wio-tracker-l1-pro-hardware.md.
+ * docs/hardware/seeed-wio-tracker-l1-pro-hardware.md.
  *
  *   nRF52840 flash:  0x00000000 .. 0x00100000   (1024K total)
  *     MBR + SoftDevice (S140 v7.3.0):  0x00000000 .. 0x00027000  ( 156K, reserved)

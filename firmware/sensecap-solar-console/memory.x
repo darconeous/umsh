@@ -5,7 +5,7 @@
  * the app starts at 0x27000. CONFIRM the app-start address against the
  * in-hand device's INFO_UF2.TXT in Phase 0 before the first flash.
  *
- * See docs/sensecap-solar-node-p1-pro-hardware.md.
+ * See docs/hardware/sensecap-solar-node-p1-pro-hardware.md.
  *
  *   nRF52840 flash:  0x00000000 .. 0x00100000   (1024K total)
  *     MBR + SoftDevice (S140 v7.3.0):  0x00000000 .. 0x00027000  ( 156K, reserved)

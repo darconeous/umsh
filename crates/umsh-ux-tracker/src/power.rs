@@ -49,7 +49,7 @@ pub enum PowerIntentSource {
 /// not USB-powered.
 ///
 /// Matches the Meshtastic behavior documented in
-/// `docs/t1000e-hardware.md`: the T1000-E has no confirmed hardware
+/// `docs/hardware/t1000e-hardware.md`: the T1000-E has no confirmed hardware
 /// undervoltage cutoff, so firmware must protect the Li-ion cell by
 /// shutting down before the voltage falls too far below the OCV table's
 /// 3.1 V floor.

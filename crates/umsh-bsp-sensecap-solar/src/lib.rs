@@ -25,7 +25,7 @@
 //! System OFF + LPCOMP solar recovery, GNSS) is welcome but is not yet
 //! implemented.
 //!
-//! See `docs/sensecap-solar-node-p1-pro-hardware.md` for the
+//! See `docs/hardware/sensecap-solar-node-p1-pro-hardware.md` for the
 //! firmware-derived hardware reference.
 //!
 //! # Pin map (nRF52840, from the Meshtastic `seeed_solar_node` variant)

@@ -14,7 +14,7 @@ if needed. That makes it a much safer place to:
 
 before ever pointing this code at a device we can't fully recover.
 
-See [lilygo-techo-hardware.md](lilygo-techo-hardware.md) for the
+See [lilygo-techo-hardware.md](../hardware/lilygo-techo-hardware.md) for the
 hardware reference. See
 [firmware-architecture.md](firmware-architecture.md) for the BSP / UX /
 App / Binary layering this firmware sits inside.
@@ -114,7 +114,7 @@ excluded from `default-members`, same pattern as
 ## Hardware assumptions to verify in Phase 0
 
 Most of these are already inferred in
-[lilygo-techo-hardware.md](lilygo-techo-hardware.md); Phase 0 just
+[lilygo-techo-hardware.md](../hardware/lilygo-techo-hardware.md); Phase 0 just
 confirms them on the specific board in hand.
 
 1. **MCU:** nRF52840.

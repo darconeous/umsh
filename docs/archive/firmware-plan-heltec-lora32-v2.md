@@ -34,7 +34,7 @@ is a battery-powered tracker with a screen — closest in spirit to the
 T-Echo — and the end goal is the full **companion radio over BLE**
 (the `companion-ncp` firmware class), not just a bringup listener.
 
-See [heltec-lora32-v2-hardware.md](heltec-lora32-v2-hardware.md) for
+See [heltec-lora32-v2-hardware.md](../hardware/heltec-lora32-v2-hardware.md) for
 the hardware reference. See
 [firmware-architecture.md](firmware-architecture.md) for the BSP /
 UX / App / Binary layering and the workspace-inclusion decision
@@ -54,7 +54,7 @@ for the phasing precedent this plan adapts.
   `sx127x` driver (`sx1276.rs`, `sx1272.rs`). This board turns the
   "any lora-phy chip works" claim into tested reality.
 - **Paves the road to the T-Lora Pager.** The
-  [LilyGO T-Lora Pager](lilygo-t-lora-pager-hardware.md) is
+  [LilyGO T-Lora Pager](../hardware/lilygo-t-lora-pager-hardware.md) is
   ESP32-S3-based; the toolchain, `esp-hal`/embassy integration,
   BLE-controller work, and flash-storage backend built here carry
   over nearly wholesale.

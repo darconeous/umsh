@@ -26,7 +26,7 @@
 //! Not yet wired: the Quectel L76K GNSS UART, the joystick / trackball,
 //! the Grove expansion I²C bus, and the QSPI external flash.
 //!
-//! See `docs/seeed-wio-tracker-l1-pro-hardware.md` for the
+//! See `docs/hardware/seeed-wio-tracker-l1-pro-hardware.md` for the
 //! firmware-derived hardware reference.
 
 #[cfg(all(target_os = "none", feature = "buzzer"))]

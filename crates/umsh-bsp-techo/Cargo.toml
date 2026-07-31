@@ -27,7 +27,7 @@ repository.workspace = true
 #   * Buttons (user, touch, reset)
 #   * Plus-only back-panel peripherals (DRV2605, BHI260, buzzer)
 #
-# See docs/lilygo-techo-hardware.md.
+# See docs/hardware/lilygo-techo-hardware.md.
 
 [features]
 default = ["display", "platform", "power", "battery"]

@@ -1,7 +1,7 @@
 //! Board BSP for the Heltec WiFi LoRa 32 V3 (ESP32-S3FN8 + SX1262 +
 //! SSD1306 OLED).
 //!
-//! See `docs/heltec-lora32-v3-hardware.md` for the authoritative hardware
+//! See `docs/hardware/heltec-lora32-v3-hardware.md` for the authoritative hardware
 //! reference. Pin numbers here are GPIO numbers.
 //!
 //! Shared-resource constraints encoded in types (hardware doc §16):

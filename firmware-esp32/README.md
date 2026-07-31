@@ -1,8 +1,8 @@
 # firmware-esp32 — Espressif (Xtensa) sibling workspace
 
 Firmware and BSPs for Espressif targets: the
-[Heltec WiFi LoRa 32 V3](../docs/heltec-lora32-v3-hardware.md) (ESP32-S3,
-active) and the [Heltec WiFi LoRa 32 V2](../docs/heltec-lora32-v2-hardware.md)
+[Heltec WiFi LoRa 32 V3](../docs/hardware/heltec-lora32-v3-hardware.md) (ESP32-S3,
+active) and the [Heltec WiFi LoRa 32 V2](../docs/hardware/heltec-lora32-v2-hardware.md)
 (classic ESP32, parked). This is a separate cargo workspace because the
 Xtensa chips need the Xtensa Rust fork (`rust-toolchain.toml` here pins
 `channel = "esp"`), which cannot coexist with the root workspace's toolchain

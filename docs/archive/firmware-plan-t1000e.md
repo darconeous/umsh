@@ -40,7 +40,7 @@ here but is deliberately outside the current BLE NCP port.
    to match the stock bootloader's expectations.
 
 Full pin map and a firmware-derived block diagram live in
-[t1000e-hardware.md](t1000e-hardware.md). That document is the source of truth
+[t1000e-hardware.md](../hardware/t1000e-hardware.md). That document is the source of truth
 for pinouts and what we know about the power architecture; this plan only
 references the bits that drive architectural decisions.
 

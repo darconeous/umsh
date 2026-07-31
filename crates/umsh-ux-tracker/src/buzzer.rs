@@ -1,7 +1,7 @@
 //! Buzzer melody engine.
 //!
 //! Pure-logic sequencer that plays short melodies on the T1000-E's
-//! piezo buzzer (P0.25, enable P1.05 — see `docs/t1000e-hardware.md`).
+//! piezo buzzer (P0.25, enable P1.05 — see `docs/hardware/t1000e-hardware.md`).
 //! Symmetric in shape to the [`led`](crate::led) module, but with
 //! tones instead of on/off pulses and with silence semantics.
 //!

@@ -7,7 +7,7 @@ with a 32 MHz TCXO and an SSD1306 OLED. The device posture is
 unchanged — a battery-powered tracker with a screen, ending at the
 full **companion radio over BLE** (`companion-ncp` firmware class).
 
-See [heltec-lora32-v3-hardware.md](heltec-lora32-v3-hardware.md) for
+See [heltec-lora32-v3-hardware.md](../hardware/heltec-lora32-v3-hardware.md) for
 the hardware reference (§15 startup sequence, §16 suggested board
 definition, §17 bring-up checklist, §18 known ambiguities). See
 [firmware-architecture.md](firmware-architecture.md) for the BSP /
