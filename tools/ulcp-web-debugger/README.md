@@ -41,7 +41,7 @@ inspect packets while retaining both raw bytes and decoded UMSH MAC details:
 addresses, channel/counter, security and payload classification, frame layout,
 options, RSSI/LQI/SNR, and buffered/acknowledged state. Captures export as
 structured JSON or Wireshark-compatible PCAP using the same radio-layer
-Ethernet/IPv4/UDP encapsulation as `umsh-capture`. In simulator mode, “Inject
+Ethernet/IPv4/UDP encapsulation as `umshctl capture`. In simulator mode, “Inject
 simulator demo” enables the PHY and puts a production-built broadcast through
 the real device receive path.
 

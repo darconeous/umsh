@@ -198,12 +198,57 @@ Peers can also be pre-registered on the command line with `--peer <key>[:alias]`
 accepts the same key formats as `/peer add`. The `--group` and `--port` flags override the
 default multicast address and port if you need to run isolated sessions on the same machine.
 
+### Manage a radio with `umshctl`
+
+`umshctl` is the host tool for a ULCP radio device: inspection, provisioning, device
+identity, persistence, pairing, radio configuration, and packet capture. It attaches
+administratively, using the non-resetting handshake, so pointing it at an autonomously
+operating board never disturbs the board — only the command given changes anything.
+
+```sh
+cargo build -p umsh --bin umshctl --features serial-radio,ble-radio
+```
+
+Given a command it runs that command and exits:
+
+```sh
+umshctl --ble="UMSH T-Echo" info
+umshctl --port /dev/cu.usbmodem101 phy on
+```
+
+Given none, it opens a shell against a single attachment — worth a great deal over BLE,
+where every fresh attach costs a discovery pass plus a handshake:
+
+```
+$ umshctl
+discovered: UMSH T-Echo
+attached: UMSH T-Echo (ble) device=techo/0.1 boot_status=RESET_POWER_ON mode=administrative
+umshctl — `help` lists commands, `exit` leaves.
+UMSH T-Echo (ble)> repeater on
+repeater on (on-board node forwards overheard frames)
+saved: changes persist across reboots
+UMSH T-Echo (ble)> scan
+UMSH T-Echo (ble)> connect 2
+UMSH T-1000E (ble)> exit
+```
+
+With no connection flag the tool finds a radio itself over BLE: the saved default first
+(`default set`), then a two-second scan, offering a numbered choice when several answer.
+A serial port is used only when you name one with `--port` or `UMSHCTL_PORT` — identifying
+a ULCP device over serial means opening the port and speaking to it, and opening a port can
+reset or DFU-trigger hardware that is not a ULCP radio at all.
+
+Mutations persist automatically (`CMD_SAVE`) unless you pass `--no-save`. Tab completion,
+`help <command>`, and persistent history come from the same command tree the one-shot
+grammar uses.
+
 ### Capture live LoRa and ULCP traffic
 
-The `umsh-capture` tool connects to a T-Echo or T-1000E radio over BLE, configures and enables its
-LoRa radio, and prints every received frame with elapsed time, RSSI, SNR, raw bytes, and an
-attempted UMSH header decode. Traffic from another protocol is retained and labeled as not a
-valid UMSH packet rather than discarded.
+`umshctl capture` connects to a T-Echo or T-1000E radio over BLE and prints every received
+frame with elapsed time, RSSI, SNR, raw bytes, and an attempted UMSH header decode. Traffic
+from another protocol is retained and labeled as not a valid UMSH packet rather than
+discarded. With no RF flags it listens on whatever the radio is already configured for, so
+pointing it at a working node does not disturb that node.
 
 On the T-Echo, choose **Start Pairing** from the BLE menu before connecting a computer for the
 first time. Stop any serial ULCP tool and disconnect other BLE-central apps such as
@@ -211,14 +256,17 @@ nRF Connect; only one host session can own the radio at a time. Then run, from t
 root:
 
 ```sh
-cargo run -p umsh --bin umsh-capture --features ble-radio -- --ble
+cargo run -p umsh --bin umshctl --features ble-radio -- capture
 ```
+
+With no connection flag the tool discovers a radio over BLE itself: one match is used, and
+several offer a numbered choice.
 
 If more than one ULCP device is nearby, select the board by its advertised name:
 
 ```sh
-cargo run -p umsh --bin umsh-capture --features ble-radio -- \
-    --ble "UMSH T-1000E"
+cargo run -p umsh --bin umshctl --features ble-radio -- \
+    --ble="UMSH T-1000E" capture
 ```
 
 The T-Echo advertises as `UMSH T-Echo`.
@@ -235,12 +283,12 @@ entry, independently of the shorter timeout used by ordinary GATT operations. On
 a `bluetoothctl` agent and pair/trust the device before running the dumper if the automatic
 subscription is rejected.
 
-The default RF profile is 910.525 MHz, LoRa SF7, 62.5 kHz bandwidth, coding rate 4/5, and sync
-word `0x1424`. Each parameter can be overridden explicitly:
+Capture listens on the radio's current configuration. Naming any RF parameter overrides it
+for the session — written live, never saved, and reported as a change:
 
 ```sh
-cargo run -p umsh --bin umsh-capture --features ble-radio -- \
-    --ble "UMSH T-1000E" \
+cargo run -p umsh --bin umshctl --features ble-radio -- \
+    --ble="UMSH T-1000E" capture \
     --freq-khz=910525 --bw-hz=62500 --sf=7 --cr=5 --sync-word=0x1424
 ```
 
@@ -261,12 +309,12 @@ packet; idle/recovery diagnostics and periodic received/displayed/filtered progr
 remain visible even when the channel is busy with foreign traffic.
 
 Write a Wireshark-readable pcap with `--pcap=PATH`. The default captures
-over-the-air radio frames; `--capture=ulcp` instead records the complete
-Spinel-inspired host/device frame exchange, while `--capture=both` records both layers:
+over-the-air radio frames; `--layers=ulcp` instead records the complete
+Spinel-inspired host/device frame exchange, while `--layers=both` records both layers:
 
 ```sh
-cargo run -p umsh --bin umsh-capture --features ble-radio -- \
-    --ble --pcap=techo.pcap --capture=both --umsh-only
+cargo run -p umsh --bin umshctl --features ble-radio -- \
+    capture --pcap=techo.pcap --layers=both --umsh-only
 ```
 
 Portable captures use synthetic Ethernet/IPv4/UDP encapsulation. Radio packets use UDP port
@@ -280,15 +328,16 @@ For an exact byte-for-byte LoRa payload capture under a private or experimental 
 select radio-only raw mode and supply the numeric `LINKTYPE` value (decimal or `0x` hex):
 
 ```sh
-cargo run -p umsh --bin umsh-capture --features ble-radio -- \
-    --ble --pcap=raw-lora.pcap --capture=radio \
+cargo run -p umsh --bin umshctl --features ble-radio -- \
+    capture --pcap=raw-lora.pcap --layers=radio \
     --pcap-raw --pcap-linktype=147
 ```
 
 Raw mode adds no per-packet header and deliberately does not mix capture layers. Wireshark must
 have a dissector configured for the chosen private `LINKTYPE` value.
 
-Use `--help` for the complete option list. Press Ctrl-C to stop the dump. A timeout while
+Use `capture --help` for the complete option list. Press Ctrl-C to stop the dump — inside
+the shell that returns to the prompt, having flushed the pcap and left promiscuous mode. A timeout while
 subscribing to Frame Out usually means the computer is not bonded and the T-Echo's pairing
 window is closed; select **Start Pairing** and retry. If discovery finds no device, ensure the
 T-Echo is awake and that neither a serial host session nor another BLE central is attached.

@@ -175,7 +175,7 @@ python3 dissectors/make_test_pcap.py dissectors/test_vectors.pcap
 
 ## ULCP Capture Files
 
-The `umsh-capture` binary can write classic pcap files directly from a serial or BLE ULCP
+The `umshctl capture` command can write classic pcap files directly from a serial or BLE ULCP
 device. Its portable encoding uses synthetic Ethernet/IPv4/UDP records so one file can contain
 both over-the-air LoRa packets and the underlying Spinel-inspired ULCP conversation:
 

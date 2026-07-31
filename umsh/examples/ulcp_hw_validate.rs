@@ -618,7 +618,7 @@ async fn rf_dev_multicast(
 /// ack-requesting unicast to the *device identity* (device-node plan
 /// increment 4 acceptance). The peer node identity is deterministic —
 /// register its printed public key once with
-/// `umsh-ulcpctl <port> dev-peer add <pk>` — and the pairwise
+/// `umshctl --port <port> dev-peer add <pk>` — and the pairwise
 /// keys come from the real X25519 derivation, so the device's MAC
 /// authenticates, acks through the shared duty ledger, and schedules
 /// an RX counter-boundary persist when the counter jump crosses a

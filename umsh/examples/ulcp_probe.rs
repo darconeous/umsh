@@ -10,7 +10,7 @@
 //! ```
 //!
 //! To list nearby companion radios without attaching, use
-//! `umsh-ulcpctl --scan-ble` or `umsh-capture --scan-ble`.
+//! `umshctl scan`.
 //!
 //! The default RF profile matches the firmware's MeshCore-US bringup
 //! defaults (910.525 MHz / SF7 / BW62.5 kHz / CR4-5).

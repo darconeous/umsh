@@ -13,7 +13,7 @@ history) and the protocol chapters under
 ## Motivation
 
 Every CRP debugging aid we have today requires a Rust toolchain and a
-terminal: `umsh-capture`, `umsh-ulcpctl`, the validation phases.
+terminal: `umshctl` and its `capture` subcommand, the validation phases.
 That is fine for us and useless for anyone else — a tester with a
 T-1000E and a laptop cannot look at what their radio is doing without
 building the workspace. A static web page that connects over Web
@@ -24,7 +24,7 @@ simulated device entirely in the browser, because the real session engine
 is `no_std` Rust and compiles to WebAssembly.
 
 The tool is a **protocol debugger**, not a chat client and not a
-replacement for `umsh-ulcpctl`: its job is to make frames,
+replacement for `umshctl`: its job is to make frames,
 properties, and NCP state visible and pokeable.
 
 ## Goals
@@ -52,7 +52,7 @@ properties, and NCP state visible and pokeable.
 ## Non-goals
 
 * Not a management workflow. Provisioning real operator keys, identity
-  ceremonies, and fleet operations stay in `umsh-ulcpctl`; the
+  ceremonies, and fleet operations stay in `umshctl`; the
   debugger's mutations are raw property operations aimed at protocol
   work. (A later phase may add guarded convenience buttons for
   save/restore/clear/reset.)
@@ -191,7 +191,7 @@ browser runs.
 `describe_frame()` and the property-name table live in the tokio-gated
 `umsh::ulcp` today. They are pure functions of frame bytes
 and belong in `umsh-ulcp` (behind an `alloc` feature or recast to
-`fmt::Display` writers), where the native driver, `umsh-ulcpctl`,
+`fmt::Display` writers), where the native driver, `umshctl`,
 and the web engine all share one decoder. This is a small,
 independently landable change and the only prerequisite touching
 existing code.
@@ -245,10 +245,10 @@ summary per frame (type, hints, counter) via `umsh-core`. Raw TX
 
 **Phase 3 — state operations and capture parity.** Guarded buttons
 for save/restore/clear/reset with the same confirmation posture as
-`umsh-ulcpctl` (`factory-reset`-grade actions spell out what they
+`umshctl` (`factory-reset`-grade actions spell out what they
 erase); pairing-PIN set/clear (masked entry, never logged); pcapng
 export of the trace in the same companion-layer encapsulation
-`umsh-capture` writes, so a browser session and a native capture open
+`umshctl capture` writes, so a browser session and a native capture open
 in Wireshark identically.
 
 Deliberately unphased: anything requiring the operator's real secrets
@@ -305,7 +305,7 @@ page until there is a concrete need.
    spec change) so hosts stop guessing? Conservative-fixed is correct
    meanwhile.
 2. **pcapng encapsulation** — settle the exact companion-layer link
-   type with `umsh-capture` before phase 3 so the two tools never
+   type with `umshctl capture` before phase 3 so the two tools never
    diverge (capture currently writes an Ethernet/IPv4/UDP wrapping or
    raw-LoRa with an explicit linktype).
 3. **Where the simulated device's radio ends** — canned packet injection

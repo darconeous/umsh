@@ -1097,6 +1097,19 @@ where
         Ok(radio)
     }
 
+    /// Give up this handle and recover the transport underneath it.
+    ///
+    /// The link stays open, so the device sees no detach and keeps its
+    /// session-scoped state: this releases the *host's* bookkeeping, not
+    /// the connection. Re-attaching the returned link produces a fresh
+    /// handle, which is how a long-lived interactive host changes
+    /// [`AttachMode`] — administrative for inspection, tethered for the
+    /// one command that establishes a host domain — without making the
+    /// user wait through a BLE reconnect.
+    pub fn into_link(self) -> L {
+        self.link
+    }
+
     /// Install (or clear) a per-frame trace sink. Every frame sent and
     /// every frame received is reported as a one-line summary (see
     /// [`describe_frame`]), so a failure can be placed at the host API,

@@ -62,7 +62,7 @@ export function captureJson(packets) {
   }, null, 2);
 }
 
-/** Classic PCAP using the same synthetic Ethernet/IPv4/UDP radio framing as umsh-capture. */
+/** Classic PCAP using the same synthetic Ethernet/IPv4/UDP radio framing as `umshctl capture`. */
 export function capturePcap(packets) {
   const writer = new ByteWriter();
   writer.u32le(0xa1b2c3d4);

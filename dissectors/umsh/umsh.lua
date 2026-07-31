@@ -1138,7 +1138,7 @@ pcall(function()
   umsh:register_heuristic("loratap", heuristic)
 end)
 
--- Synthetic UDP encapsulation used by the `umsh-capture` tool for raw
+-- Synthetic UDP encapsulation used by the `umshctl capture` command for raw
 -- ULCP frames. Kept in a sibling module so the mesh dissector's
 -- protocol logic remains independent of the host/device control plane.
 pcall(function()
