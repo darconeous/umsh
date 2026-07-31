@@ -143,19 +143,15 @@ web-debugger:
 		--out-dir ../www/pkg --out-name umsh_ulcp_web_engine
 
 
-RUSTDOC_CRATES := \
-	umsh \
-	umsh_core \
-	umsh_crypto \
-	umsh_hal \
-	umsh_uri \
-	umsh_chat_room \
-	umsh_text \
-	umsh_mac \
-	umsh_node
-
-RUSTDOC_SHARED := crates.js help.html search.index settings.html src src-files.js static.files trait.impl type.impl
-
+# Every workspace crate is documented and published. `--no-deps` means
+# target/doc holds exactly our crates plus rustdoc's shared assets, so
+# gh-pages copies the tree wholesale rather than naming crates — a list
+# would silently omit each new crate.
+#
+# A crate that only compiles for the embedded target still has to *document*
+# on the host. Gate such items on `target_os = "none"` with a host fallback
+# rather than on a feature alone; `#[cfg(doc)]` does not help, because it
+# applies to the crate being documented and not to its dependencies.
 docs:
 	mdbook build docs/protocol/
 
@@ -182,9 +178,7 @@ gh-pages: docs rust-docs-nightly
 	mkdir -p /tmp/umsh-gh-pages/docs/protocol
 	mkdir -p /tmp/umsh-gh-pages/docs/rust
 	cp -r docs/protocol/book/* /tmp/umsh-gh-pages/docs/protocol/
-	for path in $(RUSTDOC_SHARED) $(RUSTDOC_CRATES); do \
-		cp -r target/doc/$$path /tmp/umsh-gh-pages/docs/rust/; \
-	done
+	cp -r target/doc/. /tmp/umsh-gh-pages/docs/rust/
 	cp docs/rust-index.html /tmp/umsh-gh-pages/docs/rust/index.html
 	cd /tmp/umsh-gh-pages && \
 		git add -A && \

@@ -46,6 +46,16 @@
       line-height: 1.2;
       margin: 0 0 16px;
     }
+    h2 {
+      font-size: 1.15rem;
+      margin-top: 32px;
+      padding-top: 16px;
+      border-top: 1px solid var(--border);
+    }
+    h2:first-of-type {
+      border-top: 0;
+      padding-top: 0;
+    }
     p {
       margin: 0 0 16px;
       color: var(--muted);
@@ -57,11 +67,25 @@
     li + li {
       margin-top: 8px;
     }
+    li {
+      color: var(--muted);
+    }
+    li code, li a {
+      color: var(--text);
+    }
     a {
       color: var(--link);
     }
+    li a {
+      font-weight: 600;
+      text-decoration-color: var(--border);
+    }
     .top-links a + a {
       margin-left: 16px;
+    }
+    .note {
+      font-size: 0.9rem;
+      margin-top: 16px;
     }
   </style>
 </head>
@@ -75,18 +99,77 @@
         <a href="umsh/">Umbrella Crate</a>
       </p>
 
-      <h2>Crates</h2>
+      <h2>Umbrella and host tooling</h2>
       <ul>
-        <li><a href="umsh/">umsh</a> — umbrella crate that re-exports the workspace surface</li>
-        <li><a href="umsh_core/">umsh_core</a> — core packet types and protocol primitives</li>
-        <li><a href="umsh_crypto/">umsh_crypto</a> — cryptographic constructions and identities</li>
-        <li><a href="umsh_hal/">umsh_hal</a> — hardware abstraction traits</li>
-        <li><a href="umsh_uri/">umsh_uri</a> — UMSH URI parsing and formatting</li>
-        <li><a href="umsh_chat_room/">umsh_chat_room</a> — chat room payload types</li>
-        <li><a href="umsh_text/">umsh_text</a> — text messaging payloads and wrappers</li>
-        <li><a href="umsh_mac/">umsh_mac</a> — MAC layer implementation</li>
-        <li><a href="umsh_node/">umsh_node</a> — application-facing node layer</li>
+        <li><a href="umsh/">umsh</a> — umbrella crate that re-exports the workspace surface and defines the <code>Platform</code> trait with its Tokio and Embassy adapters</li>
+        <li><a href="umshctl/">umshctl</a> — host command-line tool for driving and capturing from a UMSH device</li>
+        <li><a href="umsh_cli/">umsh_cli</a> — shared CLI command surface, usable on host and on-device</li>
+        <li><a href="umsh_mobile_core/">umsh_mobile_core</a> — stable, value-oriented facade for mobile applications</li>
+        <li><a href="umsh_uniffi_bindgen/">umsh_uniffi_bindgen</a> — UniFFI binding generator</li>
       </ul>
+
+      <h2>Protocol core</h2>
+      <ul>
+        <li><a href="umsh_core/">umsh_core</a> — wire-format types and packet parse/build</li>
+        <li><a href="umsh_crypto/">umsh_crypto</a> — cryptographic constructions, identities, and key derivation</li>
+        <li><a href="umsh_mac/">umsh_mac</a> — MAC-layer coordinator and state</li>
+        <li><a href="umsh_node/">umsh_node</a> — application-facing node layer atop the MAC</li>
+        <li><a href="umsh_uri/">umsh_uri</a> — UMSH URI and address parsing and formatting</li>
+        <li><a href="umsh_hal/">umsh_hal</a> — minimal hardware abstraction traits</li>
+        <li><a href="umsh_sync/">umsh_sync</a> — single-threaded async primitives</li>
+      </ul>
+
+      <h2>Application protocols</h2>
+      <ul>
+        <li><a href="umsh_text/">umsh_text</a> — text messaging codec and sans-I/O engine</li>
+        <li><a href="umsh_chat_room/">umsh_chat_room</a> — chat room payload types</li>
+      </ul>
+
+      <h2>Local Control Protocol (ULCP)</h2>
+      <ul>
+        <li><a href="umsh_ulcp/">umsh_ulcp</a> — ULCP wire format</li>
+        <li><a href="umsh_ulcp_device/">umsh_ulcp_device</a> — device-side session engine</li>
+        <li><a href="umsh_ulcp_runtime/">umsh_ulcp_runtime</a> — board-agnostic device runtime shared across firmware targets</li>
+        <li><a href="umsh_ulcp_web_engine/">umsh_ulcp_web_engine</a> — sans-I/O engine behind the web debugger</li>
+      </ul>
+
+      <h2>Storage and radio</h2>
+      <ul>
+        <li><a href="umsh_flash_store/">umsh_flash_store</a> — sequential-storage-backed persistence over any async NOR flash</li>
+        <li><a href="umsh_journal_store/">umsh_journal_store</a> — power-loss-safe record journals for bonds, snapshots, and frame counters</li>
+        <li><a href="umsh_radio_loraphy/">umsh_radio_loraphy</a> — <code>umsh_hal::Radio</code> over any <code>lora-phy</code> RadioKind</li>
+      </ul>
+
+      <h2>Board support and UX</h2>
+      <ul>
+        <li><a href="umsh_bsp_nrf52840/">umsh_bsp_nrf52840</a> — chip-level support shared by the nRF52840 boards</li>
+        <li><a href="umsh_bsp_t1000e/">umsh_bsp_t1000e</a> — Seeed SenseCAP T1000-E</li>
+        <li><a href="umsh_bsp_techo/">umsh_bsp_techo</a> — LilyGO T-Echo</li>
+        <li><a href="umsh_bsp_wio_tracker_l1/">umsh_bsp_wio_tracker_l1</a> — Seeed Wio Tracker L1 / L1 Pro</li>
+        <li><a href="umsh_bsp_sensecap_solar/">umsh_bsp_sensecap_solar</a> — SenseCAP Solar Node P1 / P1-Pro</li>
+        <li><a href="umsh_ux_tracker/">umsh_ux_tracker</a> — UX mechanism for tracker-class boards (button, LED, buzzer)</li>
+        <li><a href="umsh_ux_display_tracker/">umsh_ux_display_tracker</a> — UX mechanism for display-tracker-class boards (menu, attention policy, input gate)</li>
+        <li><a href="umsh_app_ulcp_cli/">umsh_app_ulcp_cli</a> — console-harness application logic, generic over a board</li>
+      </ul>
+
+      <h2>Firmware images</h2>
+      <ul>
+        <li><a href="firmware_t1000e/">firmware_t1000e</a> — T-1000E device image</li>
+        <li><a href="firmware_techo/">firmware_techo</a> — T-Echo device image</li>
+        <li><a href="firmware_sensecap_solar/">firmware_sensecap_solar</a> — SenseCAP Solar device image</li>
+        <li><a href="firmware_wio_tracker_l1/">firmware_wio_tracker_l1</a> — Wio Tracker L1 device image</li>
+        <li><a href="firmware_t1000e_console/">firmware_t1000e_console</a> — T-1000E bringup harness</li>
+        <li><a href="firmware_techo_console/">firmware_techo_console</a> — T-Echo bringup harness</li>
+        <li><a href="firmware_sensecap_solar_console/">firmware_sensecap_solar_console</a> — SenseCAP Solar bringup harness</li>
+        <li><a href="firmware_wio_tracker_l1_console/">firmware_wio_tracker_l1_console</a> — Wio Tracker L1 bringup harness</li>
+      </ul>
+
+      <p class="note">
+        Firmware and board-support pages are generated on the host, where the
+        bare-metal code is compiled out; they show the portable surface rather
+        than the full device image. The Espressif boards live in a separate
+        workspace that needs the Xtensa toolchain and are not included here.
+      </p>
     </div>
   </main>
 </body>

@@ -72,9 +72,15 @@ use crate::log::debug_log;
 /// statics sit in the radio RX/TX path on boards whose BLE controller
 /// (MPSL/SDC) has hard real-time deadlines that a critical section would
 /// intrude on. Boards without that constraint take the portable default.
-#[cfg(feature = "node-thread-mode-mutex")]
+///
+/// `embassy_sync` only defines `ThreadModeRawMutex` for bare-metal targets,
+/// so the host build takes the portable default regardless of the feature.
+/// Nothing on the host runs the device node — it builds there for tests and
+/// rustdoc — and the portable lock is the correct choice under a hosted OS
+/// anyway.
+#[cfg(all(feature = "node-thread-mode-mutex", target_os = "none"))]
 pub type NodeMutex = embassy_sync::blocking_mutex::raw::ThreadModeRawMutex;
-#[cfg(not(feature = "node-thread-mode-mutex"))]
+#[cfg(not(all(feature = "node-thread-mode-mutex", target_os = "none")))]
 pub type NodeMutex = CriticalSectionRawMutex;
 
 // ─── Platform ────────────────────────────────────────────────────────────────
