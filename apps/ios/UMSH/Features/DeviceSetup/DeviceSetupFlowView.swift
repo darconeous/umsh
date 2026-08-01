@@ -116,7 +116,7 @@ final class AdminFlowController {
     }
 
     /// Record the device being configured as a peer, so the operator can
-    /// find it in Network after the sheet closes. Nothing about the setup
+    /// find it in Peers after the sheet closes. Nothing about the setup
     /// session itself is persisted.
     func savePeer(role: PeerRole) async -> Bool {
         guard let saveDevicePeer, let identity = snapshot.deviceIdentity else { return false }
@@ -290,7 +290,7 @@ struct DeviceSetupFlowView: View {
     @Environment(\.dismiss) private var dismiss
     @State private var controller: AdminFlowController
     /// Held on the view rather than the controller so it is re-read as the
-    /// Network list changes, instead of frozen when the sheet opened.
+    /// Peers list changes, instead of frozen when the sheet opened.
     private let isPeerSaved: (String) -> Bool
     private let peerActions: PeerActions
 

@@ -44,6 +44,10 @@ pub struct NodeUri<'a> {
 }
 
 /// Advisory channel metadata decoded from a URI query string.
+///
+/// String fields are the raw, still-percent-encoded slices borrowed from the
+/// URI, because decoding needs an owned buffer this borrow cannot provide. Run
+/// them through [`decode_percent`] before display.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub struct ChannelParams<'a> {
     pub display_name: Option<&'a str>,
@@ -239,10 +243,15 @@ pub fn format_node_uri(key: &umsh_core::PublicKey, buf: &mut [u8]) -> Result<usi
     Ok(pos)
 }
 
+/// Format a named-channel URI.
+///
+/// The name is percent-encoded, so a name containing a space or other
+/// non-unreserved character still yields a parseable URI. Parsers recover the
+/// original with [`decode_percent`] before canonicalizing it.
 pub fn format_channel_name_uri(name: &str, buf: &mut [u8]) -> Result<usize, Error> {
     let mut pos = 0usize;
     copy_into(buf, &mut pos, b"umsh:cs:")?;
-    copy_into(buf, &mut pos, name.as_bytes())?;
+    write_percent_encoded(buf, &mut pos, name)?;
     Ok(pos)
 }
 
@@ -263,13 +272,23 @@ pub fn format_channel_name_uri_with_params(
     Ok(pos)
 }
 
+pub fn format_channel_key_uri_with_params(
+    key: &umsh_core::ChannelKey,
+    params: &ChannelParams<'_>,
+    buf: &mut [u8],
+) -> Result<usize, Error> {
+    let mut pos = format_channel_key_uri(key, buf)?;
+    write_params(params, buf, &mut pos)?;
+    Ok(pos)
+}
+
 fn write_params(params: &ChannelParams<'_>, buf: &mut [u8], pos: &mut usize) -> Result<(), Error> {
     let mut wrote = false;
     if let Some(display_name) = params.display_name {
         push_byte(buf, pos, if wrote { b';' } else { b'?' })?;
         wrote = true;
         copy_into(buf, pos, b"n=")?;
-        copy_into(buf, pos, display_name.as_bytes())?;
+        write_percent_encoded(buf, pos, display_name)?;
     }
     if let Some(max_flood_hops) = params.max_flood_hops {
         push_byte(buf, pos, if wrote { b';' } else { b'?' })?;
@@ -282,9 +301,73 @@ fn write_params(params: &ChannelParams<'_>, buf: &mut [u8], pos: &mut usize) -> 
     if let Some(region) = params.region {
         push_byte(buf, pos, if wrote { b';' } else { b'?' })?;
         copy_into(buf, pos, b"r=")?;
-        copy_into(buf, pos, region.as_bytes())?;
+        write_percent_encoded(buf, pos, region)?;
     }
     Ok(())
+}
+
+/// Whether `byte` may appear literally in a parameter value.
+///
+/// RFC 3986 unreserved only. That is stricter than the query grammar allows,
+/// but a channel display name is arbitrary user text and the separators this
+/// crate writes (`?`, `;`, `=`) must never appear unescaped inside a value.
+fn is_unreserved(byte: u8) -> bool {
+    byte.is_ascii_alphanumeric() || matches!(byte, b'-' | b'.' | b'_' | b'~')
+}
+
+fn write_percent_encoded(buf: &mut [u8], pos: &mut usize, value: &str) -> Result<(), Error> {
+    const HEX: &[u8; 16] = b"0123456789ABCDEF";
+    for &byte in value.as_bytes() {
+        if is_unreserved(byte) {
+            push_byte(buf, pos, byte)?;
+        } else {
+            copy_into(
+                buf,
+                pos,
+                &[b'%', HEX[(byte >> 4) as usize], HEX[(byte & 0x0f) as usize]],
+            )?;
+        }
+    }
+    Ok(())
+}
+
+/// Decode percent-escapes in a URI component.
+///
+/// Parsed [`ChannelParams`] borrow raw slices from the URI; this turns one into
+/// displayable text. An escape that is truncated or not valid hex is preserved
+/// verbatim rather than rejected, and invalid UTF-8 is reported.
+pub fn decode_percent(value: &str) -> Result<String, Error> {
+    let bytes = value.as_bytes();
+    let mut out = alloc::vec::Vec::with_capacity(bytes.len());
+    let mut index = 0usize;
+    while index < bytes.len() {
+        match (bytes[index], bytes.get(index + 1), bytes.get(index + 2)) {
+            (b'%', Some(high), Some(low)) => match (hex_value(*high), hex_value(*low)) {
+                (Some(high), Some(low)) => {
+                    out.push((high << 4) | low);
+                    index += 3;
+                }
+                _ => {
+                    out.push(b'%');
+                    index += 1;
+                }
+            },
+            (byte, _, _) => {
+                out.push(byte);
+                index += 1;
+            }
+        }
+    }
+    String::from_utf8(out).map_err(|_| Error::InvalidUtf8)
+}
+
+fn hex_value(byte: u8) -> Option<u8> {
+    match byte {
+        b'0'..=b'9' => Some(byte - b'0'),
+        b'a'..=b'f' => Some(byte - b'a' + 10),
+        b'A'..=b'F' => Some(byte - b'A' + 10),
+        _ => None,
+    }
 }
 
 fn write_decimal_u8(value: u8, out: &mut [u8; 3]) -> usize {
@@ -389,6 +472,107 @@ mod tests {
             UmshUri::ChannelByKey(parsed) => assert_eq!(parsed.key.0, channel_key.0),
             _ => panic!("expected channel key uri"),
         }
+    }
+
+    #[test]
+    fn channel_key_uri_carries_invitation_params() {
+        let channel_key = umsh_core::ChannelKey([0x55; 32]);
+        let params = ChannelParams {
+            display_name: Some("Trail Crew"),
+            max_flood_hops: Some(3),
+            region: Some("SJC"),
+            raw_query: None,
+        };
+        let mut buf = [0u8; 128];
+        let len = format_channel_key_uri_with_params(&channel_key, &params, &mut buf).unwrap();
+        let uri = UriRef::from_str(core::str::from_utf8(&buf[..len]).unwrap()).unwrap();
+        match parse_umsh_uri(uri).unwrap() {
+            UmshUri::ChannelByKey(parsed) => {
+                assert_eq!(parsed.key.0, channel_key.0);
+                // Parsed params borrow the raw slice, so the space stays escaped
+                // until the consumer decodes it.
+                assert_eq!(parsed.params.display_name, Some("Trail%20Crew"));
+                assert_eq!(
+                    decode_percent(parsed.params.display_name.unwrap()).unwrap(),
+                    "Trail Crew"
+                );
+                assert_eq!(parsed.params.max_flood_hops, Some(3));
+                assert_eq!(parsed.params.region, Some("SJC"));
+            }
+            _ => panic!("expected channel key uri"),
+        }
+    }
+
+    #[test]
+    fn param_values_escape_separators_and_round_trip() {
+        // A display name containing this crate's own separators must not be
+        // able to forge additional parameters.
+        let channel_key = umsh_core::ChannelKey([0x88; 32]);
+        let hostile = "a?b;c=d&e/f";
+        let params = ChannelParams {
+            display_name: Some(hostile),
+            max_flood_hops: None,
+            region: None,
+            raw_query: None,
+        };
+        let mut buf = [0u8; 160];
+        let len = format_channel_key_uri_with_params(&channel_key, &params, &mut buf).unwrap();
+        let uri = UriRef::from_str(core::str::from_utf8(&buf[..len]).unwrap()).unwrap();
+        match parse_umsh_uri(uri).unwrap() {
+            UmshUri::ChannelByKey(parsed) => {
+                assert_eq!(parsed.params.max_flood_hops, None);
+                assert_eq!(parsed.params.region, None);
+                assert_eq!(
+                    decode_percent(parsed.params.display_name.unwrap()).unwrap(),
+                    hostile
+                );
+            }
+            _ => panic!("expected channel key uri"),
+        }
+    }
+
+    #[test]
+    fn decode_percent_preserves_malformed_escapes() {
+        assert_eq!(decode_percent("plain").unwrap(), "plain");
+        assert_eq!(decode_percent("a%2Fb").unwrap(), "a/b");
+        assert_eq!(decode_percent("100%").unwrap(), "100%");
+        assert_eq!(decode_percent("%zz").unwrap(), "%zz");
+        assert_eq!(decode_percent("%e2%82%ac").unwrap(), "€");
+        assert_eq!(decode_percent("%ff"), Err(Error::InvalidUtf8));
+    }
+
+    #[test]
+    fn channel_key_uri_without_params_matches_the_bare_form() {
+        let channel_key = umsh_core::ChannelKey([0x66; 32]);
+        let empty = ChannelParams {
+            display_name: None,
+            max_flood_hops: None,
+            region: None,
+            raw_query: None,
+        };
+        let mut with_params = [0u8; 128];
+        let mut bare = [0u8; 128];
+        let with_len =
+            format_channel_key_uri_with_params(&channel_key, &empty, &mut with_params).unwrap();
+        let bare_len = format_channel_key_uri(&channel_key, &mut bare).unwrap();
+        assert_eq!(&with_params[..with_len], &bare[..bare_len]);
+    }
+
+    #[test]
+    fn channel_key_uri_with_params_reports_a_short_buffer() {
+        let channel_key = umsh_core::ChannelKey([0x77; 32]);
+        let params = ChannelParams {
+            display_name: Some("Trail Crew"),
+            max_flood_hops: None,
+            region: None,
+            raw_query: None,
+        };
+        // Room for `umsh:ck:` and the 44-character key, but not the query.
+        let mut buf = [0u8; 52];
+        assert_eq!(
+            format_channel_key_uri_with_params(&channel_key, &params, &mut buf),
+            Err(Error::BufferTooSmall)
+        );
     }
 
     #[test]

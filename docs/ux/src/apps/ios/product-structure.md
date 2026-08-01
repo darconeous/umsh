@@ -36,10 +36,16 @@ The compact tab bar contains:
 
 1. **Conversations** — `message` symbol; badge is unread conversations, not
    raw packets.
-2. **Network** — `point.3.connected.trianglepath.dotted` or the closest current
+2. **Peers** — `point.3.connected.trianglepath.dotted` or the closest current
    system symbol; no badge for routine discovery.
 3. **Settings** — `gearshape`; a badge appears only for an actionable radio,
    identity, or migration problem.
+
+Channels are not a tab. Membership is a handful of keys that change only when
+the user says so, which does not earn a permanent place in the tab bar the way
+conversations and peers do. They live under Identity in Settings, which is also
+where they belong: the keys are held by the identity, and a different identity
+would have a different set.
 
 Every app screen places a compact companion-status toolbar item in the center
 group of the top navigation toolbar. In normal connected state it shows only an
@@ -56,9 +62,9 @@ the centered radio control. Keep toolbar groupings sparse and let system
 components, safe areas, scroll-edge effects, and Liquid Glass appearance come
 from iOS rather than drawing a custom status bar.
 
-This is the stable position across Conversations, Network, Map, Settings,
-conversation transcripts, and pushed details. The radio remains app-level
-chrome and never appears to belong to the active conversation.
+This is the stable position across Conversations, Peers, Map, Settings,
+conversation transcripts, and pushed details. The radio remains
+app-level chrome and never appears to belong to the active conversation.
 
 A disconnected or incompatible state changes the compact toolbar symbols and
 adds a concise actionable banner immediately below the toolbar but above the
@@ -162,10 +168,22 @@ Primary action: **Open Conversations**. Secondary action: **Share my identity**.
 
 ### Conversation list
 
-Navigation title: **Conversations**. Toolbar actions:
+Navigation title: **Conversations**. The toolbar carries a compose menu:
+**New Message…** and **New Channel Chat…**.
 
-- compose menu: **New message**, **Join channel**, **Join room**; and
-- more menu: **Scan UMSH code**, **Message requests**.
+Direct chats and channel group chats share one list with no section headers.
+Ordering is by most recent activity across both kinds, so a channel with newer
+traffic sits above a quiet direct chat; a conversation with no messages yet is
+as recent as its creation, so a chat just opened sits at the top where the
+user who opened it will look for it.
+
+Not every joined channel appears. Joining from Settings is membership alone —
+the conversation is created when the user asks for one, either from **New
+Channel Chat…** or from **Enter Conversation** in Channel Detail. Joining a
+channel *through* the compose menu is a request to talk in it, so that path
+creates and opens the conversation. `public` is the exception: while joined,
+its conversation always exists, because it is where an off-grid conversation
+starts when the user holds nobody's key yet.
 
 Search filters by local mnemonic alias, advertised name, channel/room name, complete
 Base58 node address, and canonical rendered hint. It does not require network
@@ -173,26 +191,29 @@ access.
 
 Each row includes:
 
-- deterministic NodeHint avatar for a peer, or an explicit type icon for a
-  Channel or Room;
-- resolved display label;
-- last-message preview or explicit empty-state text;
-- time of locally recorded activity;
-- unread count; and
-- one compact exceptional status such as **Delivery unconfirmed**, **Failed**,
-  or **Logged out**.
+- a deterministic NodeHint avatar for a peer, or the channel's rounded-square
+  badge, which is enough to tell the two kinds apart at a glance;
+- resolved display label, emphasized while unread;
+- last-message preview, or explicit empty-state text. A group preview is
+  prefixed with the sender, since the body alone does not say who is talking;
+- relative time of the last locally recorded activity;
+- an unread dot; and
+- a muted-bell marker for a channel with notifications off.
 
-The type marker also has a visible text equivalent. For example, a channel row
-shows **Private channel · Maya: Camp is set** rather than relying on a hash icon
-to distinguish it from a direct or room conversation.
+Muting is about banners only. A muted channel still receives, still records,
+and still counts as unread.
+
+Deleting a channel conversation removes the local transcript and leaves channel
+membership intact; a later message opens it again. Leaving the channel removes
+its conversation, since without the key there is nothing to send and nothing
+further will arrive.
 
 Pin, mute, and delete/archive actions use conventional context menus or swipe
 actions. Destructive swipe behavior requires confirmation when it would delete
 history or a channel key.
 
-Empty state: explain that conversations begin by scanning a person's identity,
-choosing a text-capable node from Network, or joining a channel/room. Offer
-**Scan code** and **Browse network**.
+Empty state: explain that a conversation begins with a peer or in a joined
+channel, and offer **New Message…** and **New Channel Chat…**.
 
 ### Direct conversation
 
@@ -243,13 +264,42 @@ multicast text message addressed to the channel. There is no recipient picker:
 every listening node that possesses the channel key is eligible to receive and
 display the message.
 
-The navigation title names the channel and a persistent subtitle identifies
-**Private channel · Multicast**, **Public named channel · Multicast**, `public`,
-or `EMERGENCY`. Directly above the transcript, a compact audience line says
-**Everyone with the channel key** for a symmetric private channel. The composer
-placeholder names the destination, for example **Message Trail Crew channel**.
-An Info button or tapping the title opens Channel Detail. Sender labels in the
-transcript link to Peer Detail without automatically saving the sender.
+The navigation title names the channel and the header carries its badge, the
+way a direct conversation carries the peer's avatar; tapping it opens the
+channel's details. The composer placeholder names the destination, for example
+**Message Trail Crew**.
+
+A group message is authenticated as coming from *a member*, not from a
+particular person: the channel MIC proves possession of the key, and the only
+sender identity the wire must carry is a 3-byte hint. Each inbound bubble is
+paired with its sender's deterministic hint avatar and a label, chosen in
+descending order of authority:
+
+1. the name this phone has for that peer — an alias it was given, or a name it
+   advertised and signed;
+2. the name the sender attached to the message itself;
+3. their address; then
+4. **Member a1b2c3**, the bare hint.
+
+The message-borne name is the sender's own unverified claim — anyone holding
+the channel key can write anything there — so it is useful exactly when
+nothing better is known, and never displaces a name this phone established. The
+member sheet shows it separately as **Calls themselves** when the two differ.
+Outgoing group messages carry this phone's advertised name for the same
+reason; direct messages do not, because the recipient authenticated us by key.
+
+A hint resolves to a full address on its own, since group sends carry the full
+source address. When it does, earlier messages from that member are relabelled
+retroactively rather than left inconsistent. Tapping a sender opens what is
+known about them, and offers **Request Identity** for a member still
+unidentified; that request goes out over the channel itself, since a hint is
+not an address anything can be unicast to.
+
+Our own group message, relayed back by a repeater, is never shown a second
+time. It names us as its sender because every group send carries our full
+address, but it is the message already in the transcript. It is still recorded
+under the hood: it is the only proof a multicast ever produces that something
+out there received and forwarded it.
 
 Incoming messages show the sender's resolved name above the bubble because a
 channel contains multiple speakers. The user's own messages align and style
@@ -265,9 +315,16 @@ the trailing edge and use the app's standard outgoing treatment. Timestamps and
 **Sent over radio** remain below/outside the bubble so delivery evidence is not
 mistaken for message content.
 
-The message-detail screen explains that **Sent over radio** is not a group
-delivery receipt. Invalid public/emergency traffic never appears in the normal
-transcript.
+Multicast has no acknowledgement, so a group message's terminal success state
+is **Sent** and never **Delivered**. The message-detail screen explains that
+this is not a group delivery receipt. Invalid public/emergency traffic never
+appears in the normal transcript.
+
+**Details** on any received message — direct or group — reports what the radio
+observed of the frame it arrived on: hop count (**Direct** when nothing
+relayed it), signal strength, signal-to-noise, link quality, whether the source
+was authenticated, and the route it took. Reachability in a mesh is not
+obvious from the outside, so a message that arrived says how it got here.
 
 Channel Detail is a first-class destination, not a generic group-chat info
 screen. It shows channel type, concealed/revealable full channel key, local display name, member
@@ -289,11 +346,11 @@ because the radio disconnects, **delivery unconfirmed** is effectively
 terminal. Valid late evidence may still reconcile it. Logout and Delete Local
 History are separate actions.
 
-## Network tab
+## Peers tab
 
-### Network list
+### Peers list
 
-Navigation title: **Network**. A native search field and filter menu support:
+Navigation title: **Peers**. A native search field and filter menu support:
 
 - All;
 - People/Text;
@@ -312,7 +369,7 @@ Toolbar actions: **Scan code**, **Paste URI**, and an overflow action for
 **Enter public key**. **Discover peers** is the prominent empty-state action and
 remains available from the toolbar menu. A persistent **List | Map** segmented
 control sits below search. Tapping **Map** replaces the network list while
-keeping the Network tab selected; returning to **List** restores the prior
+keeping the Peers tab selected; returning to **List** restores the prior
 filters and scroll position.
 
 ### Discover peers sheet
@@ -329,7 +386,7 @@ The first release must not label this **Scan the mesh** or imply that silent
 nodes will be returned. A short explanation says that results appear when
 nodes announce themselves or otherwise send identity-bearing traffic.
 
-### Network map
+### Peers map
 
 The map renders location regions according to advertised precision. A coarse
 location is a cell or area, not a centered precision pin. Selecting a mark or
@@ -339,7 +396,7 @@ location.
 
 The Map choice remains visible even when no mapped nodes exist. Its empty state
 says **No reported node locations** and offers **Discover peers** and **Show
-list**. On iPad, the List/Map choice stays in the Network toolbar while the
+list**. On iPad, the List/Map choice stays in the Peers toolbar while the
 selected node can occupy the detail column.
 
 ### Peer detail
@@ -369,12 +426,12 @@ are available only in advanced session details and never replace the stable
 peer avatar.
 
 Peer Detail is reached by tapping a direct-chat title/avatar, a peer row in
-Network or discovery, or a sender identity in a channel transcript. Returning
+Peers or discovery, or a sender identity in a channel transcript. Returning
 to chat preserves the draft and transcript position.
 
 When a saved companion radio exposes its own UMSH public identity, that
 identity is also represented by exactly one `NodeRecord` and appears in the
-Network list as a peer. Peer Detail labels it **Companion radio identity** and
+Peers list as a peer. Peer Detail labels it **Companion radio identity** and
 links to Radio Detail. The record is system-managed: ordinary peer removal is
 unavailable while the associated radio remains saved. This does not
 make the radio identity the phone's identity or grant infrastructure-management
@@ -427,6 +484,124 @@ Configuring a repeater the user physically has is a different path with a
 different basis for authority: device setup in Settings connects to it locally
 over Bluetooth, gated by that device's own pairing. Nothing there extends to a
 node observed only through the mesh, and this screen does not link to it.
+
+## Channels
+
+Reached from **Identity → Channels** in Settings, whose row carries the joined
+count. This screen is membership, not a directory: everything in it is a key
+this phone holds, and nothing heard on the air can add to it.
+
+### Channel badge
+
+A channel is drawn as a rounded square, distinguishing it at a glance from a
+peer's circular avatar. It carries the first letter of each word of the
+channel's name, up to four, two to a line — so three and four initials stay as
+large as two rather than shrinking. A private channel that was never named has
+nothing to initial and shows its identifier instead.
+
+The colour is derived from the key: the channel-identifier derivation run one
+byte longer, `HKDF-SHA256(channel_key, salt="UMSH-CHAN-ID", info="", L=3)`, so
+its first two bytes are the identifier itself. Everyone holding the key sees
+the same badge with nothing agreed or transmitted.
+
+Two exceptions are recognized on sight rather than read: `public` is a white
+**P** on blue, `EMERGENCY` a white **E** on red.
+
+A derived colour can land anywhere, including the middle of the brightness
+range where neither black nor white text reads well. The badge keeps the
+derived hue and moves only brightness and saturation, into whichever of a light
+or dark band it is already nearer; each band clears 4.5:1 against a fixed text
+colour.
+
+### Channel list
+
+Sections appear only when they contain something:
+
+- The channels this identity is in, with no section header — everything listed
+  is joined, which the screen title already says. Each row shows the channel's
+  badge, its name as written, a type label (**Built-in**, **Public**,
+  **Private**), the two-octet derived identifier in monospace, and which
+  identities have joined it (**Phone**, **Radio**, or **Phone and radio**). A
+  muted channel carries a bell-slash glyph with a text equivalent for
+  VoiceOver. Swiping a row offers to leave, confirmed.
+- **On the radio only** — identifiers the companion radio's device identity
+  reports that this phone holds no key for. They are shown, not named: the
+  device reports derived identifiers and never key material. Selecting one
+  explains that, rather than implying the phone could open it.
+
+`public` and `EMERGENCY` are joined on first run with notifications off. They
+are the channels a new user is expected to be reachable on, but neither should
+announce itself before the user has a reason to care.
+
+Either may be left, and the key survives so re-joining needs no invitation —
+but a channel the user has left never appears in this list again. Leaving is a
+decision, and re-offering it here would make the tab an argument rather than a
+statement of what the user is in. The standing offer belongs in the join sheet,
+where the user has already come looking.
+
+The toolbar's add menu offers **Join Channel…** and **New Private Channel…**,
+and its trailing position on a channel's own screen is the standard system
+share control.
+
+### Join channel
+
+One entry point covers both ways in. The field accepts a public channel name or
+a pasted `umsh:cs:` / `umsh:ck:` invitation, and the same staged behavior
+applies as every other URI import: parse locally, preview, confirm.
+
+A **Suggested Channels** section lists any standard channel the user has left,
+as a one-tap re-join. This is the only place the app raises them again.
+
+The preview names the kind — **Public Channel** or **Private Channel
+Invitation** — and states the security meaning plainly: a public name is not a
+password, and a private key makes its holder a full member who can also send as
+any other member. Joining `EMERGENCY` additionally describes how its traffic
+behaves.
+
+The canonicalized name is never shown. It decides which channel a name reaches,
+but it is key-derivation machinery, and surfacing a lowercased form beside the
+name the user wrote reads as a bug rather than a fact. Channels are named the
+way they are written; capitalization simply does not matter, invisibly.
+
+A key the phone already holds turns the action into **Update Local Details**
+rather than creating a second channel. A different channel already using the
+same name is called out before the button becomes available; the two are
+distinct channels and messages never cross between them.
+
+### Channel detail
+
+Leads with the channel itself — name as written, type, derived identifier, and
+join date — then local details, then membership. The key is not shown: it is
+not something to read, and the invitation is the way it leaves the phone. **Alias** is the local override; it takes display precedence
+everywhere but never changes the channel's own name, exactly as a peer alias
+behaves, and it is what travels nowhere when the channel is shared. The phone and the companion radio are separate members with separate
+key tables, so each has its own control. When no radio with an identity of its
+own is attached, the radio control is unavailable and says why — never simply
+"not joined".
+
+Where the protocol fixes a channel's behavior, the screen states it instead of
+offering a control the user could contradict. `public` and `EMERGENCY` show
+their hop ceiling as a value — five without a region code, seven with one —
+rather than as a picker, and a **How This Channel Works** section describes
+what the channel does.
+
+That section is written as fact, not instruction. The app applies every one of
+these rules itself, so the user has nothing to comply with and must never be
+addressed as though a message could be sent the wrong way: "All traffic here is
+unencrypted", not "Messages must be unencrypted". A hop recommendation arriving
+in an invitation for one of these channels is ignored for the same reason, and
+is not passed on when the channel is shared again.
+
+Sharing is the standard system share control in the trailing toolbar position,
+not a row in the form. It opens a sheet with a QR code and URI. A public channel shares only its name. A
+private channel's invitation is key material, and the sheet says so where the
+invitation is, not only on the way in. The name travels written as it is read —
+`umsh:cs:Trail%20Crew` — and canonicalization happens after percent-decoding on
+the way in, so casing survives sharing without changing which channel is meant.
+
+Leaving is confirmed. A built-in or public channel can be re-joined from its
+name at any time; a private channel's key is deleted with it, and re-joining
+needs a fresh invitation from someone still inside.
 
 ## Settings tab
 
@@ -506,7 +681,7 @@ hint, and shareable QR — not an abbreviated hint on the editor. A device that
 exposes no identity says so rather than showing an empty row.
 
 That screen offers **Save Peer**, which records the node locally so it can be
-found in Network afterwards. Saving is local only: nothing is transmitted to the
+found in Peers afterwards. Saving is local only: nothing is transmitted to the
 node, and it is not registered for messaging. This
 is the one durable trace a setup session may leave, and only when the user asks
 for it.
@@ -626,7 +801,7 @@ key presentation.
 
 ## iPad behavior
 
-Conversations and Network use a two-column split when space permits: list or
+Conversations, Peers, and Channels use a two-column split when space permits: list or
 sidebar on the leading side, selected detail on the trailing side. Settings may
 use a grouped sidebar and detail. Preserve visible selection and support
 keyboard navigation, context menus, drag-and-drop of UMSH URIs, and multiple

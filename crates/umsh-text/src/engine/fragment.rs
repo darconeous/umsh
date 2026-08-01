@@ -595,12 +595,12 @@ impl FragmentPlan {
 mod tests {
     use super::*;
     use crate::model::{ConversationKey, SenderScope};
-    use umsh_core::ChannelId;
+    use umsh_core::ChannelTag;
 
     fn stream() -> StreamKey {
         StreamKey {
             conversation: ConversationKey::ChannelGroup {
-                channel: ChannelId([1, 2]),
+                channel: ChannelTag([1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16]),
             },
             sender: SenderScope::ClaimedMember(umsh_core::NodeHint([9, 9, 9])),
         }

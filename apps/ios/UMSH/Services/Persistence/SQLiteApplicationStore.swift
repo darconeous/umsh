@@ -63,7 +63,7 @@ struct StoredNode: Equatable, Sendable {
     let lastHeardAt: Date?
     /// Whether this node is saved on the local (phone) identity. Rows with
     /// `false` are the transient tier: heard on the air, kept for search and
-    /// discovery, hidden from the main Network list, and subject to retention.
+    /// discovery, hidden from the main Peers list, and subject to retention.
     let isSaved: Bool
     let isFavorite: Bool
     /// Cache of whether this node's public key is stored on the companion
@@ -76,6 +76,86 @@ struct StoredDirectConversation: Equatable, Sendable {
     let id: Int64
     let node: StoredNode
     let draftText: String
+    /// When this conversation was last read. Messages newer than this are
+    /// unread; a conversation the user has never opened reads as all-unread
+    /// from its first message.
+    let lastReadAtMilliseconds: Int64
+    /// When the conversation row was created — the activity time of a
+    /// conversation that has no messages yet.
+    let createdAtMilliseconds: Int64
+}
+
+/// A channel's group conversation. Its other end is a channel rather than a
+/// node, which is why it is not a row in `direct_conversation`.
+struct StoredChannelConversation: Equatable, Sendable {
+    let id: Int64
+    let channelID: UUID
+    /// The address the facade keys this conversation's records by.
+    let conversationAddress: String
+    let draftText: String
+    let lastReadAtMilliseconds: Int64
+    /// When the conversation row was created — the activity time of a
+    /// conversation that has no messages yet.
+    let createdAtMilliseconds: Int64
+}
+
+/// What a notification needs to describe an arrived message, resolved from
+/// storage rather than from the mutation that triggered it.
+struct ChatNotificationTarget: Equatable, Sendable {
+    let conversationAddress: String
+    let body: String
+    /// The sender's full address, when known. A group message from a member
+    /// whose hint has not resolved yet has none.
+    let senderAddress: String?
+    /// The sender's claimed hint, for a group message.
+    let senderHint: Data?
+    /// The name the sender attached to the message.
+    let senderHandle: String?
+}
+
+/// How a channel's key was established, which decides what may be shared.
+enum StoredChannelKind: String, Equatable, Sendable {
+    /// `public` or `EMERGENCY`: named channels the protocol fixes rules for.
+    /// These rows are never deleted — leaving clears the joined flags so the
+    /// channel can be offered again.
+    case builtin
+    /// Key derived from a name anyone may know, so the name is shareable.
+    case named
+    /// Key distributed out of band; the invitation is a secret.
+    case privateKey = "private"
+}
+
+/// A channel this identity knows about. Public metadata only: the 32-byte key
+/// lives in Keychain under `id`.
+struct StoredChannel: Equatable, Sendable {
+    let id: UUID
+    let ownerIdentityID: String
+    let kind: StoredChannelKind
+    /// Canonical lowercase name the key is derived from. Key-derivation
+    /// machinery, not something to show: `name` is what the channel is called.
+    let canonicalName: String?
+    /// The channel's own name, written the way it was typed or shared.
+    let name: String?
+    /// What this user calls the channel. Takes display precedence but never
+    /// overwrites `name`, matching how a peer alias works.
+    let alias: String?
+    /// Two-octet derived identifier, hex. A hint, not an identity: distinct
+    /// keys may collide here.
+    let channelIDHex: String
+    /// Three presentation octets — the identifier extended by one byte — kept
+    /// here so a list can colour its rows without unlocking every key.
+    let tint: Data
+    let regionCode: Data?
+    let maxFloodHops: Int?
+    /// Whether the phone identity has joined. Drives MAC registration and the
+    /// radio's host channel table.
+    let joinedPhone: Bool
+    /// Whether the companion radio's device identity has joined. A cache: the
+    /// device is authoritative and this is reconciled from it on attach.
+    let joinedDevice: Bool
+    /// Reserved for channel chat; no notification path reads it yet.
+    let notificationsEnabled: Bool
+    let joinedAt: Date?
 }
 
 struct StoredChatMessage: Equatable, Sendable, Identifiable {
@@ -101,9 +181,31 @@ struct StoredChatMessage: Equatable, Sendable, Identifiable {
     let deliveredLate: Bool
     /// Pre-edit text of the sender's own edited message, kept for review.
     let originalBody: String?
+    /// Who sent this, for a group message: the full address once known, the
+    /// claimed hint the wire always carries, and the name the sender put in
+    /// the message itself.
+    let senderAddress: String?
+    let senderHint: Data?
+    let senderHandle: String?
+    /// What the radio observed of the frame this message arrived on. Absent
+    /// for outbound messages and for anything that predates the metadata.
+    let reception: StoredMessageReception?
 
     var isGapPlaceholder: Bool { presence == 1 }
     var isUnavailable: Bool { presence == 2 }
+}
+
+/// The radio's view of one received message, for the message-details sheet.
+struct StoredMessageReception: Hashable, Sendable {
+    let rssiDbm: Int?
+    let snrCentibels: Int?
+    let lqi: Int?
+    /// Hops accumulated on the way here. Zero means heard directly.
+    let hopCount: Int?
+    /// Repeater hints in trace-route order: nearest this phone first, nearest
+    /// the sender last.
+    let routeHints: [Data]
+    let sourceAuthenticated: Bool
 }
 
 /// Maps the engine's presence enum to its stored integer code.
@@ -126,7 +228,7 @@ actor SQLiteApplicationStore {
     /// store refuses to open any database above this constant, so a stale value
     /// lets the new schema apply once and then locks the user out of their own
     /// data on the next launch. ``migrate(_:)`` checks the two agree.
-    static let currentSchemaVersion: Int32 = 14
+    static let currentSchemaVersion: Int32 = 16
 
     nonisolated(unsafe) private let database: OpaquePointer
 
@@ -351,6 +453,163 @@ actor SQLiteApplicationStore {
         try stepDone(statement)
     }
 
+    // MARK: - Channels
+
+    func channels(ownerIdentityID: String) throws -> [StoredChannel] {
+        let statement = try prepare(
+            """
+            SELECT id, kind, canonical_name, name, alias, channel_id_hex, tint,
+                   region_code, max_flood_hops, joined_phone, joined_device,
+                   notifications_enabled, joined_at_ms
+            FROM channel WHERE owner_identity_id = ?
+            ORDER BY created_at_ms, id
+            """
+        )
+        defer { sqlite3_finalize(statement) }
+        try bind(ownerIdentityID, to: statement, at: 1)
+
+        var channels: [StoredChannel] = []
+        while sqlite3_step(statement) == SQLITE_ROW {
+            guard
+                let id = UUID(uuidString: Self.stringColumn(statement, at: 0)),
+                let kind = StoredChannelKind(rawValue: Self.stringColumn(statement, at: 1))
+            else {
+                continue
+            }
+            channels.append(
+                StoredChannel(
+                    id: id,
+                    ownerIdentityID: ownerIdentityID,
+                    kind: kind,
+                    canonicalName: Self.optionalStringColumn(statement, at: 2),
+                    name: Self.optionalStringColumn(statement, at: 3),
+                    alias: Self.optionalStringColumn(statement, at: 4),
+                    channelIDHex: Self.stringColumn(statement, at: 5),
+                    tint: Self.dataColumn(statement, at: 6),
+                    regionCode: Self.optionalDataColumn(statement, at: 7),
+                    maxFloodHops: Self.optionalIntColumn(statement, at: 8).map(Int.init),
+                    joinedPhone: sqlite3_column_int(statement, 9) != 0,
+                    joinedDevice: sqlite3_column_int(statement, 10) != 0,
+                    notificationsEnabled: sqlite3_column_int(statement, 11) != 0,
+                    joinedAt: Self.optionalIntColumn(statement, at: 12).map {
+                        Date(timeIntervalSince1970: Double($0) / 1_000)
+                    }
+                )
+            )
+        }
+        return channels
+    }
+
+    /// The channel this identity already holds under `keyDigest`, if any.
+    ///
+    /// Import checks this before inserting so a re-scanned invitation updates
+    /// the existing channel instead of creating a second one for the same key.
+    func channel(ownerIdentityID: String, keyDigest: String) throws -> StoredChannel? {
+        let statement = try prepare(
+            "SELECT id FROM channel WHERE owner_identity_id = ? AND key_digest = ?"
+        )
+        defer { sqlite3_finalize(statement) }
+        try bind(ownerIdentityID, to: statement, at: 1)
+        try bind(keyDigest, to: statement, at: 2)
+        guard sqlite3_step(statement) == SQLITE_ROW,
+              let id = UUID(uuidString: Self.stringColumn(statement, at: 0))
+        else {
+            return nil
+        }
+        return try channels(ownerIdentityID: ownerIdentityID).first { $0.id == id }
+    }
+
+    func insertChannel(_ channel: StoredChannel, keyDigest: String) throws {
+        let statement = try prepare(
+            """
+            INSERT INTO channel (
+                id, owner_identity_id, kind, canonical_name, name, alias,
+                channel_id_hex, tint, key_digest, region_code, max_flood_hops,
+                joined_phone, joined_device, notifications_enabled,
+                created_at_ms, joined_at_ms
+            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+            """
+        )
+        defer { sqlite3_finalize(statement) }
+        let now = Self.nowMilliseconds()
+        try bind(channel.id.uuidString, to: statement, at: 1)
+        try bind(channel.ownerIdentityID, to: statement, at: 2)
+        try bind(channel.kind.rawValue, to: statement, at: 3)
+        try bindOptional(channel.canonicalName, to: statement, at: 4)
+        try bindOptional(channel.name, to: statement, at: 5)
+        try bindOptional(channel.alias, to: statement, at: 6)
+        try bind(channel.channelIDHex, to: statement, at: 7)
+        try bind(channel.tint, to: statement, at: 8)
+        try bind(keyDigest, to: statement, at: 9)
+        try bindOptional(channel.regionCode, to: statement, at: 10)
+        try bindOptionalInt(channel.maxFloodHops.map(Int64.init), to: statement, at: 11)
+        try check(sqlite3_bind_int(statement, 12, channel.joinedPhone ? 1 : 0))
+        try check(sqlite3_bind_int(statement, 13, channel.joinedDevice ? 1 : 0))
+        try check(sqlite3_bind_int(statement, 14, channel.notificationsEnabled ? 1 : 0))
+        try check(sqlite3_bind_int64(statement, 15, now))
+        try bindOptionalInt(
+            channel.joinedAt.map { Int64($0.timeIntervalSince1970 * 1_000) },
+            to: statement,
+            at: 16
+        )
+        try stepDone(statement)
+    }
+
+    /// Update the parts of a channel the user controls, leaving membership and
+    /// key-derived columns alone.
+    func updateChannelDetails(
+        id: UUID,
+        alias: String?,
+        regionCode: Data?,
+        maxFloodHops: Int?,
+        notificationsEnabled: Bool
+    ) throws {
+        let statement = try prepare(
+            """
+            UPDATE channel
+            SET alias = ?, region_code = ?, max_flood_hops = ?,
+                notifications_enabled = ?
+            WHERE id = ?
+            """
+        )
+        defer { sqlite3_finalize(statement) }
+        try bindOptional(alias, to: statement, at: 1)
+        try bindOptional(regionCode, to: statement, at: 2)
+        try bindOptionalInt(maxFloodHops.map(Int64.init), to: statement, at: 3)
+        try check(sqlite3_bind_int(statement, 4, notificationsEnabled ? 1 : 0))
+        try bind(id.uuidString, to: statement, at: 5)
+        try stepDone(statement)
+    }
+
+    /// Record which identities have joined. `joinedAt` is stamped the first
+    /// time the phone joins and left alone after.
+    func setChannelMembership(id: UUID, joinedPhone: Bool, joinedDevice: Bool) throws {
+        let statement = try prepare(
+            """
+            UPDATE channel
+            SET joined_phone = ?, joined_device = ?,
+                joined_at_ms = CASE
+                    WHEN ? = 1 AND joined_at_ms IS NULL THEN ? ELSE joined_at_ms
+                END
+            WHERE id = ?
+            """
+        )
+        defer { sqlite3_finalize(statement) }
+        try check(sqlite3_bind_int(statement, 1, joinedPhone ? 1 : 0))
+        try check(sqlite3_bind_int(statement, 2, joinedDevice ? 1 : 0))
+        try check(sqlite3_bind_int(statement, 3, joinedPhone ? 1 : 0))
+        try check(sqlite3_bind_int64(statement, 4, Self.nowMilliseconds()))
+        try bind(id.uuidString, to: statement, at: 5)
+        try stepDone(statement)
+    }
+
+    func deleteChannel(id: UUID) throws {
+        let statement = try prepare("DELETE FROM channel WHERE id = ?")
+        defer { sqlite3_finalize(statement) }
+        try bind(id.uuidString, to: statement, at: 1)
+        try stepDone(statement)
+    }
+
     func updateNodeAlias(
         ownerIdentityID: String,
         publicAddress: String,
@@ -409,7 +668,7 @@ actor SQLiteApplicationStore {
     }
 
     /// Record a transient node on the local identity, making it visible in
-    /// the main Network list.
+    /// the main Peers list.
     func promotePeerToSaved(ownerIdentityID: String, publicAddress: String) throws {
         let statement = try prepare(
             """
@@ -506,7 +765,7 @@ actor SQLiteApplicationStore {
 
             try purgeConversationHistory(
                 ownerIdentityID: ownerIdentityID,
-                peerAddress: publicAddress
+                conversationAddress: publicAddress
             )
 
             let conversation = try prepare(
@@ -651,15 +910,16 @@ actor SQLiteApplicationStore {
 
     /// Resolve the peer a locally-stored message belongs to, keyed by its
     /// durable `(sessionID, handle)`. Used to attribute delivery acks — which
-    /// carry no peer address — back to a peer for last-heard bookkeeping.
-    func peerAddressForMessage(
+    /// carry no address of their own — back to a conversation for last-heard
+    /// bookkeeping.
+    func conversationAddressForMessage(
         ownerIdentityID: String,
         sessionID: UInt64,
         handle: UInt32
     ) throws -> String? {
         let statement = try prepare(
             """
-            SELECT peer_address FROM chat_message
+            SELECT conversation_address FROM chat_message
             WHERE owner_identity_id = ? AND session_id = ? AND handle = ?
             """
         )
@@ -673,19 +933,21 @@ actor SQLiteApplicationStore {
         return Self.optionalStringColumn(statement, at: 0)
     }
 
-    /// The persisted peer address and body of an inbound, displayable message,
-    /// for raising a notification. Returns `nil` for outbound rows, tombstones,
-    /// gap placeholders, unavailable markers, or empty bodies — nothing worth
-    /// alerting the user about. Resolves both fields from storage so a notify
-    /// carried on an `UpdateBody` (which omits peer/body) still works.
+    /// The persisted conversation address, sender, and body of an inbound,
+    /// displayable message, for raising a notification. Returns `nil` for
+    /// outbound rows, tombstones, gap placeholders, unavailable markers, or
+    /// empty bodies — nothing worth alerting the user about. Resolves every
+    /// field from storage so a notify carried on an `UpdateBody` (which omits
+    /// them) still works.
     func chatNotificationTarget(
         ownerIdentityID: String,
         sessionID: UInt64,
         handle: UInt32
-    ) throws -> (peerAddress: String, body: String)? {
+    ) throws -> ChatNotificationTarget? {
         let statement = try prepare(
             """
-            SELECT peer_address, body FROM chat_message
+            SELECT conversation_address, body, sender_address, sender_hint, sender_handle
+            FROM chat_message
             WHERE owner_identity_id = ? AND session_id = ? AND handle = ?
                 AND direction = 0 AND deleted = 0 AND presence = 0 AND body <> ''
             """
@@ -695,7 +957,13 @@ actor SQLiteApplicationStore {
         try bind(String(sessionID), to: statement, at: 2)
         try check(sqlite3_bind_int64(statement, 3, Int64(handle)))
         guard sqlite3_step(statement) == SQLITE_ROW else { return nil }
-        return (Self.stringColumn(statement, at: 0), Self.stringColumn(statement, at: 1))
+        return ChatNotificationTarget(
+            conversationAddress: Self.stringColumn(statement, at: 0),
+            body: Self.stringColumn(statement, at: 1),
+            senderAddress: Self.optionalStringColumn(statement, at: 2),
+            senderHint: Self.optionalDataColumn(statement, at: 3),
+            senderHandle: Self.optionalStringColumn(statement, at: 4)
+        )
     }
 
     func upsertUlcpDevicePeer(
@@ -784,7 +1052,7 @@ actor SQLiteApplicationStore {
                    n.advertised_name, n.system_role, n.node_kind,
                    n.advertisement, n.advertisement_authenticated, n.last_heard_at,
                    n.is_saved, n.is_favorite, n.on_dev_identity,
-                   c.draft_text
+                   c.draft_text, c.last_read_at_ms, c.created_at_ms
             FROM direct_conversation c JOIN node n ON n.id = c.node_id
             WHERE c.owner_identity_id = ? ORDER BY c.created_at_ms DESC, c.id DESC
             """
@@ -799,7 +1067,9 @@ actor SQLiteApplicationStore {
                     StoredDirectConversation(
                         id: sqlite3_column_int64(statement, 0),
                         node: storedNode(statement, offset: 1),
-                        draftText: Self.stringColumn(statement, at: 14)
+                        draftText: Self.stringColumn(statement, at: 14),
+                        lastReadAtMilliseconds: sqlite3_column_int64(statement, 15),
+                        createdAtMilliseconds: sqlite3_column_int64(statement, 16)
                     )
                 )
             case SQLITE_DONE:
@@ -808,6 +1078,183 @@ actor SQLiteApplicationStore {
                 throw ApplicationStoreError.sqliteFailure(code)
             }
         }
+    }
+
+    /// The channel conversation for a channel, created if this is the first
+    /// time the user has entered it. Channels are joined without a chat; the
+    /// conversation appears when someone asks for one, or when a message
+    /// arrives.
+    func ensureChannelConversation(
+        ownerIdentityID: String,
+        channelID: UUID,
+        conversationAddress: String
+    ) throws -> Int64 {
+        let insert = try prepare(
+            """
+            INSERT OR IGNORE INTO channel_conversation (
+                owner_identity_id, channel_id, conversation_address, created_at_ms
+            ) VALUES (?, ?, ?, ?)
+            """
+        )
+        defer { sqlite3_finalize(insert) }
+        try bind(ownerIdentityID, to: insert, at: 1)
+        try bind(channelID.uuidString, to: insert, at: 2)
+        try bind(conversationAddress, to: insert, at: 3)
+        try check(sqlite3_bind_int64(insert, 4, Self.nowMilliseconds()))
+        try stepDone(insert)
+
+        let select = try prepare(
+            "SELECT id FROM channel_conversation WHERE owner_identity_id = ? AND channel_id = ?"
+        )
+        defer { sqlite3_finalize(select) }
+        try bind(ownerIdentityID, to: select, at: 1)
+        try bind(channelID.uuidString, to: select, at: 2)
+        guard sqlite3_step(select) == SQLITE_ROW else {
+            throw ApplicationStoreError.sqliteFailure(sqlite3_errcode(database))
+        }
+        return sqlite3_column_int64(select, 0)
+    }
+
+    func listChannelConversations(
+        ownerIdentityID: String
+    ) throws -> [StoredChannelConversation] {
+        let statement = try prepare(
+            """
+            SELECT id, channel_id, conversation_address, draft_text, last_read_at_ms,
+                   created_at_ms
+            FROM channel_conversation WHERE owner_identity_id = ?
+            ORDER BY created_at_ms DESC, id DESC
+            """
+        )
+        defer { sqlite3_finalize(statement) }
+        try bind(ownerIdentityID, to: statement, at: 1)
+        var conversations: [StoredChannelConversation] = []
+        while true {
+            switch sqlite3_step(statement) {
+            case SQLITE_ROW:
+                guard let channelID = UUID(uuidString: Self.stringColumn(statement, at: 1)) else {
+                    continue
+                }
+                conversations.append(
+                    StoredChannelConversation(
+                        id: sqlite3_column_int64(statement, 0),
+                        channelID: channelID,
+                        conversationAddress: Self.stringColumn(statement, at: 2),
+                        draftText: Self.stringColumn(statement, at: 3),
+                        lastReadAtMilliseconds: sqlite3_column_int64(statement, 4),
+                        createdAtMilliseconds: sqlite3_column_int64(statement, 5)
+                    )
+                )
+            case SQLITE_DONE:
+                return conversations
+            case let code:
+                throw ApplicationStoreError.sqliteFailure(code)
+            }
+        }
+    }
+
+    /// Remove a channel conversation and its local transcript. Leaving a group
+    /// chat is not leaving the channel: the key stays, so traffic still
+    /// arrives and a later message opens the conversation again.
+    func deleteChannelConversation(ownerIdentityID: String, conversationID: Int64) throws {
+        try transaction {
+            let select = try prepare(
+                """
+                SELECT conversation_address FROM channel_conversation
+                WHERE id = ? AND owner_identity_id = ?
+                """
+            )
+            defer { sqlite3_finalize(select) }
+            try check(sqlite3_bind_int64(select, 1, conversationID))
+            try bind(ownerIdentityID, to: select, at: 2)
+            guard sqlite3_step(select) == SQLITE_ROW else { return }
+            let address = Self.stringColumn(select, at: 0)
+
+            try purgeConversationHistory(
+                ownerIdentityID: ownerIdentityID,
+                conversationAddress: address
+            )
+
+            let delete = try prepare(
+                "DELETE FROM channel_conversation WHERE id = ? AND owner_identity_id = ?"
+            )
+            defer { sqlite3_finalize(delete) }
+            try check(sqlite3_bind_int64(delete, 1, conversationID))
+            try bind(ownerIdentityID, to: delete, at: 2)
+            try stepDone(delete)
+        }
+    }
+
+    func updateChannelDraft(
+        ownerIdentityID: String,
+        conversationID: Int64,
+        text: String
+    ) throws {
+        let statement = try prepare(
+            "UPDATE channel_conversation SET draft_text = ? WHERE id = ? AND owner_identity_id = ?"
+        )
+        defer { sqlite3_finalize(statement) }
+        try bind(text, to: statement, at: 1)
+        try check(sqlite3_bind_int64(statement, 2, conversationID))
+        try bind(ownerIdentityID, to: statement, at: 3)
+        try stepDone(statement)
+    }
+
+    /// Mark everything in a conversation read as of now. Addressed rather than
+    /// keyed by row so one call serves both kinds of conversation.
+    func markConversationRead(ownerIdentityID: String, conversationAddress: String) throws {
+        let now = Self.nowMilliseconds()
+        let direct = try prepare(
+            """
+            UPDATE direct_conversation SET last_read_at_ms = ?
+            WHERE owner_identity_id = ? AND node_id IN (
+                SELECT id FROM node
+                WHERE owner_identity_id = ? AND public_address = ?
+            )
+            """
+        )
+        defer { sqlite3_finalize(direct) }
+        try check(sqlite3_bind_int64(direct, 1, now))
+        try bind(ownerIdentityID, to: direct, at: 2)
+        try bind(ownerIdentityID, to: direct, at: 3)
+        try bind(conversationAddress, to: direct, at: 4)
+        try stepDone(direct)
+
+        let channel = try prepare(
+            """
+            UPDATE channel_conversation SET last_read_at_ms = ?
+            WHERE owner_identity_id = ? AND conversation_address = ?
+            """
+        )
+        defer { sqlite3_finalize(channel) }
+        try check(sqlite3_bind_int64(channel, 1, now))
+        try bind(ownerIdentityID, to: channel, at: 2)
+        try bind(conversationAddress, to: channel, at: 3)
+        try stepDone(channel)
+    }
+
+    /// Fill in the sender of group messages stored before that member's hint
+    /// resolved to a real address. Rows that already name a sender are left
+    /// alone — the first attribution seen for a hint is the one kept.
+    func applySenderResolution(
+        ownerIdentityID: String,
+        conversationAddress: String,
+        senderHint: Data,
+        senderAddress: String
+    ) throws {
+        let statement = try prepare(
+            """
+            UPDATE chat_message SET sender_address = ?
+            WHERE owner_identity_id = ? AND conversation_address = ?
+                AND sender_hint = ? AND sender_address IS NULL
+            """
+        )
+        defer { sqlite3_finalize(statement) }
+        try bind(senderAddress, to: statement, at: 1)
+        try bind(ownerIdentityID, to: statement, at: 2)
+        try bind(conversationAddress, to: statement, at: 3)
+        try bind(senderHint, to: statement, at: 4)
+        try stepDone(statement)
     }
 
     /// Remove a conversation and its local history. Outbound stream
@@ -832,7 +1279,7 @@ actor SQLiteApplicationStore {
 
             try purgeConversationHistory(
                 ownerIdentityID: ownerIdentityID,
-                peerAddress: peerAddress
+                conversationAddress: peerAddress
             )
 
             let conversation = try prepare(
@@ -859,8 +1306,8 @@ actor SQLiteApplicationStore {
     func chatCheckpoints(ownerIdentityID: String) throws -> [MobileChatCheckpointRecord] {
         let statement = try prepare(
             """
-            SELECT peer_address, next_id, epoch FROM chat_stream_checkpoint
-            WHERE owner_identity_id = ? ORDER BY updated_at_ms ASC, peer_address ASC
+            SELECT conversation_address, next_id, epoch FROM chat_stream_checkpoint
+            WHERE owner_identity_id = ? ORDER BY updated_at_ms ASC, conversation_address ASC
             """
         )
         defer { sqlite3_finalize(statement) }
@@ -871,7 +1318,7 @@ actor SQLiteApplicationStore {
             case SQLITE_ROW:
                 records.append(
                     MobileChatCheckpointRecord(
-                        peerAddress: Self.stringColumn(statement, at: 0),
+                        conversationAddress: Self.stringColumn(statement, at: 0),
                         nextId: UInt8(sqlite3_column_int(statement, 1)),
                         epoch: UInt16(sqlite3_column_int(statement, 2))
                     )
@@ -1063,32 +1510,38 @@ actor SQLiteApplicationStore {
         let statement = try prepare(
             """
             SELECT payload FROM chat_outbound_archive
-            WHERE owner_identity_id = ? AND peer_address = ?
+            WHERE owner_identity_id = ? AND conversation_address = ?
                 AND message_id = ? AND fragment_index = ?
             """
         )
         defer { sqlite3_finalize(statement) }
         try bind(ownerIdentityID, to: statement, at: 1)
-        try bind(lookup.peerAddress, to: statement, at: 2)
+        try bind(lookup.conversationAddress, to: statement, at: 2)
         try check(sqlite3_bind_int(statement, 3, Int32(lookup.messageId)))
         try check(sqlite3_bind_int(statement, 4, lookup.fragmentIndex.map(Int32.init) ?? -1))
         guard sqlite3_step(statement) == SQLITE_ROW else { return nil }
         return Self.dataColumn(statement, at: 0)
     }
 
-    func chatMessages(ownerIdentityID: String, peerAddress: String) throws -> [StoredChatMessage] {
+    func chatMessages(
+        ownerIdentityID: String,
+        conversationAddress: String
+    ) throws -> [StoredChatMessage] {
         let statement = try prepare(
             """
             SELECT session_id, handle, body, direction, delivery_state, deleted, created_at_ms,
-                   wire_id, epoch, edited, presence, received_late, delivered_late, original_body
+                   wire_id, epoch, edited, presence, received_late, delivered_late, original_body,
+                   sender_address, sender_hint, sender_handle,
+                   rx_rssi_dbm, rx_snr_cb, rx_lqi, rx_hop_count,
+                   rx_route_hints, rx_source_authenticated
             FROM chat_message
-            WHERE owner_identity_id = ? AND peer_address = ?
+            WHERE owner_identity_id = ? AND conversation_address = ?
             ORDER BY created_at_ms ASC, rowid ASC
             """
         )
         defer { sqlite3_finalize(statement) }
         try bind(ownerIdentityID, to: statement, at: 1)
-        try bind(peerAddress, to: statement, at: 2)
+        try bind(conversationAddress, to: statement, at: 2)
         var messages: [StoredChatMessage] = []
         while true {
             switch sqlite3_step(statement) {
@@ -1110,7 +1563,11 @@ actor SQLiteApplicationStore {
                         presence: Int(sqlite3_column_int64(statement, 10)),
                         receivedLate: sqlite3_column_int(statement, 11) != 0,
                         deliveredLate: sqlite3_column_int(statement, 12) != 0,
-                        originalBody: Self.optionalStringColumn(statement, at: 13)
+                        originalBody: Self.optionalStringColumn(statement, at: 13),
+                        senderAddress: Self.optionalStringColumn(statement, at: 14),
+                        senderHint: Self.optionalDataColumn(statement, at: 15),
+                        senderHandle: Self.optionalStringColumn(statement, at: 16),
+                        reception: Self.reception(statement, at: 17)
                     )
                 )
             case SQLITE_DONE: return messages
@@ -1119,35 +1576,35 @@ actor SQLiteApplicationStore {
         }
     }
 
-    /// Remove a peer's message history, outbound archive, and delivery
-    /// fragments. Runs inside a caller-held transaction; the conversation row
-    /// itself is the caller's to delete.
+    /// Remove a conversation's message history, outbound archive, and
+    /// delivery fragments. Runs inside a caller-held transaction; the
+    /// conversation row itself is the caller's to delete.
     private func purgeConversationHistory(
         ownerIdentityID: String,
-        peerAddress: String
+        conversationAddress: String
     ) throws {
         let fragments = try prepare(
             """
             DELETE FROM chat_delivery_fragment
             WHERE owner_identity_id = ? AND (session_id, handle) IN (
                 SELECT session_id, handle FROM chat_message
-                WHERE owner_identity_id = ? AND peer_address = ?
+                WHERE owner_identity_id = ? AND conversation_address = ?
             )
             """
         )
         defer { sqlite3_finalize(fragments) }
         try bind(ownerIdentityID, to: fragments, at: 1)
         try bind(ownerIdentityID, to: fragments, at: 2)
-        try bind(peerAddress, to: fragments, at: 3)
+        try bind(conversationAddress, to: fragments, at: 3)
         try stepDone(fragments)
 
         for table in ["chat_message", "chat_outbound_archive"] {
             let statement = try prepare(
-                "DELETE FROM \(table) WHERE owner_identity_id = ? AND peer_address = ?"
+                "DELETE FROM \(table) WHERE owner_identity_id = ? AND conversation_address = ?"
             )
             defer { sqlite3_finalize(statement) }
             try bind(ownerIdentityID, to: statement, at: 1)
-            try bind(peerAddress, to: statement, at: 2)
+            try bind(conversationAddress, to: statement, at: 2)
             try stepDone(statement)
         }
     }
@@ -1188,9 +1645,9 @@ actor SQLiteApplicationStore {
         let statement = try prepare(
             """
             INSERT INTO chat_stream_checkpoint (
-                owner_identity_id, peer_address, next_id, epoch, updated_at_ms
+                owner_identity_id, conversation_address, next_id, epoch, updated_at_ms
             ) VALUES (?, ?, ?, ?, ?)
-            ON CONFLICT(owner_identity_id, peer_address) DO UPDATE SET
+            ON CONFLICT(owner_identity_id, conversation_address) DO UPDATE SET
                 next_id = excluded.next_id,
                 epoch = excluded.epoch,
                 updated_at_ms = excluded.updated_at_ms
@@ -1198,7 +1655,7 @@ actor SQLiteApplicationStore {
         )
         defer { sqlite3_finalize(statement) }
         try bind(ownerIdentityID, to: statement, at: 1)
-        try bind(checkpoint.peerAddress, to: statement, at: 2)
+        try bind(checkpoint.conversationAddress, to: statement, at: 2)
         try check(sqlite3_bind_int(statement, 3, Int32(checkpoint.nextId)))
         try check(sqlite3_bind_int(statement, 4, Int32(checkpoint.epoch)))
         try check(sqlite3_bind_int64(statement, 5, Self.nowMilliseconds()))
@@ -1215,12 +1672,12 @@ actor SQLiteApplicationStore {
         let statement = try prepare(
             """
             DELETE FROM chat_outbound_archive
-            WHERE owner_identity_id = ? AND peer_address = ? AND message_id = ?
+            WHERE owner_identity_id = ? AND conversation_address = ? AND message_id = ?
             """
         )
         defer { sqlite3_finalize(statement) }
         try bind(ownerIdentityID, to: statement, at: 1)
-        try bind(delete.peerAddress, to: statement, at: 2)
+        try bind(delete.conversationAddress, to: statement, at: 2)
         try check(sqlite3_bind_int(statement, 3, Int32(delete.messageId)))
         try stepDone(statement)
     }
@@ -1232,15 +1689,15 @@ actor SQLiteApplicationStore {
         let statement = try prepare(
             """
             INSERT INTO chat_outbound_archive (
-                owner_identity_id, peer_address, message_id, fragment_index, payload
+                owner_identity_id, conversation_address, message_id, fragment_index, payload
             ) VALUES (?, ?, ?, ?, ?)
-            ON CONFLICT(owner_identity_id, peer_address, message_id, fragment_index)
+            ON CONFLICT(owner_identity_id, conversation_address, message_id, fragment_index)
             DO UPDATE SET payload = excluded.payload
             """
         )
         defer { sqlite3_finalize(statement) }
         try bind(ownerIdentityID, to: statement, at: 1)
-        try bind(archive.peerAddress, to: statement, at: 2)
+        try bind(archive.conversationAddress, to: statement, at: 2)
         try check(sqlite3_bind_int(statement, 3, Int32(archive.messageId)))
         try check(sqlite3_bind_int(statement, 4, archive.fragmentIndex.map(Int32.init) ?? -1))
         try bind(archive.payload, to: statement, at: 5)
@@ -1271,19 +1728,22 @@ actor SQLiteApplicationStore {
 
         switch mutation.kind {
         case .insert:
-            guard let peerAddress = mutation.peerAddress,
+            guard let peerAddress = mutation.conversationAddress,
                   let direction = mutation.direction,
                   let body = mutation.body
             else { return }
             let statement = try prepare(
                 """
                 INSERT INTO chat_message (
-                    owner_identity_id, session_id, handle, peer_address, sender_address,
+                    owner_identity_id, session_id, handle, conversation_address, sender_address,
                     direction, message_type, wire_id, epoch, client_token,
                     sender_handle, regarding_handle, background_color, text_color, body,
                     complete, present_fragments, fragment_count, finalized,
-                    delivery_state, deleted, created_at_ms, presence, received_late
-                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 0, ?, ?, ?)
+                    delivery_state, deleted, created_at_ms, presence, received_late,
+                    sender_hint, rx_rssi_dbm, rx_snr_cb, rx_lqi, rx_hop_count,
+                    rx_route_hints, rx_source_authenticated
+                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 0, ?, ?, ?,
+                          ?, ?, ?, ?, ?, ?, ?)
                 ON CONFLICT(owner_identity_id, session_id, handle) DO UPDATE SET
                     body = excluded.body,
                     complete = excluded.complete,
@@ -1295,7 +1755,19 @@ actor SQLiteApplicationStore {
                     background_color = excluded.background_color,
                     text_color = excluded.text_color,
                     presence = excluded.presence,
-                    received_late = MAX(chat_message.received_late, excluded.received_late)
+                    received_late = MAX(chat_message.received_late, excluded.received_late),
+                    -- A placeholder filled in later carries the metadata of
+                    -- the frame that filled it; keep whichever row has any.
+                    sender_hint = COALESCE(excluded.sender_hint, chat_message.sender_hint),
+                    rx_rssi_dbm = COALESCE(excluded.rx_rssi_dbm, chat_message.rx_rssi_dbm),
+                    rx_snr_cb = COALESCE(excluded.rx_snr_cb, chat_message.rx_snr_cb),
+                    rx_lqi = COALESCE(excluded.rx_lqi, chat_message.rx_lqi),
+                    rx_hop_count = COALESCE(excluded.rx_hop_count, chat_message.rx_hop_count),
+                    rx_route_hints =
+                        COALESCE(excluded.rx_route_hints, chat_message.rx_route_hints),
+                    rx_source_authenticated = COALESCE(
+                        excluded.rx_source_authenticated, chat_message.rx_source_authenticated
+                    )
                 """
             )
             defer { sqlite3_finalize(statement) }
@@ -1322,6 +1794,18 @@ actor SQLiteApplicationStore {
             try check(sqlite3_bind_int64(statement, 21, Self.nowMilliseconds()))
             try check(sqlite3_bind_int(statement, 22, presenceCode(mutation.presence)))
             try check(sqlite3_bind_int(statement, 23, mutation.receivedLate ? 1 : 0))
+            try bindOptional(mutation.senderHint.map { Data($0) }, to: statement, at: 24)
+            try bindOptionalInt(mutation.rx?.rssiDbm.map(Int64.init), to: statement, at: 25)
+            try bindOptionalInt(mutation.rx?.snrCentibels.map(Int64.init), to: statement, at: 26)
+            try bindOptionalInt(mutation.rx?.lqi.map(Int64.init), to: statement, at: 27)
+            try bindOptionalInt(mutation.rx?.hopCount.map(Int64.init), to: statement, at: 28)
+            try bindOptional(mutation.rx.map { Self.packRouteHints($0.routeHints) },
+                             to: statement, at: 29)
+            try bindOptionalInt(
+                mutation.rx.map { Int64($0.sourceAuthenticated ? 1 : 0) },
+                to: statement,
+                at: 30
+            )
             try stepDone(statement)
         case .updateBody:
             guard let body = mutation.body else { return }
@@ -1331,7 +1815,13 @@ actor SQLiteApplicationStore {
                 """
                 UPDATE chat_message SET body = ?, complete = ?, present_fragments = ?,
                     fragment_count = ?, finalized = ?,
-                    received_late = MAX(received_late, ?)
+                    received_late = MAX(received_late, ?),
+                    rx_rssi_dbm = COALESCE(?, rx_rssi_dbm),
+                    rx_snr_cb = COALESCE(?, rx_snr_cb),
+                    rx_lqi = COALESCE(?, rx_lqi),
+                    rx_hop_count = COALESCE(?, rx_hop_count),
+                    rx_route_hints = COALESCE(?, rx_route_hints),
+                    rx_source_authenticated = COALESCE(?, rx_source_authenticated)
                 WHERE owner_identity_id = ? AND session_id = ? AND handle = ?
                 """
             )
@@ -1342,9 +1832,20 @@ actor SQLiteApplicationStore {
             try bindOptionalInt(mutation.fragmentCount.map(Int64.init), to: statement, at: 4)
             try bindOptionalBool(mutation.finalized, to: statement, at: 5)
             try check(sqlite3_bind_int(statement, 6, mutation.receivedLate ? 1 : 0))
-            try bind(ownerIdentityID, to: statement, at: 7)
-            try bind(sessionID, to: statement, at: 8)
-            try check(sqlite3_bind_int64(statement, 9, Int64(mutation.handle)))
+            try bindOptionalInt(mutation.rx?.rssiDbm.map(Int64.init), to: statement, at: 7)
+            try bindOptionalInt(mutation.rx?.snrCentibels.map(Int64.init), to: statement, at: 8)
+            try bindOptionalInt(mutation.rx?.lqi.map(Int64.init), to: statement, at: 9)
+            try bindOptionalInt(mutation.rx?.hopCount.map(Int64.init), to: statement, at: 10)
+            try bindOptional(mutation.rx.map { Self.packRouteHints($0.routeHints) },
+                             to: statement, at: 11)
+            try bindOptionalInt(
+                mutation.rx.map { Int64($0.sourceAuthenticated ? 1 : 0) },
+                to: statement,
+                at: 12
+            )
+            try bind(ownerIdentityID, to: statement, at: 13)
+            try bind(sessionID, to: statement, at: 14)
+            try check(sqlite3_bind_int64(statement, 15, Int64(mutation.handle)))
             try stepDone(statement)
         case .edit, .delete:
             let body = mutation.kind == .delete ? "" : (mutation.body ?? "")
@@ -1377,7 +1878,7 @@ actor SQLiteApplicationStore {
                 try stepDone(statement)
             } else if let wireID = mutation.originalWireId,
                       let direction = mutation.originalDirection,
-                      let peerAddress = mutation.peerAddress {
+                      let peerAddress = mutation.conversationAddress {
                 // The original predates the current facade session, so the
                 // engine exported its wire reference instead of a handle.
                 // Wire IDs recycle serially within a stream; the newest
@@ -1392,7 +1893,7 @@ actor SQLiteApplicationStore {
                         edited = MAX(edited, ?)
                     WHERE rowid = (
                         SELECT rowid FROM chat_message
-                        WHERE owner_identity_id = ? AND peer_address = ?
+                        WHERE owner_identity_id = ? AND conversation_address = ?
                             AND direction = ? AND wire_id = ?
                         ORDER BY epoch DESC, created_at_ms DESC, rowid DESC
                         LIMIT 1
@@ -1849,7 +2350,7 @@ actor SQLiteApplicationStore {
                 // main list, and evicted by retention. `on_dev_identity` caches
                 // whether the node's key is on the companion radio's device
                 // identity (PROP_DEV_PEERS); the device is the authority.
-                // Every pre-existing row was visible in Network, so all of
+                // Every pre-existing row was visible in Peers, so all of
                 // them upgrade as saved — nothing may vanish from the list.
                 try execute(
                     database,
@@ -1885,6 +2386,128 @@ actor SQLiteApplicationStore {
                     sql: """
                     ALTER TABLE node DROP COLUMN is_contact;
                     PRAGMA user_version = 14;
+                    """
+                )
+                try execute(database, sql: "COMMIT")
+            } catch {
+                try? execute(database, sql: "ROLLBACK")
+                throw error
+            }
+        }
+
+        if version < 15 {
+            try execute(database, sql: "BEGIN IMMEDIATE")
+            do {
+                // Channel membership. The row is public metadata; the 32-byte
+                // key it describes lives in Keychain under `id`.
+                //
+                // `channel_id_hex` is the two-octet derived identifier, which
+                // is a routing hint and NOT unique — distinct keys may collide
+                // and receivers resolve that by trial decryption — so it
+                // cannot key the table. `key_digest` can: it is a one-way
+                // commitment to the key that makes "already joined" and "same
+                // name, different key" answerable in SQL, without which an
+                // import would have to unlock every stored key to compare.
+                try execute(
+                    database,
+                    sql: """
+                    CREATE TABLE channel (
+                        id TEXT PRIMARY KEY NOT NULL,
+                        owner_identity_id TEXT NOT NULL
+                            REFERENCES local_identity(id) ON DELETE CASCADE,
+                        kind TEXT NOT NULL,
+                        canonical_name TEXT,
+                        name TEXT,
+                        alias TEXT,
+                        channel_id_hex TEXT NOT NULL,
+                        tint BLOB NOT NULL,
+                        key_digest TEXT NOT NULL,
+                        region_code BLOB,
+                        max_flood_hops INTEGER,
+                        joined_phone INTEGER NOT NULL DEFAULT 0,
+                        joined_device INTEGER NOT NULL DEFAULT 0,
+                        notifications_enabled INTEGER NOT NULL DEFAULT 0,
+                        created_at_ms INTEGER NOT NULL,
+                        joined_at_ms INTEGER,
+                        UNIQUE (owner_identity_id, key_digest)
+                    );
+
+                    CREATE INDEX channel_owner_idx ON channel (owner_identity_id, id);
+
+                    PRAGMA user_version = 15;
+                    """
+                )
+                try execute(database, sql: "COMMIT")
+            } catch {
+                try? execute(database, sql: "ROLLBACK")
+                throw error
+            }
+        }
+
+        if version < 16 {
+            try execute(database, sql: "BEGIN IMMEDIATE")
+            do {
+                // Chat is no longer only between two peers, so the column that
+                // identified a transcript's other end is renamed to what it
+                // actually holds: a conversation address, which is a peer's
+                // address for a direct chat and a channel tag for a group.
+                // The facade emits exactly this string, so the rename keeps
+                // one vocabulary from the engine to the table.
+                //
+                // Channel messages also carry what a multicast frame carries
+                // and a unicast does not — a claimed sender hint — plus the
+                // radio metadata of the frame each message arrived on, which
+                // the transcript can now show per message.
+                try execute(
+                    database,
+                    sql: """
+                    ALTER TABLE chat_message RENAME COLUMN peer_address TO conversation_address;
+                    ALTER TABLE chat_stream_checkpoint
+                        RENAME COLUMN peer_address TO conversation_address;
+                    ALTER TABLE chat_outbound_archive
+                        RENAME COLUMN peer_address TO conversation_address;
+
+                    ALTER TABLE chat_message ADD COLUMN sender_hint BLOB;
+                    ALTER TABLE chat_message ADD COLUMN rx_rssi_dbm INTEGER;
+                    ALTER TABLE chat_message ADD COLUMN rx_snr_cb INTEGER;
+                    ALTER TABLE chat_message ADD COLUMN rx_lqi INTEGER;
+                    ALTER TABLE chat_message ADD COLUMN rx_hop_count INTEGER;
+                    ALTER TABLE chat_message ADD COLUMN rx_route_hints BLOB;
+                    ALTER TABLE chat_message ADD COLUMN rx_source_authenticated INTEGER;
+
+                    -- Read cursors. Everything created before this migration
+                    -- counts as read: an install that predates unread counts
+                    -- should not open to a wall of unread badges.
+                    ALTER TABLE direct_conversation
+                        ADD COLUMN last_read_at_ms INTEGER NOT NULL DEFAULT 0;
+                    UPDATE direct_conversation
+                        SET last_read_at_ms = (
+                            SELECT COALESCE(MAX(m.created_at_ms), 0) FROM chat_message m
+                            JOIN node n ON n.public_address = m.conversation_address
+                            WHERE m.owner_identity_id = direct_conversation.owner_identity_id
+                              AND n.id = direct_conversation.node_id
+                        );
+
+                    -- A channel's group conversation. Separate from
+                    -- `direct_conversation` because its other end is a channel
+                    -- rather than a node, and `node_id` there is a hard
+                    -- reference that cannot be made to mean both.
+                    CREATE TABLE channel_conversation (
+                        id INTEGER PRIMARY KEY AUTOINCREMENT,
+                        owner_identity_id TEXT NOT NULL
+                            REFERENCES local_identity(id) ON DELETE CASCADE,
+                        channel_id TEXT NOT NULL REFERENCES channel(id) ON DELETE CASCADE,
+                        conversation_address TEXT NOT NULL,
+                        draft_text TEXT NOT NULL DEFAULT '',
+                        created_at_ms INTEGER NOT NULL,
+                        last_read_at_ms INTEGER NOT NULL DEFAULT 0,
+                        UNIQUE (owner_identity_id, channel_id)
+                    );
+
+                    CREATE INDEX channel_conversation_address_idx
+                        ON channel_conversation (owner_identity_id, conversation_address);
+
+                    PRAGMA user_version = 16;
                     """
                 )
                 try execute(database, sql: "COMMIT")
@@ -1935,6 +2558,37 @@ actor SQLiteApplicationStore {
         )
     }
 
+    /// The radio metadata columns, when the row has any. Presence of the
+    /// authentication flag is what distinguishes "no frame recorded" from a
+    /// frame that simply reported no signal figures.
+    private static func reception(
+        _ statement: OpaquePointer,
+        at offset: Int32
+    ) -> StoredMessageReception? {
+        guard sqlite3_column_type(statement, offset + 5) != SQLITE_NULL else { return nil }
+        return StoredMessageReception(
+            rssiDbm: optionalIntColumn(statement, at: offset).map(Int.init),
+            snrCentibels: optionalIntColumn(statement, at: offset + 1).map(Int.init),
+            lqi: optionalIntColumn(statement, at: offset + 2).map(Int.init),
+            hopCount: optionalIntColumn(statement, at: offset + 3).map(Int.init),
+            routeHints: unpackRouteHints(optionalDataColumn(statement, at: offset + 4)),
+            sourceAuthenticated: sqlite3_column_int(statement, offset + 5) != 0
+        )
+    }
+
+    /// Route hints are fixed-width and ordered, so they store as one blob
+    /// rather than a table of their own.
+    private static func packRouteHints(_ hints: [Data]) -> Data {
+        hints.reduce(into: Data()) { packed, hint in packed.append(hint) }
+    }
+
+    static func unpackRouteHints(_ packed: Data?) -> [Data] {
+        guard let packed, !packed.isEmpty else { return [] }
+        return stride(from: 0, to: packed.count - packed.count % 2, by: 2).map { offset in
+            packed.subdata(in: offset..<(offset + 2))
+        }
+    }
+
     private static func stringColumn(_ statement: OpaquePointer, at index: Int32) -> String {
         guard let pointer = sqlite3_column_text(statement, index) else { return "" }
         return String(cString: pointer)
@@ -1963,6 +2617,14 @@ actor SQLiteApplicationStore {
     ) -> Data? {
         guard sqlite3_column_type(statement, index) != SQLITE_NULL else { return nil }
         return dataColumn(statement, at: index)
+    }
+
+    private static func optionalIntColumn(
+        _ statement: OpaquePointer,
+        at index: Int32
+    ) -> Int64? {
+        guard sqlite3_column_type(statement, index) != SQLITE_NULL else { return nil }
+        return sqlite3_column_int64(statement, index)
     }
 
     /// Read a REAL column holding a Unix-epoch-seconds instant.

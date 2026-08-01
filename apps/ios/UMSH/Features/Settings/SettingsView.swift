@@ -28,10 +28,10 @@ struct SettingsView: View {
     /// Records a device met during setup as an ordinary peer. Absent when
     /// there is no identity or store to record it against.
     var saveDevicePeer: ((MeshPublicIdentity, String?, PeerRole) async -> Bool)? = nil
-    /// Whether a node address is already in this phone's Network list.
+    /// Whether a node address is already in this phone's Peers list.
     var isPeerSaved: (String) -> Bool = { _ in false }
     /// Handed to every peer sheet reachable from Settings so those sheets
-    /// match the ones opened from Network.
+    /// match the ones opened from Peers.
     var peerActions: PeerActions = .unavailable
     /// The app's conversation list plus messaging closures, threaded to the
     /// radio identity's peer sheet so its "Message" button opens a working
@@ -40,6 +40,9 @@ struct SettingsView: View {
     var updateDraft: ((Int64, String) async -> Void)? = nil
     var sendMessage: ((DirectConversationSummary, String) async -> MessageSendResult)? = nil
     var messageActions: ChatMessageActions = .unavailable
+    var channels: [ChannelSummary] = []
+    var unknownDeviceChannels: [UnknownDeviceChannel] = []
+    var channelActions: ChannelActions = .unavailable
 
     @State private var showsDeviceSetup = false
 
@@ -78,6 +81,23 @@ struct SettingsView: View {
                         Task { await createIdentity() }
                     } label: {
                         Label("Create identity", systemImage: "person.crop.circle.badge.plus")
+                    }
+                }
+
+                // Channel membership belongs to the identity: the keys are
+                // held by it, and switching identities would change the set.
+                if identity != nil {
+                    NavigationLink {
+                        ChannelsView(
+                            channels: channels,
+                            unknownDeviceChannels: unknownDeviceChannels,
+                            radioSnapshot: radioSnapshot,
+                            actions: channelActions
+                        )
+                    } label: {
+                        LabeledContent("Channels") {
+                            Text("\(channels.filter(\.isJoined).count)")
+                        }
                     }
                 }
 
@@ -596,7 +616,7 @@ struct RadioDetailView: View {
             } header: {
                 Text("Device identity peers (\(addresses.count) of \(devicePeerCapacity))")
             } footer: {
-                Text("The radio's own node identity can only communicate with peers whose public keys it holds. Add peers from their pages in Network.")
+                Text("The radio's own node identity can only communicate with peers whose public keys it holds. Add peers from their pages in Peers.")
             }
         }
     }

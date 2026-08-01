@@ -1,17 +1,21 @@
 //! Owned mobile facade records for the sans-I/O text engine.
 //!
-//! This first mobile surface intentionally supports direct conversations only.
-//! Channel and room profiles must be exported as typed destinations rather
-//! than falling through or requiring Swift to interpret wire options.
+//! Conversations are addressed by an opaque string that discriminates the two
+//! kinds the platform can hold: a peer's base58 address for a direct
+//! conversation, and `ch:<hex tag>` for a channel's group conversation. Room
+//! profiles are still outside this facade, and are dropped rather than
+//! exported in a form Swift would have to interpret.
 
-use std::collections::BTreeMap;
+use std::cell::RefCell;
+use std::collections::{BTreeMap, BTreeSet};
+use std::rc::Rc;
 
 use rand::Rng;
-use umsh_core::PublicKey;
+use umsh_core::{ChannelKey, ChannelTag, NodeHint, PublicKey};
 use umsh_text::engine::sequence::MessageHandle;
 use umsh_text::engine::{
-    ArchiveKey, CompletionStatus, ComposeIntent, ComposeRef, DeliveryState, Destination, Direction,
-    Engine, EngineConfig, Event, MessageMutation, MutationKind, Output, Presence, ResolvedRef,
+    ArchiveKey, CompletionStatus, ComposeIntent, ComposeRef, DeliveryState, Direction, Engine,
+    EngineConfig, Event, MessageMutation, MutationKind, Output, Presence, ResolvedRef,
     StreamCheckpoint, Transmission,
 };
 use umsh_text::model::{ConversationKey, SenderScope, WireRef};
@@ -19,16 +23,21 @@ use umsh_text::validate::DirectChannelProfile;
 
 pub(crate) type ChatEngine = Engine<DirectChannelProfile>;
 
+/// Prefix marking a channel group conversation address.
+const CHANNEL_ADDRESS_PREFIX: &str = "ch:";
+/// Prefix marking a blind-unicast conversation over a channel key.
+const CHANNEL_DIRECT_ADDRESS_PREFIX: &str = "chd:";
+
 #[derive(Clone, Debug, PartialEq, Eq, uniffi::Record)]
 pub struct MobileChatCheckpointRecord {
-    pub peer_address: String,
+    pub conversation_address: String,
     pub next_id: u8,
     pub epoch: u16,
 }
 
 #[derive(Clone, Debug, PartialEq, Eq, uniffi::Record)]
 pub struct MobileChatArchiveRecord {
-    pub peer_address: String,
+    pub conversation_address: String,
     pub message_id: u8,
     pub fragment_index: Option<u8>,
     pub payload: Vec<u8>,
@@ -41,7 +50,7 @@ pub struct MobileChatArchiveRecord {
 /// served to a resend request again.
 #[derive(Clone, Debug, PartialEq, Eq, uniffi::Record)]
 pub struct MobileChatArchiveDeleteRecord {
-    pub peer_address: String,
+    pub conversation_address: String,
     pub message_id: u8,
 }
 
@@ -69,6 +78,41 @@ pub enum MobileChatPresence {
     Unavailable,
 }
 
+/// Physical-layer metadata for a record produced by a live received frame.
+///
+/// The engine is transport-agnostic and carries none of this, so the facade
+/// attaches it alongside the mutation the frame produced. Absent on records
+/// that came from a timer, a compose, or a repair drain.
+#[derive(Clone, Debug, PartialEq, Eq, uniffi::Record)]
+pub struct MobileChatRxMetadataRecord {
+    pub rssi_dbm: Option<i16>,
+    pub snr_centibels: Option<i16>,
+    pub lqi: Option<u8>,
+    /// Hops the frame accumulated on its way here, matching the hop count
+    /// reported for a ping reply.
+    pub hop_count: Option<u8>,
+    /// Intermediate-router hints in trace-route order: each forwarding
+    /// repeater prepends its own hint, so the list starts nearest us and ends
+    /// nearest the sender. That is return-path order — usable directly as a
+    /// source route back — and the reverse of the path the frame travelled.
+    pub route_hints: Vec<Vec<u8>>,
+    pub source_authenticated: bool,
+}
+
+/// A channel member previously known only by their claimed hint has been
+/// resolved to a full public key.
+///
+/// Multicast senders are identified on the wire by a 3-byte hint. The platform
+/// renders those as anonymous members until a frame carries the full key;
+/// this record lets it upgrade the rows it already stored, keyed by
+/// conversation and hint.
+#[derive(Clone, Debug, PartialEq, Eq, uniffi::Record)]
+pub struct MobileChatSenderResolutionRecord {
+    pub conversation_address: String,
+    pub sender_hint: Vec<u8>,
+    pub sender_address: String,
+}
+
 #[derive(Clone, Debug, PartialEq, Eq, uniffi::Record)]
 pub struct MobileChatMutationRecord {
     /// A facade-session namespace prevents the engine's process-local u32
@@ -77,8 +121,12 @@ pub struct MobileChatMutationRecord {
     pub handle: u32,
     pub revision: u32,
     pub kind: MobileChatMutationKind,
-    pub peer_address: Option<String>,
+    pub conversation_address: Option<String>,
     pub sender_address: Option<String>,
+    /// The sender's 3-byte claimed hint, for a channel group message. The
+    /// only sender identity a multicast frame is required to carry; present
+    /// whether or not `sender_address` could be resolved.
+    pub sender_hint: Option<Vec<u8>>,
     pub direction: Option<MobileChatDirection>,
     pub message_type: Option<u8>,
     pub wire_id: Option<u8>,
@@ -93,9 +141,13 @@ pub struct MobileChatMutationRecord {
     /// live handle for (composed before a restart), these export the wire
     /// reference so the platform can resolve it against persisted rows:
     /// the original's wire ID within `original_direction`'s stream of the
-    /// record's `peer_address` conversation.
+    /// record's `conversation_address` conversation.
     pub original_wire_id: Option<u8>,
     pub original_direction: Option<MobileChatDirection>,
+    /// The claimed hint of the original's sender, for a channel group
+    /// conversation. Inbound group streams are per-member, so matching a wire
+    /// reference there needs the hint as well as the ID and direction.
+    pub original_sender_hint: Option<Vec<u8>>,
     pub body: Option<String>,
     pub complete: Option<bool>,
     pub present_fragments: Option<u16>,
@@ -110,7 +162,13 @@ pub struct MobileChatMutationRecord {
     pub received_late: bool,
     /// The host should raise a user notification for this record (single-frame
     /// arrival, fragment completion, or notify deadline; never placeholders).
+    ///
+    /// Whether a notification is actually shown remains the host's decision —
+    /// a muted conversation still produces records with this set, and still
+    /// counts as unread.
     pub notify: bool,
+    /// Radio metadata for the frame that produced this record, when one did.
+    pub rx: Option<MobileChatRxMetadataRecord>,
 }
 
 /// Platform-persisted identity of a previously composed outbound message,
@@ -143,7 +201,7 @@ pub struct MobileChatDeliveryRecord {
 #[derive(Clone, Debug, PartialEq, Eq, uniffi::Record)]
 pub struct MobileChatArchiveLookupRecord {
     pub request_id: u32,
-    pub peer_address: String,
+    pub conversation_address: String,
     pub message_id: u8,
     pub fragment_index: Option<u8>,
 }
@@ -187,6 +245,7 @@ pub(crate) struct ChatDrain {
     pub mutations: Vec<MobileChatMutationRecord>,
     pub deliveries: Vec<MobileChatDeliveryRecord>,
     pub lookups: Vec<MobileChatArchiveLookupRecord>,
+    pub resolutions: Vec<MobileChatSenderResolutionRecord>,
     pub diagnostics: Vec<String>,
 }
 
@@ -200,8 +259,39 @@ impl ChatDrain {
             mutations: Vec::new(),
             deliveries: Vec::new(),
             lookups: Vec::new(),
+            resolutions: Vec::new(),
             diagnostics: Vec::new(),
         }
+    }
+}
+
+/// The channels this session can hold a conversation in, and the keys to
+/// reach them.
+///
+/// Channel membership already lives in the MAC, which resolves an inbound
+/// frame to a key by authenticating it. This is the chat layer's own view:
+/// it maps between the tag a conversation is keyed by and the key a send
+/// needs, in both directions.
+#[derive(Default)]
+pub(crate) struct ChannelRegistry {
+    entries: BTreeMap<ChannelTag, ChannelKey>,
+}
+
+impl ChannelRegistry {
+    pub fn register(&mut self, tag: ChannelTag, key: ChannelKey) {
+        self.entries.insert(tag, key);
+    }
+
+    pub fn remove(&mut self, tag: &ChannelTag) {
+        self.entries.remove(tag);
+    }
+
+    pub fn key(&self, tag: &ChannelTag) -> Option<ChannelKey> {
+        self.entries.get(tag).copied()
+    }
+
+    pub fn contains(&self, tag: &ChannelTag) -> bool {
+        self.entries.contains_key(tag)
     }
 }
 
@@ -213,10 +303,20 @@ pub(crate) struct MobileChatState {
     pub session_id: u64,
     next_batch_id: u64,
     pub pending_batches: BTreeMap<u64, PendingChatBatch>,
+    /// Shared with the worker so a batch rejection — which rebuilds the
+    /// reducer — cannot lose the channels the platform registered.
+    pub channels: Rc<RefCell<ChannelRegistry>>,
+    /// Full keys learned for claimed member hints, per channel. A hint is only
+    /// 3 bytes and two members could in principle claim the same one, so this
+    /// records the first key seen for a hint and leaves it there.
+    resolved_members: BTreeMap<(ChannelTag, [u8; 3]), PublicKey>,
+    /// Hints already reported to the platform, so one resolution is announced
+    /// once rather than on every frame.
+    announced_members: BTreeSet<(ChannelTag, [u8; 3])>,
 }
 
 impl MobileChatState {
-    pub fn new(local_key: PublicKey) -> Self {
+    pub fn new(local_key: PublicKey, channels: Rc<RefCell<ChannelRegistry>>) -> Self {
         Self {
             engine: Box::new(ChatEngine::new(
                 DirectChannelProfile,
@@ -227,27 +327,60 @@ impl MobileChatState {
             session_id: rand::rng().next_u64().max(1),
             next_batch_id: 1,
             pending_batches: BTreeMap::new(),
+            channels,
+            resolved_members: BTreeMap::new(),
+            announced_members: BTreeSet::new(),
         }
     }
 
-    pub fn restore(&mut self, checkpoints: &[MobileChatCheckpointRecord], now_ms: u64) {
-        let checkpoints = checkpoints
-            .iter()
-            .filter_map(checkpoint_from_record)
-            .collect::<Vec<_>>();
-        self.engine.restore(&checkpoints, now_ms);
+    pub fn restore(&mut self, checkpoints: &[MobileChatCheckpointRecord], now_ms: u64) -> Vec<String> {
+        let mut diagnostics = Vec::new();
+        let mut restored = Vec::new();
+        for record in checkpoints {
+            match self.checkpoint_from_record(record) {
+                Some(checkpoint) => restored.push(checkpoint),
+                None => diagnostics.push(format!(
+                    "chat checkpoint for unknown conversation {}",
+                    record.conversation_address
+                )),
+            }
+        }
+        self.engine.restore(&restored, now_ms);
         let _ = self.drain();
+        diagnostics
+    }
+
+    /// Note a channel member's full key, learned from a frame that carried
+    /// both it and the claimed hint. Returns a record the first time a hint
+    /// resolves, so the platform can upgrade rows it stored anonymously.
+    pub fn resolve_member(
+        &mut self,
+        channel: ChannelTag,
+        hint: NodeHint,
+        key: PublicKey,
+    ) -> Option<MobileChatSenderResolutionRecord> {
+        self.resolved_members
+            .entry((channel, hint.0))
+            .or_insert(key);
+        if !self.announced_members.insert((channel, hint.0)) {
+            return None;
+        }
+        Some(MobileChatSenderResolutionRecord {
+            conversation_address: channel_address(channel),
+            sender_hint: hint.0.to_vec(),
+            sender_address: address(key),
+        })
     }
 
     pub fn compose_text(
         &mut self,
-        peer: PublicKey,
+        conversation: ConversationKey,
         client_token: u32,
         body: &str,
         now_ms: u64,
     ) -> Result<ComposedChatBatch, ()> {
         self.compose_batch(
-            peer,
+            conversation,
             client_token,
             ComposeIntent::Text {
                 body,
@@ -259,7 +392,7 @@ impl MobileChatState {
 
     pub fn compose_edit(
         &mut self,
-        peer: PublicKey,
+        conversation: ConversationKey,
         client_token: u32,
         original: &MobileChatOriginalRef,
         body: &str,
@@ -267,7 +400,7 @@ impl MobileChatState {
     ) -> Result<ComposedChatBatch, ()> {
         let original = self.compose_ref(original).ok_or(())?;
         self.compose_batch(
-            peer,
+            conversation,
             client_token,
             ComposeIntent::Edit { original, body },
             now_ms,
@@ -276,14 +409,14 @@ impl MobileChatState {
 
     pub fn compose_delete(
         &mut self,
-        peer: PublicKey,
+        conversation: ConversationKey,
         client_token: u32,
         original: &MobileChatOriginalRef,
         now_ms: u64,
     ) -> Result<ComposedChatBatch, ()> {
         let original = self.compose_ref(original).ok_or(())?;
         self.compose_batch(
-            peer,
+            conversation,
             client_token,
             ComposeIntent::Delete { original },
             now_ms,
@@ -306,18 +439,13 @@ impl MobileChatState {
 
     fn compose_batch(
         &mut self,
-        peer: PublicKey,
+        conversation: ConversationKey,
         client_token: u32,
         intent: ComposeIntent<'_>,
         now_ms: u64,
     ) -> Result<ComposedChatBatch, ()> {
         self.engine
-            .compose(
-                ConversationKey::Direct { peer },
-                client_token,
-                intent,
-                now_ms,
-            )
+            .compose(conversation, client_token, intent, now_ms)
             .map_err(|_| ())?;
         let mut drain = self.drain();
         let checkpoint = drain.checkpoint.ok_or(())?;
@@ -357,7 +485,7 @@ impl MobileChatState {
                 Output::Transmit(transmission) => {
                     if let Some(archive) = transmission.archive {
                         if let Some(record) =
-                            archive_record(archive, transmission.payload.as_slice())
+                            self.archive_record(archive, transmission.payload.as_slice())
                         {
                             drained.archives.push(record);
                         }
@@ -369,24 +497,30 @@ impl MobileChatState {
                     next_id,
                     epoch,
                 } => {
-                    drained.checkpoint = checkpoint_record(conversation, next_id, epoch);
+                    drained.checkpoint =
+                        self.conversation_address(conversation)
+                            .map(|conversation_address| MobileChatCheckpointRecord {
+                                conversation_address,
+                                next_id,
+                                epoch,
+                            });
                 }
                 Output::LookupOutbound {
                     request_id,
                     conversation,
                     sequence,
                 } => {
-                    if let Some(peer_address) = direct_peer_address(conversation) {
+                    if let Some(conversation_address) = self.conversation_address(conversation) {
                         drained.lookups.push(MobileChatArchiveLookupRecord {
                             request_id,
-                            peer_address,
+                            conversation_address,
                             message_id: sequence.message_id,
                             fragment_index: sequence.fragment.map(|fragment| fragment.index),
                         });
                     }
                 }
                 Output::StoreArchive { key, payload } => {
-                    if let Some(record) = archive_record(key, payload.as_slice()) {
+                    if let Some(record) = self.archive_record(key, payload.as_slice()) {
                         drained.archives.push(record);
                     }
                 }
@@ -394,9 +528,9 @@ impl MobileChatState {
                     conversation,
                     message_id,
                 } => {
-                    if let Some(peer_address) = direct_peer_address(conversation) {
+                    if let Some(conversation_address) = self.conversation_address(conversation) {
                         drained.archive_deletes.push(MobileChatArchiveDeleteRecord {
-                            peer_address,
+                            conversation_address,
                             message_id,
                         });
                     }
@@ -435,8 +569,9 @@ impl MobileChatState {
             handle: mutation.handle.0,
             revision: mutation.revision,
             kind: MobileChatMutationKind::Insert,
-            peer_address: None,
+            conversation_address: None,
             sender_address: None,
+            sender_hint: None,
             direction: None,
             message_type: None,
             wire_id: None,
@@ -449,6 +584,7 @@ impl MobileChatState {
             original_handle: None,
             original_wire_id: None,
             original_direction: None,
+            original_sender_hint: None,
             body: None,
             complete: None,
             present_fragments: None,
@@ -457,6 +593,7 @@ impl MobileChatState {
             presence: MobileChatPresence::Present,
             received_late: false,
             notify: false,
+            rx: None,
         };
         match mutation.kind {
             MutationKind::Insert {
@@ -477,8 +614,9 @@ impl MobileChatState {
                 late,
                 notify,
             } => {
-                record.peer_address = direct_peer_address(conversation);
-                record.sender_address = sender_address(sender);
+                record.conversation_address = self.conversation_address(conversation);
+                record.sender_address = self.sender_address(conversation, sender);
+                record.sender_hint = claimed_hint(sender);
                 record.direction = Some(match direction {
                     Direction::Inbound => MobileChatDirection::Inbound,
                     Direction::Outbound => MobileChatDirection::Outbound,
@@ -516,7 +654,7 @@ impl MobileChatState {
                 body,
             } => {
                 record.kind = MobileChatMutationKind::Edit;
-                record.peer_address = direct_peer_address(conversation);
+                record.conversation_address = self.conversation_address(conversation);
                 apply_original(&mut record, original);
                 record.body = Some(self.engine.body(&body).to_owned());
             }
@@ -525,11 +663,97 @@ impl MobileChatState {
                 original,
             } => {
                 record.kind = MobileChatMutationKind::Delete;
-                record.peer_address = direct_peer_address(conversation);
+                record.conversation_address = self.conversation_address(conversation);
                 apply_original(&mut record, original);
             }
         }
         Some(record)
+    }
+
+    /// The platform-facing address of a conversation: a peer's base58 address
+    /// for a direct one, a prefixed tag for a channel. Rooms have no address
+    /// in this facade.
+    fn conversation_address(&self, conversation: ConversationKey) -> Option<String> {
+        match conversation {
+            ConversationKey::Direct { peer } => Some(address(peer)),
+            ConversationKey::ChannelGroup { channel } => Some(channel_address(channel)),
+            ConversationKey::ChannelDirect { channel, peer } => Some(format!(
+                "{CHANNEL_DIRECT_ADDRESS_PREFIX}{}:{}",
+                hex(&channel.0),
+                address(peer)
+            )),
+            ConversationKey::Room { .. } => None,
+        }
+    }
+
+    /// The sender's full address when one is known. A multicast member claims
+    /// only a hint, so this is whatever key that hint has resolved to.
+    fn sender_address(
+        &self,
+        conversation: ConversationKey,
+        sender: SenderScope,
+    ) -> Option<String> {
+        match sender {
+            SenderScope::Peer(peer) => Some(address(peer)),
+            SenderScope::Local => None,
+            SenderScope::ClaimedMember(hint) => {
+                let ConversationKey::ChannelGroup { channel } = conversation else {
+                    return None;
+                };
+                self.resolved_members
+                    .get(&(channel, hint.0))
+                    .map(|peer| address(*peer))
+            }
+        }
+    }
+
+    fn archive_record(&self, key: ArchiveKey, payload: &[u8]) -> Option<MobileChatArchiveRecord> {
+        Some(MobileChatArchiveRecord {
+            conversation_address: self.conversation_address(key.conversation)?,
+            message_id: key.message_id,
+            fragment_index: key.fragment,
+            payload: payload.to_vec(),
+        })
+    }
+
+    fn checkpoint_from_record(
+        &self,
+        record: &MobileChatCheckpointRecord,
+    ) -> Option<StreamCheckpoint> {
+        let conversation = self.parse_conversation_address(&record.conversation_address)?;
+        Some(StreamCheckpoint {
+            conversation,
+            next_id: record.next_id,
+            epoch: record.epoch,
+        })
+    }
+
+    /// Resolve a stored address back to a conversation. A channel address only
+    /// resolves while its key is registered — the platform registers channels
+    /// before restoring chat, so an unresolvable one means the channel was
+    /// left.
+    pub fn parse_conversation_address(&self, value: &str) -> Option<ConversationKey> {
+        if let Some(rest) = value.strip_prefix(CHANNEL_DIRECT_ADDRESS_PREFIX) {
+            let (tag, peer) = rest.split_once(':')?;
+            let channel = parse_channel_tag(tag)?;
+            if !self.channels.borrow().contains(&channel) {
+                return None;
+            }
+            return Some(ConversationKey::ChannelDirect {
+                channel,
+                peer: decode_address(peer)?,
+            });
+        }
+        if let Some(tag) = value.strip_prefix(CHANNEL_ADDRESS_PREFIX) {
+            let channel = parse_channel_tag(tag)?;
+            if !self.channels.borrow().contains(&channel) {
+                return None;
+            }
+            return Some(ConversationKey::ChannelGroup { channel });
+        }
+        Some(ConversationKey::Direct {
+            peer: decode_address(value)?,
+        })
     }
 }
 
@@ -566,7 +790,7 @@ fn resolved_handle(reference: ResolvedRef) -> Option<u32> {
 
 /// Export an edit/delete target: a live handle when resolved, otherwise the
 /// wire reference for the platform to match against its persisted rows.
-/// Room-scoped reference forms are outside the direct-conversation facade.
+/// Room-scoped reference forms are outside this facade.
 fn apply_original(record: &mut MobileChatMutationRecord, reference: ResolvedRef) {
     match reference {
         ResolvedRef::Handle(MessageHandle(handle)) => {
@@ -574,68 +798,46 @@ fn apply_original(record: &mut MobileChatMutationRecord, reference: ResolvedRef)
         }
         ResolvedRef::Unresolved(WireRef::SenderScoped { sender, message_id }) => {
             let direction = match sender {
-                SenderScope::Local => Some(MobileChatDirection::Outbound),
-                SenderScope::Peer(_) => Some(MobileChatDirection::Inbound),
-                SenderScope::ClaimedMember(_) => None,
+                SenderScope::Local => MobileChatDirection::Outbound,
+                // A channel member's message is inbound like any other peer's;
+                // the hint is what tells the platform whose stream it was.
+                SenderScope::Peer(_) | SenderScope::ClaimedMember(_) => {
+                    MobileChatDirection::Inbound
+                }
             };
-            if let Some(direction) = direction {
-                record.original_wire_id = Some(message_id);
-                record.original_direction = Some(direction);
-            }
+            record.original_wire_id = Some(message_id);
+            record.original_direction = Some(direction);
+            record.original_sender_hint = claimed_hint(sender);
         }
         ResolvedRef::Unresolved(WireRef::RoomCanonical { .. }) => {}
     }
 }
 
-fn sender_address(sender: SenderScope) -> Option<String> {
+fn claimed_hint(sender: SenderScope) -> Option<Vec<u8>> {
     match sender {
-        SenderScope::Peer(peer) => Some(address(peer)),
-        SenderScope::Local | SenderScope::ClaimedMember(_) => None,
+        SenderScope::ClaimedMember(hint) => Some(hint.0.to_vec()),
+        SenderScope::Local | SenderScope::Peer(_) => None,
     }
 }
 
-fn checkpoint_record(
-    conversation: ConversationKey,
-    next_id: u8,
-    epoch: u16,
-) -> Option<MobileChatCheckpointRecord> {
-    Some(MobileChatCheckpointRecord {
-        peer_address: direct_peer_address(conversation)?,
-        next_id,
-        epoch,
-    })
+/// The conversation address of a channel's group conversation.
+pub(crate) fn channel_address(channel: ChannelTag) -> String {
+    format!("{CHANNEL_ADDRESS_PREFIX}{}", hex(&channel.0))
 }
 
-fn checkpoint_from_record(record: &MobileChatCheckpointRecord) -> Option<StreamCheckpoint> {
-    let peer = decode_address(&record.peer_address)?;
-    Some(StreamCheckpoint {
-        conversation: ConversationKey::Direct { peer },
-        next_id: record.next_id,
-        epoch: record.epoch,
-    })
-}
-
-fn archive_record(key: ArchiveKey, payload: &[u8]) -> Option<MobileChatArchiveRecord> {
-    Some(MobileChatArchiveRecord {
-        peer_address: direct_peer_address(key.conversation)?,
-        message_id: key.message_id,
-        fragment_index: key.fragment,
-        payload: payload.to_vec(),
-    })
-}
-
-fn direct_peer_address(conversation: ConversationKey) -> Option<String> {
-    match conversation {
-        ConversationKey::Direct { peer } => Some(address(peer)),
-        _ => None,
+fn parse_channel_tag(value: &str) -> Option<ChannelTag> {
+    if value.len() != 32 {
+        return None;
     }
+    let mut bytes = [0u8; 16];
+    for (index, byte) in bytes.iter_mut().enumerate() {
+        *byte = u8::from_str_radix(value.get(index * 2..index * 2 + 2)?, 16).ok()?;
+    }
+    Some(ChannelTag(bytes))
 }
 
-pub(crate) fn transmission_peer(transmission: &Transmission) -> Option<PublicKey> {
-    match transmission.destination {
-        Destination::Peer(peer) => Some(peer),
-        _ => None,
-    }
+fn hex(bytes: &[u8]) -> String {
+    bytes.iter().map(|byte| format!("{byte:02x}")).collect()
 }
 
 fn address(key: PublicKey) -> String {
@@ -657,6 +859,75 @@ mod tests {
 
     const LOCAL: PublicKey = PublicKey([0xAA; 32]);
     const PEER: PublicKey = PublicKey([0x11; 32]);
+    const CHANNEL_KEY: ChannelKey = ChannelKey([0x42; 32]);
+
+    fn direct() -> ConversationKey {
+        ConversationKey::Direct { peer: PEER }
+    }
+
+    /// A state whose registry already holds the test channel.
+    fn state_with_channel() -> (MobileChatState, ChannelTag) {
+        let tag = crate::channel_tag(&CHANNEL_KEY);
+        let registry = Rc::new(RefCell::new(ChannelRegistry::default()));
+        registry.borrow_mut().register(tag, CHANNEL_KEY);
+        (MobileChatState::new(LOCAL, registry), tag)
+    }
+
+    fn empty_state() -> MobileChatState {
+        MobileChatState::new(LOCAL, Rc::new(RefCell::new(ChannelRegistry::default())))
+    }
+
+    /// A channel conversation survives a facade restart: its checkpoint is
+    /// addressed by tag, and restoring it resumes the same outbound stream
+    /// rather than starting a fresh one that would replay wire IDs.
+    #[test]
+    fn a_channel_checkpoint_round_trips_through_restore() {
+        let (mut first, tag) = state_with_channel();
+        let conversation = ConversationKey::ChannelGroup { channel: tag };
+        let composed = first
+            .compose_text(conversation, 5, "on my way", 0)
+            .expect("composing into a held channel succeeds");
+        let checkpoint = composed.record.checkpoint;
+        assert_eq!(checkpoint.conversation_address, channel_address(tag));
+
+        let (mut restarted, _) = state_with_channel();
+        assert!(
+            restarted
+                .restore(std::slice::from_ref(&checkpoint), 0)
+                .is_empty(),
+            "a checkpoint for a held channel restores without complaint"
+        );
+        // Continuity proves the restore landed on the same stream: a cold
+        // engine would hand out the ID the first message already used.
+        let next = restarted
+            .compose_text(conversation, 6, "still moving", 1)
+            .expect("composing after restore succeeds");
+        assert_ne!(
+            next.record.mutations[0].wire_id, composed.record.mutations[0].wire_id,
+            "the restored stream must not reissue a spent wire ID"
+        );
+    }
+
+    /// A checkpoint whose channel this session no longer holds is reported
+    /// rather than dropped in silence — the channel was left, and the stream
+    /// it belonged to cannot be resumed without the key.
+    #[test]
+    fn a_checkpoint_for_an_unheld_channel_is_diagnosed() {
+        let (mut held, tag) = state_with_channel();
+        let checkpoint = held
+            .compose_text(ConversationKey::ChannelGroup { channel: tag }, 1, "hi", 0)
+            .expect("composing into a held channel succeeds")
+            .record
+            .checkpoint;
+
+        let diagnostics = empty_state().restore(std::slice::from_ref(&checkpoint), 0);
+        assert_eq!(diagnostics.len(), 1, "{diagnostics:?}");
+        assert!(
+            diagnostics[0].contains(&checkpoint.conversation_address),
+            "the diagnostic must name the conversation: {}",
+            diagnostics[0]
+        );
+    }
 
     /// The full restart round trip at the facade level: the persisted
     /// (wire_id, epoch) of a message composed by one facade session lets a
@@ -664,9 +935,9 @@ mod tests {
     /// edit whose mutation record exports a platform-resolvable reference.
     #[test]
     fn edit_by_persisted_reference_after_facade_restart() {
-        let mut first = MobileChatState::new(LOCAL);
+        let mut first = empty_state();
         let composed = first
-            .compose_text(PEER, 7, "v1", 0)
+            .compose_text(direct(), 7, "v1", 0)
             .expect("compose succeeds");
         let insert = composed
             .record
@@ -682,14 +953,14 @@ mod tests {
         };
         let checkpoint = composed.record.checkpoint;
 
-        let mut restarted = MobileChatState::new(LOCAL);
+        let mut restarted = empty_state();
         assert_ne!(
             restarted.session_id, first.session_id,
             "sessions must not collide"
         );
-        restarted.restore(std::slice::from_ref(&checkpoint), 0);
+        let _ = restarted.restore(std::slice::from_ref(&checkpoint), 0);
         let edited = restarted
-            .compose_edit(PEER, 8, &original, "v2", 1)
+            .compose_edit(direct(), 8, &original, "v2", 1)
             .expect("wire-referenced edit composes after restart");
         let edit = edited
             .record
@@ -700,7 +971,7 @@ mod tests {
         assert_eq!(edit.original_handle, None);
         assert_eq!(edit.original_wire_id, insert.wire_id);
         assert_eq!(edit.original_direction, Some(MobileChatDirection::Outbound));
-        assert_eq!(edit.peer_address, insert.peer_address);
+        assert_eq!(edit.conversation_address, insert.conversation_address);
         assert_eq!(edit.body.as_deref(), Some("v2"));
 
         // Superseded content is retired and re-issued under the original wire
@@ -722,7 +993,7 @@ mod tests {
 
         // Deleting retires the archive without replacing it.
         let deleted = restarted
-            .compose_delete(PEER, 9, &original, 2)
+            .compose_delete(direct(), 9, &original, 2)
             .expect("delete composes");
         assert!(
             deleted
@@ -741,7 +1012,7 @@ mod tests {
 
         // Without continuity (no restored checkpoint) the same reference is
         // rejected instead of silently starting a dangling edit.
-        let mut cold = MobileChatState::new(LOCAL);
-        assert!(cold.compose_delete(PEER, 9, &original, 0).is_err());
+        let mut cold = empty_state();
+        assert!(cold.compose_delete(direct(), 9, &original, 0).is_err());
     }
 }

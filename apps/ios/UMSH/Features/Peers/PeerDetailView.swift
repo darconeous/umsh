@@ -303,11 +303,16 @@ struct PeerDetailView: View {
         }
         .navigationDestination(item: $openedConversation) { conversation in
             if let conversation = binding(for: conversation.id) {
-                DirectConversationView(
+                ConversationThreadView(
                     conversation: conversation,
                     radioSnapshot: radioSnapshot,
                     updateDraft: updateDraft ?? { _, _ in },
-                    sendMessage: sendMessage ?? { _, _ in .failed("Messaging is unavailable.") },
+                    sendMessage: { item, body in
+                        guard case let .direct(conversation) = item, let sendMessage else {
+                            return .failed("Messaging is unavailable.")
+                        }
+                        return await sendMessage(conversation, body)
+                    },
                     messageActions: messageActions,
                     peerActions: actions,
                     conversations: $conversations
@@ -548,17 +553,20 @@ struct PeerDetailView: View {
         }
     }
 
-    private func binding(for conversationID: Int64) -> Binding<DirectConversationSummary>? {
+    /// A peer sheet only ever opens a direct transcript, so the shared
+    /// thread view's conversation binding is wrapped here rather than the
+    /// sheet carrying the mixed list.
+    private func binding(for conversationID: Int64) -> Binding<ConversationListItem>? {
         guard let fallback = conversations.first(where: { $0.id == conversationID }) else { return nil }
         return Binding(
             get: {
-                conversations.first(where: { $0.id == conversationID }) ?? fallback
+                .direct(conversations.first(where: { $0.id == conversationID }) ?? fallback)
             },
             set: { updated in
-                guard let index = conversations.firstIndex(where: { $0.id == conversationID }) else {
-                    return
-                }
-                conversations[index] = updated
+                guard case let .direct(conversation) = updated,
+                      let index = conversations.firstIndex(where: { $0.id == conversationID })
+                else { return }
+                conversations[index] = conversation
             }
         )
     }

@@ -73,6 +73,110 @@ actor RustMeshEngine: MeshEngine {
         }
     }
 
+    func inspectChannelURI(_ uri: String) throws -> MeshChannelPreview {
+        do {
+            return Self.channelPreview(from: try UMSHMobileCore.inspectChannelUri(uri: uri))
+        } catch is MobileError {
+            throw MeshEngineError.invalidChannelURI
+        } catch {
+            throw MeshEngineError.coreFailure
+        }
+    }
+
+    func inspectChannelName(_ name: String) throws -> MeshChannelPreview {
+        do {
+            return Self.channelPreview(from: try UMSHMobileCore.inspectChannelName(name: name))
+        } catch MobileError.ChannelNameNotAscii {
+            throw MeshEngineError.channelNameNotASCII
+        } catch MobileError.ChannelNameTooLong {
+            throw MeshEngineError.channelNameTooLong
+        } catch {
+            throw MeshEngineError.coreFailure
+        }
+    }
+
+    func generateChannelKey() -> Data {
+        UMSHMobileCore.generateChannelKey()
+    }
+
+    func deriveChannelID(key: Data) throws -> Data {
+        do {
+            return try UMSHMobileCore.deriveChannelId(key: key)
+        } catch {
+            throw MeshEngineError.coreFailure
+        }
+    }
+
+    func channelConversationAddress(key: Data) throws -> String {
+        do {
+            return try UMSHMobileCore.channelConversationAddress(key: key)
+        } catch {
+            throw MeshEngineError.coreFailure
+        }
+    }
+
+    func deriveChannelTint(key: Data) throws -> Data {
+        do {
+            return try UMSHMobileCore.deriveChannelTint(key: key)
+        } catch {
+            throw MeshEngineError.coreFailure
+        }
+    }
+
+    func formatChannelInvitation(
+        key: Data,
+        name: String?,
+        displayName: String?,
+        maxFloodHops: UInt8?,
+        regionCode: Data?
+    ) throws -> String {
+        do {
+            return try UMSHMobileCore.formatChannelInvitation(
+                key: key,
+                name: name,
+                displayName: displayName,
+                maxFloodHops: maxFloodHops,
+                region: regionCode
+            )
+        } catch {
+            throw MeshEngineError.coreFailure
+        }
+    }
+
+    func regionCode(from text: String) throws -> Data {
+        do {
+            return try UMSHMobileCore.regionCodeFromString(text: text)
+        } catch {
+            throw MeshEngineError.invalidRegion
+        }
+    }
+
+    func regionDescription(_ code: Data) throws -> String {
+        do {
+            return try UMSHMobileCore.regionCodeDescription(code: code)
+        } catch {
+            throw MeshEngineError.invalidRegion
+        }
+    }
+
+    private static func channelPreview(from record: ChannelPreviewRecord) -> MeshChannelPreview {
+        MeshChannelPreview(
+            kind: {
+                switch record.kind {
+                case .namedPublic: .namedPublic
+                case .privateKey: .privateKey
+                }
+            }(),
+            canonicalName: record.canonicalName,
+            key: record.key,
+            channelID: record.channelId,
+            tint: record.tint,
+            displayName: record.displayName,
+            maxFloodHops: record.maxFloodHops,
+            regionCode: record.region
+        )
+    }
+
     private static func preview(from record: NodeUriPreviewRecord) -> MeshNodeURIPreview {
         MeshNodeURIPreview(
             publicIdentity: MeshPublicIdentity(

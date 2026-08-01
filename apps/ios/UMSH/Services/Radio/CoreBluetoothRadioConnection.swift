@@ -307,6 +307,19 @@ final class CoreBluetoothRadioConnection: NSObject, RadioConnection, @unchecked 
         try await session.discoverIdentities(roleCode: roleFilter, capabilityBits: nil)
     }
 
+    func requestIdentityByHint(conversationAddress: String, hint: Data) async throws {
+        let session = try await currentMeshSession()
+        try await session.requestIdentityByHint(
+            conversationAddress: conversationAddress,
+            hint: hint
+        )
+    }
+
+    func setChatDisplayName(_ name: String) async throws {
+        let session = try await currentMeshSession()
+        try await session.setChatDisplayName(name: name)
+    }
+
     func peerRoute(peerAddress: String) async throws -> RadioPeerRoute {
         let session = try await currentMeshSession()
         return RadioPeerRoute(try await session.peerRoute(peerAddress: peerAddress))
@@ -797,11 +810,43 @@ final class CoreBluetoothRadioConnection: NSObject, RadioConnection, @unchecked 
         }
     }
 
+    func addDeviceChannel(_ channelKey: Data) async throws {
+        try await performDevicePeerOperation { session in
+            try session.insertDeviceChannelKey(channelKey: channelKey)
+        }
+    }
+
+    func removeDeviceChannel(_ channelKey: Data) async throws {
+        try await performDevicePeerOperation { session in
+            try session.removeDeviceChannelKey(channelKey: channelKey)
+        }
+    }
+
+    func registerChannels(_ channelKeys: [Data]) async throws {
+        guard !channelKeys.isEmpty else { return }
+        try await currentMeshSession().registerChannels(keys: channelKeys)
+    }
+
+    func removeChannels(_ channelKeys: [Data]) async throws {
+        guard !channelKeys.isEmpty else { return }
+        try await currentMeshSession().removeChannels(keys: channelKeys)
+    }
+
+    func reconcileHostChannels(_ channelKeys: [Data]) async throws {
+        try await performDevicePeerOperation(requiringDeviceIdentity: false) { session in
+            try session.reconcileHostChannelKeys(keys: channelKeys)
+        }
+    }
+
     /// One `PROP_DEV_PEERS` mutation at a time, resolved by the update that
     /// carries its outcome. The Rust session requires an otherwise-idle
     /// attached session, so a mutation racing chat traffic reports
     /// `operationInProgress` rather than interleaving.
+    ///
+    /// Host-domain work sets `requiringDeviceIdentity` to false: it needs
+    /// `CAP_HOST_KEYS`, which the Rust session checks for itself.
     private func performDevicePeerOperation(
+        requiringDeviceIdentity: Bool = true,
         _ operation: @escaping (MobileUlcpSession) throws -> UlcpSessionUpdateRecord
     ) async throws {
         try await withCheckedThrowingContinuation { (result: CheckedContinuation<Void, any Error>) in
@@ -813,7 +858,9 @@ final class CoreBluetoothRadioConnection: NSObject, RadioConnection, @unchecked 
                     result.resume(throwing: DevicePeerError.radioUnavailable)
                     return
                 }
-                guard snapshot.provisioning?.supportsDeviceIdentity == true else {
+                guard !requiringDeviceIdentity
+                        || snapshot.provisioning?.supportsDeviceIdentity == true
+                else {
                     result.resume(throwing: DevicePeerError.unsupported)
                     return
                 }
@@ -842,14 +889,14 @@ final class CoreBluetoothRadioConnection: NSObject, RadioConnection, @unchecked 
         }
     }
 
-    /// Map a completed device-peer mutation's status to its caller-facing
+    /// Map a completed device-domain mutation's status to its caller-facing
     /// outcome. `ALREADY` and `ITEM_NOT_FOUND` are idempotent successes —
     /// the device holds (or lacks) the key exactly as requested. A failed
     /// chained save leaves the mutation live; the existing `saved` warning
     /// in Radio Detail covers persistence.
     private func devicePeerOutcome(_ error: UlcpOperationErrorRecord?) -> (any Error)? {
         guard let error else { return nil }
-        if error.operation == "save device peers" { return nil }
+        if error.operation.hasPrefix("save device") { return nil }
         if error.statusName.hasSuffix("ALREADY") || error.statusName.hasSuffix("ITEM_NOT_FOUND") {
             return nil
         }
@@ -954,27 +1001,27 @@ final class CoreBluetoothRadioConnection: NSObject, RadioConnection, @unchecked 
     }
 
     func composeText(
-        peerAddress: String,
+        conversationAddress: String,
         clientToken: UInt32,
         body: String
     ) async throws -> MobileChatComposeBatchRecord {
         let session = try await currentMeshSession()
         return try await session.composeText(
-            peerAddress: peerAddress,
+            conversationAddress: conversationAddress,
             clientToken: clientToken,
             body: body
         )
     }
 
     func composeEdit(
-        peerAddress: String,
+        conversationAddress: String,
         clientToken: UInt32,
         original: MobileChatOriginalRef,
         body: String
     ) async throws -> MobileChatComposeBatchRecord {
         let session = try await currentMeshSession()
         return try await session.composeEdit(
-            peerAddress: peerAddress,
+            conversationAddress: conversationAddress,
             clientToken: clientToken,
             original: original,
             body: body
@@ -982,13 +1029,13 @@ final class CoreBluetoothRadioConnection: NSObject, RadioConnection, @unchecked 
     }
 
     func composeDelete(
-        peerAddress: String,
+        conversationAddress: String,
         clientToken: UInt32,
         original: MobileChatOriginalRef
     ) async throws -> MobileChatComposeBatchRecord {
         let session = try await currentMeshSession()
         return try await session.composeDelete(
-            peerAddress: peerAddress,
+            conversationAddress: conversationAddress,
             clientToken: clientToken,
             original: original
         )
@@ -1665,7 +1712,12 @@ final class CoreBluetoothRadioConnection: NSObject, RadioConnection, @unchecked 
                         try? UMSHMobileCore.inspectPublicIdentityBytes(publicKey: $0)
                             .canonicalAddress
                     }
-                }
+                },
+                devChannelIDs: $0.devChannelIds,
+                // The host key tables are read exactly when the radio
+                // advertises CAP_HOST_KEYS, so a reported count is the
+                // capability.
+                supportsHostKeys: $0.hostChannelCount != nil
             )
         }
         snapshot.problemDescription = nil
@@ -1986,6 +2038,7 @@ final class CoreBluetoothRadioConnection: NSObject, RadioConnection, @unchecked 
                         mutations: update.chatMutations,
                         deliveries: update.chatDeliveries,
                         archiveLookups: update.chatArchiveLookups,
+                        senderResolutions: update.chatSenderResolutions,
                         diagnostics: update.chatDiagnostics
                     )
                     for continuation in chatContinuations.values {

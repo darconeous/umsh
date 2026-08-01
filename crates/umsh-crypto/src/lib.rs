@@ -27,8 +27,8 @@
 use core::ops::Range;
 
 use umsh_core::{
-    ChannelId, ChannelKey, PacketHeader, PacketType, PublicKey, SourceAddrRef, UnsealedPacket,
-    feed_aad,
+    ChannelId, ChannelKey, ChannelTag, PacketHeader, PacketType, PublicKey, SourceAddrRef,
+    UnsealedPacket, feed_aad,
 };
 use zeroize::{Zeroize, ZeroizeOnDrop};
 
@@ -242,6 +242,30 @@ impl<A: AesProvider, S: Sha256Provider> CryptoEngine<A, S> {
         let mut out = [0u8; 2];
         self.hkdf(&channel_key.0, b"UMSH-CHAN-ID", b"", &mut out);
         ChannelId(out)
+    }
+
+    /// Derive three bytes for presentation — a deterministic colour a user
+    /// interface can give a channel.
+    ///
+    /// This is the channel-identifier derivation run one byte longer, so the
+    /// first two bytes are the channel identifier itself: HKDF-Expand emits a
+    /// prefix of the same block either way. Nothing on the wire carries the
+    /// third byte, and nothing depends on it.
+    pub fn derive_channel_tint(&self, channel_key: &ChannelKey) -> [u8; 3] {
+        let mut out = [0u8; 3];
+        self.hkdf(&channel_key.0, b"UMSH-CHAN-ID", b"", &mut out);
+        out
+    }
+
+    /// Derive the channel tag — a local identity wide enough to tell apart two
+    /// channels whose keys derive the same channel identifier.
+    ///
+    /// Same derivation as the channel identifier, run to sixteen bytes, so the
+    /// identifier and the presentation tint are prefixes of it.
+    pub fn derive_channel_tag(&self, channel_key: &ChannelKey) -> ChannelTag {
+        let mut out = [0u8; 16];
+        self.hkdf(&channel_key.0, b"UMSH-CHAN-ID", b"", &mut out);
+        ChannelTag(out)
     }
 
     /// Derive multicast transport keys and the channel identifier.
@@ -1211,6 +1235,33 @@ mod tests {
         let ab = alice.shared_secret_with(bob.public_key()).unwrap();
         let ba = bob.shared_secret_with(alice.public_key()).unwrap();
         assert_eq!(ab.0, ba.0);
+    }
+
+    #[cfg(feature = "software-crypto")]
+    #[test]
+    fn channel_tint_extends_the_channel_identifier() {
+        let engine = SoftwareCryptoEngine::new(SoftwareAes, SoftwareSha256);
+        let key = ChannelKey([0x5Au8; 32]);
+        let tint = engine.derive_channel_tint(&key);
+        // The presentation colour is the identifier derivation run one byte
+        // longer, so a caller holding either can recognize the other.
+        assert_eq!(&tint[..2], &engine.derive_channel_id(&key).0[..]);
+        assert_eq!(tint, engine.derive_channel_tint(&key));
+        assert_ne!(tint, engine.derive_channel_tint(&ChannelKey([0x5Bu8; 32])));
+    }
+
+    #[cfg(feature = "software-crypto")]
+    #[test]
+    fn channel_tag_extends_the_channel_identifier_and_tint() {
+        let engine = SoftwareCryptoEngine::new(SoftwareAes, SoftwareSha256);
+        let key = ChannelKey([0x5Au8; 32]);
+        let tag = engine.derive_channel_tag(&key);
+        // One derivation, three lengths: whoever holds the tag can recover the
+        // identifier and the tint without the key.
+        assert_eq!(tag.channel_id(), engine.derive_channel_id(&key));
+        assert_eq!(&tag.0[..3], &engine.derive_channel_tint(&key)[..]);
+        assert_eq!(tag, engine.derive_channel_tag(&key));
+        assert_ne!(tag, engine.derive_channel_tag(&ChannelKey([0x5Bu8; 32])));
     }
 
     // ── derive_named_channel_key ──────────────────────────────────────────────

@@ -3,7 +3,7 @@
 
 #![cfg(feature = "std")]
 
-use umsh_core::{ChannelId, NodeHint, PublicKey};
+use umsh_core::{ChannelTag, NodeHint, PublicKey};
 use umsh_text::codec::{encode, parse, parse_with_info};
 use umsh_text::model::option;
 use umsh_text::validate::{
@@ -295,7 +295,7 @@ fn group_envelope() -> Envelope {
     Envelope {
         path: DeliveryPath::Multicast,
         conversation: ConversationKey::ChannelGroup {
-            channel: ChannelId([1, 2]),
+            channel: ChannelTag([1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16]),
         },
         sender: SenderScope::ClaimedMember(NodeHint([0xAA, 0xBB, 0xCC])),
     }
@@ -333,7 +333,7 @@ fn channel_group_flag_requires_blind_unicast() {
     let blind = Envelope {
         path: DeliveryPath::BlindUnicast,
         conversation: ConversationKey::ChannelDirect {
-            channel: ChannelId([1, 2]),
+            channel: ChannelTag([1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16]),
             peer: peer(),
         },
         sender: SenderScope::Peer(peer()),

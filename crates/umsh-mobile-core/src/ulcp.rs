@@ -103,6 +103,12 @@ pub struct UlcpSyncRecord {
     /// identity, read back losslessly. Present when
     /// `supports_device_identity` and the device reported the list.
     pub dev_peer_keys: Option<Vec<Vec<u8>>>,
+    /// `PROP_DEV_CHANNEL_KEYS`: the two-octet identifiers of the channels the
+    /// device identity has joined. Key material is never read back, so a
+    /// caller names these by deriving identifiers from the keys it holds; one
+    /// that matches nothing locally is a channel the device knows and this
+    /// phone does not.
+    pub dev_channel_ids: Option<Vec<Vec<u8>>>,
     /// `PROP_IDENT_ROLE`. `None` covers "the device derives its role from
     /// what it is actually doing", "no `CAP_IDENT`", and "the device would
     /// not report it" — `supports_ident` and `unreadable_properties`
@@ -349,6 +355,22 @@ enum ExpectedResponse {
     DevPeerRemove(Vec<u8>),
     /// The `CMD_SAVE` chained behind a device-peer mutation.
     SaveDevPeers,
+    /// A `CMD_PROP_INSERT` into `PROP_DEV_CHANNEL_KEYS`. Carries the derived
+    /// identifier rather than the key, because the device confirms a channel
+    /// mutation by echoing the identifier — key material is never read back.
+    DevChannelInsert(Vec<u8>),
+    /// A `CMD_PROP_REMOVE` from `PROP_DEV_CHANNEL_KEYS`, selected by key and
+    /// confirmed by identifier.
+    DevChannelRemove(Vec<u8>),
+    /// The `CMD_SAVE` chained behind a device-channel mutation.
+    SaveDevChannels,
+    /// One `CMD_PROP_INSERT` in the host channel-key reconciliation, carrying
+    /// the keys still to be sent. `ALREADY` is success here: a channel key is
+    /// its own item, so a duplicate insert asserts a state that already holds.
+    HostChannelInsert(VecDeque<Vec<u8>>),
+    /// The whole-table `CMD_PROP_SET` used when the device holds a channel
+    /// this phone cannot name, and so cannot select for removal.
+    HostChannelReplace,
 }
 
 struct UlcpSessionState {
@@ -636,6 +658,129 @@ impl MobileUlcpSession {
         let mut outbound = Vec::new();
         state.start_refresh(&mut outbound)?;
         Ok(state.update(outbound))
+    }
+
+    /// Store one channel key on the radio's device identity
+    /// (`PROP_DEV_CHANNEL_KEYS`), then persist with a chained `CMD_SAVE` when
+    /// the device can.
+    ///
+    /// This is the device's own channel membership, independent of the phone's:
+    /// it is what the device uses for its own advertisements, blind-unicast
+    /// addressing, and repeater filtering, and it survives host replacement.
+    ///
+    /// Requires an attached, otherwise-idle session on a device advertising
+    /// `CAP_DEV_IDENTITY`, and the device additionally requires an encrypted
+    /// link before it will accept key material. Failures surface as
+    /// `operation_error` with the device's status name — `NOMEM` when the list
+    /// is full (capacity [`ulcp_max_dev_channels`]), `ALREADY` when the key is
+    /// already stored, which callers should treat as success.
+    pub fn insert_device_channel_key(
+        &self,
+        channel_key: Vec<u8>,
+    ) -> Result<UlcpSessionUpdateRecord, MobileError> {
+        let id = dev_channel_id(&channel_key)?;
+        let mut state = self.inner.lock().expect("ULCP session mutex poisoned");
+        state.begin_dev_peer_operation()?;
+        let tid = state.allocate_tid();
+        state
+            .expected
+            .insert(tid, ExpectedResponse::DevChannelInsert(id));
+        let frame = ulcp_prop_insert(tid, prop::DEV_CHANNEL_KEYS, &channel_key)?;
+        Ok(state.update(vec![frame]))
+    }
+
+    /// Remove one channel key from the radio's device identity
+    /// (`PROP_DEV_CHANNEL_KEYS`), then persist with a chained `CMD_SAVE` when
+    /// the device can.
+    ///
+    /// The remove selector is the key itself, so only a channel the caller
+    /// still holds the key for can be removed this way. Same preconditions as
+    /// [`Self::insert_device_channel_key`]; `ITEM_NOT_FOUND` surfaces as
+    /// `operation_error` and callers should treat it as success.
+    pub fn remove_device_channel_key(
+        &self,
+        channel_key: Vec<u8>,
+    ) -> Result<UlcpSessionUpdateRecord, MobileError> {
+        let id = dev_channel_id(&channel_key)?;
+        let mut state = self.inner.lock().expect("ULCP session mutex poisoned");
+        state.begin_dev_peer_operation()?;
+        let tid = state.allocate_tid();
+        state
+            .expected
+            .insert(tid, ExpectedResponse::DevChannelRemove(id));
+        let frame = ulcp_prop_remove(tid, prop::DEV_CHANNEL_KEYS, &channel_key)?;
+        Ok(state.update(vec![frame]))
+    }
+
+    /// Make the radio's host channel-key table (`PROP_HOST_CHANNEL_KEYS`)
+    /// match the phone identity's joined channels.
+    ///
+    /// The radio needs these keys to recognize multicast and blind-unicast
+    /// traffic addressed to channels this phone has joined, and to queue it
+    /// while the phone is away. That is bookkeeping between the app and its
+    /// own radio, not a user-facing setting: callers reconcile on attach and
+    /// after every join or leave, and never surface it.
+    ///
+    /// The host domain is volatile — the device does not persist it — so no
+    /// `CMD_SAVE` is chained and reconciling on attach is what makes it stick.
+    /// Requires an attached, idle session on a device advertising
+    /// `CAP_HOST_KEYS`; otherwise the table is not this session's to manage
+    /// and the call reports that the capability is missing.
+    ///
+    /// Returns without any frames when the device already holds exactly the
+    /// requested set.
+    pub fn reconcile_host_channel_keys(
+        &self,
+        keys: Vec<Vec<u8>>,
+    ) -> Result<UlcpSessionUpdateRecord, MobileError> {
+        let mut desired = VecDeque::with_capacity(keys.len());
+        let mut desired_ids = Vec::with_capacity(keys.len());
+        for key in keys {
+            desired_ids.push(dev_channel_id(&key)?);
+            desired.push_back(key);
+        }
+
+        let mut state = self.inner.lock().expect("ULCP session mutex poisoned");
+        if state.stage != SessionStage::Attached || !state.expected.is_empty() {
+            return Err(MobileError::InvalidUlcpFrame);
+        }
+        if !state.has_capability(cap::HOST_KEYS)? {
+            return Err(MobileError::UnsupportedCapability);
+        }
+
+        let current = state
+            .responses
+            .get(&prop::HOST_CHANNEL_KEYS)
+            .map(|entry| entry.value.clone())
+            .unwrap_or_default();
+        let current_ids: Vec<Vec<u8>> = current
+            .chunks(items::CHANNEL_ID_LEN)
+            .map(<[u8]>::to_vec)
+            .collect();
+
+        // Shedding a channel needs its key as the remove selector, and an
+        // identifier this phone cannot derive is one whose key it does not
+        // hold. The table is small, so one whole-table write says everything.
+        if current_ids.iter().any(|id| !desired_ids.contains(id)) {
+            let table: Vec<u8> = desired.iter().flatten().copied().collect();
+            let tid = state.allocate_tid();
+            state
+                .expected
+                .insert(tid, ExpectedResponse::HostChannelReplace);
+            state.set_host_channel_ids(&desired_ids);
+            let frame = ulcp_prop_set(tid, prop::HOST_CHANNEL_KEYS, table)?;
+            return Ok(state.update(vec![frame]));
+        }
+
+        desired.retain(|key| {
+            !current_ids
+                .iter()
+                .any(|id| dev_channel_id(key).is_ok_and(|derived| &derived == id))
+        });
+        match state.next_host_channel_insert(desired) {
+            Some(frame) => Ok(state.update(vec![frame])),
+            None => Ok(state.update(Vec::new())),
+        }
     }
 
     /// Store one peer public key on the radio's device identity
@@ -944,6 +1089,118 @@ impl MobileUlcpSession {
                     },
                 });
             }
+            ExpectedResponse::HostChannelInsert(mut remaining) => {
+                if response.property_id == prop::LAST_STATUS {
+                    let error = ulcp_operation_error(
+                        "provision host channel key".to_owned(),
+                        response.value.as_slice(),
+                    )?;
+                    // A channel key is its own item, so ALREADY asserts the
+                    // state that was asked for. Anything else — NOMEM above
+                    // all — stops the pass; the phone still runs its own MAC
+                    // while attached, so this degrades radio-side filtering
+                    // rather than the user's ability to use the channel.
+                    if error.status_code != umsh_ulcp::Status::ALREADY.0 {
+                        operation_error = Some(error);
+                        state.refresh_attached_snapshot(None)?;
+                        remaining.clear();
+                    }
+                } else if response.property_id != prop::HOST_CHANNEL_KEYS
+                    || response.command != Cmd::PropInserted as u8
+                {
+                    return Err(MobileError::InvalidUlcpFrame);
+                }
+                if let Some(frame) = state.next_host_channel_insert(remaining) {
+                    outbound.push(frame);
+                } else {
+                    state.refresh_attached_snapshot(None)?;
+                }
+            }
+            ExpectedResponse::HostChannelReplace => {
+                if response.property_id == prop::LAST_STATUS {
+                    operation_error = Some(ulcp_operation_error(
+                        "provision host channel keys".to_owned(),
+                        response.value.as_slice(),
+                    )?);
+                } else if response.property_id != prop::HOST_CHANNEL_KEYS
+                    || response.command != Cmd::PropIs as u8
+                {
+                    return Err(MobileError::InvalidUlcpFrame);
+                }
+                state.refresh_attached_snapshot(None)?;
+            }
+            ExpectedResponse::DevChannelInsert(id) => {
+                if response.property_id == prop::LAST_STATUS {
+                    let error = ulcp_operation_error(
+                        "insert device channel key".to_owned(),
+                        response.value.as_slice(),
+                    )?;
+                    // ALREADY is the device saying the channel is stored.
+                    if error.status_code == umsh_ulcp::Status::ALREADY.0 {
+                        state.patch_dev_channels(&id, true);
+                        state.refresh_attached_snapshot(None)?;
+                    }
+                    operation_error = Some(error);
+                } else {
+                    if response.property_id != prop::DEV_CHANNEL_KEYS
+                        || response.command != Cmd::PropInserted as u8
+                        || response.value != id
+                    {
+                        return Err(MobileError::InvalidUlcpFrame);
+                    }
+                    state.patch_dev_channels(&id, true);
+                    if state.has_capability(cap::SAVE)? {
+                        let tid = state.allocate_tid();
+                        state
+                            .expected
+                            .insert(tid, ExpectedResponse::SaveDevChannels);
+                        outbound.push(ulcp_save(tid)?);
+                    }
+                    state.refresh_attached_snapshot(None)?;
+                }
+            }
+            ExpectedResponse::DevChannelRemove(id) => {
+                if response.property_id == prop::LAST_STATUS {
+                    let error = ulcp_operation_error(
+                        "remove device channel key".to_owned(),
+                        response.value.as_slice(),
+                    )?;
+                    if error.status_code == umsh_ulcp::Status::ITEM_NOT_FOUND.0 {
+                        state.patch_dev_channels(&id, false);
+                        state.refresh_attached_snapshot(None)?;
+                    }
+                    operation_error = Some(error);
+                } else {
+                    if response.property_id != prop::DEV_CHANNEL_KEYS
+                        || response.command != Cmd::PropRemoved as u8
+                        || response.value != id
+                    {
+                        return Err(MobileError::InvalidUlcpFrame);
+                    }
+                    state.patch_dev_channels(&id, false);
+                    if state.has_capability(cap::SAVE)? {
+                        let tid = state.allocate_tid();
+                        state
+                            .expected
+                            .insert(tid, ExpectedResponse::SaveDevChannels);
+                        outbound.push(ulcp_save(tid)?);
+                    }
+                    state.refresh_attached_snapshot(None)?;
+                }
+            }
+            ExpectedResponse::SaveDevChannels => {
+                if response.property_id != prop::LAST_STATUS
+                    || response.command != Cmd::PropIs as u8
+                {
+                    return Err(MobileError::InvalidUlcpFrame);
+                }
+                if inspect_ulcp_status(response.value.clone())? != 0 {
+                    operation_error = Some(ulcp_operation_error(
+                        "save device channel keys".to_owned(),
+                        response.value.as_slice(),
+                    )?);
+                }
+            }
             ExpectedResponse::DevPeerInsert(item) => {
                 if response.property_id == prop::LAST_STATUS {
                     let error = ulcp_operation_error(
@@ -1230,6 +1487,74 @@ impl UlcpSessionState {
             return Err(MobileError::InvalidUlcpFrame);
         }
         Ok(())
+    }
+
+    /// Queue the next host channel-key insert, if any remain. The cached
+    /// digest is updated as each key is accepted.
+    fn next_host_channel_insert(&mut self, mut remaining: VecDeque<Vec<u8>>) -> Option<Vec<u8>> {
+        let key = remaining.pop_front()?;
+        let tid = self.allocate_tid();
+        let frame = ulcp_prop_insert(tid, prop::HOST_CHANNEL_KEYS, &key).ok()?;
+        self.expected
+            .insert(tid, ExpectedResponse::HostChannelInsert(remaining));
+        if let Ok(id) = dev_channel_id(&key) {
+            self.push_host_channel_id(&id);
+        }
+        Some(frame)
+    }
+
+    /// Replace the cached `PROP_HOST_CHANNEL_KEYS` digest wholesale.
+    fn set_host_channel_ids(&mut self, ids: &[Vec<u8>]) {
+        let value = ids.concat();
+        self.host_channel_entry().value = value;
+    }
+
+    fn push_host_channel_id(&mut self, id: &[u8]) {
+        let entry = self.host_channel_entry();
+        if !entry.value.chunks(items::CHANNEL_ID_LEN).any(|c| c == id) {
+            entry.value.extend_from_slice(id);
+        }
+    }
+
+    fn host_channel_entry(&mut self) -> &mut UlcpPropertyFrameRecord {
+        self.responses
+            .entry(prop::HOST_CHANNEL_KEYS)
+            .or_insert_with(|| UlcpPropertyFrameRecord {
+                transaction_id: frame::TID_UNSOLICITED,
+                command: Cmd::PropIs as u8,
+                property_id: prop::HOST_CHANNEL_KEYS,
+                value: Vec::new(),
+            })
+    }
+
+    /// Patch the cached `PROP_DEV_CHANNEL_KEYS` digest after a confirmed
+    /// mutation. The cached value is a list of derived identifiers, so this
+    /// tracks identifiers rather than key material.
+    fn patch_dev_channels(&mut self, id: &[u8], present: bool) {
+        let entry = self
+            .responses
+            .entry(prop::DEV_CHANNEL_KEYS)
+            .or_insert_with(|| UlcpPropertyFrameRecord {
+                transaction_id: frame::TID_UNSOLICITED,
+                command: Cmd::PropIs as u8,
+                property_id: prop::DEV_CHANNEL_KEYS,
+                value: Vec::new(),
+            });
+        let mut value = Vec::with_capacity(entry.value.len() + id.len());
+        let mut found = false;
+        for chunk in entry.value.chunks(items::CHANNEL_ID_LEN) {
+            if chunk == id {
+                found = true;
+                if !present {
+                    continue;
+                }
+            }
+            value.extend_from_slice(chunk);
+        }
+        if present && !found {
+            value.extend_from_slice(id);
+        }
+        entry.value = value;
     }
 
     /// Patch the cached `PROP_DEV_PEERS` table after a confirmed mutation,
@@ -1520,7 +1845,11 @@ pub fn ulcp_inspection_properties(capabilities: Vec<u8>) -> Result<Vec<u32>, Mob
         properties.extend([prop::IDENT_ROLE, prop::IDENT_MOBILE]);
     }
     if has(cap::DEV_IDENTITY) {
-        properties.extend([prop::DEV_PEERS, prop::DEV_DISCOVERABLE]);
+        properties.extend([
+            prop::DEV_PEERS,
+            prop::DEV_CHANNEL_KEYS,
+            prop::DEV_DISCOVERABLE,
+        ]);
     }
     if has(cap::ALERT) {
         // Read at attach so a phone reconnecting mid-search finds the
@@ -1615,6 +1944,11 @@ pub fn inspect_ulcp_sync(
         prop::DEV_PEERS,
         decode_fixed_list::<{ items::PUBLIC_KEY_LEN }>,
     );
+    let dev_channel_ids = expected.read(
+        dev_identity,
+        prop::DEV_CHANNEL_KEYS,
+        decode_fixed_list::<{ items::CHANNEL_ID_LEN }>,
+    );
 
     // Every part of the policy is read before any of it is required, so one
     // unreadable property does not hide the others behind it.
@@ -1687,6 +2021,7 @@ pub fn inspect_ulcp_sync(
         auto_ack,
         repeater,
         dev_peer_keys,
+        dev_channel_ids,
         ident_role,
         ident_mobile,
         dev_discoverable,
@@ -2161,6 +2496,22 @@ pub fn ulcp_max_dev_peers() -> u8 {
     8
 }
 
+/// Capacity of the device identity's channel list (`PROP_DEV_CHANNEL_KEYS`).
+///
+/// A label constant, like [`ulcp_max_dev_peers`].
+#[uniffi::export]
+pub fn ulcp_max_dev_channels() -> u8 {
+    8
+}
+
+/// Derive the identifier a device will echo for a channel key.
+fn dev_channel_id(channel_key: &[u8]) -> Result<Vec<u8>, MobileError> {
+    let bytes: [u8; items::CHANNEL_KEY_LEN] = channel_key
+        .try_into()
+        .map_err(|_| MobileError::InvalidChannelKeyLength)?;
+    Ok(crate::derive_channel_id(bytes.to_vec())?)
+}
+
 /// Encode a `CMD_SAVE` request with the shared ULCP codec.
 #[uniffi::export]
 pub fn ulcp_save(transaction_id: u8) -> Result<Vec<u8>, MobileError> {
@@ -2400,7 +2751,8 @@ mod tests {
             | prop::MAC_REPEATER_MIN_RSSI
             | prop::MAC_REPEATER_MIN_SNR
             | prop::IDENT_ROLE
-            | prop::DEV_PEERS => Vec::new(),
+            | prop::DEV_PEERS
+            | prop::DEV_CHANNEL_KEYS => Vec::new(),
             prop::IDENT_MOBILE => vec![0],
             prop::DEV_DISCOVERABLE => vec![1],
             other => unreachable!("unexpected property {other}"),
@@ -2437,6 +2789,23 @@ mod tests {
                 (property, host_key.clone())
             } else {
                 commissionable_value(property)
+            }
+        })
+    }
+
+    /// Bring a session to `Attached` against a device that also offers the
+    /// host key tables, which the commissionable fixture deliberately does
+    /// not.
+    fn attach_host_keys_capable(session: &MobileUlcpSession) -> UlcpSessionUpdateRecord {
+        let mut capabilities = commissionable_capabilities();
+        capabilities.push(cap::HOST_KEYS);
+        let begin = session.begin(Some(vec![0xAA; 32])).unwrap();
+        drive_reads(session, begin.outbound_frames, move |property| {
+            match property {
+                prop::CAPS => (property, encoded_capabilities(&capabilities)),
+                prop::HOST_KEY => (property, vec![0xAA; 32]),
+                prop::HOST_CHANNEL_KEYS | prop::HOST_PEER_KEYS => (property, Vec::new()),
+                _ => commissionable_value(property),
             }
         })
     }
@@ -3746,6 +4115,298 @@ mod tests {
 
         // The session remains attached and usable.
         assert!(session.insert_device_peer(vec![0xC4; 32]).is_ok());
+    }
+
+    fn dev_channel_ids(update: &UlcpSessionUpdateRecord) -> Vec<Vec<u8>> {
+        update
+            .snapshot
+            .provisioning
+            .as_ref()
+            .unwrap()
+            .dev_channel_ids
+            .clone()
+            .unwrap()
+    }
+
+    #[test]
+    fn device_channel_insert_and_remove_track_identifiers_not_keys() {
+        let session = MobileUlcpSession::new();
+        let attached = attach_commissionable(&session, Some(vec![0xAA; 32]), vec![0xAA; 32]);
+        assert_eq!(dev_channel_ids(&attached), Vec::<Vec<u8>>::new());
+
+        // The wire carries the key; the device answers with the derived
+        // identifier, because a channel key is never read back.
+        let key = vec![0xB7; 32];
+        let id = crate::derive_channel_id(key.clone()).unwrap();
+        assert_eq!(id.len(), items::CHANNEL_ID_LEN);
+
+        let insert = session.insert_device_channel_key(key.clone()).unwrap();
+        let request = Frame::parse(&insert.outbound_frames[0]).unwrap();
+        assert_eq!(request.command(), Some(Cmd::PropInsert));
+
+        let confirmed = session
+            .consume(inserted_response(
+                request.header.tid(),
+                prop::DEV_CHANNEL_KEYS,
+                &id,
+            ))
+            .unwrap();
+        assert_eq!(dev_channel_ids(&confirmed), vec![id.clone()]);
+        assert_eq!(confirmed.operation_error, None);
+        let save = Frame::parse(&confirmed.outbound_frames[0]).unwrap();
+        assert_eq!(save.command(), Some(Cmd::Save));
+        let saved = session
+            .consume(property_response(
+                save.header.tid(),
+                prop::LAST_STATUS,
+                &[umsh_ulcp::Status::OK.0 as u8],
+            ))
+            .unwrap();
+        assert!(!saved.waiting_for_responses);
+
+        // Removal selects by key and is likewise confirmed by identifier.
+        let remove = session.remove_device_channel_key(key).unwrap();
+        let request = Frame::parse(&remove.outbound_frames[0]).unwrap();
+        assert_eq!(request.command(), Some(Cmd::PropRemove));
+        let confirmed = session
+            .consume(removed_response(
+                request.header.tid(),
+                prop::DEV_CHANNEL_KEYS,
+                &id,
+            ))
+            .unwrap();
+        assert_eq!(dev_channel_ids(&confirmed), Vec::<Vec<u8>>::new());
+    }
+
+    #[test]
+    fn device_channel_failures_report_status_without_ending_the_session() {
+        let session = MobileUlcpSession::new();
+        attach_commissionable(&session, Some(vec![0xAA; 32]), vec![0xAA; 32]);
+
+        let key = vec![0xC7; 32];
+        let id = crate::derive_channel_id(key.clone()).unwrap();
+
+        let insert = session.insert_device_channel_key(key.clone()).unwrap();
+        let request = Frame::parse(&insert.outbound_frames[0]).unwrap();
+        let full = session
+            .consume(property_response(
+                request.header.tid(),
+                prop::LAST_STATUS,
+                &[umsh_ulcp::Status::NOMEM.0 as u8],
+            ))
+            .unwrap();
+        assert_eq!(
+            full.operation_error,
+            Some(UlcpOperationErrorRecord {
+                operation: "insert device channel key".into(),
+                status_code: umsh_ulcp::Status::NOMEM.0,
+                status_name: "Status::NOMEM".into(),
+            })
+        );
+        assert_eq!(dev_channel_ids(&full), Vec::<Vec<u8>>::new());
+        assert_eq!(full.snapshot.phase, UlcpSessionPhase::Attached);
+
+        // ALREADY means the device holds it, so the cache says so too.
+        let insert = session.insert_device_channel_key(key.clone()).unwrap();
+        let request = Frame::parse(&insert.outbound_frames[0]).unwrap();
+        let already = session
+            .consume(property_response(
+                request.header.tid(),
+                prop::LAST_STATUS,
+                &[umsh_ulcp::Status::ALREADY.0 as u8],
+            ))
+            .unwrap();
+        assert_eq!(dev_channel_ids(&already), vec![id]);
+
+        let remove = session.remove_device_channel_key(key).unwrap();
+        let request = Frame::parse(&remove.outbound_frames[0]).unwrap();
+        let missing = session
+            .consume(property_response(
+                request.header.tid(),
+                prop::LAST_STATUS,
+                &[umsh_ulcp::Status::ITEM_NOT_FOUND.0 as u8],
+            ))
+            .unwrap();
+        assert_eq!(
+            missing.operation_error.as_ref().unwrap().status_name,
+            "Status::ITEM_NOT_FOUND"
+        );
+        assert_eq!(dev_channel_ids(&missing), Vec::<Vec<u8>>::new());
+
+        assert!(session.insert_device_channel_key(vec![0xC8; 32]).is_ok());
+    }
+
+    fn host_channel_count(update: &UlcpSessionUpdateRecord) -> Option<u32> {
+        update
+            .snapshot
+            .provisioning
+            .as_ref()
+            .unwrap()
+            .host_channel_count
+    }
+
+    #[test]
+    fn host_channel_reconcile_inserts_what_the_radio_is_missing() {
+        let session = MobileUlcpSession::new();
+        let attached = attach_host_keys_capable(&session);
+        assert_eq!(host_channel_count(&attached), Some(0));
+
+        let first = vec![0xD1; 32];
+        let second = vec![0xD2; 32];
+        let update = session
+            .reconcile_host_channel_keys(vec![first.clone(), second.clone()])
+            .unwrap();
+
+        // One insert at a time; the next rides on the previous confirmation.
+        assert_eq!(update.outbound_frames.len(), 1);
+        let request = Frame::parse(&update.outbound_frames[0]).unwrap();
+        assert_eq!(request.command(), Some(Cmd::PropInsert));
+        let confirmed = session
+            .consume(inserted_response(
+                request.header.tid(),
+                prop::HOST_CHANNEL_KEYS,
+                &crate::derive_channel_id(first).unwrap(),
+            ))
+            .unwrap();
+        assert_eq!(confirmed.outbound_frames.len(), 1);
+        let request = Frame::parse(&confirmed.outbound_frames[0]).unwrap();
+        let done = session
+            .consume(inserted_response(
+                request.header.tid(),
+                prop::HOST_CHANNEL_KEYS,
+                &crate::derive_channel_id(second).unwrap(),
+            ))
+            .unwrap();
+        assert!(done.outbound_frames.is_empty());
+        assert!(!done.waiting_for_responses);
+        assert_eq!(done.operation_error, None);
+        assert_eq!(host_channel_count(&done), Some(2));
+    }
+
+    #[test]
+    fn host_channel_reconcile_is_a_no_op_when_the_radio_already_matches() {
+        let session = MobileUlcpSession::new();
+        attach_host_keys_capable(&session);
+        let key = vec![0xD3; 32];
+
+        let update = session
+            .reconcile_host_channel_keys(vec![key.clone()])
+            .unwrap();
+        let request = Frame::parse(&update.outbound_frames[0]).unwrap();
+        session
+            .consume(inserted_response(
+                request.header.tid(),
+                prop::HOST_CHANNEL_KEYS,
+                &crate::derive_channel_id(key.clone()).unwrap(),
+            ))
+            .unwrap();
+
+        // Reconciling the same set again asks the radio for nothing, which is
+        // what makes reconnecting cheap.
+        let again = session.reconcile_host_channel_keys(vec![key]).unwrap();
+        assert!(again.outbound_frames.is_empty());
+        assert!(!again.waiting_for_responses);
+    }
+
+    #[test]
+    fn host_channel_reconcile_replaces_the_table_to_shed_an_unknown_channel() {
+        let session = MobileUlcpSession::new();
+        attach_host_keys_capable(&session);
+        let stranger = vec![0xD4; 32];
+
+        // Something else provisioned a channel this phone has no key for.
+        let update = session
+            .reconcile_host_channel_keys(vec![stranger.clone()])
+            .unwrap();
+        let request = Frame::parse(&update.outbound_frames[0]).unwrap();
+        session
+            .consume(inserted_response(
+                request.header.tid(),
+                prop::HOST_CHANNEL_KEYS,
+                &crate::derive_channel_id(stranger).unwrap(),
+            ))
+            .unwrap();
+
+        // Removal selects by key, so an unnameable entry forces a whole-table
+        // write rather than a remove.
+        let mine = vec![0xD5; 32];
+        let replace = session
+            .reconcile_host_channel_keys(vec![mine.clone()])
+            .unwrap();
+        let request = Frame::parse(&replace.outbound_frames[0]).unwrap();
+        assert_eq!(request.command(), Some(Cmd::PropSet));
+
+        let done = session
+            .consume(property_response(
+                request.header.tid(),
+                prop::HOST_CHANNEL_KEYS,
+                &crate::derive_channel_id(mine).unwrap(),
+            ))
+            .unwrap();
+        assert_eq!(host_channel_count(&done), Some(1));
+        assert!(!done.waiting_for_responses);
+    }
+
+    #[test]
+    fn a_full_host_channel_table_reports_status_and_stays_attached() {
+        let session = MobileUlcpSession::new();
+        attach_host_keys_capable(&session);
+
+        let update = session
+            .reconcile_host_channel_keys(vec![vec![0xD6; 32], vec![0xD7; 32]])
+            .unwrap();
+        let request = Frame::parse(&update.outbound_frames[0]).unwrap();
+        let full = session
+            .consume(property_response(
+                request.header.tid(),
+                prop::LAST_STATUS,
+                &[umsh_ulcp::Status::NOMEM.0 as u8],
+            ))
+            .unwrap();
+
+        assert_eq!(
+            full.operation_error.as_ref().unwrap().status_name,
+            "Status::NOMEM"
+        );
+        // The pass stops rather than hammering a table it cannot fit, and the
+        // session stays usable.
+        assert!(full.outbound_frames.is_empty());
+        assert!(!full.waiting_for_responses);
+        assert_eq!(full.snapshot.phase, UlcpSessionPhase::Attached);
+    }
+
+    #[test]
+    fn an_already_stored_host_channel_key_is_success() {
+        let session = MobileUlcpSession::new();
+        attach_host_keys_capable(&session);
+
+        let update = session
+            .reconcile_host_channel_keys(vec![vec![0xD8; 32]])
+            .unwrap();
+        let request = Frame::parse(&update.outbound_frames[0]).unwrap();
+        let already = session
+            .consume(property_response(
+                request.header.tid(),
+                prop::LAST_STATUS,
+                &[umsh_ulcp::Status::ALREADY.0 as u8],
+            ))
+            .unwrap();
+        assert_eq!(already.operation_error, None);
+        assert!(!already.waiting_for_responses);
+    }
+
+    #[test]
+    fn device_channel_keys_must_be_full_length() {
+        let session = MobileUlcpSession::new();
+        attach_commissionable(&session, Some(vec![0xAA; 32]), vec![0xAA; 32]);
+        assert_eq!(
+            session.insert_device_channel_key(vec![0x01; 31]),
+            Err(MobileError::InvalidChannelKeyLength)
+        );
+        assert_eq!(
+            session.remove_device_channel_key(Vec::new()),
+            Err(MobileError::InvalidChannelKeyLength)
+        );
     }
 
     #[test]

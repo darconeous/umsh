@@ -294,7 +294,7 @@ where
             key_bytes,
         };
         if self.channels.insert(hname, entry).is_err() {
-            let _ = self.node.leave(&channel);
+            let _ = self.node.leave(&channel).await;
             return false;
         }
         true
@@ -1329,7 +1329,7 @@ where
                         key_bytes,
                     };
                     if self.channels.insert(hname, entry).is_err() {
-                        let _ = self.node.leave(&channel);
+                        let _ = self.node.leave(&channel).await;
                         return self.write_err("channel table full").await;
                     }
                     // Persist (best-effort).
@@ -1364,7 +1364,7 @@ where
             };
             let channel_key = umsh_core::ChannelKey(key_bytes);
             let channel = umsh_node::Channel::private(channel_key, name);
-            let _ = self.node.leave(&channel);
+            let _ = self.node.leave(&channel).await;
             // Persist deletion (best-effort).
             let _ = self.channel_store.delete_channel(name.as_bytes()).await;
             self.out.write_line("left").await?;

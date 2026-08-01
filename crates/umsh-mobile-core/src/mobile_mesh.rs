@@ -24,7 +24,7 @@ use std::{
 
 use embedded_hal_async::delay::DelayNs;
 use tokio::sync::{mpsc, oneshot};
-use umsh_core::{PayloadType, PublicKey};
+use umsh_core::{ChannelKey, ChannelTag, NodeHint, PayloadType, PublicKey};
 use umsh_crypto::{
     CryptoEngine, NodeIdentity,
     software::{SoftwareAes, SoftwareIdentity, SoftwareSha256},
@@ -36,14 +36,16 @@ use umsh_node::{
     NodeRole, PacketFamily, SendProgressTicket, Transport,
 };
 use umsh_sync::AsyncRefCell;
-use umsh_text::engine::{ArchiveResult, DeliveryState};
+use umsh_text::engine::{ArchiveResult, DeliveryState, Destination};
 use umsh_text::model::{ConversationKey, SenderScope};
 use umsh_text::validate::{DeliveryPath, Envelope};
 
 use crate::mobile_chat::{
-    MobileChatArchiveLookupRecord, MobileChatArchiveResultKind, MobileChatCheckpointRecord,
-    MobileChatComposeBatchRecord, MobileChatDeliveryRecord, MobileChatMutationRecord,
-    MobileChatOriginalRef, MobileChatState, transmission_peer,
+    ChannelRegistry, MobileChatArchiveLookupRecord, MobileChatArchiveResultKind,
+    MobileChatCheckpointRecord, MobileChatComposeBatchRecord, MobileChatDeliveryRecord,
+    MobileChatDirection, MobileChatMutationKind, MobileChatMutationRecord, MobileChatOriginalRef,
+    MobileChatPresence, MobileChatRxMetadataRecord, MobileChatSenderResolutionRecord,
+    MobileChatState,
 };
 use crate::{MobileCounterStore, MobileError, MobileIdentity};
 
@@ -59,6 +61,13 @@ pub enum MobileMeshError {
     SendFailed,
     ChatComposeFailed,
     ChatBatchMissing,
+    /// A channel key was not exactly 32 octets.
+    InvalidChannelKey,
+    /// The MAC's channel table is full.
+    ChannelCapacity,
+    /// The conversation address was malformed, or named a channel this
+    /// session holds no key for.
+    UnknownConversation,
 }
 
 impl fmt::Display for MobileMeshError {
@@ -71,6 +80,9 @@ impl fmt::Display for MobileMeshError {
             Self::SendFailed => "MESH_SEND_FAILED",
             Self::ChatComposeFailed => "MESH_CHAT_COMPOSE_FAILED",
             Self::ChatBatchMissing => "MESH_CHAT_BATCH_MISSING",
+            Self::InvalidChannelKey => "MESH_INVALID_CHANNEL_KEY",
+            Self::ChannelCapacity => "MESH_CHANNEL_CAPACITY",
+            Self::UnknownConversation => "MESH_UNKNOWN_CONVERSATION",
         })
     }
 }
@@ -312,6 +324,9 @@ pub struct MobileMeshSessionUpdateRecord {
     pub chat_mutations: Vec<MobileChatMutationRecord>,
     pub chat_deliveries: Vec<MobileChatDeliveryRecord>,
     pub chat_archive_lookups: Vec<MobileChatArchiveLookupRecord>,
+    /// Channel members whose claimed hint has resolved to a full address. The
+    /// platform should upgrade rows it stored anonymously under that hint.
+    pub chat_sender_resolutions: Vec<MobileChatSenderResolutionRecord>,
     pub chat_diagnostics: Vec<String>,
 }
 
@@ -343,6 +358,14 @@ enum WorkerCommand {
         peers: Vec<PublicKey>,
         response: oneshot::Sender<Result<(), MobileMeshError>>,
     },
+    RegisterChannels {
+        keys: Vec<ChannelKey>,
+        response: oneshot::Sender<Result<(), MobileMeshError>>,
+    },
+    RemoveChannels {
+        keys: Vec<ChannelKey>,
+        response: oneshot::Sender<Result<(), MobileMeshError>>,
+    },
     Ping {
         operation_id: u64,
         peer: PublicKey,
@@ -353,7 +376,7 @@ enum WorkerCommand {
         response: oneshot::Sender<()>,
     },
     ComposeChat {
-        peer: PublicKey,
+        conversation_address: String,
         client_token: u32,
         request: ChatComposeRequest,
         response: oneshot::Sender<Result<MobileChatComposeBatchRecord, MobileMeshError>>,
@@ -391,9 +414,18 @@ enum WorkerCommand {
         capability_bits: Option<u8>,
         response: oneshot::Sender<Result<(), MobileMeshError>>,
     },
+    RequestIdentityByHint {
+        conversation_address: String,
+        hint: NodeHint,
+        response: oneshot::Sender<Result<(), MobileMeshError>>,
+    },
     SetDiscoverable {
         enabled: bool,
         name: Option<String>,
+        response: oneshot::Sender<()>,
+    },
+    SetChatDisplayName {
+        name: String,
         response: oneshot::Sender<()>,
     },
     PeerRoute {
@@ -426,22 +458,48 @@ struct InboundFrame {
     record: MobileMeshRxRecord,
 }
 
+/// Who a received text frame came from, and over what.
+enum InboundTextSource {
+    /// Authenticated unicast from a known peer.
+    Direct { peer: PublicKey },
+    /// Multicast to a channel. The sender claims a hint; the full key is
+    /// present only when they addressed the frame with it.
+    ChannelGroup {
+        channel: ChannelTag,
+        hint: NodeHint,
+        full_key: Option<PublicKey>,
+    },
+    /// Blind unicast to us over a channel key, from an addressable peer.
+    ChannelDirect {
+        channel: ChannelTag,
+        peer: PublicKey,
+    },
+}
+
 struct InboundText {
-    peer: PublicKey,
+    source: InboundTextSource,
     payload: Vec<u8>,
     received_at_ms: Option<u64>,
+    rx: MobileChatRxMetadataRecord,
 }
 
 struct InFlightChatTransmission {
     transmission_id: u32,
-    peer: PublicKey,
+    /// The peer whose first-contact pipeline this send gates on. Channel
+    /// sends have no such peer: multicast is unaddressed and blind unicast
+    /// carries no ACK to confirm with.
+    gate_peer: Option<PublicKey>,
     ticket: SendProgressTicket,
     sent_reported: bool,
+    /// No acknowledgement will ever arrive, so transmission is the terminal
+    /// success state rather than a step toward one.
+    non_ack: bool,
 }
 
 #[derive(Clone)]
 enum MobileChatWorkerEvent {
     Mutation(MobileChatMutationRecord),
+    SenderResolution(MobileChatSenderResolutionRecord),
     Delivery(MobileChatDeliveryRecord),
     ArchiveLookup(MobileChatArchiveLookupRecord),
     Diagnostic(String),
@@ -752,7 +810,18 @@ impl umsh_mac::Platform for MobilePlatform {
 /// RAM is not the constraint.
 const MOBILE_MAC_PEERS: usize = 64;
 
-type MobileMac = Mac<MobilePlatform, { umsh_mac::DEFAULT_IDENTITIES }, MOBILE_MAC_PEERS>;
+/// Channel capacity of the phone's in-memory MAC. The embedded default of 8
+/// is sized for microcontroller RAM and already spends two slots on the
+/// default `public` and `EMERGENCY` channels; per-channel replay state is a
+/// few hundred bytes, which phone RAM does not need to ration.
+const MOBILE_MAC_CHANNELS: usize = 32;
+
+type MobileMac = Mac<
+    MobilePlatform,
+    { umsh_mac::DEFAULT_IDENTITIES },
+    MOBILE_MAC_PEERS,
+    MOBILE_MAC_CHANNELS,
+>;
 const MOBILE_CHAT_TRANSMIT_WINDOW: usize = 8;
 
 /// Long-lived Rust protocol engine used by the mobile app.
@@ -873,6 +942,38 @@ impl MobileMeshSession {
             .map_err(|_| MobileMeshError::SessionUnavailable)?
     }
 
+    /// Ask a channel member who is known only by their claimed hint to send
+    /// their identity.
+    ///
+    /// A group message carries a 3-byte hint and nothing else, so there is no
+    /// address to unicast a request to. This goes out over the channel itself,
+    /// filtered to that hint, and only the member it names answers — with a
+    /// targeted unicast, since the request carries this phone's full address.
+    ///
+    /// The request is routed by what that member's own frames have shown:
+    /// their observed trace route if one is known, otherwise a flood budget
+    /// bounded by the hops their last message took rather than a default.
+    pub async fn request_identity_by_hint(
+        &self,
+        conversation_address: String,
+        hint: Vec<u8>,
+    ) -> Result<(), MobileMeshError> {
+        let hint: [u8; 3] = hint
+            .try_into()
+            .map_err(|_| MobileMeshError::UnknownConversation)?;
+        let (response, result) = oneshot::channel();
+        self.commands
+            .send(WorkerCommand::RequestIdentityByHint {
+                conversation_address,
+                hint: NodeHint(hint),
+                response,
+            })
+            .map_err(|_| MobileMeshError::SessionUnavailable)?;
+        result
+            .await
+            .map_err(|_| MobileMeshError::SessionUnavailable)?
+    }
+
     /// Set whether this phone answers Identity Requests with its own
     /// identity — the passive counterpart of [`discover_identities`]:
     /// discoverable phones show up in other people's Discover sessions.
@@ -882,6 +983,21 @@ impl MobileMeshSession {
     /// the app pushes the stored preference and name right after install
     /// and again whenever either changes. Replies are targeted
     /// authenticated unicasts, never broadcasts.
+    /// Set the name carried on this phone's own group messages.
+    ///
+    /// A multicast reaches members holding no identity for us, so a group
+    /// message says who sent it or arrives anonymous. Direct messages never
+    /// carry it: the recipient authenticated us by key. Empty clears it.
+    pub async fn set_chat_display_name(&self, name: String) -> Result<(), MobileMeshError> {
+        let (response, result) = oneshot::channel();
+        self.commands
+            .send(WorkerCommand::SetChatDisplayName { name, response })
+            .map_err(|_| MobileMeshError::SessionUnavailable)?;
+        result
+            .await
+            .map_err(|_| MobileMeshError::SessionUnavailable)
+    }
+
     pub async fn set_discoverable(
         &self,
         enabled: bool,
@@ -986,6 +1102,35 @@ impl MobileMeshSession {
             .map_err(|_| MobileMeshError::SessionUnavailable)?
     }
 
+    /// Register channel keys with the live MAC so their traffic is accepted.
+    ///
+    /// Membership itself is persisted by the platform, which replays the whole
+    /// joined set through this call when a session starts. Re-registering a
+    /// channel already held is harmless.
+    pub async fn register_channels(&self, keys: Vec<Vec<u8>>) -> Result<(), MobileMeshError> {
+        let keys = decode_channel_keys(keys)?;
+        let (response, result) = oneshot::channel();
+        self.commands
+            .send(WorkerCommand::RegisterChannels { keys, response })
+            .map_err(|_| MobileMeshError::SessionUnavailable)?;
+        result
+            .await
+            .map_err(|_| MobileMeshError::SessionUnavailable)?
+    }
+
+    /// Drop channel keys from the live MAC, so its traffic is no longer
+    /// decrypted. Idempotent, like [`Self::remove_peers`].
+    pub async fn remove_channels(&self, keys: Vec<Vec<u8>>) -> Result<(), MobileMeshError> {
+        let keys = decode_channel_keys(keys)?;
+        let (response, result) = oneshot::channel();
+        self.commands
+            .send(WorkerCommand::RemoveChannels { keys, response })
+            .map_err(|_| MobileMeshError::SessionUnavailable)?;
+        result
+            .await
+            .map_err(|_| MobileMeshError::SessionUnavailable)?
+    }
+
     pub fn receive(&self, frame: MobileMeshRxRecord) -> Result<(), MobileMeshError> {
         if frame.data.is_empty() || frame.data.len() > MAX_FRAME_SIZE {
             return Err(MobileMeshError::SessionUnavailable);
@@ -1034,14 +1179,16 @@ impl MobileMeshSession {
             .map_err(|_| MobileMeshError::SessionUnavailable)
     }
 
+    /// Compose a message into a conversation, addressed either by a peer's
+    /// address or by a channel's conversation address.
     pub async fn compose_text(
         &self,
-        peer_address: String,
+        conversation_address: String,
         client_token: u32,
         body: String,
     ) -> Result<MobileChatComposeBatchRecord, MobileMeshError> {
         self.compose_chat(
-            &peer_address,
+            conversation_address,
             client_token,
             ChatComposeRequest::Text { body },
         )
@@ -1054,13 +1201,13 @@ impl MobileMeshSession {
     /// rejects it (`ChatComposeFailed`) if stream continuity was lost since.
     pub async fn compose_edit(
         &self,
-        peer_address: String,
+        conversation_address: String,
         client_token: u32,
         original: MobileChatOriginalRef,
         body: String,
     ) -> Result<MobileChatComposeBatchRecord, MobileMeshError> {
         self.compose_chat(
-            &peer_address,
+            conversation_address,
             client_token,
             ChatComposeRequest::Edit { original, body },
         )
@@ -1071,12 +1218,12 @@ impl MobileMeshSession {
     /// message. Same original-reference rules as [`Self::compose_edit`].
     pub async fn compose_delete(
         &self,
-        peer_address: String,
+        conversation_address: String,
         client_token: u32,
         original: MobileChatOriginalRef,
     ) -> Result<MobileChatComposeBatchRecord, MobileMeshError> {
         self.compose_chat(
-            &peer_address,
+            conversation_address,
             client_token,
             ChatComposeRequest::Delete { original },
         )
@@ -1196,6 +1343,7 @@ impl MobileMeshSession {
         let mut chat_mutations = Vec::new();
         let mut chat_deliveries = Vec::new();
         let mut chat_archive_lookups = Vec::new();
+        let mut chat_sender_resolutions = Vec::new();
         let mut chat_diagnostics = Vec::new();
         let mut chat_batch_id = None;
         if let Ok(mut pending) = self.pending_chat_events.lock() {
@@ -1220,6 +1368,9 @@ impl MobileMeshSession {
                         MobileChatWorkerEvent::ArchiveLookup(record) => {
                             chat_archive_lookups.push(record);
                         }
+                        MobileChatWorkerEvent::SenderResolution(record) => {
+                            chat_sender_resolutions.push(record);
+                        }
                         MobileChatWorkerEvent::Diagnostic(record) => chat_diagnostics.push(record),
                     }
                 }
@@ -1234,6 +1385,7 @@ impl MobileMeshSession {
             chat_mutations,
             chat_deliveries,
             chat_archive_lookups,
+            chat_sender_resolutions,
             chat_diagnostics,
         }
     }
@@ -1242,15 +1394,16 @@ impl MobileMeshSession {
 impl MobileMeshSession {
     async fn compose_chat(
         &self,
-        peer_address: &str,
+        conversation_address: String,
         client_token: u32,
         request: ChatComposeRequest,
     ) -> Result<MobileChatComposeBatchRecord, MobileMeshError> {
-        let peer = decode_peer(peer_address).map_err(|_| MobileMeshError::InvalidPeer)?;
+        // Resolved on the worker, which owns the channel registry an address
+        // may need to be interpreted against.
         let (response, result) = oneshot::channel();
         self.commands
             .send(WorkerCommand::ComposeChat {
-                peer,
+                conversation_address,
                 client_token,
                 request,
                 response,
@@ -1505,7 +1658,10 @@ async fn run_worker(
     // stored preference and display name via `set_discoverable` right
     // after install.
     node.enable_identity_responder_default(phone_identity_profile(local_key, None));
-    let mut chat = MobileChatState::new(local_key);
+    // Held outside the chat state: rejecting a batch rebuilds the reducer,
+    // and the channels the platform registered must outlive that.
+    let channel_registry = Rc::new(RefCell::new(ChannelRegistry::default()));
+    let mut chat = MobileChatState::new(local_key, channel_registry.clone());
     // Registered before every other receive handler: dispatch stops at the
     // first handler that claims a packet, and presence is true of packets
     // that something else goes on to claim. It never claims one itself.
@@ -1520,19 +1676,79 @@ async fn run_worker(
     });
     let inbound_text = Rc::new(RefCell::new(Vec::<InboundText>::new()));
     let inbound_text_callback = inbound_text.clone();
+    let text_channels = channel_registry.clone();
+    let echo_events = chat_events.clone();
     let text_subscription = node.on_receive(move |packet| {
-        if packet.payload_type() != PayloadType::TextMessage
-            || packet.packet_family() != PacketFamily::Unicast
-        {
+        if packet.payload_type() != PayloadType::TextMessage {
             return false;
         }
-        let Some(peer) = packet.from_key() else {
-            return false;
+        // Our own multicast, relayed back to us. Every group send carries our
+        // full source address, so a repeater's copy arrives naming us — but
+        // it is the message we already have, not a second one, and the
+        // transcript must not show it twice.
+        //
+        // It is still evidence: something out there received our frame and
+        // forwarded it, which is the only reachability signal a multicast
+        // ever produces. Claim it so nothing else interprets it, and report
+        // how far it travelled.
+        if packet.from_key() == Some(local_key) {
+            let hops = packet
+                .flood_hops()
+                .map(|hops| hops.accumulated())
+                .unwrap_or(0);
+            let _ = echo_events.send(MobileChatWorkerEvent::Diagnostic(format!(
+                "own multicast relayed back after {hops} hop(s)"
+            )));
+            return true;
+        }
+        // A channel frame names its channel by the key that authenticated it,
+        // so the tag is derived from that key rather than looked up by the
+        // two-byte identifier the frame carried — distinct keys may share an
+        // identifier, and only the key that decrypted the frame is the truth.
+        let channel_tag = packet.channel().map(|channel| {
+            (
+                crate::channel_tag(channel.key()),
+                text_channels.borrow().contains(&crate::channel_tag(channel.key())),
+            )
+        });
+        let source = match (packet.packet_family(), channel_tag) {
+            (PacketFamily::Unicast, _) => match packet.from_key() {
+                Some(peer) => InboundTextSource::Direct { peer },
+                None => return false,
+            },
+            // Membership is what the channel MIC authenticates; the hint is
+            // the only sender identity a multicast frame must carry.
+            (PacketFamily::Multicast, Some((channel, true))) => match packet.from_hint() {
+                Some(hint) => InboundTextSource::ChannelGroup {
+                    channel,
+                    hint,
+                    full_key: packet.from_key(),
+                },
+                None => return false,
+            },
+            // Without a full key there is nobody to attribute the message to,
+            // and nobody to answer a repair request to.
+            (PacketFamily::BlindUnicast, Some((channel, true))) => match packet.from_key() {
+                Some(peer) => InboundTextSource::ChannelDirect { channel, peer },
+                None => return false,
+            },
+            _ => return false,
         };
         inbound_text_callback.borrow_mut().push(InboundText {
-            peer,
+            source,
             payload: packet.payload().to_vec(),
             received_at_ms: packet.received_at_ms(),
+            rx: MobileChatRxMetadataRecord {
+                rssi_dbm: packet.rssi(),
+                snr_centibels: packet.snr().map(|snr| snr.as_centibels()),
+                lqi: packet.lqi().map(|lqi| lqi.get()),
+                hop_count: packet.flood_hops().map(|hops| hops.accumulated()),
+                route_hints: packet
+                    .trace_route_hops()
+                    .map(|hop| hop.0.to_vec())
+                    .collect(),
+                source_authenticated: packet.source_authenticated(),
+            },
         });
         true
     });
@@ -1554,6 +1770,9 @@ async fn run_worker(
         true
     });
     let mut in_flight_chat = Vec::<InFlightChatTransmission>::new();
+    // How each channel member was last reached, so an identity request can be
+    // routed by evidence rather than flooded at the default budget.
+    let mut member_routes = BTreeMap::<(ChannelTag, [u8; 3]), MemberRoute>::new();
     let mut chat_pipeline_ready = BTreeSet::<[u8; 32]>::new();
     let mut pending_chat_transmissions = VecDeque::<umsh_text::engine::Transmission>::new();
     let pending = Rc::new(RefCell::new(BTreeMap::<[u8; 32], u64>::new()));
@@ -1648,6 +1867,32 @@ async fn run_worker(
                                 // Not-found is success: the peer is absent
                                 // either way.
                                 let _ = node.remove_peer(&peer).await;
+                            }
+                            let _ = response.send(Ok(()));
+                        }
+                        Some(WorkerCommand::RegisterChannels { keys, response }) => {
+                            let mut result = Ok(());
+                            for key in keys {
+                                // Named and private channels are the same
+                                // thing here: the app already holds the
+                                // derived key either way.
+                                if node.join(&umsh_node::Channel::private(key, "")).await.is_err() {
+                                    result = Err(MobileMeshError::ChannelCapacity);
+                                    break;
+                                }
+                                channel_registry
+                                    .borrow_mut()
+                                    .register(crate::channel_tag(&key), key);
+                            }
+                            let _ = response.send(result);
+                        }
+                        Some(WorkerCommand::RemoveChannels { keys, response }) => {
+                            for key in keys {
+                                // Not-joined is success, as for peers.
+                                let _ = node.leave(&umsh_node::Channel::private(key, "")).await;
+                                channel_registry
+                                    .borrow_mut()
+                                    .remove(&crate::channel_tag(&key));
                             }
                             let _ = response.send(Ok(()));
                         }
@@ -1754,6 +1999,46 @@ async fn run_worker(
                             }
                             let _ = response.send(result);
                         }
+                        Some(WorkerCommand::RequestIdentityByHint {
+                            conversation_address,
+                            hint,
+                            response,
+                        }) => {
+                            let channel = chat
+                                .parse_conversation_address(&conversation_address)
+                                .and_then(|conversation| match conversation {
+                                    ConversationKey::ChannelGroup { channel } => Some(channel),
+                                    _ => None,
+                                });
+                            let result = match channel {
+                                Some(channel) => {
+                                    let route = member_routes.get(&(channel, hint.0)).cloned();
+                                    let mut nonce_bytes = [0u8; 4];
+                                    handle.fill_random(&mut nonce_bytes).await;
+                                    request_identity_over_channel(
+                                        &node,
+                                        &channel_registry,
+                                        channel,
+                                        hint,
+                                        u32::from_be_bytes(nonce_bytes),
+                                        route,
+                                    )
+                                    .await
+                                }
+                                None => Err(MobileMeshError::UnknownConversation),
+                            };
+                            if result.is_ok()
+                                && handle.service_counter_persistence().await.is_err()
+                            {
+                                let _ = response.send(Err(MobileMeshError::SendFailed));
+                                return;
+                            }
+                            let _ = response.send(result);
+                        }
+                        Some(WorkerCommand::SetChatDisplayName { name, response }) => {
+                            chat.engine.set_local_handle(&name);
+                            let _ = response.send(());
+                        }
                         Some(WorkerCommand::SetDiscoverable { enabled, name, response }) => {
                             if enabled {
                                 node.enable_identity_responder_default(phone_identity_profile(
@@ -1833,7 +2118,7 @@ async fn run_worker(
                             let _ = response.send(());
                         }
                         Some(WorkerCommand::ComposeChat {
-                            peer,
+                            conversation_address,
                             client_token,
                             request,
                             response,
@@ -1841,17 +2126,29 @@ async fn run_worker(
                             // Rejecting a persisted batch rebuilds the reducer from
                             // durable checkpoints. Keep that recovery operation
                             // unambiguous by allowing only one uncommitted compose.
-                            let result = if chat.pending_batches.is_empty() {
+                            let conversation =
+                                chat.parse_conversation_address(&conversation_address);
+                            let result = if !chat.pending_batches.is_empty() {
+                                Err(MobileMeshError::OperationInProgress)
+                            } else if let Some(conversation) = conversation {
                                 let now_ms = handle.now_ms().await;
                                 let composed = match &request {
                                     ChatComposeRequest::Text { body } => {
-                                        chat.compose_text(peer, client_token, body, now_ms)
+                                        chat.compose_text(conversation, client_token, body, now_ms)
                                     }
-                                    ChatComposeRequest::Edit { original, body } => chat
-                                        .compose_edit(peer, client_token, original, body, now_ms),
-                                    ChatComposeRequest::Delete { original } => {
-                                        chat.compose_delete(peer, client_token, original, now_ms)
-                                    }
+                                    ChatComposeRequest::Edit { original, body } => chat.compose_edit(
+                                        conversation,
+                                        client_token,
+                                        original,
+                                        body,
+                                        now_ms,
+                                    ),
+                                    ChatComposeRequest::Delete { original } => chat.compose_delete(
+                                        conversation,
+                                        client_token,
+                                        original,
+                                        now_ms,
+                                    ),
                                 };
                                 match composed {
                                     Ok(composed) => {
@@ -1870,7 +2167,10 @@ async fn run_worker(
                                     Err(()) => Err(MobileMeshError::ChatComposeFailed),
                                 }
                             } else {
-                                Err(MobileMeshError::OperationInProgress)
+                                // Either the address is malformed, or it names
+                                // a channel this session does not hold a key
+                                // for — from here those are the same thing.
+                                Err(MobileMeshError::UnknownConversation)
                             };
                             let _ = response.send(result);
                         }
@@ -1884,6 +2184,7 @@ async fn run_worker(
                                         &mut pending_chat_transmissions,
                                         &mut in_flight_chat,
                                         &chat_pipeline_ready,
+                                        &channel_registry,
                                         &mut chat,
                                         now_ms,
                                     )
@@ -1920,8 +2221,17 @@ async fn run_worker(
                                         );
                                     }
                                     publish_chat_drain(chat.drain(), &chat_events);
-                                    chat = MobileChatState::new(local_key);
-                                    chat.restore(&checkpoints, handle.now_ms().await);
+                                    chat = MobileChatState::new(
+                                        local_key,
+                                        channel_registry.clone(),
+                                    );
+                                    for diagnostic in
+                                        chat.restore(&checkpoints, handle.now_ms().await)
+                                    {
+                                        let _ = chat_events.send(
+                                            MobileChatWorkerEvent::Diagnostic(diagnostic),
+                                        );
+                                    }
                                     Ok(())
                                 }
                                 None => Err(MobileMeshError::ChatBatchMissing),
@@ -1966,6 +2276,7 @@ async fn run_worker(
                                     &mut pending_chat_transmissions,
                                     &mut in_flight_chat,
                                     &chat_pipeline_ready,
+                                    &channel_registry,
                                     &mut chat,
                                     now_ms,
                                 )
@@ -2013,18 +2324,68 @@ async fn run_worker(
                             Some(value) => value,
                             None => handle.now_ms().await,
                         };
-                        let envelope = Envelope {
-                            path: DeliveryPath::Unicast,
-                            conversation: ConversationKey::Direct { peer: text.peer },
-                            sender: SenderScope::Peer(text.peer),
+                        // The envelope's sender is what the engine keys a
+                        // stream by. A multicast member is always the claimed
+                        // hint, with the full key passed alongside: naming the
+                        // key here instead would split one member into two
+                        // streams the moment a frame omitted it.
+                        let (envelope, sender_full_key) = match text.source {
+                            InboundTextSource::Direct { peer } => (
+                                Envelope {
+                                    path: DeliveryPath::Unicast,
+                                    conversation: ConversationKey::Direct { peer },
+                                    sender: SenderScope::Peer(peer),
+                                },
+                                Some(peer),
+                            ),
+                            InboundTextSource::ChannelGroup {
+                                channel,
+                                hint,
+                                full_key,
+                            } => {
+                                if let Some(peer) = full_key {
+                                    if let Some(resolution) =
+                                        chat.resolve_member(channel, hint, peer)
+                                    {
+                                        let _ = chat_events.send(
+                                            MobileChatWorkerEvent::SenderResolution(resolution),
+                                        );
+                                    }
+                                }
+                                remember_member_route(
+                                    &mut member_routes,
+                                    channel,
+                                    hint,
+                                    &text.rx,
+                                );
+                                (
+                                    Envelope {
+                                        path: DeliveryPath::Multicast,
+                                        conversation: ConversationKey::ChannelGroup { channel },
+                                        sender: SenderScope::ClaimedMember(hint),
+                                    },
+                                    full_key,
+                                )
+                            }
+                            InboundTextSource::ChannelDirect { channel, peer } => (
+                                Envelope {
+                                    path: DeliveryPath::BlindUnicast,
+                                    conversation: ConversationKey::ChannelDirect { channel, peer },
+                                    sender: SenderScope::Peer(peer),
+                                },
+                                Some(peer),
+                            ),
                         };
                         let _ = chat.engine.receive(
                             &envelope,
-                            Some(text.peer),
+                            sender_full_key,
                             &text.payload,
                             received_at_ms,
                         );
-                        let drain = chat.drain();
+                        let mut drain = chat.drain();
+                        // This drain belongs to exactly one frame, so the
+                        // records it produced are the ones that frame caused.
+                        attach_rx_metadata(&mut drain.mutations, &text.rx);
                         let transmissions = drain.transmissions.clone();
                         publish_chat_drain(drain, &chat_events);
                         if !transmissions.is_empty() || !pending_chat_transmissions.is_empty() {
@@ -2034,6 +2395,7 @@ async fn run_worker(
                                 &mut pending_chat_transmissions,
                                 &mut in_flight_chat,
                                 &chat_pipeline_ready,
+                                &channel_registry,
                                 &mut chat,
                                 received_at_ms,
                             )
@@ -2065,6 +2427,7 @@ async fn run_worker(
                             &mut pending_chat_transmissions,
                             &mut in_flight_chat,
                             &chat_pipeline_ready,
+                            &channel_registry,
                             &mut chat,
                             now_ms,
                         )
@@ -2093,6 +2456,7 @@ async fn queue_chat_transmissions<M: MacBackend>(
     pending: &mut VecDeque<umsh_text::engine::Transmission>,
     in_flight: &mut Vec<InFlightChatTransmission>,
     pipeline_ready: &BTreeSet<[u8; 32]>,
+    channels: &Rc<RefCell<ChannelRegistry>>,
     chat: &mut MobileChatState,
     now_ms: u64,
 ) -> usize {
@@ -2105,35 +2469,77 @@ async fn queue_chat_transmissions<M: MacBackend>(
     }
     let mut queued = 0;
     while let Some(transmission) = pending.pop_front() {
-        let Some(peer) = transmission_peer(&transmission) else {
-            chat.engine.transmit_update(
-                transmission.transmission_id,
-                DeliveryState::Failed,
-                now_ms,
-            );
-            continue;
+        let gate_peer = match transmission.destination {
+            Destination::Peer(peer) => Some(peer),
+            // Multicast is unaddressed and blind unicast carries no ACK, so
+            // neither has a peer whose pipeline could be confirmed.
+            Destination::Channel(_) | Destination::ChannelPeer { .. } => None,
         };
-        if !pipeline_ready.contains(&peer.0) && in_flight.iter().any(|entry| entry.peer == peer) {
-            // First contact may require counter synchronization. Confirm one
-            // authenticated frame before opening this peer's full pipeline.
-            pending.push_front(transmission);
-            break;
+        if let Some(peer) = gate_peer {
+            if !pipeline_ready.contains(&peer.0)
+                && in_flight
+                    .iter()
+                    .any(|entry| entry.gate_peer == Some(peer))
+            {
+                // First contact may require counter synchronization. Confirm
+                // one authenticated frame before opening this peer's full
+                // pipeline.
+                pending.push_front(transmission);
+                break;
+            }
         }
         let mut payload = Vec::with_capacity(transmission.payload.len() + 1);
         payload.push(PayloadType::TextMessage as u8);
         payload.extend_from_slice(transmission.payload.as_slice());
-        let Ok(connection) = node.peer(peer).await else {
-            chat.engine.transmit_update(
-                transmission.transmission_id,
-                DeliveryState::Failed,
-                now_ms,
-            );
-            continue;
+        let sent = match transmission.destination {
+            Destination::Peer(peer) => match node.peer(peer).await {
+                Ok(connection) => {
+                    connection
+                        .send(&payload, &SendOptions::default().with_ack_requested(true))
+                        .await
+                }
+                Err(_) => {
+                    chat.engine.transmit_update(
+                        transmission.transmission_id,
+                        DeliveryState::Failed,
+                        now_ms,
+                    );
+                    continue;
+                }
+            },
+            Destination::Channel(channel) => {
+                let Some(bound) = bound_channel(node, channels, &channel) else {
+                    chat.engine.transmit_update(
+                        transmission.transmission_id,
+                        DeliveryState::Failed,
+                        now_ms,
+                    );
+                    continue;
+                };
+                // Carry the full source address: a member who misses a
+                // fragment can only ask us to resend it if our frames name
+                // the key to address that request to.
+                bound
+                    .send_all(&payload, &SendOptions::default().with_full_source())
+                    .await
+            }
+            Destination::ChannelPeer { channel, peer } => {
+                let Some(bound) = bound_channel(node, channels, &channel) else {
+                    chat.engine.transmit_update(
+                        transmission.transmission_id,
+                        DeliveryState::Failed,
+                        now_ms,
+                    );
+                    continue;
+                };
+                // A repair request; the engine owns retrying it, so no ACK is
+                // asked for here.
+                bound
+                    .send(&peer, &payload, &SendOptions::default().with_full_source())
+                    .await
+            }
         };
-        let ticket = match connection
-            .send(&payload, &SendOptions::default().with_ack_requested(true))
-            .await
-        {
+        let ticket = match sent {
             Ok(ticket) => ticket,
             Err(_) => {
                 // With a registered peer and an engine-bounded payload, the
@@ -2145,9 +2551,10 @@ async fn queue_chat_transmissions<M: MacBackend>(
         };
         in_flight.push(InFlightChatTransmission {
             transmission_id: transmission.transmission_id,
-            peer,
+            gate_peer,
             ticket,
             sent_reported: false,
+            non_ack: gate_peer.is_none(),
         });
         queued += 1;
         if in_flight.len() >= MOBILE_CHAT_TRANSMIT_WINDOW {
@@ -2155,6 +2562,83 @@ async fn queue_chat_transmissions<M: MacBackend>(
         }
     }
     queued
+}
+
+/// Solicit one channel member's identity over the channel they were heard on.
+///
+/// The request is a multicast every member receives but only the filtered hint
+/// answers. Routing follows the evidence that member's own frames left: their
+/// trace route if one was observed, otherwise a flood budget no larger than
+/// the distance they were last heard from.
+async fn request_identity_over_channel<M: MacBackend>(
+    node: &LocalNode<M>,
+    channels: &Rc<RefCell<ChannelRegistry>>,
+    channel: ChannelTag,
+    hint: NodeHint,
+    nonce: u32,
+    route: Option<MemberRoute>,
+) -> Result<(), MobileMeshError> {
+    let Some(bound) = bound_channel(node, channels, &channel) else {
+        return Err(MobileMeshError::UnknownConversation);
+    };
+    let options_block = umsh_node::mac_command::IdentityRequestBuilder::new()
+        .nonce(nonce)
+        .and_then(|builder| builder.filter_hint(&hint))
+        .map_err(|_| MobileMeshError::SendFailed)?
+        .build();
+    let cmd = umsh_node::MacCommand::IdentityRequest {
+        options: &options_block,
+    };
+    let mut frame = [0u8; 128];
+    frame[0] = PayloadType::MacCommand as u8;
+    let length = umsh_node::mac_command::encode(&cmd, &mut frame[1..])
+        .map_err(|_| MobileMeshError::SendFailed)?
+        + 1;
+    // Full source so the member can answer with a targeted unicast rather
+    // than another multicast.
+    let mut options = SendOptions::default().with_full_source();
+    match route.as_ref() {
+        Some(route) if !route.route_hints.is_empty() => {
+            let hops = route
+                .route_hints
+                .iter()
+                .filter_map(|hint| <[u8; 2]>::try_from(hint.as_slice()).ok())
+                .map(umsh_core::RouterHint)
+                .collect::<Vec<_>>();
+            // An over-long observed route is not a reason to fail the
+            // request; fall back to flooding at the distance it implies.
+            options = match options.try_with_source_route(&hops) {
+                Ok(options) => options,
+                Err(_) => SendOptions::default()
+                    .with_full_source()
+                    .with_flood_hops(route.hop_count.unwrap_or(5).max(1)),
+            };
+        }
+        Some(MemberRoute {
+            hop_count: Some(hops),
+            ..
+        }) => {
+            options = options.with_flood_hops((*hops).max(1));
+        }
+        _ => {}
+    }
+    bound
+        .send_all(&frame[..length], &options)
+        .await
+        .map(|_| ())
+        .map_err(|_| MobileMeshError::SendFailed)
+}
+
+/// Bind the channel a transmission names, so it can be sent over.
+fn bound_channel<M: MacBackend>(
+    node: &LocalNode<M>,
+    channels: &Rc<RefCell<ChannelRegistry>>,
+    channel: &ChannelTag,
+) -> Option<umsh_node::BoundChannel<M>> {
+    let key = channels.borrow().key(channel)?;
+    // Looked up per send rather than cached: leaving and rejoining a channel
+    // invalidates the binding, and the registry is the one place that knows.
+    node.bound_channel(&umsh_node::Channel::private(key, ""))
 }
 
 fn service_chat_tickets(
@@ -2171,8 +2655,15 @@ fn service_chat_tickets(
                 .transmit_update(entry.transmission_id, DeliveryState::Sent, now_ms);
             entry.sent_reported = true;
         }
-        if entry.ticket.was_acked() {
-            pipeline_ready.insert(entry.peer.0);
+        if entry.non_ack && entry.sent_reported {
+            // Nothing further can happen to this one: no acknowledgement is
+            // coming, so transmission is where it ends. Retiring it here is
+            // what keeps channel sends from accumulating in flight forever.
+            in_flight.swap_remove(index);
+        } else if entry.ticket.was_acked() {
+            if let Some(peer) = entry.gate_peer {
+                pipeline_ready.insert(peer.0);
+            }
             chat.engine
                 .transmit_update(entry.transmission_id, DeliveryState::Acked, now_ms);
             in_flight.swap_remove(index);
@@ -2199,14 +2690,75 @@ fn publish_chat_drain(
     for lookup in drain.lookups {
         let _ = events.send(MobileChatWorkerEvent::ArchiveLookup(lookup));
     }
+    for resolution in drain.resolutions {
+        let _ = events.send(MobileChatWorkerEvent::SenderResolution(resolution));
+    }
     for diagnostic in drain.diagnostics {
         let _ = events.send(MobileChatWorkerEvent::Diagnostic(diagnostic));
     }
 }
 
+/// Attach a frame's radio metadata to the records it produced.
+///
+/// The engine is transport-agnostic, so this is the only place the two are
+/// together. Only records describing received content carry it — an outbound
+/// echo or a placeholder has no frame behind it.
+fn attach_rx_metadata(
+    mutations: &mut [MobileChatMutationRecord],
+    rx: &MobileChatRxMetadataRecord,
+) {
+    for mutation in mutations {
+        let describes_receipt = match mutation.kind {
+            MobileChatMutationKind::Insert => {
+                mutation.direction == Some(MobileChatDirection::Inbound)
+                    && mutation.presence == MobileChatPresence::Present
+            }
+            MobileChatMutationKind::UpdateBody => true,
+            MobileChatMutationKind::Edit | MobileChatMutationKind::Delete => false,
+        };
+        if describes_receipt {
+            mutation.rx = Some(rx.clone());
+        }
+    }
+}
+
+/// Remember how a channel member was last reached, so a later request to them
+/// can be routed by evidence instead of by a default flood budget.
+fn remember_member_route(
+    routes: &mut BTreeMap<(ChannelTag, [u8; 3]), MemberRoute>,
+    channel: ChannelTag,
+    hint: NodeHint,
+    rx: &MobileChatRxMetadataRecord,
+) {
+    routes.insert(
+        (channel, hint.0),
+        MemberRoute {
+            hop_count: rx.hop_count,
+            route_hints: rx.route_hints.clone(),
+        },
+    );
+}
+
+/// What the last frame from a channel member showed about reaching them.
+#[derive(Clone)]
+struct MemberRoute {
+    hop_count: Option<u8>,
+    route_hints: Vec<Vec<u8>>,
+}
+
 fn decode_peer(address: &str) -> Result<PublicKey, MobileError> {
     let bytes = umsh_core::base58::decode(address.as_bytes())?;
     Ok(PublicKey(bytes))
+}
+
+fn decode_channel_keys(keys: Vec<Vec<u8>>) -> Result<Vec<ChannelKey>, MobileMeshError> {
+    keys.into_iter()
+        .map(|key| {
+            <[u8; 32]>::try_from(key.as_slice())
+                .map(ChannelKey)
+                .map_err(|_| MobileMeshError::InvalidChannelKey)
+        })
+        .collect()
 }
 
 /// The canonical fixed-width Base58 rendering of a peer key, matching what
@@ -2249,6 +2801,72 @@ mod tests {
 
     fn address(identity: &MobileIdentity) -> String {
         identity.public_identity.canonical_address.clone()
+    }
+
+    /// The 3-byte hint a node's multicast frames claim, which is the leading
+    /// bytes of its public key.
+    fn hint_of(identity: &MobileIdentity) -> Vec<u8> {
+        decode_peer(&address(identity)).unwrap().0[..3].to_vec()
+    }
+
+    async fn channel_session(name: &str) -> Arc<MobileMeshSession> {
+        let directory = tempfile::tempdir().unwrap();
+        let store = MobileCounterStore::new(directory.path().join(name).display().to_string())
+            .unwrap();
+        // The temp directory must outlive the session's counter store.
+        std::mem::forget(directory);
+        MobileMeshSession::new(identity(31), store).await.unwrap()
+    }
+
+    #[tokio::test]
+    async fn channel_registration_is_idempotent_and_reversible() {
+        let session = channel_session("channels").await;
+        let key = vec![0x5au8; 32];
+
+        session.register_channels(vec![key.clone()]).await.unwrap();
+        // Re-registering an already-joined channel restates the current
+        // state, which is what a session-start replay does.
+        session.register_channels(vec![key.clone()]).await.unwrap();
+        session.remove_channels(vec![key.clone()]).await.unwrap();
+        // Leaving a channel that is not joined is likewise not an error.
+        session.remove_channels(vec![key.clone()]).await.unwrap();
+        // And the key can come back afterwards.
+        session.register_channels(vec![key]).await.unwrap();
+    }
+
+    #[tokio::test]
+    async fn channel_keys_must_be_full_length() {
+        let session = channel_session("shortkey").await;
+        assert_eq!(
+            session.register_channels(vec![vec![0x01; 31]]).await,
+            Err(MobileMeshError::InvalidChannelKey)
+        );
+        assert_eq!(
+            session.remove_channels(vec![Vec::new()]).await,
+            Err(MobileMeshError::InvalidChannelKey)
+        );
+    }
+
+    #[tokio::test]
+    async fn the_phone_mac_holds_more_channels_than_the_embedded_default() {
+        let session = channel_session("capacity").await;
+        // Distinct keys, one per slot the phone advertises.
+        let keys: Vec<Vec<u8>> = (0..MOBILE_MAC_CHANNELS)
+            .map(|index| {
+                let mut key = vec![0u8; 32];
+                key[0] = index as u8;
+                key[1] = 0xA5;
+                key
+            })
+            .collect();
+        assert!(keys.len() > umsh_mac::DEFAULT_CHANNELS);
+        session.register_channels(keys).await.unwrap();
+
+        let overflow = vec![vec![0xFFu8; 32]];
+        assert_eq!(
+            session.register_channels(overflow).await,
+            Err(MobileMeshError::ChannelCapacity)
+        );
     }
 
     #[tokio::test]
@@ -2513,10 +3131,14 @@ mod tests {
             MobileCounterStore::new(directory.path().join("alice").display().to_string()).unwrap();
         let bob_store =
             MobileCounterStore::new(directory.path().join("bob").display().to_string()).unwrap();
-        let alice = MobileMeshSession::new(alice_identity.clone(), alice_store)
+        // Bob's reply is held for a random slice of the 30-second identity
+        // response window. Virtual time collapses that wait whenever his
+        // worker is otherwise idle, so the deadline below bounds the shuttle
+        // loop rather than the protocol delay.
+        let alice = MobileMeshSession::new_with_virtual_time(alice_identity.clone(), alice_store)
             .await
             .unwrap();
-        let bob = MobileMeshSession::new(bob_identity.clone(), bob_store)
+        let bob = MobileMeshSession::new_with_virtual_time(bob_identity.clone(), bob_store)
             .await
             .unwrap();
         // Bob answers under a display name; Alice should hear it back.
@@ -2527,8 +3149,6 @@ mod tests {
         alice.discover_identities(None, None).await.unwrap();
 
         // Shuttle frames both ways until Bob's identity lands at Alice.
-        // The reply is jittered by up to five seconds, so the deadline is
-        // generous.
         let bob_address = address(&bob_identity);
         let deadline = Instant::now() + Duration::from_secs(15);
         let event = 'outer: loop {
@@ -2993,7 +3613,7 @@ mod tests {
             .compose_text(address(&bob_identity), 77, "hello from Rust".to_owned())
             .await
             .unwrap();
-        assert_eq!(batch.checkpoint.peer_address, address(&bob_identity));
+        assert_eq!(batch.checkpoint.conversation_address, address(&bob_identity));
         assert!(!batch.archives.is_empty());
         assert_eq!(batch.mutations.len(), 1);
         assert_eq!(batch.mutations[0].body.as_deref(), Some("hello from Rust"));
@@ -3367,5 +3987,484 @@ mod tests {
             );
             std::thread::sleep(Duration::from_millis(5));
         }
+    }
+
+    /// A group message crosses two real sessions over a shared channel key.
+    ///
+    /// Multicast has no acknowledgement, so the sender's terminal state is
+    /// `Sent`; the receiver attributes the message to a claimed hint and,
+    /// because group sends carry the full source, resolves that hint to a
+    /// real address it can name.
+    #[tokio::test]
+    async fn a_channel_group_message_crosses_two_sessions() {
+        let directory = tempfile::tempdir().unwrap();
+        let alice_identity = identity(61);
+        let bob_identity = identity(62);
+        let alice = MobileMeshSession::new(
+            alice_identity.clone(),
+            MobileCounterStore::new(directory.path().join("ch-alice").display().to_string())
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+        let bob = MobileMeshSession::new(
+            bob_identity.clone(),
+            MobileCounterStore::new(directory.path().join("ch-bob").display().to_string()).unwrap(),
+        )
+        .await
+        .unwrap();
+
+        let key = vec![0x5Cu8; 32];
+        let conversation = crate::channel_conversation_address(key.clone()).unwrap();
+        assert!(conversation.starts_with("ch:"));
+        alice.register_channels(vec![key.clone()]).await.unwrap();
+        bob.register_channels(vec![key]).await.unwrap();
+
+        let batch = alice
+            .compose_text(conversation.clone(), 1, "regroup at the ridge".to_owned())
+            .await
+            .unwrap();
+        assert_eq!(batch.checkpoint.conversation_address, conversation);
+        alice.commit_chat_batch(batch.batch_id).await.unwrap();
+
+        let mut alice_states = Vec::new();
+        let mut received: Option<MobileChatMutationRecord> = None;
+        let mut resolution: Option<MobileChatSenderResolutionRecord> = None;
+        // The sender's delivery state lands on a later protocol tick than the
+        // receiver's transcript, so all three are waited for together.
+        let deadline = Instant::now() + Duration::from_secs(10);
+        while received.is_none()
+            || resolution.is_none()
+            || !alice_states.contains(&MobileChatDeliveryState::Sent)
+        {
+            let alice_update = alice.poll_update();
+            for frame in alice_update.outbound_frames {
+                alice.complete_outbound_frame(frame.id, true).unwrap();
+                bob.receive(MobileMeshRxRecord {
+                    data: frame.data,
+                    rssi_dbm: Some(-70),
+                    lqi: None,
+                    snr_cb: Some(60),
+                })
+                .unwrap();
+            }
+            alice_states.extend(
+                alice_update
+                    .chat_deliveries
+                    .iter()
+                    .map(|delivery| delivery.state),
+            );
+            if let Some(batch_id) = alice_update.chat_batch_id {
+                alice.acknowledge_chat_batch(batch_id).unwrap();
+            }
+
+            let bob_update = bob.poll_update();
+            for frame in bob_update.outbound_frames {
+                bob.complete_outbound_frame(frame.id, true).unwrap();
+            }
+            if let Some(record) = bob_update
+                .chat_mutations
+                .iter()
+                .find(|mutation| mutation.body.as_deref() == Some("regroup at the ridge"))
+            {
+                received = Some(record.clone());
+            }
+            if let Some(record) = bob_update.chat_sender_resolutions.first() {
+                resolution = Some(record.clone());
+            }
+            if let Some(batch_id) = bob_update.chat_batch_id {
+                bob.acknowledge_chat_batch(batch_id).unwrap();
+            }
+            assert!(
+                Instant::now() < deadline,
+                "group message incomplete (mutation: {}, resolution: {}, states: {alice_states:?})",
+                received.is_some(),
+                resolution.is_some()
+            );
+            std::thread::sleep(Duration::from_millis(5));
+        }
+
+        let received = received.unwrap();
+        assert_eq!(received.conversation_address.as_deref(), Some(&conversation[..]));
+        assert_eq!(received.direction, Some(MobileChatDirection::Inbound));
+        // The hint is what the wire carried; the address is what the full
+        // source let the facade resolve it to.
+        assert_eq!(
+            received.sender_hint.as_deref(),
+            Some(&hint_of(&alice_identity)[..])
+        );
+        assert_eq!(
+            received.sender_address.as_deref(),
+            Some(&address(&alice_identity)[..])
+        );
+        let rx = received.rx.expect("a received frame carries radio metadata");
+        assert_eq!(rx.rssi_dbm, Some(-70));
+        assert_eq!(rx.snr_centibels, Some(60));
+        // Heard directly off the air: no repeater carried it, so nothing
+        // accumulated.
+        assert_eq!(rx.hop_count, Some(0));
+
+        let resolution = resolution.unwrap();
+        assert_eq!(resolution.conversation_address, conversation);
+        assert_eq!(resolution.sender_hint, hint_of(&alice_identity));
+        assert_eq!(resolution.sender_address, address(&alice_identity));
+
+        // Nothing acknowledges a multicast, so `Sent` is where it ends.
+        assert!(alice_states.contains(&MobileChatDeliveryState::Sent));
+        assert!(!alice_states.contains(&MobileChatDeliveryState::Acknowledged));
+    }
+
+    /// A repeater's copy of our own group message is not a second message.
+    ///
+    /// Every multicast send carries our full source address so strangers can
+    /// address repairs to us, which means a relayed copy comes back naming us
+    /// as the sender. Feeding that to the transcript would show the user
+    /// their own message twice — once as sent, once as received from
+    /// themselves.
+    #[tokio::test]
+    async fn a_relayed_copy_of_our_own_group_message_is_not_transcribed() {
+        let directory = tempfile::tempdir().unwrap();
+        let identity = identity(67);
+        let session = MobileMeshSession::new(
+            identity.clone(),
+            MobileCounterStore::new(directory.path().join("echo").display().to_string()).unwrap(),
+        )
+        .await
+        .unwrap();
+
+        let key = vec![0x3Eu8; 32];
+        let conversation = crate::channel_conversation_address(key.clone()).unwrap();
+        session.register_channels(vec![key]).await.unwrap();
+
+        let batch = session
+            .compose_text(conversation.clone(), 1, "anyone out there".to_owned())
+            .await
+            .unwrap();
+        session.commit_chat_batch(batch.batch_id).await.unwrap();
+
+        // Feed every frame the session emits straight back into it, which is
+        // exactly what a repeater in range does.
+        let deadline = Instant::now() + Duration::from_secs(10);
+        let mut echoed = 0;
+        let mut inbound = Vec::new();
+        while echoed == 0 || Instant::now() < deadline.min(Instant::now() + Duration::from_millis(1))
+        {
+            let update = session.poll_update();
+            for frame in update.outbound_frames {
+                session.complete_outbound_frame(frame.id, true).unwrap();
+                session
+                    .receive(MobileMeshRxRecord {
+                        data: frame.data,
+                        rssi_dbm: Some(-60),
+                        lqi: None,
+                        snr_cb: Some(70),
+                    })
+                    .unwrap();
+                echoed += 1;
+            }
+            inbound.extend(
+                update
+                    .chat_mutations
+                    .iter()
+                    .filter(|mutation| mutation.direction == Some(MobileChatDirection::Inbound))
+                    .cloned(),
+            );
+            if let Some(batch_id) = update.chat_batch_id {
+                session.acknowledge_chat_batch(batch_id).unwrap();
+            }
+            if echoed > 0 && Instant::now() > deadline {
+                break;
+            }
+            std::thread::sleep(Duration::from_millis(5));
+            if echoed > 0 {
+                // Give the echo every chance to be (wrongly) transcribed.
+                for _ in 0..20 {
+                    let update = session.poll_update();
+                    inbound.extend(
+                        update
+                            .chat_mutations
+                            .iter()
+                            .filter(|mutation| {
+                                mutation.direction == Some(MobileChatDirection::Inbound)
+                            })
+                            .cloned(),
+                    );
+                    if let Some(batch_id) = update.chat_batch_id {
+                        session.acknowledge_chat_batch(batch_id).unwrap();
+                    }
+                    std::thread::sleep(Duration::from_millis(5));
+                }
+                break;
+            }
+        }
+
+        assert!(echoed > 0, "the session never transmitted the message");
+        assert!(
+            inbound.is_empty(),
+            "our own relayed message was transcribed as inbound: {inbound:?}"
+        );
+    }
+
+    /// Composing needs a channel this session actually holds: an address for
+    /// an unregistered key, and an address for a channel that was left, are
+    /// both refused rather than silently sent nowhere.
+    #[tokio::test]
+    async fn composing_to_an_unheld_channel_is_refused() {
+        let directory = tempfile::tempdir().unwrap();
+        let session = MobileMeshSession::new(
+            identity(63),
+            MobileCounterStore::new(directory.path().join("unheld").display().to_string()).unwrap(),
+        )
+        .await
+        .unwrap();
+
+        let key = vec![0x77u8; 32];
+        let conversation = crate::channel_conversation_address(key.clone()).unwrap();
+        assert_eq!(
+            session
+                .compose_text(conversation.clone(), 1, "hello".to_owned())
+                .await,
+            Err(MobileMeshError::UnknownConversation)
+        );
+
+        session.register_channels(vec![key.clone()]).await.unwrap();
+        let batch = session
+            .compose_text(conversation.clone(), 2, "hello".to_owned())
+            .await
+            .expect("a joined channel composes");
+        // Rejected rather than committed: this test is about which addresses
+        // resolve, and an uncommitted batch would block the next compose.
+        session
+            .reject_chat_batch(batch.batch_id, Vec::new())
+            .await
+            .unwrap();
+
+        session.remove_channels(vec![key]).await.unwrap();
+        assert_eq!(
+            session.compose_text(conversation, 3, "hello".to_owned()).await,
+            Err(MobileMeshError::UnknownConversation)
+        );
+    }
+
+    /// A malformed conversation address is rejected the same way, rather than
+    /// being taken for a peer address and failing somewhere less obvious.
+    #[tokio::test]
+    async fn a_malformed_conversation_address_is_refused() {
+        let directory = tempfile::tempdir().unwrap();
+        let session = MobileMeshSession::new(
+            identity(64),
+            MobileCounterStore::new(directory.path().join("malformed").display().to_string())
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+        for address in ["ch:not-hex", "ch:0011", "definitely not base58 !!"] {
+            assert_eq!(
+                session
+                    .compose_text(address.to_owned(), 1, "hello".to_owned())
+                    .await,
+                Err(MobileMeshError::UnknownConversation),
+                "{address} should not resolve to a conversation"
+            );
+        }
+    }
+
+    /// Direct chat keeps working, and now reports the radio metadata of the
+    /// frame each inbound message arrived on.
+    #[tokio::test]
+    async fn direct_chat_still_delivers_and_now_carries_radio_metadata() {
+        let directory = tempfile::tempdir().unwrap();
+        let alice_identity = identity(65);
+        let bob_identity = identity(66);
+        let alice = MobileMeshSession::new(
+            alice_identity.clone(),
+            MobileCounterStore::new(directory.path().join("dm-alice").display().to_string())
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+        let bob = MobileMeshSession::new(
+            bob_identity.clone(),
+            MobileCounterStore::new(directory.path().join("dm-bob").display().to_string()).unwrap(),
+        )
+        .await
+        .unwrap();
+        let bob_address = address(&bob_identity);
+        alice.register_peers(vec![bob_address.clone()]).await.unwrap();
+        bob.register_peers(vec![address(&alice_identity)])
+            .await
+            .unwrap();
+
+        let batch = alice
+            .compose_text(bob_address.clone(), 1, "still here".to_owned())
+            .await
+            .unwrap();
+        assert_eq!(batch.checkpoint.conversation_address, bob_address);
+        alice.commit_chat_batch(batch.batch_id).await.unwrap();
+
+        let deadline = Instant::now() + Duration::from_secs(10);
+        let received = loop {
+            let alice_update = alice.poll_update();
+            for frame in alice_update.outbound_frames {
+                alice.complete_outbound_frame(frame.id, true).unwrap();
+                bob.receive(MobileMeshRxRecord {
+                    data: frame.data,
+                    rssi_dbm: Some(-55),
+                    lqi: None,
+                    snr_cb: Some(75),
+                })
+                .unwrap();
+            }
+            if let Some(batch_id) = alice_update.chat_batch_id {
+                alice.acknowledge_chat_batch(batch_id).unwrap();
+            }
+            let bob_update = bob.poll_update();
+            for frame in bob_update.outbound_frames {
+                bob.complete_outbound_frame(frame.id, true).unwrap();
+                alice
+                    .receive(MobileMeshRxRecord {
+                        data: frame.data,
+                        rssi_dbm: Some(-55),
+                        lqi: None,
+                        snr_cb: Some(75),
+                    })
+                    .unwrap();
+            }
+            let found = bob_update
+                .chat_mutations
+                .iter()
+                .find(|mutation| mutation.body.as_deref() == Some("still here"))
+                .cloned();
+            if let Some(batch_id) = bob_update.chat_batch_id {
+                bob.acknowledge_chat_batch(batch_id).unwrap();
+            }
+            if let Some(found) = found {
+                break found;
+            }
+            assert!(Instant::now() < deadline, "the direct message never arrived");
+            std::thread::sleep(Duration::from_millis(5));
+        };
+
+        assert_eq!(
+            received.conversation_address.as_deref(),
+            Some(&address(&alice_identity)[..])
+        );
+        // A direct sender is individually authenticated, so there is no hint
+        // standing in for an identity.
+        assert_eq!(received.sender_hint, None);
+        assert_eq!(
+            received.sender_address.as_deref(),
+            Some(&address(&alice_identity)[..])
+        );
+        let rx = received.rx.expect("a received frame carries radio metadata");
+        assert_eq!(rx.rssi_dbm, Some(-55));
+        assert_eq!(rx.snr_centibels, Some(75));
+        assert!(rx.source_authenticated);
+    }
+
+    /// A fragmented group message must arrive whole.
+    ///
+    /// Multicast is never acknowledged, so nothing downstream may treat an ack
+    /// as the signal to release the next fragment: every fragment has to reach
+    /// the air on transmission alone.
+    #[tokio::test]
+    async fn a_fragmented_channel_group_message_arrives_whole() {
+        let directory = tempfile::tempdir().unwrap();
+        let alice_identity = identity(71);
+        let bob_identity = identity(72);
+        let alice = MobileMeshSession::new(
+            alice_identity.clone(),
+            MobileCounterStore::new(directory.path().join("frag-alice").display().to_string())
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+        let bob = MobileMeshSession::new(
+            bob_identity.clone(),
+            MobileCounterStore::new(directory.path().join("frag-bob").display().to_string())
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+
+        let key = vec![0x9Au8; 32];
+        let conversation = crate::channel_conversation_address(key.clone()).unwrap();
+        alice.register_channels(vec![key.clone()]).await.unwrap();
+        bob.register_channels(vec![key]).await.unwrap();
+
+        // Comfortably past a single frame, so the engine must fragment.
+        let body: String = (0..600).map(|index| char::from(b'a' + (index % 26) as u8)).collect();
+        let batch = alice
+            .compose_text(conversation.clone(), 1, body.clone())
+            .await
+            .unwrap();
+        let fragments = batch.mutations[0].fragment_count.unwrap();
+        assert!(fragments > 1, "the test body must fragment, got {fragments}");
+        alice.commit_chat_batch(batch.batch_id).await.unwrap();
+
+        let mut transmitted = 0;
+        let mut repairs = 0;
+        let mut assembled: Option<String> = None;
+        let deadline = Instant::now() + Duration::from_secs(15);
+        while assembled.as_deref() != Some(body.as_str()) {
+            let alice_update = alice.poll_update();
+            for frame in alice_update.outbound_frames {
+                alice.complete_outbound_frame(frame.id, true).unwrap();
+                transmitted += 1;
+                bob.receive(MobileMeshRxRecord {
+                    data: frame.data,
+                    rssi_dbm: Some(-70),
+                    lqi: None,
+                    snr_cb: Some(60),
+                })
+                .unwrap();
+            }
+            if let Some(batch_id) = alice_update.chat_batch_id {
+                alice.acknowledge_chat_batch(batch_id).unwrap();
+            }
+
+            let bob_update = bob.poll_update();
+            for frame in bob_update.outbound_frames {
+                bob.complete_outbound_frame(frame.id, true).unwrap();
+                // Bob has nothing to say on his own account: anything he
+                // transmits is a request to have a fragment resent.
+                repairs += 1;
+                alice
+                    .receive(MobileMeshRxRecord {
+                        data: frame.data,
+                        rssi_dbm: Some(-70),
+                        lqi: None,
+                        snr_cb: Some(60),
+                    })
+                    .unwrap();
+            }
+            for mutation in &bob_update.chat_mutations {
+                if let Some(text) = mutation.body.as_deref() {
+                    assembled = Some(text.to_owned());
+                }
+            }
+            if let Some(batch_id) = bob_update.chat_batch_id {
+                bob.acknowledge_chat_batch(batch_id).unwrap();
+            }
+            assert!(
+                Instant::now() < deadline,
+                "fragmented group message never completed \
+                 ({transmitted} frame(s) transmitted of {fragments}, \
+                 assembled {:?})",
+                assembled.as_ref().map(|text| text.len())
+            );
+            std::thread::sleep(Duration::from_millis(5));
+        }
+
+        // Every fragment reached the air off the original send. Had the
+        // sender stalled waiting for an acknowledgement that a multicast
+        // never produces, the message could only have completed through
+        // Bob asking for the rest — so a repair here would mean the
+        // transmit path is ack-gated even though the transcript recovered.
+        assert!(
+            transmitted >= usize::from(fragments),
+            "only {transmitted} of {fragments} fragment(s) were transmitted"
+        );
+        assert_eq!(repairs, 0, "the message needed {repairs} repair request(s)");
     }
 }

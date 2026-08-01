@@ -3,7 +3,7 @@
 
 #![cfg(feature = "std")]
 
-use umsh_core::{ChannelId, NodeHint, PublicKey};
+use umsh_core::{ChannelTag, NodeHint, PublicKey};
 use umsh_text::codec;
 use umsh_text::engine::sequence::MessageHandle;
 use umsh_text::engine::{
@@ -18,7 +18,9 @@ use umsh_text::{
 
 const LOCAL: PublicKey = PublicKey([0xAA; 32]);
 const PEER: PublicKey = PublicKey([0x11; 32]);
-const CHANNEL: ChannelId = ChannelId([0x01, 0x02]);
+const CHANNEL: ChannelTag = ChannelTag([
+    0x01, 0x02, 0x03, 0x04, 0x05, 0x06, 0x07, 0x08, 0x09, 0x0A, 0x0B, 0x0C, 0x0D, 0x0E, 0x0F, 0x10,
+]);
 const MEMBER_HINT: NodeHint = NodeHint([0x33, 0x44, 0x55]);
 
 type TestEngine = Engine<DirectChannelProfile, 4, 24>;

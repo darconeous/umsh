@@ -58,6 +58,12 @@ pub trait MacBackend: Clone {
         &self,
         name: &str,
     ) -> Result<(), MacBackendError<Self::SendError, Self::CapacityError>>;
+    /// Remove a channel and its replay state, reporting whether it was
+    /// registered.
+    async fn remove_channel(&self, key: &ChannelKey) -> bool {
+        let _ = key;
+        false
+    }
     /// Queue a broadcast frame.
     async fn send_broadcast(
         &self,
@@ -222,6 +228,10 @@ impl<
                 MacBackendError::InvalidChannelName(reason)
             }
         })
+    }
+
+    async fn remove_channel(&self, key: &ChannelKey) -> bool {
+        self.remove_channel(key).await
     }
 
     async fn send_broadcast(

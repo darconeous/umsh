@@ -382,8 +382,9 @@ pub async fn dev_sync_loop<CS: CounterStore + 'static>(
                 continue;
             }
             let key = applied.swap_remove(index);
-            let _ = node.leave(&umsh_node::Channel::private(ChannelKey(key), ""));
-            mac.remove_channel(&ChannelKey(key)).await;
+            let _ = node
+                .leave(&umsh_node::Channel::private(ChannelKey(key), ""))
+                .await;
             debug_log(format_args!(
                 "node dev-sync: channel {:02x}{:02x}.. removed",
                 key[0], key[1]

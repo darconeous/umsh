@@ -9,6 +9,8 @@ actor FakeRadioConnection: RadioConnection {
     /// Lets a preview exercise reset: the canned route is reported once and
     /// then reads as forgotten, as a real one would.
     private var routeCleared = false
+    /// Stands in for the phone MAC's channel table.
+    private var registeredChannelKeys: Set<Data> = []
 
     init(snapshot: RadioSnapshot = .previewReady) {
         self.snapshot = snapshot
@@ -170,6 +172,57 @@ actor FakeRadioConnection: RadioConnection {
         }
     }
 
+    func addDeviceChannel(_ channelKey: Data) async throws {
+        try mutateDeviceChannels(channelKey) { identifiers, identifier in
+            guard !identifiers.contains(identifier) else { return }
+            guard identifiers.count < deviceChannelCapacity else {
+                throw DevicePeerError.deviceFull
+            }
+            identifiers.append(identifier)
+        }
+    }
+
+    func removeDeviceChannel(_ channelKey: Data) async throws {
+        try mutateDeviceChannels(channelKey) { identifiers, identifier in
+            identifiers.removeAll { $0 == identifier }
+        }
+    }
+
+    func registerChannels(_ channelKeys: [Data]) async throws {
+        registeredChannelKeys.formUnion(channelKeys)
+    }
+
+    func removeChannels(_ channelKeys: [Data]) async throws {
+        registeredChannelKeys.subtract(channelKeys)
+    }
+
+    func reconcileHostChannels(_ channelKeys: [Data]) async throws {
+        guard var provisioning = snapshot.provisioning, provisioning.supportsHostKeys else {
+            return
+        }
+        provisioning.hostChannelCount = channelKeys.count
+        var updated = snapshot
+        updated.provisioning = provisioning
+        publish(updated)
+    }
+
+    private func mutateDeviceChannels(
+        _ channelKey: Data,
+        _ mutate: (inout [Data], Data) throws -> Void
+    ) rethrows {
+        guard var provisioning = snapshot.provisioning,
+              provisioning.supportsDeviceIdentity
+        else { return }
+        // The device reports identifiers, never keys.
+        let identifier = (try? deriveChannelId(key: channelKey)) ?? Data(channelKey.prefix(2))
+        var identifiers = provisioning.devChannelIDs ?? []
+        try mutate(&identifiers, identifier)
+        provisioning.devChannelIDs = identifiers
+        var updated = snapshot
+        updated.provisioning = provisioning
+        publish(updated)
+    }
+
     private func mutateDevicePeers(
         _ publicKey: Data,
         _ mutate: (inout [String], String) throws -> Void
@@ -227,8 +280,12 @@ actor FakeRadioConnection: RadioConnection {
 
     func removeChatPeers(_ peerAddresses: [String]) async throws {}
 
+    func requestIdentityByHint(conversationAddress: String, hint: Data) async throws {}
+
+    func setChatDisplayName(_ name: String) async throws {}
+
     func composeText(
-        peerAddress: String,
+        conversationAddress: String,
         clientToken: UInt32,
         body: String
     ) async throws -> MobileChatComposeBatchRecord {
@@ -236,7 +293,7 @@ actor FakeRadioConnection: RadioConnection {
     }
 
     func composeEdit(
-        peerAddress: String,
+        conversationAddress: String,
         clientToken: UInt32,
         original: MobileChatOriginalRef,
         body: String
@@ -245,7 +302,7 @@ actor FakeRadioConnection: RadioConnection {
     }
 
     func composeDelete(
-        peerAddress: String,
+        conversationAddress: String,
         clientToken: UInt32,
         original: MobileChatOriginalRef
     ) async throws -> MobileChatComposeBatchRecord {

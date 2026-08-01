@@ -231,7 +231,7 @@ struct RadioProvisioningSummary: Equatable, Sendable {
     let queuedFrames: Int?
     let droppedFrames: UInt32?
     let filterCount: Int?
-    let hostChannelCount: Int?
+    var hostChannelCount: Int?
     let hostPeerCount: Int?
     let autoAcknowledgementEnabled: Bool?
     /// Whether the radio has a device identity domain of its own
@@ -241,11 +241,23 @@ struct RadioProvisioningSummary: Equatable, Sendable {
     /// identity, read back losslessly. Present exactly when
     /// `supportsDeviceIdentity`; the device is the authority.
     var devPeerAddresses: [String]? = nil
+    /// Two-octet identifiers of the channels the radio's device identity has
+    /// joined. Present exactly when `supportsDeviceIdentity`. Key material is
+    /// never read back, so naming these means deriving identifiers from keys
+    /// the phone holds; one that matches nothing is a channel the radio knows
+    /// and this phone does not.
+    var devChannelIDs: [Data]? = nil
+    /// Whether the radio keeps key tables on the phone identity's behalf
+    /// (`CAP_HOST_KEYS`), which is what host channel reconciliation needs.
+    var supportsHostKeys: Bool = false
 }
 
 /// Capacity of a radio's device-identity peer list, for labels only —
 /// the device's own `NOMEM` stays authoritative.
 let devicePeerCapacity = Int(ulcpMaxDevPeers())
+
+/// Capacity of a radio's device-identity channel list, for labels only.
+let deviceChannelCapacity = Int(ulcpMaxDevChannels())
 
 extension SavedSnapshotRecord {
     /// One-line answer to "is this radio armed for restart?".

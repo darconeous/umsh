@@ -13,11 +13,11 @@ import UserNotifications
 /// message with the app backgrounded banners normally.
 final class ChatNotificationService: NSObject, UNUserNotificationCenterDelegate, @unchecked Sendable {
     private static let logger = Logger(subsystem: "com.umsh.ios", category: "Notifications")
-    private static let peerAddressKey = "umsh.peerAddress"
+    private static let conversationAddressKey = "umsh.conversationAddress"
 
     /// Peer address of the conversation currently on screen, if any.
     /// Read from the delegate callbacks; written by the UI on navigation.
-    private let visiblePeerAddress = OSAllocatedUnfairLock<String?>(initialState: nil)
+    private let visibleConversation = OSAllocatedUnfairLock<String?>(initialState: nil)
 
     /// Peer addresses of tapped message notifications, newest-wins. The UI
     /// consumes this stream and routes to the conversation.
@@ -34,17 +34,17 @@ final class ChatNotificationService: NSObject, UNUserNotificationCenterDelegate,
         UNUserNotificationCenter.current().delegate = self
     }
 
-    func setVisibleConversation(peerAddress: String?) {
-        visiblePeerAddress.withLock { $0 = peerAddress }
+    func setVisibleConversation(conversationAddress: String?) {
+        visibleConversation.withLock { $0 = conversationAddress }
     }
 
     /// Clear only if this conversation is still the visible one. When the
     /// user switches transcripts, the new view's appearance can precede the
     /// old view's disappearance; the stale disappearance must not erase the
     /// fresh state.
-    func clearVisibleConversation(ifMatching peerAddress: String) {
-        visiblePeerAddress.withLock { visible in
-            if visible == peerAddress {
+    func clearVisibleConversation(ifMatching conversationAddress: String) {
+        visibleConversation.withLock { visible in
+            if visible == conversationAddress {
                 visible = nil
             }
         }
@@ -71,13 +71,25 @@ final class ChatNotificationService: NSObject, UNUserNotificationCenterDelegate,
     }
 
     /// Post a notification for a durably persisted inbound message.
-    func postInboundMessage(peerAddress: String, displayName: String, body: String) {
+    ///
+    /// `sender` names who sent it within a group conversation, where the
+    /// title is the channel and the body alone would not say who is talking.
+    /// A direct message needs no sender: the title already is one.
+    func postInboundMessage(
+        conversationAddress: String,
+        displayName: String,
+        sender: String?,
+        body: String
+    ) {
         let content = UNMutableNotificationContent()
         content.title = displayName
+        if let sender {
+            content.subtitle = sender
+        }
         content.body = body
         content.sound = .default
-        content.threadIdentifier = peerAddress
-        content.userInfo = [Self.peerAddressKey: peerAddress]
+        content.threadIdentifier = conversationAddress
+        content.userInfo = [Self.conversationAddressKey: conversationAddress]
         let request = UNNotificationRequest(
             identifier: UUID().uuidString,
             content: content,
@@ -97,10 +109,10 @@ final class ChatNotificationService: NSObject, UNUserNotificationCenterDelegate,
         willPresent notification: UNNotification,
         withCompletionHandler completionHandler: @escaping (UNNotificationPresentationOptions) -> Void
     ) {
-        let peerAddress = notification.request.content
-            .userInfo[Self.peerAddressKey] as? String
-        let visible = visiblePeerAddress.withLock { $0 }
-        if let peerAddress, peerAddress == visible {
+        let conversationAddress = notification.request.content
+            .userInfo[Self.conversationAddressKey] as? String
+        let visible = visibleConversation.withLock { $0 }
+        if let conversationAddress, conversationAddress == visible {
             // The transcript is on screen; the message is already visible.
             completionHandler([])
         } else {
@@ -113,10 +125,10 @@ final class ChatNotificationService: NSObject, UNUserNotificationCenterDelegate,
         didReceive response: UNNotificationResponse,
         withCompletionHandler completionHandler: @escaping () -> Void
     ) {
-        let peerAddress = response.notification.request.content
-            .userInfo[Self.peerAddressKey] as? String
-        if let peerAddress {
-            conversationOpenContinuation.yield(peerAddress)
+        let conversationAddress = response.notification.request.content
+            .userInfo[Self.conversationAddressKey] as? String
+        if let conversationAddress {
+            conversationOpenContinuation.yield(conversationAddress)
         }
         completionHandler()
     }

@@ -1,3 +1,4 @@
+import CryptoKit
 import SwiftUI
 import OSLog
 import UIKit
@@ -14,8 +15,15 @@ struct AppRootView: View {
     @State private var isLoadingIdentity = true
     @State private var peers: [PeerSummary] = []
     @State private var conversations: [DirectConversationSummary] = []
+    @State private var channelConversations: [ChannelConversationSummary] = []
+    @State private var channels: [ChannelSummary] = []
+    /// Channels the radio's device identity holds that this phone has no key
+    /// for, so they can be shown as present without being named.
+    @State private var unknownDeviceChannels: [UnknownDeviceChannel] = []
     @State private var openedConversation: DirectConversationSummary?
+    @State private var openedChannelConversation: ChannelConversationSummary?
     @State private var incomingPeerImport: IncomingPeerImport?
+    @State private var incomingChannelImport: IncomingChannelImport?
     @State private var advertisedName = ""
     /// Whether this phone answers nearby nodes' identity requests. The
     /// preference outlives the mesh session, which starts discoverable, so
@@ -28,6 +36,7 @@ struct AppRootView: View {
 
     private let meshEngine: RustMeshEngine
     private let identityVault: KeychainIdentityVault
+    private let channelKeyVault = KeychainChannelKeyVault()
     private let applicationStore: SQLiteApplicationStore?
     /// Why ``applicationStore`` is nil, when it is. Every store call site
     /// degrades to a silent no-op without one, which renders as an account
@@ -80,6 +89,32 @@ struct AppRootView: View {
         )
     }
 
+    /// The channel operations the Channels tab is built from, assembled here
+    /// for the same reason as `peerActions`.
+    private var channelActions: ChannelActions {
+        ChannelActions(
+            preview: previewChannel,
+            join: joinChannel,
+            rejoin: { channel in
+                await setChannelPhoneMembership(channel, joined: true)
+            },
+            leave: leaveChannel,
+            createPrivate: createPrivateChannel,
+            updateDetails: updateChannelDetails,
+            setDeviceMembership: setChannelDeviceMembership,
+            invitation: channelInvitation,
+            revealKey: { channel in
+                try? await channelKeyVault.loadKey(channelID: channel.id)
+            },
+            enterConversation: { channel in
+                openedChannelConversation = await startChannelConversation(channel)
+                selectedTab = .conversations
+            },
+            parseRegion: { text in try? await meshEngine.regionCode(from: text) },
+            describeRegion: { code in try? await meshEngine.regionDescription(code) }
+        )
+    }
+
     var body: some View {
         if let applicationStoreError {
             // Deliberately replaces the whole interface rather than banner-ing
@@ -97,16 +132,29 @@ struct AppRootView: View {
         TabView(selection: $selectedTab) {
             NavigationStack {
                 ConversationsView(
+                    items: conversationItems,
                     conversations: $conversations,
+                    channels: channels,
+                    peers: peers,
                     radioSnapshot: radioSnapshot,
                     inspectPeerIdentity: inspectPeerIdentity,
                     savePeer: savePeer,
                     updateDraft: updateDraft,
+                    updateChannelDraft: updateChannelDraft,
                     sendMessage: sendMessage,
                     messageActions: ChatMessageActions(edit: editMessage, delete: deleteMessage),
                     deleteConversation: deleteConversation,
                     peerActions: peerActions,
-                    openedConversation: $openedConversation
+                    channelActions: ChannelConversationActions(
+                        start: startChannelConversation,
+                        startAfterJoin: startConversationAfterJoin,
+                        delete: deleteChannelConversation,
+                        requestMemberIdentity: requestMemberIdentity
+                    ),
+                    channelImportActions: channelActions,
+                    markRead: markConversationRead,
+                    openedConversation: $openedConversation,
+                    openedChannelConversation: $openedChannelConversation
                 )
                     .appRadioToolbar(radioSnapshot) {
                         showsRadioDetail = true
@@ -118,7 +166,7 @@ struct AppRootView: View {
             .tag(AppTab.conversations)
 
             NavigationStack {
-                NetworkView(
+                PeersView(
                     radioSnapshot: $radioSnapshot,
                     conversations: $conversations,
                     peers: peers,
@@ -132,7 +180,9 @@ struct AppRootView: View {
                     },
                     peerActions: peerActions,
                     updateDraft: updateDraft,
-                    sendMessage: sendMessage,
+                    sendMessage: { conversation, body in
+                        await sendMessage(.direct(conversation), body)
+                    },
                     messageActions: ChatMessageActions(edit: editMessage, delete: deleteMessage),
                     advertiseIdentity: advertiseIdentity,
                     advertisedName: advertisedName,
@@ -144,9 +194,9 @@ struct AppRootView: View {
                     }
             }
             .tabItem {
-                Label("Network", systemImage: "point.3.connected.trianglepath.dotted")
+                Label("Peers", systemImage: "point.3.connected.trianglepath.dotted")
             }
-            .tag(AppTab.network)
+            .tag(AppTab.peers)
 
             NavigationStack {
                 SettingsView(
@@ -182,8 +232,13 @@ struct AppRootView: View {
                     peerActions: peerActions,
                     conversations: $conversations,
                     updateDraft: updateDraft,
-                    sendMessage: sendMessage,
-                    messageActions: ChatMessageActions(edit: editMessage, delete: deleteMessage)
+                    sendMessage: { conversation, body in
+                        await sendMessage(.direct(conversation), body)
+                    },
+                    messageActions: ChatMessageActions(edit: editMessage, delete: deleteMessage),
+                    channels: channels,
+                    unknownDeviceChannels: unknownDeviceChannels,
+                    channelActions: channelActions
                 )
                     .appRadioToolbar(radioSnapshot) {
                         showsRadioDetail = true
@@ -196,7 +251,23 @@ struct AppRootView: View {
         }
         .onOpenURL { url in
             guard url.scheme?.lowercased() == "umsh" else { return }
-            incomingPeerImport = IncomingPeerImport(uri: url.absoluteString)
+            let uri = url.absoluteString
+            // `cs:` and `ck:` are channels; everything else stays on the peer
+            // path, which also handles bare addresses and unknown forms.
+            let isChannel = ["umsh:cs:", "umsh:ck:"].contains {
+                uri.lowercased().hasPrefix($0)
+            }
+            if isChannel {
+                incomingChannelImport = IncomingChannelImport(uri: uri)
+                selectedTab = .settings
+            } else {
+                incomingPeerImport = IncomingPeerImport(uri: uri)
+            }
+        }
+        .sheet(item: $incomingChannelImport) { item in
+            NavigationStack {
+                ChannelJoinView(actions: channelActions, initialInput: item.uri)
+            }
         }
         .sheet(item: $incomingPeerImport) { item in
             NavigationStack {
@@ -237,7 +308,9 @@ struct AppRootView: View {
                     peerActions: peerActions,
                     conversations: $conversations,
                     updateDraft: updateDraft,
-                    sendMessage: sendMessage,
+                    sendMessage: { conversation, body in
+                        await sendMessage(.direct(conversation), body)
+                    },
                     messageActions: ChatMessageActions(edit: editMessage, delete: deleteMessage)
                 )
             }
@@ -261,6 +334,8 @@ struct AppRootView: View {
                     notificationService.requestAuthorizationIfNeeded()
                 }
                 await synchronizeRadioPeer(from: snapshot)
+                await synchronizeRadioChannels(from: snapshot)
+                await reconcileHostChannels()
             }
         }
         .task {
@@ -279,15 +354,15 @@ struct AppRootView: View {
             }
         }
         .task {
-            for await peerAddress in notificationService.conversationOpens {
-                await openConversationFromNotification(peerAddress: peerAddress)
+            for await address in notificationService.conversationOpens {
+                await openConversationFromNotification(conversationAddress: address)
             }
         }
         .environment(
             \.visibleConversationReporter,
             VisibleConversationReporter(
                 appeared: { [notificationService] address in
-                    notificationService.setVisibleConversation(peerAddress: address)
+                    notificationService.setVisibleConversation(conversationAddress: address)
                 },
                 disappeared: { [notificationService] address in
                     notificationService.clearVisibleConversation(ifMatching: address)
@@ -297,15 +372,26 @@ struct AppRootView: View {
     }
 
     @MainActor
-    private func openConversationFromNotification(peerAddress: String) async {
+    private func openConversationFromNotification(conversationAddress: String) async {
         selectedTab = .conversations
+        if Self.isChannelAddress(conversationAddress) {
+            if channelConversations.first(where: {
+                $0.conversationAddress == conversationAddress
+            }) == nil {
+                await reloadApplicationState()
+            }
+            openedChannelConversation = channelConversations.first {
+                $0.conversationAddress == conversationAddress
+            }
+            return
+        }
         if conversations.first(where: {
-            $0.peer.identity.canonicalAddress == peerAddress
+            $0.peer.identity.canonicalAddress == conversationAddress
         }) == nil {
             await reloadApplicationState()
         }
         guard let conversation = conversations.first(where: {
-            $0.peer.identity.canonicalAddress == peerAddress
+            $0.peer.identity.canonicalAddress == conversationAddress
         }) else { return }
         openedConversation = conversation
     }
@@ -441,6 +527,11 @@ struct AppRootView: View {
             phoneDiscoverable,
             name: advertisedName.isEmpty ? nil : advertisedName
         )
+        // The same name rides our group messages. A channel member may hold
+        // no identity for us at all, so without it we arrive as a bare hint.
+        // Unaffected by the discoverable preference: that governs answering
+        // identity requests, not signing what we say.
+        try? await radioConnection.setChatDisplayName(advertisedName)
     }
 
     /// Broadcast a signed identity advertisement. Returns a user-facing
@@ -578,7 +669,7 @@ struct AppRootView: View {
     ///
     /// Deliberately not a chat peer: a repeater is infrastructure the operator
     /// wants to find again, not someone to talk to. Starting a conversation
-    /// with it remains an ordinary Network action.
+    /// with it remains an ordinary Peers action.
     private func saveAdministeredDevice(
         _ identity: MeshPublicIdentity,
         name: String?,
@@ -602,6 +693,11 @@ struct AppRootView: View {
     }
 
     private struct IncomingPeerImport: Identifiable {
+        let id = UUID()
+        let uri: String
+    }
+
+    private struct IncomingChannelImport: Identifiable {
         let id = UUID()
         let uri: String
     }
@@ -741,6 +837,516 @@ struct AppRootView: View {
         }
     }
 
+    // MARK: - Channels
+
+    /// Resolve typed input — a public channel name or a pasted `umsh:cs:` /
+    /// `umsh:ck:` URI — into a preview, with whatever local context the user
+    /// needs to see before committing.
+    private func previewChannel(_ input: String) async -> Result<ChannelPreview, MeshEngineError> {
+        let trimmed = input.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !trimmed.isEmpty else { return .failure(.invalidChannelURI) }
+        do {
+            let preview = trimmed.lowercased().hasPrefix("umsh:")
+                ? try await meshEngine.inspectChannelURI(trimmed)
+                : try await meshEngine.inspectChannelName(trimmed)
+            let digest = Self.keyDigest(preview.key)
+            let existing = try await storedChannel(keyDigest: digest)
+            let resolvedName = preview.displayName ?? preview.canonicalName
+            // Two channels may share a name with different keys, which is
+            // legitimate and worth seeing before joining.
+            let conflict = channels.first { channel in
+                channel.id != existing?.id
+                    && resolvedName != nil
+                    && channel.title.caseInsensitiveCompare(resolvedName!) == .orderedSame
+            }
+            return .success(
+                ChannelPreview(preview: preview, existing: existing, nameConflict: conflict)
+            )
+        } catch let error as MeshEngineError {
+            return .failure(error)
+        } catch {
+            return .failure(.coreFailure)
+        }
+    }
+
+    /// Join on the phone identity, or update local details when the key is
+    /// already held. Registering with the MAC is what actually makes traffic
+    /// arrive; the radio's host table is reconciled behind it.
+    private func joinChannel(
+        _ preview: MeshChannelPreview,
+        details: ChannelDetails
+    ) async -> ChannelActionOutcome {
+        guard let applicationStore, let localIdentity else { return .failed }
+        let digest = Self.keyDigest(preview.key)
+        do {
+            if let existing = try await storedChannel(keyDigest: digest) {
+                _ = await updateChannelDetails(existing, details: details)
+                if !existing.joinedPhone {
+                    return await setChannelPhoneMembership(existing, joined: true)
+                }
+                await reloadApplicationState()
+                return .success
+            }
+
+            let id = UUID()
+            // The key goes to the Keychain first: a row whose key cannot be
+            // read is a channel that silently does nothing.
+            try await channelKeyVault.storeKey(preview.key, channelID: id)
+            let channel = StoredChannel(
+                id: id,
+                ownerIdentityID: localIdentity.id,
+                kind: preview.kind == .namedPublic ? .named : .privateKey,
+                canonicalName: preview.canonicalName,
+                // The channel's own name comes from the invitation or what was
+                // typed; the alias is this user's override on top of it.
+                name: preview.displayName,
+                alias: details.alias,
+                channelIDHex: Self.hex(preview.channelID),
+                tint: preview.tint,
+                regionCode: details.regionCode ?? preview.regionCode,
+                maxFloodHops: details.maxFloodHops ?? preview.maxFloodHops.map(Int.init),
+                joinedPhone: true,
+                joinedDevice: false,
+                notificationsEnabled: details.notificationsEnabled,
+                joinedAt: Date()
+            )
+            do {
+                try await applicationStore.insertChannel(channel, keyDigest: digest)
+            } catch {
+                try? await channelKeyVault.deleteKey(channelID: id)
+                throw error
+            }
+            let registered = await registerChannelKeys([preview.key])
+            guard registered else {
+                try? await applicationStore.deleteChannel(id: id)
+                try? await channelKeyVault.deleteKey(channelID: id)
+                return .phoneFull
+            }
+            // Derived here, from the key in hand, because the address map is
+            // otherwise only rebuilt at session start — without this entry,
+            // "Enter Conversation" and inbound traffic cannot find the
+            // channel until the app relaunches.
+            if let address = try? await meshEngine.channelConversationAddress(key: preview.key) {
+                coordinator.channelAddresses[id] = address
+            }
+            await reloadApplicationState()
+            await reconcileHostChannels()
+            return .success
+        } catch {
+            return .failed
+        }
+    }
+
+    /// Create a private channel from a freshly generated key.
+    private func createPrivateChannel(
+        name: String,
+        details: ChannelDetails
+    ) async -> ChannelActionOutcome {
+        let key = await meshEngine.generateChannelKey()
+        guard let channelID = try? await meshEngine.deriveChannelID(key: key),
+              let tint = try? await meshEngine.deriveChannelTint(key: key)
+        else {
+            return .failed
+        }
+        return await joinChannel(
+            MeshChannelPreview(
+                kind: .privateKey,
+                canonicalName: nil,
+                key: key,
+                channelID: channelID,
+                tint: tint,
+                displayName: name,
+                maxFloodHops: details.maxFloodHops.map(UInt8.init),
+                regionCode: details.regionCode
+            ),
+            details: details
+        )
+    }
+
+    /// Leave on the phone identity. A private channel's key cannot be
+    /// recovered afterwards, so its row and key are deleted together; a named
+    /// or built-in channel keeps its row so it can be offered again.
+    private func leaveChannel(_ channel: ChannelSummary) async -> ChannelActionOutcome {
+        guard let applicationStore, let localIdentity else { return .failed }
+        let key = try? await channelKeyVault.loadKey(channelID: channel.id)
+        if let key {
+            try? await radioConnection.removeChannels([key])
+        }
+        // The group chat cannot outlive membership: without the key there is
+        // nothing to send with, and nothing further will arrive.
+        if let conversation = channelConversations.first(where: { $0.channel.id == channel.id }) {
+            try? await applicationStore.deleteChannelConversation(
+                ownerIdentityID: localIdentity.id,
+                conversationID: conversation.id
+            )
+        }
+        coordinator.channelAddresses[channel.id] = nil
+        do {
+            if channel.kind == .builtin {
+                try await applicationStore.setChannelMembership(
+                    id: channel.id,
+                    joinedPhone: false,
+                    joinedDevice: channel.joinedDevice
+                )
+            } else if channel.joinedDevice {
+                // Still joined on the device: keep the row and the key, since
+                // removing it from the device later needs the key as selector.
+                try await applicationStore.setChannelMembership(
+                    id: channel.id,
+                    joinedPhone: false,
+                    joinedDevice: true
+                )
+            } else {
+                try await applicationStore.deleteChannel(id: channel.id)
+                try? await channelKeyVault.deleteKey(channelID: channel.id)
+            }
+            await reloadApplicationState()
+            await reconcileHostChannels()
+            return .success
+        } catch {
+            return .failed
+        }
+    }
+
+    private func setChannelPhoneMembership(
+        _ channel: ChannelSummary,
+        joined: Bool
+    ) async -> ChannelActionOutcome {
+        guard let applicationStore,
+              let key = try? await channelKeyVault.loadKey(channelID: channel.id)
+        else { return .failed }
+        if joined {
+            guard await registerChannelKeys([key]) else { return .phoneFull }
+        } else {
+            try? await radioConnection.removeChannels([key])
+        }
+        do {
+            try await applicationStore.setChannelMembership(
+                id: channel.id,
+                joinedPhone: joined,
+                joinedDevice: channel.joinedDevice
+            )
+            // The address map is otherwise only rebuilt at session start, and
+            // leaving cleared this entry — a rejoin that skipped it would
+            // leave the channel unreachable from chat until relaunch.
+            if joined, let address = try? await meshEngine.channelConversationAddress(key: key) {
+                coordinator.channelAddresses[channel.id] = address
+            } else if !joined {
+                coordinator.channelAddresses[channel.id] = nil
+            }
+            await reloadApplicationState()
+            if joined, channel.canonicalName == "public" {
+                // Rejoining public restores its always-present conversation,
+                // the same invariant session start establishes.
+                await ensurePublicConversation()
+                await reloadApplicationState()
+            }
+            await reconcileHostChannels()
+            return .success
+        } catch {
+            return .failed
+        }
+    }
+
+    /// Add or remove the channel on the companion radio's own device identity,
+    /// which is membership for the radio, not for this phone.
+    private func setChannelDeviceMembership(
+        _ channel: ChannelSummary,
+        joined: Bool
+    ) async -> ChannelActionOutcome {
+        guard let applicationStore,
+              let key = try? await channelKeyVault.loadKey(channelID: channel.id)
+        else { return .failed }
+        do {
+            if joined {
+                try await radioConnection.addDeviceChannel(key)
+            } else {
+                try await radioConnection.removeDeviceChannel(key)
+            }
+            try? await applicationStore.setChannelMembership(
+                id: channel.id,
+                joinedPhone: channel.joinedPhone,
+                joinedDevice: joined
+            )
+            await reloadApplicationState()
+            return .success
+        } catch let error as DevicePeerError {
+            return switch error {
+            case .radioUnavailable: .radioUnavailable
+            case .deviceFull: .deviceFull
+            case .unsupported: .unsupported
+            case .failed: .failed
+            }
+        } catch {
+            return .failed
+        }
+    }
+
+    private func updateChannelDetails(
+        _ channel: ChannelSummary,
+        details: ChannelDetails
+    ) async -> Bool {
+        guard let applicationStore else { return false }
+        do {
+            try await applicationStore.updateChannelDetails(
+                id: channel.id,
+                alias: details.alias,
+                regionCode: details.regionCode,
+                maxFloodHops: details.maxFloodHops,
+                notificationsEnabled: details.notificationsEnabled
+            )
+            await reloadApplicationState()
+            return true
+        } catch {
+            return false
+        }
+    }
+
+    /// Build the URI that invites someone else to this channel. A named
+    /// channel shares only its name; a private one shares the key itself.
+    ///
+    /// The name goes out written the way it is read — `umsh:cs:Trail%20Crew`,
+    /// not the folded form. Recipients percent-decode first and canonicalize
+    /// after, so casing travels without changing which channel is meant.
+    private func channelInvitation(_ channel: ChannelSummary) async -> String? {
+        guard let key = try? await channelKeyVault.loadKey(channelID: channel.id) else {
+            return nil
+        }
+        // The alias is this phone's label and stays here; what goes out is the
+        // channel's own name.
+        let sharedName = channel.name ?? channel.canonicalName
+        return try? await meshEngine.formatChannelInvitation(
+            key: key,
+            name: channel.invitationIsSecret ? nil : sharedName,
+            displayName: channel.invitationIsSecret ? channel.name : nil,
+            // A protocol-fixed ceiling is not a recommendation to pass on: the
+            // recipient derives it from the channel exactly as this phone did.
+            maxFloodHops: channel.protocolMaxFloodHops == nil
+                ? channel.maxFloodHops.map(UInt8.init)
+                : nil,
+            regionCode: channel.regionCode
+        )
+    }
+
+    private func storedChannel(keyDigest: String) async throws -> ChannelSummary? {
+        guard let applicationStore, let localIdentity else { return nil }
+        let stored = try await applicationStore.channel(
+            ownerIdentityID: localIdentity.id,
+            keyDigest: keyDigest
+        )
+        return stored.map(Self.summary(from:))
+    }
+
+    /// Register keys with the phone's MAC, reporting whether they all fit.
+    private func registerChannelKeys(_ keys: [Data]) async -> Bool {
+        do {
+            try await radioConnection.registerChannels(keys)
+            return true
+        } catch {
+            return false
+        }
+    }
+
+    /// Give the radio the channel keys the phone identity has joined, so it
+    /// can recognize and queue that traffic while the phone is away.
+    ///
+    /// Bookkeeping between the app and its own radio: no part of it is a user
+    /// setting, and a radio that cannot hold them all still leaves the phone
+    /// fully able to use every channel while attached.
+    private func reconcileHostChannels() async {
+        guard radioSnapshot.linkState == .attached || radioSnapshot.linkState == .ready,
+              radioSnapshot.hostState == .matchesCurrentIdentity,
+              radioSnapshot.provisioning?.supportsHostKeys == true
+        else {
+            coordinator.lastReconciledHostChannels = nil
+            return
+        }
+        var keys: [Data] = []
+        // Deterministic priority, so a radio that cannot hold every key holds
+        // the same ones each time rather than whichever arrived first.
+        for channel in channels.filter(\.joinedPhone).sorted(by: Self.hostChannelPriority) {
+            if let key = try? await channelKeyVault.loadKey(channelID: channel.id) {
+                keys.append(key)
+            }
+        }
+        guard coordinator.lastReconciledHostChannels != keys else { return }
+        do {
+            try await radioConnection.reconcileHostChannels(keys)
+            coordinator.lastReconciledHostChannels = keys
+        } catch {
+            // Retried on the next attach or membership change.
+        }
+    }
+
+    /// `public` and `EMERGENCY` first, then the most recently joined.
+    private static func hostChannelPriority(_ lhs: ChannelSummary, _ rhs: ChannelSummary) -> Bool {
+        if (lhs.kind == .builtin) != (rhs.kind == .builtin) {
+            return lhs.kind == .builtin
+        }
+        return (lhs.joinedAt ?? .distantPast) > (rhs.joinedAt ?? .distantPast)
+    }
+
+    /// Ensure `public` and `EMERGENCY` exist for this identity.
+    ///
+    /// Both start joined with notifications off: they are the channels a new
+    /// user is expected to be reachable on, but neither should announce
+    /// itself before the user has any reason to care. Leaving either clears
+    /// the joined flags without deleting the row, which is what lets the join
+    /// flow offer them back.
+    private func ensureBuiltinChannels() async {
+        guard let applicationStore, let localIdentity else { return }
+        // Written the way the protocol names them. Only the canonicalized
+        // form reaches the key derivation, so the casing here is purely how
+        // the channels are labelled.
+        for name in ["Public", "EMERGENCY"] {
+            guard let preview = try? await meshEngine.inspectChannelName(name) else { continue }
+            let digest = Self.keyDigest(preview.key)
+            guard (try? await applicationStore.channel(
+                ownerIdentityID: localIdentity.id,
+                keyDigest: digest
+            )) ?? nil == nil else { continue }
+            let id = UUID()
+            do {
+                try await channelKeyVault.storeKey(preview.key, channelID: id)
+                try await applicationStore.insertChannel(
+                    StoredChannel(
+                        id: id,
+                        ownerIdentityID: localIdentity.id,
+                        kind: .builtin,
+                        canonicalName: preview.canonicalName,
+                        name: preview.displayName,
+                        alias: nil,
+                        channelIDHex: Self.hex(preview.channelID),
+                        tint: preview.tint,
+                        regionCode: nil,
+                        maxFloodHops: nil,
+                        joinedPhone: true,
+                        joinedDevice: false,
+                        notificationsEnabled: false,
+                        joinedAt: Date()
+                    ),
+                    keyDigest: digest
+                )
+            } catch {
+                try? await channelKeyVault.deleteKey(channelID: id)
+            }
+        }
+    }
+
+    /// Register every phone-joined channel with a freshly built mesh session.
+    /// The session starts with an empty channel table, so this is what makes
+    /// membership survive a relaunch.
+    private func replayChannelMembership() async {
+        var keys: [Data] = []
+        for channel in channels where channel.joinedPhone {
+            if let key = try? await channelKeyVault.loadKey(channelID: channel.id) {
+                keys.append(key)
+            }
+        }
+        // Registration has to precede chat restore: a channel checkpoint can
+        // only be understood once its key is held.
+        _ = await registerChannelKeys(keys)
+        await refreshChannelAddresses()
+        await ensurePublicConversation()
+        await reloadApplicationState()
+    }
+
+    /// The public channel is where an off-grid conversation starts when the
+    /// user has nobody's key yet, so its chat is always there to open. Every
+    /// other channel waits to be asked.
+    private func ensurePublicConversation() async {
+        guard let applicationStore, let localIdentity else { return }
+        guard let channel = channels.first(where: {
+            $0.canonicalName == "public" && $0.joinedPhone
+        }), let address = coordinator.channelAddresses[channel.id] else { return }
+        _ = try? await applicationStore.ensureChannelConversation(
+            ownerIdentityID: localIdentity.id,
+            channelID: channel.id,
+            conversationAddress: address
+        )
+    }
+
+    /// Derive each joined channel's conversation address once, so the rest of
+    /// the app can match a record to a channel without touching Keychain.
+    private func refreshChannelAddresses() async {
+        var addresses: [UUID: String] = [:]
+        for channel in channels where channel.joinedPhone {
+            guard let key = try? await channelKeyVault.loadKey(channelID: channel.id),
+                  let address = try? await meshEngine.channelConversationAddress(key: key)
+            else { continue }
+            addresses[channel.id] = address
+        }
+        coordinator.channelAddresses = addresses
+    }
+
+    /// Reconcile the device's channel list into the local cache flags, and
+    /// collect the identifiers this phone cannot name.
+    private func synchronizeRadioChannels(from snapshot: RadioSnapshot) async {
+        guard snapshot.linkState == .attached || snapshot.linkState == .ready,
+              snapshot.hostState == .matchesCurrentIdentity,
+              let applicationStore
+        else {
+            coordinator.lastReconciledDeviceChannels = nil
+            if !unknownDeviceChannels.isEmpty { unknownDeviceChannels = [] }
+            return
+        }
+        guard let identifiers = snapshot.provisioning?.devChannelIDs,
+              coordinator.lastReconciledDeviceChannels != identifiers
+        else { return }
+
+        // The device reports identifiers only, so naming them means deriving
+        // an identifier from each key this phone holds and matching.
+        var identified: Set<Data> = []
+        for channel in channels {
+            guard let key = try? await channelKeyVault.loadKey(channelID: channel.id),
+                  let derived = try? await meshEngine.deriveChannelID(key: key)
+            else { continue }
+            let onDevice = identifiers.contains(derived)
+            if onDevice { identified.insert(derived) }
+            if channel.joinedDevice != onDevice {
+                try? await applicationStore.setChannelMembership(
+                    id: channel.id,
+                    joinedPhone: channel.joinedPhone,
+                    joinedDevice: onDevice
+                )
+            }
+        }
+        let unknown = identifiers
+            .filter { !identified.contains($0) }
+            .map(UnknownDeviceChannel.init(identifier:))
+        if unknownDeviceChannels != unknown { unknownDeviceChannels = unknown }
+        coordinator.lastReconciledDeviceChannels = identifiers
+        await reloadApplicationState()
+    }
+
+    private static func summary(from stored: StoredChannel) -> ChannelSummary {
+        ChannelSummary(
+            id: stored.id,
+            kind: stored.kind,
+            canonicalName: stored.canonicalName,
+            name: stored.name,
+            alias: stored.alias,
+            channelIDHex: stored.channelIDHex,
+            tint: stored.tint,
+            regionCode: stored.regionCode,
+            maxFloodHops: stored.maxFloodHops,
+            joinedPhone: stored.joinedPhone,
+            joinedDevice: stored.joinedDevice,
+            notificationsEnabled: stored.notificationsEnabled,
+            joinedAt: stored.joinedAt
+        )
+    }
+
+    /// One-way commitment to a channel key, used to recognize a key the store
+    /// already holds without the store ever seeing the key itself.
+    private static func keyDigest(_ key: Data) -> String {
+        hex(Data(SHA256.hash(data: key)))
+    }
+
+    private static func hex(_ data: Data) -> String {
+        data.map { String(format: "%02x", $0) }.joined()
+    }
+
     /// One zero-hop broadcast Identity Request for the Discover sheet:
     /// nodes in direct radio range that match the role filter reply with
     /// their identities, which land through `applyReceivedAdvertisement`.
@@ -779,12 +1385,12 @@ struct AppRootView: View {
     }
 
     private func sendMessage(
-        _ conversation: DirectConversationSummary,
+        _ conversation: ConversationListItem,
         _ body: String
     ) async -> MessageSendResult {
         await performChatCompose(conversation, clearsDraft: true) { clientToken in
             try await radioConnection.composeText(
-                peerAddress: conversation.peer.identity.canonicalAddress,
+                conversationAddress: conversation.conversationAddress,
                 clientToken: clientToken,
                 body: body
             )
@@ -792,13 +1398,13 @@ struct AppRootView: View {
     }
 
     private func editMessage(
-        _ conversation: DirectConversationSummary,
+        _ conversation: ConversationListItem,
         _ message: ChatMessageSummary,
         _ newBody: String
     ) async -> MessageSendResult {
         await performChatCompose(conversation, clearsDraft: false) { clientToken in
             try await radioConnection.composeEdit(
-                peerAddress: conversation.peer.identity.canonicalAddress,
+                conversationAddress: conversation.conversationAddress,
                 clientToken: clientToken,
                 original: originalRef(message),
                 body: newBody
@@ -807,12 +1413,12 @@ struct AppRootView: View {
     }
 
     private func deleteMessage(
-        _ conversation: DirectConversationSummary,
+        _ conversation: ConversationListItem,
         _ message: ChatMessageSummary
     ) async -> MessageSendResult {
         await performChatCompose(conversation, clearsDraft: false) { clientToken in
             try await radioConnection.composeDelete(
-                peerAddress: conversation.peer.identity.canonicalAddress,
+                conversationAddress: conversation.conversationAddress,
                 clientToken: clientToken,
                 original: originalRef(message)
             )
@@ -833,7 +1439,7 @@ struct AppRootView: View {
     }
 
     private func performChatCompose(
-        _ conversation: DirectConversationSummary,
+        _ conversation: ConversationListItem,
         clearsDraft: Bool,
         compose: (UInt32) async throws -> MobileChatComposeBatchRecord
     ) async -> MessageSendResult {
@@ -878,14 +1484,23 @@ struct AppRootView: View {
                 return .failed("The message could not be queued for transmission: \(error)")
             }
             if clearsDraft {
-                try await applicationStore.updateDraft(
-                    ownerIdentityID: localIdentity.id,
-                    conversationID: conversation.id,
-                    text: ""
-                )
+                switch conversation {
+                case let .direct(direct):
+                    try await applicationStore.updateDraft(
+                        ownerIdentityID: localIdentity.id,
+                        conversationID: direct.id,
+                        text: ""
+                    )
+                case let .channel(channel):
+                    try await applicationStore.updateChannelDraft(
+                        ownerIdentityID: localIdentity.id,
+                        conversationID: channel.id,
+                        text: ""
+                    )
+                }
             }
             await reloadApplicationState()
-            guard let updated = conversations.first(where: { $0.id == conversation.id }) else {
+            guard let updated = conversationItems.first(where: { $0.id == conversation.id }) else {
                 return .failed("The message was saved, but the conversation could not be refreshed.")
             }
             return .sent(updated)
@@ -893,6 +1508,104 @@ struct AppRootView: View {
             Self.logger.error("Could not compose chat message: \(String(describing: error), privacy: .public)")
             return .failed("The message could not be composed: \(error)")
         }
+    }
+
+    /// Every conversation, both kinds, most recent traffic first.
+    ///
+    /// A channel with newer messages belongs above a quiet direct chat, so the
+    /// two are ordered together rather than grouped.
+    private var conversationItems: [ConversationListItem] {
+        let items = conversations.map(ConversationListItem.direct)
+            + channelConversations.map(ConversationListItem.channel)
+        return items.sorted { first, second in
+            if first.lastActivityMilliseconds != second.lastActivityMilliseconds {
+                return first.lastActivityMilliseconds > second.lastActivityMilliseconds
+            }
+            return first.title.localizedCaseInsensitiveCompare(second.title) == .orderedAscending
+        }
+    }
+
+    /// Open a channel's group conversation, creating it the first time.
+    private func startChannelConversation(
+        _ channel: ChannelSummary
+    ) async -> ChannelConversationSummary? {
+        guard let applicationStore, let localIdentity else { return nil }
+        guard let address = coordinator.channelAddresses[channel.id] else { return nil }
+        do {
+            _ = try await applicationStore.ensureChannelConversation(
+                ownerIdentityID: localIdentity.id,
+                channelID: channel.id,
+                conversationAddress: address
+            )
+            await reloadApplicationState()
+            return channelConversations.first { $0.channel.id == channel.id }
+        } catch {
+            Self.logger.error(
+                "Could not open channel conversation: \(String(describing: error), privacy: .public)"
+            )
+            return nil
+        }
+    }
+
+    /// Open the conversation for a channel that was just joined, resolving
+    /// the freshly stored row from the key the invitation carried.
+    private func startConversationAfterJoin(
+        _ preview: MeshChannelPreview
+    ) async -> ChannelConversationSummary? {
+        await refreshChannelAddresses()
+        guard let channel = (try? await storedChannel(keyDigest: Self.keyDigest(preview.key)))
+            ?? nil
+        else { return nil }
+
+        return await startChannelConversation(channel)
+    }
+
+    private func deleteChannelConversation(_ conversation: ChannelConversationSummary) async {
+        guard let applicationStore, let localIdentity else { return }
+        do {
+            try await applicationStore.deleteChannelConversation(
+                ownerIdentityID: localIdentity.id,
+                conversationID: conversation.id
+            )
+            await reloadApplicationState()
+        } catch {
+            Self.logger.error(
+                "Could not delete channel conversation \(conversation.id): \(String(describing: error), privacy: .public)"
+            )
+        }
+    }
+
+    private func updateChannelDraft(_ conversationID: Int64, _ text: String) async {
+        guard let applicationStore, let localIdentity else { return }
+        try? await applicationStore.updateChannelDraft(
+            ownerIdentityID: localIdentity.id,
+            conversationID: conversationID,
+            text: text
+        )
+        if let index = channelConversations.firstIndex(where: { $0.id == conversationID }) {
+            channelConversations[index].draftText = text
+        }
+    }
+
+    /// Mark a conversation read. Driven by the transcript appearing, so the
+    /// badge clears when the user actually looks at it.
+    private func markConversationRead(_ address: String) async {
+        guard let applicationStore, let localIdentity else { return }
+        try? await applicationStore.markConversationRead(
+            ownerIdentityID: localIdentity.id,
+            conversationAddress: address
+        )
+        await reloadApplicationState()
+    }
+
+    private func requestMemberIdentity(
+        _ conversation: ChannelConversationSummary,
+        _ hint: Data
+    ) async {
+        try? await radioConnection.requestIdentityByHint(
+            conversationAddress: conversation.conversationAddress,
+            hint: hint
+        )
     }
 
     private func deleteConversation(_ conversation: DirectConversationSummary) async {
@@ -1049,9 +1762,12 @@ struct AppRootView: View {
             // conversation, plus every checkpointed stream. Registering every
             // stored row would grow with the transient tier and can exceed
             // the mesh session's peer table.
+            // Channel streams are checkpointed too, but a channel is not a
+            // peer and must not be registered as one.
             let addresses = Set(
                 conversations.map(\.peer.identity.canonicalAddress)
-                    + checkpoints.map(\.peerAddress)
+                    + checkpoints.map(\.conversationAddress)
+                        .filter { !Self.isChannelAddress($0) }
             )
             try await radioConnection.prepareChat(
                 peerAddresses: addresses.sorted(),
@@ -1083,12 +1799,34 @@ struct AppRootView: View {
                     ownerIdentityID: localIdentity.id,
                     mutations: update.mutations
                 )
-                for peerAddress in Set(update.mutations.compactMap(\.peerAddress)) {
-                    _ = try await applicationStore.ensureDirectConversation(
-                        ownerIdentityID: localIdentity.id,
-                        peerAddress: peerAddress
-                    )
+                for address in Set(update.mutations.compactMap(\.conversationAddress)) {
+                    if Self.isChannelAddress(address) {
+                        // A group message opens its conversation the same way
+                        // a direct one does: the user joined the channel, so
+                        // traffic in it is expected.
+                        guard let channel = channels.first(where: {
+                            coordinator.channelAddresses[$0.id] == address
+                        }) else { continue }
+                        _ = try await applicationStore.ensureChannelConversation(
+                            ownerIdentityID: localIdentity.id,
+                            channelID: channel.id,
+                            conversationAddress: address
+                        )
+                    } else {
+                        _ = try await applicationStore.ensureDirectConversation(
+                            ownerIdentityID: localIdentity.id,
+                            peerAddress: address
+                        )
+                    }
                 }
+            }
+            for resolution in update.senderResolutions {
+                try? await applicationStore.applySenderResolution(
+                    ownerIdentityID: localIdentity.id,
+                    conversationAddress: resolution.conversationAddress,
+                    senderHint: Data(resolution.senderHint),
+                    senderAddress: resolution.senderAddress
+                )
             }
             if !update.deliveries.isEmpty {
                 try await applicationStore.applyChatDeliveries(
@@ -1112,15 +1850,22 @@ struct AppRootView: View {
             // no address, so resolve them from the acked message's conversation.
             var heardFrom: Set<String> = []
             for mutation in update.mutations where mutation.direction == .inbound {
-                if let peerAddress = mutation.peerAddress { heardFrom.insert(peerAddress) }
+                // In a channel the conversation is not a peer; the sender is,
+                // once their hint has resolved to a real address.
+                if let address = mutation.senderAddress {
+                    heardFrom.insert(address)
+                } else if let address = mutation.conversationAddress,
+                          !Self.isChannelAddress(address) {
+                    heardFrom.insert(address)
+                }
             }
             for delivery in update.deliveries where delivery.state == .acknowledged {
-                if let peerAddress = try? await applicationStore.peerAddressForMessage(
+                if let address = try? await applicationStore.conversationAddressForMessage(
                     ownerIdentityID: localIdentity.id,
                     sessionID: delivery.sessionId,
                     handle: delivery.handle
-                ) {
-                    heardFrom.insert(peerAddress)
+                ), !Self.isChannelAddress(address) {
+                    heardFrom.insert(address)
                 }
             }
             let heardAt = Date()
@@ -1162,15 +1907,62 @@ struct AppRootView: View {
                 sessionID: mutation.sessionId,
                 handle: mutation.handle
             ) else { continue }
-            let displayName = peers.first {
-                $0.identity.canonicalAddress == target.peerAddress
-            }?.displayName ?? String(target.peerAddress.prefix(10))
-            notificationService.postInboundMessage(
-                peerAddress: target.peerAddress,
-                displayName: displayName,
-                body: target.body
-            )
+            if Self.isChannelAddress(target.conversationAddress) {
+                guard let channel = channels.first(where: {
+                    coordinator.channelAddresses[$0.id] == target.conversationAddress
+                }) else { continue }
+                // Muting a channel silences its banners. The messages still
+                // arrive and still count as unread.
+                guard channel.notificationsEnabled else { continue }
+                notificationService.postInboundMessage(
+                    conversationAddress: target.conversationAddress,
+                    displayName: channel.title,
+                    // A group message is from someone in particular, and the
+                    // banner is unreadable without saying who.
+                    sender: memberName(
+                        address: target.senderAddress,
+                        handle: target.senderHandle,
+                        hint: target.senderHint
+                    ),
+                    body: target.body
+                )
+            } else {
+                let displayName = peers.first {
+                    $0.identity.canonicalAddress == target.conversationAddress
+                }?.displayName ?? String(target.conversationAddress.prefix(10))
+                notificationService.postInboundMessage(
+                    conversationAddress: target.conversationAddress,
+                    displayName: displayName,
+                    sender: nil,
+                    body: target.body
+                )
+            }
         }
+    }
+
+    /// What to call a channel member, in descending order of authority: the
+    /// name we have given them or heard them advertise, then the name they
+    /// attached to the message, then their address, then the bare hint.
+    ///
+    /// A message-borne name is the sender's unverified claim — anyone holding
+    /// the channel key can write anything there — so it never displaces a
+    /// name this phone established for a peer it actually knows.
+    private func memberName(address: String?, handle: String?, hint: Data?) -> String {
+        if let address, let peer = peers.first(where: {
+            $0.identity.canonicalAddress == address
+        }) {
+            return peer.displayName
+        }
+        if let handle, !handle.isEmpty { return handle }
+        if let address { return String(address.prefix(10)) }
+        guard let hint else { return "Unknown member" }
+        return "Member \(hint.map { String(format: "%02x", $0) }.joined())"
+    }
+
+    /// Whether an address names a channel's group conversation rather than a
+    /// peer. The facade's own prefix, checked in one place.
+    static func isChannelAddress(_ address: String) -> Bool {
+        address.hasPrefix("ch:")
     }
 
     private func prepareApplicationState() async {
@@ -1189,11 +1981,17 @@ struct AppRootView: View {
             try await applicationStore.failStalePendingMessages(
                 ownerIdentityID: localIdentity.id
             )
+            await ensureBuiltinChannels()
             await synchronizeRadioPeer(from: radioSnapshot)
             await reloadApplicationState()
+            // The mesh session starts with an empty channel table, so
+            // membership only survives a relaunch by being replayed into it.
+            await replayChannelMembership()
+            await reconcileHostChannels()
         } catch {
             peers = []
             conversations = []
+            channels = []
         }
     }
 
@@ -1311,6 +2109,13 @@ struct AppRootView: View {
                     isOnDeviceIdentity: stored.onDeviceIdentity
                 )
             }
+            let storedChannels = try await applicationStore.channels(
+                ownerIdentityID: localIdentity.id
+            )
+            let mappedChannels = storedChannels.map(Self.summary(from:))
+            if channels != mappedChannels {
+                channels = mappedChannels
+            }
             let storedConversations = try await applicationStore.listDirectConversations(
                 ownerIdentityID: localIdentity.id
             )
@@ -1327,43 +2132,125 @@ struct AppRootView: View {
                 guard let peer = mappedPeers[stored.node.id] else { continue }
                 let messages = (try? await applicationStore.chatMessages(
                     ownerIdentityID: localIdentity.id,
-                    peerAddress: peer.identity.canonicalAddress
+                    conversationAddress: peer.identity.canonicalAddress
                 )) ?? []
                 mappedConversations.append(
                     DirectConversationSummary(
                         id: stored.id,
                         peer: peer,
                         draftText: stored.draftText,
-                        messages: messages.map {
-                            ChatMessageSummary(
-                                id: $0.id,
-                                body: $0.body,
-                                isOutbound: $0.outbound,
-                                deliveryState: $0.deliveryState,
-                                isDeleted: $0.isDeleted,
-                                isEdited: $0.isEdited,
-                                sessionID: $0.sessionID,
-                                handle: $0.handle,
-                                wireID: $0.wireID,
-                                epoch: $0.epoch,
-                                isGapPlaceholder: $0.isGapPlaceholder,
-                                isUnavailable: $0.isUnavailable,
-                                isReceivedLate: $0.receivedLate,
-                                isDeliveredLate: $0.deliveredLate,
-                                originalBody: $0.originalBody,
-                                createdAtMilliseconds: $0.createdAtMilliseconds
-                            )
-                        }
+                        messages: messages.map { Self.messageSummary(from: $0) },
+                        unreadCount: Self.unreadCount(
+                            in: messages,
+                            since: stored.lastReadAtMilliseconds
+                        ),
+                        createdAtMilliseconds: stored.createdAtMilliseconds
                     )
                 )
             }
             if conversations != mappedConversations {
                 conversations = mappedConversations
             }
+
+            let storedChannelConversations = try await applicationStore.listChannelConversations(
+                ownerIdentityID: localIdentity.id
+            )
+            let channelsByID = Dictionary(
+                mappedChannels.map { ($0.id, $0) },
+                uniquingKeysWith: { first, _ in first }
+            )
+            var mappedChannelConversations: [ChannelConversationSummary] = []
+            for stored in storedChannelConversations {
+                // A conversation whose channel was left has no key to send
+                // with and no name to show, so it is not listed.
+                guard let channel = channelsByID[stored.channelID], channel.joinedPhone else {
+                    continue
+                }
+                let messages = (try? await applicationStore.chatMessages(
+                    ownerIdentityID: localIdentity.id,
+                    conversationAddress: stored.conversationAddress
+                )) ?? []
+                let nodeHints = await renderedNodeHints(in: messages)
+                mappedChannelConversations.append(
+                    ChannelConversationSummary(
+                        id: stored.id,
+                        channel: channel,
+                        conversationAddress: stored.conversationAddress,
+                        draftText: stored.draftText,
+                        messages: messages.map { Self.messageSummary(from: $0, nodeHints: nodeHints) },
+                        unreadCount: Self.unreadCount(
+                            in: messages,
+                            since: stored.lastReadAtMilliseconds
+                        ),
+                        createdAtMilliseconds: stored.createdAtMilliseconds
+                    )
+                )
+            }
+            if channelConversations != mappedChannelConversations {
+                channelConversations = mappedChannelConversations
+            }
         } catch {
             if !peers.isEmpty { peers = [] }
             if !conversations.isEmpty { conversations = [] }
+            if !channelConversations.isEmpty { channelConversations = [] }
         }
+    }
+
+    private static func messageSummary(
+        from stored: StoredChatMessage,
+        nodeHints: [Data: MeshNodeHint] = [:]
+    ) -> ChatMessageSummary {
+        ChatMessageSummary(
+            id: stored.id,
+            body: stored.body,
+            isOutbound: stored.outbound,
+            deliveryState: stored.deliveryState,
+            isDeleted: stored.isDeleted,
+            isEdited: stored.isEdited,
+            sessionID: stored.sessionID,
+            handle: stored.handle,
+            wireID: stored.wireID,
+            epoch: stored.epoch,
+            isGapPlaceholder: stored.isGapPlaceholder,
+            isUnavailable: stored.isUnavailable,
+            isReceivedLate: stored.receivedLate,
+            isDeliveredLate: stored.deliveredLate,
+            originalBody: stored.originalBody,
+            createdAtMilliseconds: stored.createdAtMilliseconds,
+            senderAddress: stored.senderAddress,
+            senderHint: stored.senderHint,
+            senderHandle: stored.senderHandle,
+            senderNodeHint: stored.senderHint.flatMap { nodeHints[$0] },
+            reception: stored.reception
+        )
+    }
+
+    /// Render every distinct sender hint in a transcript once, so each group
+    /// bubble can carry its sender's avatar without re-deriving it per row.
+    private func renderedNodeHints(in messages: [StoredChatMessage]) async -> [Data: MeshNodeHint] {
+        var rendered: [Data: MeshNodeHint] = [:]
+        for hint in Set(messages.compactMap(\.senderHint)) {
+            if let value = try? await meshEngine.renderNodeHint(hint) {
+                rendered[hint] = value
+            }
+        }
+        return rendered
+    }
+
+    /// Inbound messages that arrived after the conversation was last read.
+    /// Placeholders and tombstones are not messages the user can read, so
+    /// they never contribute to a badge.
+    private static func unreadCount(
+        in messages: [StoredChatMessage],
+        since lastReadAtMilliseconds: Int64
+    ) -> Int {
+        messages.filter { message in
+            !message.outbound
+                && !message.isDeleted
+                && !message.isGapPlaceholder
+                && !message.isUnavailable
+                && message.createdAtMilliseconds > lastReadAtMilliseconds
+        }.count
     }
 }
 
@@ -1375,6 +2262,16 @@ private final class AppStateCoordinator {
     /// The device-identity peer list last written into the store's cache
     /// flags, so the steady snapshot stream reconciles only on real change.
     var lastReconciledDevicePeers: [String]?
+    /// The device-identity channel identifiers last reconciled, gating the
+    /// same way.
+    var lastReconciledDeviceChannels: [Data]?
+    /// The channel keys last provisioned to the radio's host table, so
+    /// reconciling is free when nothing has changed.
+    var lastReconciledHostChannels: [Data]?
+    /// Each joined channel's conversation address, derived from its key when
+    /// the key is unlocked. Kept here rather than on `ChannelSummary` because
+    /// deriving it needs the key, which the summary deliberately never holds.
+    var channelAddresses: [UUID: String] = [:]
     /// A reload that has been queued but has not begun reading storage yet;
     /// later callers can safely join it.
     var pendingReload: Task<Void, Never>?
@@ -1393,7 +2290,7 @@ private struct SynchronizedRadioPeer: Equatable {
 
 private enum AppTab: Hashable {
     case conversations
-    case network
+    case peers
     case settings
 }
 

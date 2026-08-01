@@ -1,6 +1,6 @@
 //! Wire-level model types for text messages.
 
-use umsh_core::{ChannelId, NodeHint, PublicKey};
+use umsh_core::{ChannelTag, NodeHint, PublicKey};
 
 use crate::ParseError;
 
@@ -225,9 +225,14 @@ pub enum ConversationKey {
     /// One-to-one unicast conversation with an authenticated peer.
     Direct { peer: PublicKey },
     /// The shared group conversation of a multicast channel.
-    ChannelGroup { channel: ChannelId },
+    ///
+    /// Keyed by the channel's [tag](ChannelTag) rather than its two-byte
+    /// identifier: the identifier is a hint that distinct keys may share, and a
+    /// conversation must never merge two channels that a receiver can tell
+    /// apart by authentication.
+    ChannelGroup { channel: ChannelTag },
     /// One-to-one blind-unicast conversation over a channel key.
-    ChannelDirect { channel: ChannelId, peer: PublicKey },
+    ChannelDirect { channel: ChannelTag, peer: PublicKey },
     /// Conversation with a chat-room node (reserved for the room adapter).
     Room { room: PublicKey },
 }

@@ -47,7 +47,9 @@ Guided setup flows built on top of that primitive:
   power, bandwidth, spreading factor, coding rate
 - [x] Duty cycle requirements (Custom overrides to regional presets)
 - [ ] Amateur radio operation
-  - [ ] Mode (Unlicensed, Licensed-Only, Hybrid)
+  - [ ] Mode
+    - [ ] Unlicensed/Licensed-Only
+    - [ ] Hybrid
   - [ ] Callsign
 
 ### Repeater
@@ -148,6 +150,8 @@ Guided setup flows built on top of that primitive:
 
 - [x] View existing text conversations
 - [x] Start a new text conversation with a peer
+- [x] Sorted by most recent activity. Unread messages should indicate in the row somehow.
+- [ ] Select/Change a channel for a conversation
 - [ ] Participate in existing text conversations
 	- [x] Send messages
 	- [ ] Emote messages sent to you
@@ -156,8 +160,7 @@ Guided setup flows built on top of that primitive:
 	- [x] Delete a previously sent message
 	- [ ] Properly display all of the above
 - [x] Delete an existing text conversation
-- [ ] See metadata about a specific received message (hop count, routing path, etc.)
-  — available for a ping reply on Peer Detail, not per message
+- [x] See metadata about a specific received message (hop count, routing path, etc.)
 
 ## 7. Channel Management
 
@@ -165,24 +168,37 @@ Channels are joined per-identity. The phone identity and the companion radio's
 device identity keep independent channel sets with independent keys; a channel
 present in both is a convention, not a shared object.
 
-- [ ] List channels (both local and device)
-- [ ] Add a channel
-- [ ] Delete a channel
+`public` and `EMERGENCY` are joined on first run with notifications off, and
+can be left; leaving keeps the record so the join flow can offer them back.
+
+- [x] List channels (both local and device) — device membership is listed by
+  the identifiers it reports; a channel whose key this phone lacks is shown but
+  cannot be named
+- [x] Join a channel (Public channels with a name, private channels with a URI)
+- [x] Leave a channel
+- [x] Create a new private channel
 - [ ] Configure a channel
-  - [ ] Region
-  - [ ] Alias
-  - [ ] Local, device, or both — which identity has joined the channel: the phone,
+  - [x] Region
+  - [x] Alias
+  - [x] Local, device, or both — which identity has joined the channel: the phone,
     the companion radio's device identity, or each of them separately
-  - [ ] Allow other members to request identity and public key
+  - [ ] Allow other members to request identity and public key — no layer scopes
+    identity requests per channel yet; the responder would have to filter on the
+    channel a request arrived on before this can be offered
 
 ## 8. Channel Group Chat
 
 Locally-joined channels only. Group chat is the phone identity participating, so
 device-joined channels are out of scope by construction.
 
-- [ ] Join a channel group chat
-- [ ] Participate in a channel group chat
-- [ ] Leave a channel group chat
-- [ ] Request the identity of a group chat participant
-- [ ] See metadata about a specific received group message (hop count, routing path,
+- [x] Group chat channels are displayed alongside uncast chats in the conversations tab, not in a separate sheet or section. Groups chats are subject to the same ordering rules: new messages push conversations to the top.
+- [x] Join a channel group chat — joining from Settings is membership alone; a
+  conversation is created on request, or automatically when joined through the
+  conversations tab. `public` always has one while joined.
+- [x] Participate in a channel group chat
+- [x] Leave a channel group chat — removes the local transcript and keeps
+  channel membership
+- [x] Request the identity of a group chat participant — sent over the channel,
+  filtered to the member's hint, routed by what their own frames showed
+- [x] See metadata about a specific received group message (hop count, routing path,
   node hint, etc.)

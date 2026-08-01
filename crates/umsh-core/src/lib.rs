@@ -54,7 +54,7 @@ pub use builder::{
 };
 pub use error::{AddressParseError, BuildError, EncodeError, ParseError};
 pub use packet::{
-    ChannelId, ChannelKey, Fcf, FloodHops, MicSize, NodeHint, OptionNumber, PacketHeader,
+    ChannelId, ChannelKey, ChannelTag, Fcf, FloodHops, MicSize, NodeHint, OptionNumber, PacketHeader,
     PacketType, ParsedOptions, PayloadType, PublicKey, RouterHint, Scf, SecInfo, SourceAddr,
     SourceAddrRef, UMSH_VERSION, UnsealedPacket, feed_aad, iter_options,
 };

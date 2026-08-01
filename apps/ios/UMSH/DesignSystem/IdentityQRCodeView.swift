@@ -2,10 +2,13 @@ import CoreImage.CIFilterBuiltins
 import SwiftUI
 import UIKit
 
-/// Renders a UMSH identity URI as a scannable QR code with the shareable
-/// URI and a copy control underneath.
+/// Renders a UMSH URI as a scannable QR code with the shareable URI and a
+/// copy control underneath.
 struct IdentityShareView: View {
     let uri: String
+    /// Names what is being copied. Defaults to an identity, which is where
+    /// this view started.
+    var copyLabel = "Copy Identity URI"
     @State private var copied = false
 
     var body: some View {
@@ -21,7 +24,7 @@ struct IdentityShareView: View {
                 UIPasteboard.general.string = uri
                 copied = true
             } label: {
-                Label(copied ? "Copied" : "Copy Identity URI",
+                Label(copied ? "Copied" : copyLabel,
                       systemImage: copied ? "checkmark" : "doc.on.doc")
             }
             .buttonStyle(.bordered)

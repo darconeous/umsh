@@ -55,6 +55,23 @@ protocol RadioConnection: AnyObject, Sendable {
     /// Remove a peer public key from the radio's device identity.
     /// Idempotent: a key the radio does not hold resolves as success.
     func removeDevicePeer(_ publicKey: Data) async throws
+    /// Store a channel key on the radio's device identity
+    /// (`PROP_DEV_CHANNEL_KEYS`), persisting it with a chained save. This is
+    /// the device's own membership, separate from the phone's. Idempotent.
+    func addDeviceChannel(_ channelKey: Data) async throws
+    /// Remove a channel key from the radio's device identity. Idempotent.
+    func removeDeviceChannel(_ channelKey: Data) async throws
+    /// Register channel keys with the phone's own MAC so their traffic is
+    /// accepted. Called with the full joined set at session start and
+    /// incrementally on join.
+    func registerChannels(_ channelKeys: [Data]) async throws
+    /// Drop channel keys from the phone's MAC.
+    func removeChannels(_ channelKeys: [Data]) async throws
+    /// Make the radio's host channel-key table match the phone's joined
+    /// channels, so it can filter and queue that traffic while the phone is
+    /// away. Bookkeeping between the app and its own radio: callers reconcile
+    /// on attach and after every membership change, and never surface it.
+    func reconcileHostChannels(_ channelKeys: [Data]) async throws
     func ping(peerAddress: String) async throws -> RadioPingResult
     /// Solicit a peer's current node identity by sending a targeted MAC
     /// Identity Request. Resolves once the request is handed to the radio;
@@ -65,6 +82,14 @@ protocol RadioConnection: AnyObject, Sendable {
     /// it). `roleFilter` is a wire role byte to narrow who answers; nil asks
     /// everyone. Replies arrive on `advertisementEvents()`.
     func requestNearbyIdentities(roleFilter: UInt8?) async throws
+    /// Ask one channel member — known only by the hint their group messages
+    /// claim — to identify themselves. The request goes out over that
+    /// channel, since a hint is not an address anything can be unicast to.
+    /// The reply arrives on `advertisementEvents()`.
+    func requestIdentityByHint(conversationAddress: String, hint: Data) async throws
+    /// Set the name carried on this phone's own group messages. Direct
+    /// messages never carry it — the recipient authenticated us by key.
+    func setChatDisplayName(_ name: String) async throws
     /// The route the phone's MAC will use for the next frame to this peer.
     /// Read-only: inspecting a peer never registers it.
     func peerRoute(peerAddress: String) async throws -> RadioPeerRoute
@@ -81,18 +106,18 @@ protocol RadioConnection: AnyObject, Sendable {
     /// and `prepareChat` rebuilds the registry on the next attach.
     func removeChatPeers(_ peerAddresses: [String]) async throws
     func composeText(
-        peerAddress: String,
+        conversationAddress: String,
         clientToken: UInt32,
         body: String
     ) async throws -> MobileChatComposeBatchRecord
     func composeEdit(
-        peerAddress: String,
+        conversationAddress: String,
         clientToken: UInt32,
         original: MobileChatOriginalRef,
         body: String
     ) async throws -> MobileChatComposeBatchRecord
     func composeDelete(
-        peerAddress: String,
+        conversationAddress: String,
         clientToken: UInt32,
         original: MobileChatOriginalRef
     ) async throws -> MobileChatComposeBatchRecord
@@ -180,6 +205,8 @@ struct RadioChatUpdate: Sendable {
     let mutations: [MobileChatMutationRecord]
     let deliveries: [MobileChatDeliveryRecord]
     let archiveLookups: [MobileChatArchiveLookupRecord]
+    /// Channel members whose claimed hint has resolved to a real address.
+    let senderResolutions: [MobileChatSenderResolutionRecord]
     let diagnostics: [String]
 }
 

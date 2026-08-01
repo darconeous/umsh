@@ -21,7 +21,7 @@ struct PeerSummary: Identifiable, Hashable, Sendable {
     /// evidence.
     var lastHeard: Date? = nil
     /// Whether this node is saved on the local (phone) identity. `false` is
-    /// the transient tier: hidden from the main Network list, surfaced only
+    /// the transient tier: hidden from the main Peers list, surfaced only
     /// through search and discovery.
     var isSaved: Bool = true
     var isFavorite: Bool = false
@@ -138,6 +138,90 @@ struct DirectConversationSummary: Identifiable, Hashable, Sendable {
     let peer: PeerSummary
     var draftText: String
     var messages: [ChatMessageSummary]
+    /// Messages received since the user last opened this conversation.
+    var unreadCount: Int = 0
+    /// When the conversation was created, which stands in for activity until
+    /// the first message.
+    var createdAtMilliseconds: Int64 = 0
+
+    /// The address the mesh facade keys this conversation's records by.
+    var conversationAddress: String { peer.identity.canonicalAddress }
+}
+
+/// A channel's group conversation. Everyone holding the key is a participant,
+/// so there is no peer on the other end — only members, who are known by the
+/// hint their messages claim until their full address is learned.
+struct ChannelConversationSummary: Identifiable, Hashable, Sendable {
+    let id: Int64
+    let channel: ChannelSummary
+    let conversationAddress: String
+    var draftText: String
+    var messages: [ChatMessageSummary]
+    var unreadCount: Int = 0
+    /// When the conversation was created, which stands in for activity until
+    /// the first message.
+    var createdAtMilliseconds: Int64 = 0
+}
+
+/// One row of the conversations list, whichever kind it is. The list mixes
+/// both and orders them together: a channel with newer traffic belongs above
+/// a quiet direct chat.
+enum ConversationListItem: Identifiable, Hashable, Sendable {
+    case direct(DirectConversationSummary)
+    case channel(ChannelConversationSummary)
+
+    var id: String {
+        switch self {
+        case let .direct(conversation): "direct:\(conversation.id)"
+        case let .channel(conversation): "channel:\(conversation.id)"
+        }
+    }
+
+    var title: String {
+        switch self {
+        case let .direct(conversation): conversation.peer.displayName
+        case let .channel(conversation): conversation.channel.title
+        }
+    }
+
+    var messages: [ChatMessageSummary] {
+        switch self {
+        case let .direct(conversation): conversation.messages
+        case let .channel(conversation): conversation.messages
+        }
+    }
+
+    var draftText: String {
+        switch self {
+        case let .direct(conversation): conversation.draftText
+        case let .channel(conversation): conversation.draftText
+        }
+    }
+
+    var unreadCount: Int {
+        switch self {
+        case let .direct(conversation): conversation.unreadCount
+        case let .channel(conversation): conversation.unreadCount
+        }
+    }
+
+    var conversationAddress: String {
+        switch self {
+        case let .direct(conversation): conversation.conversationAddress
+        case let .channel(conversation): conversation.conversationAddress
+        }
+    }
+
+    /// When this conversation last saw traffic, for ordering. A conversation
+    /// with no messages yet is as recent as its creation: a chat just opened
+    /// belongs at the top, where the user who opened it will look for it.
+    var lastActivityMilliseconds: Int64 {
+        let created = switch self {
+        case let .direct(conversation): conversation.createdAtMilliseconds
+        case let .channel(conversation): conversation.createdAtMilliseconds
+        }
+        return messages.last.map { max($0.createdAtMilliseconds, created) } ?? created
+    }
 }
 
 struct ChatMessageSummary: Identifiable, Hashable, Sendable {
@@ -168,25 +252,64 @@ struct ChatMessageSummary: Identifiable, Hashable, Sendable {
     /// Pre-edit text of the sender's own edited message, available for review
     /// via the bubble's context menu. The wire archive never resends it.
     var originalBody: String? = nil
-    /// When the message was recorded locally. Drives the Network list's
+    /// When the message was recorded locally. Drives the Peers list's
     /// "Latest message" sort; transcripts order by storage, not this.
     var createdAtMilliseconds: Int64 = 0
+    /// Who sent this, in a group conversation. The address is present once
+    /// that member's hint has been resolved; the hint is always there; the
+    /// handle is the name the sender chose to attach to the message.
+    var senderAddress: String? = nil
+    var senderHint: Data? = nil
+    var senderHandle: String? = nil
+    /// The sender's hint rendered for display, so a group bubble can show the
+    /// same deterministic avatar a peer gets. Resolved when the transcript is
+    /// loaded rather than per bubble.
+    var senderNodeHint: MeshNodeHint? = nil
+    /// What the radio observed of the frame this message arrived on.
+    var reception: StoredMessageReception? = nil
+
+    /// A short, stable label for a member known only by their hint.
+    var senderHintLabel: String? {
+        senderHint.map { hint in hint.map { String(format: "%02x", $0) }.joined() }
+    }
 }
 
 enum MessageSendResult: Sendable {
-    case sent(DirectConversationSummary)
+    case sent(ConversationListItem)
     case failed(String)
 }
 
 /// Message-level operations on an open transcript. Bundled so intermediate
 /// views do not grow a parameter per operation.
 struct ChatMessageActions: Sendable {
-    let edit: @Sendable (DirectConversationSummary, ChatMessageSummary, String) async -> MessageSendResult
-    let delete: @Sendable (DirectConversationSummary, ChatMessageSummary) async -> MessageSendResult
+    let edit: @Sendable (ConversationListItem, ChatMessageSummary, String) async -> MessageSendResult
+    let delete: @Sendable (ConversationListItem, ChatMessageSummary) async -> MessageSendResult
 
     static let unavailable = ChatMessageActions(
         edit: { _, _, _ in .failed("Messaging is unavailable.") },
         delete: { _, _ in .failed("Messaging is unavailable.") }
+    )
+}
+
+/// Operations on a channel's group conversation, beyond sending. Bundled the
+/// same way the channel-management actions are.
+struct ChannelConversationActions: Sendable {
+    /// Open a channel's conversation, creating it if this is the first time.
+    let start: @Sendable (ChannelSummary) async -> ChannelConversationSummary?
+    /// Open the conversation for a channel that was just joined. Joining from
+    /// here is a request to talk in the channel, so the chat opens with it —
+    /// unlike joining from Settings, which is membership alone.
+    let startAfterJoin: @Sendable (MeshChannelPreview) async -> ChannelConversationSummary?
+    /// Leave the group chat: the transcript goes, channel membership stays.
+    let delete: @Sendable (ChannelConversationSummary) async -> Void
+    /// Ask a member known only by their hint to identify themselves.
+    let requestMemberIdentity: @Sendable (ChannelConversationSummary, Data) async -> Void
+
+    static let unavailable = ChannelConversationActions(
+        start: { _ in nil },
+        startAfterJoin: { _ in nil },
+        delete: { _ in },
+        requestMemberIdentity: { _, _ in }
     )
 }
 
@@ -236,7 +359,7 @@ struct PeerRoute: Equatable, Sendable {
 /// Everything the peer sheet can do with the node it is showing.
 ///
 /// Bundled because `PeerDetailView` is presented from four places — the
-/// Network list, a conversation's title bar, Settings' radio identity, and
+/// Peers list, a conversation's title bar, Settings' radio identity, and
 /// device setup — and passing these one parameter at a time made the same
 /// sheet offer different things depending on where it was opened. One value
 /// threaded through means one sheet with one set of capabilities.

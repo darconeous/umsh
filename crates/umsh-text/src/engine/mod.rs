@@ -98,10 +98,10 @@ pub enum Destination {
     /// Unicast to an authenticated peer.
     Peer(PublicKey),
     /// Multicast to a channel.
-    Channel(umsh_core::ChannelId),
+    Channel(umsh_core::ChannelTag),
     /// Blind-unicast to a peer over a channel key.
     ChannelPeer {
-        channel: umsh_core::ChannelId,
+        channel: umsh_core::ChannelTag,
         peer: PublicKey,
     },
 }
@@ -488,6 +488,13 @@ pub struct Engine<P: TextProfile, const SLOTS: usize = 4, const PAGES: usize = 2
     next_transmission: u32,
     next_request: u32,
     revision: u32,
+    /// A display name attached to our own group messages.
+    ///
+    /// A multicast reaches members who may hold no identity for us at all —
+    /// the wire carries only a 3-byte hint — so a group message says who sent
+    /// it or arrives anonymous. Unicast never needs it: the recipient
+    /// authenticated us by key.
+    local_handle: heapless::String<24>,
     lookups: heapless::Vec<PendingLookup, 8>,
     coalesce: CoalesceRing,
     in_flight: heapless::Vec<InFlightFrame, 16>,
@@ -530,6 +537,7 @@ impl<P: TextProfile, const SLOTS: usize, const PAGES: usize> Engine<P, SLOTS, PA
             next_transmission: 1,
             next_request: 1,
             revision: 1,
+            local_handle: heapless::String::new(),
             lookups: heapless::Vec::new(),
             coalesce: CoalesceRing::default(),
             in_flight: heapless::Vec::new(),
@@ -546,6 +554,20 @@ impl<P: TextProfile, const SLOTS: usize, const PAGES: usize> Engine<P, SLOTS, PA
             self.arena_used = 0;
         }
         output
+    }
+
+    /// Set the display name carried on our own group messages.
+    ///
+    /// Truncated to the wire limit on a character boundary. An empty name
+    /// clears it, and group messages then go out unnamed — recipients see
+    /// only the claimed hint.
+    pub fn set_local_handle(&mut self, handle: &str) {
+        self.local_handle.clear();
+        for character in handle.chars() {
+            if self.local_handle.push(character).is_err() {
+                break;
+            }
+        }
     }
 
     /// Resolve a [`BodyRef`] to its UTF-8 text.
@@ -669,9 +691,19 @@ impl<P: TextProfile, const SLOTS: usize, const PAGES: usize> Engine<P, SLOTS, PA
         } else {
             MessageType::Basic
         };
+        // Named only where the recipient may not know us. A unicast peer
+        // authenticated us by key, so spending airtime on a name there would
+        // repeat what the frame already proves.
+        //
+        // Copied out rather than borrowed: encoding needs `&mut self`.
+        let handle_bytes: heapless::String<24> = match conversation {
+            ConversationKey::ChannelGroup { .. } => self.local_handle.clone(),
+            _ => heapless::String::new(),
+        };
+        let sender_handle = (!handle_bytes.is_empty()).then(|| handle_bytes.as_str());
         let template = TextMessage {
             message_type,
-            sender_handle: None,
+            sender_handle,
             sequence: Some(MessageSequence::unfragmented(message_id)),
             sequence_reset: announce_reset,
             regarding,

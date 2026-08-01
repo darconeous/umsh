@@ -243,6 +243,67 @@ mod tests {
     }
 
     #[cfg(all(feature = "software-crypto", feature = "unsafe-advanced"))]
+    fn test_node(mac: FakeMac) -> crate::node::LocalNode<FakeMac> {
+        use crate::node::{LocalNode, LocalNodeState, NodeMembership};
+
+        LocalNode::new(
+            LocalIdentityId(1),
+            mac,
+            Rc::new(RefCell::new(crate::dispatch::EventDispatcher::new())),
+            Rc::new(RefCell::new(NodeMembership::new())),
+            Rc::new(RefCell::new(LocalNodeState::new())),
+        )
+    }
+
+    #[cfg(all(feature = "software-crypto", feature = "unsafe-advanced"))]
+    #[test]
+    fn leaving_a_channel_unregisters_its_key_from_the_mac() {
+        let mac = FakeMac::new(Vec::new());
+        let node = test_node(mac.clone());
+        let channel = crate::Channel::private(umsh_core::ChannelKey([0x11; 32]), "trail");
+
+        block_on_ready(node.join(&channel)).unwrap();
+        assert!(mac.holds_channel(channel.key()));
+
+        block_on_ready(node.leave(&channel)).unwrap();
+        assert!(!mac.holds_channel(channel.key()));
+        assert!(node.bound_channel(&channel).is_none());
+    }
+
+    #[cfg(all(feature = "software-crypto", feature = "unsafe-advanced"))]
+    #[test]
+    fn rejoining_after_leave_re_registers_the_key_with_the_mac() {
+        let mac = FakeMac::new(Vec::new());
+        let node = test_node(mac.clone());
+        let channel = crate::Channel::private(umsh_core::ChannelKey([0x22; 32]), "camp");
+
+        let first = block_on_ready(node.join(&channel)).unwrap();
+        block_on_ready(node.leave(&channel)).unwrap();
+        let second = block_on_ready(node.join(&channel)).unwrap();
+
+        // The key is back in the MAC, the fresh handle is live, and the stale
+        // one from before the leave is not.
+        assert!(mac.holds_channel(channel.key()));
+        assert!(second.is_active());
+        assert!(!first.is_active());
+    }
+
+    #[cfg(all(feature = "software-crypto", feature = "unsafe-advanced"))]
+    #[test]
+    fn leaving_a_channel_that_was_never_joined_is_a_no_op() {
+        let mac = FakeMac::new(Vec::new());
+        let node = test_node(mac.clone());
+        let joined = crate::Channel::private(umsh_core::ChannelKey([0x33; 32]), "joined");
+        let stranger = crate::Channel::private(umsh_core::ChannelKey([0x44; 32]), "stranger");
+
+        block_on_ready(node.join(&joined)).unwrap();
+        block_on_ready(node.leave(&stranger)).unwrap();
+
+        assert!(mac.holds_channel(joined.key()));
+        assert!(node.bound_channel(&joined).is_some());
+    }
+
+    #[cfg(all(feature = "software-crypto", feature = "unsafe-advanced"))]
     #[test]
     fn receive_callbacks_can_observe_rx_metadata() {
         use crate::node::{LocalNode, LocalNodeState, NodeMembership};
@@ -667,6 +728,7 @@ mod tests {
         unicasts: Vec<SentUnicast>,
         removed_ephemerals: Vec<LocalIdentityId>,
         peers: Vec<(PublicKey, PeerId)>,
+        channels: Vec<umsh_core::ChannelKey>,
     }
 
     #[cfg(all(feature = "software-crypto", feature = "unsafe-advanced"))]
@@ -694,6 +756,10 @@ mod tests {
 
         fn take_unicasts(&self) -> Vec<SentUnicast> {
             core::mem::take(&mut self.state.borrow_mut().unicasts)
+        }
+
+        fn holds_channel(&self, key: &umsh_core::ChannelKey) -> bool {
+            self.state.borrow().channels.iter().any(|k| k.0 == key.0)
         }
     }
 
@@ -732,8 +798,12 @@ mod tests {
 
         async fn add_private_channel(
             &self,
-            _key: umsh_core::ChannelKey,
+            key: umsh_core::ChannelKey,
         ) -> Result<(), MacBackendError<Self::SendError, Self::CapacityError>> {
+            let mut state = self.state.borrow_mut();
+            if !state.channels.iter().any(|k| k.0 == key.0) {
+                state.channels.push(key);
+            }
             Ok(())
         }
 
@@ -742,6 +812,13 @@ mod tests {
             _name: &str,
         ) -> Result<(), MacBackendError<Self::SendError, Self::CapacityError>> {
             Ok(())
+        }
+
+        async fn remove_channel(&self, key: &umsh_core::ChannelKey) -> bool {
+            let mut state = self.state.borrow_mut();
+            let before = state.channels.len();
+            state.channels.retain(|k| k.0 != key.0);
+            state.channels.len() != before
         }
 
         async fn send_broadcast(
@@ -949,13 +1026,13 @@ mod tests {
         assert_eq!(reply.to, requester);
         // A broadcast is unauthenticated, so the requester may lack our key.
         assert!(reply.options.full_source);
-        // The reply is held for a random slice of the 5-second window so the
+        // The reply is held for a random slice of the 30-second window so the
         // selected nodes do not all answer the same frame at once.
         let delay = reply
             .options
             .tx_delay_ms
             .expect("broadcast replies are jittered");
-        assert!(delay <= 5_000);
+        assert!((500..=30_000).contains(&delay));
     }
 
     #[cfg(all(feature = "software-crypto", feature = "unsafe-advanced"))]

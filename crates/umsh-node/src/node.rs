@@ -1017,12 +1017,12 @@ impl<M: MacBackend> LocalNode<M> {
     /// the first node to join it. Returns the bound channel handle.
     #[cfg(feature = "software-crypto")]
     pub async fn join(&self, channel: &Channel) -> Result<BoundChannel<M>, NodeError<M>> {
-        let mut membership = self.membership.borrow_mut();
+        let membership = self.membership.borrow_mut();
 
         // Check if already joined.
         if let Some(entry) = membership
             .channels
-            .iter_mut()
+            .iter()
             .find(|e| e.channel == *channel)
         {
             if entry.active {
@@ -1032,7 +1032,20 @@ impl<M: MacBackend> LocalNode<M> {
                     join_generation: entry.generation,
                 });
             }
-            // Re-joining after leave — mark active again, bump generation.
+        }
+
+        // Either new or re-joining after a leave. Both register with the MAC:
+        // `leave` unregisters the key, so a dormant entry has no MAC state to
+        // reuse.
+        drop(membership);
+        self.mac.add_private_channel(channel.key().clone()).await?;
+        let mut membership = self.membership.borrow_mut();
+
+        if let Some(entry) = membership
+            .channels
+            .iter_mut()
+            .find(|e| e.channel == *channel)
+        {
             entry.active = true;
             entry.generation = entry.generation.wrapping_add(1);
             return Ok(BoundChannel {
@@ -1041,11 +1054,6 @@ impl<M: MacBackend> LocalNode<M> {
                 join_generation: entry.generation,
             });
         }
-
-        // New channel — register with MAC.
-        drop(membership);
-        self.mac.add_private_channel(channel.key().clone()).await?;
-        let mut membership = self.membership.borrow_mut();
 
         let generation = 0;
         membership.channels.push(ChannelMembershipEntry {
@@ -1061,19 +1069,24 @@ impl<M: MacBackend> LocalNode<M> {
         })
     }
 
-    /// Leave a channel. Marks the membership entry inactive and bumps
-    /// that entry's generation counter.
+    /// Leave a channel. Marks the membership entry inactive, bumps that
+    /// entry's generation counter, and unregisters the channel key from the
+    /// MAC so inbound traffic on it is no longer decrypted.
     #[cfg(feature = "software-crypto")]
-    pub fn leave(&self, channel: &Channel) -> Result<(), NodeError<M>> {
-        let mut membership = self.membership.borrow_mut();
-        if let Some(entry) = membership
-            .channels
-            .iter_mut()
-            .find(|e| e.channel == *channel && e.active)
+    pub async fn leave(&self, channel: &Channel) -> Result<(), NodeError<M>> {
         {
+            let mut membership = self.membership.borrow_mut();
+            let Some(entry) = membership
+                .channels
+                .iter_mut()
+                .find(|e| e.channel == *channel && e.active)
+            else {
+                return Ok(());
+            };
             entry.active = false;
             entry.generation = entry.generation.wrapping_add(1);
         }
+        self.mac.remove_channel(channel.key()).await;
         Ok(())
     }
 

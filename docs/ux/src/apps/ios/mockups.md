@@ -8,6 +8,10 @@ and implementation.
 ## Review legend
 
 - Text in `[brackets]` is a tappable control.
+- The tab strip drawn as `[Conversations] [Network] [Settings]` predates the
+  Peers/Channels split and is too narrow to redraw here. The shipping tab bar
+  is **Conversations · Peers · Channels · Settings**; see
+  [product structure](product-structure.md).
 - `(...)` is a status or secondary label.
 - `⋯` opens a menu; it is never the only route to a primary action.
 - Protocol evidence is written out in detail views even when the transcript
@@ -180,12 +184,12 @@ bubble style; initials, names, grouping, and spacing distinguish them without a
 rainbow of sender colors. The user's outgoing bubble uses the platform accent
 and trailing alignment.
 
-## C. Network list
+## C. Peers list
 
 ```text
 ┌─────────────────────────────────────┐
 │                  [⌁ ◫]    [scan] ⋯ │
-│ Network                             │
+│ Peers                               │
 │ [ Search nodes               ]      │
 │ [All] [People] [Sensors] [More ▾]   │
 │                         [List | Map]│
@@ -208,13 +212,13 @@ and trailing alignment.
 
 The filter row is horizontally adaptable and may become one filter menu at
 large text sizes. Rows never call RSSI a distance. **Map** in the persistent
-List/Map control opens the map without leaving the Network tab.
+List/Map control opens the map without leaving the Peers tab.
 
 ## D. Peer detail
 
 ```text
 ┌─────────────────────────────────────┐
-│ ‹ Network          [⌁ ◫]      [Share]│
+│ ‹ Peers            [⌁ ◫]      [Share]│
 │ Peer details                        │
 │                                     │
 │              ╭────────╮             │
@@ -253,7 +257,7 @@ this stable peer.
 
 ```text
 ┌─────────────────────────────────────┐
-│ ‹ Network          [⌁ ◫]      [Share]│
+│ ‹ Peers            [⌁ ◫]      [Share]│
 │             Creek Gauge             │
 │             Sensor                  │
 │                                     │
@@ -524,12 +528,12 @@ The chart is illustrative only; an actual resource view must use units and
 history supplied or locally observed for that resource. Staleness remains
 visible even when the value itself looks plausible.
 
-## K. Network map
+## K. Peers map
 
 ```text
 ┌─────────────────────────────────────┐
 │                  [⌁ ◫]    [scan] ⋯ │
-│ Network                             │
+│ Peers                               │
 │ [ Search nodes               ]      │
 │                    [List | MAP]     │
 │ ┌─────────────────────────────────┐ │
@@ -551,7 +555,7 @@ visible even when the value itself looks plausible.
 └─────────────────────────────────────┘
 ```
 
-The map is the second presentation of Network, reached by tapping **Map** in
+The map is the second presentation of Peers, reached by tapping **Map** in
 the segmented control. It renders coarse reported locations as areas rather
 than precise pins. Selecting an area shows one compact summary; **View node**
 opens Node Detail. The control remains present when there are no locations so
@@ -716,8 +720,13 @@ Conversations
                     -> Node / Channel / Room detail
   New / Scan       -> Import preview -> Confirmed destination
 
-Network
+Peers
   List <-> Map -> Node detail -> Messages / Data / Room / Management
+
+Channels
+  Joined / Suggested / On the radio only
+                   -> Channel detail -> Share invitation / Leave
+  Join / Create    -> Preview -> Joined
 
 Settings
   Identity -> Share / Metadata / Recovery

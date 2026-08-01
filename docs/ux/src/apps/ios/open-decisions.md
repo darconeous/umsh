@@ -82,7 +82,7 @@ Choose:
 - whether discovery defaults differ in amateur-radio or privacy-sensitive
   profiles.
 
-The default should avoid both an empty, mysterious Network tab and an unbounded
+The default should avoid both an empty, mysterious Peers tab and an unbounded
 address harvest.
 
 ## Active peer-discovery exchange

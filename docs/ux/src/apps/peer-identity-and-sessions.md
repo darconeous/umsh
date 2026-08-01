@@ -108,7 +108,7 @@ show ephemeral addresses with explicit **Ephemeral session address** labels.
 ## Peer Detail
 
 Peer Detail is the authoritative user-facing view of one known peer. It is
-reachable from a direct-conversation title/avatar, a discovery or Network row,
+reachable from a direct-conversation title/avatar, a discovery or Peers row,
 a channel sender, and other peer references. It contains:
 
 - deterministic NodeHint avatar and any local replacement;

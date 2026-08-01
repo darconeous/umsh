@@ -317,6 +317,27 @@ impl core::fmt::Display for RouterHint {
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
 pub struct ChannelId(pub [u8; 2]);
 
+/// Sixteen-byte channel tag: a local identity for a channel, wide enough to
+/// distinguish channels that a [`ChannelId`] cannot.
+///
+/// The two-byte identifier is a hint, and collisions between distinct channel
+/// keys are legal — a frame belongs to whichever channel key authenticates it,
+/// not to whichever key derives the same identifier. Bookkeeping that has no
+/// key at hand to authenticate against therefore needs a wider name; this is
+/// that name. Nothing on the wire carries it.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash, PartialOrd, Ord)]
+pub struct ChannelTag(pub [u8; 16]);
+
+impl ChannelTag {
+    /// The channel identifier this tag begins with.
+    ///
+    /// Both come from the same derivation, so the identifier is the tag's own
+    /// first two bytes rather than a separate computation.
+    pub fn channel_id(&self) -> ChannelId {
+        ChannelId([self.0[0], self.0[1]])
+    }
+}
+
 /// Node public key, which also acts as the full network address.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
 pub struct PublicKey(pub [u8; 32]);
