@@ -1033,6 +1033,40 @@ mod tests {
             .tx_delay_ms
             .expect("broadcast replies are jittered");
         assert!((500..=30_000).contains(&delay));
+        // No FILTER_NODE_HINT narrowed the solicitation, so the reply stays
+        // inside the one hop the request was allowed: no FHOPS field.
+        assert_eq!(reply.options.flood_hops, None);
+    }
+
+    /// A `FILTER_NODE_HINT` names one answering node, so the solicitation may
+    /// be flood routed and the reply keeps its normal flood budget.
+    #[cfg(all(feature = "software-crypto", feature = "unsafe-advanced"))]
+    #[test]
+    fn responder_answers_flood_routed_hint_filtered_solicitation() {
+        let mac = FakeMac::new(vec![[0x12; 32]]);
+        let node = responder_node(&mac);
+        let our_key = PublicKey([0x11; 32]);
+        let requester = PublicKey([0x41; 32]);
+        node.enable_identity_responder_default(test_profile(our_key));
+
+        let options = crate::mac_command::IdentityRequestBuilder::new()
+            .filter_hint(&our_key.hint())
+            .unwrap()
+            .build();
+        // FHOPS_REM=2, FHOPS_ACC=1: repeated once, two hops of budget left.
+        let repeated = test_broadcast_packet(requester, Some(0x21), None);
+
+        let plan = node
+            .evaluate_identity_request(&repeated, requester, &options)
+            .expect("a hint-filtered solicitation may be flood routed");
+        block_on_ready(node.send_identity_response(plan));
+
+        let unicasts = mac.take_unicasts();
+        assert_eq!(unicasts.len(), 1);
+        assert!(
+            unicasts[0].options.flood_hops.is_some(),
+            "the reply may be flooded back to a requester that named us"
+        );
     }
 
     #[cfg(all(feature = "software-crypto", feature = "unsafe-advanced"))]
@@ -1048,17 +1082,27 @@ mod tests {
             .unwrap()
             .build();
 
-        // A nonzero FHOPS byte marks a repeated (or repeatable) request.
+        // A nonzero FHOPS byte marks a request that was flood routed, and no
+        // FILTER_NODE_HINT narrows this one to a single answering node.
         let repeated = test_broadcast_packet(requester, Some(0x21), None);
         assert!(
             node.evaluate_identity_request(&repeated, requester, &options)
                 .is_none()
         );
 
-        // A non-empty Route option is a steered request.
+        // A non-empty Route option is a steered request. That holds whatever
+        // the filters say, so check it with a hint filter too.
         let routed = test_broadcast_packet(requester, None, Some(&[0xAB, 0xCD]));
         assert!(
             node.evaluate_identity_request(&routed, requester, &options)
+                .is_none()
+        );
+        let hint_options = crate::mac_command::IdentityRequestBuilder::new()
+            .filter_hint(&our_key.hint())
+            .unwrap()
+            .build();
+        assert!(
+            node.evaluate_identity_request(&routed, requester, &hint_options)
                 .is_none()
         );
 

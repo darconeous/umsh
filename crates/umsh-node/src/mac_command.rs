@@ -278,6 +278,22 @@ impl<'a> IdentityRequestFilters<'a> {
         Ok(None)
     }
 
+    /// Whether the request carries at least one `FILTER_NODE_HINT` filter.
+    ///
+    /// A hint filter names a single node, so such a request solicits one reply
+    /// however far it travels. Without one the request selects by role or
+    /// capability and every node it reaches may answer, which is what confines
+    /// a broadcast or multicast solicitation — and its replies — to the
+    /// requester's own neighbourhood.
+    ///
+    /// A malformed option block reads as unfiltered, which is the conservative
+    /// answer: it keeps the strict rules in force.
+    pub fn hint_filtered(&self) -> bool {
+        OptionDecoder::new(self.options)
+            .map_while(Result::ok)
+            .any(|(number, _)| number == identity_filter::FILTER_NODE_HINT)
+    }
+
     /// Whether a node with the given identity is selected by this request.
     ///
     /// Filters combine as a logical AND across distinct filter types and a
@@ -505,6 +521,27 @@ mod tests {
                 .selects(NodeRole::Chat, caps, &NodeHint([0xAA, 0xBB, 0xCD]))
                 .unwrap()
         );
+    }
+
+    #[test]
+    fn identity_filters_report_hint_presence() {
+        let hinted = IdentityRequestBuilder::new()
+            .nonce(0x0102_0304)
+            .unwrap()
+            .filter_hint(&NodeHint([0xAA, 0xBB, 0xCC]))
+            .unwrap()
+            .build();
+        assert!(IdentityRequestFilters::new(&hinted).hint_filtered());
+
+        let by_role = IdentityRequestBuilder::new()
+            .filter_role(NodeRole::Repeater)
+            .unwrap()
+            .build();
+        assert!(!IdentityRequestFilters::new(&by_role).hint_filtered());
+
+        // No filters at all, and a truncated block, both read as unfiltered.
+        assert!(!IdentityRequestFilters::new(&[]).hint_filtered());
+        assert!(!IdentityRequestFilters::new(&[0x33, 0xAA]).hint_filtered());
     }
 
     #[test]

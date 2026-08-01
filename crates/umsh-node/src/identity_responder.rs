@@ -178,6 +178,11 @@ pub(crate) struct IdentityResponsePlan {
     /// Set for broadcast/multicast solicitations, where every selected node
     /// answers at once and undelayed replies would collide on the channel.
     pub(crate) delayed: bool,
+    /// Whether the reply must carry no flood hop count field at all.
+    /// Set for a solicitation that no `FILTER_NODE_HINT` narrowed: such a
+    /// request was confined to the requester's neighbours on the way in, and
+    /// its reply stays there too rather than being flooded back.
+    pub(crate) no_flood: bool,
     /// The framed reply payload: `PayloadType::NodeIdentity` + encoded identity.
     pub(crate) framed: Vec<u8>,
 }
@@ -215,13 +220,15 @@ impl IdentityResponder {
         let mut buf = [0u8; 192];
         buf[0] = PayloadType::NodeIdentity as u8;
         let len = 1 + payload.encode(&mut buf[1..]).ok()?;
+        let solicitation = matches!(
+            ctx.family,
+            crate::PacketFamily::Broadcast | crate::PacketFamily::Multicast
+        );
         Some(IdentityResponsePlan {
             to: ctx.from_key,
             full_source,
-            delayed: matches!(
-                ctx.family,
-                crate::PacketFamily::Broadcast | crate::PacketFamily::Multicast
-            ),
+            delayed: solicitation,
+            no_flood: solicitation && !ctx.filters.hint_filtered(),
             framed: Vec::from(&buf[..len]),
         })
     }

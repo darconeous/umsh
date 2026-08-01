@@ -619,19 +619,24 @@ impl<M: MacBackend> LocalNode<M> {
         options: &[u8],
     ) -> Option<IdentityResponsePlan> {
         // Flood management for solicitations that can reach many nodes: a
-        // broadcast (or multicast) Identity Request must arrive unrepeated —
-        // FHOPS absent or fully zero — and must not carry a routing
-        // constraint (a Route option is fine only when empty). Anything else
-        // is a repeated or steered request, and answering it multiplies
-        // replies across the mesh.
+        // broadcast (or multicast) Identity Request must not carry a routing
+        // constraint (a Route option is fine only when empty) — a steered
+        // request is still on its way to the neighbourhood it meant to ask.
+        //
+        // A request that no FILTER_NODE_HINT narrows may additionally be
+        // answered by every node it reaches, so it must also arrive
+        // unrepeated, FHOPS absent or fully zero; flood routing such a request
+        // multiplies replies across the mesh. A hint-filtered request names
+        // one answering node and so may travel as far as it likes.
+        let filters = crate::mac_command::IdentityRequestFilters::new(options);
         if matches!(
             packet.packet_family(),
             crate::PacketFamily::Broadcast | crate::PacketFamily::Multicast
         ) {
-            if packet.flood_hops().is_some_and(|hops| hops.0 != 0) {
+            if packet.source_route().is_some_and(|route| !route.is_empty()) {
                 return None;
             }
-            if packet.source_route().is_some_and(|route| !route.is_empty()) {
+            if !filters.hint_filtered() && packet.flood_hops().is_some_and(|hops| hops.0 != 0) {
                 return None;
             }
         }
@@ -642,7 +647,7 @@ impl<M: MacBackend> LocalNode<M> {
             has_full_source: packet.has_full_source(),
             channel: packet.channel().map(|c| c.id()),
             family: packet.packet_family(),
-            filters: crate::mac_command::IdentityRequestFilters::new(options),
+            filters,
             rssi: packet.rssi(),
             snr: packet.snr(),
         };
@@ -668,6 +673,12 @@ impl<M: MacBackend> LocalNode<M> {
         let mut options = SendOptions::default();
         if plan.full_source {
             options = options.with_full_source();
+        }
+        if plan.no_flood {
+            // The solicitation named no single node, so it was allowed one hop
+            // and no more; the reply carries no FHOPS field so no repeater can
+            // flood it back across the mesh.
+            options = options.no_flood();
         }
         if plan.delayed {
             // Every node the solicitation selected is answering the same
