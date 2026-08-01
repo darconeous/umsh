@@ -2,18 +2,13 @@
 <!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
 <plist version="1.0">
 <dict>
-	<!-- Merged with the build-setting-generated Info.plist
-	     (GENERATE_INFOPLIST_FILE stays enabled). Only keys that cannot be
-	     expressed as INFOPLIST_KEY_* settings belong here. -->
-	<key>UIBackgroundModes</key>
-	<array>
-		<string>bluetooth-central</string>
-	</array>
 	<key>CFBundleURLTypes</key>
 	<array>
 		<dict>
 			<key>CFBundleTypeRole</key>
 			<string>Viewer</string>
+			<key>CFBundleURLIconFile</key>
+			<string>../../docs/logo/umsh-app-icon.png</string>
 			<key>CFBundleURLName</key>
 			<string>com.voria.umsh.app.uri</string>
 			<key>CFBundleURLSchemes</key>
@@ -21,6 +16,10 @@
 				<string>umsh</string>
 			</array>
 		</dict>
+	</array>
+	<key>UIBackgroundModes</key>
+	<array>
+		<string>bluetooth-central</string>
 	</array>
 </dict>
 </plist>
