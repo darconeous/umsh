@@ -5,7 +5,10 @@ import UMSHMobileCore
 enum ApplicationStoreError: Error, Equatable, Sendable {
     case applicationSupportUnavailable
     case openFailed(Int32)
-    case sqliteFailure(Int32)
+    /// A result code plus SQLite's own account of it. The code alone says only
+    /// that something was refused; the message names the column, table or
+    /// constraint, which is the difference between a usable report and a guess.
+    case sqliteFailure(Int32, message: String)
     case unsupportedSchema(Int32)
     /// Migrations ran but left the database at a version other than
     /// ``SQLiteApplicationStore/currentSchemaVersion`` — a migration block
@@ -23,8 +26,8 @@ extension ApplicationStoreError {
             "The Application Support directory is unavailable."
         case .openFailed(let code):
             "sqlite3_open_v2 failed with code \(code)."
-        case .sqliteFailure(let code):
-            "SQLite returned code \(code)."
+        case .sqliteFailure(let code, let message):
+            "SQLite returned code \(code): \(message)."
         case .unsupportedSchema(let version):
             """
             The database is at schema version \(version); this build supports \
@@ -1040,7 +1043,7 @@ actor SQLiteApplicationStore {
         try bind(ownerIdentityID, to: select, at: 1)
         try bind(peerAddress, to: select, at: 2)
         guard sqlite3_step(select) == SQLITE_ROW else {
-            throw ApplicationStoreError.sqliteFailure(sqlite3_errcode(database))
+            throw Self.sqliteFailure(database, sqlite3_errcode(database))
         }
         return sqlite3_column_int64(select, 0)
     }
@@ -1075,7 +1078,7 @@ actor SQLiteApplicationStore {
             case SQLITE_DONE:
                 return conversations
             case let code:
-                throw ApplicationStoreError.sqliteFailure(code)
+                throw Self.sqliteFailure(database, code)
             }
         }
     }
@@ -1110,7 +1113,7 @@ actor SQLiteApplicationStore {
         try bind(ownerIdentityID, to: select, at: 1)
         try bind(channelID.uuidString, to: select, at: 2)
         guard sqlite3_step(select) == SQLITE_ROW else {
-            throw ApplicationStoreError.sqliteFailure(sqlite3_errcode(database))
+            throw Self.sqliteFailure(database, sqlite3_errcode(database))
         }
         return sqlite3_column_int64(select, 0)
     }
@@ -1148,7 +1151,7 @@ actor SQLiteApplicationStore {
             case SQLITE_DONE:
                 return conversations
             case let code:
-                throw ApplicationStoreError.sqliteFailure(code)
+                throw Self.sqliteFailure(database, code)
             }
         }
     }
@@ -1324,7 +1327,7 @@ actor SQLiteApplicationStore {
                     )
                 )
             case SQLITE_DONE: return records
-            case let code: throw ApplicationStoreError.sqliteFailure(code)
+            case let code: throw Self.sqliteFailure(database, code)
             }
         }
     }
@@ -1571,7 +1574,7 @@ actor SQLiteApplicationStore {
                     )
                 )
             case SQLITE_DONE: return messages
-            case let code: throw ApplicationStoreError.sqliteFailure(code)
+            case let code: throw Self.sqliteFailure(database, code)
             }
         }
     }
@@ -1615,7 +1618,7 @@ actor SQLiteApplicationStore {
             switch sqlite3_step(statement) {
             case SQLITE_ROW: nodes.append(storedNode(statement))
             case SQLITE_DONE: return nodes
-            case let code: throw ApplicationStoreError.sqliteFailure(code)
+            case let code: throw Self.sqliteFailure(database, code)
             }
         }
     }
@@ -1930,7 +1933,7 @@ actor SQLiteApplicationStore {
         var statement: OpaquePointer?
         let status = sqlite3_prepare_v2(database, sql, -1, &statement, nil)
         guard status == SQLITE_OK, let statement else {
-            throw ApplicationStoreError.sqliteFailure(status)
+            throw Self.sqliteFailure(database, status)
         }
         return statement
     }
@@ -1996,14 +1999,25 @@ actor SQLiteApplicationStore {
     private func stepDone(_ statement: OpaquePointer) throws {
         let status = sqlite3_step(statement)
         guard status == SQLITE_DONE else {
-            throw ApplicationStoreError.sqliteFailure(status)
+            throw Self.sqliteFailure(database, status)
         }
     }
 
     private func check(_ status: Int32) throws {
         guard status == SQLITE_OK else {
-            throw ApplicationStoreError.sqliteFailure(status)
+            throw Self.sqliteFailure(database, status)
         }
+    }
+
+    /// Pair a result code with SQLite's own description of it, taken while the
+    /// connection still holds it — `sqlite3_errmsg` reports the most recent
+    /// failure, so it has to be read at the throw and not later.
+    private static func sqliteFailure(
+        _ database: OpaquePointer?,
+        _ status: Int32
+    ) -> ApplicationStoreError {
+        let message = database.map { String(cString: sqlite3_errmsg($0)) } ?? "no connection"
+        return .sqliteFailure(status, message: message)
     }
 
     private static func migrate(_ database: OpaquePointer) throws {
@@ -2535,11 +2549,11 @@ actor SQLiteApplicationStore {
         var statement: OpaquePointer?
         let status = sqlite3_prepare_v2(database, "PRAGMA user_version", -1, &statement, nil)
         guard status == SQLITE_OK, let statement else {
-            throw ApplicationStoreError.sqliteFailure(status)
+            throw Self.sqliteFailure(database, status)
         }
         defer { sqlite3_finalize(statement) }
         guard sqlite3_step(statement) == SQLITE_ROW else {
-            throw ApplicationStoreError.sqliteFailure(sqlite3_errcode(database))
+            throw Self.sqliteFailure(database, sqlite3_errcode(database))
         }
         return sqlite3_column_int(statement, 0)
     }
@@ -2547,7 +2561,7 @@ actor SQLiteApplicationStore {
     private static func execute(_ database: OpaquePointer, sql: String) throws {
         let status = sqlite3_exec(database, sql, nil, nil, nil)
         guard status == SQLITE_OK else {
-            throw ApplicationStoreError.sqliteFailure(status)
+            throw Self.sqliteFailure(database, status)
         }
     }
 

@@ -7,6 +7,15 @@ import UMSHMobileCore
 @MainActor
 struct AppRootView: View {
     private static let logger = Logger(subsystem: "com.umsh.ios", category: "AppRoot")
+    /// Chat has its own category because it is the part with a queue in it:
+    /// composing, transmitting and applying happen on separate schedules, so
+    /// a stuck message is only diagnosable from the sequence.
+    private static let chatLogger = Logger(subsystem: "com.umsh.ios", category: "Chat")
+    /// How many times to retry a chat batch before dropping it. Three attempts
+    /// over the redelivery pump's two-second period is long enough to ride out
+    /// a busy moment and short enough that a wedged session recovers while the
+    /// user is still looking at it.
+    private static let chatBatchAttemptLimit = 3
     @State private var selectedTab: AppTab = .conversations
     @State private var radioSnapshot = RadioSnapshot.idle
     @State private var showsRadioDetail = false
@@ -149,7 +158,8 @@ struct AppRootView: View {
                         start: startChannelConversation,
                         startAfterJoin: startConversationAfterJoin,
                         delete: deleteChannelConversation,
-                        requestMemberIdentity: requestMemberIdentity
+                        requestMemberIdentity: requestMemberIdentity,
+                        setNotifications: setChannelNotifications
                     ),
                     channelImportActions: channelActions,
                     markRead: markConversationRead,
@@ -1102,6 +1112,21 @@ struct AppRootView: View {
         }
     }
 
+    /// Toggle a channel's banners from inside its conversation, where the
+    /// question actually comes up. Everything else the user set stays put:
+    /// this is one field of the same local details the Channels tab edits.
+    private func setChannelNotifications(_ channel: ChannelSummary, _ enabled: Bool) async {
+        _ = await updateChannelDetails(
+            channel,
+            details: ChannelDetails(
+                alias: channel.alias,
+                regionCode: channel.regionCode,
+                maxFloodHops: channel.maxFloodHops,
+                notificationsEnabled: enabled
+            )
+        )
+    }
+
     /// Build the URI that invites someone else to this channel. A named
     /// channel shares only its name; a private one shares the key itself.
     ///
@@ -1438,6 +1463,16 @@ struct AppRootView: View {
         )
     }
 
+    /// Which kind of conversation a log line is about. Never the address
+    /// itself: a peer address identifies a person, and the console is not the
+    /// place to publish who this phone talks to.
+    private static func conversationKindLabel(_ conversation: ConversationListItem) -> String {
+        switch conversation {
+        case .direct: "direct"
+        case .channel: "channel"
+        }
+    }
+
     private func performChatCompose(
         _ conversation: ConversationListItem,
         clearsDraft: Bool,
@@ -1474,8 +1509,18 @@ struct AppRootView: View {
             }
             do {
                 try await radioConnection.commitChatBatch(batch.batchId)
+                let fragments = batch.mutations.compactMap(\.fragmentCount).max() ?? 1
+                Self.chatLogger.info(
+                    """
+                    Composed \(Self.conversationKindLabel(conversation), privacy: .public) message \
+                    handle \(batch.mutations.first?.handle ?? 0, privacy: .public) \
+                    in batch \(batch.batchId, privacy: .public): \
+                    \(fragments, privacy: .public) fragment(s), \
+                    \(batch.archives.count, privacy: .public) archive(s); released to radio
+                    """
+                )
             } catch {
-                Self.logger.error("Could not release chat batch to radio: \(String(describing: error), privacy: .public)")
+                Self.chatLogger.error("Could not release chat batch to radio: \(String(describing: error), privacy: .public)")
                 try? await applicationStore.markChatComposeBatchFailed(
                     ownerIdentityID: localIdentity.id,
                     batch: batch
@@ -1791,7 +1836,25 @@ struct AppRootView: View {
             }
         }
         for diagnostic in update.diagnostics {
-            Self.logger.warning("Rust chat diagnostic: \(diagnostic, privacy: .public)")
+            Self.chatLogger.warning("Core chat diagnostic: \(diagnostic, privacy: .public)")
+        }
+        Self.chatLogger.debug(
+            """
+            Chat batch \(update.batchID, privacy: .public) arrived: \
+            \(update.mutations.count, privacy: .public) mutation(s), \
+            \(update.deliveries.count, privacy: .public) delivery(s), \
+            \(update.archiveLookups.count, privacy: .public) archive lookup(s), \
+            \(update.senderResolutions.count, privacy: .public) sender resolution(s)
+            """
+        )
+        for delivery in update.deliveries {
+            Self.chatLogger.debug(
+                """
+                Delivery handle \(delivery.handle, privacy: .public)\
+                \(delivery.fragmentIndex.map { " fragment \($0)" } ?? "", privacy: .public) \
+                → \(String(describing: delivery.state), privacy: .public)
+                """
+            )
         }
         do {
             if !update.mutations.isEmpty {
@@ -1839,11 +1902,24 @@ struct AppRootView: View {
                     ownerIdentityID: localIdentity.id,
                     lookup: lookup
                 )
-                try await radioConnection.applyChatArchiveResult(
-                    requestID: lookup.requestId,
-                    kind: payload == nil ? .unknown : .found,
-                    payload: payload ?? Data()
-                )
+                // Answering someone else's repair request is best effort: it
+                // travels over the radio link, which can be gone. Letting that
+                // failure escape would leave the batch unacknowledged and stall
+                // every later update behind a frame we cannot resend anyway.
+                do {
+                    try await radioConnection.applyChatArchiveResult(
+                        requestID: lookup.requestId,
+                        kind: payload == nil ? .unknown : .found,
+                        payload: payload ?? Data()
+                    )
+                } catch {
+                    Self.chatLogger.warning(
+                        """
+                        Archive lookup \(lookup.requestId, privacy: .public) went unanswered: \
+                        \(String(describing: error), privacy: .public)
+                        """
+                    )
+                }
             }
             // Last-heard evidence beyond chat inserts: an inbound message and a
             // delivery ack both prove we heard from the peer. Deliveries carry
@@ -1877,16 +1953,46 @@ struct AppRootView: View {
                 )
             }
             try await radioConnection.acknowledgeChatBatch(update.batchID)
+            coordinator.chatBatchFailures = nil
+            Self.chatLogger.debug(
+                "Applied chat batch \(update.batchID, privacy: .public)"
+            )
             if !update.mutations.isEmpty || !update.deliveries.isEmpty {
                 await reloadApplicationState()
             }
             await postNotifications(for: update.mutations)
         } catch {
-            // Effects remain idempotent and can safely be applied again if
-            // the Rust facade re-emits them.
-            Self.logger.error(
-                "Could not apply chat update batch \(update.batchID, privacy: .public): \(String(describing: error), privacy: .public)"
+            // Effects remain idempotent, so the core re-offering this batch is
+            // a real chance to recover from a transient failure.
+            let attempts = coordinator.chatBatchFailures.map {
+                $0.id == update.batchID ? $0.count + 1 : 1
+            } ?? 1
+            coordinator.chatBatchFailures = (id: update.batchID, count: attempts)
+            Self.chatLogger.error(
+                """
+                Could not apply chat batch \(update.batchID, privacy: .public) \
+                (attempt \(attempts, privacy: .public) of \(Self.chatBatchAttemptLimit, privacy: .public), \
+                \(update.mutations.count, privacy: .public) mutation(s), \
+                \(update.deliveries.count, privacy: .public) delivery(s)): \
+                \(String(describing: error), privacy: .public)
+                """
             )
+            guard attempts >= Self.chatBatchAttemptLimit else { return }
+            // The core holds one batch at a time and will not release the next
+            // until this one is acknowledged. Dropping a batch loses the
+            // updates it carried — stale rows, a message stuck on "Sending" —
+            // but keeping it would freeze every conversation for the rest of
+            // the session, which is the worse of the two.
+            Self.chatLogger.fault(
+                """
+                Abandoning chat batch \(update.batchID, privacy: .public) after \
+                \(attempts, privacy: .public) failed attempts; its updates are lost. \
+                Conversation state may be stale until the next session.
+                """
+            )
+            try? await radioConnection.acknowledgeChatBatch(update.batchID)
+            coordinator.chatBatchFailures = nil
+            await reloadApplicationState()
         }
     }
 
@@ -2278,6 +2384,11 @@ private final class AppStateCoordinator {
     /// The most recently queued reload, joined or not. New reloads chain
     /// behind it so two never read and publish state concurrently.
     var runningReload: Task<Void, Never>?
+    /// How many times the current chat batch has failed to apply. The core
+    /// hands out one batch at a time and holds it until acknowledged, so a
+    /// batch that can never be applied would otherwise stall every later
+    /// chat update — delivery receipts included — for the whole session.
+    var chatBatchFailures: (id: UInt64, count: Int)?
 }
 
 /// The subset of a radio snapshot that reaches persistent storage.

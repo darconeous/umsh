@@ -494,7 +494,18 @@ struct InFlightChatTransmission {
     /// No acknowledgement will ever arrive, so transmission is the terminal
     /// success state rather than a step toward one.
     non_ack: bool,
+    /// When this entry entered the window, and whether it has already been
+    /// reported as overdue. A frame that never resolves holds a slot in a
+    /// window of eight; eight of them stop chat entirely, and from the outside
+    /// that looks like messages hanging on "Sending" for no reason.
+    queued_at_ms: u64,
+    stall_reported: bool,
 }
+
+/// How long an in-flight transmission may go unresolved before it is called
+/// out. Longer than any ordinary ACK wait, so this fires on trouble rather
+/// than on a slow link.
+const CHAT_TRANSMISSION_STALL_MS: u64 = 60_000;
 
 #[derive(Clone)]
 enum MobileChatWorkerEvent {
@@ -1711,6 +1722,30 @@ async fn run_worker(
                 text_channels.borrow().contains(&crate::channel_tag(channel.key())),
             )
         });
+        // The same rule read from the receiving end: emergency traffic that is
+        // not readable by every node in range, or that does not name its
+        // sender outright, is not accepted at all. A frame that fails either
+        // test is dropped rather than shown unmarked — a message the reader
+        // would act on in an emergency must not arrive with its origin or its
+        // reach in question.
+        //
+        // Both checks live here, at the chat layer, rather than under the MAC:
+        // the requirement the spec states is about chat messages, and the MAC
+        // is deliberately incurious about what it carries.
+        if let Some((tag, _)) = channel_tag
+            && tag == crate::emergency_channel_tag()
+            && (packet.encrypted() || packet.from_key().is_none())
+        {
+            let reason = if packet.encrypted() {
+                "encrypted"
+            } else {
+                "missing its full source key"
+            };
+            let _ = echo_events.send(MobileChatWorkerEvent::Diagnostic(format!(
+                "dropped an emergency-channel text frame: {reason}"
+            )));
+            return false;
+        }
         let source = match (packet.packet_family(), channel_tag) {
             (PacketFamily::Unicast, _) => match packet.from_key() {
                 Some(peer) => InboundTextSource::Direct { peer },
@@ -2415,6 +2450,8 @@ async fn run_worker(
                         &mut chat,
                         &mut in_flight_chat,
                         &mut chat_pipeline_ready,
+                        &chat_events,
+                        pending_chat_transmissions.len(),
                         now_ms,
                     );
                     let drain = chat.drain();
@@ -2519,9 +2556,16 @@ async fn queue_chat_transmissions<M: MacBackend>(
                 // Carry the full source address: a member who misses a
                 // fragment can only ask us to resend it if our frames name
                 // the key to address that request to.
-                bound
-                    .send_all(&payload, &SendOptions::default().with_full_source())
-                    .await
+                let mut options = SendOptions::default().with_full_source();
+                // An emergency message that only channel members can read is
+                // not an emergency message. The spec forbids encrypting chat
+                // on `EMERGENCY` so anyone in range can act on it, whether or
+                // not they hold the key; the full source key it already
+                // carries is what keeps it attributable without it.
+                if channel == crate::emergency_channel_tag() {
+                    options = options.unencrypted();
+                }
+                bound.send_all(&payload, &options).await
             }
             Destination::ChannelPeer { channel, peer } => {
                 let Some(bound) = bound_channel(node, channels, &channel) else {
@@ -2532,11 +2576,35 @@ async fn queue_chat_transmissions<M: MacBackend>(
                     );
                     continue;
                 };
+                // The MAC will only address a registered peer, and a channel
+                // member is not one — nothing about being in a channel
+                // together registers anybody. Register on the way out rather
+                // than on sight: only the members we actually have to ask
+                // something of spend a peer slot, and this is the only place
+                // we ever ask.
+                if node.peer(peer).await.is_err() {
+                    chat.engine.transmit_update(
+                        transmission.transmission_id,
+                        DeliveryState::Failed,
+                        now_ms,
+                    );
+                    continue;
+                }
                 // A repair request; the engine owns retrying it, so no ACK is
                 // asked for here.
-                bound
-                    .send(&peer, &payload, &SendOptions::default().with_full_source())
-                    .await
+                let mut options = SendOptions::default().with_full_source();
+                // Repairs carry the same message the multicast did, so they
+                // are held to the same rule — and have to be, since the
+                // receiving side refuses encrypted emergency text whatever
+                // family it arrives in. It stays blind unicast even so: what
+                // an unencrypted blind unicast still carries over a plain one
+                // is the channel it names, which is what a repeater decides
+                // to forward on.
+                if channel == crate::emergency_channel_tag() {
+                    options = options.unencrypted();
+                }
+                let r = bound.send(&peer, &payload, &options).await;
+                r
             }
         };
         let ticket = match sent {
@@ -2555,6 +2623,8 @@ async fn queue_chat_transmissions<M: MacBackend>(
             ticket,
             sent_reported: false,
             non_ack: gate_peer.is_none(),
+            queued_at_ms: now_ms,
+            stall_reported: false,
         });
         queued += 1;
         if in_flight.len() >= MOBILE_CHAT_TRANSMIT_WINDOW {
@@ -2645,10 +2715,29 @@ fn service_chat_tickets(
     chat: &mut MobileChatState,
     in_flight: &mut Vec<InFlightChatTransmission>,
     pipeline_ready: &mut BTreeSet<[u8; 32]>,
+    events: &NotifyingSender<MobileChatWorkerEvent>,
+    pending_depth: usize,
     now_ms: u64,
 ) {
+    let occupied = in_flight.len();
     let mut index = 0;
     while index < in_flight.len() {
+        let entry = &mut in_flight[index];
+        // Checked before the state transitions below, so an entry that is
+        // about to retire this pass is not accused on its way out.
+        if !entry.stall_reported
+            && !entry.ticket.was_transmitted()
+            && now_ms.saturating_sub(entry.queued_at_ms) >= CHAT_TRANSMISSION_STALL_MS
+        {
+            entry.stall_reported = true;
+            let waited = now_ms.saturating_sub(entry.queued_at_ms) / 1000;
+            let transmission_id = entry.transmission_id;
+            let _ = events.send(MobileChatWorkerEvent::Diagnostic(format!(
+                "transmission {transmission_id} has not left the radio after {waited}s \
+                 ({occupied}/{MOBILE_CHAT_TRANSMIT_WINDOW} window slots used, \
+                 {pending_depth} more waiting)"
+            )));
+        }
         let entry = &mut in_flight[index];
         if entry.ticket.was_transmitted() && !entry.sent_reported {
             chat.engine
@@ -4114,6 +4203,331 @@ mod tests {
         assert!(!alice_states.contains(&MobileChatDeliveryState::Acknowledged));
     }
 
+    /// `EMERGENCY` chat goes out readable, and unreadable copies are ignored.
+    ///
+    /// The two halves are one rule seen from both ends, so they are proven
+    /// together: what leaves carries no encryption, and a frame that arrives
+    /// encrypted is refused however well it authenticates. The refused frame
+    /// here is byte-for-byte the payload the accepted one carries, sealed
+    /// under the same channel key by the same sender — encryption is the only
+    /// difference between the message that is shown and the message that is
+    /// not.
+    #[tokio::test]
+    async fn emergency_chat_is_sent_readable_and_encrypted_copies_are_refused() {
+        use umsh_core::{MicSize, PacketBuilder, PacketHeader};
+        use umsh_crypto::{
+            CryptoEngine, PairwiseKeys,
+            software::{SoftwareAes, SoftwareSha256},
+        };
+
+        let directory = tempfile::tempdir().unwrap();
+        let alice_identity = identity(71);
+        let alice = MobileMeshSession::new(
+            alice_identity.clone(),
+            MobileCounterStore::new(directory.path().join("sos-alice").display().to_string())
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+        let bob = MobileMeshSession::new(
+            identity(72),
+            MobileCounterStore::new(directory.path().join("sos-bob").display().to_string())
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+
+        let key = crate::inspect_channel_name(crate::EMERGENCY_CHANNEL_NAME.to_owned())
+            .unwrap()
+            .key;
+        let conversation = crate::channel_conversation_address(key.clone()).unwrap();
+        alice.register_channels(vec![key.clone()]).await.unwrap();
+        bob.register_channels(vec![key.clone()]).await.unwrap();
+
+        let body = "tower down at mile 14";
+        let batch = alice
+            .compose_text(conversation.clone(), 1, body.to_owned())
+            .await
+            .unwrap();
+        alice.commit_chat_batch(batch.batch_id).await.unwrap();
+
+        // Collect what Alice puts on the air. A message this short is one
+        // frame; anything else the session emits is not a multicast on this
+        // channel and is filtered out below.
+        let engine = CryptoEngine::new(SoftwareAes, SoftwareSha256);
+        let channel_keys =
+            engine.derive_channel_keys(&crate::channel_key_from_bytes(&key).unwrap());
+        let deadline = Instant::now() + Duration::from_secs(10);
+        let mut frame = None;
+        while frame.is_none() {
+            for outbound in alice.poll_update().outbound_frames {
+                alice.complete_outbound_frame(outbound.id, true).unwrap();
+                let header = match PacketHeader::parse(&outbound.data) {
+                    Ok(header) => header,
+                    Err(_) => continue,
+                };
+                if header.channel == Some(channel_keys.channel_id)
+                    && header.packet_type() == umsh_core::PacketType::Multicast
+                {
+                    frame = Some((outbound.data, header));
+                }
+            }
+            assert!(Instant::now() < deadline, "no emergency frame was sent");
+            std::thread::sleep(Duration::from_millis(5));
+        }
+        let (frame, header) = frame.unwrap();
+
+        // Half one: it left in the clear.
+        let sec_info = header.sec_info.expect("a multicast frame carries SECINFO");
+        assert!(
+            !sec_info.scf.encrypted(),
+            "emergency chat must be readable by any node in range"
+        );
+        assert!(
+            matches!(header.source, umsh_core::SourceAddrRef::FullKeyAt { .. }),
+            "emergency chat must name its sender outright"
+        );
+
+        // Half two: the same payload, from the same sender, under the same
+        // channel key — encrypted. It authenticates perfectly and must still
+        // be refused. An earlier frame counter keeps it ahead of the real
+        // frame in the channel's replay window, so the genuine copy that
+        // follows is judged on its own merits.
+        let payload = {
+            let mut opened = frame.clone();
+            let range = engine
+                .open_packet(
+                    &mut opened,
+                    &header,
+                    &PairwiseKeys {
+                        k_enc: channel_keys.k_enc,
+                        k_mic: channel_keys.k_mic,
+                    },
+                )
+                .unwrap();
+            opened[range].to_vec()
+        };
+        assert!(
+            sec_info.frame_counter > 0,
+            "the forged copy needs a lower counter than the genuine one"
+        );
+        let alice_key = decode_peer(&address(&alice_identity)).unwrap();
+        let mut buf = [0u8; 256];
+        let mut forged = PacketBuilder::new(&mut buf)
+            .multicast(channel_keys.channel_id)
+            .source_full(&alice_key)
+            .frame_counter(sec_info.frame_counter - 1)
+            .encrypted()
+            .mic_size(MicSize::Mic16)
+            .payload(&payload)
+            .build()
+            .unwrap();
+        engine
+            .seal_packet(
+                &mut forged,
+                &PairwiseKeys {
+                    k_enc: channel_keys.k_enc,
+                    k_mic: channel_keys.k_mic,
+                },
+            )
+            .unwrap();
+        bob.receive(MobileMeshRxRecord {
+            data: forged.as_bytes().to_vec(),
+            rssi_dbm: Some(-70),
+            lqi: None,
+            snr_cb: Some(60),
+        })
+        .unwrap();
+
+        let mut refusal = None;
+        let deadline = Instant::now() + Duration::from_secs(10);
+        while refusal.is_none() {
+            let update = bob.poll_update();
+            assert!(
+                !update
+                    .chat_mutations
+                    .iter()
+                    .any(|mutation| mutation.body.as_deref() == Some(body)),
+                "an encrypted emergency frame reached the transcript"
+            );
+            refusal = update
+                .chat_diagnostics
+                .iter()
+                .find(|line| line.contains("emergency-channel"))
+                .cloned();
+            if let Some(batch_id) = update.chat_batch_id {
+                bob.acknowledge_chat_batch(batch_id).unwrap();
+            }
+            assert!(Instant::now() < deadline, "the encrypted copy was not refused");
+            std::thread::sleep(Duration::from_millis(5));
+        }
+        assert!(refusal.unwrap().contains("encrypted"));
+
+        // And the genuine one, differing only in that it is readable, lands.
+        bob.receive(MobileMeshRxRecord {
+            data: frame,
+            rssi_dbm: Some(-70),
+            lqi: None,
+            snr_cb: Some(60),
+        })
+        .unwrap();
+        let deadline = Instant::now() + Duration::from_secs(10);
+        let mut received = false;
+        while !received {
+            let update = bob.poll_update();
+            received = update
+                .chat_mutations
+                .iter()
+                .any(|mutation| mutation.body.as_deref() == Some(body));
+            if let Some(batch_id) = update.chat_batch_id {
+                bob.acknowledge_chat_batch(batch_id).unwrap();
+            }
+            assert!(Instant::now() < deadline, "the readable copy never arrived");
+            std::thread::sleep(Duration::from_millis(5));
+        }
+    }
+
+    /// Repair still works once emergency traffic stops being encrypted.
+    ///
+    /// A resend request goes out channel-addressed and, on `EMERGENCY`, in
+    /// the clear, so it is a frame the receiving gate now judges: were the
+    /// two halves of the rule out of step, a dropped fragment there could
+    /// never be recovered and a long emergency message would never assemble.
+    ///
+    /// It also covers group repair as such, which nothing else does: it is
+    /// the only test where a member has to ask for a fragment and get it.
+    /// Two separate faults used to stop that dead — the requester could not
+    /// address a channel member it had never registered as a peer, and the
+    /// sender refused to serve any frame still sitting in `in_flight`, which
+    /// a multicast never left. Either one alone leaves this failing.
+    ///
+    /// Runs on the real clock, and takes the repair grace period in real
+    /// seconds because of it. Virtual time is faster but not usable here:
+    /// the runtime leaps to the next deadline whenever it is idle, and a
+    /// test that drives it from outside idles constantly, so under load the
+    /// reassembly can age out its whole 90-second lifetime between two
+    /// polls.
+    #[tokio::test]
+    async fn a_dropped_emergency_fragment_is_repaired() {
+        let directory = tempfile::tempdir().unwrap();
+        let alice = MobileMeshSession::new(
+            identity(73),
+            MobileCounterStore::new(directory.path().join("sos-frag-a").display().to_string())
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+        let bob = MobileMeshSession::new(
+            identity(74),
+            MobileCounterStore::new(directory.path().join("sos-frag-b").display().to_string())
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+
+        let key = crate::inspect_channel_name(crate::EMERGENCY_CHANNEL_NAME.to_owned())
+            .unwrap()
+            .key;
+        let conversation = crate::channel_conversation_address(key.clone()).unwrap();
+        alice.register_channels(vec![key.clone()]).await.unwrap();
+        bob.register_channels(vec![key]).await.unwrap();
+
+        let body: String = (0..600).map(|index| char::from(b'a' + (index % 26) as u8)).collect();
+        let batch = alice
+            .compose_text(conversation.clone(), 1, body.clone())
+            .await
+            .unwrap();
+        assert!(batch.mutations[0].fragment_count.unwrap() > 1);
+        // Alice's own archive, as the platform would keep it: the only thing
+        // she can answer a resend request out of.
+        let archives: std::collections::HashMap<(u8, Option<u8>), Vec<u8>> = batch
+            .archives
+            .iter()
+            .map(|archive| {
+                (
+                    (archive.message_id, archive.fragment_index),
+                    archive.payload.clone(),
+                )
+            })
+            .collect();
+        alice.commit_chat_batch(batch.batch_id).await.unwrap();
+
+        let mut sent = 0;
+        let mut repairs = 0;
+        let mut assembled: Option<String> = None;
+        let deadline = Instant::now() + Duration::from_secs(40);
+        while assembled.as_deref() != Some(body.as_str()) {
+            let alice_update = alice.poll_update();
+            for frame in alice_update.outbound_frames {
+                alice.complete_outbound_frame(frame.id, true).unwrap();
+                sent += 1;
+                // The radio eats the second fragment. Everything after it
+                // gets through, so only a repair can complete the message.
+                if sent == 2 {
+                    continue;
+                }
+                bob.receive(MobileMeshRxRecord {
+                    data: frame.data,
+                    rssi_dbm: Some(-70),
+                    lqi: None,
+                    snr_cb: Some(60),
+                })
+                .unwrap();
+            }
+            for lookup in &alice_update.chat_archive_lookups {
+                match archives.get(&(lookup.message_id, lookup.fragment_index)) {
+                    Some(payload) => alice
+                        .apply_chat_archive_result(
+                            lookup.request_id,
+                            MobileChatArchiveResultKind::Found,
+                            payload.clone(),
+                        )
+                        .unwrap(),
+                    None => alice
+                        .apply_chat_archive_result(
+                            lookup.request_id,
+                            MobileChatArchiveResultKind::Unknown,
+                            Vec::new(),
+                        )
+                        .unwrap(),
+                }
+            }
+            if let Some(batch_id) = alice_update.chat_batch_id {
+                alice.acknowledge_chat_batch(batch_id).unwrap();
+            }
+
+            let bob_update = bob.poll_update();
+            for frame in bob_update.outbound_frames {
+                bob.complete_outbound_frame(frame.id, true).unwrap();
+                repairs += 1;
+                alice
+                    .receive(MobileMeshRxRecord {
+                        data: frame.data,
+                        rssi_dbm: Some(-70),
+                        lqi: None,
+                        snr_cb: Some(60),
+                    })
+                    .unwrap();
+            }
+            for mutation in &bob_update.chat_mutations {
+                if let Some(text) = mutation.body.as_deref() {
+                    assembled = Some(text.to_owned());
+                }
+            }
+            if let Some(batch_id) = bob_update.chat_batch_id {
+                bob.acknowledge_chat_batch(batch_id).unwrap();
+            }
+            assert!(
+                Instant::now() < deadline,
+                "a dropped emergency fragment was never repaired \
+                 ({repairs} repair frame(s), assembled {:?})",
+                assembled.as_ref().map(|text| text.len())
+            );
+            std::thread::sleep(Duration::from_millis(5));
+        }
+        assert!(repairs > 0, "the message assembled without any repair");
+    }
+
     /// A repeater's copy of our own group message is not a second message.
     ///
     /// Every multicast send carries our full source address so strangers can
@@ -4362,6 +4776,27 @@ mod tests {
         assert!(rx.source_authenticated);
     }
 
+    /// A batch id is issued exactly when the batch has events in it, and never
+    /// otherwise. The platform reads the id as its whole signal to apply and
+    /// acknowledge, so a batch made of only one kind of event — a lone sender
+    /// resolution, say — must still be announced. One batch left
+    /// unacknowledged holds the slot for the rest of the session, and every
+    /// delivery receipt behind it never arrives: messages transmit fine and
+    /// stay on "Sending" forever, in every conversation at once.
+    fn assert_batch_id_matches_events(update: &MobileMeshSessionUpdateRecord) {
+        let has_events = !update.chat_mutations.is_empty()
+            || !update.chat_deliveries.is_empty()
+            || !update.chat_archive_lookups.is_empty()
+            || !update.chat_sender_resolutions.is_empty()
+            || !update.chat_diagnostics.is_empty();
+        assert_eq!(
+            update.chat_batch_id.is_some(),
+            has_events,
+            "batch id {:?} disagrees with the batch's contents",
+            update.chat_batch_id
+        );
+    }
+
     /// A fragmented group message must arrive whole.
     ///
     /// Multicast is never acknowledged, so nothing downstream may treat an ack
@@ -4408,6 +4843,7 @@ mod tests {
         let deadline = Instant::now() + Duration::from_secs(15);
         while assembled.as_deref() != Some(body.as_str()) {
             let alice_update = alice.poll_update();
+            assert_batch_id_matches_events(&alice_update);
             for frame in alice_update.outbound_frames {
                 alice.complete_outbound_frame(frame.id, true).unwrap();
                 transmitted += 1;
@@ -4424,6 +4860,7 @@ mod tests {
             }
 
             let bob_update = bob.poll_update();
+            assert_batch_id_matches_events(&bob_update);
             for frame in bob_update.outbound_frames {
                 bob.complete_outbound_frame(frame.id, true).unwrap();
                 // Bob has nothing to say on his own account: anything he

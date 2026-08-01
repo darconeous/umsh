@@ -143,6 +143,20 @@ struct ChannelMemberSheet: View {
 /// header the way a peer's profile is.
 struct ChannelConversationDetailView: View {
     let conversation: ChannelConversationSummary
+    let setNotifications: (ChannelSummary, Bool) async -> Void
+
+    /// What the toggle shows until the store comes back with the new value.
+    /// Without it the switch springs back mid-write, which reads as a failure
+    /// even though the write is on its way.
+    @State private var pendingNotifications: Bool?
+
+    init(
+        conversation: ChannelConversationSummary,
+        setNotifications: @escaping (ChannelSummary, Bool) async -> Void = { _, _ in }
+    ) {
+        self.conversation = conversation
+        self.setNotifications = setNotifications
+    }
 
     var body: some View {
         Form {
@@ -157,6 +171,23 @@ struct ChannelConversationDetailView: View {
                             .foregroundStyle(.secondary)
                     }
                 }
+            }
+            Section {
+                Toggle("Notifications", isOn: Binding(
+                    get: { pendingNotifications ?? conversation.channel.notificationsEnabled },
+                    set: { enabled in
+                        pendingNotifications = enabled
+                        Task {
+                            await setNotifications(conversation.channel, enabled)
+                            // The store has reloaded by now, so hand the toggle
+                            // back to it — including when the write failed and
+                            // the honest answer is the old value.
+                            pendingNotifications = nil
+                        }
+                    }
+                ))
+            } footer: {
+                Text("Messages in this channel still arrive and still count as unread. This decides only whether they interrupt you.")
             }
             Section("Channel") {
                 LabeledContent("Identifier") {

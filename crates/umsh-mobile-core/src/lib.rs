@@ -388,6 +388,27 @@ pub(crate) fn channel_tag(key: &umsh_core::ChannelKey) -> umsh_core::ChannelTag 
     umsh_crypto::CryptoEngine::new(SoftwareAes, SoftwareSha256).derive_channel_tag(key)
 }
 
+/// The canonical name of the well-known `EMERGENCY` channel.
+pub(crate) const EMERGENCY_CHANNEL_NAME: &str = "emergency";
+
+/// The tag of the well-known `EMERGENCY` channel.
+///
+/// Emergency traffic is singled out by which channel carries it and by nothing
+/// on the wire, so recognizing the channel is the whole of the test. Derived
+/// from the name rather than written down as a literal, so it cannot drift
+/// from the derivation every other channel goes through.
+pub(crate) fn emergency_channel_tag() -> umsh_core::ChannelTag {
+    static TAG: std::sync::OnceLock<umsh_core::ChannelTag> = std::sync::OnceLock::new();
+
+    *TAG.get_or_init(|| {
+        channel_tag(
+            umsh_node::Channel::named(EMERGENCY_CHANNEL_NAME)
+                .expect("the emergency channel name is short ASCII")
+                .key(),
+        )
+    })
+}
+
 /// The address of a channel's group conversation, as the chat records carry it.
 ///
 /// Exported so the platform never has to reproduce the derivation itself and

@@ -677,7 +677,10 @@ struct ConversationThreadView: View {
                             messageActions: messageActions
                         )
                     } else if let channelConversation {
-                        ChannelConversationDetailView(conversation: channelConversation)
+                        ChannelConversationDetailView(
+                            conversation: channelConversation,
+                            setNotifications: channelActions.setNotifications
+                        )
                     }
                 }
                 .navigationBarTitleDisplayMode(.inline)

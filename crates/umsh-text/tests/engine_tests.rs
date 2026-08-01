@@ -2744,6 +2744,86 @@ fn resend_request_for_recently_transmitted_frame_is_coalesced() {
     );
 }
 
+/// `Sent` retires a multicast, because nothing will ever ack one.
+///
+/// The in-flight guard above is meant to last as long as the frame is
+/// genuinely queued on our own radio. A multicast gets one report and no
+/// acknowledgement ever, so a frame that only retires on `Acked` stays in
+/// flight for good and this node refuses every resend request for it — the
+/// one thing a group member has no other way to recover from.
+#[test]
+fn a_multicast_retires_from_flight_on_its_only_report() {
+    let mut engine = engine();
+    let body = "z".repeat(400); // three fragments
+    engine
+        .compose(
+            group_conv(),
+            1,
+            ComposeIntent::Text {
+                body: &body,
+                status: false,
+            },
+            0,
+        )
+        .unwrap();
+    let mut frames = Vec::new();
+    while let Some(output) = engine.poll_output() {
+        if let Output::Transmit(tx) = output
+            && let Some(archive) = tx.archive
+        {
+            frames.push((tx.transmission_id, archive));
+        }
+    }
+    assert_eq!(frames.len(), 3);
+
+    // Fragment 1 leaves the radio. This is the last report it will ever
+    // draw: a multicast has nobody to acknowledge it.
+    let (transmission_id, archive) = frames[1];
+    engine.transmit_update(transmission_id, DeliveryState::Sent, 5_000);
+    drain(&mut engine);
+
+    // A member's request arrives blind-unicast, flagged as a group resend.
+    let blind = Envelope {
+        path: DeliveryPath::BlindUnicast,
+        conversation: ConversationKey::ChannelDirect {
+            channel: CHANNEL,
+            peer: PEER,
+        },
+        sender: SenderScope::Peer(PEER),
+    };
+    let request = |index: u8| {
+        let mut request = TextMessage::basic("");
+        request.message_type = MessageType::ResendRequest;
+        request.channel_group_resend = true;
+        request.sequence = Some(MessageSequence {
+            message_id: archive.message_id,
+            fragment: Some(Fragment { index, count: 3 }),
+        });
+        request
+    };
+
+    feed(&mut engine, &blind, None, &request(1), 6_000);
+    let outputs = drain(&mut engine);
+    assert!(
+        outputs
+            .iter()
+            .any(|output| matches!(output, Drained::LookupOutbound { .. })),
+        "a reported multicast must be servable: {outputs:?}"
+    );
+
+    // Fragment 2 has drawn no report at all, so it really is still queued
+    // behind fragment 1 — that request is coalesced, as before.
+    feed(&mut engine, &blind, None, &request(2), 6_000);
+    let outputs = drain(&mut engine);
+    assert!(
+        outputs.iter().any(|output| matches!(
+            output,
+            Drained::Diagnostic(Diagnostic::CoalescedResend { .. })
+        )),
+        "an unreported frame is still in flight: {outputs:?}"
+    );
+}
+
 /// Concurrent resend requests for one frame share a single outstanding
 /// archive lookup.
 #[test]

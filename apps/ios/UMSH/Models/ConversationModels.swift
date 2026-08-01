@@ -304,12 +304,17 @@ struct ChannelConversationActions: Sendable {
     let delete: @Sendable (ChannelConversationSummary) async -> Void
     /// Ask a member known only by their hint to identify themselves.
     let requestMemberIdentity: @Sendable (ChannelConversationSummary, Data) async -> Void
+    /// Turn this channel's banners on or off. The same setting the Channels
+    /// tab carries, reachable from the conversation it actually affects.
+    /// Unread counts are unaffected — muting silences banners, not the channel.
+    let setNotifications: @Sendable (ChannelSummary, Bool) async -> Void
 
     static let unavailable = ChannelConversationActions(
         start: { _ in nil },
         startAfterJoin: { _ in nil },
         delete: { _ in },
-        requestMemberIdentity: { _, _ in }
+        requestMemberIdentity: { _, _ in },
+        setNotifications: { _, _ in }
     )
 }
 

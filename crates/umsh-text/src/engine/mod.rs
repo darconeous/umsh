@@ -515,6 +515,11 @@ struct InFlightFrame {
     /// Archive coordinates, used to coalesce resend requests that arrive
     /// around this frame's own transmission.
     archive: Option<ArchiveKey>,
+    /// Whether an acknowledgement will ever follow. Only a unicast to a
+    /// peer earns one; a multicast is answered by nobody, so `Sent` is the
+    /// last word its transport will ever say about it and the frame has to
+    /// retire there or it retires never.
+    expects_ack: bool,
 }
 
 impl<P: TextProfile, const SLOTS: usize, const PAGES: usize> Engine<P, SLOTS, PAGES> {
@@ -860,7 +865,16 @@ impl<P: TextProfile, const SLOTS: usize, const PAGES: usize> Engine<P, SLOTS, PA
             fragment: frame.fragment,
             state,
         }));
-        if matches!(state, DeliveryState::Acked | DeliveryState::Failed) {
+        // `Sent` is not terminal for a frame that is still waiting to be
+        // acknowledged, but it is the whole story for one that never will
+        // be. Holding a multicast here forever would make this node refuse
+        // every resend request for it — the one thing a group member has no
+        // other way to recover from.
+        let terminal = match state {
+            DeliveryState::Acked | DeliveryState::Failed => true,
+            DeliveryState::Sent => !frame.expects_ack,
+        };
+        if terminal {
             self.in_flight.remove(position);
         }
         let _ = now_ms;
@@ -2299,6 +2313,7 @@ impl<P: TextProfile, const SLOTS: usize, const PAGES: usize> Engine<P, SLOTS, PA
                 handle,
                 fragment,
                 archive,
+                expects_ack: matches!(destination, Destination::Peer(_)),
             });
         }
         self.push_output(Output::Transmit(Transmission {

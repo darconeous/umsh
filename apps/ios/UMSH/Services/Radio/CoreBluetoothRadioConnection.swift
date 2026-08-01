@@ -2015,12 +2015,12 @@ final class CoreBluetoothRadioConnection: NSObject, RadioConnection, @unchecked 
                     continuation.yield(heard)
                 }
             }
-            if let chatBatchID = update.chatBatchId,
-               (!update.chatMutations.isEmpty
-                || !update.chatDeliveries.isEmpty
-                || !update.chatArchiveLookups.isEmpty
-                || !update.chatDiagnostics.isEmpty)
-            {
+            // A batch id is issued only for a batch that has events in it, so
+            // its presence is the whole condition. Testing the event lists
+            // instead would drop any batch made only of a kind this check
+            // forgot — and a batch that is never delivered is never
+            // acknowledged, which stalls every later batch behind it.
+            if let chatBatchID = update.chatBatchId {
                 // The facade replays a batch until it is acknowledged, and a
                 // wake-triggered pump can run several times in quick
                 // succession. Deliver a given batch once; if the consumer
