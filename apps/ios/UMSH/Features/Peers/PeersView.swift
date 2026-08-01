@@ -393,22 +393,7 @@ struct PeersView: View {
     }
 
     private func matchesSearch(_ peer: PeerSummary) -> Bool {
-        let query = searchText.trimmingCharacters(in: .whitespaces)
-        guard !query.isEmpty else { return true }
-        let textOptions: String.CompareOptions = [.caseInsensitive, .diacriticInsensitive]
-        if let alias = peer.alias, alias.range(of: query, options: textOptions) != nil {
-            return true
-        }
-        if let name = peer.advertisedName, name.range(of: query, options: textOptions) != nil {
-            return true
-        }
-        // Addresses are exact base58, so only a prefix (or the whole string,
-        // pasted) is a meaningful match — substring hits would be noise.
-        if peer.identity.canonicalAddress.hasPrefix(query) { return true }
-        if peer.identity.hint.text.range(of: query, options: .caseInsensitive) != nil {
-            return true
-        }
-        return false
+        peer.matches(searchQuery: searchText)
     }
 }
 

@@ -108,6 +108,24 @@ struct ChannelSummary: Identifiable, Hashable, Sendable {
     }
 
     var isJoined: Bool { joinedPhone || joinedDevice }
+
+    /// Whether this channel answers to a search query, across the names a user
+    /// would type and the identifier they might read off someone else's
+    /// device. An empty query matches everything, so a caller can filter
+    /// unconditionally.
+    ///
+    /// The channel's own name is matched alongside `title` so an aliased
+    /// channel is still found by what it calls itself. The identifier matches
+    /// on a prefix: it is four hex digits, and a hit in the middle of one says
+    /// nothing.
+    func matches(searchQuery: String) -> Bool {
+        let query = searchQuery.trimmingCharacters(in: .whitespaces)
+        guard !query.isEmpty else { return true }
+        let textOptions: String.CompareOptions = [.caseInsensitive, .diacriticInsensitive]
+        if title.range(of: query, options: textOptions) != nil { return true }
+        if let name, name.range(of: query, options: textOptions) != nil { return true }
+        return channelIDHex.hasPrefix(query.lowercased())
+    }
 }
 
 /// A channel the radio's device identity has joined that this phone cannot

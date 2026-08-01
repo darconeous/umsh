@@ -46,7 +46,12 @@ struct ChannelChatChooserView: View {
                         Button {
                             Task { await start(channel) }
                         } label: {
+                            // A plain button is only as tappable as its label
+                            // is wide, and a channel row does not reach the
+                            // edge on its own. Rows are tapped anywhere.
                             ChannelRow(channel: channel, showsScope: false)
+                                .frame(maxWidth: .infinity, alignment: .leading)
+                                .contentShape(Rectangle())
                         }
                         .buttonStyle(.plain)
                     }
@@ -136,78 +141,6 @@ struct ChannelMemberSheet: View {
                 Button("Done") { dismiss() }
             }
         }
-    }
-}
-
-/// The channel behind an open group conversation, reached from the transcript
-/// header the way a peer's profile is.
-struct ChannelConversationDetailView: View {
-    let conversation: ChannelConversationSummary
-    let setNotifications: (ChannelSummary, Bool) async -> Void
-
-    /// What the toggle shows until the store comes back with the new value.
-    /// Without it the switch springs back mid-write, which reads as a failure
-    /// even though the write is on its way.
-    @State private var pendingNotifications: Bool?
-
-    init(
-        conversation: ChannelConversationSummary,
-        setNotifications: @escaping (ChannelSummary, Bool) async -> Void = { _, _ in }
-    ) {
-        self.conversation = conversation
-        self.setNotifications = setNotifications
-    }
-
-    var body: some View {
-        Form {
-            Section {
-                HStack(spacing: 12) {
-                    ChannelAvatar(channel: conversation.channel, size: 52)
-                    VStack(alignment: .leading, spacing: 2) {
-                        Text(conversation.channel.title)
-                            .font(.headline)
-                        Text(conversation.channel.kindLabel)
-                            .font(.caption)
-                            .foregroundStyle(.secondary)
-                    }
-                }
-            }
-            Section {
-                Toggle("Notifications", isOn: Binding(
-                    get: { pendingNotifications ?? conversation.channel.notificationsEnabled },
-                    set: { enabled in
-                        pendingNotifications = enabled
-                        Task {
-                            await setNotifications(conversation.channel, enabled)
-                            // The store has reloaded by now, so hand the toggle
-                            // back to it — including when the write failed and
-                            // the honest answer is the old value.
-                            pendingNotifications = nil
-                        }
-                    }
-                ))
-            } footer: {
-                Text("Messages in this channel still arrive and still count as unread. This decides only whether they interrupt you.")
-            }
-            Section("Channel") {
-                LabeledContent("Identifier") {
-                    Text(conversation.channel.channelIDHex)
-                        .font(.body.monospaced())
-                }
-                LabeledContent("Messages", value: "\(conversation.messages.count)")
-            }
-            let behavior = conversation.channel.protocolBehavior
-            if !behavior.isEmpty {
-                Section("How This Channel Works") {
-                    ForEach(behavior, id: \.self) { statement in
-                        Text(statement)
-                            .font(.callout)
-                            .foregroundStyle(.secondary)
-                    }
-                }
-            }
-        }
-        .navigationTitle(conversation.channel.title)
     }
 }
 

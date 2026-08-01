@@ -67,6 +67,24 @@ struct PeerSummary: Identifiable, Hashable, Sendable {
         case .invalid, nil: false
         }
     }
+
+    /// Whether this node answers to a search query, across the names a user
+    /// would type and the identifiers they would paste. An empty query
+    /// matches everything, so a caller can filter unconditionally.
+    ///
+    /// Addresses match on a prefix only. They are exact base58, so a hit in
+    /// the middle of one carries no meaning and would only add noise.
+    func matches(searchQuery: String) -> Bool {
+        let query = searchQuery.trimmingCharacters(in: .whitespaces)
+        guard !query.isEmpty else { return true }
+        let textOptions: String.CompareOptions = [.caseInsensitive, .diacriticInsensitive]
+        if let alias, alias.range(of: query, options: textOptions) != nil { return true }
+        if let advertisedName, advertisedName.range(of: query, options: textOptions) != nil {
+            return true
+        }
+        if identity.canonicalAddress.hasPrefix(query) { return true }
+        return identity.hint.text.range(of: query, options: .caseInsensitive) != nil
+    }
 }
 
 /// What a node says it is, named from the wire role byte in its advertised
@@ -284,6 +302,10 @@ enum MessageSendResult: Sendable {
 struct ChatMessageActions: Sendable {
     let edit: @Sendable (ConversationListItem, ChatMessageSummary, String) async -> MessageSendResult
     let delete: @Sendable (ConversationListItem, ChatMessageSummary) async -> MessageSendResult
+    /// Erase every message in the conversation at this address. Local only:
+    /// nothing is sent, and everyone else keeps their copy. The conversation
+    /// itself survives, as does its place in the wire stream.
+    var clearMessages: @Sendable (String) async -> Void = { _ in }
 
     static let unavailable = ChatMessageActions(
         edit: { _, _, _ in .failed("Messaging is unavailable.") },

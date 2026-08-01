@@ -185,9 +185,30 @@ creates and opens the conversation. `public` is the exception: while joined,
 its conversation always exists, because it is where an off-grid conversation
 starts when the user holds nobody's key yet.
 
-Search filters by local mnemonic alias, advertised name, channel/room name, complete
-Base58 node address, and canonical rendered hint. It does not require network
-access.
+The search field is hidden until the list is dragged down, which is where a
+reader looking for someone reaches for it. Results are grouped in the order
+they are most likely wanted:
+
+1. **Conversations** — matching conversations of either kind, rendered exactly
+   as they are in the list proper and in the same most-recent-activity order.
+   Somewhere the user already talks is almost always what they were reaching
+   for.
+2. **Peers** — saved nodes with no conversation yet.
+3. **Channels** — joined channels with no conversation yet.
+4. **Discovered nodes** — the transient tier the Peers list hides, included on
+   the reasoning that a node heard over the air is reachable, so it is
+   findable.
+
+Tapping anything below the first group opens the conversation with it, creating
+it first. Searching a channel out is a request to talk in it, so it creates a
+group chat the way joining through the compose menu does. The phone's own
+companion radio is never a result; it is hardware, not a correspondent.
+
+Search matches a node's local mnemonic alias, advertised name, Base58 address,
+and canonical rendered hint; and a channel's alias, its own name, and its
+identifier. Address and identifier matching is by prefix — both are exact
+encodings, so a hit in the middle of one carries no meaning. Message search is
+not implemented. Searching does not require network access.
 
 Each row includes:
 
@@ -227,10 +248,28 @@ in the app-level toolbar control rather than the conversation subtitle.
 When PFS is establishing, active, ending, or failed, the avatar carries the
 corresponding outer-ring treatment and visible text beside the title states the exact
 condition, for example **PFS active · 24 min remaining**. The deterministic
-avatar color never changes for security state. Tapping the avatar/title opens
-Peer Detail, where the same status and controls are available.
+avatar color never changes for security state.
 
-Tapping the title opens Peer Detail. The transcript uses standard readable
+Tapping the avatar/title opens the **conversation info sheet**, which both kinds
+of conversation share. It answers what the conversation *is*: a row leading to
+whoever — or whatever — is on the other end (Peer Detail for a direct chat,
+Channel Detail for a group one), what the transcript holds, and the
+conversation-level actions. It is deliberately not the peer or channel sheet
+itself; those describe a node and a key, which outlive any one conversation
+with them. From a group conversation, Channel Detail does not offer **Enter
+Conversation** — entering it is what got the user there.
+
+**Clear All Messages** erases the transcript while keeping the conversation:
+the row, its draft, and its place in the wire stream all survive, so it is the
+action for a conversation the user intends to keep using — as distinct from
+deleting the conversation. It is local only; nothing is sent and everyone else
+keeps their copy. Outbound stream checkpoints are retained for the same reason
+deleting a conversation retains them: sequence continuity with the far end has
+to outlive the transcript, or the next message would announce a Sequence Reset.
+Archived outbound payloads go with the history, so a later resend request for a
+cleared message is answered Unavailable.
+
+The transcript uses standard readable
 bubbles, date separators, reply previews, inline status/emote messages, and
 missing-fragment placeholders. Long-press/context-menu actions include Reply,
 React, Copy, Edit/Delete when permitted, Details, and Quote when a wire reply is
@@ -265,9 +304,9 @@ every listening node that possesses the channel key is eligible to receive and
 display the message.
 
 The navigation title names the channel and the header carries its badge, the
-way a direct conversation carries the peer's avatar; tapping it opens the
-channel's details. The composer placeholder names the destination, for example
-**Message Trail Crew**.
+way a direct conversation carries the peer's avatar; tapping it opens the same
+conversation info sheet, whose identity row leads on to Channel Detail. The
+composer placeholder names the destination, for example **Message Trail Crew**.
 
 A group message is authenticated as coming from *a member*, not from a
 particular person: the channel MIC proves possession of the key, and the only
@@ -425,8 +464,8 @@ relationship to standard long-term pairwise encryption. Ephemeral addresses
 are available only in advanced session details and never replace the stable
 peer avatar.
 
-Peer Detail is reached by tapping a direct-chat title/avatar, a peer row in
-Peers or discovery, or a sender identity in a channel transcript. Returning
+Peer Detail is reached from a direct chat's conversation info sheet, a peer row
+in Peers or discovery, or a sender identity in a channel transcript. Returning
 to chat preserves the draft and transcript position.
 
 When a saved companion radio exposes its own UMSH public identity, that

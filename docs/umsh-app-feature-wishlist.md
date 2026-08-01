@@ -151,6 +151,11 @@ Guided setup flows built on top of that primitive:
 - [x] View existing text conversations
 - [x] Start a new text conversation with a peer
 - [x] Sorted by most recent activity. Unread messages should indicate in the row somehow.
+- [x] Search from the conversation list — pull down to reveal; finds existing
+  conversations first, then peers (saved and transient) and joined channels to
+  start one with. Message search is not implemented.
+- [x] Conversation info sheet — reached from the transcript header for both
+  kinds, leads on to Peer Detail or Channel Detail, and clears the transcript
 - [ ] Select/Change a channel for a conversation
 - [ ] Participate in existing text conversations
 	- [x] Send messages

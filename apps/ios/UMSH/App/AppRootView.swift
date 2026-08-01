@@ -151,7 +151,11 @@ struct AppRootView: View {
                     updateDraft: updateDraft,
                     updateChannelDraft: updateChannelDraft,
                     sendMessage: sendMessage,
-                    messageActions: ChatMessageActions(edit: editMessage, delete: deleteMessage),
+                    messageActions: ChatMessageActions(
+                        edit: editMessage,
+                        delete: deleteMessage,
+                        clearMessages: clearConversationMessages
+                    ),
                     deleteConversation: deleteConversation,
                     peerActions: peerActions,
                     channelActions: ChannelConversationActions(
@@ -161,7 +165,7 @@ struct AppRootView: View {
                         requestMemberIdentity: requestMemberIdentity,
                         setNotifications: setChannelNotifications
                     ),
-                    channelImportActions: channelActions,
+                    channelManagementActions: channelActions,
                     markRead: markConversationRead,
                     openedConversation: $openedConversation,
                     openedChannelConversation: $openedChannelConversation
@@ -193,7 +197,11 @@ struct AppRootView: View {
                     sendMessage: { conversation, body in
                         await sendMessage(.direct(conversation), body)
                     },
-                    messageActions: ChatMessageActions(edit: editMessage, delete: deleteMessage),
+                    messageActions: ChatMessageActions(
+                        edit: editMessage,
+                        delete: deleteMessage,
+                        clearMessages: clearConversationMessages
+                    ),
                     advertiseIdentity: advertiseIdentity,
                     advertisedName: advertisedName,
                     clearDiscoveredNodes: clearDiscoveredNodes,
@@ -245,7 +253,11 @@ struct AppRootView: View {
                     sendMessage: { conversation, body in
                         await sendMessage(.direct(conversation), body)
                     },
-                    messageActions: ChatMessageActions(edit: editMessage, delete: deleteMessage),
+                    messageActions: ChatMessageActions(
+                        edit: editMessage,
+                        delete: deleteMessage,
+                        clearMessages: clearConversationMessages
+                    ),
                     channels: channels,
                     unknownDeviceChannels: unknownDeviceChannels,
                     channelActions: channelActions
@@ -321,7 +333,11 @@ struct AppRootView: View {
                     sendMessage: { conversation, body in
                         await sendMessage(.direct(conversation), body)
                     },
-                    messageActions: ChatMessageActions(edit: editMessage, delete: deleteMessage)
+                    messageActions: ChatMessageActions(
+                        edit: editMessage,
+                        delete: deleteMessage,
+                        clearMessages: clearConversationMessages
+                    )
                 )
             }
         }
@@ -668,7 +684,10 @@ struct AppRootView: View {
                 )
             }
             await reloadApplicationState()
-            try await radioConnection.registerChatPeers([identity.canonicalAddress])
+            // Best effort, for the same reason as in `startConversation`: the
+            // peer and any conversation are already on disk, and an unattached
+            // radio must not turn that into a failed import.
+            try? await radioConnection.registerChatPeers([identity.canonicalAddress])
             return conversations.first { $0.peer.identity.canonicalAddress == identity.canonicalAddress }
         } catch {
             return nil
@@ -1653,6 +1672,27 @@ struct AppRootView: View {
         )
     }
 
+    /// Erase a conversation's transcript, keeping the conversation. Local
+    /// only: nothing is sent, so everyone else keeps their copy.
+    ///
+    /// Addressed rather than keyed by row so one path serves both kinds, and
+    /// `@Sendable` because it is handed to views as a bare closure.
+    @Sendable
+    private func clearConversationMessages(_ address: String) async {
+        guard let applicationStore, let localIdentity else { return }
+        do {
+            try await applicationStore.clearConversationMessages(
+                ownerIdentityID: localIdentity.id,
+                conversationAddress: address
+            )
+            await reloadApplicationState()
+        } catch {
+            Self.logger.error(
+                "Could not clear conversation messages: \(String(describing: error), privacy: .public)"
+            )
+        }
+    }
+
     private func deleteConversation(_ conversation: DirectConversationSummary) async {
         guard let applicationStore, let localIdentity else { return }
         do {
@@ -1674,7 +1714,13 @@ struct AppRootView: View {
                 peerAddress: peer.identity.canonicalAddress
             )
             await reloadApplicationState()
-            try await radioConnection.registerChatPeers([peer.identity.canonicalAddress])
+            // Telling the radio is an optimization for the attached case, not
+            // part of creating the conversation: with no radio there is
+            // nothing to tell, and `prepareChatState` registers every
+            // conversation peer on the next attach anyway. Letting it fail the
+            // whole operation would leave a conversation that exists on disk
+            // but that nothing ever opens.
+            try? await radioConnection.registerChatPeers([peer.identity.canonicalAddress])
             return conversations.first {
                 $0.peer.identity.canonicalAddress == peer.identity.canonicalAddress
             }

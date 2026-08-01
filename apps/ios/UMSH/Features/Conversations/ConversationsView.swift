@@ -22,7 +22,9 @@ struct ConversationsView: View {
     var deleteConversation: (DirectConversationSummary) async -> Void = { _ in }
     var peerActions: PeerActions = .unavailable
     var channelActions: ChannelConversationActions = .unavailable
-    var channelImportActions: ChannelActions = .unavailable
+    /// Channel management, for joining one from here and for the channel
+    /// sheet an open group conversation leads to.
+    var channelManagementActions: ChannelActions = .unavailable
     var markRead: (String) async -> Void = { _ in }
     // Owned by the app root so URL-scheme imports can open a transcript
     // directly from outside this view.
@@ -34,10 +36,13 @@ struct ConversationsView: View {
     @State private var presentedSheet: NewConversationSheet?
     @State private var conversationPendingDeletion: DirectConversationSummary?
     @State private var channelConversationPendingDeletion: ChannelConversationSummary?
+    @State private var searchText = ""
 
     var body: some View {
         List {
-            if items.isEmpty {
+            if isSearching {
+                searchResults
+            } else if items.isEmpty {
                 ContentUnavailableView {
                     Label("No conversations", systemImage: "bubble.left.and.bubble.right")
                 } description: {
@@ -68,6 +73,12 @@ struct ConversationsView: View {
             }
         }
         .navigationTitle("Conversations")
+        // Hidden until the list is dragged down, which is where a reader
+        // looking for someone reaches for it. Conversations, peers, and joined
+        // channels — not messages: finding a message is a separate feature,
+        // and this one is about reaching somewhere, whether or not a
+        // conversation there exists yet.
+        .searchable(text: $searchText, prompt: "Name, alias, address, or hint")
         .navigationDestination(for: String.self) { itemID in
             if let conversation = binding(for: itemID) {
                 ConversationThreadView(
@@ -79,6 +90,7 @@ struct ConversationsView: View {
                     messageActions: messageActions,
                     peerActions: peerActions,
                     channelActions: channelActions,
+                    channelManagementActions: channelManagementActions,
                     markRead: markRead,
                     conversations: $conversations,
                     peers: peers
@@ -96,6 +108,7 @@ struct ConversationsView: View {
                     messageActions: messageActions,
                     peerActions: peerActions,
                     channelActions: channelActions,
+                    channelManagementActions: channelManagementActions,
                     markRead: markRead,
                     conversations: $conversations,
                     peers: peers
@@ -113,6 +126,7 @@ struct ConversationsView: View {
                     messageActions: messageActions,
                     peerActions: peerActions,
                     channelActions: channelActions,
+                    channelManagementActions: channelManagementActions,
                     markRead: markRead,
                     conversations: $conversations,
                     peers: peers
@@ -180,7 +194,7 @@ struct ConversationsView: View {
                 case .channelChooser:
                     ChannelChatChooserView(
                         channels: channelsWithoutConversation,
-                        actions: channelImportActions,
+                        actions: channelManagementActions,
                         start: { channel in
                             presentedSheet = nil
                             openedChannelConversation = await channelActions.start(channel)
@@ -192,6 +206,167 @@ struct ConversationsView: View {
                     )
                 }
             }
+        }
+    }
+
+    private var isSearching: Bool {
+        !searchText.trimmingCharacters(in: .whitespaces).isEmpty
+    }
+
+    /// What the query finds, in the order it is most likely wanted:
+    /// conversations that already exist, then the peers and channels one could
+    /// be started with.
+    ///
+    /// Somewhere the user already talks is almost always what they were
+    /// reaching for, so those rows come first and look exactly as they do in
+    /// the list proper. Everything below them is an offer to start something,
+    /// which is the part the list itself cannot help with.
+    ///
+    /// Peer results span the transient tier the Peers list hides: a node heard
+    /// over the air is reachable, so it is findable. The phone's own companion
+    /// radio is left out; it is hardware, not a correspondent.
+    @ViewBuilder
+    private var searchResults: some View {
+        let existing = items.filter { matchesSearch($0) }
+        let startablePeers = peers
+            .filter { peer in
+                !peer.isUlcpDevice
+                    && peer.matches(searchQuery: searchText)
+                    && existingConversation(with: peer) == nil
+            }
+            .sorted {
+                let comparison = $0.displayName.localizedCaseInsensitiveCompare($1.displayName)
+                if comparison != .orderedSame { return comparison == .orderedAscending }
+                return $0.id < $1.id
+            }
+        let startableChannels = channelsWithoutConversation
+            .filter { $0.matches(searchQuery: searchText) }
+            .sorted { $0.title.localizedCaseInsensitiveCompare($1.title) == .orderedAscending }
+        let savedPeers = startablePeers.filter(\.isSaved)
+        let discoveredPeers = startablePeers.filter { !$0.isSaved }
+
+        if existing.isEmpty && startablePeers.isEmpty && startableChannels.isEmpty {
+            Section {
+                Text("Nothing matches this search.")
+                    .foregroundStyle(.secondary)
+            }
+        }
+        if !existing.isEmpty {
+            // Ordered as the list orders itself: most recent activity first.
+            Section("Conversations") {
+                ForEach(existing) { item in
+                    NavigationLink(value: item.id) {
+                        ConversationRow(item: item)
+                    }
+                }
+            }
+        }
+        if !savedPeers.isEmpty {
+            Section("Peers") {
+                ForEach(savedPeers) { peer in peerSearchRow(peer) }
+            }
+        }
+        if !startableChannels.isEmpty {
+            Section {
+                ForEach(startableChannels) { channel in channelSearchRow(channel) }
+            } header: {
+                Text("Channels")
+            } footer: {
+                Text("Joined, with no conversation open yet.")
+            }
+        }
+        if !discoveredPeers.isEmpty {
+            Section {
+                ForEach(discoveredPeers) { peer in peerSearchRow(peer) }
+            } header: {
+                Text("Discovered nodes")
+            } footer: {
+                Text("Heard over the air but not saved. Opening a conversation with one works the same way.")
+            }
+        }
+    }
+
+    private func matchesSearch(_ item: ConversationListItem) -> Bool {
+        switch item {
+        case let .direct(conversation): conversation.peer.matches(searchQuery: searchText)
+        case let .channel(conversation): conversation.channel.matches(searchQuery: searchText)
+        }
+    }
+
+    private func peerSearchRow(_ peer: PeerSummary) -> some View {
+        searchRow {
+            Task { await openConversation(with: peer) }
+        } label: {
+            PeerAvatar(hint: peer.identity.hint, showsFavoriteStar: peer.isFavorite)
+            VStack(alignment: .leading, spacing: 2) {
+                Text(peer.displayName)
+                    .foregroundStyle(.primary)
+                Text(peer.identity.hint.text)
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+            }
+        }
+    }
+
+    private func channelSearchRow(_ channel: ChannelSummary) -> some View {
+        searchRow {
+            Task { await openConversation(in: channel) }
+        } label: {
+            ChannelAvatar(channel: channel, size: 40)
+            VStack(alignment: .leading, spacing: 2) {
+                Text(channel.title)
+                    .foregroundStyle(.primary)
+                Text("\(channel.kindLabel) · \(channel.channelIDHex)")
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+            }
+        }
+    }
+
+    private func searchRow<Label: View>(
+        action: @escaping () -> Void,
+        @ViewBuilder label: () -> Label
+    ) -> some View {
+        Button(action: action) {
+            HStack(spacing: 12) { label() }
+                // A plain button is only as tappable as its label is wide,
+                // which for a name and a subtitle is nowhere near the row.
+                // Rows are tapped anywhere along them.
+                .frame(maxWidth: .infinity, alignment: .leading)
+                .contentShape(Rectangle())
+        }
+        .buttonStyle(.plain)
+    }
+
+    /// Open the conversation with a searched-for node, creating it when this
+    /// is the first time. Creating is what makes the search useful, so it is
+    /// not a separate confirmed step.
+    private func openConversation(with peer: PeerSummary) async {
+        var conversation = existingConversation(with: peer)
+        if conversation == nil {
+            // Creating can report failure after the row itself was written, so
+            // look again rather than leaving the tap with nothing to show for
+            // itself.
+            conversation = await peerActions.startConversation?(peer)
+                ?? existingConversation(with: peer)
+        }
+        guard let conversation else { return }
+        searchText = ""
+        openedConversation = conversation
+    }
+
+    /// The same for a joined channel. Searching one out is a request to talk
+    /// in it, so the group chat is created the way joining through the compose
+    /// menu creates one.
+    private func openConversation(in channel: ChannelSummary) async {
+        guard let conversation = await channelActions.start(channel) else { return }
+        searchText = ""
+        openedChannelConversation = conversation
+    }
+
+    private func existingConversation(with peer: PeerSummary) -> DirectConversationSummary? {
+        conversations.first {
+            $0.peer.identity.canonicalAddress == peer.identity.canonicalAddress
         }
     }
 
@@ -388,6 +563,9 @@ struct ConversationThreadView: View {
     let messageActions: ChatMessageActions
     let peerActions: PeerActions
     let channelActions: ChannelConversationActions
+    /// Channel management, for the channel sheet the group conversation's
+    /// info sheet leads to.
+    let channelManagementActions: ChannelActions
     /// Called when the transcript appears, so its unread badge clears at the
     /// moment the user actually looks at it.
     let markRead: (String) async -> Void
@@ -400,7 +578,7 @@ struct ConversationThreadView: View {
     let peers: [PeerSummary]
 
     @State private var draft: String
-    @State private var showsPeerProfile = false
+    @State private var showsConversationInfo = false
     @State private var showsBlockedReason = false
     @State private var sendFailureMessage: String?
     @State private var editingMessage: ChatMessageSummary?
@@ -424,6 +602,7 @@ struct ConversationThreadView: View {
         messageActions: ChatMessageActions = .unavailable,
         peerActions: PeerActions = .unavailable,
         channelActions: ChannelConversationActions = .unavailable,
+        channelManagementActions: ChannelActions = .unavailable,
         markRead: @escaping (String) async -> Void = { _ in },
         conversations: Binding<[DirectConversationSummary]> = .constant([]),
         peers: [PeerSummary] = []
@@ -436,6 +615,7 @@ struct ConversationThreadView: View {
         self.messageActions = messageActions
         self.peerActions = peerActions
         self.channelActions = channelActions
+        self.channelManagementActions = channelManagementActions
         self.markRead = markRead
         _conversations = conversations
         self.peers = peers
@@ -639,11 +819,12 @@ struct ConversationThreadView: View {
         }
         .toolbar {
             // The avatar replaces the plain title, as in Messages; tapping it
-            // opens the peer's profile. The navigation title above still
-            // labels the back button and accessibility focus.
+            // opens the conversation's own sheet, which is where the peer or
+            // channel behind it is reached from. The navigation title above
+            // still labels the back button and accessibility focus.
             ToolbarItem(placement: .principal) {
                 Button {
-                    showsPeerProfile = true
+                    showsConversationInfo = true
                 } label: {
                     VStack(spacing: 1) {
                         if let peer {
@@ -661,32 +842,36 @@ struct ConversationThreadView: View {
                 .accessibilityLabel("\(conversation.title) details")
             }
         }
-        .sheet(isPresented: $showsPeerProfile) {
+        .sheet(isPresented: $showsConversationInfo) {
             NavigationStack {
                 Group {
-                    if let peer {
-                        PeerDetailView(
-                            peer: peer,
-                            radioSnapshot: .constant(radioSnapshot),
+                    if case let .direct(direct) = conversation {
+                        DirectConversationDetailView(
+                            conversation: direct,
+                            radioSnapshot: radioSnapshot,
                             conversations: $conversations,
-                            actions: peerActions,
+                            peerActions: peerActions,
+                            messageActions: messageActions,
                             updateDraft: updateDraft,
                             sendMessage: { conversation, body in
                                 await sendMessage(.direct(conversation), body)
                             },
-                            messageActions: messageActions
+                            clearMessages: clearMessages
                         )
                     } else if let channelConversation {
                         ChannelConversationDetailView(
                             conversation: channelConversation,
-                            setNotifications: channelActions.setNotifications
+                            radioSnapshot: radioSnapshot,
+                            channelActions: channelManagementActions,
+                            setNotifications: channelActions.setNotifications,
+                            clearMessages: clearMessages
                         )
                     }
                 }
                 .navigationBarTitleDisplayMode(.inline)
                 .toolbar {
                     ToolbarItem(placement: .confirmationAction) {
-                        Button("Done") { showsPeerProfile = false }
+                        Button("Done") { showsConversationInfo = false }
                     }
                 }
             }
@@ -811,6 +996,14 @@ struct ConversationThreadView: View {
             sendFailureMessage = message
             showsBlockedReason = true
         }
+    }
+
+    /// Erase this conversation's transcript, closing the sheet the action was
+    /// taken from: what that sheet described is gone, and leaving it open
+    /// would sit a "Clear All Messages" button over an empty conversation.
+    private func clearMessages() async {
+        showsConversationInfo = false
+        await messageActions.clearMessages(conversation.conversationAddress)
     }
 
     private var isChannel: Bool { channelConversation != nil }

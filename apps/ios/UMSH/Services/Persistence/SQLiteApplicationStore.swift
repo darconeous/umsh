@@ -1188,6 +1188,27 @@ actor SQLiteApplicationStore {
         }
     }
 
+    /// Erase a conversation's messages while keeping the conversation itself.
+    /// Addressed rather than keyed by row so one call serves both kinds.
+    ///
+    /// Outbound stream checkpoints are kept, for the same reason deleting a
+    /// conversation keeps them: sequence continuity with the far end has to
+    /// outlive the transcript, or the next message would announce a Sequence
+    /// Reset. Archived outbound payloads do go, so a later resend request for
+    /// a cleared message is answered Unavailable — the protocol handles that,
+    /// and keeping erased content on disk would not be acceptable.
+    func clearConversationMessages(
+        ownerIdentityID: String,
+        conversationAddress: String
+    ) throws {
+        try transaction {
+            try purgeConversationHistory(
+                ownerIdentityID: ownerIdentityID,
+                conversationAddress: conversationAddress
+            )
+        }
+    }
+
     func updateChannelDraft(
         ownerIdentityID: String,
         conversationID: Int64,
