@@ -44,7 +44,18 @@ struct SettingsView: View {
     var unknownDeviceChannels: [UnknownDeviceChannel] = []
     var channelActions: ChannelActions = .unavailable
 
+    /// Fills a conversation with generated messages, for exercising the
+    /// transcript at a size no test account reaches by hand. Only supplied by
+    /// debug builds; the control that calls it only exists there too.
+    var seedMessages: ((String, Int) async -> Void)? = nil
+
     @State private var showsDeviceSetup = false
+    @State private var isSeeding = false
+
+    private func seedConversation(_ count: Int) async {
+        guard let seedMessages, let first = conversations.wrappedValue.first else { return }
+        await seedMessages(first.conversationAddress, count)
+    }
 
     var body: some View {
         List {
@@ -149,6 +160,29 @@ struct SettingsView: View {
                 NavigationLink("Privacy and storage") { Text("Privacy and storage settings") }
                 NavigationLink("Diagnostics") { Text("Redacted diagnostics") }
             }
+
+            #if DEBUG
+            Section {
+                Button("Seed 2000 Messages") {
+                    isSeeding = true
+                    Task {
+                        await seedConversation(2_000)
+                        isSeeding = false
+                    }
+                }
+                .disabled(isSeeding || conversations.wrappedValue.isEmpty)
+                if isSeeding {
+                    HStack(spacing: 8) {
+                        ProgressView()
+                        Text("Seeding…").foregroundStyle(.secondary)
+                    }
+                }
+            } header: {
+                Text("Developer")
+            } footer: {
+                Text("Fills the first conversation with generated messages, for checking how the transcript behaves at size. Debug builds only.")
+            }
+            #endif
         }
         .navigationTitle("Settings")
         .sheet(isPresented: $showsDeviceSetup) {

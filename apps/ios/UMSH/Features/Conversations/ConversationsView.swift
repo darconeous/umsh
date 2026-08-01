@@ -456,7 +456,7 @@ private struct ConversationRow: View {
     }
 
     private var timestamp: String? {
-        guard let last = item.messages.last, last.createdAtMilliseconds > 0 else { return nil }
+        guard let last = item.lastMessage, last.createdAtMilliseconds > 0 else { return nil }
         let date = Date(timeIntervalSince1970: Double(last.createdAtMilliseconds) / 1000)
         return date.formatted(.relative(presentation: .numeric, unitsStyle: .narrow))
     }
@@ -465,7 +465,7 @@ private struct ConversationRow: View {
         if !item.draftText.isEmpty {
             return "Draft: \(item.draftText)"
         }
-        guard let last = item.messages.last else { return "No messages yet" }
+        guard let last = item.lastMessage else { return "No messages yet" }
         if last.isDeleted { return "Message deleted" }
         if last.isOutbound { return "You: \(last.body)" }
         // In a group the body alone does not say who is talking.
@@ -491,19 +491,130 @@ struct VisibleConversationReporter: Sendable {
 
 extension EnvironmentValues {
     @Entry var visibleConversationReporter = VisibleConversationReporter()
+    /// Reads a bounded slice of whichever transcript is open. In the
+    /// environment rather than passed down, because a transcript is reached
+    /// from several places — the conversations list, a peer's profile, a
+    /// notification tap — and none of the views in between have any use for it.
+    @Entry var transcriptLoader = TranscriptLoader.unavailable
 }
 
-/// A transcript row: a real message, or a collapsed run of one-or-more
-/// consecutive gap placeholders shown as a single spinner.
-private enum TranscriptItem: Identifiable {
-    case message(ChatMessageSummary)
-    case gap(id: String, count: Int)
+/// Where the reader is in an open transcript, and what the last gesture has
+/// already done.
+///
+/// Held by reference for the same reason the app root keeps its bookkeeping
+/// that way: these change continuously while a finger is down, and none of them
+/// is drawn. As view state, each write would invalidate a non-lazy stack of
+/// hundreds of bubbles on every frame of a drag.
+@MainActor
+private final class TranscriptScrollState {
+    /// Following the live edge is an explicit, sticky mode. Appending a row can
+    /// temporarily increase the measured distance from the bottom before the
+    /// compensating scroll runs; that layout change must not look like the user
+    /// scrolled away. Only user-driven scrolling can leave follow mode.
+    var followsLatestMessage = true
+    var userIsScrolling = false
+    var distanceFromBottom: CGFloat = 0
+    var viewportHeight: CGFloat = 0
+    var contentHeight: CGFloat = 0
+    /// How far the viewport sits below the top of the content, kept for
+    /// restoring the viewport arithmetically after the window is edited around
+    /// it. Zero at rest at the top: measured in the same space as
+    /// `ScrollPosition.scrollTo(y:)`, which counts from the content's top, not
+    /// the inset-relative `contentOffset`.
+    var offsetFromContentTop: CGFloat = 0
+    /// How far the top of the window sits above the viewport. Derived rather
+    /// than observed: one geometry reading feeds every distance.
+    var distanceFromTop: CGFloat {
+        max(0, contentHeight - viewportHeight - distanceFromBottom)
+    }
+    /// At most one automatic page per gesture, so a single long pull cannot
+    /// walk backward through the whole history.
+    var pagedThisGesture = false
+    /// The transcript is at rest — no finger down, no momentum, no bounce.
+    /// Only then does growing the content above the viewport leave the reader
+    /// where they were: with a finger down the pan gesture owns the offset
+    /// outright, and during deceleration or the rubber-band settle the system
+    /// is animating toward a point in the *old* content — either way the
+    /// prepended rows shove the viewport a page up the history. Pages that
+    /// arrive while the transcript is moving wait in `pendingOlderPage`.
+    var isSettled = true
+    var pendingOlderPage: PendingOlderPage?
 
-    var id: String {
-        switch self {
-        case let .message(message): return message.id
-        case let .gap(id, _): return "gap:\(id)"
+    /// A page of older rows read while the transcript was moving, with the
+    /// cursor the window began at when it was requested — the proof it still
+    /// belongs to this window when it is finally applied.
+    struct PendingOlderPage {
+        let page: TranscriptPage
+        let front: ChatMessageCursor
+    }
+}
+
+/// Both distances the transcript reacts to, read in one observation.
+///
+/// Whole points on every axis: sub-pixel measurement jitter feeding a
+/// state-write → layout → state-write loop is what wedged this view before.
+private struct TranscriptScrollMetrics: Equatable {
+    let distanceFromBottom: CGFloat
+    /// How far the reader has pulled past the top. Zero unless overscrolling.
+    let overscrollAboveTop: CGFloat
+    let viewportHeight: CGFloat
+    let contentHeight: CGFloat
+    let offsetFromContentTop: CGFloat
+}
+
+/// Which row to put back under the reader after the window grows above them.
+/// The generation makes two restores to the same row distinct changes, so the
+/// second one still fires.
+private struct TranscriptRestoreAnchor: Equatable {
+    var messageID: String?
+    var generation = 0
+    /// Carry on to the live edge once the anchor is in place. Set when
+    /// returning from far up the history: landing just short of the end first
+    /// gives the animation a short distance to travel instead of a jump
+    /// through thousands of messages that were never loaded.
+    var thenScrollToBottom = false
+
+    func moved(to id: String?, thenScrollToBottom: Bool = false) -> TranscriptRestoreAnchor {
+        TranscriptRestoreAnchor(
+            messageID: id,
+            generation: generation + 1,
+            thenScrollToBottom: thenScrollToBottom
+        )
+    }
+}
+
+/// The marker at a window edge that has more behind it.
+///
+/// Fixed height whether or not it is spinning: this sits at the boundary a page
+/// lands on, and a row that changes size there moves the content the scroll
+/// restore is trying to hold still.
+private struct TranscriptEdgeSpinner: View {
+    let isLoading: Bool
+
+    var body: some View {
+        ProgressView()
+            .opacity(isLoading ? 1 : 0)
+            .frame(height: 28)
+            .frame(maxWidth: .infinity)
+    }
+}
+
+/// Offered when the window does not hold the newest messages, which is the one
+/// state where scrolling down does not eventually arrive at the present.
+private struct JumpToLatestButton: View {
+    let action: () -> Void
+
+    var body: some View {
+        Button(action: action) {
+            Label("Jump to Latest", systemImage: "arrow.down.to.line")
+                .font(.footnote.weight(.medium))
+                .padding(.horizontal, 12)
+                .padding(.vertical, 7)
+                .background(.regularMaterial, in: Capsule())
         }
+        .buttonStyle(.plain)
+        .padding(.bottom, 8)
+        .shadow(radius: 3, y: 1)
     }
 }
 
@@ -517,43 +628,21 @@ private enum TranscriptItem: Identifiable {
 struct ConversationThreadView: View {
     private static let bottomAnchorID = "chat-transcript-bottom"
 
-    /// Collapse consecutive gap placeholders into a single `.gap` item so no
-    /// two spinner bubbles ever render adjacently. The run's stable id is its
-    /// first placeholder handle, keeping SwiftUI diffing cheap.
-    fileprivate static func transcriptItems(_ messages: [ChatMessageSummary]) -> [TranscriptItem] {
-        var items: [TranscriptItem] = []
-        var runStart: String?
-        var runCount = 0
-        func flushGap() {
-            if let start = runStart, runCount > 0 {
-                items.append(.gap(id: start, count: runCount))
-            }
-            runStart = nil
-            runCount = 0
-        }
-        for message in messages {
-            if message.isGapPlaceholder {
-                // A placeholder the engine deleted was filled by an edit (the
-                // missing frame was an edit, not a standalone bubble): it no
-                // longer holds a slot, so drop it. Any still-pending neighbors
-                // stay contiguous and keep the collapsed spinner.
-                if message.isDeleted { continue }
-                if runStart == nil { runStart = message.id }
-                runCount += 1
-            } else {
-                flushGap()
-                items.append(.message(message))
-            }
-        }
-        flushGap()
-        return items
-    }
-    // Following the live edge is an explicit, sticky mode. Appending a row can
-    // temporarily increase the measured distance from the bottom before the
-    // compensating scroll runs; that layout change must not look like the user
-    // scrolled away. Only user-driven scrolling can leave follow mode.
+    // The hysteresis around follow mode; see `TranscriptScrollState`.
     private static let stopFollowingDistance: CGFloat = 360
     private static let resumeFollowingDistance: CGFloat = 240
+    /// How far past the top the reader has to pull before the next page of
+    /// history loads — far enough that it reads as asking for more, rather than
+    /// as the bounce at the end of an ordinary flick.
+    private static let edgePagingOverscroll: CGFloat = 48
+    /// Approaching the bottom of a window that is not at the live edge loads
+    /// forward, so reading back down to the present is continuous.
+    private static let edgePagingDistanceFromBottom: CGFloat = 240
+    /// How close to the top of the window the reader has to be for trimming
+    /// its far end to be worth the correction it costs.
+    private static let trimProximityToTop: CGFloat = 200
+    private static let olderEdgeID = "chat-transcript-older-edge"
+    private static let newerEdgeID = "chat-transcript-newer-edge"
 
     @Binding var conversation: ConversationListItem
     let radioSnapshot: RadioSnapshot
@@ -587,11 +676,29 @@ struct ConversationThreadView: View {
     @State private var inspectedMember: ChannelMember?
     @State private var inspectedMessage: ChatMessageSummary?
     @Environment(\.visibleConversationReporter) private var visibleConversationReporter
-    @State private var followsLatestMessage = true
-    @State private var userIsScrollingTranscript = false
-    @State private var transcriptDistanceFromBottom: CGFloat = 0
-    @State private var outgoingScrollRequest = 0
+    @Environment(\.transcriptLoader) private var transcriptLoader
+    @State private var transcript = TranscriptWindow()
+    /// Where the reader is, held by reference so that following a scroll costs
+    /// nothing to draw. Every one of these changes many times per drag, and as
+    /// view state each write would invalidate the transcript and re-diff every
+    /// row in the window on every frame — none of them is something the
+    /// transcript renders.
+    @State private var scroll = TranscriptScrollState()
+    /// Bumped by every change that should carry the reader to the live edge,
+    /// and by nothing else. Follow is decided where the window is mutated
+    /// rather than inferred from the result: a page of history arriving at the
+    /// top and a message arriving at the bottom are indistinguishable as diffs,
+    /// and only one of them means "scroll".
+    @State private var scrollToBottomRequest = 0
     @State private var scrollToBottomScheduled = false
+    /// Which row to put back under the reader after a page lands above them,
+    /// and a counter so two restores to the same row still both fire.
+    @State private var restoreAnchor = TranscriptRestoreAnchor()
+    /// Programmatic offset control, used only to hold the viewport still while
+    /// the window is edited around it. Never configured to track anything: the
+    /// offset fields of a `ScrollPosition` are written by programmatic scrolls
+    /// only, so this costs a state write per correction, not per scroll frame.
+    @State private var scrollPosition = ScrollPosition()
 
     init(
         conversation: Binding<ConversationListItem>,
@@ -637,13 +744,25 @@ struct ConversationThreadView: View {
 
     var body: some View {
         VStack(spacing: 0) {
-            if conversation.messages.isEmpty {
+            // Gated on the summary rather than the window: the summary knows
+            // synchronously whether anything was ever said here, so a long
+            // transcript does not flash "No messages yet" before its first
+            // page lands.
+            if conversation.lastMessage == nil {
                 ContentUnavailableView {
                     Label("No messages yet", systemImage: "bubble.left")
                 } description: {
                     Text(emptyStateDescription)
                 }
                 .frame(maxHeight: .infinity)
+            } else if !transcript.hasLoadedOnce {
+                // Hold the scroll view back until its first page exists.
+                // `defaultScrollAnchor(.bottom)` positions content the scroll
+                // view already has; given an empty stack that fills in a moment
+                // later, it has nothing to anchor and the transcript opens at
+                // the top of the window instead of at the newest message.
+                ProgressView()
+                    .frame(maxWidth: .infinity, maxHeight: .infinity)
             } else {
                 ScrollViewReader { proxy in
                     ScrollView {
@@ -652,12 +771,20 @@ struct ConversationThreadView: View {
                         // an animated scrollTo to a bottom anchor plus the
                         // geometry observer below, oscillating row heights
                         // can wedge the main thread in a layout loop (screen
-                        // renders but touches never deliver).
+                        // renders but touches never deliver). What keeps that
+                        // affordable is the window: only a bounded slice of a
+                        // conversation is ever built.
                         VStack(spacing: 10) {
-                            let lastOutboundID = conversation.messages.last(
-                                where: { $0.isOutbound && !$0.isDeleted }
-                            )?.id
-                            ForEach(Self.transcriptItems(conversation.messages)) { item in
+                            // Fixed height, and always present when there is
+                            // history behind the window: a row that changes
+                            // size at the top edge while a page is landing
+                            // fights the scroll restore below.
+                            if transcript.hasOlder {
+                                TranscriptEdgeSpinner(isLoading: transcript.isLoadingOlder)
+                                    .id(Self.olderEdgeID)
+                            }
+                            let lastOutboundID = transcript.lastOutboundID
+                            ForEach(transcript.rows) { item in
                                 switch item {
                                 case let .message(message):
                                     ChatMessageBubble(
@@ -698,6 +825,10 @@ struct ConversationThreadView: View {
                                         .id(item.id)
                                 }
                             }
+                            if transcript.hasNewer {
+                                TranscriptEdgeSpinner(isLoading: transcript.isLoadingNewer)
+                                    .id(Self.newerEdgeID)
+                            }
                             Color.clear
                                 .frame(height: 1)
                                 .id(Self.bottomAnchorID)
@@ -710,53 +841,92 @@ struct ConversationThreadView: View {
                     // the default top-anchored offset, which hides the
                     // newest messages behind the keyboard.
                     .defaultScrollAnchor(.bottom, for: .sizeChanges)
-                    .onAppear {
-                        guard !conversation.messages.isEmpty else { return }
-                        // Initial presentation always opens at the newest
-                        // message. Conditional auto-follow applies only after
-                        // the reader has had a chance to scroll upward.
-                        scheduleScrollToBottom(proxy, animated: false)
-                    }
-                    .onScrollGeometryChange(for: CGFloat.self) { geometry in
-                        // Whole-point granularity: sub-pixel measurement
-                        // jitter must not feed a state-write → layout →
+                    .scrollPosition($scrollPosition)
+                    .onScrollGeometryChange(for: TranscriptScrollMetrics.self) { geometry in
+                        // One observer for both edges. A second would be a
+                        // second state write into the same layout pass, and
+                        // whole-point granularity on both keeps sub-pixel
+                        // measurement jitter out of a state-write → layout →
                         // state-write feedback loop.
-                        max(0, geometry.contentSize.height - geometry.visibleRect.maxY)
-                            .rounded()
-                    } action: { _, distance in
-                        transcriptDistanceFromBottom = distance
-                        updateFollowState(
-                            distanceFromBottom: distance,
-                            userDriven: userIsScrollingTranscript
+                        TranscriptScrollMetrics(
+                            distanceFromBottom: max(
+                                0,
+                                geometry.contentSize.height - geometry.visibleRect.maxY
+                            ).rounded(),
+                            overscrollAboveTop: max(
+                                0,
+                                -(geometry.contentOffset.y + geometry.contentInsets.top)
+                            ).rounded(),
+                            viewportHeight: geometry.containerSize.height.rounded(),
+                            contentHeight: geometry.contentSize.height.rounded(),
+                            offsetFromContentTop: (geometry.contentOffset.y
+                                + geometry.contentInsets.top).rounded()
                         )
+                    } action: { _, metrics in
+                        scroll.distanceFromBottom = metrics.distanceFromBottom
+                        updateFollowState(
+                            distanceFromBottom: metrics.distanceFromBottom,
+                            userDriven: scroll.userIsScrolling
+                        )
+                        respondToScroll(metrics, proxy: proxy)
                     }
                     .onScrollPhaseChange { _, phase in
                         switch phase {
                         case .tracking, .interacting, .decelerating:
-                            userIsScrollingTranscript = true
+                            scroll.isSettled = false
+                            scroll.userIsScrolling = true
                             updateFollowState(
-                                distanceFromBottom: transcriptDistanceFromBottom,
+                                distanceFromBottom: scroll.distanceFromBottom,
                                 userDriven: true
                             )
-                        case .idle, .animating:
-                            userIsScrollingTranscript = false
+                        case .idle:
+                            scroll.isSettled = true
+                            scroll.userIsScrolling = false
+                            // One page per gesture; a new gesture re-arms it.
+                            scroll.pagedThisGesture = false
+                            // Nothing is moving, so neither the prepend's
+                            // restore nor the trim's has anything to fight.
+                            // A prepend chains its own trim once its restore
+                            // has landed, so only one of these runs here.
+                            if !applyPendingOlderPage() {
+                                trimTranscriptIfNeeded()
+                            }
+                        case .animating:
+                            scroll.isSettled = false
+                            scroll.userIsScrolling = false
                         }
                     }
-                    .onChange(of: conversation.messages) { _, messages in
-                        guard !messages.isEmpty, followsLatestMessage else { return }
-                        // Follow inserts as well as live body/delivery-state
-                        // mutations. Deferring lets SwiftUI finish measuring
-                        // the changed final bubble before targeting the edge.
-                        scheduleScrollToBottom(proxy)
+                    .onChange(of: scrollToBottomRequest) { _, _ in
+                        scheduleScrollToBottom(proxy, animated: transcript.hasLoadedOnce)
                     }
-                    .onChange(of: outgoingScrollRequest) { _, _ in
-                        // Sending is an explicit navigation to the new item,
-                        // unlike a passive update while reading older history.
-                        followsLatestMessage = true
-                        scheduleScrollToBottom(proxy)
+                    .onChange(of: restoreAnchor) { _, anchor in
+                        guard let id = anchor.messageID else { return }
+                        // After a page lands above the reader, put the row they
+                        // were looking at back where it was. Never animated:
+                        // this is a correction, not a movement. The hop lets
+                        // SwiftUI measure the new rows before the target is
+                        // resolved, the same deferral the bottom scroll uses.
+                        DispatchQueue.main.async {
+                            proxy.scrollTo(id, anchor: .top)
+                            guard anchor.thenScrollToBottom else { return }
+                            // Chained rather than requested alongside: issued
+                            // together the two resolve in one tick and the
+                            // pre-position wins, stopping the transcript short
+                            // of the live edge it was asked to return to.
+                            DispatchQueue.main.async {
+                                withAnimation {
+                                    proxy.scrollTo(Self.bottomAnchorID, anchor: .bottom)
+                                }
+                            }
+                        }
                     }
                 }
                 .frame(maxHeight: .infinity)
+                .overlay(alignment: .bottom) {
+                    if transcript.hasNewer {
+                        JumpToLatestButton { Task { await jumpToLatest() } }
+                    }
+                }
             }
 
             Divider()
@@ -807,6 +977,10 @@ struct ConversationThreadView: View {
         }
         .navigationTitle(conversation.title)
         .navigationBarTitleDisplayMode(.inline)
+        // Keyed on the revision, so a reload that changed no messages here —
+        // a peer heard, another conversation's traffic, this one being marked
+        // read — costs nothing.
+        .task(id: conversation.messageRevision) { await refreshTranscript() }
         .onAppear {
             visibleConversationReporter.appeared(conversation.conversationAddress)
             Task { await markRead(conversation.conversationAddress) }
@@ -856,7 +1030,8 @@ struct ConversationThreadView: View {
                             sendMessage: { conversation, body in
                                 await sendMessage(.direct(conversation), body)
                             },
-                            clearMessages: clearMessages
+                            clearMessages: clearMessages,
+                            countMessages: countMessages
                         )
                     } else if let channelConversation {
                         ChannelConversationDetailView(
@@ -864,7 +1039,8 @@ struct ConversationThreadView: View {
                             radioSnapshot: radioSnapshot,
                             channelActions: channelManagementActions,
                             setNotifications: channelActions.setNotifications,
-                            clearMessages: clearMessages
+                            clearMessages: clearMessages,
+                            countMessages: countMessages
                         )
                     }
                 }
@@ -952,6 +1128,289 @@ struct ConversationThreadView: View {
         }
     }
 
+    /// Bring the window up to date with storage.
+    ///
+    /// What "up to date" means depends on where the reader is. Following the
+    /// live edge, the window *slides* there — a re-read of the extent it
+    /// already holds would strand a follower behind a batch that landed more
+    /// messages than the window has slack for. Reading history, the extent is
+    /// re-read in place instead, so edits, deletions and delivery changes
+    /// appear without the ground moving.
+    private func refreshTranscript() async {
+        let revision = conversation.messageRevision
+        guard transcript.loadedRevision != revision else { return }
+        let address = conversation.conversationAddress
+
+        guard transcript.hasLoadedOnce, let oldest = transcript.oldestCursor else {
+            let page = await transcriptLoader.newest(address, TranscriptWindow.pageSize)
+            guard !Task.isCancelled else { return }
+            // The scroll view is built for the first time around this content,
+            // so its bottom anchor opens on the newest message with no scroll
+            // command to race the layout of a whole page of bubbles.
+            transcript.replace(with: page, revision: revision)
+            await fillViewportIfShort()
+            return
+        }
+
+        if scroll.followsLatestMessage && !transcript.hasNewer {
+            let page = await transcriptLoader.newest(address, TranscriptWindow.pageSize)
+            guard !Task.isCancelled else { return }
+            transcript.replace(with: page, revision: revision)
+            scrollToBottomRequest += 1
+            return
+        }
+
+        // Re-read exactly what is held. With unloaded messages already beyond
+        // the window, asking for slack would creep the bottom edge forward on
+        // every refresh with rows the reader never asked to see.
+        let slack = transcript.hasNewer ? 0 : 32
+        let page = await transcriptLoader.newer(
+            address,
+            oldest,
+            true,
+            min(transcript.messages.count + slack, TranscriptWindow.capacity)
+        )
+        guard !Task.isCancelled else { return }
+        transcript.replace(with: page, revision: revision)
+    }
+
+    /// Page backward until the content is at least tall enough to scroll.
+    ///
+    /// A window shorter than the viewport cannot be pulled, so the gesture that
+    /// would load more history can never happen — the reader would be stuck
+    /// with whatever the first page held and no way to ask for the rest.
+    private func fillViewportIfShort() async {
+        guard transcript.hasOlder, !transcript.isLoadingOlder else { return }
+        guard scroll.contentHeight > 0, scroll.viewportHeight > 0 else { return }
+        guard scroll.contentHeight < scroll.viewportHeight else { return }
+        await loadOlder()
+    }
+
+    /// Take one page of older messages.
+    ///
+    /// No scroll correction: the rows land above the reader and
+    /// `defaultScrollAnchor(.bottom, for: .sizeChanges)` holds the content
+    /// already on screen where it is. Issuing a `scrollTo` here instead would
+    /// land mid-gesture and cancel the very flick that asked for the page.
+    ///
+    /// The anchor only compensates when nothing else is steering the offset,
+    /// though. A finger down, momentum, or the rubber-band settle all move the
+    /// viewport toward a point in the *old* content, and a prepend applied
+    /// under any of them dumps the reader a page up the history — so a page
+    /// that arrives while the transcript is moving is parked and applied by
+    /// the phase handler once it comes to rest.
+    private func loadOlder() async {
+        guard transcript.hasOlder, !transcript.isLoadingOlder else { return }
+        guard let oldest = transcript.oldestCursor else { return }
+        transcript.isLoadingOlder = true
+
+        let page = await transcriptLoader.older(
+            conversation.conversationAddress,
+            oldest,
+            TranscriptWindow.pageSize
+        )
+        // The window may have been replaced while the read was in flight
+        // (jump-to-latest, focus). Rows older than a cursor the window no
+        // longer starts at belong to nothing on screen.
+        guard !Task.isCancelled, !page.messages.isEmpty,
+              transcript.oldestCursor == oldest else {
+            transcript.isLoadingOlder = false
+            return
+        }
+        if scroll.isSettled {
+            applyOlderPage(page)
+        } else {
+            scroll.pendingOlderPage = .init(page: page, front: oldest)
+        }
+    }
+
+    /// Apply a page that arrived while the transcript was moving. Reports
+    /// whether it did, since the restore it schedules has to finish before
+    /// anything else may measure the reader's position.
+    @discardableResult
+    private func applyPendingOlderPage() -> Bool {
+        guard let pending = scroll.pendingOlderPage else { return false }
+        scroll.pendingOlderPage = nil
+        guard transcript.oldestCursor == pending.front else {
+            transcript.isLoadingOlder = false
+            return false
+        }
+        applyOlderPage(pending.page)
+        return true
+    }
+
+    private func applyOlderPage(_ page: TranscriptPage) {
+        let offsetBefore = scroll.offsetFromContentTop
+        let heightBefore = scroll.contentHeight
+        var transaction = Transaction()
+        transaction.disablesAnimations = true
+        withTransaction(transaction) {
+            transcript.prepend(page)
+            transcript.isLoadingOlder = false
+        }
+        // However much the content grew above the viewport is exactly how far
+        // the rows on screen moved down; putting the offset there is what
+        // holds them still. Trimming waits for that to land: it measures where
+        // the reader is, and until the restore runs that is the old position.
+        restoreViewport(
+            to: { heightAfter in offsetBefore + (heightAfter - heightBefore) },
+            then: { trimTranscriptIfNeeded() }
+        )
+    }
+
+    /// Put the viewport back over the rows it was showing after the window was
+    /// edited around it.
+    ///
+    /// SwiftUI's scroll anchors do not compensate for content growing above a
+    /// transcript resting at its top — the new rows land above offset zero and
+    /// the viewport ends up a page back in the history — so the offset is
+    /// restored arithmetically instead, from the one fact layout has to settle
+    /// first: the content's new height. The hop waits for that layout;
+    /// `target` then computes the offset that leaves the same rows on screen.
+    /// Setting an absolute offset also cannot double-correct if an anchor did
+    /// compensate.
+    private func restoreViewport(
+        attempt: Int = 0,
+        to target: @escaping (_ contentHeightAfter: CGFloat) -> CGFloat,
+        then completion: (() -> Void)? = nil
+    ) {
+        let heightBefore = scroll.contentHeight
+        DispatchQueue.main.async {
+            // The geometry observer reports the post-edit height once layout
+            // runs. If it has not yet, give it another turn — but never stall
+            // forever on an edit that happened not to change the height.
+            if scroll.contentHeight == heightBefore, attempt < 3 {
+                restoreViewport(attempt: attempt + 1, to: target, then: completion)
+                return
+            }
+            var transaction = Transaction()
+            transaction.disablesAnimations = true
+            withTransaction(transaction) {
+                scrollPosition.scrollTo(y: target(scroll.contentHeight))
+            }
+            guard let completion else { return }
+            // One more turn, so whatever runs next reads the position this
+            // scroll produced rather than the one it replaced.
+            DispatchQueue.main.async(execute: completion)
+        }
+    }
+
+    /// Give back the newest messages once the window has outgrown its budget.
+    ///
+    /// Deferred to a resting transcript on purpose: this shrinks the content
+    /// below the reader, which the bottom scroll anchor answers by pulling
+    /// everything up, so it needs a correction — and a correction is only
+    /// invisible when nothing is moving.
+    private func trimTranscriptIfNeeded() {
+        guard transcript.exceedsCapacity, !transcript.isLoadingOlder else { return }
+        // Only while the reader is up near the top, which is where paging
+        // backward leaves them: everything trimmed is then far below the
+        // viewport. An over-capacity window is not worth touching someone's
+        // reading position for, and the next pause at the top collects it.
+        guard scroll.distanceFromTop <= Self.trimProximityToTop else { return }
+        let offsetBefore = scroll.offsetFromContentTop
+        var transaction = Transaction()
+        transaction.disablesAnimations = true
+        var trimmed = false
+        withTransaction(transaction) { trimmed = transcript.trimToCapacity() }
+        guard trimmed else { return }
+        // Content removed below the viewport moves nothing above it: the
+        // right offset afterwards is the one it already had.
+        restoreViewport { _ in offsetBefore }
+    }
+
+    /// Take one page of newer messages. Nothing to restore: the rows land below
+    /// the viewport, where they move nothing already on screen.
+    private func loadNewer() async {
+        guard transcript.hasNewer, !transcript.isLoadingNewer else { return }
+        guard let newest = transcript.newestCursor else { return }
+        transcript.isLoadingNewer = true
+        defer { transcript.isLoadingNewer = false }
+
+        let page = await transcriptLoader.newer(
+            conversation.conversationAddress,
+            newest,
+            false,
+            TranscriptWindow.pageSize
+        )
+        guard !Task.isCancelled else { return }
+        transcript.append(page)
+    }
+
+    /// Return to the live edge from a window that does not hold it.
+    ///
+    /// The window is replaced rather than paged forward — the reader may be
+    /// thousands of messages back — but it is not cut to the bottom either.
+    /// Pre-positioning just above the newest messages and then animating home
+    /// reads as arriving somewhere, which is what the reader asked for.
+    private func landAtLiveEdge() async {
+        let page = await transcriptLoader.newest(
+            conversation.conversationAddress,
+            TranscriptWindow.pageSize
+        )
+        guard !Task.isCancelled, !page.messages.isEmpty else { return }
+        var transaction = Transaction()
+        transaction.disablesAnimations = true
+        withTransaction(transaction) {
+            transcript.replace(with: page, revision: conversation.messageRevision)
+        }
+        scroll.followsLatestMessage = true
+        // Put the reader just short of the end, then glide in. The two steps
+        // are chained through the restore handler rather than issued together:
+        // as separate requests they resolve in the same run-loop tick and the
+        // pre-position wins, leaving the transcript stopped short.
+        let runway = 12
+        if page.messages.count > runway {
+            restoreAnchor = restoreAnchor.moved(
+                to: page.messages[page.messages.count - runway].id,
+                thenScrollToBottom: true
+            )
+        } else {
+            scrollToBottomRequest += 1
+        }
+    }
+
+    private func jumpToLatest() async {
+        await landAtLiveEdge()
+    }
+
+    /// Open the window on a particular message, for a search result that has to
+    /// be shown in its context rather than at the end of the conversation.
+    func focus(messageID: String) async {
+        guard let page = await transcriptLoader.around(
+            conversation.conversationAddress,
+            messageID,
+            TranscriptWindow.focusRadius
+        ) else { return }
+        guard !Task.isCancelled else { return }
+        // Off before the window is published: its bottom is not the live edge,
+        // so nothing here should be chasing it.
+        scroll.followsLatestMessage = false
+        var transaction = Transaction()
+        transaction.disablesAnimations = true
+        withTransaction(transaction) {
+            transcript.replace(with: page, revision: conversation.messageRevision)
+        }
+        restoreAnchor = restoreAnchor.moved(to: messageID)
+    }
+
+    /// React to where the reader has got to: pull past an edge and the page
+    /// behind it loads.
+    private func respondToScroll(_ metrics: TranscriptScrollMetrics, proxy: ScrollViewProxy) {
+        scroll.viewportHeight = metrics.viewportHeight
+        scroll.contentHeight = metrics.contentHeight
+        scroll.offsetFromContentTop = metrics.offsetFromContentTop
+        guard scroll.userIsScrolling, !scroll.pagedThisGesture else { return }
+        if metrics.overscrollAboveTop >= Self.edgePagingOverscroll, transcript.hasOlder {
+            scroll.pagedThisGesture = true
+            Task { await loadOlder() }
+        } else if transcript.hasNewer,
+                  metrics.distanceFromBottom <= Self.edgePagingDistanceFromBottom {
+            scroll.pagedThisGesture = true
+            Task { await loadNewer() }
+        }
+    }
+
     /// At most one scroll command per run-loop tick. After a send, both the
     /// messages change and the explicit scroll request fire together; two
     /// simultaneous animated scrollTo calls fight each other and churn
@@ -972,10 +1431,17 @@ struct ConversationThreadView: View {
     }
 
     private func updateFollowState(distanceFromBottom: CGFloat, userDriven: Bool) {
+        // A window with messages beyond it has no live edge to follow: reaching
+        // its bottom is reaching the end of what is loaded, not the end of the
+        // conversation, and re-arming here would chase a moving target.
+        guard !transcript.hasNewer else {
+            scroll.followsLatestMessage = false
+            return
+        }
         if distanceFromBottom <= Self.resumeFollowingDistance {
-            followsLatestMessage = true
+            scroll.followsLatestMessage = true
         } else if userDriven && distanceFromBottom >= Self.stopFollowingDistance {
-            followsLatestMessage = false
+            scroll.followsLatestMessage = false
         }
     }
 
@@ -991,7 +1457,18 @@ struct ConversationThreadView: View {
         case let .sent(updatedConversation):
             conversation = updatedConversation
             draft = ""
-            outgoingScrollRequest += 1
+            if transcript.hasNewer {
+                // Sent from up in the history, where the new message is not
+                // even loaded. Bring the live edge in and land on it, rather
+                // than scrolling to the bottom of a window that does not hold
+                // what was just sent.
+                await landAtLiveEdge()
+            } else {
+                // Sending is an explicit navigation to the new item, unlike a
+                // passive update while reading older history.
+                scroll.followsLatestMessage = true
+                scrollToBottomRequest += 1
+            }
         case let .failed(message):
             sendFailureMessage = message
             showsBlockedReason = true
@@ -1004,6 +1481,10 @@ struct ConversationThreadView: View {
     private func clearMessages() async {
         showsConversationInfo = false
         await messageActions.clearMessages(conversation.conversationAddress)
+    }
+
+    private func countMessages() async -> Int {
+        await messageActions.countMessages(conversation.conversationAddress)
     }
 
     private var isChannel: Bool { channelConversation != nil }

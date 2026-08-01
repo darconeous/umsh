@@ -17,6 +17,11 @@ struct DirectConversationDetailView: View {
     var sendMessage: ((DirectConversationSummary, String) async -> MessageSendResult)? = nil
     /// Erase the transcript. Absent when there is no store to erase it from.
     var clearMessages: (() async -> Void)? = nil
+    /// Counted when the sheet appears rather than carried on the summary, which
+    /// holds only the tail of the transcript.
+    var countMessages: () async -> Int = { 0 }
+
+    @State private var messageCount: Int?
 
     private var peer: PeerSummary { conversation.peer }
 
@@ -53,17 +58,18 @@ struct DirectConversationDetailView: View {
                     Text(peer.identity.hint.text)
                         .font(.body.monospaced())
                 }
-                LabeledContent("Messages", value: "\(conversation.messages.count)")
+                LabeledContent("Messages", value: messageCount.map(String.init) ?? "…")
             }
-            if let clearMessages {
+            if let clearMessages, let messageCount {
                 ClearMessagesSection(
-                    messageCount: conversation.messages.count,
+                    messageCount: messageCount,
                     warning: "The message history on this phone is erased. Nothing is sent, and \(peer.displayName) keeps their copy.",
                     clear: clearMessages
                 )
             }
         }
         .navigationTitle(peer.displayName)
+        .task { messageCount = await countMessages() }
     }
 }
 
@@ -78,11 +84,15 @@ struct ChannelConversationDetailView: View {
     var channelActions: ChannelActions = .unavailable
     var setNotifications: (ChannelSummary, Bool) async -> Void = { _, _ in }
     var clearMessages: (() async -> Void)? = nil
+    /// Counted when the sheet appears rather than carried on the summary, which
+    /// holds only the tail of the transcript.
+    var countMessages: () async -> Int = { 0 }
 
     /// What the toggle shows until the store comes back with the new value.
     /// Without it the switch springs back mid-write, which reads as a failure
     /// even though the write is on its way.
     @State private var pendingNotifications: Bool?
+    @State private var messageCount: Int?
 
     var body: some View {
         Form {
@@ -130,11 +140,11 @@ struct ChannelConversationDetailView: View {
                     Text(conversation.channel.channelIDHex)
                         .font(.body.monospaced())
                 }
-                LabeledContent("Messages", value: "\(conversation.messages.count)")
+                LabeledContent("Messages", value: messageCount.map(String.init) ?? "…")
             }
-            if let clearMessages {
+            if let clearMessages, let messageCount {
                 ClearMessagesSection(
-                    messageCount: conversation.messages.count,
+                    messageCount: messageCount,
                     warning: "The message history on this phone is erased. Nothing is sent, and everyone else in the channel keeps their copy.",
                     clear: clearMessages
                 )
@@ -151,6 +161,7 @@ struct ChannelConversationDetailView: View {
             }
         }
         .navigationTitle(conversation.channel.title)
+        .task { messageCount = await countMessages() }
     }
 
     /// Entering the conversation is what got the user here, so the channel

@@ -75,6 +75,23 @@ struct StoredNode: Equatable, Sendable {
     let onDeviceIdentity: Bool
 }
 
+/// The newest message in a conversation, reduced to what a list row draws.
+///
+/// This is the literal last row in transcript order, tombstones and gap
+/// placeholders included: a list preview says what the bottom of the transcript
+/// is, and a deleted last message reads as "Message deleted" rather than
+/// silently promoting the one before it.
+struct StoredConversationPreview: Equatable, Sendable {
+    let createdAtMilliseconds: Int64
+    let body: String
+    let isOutbound: Bool
+    let isDeleted: Bool
+    /// Who sent it, for a group conversation: the resolved address once known,
+    /// and the hint the wire always carries.
+    let senderAddress: String?
+    let senderHint: Data?
+}
+
 struct StoredDirectConversation: Equatable, Sendable {
     let id: Int64
     let node: StoredNode
@@ -86,6 +103,8 @@ struct StoredDirectConversation: Equatable, Sendable {
     /// When the conversation row was created — the activity time of a
     /// conversation that has no messages yet.
     let createdAtMilliseconds: Int64
+    let lastMessage: StoredConversationPreview?
+    let unreadCount: Int
 }
 
 /// A channel's group conversation. Its other end is a channel rather than a
@@ -100,6 +119,8 @@ struct StoredChannelConversation: Equatable, Sendable {
     /// When the conversation row was created — the activity time of a
     /// conversation that has no messages yet.
     let createdAtMilliseconds: Int64
+    let lastMessage: StoredConversationPreview?
+    let unreadCount: Int
 }
 
 /// What a notification needs to describe an arrived message, resolved from
@@ -193,9 +214,52 @@ struct StoredChatMessage: Equatable, Sendable, Identifiable {
     /// What the radio observed of the frame this message arrived on. Absent
     /// for outbound messages and for anything that predates the metadata.
     let reception: StoredMessageReception?
+    /// The row's SQLite rowid, which with `createdAtMilliseconds` forms this
+    /// message's keyset cursor. Ordering key only — `(sessionID, handle)`
+    /// remains the durable identity.
+    let rowID: Int64
 
     var isGapPlaceholder: Bool { presence == 1 }
     var isUnavailable: Bool { presence == 2 }
+
+    var cursor: ChatMessageCursor {
+        ChatMessageCursor(createdAtMilliseconds: createdAtMilliseconds, rowID: rowID)
+    }
+}
+
+/// Where one message sits in its conversation's storage order.
+///
+/// `(created_at_ms, rowid)` is exactly the transcript's ORDER BY, so a cursor
+/// names a row rather than an offset: a page boundary stays put when older
+/// messages are repaired in behind it. The rowid half is load-bearing rather
+/// than defensive — a mutation batch is stamped from one clock read, so several
+/// messages sharing a millisecond is the normal case, not an edge one.
+///
+/// Rowids are reused after a transcript is cleared, so two messages in the same
+/// conversation and the same millisecond straddling a clear could in principle
+/// compare in storage order rather than arrival order. The transcript's ORDER BY
+/// has always been ambiguous in exactly that case; the cursor inherits it rather
+/// than introducing it.
+struct ChatMessageCursor: Hashable, Sendable, Comparable {
+    let createdAtMilliseconds: Int64
+    let rowID: Int64
+
+    static func < (lhs: ChatMessageCursor, rhs: ChatMessageCursor) -> Bool {
+        lhs.createdAtMilliseconds == rhs.createdAtMilliseconds
+            ? lhs.rowID < rhs.rowID
+            : lhs.createdAtMilliseconds < rhs.createdAtMilliseconds
+    }
+}
+
+/// One loaded slice of a transcript, oldest first — the order it renders in.
+/// The flags describe what storage holds beyond the slice, so a reader knows
+/// whether there is more to page toward in either direction.
+struct StoredChatMessagePage: Equatable, Sendable {
+    let messages: [StoredChatMessage]
+    let hasOlder: Bool
+    let hasNewer: Bool
+
+    static let empty = StoredChatMessagePage(messages: [], hasOlder: false, hasNewer: false)
 }
 
 /// The radio's view of one received message, for the message-details sheet.
@@ -1048,6 +1112,66 @@ actor SQLiteApplicationStore {
         return sqlite3_column_int64(select, 0)
     }
 
+    /// The last message and unread count a list row needs, as SQL expressions
+    /// against an already-joined conversation.
+    ///
+    /// Both are per-conversation index seeks rather than scans: the last message
+    /// resolves a rowid at the end of one index range and then fetches that one
+    /// row, and the unread count starts at the read cursor instead of the
+    /// beginning of history. Deliberately absent is a total message count — it
+    /// is the one aggregate that must walk the whole range, and nothing in a
+    /// list row asks for it.
+    ///
+    /// `owner` and `address` are the outer query's own column references, so
+    /// this reads the same for a direct chat keyed by peer address and a
+    /// channel chat keyed by channel tag.
+    private static func conversationTailColumns(owner: String, address: String) -> String {
+        """
+        lm.created_at_ms, lm.body, lm.direction, lm.deleted,
+        lm.sender_address, lm.sender_hint,
+        (SELECT COUNT(*) FROM chat_message u
+          WHERE u.owner_identity_id = \(owner)
+            AND u.conversation_address = \(address)
+            AND u.direction = 0 AND u.deleted = 0 AND u.presence = 0
+            AND u.created_at_ms > c.last_read_at_ms)
+        """
+    }
+
+    private static func conversationTailJoin(owner: String, address: String) -> String {
+        """
+        LEFT JOIN chat_message lm ON lm.rowid = (
+            SELECT m.rowid FROM chat_message m
+            WHERE m.owner_identity_id = \(owner) AND m.conversation_address = \(address)
+            ORDER BY m.created_at_ms DESC, m.rowid DESC
+            LIMIT 1
+        )
+        """
+    }
+
+    /// Reads the six preview columns and the unread count a tail block selects,
+    /// starting at `offset`. A conversation with no messages has a NULL
+    /// timestamp and no preview.
+    private static func conversationTail(
+        _ statement: OpaquePointer,
+        at offset: Int32
+    ) -> (lastMessage: StoredConversationPreview?, unreadCount: Int) {
+        let unread = Int(sqlite3_column_int64(statement, offset + 6))
+        guard sqlite3_column_type(statement, offset) != SQLITE_NULL else {
+            return (nil, unread)
+        }
+        return (
+            StoredConversationPreview(
+                createdAtMilliseconds: sqlite3_column_int64(statement, offset),
+                body: stringColumn(statement, at: offset + 1),
+                isOutbound: sqlite3_column_int(statement, offset + 2) == 1,
+                isDeleted: sqlite3_column_int(statement, offset + 3) != 0,
+                senderAddress: optionalStringColumn(statement, at: offset + 4),
+                senderHint: optionalDataColumn(statement, at: offset + 5)
+            ),
+            unread
+        )
+    }
+
     func listDirectConversations(ownerIdentityID: String) throws -> [StoredDirectConversation] {
         let statement = try prepare(
             """
@@ -1055,8 +1179,16 @@ actor SQLiteApplicationStore {
                    n.advertised_name, n.system_role, n.node_kind,
                    n.advertisement, n.advertisement_authenticated, n.last_heard_at,
                    n.is_saved, n.is_favorite, n.on_dev_identity,
-                   c.draft_text, c.last_read_at_ms, c.created_at_ms
+                   c.draft_text, c.last_read_at_ms, c.created_at_ms,
+                   \(Self.conversationTailColumns(
+                        owner: "c.owner_identity_id",
+                        address: "n.public_address"
+                   ))
             FROM direct_conversation c JOIN node n ON n.id = c.node_id
+            \(Self.conversationTailJoin(
+                 owner: "c.owner_identity_id",
+                 address: "n.public_address"
+            ))
             WHERE c.owner_identity_id = ? ORDER BY c.created_at_ms DESC, c.id DESC
             """
         )
@@ -1066,13 +1198,16 @@ actor SQLiteApplicationStore {
         while true {
             switch sqlite3_step(statement) {
             case SQLITE_ROW:
+                let tail = Self.conversationTail(statement, at: 17)
                 conversations.append(
                     StoredDirectConversation(
                         id: sqlite3_column_int64(statement, 0),
                         node: storedNode(statement, offset: 1),
                         draftText: Self.stringColumn(statement, at: 14),
                         lastReadAtMilliseconds: sqlite3_column_int64(statement, 15),
-                        createdAtMilliseconds: sqlite3_column_int64(statement, 16)
+                        createdAtMilliseconds: sqlite3_column_int64(statement, 16),
+                        lastMessage: tail.lastMessage,
+                        unreadCount: tail.unreadCount
                     )
                 )
             case SQLITE_DONE:
@@ -1123,10 +1258,19 @@ actor SQLiteApplicationStore {
     ) throws -> [StoredChannelConversation] {
         let statement = try prepare(
             """
-            SELECT id, channel_id, conversation_address, draft_text, last_read_at_ms,
-                   created_at_ms
-            FROM channel_conversation WHERE owner_identity_id = ?
-            ORDER BY created_at_ms DESC, id DESC
+            SELECT c.id, c.channel_id, c.conversation_address, c.draft_text,
+                   c.last_read_at_ms, c.created_at_ms,
+                   \(Self.conversationTailColumns(
+                        owner: "c.owner_identity_id",
+                        address: "c.conversation_address"
+                   ))
+            FROM channel_conversation c
+            \(Self.conversationTailJoin(
+                 owner: "c.owner_identity_id",
+                 address: "c.conversation_address"
+            ))
+            WHERE c.owner_identity_id = ?
+            ORDER BY c.created_at_ms DESC, c.id DESC
             """
         )
         defer { sqlite3_finalize(statement) }
@@ -1138,6 +1282,7 @@ actor SQLiteApplicationStore {
                 guard let channelID = UUID(uuidString: Self.stringColumn(statement, at: 1)) else {
                     continue
                 }
+                let tail = Self.conversationTail(statement, at: 6)
                 conversations.append(
                     StoredChannelConversation(
                         id: sqlite3_column_int64(statement, 0),
@@ -1145,7 +1290,9 @@ actor SQLiteApplicationStore {
                         conversationAddress: Self.stringColumn(statement, at: 2),
                         draftText: Self.stringColumn(statement, at: 3),
                         lastReadAtMilliseconds: sqlite3_column_int64(statement, 4),
-                        createdAtMilliseconds: sqlite3_column_int64(statement, 5)
+                        createdAtMilliseconds: sqlite3_column_int64(statement, 5),
+                        lastMessage: tail.lastMessage,
+                        unreadCount: tail.unreadCount
                     )
                 )
             case SQLITE_DONE:
@@ -1547,57 +1694,357 @@ actor SQLiteApplicationStore {
         return Self.dataColumn(statement, at: 0)
     }
 
-    func chatMessages(
+    /// The columns every transcript read selects, in the order
+    /// ``storedChatMessage(_:)`` expects them. `rowid` is last so the reception
+    /// block keeps its offsets.
+    private static let chatMessageColumns = """
+        session_id, handle, body, direction, delivery_state, deleted, created_at_ms,
+        wire_id, epoch, edited, presence, received_late, delivered_late, original_body,
+        sender_address, sender_hint, sender_handle,
+        rx_rssi_dbm, rx_snr_cb, rx_lqi, rx_hop_count,
+        rx_route_hints, rx_source_authenticated, rowid
+        """
+
+    /// How many messages a transcript read will accept in one page, whatever
+    /// the caller asks for. A page becomes a live `UITextView` per row on the
+    /// way to the screen, so an unbounded request is a mistake the store can
+    /// see and the caller usually cannot.
+    static let chatMessagePageLimit = 500
+
+    /// The newest `limit` messages in a conversation.
+    func chatMessagePage(
         ownerIdentityID: String,
-        conversationAddress: String
-    ) throws -> [StoredChatMessage] {
+        conversationAddress: String,
+        newest limit: Int
+    ) throws -> StoredChatMessagePage {
+        // Read newest-first so the LIMIT lands at the end of the index range,
+        // then flip: the transcript wants oldest-first.
+        try descendingPage(
+            ownerIdentityID: ownerIdentityID,
+            conversationAddress: conversationAddress,
+            cursorClause: nil,
+            cursor: nil,
+            limit: limit,
+            hasNewer: false
+        )
+    }
+
+    /// The `limit` messages immediately older than `cursor`.
+    func chatMessagePage(
+        ownerIdentityID: String,
+        conversationAddress: String,
+        before cursor: ChatMessageCursor,
+        limit: Int
+    ) throws -> StoredChatMessagePage {
+        try descendingPage(
+            ownerIdentityID: ownerIdentityID,
+            conversationAddress: conversationAddress,
+            cursorClause: "AND (created_at_ms, rowid) < (?, ?)",
+            cursor: cursor,
+            limit: limit,
+            // Everything the cursor came from is newer than this page.
+            hasNewer: true
+        )
+    }
+
+    /// The `limit` messages immediately newer than `cursor` — or starting at
+    /// it, when `including` is set, which is how a window re-reads the extent
+    /// it already holds.
+    func chatMessagePage(
+        ownerIdentityID: String,
+        conversationAddress: String,
+        after cursor: ChatMessageCursor,
+        including: Bool = false,
+        limit: Int
+    ) throws -> StoredChatMessagePage {
+        let bounded = min(max(limit, 1), Self.chatMessagePageLimit)
         let statement = try prepare(
             """
-            SELECT session_id, handle, body, direction, delivery_state, deleted, created_at_ms,
-                   wire_id, epoch, edited, presence, received_late, delivered_late, original_body,
-                   sender_address, sender_hint, sender_handle,
-                   rx_rssi_dbm, rx_snr_cb, rx_lqi, rx_hop_count,
-                   rx_route_hints, rx_source_authenticated
+            SELECT \(Self.chatMessageColumns)
             FROM chat_message
             WHERE owner_identity_id = ? AND conversation_address = ?
+              AND (created_at_ms, rowid) \(including ? ">=" : ">") (?, ?)
             ORDER BY created_at_ms ASC, rowid ASC
+            LIMIT ?
             """
         )
         defer { sqlite3_finalize(statement) }
         try bind(ownerIdentityID, to: statement, at: 1)
         try bind(conversationAddress, to: statement, at: 2)
+        try check(sqlite3_bind_int64(statement, 3, cursor.createdAtMilliseconds))
+        try check(sqlite3_bind_int64(statement, 4, cursor.rowID))
+        // One past the page answers "is there more" without a second statement.
+        try check(sqlite3_bind_int64(statement, 5, Int64(bounded) + 1))
+        var messages = try readChatMessages(statement)
+        let hasNewer = messages.count > bounded
+        if hasNewer { messages.removeLast(messages.count - bounded) }
+        // A forward read sees nothing behind where it started, so ask. Reporting
+        // "no older messages" on a hunch is the one wrong answer with teeth: it
+        // tells the transcript its history is complete and retires the only
+        // affordance that would have proved otherwise.
+        let hasOlder = try messages.first.map {
+            try hasMessages(
+                ownerIdentityID: ownerIdentityID,
+                conversationAddress: conversationAddress,
+                before: $0.cursor
+            )
+        } ?? false
+        return StoredChatMessagePage(
+            messages: messages,
+            hasOlder: hasOlder,
+            hasNewer: hasNewer
+        )
+    }
+
+    #if DEBUG
+    /// Fill a conversation with generated messages, for exercising a transcript
+    /// at a size no test account reaches by hand.
+    ///
+    /// Written straight to the table in one transaction rather than through
+    /// `applyChatMutations`: that path stamps `created_at_ms` from the clock, so
+    /// every seeded row would share a timestamp and the transcript would have no
+    /// spread to page through. Timestamps here run backward from now in
+    /// one-minute steps, in occasional same-millisecond clusters, which is what
+    /// a real batch produces.
+    func seedGeneratedMessages(
+        ownerIdentityID: String,
+        conversationAddress: String,
+        count: Int
+    ) throws {
+        try transaction {
+            let statement = try prepare(
+                """
+                INSERT OR REPLACE INTO chat_message (
+                    owner_identity_id, session_id, handle, conversation_address,
+                    direction, body, deleted, created_at_ms, presence, delivery_state
+                ) VALUES (?, ?, ?, ?, ?, ?, 0, ?, 0, ?)
+                """
+            )
+            defer { sqlite3_finalize(statement) }
+            let sessionID = "9\(Self.nowMilliseconds() % 1_000_000)"
+            var createdAt = Self.nowMilliseconds() - Int64(count) * 60_000
+            var clusterRemaining = 0
+            for index in 0..<count {
+                if clusterRemaining == 0 {
+                    clusterRemaining = 3 + (index % 5)
+                    createdAt += 60_000
+                }
+                clusterRemaining -= 1
+                let outbound = index % 3 == 0
+                sqlite3_reset(statement)
+                try bind(ownerIdentityID, to: statement, at: 1)
+                try bind(sessionID, to: statement, at: 2)
+                try check(sqlite3_bind_int64(statement, 3, Int64(index)))
+                try bind(conversationAddress, to: statement, at: 4)
+                try check(sqlite3_bind_int(statement, 5, outbound ? 1 : 0))
+                try bind(
+                    "Seeded message \(index + 1) of \(count). "
+                        + String(repeating: "Filler text. ", count: 1 + (index % 6)),
+                    to: statement,
+                    at: 6
+                )
+                try check(sqlite3_bind_int64(statement, 7, createdAt))
+                try bindOptional(outbound ? "delivered" : nil, to: statement, at: 8)
+                try stepDone(statement)
+            }
+        }
+    }
+    #endif
+
+    /// Whether anything sits behind `cursor` in this conversation. One index
+    /// seek, so a forward read can answer for the side it did not look at.
+    private func hasMessages(
+        ownerIdentityID: String,
+        conversationAddress: String,
+        before cursor: ChatMessageCursor
+    ) throws -> Bool {
+        let statement = try prepare(
+            """
+            SELECT 1 FROM chat_message
+            WHERE owner_identity_id = ? AND conversation_address = ?
+              AND (created_at_ms, rowid) < (?, ?)
+            LIMIT 1
+            """
+        )
+        defer { sqlite3_finalize(statement) }
+        try bind(ownerIdentityID, to: statement, at: 1)
+        try bind(conversationAddress, to: statement, at: 2)
+        try check(sqlite3_bind_int64(statement, 3, cursor.createdAtMilliseconds))
+        try check(sqlite3_bind_int64(statement, 4, cursor.rowID))
+        switch sqlite3_step(statement) {
+        case SQLITE_ROW: return true
+        case SQLITE_DONE: return false
+        case let code: throw Self.sqliteFailure(database, code)
+        }
+    }
+
+    /// The transcript around one message, for opening a search result in
+    /// context. `nil` when that message is not in this conversation — a stale
+    /// hit against a cleared transcript, which is not an error.
+    func chatMessageWindow(
+        ownerIdentityID: String,
+        conversationAddress: String,
+        around sessionID: String,
+        handle: UInt32,
+        radius: Int
+    ) throws -> StoredChatMessagePage? {
+        guard let anchor = try chatMessageCursor(
+            ownerIdentityID: ownerIdentityID,
+            conversationAddress: conversationAddress,
+            sessionID: sessionID,
+            handle: handle
+        ) else { return nil }
+        let older = try chatMessagePage(
+            ownerIdentityID: ownerIdentityID,
+            conversationAddress: conversationAddress,
+            before: anchor,
+            limit: radius
+        )
+        // Including the anchor keeps the centred message in the window even
+        // when nothing follows it.
+        let newer = try chatMessagePage(
+            ownerIdentityID: ownerIdentityID,
+            conversationAddress: conversationAddress,
+            after: anchor,
+            including: true,
+            limit: radius + 1
+        )
+        return StoredChatMessagePage(
+            messages: older.messages + newer.messages,
+            hasOlder: older.hasOlder,
+            hasNewer: newer.hasNewer
+        )
+    }
+
+    /// Where a message sits in its conversation's order, by the durable
+    /// identity the transcript knows it as.
+    func chatMessageCursor(
+        ownerIdentityID: String,
+        conversationAddress: String,
+        sessionID: String,
+        handle: UInt32
+    ) throws -> ChatMessageCursor? {
+        let statement = try prepare(
+            """
+            SELECT created_at_ms, rowid FROM chat_message
+            WHERE owner_identity_id = ? AND session_id = ? AND handle = ?
+              AND conversation_address = ?
+            """
+        )
+        defer { sqlite3_finalize(statement) }
+        try bind(ownerIdentityID, to: statement, at: 1)
+        try bind(sessionID, to: statement, at: 2)
+        try check(sqlite3_bind_int64(statement, 3, Int64(handle)))
+        try bind(conversationAddress, to: statement, at: 4)
+        switch sqlite3_step(statement) {
+        case SQLITE_ROW:
+            return ChatMessageCursor(
+                createdAtMilliseconds: sqlite3_column_int64(statement, 0),
+                rowID: sqlite3_column_int64(statement, 1)
+            )
+        case SQLITE_DONE: return nil
+        case let code: throw Self.sqliteFailure(database, code)
+        }
+    }
+
+    /// How many messages a conversation holds. Deliberately its own call: this
+    /// is the one aggregate that has to walk the whole range, so it belongs
+    /// where something asked for it rather than on the conversation list.
+    func chatMessageCount(
+        ownerIdentityID: String,
+        conversationAddress: String
+    ) throws -> Int {
+        let statement = try prepare(
+            """
+            SELECT COUNT(*) FROM chat_message
+            WHERE owner_identity_id = ? AND conversation_address = ?
+            """
+        )
+        defer { sqlite3_finalize(statement) }
+        try bind(ownerIdentityID, to: statement, at: 1)
+        try bind(conversationAddress, to: statement, at: 2)
+        guard sqlite3_step(statement) == SQLITE_ROW else {
+            throw Self.sqliteFailure(database, sqlite3_errcode(database))
+        }
+        return Int(sqlite3_column_int64(statement, 0))
+    }
+
+    /// Both newest-first reads: take the page off the end of the index range,
+    /// then reverse into the transcript's own order.
+    private func descendingPage(
+        ownerIdentityID: String,
+        conversationAddress: String,
+        cursorClause: String?,
+        cursor: ChatMessageCursor?,
+        limit: Int,
+        hasNewer: Bool
+    ) throws -> StoredChatMessagePage {
+        let bounded = min(max(limit, 1), Self.chatMessagePageLimit)
+        let statement = try prepare(
+            """
+            SELECT \(Self.chatMessageColumns)
+            FROM chat_message
+            WHERE owner_identity_id = ? AND conversation_address = ?
+              \(cursorClause ?? "")
+            ORDER BY created_at_ms DESC, rowid DESC
+            LIMIT ?
+            """
+        )
+        defer { sqlite3_finalize(statement) }
+        try bind(ownerIdentityID, to: statement, at: 1)
+        try bind(conversationAddress, to: statement, at: 2)
+        var index: Int32 = 3
+        if let cursor {
+            try check(sqlite3_bind_int64(statement, index, cursor.createdAtMilliseconds))
+            try check(sqlite3_bind_int64(statement, index + 1, cursor.rowID))
+            index += 2
+        }
+        try check(sqlite3_bind_int64(statement, index, Int64(bounded) + 1))
+        var messages = try readChatMessages(statement)
+        let hasOlder = messages.count > bounded
+        if hasOlder { messages.removeLast(messages.count - bounded) }
+        return StoredChatMessagePage(
+            messages: messages.reversed(),
+            hasOlder: hasOlder,
+            hasNewer: hasNewer
+        )
+    }
+
+    private func readChatMessages(_ statement: OpaquePointer) throws -> [StoredChatMessage] {
         var messages: [StoredChatMessage] = []
         while true {
             switch sqlite3_step(statement) {
-            case SQLITE_ROW:
-                messages.append(
-                    StoredChatMessage(
-                        sessionID: Self.stringColumn(statement, at: 0),
-                        handle: UInt32(sqlite3_column_int64(statement, 1)),
-                        body: Self.stringColumn(statement, at: 2),
-                        outbound: sqlite3_column_int(statement, 3) == 1,
-                        deliveryState: Self.optionalStringColumn(statement, at: 4),
-                        isDeleted: sqlite3_column_int(statement, 5) != 0,
-                        createdAtMilliseconds: sqlite3_column_int64(statement, 6),
-                        wireID: sqlite3_column_type(statement, 7) == SQLITE_NULL
-                            ? nil : UInt8(truncatingIfNeeded: sqlite3_column_int64(statement, 7)),
-                        epoch: sqlite3_column_type(statement, 8) == SQLITE_NULL
-                            ? nil : UInt16(truncatingIfNeeded: sqlite3_column_int64(statement, 8)),
-                        isEdited: sqlite3_column_int(statement, 9) != 0,
-                        presence: Int(sqlite3_column_int64(statement, 10)),
-                        receivedLate: sqlite3_column_int(statement, 11) != 0,
-                        deliveredLate: sqlite3_column_int(statement, 12) != 0,
-                        originalBody: Self.optionalStringColumn(statement, at: 13),
-                        senderAddress: Self.optionalStringColumn(statement, at: 14),
-                        senderHint: Self.optionalDataColumn(statement, at: 15),
-                        senderHandle: Self.optionalStringColumn(statement, at: 16),
-                        reception: Self.reception(statement, at: 17)
-                    )
-                )
+            case SQLITE_ROW: messages.append(Self.storedChatMessage(statement))
             case SQLITE_DONE: return messages
             case let code: throw Self.sqliteFailure(database, code)
             }
         }
+    }
+
+    private static func storedChatMessage(_ statement: OpaquePointer) -> StoredChatMessage {
+        StoredChatMessage(
+            sessionID: stringColumn(statement, at: 0),
+            handle: UInt32(sqlite3_column_int64(statement, 1)),
+            body: stringColumn(statement, at: 2),
+            outbound: sqlite3_column_int(statement, 3) == 1,
+            deliveryState: optionalStringColumn(statement, at: 4),
+            isDeleted: sqlite3_column_int(statement, 5) != 0,
+            createdAtMilliseconds: sqlite3_column_int64(statement, 6),
+            wireID: sqlite3_column_type(statement, 7) == SQLITE_NULL
+                ? nil : UInt8(truncatingIfNeeded: sqlite3_column_int64(statement, 7)),
+            epoch: sqlite3_column_type(statement, 8) == SQLITE_NULL
+                ? nil : UInt16(truncatingIfNeeded: sqlite3_column_int64(statement, 8)),
+            isEdited: sqlite3_column_int(statement, 9) != 0,
+            presence: Int(sqlite3_column_int64(statement, 10)),
+            receivedLate: sqlite3_column_int(statement, 11) != 0,
+            deliveredLate: sqlite3_column_int(statement, 12) != 0,
+            originalBody: optionalStringColumn(statement, at: 13),
+            senderAddress: optionalStringColumn(statement, at: 14),
+            senderHint: optionalDataColumn(statement, at: 15),
+            senderHandle: optionalStringColumn(statement, at: 16),
+            reception: reception(statement, at: 17),
+            rowID: sqlite3_column_int64(statement, 23)
+        )
     }
 
     /// Remove a conversation's message history, outbound archive, and

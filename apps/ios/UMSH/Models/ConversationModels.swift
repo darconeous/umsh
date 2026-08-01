@@ -151,16 +151,50 @@ struct PeerImportDetails: Sendable {
     let alias: String?
 }
 
+/// The newest message in a conversation, reduced to what a list row draws.
+///
+/// A summary carries this rather than the transcript. The conversations list
+/// asks only when a chat last spoke, who spoke, and what they said; answering
+/// that by holding every message meant a refresh cost the whole history of
+/// every conversation, on a cadence set by radio traffic.
+struct ConversationPreviewMessage: Hashable, Sendable {
+    let createdAtMilliseconds: Int64
+    let body: String
+    let isOutbound: Bool
+    let isDeleted: Bool
+    /// Who sent this, in a group conversation: the resolved address once known,
+    /// and the hint the wire always carries.
+    let senderAddress: String?
+    let senderHint: Data?
+
+    /// A short, stable label for a member known only by their hint. Mirrors
+    /// ``ChatMessageSummary/senderHintLabel`` so a list row and a bubble name
+    /// the same member the same way.
+    var senderHintLabel: String? {
+        senderHint.map { hint in hint.map { String(format: "%02x", $0) }.joined() }
+    }
+}
+
 struct DirectConversationSummary: Identifiable, Hashable, Sendable {
     let id: Int64
     let peer: PeerSummary
     var draftText: String
-    var messages: [ChatMessageSummary]
+    /// The bottom of the transcript, for the list row. The transcript itself is
+    /// loaded a window at a time by whichever thread view is open.
+    var lastMessage: ConversationPreviewMessage?
     /// Messages received since the user last opened this conversation.
     var unreadCount: Int = 0
     /// When the conversation was created, which stands in for activity until
     /// the first message.
     var createdAtMilliseconds: Int64 = 0
+    /// Bumped whenever this conversation's stored messages change, so an open
+    /// transcript knows to re-read its window.
+    ///
+    /// Stored rather than derived, and part of the synthesized equality on
+    /// purpose: a delivery-state change or an edit to an older message moves no
+    /// other field here, so this is the only thing that makes a reload publish
+    /// the summary at all.
+    var messageRevision: Int = 0
 
     /// The address the mesh facade keys this conversation's records by.
     var conversationAddress: String { peer.identity.canonicalAddress }
@@ -174,11 +208,13 @@ struct ChannelConversationSummary: Identifiable, Hashable, Sendable {
     let channel: ChannelSummary
     let conversationAddress: String
     var draftText: String
-    var messages: [ChatMessageSummary]
+    var lastMessage: ConversationPreviewMessage?
     var unreadCount: Int = 0
     /// When the conversation was created, which stands in for activity until
     /// the first message.
     var createdAtMilliseconds: Int64 = 0
+    /// See ``DirectConversationSummary/messageRevision``.
+    var messageRevision: Int = 0
 }
 
 /// One row of the conversations list, whichever kind it is. The list mixes
@@ -202,10 +238,17 @@ enum ConversationListItem: Identifiable, Hashable, Sendable {
         }
     }
 
-    var messages: [ChatMessageSummary] {
+    var lastMessage: ConversationPreviewMessage? {
         switch self {
-        case let .direct(conversation): conversation.messages
-        case let .channel(conversation): conversation.messages
+        case let .direct(conversation): conversation.lastMessage
+        case let .channel(conversation): conversation.lastMessage
+        }
+    }
+
+    var messageRevision: Int {
+        switch self {
+        case let .direct(conversation): conversation.messageRevision
+        case let .channel(conversation): conversation.messageRevision
         }
     }
 
@@ -238,7 +281,7 @@ enum ConversationListItem: Identifiable, Hashable, Sendable {
         case let .direct(conversation): conversation.createdAtMilliseconds
         case let .channel(conversation): conversation.createdAtMilliseconds
         }
-        return messages.last.map { max($0.createdAtMilliseconds, created) } ?? created
+        return max(lastMessage?.createdAtMilliseconds ?? 0, created)
     }
 }
 
@@ -256,6 +299,14 @@ struct ChatMessageSummary: Identifiable, Hashable, Sendable {
     let handle: UInt32
     let wireID: UInt8?
     let epoch: UInt16?
+    /// Where this message sits in its conversation's storage order, so a
+    /// transcript can page from the edges of what it holds.
+    ///
+    /// Safe to compare alongside the rest of the message — `ChatMessageBubble`
+    /// is `Equatable` to avoid re-measuring its `UITextView` — because a row's
+    /// ordering key is fixed for its lifetime. Two summaries of the same
+    /// message always agree on it.
+    let cursor: ChatMessageCursor
     /// A reserved gap slot awaiting repair — rendered as a spinner placeholder,
     /// not a real bubble.
     var isGapPlaceholder: Bool = false
@@ -306,6 +357,10 @@ struct ChatMessageActions: Sendable {
     /// nothing is sent, and everyone else keeps their copy. The conversation
     /// itself survives, as does its place in the wire stream.
     var clearMessages: @Sendable (String) async -> Void = { _ in }
+    /// How many messages the conversation at this address holds. Asked for on
+    /// demand rather than carried on the summary: it is the one figure that has
+    /// to walk a whole transcript, and only the info sheet wants it.
+    var countMessages: @Sendable (String) async -> Int = { _ in 0 }
 
     static let unavailable = ChatMessageActions(
         edit: { _, _, _ in .failed("Messaging is unavailable.") },

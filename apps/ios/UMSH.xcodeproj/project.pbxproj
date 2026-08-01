@@ -39,6 +39,7 @@
 		100000000000000000000012 /* UMSH/Services/Persistence/SQLiteApplicationStore.swift in Sources */ = {isa = PBXBuildFile; fileRef = 200000000000000000000012 /* UMSH/Services/Persistence/SQLiteApplicationStore.swift */; };
 		100000000000000000000013 /* UMSH/Services/Radio/CoreBluetoothRadioConnection.swift in Sources */ = {isa = PBXBuildFile; fileRef = 200000000000000000000013 /* UMSH/Services/Radio/CoreBluetoothRadioConnection.swift */; };
 		100000000000000000000014 /* UMSH/Models/ConversationModels.swift in Sources */ = {isa = PBXBuildFile; fileRef = 200000000000000000000014 /* UMSH/Models/ConversationModels.swift */; };
+		100000000000000000000039 /* UMSH/Models/TranscriptModels.swift in Sources */ = {isa = PBXBuildFile; fileRef = 200000000000000000000039 /* UMSH/Models/TranscriptModels.swift */; };
 		100000000000000000000015 /* UMSH/DesignSystem/IdentityQRCodeView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 200000000000000000000015 /* UMSH/DesignSystem/IdentityQRCodeView.swift */; };
 		100000000000000000000016 /* UMSH/Services/Notifications/ChatNotificationService.swift in Sources */ = {isa = PBXBuildFile; fileRef = 200000000000000000000016 /* UMSH/Services/Notifications/ChatNotificationService.swift */; };
 		100000000000000000000017 /* UMSH/Assets.xcassets in Resources */ = {isa = PBXBuildFile; fileRef = 200000000000000000000017 /* UMSH/Assets.xcassets */; };
@@ -89,6 +90,7 @@
 		200000000000000000000012 /* UMSH/Services/Persistence/SQLiteApplicationStore.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = UMSH/Services/Persistence/SQLiteApplicationStore.swift; sourceTree = "<group>"; };
 		200000000000000000000013 /* UMSH/Services/Radio/CoreBluetoothRadioConnection.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = UMSH/Services/Radio/CoreBluetoothRadioConnection.swift; sourceTree = "<group>"; };
 		200000000000000000000014 /* UMSH/Models/ConversationModels.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = UMSH/Models/ConversationModels.swift; sourceTree = "<group>"; };
+		200000000000000000000039 /* UMSH/Models/TranscriptModels.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = UMSH/Models/TranscriptModels.swift; sourceTree = "<group>"; };
 		200000000000000000000015 /* UMSH/DesignSystem/IdentityQRCodeView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = UMSH/DesignSystem/IdentityQRCodeView.swift; sourceTree = "<group>"; };
 		200000000000000000000016 /* UMSH/Services/Notifications/ChatNotificationService.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = UMSH/Services/Notifications/ChatNotificationService.swift; sourceTree = "<group>"; };
 		200000000000000000000017 /* UMSH/Assets.xcassets */ = {isa = PBXFileReference; lastKnownFileType = folder.assetcatalog; path = UMSH/Assets.xcassets; sourceTree = "<group>"; };
@@ -165,6 +167,7 @@
 				200000000000000000000001B /* UMSH/Services/Radio/AdminSessionRegistry.swift */,
 				200000000000000000000001C /* UMSH/Services/Radio/AdministrativeDeviceSession.swift */,
 				200000000000000000000014 /* UMSH/Models/ConversationModels.swift */,
+				200000000000000000000039 /* UMSH/Models/TranscriptModels.swift */,
 				200000000000000000000031 /* UMSH/Models/ChannelModels.swift */,
 				200000000000000000000018 /* UMSH/Models/DiscoveredRadio.swift */,
 				200000000000000000000019 /* UMSH/Features/Settings/RadioPickerView.swift */,
@@ -298,6 +301,7 @@
 				100000000000000000000001B /* UMSH/Services/Radio/AdminSessionRegistry.swift in Sources */,
 				100000000000000000000001C /* UMSH/Services/Radio/AdministrativeDeviceSession.swift in Sources */,
 				100000000000000000000014 /* UMSH/Models/ConversationModels.swift in Sources */,
+				100000000000000000000039 /* UMSH/Models/TranscriptModels.swift in Sources */,
 				100000000000000000000031 /* UMSH/Models/ChannelModels.swift in Sources */,
 				100000000000000000000018 /* UMSH/Models/DiscoveredRadio.swift in Sources */,
 				100000000000000000000019 /* UMSH/Features/Settings/RadioPickerView.swift in Sources */,
@@ -316,6 +320,7 @@
 		900000000000000000000001 /* Debug */ = {
 			isa = XCBuildConfiguration;
 			buildSettings = {
+				SWIFT_ACTIVE_COMPILATION_CONDITIONS = DEBUG;
 				CLANG_ENABLE_MODULES = YES;
 				"EXCLUDED_ARCHS[sdk=iphonesimulator*]" = x86_64;
 				SWIFT_VERSION = 6.0;
@@ -335,6 +340,7 @@
 		900000000000000000000003 /* Debug */ = {
 			isa = XCBuildConfiguration;
 			buildSettings = {
+				SWIFT_ACTIVE_COMPILATION_CONDITIONS = DEBUG;
 				ASSETCATALOG_COMPILER_APPICON_NAME = AppIcon;
 				ASSETCATALOG_COMPILER_INCLUDE_ALL_APPICON_ASSETS = NO;
 				CODE_SIGN_STYLE = Automatic;

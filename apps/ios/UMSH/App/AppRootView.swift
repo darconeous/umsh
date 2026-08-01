@@ -154,7 +154,8 @@ struct AppRootView: View {
                     messageActions: ChatMessageActions(
                         edit: editMessage,
                         delete: deleteMessage,
-                        clearMessages: clearConversationMessages
+                        clearMessages: clearConversationMessages,
+                        countMessages: countConversationMessages
                     ),
                     deleteConversation: deleteConversation,
                     peerActions: peerActions,
@@ -200,7 +201,8 @@ struct AppRootView: View {
                     messageActions: ChatMessageActions(
                         edit: editMessage,
                         delete: deleteMessage,
-                        clearMessages: clearConversationMessages
+                        clearMessages: clearConversationMessages,
+                        countMessages: countConversationMessages
                     ),
                     advertiseIdentity: advertiseIdentity,
                     advertisedName: advertisedName,
@@ -256,11 +258,13 @@ struct AppRootView: View {
                     messageActions: ChatMessageActions(
                         edit: editMessage,
                         delete: deleteMessage,
-                        clearMessages: clearConversationMessages
+                        clearMessages: clearConversationMessages,
+                        countMessages: countConversationMessages
                     ),
                     channels: channels,
                     unknownDeviceChannels: unknownDeviceChannels,
-                    channelActions: channelActions
+                    channelActions: channelActions,
+                    seedMessages: seedGeneratedMessages
                 )
                     .appRadioToolbar(radioSnapshot) {
                         showsRadioDetail = true
@@ -336,7 +340,8 @@ struct AppRootView: View {
                     messageActions: ChatMessageActions(
                         edit: editMessage,
                         delete: deleteMessage,
-                        clearMessages: clearConversationMessages
+                        clearMessages: clearConversationMessages,
+                        countMessages: countConversationMessages
                     )
                 )
             }
@@ -384,6 +389,10 @@ struct AppRootView: View {
                 await openConversationFromNotification(conversationAddress: address)
             }
         }
+        // Every path into a transcript gets the same reader — the conversations
+        // list, a peer's profile, a notification tap — without each one
+        // carrying it as a parameter.
+        .environment(\.transcriptLoader, transcriptLoader)
         .environment(
             \.visibleConversationReporter,
             VisibleConversationReporter(
@@ -1514,6 +1523,11 @@ struct AppRootView: View {
                 // row immediately; radio transmission and delivery evidence
                 // can update its state afterward without making the user
                 // refresh or wait for the transport round trip.
+                //
+                // The bump has to precede the reload: the reload stamps the
+                // revision into the summary it publishes, and the open
+                // transcript takes its cue to re-read from that stamp.
+                coordinator.bumpChatRevisions([conversation.conversationAddress])
                 await reloadApplicationState()
             } catch {
                 Self.logger.error("Could not persist chat compose batch: \(String(describing: error), privacy: .public)")
@@ -1544,6 +1558,7 @@ struct AppRootView: View {
                     ownerIdentityID: localIdentity.id,
                     batch: batch
                 )
+                coordinator.bumpChatRevisions([conversation.conversationAddress])
                 await reloadApplicationState()
                 return .failed("The message could not be queued for transmission: \(error)")
             }
@@ -1685,12 +1700,195 @@ struct AppRootView: View {
                 ownerIdentityID: localIdentity.id,
                 conversationAddress: address
             )
+            coordinator.bumpChatRevisions([address])
             await reloadApplicationState()
         } catch {
             Self.logger.error(
                 "Could not clear conversation messages: \(String(describing: error), privacy: .public)"
             )
         }
+    }
+
+    /// Bounded transcript reads for whichever thread view is open.
+    ///
+    /// The window lives in the thread view rather than here: the ordinary way
+    /// into a transcript is a navigation destination the app root never sees,
+    /// so hoisting it would mean tracking push and pop for no other reason.
+    private var transcriptLoader: TranscriptLoader {
+        TranscriptLoader(
+            newest: newestTranscriptPage,
+            older: olderTranscriptPage,
+            newer: newerTranscriptPage,
+            around: focusedTranscriptPage
+        )
+    }
+
+    @Sendable
+    private func newestTranscriptPage(_ address: String, _ limit: Int) async -> TranscriptPage {
+        guard let applicationStore, let localIdentity else { return .empty }
+        return await transcriptPage(
+            try? await applicationStore.chatMessagePage(
+                ownerIdentityID: localIdentity.id,
+                conversationAddress: address,
+                newest: limit
+            )
+        ) ?? .empty
+    }
+
+    @Sendable
+    private func olderTranscriptPage(
+        _ address: String,
+        _ cursor: ChatMessageCursor,
+        _ limit: Int
+    ) async -> TranscriptPage {
+        guard let applicationStore, let localIdentity else { return .empty }
+        return await transcriptPage(
+            try? await applicationStore.chatMessagePage(
+                ownerIdentityID: localIdentity.id,
+                conversationAddress: address,
+                before: cursor,
+                limit: limit
+            )
+        ) ?? .empty
+    }
+
+    @Sendable
+    private func newerTranscriptPage(
+        _ address: String,
+        _ cursor: ChatMessageCursor,
+        _ including: Bool,
+        _ limit: Int
+    ) async -> TranscriptPage {
+        guard let applicationStore, let localIdentity else { return .empty }
+        return await transcriptPage(
+            try? await applicationStore.chatMessagePage(
+                ownerIdentityID: localIdentity.id,
+                conversationAddress: address,
+                after: cursor,
+                including: including,
+                limit: limit
+            )
+        ) ?? .empty
+    }
+
+    @Sendable
+    private func focusedTranscriptPage(
+        _ address: String,
+        _ messageID: String,
+        _ radius: Int
+    ) async -> TranscriptPage? {
+        guard let applicationStore, let localIdentity,
+              let reference = Self.messageReference(messageID)
+        else { return nil }
+        let stored = try? await applicationStore.chatMessageWindow(
+            ownerIdentityID: localIdentity.id,
+            conversationAddress: address,
+            around: reference.sessionID,
+            handle: reference.handle,
+            radius: radius
+        )
+        // A nil read and a nil window mean the same thing to the caller: this
+        // message is not somewhere the transcript can go.
+        guard let stored else { return nil }
+        return await transcriptPage(stored)
+    }
+
+    /// Map one bounded read for display, resolving the sender hints that page
+    /// needs. A page is at most a few hundred rows, so hint rendering is
+    /// bounded by what is about to be on screen rather than by stored history.
+    private func transcriptPage(_ stored: StoredChatMessagePage?) async -> TranscriptPage? {
+        guard let stored else { return nil }
+        let nodeHints = await renderedNodeHints(in: stored.messages)
+        return TranscriptPage(
+            messages: stored.messages.map { Self.messageSummary(from: $0, nodeHints: nodeHints) },
+            hasOlder: stored.hasOlder,
+            hasNewer: stored.hasNewer
+        )
+    }
+
+    /// Split a `ChatMessageSummary.id` back into the durable identity it was
+    /// built from. The transcript names messages this way throughout, so a
+    /// search result can be handed straight back as an anchor.
+    private static func messageReference(
+        _ messageID: String
+    ) -> (sessionID: String, handle: UInt32)? {
+        guard let separator = messageID.lastIndex(of: ":"),
+              let handle = UInt32(messageID[messageID.index(after: separator)...])
+        else { return nil }
+        return (String(messageID[..<separator]), handle)
+    }
+
+    /// Record which conversations a chat batch changed, so an open transcript
+    /// re-reads its window.
+    ///
+    /// Not everything in a batch names its conversation. A body edit or a
+    /// tombstone identifies its message by durable handle alone, and a delivery
+    /// carries only the handle it acknowledges, so both are resolved from the
+    /// row already in storage. Deliveries arrive per fragment, so identical
+    /// handles are collapsed first: each distinct message is worth one lookup,
+    /// not one per fragment.
+    private func noteChatMessagesChanged(by update: RadioChatUpdate) async {
+        guard let applicationStore, let localIdentity else { return }
+        var addresses = Set(update.mutations.compactMap(\.conversationAddress))
+        addresses.formUnion(update.senderResolutions.map(\.conversationAddress))
+
+        var unresolved: Set<ChatMessageKey> = []
+        for mutation in update.mutations where mutation.conversationAddress == nil {
+            unresolved.insert(ChatMessageKey(sessionID: mutation.sessionId, handle: mutation.handle))
+        }
+        for delivery in update.deliveries {
+            unresolved.insert(ChatMessageKey(sessionID: delivery.sessionId, handle: delivery.handle))
+        }
+        var unresolvable = false
+        for key in unresolved {
+            if let address = try? await applicationStore.conversationAddressForMessage(
+                ownerIdentityID: localIdentity.id,
+                sessionID: key.sessionID,
+                handle: key.handle
+            ) {
+                addresses.insert(address)
+            } else {
+                unresolvable = true
+            }
+        }
+        if unresolvable {
+            // A change to a message this phone cannot place. Refreshing every
+            // open transcript costs one bounded query; not refreshing the right
+            // one leaves it showing something that is no longer true.
+            addresses.formUnion(conversations.map(\.conversationAddress))
+            addresses.formUnion(channelConversations.map(\.conversationAddress))
+        }
+        coordinator.bumpChatRevisions(addresses)
+    }
+
+    #if DEBUG
+    /// Fill a conversation with generated messages, so a transcript can be
+    /// exercised at a size no test account reaches by hand.
+    @Sendable
+    private func seedGeneratedMessages(_ address: String, _ count: Int) async {
+        guard let applicationStore, let localIdentity else { return }
+        try? await applicationStore.seedGeneratedMessages(
+            ownerIdentityID: localIdentity.id,
+            conversationAddress: address,
+            count: count
+        )
+        coordinator.bumpChatRevisions([address])
+        await reloadApplicationState()
+    }
+    #else
+    private var seedGeneratedMessages: ((String, Int) async -> Void)? { nil }
+    #endif
+
+    /// How many messages a conversation holds, for the info sheet. The only
+    /// aggregate that walks a whole transcript, so it is answered here rather
+    /// than carried on every summary through every reload.
+    @Sendable
+    private func countConversationMessages(_ address: String) async -> Int {
+        guard let applicationStore, let localIdentity else { return 0 }
+        return (try? await applicationStore.chatMessageCount(
+            ownerIdentityID: localIdentity.id,
+            conversationAddress: address
+        )) ?? 0
     }
 
     private func deleteConversation(_ conversation: DirectConversationSummary) async {
@@ -1943,6 +2141,7 @@ struct AppRootView: View {
                     deliveries: update.deliveries
                 )
             }
+            await noteChatMessagesChanged(by: update)
             for lookup in update.archiveLookups {
                 let payload = try? await applicationStore.chatArchive(
                     ownerIdentityID: localIdentity.id,
@@ -2129,7 +2328,9 @@ struct AppRootView: View {
                 publicAddress: localIdentity.publicIdentity.canonicalAddress
             )
             // Runs before any compose in this process, so every 'pending'
-            // outbound row is an orphan from a previous launch.
+            // outbound row is an orphan from a previous launch. No transcript
+            // can be open this early, so the rows it rewrites need no revision
+            // bump — the first reload below publishes them.
             try await applicationStore.failStalePendingMessages(
                 ownerIdentityID: localIdentity.id
             )
@@ -2282,21 +2483,17 @@ struct AppRootView: View {
             var mappedConversations: [DirectConversationSummary] = []
             for stored in storedConversations {
                 guard let peer = mappedPeers[stored.node.id] else { continue }
-                let messages = (try? await applicationStore.chatMessages(
-                    ownerIdentityID: localIdentity.id,
-                    conversationAddress: peer.identity.canonicalAddress
-                )) ?? []
                 mappedConversations.append(
                     DirectConversationSummary(
                         id: stored.id,
                         peer: peer,
                         draftText: stored.draftText,
-                        messages: messages.map { Self.messageSummary(from: $0) },
-                        unreadCount: Self.unreadCount(
-                            in: messages,
-                            since: stored.lastReadAtMilliseconds
-                        ),
-                        createdAtMilliseconds: stored.createdAtMilliseconds
+                        lastMessage: Self.previewMessage(from: stored.lastMessage),
+                        unreadCount: stored.unreadCount,
+                        createdAtMilliseconds: stored.createdAtMilliseconds,
+                        messageRevision: coordinator.chatRevisions[
+                            peer.identity.canonicalAddress
+                        ] ?? 0
                     )
                 )
             }
@@ -2318,23 +2515,18 @@ struct AppRootView: View {
                 guard let channel = channelsByID[stored.channelID], channel.joinedPhone else {
                     continue
                 }
-                let messages = (try? await applicationStore.chatMessages(
-                    ownerIdentityID: localIdentity.id,
-                    conversationAddress: stored.conversationAddress
-                )) ?? []
-                let nodeHints = await renderedNodeHints(in: messages)
                 mappedChannelConversations.append(
                     ChannelConversationSummary(
                         id: stored.id,
                         channel: channel,
                         conversationAddress: stored.conversationAddress,
                         draftText: stored.draftText,
-                        messages: messages.map { Self.messageSummary(from: $0, nodeHints: nodeHints) },
-                        unreadCount: Self.unreadCount(
-                            in: messages,
-                            since: stored.lastReadAtMilliseconds
-                        ),
-                        createdAtMilliseconds: stored.createdAtMilliseconds
+                        lastMessage: Self.previewMessage(from: stored.lastMessage),
+                        unreadCount: stored.unreadCount,
+                        createdAtMilliseconds: stored.createdAtMilliseconds,
+                        messageRevision: coordinator.chatRevisions[
+                            stored.conversationAddress
+                        ] ?? 0
                     )
                 )
             }
@@ -2363,6 +2555,7 @@ struct AppRootView: View {
             handle: stored.handle,
             wireID: stored.wireID,
             epoch: stored.epoch,
+            cursor: stored.cursor,
             isGapPlaceholder: stored.isGapPlaceholder,
             isUnavailable: stored.isUnavailable,
             isReceivedLate: stored.receivedLate,
@@ -2377,32 +2570,33 @@ struct AppRootView: View {
         )
     }
 
-    /// Render every distinct sender hint in a transcript once, so each group
-    /// bubble can carry its sender's avatar without re-deriving it per row.
-    private func renderedNodeHints(in messages: [StoredChatMessage]) async -> [Data: MeshNodeHint] {
-        var rendered: [Data: MeshNodeHint] = [:]
-        for hint in Set(messages.compactMap(\.senderHint)) {
-            if let value = try? await meshEngine.renderNodeHint(hint) {
-                rendered[hint] = value
-            }
+    private static func previewMessage(
+        from stored: StoredConversationPreview?
+    ) -> ConversationPreviewMessage? {
+        stored.map { preview in
+            ConversationPreviewMessage(
+                createdAtMilliseconds: preview.createdAtMilliseconds,
+                body: preview.body,
+                isOutbound: preview.isOutbound,
+                isDeleted: preview.isDeleted,
+                senderAddress: preview.senderAddress,
+                senderHint: preview.senderHint
+            )
         }
-        return rendered
     }
 
-    /// Inbound messages that arrived after the conversation was last read.
-    /// Placeholders and tombstones are not messages the user can read, so
-    /// they never contribute to a badge.
-    private static func unreadCount(
-        in messages: [StoredChatMessage],
-        since lastReadAtMilliseconds: Int64
-    ) -> Int {
-        messages.filter { message in
-            !message.outbound
-                && !message.isDeleted
-                && !message.isGapPlaceholder
-                && !message.isUnavailable
-                && message.createdAtMilliseconds > lastReadAtMilliseconds
-        }.count
+    /// Render every distinct sender hint in a transcript page once, so each
+    /// group bubble can carry its sender's avatar without re-deriving it per
+    /// row. Rendering is an FFI round trip and the answer never changes, so the
+    /// coordinator keeps what it has already resolved for the whole session.
+    private func renderedNodeHints(in messages: [StoredChatMessage]) async -> [Data: MeshNodeHint] {
+        for hint in Set(messages.compactMap(\.senderHint))
+        where coordinator.renderedNodeHints[hint] == nil {
+            if let value = try? await meshEngine.renderNodeHint(hint) {
+                coordinator.renderedNodeHints[hint] = value
+            }
+        }
+        return coordinator.renderedNodeHints
     }
 }
 
@@ -2435,6 +2629,38 @@ private final class AppStateCoordinator {
     /// batch that can never be applied would otherwise stall every later
     /// chat update — delivery receipts included — for the whole session.
     var chatBatchFailures: (id: UInt64, count: Int)?
+    /// How many times each conversation's stored messages have changed.
+    ///
+    /// An open transcript holds a bounded window rather than the whole history,
+    /// so it has to be told when to re-read. Stamping this into the summary
+    /// makes the reload that already publishes the summary carry the news, with
+    /// no second channel to keep in step.
+    ///
+    /// Deliberately not bumped by marking a conversation read: that moves the
+    /// unread badge, which rides the summary directly, and re-reading a
+    /// transcript every time one is opened is the cost this exists to avoid.
+    var chatRevisions: [String: Int] = [:]
+    /// Rendered forms of every sender hint seen this session. Deriving one is
+    /// an FFI round trip and the answer never changes, so a transcript page
+    /// pays for each distinct hint at most once per process.
+    var renderedNodeHints: [Data: MeshNodeHint] = [:]
+
+    /// Record that these conversations' messages changed. Callers that cannot
+    /// resolve which conversation a change belongs to pass every address they
+    /// know: a redundant bounded re-read costs one query, while a missed one
+    /// leaves an open transcript showing stale messages.
+    func bumpChatRevisions(_ addresses: some Sequence<String>) {
+        for address in addresses {
+            chatRevisions[address, default: 0] += 1
+        }
+    }
+}
+
+/// A message's durable identity, for collapsing repeated references to it
+/// within one batch — deliveries name the same message once per fragment.
+private struct ChatMessageKey: Hashable {
+    let sessionID: UInt64
+    let handle: UInt32
 }
 
 /// The subset of a radio snapshot that reaches persistent storage.

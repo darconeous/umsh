@@ -369,9 +369,9 @@ struct PeersView: View {
     private var latestMessageByAddress: [String: Int64] {
         var latest: [String: Int64] = [:]
         for conversation in conversations {
-            guard let newest = conversation.messages.map(\.createdAtMilliseconds).max() else {
-                continue
-            }
+            // The summary's last message is the newest by construction: the
+            // transcript is stored and read in ascending time order.
+            guard let newest = conversation.lastMessage?.createdAtMilliseconds else { continue }
             latest[conversation.peer.identity.canonicalAddress] = newest
         }
         return latest
