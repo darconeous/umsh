@@ -3679,7 +3679,10 @@ public struct MobileChatRxMetadataRecord: Equatable, Hashable {
      */
     public var hopCount: UInt8?
     /**
-     * Authenticated intermediate-router hints, source to destination.
+     * Intermediate-router hints in trace-route order: each forwarding
+     * repeater prepends its own hint, so the list starts nearest us and ends
+     * nearest the sender. That is return-path order — usable directly as a
+     * source route back — and the reverse of the path the frame travelled.
      */
     public var routeHints: [Data]
     public var sourceAuthenticated: Bool
@@ -3692,7 +3695,10 @@ public struct MobileChatRxMetadataRecord: Equatable, Hashable {
          * reported for a ping reply.
          */hopCount: UInt8?,
         /**
-         * Authenticated intermediate-router hints, source to destination.
+         * Intermediate-router hints in trace-route order: each forwarding
+         * repeater prepends its own hint, so the list starts nearest us and ends
+         * nearest the sender. That is return-path order — usable directly as a
+         * source route back — and the reverse of the path the frame travelled.
          */routeHints: [Data], sourceAuthenticated: Bool) {
         self.rssiDbm = rssiDbm
         self.snrCentibels = snrCentibels
