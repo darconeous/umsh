@@ -400,13 +400,55 @@ private struct SelectableMessageText: UIViewRepresentable {
     }
 
     func updateUIView(_ view: BubbleTextView, context: Context) {
-        if view.text != text {
-            view.text = text
+        let body = Self.attributed(text, color: textColor)
+        if view.attributedText != body {
+            view.attributedText = body
         }
         if view.textColor != textColor {
             apply(textColor, to: view)
         }
     }
+
+    /// The message body with `umsh:` URIs marked up as links.
+    ///
+    /// Only ours. `dataDetectorTypes` stays on and keeps everything else, and
+    /// keeps doing it better than a pattern here could: it knows the schemes
+    /// this device can actually act on, so `tel:` links where there is a phone
+    /// and an unknown `scheme://` links only where an app has claimed it —
+    /// never offering a link that would go nowhere.
+    ///
+    /// What it will not claim is an opaque path under a scheme it does not
+    /// know, and `umsh:cs:EMERGENCY` is exactly that: no `//`, no authority,
+    /// nothing generic to recognize. Marking it here costs the detector
+    /// nothing, since it passes over ranges that already carry a link.
+    private static func attributed(_ text: String, color: UIColor) -> NSAttributedString {
+        let body = NSMutableAttributedString(
+            string: text,
+            attributes: [
+                .font: UIFont.preferredFont(forTextStyle: .body),
+                .foregroundColor: color
+            ]
+        )
+        guard let umshURI else { return body }
+        for match in umshURI.matches(in: text, range: NSRange(text.startIndex..., in: text)) {
+            guard let range = Range(match.range, in: text),
+                  let url = URL(string: String(text[range]))
+            else { continue }
+            body.addAttribute(.link, value: url, range: match.range)
+        }
+        return body
+    }
+
+    /// The three forms `umsh-uri` emits, with a payload that may be
+    /// percent-encoded and — for a channel key — carry a query.
+    ///
+    /// The last character is matched apart from the rest so a URI ending a
+    /// sentence does not swallow the full stop, or the comma in a list, or the
+    /// bracket around an aside.
+    private static let umshURI = try? NSRegularExpression(
+        pattern: #"umsh:(?:n|cs|ck):[A-Za-z0-9\-._~%!$&'()*+,;=:@/?]*[A-Za-z0-9\-_~%$&*+=@/]"#,
+        options: [.caseInsensitive]
+    )
 
     private func apply(_ color: UIColor, to view: BubbleTextView) {
         view.textColor = color
