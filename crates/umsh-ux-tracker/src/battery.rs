@@ -193,13 +193,27 @@ pub const fn load_recent(now_ms: u32, last_load_ms: Option<u32>) -> bool {
 /// a rest-gated OCV table with a median filter, a discharge-direction
 /// clamp, and quantized output.
 ///
-/// Feed it every monitor sample via [`Self::sample`]. Terminal voltage
-/// only counts toward an anchor after [`LEVEL_REST_MS`] of quiet
-/// (no external power, no reported load); anchored levels never rise
-/// while discharging, so the output is stable and monotone between
-/// charge sessions. While charging the level holds (charging voltage
-/// is not comparable to the discharge table); the `Charged`
-/// classification pins it to 100.
+/// Feed it every monitor sample via [`Self::sample`]. It moves at two
+/// speeds:
+///
+/// - **Every quiet sample** sets a ceiling. A terminal voltage that is
+///   not sagging relaxes downward toward true OCV, so the table can only
+///   overstate what is in the pack; the level is capped to that reading
+///   immediately. This is what keeps a stale estimate — most visibly the
+///   one bootstrapped from a charger's elevated rail — from surviving
+///   long after the pack has been unplugged.
+/// - **A rested window of [`LEVEL_WINDOW`] samples** anchors. Only after
+///   [`LEVEL_REST_MS`] of quiet (no external power, no reported load)
+///   does the median become the level outright, and only then is the
+///   discharge clamp re-established.
+///
+/// Anchored levels never rise while discharging, so the output is stable
+/// and monotone between charge sessions. A charge since the last anchor
+/// invalidates the stored level in both directions, so until the next
+/// anchor the ceiling replaces it rather than capping it — which is how
+/// a partial charge shows up without waiting out a full window. While
+/// charging the level holds (charging voltage is not comparable to the
+/// discharge table); the `Charged` classification pins it to 100.
 pub struct LevelEstimator {
     window: [u16; LEVEL_WINDOW],
     window_len: usize,
@@ -259,11 +273,6 @@ impl LevelEstimator {
                     self.disturb(s.now_ms);
                     return;
                 }
-                if self.level.is_none() {
-                    // Provisional bootstrap from the first quiet sample;
-                    // anchors refine it once true rest is observed.
-                    self.level = Some(quantize(soc_from_ocv(s.battery_mv)));
-                }
                 if self.window_len < LEVEL_WINDOW {
                     self.window[self.window_len] = s.battery_mv;
                     self.window_len += 1;
@@ -271,6 +280,27 @@ impl LevelEstimator {
                     self.window.rotate_left(1);
                     self.window[LEVEL_WINDOW - 1] = s.battery_mv;
                 }
+
+                // A quiet reading bounds the charge from above straight
+                // away. Terminal voltage relaxes *downward* toward true
+                // OCV once a charge stops, so the table can only overstate
+                // what is left in the pack — which makes it a ceiling
+                // worth applying on the spot rather than holding a stale
+                // number until an anchor lands twenty-odd minutes later.
+                // The median runs over however much of the window has
+                // filled, so the bound gains outlier rejection as it goes
+                // without giving up the first-sample response.
+                let bound = quantize(soc_from_ocv(median(&self.window[..self.window_len])));
+                self.level = Some(match self.level {
+                    // A charge since the last anchor invalidates the
+                    // stored level in *both* directions, so the bound
+                    // replaces it rather than capping it: the pack may
+                    // genuinely hold more than it did before.
+                    Some(_) if self.charged_since_anchor => bound,
+                    Some(current) => current.min(bound),
+                    None => bound,
+                });
+
                 let rested = s.now_ms.wrapping_sub(self.last_disturbance_ms) >= LEVEL_REST_MS;
                 if rested && self.window_len == LEVEL_WINDOW {
                     let mut candidate = quantize(soc_from_ocv(median(&self.window)));
@@ -305,10 +335,17 @@ fn quantize(pct: u8) -> u8 {
     ((pct + LEVEL_QUANT / 2) / LEVEL_QUANT * LEVEL_QUANT).min(100)
 }
 
-fn median(window: &[u16; LEVEL_WINDOW]) -> u16 {
-    let mut sorted = *window;
-    sorted.sort_unstable();
-    sorted[LEVEL_WINDOW / 2]
+/// Median of a non-empty run of samples, at most [`LEVEL_WINDOW`] long.
+///
+/// An even-length run takes the upper of the two middle values, which
+/// biases a partially filled window's bound very slightly high — the
+/// forgiving direction for a ceiling.
+fn median(samples: &[u16]) -> u16 {
+    let mut sorted = [0u16; LEVEL_WINDOW];
+    let len = samples.len().min(LEVEL_WINDOW);
+    sorted[..len].copy_from_slice(&samples[..len]);
+    sorted[..len].sort_unstable();
+    sorted[len / 2]
 }
 
 #[cfg(test)]
@@ -392,22 +429,82 @@ mod tests {
     }
 
     #[test]
-    fn load_restarts_the_quiet_window() {
+    fn a_sagged_sample_neither_lowers_the_level_nor_fills_the_window() {
         let mut estimator = LevelEstimator::new();
         estimator.sample(quiet(3_850, 0));
         for index in 0..3u32 {
-            estimator.sample(quiet(3_700, 190_000 + index * 30_000));
+            estimator.sample(quiet(3_850, 190_000 + index * 30_000));
         }
-        // A transmission invalidates the window right before it fills.
+        assert_eq!(estimator.level(), Some(60));
+        // A transmission drags the terminal voltage down right before the
+        // window fills. That reading is sag, not state of charge: it must
+        // not touch the level, and it restarts the window so the anchor
+        // waits for genuinely quiet samples.
         estimator.sample(LevelSample {
-            battery_mv: 3_600,
+            battery_mv: 3_400,
             state: BatteryState::BatteryOnly,
             load_recent: true,
             now_ms: 280_000,
         });
-        estimator.sample(quiet(3_700, 310_000));
-        // No anchor happened: the bootstrap value is still in force.
         assert_eq!(estimator.level(), Some(60));
+        estimator.sample(quiet(3_850, 310_000));
+        assert_eq!(estimator.level(), Some(60));
+    }
+
+    /// The failure this fixes, from a T-Echo flashed over USB: the level
+    /// bootstraps from the charger's elevated rail, reads full, and then
+    /// sits there for twenty-odd minutes after unplugging while the pack
+    /// is visibly at 3.6 V.
+    #[test]
+    fn a_quiet_reading_after_a_charge_replaces_a_stale_level_at_once() {
+        let mut estimator = LevelEstimator::new();
+        estimator.sample(LevelSample {
+            battery_mv: 4_360,
+            state: BatteryState::BatteryCharging,
+            load_recent: false,
+            now_ms: 0,
+        });
+        assert_eq!(estimator.level(), Some(100));
+        // Unplugged. The pack is nowhere near full and the very next
+        // quiet reading is enough to say so — no five-sample anchor, no
+        // twenty-five minute wait.
+        estimator.sample(quiet(3_600, 300_000));
+        assert_eq!(estimator.level(), Some(10));
+    }
+
+    #[test]
+    fn a_partial_charge_lets_the_level_rise_on_the_next_quiet_reading() {
+        let mut estimator = LevelEstimator::new();
+        estimator.sample(quiet(3_600, 0));
+        assert_eq!(estimator.level(), Some(10));
+        estimator.sample(LevelSample {
+            battery_mv: 4_000,
+            state: BatteryState::BatteryCharging,
+            load_recent: false,
+            now_ms: 60_000,
+        });
+        assert_eq!(estimator.level(), Some(10), "charging voltage must not map");
+        // Unplugged with real charge in the pack. The ceiling now sits
+        // above the stored level, and a charge since the last anchor is
+        // precisely the case where it is allowed to raise it.
+        estimator.sample(quiet(3_900, 360_000));
+        assert_eq!(estimator.level(), Some(65));
+    }
+
+    /// Once an anchor has re-established the clamp, the ceiling can only
+    /// ever lower the level — no amount of voltage recovery raises it
+    /// without a charge in between.
+    #[test]
+    fn the_ceiling_never_raises_a_level_that_has_been_anchored() {
+        let mut estimator = LevelEstimator::new();
+        for index in 0..5u32 {
+            estimator.sample(quiet(3_700, 190_000 + index * 30_000));
+        }
+        assert_eq!(estimator.level(), Some(30));
+        for index in 0..5u32 {
+            estimator.sample(quiet(4_100, 400_000 + index * 30_000));
+        }
+        assert_eq!(estimator.level(), Some(30));
     }
 
     #[test]
