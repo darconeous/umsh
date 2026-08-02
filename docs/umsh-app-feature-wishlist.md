@@ -166,6 +166,9 @@ Guided setup flows built on top of that primitive:
 	- [ ] Properly display all of the above
 - [x] Delete an existing text conversation
 - [x] See metadata about a specific received message (hop count, routing path, etc.)
+- [ ] Update app badge with unread message count
+- [ ] Respond in text message notifications directly from the notification.
+- [ ] See the peer/channel avatar in the text message notification.
 
 ## 7. Channel Management
 
@@ -205,5 +208,11 @@ device-joined channels are out of scope by construction.
   channel membership
 - [x] Request the identity of a group chat participant — sent over the channel,
   filtered to the member's hint, routed by what their own frames showed
-- [x] See metadata about a specific received group message (hop count, routing path,
-  node hint, etc.)
+- [x] See metadata about a specific received group message
+  - [x] hop count
+  - [ ] routing path
+  - [ ] way to jump to associated peer entry (if possible)
+  - [ ] node address (or hint, if we don't have an address)
+- [ ] Instead of showing "Delivered", show how many times we heard
+      our message being repeated. Like "Repeated 1x"/"Repeated 3x",
+      changing as repeated messages arrive. This is useful signal for the user. 
