@@ -76,24 +76,24 @@ Guided setup flows built on top of that primitive:
 - [ ] Enter BLE pairing mode
 - [ ] Set a PIN for the next pairing session
 
-## 3. Device Actions (over BLE)
+## 3. ULCP Device Actions (over BLE)
 
-- [ ] Reboot — only reachable bundled into factory reset, not as its own action
+- [ ] Reboot
 - [ ] Sleep / power-down
 - [ ] Enter USB DFU mode
 - [ ] Enter wireless DFU mode
 - [x] Factory reset
-- [ ] Send advertisement/beacon now — the phone can broadcast *its own* identity
-  from Discover; asking the device to beacon is not exposed
+- [ ] Send advertisement/beacon now (for device identity)
 - [x] Find this device — locate alert (beep/flash), cancelled from the phone, by
   a button press on the device, or by its own timeout
 - [ ] Backup Configuration (omits private keys)
 - [ ] Restore Configuration (omits private keys)
+- [ ] Out-of-range warning (Exact implementation TBD)
 
 ## 4. Phone-Local Settings
 
 - [ ] Default hop count
-- [ ] Default region (or no region)
+- [ ] Flood region (Default is none)
 - [ ] Default channel
 
 ## 5. Peer Management
@@ -101,10 +101,9 @@ Guided setup flows built on top of that primitive:
 ### Lists
 - [x] View/list saved peers
 	- [x] ordering selectable: alphabetic, heard recently, or latest messages
-	- [ ] filterable by role, capability, favorite, etc. — role filter, text
-	  search, and a favorites group exist; capability is not a filter
-	- [ ] Display as list or on a map — the list is done; Map is a placeholder
-	  with no map rendering
+	- [x] filterable by role, string, favorite, etc.
+	- [x] Display as list
+    - [ ] Display on a map
 - [x] View/list transient peers (peers that have given us their full address but
   aren't on our peer list. They may have sent us a unicast message or it could be from an identity announcement)
 - [x] Add a saved peer
@@ -119,7 +118,8 @@ Guided setup flows built on top of that primitive:
   - [x] Role
   - [x] Capabilities
   - [ ] Callsign
-  - [x] Location — shown as a value; no map view
+  - [x] Location
+    - [ ] Map View of Location
 - [x] Saved status
 - [x] Last seen
 - [x] Last-seen hop count
@@ -131,31 +131,35 @@ Guided setup flows built on top of that primitive:
 ### Peer settings (user-assigned)
 - [x] Alias
 - [ ] Permissions
+    * "Device Admin" (Administrative control of ULCP device)
+    * "Identity Admin" (Administrative control of phone app)
+    * "Read Sensors"
+    * "Ping/Get Identity"
+    * "Blacklisted" (Do not let these packets through ever)
 - [x] "Shared with UMSH Device" — saved separately to this phone and to the
   companion radio's device identity
-- [ ] Notify on received message — notifications are global, not per-peer
+- [ ] Per-peer Notifications
+    - [ ] Notify on received message
+    - [ ] Notify on next time seen (advertisement, beacon, direct message, etc)
 - [x] Favorite / unfavorite
 	- [x] Favorited peers get a star in the upper-right corner of their icon.
 - [ ] Group membership (organizational / ACL)
 - [ ] Manually set source route
-- [ ] Which blind unicast channel to use, or none (joined channels only)
+- [ ] Which blind unicast channel to use, or none
 
 ### Peer actions
 - [ ] Initiate / end a PFS session
 - [x] Request an identity data update
-- [ ] Discover a source route — an observed route is displayed, but there is no
-  action to probe for one
+- [ ] Discover a source route
 
 ## 6. Conversation Management
 
 - [x] View existing text conversations
 - [x] Start a new text conversation with a peer
 - [x] Sorted by most recent activity. Unread messages should indicate in the row somehow.
-- [x] Search from the conversation list — pull down to reveal; finds existing
-  conversations first, then peers (saved and transient) and joined channels to
-  start one with. Message search is not implemented.
-- [x] Conversation info sheet — reached from the transcript header for both
-  kinds, leads on to Peer Detail or Channel Detail, and clears the transcript
+- [x] Search from the conversation list
+    - [ ] Message search
+- [x] Conversation info sheet
 - [ ] Select/Change a channel for a conversation
 - [ ] Participate in existing text conversations
 	- [x] Send messages
@@ -179,9 +183,7 @@ present in both is a convention, not a shared object.
 `public` and `EMERGENCY` are joined on first run with notifications off, and
 can be left; leaving keeps the record so the join flow can offer them back.
 
-- [x] List channels (both local and device) — device membership is listed by
-  the identifiers it reports; a channel whose key this phone lacks is shown but
-  cannot be named
+- [x] List channels (both local and device)
 - [x] Join a channel (Public channels with a name, private channels with a URI)
 - [x] Leave a channel
 - [x] Create a new private channel
@@ -190,9 +192,7 @@ can be left; leaving keeps the record so the join flow can offer them back.
   - [x] Alias
   - [x] Local, device, or both — which identity has joined the channel: the phone,
     the companion radio's device identity, or each of them separately
-  - [ ] Allow other members to request identity and public key — no layer scopes
-    identity requests per channel yet; the responder would have to filter on the
-    channel a request arrived on before this can be offered
+  - [ ] Allow other members to request identity and public key
 
 ## 8. Channel Group Chat
 

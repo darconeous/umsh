@@ -65,8 +65,8 @@ Options use the CoAP-style delta-length encoding defined in [Packet Options](pac
 | 0 | Node Name | UTF-8 string |
 | 1 | Node Location | 1-7 bytes, see [Variable-Precision Location Format](#variable-precision-location-format) |
 | 2 | Altitude in Meters | signed integer, meters above mean sea level |
-| 3 | Unix Timestamp | unsigned integer, seconds since the Unix epoch |
-| 4 | Supported Regions | one or more concatenated 2-byte region codes |
+| 3 | Unix Timestamp | unsigned integer, seconds since the Unix epoch, UTC |
+| 4 | Supported Flood Regions | one or more concatenated 2-byte region codes |
 | 5 | Nonce | 4 bytes, echoed from a soliciting Identity Request |
 
 ### Node Name (option 0)
@@ -88,7 +88,6 @@ For repeaters, the list of [region codes](packet-options.md#region-code-encoding
 Copied verbatim from the [Identity Request](mac-commands.md#identity-request-1) that solicited this identity payload, letting the requester correlate the response to its request. Present only in responses whose request carried a NONCE option. Length: 4 bytes.
 
 ### Variable-Precision Location Format
-
 The node location is encoded as a string of one or more bytes, where each byte narrows the position to a 16×16 sub-grid of the preceding byte's cell. Additional bytes increase precision; trailing bytes may be omitted to give a coarser — and therefore more privacy-preserving — location.
 
 #### Grid Subdivision
