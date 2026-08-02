@@ -75,4 +75,5 @@ Docs: `make docs` (mdBook), `make rust-docs`, `make docs-serve`, `make web-debug
 - **Git**: commit only when asked; batch changes. Board bringup status, storage decisions, and many hardware gotchas live in the persistent memory index (`memory/MEMORY.md`) — consult it for board-specific detail.
 - **Questions are not calls to action**: Do not assume that the user asking a question implies that you should take action. Answer the question. Do not make code changes unless that was explicitly requested by the user.
 - **Remember your current directory**: Avoid unnecessarily prepending `cd <PROJECTDIR> &&` to bash commands,  as this causes unnecessary permission prompts.
-- **Don't take credit for stuff you aren't sure you wrote**: Unless you are absolutely certain the changes are yours, DO NOT add a "Co-Authored-By" line in the git commit log.
+- **Use the label `LLM: ...` instead of `Co-Authored-By: ...` in commit logs**: `Co-Authored-By` attributions cause a Claude logo to appear on our GitHub project which is unacceptable.
+- **Don't take credit for stuff you aren't sure you wrote**: Unless you are absolutely certain the changes are yours, DO NOT add a "LLM: ..." line in the git commit log.
