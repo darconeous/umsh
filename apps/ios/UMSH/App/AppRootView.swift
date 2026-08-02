@@ -16,6 +16,7 @@ struct AppRootView: View {
     /// a busy moment and short enough that a wedged session recovers while the
     /// user is still looking at it.
     private static let chatBatchAttemptLimit = 3
+    @Environment(\.scenePhase) private var scenePhase
     @State private var selectedTab: AppTab = .conversations
     @State private var radioSnapshot = RadioSnapshot.idle
     @State private var showsRadioDetail = false
@@ -360,6 +361,27 @@ struct AppRootView: View {
         .task {
             await loadIdentity()
         }
+        // The identity is read once at launch, and a launch is not always a
+        // moment when it can be read: iOS relaunches the app in the background
+        // for a ULCP event, and before the phone's first unlock the Keychain
+        // refuses the item outright. That attempt is the only one the view
+        // makes, so without these the process runs to its end with no identity
+        // — no mesh session, and a radio parked on a host decision the app
+        // cannot make.
+        .onReceive(
+            NotificationCenter.default
+                .publisher(for: UIApplication.protectedDataDidBecomeAvailableNotification)
+                .receive(on: DispatchQueue.main)
+        ) { _ in
+            // Fires while still in the background: the phone being unlocked is
+            // enough to finish bootstrap and attach, without waiting for the
+            // user to open the app.
+            Task { await retryIdentityLoadIfNeeded() }
+        }
+        .onChange(of: scenePhase) { _, phase in
+            guard phase == .active else { return }
+            Task { await retryIdentityLoadIfNeeded() }
+        }
         .task {
             for await snapshot in await radioConnection.snapshots() {
                 // A snapshot is published for every ULCP frame the radio
@@ -525,6 +547,22 @@ struct AppRootView: View {
         } catch {
             identityError = .keychainFailure
         }
+    }
+
+    /// Re-run bootstrap after a failed identity load, once the reason for the
+    /// failure may have passed.
+    ///
+    /// Scoped to attempts that actually failed: a phone with no identity yet
+    /// reports success with none, and is waiting on onboarding rather than on
+    /// anything a retry could change. `isLoadingIdentity` guards against
+    /// overlapping with the launch attempt or with a retry already running —
+    /// bootstrap installs the mesh session and rebuilds application state, so
+    /// two at once would be two sessions.
+    @MainActor
+    private func retryIdentityLoadIfNeeded() async {
+        guard identityError != nil, localIdentity == nil, !isLoadingIdentity else { return }
+        Self.logger.notice("Retrying the identity load after an earlier failure")
+        await loadIdentity()
     }
 
     @MainActor

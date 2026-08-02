@@ -130,6 +130,7 @@ final class CoreBluetoothRadioConnection: NSObject, RadioConnection, @unchecked 
     private var lastChatBatchYield = DispatchTime.distantFuture
     private var autoEnableAttemptedGeneration: UInt64?
     private var autoClaimAttemptedGeneration: UInt64?
+    private var hostKeyRestartAttemptedGeneration: UInt64?
 
     /// Stable restoration identifier: iOS relaunches the app in the
     /// background for ULCP events only when a central with this
@@ -1769,6 +1770,27 @@ final class CoreBluetoothRadioConnection: NSObject, RadioConnection, @unchecked 
             autoClaimAttemptedGeneration = update.snapshot.generation
         }
 
+        // The transport attaches on Bluetooth's schedule, not the app's: the
+        // central is recreated at launch so a background relaunch can be
+        // restored, and synchronization begins the moment the radio's
+        // notifications are enabled. That can be before app bootstrap has
+        // read the phone identity out of the Keychain, in which case the
+        // session began with no host key and parked here with nothing to
+        // re-judge it. `useHostIdentity` restarts a session that is already
+        // parked when the key lands; this covers the opposite ordering — the
+        // key arrived while the first synchronization was still in flight, so
+        // the parked state is stale the moment it is reported. One attempt
+        // per generation, and a restart carrying a key cannot classify the
+        // host as unavailable again.
+        let shouldRestartForHostKey = update.snapshot.phase == .awaitingHost
+            && update.snapshot.hostOwnership == .localIdentityUnavailable
+            && selectedHostKey != nil
+            && !update.waitingForResponses
+            && hostKeyRestartAttemptedGeneration != update.snapshot.generation
+        if shouldRestartForHostKey {
+            hostKeyRestartAttemptedGeneration = update.snapshot.generation
+        }
+
         var rawTransmitDelay: TimeInterval?
         if let result = update.rawTransmitResult {
             guard var submission = rawTransmitsInFlight.removeValue(
@@ -1866,6 +1888,21 @@ final class CoreBluetoothRadioConnection: NSObject, RadioConnection, @unchecked 
                     deviceName: update.snapshot.deviceName,
                     on: peripheral
                 )
+            }
+        }
+
+        if shouldRestartForHostKey {
+            bluetoothQueue.async { [weak self] in
+                guard let self, self.peripheral === peripheral,
+                      peripheral.state == .connected,
+                      self.selectedHostKey != nil,
+                      self.snapshot.linkState == .awaitingHost,
+                      self.frameIn != nil
+                else { return }
+                Self.logger.notice(
+                    "Radio parked without a phone identity that has since arrived; re-synchronizing"
+                )
+                self.beginSynchronization(on: peripheral)
             }
         }
 
