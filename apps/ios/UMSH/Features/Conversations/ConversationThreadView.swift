@@ -27,6 +27,15 @@ struct ConversationThreadView: View {
     private static let olderEdgeID = "chat-transcript-older-edge"
     private static let newerEdgeID = "chat-transcript-newer-edge"
 
+    /// Which member's sheet is open, named by the one thing about them that
+    /// cannot change. Everything else — their address, their name, whether
+    /// they are a peer at all — is answered from the transcript at render, so
+    /// the sheet is never older than what the transcript knows.
+    private struct InspectedMember: Identifiable, Equatable {
+        let hint: Data
+        var id: Data { hint }
+    }
+
     @Binding var conversation: ConversationListItem
     let radioSnapshot: RadioSnapshot
     let updateDraft: (Int64, String) async -> Void
@@ -59,7 +68,7 @@ struct ConversationThreadView: View {
     @State private var editingMessage: ChatMessageSummary?
     @State private var editDraft = ""
     @State private var deletingMessage: ChatMessageSummary?
-    @State private var inspectedMember: ChannelMember?
+    @State private var inspectedMember: InspectedMember?
     @State private var inspectedMessage: ChatMessageSummary?
     @Environment(\.visibleConversationReporter) private var visibleConversationReporter
     @Environment(\.transcriptLoader) private var transcriptLoader
@@ -204,7 +213,10 @@ struct ConversationThreadView: View {
                                             : nil,
                                         onShowDetails: { inspectedMessage = message },
                                         onShowSender: isChannel && !message.isOutbound
-                                            ? { inspectedMember = member(for: message) }
+                                            ? {
+                                                inspectedMember = message.senderHint
+                                                    .map(InspectedMember.init)
+                                            }
                                             : nil
                                     )
                                     // Every bubble measures a UITextView, so
@@ -419,7 +431,10 @@ struct ConversationThreadView: View {
                 }
             }
         }
-        .sheet(item: $inspectedMember) { member in
+        .sheet(item: $inspectedMember) { inspected in
+            // Resolved here rather than at the tap, so an identity arriving
+            // while the sheet is open reaches it.
+            let member = member(hint: inspected.hint)
             NavigationStack {
                 ChannelMemberSheet(
                     member: member,
@@ -429,7 +444,15 @@ struct ConversationThreadView: View {
                             await channelActions.requestMemberIdentity(conversation, hint)
                         }
                     },
-                    dismiss: { inspectedMember = nil }
+                    dismiss: { inspectedMember = nil },
+                    conversations: $conversations,
+                    radioSnapshot: radioSnapshot,
+                    peerActions: peerActions,
+                    messageActions: messageActions,
+                    updateDraft: updateDraft,
+                    sendMessage: { conversation, body in
+                        await sendMessage(.direct(conversation), body)
+                    }
                 )
             }
         }
@@ -939,13 +962,44 @@ struct ConversationThreadView: View {
             ?? conversations.first { $0.peer.identity.canonicalAddress == address }?.peer
     }
 
-    private func member(for message: ChatMessageSummary) -> ChannelMember? {
-        guard let hint = message.senderHint else { return nil }
+    /// Who a member is *now*, rebuilt from the window every time this view
+    /// updates rather than captured when their avatar was tapped.
+    ///
+    /// A channel message carries a hint; the address behind it can arrive
+    /// minutes later, in the identity response this sheet is the place to ask
+    /// for. That response backfills the sender of every stored message from
+    /// the same hint and bumps the conversation's revision, so re-reading the
+    /// window is what lets an answer turn into a peer while the sheet is still
+    /// open — a value captured at the tap never could.
+    private func member(hint: Data) -> ChannelMember {
+        // Any of their messages will do once resolution has landed, since it
+        // fills them all in; preferring one that names an address keeps a
+        // straggler stored before that from hiding a resolved sibling.
+        var chosen: ChatMessageSummary?
+        for case let .message(message, _) in transcript.rows
+        where message.senderHint == hint {
+            if message.senderAddress != nil {
+                chosen = message
+                break
+            }
+            if chosen == nil { chosen = message }
+        }
+        guard let chosen else {
+            // Everything they said has left the window while the sheet was
+            // open. The hint is still theirs, and still worth asking about.
+            let label = hint.map { String(format: "%02x", $0) }.joined()
+            return ChannelMember(
+                hint: hint,
+                address: nil,
+                handle: nil,
+                displayName: "Member \(label)"
+            )
+        }
         return ChannelMember(
             hint: hint,
-            address: message.senderAddress,
-            handle: message.senderHandle,
-            displayName: memberName(for: message)
+            address: chosen.senderAddress,
+            handle: chosen.senderHandle,
+            displayName: memberName(for: chosen)
         )
     }
 

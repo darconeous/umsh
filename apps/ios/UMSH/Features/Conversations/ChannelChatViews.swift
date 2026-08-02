@@ -95,20 +95,68 @@ struct ChannelMemberSheet: View {
     /// Absent when there is no channel to ask over.
     let requestIdentity: ((Data) async -> Void)?
     let dismiss: () -> Void
+    /// Everything the peer sheet needs to be itself once this member turns out
+    /// to be a node this phone knows — the same bundle the direct-conversation
+    /// sheet hands it, so the peer is the same wherever it is reached from.
+    @Binding var conversations: [DirectConversationSummary]
+    let radioSnapshot: RadioSnapshot
+    var peerActions: PeerActions = .unavailable
+    var messageActions: ChatMessageActions = .unavailable
+    var updateDraft: ((Int64, String) async -> Void)? = nil
+    var sendMessage: ((DirectConversationSummary, String) async -> MessageSendResult)? = nil
 
     @State private var requested = false
 
     var body: some View {
         Form {
+            // A member who is also a saved peer is a node, with everything a
+            // node has — a route, a role, a way to message them directly. The
+            // avatar in the transcript is the only thing pointing at it, so it
+            // has to lead somewhere rather than stopping at four fields.
+            if let knownPeer {
+                Section {
+                    NavigationLink {
+                        PeerDetailView(
+                            peer: knownPeer,
+                            radioSnapshot: .constant(radioSnapshot),
+                            conversations: $conversations,
+                            actions: peerActions,
+                            updateDraft: updateDraft,
+                            sendMessage: sendMessage,
+                            messageActions: messageActions
+                        )
+                    } label: {
+                        HStack(spacing: 12) {
+                            PeerAvatar(hint: knownPeer.identity.hint, diameter: 52)
+                            VStack(alignment: .leading, spacing: 2) {
+                                Text(knownPeer.displayName)
+                                    .font(.headline)
+                                Text(
+                                    knownPeer.isUlcpDevice
+                                        ? "Companion radio identity"
+                                        : knownPeer.role.label
+                                )
+                                .font(.caption)
+                                .foregroundStyle(.secondary)
+                            }
+                        }
+                    }
+                } footer: {
+                    Text("Everything this phone knows about the node this member is speaking from.")
+                }
+            }
             Section("Member") {
                 LabeledContent("Name", value: member.displayName)
+                    .copyable(member.displayName)
                 if let handle = member.handle, !handle.isEmpty, handle != member.displayName {
                     LabeledContent("Calls themselves", value: handle)
+                        .copyable(handle)
                 }
                 LabeledContent("Hint") {
                     Text(member.id)
                         .font(.body.monospaced())
                 }
+                .copyable(member.id)
                 if let address = member.address {
                     LabeledContent("Address") {
                         Text(address)
@@ -116,6 +164,7 @@ struct ChannelMemberSheet: View {
                             .lineLimit(2)
                             .truncationMode(.middle)
                     }
+                    .copyable(address)
                 }
             }
             if knownPeer == nil, let requestIdentity {
@@ -171,6 +220,7 @@ struct MessageDetailsSheet: View {
                         Text(hint)
                             .font(.body.monospaced())
                     }
+                    .copyable(hint)
                     if let address = message.senderAddress {
                         LabeledContent("Address") {
                             Text(address)
@@ -178,6 +228,7 @@ struct MessageDetailsSheet: View {
                                 .lineLimit(2)
                                 .truncationMode(.middle)
                         }
+                        .copyable(address)
                     }
                 }
             }
@@ -206,18 +257,18 @@ struct MessageDetailsSheet: View {
                         value: reception.sourceAuthenticated ? "Authenticated" : "Unauthenticated"
                     )
                     if !reception.routeHints.isEmpty {
+                        // Stored in trace-route order, nearest us first;
+                        // reversed here so the arrows read the way the message
+                        // travelled — sender toward this phone.
+                        let route = reception.routeHints
+                            .reversed()
+                            .map { $0.map { String(format: "%02x", $0) }.joined() }
+                            .joined(separator: " → ")
                         LabeledContent("Route") {
-                            // Stored in trace-route order, nearest us first;
-                            // reversed here so the arrows read the way the
-                            // message travelled — sender toward this phone.
-                            Text(
-                                reception.routeHints
-                                    .reversed()
-                                    .map { $0.map { String(format: "%02x", $0) }.joined() }
-                                    .joined(separator: " → ")
-                            )
-                            .font(.caption.monospaced())
+                            Text(route)
+                                .font(.caption.monospaced())
                         }
+                        .copyable(route)
                     }
                 }
             } else if !message.isOutbound {

@@ -97,6 +97,10 @@ struct MessageComposer: View {
                             canSend ? Color.accentColor : Color(uiColor: .systemGray3)
                         )
                 }
+                // The glyph is the button. Left to the default style it picks
+                // up the system's own background — a grey rounded square sitting
+                // behind the circle, which reads as a second control.
+                .buttonStyle(.plain)
                 .disabled(!canSend)
                 .padding(2)
                 .transition(.scale.combined(with: .opacity))
