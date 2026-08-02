@@ -4802,6 +4802,109 @@ fn poll_cycle_holds_application_tx_while_forward_listen_is_active() {
 }
 
 #[test]
+fn counters_tally_every_transmission_including_forwards() {
+    let mut mac = make_mac();
+    assert_eq!(mac.counters(), crate::MacCounters::default());
+
+    // No identity on these, which is what a forwarded frame looks like:
+    // they emit no event, so only the counter can see them.
+    mac.tx_queue_mut()
+        .enqueue(TxPriority::Application, b"app", None, None)
+        .unwrap();
+    mac.tx_queue_mut()
+        .enqueue(TxPriority::Retry, b"retry", Some(SendReceipt(7)), None)
+        .unwrap();
+    block_on(mac.drain_tx_queue(&mut |_, _| {})).unwrap();
+
+    assert_eq!(mac.counters().tx_frames, 2);
+    assert_eq!(mac.counters().tx_abandoned, 0);
+}
+
+#[test]
+fn counters_record_a_frame_abandoned_to_a_busy_channel() {
+    let mut mac = make_mac();
+    for _ in 0..crate::MAX_CAD_ATTEMPTS {
+        mac.radio_mut().cad_responses.push_back(true).unwrap();
+    }
+    mac.tx_queue_mut()
+        .enqueue(TxPriority::Application, b"app", None, None)
+        .unwrap();
+
+    // Each busy CAD requeues with a backoff, so the queue has to be
+    // drained repeatedly to walk the frame through its attempts.
+    for _ in 0..crate::MAX_CAD_ATTEMPTS {
+        block_on(mac.drain_tx_queue(&mut |_, _| {})).unwrap();
+        mac.clock().advance_ms(60_000);
+    }
+
+    assert!(mac.radio().transmitted.is_empty());
+    assert_eq!(mac.counters().tx_frames, 0);
+    assert_eq!(mac.counters().tx_abandoned, 1);
+    assert!(mac.tx_queue().is_empty());
+}
+
+/// A node hearing traffic it cannot use still counts the reception. The
+/// gap between the two numbers is the whole point: it is what tells a
+/// deaf radio (`rx_frames` flat) apart from a busy neighbourhood
+/// (`rx_frames` climbing, `rx_accepted` not).
+#[test]
+fn counters_separate_receptions_from_receptions_that_meant_something() {
+    let mut mac = make_mac();
+    mac.radio_mut().queue_received_frame(b"not a umsh frame");
+    let handled = block_on(mac.receive_one(|_, _| {})).unwrap();
+
+    assert!(!handled);
+    assert_eq!(mac.counters().rx_frames, 1);
+    assert_eq!(mac.counters().rx_accepted, 0);
+    assert_eq!(mac.counters().forwarded, 0);
+}
+
+#[test]
+fn counters_record_a_forwarded_frame() {
+    let mut mac = make_mac();
+    mac.repeater_config_mut().enabled = true;
+    let repeater_id = mac.add_identity(DummyIdentity::new([0x10; 32])).unwrap();
+    let repeater_hint = mac
+        .identity(repeater_id)
+        .unwrap()
+        .identity()
+        .public_key()
+        .router_hint();
+
+    let remote = DummyIdentity::new([0xAB; 32]);
+    let pairwise = PairwiseKeys {
+        k_enc: [1; 16],
+        k_mic: [2; 16],
+    };
+    let channel_key = ChannelKey([0x5A; 32]);
+    let channel_id = mac.crypto().derive_channel_id(&channel_key);
+    mac.add_channel(channel_key.clone()).unwrap();
+    let channel_keys = mac
+        .channels()
+        .lookup_by_id(&channel_id)
+        .next()
+        .unwrap()
+        .derived
+        .clone();
+    let source_route = [repeater_hint, RouterHint([0x21, 0x22])];
+    let original = build_received_blind_unicast_frame(
+        &remote,
+        &pairwise,
+        &channel_keys,
+        &umsh_core::NodeHint([0x77, 0x66, 0x55]),
+        b"hello",
+        false,
+        Some(&source_route),
+    );
+    mac.radio_mut().queue_received_frame(original.as_slice());
+
+    assert!(block_on(mac.receive_one(|_, _| {})).unwrap());
+    assert_eq!(mac.counters().rx_frames, 1);
+    assert_eq!(mac.counters().rx_accepted, 1);
+    assert_eq!(mac.counters().forwarded, 1);
+}
+
+#[test]
 fn drain_tx_queue_returns_when_cad_keeps_reporting_busy() {
     let mut mac = make_mac();
     mac.radio_mut().cad_responses.push_back(true).unwrap();

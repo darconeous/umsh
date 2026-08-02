@@ -44,7 +44,7 @@
 extern crate alloc;
 
 use core::cell::RefCell;
-use core::sync::atomic::{AtomicBool, Ordering};
+use core::sync::atomic::{AtomicBool, AtomicU16, AtomicU32, Ordering};
 
 use embassy_sync::blocking_mutex::Mutex as BlockingMutex;
 use embassy_sync::blocking_mutex::raw::CriticalSectionRawMutex;
@@ -56,7 +56,7 @@ use umsh_core::{ChannelKey, PublicKey};
 use umsh_crypto::CryptoEngine;
 use umsh_crypto::software::{SoftwareAes, SoftwareIdentity, SoftwareSha256};
 use umsh_hal::{CounterStore, EmbassyClock, NoKeyValueStore};
-use umsh_mac::{MacHandle, OperatingPolicy, RepeaterConfig, SendOptions};
+use umsh_mac::{MacCounters, MacHandle, OperatingPolicy, RepeaterConfig, SendOptions};
 use umsh_node::{Host, LocalNode, NodeCapabilities, NodeIdentityProfile, NodeRole};
 use umsh_sync::AsyncRefCell;
 use umsh_ulcp_device::{MAX_CHANNEL_KEYS, MAX_DEV_PEERS, MAX_DEVICE_NAME_LEN};
@@ -200,6 +200,63 @@ static NODE_IS_REPEATER: AtomicBool = AtomicBool::new(false);
 /// [`IDENT_REQUEST`], and a `PROP_IDENT` read must fail rather than hang
 /// the session waiting for a task that does not exist.
 static NODE_UP: AtomicBool = AtomicBool::new(false);
+
+/// The MAC's frame tallies, republished by [`pump_loop`] after each wake
+/// cycle so a board's display can read them without borrowing the
+/// coordinator.
+///
+/// Five plain atomics rather than a mutex: the readers are display code
+/// that wants a glance, not a consistent transaction, and a torn read
+/// across two of these counters is invisible at the resolution anyone
+/// looks at them. Publishing from inside the pump costs no extra wakeups —
+/// it happens on a loop that was going to run anyway.
+static MAC_TX_FRAMES: AtomicU32 = AtomicU32::new(0);
+static MAC_TX_ABANDONED: AtomicU32 = AtomicU32::new(0);
+static MAC_RX_FRAMES: AtomicU32 = AtomicU32::new(0);
+static MAC_RX_ACCEPTED: AtomicU32 = AtomicU32::new(0);
+static MAC_FORWARDED: AtomicU32 = AtomicU32::new(0);
+
+/// The most recently published MAC tallies.
+///
+/// All zero before the node's first wake cycle, which is
+/// indistinguishable from a node that has done nothing — and is the same
+/// thing as far as a reader is concerned.
+pub fn mac_counters() -> MacCounters {
+    MacCounters {
+        tx_frames: MAC_TX_FRAMES.load(Ordering::Relaxed),
+        tx_abandoned: MAC_TX_ABANDONED.load(Ordering::Relaxed),
+        rx_frames: MAC_RX_FRAMES.load(Ordering::Relaxed),
+        rx_accepted: MAC_RX_ACCEPTED.load(Ordering::Relaxed),
+        forwarded: MAC_FORWARDED.load(Ordering::Relaxed),
+    }
+}
+
+fn publish_mac_counters(counters: MacCounters) {
+    MAC_TX_FRAMES.store(counters.tx_frames, Ordering::Relaxed);
+    MAC_TX_ABANDONED.store(counters.tx_abandoned, Ordering::Relaxed);
+    MAC_RX_FRAMES.store(counters.rx_frames, Ordering::Relaxed);
+    MAC_RX_ACCEPTED.store(counters.rx_accepted, Ordering::Relaxed);
+    MAC_FORWARDED.store(counters.forwarded, Ordering::Relaxed);
+}
+
+/// The transmit power the radio was last configured with, in dBm, offset
+/// by 128 so the sentinel for "not yet configured" is a value no real
+/// setting occupies.
+static TX_POWER_DBM: AtomicU16 = AtomicU16::new(u16::MAX);
+
+/// The applied `PROP_PHY_TX_POWER`, or `None` before the first
+/// `Effect::ApplyRadio`.
+pub fn tx_power_dbm() -> Option<i8> {
+    match TX_POWER_DBM.load(Ordering::Relaxed) {
+        u16::MAX => None,
+        raw => Some((raw as i16 - 128) as i8),
+    }
+}
+
+/// Publish the transmit power the board just applied to the radio.
+pub fn set_tx_power_dbm(dbm: i8) {
+    TX_POWER_DBM.store((i16::from(dbm) + 128) as u16, Ordering::Relaxed);
+}
 
 /// The live device name, pushed by the board.
 ///
@@ -494,10 +551,22 @@ impl Default for NodeHooks {
 /// Drives the device node's MAC pump. Never returns while healthy; an
 /// exit means the MAC hit an unrecoverable radio error, and rebooting
 /// through the panic handler beats silently losing the device identity.
-pub async fn pump_loop<CS: CounterStore + 'static>(mut host: DeviceNodeHost<CS>) -> ! {
+pub async fn pump_loop<CS: CounterStore + 'static>(
+    mut host: DeviceNodeHost<CS>,
+    mac: DeviceNodeHandle<CS>,
+) -> ! {
     debug_log(format_args!("node pump: running"));
-    let result = host.run().await;
-    debug_log(format_args!("node pump: EXITED ok={}", result.is_ok()));
+    // `Host::run` is this loop without the republish. Spelling it out here
+    // is what lets the counters be refreshed on a schedule that already
+    // exists: one wake cycle has just completed, the coordinator's borrow
+    // is released, and nothing else had to be woken to notice.
+    loop {
+        if let Err(error) = host.pump_once().await {
+            debug_log(format_args!("node pump: EXITED error={error:?}"));
+            break;
+        }
+        publish_mac_counters(mac.counters().await);
+    }
     panic!("device node host exited");
 }
 

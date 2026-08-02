@@ -789,6 +789,39 @@ impl<RadioError> From<TxError<RadioError>> for MacError<RadioError> {
 ///     // handle deliveries / ACKs here and schedule persistence work as needed
 /// }).await?;
 /// ```
+/// Cumulative frame tallies for the coordinator, since construction.
+///
+/// Diagnostic only: nothing in the protocol depends on them, and they are
+/// deliberately not persisted. They exist so an operator can tell a
+/// working node from a deaf one without a capture — a radio whose
+/// `rx_frames` never moves is not hearing anybody.
+///
+/// Every field saturates rather than wraps. A counter that rolled over
+/// would make a long-running node look freshly booted; pinning at the
+/// maximum is at least monotone, which is the property a reader is
+/// actually using them for.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub struct MacCounters {
+    /// Frames the radio accepted for transmission, including forwards.
+    pub tx_frames: u32,
+    /// Frames given up on after [`MAX_CAD_ATTEMPTS`] busy channels.
+    pub tx_abandoned: u32,
+    /// Frames the radio handed up, whoever they were addressed to.
+    pub rx_frames: u32,
+    /// Receptions that produced an event or a side effect. The shortfall
+    /// against [`Self::rx_frames`] is other people's traffic, duplicates,
+    /// and undecodable noise.
+    pub rx_accepted: u32,
+    /// Receptions this node repeated onward.
+    pub forwarded: u32,
+}
+
+impl MacCounters {
+    fn bump(slot: &mut u32) {
+        *slot = slot.saturating_add(1);
+    }
+}
+
 pub struct Mac<
     P: Platform,
     const IDENTITIES: usize = DEFAULT_IDENTITIES,
@@ -817,6 +850,7 @@ pub struct Mac<
     operating_policy: OperatingPolicy,
     auto_register_full_key_peers: bool,
     deferred_counter_resync_frame: Option<DeferredCounterResyncFrame<FRAME>>,
+    counters: MacCounters,
 }
 
 impl<
@@ -859,7 +893,13 @@ impl<
             operating_policy,
             auto_register_full_key_peers: false,
             deferred_counter_resync_frame: None,
+            counters: MacCounters::default(),
         }
+    }
+
+    /// Cumulative frame tallies since construction.
+    pub const fn counters(&self) -> MacCounters {
+        self.counters
     }
 
     /// Borrow the underlying radio.
@@ -1807,6 +1847,11 @@ impl<
             Err(TxError::CadTimeout) => {
                 let next_attempt = queued.cad_attempts.saturating_add(1);
                 if next_attempt >= MAX_CAD_ATTEMPTS {
+                    // Counted whether or not anyone is told: a forwarded
+                    // frame is dropped without an event, and a node
+                    // abandoning every forward is exactly the condition
+                    // this tally exists to make visible.
+                    MacCounters::bump(&mut self.counters.tx_abandoned);
                     // Drop with accounting: locally-originated frames report
                     // the abandonment to the owning identity (an ACK-requested
                     // send will never see AckReceived/AckTimeout, so this is
@@ -1842,6 +1887,9 @@ impl<
             }
             Err(error) => return Err(MacError::Transmit(error)),
         }
+        // Counted before the event, which only locally-originated frames
+        // get: a repeater's whole output would otherwise be invisible.
+        MacCounters::bump(&mut self.counters.tx_frames);
         if let Some(identity_id) = identity_id {
             on_event(
                 identity_id,
@@ -2116,7 +2164,28 @@ impl<
     /// This is the shared implementation used by both [`receive_one`](Self::receive_one)
     /// and [`next_event`](Self::next_event).  Returns `true` when the frame
     /// produced at least one event or side-effect.
+    ///
+    /// Every reception passes through here exactly once, which is what
+    /// makes it the place to tally them: the `rx_frames`/`rx_accepted`
+    /// pair counts one radio reception and whether anything came of it.
     pub async fn process_received_frame(
+        &mut self,
+        buf: &mut [u8; FRAME],
+        frame_len: usize,
+        rx: &RxInfo,
+        on_event: impl FnMut(LocalIdentityId, crate::MacEventRef<'_>),
+    ) -> bool {
+        MacCounters::bump(&mut self.counters.rx_frames);
+        let handled = self
+            .process_received_frame_inner(buf, frame_len, rx, on_event)
+            .await;
+        if handled {
+            MacCounters::bump(&mut self.counters.rx_accepted);
+        }
+        handled
+    }
+
+    async fn process_received_frame_inner(
         &mut self,
         buf: &mut [u8; FRAME],
         frame_len: usize,
@@ -4169,6 +4238,12 @@ impl<
             return false;
         }
         self.dup_cache.insert(cache_key, now_ms);
+        // Counted at the decision to repeat rather than at the eventual
+        // transmit, so the tally measures what this node chose to carry.
+        // The frame is also counted again in `tx_frames` when it actually
+        // goes out, which is the correct relationship: a repeat that CAD
+        // abandons shows up here and not there.
+        MacCounters::bump(&mut self.counters.forwarded);
         true
     }
 

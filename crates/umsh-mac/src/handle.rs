@@ -92,6 +92,11 @@ impl<
         Self { mac }
     }
 
+    /// Cumulative frame tallies from the shared coordinator.
+    pub async fn counters(&self) -> crate::MacCounters {
+        self.mac.borrow().await.counters()
+    }
+
     /// Registers a local identity with the shared coordinator.
     pub async fn add_identity(
         &self,

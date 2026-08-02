@@ -18,7 +18,8 @@ use umsh_ulcp_runtime::device_node as node;
 // board with a primary-action button, so it is unused in some builds.
 #[allow(unused_imports)]
 pub use umsh_ulcp_runtime::device_node::{
-    BeaconTrigger, DEV_SYNC, NODE_CH, request_beacon, set_device_name, sign_identity_blob,
+    BeaconTrigger, DEV_SYNC, NODE_CH, mac_counters, request_beacon, set_device_name,
+    set_tx_power_dbm, sign_identity_blob, tx_power_dbm,
 };
 
 /// The node's platform binding: everything generic resolved against this
@@ -33,8 +34,8 @@ static NODE_MAC_CELL: node::DeviceNodeMacCell<CounterStore> = StaticCell::new();
 // ─── Task shims ──────────────────────────────────────────────────────────────
 
 #[embassy_executor::task]
-async fn node_pump_task(host: DeviceNodeHost) {
-    node::pump_loop(host).await
+async fn node_pump_task(host: DeviceNodeHost, mac: DeviceNodeHandle) {
+    node::pump_loop(host, mac).await
 }
 
 #[embassy_executor::task]
@@ -115,7 +116,7 @@ pub async fn bring_up(
         hooks,
     )
     .await;
-    spawner.spawn(node_pump_task(parts.host).unwrap());
+    spawner.spawn(node_pump_task(parts.host, parts.mac).unwrap());
     spawner.spawn(
         node_identity_blob_task(
             parts.node.clone(),

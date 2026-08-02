@@ -420,6 +420,13 @@ async fn apply_effect<A, S, const TXQ: usize, M, const RX: usize, const TX: usiz
                 cr,
                 power_dbm: i32::from(settings.tx_power_dbm),
             });
+            // Published for anything that wants to show what the radio is
+            // actually set to — a board's stats page, in particular —
+            // without having to hold the session to ask. The statics live
+            // with the device node, which not every driver consumer
+            // builds.
+            #[cfg(feature = "device-node")]
+            crate::device_node::set_tx_power_dbm(settings.tx_power_dbm);
         }
         Some(Effect::StartTransmit) => {
             let mut data: heapless::Vec<u8, MAX_PAYLOAD> = heapless::Vec::new();
