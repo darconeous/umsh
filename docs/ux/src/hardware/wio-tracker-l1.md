@@ -44,9 +44,11 @@ frame is redrawn before the panel is switched on, so a stale frame is never
 visible. Waking always lands on the status page.
 
 Battery readings never light the panel — the battery is sampled on a timer, and
-treating a timed sample as attention would keep the display on forever. The
-status row reads the monitor's latest sample each time the frame is drawn, so a
-fresh value arrives with the next redraw.
+treating a timed sample as attention would keep the display on forever. When the
+charge class or level moves the monitor asks for a redraw, which an already-lit
+panel takes and a dark one ignores; either way the frame is built from the
+monitor's latest published sample, so a fresh value arrives with the next redraw
+whatever prompted it.
 
 ### Locate alert
 

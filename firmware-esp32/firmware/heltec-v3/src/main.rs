@@ -55,11 +55,6 @@ use embassy_sync::once_lock::OnceLock;
 use embassy_sync::signal::Signal;
 use embassy_sync::watch::Watch;
 use embassy_time::{Delay, Duration, Instant, Timer, with_timeout};
-use embedded_graphics::mono_font::MonoTextStyle;
-use embedded_graphics::mono_font::ascii::FONT_6X10;
-use embedded_graphics::pixelcolor::BinaryColor;
-use embedded_graphics::prelude::*;
-use embedded_graphics::text::Text;
 use embedded_hal_bus::spi::ExclusiveDevice;
 use esp_hal::Async;
 use esp_hal::clock::CpuClock;
@@ -100,9 +95,8 @@ use umsh_ux_display_tracker::attention::{
     Attention, AttentionConfig, DisplayKind, HoldReason, Transition,
 };
 use umsh_ux_display_tracker::gate::{Disposition, Gate, GateReason};
-use umsh_ux_display_tracker::menu::{
-    MenuItem, MenuItems, Page, UiEffect, UiInput, UiModel, UiNotice,
-};
+use umsh_ux_display_tracker::menu::{MenuItems, UiEffect, UiInput, UiModel, UiNotice};
+use umsh_ux_display_tracker::screen;
 use umsh_ux_tracker::battery::soc_from_ocv;
 use umsh_ux_tracker::button::{ButtonEdge, ButtonEvent, ButtonFsm};
 
@@ -537,7 +531,23 @@ async fn clear_node_counters(counters: &'static NodeCountersMutex) {
 /// every reading and needs an explicit threshold. Matched to the
 /// estimator's five-point step so every board announces level movement at
 /// the same granularity.
+///
+/// The estimator is deliberately not used here. It releases its
+/// never-rise-while-discharging clamp only on a `Charging` or `Charged`
+/// classification, and this board cannot produce either — the LGS4056H's
+/// status output drives the orange LED and reaches no GPIO. Fed
+/// perpetually-discharging samples the clamp would never lift, so a fully
+/// recharged pack would keep reporting the level it bottomed out at until
+/// the next reboot.
 const BATTERY_LEVEL_STEP: u8 = 5;
+
+/// Raised when the announced level moves, so the panel can redraw its
+/// battery indicator.
+///
+/// A redraw prompt, never a wake: an unrequested sample must not light an
+/// emissive panel, or a board left on a desk would glow every minute
+/// forever.
+static BATTERY_UI_CHANGED: Signal<CriticalSectionRawMutex, ()> = Signal::new();
 
 /// Owns the ADC divider. Samples on a slow cadence for the OLED and
 /// immediately on session request (`Effect::SampleBattery`).
@@ -570,6 +580,8 @@ async fn battery_task(mut sampler: BatterySampler) {
         if moved {
             announced = Some(level);
             announce.send(mv);
+            // The same movement is what the on-screen indicator draws.
+            BATTERY_UI_CHANGED.signal(());
         }
     }
 }
@@ -1628,11 +1640,6 @@ async fn device_task(
 
 // ─── UI: OLED, button, LED ───────────────────────────────────────────────
 
-fn draw_line(display: &mut Display, text: &str, row: i32, style: MonoTextStyle<'_, BinaryColor>) {
-    // FONT_6X10 baseline: rows 0..=4 fit in the 64 px panel.
-    let _ = Text::new(text, Point::new(0, 10 + row * 12), style).draw(display);
-}
-
 /// The whole class vocabulary: this board can beacon, pair, and clear
 /// its bonds. Clearing is a menu item rather than a bare gesture because
 /// the confirmation page in front of it is what makes it safe.
@@ -1640,151 +1647,63 @@ fn heltec_menu_items() -> MenuItems {
     MenuItems::all()
 }
 
-/// Render the current page. Best-effort — a display error just leaves
-/// the panel stale; it never blocks the protocol paths.
+/// Everything the shared renderer draws that is not menu state.
 ///
-/// Five rows of `FONT_6X10` fit the 64 px panel. Row 0 always names the
-/// device and row 1 always shows the menu cursor, so the user can tell
-/// where they are without remembering; the remaining three rows belong
-/// to the page.
-async fn render_frame(display: &mut Display, model: UiModel) {
-    let style = MonoTextStyle::new(&FONT_6X10, BinaryColor::On);
-    display.clear_buffer();
-
-    let name = device_name_snapshot().await;
-    draw_line(
-        display,
-        core::str::from_utf8(&name).unwrap_or(DEFAULT_DEVICE_NAME),
-        0,
-        style,
-    );
-
-    let mut line: heapless::String<24> = heapless::String::new();
-    match model.page() {
-        Page::Menu(item) => {
-            draw_line(
-                display,
-                match item {
-                    MenuItem::Status => "> Status",
-                    MenuItem::CheckIn => "> Check in",
-                    MenuItem::StartPairing => "> Start pairing",
-                    MenuItem::ClearBonds => "> Clear bonds",
+/// The device name is passed in rather than read here: reading it is
+/// async and the model borrows it, so the display task snapshots it once
+/// per frame and lends it to this.
+fn ui_status(name: &DeviceName) -> screen::StatusModel<'_> {
+    let mv = BATTERY_MV.load(Ordering::Acquire);
+    screen::StatusModel {
+        device_name: core::str::from_utf8(name).unwrap_or(DEFAULT_DEVICE_NAME),
+        battery: screen::BatteryIndicator {
+            level_percent: (mv != 0).then(|| soc_from_ocv(mv)),
+            // No charger telemetry reaches the MCU on this board, so the
+            // indicator says nothing about charging rather than asserting
+            // the pack is discharging.
+            charge: None,
+        },
+        battery_mv: (mv != 0).then_some(mv),
+        link: match BLE_LINK.load(Ordering::Acquire) {
+            2 => screen::LinkState::Attached,
+            1 => screen::LinkState::Connected,
+            _ if ADV_ALLOWED.load(Ordering::Acquire) => screen::LinkState::Advertising,
+            _ => screen::LinkState::OffWired,
+        },
+        bonds: BLE_BOND_COUNT.load(Ordering::Acquire),
+        // Lockout outranks the window: while locked out there is no
+        // window to describe.
+        pairing: if PAIRING_LOCKED_OUT.load(Ordering::Acquire) {
+            screen::PairingState::LockedOut
+        } else if PAIRING_MODE.load(Ordering::Acquire) {
+            screen::PairingState::Open {
+                pin: match PAIRING_PIN.load(Ordering::Acquire) {
+                    u32::MAX => None,
+                    pin => Some(pin),
                 },
-                1,
-                style,
-            );
-
-            if item == MenuItem::Status {
-                // Row 2 is the most valuable line on the page, so a
-                // pending result outranks the pairing state there; the
-                // PIN comes back as soon as the notice clears.
-                match model.notice() {
-                    Some(notice) => draw_line(
-                        display,
-                        match notice {
-                            UiNotice::CheckInRequested => "checking in...",
-                            UiNotice::PairingStarted => "pairing started",
-                            UiNotice::PairingUnavailable => "pair unavailable",
-                            UiNotice::BondsCleared => "bonds cleared",
-                            UiNotice::ClearFailed => "CLEAR FAILED",
-                        },
-                        2,
-                        style,
-                    ),
-                    None => {
-                        let pin = PAIRING_PIN.load(Ordering::Acquire);
-                        if PAIRING_MODE.load(Ordering::Acquire) && pin != u32::MAX {
-                            let _ = write!(line, "PIN {pin:06}");
-                        } else if PAIRING_MODE.load(Ordering::Acquire) {
-                            let _ = write!(line, "pairing (no PIN)");
-                        } else {
-                            let _ = write!(line, "paired");
-                        }
-                        draw_line(display, &line, 2, style);
-                    }
-                }
-
-                line.clear();
-                let _ = write!(
-                    line,
-                    "{} b{}/{}{}",
-                    match BLE_LINK.load(Ordering::Acquire) {
-                        2 => "attached",
-                        1 => "connected",
-                        _ if ADV_ALLOWED.load(Ordering::Acquire) => "advertising",
-                        _ => "off (wired)",
-                    },
-                    BLE_BOND_COUNT.load(Ordering::Acquire),
-                    ble_store::MAX_BONDS,
-                    if PAIRING_LOCKED_OUT.load(Ordering::Acquire) {
-                        " LOCK"
-                    } else {
-                        ""
-                    },
-                );
-                draw_line(display, &line, 3, style);
-
-                line.clear();
-                let mv = BATTERY_MV.load(Ordering::Acquire);
-                if mv == 0 {
-                    let _ = write!(line, "batt --");
-                } else {
-                    let _ = write!(line, "batt {mv} mV {}%", soc_from_ocv(mv));
-                }
-                draw_line(display, &line, 4, style);
-            } else {
-                draw_line(
-                    display,
-                    match item {
-                        MenuItem::CheckIn => "2x: check in",
-                        MenuItem::StartPairing => "2x: start",
-                        MenuItem::ClearBonds => "2x: continue",
-                        MenuItem::Status => "",
-                    },
-                    2,
-                    style,
-                );
-                draw_line(display, "1x: next", 3, style);
-                draw_line(display, "hold: back", 4, style);
             }
-        }
-        Page::Confirm {
-            confirm_selected, ..
-        } => {
-            draw_line(display, "Clear all bonds?", 1, style);
-            draw_line(
-                display,
-                if confirm_selected {
-                    "  Cancel"
-                } else {
-                    "> Cancel"
-                },
-                2,
-                style,
-            );
-            draw_line(
-                display,
-                if confirm_selected {
-                    "> CLEAR"
-                } else {
-                    "  CLEAR"
-                },
-                3,
-                style,
-            );
-            draw_line(display, "2x: confirm", 4, style);
-        }
+        } else {
+            screen::PairingState::Closed
+        },
     }
+}
 
+/// Render the current page. Best-effort — a display error just leaves the
+/// panel stale; it never blocks the protocol paths.
+async fn render_frame(display: &mut Display, model: &UiModel, status: &screen::StatusModel<'_>) {
+    screen::render_frame(display, &screen::Layout::OLED_128X64, model, status);
     let _ = display.flush().await;
 }
 
-/// Center a short message on an otherwise blank panel.
-async fn render_message(display: &mut Display, title: &str, detail: &str) {
-    let style = MonoTextStyle::new(&FONT_6X10, BinaryColor::On);
-    display.clear_buffer();
-    draw_line(display, title, 1, style);
-    draw_line(display, detail, 2, style);
+/// Center a short message, keeping the header so the battery stays
+/// readable while the board is busy saying something else.
+async fn render_message(
+    display: &mut Display,
+    status: &screen::StatusModel<'_>,
+    title: &str,
+    detail: &str,
+) {
+    screen::render_message(display, &screen::Layout::OLED_128X64, status, title, detail);
     let _ = display.flush().await;
 }
 
@@ -1804,9 +1723,17 @@ async fn display_task(mut display: Display, mut vext: Vext) {
         Instant::now().as_millis(),
     );
     let _ = display.set_brightness(Brightness::NORMAL).await;
-    render_frame(&mut display, model).await;
+    {
+        let name = device_name_snapshot().await;
+        render_frame(&mut display, &model, &ui_status(&name)).await;
+    }
 
     loop {
+        // The name changes rarely but every frame this pass might draw
+        // needs it, so it is snapshotted once and lent out; the rest of
+        // the status is rebuilt at each draw.
+        let name = device_name_snapshot().await;
+
         let now = Instant::now().as_millis();
         attention.set_hold(
             HoldReason::Pairing,
@@ -1826,7 +1753,14 @@ async fn display_task(mut display: Display, mut vext: Vext) {
         let mut transition = None;
         match select4(
             UI_INPUT_CH.receive(),
-            select3(UI_REFRESH.wait(), UI_NOTICE.wait(), UI_WAKE.wait()),
+            select3(
+                // Both are "content moved, redraw if the panel is already
+                // lit"; they differ only in what they do to the model, so
+                // they share an arm.
+                select(UI_REFRESH.wait(), BATTERY_UI_CHANGED.wait()),
+                UI_NOTICE.wait(),
+                UI_WAKE.wait(),
+            ),
             DISPLAY_SHUTDOWN.wait(),
             lapse,
         )
@@ -1848,8 +1782,10 @@ async fn display_task(mut display: Display, mut vext: Vext) {
             }
             Either4::Second(event) => match event {
                 // Content the user did not ask for: redraw if the panel
-                // is already lit, but never light it.
-                Either3::First(()) => redraw = true,
+                // is already lit, but never light it. That rule is what
+                // keeps a battery sample from waking a board left on a
+                // desk every minute.
+                Either3::First(_) => redraw = true,
                 Either3::Second(notice) => {
                     model.set_notice(notice);
                     transition = attention.wake(Instant::now().as_millis());
@@ -1864,7 +1800,13 @@ async fn display_task(mut display: Display, mut vext: Vext) {
                 }
             },
             Either4::Third(()) => {
-                render_message(&mut display, "Powering off", "hold to wake").await;
+                render_message(
+                    &mut display,
+                    &ui_status(&name),
+                    "Powering off",
+                    "hold to wake",
+                )
+                .await;
                 let _ = display.set_display_on(true).await;
                 Timer::after_millis(1_200).await;
                 let _ = display.set_display_on(false).await;
@@ -1891,7 +1833,7 @@ async fn display_task(mut display: Display, mut vext: Vext) {
         }
 
         if redraw && attention.accepts_redraw() {
-            render_frame(&mut display, model).await;
+            render_frame(&mut display, &model, &ui_status(&name)).await;
         }
         // Ordered after the redraw so the panel never lights on a stale
         // frame.

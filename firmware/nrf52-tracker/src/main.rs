@@ -235,7 +235,9 @@ mod firmware {
     use umsh_ux_display_tracker::gate::{Disposition, Gate, GateReason};
     use umsh_ux_display_tracker::menu::UiNotice;
     #[cfg(feature = "has-display")]
-    use umsh_ux_display_tracker::menu::{MenuItem, MenuItems, Page, UiEffect, UiInput, UiModel};
+    use umsh_ux_display_tracker::menu::{MenuItems, UiEffect, UiInput, UiModel};
+    #[cfg(feature = "has-display")]
+    use umsh_ux_display_tracker::screen;
     #[cfg(any(feature = "button-nav", feature = "t1000e"))]
     use umsh_ux_tracker::button::{ButtonEdge, ButtonEvent, ButtonFsm};
     // The display trackers take their timings from the shared class
@@ -2566,111 +2568,115 @@ mod firmware {
         .await
     }
 
-    #[cfg(feature = "display-epd")]
-    fn render_ui_frame(buf: &mut [u8; display::BUF_SIZE], model: UiModel) {
-        use core::fmt::Write as _;
-        use embedded_graphics::Drawable;
-        use embedded_graphics::geometry::Point;
-        use embedded_graphics::mono_font::MonoTextStyle;
-        use embedded_graphics::mono_font::ascii::FONT_10X20;
-        use embedded_graphics::pixelcolor::BinaryColor;
-        use embedded_graphics::text::{Baseline, Text};
-        use heapless::String;
-
-        buf.fill(0xff);
-        let mut fb = display::EpdFb(buf);
-        let style = MonoTextStyle::new(&FONT_10X20, BinaryColor::On);
-        let mut y = 8;
-        let mut line = |text: &str| {
-            let _ = Text::with_baseline(text, Point::new(5, y), style, Baseline::Top).draw(&mut fb);
-            y += 27;
-        };
-
-        line("UMSH BLE");
-        match model.page() {
-            Page::Menu(item) => {
-                line(match item {
-                    MenuItem::Status => "> Status",
-                    MenuItem::CheckIn => "> Check in",
-                    MenuItem::StartPairing => "> Start pairing",
-                    MenuItem::ClearBonds => "> Clear bonds",
-                });
-
-                let mut bonds: String<20> = String::new();
-                let _ = write!(
-                    bonds,
-                    "Bonds: {}/{}",
-                    BLE_BOND_COUNT.load(Ordering::Acquire),
-                    ble_store::MAX_BONDS
-                );
-                line(&bonds);
-
-                let pairing = if PAIRING_LOCKED_OUT.load(Ordering::Acquire) {
-                    "Pairing: LOCKED"
-                } else if PAIRING_MODE.load(Ordering::Acquire) {
-                    "Pairing: open"
-                } else {
-                    "Pairing: closed"
-                };
-                line(pairing);
-                line(match item {
-                    MenuItem::Status => match model.notice() {
-                        Some(UiNotice::CheckInRequested) => "Checking in...",
-                        Some(UiNotice::PairingStarted) => "Pairing started",
-                        Some(UiNotice::PairingUnavailable) => "Pair unavailable",
-                        Some(UiNotice::BondsCleared) => "Bonds cleared",
-                        Some(UiNotice::ClearFailed) => "CLEAR FAILED",
-                        None => "2x: no action",
+    /// Everything the shared renderer draws that is not menu state.
+    ///
+    /// The device name is passed in rather than read here: reading it is
+    /// async and the model borrows it, so the display task snapshots it
+    /// once per frame and lends it to this.
+    #[cfg(feature = "has-display")]
+    fn ui_status(name: &DeviceName) -> screen::StatusModel<'_> {
+        screen::StatusModel {
+            device_name: core::str::from_utf8(name).unwrap_or(DEFAULT_DEVICE_NAME),
+            battery: ui_battery(),
+            battery_mv: ui_battery_mv(),
+            // This family exposes no connection state to the UI layer, so
+            // the panel reports what it does know: whether the device can
+            // currently be found.
+            link: if ADV_ALLOWED.load(Ordering::Acquire) {
+                screen::LinkState::Advertising
+            } else {
+                screen::LinkState::OffWired
+            },
+            bonds: BLE_BOND_COUNT.load(Ordering::Acquire),
+            // Lockout outranks the window: while locked out there is no
+            // window to describe.
+            pairing: if PAIRING_LOCKED_OUT.load(Ordering::Acquire) {
+                screen::PairingState::LockedOut
+            } else if PAIRING_MODE.load(Ordering::Acquire) {
+                screen::PairingState::Open {
+                    pin: match PAIRING_PIN.load(Ordering::Acquire) {
+                        u32::MAX => None,
+                        pin => Some(pin),
                     },
-                    MenuItem::CheckIn => "2x: check in",
-                    MenuItem::StartPairing => "2x: start",
-                    MenuItem::ClearBonds => "2x: continue",
-                });
-                line("1x: next");
-                line("hold: back");
+                }
+            } else {
+                screen::PairingState::Closed
+            },
+        }
+    }
+
+    /// Cached battery reading for the indicator. Reads the monitor's
+    /// published atomics rather than requesting a sample: the request path
+    /// is single-consumer and already belongs to the ULCP driver.
+    #[cfg(feature = "has-display")]
+    fn ui_battery() -> screen::BatteryIndicator {
+        #[cfg(feature = "cap-battery-saadc")]
+        {
+            screen::BatteryIndicator {
+                level_percent: board_power::battery_level(),
+                charge: Some(umsh_ux_tracker::battery::charge_class(
+                    board_power::battery_state(),
+                )),
             }
-            Page::Confirm {
-                confirm_selected, ..
-            } => {
-                line("Clear all bonds?");
-                line(if confirm_selected {
-                    "  Cancel"
-                } else {
-                    "> Cancel"
-                });
-                line(if confirm_selected {
-                    "> CLEAR"
-                } else {
-                    "  CLEAR"
-                });
-                line("1x/hold: toggle");
-                line("2x: confirm");
-            }
+        }
+        #[cfg(not(feature = "cap-battery-saadc"))]
+        {
+            screen::BatteryIndicator::UNKNOWN
+        }
+    }
+
+    /// Completes when the charge class or level moves, so the panel can
+    /// redraw its indicator. Never completes on a board built without the
+    /// SAADC monitor, which keeps the display tasks' `select` shape the
+    /// same either way.
+    #[cfg(feature = "has-display")]
+    async fn battery_ui_changed() {
+        #[cfg(feature = "cap-battery-saadc")]
+        board_power::BATTERY_UI_CHANGED.wait().await;
+        #[cfg(not(feature = "cap-battery-saadc"))]
+        core::future::pending::<()>().await
+    }
+
+    #[cfg(feature = "has-display")]
+    fn ui_battery_mv() -> Option<u16> {
+        #[cfg(feature = "cap-battery-saadc")]
+        {
+            board_power::battery_millivolts()
+        }
+        #[cfg(not(feature = "cap-battery-saadc"))]
+        {
+            None
         }
     }
 
     #[cfg(feature = "display-epd")]
-    fn render_message_frame(buf: &mut [u8; display::BUF_SIZE], title: &str, detail: &str) {
-        use embedded_graphics::Drawable;
-        use embedded_graphics::geometry::Point;
-        use embedded_graphics::mono_font::MonoTextStyle;
-        use embedded_graphics::mono_font::ascii::FONT_10X20;
-        use embedded_graphics::pixelcolor::BinaryColor;
-        use embedded_graphics::text::{Baseline, Text};
+    fn render_ui_frame(
+        buf: &mut [u8; display::BUF_SIZE],
+        model: &UiModel,
+        status: &screen::StatusModel<'_>,
+    ) {
+        screen::render_frame(
+            &mut display::EpdFb(buf),
+            &screen::Layout::EPD_200X200,
+            model,
+            status,
+        );
+    }
 
-        buf.fill(0xff);
-        let mut fb = display::EpdFb(buf);
-        let style = MonoTextStyle::new(&FONT_10X20, BinaryColor::On);
-        let center_x = |text: &str| (display::WIDTH as i32 - text.len() as i32 * 10) / 2;
-        let _ = Text::with_baseline(title, Point::new(center_x(title), 70), style, Baseline::Top)
-            .draw(&mut fb);
-        let _ = Text::with_baseline(
+    #[cfg(feature = "display-epd")]
+    fn render_message_frame(
+        buf: &mut [u8; display::BUF_SIZE],
+        status: &screen::StatusModel<'_>,
+        title: &str,
+        detail: &str,
+    ) {
+        screen::render_message(
+            &mut display::EpdFb(buf),
+            &screen::Layout::EPD_200X200,
+            status,
+            title,
             detail,
-            Point::new(center_x(detail), 105),
-            style,
-            Baseline::Top,
-        )
-        .draw(&mut fb);
+        );
     }
 
     /// Everything this board's menu can do. Every display tracker in this
@@ -2707,7 +2713,10 @@ mod firmware {
         );
         let mut shown = [0xff; display::BUF_SIZE];
         let mut next = [0xff; display::BUF_SIZE];
-        render_ui_frame(&mut next, model);
+        {
+            let name = device_name_snapshot().await;
+            render_ui_frame(&mut next, &model, &ui_status(&name));
+        }
         display::init(&mut spi, &mut cs, &mut dc, &mut rst, &mut busy).await;
         display::render(&mut spi, &mut cs, &mut dc, &mut busy, &next).await;
         shown.copy_from_slice(&next);
@@ -2723,6 +2732,13 @@ mod firmware {
         }
 
         loop {
+            // The name changes rarely but is needed by every frame this
+            // pass might draw, including the message frames below, so it
+            // is snapshotted once and lent out. The rest of the status is
+            // rebuilt at each draw, since an effect handled below can
+            // change it.
+            let name = device_name_snapshot().await;
+
             // Both holds are edge-published by other tasks, but re-deriving
             // them here each pass is idempotent and cannot miss an edge.
             let now = Instant::now().as_millis();
@@ -2744,7 +2760,12 @@ mod firmware {
             let mut redraw = true;
             match select4(
                 UI_INPUT_CH.receive(),
-                select3(UI_REFRESH.wait(), UI_NOTICE.wait(), UI_ALERT_CHANGED.wait()),
+                select4(
+                    UI_REFRESH.wait(),
+                    UI_NOTICE.wait(),
+                    UI_ALERT_CHANGED.wait(),
+                    battery_ui_changed(),
+                ),
                 DISPLAY_SHUTDOWN.wait(),
                 lapse,
             )
@@ -2761,13 +2782,23 @@ mod firmware {
                             model.set_notice(UiNotice::CheckInRequested);
                         }
                         Some(UiEffect::StartPairing) => {
-                            render_message_frame(&mut next, "Starting", "pairing mode...");
+                            render_message_frame(
+                                &mut next,
+                                &ui_status(&name),
+                                "Starting",
+                                "pairing mode...",
+                            );
                             push!();
                             redraw = false;
                             PAIRING_MODE_REQUEST.signal(());
                         }
                         Some(UiEffect::ClearBonds) => {
-                            render_message_frame(&mut next, "Clearing", "bonds + PIN...");
+                            render_message_frame(
+                                &mut next,
+                                &ui_status(&name),
+                                "Clearing",
+                                "bonds + PIN...",
+                            );
                             push!();
                             redraw = false;
                             BLE_WIPE_REQUEST.signal(());
@@ -2775,25 +2806,44 @@ mod firmware {
                         None => {}
                     }
                 }
-                // Every one of these is a consequence of something the
-                // user or their phone just did, so all of them count as
-                // attention. Nothing on this board redraws on a timer.
                 Either4::Second(refresh) => {
-                    attention.wake(Instant::now().as_millis());
                     match refresh {
-                        Either3::First(()) => model.clear_notice(),
-                        Either3::Second(notice) => model.set_notice(notice),
-                        Either3::Third(()) => {
+                        // The first three are consequences of something the
+                        // user or their phone just did, so all of them
+                        // count as attention.
+                        Either4::First(()) => {
+                            attention.wake(Instant::now().as_millis());
+                            model.clear_notice();
+                        }
+                        Either4::Second(notice) => {
+                            attention.wake(Instant::now().as_millis());
+                            model.set_notice(notice);
+                        }
+                        Either4::Third(()) => {
+                            attention.wake(Instant::now().as_millis());
                             if alert_active() {
-                                render_message_frame(&mut next, "Locate alert", "Press to stop");
+                                render_message_frame(
+                                    &mut next,
+                                    &ui_status(&name),
+                                    "Locate alert",
+                                    "Press to stop",
+                                );
                                 push!();
                                 redraw = false;
                             }
                         }
+                        // A battery sample is the one thing here nobody
+                        // asked for, so it redraws without counting as
+                        // attention — waking on it would reset the lapse
+                        // timer every few minutes forever. The panel is
+                        // bistable and already showing the old reading, so
+                        // the redraw is a partial refresh of the indicator
+                        // and little else.
+                        Either4::Fourth(()) => {}
                     }
                 }
                 Either4::Third(()) => {
-                    render_message_frame(&mut next, "Sleeping", "Good night");
+                    render_message_frame(&mut next, &ui_status(&name), "Sleeping", "Good night");
                     push!();
                     display::sleep(&mut spi, &mut cs, &mut dc).await;
                     DISPLAY_SHUTDOWN_DONE.signal(());
@@ -2811,7 +2861,7 @@ mod firmware {
             }
 
             if redraw {
-                render_ui_frame(&mut next, model);
+                render_ui_frame(&mut next, &model, &ui_status(&name));
                 push!();
             }
         }
@@ -2970,180 +3020,23 @@ mod firmware {
         }
     }
 
-    /// One row of the OLED's five-line grid.
     #[cfg(feature = "display-oled")]
-    fn draw_oled_line(
+    fn render_oled_frame(
         fb: &mut display::Sh1106Fb,
-        text: &str,
-        row: i32,
-        style: embedded_graphics::mono_font::MonoTextStyle<
-            '_,
-            embedded_graphics::pixelcolor::BinaryColor,
-        >,
+        model: &UiModel,
+        status: &screen::StatusModel<'_>,
     ) {
-        use embedded_graphics::Drawable;
-        use embedded_graphics::geometry::Point;
-        use embedded_graphics::text::Text;
-        // FONT_6X10 baseline: rows 0..=4 fit in the 64 px panel.
-        let _ = Text::new(text, Point::new(0, 10 + row * 12), style).draw(fb);
+        screen::render_frame(fb, &screen::Layout::OLED_128X64, model, status);
     }
 
-    /// Render the current page onto the OLED frame buffer.
-    ///
-    /// Row 0 always names the device and row 1 always shows the menu
-    /// cursor, so the user can tell where they are without remembering;
-    /// the remaining three rows belong to the page.
     #[cfg(feature = "display-oled")]
-    async fn render_oled_frame(fb: &mut display::Sh1106Fb, model: UiModel) {
-        use core::fmt::Write as _;
-        use embedded_graphics::mono_font::MonoTextStyle;
-        use embedded_graphics::mono_font::ascii::FONT_6X10;
-        use embedded_graphics::pixelcolor::BinaryColor;
-
-        let style = MonoTextStyle::new(&FONT_6X10, BinaryColor::On);
-        fb.clear();
-
-        let name = device_name_snapshot().await;
-        draw_oled_line(
-            fb,
-            core::str::from_utf8(&name).unwrap_or(DEFAULT_DEVICE_NAME),
-            0,
-            style,
-        );
-
-        let mut line: heapless::String<24> = heapless::String::new();
-        match model.page() {
-            Page::Menu(item) => {
-                draw_oled_line(
-                    fb,
-                    match item {
-                        MenuItem::Status => "> Status",
-                        MenuItem::CheckIn => "> Check in",
-                        MenuItem::StartPairing => "> Start pairing",
-                        MenuItem::ClearBonds => "> Clear bonds",
-                    },
-                    1,
-                    style,
-                );
-
-                if item == MenuItem::Status {
-                    // Row 2 is the most valuable line on the page, so a
-                    // pending result outranks the pairing state there; the
-                    // PIN comes back as soon as the notice clears.
-                    match model.notice() {
-                        Some(notice) => draw_oled_line(
-                            fb,
-                            match notice {
-                                UiNotice::CheckInRequested => "checking in...",
-                                UiNotice::PairingStarted => "pairing started",
-                                UiNotice::PairingUnavailable => "pair unavailable",
-                                UiNotice::BondsCleared => "bonds cleared",
-                                UiNotice::ClearFailed => "CLEAR FAILED",
-                            },
-                            2,
-                            style,
-                        ),
-                        None => {
-                            let pin = PAIRING_PIN.load(Ordering::Acquire);
-                            if !PAIRING_MODE.load(Ordering::Acquire) {
-                                let _ = write!(line, "pairing closed");
-                            } else if pin != u32::MAX {
-                                let _ = write!(line, "PIN {pin:06}");
-                            } else {
-                                let _ = write!(line, "pairing (no PIN)");
-                            }
-                            draw_oled_line(fb, &line, 2, style);
-                        }
-                    }
-
-                    line.clear();
-                    let _ = write!(
-                        line,
-                        "{} b{}/{}{}",
-                        if ADV_ALLOWED.load(Ordering::Acquire) {
-                            "advertising"
-                        } else {
-                            "off (wired)"
-                        },
-                        BLE_BOND_COUNT.load(Ordering::Acquire),
-                        ble_store::MAX_BONDS,
-                        if PAIRING_LOCKED_OUT.load(Ordering::Acquire) {
-                            " LOCK"
-                        } else {
-                            ""
-                        },
-                    );
-                    draw_oled_line(fb, &line, 3, style);
-
-                    line.clear();
-                    match board_power::battery_millivolts() {
-                        Some(mv) => {
-                            let _ = write!(line, "batt {mv} mV");
-                            if let Some(level) = board_power::battery_level() {
-                                let _ = write!(line, " {level}%");
-                            }
-                        }
-                        None => {
-                            let _ = write!(line, "batt --");
-                        }
-                    }
-                    draw_oled_line(fb, &line, 4, style);
-                } else {
-                    draw_oled_line(
-                        fb,
-                        match item {
-                            MenuItem::CheckIn => "2x: check in",
-                            MenuItem::StartPairing => "2x: start",
-                            MenuItem::ClearBonds => "2x: continue",
-                            MenuItem::Status => "",
-                        },
-                        2,
-                        style,
-                    );
-                    draw_oled_line(fb, "1x: next", 3, style);
-                    draw_oled_line(fb, "hold: back", 4, style);
-                }
-            }
-            Page::Confirm {
-                confirm_selected, ..
-            } => {
-                draw_oled_line(fb, "Clear all bonds?", 1, style);
-                draw_oled_line(
-                    fb,
-                    if confirm_selected {
-                        "  Cancel"
-                    } else {
-                        "> Cancel"
-                    },
-                    2,
-                    style,
-                );
-                draw_oled_line(
-                    fb,
-                    if confirm_selected {
-                        "> CLEAR"
-                    } else {
-                        "  CLEAR"
-                    },
-                    3,
-                    style,
-                );
-                draw_oled_line(fb, "2x: confirm", 4, style);
-            }
-        }
-    }
-
-    /// Center a short message on an otherwise blank panel.
-    #[cfg(feature = "display-oled")]
-    fn render_oled_message(fb: &mut display::Sh1106Fb, title: &str, detail: &str) {
-        use embedded_graphics::mono_font::MonoTextStyle;
-        use embedded_graphics::mono_font::ascii::FONT_6X10;
-        use embedded_graphics::pixelcolor::BinaryColor;
-
-        let style = MonoTextStyle::new(&FONT_6X10, BinaryColor::On);
-        fb.clear();
-        draw_oled_line(fb, title, 1, style);
-        draw_oled_line(fb, detail, 2, style);
+    fn render_oled_message(
+        fb: &mut display::Sh1106Fb,
+        status: &screen::StatusModel<'_>,
+        title: &str,
+        detail: &str,
+    ) {
+        screen::render_message(fb, &screen::Layout::OLED_128X64, status, title, detail);
     }
 
     /// Owns the SH1106 panel and the display attention policy.
@@ -3163,10 +3056,18 @@ mod firmware {
         );
         let mut fb = display::Sh1106Fb::new();
         oled.init().await;
-        render_oled_frame(&mut fb, model).await;
+        {
+            let name = device_name_snapshot().await;
+            render_oled_frame(&mut fb, &model, &ui_status(&name));
+        }
         oled.flush(&fb).await;
 
         loop {
+            // The name changes rarely but every frame this pass might draw
+            // needs it, so it is snapshotted once and lent out; the rest of
+            // the status is rebuilt at each draw.
+            let name = device_name_snapshot().await;
+
             // Both holds are edge-published by other tasks, but re-deriving
             // them here each pass is idempotent and cannot miss an edge.
             let now = Instant::now().as_millis();
@@ -3191,7 +3092,10 @@ mod firmware {
             match select4(
                 UI_INPUT_CH.receive(),
                 select4(
-                    UI_REFRESH.wait(),
+                    // Both are "content moved, redraw if the panel is
+                    // already lit"; they differ only in what they do to
+                    // the model, so they share an arm.
+                    select(UI_REFRESH.wait(), battery_ui_changed()),
                     UI_NOTICE.wait(),
                     UI_WAKE.wait(),
                     UI_ALERT_CHANGED.wait(),
@@ -3219,11 +3123,14 @@ mod firmware {
                 }
                 Either4::Second(event) => match event {
                     // Content the user did not ask for: redraw if the
-                    // panel is already lit, but never light it.
-                    Either4::First(()) => {
+                    // panel is already lit, but never light it. That rule
+                    // is what keeps a battery sample from waking a tracker
+                    // in a drawer every few minutes.
+                    Either4::First(Either::First(())) => {
                         model.clear_notice();
                         redraw = true;
                     }
+                    Either4::First(Either::Second(())) => redraw = true,
                     Either4::Second(notice) => {
                         model.set_notice(notice);
                         transition = attention.wake(Instant::now().as_millis());
@@ -3246,7 +3153,12 @@ mod firmware {
                     }
                 },
                 Either4::Third(()) => {
-                    render_oled_message(&mut fb, "Powering off", "press to wake");
+                    render_oled_message(
+                        &mut fb,
+                        &ui_status(&name),
+                        "Powering off",
+                        "press to wake",
+                    );
                     oled.flush(&fb).await;
                     oled.set_contrast(display::CONTRAST_NORMAL).await;
                     oled.set_display_on(true).await;
@@ -3274,10 +3186,11 @@ mod firmware {
             }
 
             if redraw && attention.accepts_redraw() {
+                let status = ui_status(&name);
                 if alert_frame {
-                    render_oled_message(&mut fb, "Locate alert", "Press to stop");
+                    render_oled_message(&mut fb, &status, "Locate alert", "Press to stop");
                 } else {
-                    render_oled_frame(&mut fb, model).await;
+                    render_oled_frame(&mut fb, &model, &status);
                 }
                 oled.flush(&fb).await;
             }

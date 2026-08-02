@@ -82,7 +82,7 @@ pub use monitor::*;
 
 #[cfg(all(target_os = "none", feature = "battery"))]
 mod monitor {
-    use core::sync::atomic::{AtomicU8, AtomicU32, Ordering};
+    use core::sync::atomic::{AtomicU8, AtomicU16, AtomicU32, Ordering};
 
     use embassy_nrf::pac;
     use embassy_nrf::saadc::Saadc;
@@ -114,6 +114,46 @@ mod monitor {
     pub fn battery_state() -> BatteryState {
         BatteryState::from_u8(BATTERY_STATE.load(Ordering::Acquire))
     }
+
+    /// Most recent measured pack voltage, 0 before the first sample.
+    static BATTERY_MV: AtomicU16 = AtomicU16::new(0);
+    /// Most recent estimated charge level, 0xFF before the estimator has
+    /// seen a resting sample.
+    static BATTERY_LEVEL: AtomicU8 = AtomicU8::new(u8::MAX);
+
+    /// The last measured pack voltage in millivolts, or `None` before the
+    /// monitor's first sample.
+    ///
+    /// The display task reads these rather than joining
+    /// [`BATTERY_ANNOUNCE`], whose single-receiver budget is already spent
+    /// on the ULCP driver, and rather than calling [`sample_battery`],
+    /// which is single-consumer for the same reason. Two relaxed atomic
+    /// loads at frame-build time cost nothing and cannot race the driver.
+    pub fn battery_millivolts() -> Option<u16> {
+        match BATTERY_MV.load(Ordering::Acquire) {
+            0 => None,
+            mv => Some(mv),
+        }
+    }
+
+    /// The last estimated charge level in percent, or `None` until the
+    /// level estimator has had a resting sample to work from.
+    pub fn battery_level() -> Option<u8> {
+        match BATTERY_LEVEL.load(Ordering::Acquire) {
+            u8::MAX => None,
+            level => Some(level),
+        }
+    }
+
+    /// Raised when the charge class or estimated level moves — the two
+    /// things the on-screen indicator draws.
+    ///
+    /// This is a *redraw* prompt, never a wake: a battery sample the user
+    /// did not ask for must not light a panel, or a tracker in a drawer
+    /// would glow every five minutes forever. The e-paper needs it because
+    /// it is always showing something, so without a nudge it would keep a
+    /// stale charging bolt on screen for hours.
+    pub static BATTERY_UI_CHANGED: Signal<ThreadModeRawMutex, ()> = Signal::new();
 
     /// Whether the nRF USB regulator currently detects VBUS. This is the
     /// only external-power signal on this board — the charger's status LED
@@ -265,6 +305,12 @@ mod monitor {
                 level_percent: estimator.level(),
             };
 
+            // Published for the display task, which reads rather than
+            // subscribes. A measured pack never reads 0 mV, so the
+            // "no sample yet" sentinel cannot collide with a real value.
+            BATTERY_MV.store(sample.battery_mv, Ordering::Release);
+            BATTERY_LEVEL.store(sample.level_percent.unwrap_or(u8::MAX), Ordering::Release);
+
             if reply_pending || BATTERY_SAMPLE_REQUEST.try_take().is_some() {
                 reply_pending = false;
                 BATTERY_SAMPLE_REPLY.signal(sample);
@@ -278,6 +324,8 @@ mod monitor {
             if announced != Some(key) {
                 announced = Some(key);
                 announce.send(sample);
+                // The same two fields are what the panel draws.
+                BATTERY_UI_CHANGED.signal(());
             }
 
             // Protective cell cutoff: sustained critical voltage while on

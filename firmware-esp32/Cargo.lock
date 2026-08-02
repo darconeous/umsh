@@ -2828,6 +2828,8 @@ dependencies = [
 name = "umsh-ux-display-tracker"
 version = "0.1.0"
 dependencies = [
+ "embedded-graphics",
+ "heapless 0.8.0",
  "umsh-ux-tracker",
 ]
 

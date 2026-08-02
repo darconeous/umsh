@@ -18,16 +18,21 @@
 //!   one (send the menu home).
 //! - [`gate`] — what a gesture means when the screen is dark, an alert
 //!   is running, or the panel is mid-refresh.
+//! - [`screen`] — what a frame looks like: the rows, what they say, and
+//!   the battery indicator every frame carries. Behind the `screen`
+//!   feature, since two boards in this family have no panel.
 //!
 //! Button gestures themselves come from
 //! [`umsh_ux_tracker::button::ButtonFsm`]; this crate adds only the
 //! shared timing policy, [`button_timings`]. Policy that depends on the
-//! board — which effects the menu items map to, how a frame is drawn,
-//! what shutting down entails — belongs in the firmware.
+//! board — which effects the menu items map to, what shutting down
+//! entails — belongs in the firmware.
 //!
-//! Rendering is deliberately absent. Every panel in this class is an
-//! `embedded-graphics` `DrawTarget`, but their geometries are far enough
-//! apart (128×64 OLED versus 200×200 e-paper) that layout is board work.
+//! Rendering used to belong there too, on the theory that a 128×64 OLED
+//! and a 200×200 e-paper have too little in common to share a layout.
+//! They have more in common than they have pixels: [`screen`] takes a
+//! per-board [`screen::Layout`] and draws the rest once, so the class
+//! agrees on what a status page is rather than on how tall it is.
 //!
 //! See `docs/ux/` for the user-facing rules these modules encode and
 //! `docs/firmware-architecture.md` for the BSP / UX / App / Binary
@@ -36,6 +41,8 @@
 pub mod attention;
 pub mod gate;
 pub mod menu;
+#[cfg(feature = "screen")]
+pub mod screen;
 
 use core::time::Duration;
 use umsh_ux_tracker::button::ButtonTimings;

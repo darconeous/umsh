@@ -7,8 +7,12 @@ but the display makes status and sensitive device actions visible.
 
 ## Implemented behavior
 
-The e-paper menu contains Status, Check in, Start pairing, and Clear bonds. It
-shows bond count and whether pairing is open, closed, or locked.
+The e-paper menu contains Status, Check in, Start pairing, and Clear bonds. The
+Status page names the device, says whether it is advertising, gives the bond
+count, and shows the pairing PIN while a window is open. Every frame — menu,
+confirmation, and the transient message screens alike — carries a header with
+the device name and a battery indicator showing the approximate charge and
+whether external power is present.
 
 | Input | Meaning |
 |---|---|
@@ -52,8 +56,9 @@ Implemented in [`firmware/nrf52-tracker/src/main.rs`][techo-src] over the shared
 
 ## Recommended evolution
 
-- Keep the default page glanceable: battery, BLE connection/pairing, radio or
-  last activity, and silence/attention state if applicable.
+- Keep extending the default page toward glanceability: it carries battery and
+  BLE connection/pairing today; radio or last activity, and silence/attention
+  state where applicable, are still missing.
 - Print the one-button legend on every menu or confirmation page.
 - Keep the capacitive control dedicated to illumination unless hardware testing
   shows it is reliable enough and clearly labeled for navigation.

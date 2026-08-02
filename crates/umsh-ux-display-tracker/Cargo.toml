@@ -24,6 +24,12 @@ repository.workspace = true
 
 [features]
 default = []
+# Frame rendering (`screen`). Off by default so the boards in this family
+# that have no panel — T-1000E, SenseCAP Solar — still get the menu,
+# attention, and gate policy without pulling in a graphics stack.
+screen = ["dep:embedded-graphics", "dep:heapless"]
 
 [dependencies]
 umsh-ux-tracker = { path = "../umsh-ux-tracker" }
+embedded-graphics = { version = "0.8", default-features = false, optional = true }
+heapless = { version = "0.8", default-features = false, optional = true }

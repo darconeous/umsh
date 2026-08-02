@@ -65,7 +65,7 @@ umsh-crypto = { path = "../../crates/umsh-crypto", default-features = false, fea
 umsh-hal = { path = "../../crates/umsh-hal", default-features = false }
 umsh-journal-store = { path = "../../crates/umsh-journal-store" }
 umsh-ux-tracker = { path = "../../crates/umsh-ux-tracker", default-features = false }
-umsh-ux-display-tracker = { path = "../../crates/umsh-ux-display-tracker", default-features = false }
+umsh-ux-display-tracker = { path = "../../crates/umsh-ux-display-tracker", default-features = false, features = ["screen"] }
 heapless = { version = "0.8", default-features = false }
 heapless09 = { package = "heapless", version = "0.9", default-features = false }
 embassy-futures = { version = "0.1", default-features = false }

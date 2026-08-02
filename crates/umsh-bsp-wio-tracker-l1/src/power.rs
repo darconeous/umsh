@@ -146,6 +146,14 @@ mod monitor {
         }
     }
 
+    /// Raised when the charge class or estimated level moves — the two
+    /// things the on-screen indicator draws.
+    ///
+    /// This is a *redraw* prompt, never a wake: a battery sample the user
+    /// did not ask for must not light this board's emissive panel, or a
+    /// tracker in a drawer would glow every five minutes forever.
+    pub static BATTERY_UI_CHANGED: Signal<ThreadModeRawMutex, ()> = Signal::new();
+
     /// Whether the nRF USB regulator currently detects VBUS.
     ///
     /// The board's charger exposes no status line to the MCU, so this is
@@ -320,6 +328,8 @@ mod monitor {
             if announced != Some(key) {
                 announced = Some(key);
                 announce.send(sample);
+                // The same two fields are what the panel draws.
+                BATTERY_UI_CHANGED.signal(());
             }
 
             // Protective cell cutoff: sustained critical voltage while on
