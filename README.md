@@ -1,26 +1,18 @@
-# UMSH
-
 ![UMSH Logo](docs/logo/umsh-logo-orange-sm.png)
 
-**UMSH** is an experimental, LoRa-oriented mesh protocol designed from the ground up with strong cryptography, clean layer separation, and strict bandwidth discipline.
+\[ [Protocol Book](https://darconeous.github.io/umsh/docs/protocol/) | [Rustdocs](https://darconeous.github.io/umsh/docs/rust/) \]
 
-Originally intended as a proposal for a "MeshCore 2.0", UMSH grew out of a simple question: what would a cryptographically addressed LoRa mesh look like with security and clean architecture as primary design goals? Inspired by MeshCore, it started as a thought experiment addressing the [critical shortcomings](https://darconeous.github.io/umsh/docs/protocol/meshcore-comparison.html#cryptography) in that protocol that would practically require backward-incompatible changes to fix. What began as a toy protocol has since been developed into a [comprehensive specification](https://darconeous.github.io/umsh/docs/protocol/).
+**UMSH** is an experimental, LoRa-oriented mesh protocol designed from the ground up with strong cryptography, clean layer separation, and strict bandwidth discipline. The primary use case it enables is decentralized, wide-area text chat and location/sensor reporting.
+
+Originally intended as a proposal for a "[MeshCore](https://github.com/meshcore-dev/MeshCore) 2.0", UMSH grew out of a simple question: what would a cryptographically addressed LoRa mesh protocol look like with proper security and clean architecture as primary design goals? Inspired by [MeshCore](https://github.com/meshcore-dev/MeshCore), it started as a thought experiment addressing the [critical shortcomings](https://darconeous.github.io/umsh/docs/protocol/meshcore-comparison.html#cryptography) in that protocol that would practically require backward-incompatible changes to fix. What began as a toy protocol has since been developed into a [comprehensive specification](https://darconeous.github.io/umsh/docs/protocol/), reference implementation, and iOS app.
 
 > [!NOTE]
-> All of the content in this repository was written with the assistance of an LLM.
-> In the case of the [specification](https://darconeous.github.io/umsh/docs/protocol/),
-> LLM usage was largely limited to improving readability and acting as a research
-> assistant when writing the comparison documents.
+> Practically all of the content in this repository was written with the assistance of an LLM.
+> For more details, see [`docs/AI.md`](docs/AI.md). This project would not exist without
+> LLM coding assistance, as the amount of work required to write this by hand would be too much
+> for me to dedicate to unpaid work.
 >
-> The reference implementation and the Wireshark dissector were more or less written
-> by the LLM, with heavy feedback from [me](https://github.com/darconeous), mostly
-> around API ergonomics and the occasional WTF moments that come with working with a
-> coding LLM(if you know, you know). The reference code seems to be at reasonable starting
-> point and there are plenty of test cases already implemented. However, there are still
-> code-smells and anti-patterns that need to be addressed.
->
-> That said, I don't consider this AI slop. I've put dozens of hours into this project,
-> and it has taken considerable effort to get it to this point. If you'd like tag along
+> It has taken considerable effort to get it to this point. If you'd like tag along
 > for the ride and see where this ends up going, follow the project on github to see
 > updates. I'd also love to hear your feedback!
 
