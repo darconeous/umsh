@@ -25,6 +25,9 @@ side. The protocol itself is specified in the chapters that follow:
   identifier
 - [ULCP over BLE](ulcp-ble.md) binds the protocol to BLE GATT; serial
   transports (UART, USB-CDC) use HDLC-Lite framing
+- [Node Management](app-node-management.md) carries the same grammar over
+  the mesh itself, letting an authorized administrator reach a device's
+  device domain in-band, with no local link at all
 
 One protocol serves every deployment of a device; the familiar deployment
 names describe configuration, not distinct firmware:

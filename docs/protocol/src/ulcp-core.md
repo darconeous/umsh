@@ -611,6 +611,8 @@ host is attached:
   forwarding switch (`PROP_MAC_REPEATER_ENABLED`), with the rest of the
   range reserved for future definition (further repeater policy,
   positioning, periodic advertisement of the device identity, and similar)
+* the administrator list ([`PROP_DEV_ADMINS`](app-node-management.md#prop-dev-admins))
+  authorizing [node management](app-node-management.md) over the mesh
 * transport configuration such as `PROP_BLE_PAIRING_PIN`
 
 The RF configuration is deliberately device-domain: a site repeater keeps
@@ -790,6 +792,7 @@ Id | Name
 18 | `STATUS_CCA_FAILURE`
 19 | `STATUS_ALREADY`
 20 | `STATUS_ITEM_NOT_FOUND`
+21 | `STATUS_CURSOR_INVALID`
 32 | `STATUS_DUTY_LIMIT`
 
 `STATUS_OK`
@@ -843,6 +846,13 @@ Id | Name
 `STATUS_ITEM_NOT_FOUND`
 : The item or selector passed to `CMD_PROP_REMOVE` does not match any item
   in the property.
+
+`STATUS_CURSOR_INVALID`
+: The cursor presented in a [Node Management](app-node-management.md#cursors)
+  continuation is not one the device can honor — it does not parse, names a
+  different property, or the underlying data has changed so that the
+  position is meaningless. The administrator restarts the read from an
+  initial, cursor-less request.
 
 `STATUS_CCA_FAILURE`
 : The packet was not sent due to a CCA failure. This status code is only
@@ -946,6 +956,7 @@ Code | Name                      | Requires                             | Define
 40   | `CAP_REPEATER`            | `CAP_DEV_IDENTITY`                   | [Device Domain](ulcp-device.md#capabilities)
 41   | `CAP_IDENT`               | `CAP_DEV_IDENTITY`                   | [Device Domain](ulcp-device.md#capabilities)
 42   | `CAP_ALERT`               | —                                    | [Device Domain](ulcp-device.md#capabilities)
+43   | `CAP_ADMIN`               | `CAP_DEV_IDENTITY`                   | [Node Management](app-node-management.md#capabilities)
 515  | `CAP_PHY_LORA`            | —                                    | [Radio Control](ulcp-radio.md#capabilities)
 
 A device **MUST NOT** advertise a capability without also advertising the

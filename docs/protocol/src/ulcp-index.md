@@ -76,6 +76,7 @@ Id   | Mnemonic                                                                 
 4820 | [`PROP_PHY_DUTY_NOW`](ulcp-radio.md#prop-phy-duty-now)                     | Get                      | `CAP_PHY_DUTY_LIMIT`
 4822 | [`PROP_PHY_DUTY_LIMIT`](ulcp-radio.md#prop-phy-duty-limit)                 | Get, Set                 | `CAP_PHY_DUTY_LIMIT`
 4864 | [`PROP_BLE_PAIRING_PIN`](ulcp-ble.md#prop-ble-pairing-pin)                 | Set                      | BLE transport
+4865 | [`PROP_DEV_ADMINS`](app-node-management.md#prop-dev-admins)                | Get, Set, Insert, Remove | `CAP_ADMIN`
 
 ## Capabilities
 
@@ -97,6 +98,7 @@ Code | Name                      | Defined in
 40   | `CAP_REPEATER`            | [Device Domain](ulcp-device.md#capabilities)
 41   | `CAP_IDENT`               | [Device Domain](ulcp-device.md#capabilities)
 42   | `CAP_ALERT`               | [Device Domain](ulcp-device.md#capabilities)
+43   | `CAP_ADMIN`               | [Node Management](app-node-management.md#capabilities)
 515  | `CAP_PHY_LORA`            | [Radio Control](ulcp-radio.md#capabilities)
 
 ## Status Codes
@@ -110,8 +112,8 @@ Id | Name                      | Id | Name
 2  | `STATUS_UNIMPLEMENTED`    | 18 | `STATUS_CCA_FAILURE`
 3  | `STATUS_INVALID_ARGUMENT` | 19 | `STATUS_ALREADY`
 4  | `STATUS_INVALID_STATE`    | 20 | `STATUS_ITEM_NOT_FOUND`
-5  | `STATUS_INVALID_COMMAND`  | 32 | `STATUS_DUTY_LIMIT`
-7  | `STATUS_INTERNAL_ERROR`   |    |
+5  | `STATUS_INVALID_COMMAND`  | 21 | `STATUS_CURSOR_INVALID`
+7  | `STATUS_INTERNAL_ERROR`   | 32 | `STATUS_DUTY_LIMIT`
 9  | `STATUS_PARSE_ERROR`      |    |
 10 | `STATUS_IN_PROGRESS`      |    |
 11 | `STATUS_NOMEM`            |    |
