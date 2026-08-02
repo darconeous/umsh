@@ -219,6 +219,17 @@ struct AppRootView: View {
             .tag(AppTab.peers)
 
             NavigationStack {
+                NodeMapView()
+                    .appRadioToolbar(radioSnapshot) {
+                        showsRadioDetail = true
+                    }
+            }
+            .tabItem {
+                Label("Map", systemImage: "map")
+            }
+            .tag(AppTab.map)
+
+            NavigationStack {
                 SettingsView(
                     identity: localIdentity,
                     identityError: identityError,
@@ -2677,6 +2688,7 @@ private struct SynchronizedRadioPeer: Equatable {
 private enum AppTab: Hashable {
     case conversations
     case peers
+    case map
     case settings
 }
 

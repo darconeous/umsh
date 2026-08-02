@@ -58,6 +58,7 @@
 		10000000000000000000003B /* UMSH/Features/Conversations/TranscriptScrollSupport.swift in Sources */ = {isa = PBXBuildFile; fileRef = 20000000000000000000003B /* UMSH/Features/Conversations/TranscriptScrollSupport.swift */; };
 		10000000000000000000003C /* UMSH/Features/Conversations/ChatMessageBubble.swift in Sources */ = {isa = PBXBuildFile; fileRef = 20000000000000000000003C /* UMSH/Features/Conversations/ChatMessageBubble.swift */; };
 		10000000000000000000003D /* UMSH/Features/Conversations/MessageComposer.swift in Sources */ = {isa = PBXBuildFile; fileRef = 20000000000000000000003D /* UMSH/Features/Conversations/MessageComposer.swift */; };
+		10000000000000000000003E /* UMSH/Features/Map/NodeMapView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 20000000000000000000003E /* UMSH/Features/Map/NodeMapView.swift */; };
 		A6E6D53B301E775800820BB7 /* umsh-app-icon.png in Resources */ = {isa = PBXBuildFile; fileRef = A6E6D53A301E775800820BB7 /* umsh-app-icon.png */; };
 /* End PBXBuildFile section */
 
@@ -113,6 +114,7 @@
 		20000000000000000000003B /* UMSH/Features/Conversations/TranscriptScrollSupport.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = UMSH/Features/Conversations/TranscriptScrollSupport.swift; sourceTree = "<group>"; };
 		20000000000000000000003C /* UMSH/Features/Conversations/ChatMessageBubble.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = UMSH/Features/Conversations/ChatMessageBubble.swift; sourceTree = "<group>"; };
 		20000000000000000000003D /* UMSH/Features/Conversations/MessageComposer.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = UMSH/Features/Conversations/MessageComposer.swift; sourceTree = "<group>"; };
+		20000000000000000000003E /* UMSH/Features/Map/NodeMapView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = UMSH/Features/Map/NodeMapView.swift; sourceTree = "<group>"; };
 		A6E6D53A301E775800820BB7 /* umsh-app-icon.png */ = {isa = PBXFileReference; lastKnownFileType = image.png; name = "umsh-app-icon.png"; path = "../../docs/logo/umsh-app-icon.png"; sourceTree = "<group>"; };
 /* End PBXFileReference section */
 
@@ -154,6 +156,7 @@
 				200000000000000000000002D /* UMSH/Features/Peers/PeerDetailView.swift */,
 				200000000000000000000002E /* UMSH/Features/Peers/NodeImportView.swift */,
 				200000000000000000000002F /* UMSH/Features/Peers/DiscoverPeersView.swift */,
+				20000000000000000000003E /* UMSH/Features/Map/NodeMapView.swift */,
 				200000000000000000000032 /* UMSH/Features/Channels/ChannelsView.swift */,
 				200000000000000000000033 /* UMSH/Features/Channels/ChannelJoinView.swift */,
 				200000000000000000000034 /* UMSH/Features/Channels/ChannelCreateView.swift */,
@@ -292,6 +295,7 @@
 				100000000000000000000002D /* UMSH/Features/Peers/PeerDetailView.swift in Sources */,
 				100000000000000000000002E /* UMSH/Features/Peers/NodeImportView.swift in Sources */,
 				100000000000000000000002F /* UMSH/Features/Peers/DiscoverPeersView.swift in Sources */,
+				10000000000000000000003E /* UMSH/Features/Map/NodeMapView.swift in Sources */,
 				100000000000000000000032 /* UMSH/Features/Channels/ChannelsView.swift in Sources */,
 				100000000000000000000033 /* UMSH/Features/Channels/ChannelJoinView.swift in Sources */,
 				100000000000000000000034 /* UMSH/Features/Channels/ChannelCreateView.swift in Sources */,

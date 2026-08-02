@@ -25,7 +25,6 @@ struct PeersView: View {
     var clearDiscoveredNodes: (() async -> Void)? = nil
     /// Send one zero-hop Identity Request soliciting nearby nodes.
     var solicitNearbyIdentities: ((PeerRole?) async -> Bool)? = nil
-    @State private var presentation: PeersPresentation = .list
     @State private var showsAddPeer = false
     @State private var showsDiscovery = false
     @AppStorage("peers.sort") private var sortOrder: PeersSortOrder = .alphabetic
@@ -34,24 +33,27 @@ struct PeersView: View {
     @State private var peerPendingRemoval: PeerSummary?
 
     var body: some View {
-        VStack(spacing: 0) {
-            Picker("Presentation", selection: $presentation) {
-                Text("List").tag(PeersPresentation.list)
-                Text("Map").tag(PeersPresentation.map)
-            }
-            .pickerStyle(.segmented)
-            .padding()
-
-            switch presentation {
-            case .list: peerList
-            case .map:
+        // One `List` at the root, with every state inside it, so the search
+        // field belongs to a scroll view and hides until the list is dragged
+        // down — the same reach the Conversations tab answers. Wrapped in
+        // anything else it is pinned under the title with nowhere to go.
+        List {
+            if isSearching {
+                searchResults
+            } else if peers.isEmpty {
                 ContentUnavailableView {
-                    Label("No reported locations", systemImage: "map")
+                    Label("No known nodes", systemImage: "point.3.connected.trianglepath.dotted")
                 } description: {
-                    Text("Locations reported by observed nodes will appear here with their precision and age.")
+                    Text("Import a peer to get started, or listen for nodes announcing themselves nearby.")
+                } actions: {
+                    Button("Discover peers") { showsDiscovery = true }
+                        .buttonStyle(.borderedProminent)
                 }
+            } else {
+                peerSections
             }
         }
+        .listStyle(.insetGrouped)
         .navigationTitle("Peers")
         .searchable(text: $searchText, prompt: "Name, alias, address, or hint")
         .toolbar {
@@ -131,87 +133,69 @@ struct PeersView: View {
     // MARK: - List
 
     @ViewBuilder
-    private var peerList: some View {
-        if peers.isEmpty {
-            ContentUnavailableView {
-                Label("No known nodes", systemImage: "point.3.connected.trianglepath.dotted")
-            } description: {
-                Text("Import a peer to get started, or listen for nodes announcing themselves nearby.")
-            } actions: {
-                Button("Discover peers") { showsDiscovery = true }
-                    .buttonStyle(.borderedProminent)
+    private var peerSections: some View {
+        let radios = arranged(visiblePeers.filter(\.isUlcpDevice))
+        if !radios.isEmpty {
+            Section("Saved radio") {
+                ForEach(radios) { peer in peerRow(peer) }
             }
-        } else if isSearching {
-            searchResults
-        } else {
-            List {
-                let radios = arranged(visiblePeers.filter(\.isUlcpDevice))
-                if !radios.isEmpty {
-                    Section("Saved radio") {
-                        ForEach(radios) { peer in peerRow(peer) }
-                    }
-                }
-                let favorites = arranged(visiblePeers.filter { !$0.isUlcpDevice && $0.isFavorite })
-                if !favorites.isEmpty {
-                    Section("Favorites") {
-                        ForEach(favorites) { peer in peerRow(peer) }
-                    }
-                }
-                let saved = arranged(
-                    visiblePeers.filter { !$0.isUlcpDevice && !$0.isFavorite }
-                )
-                if !saved.isEmpty {
-                    Section("Saved nodes") {
-                        ForEach(saved) { peer in peerRow(peer) }
-                    }
-                }
-                if visiblePeers.isEmpty {
-                    Section {
-                        Text("No saved nodes. Nodes heard over the air appear in search until you save them.")
-                            .foregroundStyle(.secondary)
-                    }
-                }
-                Section {
-                    Button("Discover peers") { showsDiscovery = true }
-                } footer: {
-                    Text("A bounded listening session for nodes announcing themselves nearby.")
-                }
+        }
+        let favorites = arranged(visiblePeers.filter { !$0.isUlcpDevice && $0.isFavorite })
+        if !favorites.isEmpty {
+            Section("Favorites") {
+                ForEach(favorites) { peer in peerRow(peer) }
             }
-            .listStyle(.insetGrouped)
+        }
+        let saved = arranged(
+            visiblePeers.filter { !$0.isUlcpDevice && !$0.isFavorite }
+        )
+        if !saved.isEmpty {
+            Section("Saved nodes") {
+                ForEach(saved) { peer in peerRow(peer) }
+            }
+        }
+        if visiblePeers.isEmpty {
+            Section {
+                Text("No saved nodes. Nodes heard over the air appear in search until you save them.")
+                    .foregroundStyle(.secondary)
+            }
+        }
+        Section {
+            Button("Discover peers") { showsDiscovery = true }
+        } footer: {
+            Text("A bounded listening session for nodes announcing themselves nearby.")
         }
     }
 
     /// Search spans every recorded node, including the transient tier the
     /// main list hides — that is the deliberate way discovered-but-unsaved
     /// nodes stay reachable.
+    @ViewBuilder
     private var searchResults: some View {
-        List {
-            let saved = arranged(visiblePeers.filter { matchesSearch($0) })
-            if !saved.isEmpty {
-                Section("Saved") {
-                    ForEach(saved) { peer in peerRow(peer) }
-                }
-            }
-            let discovered = arranged(
-                peers.filter { !$0.isSaved && !$0.isUlcpDevice && matchesSearch($0) }
-            )
-            if !discovered.isEmpty {
-                Section {
-                    ForEach(discovered) { peer in peerRow(peer) }
-                } header: {
-                    Text("Discovered nodes")
-                } footer: {
-                    Text("Heard over the air but not saved. Swipe to save one, or open it for details.")
-                }
-            }
-            if saved.isEmpty && discovered.isEmpty {
-                Section {
-                    Text("No nodes match this search.")
-                        .foregroundStyle(.secondary)
-                }
+        let saved = arranged(visiblePeers.filter { matchesSearch($0) })
+        if !saved.isEmpty {
+            Section("Saved") {
+                ForEach(saved) { peer in peerRow(peer) }
             }
         }
-        .listStyle(.insetGrouped)
+        let discovered = arranged(
+            peers.filter { !$0.isSaved && !$0.isUlcpDevice && matchesSearch($0) }
+        )
+        if !discovered.isEmpty {
+            Section {
+                ForEach(discovered) { peer in peerRow(peer) }
+            } header: {
+                Text("Discovered nodes")
+            } footer: {
+                Text("Heard over the air but not saved. Swipe to save one, or open it for details.")
+            }
+        }
+        if saved.isEmpty && discovered.isEmpty {
+            Section {
+                Text("No nodes match this search.")
+                    .foregroundStyle(.secondary)
+            }
+        }
     }
 
     // MARK: - Rows
@@ -395,11 +379,6 @@ struct PeersView: View {
     private func matchesSearch(_ peer: PeerSummary) -> Bool {
         peer.matches(searchQuery: searchText)
     }
-}
-
-private enum PeersPresentation: Hashable {
-    case list
-    case map
 }
 
 private enum PeersSortOrder: String, CaseIterable, Identifiable {
