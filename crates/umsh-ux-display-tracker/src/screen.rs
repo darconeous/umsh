@@ -436,12 +436,15 @@ pub fn draw_battery_icon<D>(
     let solid = PrimitiveStyle::with_fill(BinaryColor::On);
 
     // Charging with nothing to fill a body with: the bolt is the whole
-    // indicator, centered in the zone the body would otherwise occupy.
+    // indicator. It keeps the zone's right edge rather than centering in
+    // it, so the indicator stays anchored to the same corner whatever it
+    // is currently drawing — a marker that slides sideways when the
+    // charger goes in reads as a second change on top of the real one.
     if indicator.bolt_stands_alone() {
         let zone = Size::new(metrics.zone_width(), metrics.body.height);
         let bolt = metrics.solo_bolt;
         let at = Point::new(
-            top_left.x + (zone.width.saturating_sub(bolt.width) / 2) as i32,
+            top_left.x + zone.width.saturating_sub(bolt.width) as i32,
             top_left.y + (zone.height.saturating_sub(bolt.height) / 2) as i32,
         );
         draw_bolt(target, at, bolt, solid);
@@ -1337,17 +1340,6 @@ mod tests {
     fn charging_without_a_level_replaces_the_body_with_a_bolt() {
         for layout in layouts() {
             let zone = layout.battery_zone();
-            let body = Rectangle::new(
-                Point::new(
-                    zone.top_left.x + (layout.battery.bolt_width + layout.battery.spacing) as i32,
-                    zone.top_left.y,
-                ),
-                Size::new(
-                    layout.battery.body.width + layout.battery.nub.width,
-                    layout.battery.body.height,
-                ),
-            );
-
             let mut charging = TestPanel::new(layout.size);
             let mut status = demo_status();
             status.battery = BatteryIndicator {
@@ -1382,20 +1374,32 @@ mod tests {
                 layout.size
             );
 
-            // The right-hand body region is where the outline and nub
-            // live; a solo bolt is centered and must leave the nub column
-            // clear, so nothing suggests a body outline is still there.
-            let nub = Rectangle::new(
+            // The bolt keeps the zone's right edge, so the indicator does
+            // not shift sideways when a charger goes in. Its rightmost
+            // column must be lit and everything left of the bolt clear —
+            // which also proves no body outline survived.
+            let solo = layout.battery.solo_bolt;
+            let right_edge = Rectangle::new(
                 Point::new(
-                    body.top_left.x + layout.battery.body.width as i32,
-                    body.top_left.y,
+                    zone.top_left.x + zone.size.width as i32 - 1,
+                    zone.top_left.y,
                 ),
-                Size::new(layout.battery.nub.width, layout.battery.body.height),
+                Size::new(1, zone.size.height),
+            );
+            assert!(
+                charging.lit_in(right_edge) > 0,
+                "the solo bolt is not right-aligned on {:?}",
+                layout.size
+            );
+
+            let left_of_bolt = Rectangle::new(
+                zone.top_left,
+                Size::new(zone.size.width - solo.width, zone.size.height),
             );
             assert_eq!(
-                charging.lit_in(nub),
+                charging.lit_in(left_of_bolt),
                 0,
-                "the solo bolt spilled into the terminal nub on {:?}",
+                "something remained left of the solo bolt on {:?}",
                 layout.size
             );
         }
