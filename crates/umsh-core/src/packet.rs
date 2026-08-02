@@ -117,7 +117,7 @@ impl PayloadType {
                     | PacketType::Multicast
                     | PacketType::Broadcast
             ),
-            Self::TextMessage | Self::CoapOverUmsh | Self::NodeManagement => matches!(
+            Self::TextMessage | Self::CoapOverUmsh => matches!(
                 packet_type,
                 PacketType::Unicast
                     | PacketType::UnicastAckReq
@@ -125,7 +125,7 @@ impl PayloadType {
                     | PacketType::BlindUnicastAckReq
                     | PacketType::Multicast
             ),
-            Self::ChatRoomMessage => matches!(
+            Self::NodeManagement | Self::ChatRoomMessage => matches!(
                 packet_type,
                 PacketType::Unicast
                     | PacketType::UnicastAckReq
@@ -1163,8 +1163,29 @@ impl<'a> UnsealedPacket<'a> {
 
 #[cfg(test)]
 mod tests {
-    use super::{NodeHint, PublicKey, RouterHint};
+    use super::{NodeHint, PacketType, PayloadType, PublicKey, RouterHint};
     use crate::AddressParseError;
+
+    #[test]
+    fn node_management_rides_only_unicast() {
+        for packet_type in [
+            PacketType::Unicast,
+            PacketType::UnicastAckReq,
+            PacketType::BlindUnicast,
+            PacketType::BlindUnicastAckReq,
+        ] {
+            assert!(PayloadType::NodeManagement.allowed_for(packet_type));
+        }
+        for packet_type in [
+            PacketType::Multicast,
+            PacketType::Broadcast,
+            PacketType::MacAck,
+        ] {
+            assert!(!PayloadType::NodeManagement.allowed_for(packet_type));
+        }
+        assert!(PayloadType::TextMessage.allowed_for(PacketType::Multicast));
+        assert!(PayloadType::CoapOverUmsh.allowed_for(PacketType::Multicast));
+    }
 
     // Reference address from the addressing chapter discussion; first byte 0x5e.
     const EXAMPLE_B58: &str = "7NeD1xuPGwZgikCNUaPhmMB13miitwoAEYdzhkvQVu9o";
