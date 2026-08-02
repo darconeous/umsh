@@ -151,8 +151,16 @@ fn status(
         },
         battery_mv: Some(3_950),
         link,
-        bonds: 1,
+        bonds: 3,
         pairing,
+        stats: StatsModel {
+            tx_frames: 128,
+            rx_frames: 4_071,
+            rx_accepted: 3_588,
+            forwarded: 42,
+            tx_power_dbm: Some(22),
+            duty_permille: 13,
+        },
     }
 }
 
@@ -167,13 +175,29 @@ fn frames(layout: &Layout) -> Vec<Panel> {
         out.push(p);
     };
 
-    // Status page across the battery range.
+    // The resting frame: nothing to report but the battery.
+    push(&|p| {
+        render_frame(
+            p,
+            layout,
+            &UiModel::new(MenuItems::all()),
+            &status(
+                Some(72),
+                Some(ChargeClass::Discharging),
+                PairingState::Closed,
+                LinkState::Advertising,
+            ),
+        )
+    });
+
+    // Status page across the battery range, with a pairing window open.
     for (level, charge) in [
         (Some(100), Some(ChargeClass::Charged)),
-        (Some(72), Some(ChargeClass::Discharging)),
-        (Some(45), Some(ChargeClass::Charging)),
+        (Some(45), Some(ChargeClass::Discharging)),
         (Some(8), Some(ChargeClass::Discharging)),
         (None, None),
+        // Charging with no derivable level: bolt only, no body.
+        (None, Some(ChargeClass::Charging)),
     ] {
         push(&|p| {
             render_frame(
@@ -200,8 +224,26 @@ fn frames(layout: &Layout) -> Vec<Panel> {
         )
     });
 
+    // The stats page.
+    let mut s = UiModel::new(MenuItems::all());
+    s.apply(UiInput::Forward);
+    push(&|p| {
+        render_frame(
+            p,
+            layout,
+            &s,
+            &status(
+                Some(60),
+                Some(ChargeClass::Discharging),
+                PairingState::Closed,
+                LinkState::Advertising,
+            ),
+        )
+    });
+
     // A non-status menu item, where the gesture hints come back.
     let mut m = UiModel::new(MenuItems::all());
+    m.apply(UiInput::Forward);
     m.apply(UiInput::Forward);
     push(&|p| {
         render_frame(

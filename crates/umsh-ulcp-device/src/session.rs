@@ -60,11 +60,16 @@ pub enum TxPower {
     Dbm(i8),
 }
 
-/// Which battery measurements the platform reports through
-/// `PROP_BATTERY`. Fixed for the life of a session: these bits determine
-/// the field-flags octet of every snapshot, and a completed sample whose
-/// populated fields differ is refused (spec: the flags do not change
-/// while a session is attached).
+/// Which battery measurements the platform is *capable* of reporting
+/// through `PROP_BATTERY`. Fixed for the life of a session: these bits
+/// bound the field-flags octet of every snapshot.
+///
+/// An individual sample may populate fewer fields than are advertised —
+/// a level estimated from resting terminal voltage has no value while the
+/// pack is charging, and the spec would rather see the field omitted than
+/// a number the device knows to be wrong. The reverse is refused: a
+/// sample carrying a field the platform never claimed cannot be encoded
+/// honestly, so it is rejected.
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
 pub struct BatteryFields {
     pub voltage: bool,
@@ -86,10 +91,11 @@ impl BatteryFields {
         self.voltage || self.level || self.charge_state
     }
 
+    /// Whether `snapshot` populates only fields this platform advertises.
     fn matches(self, snapshot: &BatteryStatus) -> bool {
-        self.voltage == snapshot.voltage_mv.is_some()
-            && self.level == snapshot.level_percent.is_some()
-            && self.charge_state == snapshot.charge_state.is_some()
+        (self.voltage || snapshot.voltage_mv.is_none())
+            && (self.level || snapshot.level_percent.is_none())
+            && (self.charge_state || snapshot.charge_state.is_none())
     }
 }
 
@@ -2657,10 +2663,11 @@ impl<A: AesProvider, S: Sha256Provider, const TX: usize> Session<A, S, TX> {
     ///
     /// Returns whether a frame was emitted. Nothing is published while
     /// no host is attached (there is nobody to notify), and a snapshot
-    /// whose populated fields do not match the configured
-    /// [`BatteryFields`] is dropped rather than sent — the advertised
-    /// field flags must not vary within a session, and an unsolicited
-    /// notification has no transaction to fail.
+    /// populating a field the configured [`BatteryFields`] never claimed
+    /// is dropped rather than sent — an unsolicited notification has no
+    /// transaction to fail. A snapshot that merely omits an advertised
+    /// field is published as-is: absence is how the device says the value
+    /// is not knowable right now.
     pub fn publish_battery(&mut self, sample: BatteryStatus, emit: &mut impl FnMut(&[u8])) -> bool {
         if !self.attached {
             return false;
@@ -2683,9 +2690,10 @@ impl<A: AesProvider, S: Sha256Provider, const TX: usize> Session<A, S, TX> {
     /// `Err` if the measurement failed. Quote the same `tid` the effect
     /// carried.
     ///
-    /// A snapshot whose populated fields do not exactly match the
-    /// configured [`BatteryFields`] is refused as `STATUS_FAILURE`: the
-    /// advertised field flags must never vary between reads.
+    /// A snapshot populating a field the configured [`BatteryFields`]
+    /// never claimed is refused as `STATUS_FAILURE`; one that omits an
+    /// advertised field is answered as-is, since a field the platform
+    /// cannot currently substantiate is reported by its absence.
     pub fn respond_battery(
         &mut self,
         tid: u8,
@@ -4772,7 +4780,9 @@ mod tests {
         );
         expect_status(&out[0], 5, Status::FAILURE);
 
-        // Same for a missing configured field.
+        // Omitting an advertised field is the opposite case and is
+        // allowed: it is how a platform says the value is not knowable
+        // right now, which beats quoting one it knows to be wrong.
         let mut out = Vec::new();
         session.respond_battery(
             6,
@@ -4783,7 +4793,11 @@ mod tests {
             }),
             &mut |bytes: &[u8]| out.push(bytes.to_vec()),
         );
-        expect_status(&out[0], 6, Status::FAILURE);
+        let (tid, key, value) = parse_prop_is(&out[0]);
+        assert_eq!((tid, key), (6, prop::BATTERY));
+        let decoded = BatteryStatus::decode(&value).unwrap();
+        assert_eq!(decoded.voltage_mv, Some(4200));
+        assert_eq!(decoded.charge_state, None);
     }
 
     #[test]
@@ -5083,9 +5097,9 @@ mod tests {
     #[test]
     fn battery_publish_enforces_configured_fields() {
         let mut session = test_session();
-        // A level the profile never advertised would change the field
-        // flags mid-session. An unsolicited notification has no
-        // transaction to fail, so it is dropped outright.
+        // A level the profile never advertised cannot be encoded within
+        // the flags this platform claims. An unsolicited notification has
+        // no transaction to fail, so it is dropped outright.
         let (published, out) = publish(
             &mut session,
             BatteryStatus {
@@ -5097,7 +5111,10 @@ mod tests {
         assert!(!published);
         assert!(out.is_empty());
 
-        // Likewise a configured field the sample omits.
+        // Omitting an advertised field goes out unchanged: a charging
+        // pack whose level is not derivable still has a voltage worth
+        // publishing, and silence would strand the host on the last
+        // reading it saw.
         let (published, out) = publish(
             &mut session,
             BatteryStatus {
@@ -5106,8 +5123,13 @@ mod tests {
                 charge_state: None,
             },
         );
-        assert!(!published);
-        assert!(out.is_empty());
+        assert!(published);
+        let (_, key, value) = parse_prop_is(&out[0]);
+        assert_eq!(key, prop::BATTERY);
+        assert_eq!(
+            BatteryStatus::decode(&value).unwrap().voltage_mv,
+            Some(4200)
+        );
     }
 
     #[test]

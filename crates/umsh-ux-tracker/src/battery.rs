@@ -145,9 +145,6 @@ const LEVEL_REST_MS: u32 = 180_000;
 /// Reported levels move in steps of this size; coarse output is the
 /// honesty the estimate can actually back.
 const LEVEL_QUANT: u8 = 5;
-/// Rough charge-elevation guess used only to bootstrap a provisional
-/// level when the very first sample arrives with the charger active.
-const CHARGE_ELEVATION_MV: u16 = 180;
 
 /// How long after a transient load a terminal-voltage reading is still
 /// treated as possibly sagged rather than as resting OCV.
@@ -211,9 +208,16 @@ pub const fn load_recent(now_ms: u32, last_load_ms: Option<u32>) -> bool {
 /// and monotone between charge sessions. A charge since the last anchor
 /// invalidates the stored level in both directions, so until the next
 /// anchor the ceiling replaces it rather than capping it — which is how
-/// a partial charge shows up without waiting out a full window. While
-/// charging the level holds (charging voltage is not comparable to the
-/// discharge table); the `Charged` classification pins it to 100.
+/// a partial charge shows up without waiting out a full window.
+///
+/// While charging there is no level at all: charging voltage is not
+/// comparable to the discharge table, so the estimate is withdrawn rather
+/// than frozen at its pre-charge value. It returns on the first quiet
+/// reading after the charger goes away. The one exception is the
+/// `Charged` classification, which is a charger's completion signal and
+/// therefore an exact calibration point: it pins the level to 100. Boards
+/// whose charger reports no completion never see that state and simply
+/// report nothing for as long as they are plugged in.
 pub struct LevelEstimator {
     window: [u16; LEVEL_WINDOW],
     window_len: usize,
@@ -235,7 +239,9 @@ impl LevelEstimator {
         }
     }
 
-    /// The current estimate; `Some` after the first sample.
+    /// The current estimate, or `None` when no trustworthy one exists —
+    /// before the first quiet sample, and for as long as the pack is
+    /// charging.
     pub const fn level(&self) -> Option<u8> {
         self.level
     }
@@ -255,13 +261,13 @@ impl LevelEstimator {
             }
             BatteryState::BatteryCharging => {
                 // Charging terminal voltage does not map through the
-                // discharge table; hold, except to bootstrap a first
-                // provisional value with a rough elevation correction.
-                if self.level.is_none() {
-                    self.level = Some(quantize(soc_from_ocv(
-                        s.battery_mv.saturating_sub(CHARGE_ELEVATION_MV),
-                    )));
-                }
+                // discharge table, and on a charger that reports no
+                // completion there is no later moment to correct against
+                // either — so there is no level to report, and holding the
+                // pre-charge one would state a number that only grows more
+                // wrong the longer the pack is plugged in. Report nothing
+                // until a quiet reading says otherwise.
+                self.level = None;
                 self.disturb(s.now_ms);
                 self.charged_since_anchor = true;
             }
@@ -454,7 +460,8 @@ mod tests {
     /// The failure this fixes, from a T-Echo flashed over USB: the level
     /// bootstraps from the charger's elevated rail, reads full, and then
     /// sits there for twenty-odd minutes after unplugging while the pack
-    /// is visibly at 3.6 V.
+    /// is visibly at 3.6 V. The elevated rail now produces no level at
+    /// all, and the first quiet reading produces a true one.
     #[test]
     fn a_quiet_reading_after_a_charge_replaces_a_stale_level_at_once() {
         let mut estimator = LevelEstimator::new();
@@ -464,7 +471,7 @@ mod tests {
             load_recent: false,
             now_ms: 0,
         });
-        assert_eq!(estimator.level(), Some(100));
+        assert_eq!(estimator.level(), None);
         // Unplugged. The pack is nowhere near full and the very next
         // quiet reading is enough to say so — no five-sample anchor, no
         // twenty-five minute wait.
@@ -483,7 +490,7 @@ mod tests {
             load_recent: false,
             now_ms: 60_000,
         });
-        assert_eq!(estimator.level(), Some(10), "charging voltage must not map");
+        assert_eq!(estimator.level(), None, "charging voltage must not map");
         // Unplugged with real charge in the pack. The ceiling now sits
         // above the stored level, and a charge since the last anchor is
         // precisely the case where it is allowed to raise it.
@@ -525,7 +532,7 @@ mod tests {
     }
 
     #[test]
-    fn charging_holds_and_charged_pins_full() {
+    fn charging_withdraws_the_level_and_charged_pins_full() {
         let mut estimator = LevelEstimator::new();
         estimator.sample(quiet(3_700, 0));
         assert_eq!(estimator.level(), Some(30));
@@ -535,7 +542,11 @@ mod tests {
             load_recent: false,
             now_ms: 30_000,
         });
-        assert_eq!(estimator.level(), Some(30), "charging voltage must not map");
+        assert_eq!(
+            estimator.level(),
+            None,
+            "a pre-charge level must not survive the charge"
+        );
         estimator.sample(LevelSample {
             battery_mv: 4_200,
             state: BatteryState::BatteryCharged,
@@ -551,16 +562,25 @@ mod tests {
         assert_eq!(estimator.level(), Some(95));
     }
 
+    /// A board whose charger reports no completion — the T-Echo, the Wio
+    /// Tracker L1, the SenseCAP Solar Node — stays in `BatteryCharging`
+    /// for the whole session and never reaches `BatteryCharged`. It must
+    /// report no level for that entire time rather than inventing one
+    /// from the charger's elevated rail.
     #[test]
-    fn bootstrap_while_charging_corrects_for_elevation() {
+    fn a_charger_without_completion_reports_no_level_until_unplugged() {
         let mut estimator = LevelEstimator::new();
-        estimator.sample(LevelSample {
-            battery_mv: 4_060,
-            state: BatteryState::BatteryCharging,
-            load_recent: false,
-            now_ms: 0,
-        });
-        // 4060 - 180 = 3880 mV -> 64% -> 65 quantized.
-        assert_eq!(estimator.level(), Some(65));
+        for index in 0..10u32 {
+            estimator.sample(LevelSample {
+                battery_mv: 4_060 + index as u16 * 20,
+                state: BatteryState::BatteryCharging,
+                load_recent: false,
+                now_ms: index * 300_000,
+            });
+            assert_eq!(estimator.level(), None, "sample {index} invented a level");
+        }
+        // Unplugged, and now the terminal voltage means something again.
+        estimator.sample(quiet(4_050, 3_300_000));
+        assert_eq!(estimator.level(), Some(85));
     }
 }

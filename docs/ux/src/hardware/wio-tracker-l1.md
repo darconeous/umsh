@@ -16,9 +16,21 @@ direct rather than modal, and is the first thing to add here.
 
 ## Implemented behavior
 
-The menu contains Status, Check in, Start pairing, and Clear bonds. Row 0 always
-names the device and row 1 always shows the menu cursor, so the current position
-is visible without remembering it.
+The menu contains Status, Stats, Check in, Start pairing, and Clear bonds. Row
+0 always names the device and carries the battery indicator, and row 1 always
+shows the menu cursor, so the current position is visible without remembering
+it.
+
+The Status page spends its remaining rows only on state that departs from
+nominal: a pairing PIN while a window is open, a link line when a host is
+connected or advertising is suppressed, and a diagnostic line with pack
+voltage and charge level. A closed pairing window and ordinary advertising
+draw nothing, which is what leaves this five-row panel enough space to show
+both gesture hints on the page users sit on.
+
+The Stats page reports frames transmitted and received, frames repeated
+onward, receptions that went nowhere, transmit power, and duty-cycle usage —
+enough to tell a working node from a deaf one without a capture.
 
 | Input | Meaning |
 |---|---|
@@ -28,7 +40,15 @@ is visible without remembering it.
 | Continue holding for 4 seconds | Power off |
 
 Clear bonds opens a confirmation page defaulting to Cancel, exactly as on the
-T-Echo and the Heltec V3.
+T-Echo and the Heltec V3. The question names the count it would destroy.
+
+### Charging
+
+Like the T-Echo, this board sees only VBUS presence and never charge
+completion, so while it is plugged in it has no trustworthy state of charge.
+The indicator shows a bare bolt in place of the battery body, and
+`PROP_BATTERY` omits the level while still reporting voltage and charge state.
+A level returns on the first quiet sample after unplugging.
 
 ### Display attention
 

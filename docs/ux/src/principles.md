@@ -72,6 +72,44 @@ When possible, show whether the device is powered, connected, pairing,
 acquiring a location, transmitting, silenced, low on battery, or in an error
 state. Do not overload one pattern with multiple meanings in the same context.
 
+## Never state a value the device cannot stand behind
+
+A reading that is known to be wrong, or that the hardware cannot currently
+substantiate, must not be presented as fact. Withdraw it and show that it is
+unknown.
+
+The temptation is always to keep displaying the last good value, because a
+blank looks like a defect. It is the worse option: a stale number carries the
+same authority as a fresh one, so the user cannot tell the difference, and
+they will act on it. A charge estimate derived from resting terminal voltage
+means nothing while the pack is charging, and on a charger that reports no
+completion there is no later moment to correct it against — so for that whole
+period the device has no state of charge, and says so. What it does know, that
+the pack is on external power, it still shows.
+
+This applies equally to what leaves the device. A protocol field that cannot
+be substantiated is omitted rather than filled with the last value or a
+plausible guess; an absent field and a wrong one are not equally recoverable,
+because a peer can reason about the first and not the second.
+
+Distinguish this from a value that is merely coarse. An estimate that is
+approximate, quantized, or slow to converge is still worth showing, provided
+its presentation does not imply more precision than it has. The rule is
+against asserting what is false, not against admitting what is rough.
+
+## Show only what departs from nominal
+
+A row that is present on almost every frame teaches the user to stop reading
+that row, and takes the space from something that would have been worth
+reading. State whose normal value is uninteresting — a closed pairing window,
+ordinary advertising with nobody connected — earns its place on screen only
+when it changes.
+
+Reserve the persistent indicators for what a user checks at a glance and acts
+on: power, and whether anything is currently wrong. A small screen that is
+quiet when nothing is happening is one whose contents mean something when they
+appear.
+
 ## Respect latency and persistence
 
 The displayed state must be the state on which the next input operates. This is

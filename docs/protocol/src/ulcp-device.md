@@ -257,14 +257,22 @@ Bits 3–7 are reserved and **MUST** be zero; a host **MUST** treat a value
 with a reserved bit set, or whose length does not match its field flags, as
 malformed.
 
-Which fields are reported is fixed for a given hardware and firmware
-configuration: the field flags do not change while a session is attached. An
-absent field indicates only that the implementation cannot report that
-measurement. It **MUST NOT** be used to indicate a depleted, disconnected,
-or temporarily unreadable battery: an implementation that normally reports a
-field but cannot currently obtain a measurement fails the `CMD_PROP_GET`
-with `STATUS_FAILURE` rather than omitting the field or returning an empty
-value.
+Which fields a platform can report is fixed for a given hardware and firmware
+configuration; an individual snapshot carries those it can currently
+substantiate. A field is absent either because the implementation never
+reports that measurement, or because the value is not derivable in the
+device's present state — a level estimated from resting terminal voltage is
+not obtainable while the pack is charging, and a charger that reports no
+completion signal offers no moment at which to recalibrate one. An
+implementation **MUST NOT** report a value it knows to be unreliable in place
+of omitting the field.
+
+Absence **MUST NOT** be used to indicate a depleted or disconnected battery,
+and it is not how a failed measurement is reported: an implementation whose
+attempt to take a reading fails answers `CMD_PROP_GET` with `STATUS_FAILURE`.
+
+A host **MUST** treat an absent field as unknown at that instant, and **MUST
+NOT** carry a value forward from an earlier snapshot in its place.
 
 The value returned by `CMD_PROP_GET` reflects a measurement performed when
 the request is serviced, not a previously cached reading; concurrent
@@ -299,8 +307,8 @@ Value | Name
 `BATTERY_CHARGE_STATE_DISCHARGING`
 : The charging system reports neither active charging nor charge completion.
   This is the charge state used for a disconnected battery when the
-  implementation can detect that condition; an absent field remains reserved
-  exclusively for unsupported reporting.
+  implementation can detect that condition; an absent field never carries
+  that meaning.
 
 `BATTERY_CHARGE_STATE_CHARGING`
 : The charging system reports that the battery is actively receiving charge.

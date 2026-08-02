@@ -30,8 +30,11 @@ pub enum UiInput {
 /// with [`MenuItems`]. Declaration order is navigation order.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum MenuItem {
-    /// Home. Shows device name, link state, and battery.
+    /// Home. Shows the battery, and whatever else is not nominal.
     Status,
+    /// Radio activity since boot: frame counts, power, duty cycle. A
+    /// page, not an action.
+    Stats,
     /// Advertise this device's identity now.
     CheckIn,
     /// Open a time-limited pairing window for a new companion.
@@ -42,8 +45,9 @@ pub enum MenuItem {
 
 impl MenuItem {
     /// Every item, in navigation order.
-    pub const ALL: [MenuItem; 4] = [
+    pub const ALL: [MenuItem; 5] = [
         MenuItem::Status,
+        MenuItem::Stats,
         MenuItem::CheckIn,
         MenuItem::StartPairing,
         MenuItem::ClearBonds,
@@ -66,11 +70,11 @@ impl MenuItem {
         matches!(self, MenuItem::ClearBonds)
     }
 
-    /// What activating this item asks the firmware to do. `Status` is
-    /// inert — it is a page, not an action.
+    /// What activating this item asks the firmware to do. `Status` and
+    /// `Stats` are inert — they are pages, not actions.
     pub const fn effect(self) -> Option<UiEffect> {
         match self {
-            MenuItem::Status => None,
+            MenuItem::Status | MenuItem::Stats => None,
             MenuItem::CheckIn => Some(UiEffect::CheckIn),
             MenuItem::StartPairing => Some(UiEffect::StartPairing),
             MenuItem::ClearBonds => Some(UiEffect::ClearBonds),
@@ -95,6 +99,7 @@ impl MenuItems {
     pub const fn all() -> Self {
         Self(
             MenuItem::Status.bit()
+                | MenuItem::Stats.bit()
                 | MenuItem::CheckIn.bit()
                 | MenuItem::StartPairing.bit()
                 | MenuItem::ClearBonds.bit(),
@@ -313,6 +318,8 @@ mod tests {
     fn forward_and_backward_wrap_menu_items() {
         let mut ui = full();
         ui.apply(UiInput::Forward);
+        assert_eq!(ui.page(), Page::Menu(MenuItem::Stats));
+        ui.apply(UiInput::Forward);
         assert_eq!(ui.page(), Page::Menu(MenuItem::CheckIn));
         ui.apply(UiInput::Forward);
         assert_eq!(ui.page(), Page::Menu(MenuItem::StartPairing));
@@ -349,9 +356,11 @@ mod tests {
     fn safe_items_activate_without_confirmation() {
         let mut ui = full();
         ui.apply(UiInput::Forward);
+        ui.apply(UiInput::Forward);
         assert_eq!(ui.apply(UiInput::Select), Some(UiEffect::CheckIn));
         assert_eq!(ui.page(), Page::Menu(MenuItem::Status));
 
+        ui.apply(UiInput::Forward);
         ui.apply(UiInput::Forward);
         ui.apply(UiInput::Forward);
         assert_eq!(ui.apply(UiInput::Select), Some(UiEffect::StartPairing));
@@ -422,7 +431,7 @@ mod tests {
 
         ui.apply(UiInput::Forward);
         assert_eq!(ui.notice(), None);
-        assert_eq!(ui.page(), Page::Menu(MenuItem::CheckIn));
+        assert_eq!(ui.page(), Page::Menu(MenuItem::Stats));
     }
 
     #[test]
@@ -452,6 +461,6 @@ mod tests {
         assert!(MenuItems::new().contains(MenuItem::Status));
         assert!(MenuItems::all().contains(MenuItem::Status));
         assert_eq!(MenuItems::new().len(), 1);
-        assert_eq!(MenuItems::all().len(), 4);
+        assert_eq!(MenuItems::all().len(), 5);
     }
 }

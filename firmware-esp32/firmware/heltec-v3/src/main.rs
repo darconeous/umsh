@@ -1685,6 +1685,27 @@ fn ui_status(name: &DeviceName) -> screen::StatusModel<'_> {
         } else {
             screen::PairingState::Closed
         },
+        stats: ui_stats(),
+    }
+}
+
+/// Radio activity for the stats page.
+///
+/// Sampled when a frame is drawn rather than pushed: the counters move
+/// with every frame on the air, and a redraw per frame would burn the
+/// panel's power budget reporting numbers nobody is looking at.
+fn ui_stats() -> screen::StatsModel {
+    let counters = device_node::mac_counters();
+    screen::StatsModel {
+        tx_frames: counters.tx_frames,
+        rx_frames: counters.rx_frames,
+        rx_accepted: counters.rx_accepted,
+        forwarded: counters.forwarded,
+        tx_power_dbm: device_node::tx_power_dbm(),
+        // The ledger's scale is 0-65535 for 0-100%; the page shows tenths
+        // of a percent, which is the range a tracker lives in.
+        duty_permille: (u32::from(DUTY_LEDGER.usage(Instant::now().as_millis())) * 1_000 / 65_535)
+            as u16,
     }
 }
 

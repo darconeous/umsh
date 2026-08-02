@@ -12,9 +12,18 @@ except the panel technology and what powering off means.
 
 ## Implemented behavior
 
-The menu contains Status, Check in, Start pairing, and Clear bonds. Row 0 always
-names the device and row 1 always shows the menu cursor, so the current position
-is visible without remembering it.
+The menu contains Status, Stats, Check in, Start pairing, and Clear bonds. Row
+0 always names the device and carries the battery indicator, and row 1 always
+shows the menu cursor, so the current position is visible without remembering
+it. As on the other display trackers, the Status page shows only state that
+departs from nominal, and the Stats page reports radio activity since boot.
+
+No external-power signal reaches the S3 on this board, which is a different
+thing from knowing the pack is discharging: the indicator therefore never
+draws a charging bolt, and the level it shows is a plain open-circuit-voltage
+lookup that reads high while the board is plugged in. The boards that can at
+least see VBUS withdraw their level while charging; this one has no signal to
+withdraw it on.
 
 | Input | Meaning |
 |---|---|

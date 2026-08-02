@@ -900,15 +900,14 @@ mod firmware {
             ChargeClass::Charged => BatteryChargeState::Charged,
             ChargeClass::Discharging => BatteryChargeState::Discharging,
         };
-        // The estimator seeds on the monitor's first sample, so a reply
-        // always carries a level; failing closed here keeps the
-        // advertised field flags stable if that invariant ever breaks.
-        let Some(level_percent) = sample.level_percent else {
-            return Err(());
-        };
+        // The level is reported by its absence when the estimator has
+        // none to give — before its first quiet sample, and for as long as
+        // the pack is charging on a board whose charger reports no
+        // completion. Voltage and charge state still mean something in
+        // both cases, so the snapshot goes out carrying what it can.
         Ok(BatteryStatus {
             voltage_mv: Some(sample.battery_mv),
-            level_percent: Some(level_percent),
+            level_percent: sample.level_percent,
             charge_state: Some(charge_state),
         })
     }
@@ -947,6 +946,19 @@ mod firmware {
     static PAIRING_PIN: AtomicU32 = AtomicU32::new(u32::MAX);
     static BLE_BONDS_AT_BOOT: AtomicU8 = AtomicU8::new(0);
     static BLE_BOND_COUNT: AtomicU8 = AtomicU8::new(0);
+
+    /// How far the BLE link has got, for the status page. Nothing is
+    /// connected until a GATT connection is accepted; "attached" means the
+    /// client has subscribed to the ULCP notification characteristic and
+    /// is therefore actually talking to us, not merely nearby.
+    ///
+    /// Same encoding as the Heltec V3's, so both families read the state
+    /// out of their `ui_status` the same way.
+    static BLE_LINK: AtomicU8 = AtomicU8::new(BLE_LINK_NONE);
+    const BLE_LINK_NONE: u8 = 0;
+    const BLE_LINK_CONNECTED: u8 = 1;
+    const BLE_LINK_ATTACHED: u8 = 2;
+
     static PAIRING_MODE: AtomicBool = AtomicBool::new(true);
     static PAIRING_LOCKED_OUT: AtomicBool = AtomicBool::new(false);
     static PAIRING_FAILURES: AtomicU8 = AtomicU8::new(0);
@@ -1793,6 +1805,7 @@ mod firmware {
             conn.raw().att_mtu(),
         ));
         let mut attached = false;
+        BLE_LINK.store(BLE_LINK_CONNECTED, Ordering::Release);
         let mut reassembler: gatt::Reassembler<{ gatt::MAX_FRAME }> = gatt::Reassembler::new();
 
         // Reap a connection that never reaches encryption, so an unbonded or
@@ -2140,11 +2153,15 @@ mod firmware {
                             (false, true) => {
                                 debug_log(format_args!("cccd subscribed=true"));
                                 attached = true;
+                                BLE_LINK.store(BLE_LINK_ATTACHED, Ordering::Release);
+                                UI_REFRESH.signal(());
                                 INPUT_CH.send(InEvent::Attached(Transport::Ble)).await;
                             }
                             (true, false) => {
                                 debug_log(format_args!("cccd subscribed=false"));
                                 attached = false;
+                                BLE_LINK.store(BLE_LINK_CONNECTED, Ordering::Release);
+                                UI_REFRESH.signal(());
                                 reassembler.reset();
                                 INPUT_CH.send(InEvent::Detached(Transport::Ble)).await;
                             }
@@ -2245,6 +2262,8 @@ mod firmware {
                 }
             }
         }
+        BLE_LINK.store(BLE_LINK_NONE, Ordering::Release);
+        UI_REFRESH.signal(());
         if attached {
             INPUT_CH.send(InEvent::Detached(Transport::Ble)).await;
         }
@@ -2579,14 +2598,16 @@ mod firmware {
             device_name: core::str::from_utf8(name).unwrap_or(DEFAULT_DEVICE_NAME),
             battery: ui_battery(),
             battery_mv: ui_battery_mv(),
-            // This family exposes no connection state to the UI layer, so
-            // the panel reports what it does know: whether the device can
-            // currently be found.
-            link: if ADV_ALLOWED.load(Ordering::Acquire) {
-                screen::LinkState::Advertising
-            } else {
-                screen::LinkState::OffWired
+            // A live host outranks discoverability: "somebody is talking
+            // to me" is the fact worth a row, and advertising with nobody
+            // there is the resting state the page no longer mentions.
+            link: match BLE_LINK.load(Ordering::Acquire) {
+                BLE_LINK_ATTACHED => screen::LinkState::Attached,
+                BLE_LINK_CONNECTED => screen::LinkState::Connected,
+                _ if ADV_ALLOWED.load(Ordering::Acquire) => screen::LinkState::Advertising,
+                _ => screen::LinkState::OffWired,
             },
+            stats: ui_stats(),
             bonds: BLE_BOND_COUNT.load(Ordering::Acquire),
             // Lockout outranks the window: while locked out there is no
             // window to describe.
@@ -2602,6 +2623,28 @@ mod firmware {
             } else {
                 screen::PairingState::Closed
             },
+        }
+    }
+
+    /// Radio activity for the stats page.
+    ///
+    /// Sampled when a frame is drawn rather than pushed: the counters move
+    /// with every frame on the air, and waking a panel for each one would
+    /// re-ink an e-paper display continuously to report numbers nobody is
+    /// looking at.
+    #[cfg(feature = "has-display")]
+    fn ui_stats() -> screen::StatsModel {
+        let counters = super::device_node::mac_counters();
+        screen::StatsModel {
+            tx_frames: counters.tx_frames,
+            rx_frames: counters.rx_frames,
+            rx_accepted: counters.rx_accepted,
+            forwarded: counters.forwarded,
+            tx_power_dbm: super::device_node::tx_power_dbm(),
+            // The ledger's scale is 0-65535 for 0-100%; the page shows
+            // tenths of a percent, which is the range a tracker lives in.
+            duty_permille: (u32::from(DUTY_LEDGER.usage(Instant::now().as_millis())) * 1_000
+                / 65_535) as u16,
         }
     }
 
