@@ -341,6 +341,13 @@ struct ChatMessageSummary: Identifiable, Hashable, Sendable {
     var senderHintLabel: String? {
         senderHint.map { hint in hint.map { String(format: "%02x", $0) }.joined() }
     }
+
+    /// When this was written, or nil for a record carrying no usable time —
+    /// a gap placeholder standing in for a message nobody has seen yet.
+    var sentDate: Date? {
+        guard createdAtMilliseconds > 0 else { return nil }
+        return Date(timeIntervalSince1970: Double(createdAtMilliseconds) / 1000)
+    }
 }
 
 enum MessageSendResult: Sendable {

@@ -301,8 +301,8 @@ struct PeerDetailView: View {
         } message: {
             Text("The alias is a private name stored only on this phone.")
         }
-        .navigationDestination(item: $openedConversation) { conversation in
-            if let conversation = binding(for: conversation.id) {
+        .navigationDestination(item: $openedConversation) { opened in
+            if let conversation = binding(for: opened.id) {
                 ConversationThreadView(
                     conversation: conversation,
                     radioSnapshot: radioSnapshot,
@@ -315,7 +315,12 @@ struct PeerDetailView: View {
                     },
                     messageActions: messageActions,
                     peerActions: actions,
-                    conversations: $conversations
+                    conversations: $conversations,
+                    // Direct chats only, which is all this view holds. A
+                    // channel with unread messages is not counted here.
+                    unreadElsewhere: conversations
+                        .filter { $0.id != opened.id }
+                        .reduce(0) { $0 + $1.unreadCount }
                 )
             }
         }

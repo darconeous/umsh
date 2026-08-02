@@ -1805,7 +1805,9 @@ actor SQLiteApplicationStore {
     /// every seeded row would share a timestamp and the transcript would have no
     /// spread to page through. Timestamps here run backward from now in
     /// one-minute steps, in occasional same-millisecond clusters, which is what
-    /// a real batch produces.
+    /// a real batch produces — with a lull of several hours every so often, so
+    /// the seeded transcript spans days and carries the date separators a real
+    /// one does.
     func seedGeneratedMessages(
         ownerIdentityID: String,
         conversationAddress: String,
@@ -1822,14 +1824,31 @@ actor SQLiteApplicationStore {
             )
             defer { sqlite3_finalize(statement) }
             let sessionID = "9\(Self.nowMilliseconds() % 1_000_000)"
-            var createdAt = Self.nowMilliseconds() - Int64(count) * 60_000
+            // The timeline is laid out first so the newest message still lands
+            // on now: the lulls make the total span depend on the pattern, not
+            // on the count alone.
+            var offsets: [Int64] = []
+            offsets.reserveCapacity(count)
+            var offset: Int64 = 0
             var clusterRemaining = 0
+            var clusters = 0
             for index in 0..<count {
                 if clusterRemaining == 0 {
                     clusterRemaining = 3 + (index % 5)
-                    createdAt += 60_000
+                    if index > 0 {
+                        // Counted in clusters rather than messages: cluster
+                        // lengths vary, so a condition on the message index
+                        // lands on a cluster boundary only by coincidence.
+                        offset += clusters % 9 == 0 ? 5 * 3_600_000 : 60_000
+                    }
+                    clusters += 1
                 }
                 clusterRemaining -= 1
+                offsets.append(offset)
+            }
+            let start = Self.nowMilliseconds() - (offsets.last ?? 0)
+            for index in 0..<count {
+                let createdAt = start + offsets[index]
                 let outbound = index % 3 == 0
                 sqlite3_reset(statement)
                 try bind(ownerIdentityID, to: statement, at: 1)

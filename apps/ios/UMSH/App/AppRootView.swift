@@ -404,6 +404,9 @@ struct AppRootView: View {
                 }
             )
         )
+        // A composer with no radio behind it offers the way to attach one, and
+        // the sheet that does it lives here.
+        .environment(\.openRadioDetail) { showsRadioDetail = true }
     }
 
     @MainActor

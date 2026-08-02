@@ -54,6 +54,10 @@
 		100000000000000000000036 /* UMSH/DesignSystem/ChannelAvatar.swift in Sources */ = {isa = PBXBuildFile; fileRef = 200000000000000000000036 /* UMSH/DesignSystem/ChannelAvatar.swift */; };
 		100000000000000000000037 /* UMSH/Features/Conversations/ChannelChatViews.swift in Sources */ = {isa = PBXBuildFile; fileRef = 200000000000000000000037 /* UMSH/Features/Conversations/ChannelChatViews.swift */; };
 		100000000000000000000038 /* UMSH/Features/Conversations/ConversationInfoViews.swift in Sources */ = {isa = PBXBuildFile; fileRef = 200000000000000000000038 /* UMSH/Features/Conversations/ConversationInfoViews.swift */; };
+		10000000000000000000003A /* UMSH/Features/Conversations/ConversationThreadView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 20000000000000000000003A /* UMSH/Features/Conversations/ConversationThreadView.swift */; };
+		10000000000000000000003B /* UMSH/Features/Conversations/TranscriptScrollSupport.swift in Sources */ = {isa = PBXBuildFile; fileRef = 20000000000000000000003B /* UMSH/Features/Conversations/TranscriptScrollSupport.swift */; };
+		10000000000000000000003C /* UMSH/Features/Conversations/ChatMessageBubble.swift in Sources */ = {isa = PBXBuildFile; fileRef = 20000000000000000000003C /* UMSH/Features/Conversations/ChatMessageBubble.swift */; };
+		10000000000000000000003D /* UMSH/Features/Conversations/MessageComposer.swift in Sources */ = {isa = PBXBuildFile; fileRef = 20000000000000000000003D /* UMSH/Features/Conversations/MessageComposer.swift */; };
 		A6E6D53B301E775800820BB7 /* umsh-app-icon.png in Resources */ = {isa = PBXBuildFile; fileRef = A6E6D53A301E775800820BB7 /* umsh-app-icon.png */; };
 /* End PBXBuildFile section */
 
@@ -105,6 +109,10 @@
 		200000000000000000000036 /* UMSH/DesignSystem/ChannelAvatar.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = UMSH/DesignSystem/ChannelAvatar.swift; sourceTree = "<group>"; };
 		200000000000000000000037 /* UMSH/Features/Conversations/ChannelChatViews.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = UMSH/Features/Conversations/ChannelChatViews.swift; sourceTree = "<group>"; };
 		200000000000000000000038 /* UMSH/Features/Conversations/ConversationInfoViews.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = UMSH/Features/Conversations/ConversationInfoViews.swift; sourceTree = "<group>"; };
+		20000000000000000000003A /* UMSH/Features/Conversations/ConversationThreadView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = UMSH/Features/Conversations/ConversationThreadView.swift; sourceTree = "<group>"; };
+		20000000000000000000003B /* UMSH/Features/Conversations/TranscriptScrollSupport.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = UMSH/Features/Conversations/TranscriptScrollSupport.swift; sourceTree = "<group>"; };
+		20000000000000000000003C /* UMSH/Features/Conversations/ChatMessageBubble.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = UMSH/Features/Conversations/ChatMessageBubble.swift; sourceTree = "<group>"; };
+		20000000000000000000003D /* UMSH/Features/Conversations/MessageComposer.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = UMSH/Features/Conversations/MessageComposer.swift; sourceTree = "<group>"; };
 		A6E6D53A301E775800820BB7 /* umsh-app-icon.png */ = {isa = PBXFileReference; lastKnownFileType = image.png; name = "umsh-app-icon.png"; path = "../../docs/logo/umsh-app-icon.png"; sourceTree = "<group>"; };
 /* End PBXFileReference section */
 
@@ -155,6 +163,10 @@
 				200000000000000000000036 /* UMSH/DesignSystem/ChannelAvatar.swift */,
 				200000000000000000000037 /* UMSH/Features/Conversations/ChannelChatViews.swift */,
 				200000000000000000000038 /* UMSH/Features/Conversations/ConversationInfoViews.swift */,
+				20000000000000000000003A /* UMSH/Features/Conversations/ConversationThreadView.swift */,
+				20000000000000000000003B /* UMSH/Features/Conversations/TranscriptScrollSupport.swift */,
+				20000000000000000000003C /* UMSH/Features/Conversations/ChatMessageBubble.swift */,
+				20000000000000000000003D /* UMSH/Features/Conversations/MessageComposer.swift */,
 				20000000000000000000000F /* UMSH/DesignSystem/CanonicalAddressView.swift */,
 				200000000000000000000015 /* UMSH/DesignSystem/IdentityQRCodeView.swift */,
 				200000000000000000000016 /* UMSH/Services/Notifications/ChatNotificationService.swift */,
@@ -289,6 +301,10 @@
 				100000000000000000000036 /* UMSH/DesignSystem/ChannelAvatar.swift in Sources */,
 				100000000000000000000037 /* UMSH/Features/Conversations/ChannelChatViews.swift in Sources */,
 				100000000000000000000038 /* UMSH/Features/Conversations/ConversationInfoViews.swift in Sources */,
+				10000000000000000000003A /* UMSH/Features/Conversations/ConversationThreadView.swift in Sources */,
+				10000000000000000000003B /* UMSH/Features/Conversations/TranscriptScrollSupport.swift in Sources */,
+				10000000000000000000003C /* UMSH/Features/Conversations/ChatMessageBubble.swift in Sources */,
+				10000000000000000000003D /* UMSH/Features/Conversations/MessageComposer.swift in Sources */,
 				10000000000000000000000F /* UMSH/DesignSystem/CanonicalAddressView.swift in Sources */,
 				100000000000000000000015 /* UMSH/DesignSystem/IdentityQRCodeView.swift in Sources */,
 				100000000000000000000016 /* UMSH/Services/Notifications/ChatNotificationService.swift in Sources */,
