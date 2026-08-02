@@ -111,16 +111,28 @@ struct RadioSnapshot: Equatable, Sendable {
         if let name {
             parts.append(name)
         }
+        // A radio charging off a rail it cannot estimate a level from
+        // still reports its terminal voltage, which is a measurement
+        // rather than the absence of one.
         if let batteryPercentage {
             parts.append("Battery \(batteryPercentage) percent")
+        } else if let millivolts = batteryVoltageMillivolts {
+            parts.append("Battery \(formattedVolts(millivolts))")
         } else if reportsBattery {
-            parts.append("Battery unavailable")
+            parts.append("Battery level unavailable")
         }
         if let chargeState {
             parts.append(chargeState.accessibilityLabel)
         }
         return parts.joined(separator: ", ")
     }
+}
+
+/// Millivolts as the volts a person reads off a meter — 3820 → "3.82 V".
+/// Devices report terminal voltage in millivolts; nothing displays it that way.
+func formattedVolts(_ millivolts: Int) -> String {
+    let volts = Double(millivolts) / 1_000
+    return volts.formatted(.number.precision(.fractionLength(2))) + " V"
 }
 
 /// What a radio's charging system is doing (`PROP_BATTERY`).

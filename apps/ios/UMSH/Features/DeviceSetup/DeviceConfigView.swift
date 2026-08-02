@@ -295,7 +295,8 @@ struct DeviceConfigView: View {
         Section {
             LabeledContent(
                 "Battery",
-                value: controller.snapshot.batteryPercentage.map { "\($0)%" } ?? "Unavailable"
+                value: controller.snapshot.batteryPercentage.map { "\($0)%" }
+                    ?? "Level unavailable"
             )
             if let millivolts = controller.snapshot.batteryVoltageMillivolts {
                 LabeledContent("Voltage", value: formattedVolts(millivolts))
@@ -308,12 +309,6 @@ struct DeviceConfigView: View {
         } footer: {
             Text("Read from the device when this session started, and again whenever it reports a change.")
         }
-    }
-
-    /// Millivolts as the volts a person reads off a meter — 3820 → "3.82 V".
-    private func formattedVolts(_ millivolts: Int) -> String {
-        let volts = Double(millivolts) / 1_000
-        return volts.formatted(.number.precision(.fractionLength(2))) + " V"
     }
 
     @ViewBuilder

@@ -451,9 +451,12 @@ struct RadioDetailView: View {
             // unavailable.
             if snapshot.reportsBattery {
                 Section("Power") {
+                    // A radio that cannot estimate a level while charging
+                    // still reports the rest of its power state, so this
+                    // says what is missing rather than "unavailable".
                     LabeledContent(
                         "Battery",
-                        value: snapshot.batteryPercentage.map { "\($0)%" } ?? "Unavailable"
+                        value: snapshot.batteryPercentage.map { "\($0)%" } ?? "Level unavailable"
                     )
                     if let millivolts = snapshot.batteryVoltageMillivolts {
                         LabeledContent("Voltage", value: formattedVolts(millivolts))
@@ -636,12 +639,6 @@ struct RadioDetailView: View {
     private func dutyPercentage(_ value: UInt16) -> String {
         let percent = Double(value) * 100 / Double(UInt16.max)
         return percent.formatted(.number.precision(.fractionLength(percent < 1 ? 2 : 1))) + "%"
-    }
-
-    /// Millivolts as the volts a person reads off a meter — 3820 → "3.82 V".
-    private func formattedVolts(_ millivolts: Int) -> String {
-        let volts = Double(millivolts) / 1_000
-        return volts.formatted(.number.precision(.fractionLength(2))) + " V"
     }
 
     /// The peers stored on the radio's device identity, read back from the

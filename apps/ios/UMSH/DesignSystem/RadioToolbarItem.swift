@@ -8,12 +8,16 @@ struct RadioToolbarItem: View {
         Button(action: action) {
             HStack(spacing: 6) {
                 Image(systemName: snapshot.linkState.symbolName)
+                // Independent of each other: a device charging off a rail
+                // it cannot estimate a level from reports a charge state
+                // and no percentage, and the power cue is the part that
+                // still means something then.
                 if let batteryPercentage = snapshot.batteryPercentage {
                     Image(systemName: batterySymbol(for: batteryPercentage))
-                    if let symbol = snapshot.chargeState?.externalPowerSymbol {
-                        Image(systemName: symbol)
-                            .font(.caption2)
-                    }
+                }
+                if let symbol = snapshot.chargeState?.externalPowerSymbol {
+                    Image(systemName: symbol)
+                        .font(.caption2)
                 }
             }
             .font(.subheadline)
