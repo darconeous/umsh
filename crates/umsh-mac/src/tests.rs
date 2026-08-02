@@ -1724,11 +1724,7 @@ fn transmit_next_drops_frame_after_five_busy_cad_attempts() {
     // The drop is accounted: exactly one TxAbandoned, on the final attempt.
     assert_eq!(
         abandoned.as_slice(),
-        &[(
-            LocalIdentityId(0),
-            LocalIdentityId(0),
-            Some(SendReceipt(3))
-        )]
+        &[(LocalIdentityId(0), LocalIdentityId(0), Some(SendReceipt(3)))]
     );
 }
 

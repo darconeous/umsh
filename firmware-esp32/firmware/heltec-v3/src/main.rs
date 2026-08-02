@@ -100,7 +100,9 @@ use umsh_ux_display_tracker::attention::{
     Attention, AttentionConfig, DisplayKind, HoldReason, Transition,
 };
 use umsh_ux_display_tracker::gate::{Disposition, Gate, GateReason};
-use umsh_ux_display_tracker::menu::{MenuItem, MenuItems, Page, UiEffect, UiInput, UiModel, UiNotice};
+use umsh_ux_display_tracker::menu::{
+    MenuItem, MenuItems, Page, UiEffect, UiInput, UiModel, UiNotice,
+};
 use umsh_ux_tracker::battery::soc_from_ocv;
 use umsh_ux_tracker::button::{ButtonEdge, ButtonEvent, ButtonFsm};
 
@@ -1762,7 +1764,11 @@ async fn render_frame(display: &mut Display, model: UiModel) {
             );
             draw_line(
                 display,
-                if confirm_selected { "> CLEAR" } else { "  CLEAR" },
+                if confirm_selected {
+                    "> CLEAR"
+                } else {
+                    "  CLEAR"
+                },
                 3,
                 style,
             );

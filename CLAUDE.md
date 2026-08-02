@@ -43,6 +43,8 @@ costs of migration before considering implementing it.
 
 ## Build / test
 
+- **Formatting**: enable the checked-in pre-commit hook once per clone with `git config core.hooksPath .githooks`. It rejects commits that aren't rustfmt-clean in either workspace; CI checks the same two. `firmware-esp32/` needs `cargo +stable fmt --all` (its `rust-toolchain.toml` pins the `esp` channel; stable rustfmt gives identical output).
+
 - Host: `cargo build` / `cargo test` / `cargo check` from root — **skips `firmware/*`** by design (`default-members`); host crates only.
 - Firmware crates are **excluded from default builds** and must be built from inside their own directory so the per-firmware `.cargo/config.toml` (target triple + linker flags) is picked up. Building with `--manifest-path`/`-p` from root silently drops those flags and yields a broken ELF.
 - nRF52840 firmware **only links in `--release`** (dev overflows flash). `cargo check` is fine at any profile.

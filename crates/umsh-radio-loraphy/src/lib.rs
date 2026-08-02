@@ -322,7 +322,7 @@ where
                             rx_in_progress = true; // gate TX until the frame resolves
                             continue;
                         }
-                        Ok(_) => continue, // no-op IRQ: stay in RX
+                        Ok(_) => continue,         // no-op IRQ: stay in RX
                         Err(_) => continue 'outer, // CRC / header error: full re-prepare
                     }
                 }

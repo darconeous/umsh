@@ -1031,11 +1031,7 @@ impl<M: MacBackend> LocalNode<M> {
         let membership = self.membership.borrow_mut();
 
         // Check if already joined.
-        if let Some(entry) = membership
-            .channels
-            .iter()
-            .find(|e| e.channel == *channel)
-        {
+        if let Some(entry) = membership.channels.iter().find(|e| e.channel == *channel) {
             if entry.active {
                 return Ok(BoundChannel {
                     node: self.clone(),

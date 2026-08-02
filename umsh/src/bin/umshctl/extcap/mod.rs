@@ -51,7 +51,11 @@ pub fn is_extcap_invocation() -> bool {
 /// unconditionally, and a hard error on any one of them would make the
 /// interface vanish from the list entirely.
 #[derive(Debug, Parser)]
-#[command(name = "umshctl", about = "Wireshark extcap interface", disable_help_flag = true)]
+#[command(
+    name = "umshctl",
+    about = "Wireshark extcap interface",
+    disable_help_flag = true
+)]
 pub struct ExtcapArgs {
     #[arg(long)]
     extcap_interfaces: bool,
@@ -108,11 +112,18 @@ pub struct ExtcapArgs {
 /// Wireshark sends the flag with an empty value for a string argument
 /// the user did not fill in, which has to mean "leave the radio alone"
 /// rather than "set it to zero".
-fn rf_override<T>(value: Option<&String>, what: &str, range: std::ops::RangeInclusive<u64>) -> Result<Option<T>>
+fn rf_override<T>(
+    value: Option<&String>,
+    what: &str,
+    range: std::ops::RangeInclusive<u64>,
+) -> Result<Option<T>>
 where
     T: TryFrom<u64>,
 {
-    let Some(text) = value.map(|text| text.trim()).filter(|text| !text.is_empty()) else {
+    let Some(text) = value
+        .map(|text| text.trim())
+        .filter(|text| !text.is_empty())
+    else {
         return Ok(None);
     };
     let parsed = match text.strip_prefix("0x").or_else(|| text.strip_prefix("0X")) {
@@ -127,9 +138,9 @@ where
             range.end(),
         );
     }
-    T::try_from(parsed).map(Some).map_err(|_| {
-        anyhow::anyhow!("{what}: {parsed} does not fit")
-    })
+    T::try_from(parsed)
+        .map(Some)
+        .map_err(|_| anyhow::anyhow!("{what}: {parsed} does not fit"))
 }
 
 pub async fn run() -> Result<()> {
@@ -150,7 +161,10 @@ pub async fn run() -> Result<()> {
         return Ok(());
     }
     if args.extcap_interfaces {
-        print!("{}", protocol::interfaces(Prefs::load().default_device.as_ref()));
+        print!(
+            "{}",
+            protocol::interfaces(Prefs::load().default_device.as_ref())
+        );
         return Ok(());
     }
     if args.capture {
@@ -252,7 +266,11 @@ fn capture_args(args: &ExtcapArgs) -> Result<CaptureArgs> {
         idle_probe_secs: args.idle_probe_secs.max(1),
         no_reconnect: args.no_reconnect,
         reconnect_delay_secs: 2,
-        freq_khz: rf_override(args.freq_khz.as_ref(), "--freq-khz", 1..=u64::from(u32::MAX))?,
+        freq_khz: rf_override(
+            args.freq_khz.as_ref(),
+            "--freq-khz",
+            1..=u64::from(u32::MAX),
+        )?,
         bw_hz: rf_override(args.bw_hz.as_ref(), "--bw-hz", 1..=u64::from(u32::MAX))?,
         sf: rf_override(args.sf.as_ref(), "--sf", 5..=12)?,
         cr: rf_override(args.cr.as_ref(), "--cr", 5..=8)?,
@@ -357,7 +375,10 @@ mod tests {
             "--serial-port=/dev/null",
         ]);
         assert!(capture.capture);
-        assert_eq!(capture.fifo.as_deref(), Some(std::path::Path::new("/tmp/x")));
+        assert_eq!(
+            capture.fifo.as_deref(),
+            Some(std::path::Path::new("/tmp/x"))
+        );
     }
 
     /// `--extcap-interface` and `--extcap-interfaces` differ by one
@@ -372,7 +393,10 @@ mod tests {
     #[test]
     fn an_empty_rf_override_leaves_the_radio_alone() {
         let empty = String::new();
-        assert_eq!(rf_override::<u8>(Some(&empty), "--sf", 5..=12).unwrap(), None);
+        assert_eq!(
+            rf_override::<u8>(Some(&empty), "--sf", 5..=12).unwrap(),
+            None
+        );
         assert_eq!(rf_override::<u8>(None, "--sf", 5..=12).unwrap(), None);
         assert_eq!(
             rf_override::<u8>(Some(&"7".to_string()), "--sf", 5..=12).unwrap(),

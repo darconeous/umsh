@@ -1,0 +1,24 @@
+#!/bin/sh
+# Reject commits that aren't rustfmt-clean. Check-only, never auto-fix:
+# rewriting files mid-commit would leave the staged content different from
+# what was just formatted.
+#
+# Enabled per clone with:  git config core.hooksPath .githooks
+#
+# Two invocations because firmware-esp32/ is a separate cargo workspace. It
+# pins the `esp` toolchain channel, so `cargo fmt` there would demand a
+# toolchain most clones don't have — `+stable` sidesteps that and produces
+# identical output.
+set -e
+
+cd "$(git rev-parse --show-toplevel)"
+
+if ! cargo fmt --check; then
+    echo "pre-commit: run 'cargo fmt' and re-stage." >&2
+    exit 1
+fi
+
+if ! (cd firmware-esp32 && cargo +stable fmt --all --check); then
+    echo "pre-commit: run 'cargo +stable fmt --all' in firmware-esp32/ and re-stage." >&2
+    exit 1
+fi

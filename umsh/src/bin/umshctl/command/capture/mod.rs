@@ -239,9 +239,7 @@ pub(crate) async fn run_with_writer(
 
     // Both cleanups run whatever happened: a half-written pcap and a
     // device left promiscuous are each worse than the original failure.
-    if tapped
-        && let Ok(session) = app.session()
-    {
+    if tapped && let Ok(session) = app.session() {
         session.tap.borrow_mut().take();
     }
     if app.interactive {

@@ -40,8 +40,8 @@ pub use ulcp::{
     UlcpRepeaterSettingsRecord, UlcpSessionPhase, UlcpSessionSnapshotRecord,
     UlcpSessionUpdateRecord, UlcpSyncRecord, inspect_ulcp_alert, inspect_ulcp_battery,
     inspect_ulcp_property_frame, inspect_ulcp_status, inspect_ulcp_sync, region_code_description,
-    region_code_from_string, ulcp_gatt_segments, ulcp_inspection_properties,
-    ulcp_max_dev_channels, ulcp_max_dev_peers, ulcp_prop_get, ulcp_prop_set, ulcp_save,
+    region_code_from_string, ulcp_gatt_segments, ulcp_inspection_properties, ulcp_max_dev_channels,
+    ulcp_max_dev_peers, ulcp_prop_get, ulcp_prop_set, ulcp_save,
 };
 
 uniffi::setup_scaffolding!();
@@ -304,7 +304,8 @@ pub fn inspect_channel_uri(uri: String) -> Result<ChannelPreviewRecord, MobileEr
     let reference = UriRef::from_str(&uri).map_err(|_| MobileError::InvalidUri)?;
     match umsh_uri::parse_umsh_uri(reference).map_err(|_| MobileError::InvalidUri)? {
         UmshUri::ChannelByName(parsed) => {
-            let name = umsh_uri::decode_percent(parsed.name).map_err(|_| MobileError::InvalidUri)?;
+            let name =
+                umsh_uri::decode_percent(parsed.name).map_err(|_| MobileError::InvalidUri)?;
             let mut record = named_channel_preview(&name)?;
             apply_channel_params(&mut record, &parsed.params)?;
             Ok(record)
@@ -936,14 +937,9 @@ mod tests {
     #[test]
     fn named_channel_invitation_keeps_the_name_out_of_the_key_slot() {
         let key = inspect_channel_name("trail-crew".to_owned()).unwrap().key;
-        let uri = format_channel_invitation(
-            key.clone(),
-            Some("trail-crew".to_owned()),
-            None,
-            None,
-            None,
-        )
-        .unwrap();
+        let uri =
+            format_channel_invitation(key.clone(), Some("trail-crew".to_owned()), None, None, None)
+                .unwrap();
         assert_eq!(uri, "umsh:cs:trail-crew");
 
         let preview = inspect_channel_uri(uri).unwrap();
@@ -976,7 +972,10 @@ mod tests {
         assert_eq!(preview.canonical_name.as_deref(), Some("emergency"));
         assert_eq!(preview.display_name.as_deref(), Some("EMERGENCY"));
         // Same channel either way — only the folded form reaches the key.
-        assert_eq!(preview.key, inspect_channel_name("emergency".to_owned()).unwrap().key);
+        assert_eq!(
+            preview.key,
+            inspect_channel_name("emergency".to_owned()).unwrap().key
+        );
     }
 
     #[test]
@@ -1022,8 +1021,7 @@ mod tests {
         // same code or a shared invitation would silently retarget.
         let key = generate_channel_key();
         let region = ulcp::region_code_from_string("Willamette Valley".to_owned()).unwrap();
-        let uri =
-            format_channel_invitation(key, None, None, None, Some(region.clone())).unwrap();
+        let uri = format_channel_invitation(key, None, None, None, Some(region.clone())).unwrap();
         assert_eq!(inspect_channel_uri(uri).unwrap().region, Some(region));
     }
 

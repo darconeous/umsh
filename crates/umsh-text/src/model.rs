@@ -232,7 +232,10 @@ pub enum ConversationKey {
     /// apart by authentication.
     ChannelGroup { channel: ChannelTag },
     /// One-to-one blind-unicast conversation over a channel key.
-    ChannelDirect { channel: ChannelTag, peer: PublicKey },
+    ChannelDirect {
+        channel: ChannelTag,
+        peer: PublicKey,
+    },
     /// Conversation with a chat-room node (reserved for the room adapter).
     Room { room: PublicKey },
 }

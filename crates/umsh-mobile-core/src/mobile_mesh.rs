@@ -827,12 +827,8 @@ const MOBILE_MAC_PEERS: usize = 64;
 /// few hundred bytes, which phone RAM does not need to ration.
 const MOBILE_MAC_CHANNELS: usize = 32;
 
-type MobileMac = Mac<
-    MobilePlatform,
-    { umsh_mac::DEFAULT_IDENTITIES },
-    MOBILE_MAC_PEERS,
-    MOBILE_MAC_CHANNELS,
->;
+type MobileMac =
+    Mac<MobilePlatform, { umsh_mac::DEFAULT_IDENTITIES }, MOBILE_MAC_PEERS, MOBILE_MAC_CHANNELS>;
 const MOBILE_CHAT_TRANSMIT_WINDOW: usize = 8;
 
 /// Long-lived Rust protocol engine used by the mobile app.
@@ -1719,7 +1715,9 @@ async fn run_worker(
         let channel_tag = packet.channel().map(|channel| {
             (
                 crate::channel_tag(channel.key()),
-                text_channels.borrow().contains(&crate::channel_tag(channel.key())),
+                text_channels
+                    .borrow()
+                    .contains(&crate::channel_tag(channel.key())),
             )
         });
         // The same rule read from the receiving end: emergency traffic that is
@@ -2514,9 +2512,7 @@ async fn queue_chat_transmissions<M: MacBackend>(
         };
         if let Some(peer) = gate_peer {
             if !pipeline_ready.contains(&peer.0)
-                && in_flight
-                    .iter()
-                    .any(|entry| entry.gate_peer == Some(peer))
+                && in_flight.iter().any(|entry| entry.gate_peer == Some(peer))
             {
                 // First contact may require counter synchronization. Confirm
                 // one authenticated frame before opening this peer's full
@@ -2792,10 +2788,7 @@ fn publish_chat_drain(
 /// The engine is transport-agnostic, so this is the only place the two are
 /// together. Only records describing received content carry it — an outbound
 /// echo or a placeholder has no frame behind it.
-fn attach_rx_metadata(
-    mutations: &mut [MobileChatMutationRecord],
-    rx: &MobileChatRxMetadataRecord,
-) {
+fn attach_rx_metadata(mutations: &mut [MobileChatMutationRecord], rx: &MobileChatRxMetadataRecord) {
     for mutation in mutations {
         let describes_receipt = match mutation.kind {
             MobileChatMutationKind::Insert => {
@@ -2900,8 +2893,8 @@ mod tests {
 
     async fn channel_session(name: &str) -> Arc<MobileMeshSession> {
         let directory = tempfile::tempdir().unwrap();
-        let store = MobileCounterStore::new(directory.path().join(name).display().to_string())
-            .unwrap();
+        let store =
+            MobileCounterStore::new(directory.path().join(name).display().to_string()).unwrap();
         // The temp directory must outlive the session's counter store.
         std::mem::forget(directory);
         MobileMeshSession::new(identity(31), store).await.unwrap()
@@ -3702,7 +3695,10 @@ mod tests {
             .compose_text(address(&bob_identity), 77, "hello from Rust".to_owned())
             .await
             .unwrap();
-        assert_eq!(batch.checkpoint.conversation_address, address(&bob_identity));
+        assert_eq!(
+            batch.checkpoint.conversation_address,
+            address(&bob_identity)
+        );
         assert!(!batch.archives.is_empty());
         assert_eq!(batch.mutations.len(), 1);
         assert_eq!(batch.mutations[0].body.as_deref(), Some("hello from Rust"));
@@ -4174,7 +4170,10 @@ mod tests {
         }
 
         let received = received.unwrap();
-        assert_eq!(received.conversation_address.as_deref(), Some(&conversation[..]));
+        assert_eq!(
+            received.conversation_address.as_deref(),
+            Some(&conversation[..])
+        );
         assert_eq!(received.direction, Some(MobileChatDirection::Inbound));
         // The hint is what the wire carried; the address is what the full
         // source let the facade resolve it to.
@@ -4186,7 +4185,9 @@ mod tests {
             received.sender_address.as_deref(),
             Some(&address(&alice_identity)[..])
         );
-        let rx = received.rx.expect("a received frame carries radio metadata");
+        let rx = received
+            .rx
+            .expect("a received frame carries radio metadata");
         assert_eq!(rx.rssi_dbm, Some(-70));
         assert_eq!(rx.snr_centibels, Some(60));
         // Heard directly off the air: no repeater carried it, so nothing
@@ -4358,7 +4359,10 @@ mod tests {
             if let Some(batch_id) = update.chat_batch_id {
                 bob.acknowledge_chat_batch(batch_id).unwrap();
             }
-            assert!(Instant::now() < deadline, "the encrypted copy was not refused");
+            assert!(
+                Instant::now() < deadline,
+                "the encrypted copy was not refused"
+            );
             std::thread::sleep(Duration::from_millis(5));
         }
         assert!(refusal.unwrap().contains("encrypted"));
@@ -4432,7 +4436,9 @@ mod tests {
         alice.register_channels(vec![key.clone()]).await.unwrap();
         bob.register_channels(vec![key]).await.unwrap();
 
-        let body: String = (0..600).map(|index| char::from(b'a' + (index % 26) as u8)).collect();
+        let body: String = (0..600)
+            .map(|index| char::from(b'a' + (index % 26) as u8))
+            .collect();
         let batch = alice
             .compose_text(conversation.clone(), 1, body.clone())
             .await
@@ -4561,7 +4567,8 @@ mod tests {
         let deadline = Instant::now() + Duration::from_secs(10);
         let mut echoed = 0;
         let mut inbound = Vec::new();
-        while echoed == 0 || Instant::now() < deadline.min(Instant::now() + Duration::from_millis(1))
+        while echoed == 0
+            || Instant::now() < deadline.min(Instant::now() + Duration::from_millis(1))
         {
             let update = session.poll_update();
             for frame in update.outbound_frames {
@@ -4655,7 +4662,9 @@ mod tests {
 
         session.remove_channels(vec![key]).await.unwrap();
         assert_eq!(
-            session.compose_text(conversation, 3, "hello".to_owned()).await,
+            session
+                .compose_text(conversation, 3, "hello".to_owned())
+                .await,
             Err(MobileMeshError::UnknownConversation)
         );
     }
@@ -4704,7 +4713,10 @@ mod tests {
         .await
         .unwrap();
         let bob_address = address(&bob_identity);
-        alice.register_peers(vec![bob_address.clone()]).await.unwrap();
+        alice
+            .register_peers(vec![bob_address.clone()])
+            .await
+            .unwrap();
         bob.register_peers(vec![address(&alice_identity)])
             .await
             .unwrap();
@@ -4755,7 +4767,10 @@ mod tests {
             if let Some(found) = found {
                 break found;
             }
-            assert!(Instant::now() < deadline, "the direct message never arrived");
+            assert!(
+                Instant::now() < deadline,
+                "the direct message never arrived"
+            );
             std::thread::sleep(Duration::from_millis(5));
         };
 
@@ -4770,7 +4785,9 @@ mod tests {
             received.sender_address.as_deref(),
             Some(&address(&alice_identity)[..])
         );
-        let rx = received.rx.expect("a received frame carries radio metadata");
+        let rx = received
+            .rx
+            .expect("a received frame carries radio metadata");
         assert_eq!(rx.rssi_dbm, Some(-55));
         assert_eq!(rx.snr_centibels, Some(75));
         assert!(rx.source_authenticated);
@@ -4828,13 +4845,18 @@ mod tests {
         bob.register_channels(vec![key]).await.unwrap();
 
         // Comfortably past a single frame, so the engine must fragment.
-        let body: String = (0..600).map(|index| char::from(b'a' + (index % 26) as u8)).collect();
+        let body: String = (0..600)
+            .map(|index| char::from(b'a' + (index % 26) as u8))
+            .collect();
         let batch = alice
             .compose_text(conversation.clone(), 1, body.clone())
             .await
             .unwrap();
         let fragments = batch.mutations[0].fragment_count.unwrap();
-        assert!(fragments > 1, "the test body must fragment, got {fragments}");
+        assert!(
+            fragments > 1,
+            "the test body must fragment, got {fragments}"
+        );
         alice.commit_chat_batch(batch.batch_id).await.unwrap();
 
         let mut transmitted = 0;

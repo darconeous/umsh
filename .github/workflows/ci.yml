@@ -33,8 +33,17 @@ jobs:
 
       - uses: Swatinem/rust-cache@v2
 
+      # The root manifest is virtual, so this walks every workspace member
+      # (including firmware/*), not just default-members.
       - name: cargo fmt --check
         run: cargo fmt --check
+
+      # firmware-esp32 is a separate workspace and is invisible to the check
+      # above. `+stable` because its rust-toolchain.toml pins the `esp`
+      # channel, which this job doesn't install — stable rustfmt produces
+      # identical output on that tree.
+      - name: cargo fmt --check (firmware-esp32)
+        run: cd firmware-esp32 && cargo +stable fmt --all --check
 
       # NOTE: plain `cargo test`, not `--workspace` — the latter drags in
       # firmware/* crates that aren't meant to build on host and currently

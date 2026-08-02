@@ -2800,14 +2800,16 @@ mod tests {
         let mut capabilities = commissionable_capabilities();
         capabilities.push(cap::HOST_KEYS);
         let begin = session.begin(Some(vec![0xAA; 32])).unwrap();
-        drive_reads(session, begin.outbound_frames, move |property| {
-            match property {
+        drive_reads(
+            session,
+            begin.outbound_frames,
+            move |property| match property {
                 prop::CAPS => (property, encoded_capabilities(&capabilities)),
                 prop::HOST_KEY => (property, vec![0xAA; 32]),
                 prop::HOST_CHANNEL_KEYS | prop::HOST_PEER_KEYS => (property, Vec::new()),
                 _ => commissionable_value(property),
-            }
-        })
+            },
+        )
     }
 
     /// Consume a configuration batch, returning the writes it made as a

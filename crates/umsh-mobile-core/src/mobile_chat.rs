@@ -333,7 +333,11 @@ impl MobileChatState {
         }
     }
 
-    pub fn restore(&mut self, checkpoints: &[MobileChatCheckpointRecord], now_ms: u64) -> Vec<String> {
+    pub fn restore(
+        &mut self,
+        checkpoints: &[MobileChatCheckpointRecord],
+        now_ms: u64,
+    ) -> Vec<String> {
         let mut diagnostics = Vec::new();
         let mut restored = Vec::new();
         for record in checkpoints {
@@ -688,11 +692,7 @@ impl MobileChatState {
 
     /// The sender's full address when one is known. A multicast member claims
     /// only a hint, so this is whatever key that hint has resolved to.
-    fn sender_address(
-        &self,
-        conversation: ConversationKey,
-        sender: SenderScope,
-    ) -> Option<String> {
+    fn sender_address(&self, conversation: ConversationKey, sender: SenderScope) -> Option<String> {
         match sender {
             SenderScope::Peer(peer) => Some(address(peer)),
             SenderScope::Local => None,

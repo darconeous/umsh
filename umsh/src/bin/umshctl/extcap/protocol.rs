@@ -230,7 +230,10 @@ mod tests {
             found("id-1", Some("T-Echo"), Some(-52)),
             found("id-2", None, None),
         ]);
-        assert!(text.contains("{value=id-1}{display=T-Echo  (-52 dBm)}"), "{text}");
+        assert!(
+            text.contains("{value=id-1}{display=T-Echo  (-52 dBm)}"),
+            "{text}"
+        );
         assert!(text.contains("{value=id-2}{display=(no name)}"), "{text}");
     }
 
