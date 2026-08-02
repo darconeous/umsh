@@ -36,6 +36,8 @@ struct DeviceConfigView: View {
     @State private var minSnrDB: Int8?
 
     @State private var isSaving = false
+    @State private var alertRequestInFlight = false
+    @State private var alertProblem: String?
     /// The configuration the device confirmed, as the form ended up holding
     /// it. Kept rather than a flag so that adopting a value the device
     /// reported back does not read as an unsaved edit, and so any real edit
@@ -107,6 +109,14 @@ struct DeviceConfigView: View {
             }
 
             ownershipSection
+
+            if let alert = controller.snapshot.alert {
+                findSection(alert)
+            }
+
+            if sync.supportsBattery {
+                powerSection
+            }
 
             if sync.supportsDeviceName {
                 Section {
@@ -231,6 +241,79 @@ struct DeviceConfigView: View {
                 Text("Changing settings here does not claim the device for this phone.")
             }
         }
+    }
+
+    /// Make the device announce itself, so the one being configured can be
+    /// picked out of a bench full of identical boards.
+    ///
+    /// Shown only when the device advertises `CAP_ALERT`, and it reflects
+    /// `PROP_ALERT` rather than what was last asked for — the device ends an
+    /// alert on its own when someone presses its button or its deadline runs
+    /// out, and the control follows.
+    @ViewBuilder
+    private func findSection(_ alert: RadioAlertState) -> some View {
+        Section {
+            Button {
+                let desired: RadioAlertState = alert.isLocating ? .none : .locating
+                alertProblem = nil
+                alertRequestInFlight = true
+                Task {
+                    do {
+                        try await controller.setAlert(desired)
+                    } catch {
+                        alertProblem = "The device did not answer. It may have moved out of range."
+                    }
+                    alertRequestInFlight = false
+                }
+            } label: {
+                Label(
+                    alert.isLocating ? "Stop Alert" : "Find This Device",
+                    systemImage: alert.isLocating ? "bell.slash" : "bell.and.waves.left.and.right"
+                )
+            }
+            .disabled(alertRequestInFlight || isLinkDown)
+            if let alertProblem {
+                Label(alertProblem, systemImage: "exclamationmark.circle")
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+            }
+        } header: {
+            Text("Find")
+        } footer: {
+            Text(alert.isLocating
+                ? "The device is announcing itself. It stops when you tap Stop Alert, when someone presses the button on it, or after a few minutes. An alert left running keeps running after you close this sheet."
+                : "Makes the device beep or flash — whichever its hardware can do — even if its buzzer is silenced. This is not a saved setting.")
+        }
+    }
+
+    /// What the device reports about its own power, as measured rather than
+    /// configured. Each row appears only when the device publishes that
+    /// field: level, terminal voltage, and charge state are independently
+    /// optional in `PROP_BATTERY`.
+    @ViewBuilder
+    private var powerSection: some View {
+        Section {
+            LabeledContent(
+                "Battery",
+                value: controller.snapshot.batteryPercentage.map { "\($0)%" } ?? "Unavailable"
+            )
+            if let millivolts = controller.snapshot.batteryVoltageMillivolts {
+                LabeledContent("Voltage", value: formattedVolts(millivolts))
+            }
+            if let chargeState = controller.snapshot.chargeState {
+                LabeledContent("Charge state", value: chargeState.label)
+            }
+        } header: {
+            Text("Power")
+        } footer: {
+            Text("Read from the device when this session started, and again whenever it reports a change.")
+        }
+    }
+
+    /// Millivolts as the volts a person reads off a meter — 3820 → "3.82 V".
+    private func formattedVolts(_ millivolts: Int) -> String {
+        let volts = Double(millivolts) / 1_000
+        return volts.formatted(.number.precision(.fractionLength(2))) + " V"
     }
 
     @ViewBuilder

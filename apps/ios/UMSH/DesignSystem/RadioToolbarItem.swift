@@ -10,8 +10,8 @@ struct RadioToolbarItem: View {
                 Image(systemName: snapshot.linkState.symbolName)
                 if let batteryPercentage = snapshot.batteryPercentage {
                     Image(systemName: batterySymbol(for: batteryPercentage))
-                    if snapshot.isExternallyPowered == true {
-                        Image(systemName: "bolt.fill")
+                    if let symbol = snapshot.chargeState?.externalPowerSymbol {
+                        Image(systemName: symbol)
                             .font(.caption2)
                     }
                 }

@@ -6,7 +6,10 @@ struct RadioSnapshot: Equatable, Sendable {
     var name: String?
     var localIdentifier: UUID?
     var batteryPercentage: Int?
-    var isExternallyPowered: Bool?
+    /// Terminal voltage in millivolts, on radios that measure it. Stored as
+    /// the device reports it; presentation converts to volts.
+    var batteryVoltageMillivolts: Int?
+    var chargeState: RadioChargeState?
     var batteryReadAt: Date?
     var deviceIdentity: MeshPublicIdentity?
     var hostState: RadioHostState
@@ -23,7 +26,8 @@ struct RadioSnapshot: Equatable, Sendable {
         name: nil,
         localIdentifier: nil,
         batteryPercentage: nil,
-        isExternallyPowered: nil,
+        batteryVoltageMillivolts: nil,
+        chargeState: nil,
         batteryReadAt: nil,
         deviceIdentity: nil,
         hostState: .unknown,
@@ -36,7 +40,8 @@ struct RadioSnapshot: Equatable, Sendable {
         name: nil,
         localIdentifier: nil,
         batteryPercentage: nil,
-        isExternallyPowered: nil,
+        batteryVoltageMillivolts: nil,
+        chargeState: nil,
         batteryReadAt: nil,
         deviceIdentity: nil,
         hostState: .unknown,
@@ -49,7 +54,8 @@ struct RadioSnapshot: Equatable, Sendable {
         name: "T-Echo",
         localIdentifier: UUID(uuidString: "F2A1073A-2FF5-4D85-B71D-6A81031A9C25"),
         batteryPercentage: 82,
-        isExternallyPowered: false,
+        batteryVoltageMillivolts: 3_820,
+        chargeState: .discharging,
         batteryReadAt: .now,
         deviceIdentity: MeshPublicIdentity(
             canonicalAddress: "111thX6LZfHDZZKUs92febYZhYRcXddmzfzF2NvTkPNE",
@@ -64,6 +70,7 @@ struct RadioSnapshot: Equatable, Sendable {
             supportsDeviceName: true,
             supportsLoRa: true,
             supportsDutyCycleLimit: true,
+            supportsBattery: true,
             phyEnabled: true,
             frequencyKHz: 915_000,
             transmitPowerDBm: 14,
@@ -86,6 +93,19 @@ struct RadioSnapshot: Equatable, Sendable {
         problemDescription: nil
     )
 
+    /// Whether the radio is running on external power, which follows from
+    /// the charge state rather than being reported separately.
+    var isExternallyPowered: Bool? {
+        chargeState.map { $0 != .discharging }
+    }
+
+    /// Whether the radio measures its own power state at all
+    /// (`CAP_BATTERY`). False on a radio that will never report one, so
+    /// power detail is hidden rather than shown as unavailable.
+    var reportsBattery: Bool {
+        provisioning?.supportsBattery ?? false
+    }
+
     var accessibleSummary: String {
         var parts = [linkState.accessibilityLabel]
         if let name {
@@ -93,13 +113,54 @@ struct RadioSnapshot: Equatable, Sendable {
         }
         if let batteryPercentage {
             parts.append("Battery \(batteryPercentage) percent")
-        } else {
+        } else if reportsBattery {
             parts.append("Battery unavailable")
         }
-        if isExternallyPowered == true {
-            parts.append("External power")
+        if let chargeState {
+            parts.append(chargeState.accessibilityLabel)
         }
         return parts.joined(separator: ", ")
+    }
+}
+
+/// What a radio's charging system is doing (`PROP_BATTERY`).
+enum RadioChargeState: String, Equatable, Sendable {
+    case discharging
+    case charging
+    case charged
+
+    init(_ state: UlcpChargeState) {
+        self = switch state {
+        case .discharging: .discharging
+        case .charging: .charging
+        case .charged: .charged
+        }
+    }
+
+    var label: String {
+        switch self {
+        case .discharging: "Discharging"
+        case .charging: "Charging"
+        case .charged: "Charged"
+        }
+    }
+
+    var accessibilityLabel: String {
+        switch self {
+        case .discharging: "Discharging"
+        case .charging: "Charging"
+        case .charged: "Charged, on external power"
+        }
+    }
+
+    /// SF Symbol for the toolbar's external-power cue, or `nil` while the
+    /// radio is running off its battery.
+    var externalPowerSymbol: String? {
+        switch self {
+        case .discharging: nil
+        case .charging: "bolt.fill"
+        case .charged: "powerplug.fill"
+        }
     }
 }
 
@@ -219,6 +280,8 @@ struct RadioProvisioningSummary: Equatable, Sendable {
     let supportsDeviceName: Bool
     let supportsLoRa: Bool
     let supportsDutyCycleLimit: Bool
+    /// `CAP_BATTERY`: the radio measures and reports its own power state.
+    let supportsBattery: Bool
     let phyEnabled: Bool
     let frequencyKHz: UInt32
     let transmitPowerDBm: Int8

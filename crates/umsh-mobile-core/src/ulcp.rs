@@ -35,7 +35,33 @@ pub struct UlcpPropertyFrameRecord {
 #[derive(Clone, Debug, PartialEq, Eq, uniffi::Record)]
 pub struct UlcpBatteryRecord {
     pub percentage: Option<u8>,
-    pub is_externally_powered: Option<bool>,
+    /// Measured terminal voltage in millivolts, when the device reports it.
+    pub voltage_mv: Option<u16>,
+    /// What the charging system is doing, when the device reports it.
+    /// Whether the radio is on external power follows from this rather
+    /// than being carried separately.
+    pub charge_state: Option<UlcpChargeState>,
+}
+
+/// The charge state a device reports in `PROP_BATTERY`.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, uniffi::Enum)]
+pub enum UlcpChargeState {
+    /// Running off the battery.
+    Discharging,
+    /// On external power, taking charge.
+    Charging,
+    /// On external power, charge complete.
+    Charged,
+}
+
+impl UlcpChargeState {
+    fn from_wire(state: BatteryChargeState) -> Self {
+        match state {
+            BatteryChargeState::Discharging => Self::Discharging,
+            BatteryChargeState::Charging => Self::Charging,
+            BatteryChargeState::Charged => Self::Charged,
+        }
+    }
 }
 
 /// The device identity's autonomous flood-forwarding policy.
@@ -73,6 +99,9 @@ pub struct UlcpSyncRecord {
     pub supports_device_name: bool,
     pub supports_lora: bool,
     pub supports_duty_cycle_limit: bool,
+    /// The device measures its own power state (`CAP_BATTERY`). A device
+    /// without it never reports a battery, so callers have nothing to show.
+    pub supports_battery: bool,
     /// The device can forward for the mesh on its own (`CAP_REPEATER`).
     pub supports_repeater: bool,
     /// The device serves and configures its own advertised node identity
@@ -2001,6 +2030,7 @@ pub fn inspect_ulcp_sync(
         supports_device_name: has(cap::DEV_NAME),
         supports_lora: has(cap::PHY_LORA),
         supports_duty_cycle_limit: has(cap::PHY_DUTY_LIMIT),
+        supports_battery: has(cap::BATTERY),
         supports_repeater: has(cap::REPEATER),
         supports_ident: has(cap::IDENT),
         supports_device_identity: has(cap::DEV_IDENTITY),
@@ -2578,12 +2608,8 @@ pub fn inspect_ulcp_battery(value: Vec<u8>) -> Result<UlcpBatteryRecord, MobileE
     let battery = BatteryStatus::decode(&value).map_err(|_| MobileError::InvalidUlcpFrame)?;
     Ok(UlcpBatteryRecord {
         percentage: battery.level_percent,
-        is_externally_powered: battery.charge_state.map(|state| {
-            matches!(
-                state,
-                BatteryChargeState::Charging | BatteryChargeState::Charged
-            )
-        }),
+        voltage_mv: battery.voltage_mv,
+        charge_state: battery.charge_state.map(UlcpChargeState::from_wire),
     })
 }
 
@@ -2922,14 +2948,24 @@ mod tests {
             inspect_ulcp_battery(vec![0b110, 82, 1]).unwrap(),
             UlcpBatteryRecord {
                 percentage: Some(82),
-                is_externally_powered: Some(true),
+                voltage_mv: None,
+                charge_state: Some(UlcpChargeState::Charging),
+            }
+        );
+        assert_eq!(
+            inspect_ulcp_battery(vec![0b111, 0xEC, 0x0E, 82, 0]).unwrap(),
+            UlcpBatteryRecord {
+                percentage: Some(82),
+                voltage_mv: Some(3820),
+                charge_state: Some(UlcpChargeState::Discharging),
             }
         );
         assert_eq!(
             inspect_ulcp_battery(vec![]).unwrap(),
             UlcpBatteryRecord {
                 percentage: None,
-                is_externally_powered: None,
+                voltage_mv: None,
+                charge_state: None,
             }
         );
     }
@@ -4499,7 +4535,8 @@ mod tests {
             .unwrap();
         let battery = pushed.snapshot.battery.expect("push carries the snapshot");
         assert_eq!(battery.percentage, Some(45));
-        assert_eq!(battery.is_externally_powered, Some(true));
+        assert_eq!(battery.voltage_mv, Some(0x1010));
+        assert_eq!(battery.charge_state, Some(UlcpChargeState::Charging));
 
         // A later update that carries no measurement must not repeat it.
         // Consumers timestamp what they receive, so a repeat would report

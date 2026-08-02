@@ -24,7 +24,11 @@ struct AdministeredDeviceSnapshot: Equatable, Sendable {
     var hostState: RadioHostState
     var sync: UlcpSyncRecord?
     var batteryPercentage: Int?
-    var isExternallyPowered: Bool?
+    var batteryVoltageMillivolts: Int?
+    var chargeState: RadioChargeState?
+    /// `PROP_ALERT`, or `nil` on a device that cannot make itself
+    /// conspicuous (no `CAP_ALERT`).
+    var alert: RadioAlertState?
     var problemDescription: String?
 
     static let idle = Self(
@@ -35,7 +39,9 @@ struct AdministeredDeviceSnapshot: Equatable, Sendable {
         hostState: .unknown,
         sync: nil,
         batteryPercentage: nil,
-        isExternallyPowered: nil,
+        batteryVoltageMillivolts: nil,
+        chargeState: nil,
+        alert: nil,
         problemDescription: nil
     )
 }
@@ -419,6 +425,16 @@ final class AdministrativeDeviceSession: NSObject, @unchecked Sendable {
         _ = try await perform { session in try session.configureDevice(configuration: configuration) }
     }
 
+    /// Start or stop the device's locate alert (`PROP_ALERT`).
+    ///
+    /// Live behavior rather than configuration: it is never part of a
+    /// configuration write, never saved, and it outlives this session —
+    /// an alert left running keeps running after the setup sheet closes.
+    func setAlert(_ state: RadioAlertState) async throws {
+        Self.logger.notice("action: user set locate alert to \(state.rawValue, privacy: .public)")
+        _ = try await perform { session in try session.setAlert(state: state.wire) }
+    }
+
     /// Re-read the device's authoritative configuration and return it.
     ///
     /// A write is already echo-verified property by property, so this is not
@@ -529,8 +545,13 @@ final class AdministrativeDeviceSession: NSObject, @unchecked Sendable {
         }
         if let battery = update.snapshot.battery {
             snapshot.batteryPercentage = battery.percentage.map(Int.init)
-            snapshot.isExternallyPowered = battery.isExternallyPowered
+            snapshot.batteryVoltageMillivolts = battery.voltageMv.map(Int.init)
+            snapshot.chargeState = battery.chargeState.map(RadioChargeState.init)
         }
+        // Carried on every update, unlike battery: the device ends an alert
+        // on its own — a button press or its deadline — so the control has
+        // to follow the device rather than what was last asked for.
+        snapshot.alert = update.snapshot.alert.map(RadioAlertState.init)
         if let provisioning = update.snapshot.provisioning {
             snapshot.sync = provisioning
         }

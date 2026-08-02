@@ -258,6 +258,15 @@ final class AdminFlowController {
         }
     }
 
+    // MARK: - Live device controls
+
+    /// Start or stop the device's locate alert. Nothing about it is part of
+    /// the configuration write, so it takes effect the moment it is tapped
+    /// and is unaffected by applying or abandoning the form.
+    func setAlert(_ state: RadioAlertState) async throws {
+        try await session.setAlert(state)
+    }
+
     // MARK: - Configuration
 
     /// Write the configuration, then read the device back. Returns the

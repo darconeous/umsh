@@ -4869,13 +4869,31 @@ public func FfiConverterTypeRouterHintRecord_lower(_ value: RouterHintRecord) ->
  */
 public struct UlcpBatteryRecord: Equatable, Hashable {
     public var percentage: UInt8?
-    public var isExternallyPowered: Bool?
+    /**
+     * Measured terminal voltage in millivolts, when the device reports it.
+     */
+    public var voltageMv: UInt16?
+    /**
+     * What the charging system is doing, when the device reports it.
+     * Whether the radio is on external power follows from this rather
+     * than being carried separately.
+     */
+    public var chargeState: UlcpChargeState?
 
     // Default memberwise initializers are never public by default, so we
     // declare one manually.
-    public init(percentage: UInt8?, isExternallyPowered: Bool?) {
+    public init(percentage: UInt8?,
+        /**
+         * Measured terminal voltage in millivolts, when the device reports it.
+         */voltageMv: UInt16?,
+        /**
+         * What the charging system is doing, when the device reports it.
+         * Whether the radio is on external power follows from this rather
+         * than being carried separately.
+         */chargeState: UlcpChargeState?) {
         self.percentage = percentage
-        self.isExternallyPowered = isExternallyPowered
+        self.voltageMv = voltageMv
+        self.chargeState = chargeState
     }
 
 
@@ -4895,13 +4913,15 @@ public struct FfiConverterTypeUlcpBatteryRecord: FfiConverterRustBuffer {
         return
             try UlcpBatteryRecord(
                 percentage: FfiConverterOptionUInt8.read(from: &buf),
-                isExternallyPowered: FfiConverterOptionBool.read(from: &buf)
+                voltageMv: FfiConverterOptionUInt16.read(from: &buf),
+                chargeState: FfiConverterOptionTypeUlcpChargeState.read(from: &buf)
         )
     }
 
     public static func write(_ value: UlcpBatteryRecord, into buf: inout [UInt8]) {
         FfiConverterOptionUInt8.write(value.percentage, into: &buf)
-        FfiConverterOptionBool.write(value.isExternallyPowered, into: &buf)
+        FfiConverterOptionUInt16.write(value.voltageMv, into: &buf)
+        FfiConverterOptionTypeUlcpChargeState.write(value.chargeState, into: &buf)
     }
 }
 
@@ -5730,6 +5750,11 @@ public struct UlcpSyncRecord: Equatable, Hashable {
     public var supportsLora: Bool
     public var supportsDutyCycleLimit: Bool
     /**
+     * The device measures its own power state (`CAP_BATTERY`). A device
+     * without it never reports a battery, so callers have nothing to show.
+     */
+    public var supportsBattery: Bool
+    /**
      * The device can forward for the mesh on its own (`CAP_REPEATER`).
      */
     public var supportsRepeater: Bool
@@ -5811,6 +5836,10 @@ public struct UlcpSyncRecord: Equatable, Hashable {
     // declare one manually.
     public init(capabilityCount: UInt32, hasHostFiltering: Bool, supportsOfflineQueue: Bool, supportsDelegatedAck: Bool, supportsDeviceName: Bool, supportsLora: Bool, supportsDutyCycleLimit: Bool,
         /**
+         * The device measures its own power state (`CAP_BATTERY`). A device
+         * without it never reports a battery, so callers have nothing to show.
+         */supportsBattery: Bool,
+        /**
          * The device can forward for the mesh on its own (`CAP_REPEATER`).
          */supportsRepeater: Bool,
         /**
@@ -5869,6 +5898,7 @@ public struct UlcpSyncRecord: Equatable, Hashable {
         self.supportsDeviceName = supportsDeviceName
         self.supportsLora = supportsLora
         self.supportsDutyCycleLimit = supportsDutyCycleLimit
+        self.supportsBattery = supportsBattery
         self.supportsRepeater = supportsRepeater
         self.supportsIdent = supportsIdent
         self.supportsDeviceIdentity = supportsDeviceIdentity
@@ -5919,6 +5949,7 @@ public struct FfiConverterTypeUlcpSyncRecord: FfiConverterRustBuffer {
                 supportsDeviceName: FfiConverterBool.read(from: &buf),
                 supportsLora: FfiConverterBool.read(from: &buf),
                 supportsDutyCycleLimit: FfiConverterBool.read(from: &buf),
+                supportsBattery: FfiConverterBool.read(from: &buf),
                 supportsRepeater: FfiConverterBool.read(from: &buf),
                 supportsIdent: FfiConverterBool.read(from: &buf),
                 supportsDeviceIdentity: FfiConverterBool.read(from: &buf),
@@ -5955,6 +5986,7 @@ public struct FfiConverterTypeUlcpSyncRecord: FfiConverterRustBuffer {
         FfiConverterBool.write(value.supportsDeviceName, into: &buf)
         FfiConverterBool.write(value.supportsLora, into: &buf)
         FfiConverterBool.write(value.supportsDutyCycleLimit, into: &buf)
+        FfiConverterBool.write(value.supportsBattery, into: &buf)
         FfiConverterBool.write(value.supportsRepeater, into: &buf)
         FfiConverterBool.write(value.supportsIdent, into: &buf)
         FfiConverterBool.write(value.supportsDeviceIdentity, into: &buf)
@@ -7383,6 +7415,91 @@ public func FfiConverterTypeUlcpAttachMode_lower(_ value: UlcpAttachMode) -> Rus
 
 
 /**
+ * The charge state a device reports in `PROP_BATTERY`.
+ */
+
+public enum UlcpChargeState: Equatable, Hashable {
+
+    /**
+     * Running off the battery.
+     */
+    case discharging
+    /**
+     * On external power, taking charge.
+     */
+    case charging
+    /**
+     * On external power, charge complete.
+     */
+    case charged
+
+
+
+
+
+}
+
+#if compiler(>=6)
+extension UlcpChargeState: Sendable {}
+#endif
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public struct FfiConverterTypeUlcpChargeState: FfiConverterRustBuffer {
+    typealias SwiftType = UlcpChargeState
+
+    public static func read(from buf: inout (data: Data, offset: Data.Index)) throws -> UlcpChargeState {
+        let variant: Int32 = try readInt(&buf)
+        switch variant {
+
+        case 1: return .discharging
+
+        case 2: return .charging
+
+        case 3: return .charged
+
+        default: throw UniffiInternalError.unexpectedEnumCase
+        }
+    }
+
+    public static func write(_ value: UlcpChargeState, into buf: inout [UInt8]) {
+        switch value {
+
+
+        case .discharging:
+            writeInt(&buf, Int32(1))
+
+
+        case .charging:
+            writeInt(&buf, Int32(2))
+
+
+        case .charged:
+            writeInt(&buf, Int32(3))
+
+        }
+    }
+}
+
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public func FfiConverterTypeUlcpChargeState_lift(_ buf: RustBuffer) throws -> UlcpChargeState {
+    return try FfiConverterTypeUlcpChargeState.lift(buf)
+}
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public func FfiConverterTypeUlcpChargeState_lower(_ value: UlcpChargeState) -> RustBuffer {
+    return FfiConverterTypeUlcpChargeState.lower(value)
+}
+
+
+
+/**
  * Authoritative comparison of `PROP_HOST_KEY` with the selected phone identity.
  */
 
@@ -8151,6 +8268,30 @@ fileprivate struct FfiConverterOptionTypeUlcpAlertState: FfiConverterRustBuffer 
         switch try readInt(&buf) as Int8 {
         case 0: return nil
         case 1: return try FfiConverterTypeUlcpAlertState.read(from: &buf)
+        default: throw UniffiInternalError.unexpectedOptionalTag
+        }
+    }
+}
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+fileprivate struct FfiConverterOptionTypeUlcpChargeState: FfiConverterRustBuffer {
+    typealias SwiftType = UlcpChargeState?
+
+    public static func write(_ value: SwiftType, into buf: inout [UInt8]) {
+        guard let value = value else {
+            writeInt(&buf, Int8(0))
+            return
+        }
+        writeInt(&buf, Int8(1))
+        FfiConverterTypeUlcpChargeState.write(value, into: &buf)
+    }
+
+    public static func read(from buf: inout (data: Data, offset: Data.Index)) throws -> SwiftType {
+        switch try readInt(&buf) as Int8 {
+        case 0: return nil
+        case 1: return try FfiConverterTypeUlcpChargeState.read(from: &buf)
         default: throw UniffiInternalError.unexpectedOptionalTag
         }
     }

@@ -185,9 +185,9 @@ it looking pending or promising automatic resolution.
 ### Radio status always includes power state
 
 Every compact or expanded component that reports radio connection state must
-also report the radio's battery or power state. This includes navigation-bar
-status, connection banners, radio pickers, onboarding progress, readiness
-summaries, and Radio Detail.
+also report the radio's battery or power state, unless the radio measures no
+power state at all. This includes navigation-bar status, connection banners,
+radio pickers, onboarding progress, readiness summaries, and Radio Detail.
 
 Use the most specific truthful presentation available:
 
@@ -198,8 +198,14 @@ Use the most specific truthful presentation available:
 - **Connected · Battery unavailable** when the radio cannot report it; and
 - **Disconnected · Last battery 78%, 12 min ago** for a cached reading.
 
-Never omit the power position merely because its value is unknown, and never
-present a cached value as live. The battery glyph is accompanied by an
+A radio that advertises no battery capability has no power position: omit it
+rather than reporting it as unavailable, and omit the power detail section of
+Radio Detail entirely. Where the radio does measure its power state, Radio
+Detail reports each measured field it publishes — level, terminal voltage in
+volts, and charge state as discharging, charging, or charged.
+
+Never omit the power position of a battery-reporting radio merely because its
+value is unknown, and never present a cached value as live. The battery glyph is accompanied by an
 accessible text value; neither fill color nor icon shape alone conveys the
 state. This value always describes the companion radio, not the phone.
 

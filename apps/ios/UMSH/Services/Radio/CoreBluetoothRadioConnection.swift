@@ -1197,7 +1197,8 @@ final class CoreBluetoothRadioConnection: NSObject, RadioConnection, @unchecked 
                     name: nil,
                     localIdentifier: self.rememberedPeripheralIdentifier,
                     batteryPercentage: nil,
-                    isExternallyPowered: nil,
+                    batteryVoltageMillivolts: nil,
+                    chargeState: nil,
                     batteryReadAt: nil,
                     deviceIdentity: nil,
                     hostState: .unknown,
@@ -1315,7 +1316,8 @@ final class CoreBluetoothRadioConnection: NSObject, RadioConnection, @unchecked 
                 name: nil,
                 localIdentifier: rememberedPeripheralIdentifier,
                 batteryPercentage: nil,
-                isExternallyPowered: nil,
+                batteryVoltageMillivolts: nil,
+                chargeState: nil,
                 batteryReadAt: nil,
                 deviceIdentity: nil,
                 hostState: .unknown,
@@ -1336,7 +1338,8 @@ final class CoreBluetoothRadioConnection: NSObject, RadioConnection, @unchecked 
                 name: name,
                 localIdentifier: localIdentifier,
                 batteryPercentage: nil,
-                isExternallyPowered: nil,
+                batteryVoltageMillivolts: nil,
+                chargeState: nil,
                 batteryReadAt: nil,
                 deviceIdentity: nil,
                 hostState: .unknown,
@@ -1557,7 +1560,8 @@ final class CoreBluetoothRadioConnection: NSObject, RadioConnection, @unchecked 
                 name: name,
                 localIdentifier: rememberedPeripheralIdentifier,
                 batteryPercentage: nil,
-                isExternallyPowered: nil,
+                batteryVoltageMillivolts: nil,
+                chargeState: nil,
                 batteryReadAt: nil,
                 deviceIdentity: nil,
                 hostState: .unknown,
@@ -1675,7 +1679,8 @@ final class CoreBluetoothRadioConnection: NSObject, RadioConnection, @unchecked 
         // a minutes-old value being restamped as current.
         if let battery = update.snapshot.battery {
             snapshot.batteryPercentage = battery.percentage.map(Int.init)
-            snapshot.isExternallyPowered = battery.isExternallyPowered
+            snapshot.batteryVoltageMillivolts = battery.voltageMv.map(Int.init)
+            snapshot.chargeState = battery.chargeState.map(RadioChargeState.init)
             snapshot.batteryReadAt = .now
         }
         // Unlike battery, carried on every update: the radio ends an
@@ -1691,6 +1696,7 @@ final class CoreBluetoothRadioConnection: NSObject, RadioConnection, @unchecked 
                 supportsDeviceName: $0.supportsDeviceName,
                 supportsLoRa: $0.supportsLora,
                 supportsDutyCycleLimit: $0.supportsDutyCycleLimit,
+                supportsBattery: $0.supportsBattery,
                 phyEnabled: $0.phyEnabled,
                 frequencyKHz: $0.frequencyKhz,
                 transmitPowerDBm: $0.transmitPowerDbm,

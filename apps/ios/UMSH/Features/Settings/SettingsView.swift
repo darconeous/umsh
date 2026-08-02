@@ -446,13 +446,21 @@ struct RadioDetailView: View {
                         .foregroundStyle(.secondary)
                 }
             }
-            Section("Power") {
-                LabeledContent(
-                    "Battery",
-                    value: snapshot.batteryPercentage.map { "\($0)%" } ?? "Unavailable"
-                )
-                if let isExternallyPowered = snapshot.isExternallyPowered {
-                    LabeledContent("External power", value: isExternallyPowered ? "Connected" : "Not connected")
+            // Hidden outright on a radio without CAP_BATTERY: it has no
+            // power state to measure, so there is nothing to report as
+            // unavailable.
+            if snapshot.reportsBattery {
+                Section("Power") {
+                    LabeledContent(
+                        "Battery",
+                        value: snapshot.batteryPercentage.map { "\($0)%" } ?? "Unavailable"
+                    )
+                    if let millivolts = snapshot.batteryVoltageMillivolts {
+                        LabeledContent("Voltage", value: formattedVolts(millivolts))
+                    }
+                    if let chargeState = snapshot.chargeState {
+                        LabeledContent("Charge state", value: chargeState.label)
+                    }
                 }
             }
             if let provisioning = snapshot.provisioning {
@@ -628,6 +636,12 @@ struct RadioDetailView: View {
     private func dutyPercentage(_ value: UInt16) -> String {
         let percent = Double(value) * 100 / Double(UInt16.max)
         return percent.formatted(.number.precision(.fractionLength(percent < 1 ? 2 : 1))) + "%"
+    }
+
+    /// Millivolts as the volts a person reads off a meter — 3820 → "3.82 V".
+    private func formattedVolts(_ millivolts: Int) -> String {
+        let volts = Double(millivolts) / 1_000
+        return volts.formatted(.number.precision(.fractionLength(2))) + " V"
     }
 
     /// The peers stored on the radio's device identity, read back from the
