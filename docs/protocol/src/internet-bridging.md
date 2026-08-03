@@ -148,13 +148,14 @@ a segment's airtime budget.
 
 A confirmed transmission reports channel-access failure to the
 participant rather than retrying on its own, and the local control
-protocol carries no retry count to delegate one. A participant whose
-frame is refused for a busy channel **SHOULD** offer it again over a
-randomised, growing interval bounded by a budget shorter than the
-staleness limit it applies to queued frames, and **MUST** continue
-draining its device's receive path while it waits: a participant that
-stops listening in order to talk costs its segment other stations'
-traffic as well as its own.
+protocol carries no retry count to delegate one: one `CMD_STR_SEND` is
+one channel-access attempt. The
+[backoff procedure](channel-access.md#backoff-procedure) is therefore
+the participant's to run, and it runs the same one every other
+transmitter on that segment does. A participant **MUST** continue
+draining its device's receive path while it waits out a backoff; a
+participant that stops listening in order to talk costs its segment
+other stations' traffic as well as its own.
 
 The server provisions its host domain as any MAC-owning host would.
 Clients **SHOULD NOT** configure a host key or acknowledgement delegation

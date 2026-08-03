@@ -231,18 +231,6 @@ Selected by `type`; each type accepts only its own keys.
 | `queue_depth` | 32 | Frames held per tunnel before the oldest is dropped. |
 | `reconnect_min_secs` / `reconnect_max_secs` | 1 / 60 | Jittered backoff bounds for reconnection. |
 
-### `[server.transmit]` / `[client.transmit]`
-
-| Key | Default | Description |
-| --- | --- | --- |
-| `cca_retry_ms` | 4000 | How long to keep offering a frame the radio refused because the channel was busy. ULCP carries no retry count, so one `CMD_STR_SEND` is one channel-access attempt and persistence is the bridge's job: it re-offers the frame on a jittered backoff growing from 50 ms to 1 s, while continuing to drain the device's receive path. Zero attempts once and drops. Must not exceed `max_frame_age_secs`, since a frame retried that long is discarded as stale before the budget runs out. |
-
-A frame that loses the channel for the whole budget is logged at warn —
-it is a real loss, not a routine event. Seeing those means the segment
-is congested enough that the bridge's own traffic cannot get out;
-raising the budget trades latency for delivery, but the honest fix is
-usually less traffic or a quieter channel.
-
 ### `[[server.clients]]` — one per admitted client
 
 | Key | Default | Description |
@@ -358,6 +346,19 @@ The repository's integration tests do exactly this in-process; see
 miniature.
 
 ## Operational notes
+
+- **A busy channel is not configurable.** Putting a frame on the air
+  follows the MAC's
+  [channel-access backoff procedure](https://darconeous.github.io/umsh/docs/protocol/channel-access.html#backoff-procedure):
+  up to five attempts, each separated by a wait sampled uniformly from
+  `[0, T_frame]`, then a silent drop. `T_frame` comes from the radio's
+  own channel settings, so the backoff tracks the spreading factor
+  instead of a number chosen at deployment time. There is no knob for
+  this on purpose — nodes sharing a segment have to share the
+  procedure, and abandonment is logged at debug (`transmit abandoned:
+  the channel stayed busy`). Seeing those often means the segment is too
+  congested to forward into, which is a traffic problem rather than a
+  tuning one.
 
 - **Rotation and revocation.** There is nothing to expire: the pinned identity
   is the whole trust decision. Rotating a client is generating a new identity

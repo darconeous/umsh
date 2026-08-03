@@ -17,9 +17,9 @@ use std::task::{Context, Poll};
 use std::time::Duration;
 
 use anyhow::{Result, anyhow, bail};
-use tokio::time::Instant;
 use umsh::ulcp::{RawRxFrame, UlcpError};
 use umsh_hal::TxError;
+use umsh_mac::MAX_CAD_ATTEMPTS;
 
 // Only the two ULCP transports attach, advertise capabilities, or have
 // a promiscuous flag to set; a build with neither is fake-radio only.
@@ -37,12 +37,9 @@ use crate::udp_radio::UdpFakeRadio;
 /// radio that is simply gone should not spin the CPU about it.
 const REOPEN_DELAY: Duration = Duration::from_secs(3);
 
-/// Channel-access retry pacing. The first re-offer comes quickly, since
-/// a channel busy with one neighbour's frame clears within a frame time,
-/// and the interval then grows so that a genuinely congested segment is
-/// not answered with a stream of command traffic.
-const CCA_BACKOFF_MIN: Duration = Duration::from_millis(50);
-const CCA_BACKOFF_MAX: Duration = Duration::from_millis(1_000);
+/// Frame time to assume for a radio that reports none — the fake radio,
+/// which has no channel to be busy and so never reaches the backoff.
+const NOMINAL_T_FRAME: Duration = Duration::from_millis(800);
 
 /// The RF parameters carried by a device configuration are applied only
 /// by the resetting attach, which a bridge never performs: radio
@@ -223,6 +220,30 @@ impl Device {
 
         with_device!(self, device => device.max_frame_size())
     }
+
+    /// The segment's frame time, which sets the channel-access backoff.
+    ///
+    /// A real device computes it from the channel settings it is
+    /// actually running, so the backoff tracks the spreading factor
+    /// rather than a number someone guessed at deployment time.
+    fn t_frame(&self) -> Duration {
+        #[cfg(any(feature = "serial-radio", feature = "ble-radio"))]
+        use umsh_hal::Radio as _;
+
+        let millis = match self {
+            #[cfg(feature = "serial-radio")]
+            Self::Serial(device) => device.t_frame_ms(),
+            #[cfg(feature = "ble-radio")]
+            Self::Ble(device) => device.t_frame_ms(),
+            // UDP has no airtime and never reports the channel busy, so
+            // this only ever feeds a backoff that is not reached.
+            Self::Udp(_) => 0,
+        };
+        match millis {
+            0 => NOMINAL_T_FRAME,
+            millis => Duration::from_millis(u64::from(millis)),
+        }
+    }
 }
 
 #[cfg(feature = "serial-radio")]
@@ -239,50 +260,18 @@ async fn open_serial_link(
     Ok(umsh::ulcp::SerialFrameLink::new(stream))
 }
 
-/// The channel-access retry schedule for one frame.
+/// The backoff between two channel-access attempts, sampled uniformly
+/// from `[0, T_frame]` exactly as
+/// [Channel Access § Backoff Procedure][spec] specifies.
 ///
-/// Separated from the relay so the policy can be exercised without a
-/// radio: it is pure arithmetic over the clock, and the relay only asks
-/// it how long to wait next.
-struct CcaBackoff {
-    deadline: Instant,
-    next: Duration,
-}
-
-impl CcaBackoff {
-    fn new(budget: Duration) -> Self {
-        Self {
-            deadline: Instant::now() + budget,
-            next: CCA_BACKOFF_MIN,
-        }
-    }
-
-    /// How long to wait before offering the frame again, or `None` when
-    /// the budget is spent and the frame should be given up on.
-    ///
-    /// A zero budget yields `None` on the first ask, which is the single
-    /// attempt a segment with no other traffic wants.
-    fn next_wait(&mut self) -> Option<Duration> {
-        let remaining = self.deadline.saturating_duration_since(Instant::now());
-        if remaining.is_zero() {
-            return None;
-        }
-        let wait = jittered(self.next).min(remaining);
-        self.next = (self.next * 2).min(CCA_BACKOFF_MAX);
-        Some(wait)
-    }
-}
-
-/// Spread each wait across the upper half of its interval.
+/// Flat rather than growing, and scaled by the segment's own frame time
+/// rather than by a wall-clock constant: what a busy channel means is
+/// that a neighbour's frame is in the air, so the interesting unit of
+/// time is how long that frame lasts.
 ///
-/// Two bridges backing off from the same busy channel must not converge
-/// on one retry instant, and the tunnel's additive reconnect jitter is
-/// the wrong shape for that — here the randomness has to be a meaningful
-/// fraction of the wait itself, while still guaranteeing the interval
-/// grows.
-fn jittered(backoff: Duration) -> Duration {
-    let millis = backoff.as_millis() as u64;
-    Duration::from_millis(millis / 2 + rand::random_range(0..=millis / 2))
+/// [spec]: https://darconeous.github.io/umsh/docs/protocol/channel-access.html#backoff-procedure
+fn backoff(t_frame: Duration) -> Duration {
+    Duration::from_millis(rand::random_range(0..=t_frame.as_millis() as u64))
 }
 
 /// One interface's two queues, from the relay's point of view.
@@ -292,22 +281,14 @@ pub struct DeviceRelay {
     inbound: Arc<TunnelQueue>,
     /// Frames to put on the air.
     outbound: Arc<TunnelQueue>,
-    /// How long a frame refused for a busy channel keeps being offered.
-    cca_retry: Duration,
 }
 
 impl DeviceRelay {
-    pub fn new(
-        config: RadioConfig,
-        inbound: Arc<TunnelQueue>,
-        outbound: Arc<TunnelQueue>,
-        cca_retry: Duration,
-    ) -> Self {
+    pub fn new(config: RadioConfig, inbound: Arc<TunnelQueue>, outbound: Arc<TunnelQueue>) -> Self {
         Self {
             config,
             inbound,
             outbound,
-            cca_retry,
         }
     }
 
@@ -343,6 +324,7 @@ impl DeviceRelay {
             "radio attached"
         );
 
+        let t_frame = device.t_frame();
         let generation = self.outbound.generation();
         loop {
             // The device is borrowed only for the duration of this
@@ -381,45 +363,41 @@ impl DeviceRelay {
                         );
                         continue;
                     }
-                    self.transmit(&mut device, &frame).await?;
+                    self.transmit(&mut device, &frame, t_frame).await?;
                 }
             }
         }
     }
 
-    /// Put one frame on the air, offering it again for as long as the
-    /// radio reports the channel busy.
+    /// Put one frame on the air, following the MAC's channel-access
+    /// [backoff procedure][spec]: up to [`MAX_CAD_ATTEMPTS`] attempts,
+    /// each separated by a wait sampled uniformly from `[0, T_frame]`,
+    /// and a silent drop if the channel never comes free.
     ///
-    /// ULCP carries no retry count, so one `CMD_STR_SEND` buys exactly
-    /// one channel-access attempt: a device that finds the channel busy
-    /// answers `STATUS_CCA_FAILURE` straight away, and the only way to
-    /// try again is for the host to offer the frame again. That makes
-    /// persistence the bridge's job rather than the radio's.
-    async fn transmit(&self, device: &mut Device, frame: &TunnelFrame) -> Result<()> {
-        let mut backoff = CcaBackoff::new(self.cca_retry);
-        let mut attempts = 0u32;
-
-        loop {
-            attempts += 1;
+    /// The procedure has to run here because ULCP carries no retry
+    /// count: one `CMD_STR_SEND` is one channel-access attempt, answered
+    /// with `STATUS_CCA_FAILURE` the moment the device finds the channel
+    /// busy. A host relaying onto a segment contends with the same
+    /// neighbours the MAC does, so it runs the same procedure rather
+    /// than inventing a second answer.
+    ///
+    /// [spec]: https://darconeous.github.io/umsh/docs/protocol/channel-access.html#backoff-procedure
+    async fn transmit(
+        &self,
+        device: &mut Device,
+        frame: &TunnelFrame,
+        t_frame: Duration,
+    ) -> Result<()> {
+        for attempt in 1..=MAX_CAD_ATTEMPTS {
             match device.transmit(frame).await {
                 Ok(()) => {
-                    if attempts > 1 {
-                        tracing::debug!(attempts, "device tx, after waiting out a busy channel");
-                    } else {
-                        tracing::trace!(len = frame.data.len(), "device tx");
-                    }
+                    tracing::trace!(len = frame.data.len(), attempt, "device tx");
                     return Ok(());
                 }
                 Err(TxError::CadTimeout) => {
-                    let Some(wait) = backoff.next_wait() else {
-                        tracing::warn!(
-                            attempts,
-                            len = frame.data.len(),
-                            "dropped a frame: the channel stayed busy for the whole retry budget"
-                        );
-                        return Ok(());
-                    };
-                    self.listen_during(device, wait).await?;
+                    if attempt < MAX_CAD_ATTEMPTS {
+                        self.listen_during(device, backoff(t_frame)).await?;
+                    }
                 }
                 // A spent duty budget is the device doing its job, and
                 // unlike a busy channel it is not worth re-offering:
@@ -431,6 +409,16 @@ impl DeviceRelay {
                 Err(error) => bail!("transmitting: {error:?}"),
             }
         }
+
+        // "Drop the packet silently" — silent on the air, which is what
+        // the procedure is about. Saying so at debug is how the operator
+        // finds out the segment is too busy to forward into.
+        tracing::debug!(
+            attempts = MAX_CAD_ATTEMPTS,
+            len = frame.data.len(),
+            "transmit abandoned: the channel stayed busy"
+        );
+        Ok(())
     }
 
     /// Wait out a backoff without going deaf.
@@ -477,71 +465,59 @@ enum Event {
 mod tests {
     use super::*;
 
-    /// Spend a whole budget, returning what was waited each time.
-    async fn schedule(budget: Duration) -> Vec<Duration> {
-        let mut backoff = CcaBackoff::new(budget);
-        let mut waits = Vec::new();
-        while let Some(wait) = backoff.next_wait() {
-            waits.push(wait);
-            tokio::time::sleep(wait).await;
+    /// The spec's US reference point: BW 62.5 kHz, SF7, CR 4/5.
+    const US_T_FRAME: Duration = Duration::from_millis(800);
+
+    #[test]
+    fn a_backoff_is_uniform_over_a_whole_frame_time() {
+        // Channel Access § Backoff Procedure: "Wait a random duration
+        // uniformly sampled from [0, T_frame]" — flat, not growing, and
+        // scaled by the segment rather than the wall clock.
+        let mut seen_low = false;
+        let mut seen_high = false;
+        for _ in 0..512 {
+            let wait = backoff(US_T_FRAME);
+            assert!(wait <= US_T_FRAME, "{wait:?} exceeds T_frame");
+            seen_low |= wait < US_T_FRAME / 4;
+            seen_high |= wait > US_T_FRAME * 3 / 4;
         }
-        waits
+        assert!(seen_low && seen_high, "the range is not being covered");
     }
 
-    #[tokio::test(start_paused = true)]
-    async fn a_busy_channel_is_retried_until_the_budget_is_spent() {
-        let waits = schedule(Duration::from_secs(4)).await;
+    #[test]
+    fn the_backoff_tracks_the_segments_frame_time() {
+        // A slow spreading factor waits proportionally longer, which is
+        // the point of expressing the procedure in T_frame: one number
+        // cannot serve a spread this wide.
+        let slow = Duration::from_millis(2_200);
+        for _ in 0..64 {
+            assert!(backoff(slow) <= slow);
+        }
         assert!(
-            waits.len() > 4,
-            "a four-second budget should buy several attempts, got {}",
-            waits.len()
+            (0..256).any(|_| backoff(slow) > US_T_FRAME),
+            "a 2.2 s frame time should sometimes wait past 800 ms"
         );
-        let total: Duration = waits.iter().sum();
-        assert!(
-            total <= Duration::from_secs(4),
-            "waited {total:?}, past the budget"
-        );
+    }
+
+    #[test]
+    fn the_attempt_bound_is_the_macs_own() {
+        // Shared rather than restated: a bridge contends with the same
+        // neighbours the MAC does, and two answers would be one too many.
+        assert_eq!(MAX_CAD_ATTEMPTS, 5);
     }
 
     #[tokio::test(start_paused = true)]
-    async fn the_interval_grows_and_then_holds_at_the_ceiling() {
-        let waits = schedule(Duration::from_secs(30)).await;
-        // Jitter makes each wait a range rather than a value, so the
-        // property to assert is the envelope: nothing below half the
-        // floor, nothing above the ceiling, and the tail at the ceiling.
-        for wait in &waits {
-            assert!(*wait >= CCA_BACKOFF_MIN / 2, "{wait:?} is below the floor");
-            assert!(*wait <= CCA_BACKOFF_MAX, "{wait:?} is above the ceiling");
+    async fn the_whole_procedure_is_bounded_by_four_frame_times() {
+        // Four waits between five attempts, each at most T_frame, so a
+        // frame is never held longer than this no matter how busy the
+        // channel is.
+        let mut total = Duration::ZERO;
+        for _ in 0..MAX_CAD_ATTEMPTS - 1 {
+            total += backoff(US_T_FRAME);
         }
-        let tail = &waits[waits.len() - 3..waits.len() - 1];
-        for wait in tail {
-            assert!(
-                *wait >= CCA_BACKOFF_MAX / 2,
-                "{wait:?} should have reached the ceiling's jitter band by the tail"
-            );
-        }
-    }
-
-    #[tokio::test(start_paused = true)]
-    async fn a_zero_budget_is_a_single_attempt() {
-        // The relay asks once before its first re-offer, so a refusal
-        // with no budget must abandon immediately rather than sleep.
-        assert!(CcaBackoff::new(Duration::ZERO).next_wait().is_none());
-    }
-
-    #[tokio::test(start_paused = true)]
-    async fn the_last_wait_never_overruns_the_budget() {
-        // The final interval is clamped to what is left, so a frame is
-        // never held past the budget waiting for an attempt that the
-        // budget cannot pay for.
-        let budget = Duration::from_millis(120);
-        let started = Instant::now();
-        let waits = schedule(budget).await;
-        assert!(!waits.is_empty(), "a non-zero budget buys at least one");
         assert!(
-            started.elapsed() <= budget,
-            "overran by {:?}",
-            started.elapsed()
+            total <= US_T_FRAME * u32::from(MAX_CAD_ATTEMPTS - 1),
+            "{total:?} exceeds four frame times"
         );
     }
 }
