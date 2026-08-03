@@ -67,6 +67,8 @@ Flooding works across bridges, but the remaining flood hop count is clamped when
 > non-local chatter. Moreso than other types of bridges, internet bridges MUST limit the flood hop count
 > of packets which transit the bridge.
 
+A client–server tunnel realization of an internet bridge — including the exact form of the inbound-medium retransmission — is specified in [Internet Bridging](internet-bridging.md).
+
 ## Forwarding Confirmation and Recovery
 
 UMSH provides hop-by-hop forwarding confirmation for both source-routed and flood-originated packets. After transmitting, a node listens for the next hop to retransmit the same packet. If no retransmission is heard within a timeout, the node retries with exponential backoff (up to 3 retries). The original sender does not currently receive any notification of a forwarding failure when source routing.

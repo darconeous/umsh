@@ -46,6 +46,7 @@
   - [Superseded: Minimal Protocol](ulcp-minimal.md)
   - [Superseded: Full Protocol](ulcp-full.md)
 - [Identity Export Format](identity-export.md)
+- [Internet Bridging](internet-bridging.md)
 - [Security Considerations](security-considerations.md)
 - [Amateur Radio Operation](amateur-radio.md)
 - [Limitations & Open Items](limitations.md)
