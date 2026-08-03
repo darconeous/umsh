@@ -1,0 +1,62 @@
+# Sample unit for one end of a UMSH internet bridge.
+#
+# The role — server or client — comes from the configuration file, so
+# this one unit fits either. Validate a change before restarting:
+#
+#     umsh-bridge check -c /etc/umsh-bridge/config.toml
+#
+# Install:
+#
+#     cargo install --path tools/umsh-bridge
+#     useradd --system --no-create-home --shell /usr/sbin/nologin umsh-bridge
+#     install -d -o umsh-bridge -g umsh-bridge -m 0750 /etc/umsh-bridge
+#     # ... write config.toml, identity.key (0600), and the certificates
+#     systemctl enable --now umsh-bridge
+#
+# A serial radio needs the user in the `dialout` group; a BLE radio needs
+# access to the system D-Bus and BlueZ, which the sandboxing below
+# permits.
+
+[Unit]
+Description=UMSH internet bridge
+Documentation=https://darconeous.github.io/umsh/docs/protocol/internet-bridging.html
+After=network-online.target bluetooth.target
+Wants=network-online.target
+
+[Service]
+Type=exec
+User=umsh-bridge
+Group=umsh-bridge
+SupplementaryGroups=dialout
+# No ExecReload: the configuration is read once at start-up, so applying
+# a change is `systemctl restart` — after `umsh-bridge check`.
+Environment=UMSH_BRIDGE_CONFIG=/etc/umsh-bridge/config.toml
+ExecStart=/usr/local/bin/umsh-bridge run
+
+# The process runs in the foreground and exits on SIGINT/SIGTERM; a
+# bridge that has lost its radio or its tunnel retries on its own, so a
+# restart here is only for a process that actually died.
+Restart=on-failure
+RestartSec=5
+
+# It reads a handful of files, opens one listening socket or one
+# outbound connection, and talks to a radio. Nothing else.
+NoNewPrivileges=yes
+PrivateTmp=yes
+ProtectSystem=strict
+ProtectHome=yes
+ReadOnlyPaths=/etc/umsh-bridge
+ProtectKernelTunables=yes
+ProtectKernelModules=yes
+ProtectControlGroups=yes
+RestrictNamespaces=yes
+RestrictRealtime=yes
+RestrictSUIDSGID=yes
+LockPersonality=yes
+MemoryDenyWriteExecute=yes
+SystemCallArchitectures=native
+SystemCallFilter=@system-service
+RestrictAddressFamilies=AF_INET AF_INET6 AF_UNIX AF_NETLINK
+
+[Install]
+WantedBy=multi-user.target

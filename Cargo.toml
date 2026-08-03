@@ -34,6 +34,7 @@ members = [
     "firmware/sensecap-solar",
     "firmware/wio-tracker-l1",
     "tools/ulcp-web-debugger/engine",
+    "tools/umsh-bridge",
     "tools/umshctl",
     "tools/uniffi-bindgen",
     "umsh",
@@ -68,6 +69,7 @@ default-members = [
     "crates/umsh-ux-display-tracker",
     "crates/umsh-app-ulcp-cli",
     "tools/ulcp-web-debugger/engine",
+    "tools/umsh-bridge",
     "tools/umshctl",
     "umsh",
 ]

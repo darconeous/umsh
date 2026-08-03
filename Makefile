@@ -10,7 +10,7 @@
 	build-techo flash-techo \
 	build-heltec-v3-console flash-heltec-v3-console \
 	build-heltec-v3 flash-heltec-v3 \
-	install-umshctl install-dissector install-extcap
+	install-umshctl install-umsh-bridge install-dissector install-extcap
 
 # ─── Firmware build / flash ──────────────────────────────────────────────────
 #
@@ -140,6 +140,9 @@ flash-heltec-v3: build-heltec-v3
 
 install-umshctl:
 	cargo install --path tools/umshctl
+
+install-umsh-bridge:
+	cargo install --path tools/umsh-bridge
 
 # ─── Wireshark ───────────────────────────────────────────────────────────────
 #

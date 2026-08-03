@@ -40,9 +40,10 @@ costs of migration before considering implementing it.
 - `apps/ios/` — SwiftUI app; `packages/UMSHMobileCore` — UniFFI Swift package.
 - `tools/` — host binaries and dev tooling (`crates/` is reserved for library crates):
   - `umshctl` — the radio tool (clap + rustyline; capture is a subcommand)
+  - `umsh-bridge` — the internet bridge daemon (`docs/protocol/src/internet-bridging.md`); lib+bin split so the integration tests can stand a whole bridge up in one process. TOML config + `tracing`, its own dependency table
   - `ulcp-web-debugger`, `uniffi-bindgen`
 - `docs/` — protocol spec (`protocol/`), per-board hardware docs, firmware/feature plans, UX.
-- `dissectors/umsh/` — Wireshark Lua dissector. `diag/`, `scripts/flash.py`.
+- `dissectors/umsh/` — Wireshark Lua dissector. `diag/`, `contrib/systemd/`, `scripts/flash.py`.
 
 ## Build / test
 
