@@ -19,11 +19,18 @@ places at once.
 
 ## How it works
 
+- Every participant holds its own **Ed25519 identity** — the server's doubles
+  as the bridge's node identity on the mesh — and each side is configured with
+  the other's public key, written as the canonical UMSH address. The address is
+  public: it can be exchanged over chat, email, or a QR code without weakening
+  anything. There is no CA and nothing else to distribute — admitting a client
+  is adding its address to the server's configuration, and revoking one is
+  deleting that entry.
 - Participants connect over **TLS 1.3 only** (older versions are not compiled
-  in), with ALPN `umsh-bridge/1`. Both ends present self-signed certificates
-  and each pins the SHA-256 fingerprint of the other's. There is no CA:
-  admitting a client is adding its fingerprint to the server's configuration,
-  and revoking one is deleting that entry.
+  in), with ALPN `umsh-bridge/1`. The certificates TLS requires are minted in
+  memory from the identity at startup and never stored; the trust decision is
+  the handshake signature checked against the pinned identity — proof the peer
+  *holds* the key, independent of anything a certificate claims.
 - The tunnel carries raw PHY frames with their receive metadata in HDLC-Lite
   framing — the same `STR_PHY_RAW` structures the ULCP device protocol uses, so
   clients relay them without parsing. Idle tunnels exchange keepalives; a
@@ -103,26 +110,15 @@ fake radio and the radio-less server are always available.
 
 ## Quick start
 
-The binary issues every credential a deployment needs. On the server, generate
-the bridge's node identity — once, for the life of the bridge; it is the
-address the mesh knows the bridge by:
+Each endpoint generates one identity, once, wherever it runs:
 
 ```sh
 umsh-bridge keygen identity /etc/umsh-bridge/identity.key
 ```
 
-Then a TLS certificate for each participant, wherever that participant runs:
-
-```sh
-umsh-bridge keygen cert server --cert /etc/umsh-bridge/server.crt --key /etc/umsh-bridge/server.key
-```
-
-```sh
-umsh-bridge keygen cert myclient --cert /etc/umsh-bridge/myclient.crt --key /etc/umsh-bridge/myclient.key
-```
-
-Each `keygen cert` prints the fingerprint the *other* end must pin
-(`keygen fingerprint <cert>` re-prints it later). Server configuration:
+It prints the identity's **address** — the public name the other end pins,
+re-printable any time with `umsh-bridge address`. Swap addresses between the
+two ends (they are public; any channel works) and write the configurations:
 
 ```toml
 # /etc/umsh-bridge/config.toml on the server
@@ -132,17 +128,13 @@ key_file = "/etc/umsh-bridge/identity.key"
 [server]
 listen = ["0.0.0.0:21837", "[::]:21837"]   # the default
 
-[server.tls]
-cert_file = "/etc/umsh-bridge/server.crt"
-key_file = "/etc/umsh-bridge/server.key"
-
 [server.radio]
 type = "serial"                    # or "ble", "udp-multicast", "none"
 port = "/dev/ttyACM0"
 
 [[server.clients]]
 name = "myclient"
-fingerprint = "sha256:…"           # printed by `keygen cert myclient`
+address = "…"                      # printed by the client's `keygen identity`
 max_frames_per_minute = 60
 ```
 
@@ -150,21 +142,22 @@ And the client's:
 
 ```toml
 # /etc/umsh-bridge/config.toml on the client
+[identity]
+key_file = "/etc/umsh-bridge/identity.key"
+
 [client]
 server = "bridge.example.net:21837"
-
-[client.tls]
-cert_file = "/etc/umsh-bridge/myclient.crt"
-key_file = "/etc/umsh-bridge/myclient.key"
-server_fingerprint = "sha256:…"    # printed by `keygen cert server`
+server_address = "…"               # printed by the server's `keygen identity`
 
 [client.radio]
 type = "ble"
 selector = "UMSH T-Echo"
 ```
 
-Validate before running — `check` reads the credentials for real but opens no
-socket and touches no radio, so it is safe against a live deployment's config:
+There are no certificate files: the TLS credential is minted in memory from
+the identity at startup. Validate before running — `check` reads the identity
+key for real but opens no socket and touches no radio, so it is safe against a
+live deployment's config:
 
 ```sh
 umsh-bridge check
@@ -185,11 +178,11 @@ The file is TOML. Unknown keys are rejected rather than ignored — a misspelled
 option fails `check` instead of silently doing nothing. Exactly one of
 `[server]` or `[client]` must be present.
 
-### `[identity]` — server only
+### `[identity]` — both roles
 
 | Key | Description |
 | --- | --- |
-| `key_file` | File holding the 64-hex Ed25519 seed, readable only by its owner (`keygen identity` writes it with mode 0600, and `check` rejects anything looser). |
+| `key_file` | File holding this endpoint's 64-hex Ed25519 seed, readable only by its owner (`keygen identity` writes it with mode 0600, and `check` rejects anything looser). The server's identity is also the bridge's node identity on the mesh; a client's is its tunnel credential, and is ready to become a mesh-addressable management identity later. |
 
 ### `[server]`
 
@@ -197,13 +190,13 @@ option fails `check` instead of silently doing nothing. Exactly one of
 | --- | --- | --- |
 | `listen` | `["0.0.0.0:21837", "[::]:21837"]` | Socket addresses to accept tunnels on. |
 
-### `[server.tls]` / `[client.tls]`
+### `[client]`
 
-| Key | Description |
-| --- | --- |
-| `cert_file`, `key_file` | This participant's certificate and private key, as issued by `keygen cert`. |
-| `server_fingerprint` | *(client only)* SHA-256 of the server's certificate DER, `sha256:<64 hex>`. |
-| `server_name` | *(client only, optional)* SNI name to present. The pin is what authenticates the server; this only matters when the server multiplexes on it. |
+| Key | Default | Description |
+| --- | --- | --- |
+| `server` | *(required)* | `host:port` of the bridge server. Every address the name resolves to is tried, IPv6 and IPv4 alike. |
+| `server_address` | *(required)* | The server's identity, as the UMSH address its `keygen identity` printed (fixed-44 base58, or 64 hex). |
+| `server_name` | *(optional)* | SNI name to present. The pinned identity is what authenticates the server; this only matters when the server multiplexes on it. |
 
 ### `[server.radio]` / `[client.radio]`
 
@@ -243,7 +236,7 @@ Selected by `type`; each type accepts only its own keys.
 | Key | Default | Description |
 | --- | --- | --- |
 | `name` | *(required)* | Interface name, used in log lines and in other clients' `allow_to`. `"radio"` is reserved for the server's own radio. |
-| `fingerprint` | *(required)* | SHA-256 of this client's certificate DER. Each credential identifies exactly one client. |
+| `address` | *(required)* | This client's identity, as the UMSH address its `keygen identity` printed. An identity names exactly one client. |
 | `max_frames_per_minute` | *(unlimited)* | Forwarding budget for frames arriving from this client. `check` warns when absent: an authenticated but misbehaving client is the realistic failure mode. |
 | `allow_to` | *(all)* | Interfaces this client's traffic may be fanned out to (client names and/or `"radio"`). |
 | `suppress_flood_confirmations` | `false` | Set when the device behind this client also runs its own repeater role: its re-forward already confirms the previous hop, so the bridge's flood confirmation copy would be redundant airtime. Source-routed confirmations are still emitted, and a direct retry from the previous hop is still answered. |
@@ -253,16 +246,16 @@ Selected by `type`; each type accepts only its own keys.
 | Command | Description |
 | --- | --- |
 | `umsh-bridge run` | Run the bridge in the foreground until interrupted (SIGINT/SIGTERM). |
-| `umsh-bridge check` | Load and validate a configuration, reading the keys and certificates it names, without opening a socket or touching a radio. Prints the role, fingerprints, and per-client fan-out; exits nonzero on any problem. |
-| `umsh-bridge keygen identity <path>` | Generate the bridge's node identity (server only, once) and print its mesh address and hints. |
-| `umsh-bridge keygen cert <name> --cert <path> --key <path>` | Issue a self-signed certificate and print the fingerprint to pin at the other end. |
-| `umsh-bridge keygen fingerprint <cert>` | Re-print an existing certificate's fingerprint. |
+| `umsh-bridge check` | Load and validate a configuration, reading the identity key it names, without opening a socket or touching a radio. Prints the role, addresses, and per-client fan-out; exits nonzero on any problem. |
+| `umsh-bridge keygen identity <path>` | Generate this endpoint's identity, once for its life, and print its address and hints. |
+| `umsh-bridge address <path>` | Print an existing identity's address — the one line the other end needs. Safe to share anywhere. |
 
-`run` and `check` take `-c`/`--config` (default `/etc/umsh-bridge/config.toml`,
-or the `UMSH_BRIDGE_CONFIG` environment variable). `keygen` refuses to replace
-an existing file without `--force`, since every peer pinning the old
-certificate would need updating — and a replaced *identity* changes the
-bridge's mesh address permanently.
+`run`, `check`, and `address` default to `/etc/umsh-bridge/config.toml` and
+`/etc/umsh-bridge/identity.key`; `run` and `check` take `-c`/`--config` (or the
+`UMSH_BRIDGE_CONFIG` environment variable). `keygen identity` refuses to
+replace an existing key without `--force`, since the identity's address — what
+every peer pins, and for a server what the mesh knows the bridge by — changes
+permanently.
 
 Logging goes to stderr: `-v` for debug, `-vv` for trace (per-frame forwarding
 verdicts), `-q` for warnings only, `-qq` for errors only. Verbosity is spent on
@@ -286,7 +279,7 @@ sudo useradd --system --no-create-home --shell /usr/sbin/nologin umsh-bridge
 sudo install -d -o umsh-bridge -g umsh-bridge -m 0750 /etc/umsh-bridge
 ```
 
-Write `config.toml` and generate the credentials into `/etc/umsh-bridge`, then:
+Generate the identity and write `config.toml` into `/etc/umsh-bridge`, then:
 
 ```sh
 sudo cp contrib/systemd/umsh-bridge.service /etc/systemd/system/
@@ -354,17 +347,23 @@ miniature.
 
 ## Operational notes
 
-- **Rotation and revocation.** Nothing consults a certificate's validity
-  window — the pin is the trust decision, so certificates are issued long
-  (10 years) and rotation is an operator action: issue a new certificate, add
-  its fingerprint at the other end, remove the old one. Revoking a client is
-  deleting its `[[server.clients]]` entry and restarting.
+- **Rotation and revocation.** There is nothing to expire: the pinned identity
+  is the whole trust decision. Rotating a client is generating a new identity
+  and updating its address in the server's configuration; revoking one is
+  deleting its `[[server.clients]]` entry and restarting. Rotating the
+  *server's* identity is a bigger deal — it is also the bridge's mesh address —
+  so treat it as generated once for the life of the bridge.
 - **A rejected client looks connected, briefly.** TLS 1.3 completes the
-  client's half of the handshake before the server evaluates the certificate,
-  so a client with an unknown fingerprint sees its connection accepted and then
-  immediately closed with an alert. If a client connects and instantly drops in
-  a loop, compare `keygen fingerprint` output against the server's
+  client's half of the handshake before the server evaluates its identity, so
+  a client the server does not pin sees its connection accepted and then
+  immediately closed with an alert. If a client connects and instantly drops
+  in a loop, compare its `umsh-bridge address` output against the server's
   configuration.
+- **One key, two protocols, safely.** The identity that authenticates the
+  tunnel is the same Ed25519 key that will sign UMSH structures if the
+  endpoint later acts on the mesh. The two uses cannot be confused: TLS 1.3
+  domain-separates its handshake signatures behind a fixed 64-octet padding
+  prefix and context string that no UMSH signed structure begins with.
 - **Reconnects discard the queue.** Frames buffered for a dead tunnel are
   dropped on reconnect rather than delivered late; the mesh's own retry
   machinery is the recovery path, and `max_frame_age_secs` bounds staleness the

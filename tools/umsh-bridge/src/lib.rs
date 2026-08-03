@@ -40,16 +40,10 @@ pub fn run(args: ToolArgs) -> Result<()> {
     match args.command {
         Command::Check(run_args) => check::check(&run_args.config),
         Command::Run(run_args) => run_bridge(&run_args.config),
+        Command::Address { path } => keygen::print_address(&path),
         Command::Keygen(KeygenCommand::Identity { path, force }) => {
             keygen::write_identity(&path, force)
         }
-        Command::Keygen(KeygenCommand::Cert {
-            name,
-            cert,
-            key,
-            force,
-        }) => keygen::write_certificate(&name, &cert, &key, force),
-        Command::Keygen(KeygenCommand::Fingerprint { cert }) => keygen::print_fingerprint(&cert),
     }
 }
 

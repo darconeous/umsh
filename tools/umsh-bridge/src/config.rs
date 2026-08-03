@@ -13,7 +13,7 @@ use anyhow::{Context, Result, bail};
 use serde::Deserialize;
 use umsh_core::RegionCode;
 
-use crate::tls::Fingerprint;
+use crate::tls::Address;
 
 /// Default tunnel port: `0x554D`, big-endian ASCII "UM". Unassigned by
 /// IANA, and far enough from the usual hand-picked numbers to be
@@ -27,8 +27,8 @@ pub const RADIO_INTERFACE: &str = "radio";
 #[derive(Debug, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct Config {
-    /// The bridge's node identity. Required for a server, which owns it;
-    /// meaningless for a client, which has none.
+    /// This endpoint's Ed25519 identity, which the tunnel authenticates
+    /// with. The server's doubles as the bridge's node identity.
     pub identity: Option<IdentityConfig>,
     pub server: Option<ServerConfig>,
     pub client: Option<ClientConfig>,
@@ -46,7 +46,6 @@ pub struct IdentityConfig {
 pub struct ServerConfig {
     #[serde(default = "default_listen")]
     pub listen: Vec<SocketAddr>,
-    pub tls: ServerTlsConfig,
     #[serde(default)]
     pub radio: RadioConfig,
     #[serde(default)]
@@ -59,19 +58,13 @@ pub struct ServerConfig {
 
 #[derive(Debug, Deserialize)]
 #[serde(deny_unknown_fields)]
-pub struct ServerTlsConfig {
-    pub cert_file: PathBuf,
-    pub key_file: PathBuf,
-}
-
-#[derive(Debug, Deserialize)]
-#[serde(deny_unknown_fields)]
 pub struct ClientEntry {
     /// Interface name, used in log lines and in other clients'
     /// `allow_to`.
     pub name: String,
-    /// SHA-256 of this client's certificate, in DER form.
-    pub fingerprint: Fingerprint,
+    /// This client's identity — the address its `keygen identity`
+    /// printed.
+    pub address: Address,
     /// Forwarding budget for frames arriving from this client. Absent
     /// means unlimited, which the spec advises against.
     pub max_frames_per_minute: Option<u32>,
@@ -92,24 +85,18 @@ pub struct ClientConfig {
     /// `host:port` of the bridge server. Every address it resolves to is
     /// tried, IPv6 and IPv4 alike.
     pub server: String,
-    pub tls: ClientTlsConfig,
+    /// The server's identity — the address its `keygen identity`
+    /// printed.
+    pub server_address: Address,
+    /// SNI name to present. The pinned identity is what authenticates
+    /// the server, so this only matters when the server multiplexes on
+    /// it.
+    #[serde(default)]
+    pub server_name: Option<String>,
     #[serde(default)]
     pub radio: RadioConfig,
     #[serde(default)]
     pub tunnel: TunnelConfig,
-}
-
-#[derive(Debug, Deserialize)]
-#[serde(deny_unknown_fields)]
-pub struct ClientTlsConfig {
-    pub cert_file: PathBuf,
-    pub key_file: PathBuf,
-    /// SHA-256 of the server's certificate, in DER form.
-    pub server_fingerprint: Fingerprint,
-    /// SNI name to present. The pin is what authenticates the server, so
-    /// this only matters when the server multiplexes on it.
-    #[serde(default)]
-    pub server_name: Option<String>,
 }
 
 #[derive(Debug, Deserialize)]
@@ -435,7 +422,14 @@ impl Config {
                 }
                 server.validate()
             }
-            (None, Some(client)) => client.validate(),
+            (None, Some(client)) => {
+                if self.identity.is_none() {
+                    bail!(
+                        "a client authenticates the tunnel with its own identity; add [identity]"
+                    );
+                }
+                client.validate()
+            }
         }
     }
 }
@@ -470,7 +464,7 @@ impl ServerConfig {
         }
 
         let mut names = HashSet::new();
-        let mut fingerprints = HashSet::new();
+        let mut addresses = HashSet::new();
         for client in &self.clients {
             if client.name == RADIO_INTERFACE {
                 bail!("client name \"{RADIO_INTERFACE}\" is reserved for the server's own radio");
@@ -481,10 +475,10 @@ impl ServerConfig {
             if !names.insert(client.name.as_str()) {
                 bail!("two [[server.clients]] are both named \"{}\"", client.name);
             }
-            if !fingerprints.insert(client.fingerprint) {
+            if !addresses.insert(client.address) {
                 bail!(
-                    "client \"{}\" shares a fingerprint with another; a credential identifies \
-                     exactly one client",
+                    "client \"{}\" shares an address with another; an identity names exactly \
+                     one client",
                     client.name
                 );
             }
@@ -560,10 +554,13 @@ impl ClientConfig {
 mod tests {
     use super::*;
 
-    const SERVER_FP: &str =
-        "sha256:0000000000000000000000000000000000000000000000000000000000000001";
-    const CLIENT_FP: &str =
-        "sha256:0000000000000000000000000000000000000000000000000000000000000002";
+    /// A real address, since config parsing validates the curve point.
+    fn address(seed: u8) -> String {
+        use umsh_crypto::NodeIdentity as _;
+        umsh_crypto::software::SoftwareIdentity::from_secret_bytes(&[seed; 32])
+            .public_key()
+            .to_string()
+    }
 
     fn parse(text: &str) -> Result<Config> {
         let config: Config = toml::from_str(text)?;
@@ -574,8 +571,7 @@ mod tests {
     fn server_config(extra: &str) -> String {
         format!(
             "[identity]\nkey_file = \"/etc/umsh-bridge/identity.key\"\n\
-             [server]\n\
-             [server.tls]\ncert_file = \"a.crt\"\nkey_file = \"a.key\"\n{extra}"
+             [server]\n{extra}"
         )
     }
 
@@ -614,19 +610,45 @@ mod tests {
     fn a_role_is_required_and_exclusive() {
         assert!(parse("[identity]\nkey_file = \"k\"\n").is_err());
         let both = format!(
-            "{}\n[client]\nserver = \"h:21837\"\n[client.tls]\ncert_file = \"c\"\n\
-             key_file = \"k\"\nserver_fingerprint = \"{SERVER_FP}\"\n",
-            server_config("[server.radio]\ntype = \"ble\"\n")
+            "{}\n[client]\nserver = \"h:21837\"\nserver_address = \"{}\"\n",
+            server_config("[server.radio]\ntype = \"ble\"\n"),
+            address(1)
         );
         assert!(parse(&both).is_err());
     }
 
     #[test]
-    fn a_server_without_an_identity_is_rejected() {
-        let text = "[server]\n[server.tls]\ncert_file = \"a\"\nkey_file = \"b\"\n\
-                    [server.radio]\ntype = \"ble\"\n";
+    fn either_role_without_an_identity_is_rejected() {
+        let text = "[server]\n[server.radio]\ntype = \"ble\"\n";
         let error = parse(text).unwrap_err().to_string();
         assert!(error.contains("[identity]"), "{error}");
+
+        let text = format!(
+            "[client]\nserver = \"h:21837\"\nserver_address = \"{}\"\n\
+             [client.radio]\ntype = \"ble\"\n",
+            address(1)
+        );
+        let error = parse(&text).unwrap_err().to_string();
+        assert!(error.contains("[identity]"), "{error}");
+    }
+
+    #[test]
+    fn an_address_that_is_not_a_key_fails_the_parse() {
+        // 64 hex digits that are not a curve point, found by search.
+        let junk = (0u8..=255)
+            .map(|byte| {
+                let mut key = [0u8; 32];
+                key[0] = byte;
+                umsh_core::PublicKey(key)
+            })
+            .find(|key| !umsh_crypto::is_valid_ed25519_public_key(key))
+            .unwrap();
+        let text = server_config(&format!(
+            "[server.radio]\ntype = \"ble\"\n\
+             [[server.clients]]\nname = \"myclient\"\naddress = \"{junk:x}\"\n"
+        ));
+        let error = parse(&text).unwrap_err().to_string();
+        assert!(error.contains("Ed25519"), "{error}");
     }
 
     #[test]
@@ -665,8 +687,9 @@ mod tests {
     fn allow_to_must_name_a_real_interface() {
         let text = server_config(&format!(
             "[server.radio]\ntype = \"ble\"\n\
-             [[server.clients]]\nname = \"cabin\"\nfingerprint = \"{CLIENT_FP}\"\n\
-             allow_to = [\"radio\", \"summit\"]\n"
+             [[server.clients]]\nname = \"cabin\"\naddress = \"{}\"\n\
+             allow_to = [\"radio\", \"summit\"]\n",
+            address(2)
         ));
         let error = parse(&text).unwrap_err().to_string();
         assert!(error.contains("summit"), "{error}");
@@ -675,24 +698,28 @@ mod tests {
     #[test]
     fn allow_to_radio_needs_a_radio() {
         let text = server_config(&format!(
-            "[[server.clients]]\nname = \"cabin\"\nfingerprint = \"{CLIENT_FP}\"\n\
-             allow_to = [\"radio\"]\n"
+            "[[server.clients]]\nname = \"cabin\"\naddress = \"{}\"\n\
+             allow_to = [\"radio\"]\n",
+            address(2)
         ));
         assert!(parse(&text).is_err());
     }
 
     #[test]
-    fn one_credential_names_one_client() {
+    fn one_identity_names_one_client() {
         let text = server_config(&format!(
-            "[[server.clients]]\nname = \"cabin\"\nfingerprint = \"{CLIENT_FP}\"\n\
-             [[server.clients]]\nname = \"summit\"\nfingerprint = \"{CLIENT_FP}\"\n"
+            "[[server.clients]]\nname = \"cabin\"\naddress = \"{0}\"\n\
+             [[server.clients]]\nname = \"summit\"\naddress = \"{0}\"\n",
+            address(2)
         ));
         let error = parse(&text).unwrap_err().to_string();
-        assert!(error.contains("fingerprint"), "{error}");
+        assert!(error.contains("address"), "{error}");
 
         let text = server_config(&format!(
-            "[[server.clients]]\nname = \"cabin\"\nfingerprint = \"{CLIENT_FP}\"\n\
-             [[server.clients]]\nname = \"cabin\"\nfingerprint = \"{SERVER_FP}\"\n"
+            "[[server.clients]]\nname = \"cabin\"\naddress = \"{}\"\n\
+             [[server.clients]]\nname = \"cabin\"\naddress = \"{}\"\n",
+            address(2),
+            address(3)
         ));
         assert!(parse(&text).is_err(), "duplicate names");
     }
@@ -701,7 +728,8 @@ mod tests {
     fn the_radio_interface_name_is_reserved() {
         let text = server_config(&format!(
             "[server.radio]\ntype = \"ble\"\n\
-             [[server.clients]]\nname = \"radio\"\nfingerprint = \"{CLIENT_FP}\"\n"
+             [[server.clients]]\nname = \"radio\"\naddress = \"{}\"\n",
+            address(2)
         ));
         assert!(parse(&text).is_err());
     }
@@ -734,9 +762,9 @@ mod tests {
     fn a_client_needs_a_radio_and_a_port() {
         let client = |server: &str, radio: &str| {
             format!(
-                "[client]\nserver = \"{server}\"\n\
-                 [client.tls]\ncert_file = \"c\"\nkey_file = \"k\"\n\
-                 server_fingerprint = \"{SERVER_FP}\"\n{radio}"
+                "[identity]\nkey_file = \"/etc/umsh-bridge/identity.key\"\n\
+                 [client]\nserver = \"{server}\"\nserver_address = \"{}\"\n{radio}",
+                address(1)
             )
         };
         assert!(

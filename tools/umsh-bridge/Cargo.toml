@@ -36,8 +36,6 @@ rand = { version = "0.10.1", features = ["std", "thread_rng"] }
 rcgen = "0.14"
 rustls-pki-types = "1"
 serde = { version = "1", features = ["derive"] }
-sha2 = { version = "0.10", features = ["std"] }
-time = "0.3"
 tokio = { version = "1", features = ["io-util", "macros", "net", "rt", "signal", "sync", "time"] }
 # No `tls12`: the tunnel is TLS 1.3 only, and leaving the older protocol
 # uncompiled is a stronger guarantee than declining to negotiate it.

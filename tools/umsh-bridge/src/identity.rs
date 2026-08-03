@@ -1,10 +1,13 @@
-//! The bridge's node identity.
+//! A participant's Ed25519 identity.
 //!
-//! The server owns it; a client has none. Forwarding needs only the
-//! public half — the router hint that source routes match against and
-//! that trace routes are prepended with — but the secret is what makes
-//! the identity the bridge's rather than a name it borrowed, and it is
-//! what a later bridge that originates its own traffic will sign with.
+//! Every endpoint has one, and it is the credential the tunnel
+//! authenticates with (see [`crate::tls`]). The server's doubles as the
+//! bridge's node identity: forwarding needs its router hint — what
+//! source routes match against and trace routes are prepended with — and
+//! a later bridge that originates its own traffic will sign with it. A
+//! client's is only a tunnel credential today, but it is a full identity
+//! so that a client can become individually addressable for management
+//! without re-keying anything.
 
 use std::path::Path;
 
@@ -14,6 +17,7 @@ use umsh_crypto::software::SoftwareIdentity;
 
 pub struct BridgeIdentity {
     inner: SoftwareIdentity,
+    seed: [u8; 32],
     public: PublicKey,
     node_hint: NodeHint,
     router_hint: RouterHint,
@@ -25,6 +29,7 @@ impl BridgeIdentity {
         let public = *umsh_crypto::NodeIdentity::public_key(&inner);
         Self {
             inner,
+            seed: *seed,
             public,
             node_hint: public.hint(),
             router_hint: public.router_hint(),
@@ -58,9 +63,14 @@ impl BridgeIdentity {
         self.router_hint
     }
 
+    /// The raw seed, for wrapping the identity key into the formats the
+    /// TLS stack expects.
+    pub(crate) fn seed(&self) -> &[u8; 32] {
+        &self.seed
+    }
+
     /// The signing identity, for the node logic a forwarding-only bridge
     /// does not yet have.
-    #[allow(dead_code)]
     pub fn signer(&self) -> &SoftwareIdentity {
         &self.inner
     }

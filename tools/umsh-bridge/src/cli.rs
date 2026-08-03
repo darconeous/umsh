@@ -22,10 +22,13 @@ Which end this is comes from the configuration file, not the command
 line, so one unit file fits either role and `umsh-bridge check` validates
 the exact artifact that will run.
 
-Credentials are issued by this binary: `keygen identity` for the server's
-node identity, and `keygen cert` for the TLS certificate each participant
-presents. Each side pins the SHA-256 of the other's certificate, which
-makes revoking a client an edit to the server's configuration."
+Every participant holds an Ed25519 identity, issued once by `keygen
+identity`; the server's is also the bridge's node identity on the mesh.
+Each side is configured with the other's public key — the UMSH address
+that `address` prints — and the tunnel authenticates against those pins,
+which makes revoking a client an edit to the server's configuration. The
+TLS certificates the handshake requires are minted in memory from the
+identity at startup; none are stored or exchanged."
 )]
 pub struct ToolArgs {
     #[command(subcommand)]
@@ -70,12 +73,19 @@ pub enum Command {
     /// Run the bridge until interrupted.
     Run(RunArgs),
 
-    /// Load and validate a configuration, reading the keys and
-    /// certificates it names, without opening a socket or touching a
-    /// radio.
+    /// Load and validate a configuration, reading the identity key it
+    /// names, without opening a socket or touching a radio.
     Check(RunArgs),
 
-    /// Issue the keys and certificates a deployment needs.
+    /// Print the address of an identity key — the public name the
+    /// other end of the tunnel pins. Safe to share anywhere.
+    Address {
+        /// The identity key to read.
+        #[arg(default_value = "/etc/umsh-bridge/identity.key")]
+        path: PathBuf,
+    },
+
+    /// Issue the identity a participant needs.
     #[command(subcommand)]
     Keygen(KeygenCommand),
 }
@@ -95,44 +105,18 @@ pub struct RunArgs {
 
 #[derive(Debug, Subcommand)]
 pub enum KeygenCommand {
-    /// Generate the bridge's node identity. Server only, and generated
-    /// once for the life of the bridge: it is the address the mesh knows
-    /// the bridge by.
+    /// Generate this participant's identity, once for its life: its
+    /// address is what the other end pins, and for a server it is also
+    /// the address the mesh knows the bridge by.
     Identity {
         /// Where to write the 64-hex Ed25519 seed.
         #[arg(default_value = "/etc/umsh-bridge/identity.key")]
         path: PathBuf,
 
-        /// Replace an existing key. The bridge's address changes.
+        /// Replace an existing key. The identity's address changes, and
+        /// every peer pinning it must be updated.
         #[arg(long)]
         force: bool,
-    },
-
-    /// Issue a self-signed TLS certificate and its key, and print the
-    /// fingerprint to pin at the other end.
-    Cert {
-        /// Name to put in the certificate, and the client name to use in
-        /// the server's configuration.
-        name: String,
-
-        /// Where to write the certificate.
-        #[arg(long, value_name = "PATH")]
-        cert: PathBuf,
-
-        /// Where to write the private key.
-        #[arg(long, value_name = "PATH")]
-        key: PathBuf,
-
-        /// Replace existing files. Every peer pinning the old
-        /// certificate must be updated.
-        #[arg(long)]
-        force: bool,
-    },
-
-    /// Print the fingerprint of an existing certificate.
-    Fingerprint {
-        /// The certificate to read.
-        cert: PathBuf,
     },
 }
 
@@ -175,20 +159,17 @@ mod tests {
     }
 
     #[test]
-    fn keygen_cert_needs_both_output_paths() {
-        assert!(ToolArgs::try_parse_from(["umsh-bridge", "keygen", "cert", "cabin"]).is_err());
+    fn identity_paths_default_to_the_deployment_location() {
+        let parsed = ToolArgs::try_parse_from(["umsh-bridge", "address"]).unwrap();
+        let Command::Address { path } = parsed.command else {
+            panic!("parsed as the wrong command");
+        };
+        assert_eq!(path, PathBuf::from("/etc/umsh-bridge/identity.key"));
+
+        assert!(ToolArgs::try_parse_from(["umsh-bridge", "keygen", "identity"]).is_ok());
         assert!(
-            ToolArgs::try_parse_from([
-                "umsh-bridge",
-                "keygen",
-                "cert",
-                "cabin",
-                "--cert",
-                "a.crt",
-                "--key",
-                "a.key",
-            ])
-            .is_ok()
+            ToolArgs::try_parse_from(["umsh-bridge", "keygen", "identity", "a.key", "--force"])
+                .is_ok()
         );
     }
 

@@ -14,13 +14,14 @@ use tokio::net::TcpStream;
 
 use crate::config::ClientConfig;
 use crate::device::DeviceRelay;
+use crate::identity::BridgeIdentity;
 use crate::tls::{self, Credential};
 use crate::tunnel::{TunnelQueue, TunnelReader, TunnelWriter, pump_writer};
 
-pub async fn run(mut config: ClientConfig) -> Result<()> {
-    let credential = Credential::load(&config.tls.cert_file, &config.tls.key_file)
-        .context("loading this client's TLS credential")?;
-    let tls_config = tls::client_config(&credential, config.tls.server_fingerprint)?;
+pub async fn run(identity: BridgeIdentity, mut config: ClientConfig) -> Result<()> {
+    let credential =
+        Credential::for_identity(&identity).context("minting this client's TLS credential")?;
+    let tls_config = tls::client_config(&credential, config.server_address)?;
     let connector = tokio_rustls::TlsConnector::from(tls_config);
 
     let max_age = Duration::from_secs(config.tunnel.max_frame_age_secs);
@@ -36,7 +37,7 @@ pub async fn run(mut config: ClientConfig) -> Result<()> {
 
     tracing::info!(
         server = %config.server,
-        fingerprint = %credential.fingerprint,
+        address = %credential.address,
         "bridge client starting"
     );
 
@@ -73,7 +74,7 @@ async fn session(
     stream.set_nodelay(true).ok();
     let peer = stream.peer_addr().ok();
 
-    let name = match &config.tls.server_name {
+    let name = match &config.server_name {
         Some(name) => tls::server_name(name)?,
         None => tls::server_name(host_of(&config.server))?,
     };

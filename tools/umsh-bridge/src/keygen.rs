@@ -1,24 +1,16 @@
-//! Credential issuance, so a deployment needs nothing but this binary.
+//! Identity issuance, so a deployment needs nothing but this binary.
 //!
-//! Two kinds of key exist and they are unrelated: the bridge's node
-//! identity, which is an Ed25519 seed and lives only on the server, and
-//! a TLS certificate, which every participant has one of.
+//! An identity's Ed25519 seed is the only credential a participant
+//! holds. Its public half — the UMSH address — is what the other end of
+//! the tunnel pins, and it is public: sharing it needs no confidential
+//! channel. The TLS certificates the handshake requires are minted in
+//! memory from the identity at startup and never stored.
 
 use std::path::Path;
 
 use anyhow::{Context, Result, bail};
-use rcgen::{CertificateParams, DnType, ExtendedKeyUsagePurpose, KeyPair, KeyUsagePurpose};
-use rustls_pki_types::CertificateDer;
-use time::{Duration, OffsetDateTime};
 
 use crate::identity::{BridgeIdentity, format_seed};
-use crate::tls::Fingerprint;
-
-/// Certificates are issued long. The pin is the trust decision and
-/// nothing consults the validity window, so an expiry date would only
-/// ever be a scheduled outage; rotation here is an operator action —
-/// issue a new certificate, add its fingerprint, remove the old one.
-const VALIDITY_YEARS: i64 = 10;
 
 pub fn write_identity(path: &Path, force: bool) -> Result<()> {
     let mut seed = [0u8; 32];
@@ -31,83 +23,17 @@ pub fn write_identity(path: &Path, force: bool) -> Result<()> {
     println!("address:      {}", identity.public_key());
     println!("node hint:    {}", identity.node_hint());
     println!("router hint:  {}", identity.router_hint());
+    println!();
+    println!("The address is public: configure it at the other end of the tunnel.");
     Ok(())
 }
 
-pub fn write_certificate(name: &str, cert_path: &Path, key_path: &Path, force: bool) -> Result<()> {
-    let key_pair = KeyPair::generate().context("generating a certificate key pair")?;
-
-    // A self-signed certificate that will be pinned needs no subject
-    // alternative name to be reachable by, but rustls declines to build
-    // a certificate with an empty subject, and a name is what makes a
-    // directory of ten of these readable.
-    let mut params =
-        CertificateParams::new(vec![sanitized_san(name)]).context("building certificate params")?;
-    params.distinguished_name.push(DnType::CommonName, name);
-    params.distinguished_name.push(
-        DnType::OrganizationName,
-        "UMSH bridge (self-signed, pinned)",
-    );
-    params.key_usages = vec![KeyUsagePurpose::DigitalSignature];
-    params.extended_key_usages = vec![
-        ExtendedKeyUsagePurpose::ServerAuth,
-        ExtendedKeyUsagePurpose::ClientAuth,
-    ];
-    let now = OffsetDateTime::now_utc();
-    // Backdated a day so a participant whose clock trails the issuer's
-    // does not see a not-yet-valid certificate.
-    params.not_before = now - Duration::days(1);
-    params.not_after = now + Duration::days(365 * VALIDITY_YEARS);
-
-    let certificate = params
-        .self_signed(&key_pair)
-        .context("self-signing the certificate")?;
-
-    write_public(cert_path, &certificate.pem(), force)?;
-    write_secret(key_path, &key_pair.serialize_pem(), force)?;
-
-    let fingerprint = Fingerprint::of(certificate.der());
-    println!("certificate: {}", cert_path.display());
-    println!("private key: {}", key_path.display());
-    println!("fingerprint: {fingerprint}");
+/// Print the address of an existing identity — what the operator copies
+/// into the other end's configuration.
+pub fn print_address(path: &Path) -> Result<()> {
+    let identity = BridgeIdentity::load(path)?;
+    println!("{}", identity.public_key());
     Ok(())
-}
-
-/// Print the fingerprint of an already-issued certificate — what the
-/// operator copies into the other end's config.
-pub fn print_fingerprint(cert_path: &Path) -> Result<()> {
-    let pem = std::fs::read_to_string(cert_path)
-        .with_context(|| format!("reading {}", cert_path.display()))?;
-    let der = crate::tls::first_certificate(&pem)
-        .with_context(|| format!("parsing {}", cert_path.display()))?;
-    println!("{}", Fingerprint::of(&CertificateDer::from(der)));
-    Ok(())
-}
-
-/// A SAN must be a DNS name; a human-chosen interface name is not.
-fn sanitized_san(name: &str) -> String {
-    let cleaned: String = name
-        .chars()
-        .map(|c| {
-            if c.is_ascii_alphanumeric() || c == '-' {
-                c.to_ascii_lowercase()
-            } else {
-                '-'
-            }
-        })
-        .collect();
-    let trimmed = cleaned.trim_matches('-');
-    if trimmed.is_empty() {
-        "bridge.invalid".to_string()
-    } else {
-        format!("{trimmed}.umsh-bridge.invalid")
-    }
-}
-
-fn write_public(path: &Path, contents: &str, force: bool) -> Result<()> {
-    guard_existing(path, force)?;
-    create_parent(path)?;
-    std::fs::write(path, contents).with_context(|| format!("writing {}", path.display()))
 }
 
 fn write_secret(path: &Path, contents: &str, force: bool) -> Result<()> {
@@ -140,8 +66,8 @@ fn write_owner_only(path: &Path, contents: &str) -> std::io::Result<()> {
 fn guard_existing(path: &Path, force: bool) -> Result<()> {
     if path.exists() && !force {
         bail!(
-            "{} already exists; pass --force to replace it (every peer pinning it must be \
-             updated)",
+            "{} already exists; pass --force to replace it (the identity's address changes, \
+             and every peer pinning it must be updated)",
             path.display()
         );
     }
@@ -164,34 +90,23 @@ mod tests {
     use super::*;
 
     #[test]
-    fn an_issued_certificate_loads_back_with_the_fingerprint_that_was_printed() {
+    fn an_existing_identity_is_not_replaced_without_force() {
         let dir = tempfile::tempdir().unwrap();
-        let cert = dir.path().join("a.crt");
-        let key = dir.path().join("a.key");
-        write_certificate("cabin", &cert, &key, false).unwrap();
-
-        let credential = crate::tls::Credential::load(&cert, &key).unwrap();
-        let pem = std::fs::read_to_string(&cert).unwrap();
-        let der = crate::tls::first_certificate(&pem).unwrap();
+        let path = dir.path().join("identity.key");
+        write_identity(&path, false).unwrap();
+        let first = *BridgeIdentity::load(&path).unwrap().public_key();
+        assert!(write_identity(&path, false).is_err());
         assert_eq!(
-            credential.fingerprint,
-            Fingerprint::of(&CertificateDer::from(der))
+            *BridgeIdentity::load(&path).unwrap().public_key(),
+            first,
+            "a refused overwrite leaves the identity untouched"
         );
-    }
-
-    #[test]
-    fn an_existing_file_is_not_replaced_without_force() {
-        let dir = tempfile::tempdir().unwrap();
-        let cert = dir.path().join("a.crt");
-        let key = dir.path().join("a.key");
-        write_certificate("cabin", &cert, &key, false).unwrap();
-        assert!(write_certificate("cabin", &cert, &key, false).is_err());
-        assert!(write_certificate("cabin", &cert, &key, true).is_ok());
+        assert!(write_identity(&path, true).is_ok());
     }
 
     #[cfg(unix)]
     #[test]
-    fn a_written_private_key_is_readable_only_by_its_owner() {
+    fn a_written_identity_key_is_readable_only_by_its_owner() {
         use std::os::unix::fs::PermissionsExt;
 
         let dir = tempfile::tempdir().unwrap();
@@ -201,22 +116,6 @@ mod tests {
         assert_eq!(mode, 0o600, "identity key mode");
         // And the loader accepts what the generator wrote.
         BridgeIdentity::load(&identity).unwrap();
-    }
-
-    #[test]
-    fn a_name_that_is_not_a_dns_label_still_yields_a_certificate() {
-        assert_eq!(
-            sanitized_san("Summit Repeater"),
-            "summit-repeater.umsh-bridge.invalid"
-        );
-        assert_eq!(sanitized_san("!!"), "bridge.invalid");
-        let dir = tempfile::tempdir().unwrap();
-        write_certificate(
-            "Cabin / west ridge",
-            &dir.path().join("a.crt"),
-            &dir.path().join("a.key"),
-            false,
-        )
-        .unwrap();
+        print_address(&identity).unwrap();
     }
 }

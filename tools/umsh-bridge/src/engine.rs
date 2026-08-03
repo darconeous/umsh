@@ -630,19 +630,25 @@ mod tests {
 
     use crate::config::Config;
 
-    const FP_A: &str = "sha256:00000000000000000000000000000000000000000000000000000000000000aa";
-    const FP_B: &str = "sha256:00000000000000000000000000000000000000000000000000000000000000bb";
+    /// A pinned-client address the fixtures can use.
+    fn address(seed: u8) -> String {
+        use umsh_crypto::NodeIdentity as _;
+        umsh_crypto::software::SoftwareIdentity::from_secret_bytes(&[seed; 32])
+            .public_key()
+            .to_string()
+    }
 
     /// A server with a radio and two clients, plus whatever the caller
     /// adds to `[server.forwarding]`.
     fn engine(forwarding: &str) -> (Engine, std::sync::Arc<Interfaces>, BridgeIdentity) {
         let text = format!(
             "[identity]\nkey_file = \"k\"\n[server]\n\
-             [server.tls]\ncert_file = \"a\"\nkey_file = \"b\"\n\
              [server.radio]\ntype = \"ble\"\n\
              [server.forwarding]\n{forwarding}\
-             [[server.clients]]\nname = \"cabin\"\nfingerprint = \"{FP_A}\"\n\
-             [[server.clients]]\nname = \"summit\"\nfingerprint = \"{FP_B}\"\n"
+             [[server.clients]]\nname = \"cabin\"\naddress = \"{}\"\n\
+             [[server.clients]]\nname = \"summit\"\naddress = \"{}\"\n",
+            address(0xAA),
+            address(0xBB)
         );
         let config: Config = toml::from_str(&text).unwrap();
         config.validate().unwrap();
@@ -990,10 +996,10 @@ mod tests {
     async fn a_rate_limited_client_stops_being_forwarded() {
         let text = format!(
             "[identity]\nkey_file = \"k\"\n[server]\n\
-             [server.tls]\ncert_file = \"a\"\nkey_file = \"b\"\n\
              [server.radio]\ntype = \"ble\"\n\
-             [[server.clients]]\nname = \"cabin\"\nfingerprint = \"{FP_A}\"\n\
-             max_frames_per_minute = 2\n"
+             [[server.clients]]\nname = \"cabin\"\naddress = \"{}\"\n\
+             max_frames_per_minute = 2\n",
+            address(0xAA)
         );
         let config: Config = toml::from_str(&text).unwrap();
         config.validate().unwrap();
@@ -1025,11 +1031,11 @@ mod tests {
     async fn suppression_silences_flood_confirmations_but_not_routed_ones() {
         let text = format!(
             "[identity]\nkey_file = \"k\"\n[server]\n\
-             [server.tls]\ncert_file = \"a\"\nkey_file = \"b\"\n\
              [server.radio]\ntype = \"ble\"\n\
              [server.forwarding]\nflood_contention_ms = 0\n\
-             [[server.clients]]\nname = \"cabin\"\nfingerprint = \"{FP_A}\"\n\
-             suppress_flood_confirmations = true\n"
+             [[server.clients]]\nname = \"cabin\"\naddress = \"{}\"\n\
+             suppress_flood_confirmations = true\n",
+            address(0xAA)
         );
         let config: Config = toml::from_str(&text).unwrap();
         config.validate().unwrap();

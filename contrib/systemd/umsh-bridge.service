@@ -10,7 +10,8 @@
 #     cargo install --path tools/umsh-bridge
 #     useradd --system --no-create-home --shell /usr/sbin/nologin umsh-bridge
 #     install -d -o umsh-bridge -g umsh-bridge -m 0750 /etc/umsh-bridge
-#     # ... write config.toml, identity.key (0600), and the certificates
+#     umsh-bridge keygen identity            # once; prints the address to pin
+#     # ... write config.toml, pinning the other end's address
 #     systemctl enable --now umsh-bridge
 #
 # A serial radio needs the user in the `dialout` group; a BLE radio needs

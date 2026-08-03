@@ -54,6 +54,15 @@ trusted roots. Each client **SHOULD** hold a distinct credential: it is
 how the server identifies a client for policy and rate limiting, and it
 allows one client to be revoked without re-keying the rest.
 
+A deployment **MAY** use each participant's Ed25519 node identity as its
+certificate key, each side pinning the peer's public key rather than a
+certificate. The pinned key **MUST** then be held against the TLS 1.3
+`CertificateVerify` signature — proof that the peer possesses the
+identity, independent of anything the certificate claims — rather than
+against the certificate's contents. This gives every tunnel credential a
+UMSH address, so a client's credential can later serve as a
+mesh-addressable identity for management without re-keying.
+
 The tunnel carries no version of its own. Participants **SHOULD** offer
 the ALPN protocol identifier `umsh-bridge/1`, so that an incompatible
 future revision fails the handshake instead of misparsing frames.
@@ -341,10 +350,16 @@ another interface.
 ## Security Considerations
 
 TLS provides tunnel authentication, integrity, and replay protection;
-the shared secret or certificate is the sole admission control. UMSH
-frames are already end-to-end authenticated and encrypted at the MAC
-layer, so the tunnel's confidentiality mainly shields routing metadata —
-hints, options, traffic volume — from path observers.
+the shared secret or pinned credential is the sole admission control.
+UMSH frames are already end-to-end authenticated and encrypted at the
+MAC layer, so the tunnel's confidentiality mainly shields routing
+metadata — hints, options, traffic volume — from path observers.
+
+Using a node identity as a tunnel credential does not let the two
+protocols' signatures be confused for one another: the TLS 1.3
+`CertificateVerify` payload is domain-separated by a fixed 64-octet
+padding prefix and context string that no UMSH signed structure begins
+with.
 
 A compromised client credential is equivalent to granting the attacker an
 RF presence on every segment the bridge touches: it can inject arbitrary

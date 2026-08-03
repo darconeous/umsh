@@ -1,14 +1,15 @@
 //! `umsh-bridge check`: everything that can go wrong before a frame
 //! moves, reported at once rather than one restart at a time.
 //!
-//! It reads the credentials and the identity key for real — a
-//! configuration that parses but names a key the daemon cannot read is
-//! not a configuration that works — but opens no socket and touches no
-//! radio, so it is safe to run against a live deployment's config.
+//! It reads the identity key for real and mints the TLS credential the
+//! daemon would present — a configuration that parses but names a key
+//! the daemon cannot read or use is not a configuration that works —
+//! but opens no socket and touches no radio, so it is safe to run
+//! against a live deployment's config.
 
 use std::path::Path;
 
-use anyhow::{Context, Result};
+use anyhow::{Context, Result, anyhow};
 
 use crate::config::Config;
 use crate::identity::BridgeIdentity;
@@ -17,23 +18,20 @@ use crate::tls::Credential;
 pub fn check(path: &Path) -> Result<()> {
     let config = Config::load(path)?;
 
-    if let Some(identity) = &config.identity {
-        let loaded = BridgeIdentity::load(&identity.key_file)?;
-        if config.server.is_some() {
-            println!("identity:    {}", loaded.public_key());
-            println!("router hint: {}", loaded.router_hint());
-        } else {
-            println!(
-                "note: [identity] is ignored for a client; the bridge identity lives at the server"
-            );
-        }
-    }
+    let identity = BridgeIdentity::load(
+        &config
+            .identity
+            .as_ref()
+            .ok_or_else(|| anyhow!("validated config has an identity"))?
+            .key_file,
+    )?;
+    Credential::for_identity(&identity).context("minting the TLS credential")?;
 
     if let Some(server) = &config.server {
-        let credential = Credential::load(&server.tls.cert_file, &server.tls.key_file)
-            .context("loading the server's TLS credential")?;
         println!("role:        server");
-        println!("fingerprint: {}", credential.fingerprint);
+        println!("address:     {}", identity.public_key());
+        println!("  clients pin this address as server_address");
+        println!("router hint: {}", identity.router_hint());
         for address in &server.listen {
             println!("listen:      {address}");
         }
@@ -61,8 +59,15 @@ pub fn check(path: &Path) -> Result<()> {
             };
             println!(
                 "client:      {} [{}] -> {fan_out} ({rate})",
-                client.name, client.fingerprint
+                client.name, client.address
             );
+            if client.address.0 == *identity.public_key() {
+                // The same condition refuses to start the server.
+                anyhow::bail!(
+                    "client \"{}\" lists this bridge's own identity as its address",
+                    client.name
+                );
+            }
             if client.max_frames_per_minute.is_none() {
                 println!(
                     "  warning: no rate limit; an authenticated but misbehaving client is the \
@@ -82,13 +87,11 @@ pub fn check(path: &Path) -> Result<()> {
     }
 
     if let Some(client) = &config.client {
-        let credential = Credential::load(&client.tls.cert_file, &client.tls.key_file)
-            .context("loading the client's TLS credential")?;
         println!("role:        client");
-        println!("fingerprint: {}", credential.fingerprint);
-        println!("  register this fingerprint in the server's [[server.clients]]");
+        println!("address:     {}", identity.public_key());
+        println!("  register this address in the server's [[server.clients]]");
         println!("server:      {}", client.server);
-        println!("server pin:  {}", client.tls.server_fingerprint);
+        println!("server pin:  {}", client.server_address);
         println!("radio:       {}", client.radio.describe());
     }
 
@@ -110,42 +113,30 @@ mod tests {
     /// A whole deployment's worth of files, generated the way an
     /// operator would generate them.
     fn deployment(dir: &Path) -> (String, String) {
-        crate::keygen::write_identity(&dir.join("identity.key"), false).unwrap();
-        crate::keygen::write_certificate(
-            "server",
-            &dir.join("server.crt"),
-            &dir.join("server.key"),
-            false,
-        )
-        .unwrap();
-        crate::keygen::write_certificate(
-            "cabin",
-            &dir.join("cabin.crt"),
-            &dir.join("cabin.key"),
-            false,
-        )
-        .unwrap();
+        crate::keygen::write_identity(&dir.join("server.key"), false).unwrap();
+        crate::keygen::write_identity(&dir.join("client.key"), false).unwrap();
 
-        let server_fp = Credential::load(&dir.join("server.crt"), &dir.join("server.key"))
+        let server_address = BridgeIdentity::load(&dir.join("server.key"))
             .unwrap()
-            .fingerprint;
-        let cabin_fp = Credential::load(&dir.join("cabin.crt"), &dir.join("cabin.key"))
+            .public_key()
+            .to_string();
+        let client_address = BridgeIdentity::load(&dir.join("client.key"))
             .unwrap()
-            .fingerprint;
+            .public_key()
+            .to_string();
         let d = dir.display();
         (
             format!(
-                "[identity]\nkey_file = \"{d}/identity.key\"\n\
+                "[identity]\nkey_file = \"{d}/server.key\"\n\
                  [server]\nlisten = [\"127.0.0.1:0\"]\n\
-                 [server.tls]\ncert_file = \"{d}/server.crt\"\nkey_file = \"{d}/server.key\"\n\
                  [server.radio]\ntype = \"udp-multicast\"\n\
-                 [[server.clients]]\nname = \"cabin\"\nfingerprint = \"{cabin_fp}\"\n\
+                 [[server.clients]]\nname = \"myclient\"\naddress = \"{client_address}\"\n\
                  max_frames_per_minute = 60\n"
             ),
             format!(
-                "[client]\nserver = \"127.0.0.1:21837\"\n\
-                 [client.tls]\ncert_file = \"{d}/cabin.crt\"\nkey_file = \"{d}/cabin.key\"\n\
-                 server_fingerprint = \"{server_fp}\"\n\
+                "[identity]\nkey_file = \"{d}/client.key\"\n\
+                 [client]\nserver = \"127.0.0.1:21837\"\n\
+                 server_address = \"{server_address}\"\n\
                  [client.radio]\ntype = \"udp-multicast\"\nport = 7374\n"
             ),
         )
@@ -166,15 +157,14 @@ mod tests {
     }
 
     #[test]
-    fn a_credential_the_daemon_cannot_read_fails_the_check() {
+    fn an_identity_the_daemon_cannot_read_fails_the_check() {
         let dir = tempfile::tempdir().unwrap();
         let (server, _) = deployment(dir.path());
         std::fs::remove_file(dir.path().join("server.key")).unwrap();
 
         let path = dir.path().join("server.toml");
         std::fs::write(&path, server).unwrap();
-        let error = check(&path).unwrap_err().to_string();
-        assert!(error.contains("TLS credential"), "{error}");
+        assert!(check(&path).is_err());
     }
 
     #[cfg(unix)]
@@ -185,7 +175,7 @@ mod tests {
         let dir = tempfile::tempdir().unwrap();
         let (server, _) = deployment(dir.path());
         std::fs::set_permissions(
-            dir.path().join("identity.key"),
+            dir.path().join("server.key"),
             std::fs::Permissions::from_mode(0o644),
         )
         .unwrap();

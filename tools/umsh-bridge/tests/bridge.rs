@@ -13,6 +13,7 @@ use std::time::Duration;
 
 use umsh::tokio_support::UdpMulticastRadio;
 use umsh_bridge::config::Config;
+use umsh_bridge::identity::BridgeIdentity;
 use umsh_bridge::tls::Credential;
 use umsh_core::{FloodHops, NodeHint, OptionNumber, PacketBuilder, PacketHeader, ParsedOptions};
 use umsh_hal::{CadPolicy, Radio, TxOptions};
@@ -32,27 +33,16 @@ struct Deployment {
 /// Issue everything a deployment needs and write both configurations.
 fn deployment(dir: &Path, extra_forwarding: &str) -> Deployment {
     umsh_bridge::keygen::write_identity(&dir.join("identity.key"), false).unwrap();
-    umsh_bridge::keygen::write_certificate(
-        "server",
-        &dir.join("server.crt"),
-        &dir.join("server.key"),
-        false,
-    )
-    .unwrap();
-    umsh_bridge::keygen::write_certificate(
-        "cabin",
-        &dir.join("cabin.crt"),
-        &dir.join("cabin.key"),
-        false,
-    )
-    .unwrap();
+    umsh_bridge::keygen::write_identity(&dir.join("cabin.key"), false).unwrap();
 
-    let server_fp = Credential::load(&dir.join("server.crt"), &dir.join("server.key"))
+    let server_address = BridgeIdentity::load(&dir.join("identity.key"))
         .unwrap()
-        .fingerprint;
-    let cabin_fp = Credential::load(&dir.join("cabin.crt"), &dir.join("cabin.key"))
+        .public_key()
+        .to_string();
+    let cabin_address = BridgeIdentity::load(&dir.join("cabin.key"))
         .unwrap()
-        .fingerprint;
+        .public_key()
+        .to_string();
 
     let tunnel_port = free_port();
     let server_port = free_port();
@@ -63,16 +53,15 @@ fn deployment(dir: &Path, extra_forwarding: &str) -> Deployment {
         server: format!(
             "[identity]\nkey_file = \"{d}/identity.key\"\n\
              [server]\nlisten = [\"127.0.0.1:{tunnel_port}\"]\n\
-             [server.tls]\ncert_file = \"{d}/server.crt\"\nkey_file = \"{d}/server.key\"\n\
              [server.radio]\ntype = \"udp-multicast\"\ngroup = \"{SEGMENT_A}\"\n\
              port = {server_port}\n\
              [server.forwarding]\nflood_contention_ms = 0\n{extra_forwarding}\
-             [[server.clients]]\nname = \"cabin\"\nfingerprint = \"{cabin_fp}\"\n"
+             [[server.clients]]\nname = \"cabin\"\naddress = \"{cabin_address}\"\n"
         ),
         client: format!(
-            "[client]\nserver = \"127.0.0.1:{tunnel_port}\"\n\
-             [client.tls]\ncert_file = \"{d}/cabin.crt\"\nkey_file = \"{d}/cabin.key\"\n\
-             server_fingerprint = \"{server_fp}\"\n\
+            "[identity]\nkey_file = \"{d}/cabin.key\"\n\
+             [client]\nserver = \"127.0.0.1:{tunnel_port}\"\n\
+             server_address = \"{server_address}\"\n\
              [client.radio]\ntype = \"udp-multicast\"\ngroup = \"{SEGMENT_B}\"\n\
              port = {client_port}\n"
         ),
@@ -288,13 +277,13 @@ fn a_spent_flood_budget_does_not_cross() {
     });
 }
 
-/// A raw pinned tunnel connection with the cabin client's credential,
-/// for tests that need to hold more than one at a time.
-async fn connect_pinned(
-    client: &umsh_bridge::config::ClientConfig,
-) -> tokio_rustls::client::TlsStream<tokio::net::TcpStream> {
-    let credential = Credential::load(&client.tls.cert_file, &client.tls.key_file).unwrap();
-    let tls = umsh_bridge::tls::client_config(&credential, client.tls.server_fingerprint).unwrap();
+/// A raw pinned tunnel connection with the configured client's
+/// identity, for tests that need to hold more than one at a time.
+async fn connect_pinned(config: &Config) -> tokio_rustls::client::TlsStream<tokio::net::TcpStream> {
+    let identity = BridgeIdentity::load(&config.identity.as_ref().unwrap().key_file).unwrap();
+    let credential = Credential::for_identity(&identity).unwrap();
+    let client = config.client.as_ref().unwrap();
+    let tls = umsh_bridge::tls::client_config(&credential, client.server_address).unwrap();
     let connector = tokio_rustls::TlsConnector::from(tls);
     let stream = tokio::net::TcpStream::connect(client.server.as_str())
         .await
@@ -321,10 +310,10 @@ fn a_reconnecting_client_displaces_its_predecessor_without_being_torn_down() {
 
         // The first connection attaches, silently loses its network
         // path, and the reconnection displaces it.
-        let client = parse(&deployment.client).client.unwrap();
-        let stale = connect_pinned(&client).await;
+        let config = parse(&deployment.client);
+        let stale = connect_pinned(&config).await;
         tokio::time::sleep(Duration::from_millis(100)).await;
-        let live = connect_pinned(&client).await;
+        let live = connect_pinned(&config).await;
         tokio::time::sleep(Duration::from_millis(100)).await;
 
         // The stale session's teardown runs now — it must not mark the
@@ -357,24 +346,34 @@ fn a_reconnecting_client_displaces_its_predecessor_without_being_torn_down() {
     });
 }
 
+/// Expect the server to refuse the session: in TLS 1.3 the client
+/// finishes before the server has looked at its certificate, so the
+/// refusal arrives as an alert on the first exchange rather than as a
+/// handshake error. What matters is that the session never carries a
+/// frame.
+async fn expect_refusal(stream: tokio_rustls::client::TlsStream<tokio::net::TcpStream>, who: &str) {
+    use tokio::io::{AsyncReadExt as _, AsyncWriteExt as _};
+    let mut stream = stream;
+    let _ = stream.write_all(&[0x7E]).await;
+    let mut buf = [0u8; 16];
+    let outcome = tokio::time::timeout(Duration::from_secs(3), stream.read(&mut buf)).await;
+    match outcome {
+        Ok(Err(_)) => {}
+        Ok(Ok(0)) => {}
+        Ok(Ok(read)) => panic!("{who} was served {read} bytes"),
+        Err(_) => panic!("{who}'s connection was left open"),
+    }
+}
+
 #[test]
 fn a_client_the_server_does_not_pin_is_refused_at_the_handshake() {
     with_local(|| async {
         let dir = tempfile::tempdir().unwrap();
         let deployment = deployment(dir.path(), "");
 
-        // A credential the server has never heard of.
-        umsh_bridge::keygen::write_certificate(
-            "stranger",
-            &dir.path().join("stranger.crt"),
-            &dir.path().join("stranger.key"),
-            false,
-        )
-        .unwrap();
-        let stranger = deployment
-            .client
-            .replace("cabin.crt", "stranger.crt")
-            .replace("cabin.key", "stranger.key");
+        // An identity the server has never heard of.
+        umsh_bridge::keygen::write_identity(&dir.path().join("stranger.key"), false).unwrap();
+        let stranger = deployment.client.replace("cabin.key", "stranger.key");
 
         let server = parse(&deployment.server);
         tokio::task::spawn_local(async move {
@@ -383,38 +382,127 @@ fn a_client_the_server_does_not_pin_is_refused_at_the_handshake() {
         tokio::time::sleep(Duration::from_millis(200)).await;
 
         let config = parse(&stranger);
+        let identity = BridgeIdentity::load(&config.identity.as_ref().unwrap().key_file).unwrap();
+        let credential = Credential::for_identity(&identity).unwrap();
         let client = config.client.unwrap();
-        let credential = Credential::load(&client.tls.cert_file, &client.tls.key_file).unwrap();
-        let tls =
-            umsh_bridge::tls::client_config(&credential, client.tls.server_fingerprint).unwrap();
+        let tls = umsh_bridge::tls::client_config(&credential, client.server_address).unwrap();
         let connector = tokio_rustls::TlsConnector::from(tls);
         let stream = tokio::net::TcpStream::connect(client.server.as_str())
             .await
             .unwrap();
-        // In TLS 1.3 the client finishes before the server has looked at
-        // its certificate, so the refusal arrives as an alert on the
-        // first exchange rather than as a handshake error. What matters
-        // is that the session never carries a frame.
-        let mut stream = connector
+        let stream = connector
             .connect(umsh_bridge::tls::server_name("127.0.0.1").unwrap(), stream)
             .await
             .expect("the client half of a 1.3 handshake completes early");
-
-        use tokio::io::{AsyncReadExt as _, AsyncWriteExt as _};
-        let _ = stream.write_all(&[0x7E]).await;
-        let mut buf = [0u8; 16];
-        let outcome = tokio::time::timeout(Duration::from_secs(3), stream.read(&mut buf)).await;
-        match outcome {
-            Ok(Err(_)) => {}
-            Ok(Ok(0)) => {}
-            Ok(Ok(read)) => panic!("an unpinned client was served {read} bytes"),
-            Err(_) => panic!("an unpinned client's connection was left open"),
-        }
+        expect_refusal(stream, "an unpinned client").await;
     });
 }
 
 #[test]
-fn a_server_whose_fingerprint_does_not_match_is_refused_by_the_client() {
+fn a_client_cannot_wear_a_pinned_address_without_holding_its_key() {
+    with_local(|| async {
+        let dir = tempfile::tempdir().unwrap();
+        let deployment = deployment(dir.path(), "");
+
+        let server = parse(&deployment.server);
+        tokio::task::spawn_local(async move {
+            let _ = umsh_bridge::server::run_config(server).await;
+        });
+        tokio::time::sleep(Duration::from_millis(200)).await;
+
+        // The attacker presents cabin's certificate — public material —
+        // but holds only its own key. rustls's own builder refuses a
+        // mismatched pair, so the forgery needs a resolver that skips
+        // the consistency check; a real attacker gets to skip it too.
+        umsh_bridge::keygen::write_identity(&dir.path().join("stranger.key"), false).unwrap();
+        let cabin = BridgeIdentity::load(&dir.path().join("cabin.key")).unwrap();
+        let stranger = BridgeIdentity::load(&dir.path().join("stranger.key")).unwrap();
+        let cabin_cred = Credential::for_identity(&cabin).unwrap();
+        let stranger_cred = Credential::for_identity(&stranger).unwrap();
+
+        use std::sync::Arc;
+        use tokio_rustls::rustls;
+
+        #[derive(Debug)]
+        struct Forged(Arc<rustls::sign::CertifiedKey>);
+        impl rustls::client::ResolvesClientCert for Forged {
+            fn resolve(
+                &self,
+                _hints: &[&[u8]],
+                _schemes: &[rustls::SignatureScheme],
+            ) -> Option<Arc<rustls::sign::CertifiedKey>> {
+                Some(self.0.clone())
+            }
+            fn has_certs(&self) -> bool {
+                true
+            }
+        }
+
+        /// The attacker does not bother verifying the server.
+        #[derive(Debug)]
+        struct TrustAnything;
+        impl rustls::client::danger::ServerCertVerifier for TrustAnything {
+            fn verify_server_cert(
+                &self,
+                _end_entity: &rustls::pki_types::CertificateDer<'_>,
+                _intermediates: &[rustls::pki_types::CertificateDer<'_>],
+                _server_name: &rustls::pki_types::ServerName<'_>,
+                _ocsp: &[u8],
+                _now: rustls::pki_types::UnixTime,
+            ) -> Result<rustls::client::danger::ServerCertVerified, rustls::Error> {
+                Ok(rustls::client::danger::ServerCertVerified::assertion())
+            }
+            fn verify_tls12_signature(
+                &self,
+                _m: &[u8],
+                _c: &rustls::pki_types::CertificateDer<'_>,
+                _d: &rustls::DigitallySignedStruct,
+            ) -> Result<rustls::client::danger::HandshakeSignatureValid, rustls::Error>
+            {
+                Ok(rustls::client::danger::HandshakeSignatureValid::assertion())
+            }
+            fn verify_tls13_signature(
+                &self,
+                _m: &[u8],
+                _c: &rustls::pki_types::CertificateDer<'_>,
+                _d: &rustls::DigitallySignedStruct,
+            ) -> Result<rustls::client::danger::HandshakeSignatureValid, rustls::Error>
+            {
+                Ok(rustls::client::danger::HandshakeSignatureValid::assertion())
+            }
+            fn supported_verify_schemes(&self) -> Vec<rustls::SignatureScheme> {
+                vec![rustls::SignatureScheme::ED25519]
+            }
+        }
+
+        let signing_key =
+            rustls::crypto::ring::sign::any_supported_type(&stranger_cred.key).unwrap();
+        let forged = rustls::sign::CertifiedKey::new(cabin_cred.chain.clone(), signing_key);
+        let mut tls = rustls::ClientConfig::builder_with_provider(Arc::new(
+            rustls::crypto::ring::default_provider(),
+        ))
+        .with_protocol_versions(&[&rustls::version::TLS13])
+        .unwrap()
+        .dangerous()
+        .with_custom_certificate_verifier(Arc::new(TrustAnything))
+        .with_client_cert_resolver(Arc::new(Forged(Arc::new(forged))));
+        tls.alpn_protocols = vec![umsh_bridge::tls::ALPN.to_vec()];
+
+        let client = parse(&deployment.client).client.unwrap();
+        let connector = tokio_rustls::TlsConnector::from(Arc::new(tls));
+        let stream = tokio::net::TcpStream::connect(client.server.as_str())
+            .await
+            .unwrap();
+        let stream = connector
+            .connect(umsh_bridge::tls::server_name("127.0.0.1").unwrap(), stream)
+            .await
+            .expect("the client half of a 1.3 handshake completes early");
+        expect_refusal(stream, "an impostor wearing a pinned address").await;
+    });
+}
+
+#[test]
+fn a_server_whose_identity_does_not_match_is_refused_by_the_client() {
     with_local(|| async {
         let dir = tempfile::tempdir().unwrap();
         let deployment = deployment(dir.path(), "");
@@ -426,11 +514,16 @@ fn a_server_whose_fingerprint_does_not_match_is_refused_by_the_client() {
         tokio::time::sleep(Duration::from_millis(200)).await;
 
         let config = parse(&deployment.client);
+        let identity = BridgeIdentity::load(&config.identity.as_ref().unwrap().key_file).unwrap();
+        let credential = Credential::for_identity(&identity).unwrap();
         let client = config.client.unwrap();
-        let credential = Credential::load(&client.tls.cert_file, &client.tls.key_file).unwrap();
-        let wrong = "sha256:00000000000000000000000000000000000000000000000000000000000000ff"
-            .parse()
-            .unwrap();
+        // Pin some identity that is not the server's.
+        umsh_bridge::keygen::write_identity(&dir.path().join("wrong.key"), false).unwrap();
+        let wrong = umsh_bridge::tls::Address(
+            *BridgeIdentity::load(&dir.path().join("wrong.key"))
+                .unwrap()
+                .public_key(),
+        );
         let tls = umsh_bridge::tls::client_config(&credential, wrong).unwrap();
         let connector = tokio_rustls::TlsConnector::from(tls);
         let stream = tokio::net::TcpStream::connect(client.server.as_str())

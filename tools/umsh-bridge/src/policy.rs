@@ -242,10 +242,7 @@ mod tests {
     use crate::config::Config;
 
     fn parse(extra: &str) -> (ServerConfig, Interfaces, Policy) {
-        let text = format!(
-            "[identity]\nkey_file = \"k\"\n[server]\n\
-             [server.tls]\ncert_file = \"a\"\nkey_file = \"b\"\n{extra}"
-        );
+        let text = format!("[identity]\nkey_file = \"k\"\n[server]\n{extra}");
         let config: Config = toml::from_str(&text).unwrap();
         config.validate().unwrap();
         let server = config.server.unwrap();
@@ -254,14 +251,21 @@ mod tests {
         (server, interfaces, policy)
     }
 
-    const FP_A: &str = "sha256:00000000000000000000000000000000000000000000000000000000000000aa";
-    const FP_B: &str = "sha256:00000000000000000000000000000000000000000000000000000000000000bb";
+    /// A pinned-client address the fixtures can use.
+    fn address(seed: u8) -> String {
+        use umsh_crypto::NodeIdentity as _;
+        umsh_crypto::software::SoftwareIdentity::from_secret_bytes(&[seed; 32])
+            .public_key()
+            .to_string()
+    }
 
     fn two_clients(extra: &str) -> (ServerConfig, Interfaces, Policy) {
         parse(&format!(
             "[server.radio]\ntype = \"ble\"\n\
-             [[server.clients]]\nname = \"cabin\"\nfingerprint = \"{FP_A}\"\n{extra}\
-             [[server.clients]]\nname = \"summit\"\nfingerprint = \"{FP_B}\"\n"
+             [[server.clients]]\nname = \"cabin\"\naddress = \"{}\"\n{extra}\
+             [[server.clients]]\nname = \"summit\"\naddress = \"{}\"\n",
+            address(0xAA),
+            address(0xBB)
         ))
     }
 
@@ -337,12 +341,12 @@ mod tests {
 
     #[test]
     fn region_matching_carries_untagged_traffic_and_filters_the_rest() {
-        let (_, _, policy) = parse(
+        let (_, _, policy) = parse(&format!(
             "[server.radio]\ntype = \"ble\"\n\
              [server.forwarding]\nregions = [\"SJC\"]\n\
-             [[server.clients]]\nname = \"cabin\"\n\
-             fingerprint = \"sha256:00000000000000000000000000000000000000000000000000000000000000aa\"\n",
-        );
+             [[server.clients]]\nname = \"cabin\"\naddress = \"{}\"\n",
+            address(0xAA)
+        ));
         let sjc = RegionCode::from_iata("SJC").unwrap();
         let mut options = ParsedOptions::default();
         assert!(policy.region_admits(&options), "untagged");

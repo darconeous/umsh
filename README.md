@@ -106,8 +106,9 @@ specified in the protocol's [Internet Bridging](docs/protocol/src/internet-bridg
 appendix. One process runs as the **server** — it owns the bridge's node identity, keeps the
 shared duplicate cache, and makes every forwarding decision — and any number of others run
 as **clients**, which relay frames byte for byte between their own radio and the server. The
-tunnel is TLS 1.3 with mutually pinned certificates over IPv4 or IPv6, and the tool issues
-its own credentials. Installation, configuration, and deployment are covered in
+tunnel is TLS 1.3 over IPv4 or IPv6, mutually authenticated by each endpoint's Ed25519
+identity: each side pins the other's UMSH address, and the certificates TLS requires are
+minted in memory at startup. Installation, configuration, and deployment are covered in
 [its own README](tools/umsh-bridge/README.md).
 
 ### Device firmware
@@ -368,19 +369,6 @@ prompt, having flushed the pcap and left promiscuous mode. A timeout while subsc
 Frame Out usually means the computer is not bonded and the board's pairing window has
 closed; reopen pairing and retry. If discovery finds no device, ensure the board is awake
 and that neither a serial host session nor another BLE central is attached.
-
-### Bridge two meshes over the internet
-
-A bridge is one virtual repeater with radios in two places, joined by `umsh-bridge` over a
-mutually authenticated TLS tunnel. The tool issues its own credentials, validates a
-deployment's configuration with `umsh-bridge check`, and ships with a sample systemd unit;
-the [umsh-bridge README](tools/umsh-bridge/README.md) walks through installation,
-configuration, and running it as a service — including trying a whole bridge on one
-machine with the `udp-multicast` fake radio and a
-[desktop chat](#build-and-run-the-desktop-chat-example) instance on each segment. Heed the
-specification's [cautions](docs/protocol/src/routing-overview.md): an internet bridge
-cannot be relied upon in an emergency, and it spends local airtime on traffic that is not
-local.
 
 ### Inspecting packets with Wireshark
 

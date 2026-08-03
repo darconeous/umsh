@@ -1,7 +1,7 @@
 //! The bridge server: listeners, per-client tunnels, and the one task
 //! that decides everything.
 //!
-//! A client is a configured name with a pinned certificate, so the
+//! A client is a configured name with a pinned identity, so the
 //! interface set is fixed for the run and a disconnected client is an
 //! interface that is down rather than one that has gone away. That is
 //! what lets the engine hold a stable interface index and lets a
@@ -23,7 +23,7 @@ use crate::engine::Engine;
 use crate::identity::BridgeIdentity;
 use crate::iface::{Ingress, InterfaceId, Interfaces};
 use crate::policy::Policy;
-use crate::tls::{self, Credential, Fingerprint};
+use crate::tls::{self, Address, Credential};
 use crate::tunnel::{TunnelQueue, TunnelReader, TunnelWriter, pump_writer};
 
 /// Frames waiting for the engine before an interface's reader blocks.
@@ -31,16 +31,22 @@ use crate::tunnel::{TunnelQueue, TunnelReader, TunnelWriter, pump_writer};
 /// absorbs a burst.
 const ENGINE_BACKLOG: usize = 64;
 
-pub async fn run(config: Config) -> Result<()> {
+pub async fn run(identity: BridgeIdentity, config: Config) -> Result<()> {
     let mut server = config.server.expect("validated as a server configuration");
-    let identity = BridgeIdentity::load(
-        &config
-            .identity
-            .expect("validated as a server configuration")
-            .key_file,
-    )?;
-    let credential = Credential::load(&server.tls.cert_file, &server.tls.key_file)
-        .context("loading the server's TLS credential")?;
+    let credential =
+        Credential::for_identity(&identity).context("minting the server's TLS credential")?;
+
+    // A configured client with this server's own address would let the
+    // engine attribute the server's traffic to a client — and it can
+    // only be a mistake, because no client can hold this server's key.
+    for client in &server.clients {
+        if client.address.0 == *identity.public_key() {
+            anyhow::bail!(
+                "client \"{}\" lists this bridge's own identity as its address",
+                client.name
+            );
+        }
+    }
 
     let interfaces = Arc::new(Interfaces::build(&server));
     let policy = Policy::build(&server, &interfaces)?;
@@ -48,7 +54,6 @@ pub async fn run(config: Config) -> Result<()> {
     tracing::info!(
         address = %identity.public_key(),
         router_hint = %identity.router_hint(),
-        fingerprint = %credential.fingerprint,
         exit_clamp = server.forwarding.exit_clamp,
         "bridge server starting"
     );
@@ -80,21 +85,21 @@ pub async fn run(config: Config) -> Result<()> {
     let engine = Engine::new(&identity, &server, interfaces.clone(), policy);
     tokio::task::spawn_local(engine.run(ingress_rx));
 
-    // A fingerprint identifies exactly one client; the configuration
+    // An identity names exactly one client; the configuration
     // guarantees no two share one.
-    let by_fingerprint: HashMap<Fingerprint, usize> = server
+    let by_address: HashMap<Address, usize> = server
         .clients
         .iter()
         .enumerate()
-        .map(|(index, client)| (client.fingerprint, index))
+        .map(|(index, client)| (client.address, index))
         .collect();
-    let accepted: Vec<Fingerprint> = by_fingerprint.keys().copied().collect();
+    let accepted: Vec<Address> = by_address.keys().copied().collect();
 
     let tls_config = tls::server_config(&credential, accepted)?;
     let acceptor = TlsAcceptor::from(tls_config);
     let shared = Arc::new(Shared {
         interfaces,
-        by_fingerprint,
+        by_address,
         tunnel: server.tunnel,
         client_names: server
             .clients
@@ -127,7 +132,7 @@ pub async fn run(config: Config) -> Result<()> {
 
 struct Shared {
     interfaces: Arc<Interfaces>,
-    by_fingerprint: HashMap<Fingerprint, usize>,
+    by_address: HashMap<Address, usize>,
     tunnel: crate::config::TunnelConfig,
     client_names: Vec<String>,
     ingress: mpsc::Sender<Ingress>,
@@ -161,20 +166,22 @@ async fn serve(stream: TcpStream, acceptor: TlsAcceptor, shared: Arc<Shared>) ->
     let peer = stream.peer_addr().ok();
     let stream = acceptor.accept(stream).await.context("TLS handshake")?;
 
-    // The handshake already refused every certificate not on the pinned
-    // list; this is only working out *which* client it was.
-    let fingerprint = {
+    // The handshake already proved the peer holds a pinned identity's
+    // key, and proved it for the key its certificate names; this is
+    // only working out *which* client that was.
+    let address = {
         let (_, connection) = stream.get_ref();
         let certificate = connection
             .peer_certificates()
             .and_then(<[_]>::first)
             .ok_or_else(|| anyhow!("the client presented no certificate"))?;
-        Fingerprint::of(certificate)
+        tls::certificate_key(certificate)
+            .ok_or_else(|| anyhow!("the client's certificate carries no key"))?
     };
     let client = *shared
-        .by_fingerprint
-        .get(&fingerprint)
-        .ok_or_else(|| anyhow!("no client is configured for {fingerprint}"))?;
+        .by_address
+        .get(&address)
+        .ok_or_else(|| anyhow!("no client is configured for {address}"))?;
     let iface = shared
         .interfaces
         .by_client(client)
@@ -261,9 +268,16 @@ fn spawn_ingress(inbound: Arc<TunnelQueue>, iface: InterfaceId, ingress: mpsc::S
 }
 
 /// Wire a validated configuration to whichever role it describes.
-pub async fn run_config(config: Config) -> Result<()> {
+pub async fn run_config(mut config: Config) -> Result<()> {
+    let identity = BridgeIdentity::load(
+        &config
+            .identity
+            .take()
+            .expect("validated: every role has an identity")
+            .key_file,
+    )?;
     match config.client {
-        Some(client) => crate::client::run(client).await,
-        None => run(config).await,
+        Some(client) => crate::client::run(identity, client).await,
+        None => run(identity, config).await,
     }
 }
