@@ -138,6 +138,12 @@ struct AppRootView: View {
         }
     }
 
+    /// Whether launch bootstrap has yet to finish. It ends only once the
+    /// identity is unlocked, the mesh session is installed, and the first
+    /// store read has published — so a list that is empty while this holds
+    /// has not been read yet, rather than having nothing in it.
+    private var isBootstrapping: Bool { isLoadingIdentity }
+
     private var mainInterface: some View {
         TabView(selection: $selectedTab) {
             NavigationStack {
@@ -147,6 +153,7 @@ struct AppRootView: View {
                     channels: channels,
                     peers: peers,
                     radioSnapshot: radioSnapshot,
+                    isLoading: isBootstrapping,
                     inspectPeerIdentity: inspectPeerIdentity,
                     savePeer: savePeer,
                     updateDraft: updateDraft,
@@ -186,6 +193,7 @@ struct AppRootView: View {
                     radioSnapshot: $radioSnapshot,
                     conversations: $conversations,
                     peers: peers,
+                    isLoading: isBootstrapping,
                     inspectPeerIdentity: inspectPeerIdentity,
                     savePeer: { preview, details, startConversation in
                         await savePeer(preview, details: details, startConversation: startConversation)

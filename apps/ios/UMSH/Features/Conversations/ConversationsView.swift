@@ -13,6 +13,11 @@ struct ConversationsView: View {
     /// direct chat ever having been opened.
     var peers: [PeerSummary] = []
     let radioSnapshot: RadioSnapshot
+    /// Whether launch bootstrap is still running, so the list can say it is
+    /// still reading rather than claim there is nothing to read. The stored
+    /// conversations arrive well after first paint — identity, then store —
+    /// and an empty list is otherwise indistinguishable from a loaded one.
+    var isLoading = false
     let inspectPeerIdentity: (String) async -> Result<MeshNodeURIPreview, MeshEngineError>
     let savePeer: (MeshNodeURIPreview, PeerImportDetails, Bool) async -> DirectConversationSummary?
     let updateDraft: (Int64, String) async -> Void
@@ -42,6 +47,13 @@ struct ConversationsView: View {
         List {
             if isSearching {
                 searchResults
+            } else if items.isEmpty, isLoading {
+                ContentUnavailableView {
+                    ProgressView()
+                        .accessibilityLabel("Loading conversations")
+                } description: {
+                    Text("Loading conversations…")
+                }
             } else if items.isEmpty {
                 ContentUnavailableView {
                     Label("No conversations", systemImage: "bubble.left.and.bubble.right")

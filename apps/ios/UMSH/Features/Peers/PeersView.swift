@@ -5,6 +5,10 @@ struct PeersView: View {
     @Binding var radioSnapshot: RadioSnapshot
     @Binding var conversations: [DirectConversationSummary]
     let peers: [PeerSummary]
+    /// Whether launch bootstrap is still running. Same reason as the
+    /// conversations list: the stored peers arrive after first paint, and an
+    /// empty list would otherwise read as "no nodes" before any were read.
+    var isLoading = false
     let inspectPeerIdentity: (String) async -> Result<MeshNodeURIPreview, MeshEngineError>
     /// Same shape Conversations uses, so an import here can open the new
     /// transcript instead of silently dropping the "Message" intent.
@@ -40,6 +44,13 @@ struct PeersView: View {
         List {
             if isSearching {
                 searchResults
+            } else if peers.isEmpty, isLoading {
+                ContentUnavailableView {
+                    ProgressView()
+                        .accessibilityLabel("Loading nodes")
+                } description: {
+                    Text("Loading nodes…")
+                }
             } else if peers.isEmpty {
                 ContentUnavailableView {
                     Label("No known nodes", systemImage: "point.3.connected.trianglepath.dotted")

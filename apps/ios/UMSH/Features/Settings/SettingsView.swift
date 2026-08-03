@@ -155,12 +155,6 @@ struct SettingsView: View {
                 Text("Configure any nearby UMSH device — a repeater, a tracker, or a radio for another phone — without disturbing this phone's own connection.")
             }
 
-            Section("Application") {
-                NavigationLink("Notifications") { Text("Notification settings") }
-                NavigationLink("Privacy and storage") { Text("Privacy and storage settings") }
-                NavigationLink("Diagnostics") { Text("Redacted diagnostics") }
-            }
-
             #if DEBUG
             Section {
                 Button("Seed 2000 Messages") {
