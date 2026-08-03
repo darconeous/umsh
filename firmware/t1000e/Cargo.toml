@@ -15,6 +15,7 @@ board-techo = ["display-epd", "button-nav", "system-off-techo", "led-active-low"
 board-t1000e = ["t1000e", "cap-battery-saadc"]
 board-sensecap-solar = ["cap-battery-saadc", "power-button"]
 board-wio-tracker-l1 = ["display-oled", "button-nav", "system-off-wio", "cap-battery-saadc", "cap-buzzer"]
+board-xiao-nrf52 = ["cap-battery-saadc", "led-active-low", "boot-pairing-window"]
 t1000e = []
 cap-battery-saadc = []
 cap-buzzer = []
@@ -30,6 +31,7 @@ lfclk-rc = []
 # Dedicated hardware power button + System OFF teardown / GPIO-DETECT wake
 # (SenseCAP Solar PWR button on P1.07).
 power-button = []
+boot-pairing-window = []
 # Diagnostic build: skip MPSL/SDC/Trouble entirely (USB-only device) while
 # keeping the BLE clock configuration, to isolate the post-DFU
 # first-boot watchdog freeze. Not a production configuration.

@@ -1,21 +1,27 @@
 [package]
-name = "firmware-wio-tracker-l1"
-description = "Seeed Wio Tracker L1 / L1 Pro ULCP device firmware over USB-CDC and BLE GATT"
+name = "firmware-xiao-nrf52"
+description = "Seeed XIAO nRF52840 + Wio-SX1262 Kit ULCP device firmware over USB-CDC and BLE GATT"
 version.workspace = true
 edition.workspace = true
 license.workspace = true
 repository.workspace = true
 
 [features]
-# See firmware/techo/Cargo.toml for the capability-feature
-# rationale; this block is kept identical across the device boards, only the
-# `default` differs. Default build = Wio Tracker L1 (OLED variant).
+# See firmware/techo/Cargo.toml for the capability-feature rationale; this
+# block is kept identical across the device boards, only the `default`
+# differs. Default build = Seeed XIAO nRF52840 + Wio-SX1262 Kit.
 #
-# The Wio Tracker L1 is the first board in this family to combine an
-# emissive panel with a sounder: SX1262 radio + SH1106 OLED + SAADC
-# battery monitor + piezo + nav button. The L1 e-ink variant is a
-# different display path (SPI1) and is not covered by this image.
-default = ["board-wio-tracker-l1"]
+# The XIAO kit is the SenseCAP Solar's closest relative — same SX1262
+# wiring, same SAADC battery topology — with two differences that show up
+# here: the RGB LED is active-low (`led-active-low`), and the board has no
+# buttons at all, so it takes neither `power-button` nor `button-nav` and
+# no `system-off-*` gesture feature. System OFF exists but is commanded,
+# not gestured, and the teardown lives in the BSP.
+#
+# The 32.768 kHz crystal is fitted (schematic X1 + 10 pF loading caps, and
+# both upstream firmwares define USE_LFXO), so this board does NOT take
+# `lfclk-rc`.
+default = ["board-xiao-nrf52"]
 board-techo = ["display-epd", "button-nav", "system-off-techo", "led-active-low", "cap-battery-saadc"]
 board-t1000e = ["t1000e", "cap-battery-saadc"]
 board-sensecap-solar = ["cap-battery-saadc", "power-button"]
@@ -32,14 +38,16 @@ system-off-techo = []
 system-off-wio = []
 led-active-low = []
 # LFCLK from the internal RC oscillator (crystal-less XIAO-based boards).
-#
-# Whether the Wio Tracker L1 populates a 32.768 kHz crystal is the one
-# hardware fact this image has not confirmed. If MPSL clock init fails on
-# hardware, add `lfclk-rc` to `board-wio-tracker-l1` above.
 lfclk-rc = []
 # Dedicated hardware power button + System OFF teardown / GPIO-DETECT wake
 # (SenseCAP Solar PWR button on P1.07).
 power-button = []
+# Open a 20 s BLE pairing window on every boot, bonded or not, instead of
+# only when there are no bonds. For boards with no button and no display,
+# where there is otherwise NO way to reach pairing mode again after the
+# first bond — a bonded node would be locked to its first host forever.
+# RESET is the physical-presence ceremony on such a board. Interim
+# measure; a proper story for these boards is still owed.
 boot-pairing-window = []
 # Diagnostic build: skip MPSL/SDC/Trouble entirely (USB-only device).
 no-ble = []
@@ -50,15 +58,15 @@ ble-store-fault-inject = ["ble-debug"]
 ble-wipe-on-boot = ["ble-debug"]
 
 [[bin]]
-name = "firmware-wio-tracker-l1"
+name = "firmware-xiao-nrf52"
 # The protocol, security, transport-arbitration, and BLE implementation live in
 # the shared nRF52840 tracker sources. Board differences are selected by
-# the capability + `board-wio-tracker-l1` features above.
+# the capability + `board-xiao-nrf52` features above.
 path = "../nrf52-tracker/src/main.rs"
 
 [dependencies]
 umsh-bsp-nrf52840 = { path = "../../crates/umsh-bsp-nrf52840", default-features = false }
-umsh-bsp-wio-tracker-l1 = { path = "../../crates/umsh-bsp-wio-tracker-l1", default-features = false, features = ["display", "power", "battery", "buzzer"] }
+umsh-bsp-xiao-nrf52 = { path = "../../crates/umsh-bsp-xiao-nrf52", default-features = false }
 umsh-radio-loraphy = { path = "../../crates/umsh-radio-loraphy", default-features = false }
 umsh-ulcp = { path = "../../crates/umsh-ulcp" }
 umsh-ulcp-device = { path = "../../crates/umsh-ulcp-device" }
@@ -67,7 +75,7 @@ umsh-crypto = { path = "../../crates/umsh-crypto", default-features = false, fea
 umsh-hal = { path = "../../crates/umsh-hal", default-features = false }
 umsh-journal-store = { path = "../../crates/umsh-journal-store" }
 umsh-ux-tracker = { path = "../../crates/umsh-ux-tracker", default-features = false }
-umsh-ux-display-tracker = { path = "../../crates/umsh-ux-display-tracker", default-features = false, features = ["screen"] }
+umsh-ux-display-tracker = { path = "../../crates/umsh-ux-display-tracker", default-features = false }
 heapless = { version = "0.8", default-features = false }
 heapless09 = { package = "heapless", version = "0.9", default-features = false }
 embassy-futures = { version = "0.1", default-features = false }
@@ -84,7 +92,6 @@ embassy-usb = { version = "0.6", default-features = false }
 static_cell = "2"
 lora-phy = { workspace = true }
 embedded-hal-bus = { version = "0.3", default-features = false, features = ["async"] }
-embedded-graphics = { version = "0.8", default-features = false }
 embedded-alloc = { version = "0.5", default-features = false }
 defmt = "0.3"
 nrf-mpsl = { version = "0.3", default-features = false, features = ["critical-section-impl"] }

@@ -202,6 +202,8 @@ mod firmware {
     use umsh_bsp_techo::power as board_power;
     #[cfg(all(feature = "cap-battery-saadc", feature = "board-wio-tracker-l1"))]
     use umsh_bsp_wio_tracker_l1::power as board_power;
+    #[cfg(all(feature = "cap-battery-saadc", feature = "board-xiao-nrf52"))]
+    use umsh_bsp_xiao_nrf52::power as board_power;
     use umsh_crypto::CryptoEngine;
     use umsh_crypto::software::{SoftwareAes, SoftwareSha256};
     use umsh_ulcp::{Status, gatt, hdlc};
@@ -306,6 +308,8 @@ mod firmware {
     const DEFAULT_DEVICE_NAME: &str = "UMSH Solar";
     #[cfg(feature = "board-wio-tracker-l1")]
     const DEFAULT_DEVICE_NAME: &str = "UMSH Wio L1";
+    #[cfg(feature = "board-xiao-nrf52")]
+    const DEFAULT_DEVICE_NAME: &str = "UMSH XIAO";
 
     /// The board default name plus a stable per-die suffix — the low 16
     /// bits of FICR DEVICEADDR, the same die-unique value the BLE
@@ -357,6 +361,8 @@ mod firmware {
     const DEV_VERSION: &str = concat!("umsh-sensecap-solar ", env!("GIT_DESCRIBE"));
     #[cfg(feature = "board-wio-tracker-l1")]
     const DEV_VERSION: &str = concat!("umsh-wio-tracker-l1 ", env!("GIT_DESCRIBE"));
+    #[cfg(feature = "board-xiao-nrf52")]
+    const DEV_VERSION: &str = concat!("umsh-xiao-nrf52 ", env!("GIT_DESCRIBE"));
 
     fn session_config() -> SessionConfig {
         SessionConfig {
@@ -1450,9 +1456,27 @@ mod firmware {
         }
     }
 
+    /// How long a pairing window stays open before it closes itself.
+    ///
+    /// Boards that can *ask* for a window — a menu entry, or a
+    /// hold-through-power-on gesture — get 30 s, because reopening one is
+    /// cheap. A `boot-pairing-window` board has neither, so its only
+    /// window is the automatic one at boot and it is deliberately shorter:
+    /// it is open on every single boot rather than on request, so the
+    /// exposure is recurring and the length is the only thing limiting it.
+    #[cfg(not(feature = "boot-pairing-window"))]
+    const PAIRING_WINDOW_SECS: u64 = 30;
+    #[cfg(feature = "boot-pairing-window")]
+    const PAIRING_WINDOW_SECS: u64 = 20;
+
     async fn pairing_timeout<C: Controller, P: PacketPool>(stack: &Stack<'_, C, P>) -> ! {
         loop {
-            match select(Timer::after_secs(30), PAIRING_TIMER_RESET.wait()).await {
+            match select(
+                Timer::after_secs(PAIRING_WINDOW_SECS),
+                PAIRING_TIMER_RESET.wait(),
+            )
+            .await
+            {
                 Either::First(()) => {
                     debug_log(format_args!("pairing window expired"));
                     PAIRING_MODE.store(false, Ordering::Release);
@@ -2349,8 +2373,16 @@ mod firmware {
         }
         PAIRING_PIN.store(initial.pin.unwrap_or(u32::MAX), Ordering::Release);
         BLE_BOND_COUNT.store(initial.bonds.len() as u8, Ordering::Release);
-        let initial_pairing_mode =
-            initial.bonds.is_empty() || FORCE_PAIRING_AT_BOOT.load(Ordering::Acquire);
+        // `boot-pairing-window` boards open a window on *every* boot,
+        // bonded or not. They have no button and no menu, so this is the
+        // only way to ever pair a second host — without it the first
+        // bond would lock everyone else out permanently. Pressing RESET
+        // is the physical-presence ceremony on those boards, standing in
+        // for the button hold the others use; a configured PIN still
+        // gates the pairing itself, and the failure lockout still applies.
+        let initial_pairing_mode = initial.bonds.is_empty()
+            || FORCE_PAIRING_AT_BOOT.load(Ordering::Acquire)
+            || cfg!(feature = "boot-pairing-window");
         PAIRING_MODE.store(initial_pairing_mode, Ordering::Release);
         BLE_LED_MODE.store(u8::from(initial_pairing_mode), Ordering::Release);
         UI_REFRESH.signal(());
@@ -3386,6 +3418,40 @@ mod firmware {
         umsh_bsp_sensecap_solar::power::run_battery_monitor(saadc, divider_gate).await;
     }
 
+    /// XIAO nRF52840 kit battery monitor task: SAADC plus three held
+    /// pins. The divider is **ungated** — P0.14 is its low side and is
+    /// driven LOW for the life of the program, because both alternatives
+    /// exceed P0.31's absolute maximum (see the BSP `power` module). The
+    /// BQ25100 does report its own state, so unlike the other boards here
+    /// this one distinguishes charging from charge-complete.
+    #[cfg(feature = "board-xiao-nrf52")]
+    #[embassy_executor::task]
+    async fn xiao_power_task(
+        saadc: Saadc<'static, 1>,
+        divider_low: Output<'static>,
+        charge_status_n: Input<'static>,
+        charge_current_hi: Output<'static>,
+    ) {
+        umsh_bsp_xiao_nrf52::power::run_battery_monitor(
+            saadc,
+            divider_low,
+            charge_status_n,
+            charge_current_hi,
+        )
+        .await;
+    }
+
+    /// Headless System OFF for the XIAO nRF52840 kit. The sole producer
+    /// is the BSP's protective low-battery cutoff: this board has no
+    /// button to hold, and there is no remote power-off command in this
+    /// firmware. Nothing is armed as a wake source either — there is
+    /// nothing on the board to arm. See the BSP `shutdown` module.
+    #[cfg(feature = "board-xiao-nrf52")]
+    #[embassy_executor::task]
+    async fn xiao_shutdown_task() -> ! {
+        umsh_bsp_xiao_nrf52::shutdown::run().await
+    }
+
     /// T-Echo battery monitor task: SAADC only. The divider is hard-wired
     /// (no gate) and the charger exposes no status pin, so external power
     /// comes from usbregstatus (see BSP `power` module).
@@ -3954,6 +4020,12 @@ mod firmware {
         // Wio Tracker L1: the user LED (D11 / P1.01) is active-high.
         #[cfg(feature = "board-wio-tracker-l1")]
         let led = Output::new(p.P1_01, Level::Low, OutputDrive::Standard);
+        // XIAO nRF52840: blue segment of the common-anode RGB LED (P0.06),
+        // **active-low** — Level::High is off. Blue is the status colour
+        // here (MeshCore's choice on this board); red stays free as a TX
+        // indicator and green is the 10 kΩ leg, noticeably dimmer.
+        #[cfg(feature = "board-xiao-nrf52")]
+        let led = Output::new(p.P0_06, Level::High, OutputDrive::Standard);
         #[cfg(feature = "t1000e")]
         let led = {
             let mut config = SimpleConfig::default();
@@ -4086,12 +4158,24 @@ mod firmware {
             }
         }
 
-        // ── SX1262 LoRa radio (SenseCAP Solar Node) ─────────────────────────
-        // Byte-for-byte the Wio Tracker L1 SX1262 bring-up on this board's
-        // pins (external RXEN, DIO2 internal RF switch, DIO3 1.8 V TCXO):
+        // ── SX1262 LoRa radio (SenseCAP Solar Node, XIAO nRF52840 kit) ──────
+        // Byte-for-byte the Wio Tracker L1 SX1262 bring-up on this pin map
+        // (external RXEN, DIO2 internal RF switch, DIO3 1.8 V TCXO):
         //   SPI TWISPI1 @16MHz: SCK=P1.13, MISO=P1.14, MOSI=P1.15, CS=P0.04
         //   RST=P0.28, BUSY=P0.29, DIO1=P0.03, RXEN=P0.05 (rf_switch_rx)
-        #[cfg(feature = "board-sensecap-solar")]
+        //
+        // Two boards share this block verbatim, and not by coincidence:
+        // both are XIAO-pinout carriers around the same Wio SX1262 module,
+        // so the wiring is identical pin for pin. The XIAO kit's copy is
+        // additionally schematic-confirmed (Wio-SX1262 for XIAO V1.0)
+        // rather than reconstructed from vendor firmware.
+        //
+        // Two carrier details worth knowing here, both from that schematic:
+        // RESET has a 10 kΩ pull-up, so a floating pin does *not* hold the
+        // radio down — the explicit reset below is what does. RXEN has no
+        // pull at all, which is why it is clamped at construction rather
+        // than left to lora-phy's first transition.
+        #[cfg(any(feature = "board-sensecap-solar", feature = "board-xiao-nrf52"))]
         {
             let mut cfg = SpimConfig::default();
             cfg.frequency = Frequency::M16;
@@ -4129,7 +4213,10 @@ mod firmware {
 
             // Radio init failure degrades to a USB/BLE-only device (RF dead)
             // rather than a startup panic → reboot loop. The SX1262 bring-up
-            // on these pins is hardware-proven (bidirectional RF, 2026-07-23).
+            // on these pins is hardware-proven on the SenseCAP Solar
+            // (bidirectional RF, 2026-07-23); on the XIAO kit it is still
+            // only schematic-confirmed, which is exactly the case this
+            // degrade-instead-of-panic path exists for.
             match LoRa::new(Sx126x::new(radio_spi, iv, lora_config), false, Delay).await {
                 Ok(lora) => {
                     spawner.spawn(radio_task(lora).unwrap());
@@ -4365,9 +4452,12 @@ mod firmware {
             }
             BLE_BONDS_AT_BOOT.store(ble_store.snapshot().bonds.len() as u8, Ordering::Release);
             BLE_BOND_COUNT.store(ble_store.snapshot().bonds.len() as u8, Ordering::Release);
+            // See the matching seed in `ble_app` for why
+            // `boot-pairing-window` boards force this true every boot.
             PAIRING_MODE.store(
                 ble_store.snapshot().bonds.is_empty()
-                    || FORCE_PAIRING_AT_BOOT.load(Ordering::Acquire),
+                    || FORCE_PAIRING_AT_BOOT.load(Ordering::Acquire)
+                    || cfg!(feature = "boot-pairing-window"),
                 Ordering::Release,
             );
 
@@ -4432,6 +4522,11 @@ mod firmware {
         {
             config.product = Some("Wio Tracker UMSH Radio");
             config.serial_number = Some("wio-tracker-l1");
+        }
+        #[cfg(feature = "board-xiao-nrf52")]
+        {
+            config.product = Some("XIAO nRF52 UMSH Radio");
+            config.serial_number = Some("xiao-nrf52");
         }
         config.max_power = 100;
         config.max_packet_size_0 = 64;
@@ -4583,6 +4678,45 @@ mod firmware {
             );
             let divider_gate = Output::new(p.P0_14, Level::High, OutputDrive::Standard);
             spawner.spawn(sensecap_power_task(saadc, divider_gate).unwrap());
+        }
+
+        // XIAO nRF52840 kit peripherals. Same SAADC channel and the same
+        // physical 1M/510k network as the SenseCAP Solar above, but the
+        // low side is *not* a gate: P0.14 is created LOW and stays LOW
+        // forever, because driving it high sits P0.31 exactly at its
+        // VDD+0.3 absolute maximum and releasing it takes P0.31 to the
+        // full cell voltage. Seeed's own wiki documents the rule; the
+        // shipping Meshtastic build for this board violates it.
+        //
+        // The BQ25100 adds what the other boards here lack: HICHG (P0.13,
+        // LOW = 100 mA) and ~CHG (P0.17, open-drain, LOW while charging).
+        // ~CHG shares its node with the red charge LED, so it is an input
+        // and nothing else. Both pins are handed to the monitor so they
+        // stay asserted for the life of the program.
+        //
+        // No button task and no force-pairing ceremony: a stock kit has
+        // no user button at all (the carrier's K1 footprint ships bare),
+        // so this board is headless by construction. The shutdown task
+        // still runs, but only the low-battery cutoff can reach it, and
+        // it arms no wake source.
+        #[cfg(feature = "board-xiao-nrf52")]
+        {
+            let saadc = Saadc::new(
+                p.SAADC,
+                Irqs,
+                SaadcConfig::default(),
+                [ChannelConfig::single_ended(p.P0_31)],
+            );
+            let divider_low = Output::new(p.P0_14, Level::Low, OutputDrive::Standard);
+            let charge_status_n = Input::new(p.P0_17, Pull::None);
+            // 100 mA. Sensible for anything above ~500 mAh, but it is a
+            // 1C-plus rate for a small cell — the kit ships without one,
+            // so the pack is whatever the user attached.
+            let charge_current_hi = Output::new(p.P0_13, Level::Low, OutputDrive::Standard);
+            spawner.spawn(
+                xiao_power_task(saadc, divider_low, charge_status_n, charge_current_hi).unwrap(),
+            );
+            spawner.spawn(xiao_shutdown_task().unwrap());
         }
 
         // T-Echo battery monitor: SAADC on AIN2/P0.04. Same SAADC

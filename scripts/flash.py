@@ -28,6 +28,13 @@ Boards
   sensecap-solar   SenseCAP Solar Node P1 / P1-Pro (Seeed family
                    0x28860044, S140 v7.3.0, app @ 0x27000,
                    /Volumes/SENSECAP; confirmed Phase 0 2026-07-23).
+  xiao-nrf52       Seeed XIAO nRF52840 + Wio-SX1262 Kit (generic
+                   Adafruit family 0xADA52840, S140 v7.3.0,
+                   app @ 0x27000, app window ends 0xEA000,
+                   /Volumes/XIAO-SENSE; confirmed 2026-08-03).
+                   Note: retail kits ship the *Sense* bootloader config
+                   on plain hardware, and a wrong-family UF2 is copied
+                   with no error and silently not written.
 
 Examples
 --------
@@ -120,6 +127,39 @@ BOARDS = {
         "family": 0x28860044,        # Seeed Solar Node P1 family (confirmed from CURRENT.UF2)
         "mount":  "/Volumes/SENSECAP",
         "description": "SenseCAP Solar Node P1 / P1-Pro",
+    },
+    "xiao-nrf52": {
+        # Confirmed against an in-hand retail kit (2026-08-03) from
+        # INFO_UF2.TXT + CURRENT.UF2, and by direct write probes:
+        #   Bootloader: UF2 Bootloader 0.6.1 (Nov 12 2021)
+        #   Board-ID: Seeed_XIAO_nRF52840_Sense   ← the *Sense* config,
+        #             on plain XIAO nRF52840 hardware
+        #   SoftDevice: S140 7.3.0  → app starts at 0x27000
+        #   Board-specific family (from CURRENT.UF2): 0x28860045
+        #   Bootloader volume name: XIAO-SENSE
+        #
+        # We pack with the GENERIC 0xADA52840 family, not the
+        # board-specific 0x28860045. The 0.6.1 `write_block` accepts
+        # either, and the generic one works whichever bootloader config a
+        # given unit shipped with — which matters precisely because Seeed
+        # ships the Sense config here, so a unit with the plain
+        # `XIAO-BOOT` config (family 0x28860044, volume XIAO-BOOT) is also
+        # plausible in the wild. Verified accepted by probe.
+        #
+        # A UF2 with the wrong family is SILENTLY IGNORED: the copy exits
+        # 0 with no error and the volume stays mounted, indistinguishable
+        # from a real flash. Our own `sensecap-solar` preset above was
+        # tested against this kit and did exactly that. If a flash appears
+        # to succeed but the board comes back running the old image, check
+        # the family before anything else.
+        "base":   0x00027000,        # S140 v7.3.0 reserves 156 KiB (confirmed)
+        "family": 0xADA52840,        # generic nRF52840 — tolerates XIAO-BOOT and XIAO-SENSE
+        # Retail units mount as XIAO-SENSE; a re-bootloadered unit may
+        # mount as XIAO-BOOT instead, so --copy-default is less reliable
+        # here than on the other boards. Use --copy-to with the volume you
+        # actually see, or drag and drop.
+        "mount":  "/Volumes/XIAO-SENSE",
+        "description": "Seeed XIAO nRF52840 + Wio-SX1262 Kit",
     },
 }
 

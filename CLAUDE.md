@@ -30,12 +30,12 @@ costs of migration before considering implementing it.
   - `umsh-mobile-core` — stable value-oriented facade for mobile apps (UniFFI)
   - `umsh-flash-store` / `umsh-journal-store` — sequential-storage NV storage + power-safe journals
   - `umsh-radio-loraphy` — `umsh-hal::Radio` over any `lora-phy` RadioKind
-  - `umsh-bsp-*` — board support: `nrf52840` (shared base), `t1000e`, `techo`, `wio-tracker-l1`, `sensecap-solar`
+  - `umsh-bsp-*` — board support: `nrf52840` (shared base), `t1000e`, `techo`, `wio-tracker-l1`, `sensecap-solar`, `xiao-nrf52`
   - `umsh-ux-tracker` — single-button/LED/buzzer UX for tracker boards
   - `umsh-ux-display-tracker` — menu + display-attention + input-gate UX shared by display trackers (t-echo, heltec-v3, wio-tracker-l1)
   - `umsh-cli` / `umsh-app-ulcp-cli` — host CLI + CLI-console firmware logic
 - `umsh/` — umbrella crate re-exporting the workspace; defines the `Platform` trait + Tokio/Embassy adapters. **Library only** — host binaries live in `tools/`, which is what keeps clap/rustyline out of the umbrella's dependency tree.
-- `firmware/` — nRF52840 firmware (thumbv7em, UF2/DFU). **One shipping image per board** (t1000e / techo / sensecap-solar / wio-tracker-l1) — there is no separate repeater build; role is configuration. All four are thin manifests over the shared `firmware/nrf52-tracker/src/main.rs`, differing only by their `board-*` feature. The `*-console` builds are per-board bringup harnesses, not products.
+- `firmware/` — nRF52840 firmware (thumbv7em, UF2/DFU). **One shipping image per board** (t1000e / techo / sensecap-solar / wio-tracker-l1 / xiao-nrf52) — there is no separate repeater build; role is configuration. All five are thin manifests over the shared `firmware/nrf52-tracker/src/main.rs`, differing only by their `board-*` feature. The existing `*-console` builds are per-board bringup harnesses, not products; **new boards do not get one** (xiao-nrf52 ships the device image only).
 - `firmware-esp32/` — **separate cargo workspace** for Xtensa boards (Heltec LoRa32 V2 parked, V3 active). Own `rust-toolchain.toml` pinning `channel = "esp"`.
 - `apps/ios/` — SwiftUI app; `packages/UMSHMobileCore` — UniFFI Swift package.
 - `tools/` — host binaries and dev tooling (`crates/` is reserved for library crates):
@@ -61,6 +61,7 @@ nRF52840 (UF2/DFU via `scripts/flash.py`; device must be in DFU mode: 1200-baud 
 - `make flash-wio-tracker-l1-console`, `make flash-wio-tracker-l1` (UF2 drive `/Volumes/TRACKER L1`; app base `0x27000` — S140 v7.3.0, **not** the T-Echo's `0x26000`)
 - `make flash-t1000e-console` (UF2 drive) or `make flash-t1000e-console-serial` (T1000-E button-bootloader exposes only serial; override `DFU_SERIAL_PORT=/dev/tty.usbmodemN`)
 - `make flash-sensecap-solar` (shipping image) or `make flash-sensecap-solar-console`
+- `make flash-xiao-nrf52` (Seeed XIAO nRF52840 + Wio-SX1262 kit; app base `0x27000`, **app window ends `0xEA000`**). Packed with the generic `0xADA52840` family, not a Seeed one: retail kits ship the *Sense* bootloader config on plain hardware (`/Volumes/XIAO-SENSE`), and **a wrong-family UF2 is copied with no error and silently not written** — if a flash "succeeds" but the old image still runs, check the family first
 
 ESP32 (build from `firmware-esp32/`; needs espup toolchain: `cargo install espup espflash && espup install`). Flash via ROM serial bootloader — cannot be bricked, stays attached as monitor:
 - `make flash-heltec-v3`, `make flash-heltec-v3-console` (override `ESPFLASH_PORT=...`)

@@ -1752,6 +1752,50 @@ dependencies = [
 ]
 
 [[package]]
+name = "firmware-xiao-nrf52"
+version = "0.1.0"
+dependencies = [
+ "cortex-m",
+ "cortex-m-rt",
+ "critical-section",
+ "defmt 0.3.100",
+ "embassy-executor 0.10.0",
+ "embassy-futures",
+ "embassy-nrf",
+ "embassy-sync 0.8.0",
+ "embassy-time",
+ "embassy-usb",
+ "embedded-alloc",
+ "embedded-hal-bus",
+ "heapless 0.8.0",
+ "heapless 0.9.3",
+ "log",
+ "lora-phy",
+ "nrf-mpsl",
+ "nrf-sdc",
+ "rand 0.10.1",
+ "rand_chacha",
+ "rand_core 0.6.4",
+ "static_cell",
+ "trouble-host",
+ "umsh-bsp-nrf52840",
+ "umsh-bsp-xiao-nrf52",
+ "umsh-core",
+ "umsh-crypto",
+ "umsh-hal",
+ "umsh-journal-store",
+ "umsh-mac",
+ "umsh-node",
+ "umsh-radio-loraphy",
+ "umsh-sync",
+ "umsh-ulcp",
+ "umsh-ulcp-device",
+ "umsh-ulcp-runtime",
+ "umsh-ux-display-tracker",
+ "umsh-ux-tracker",
+]
+
+[[package]]
 name = "fixed"
 version = "1.29.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -3912,6 +3956,23 @@ dependencies = [
  "embassy-sync 0.8.0",
  "embassy-time",
  "embedded-graphics",
+ "umsh-bsp-nrf52840",
+ "umsh-crypto",
+ "umsh-hal",
+ "umsh-mac",
+ "umsh-radio-loraphy",
+ "umsh-ux-tracker",
+]
+
+[[package]]
+name = "umsh-bsp-xiao-nrf52"
+version = "0.1.0"
+dependencies = [
+ "cortex-m",
+ "embassy-futures",
+ "embassy-nrf",
+ "embassy-sync 0.8.0",
+ "embassy-time",
  "umsh-bsp-nrf52840",
  "umsh-crypto",
  "umsh-hal",

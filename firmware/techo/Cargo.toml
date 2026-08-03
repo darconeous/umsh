@@ -13,6 +13,7 @@ board-techo = ["display-epd", "button-nav", "system-off-techo", "led-active-low"
 board-t1000e = ["t1000e", "cap-battery-saadc"]
 board-sensecap-solar = ["cap-battery-saadc", "power-button"]
 board-wio-tracker-l1 = ["display-oled", "button-nav", "system-off-wio", "cap-battery-saadc", "cap-buzzer"]
+board-xiao-nrf52 = ["cap-battery-saadc", "led-active-low", "boot-pairing-window"]
 
 # ─── Capability features (shared code shape, board-portable) ───
 # The historical `t1000e` flag still bundles the T-1000E-only capabilities
@@ -54,6 +55,7 @@ lfclk-rc = []
 # (SenseCAP Solar PWR button on P1.07). A board with a button reserved for
 # power, distinct from the single-button gesture FSM.
 power-button = []
+boot-pairing-window = []
 
 # Default build = T-Echo.
 default = ["board-techo"]

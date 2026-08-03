@@ -6,6 +6,7 @@
 	flash-t1000e-console-serial \
 	build-sensecap-solar-console flash-sensecap-solar-console \
 	build-sensecap-solar flash-sensecap-solar \
+	build-xiao-nrf52 flash-xiao-nrf52 \
 	build-t1000e flash-t1000e-serial \
 	build-techo flash-techo \
 	build-heltec-v3-console flash-heltec-v3-console \
@@ -93,6 +94,20 @@ build-sensecap-solar:
 flash-sensecap-solar: build-sensecap-solar
 	scripts/flash.py --board sensecap-solar --copy-default \
 		$(TARGET_DIR)/firmware-sensecap-solar
+
+# Seeed XIAO nRF52840 + Wio-SX1262 Kit. Retail units mount their DFU
+# volume as XIAO-SENSE (Seeed ships the *Sense* bootloader config on plain
+# hardware); a re-bootloadered unit may present XIAO-BOOT instead, so
+# --copy-default can miss. Override with `--copy-to` or drag the .uf2
+# across by hand if it does. The image is packed with the generic
+# 0xADA52840 family, which both configs accept — a wrong-family UF2 is
+# copied with no error and silently not written.
+build-xiao-nrf52:
+	cd firmware/xiao-nrf52 && cargo build --release
+
+flash-xiao-nrf52: build-xiao-nrf52
+	scripts/flash.py --board xiao-nrf52 --copy-default \
+		$(TARGET_DIR)/firmware-xiao-nrf52
 
 build-t1000e:
 	cd firmware/t1000e && cargo build --release

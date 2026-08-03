@@ -22,10 +22,17 @@ Sources, in decreasing authority:
 4. Meshtastic's `seeed_xiao_nrf52840_kit` variant
 5. MeshCore's `xiao_nrf52` variant and board class
 
-**Almost nothing here has been validated on hardware by this project.** No UMSH
-BSP exists for this board yet. Except where a dated hardware note says
-otherwise, every "confirmed" below means confirmed *against the schematic*, not
-confirmed on a bench.
+**Almost nothing here has been validated on hardware by this project.** Except
+where a dated hardware note says otherwise, every "confirmed" below means
+confirmed *against the schematic*, not confirmed on a bench.
+
+A UMSH BSP and a shipping firmware image now exist — `crates/umsh-bsp-xiao-nrf52`
+and `firmware/xiao-nrf52`, built from this document on 2026-08-03 — but **none of
+it has been run on the board**. It compiles and packs to a UF2 whose family and
+address extent are verified against the probe results below; everything past that
+is the bring-up checklist at the end of this document, which is entirely open.
+The build is deliberately headless (no button profile) and does not implement
+GNSS, QSPI deep power-down, or the LPCOMP recovery wake.
 
 Two schematic-versus-reality discrepancies **were** found by physical
 inspection of a retail kit (2026-08-03), and they run in opposite directions:
@@ -973,21 +980,21 @@ So:
 
 `scripts/flash.py`'s existing `sensecap-solar` preset (base `0x27000`, family
 `0x28860044`) **was tested against this kit and failed silently** — probe 1
-above. A new preset is needed:
+above. The `xiao-nrf52` preset added on 2026-08-03 carries the working values:
 
 ```python
-"xiao-nrf52840-kit": {
+"xiao-nrf52": {
     "base": 0x27000,
     "family": 0xADA52840,          # generic nRF52840 — tolerates XIAO-BOOT and XIAO-SENSE
     "mount": "/Volumes/XIAO-SENSE",  # retail units; XIAO-BOOT if re-bootloadered
-    "description": "Seeed XIAO nRF52840 + Wio-SX1262 Kit "
-                   "(S140 v7.3.0, app @ 0x27000, app window ends 0xEA000)",
+    "description": "Seeed XIAO nRF52840 + Wio-SX1262 Kit",
 },
 ```
 
 Because the mount name varies with the installed bootloader, `--copy-default`
 is less reliable here than on the other boards; `--copy-to` with the observed
-volume, or a plain drag-and-drop, is safer.
+volume, or a plain drag-and-drop, is safer. `make flash-xiao-nrf52` uses
+`--copy-default` and will need one of those fallbacks on an `XIAO-BOOT` unit.
 
 ### Do not trust Meshtastic's board metadata for this kit
 
