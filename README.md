@@ -107,8 +107,8 @@ appendix. One process runs as the **server** — it owns the bridge's node ident
 shared duplicate cache, and makes every forwarding decision — and any number of others run
 as **clients**, which relay frames byte for byte between their own radio and the server. The
 tunnel is TLS 1.3 with mutually pinned certificates over IPv4 or IPv6, and the tool issues
-its own credentials. It lives in [`tools/umsh-bridge/`](tools/umsh-bridge/) — see
-[Bridge two meshes over the internet](#bridge-two-meshes-over-the-internet) below.
+its own credentials. Installation, configuration, and deployment are covered in
+[its own README](tools/umsh-bridge/README.md).
 
 ### Device firmware
 
@@ -371,77 +371,16 @@ and that neither a serial host session nor another BLE central is attached.
 
 ### Bridge two meshes over the internet
 
-> [!CAUTION]
-> An internet bridge cannot be relied upon in an emergency, and it spends local airtime on
-> traffic that is not local. The specification's
-> [cautions](docs/protocol/src/routing-overview.md) apply in full; this tool exists so that
-> a bridge deployed anyway behaves predictably and conservatively.
-
-A bridge is one virtual repeater with radios in two places. The server owns its node
-identity, so start by generating one along with a certificate for each participant:
-
-```sh
-cargo build -p umsh-bridge
-```
-
-```sh
-umsh-bridge keygen identity /etc/umsh-bridge/identity.key
-```
-
-```sh
-umsh-bridge keygen cert server --cert /etc/umsh-bridge/server.crt --key /etc/umsh-bridge/server.key
-```
-
-Each `keygen cert` prints the fingerprint the other end must pin. The server lists one
-`[[server.clients]]` per client, naming that client's fingerprint; each client pins the
-server's. There is no CA — revoking a client is deleting its entry.
-
-```toml
-# /etc/umsh-bridge/config.toml on the server
-[identity]
-key_file = "/etc/umsh-bridge/identity.key"
-
-[server]
-listen = ["0.0.0.0:21837", "[::]:21837"]
-
-[server.tls]
-cert_file = "/etc/umsh-bridge/server.crt"
-key_file = "/etc/umsh-bridge/server.key"
-
-[server.radio]
-type = "serial"                   # or "ble", "udp-multicast", "none"
-port = "/dev/ttyACM0"
-
-[[server.clients]]
-name = "cabin"
-fingerprint = "sha256:…"          # printed by `keygen cert cabin`
-max_frames_per_minute = 60
-```
-
-```toml
-# /etc/umsh-bridge/config.toml on the client
-[client]
-server = "bridge.example.net:21837"
-
-[client.tls]
-cert_file = "/etc/umsh-bridge/cabin.crt"
-key_file = "/etc/umsh-bridge/cabin.key"
-server_fingerprint = "sha256:…"   # printed by `keygen cert server`
-
-[client.radio]
-type = "ble"
-selector = "UMSH T-Echo"
-```
-
-`umsh-bridge check` loads a configuration, opens its credentials, and prints what the daemon
-would do — without touching a radio or a socket, so it is safe against a live deployment's
-config. `umsh-bridge run` runs in the foreground; a sample systemd unit is in
-[`contrib/systemd/`](contrib/systemd/). Logging is `-v` for debug, `-vv` for trace, `-q` for
-warnings only, or `--log-filter` for per-module control.
-
-To try a bridge without hardware, point both ends at the `udp-multicast` fake radio on
-different groups and run a
-[desktop chat](#build-and-run-the-desktop-chat-example) instance on each.
+A bridge is one virtual repeater with radios in two places, joined by `umsh-bridge` over a
+mutually authenticated TLS tunnel. The tool issues its own credentials, validates a
+deployment's configuration with `umsh-bridge check`, and ships with a sample systemd unit;
+the [umsh-bridge README](tools/umsh-bridge/README.md) walks through installation,
+configuration, and running it as a service — including trying a whole bridge on one
+machine with the `udp-multicast` fake radio and a
+[desktop chat](#build-and-run-the-desktop-chat-example) instance on each segment. Heed the
+specification's [cautions](docs/protocol/src/routing-overview.md): an internet bridge
+cannot be relied upon in an emergency, and it spends local airtime on traffic that is not
+local.
 
 ### Inspecting packets with Wireshark
 
