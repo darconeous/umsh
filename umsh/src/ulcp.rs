@@ -2155,6 +2155,127 @@ where
             lqi: packet.meta.lqi,
         })
     }
+
+    /// Issue one `CMD_STR_SEND` with an already-encoded metadata block
+    /// and await its confirmation, retrying while CCA reports the
+    /// channel busy and `cca_deadline` has not passed.
+    async fn send_confirmed(
+        &mut self,
+        data: &[u8],
+        metadata: &[u8],
+        cca_deadline: Option<Instant>,
+    ) -> Result<(), TxError<UlcpError>> {
+        loop {
+            let tid = self.alloc_tid();
+            let mut frame_buf = vec![0u8; data.len() + metadata.len() + 16];
+            let frame_len = frame::str_send(&mut frame_buf, tid, stream::PHY_RAW, data, metadata)
+                .map_err(|_| TxError::Io(UlcpError::Protocol("frame encode")))?;
+            self.send(&frame_buf[..frame_len])
+                .await
+                .map_err(TxError::Io)?;
+
+            // The confirmation arrives only after the frame is on the
+            // air (or definitively failed), so allow for airtime.
+            let deadline = Instant::now()
+                + self.config.response_timeout
+                + Duration::from_millis(u64::from(self.t_frame_ms) * 2);
+            let response = self
+                .wait_response(tid, deadline)
+                .await
+                .map_err(TxError::Io)?;
+            if response.kind != ResponseKind::Is || response.key != prop::LAST_STATUS {
+                return Err(TxError::Io(UlcpError::Protocol(
+                    "unexpected transmit response",
+                )));
+            }
+            match decode_status(&response.value) {
+                Status::OK => return Ok(()),
+                Status::CCA_FAILURE => match cca_deadline {
+                    Some(deadline) if Instant::now() < deadline => {
+                        tokio::time::sleep(CCA_RETRY_DELAY).await;
+                    }
+                    _ => return Err(TxError::CadTimeout),
+                },
+                status => return Err(TxError::Io(UlcpError::Status(status))),
+            }
+        }
+    }
+
+    /// Transmit a frame with a caller-supplied `STR_PHY_RAW` metadata
+    /// block, byte for byte.
+    ///
+    /// [`Radio::transmit`] composes the metadata from [`TxOptions`],
+    /// which is what a MAC wants. A bridge does not: it relays frames
+    /// whose transmit parameters were decided elsewhere, and must be
+    /// able to put exactly those bytes on the wire — including fields
+    /// [`TxOptions`] has no vocabulary for, such as a power override.
+    ///
+    /// The channel-access retry budget comes from the metadata itself:
+    /// with `TX_FLAG_NOCCA` clear the device performs CCA and a busy
+    /// channel fails immediately with [`TxError::CadTimeout`], leaving
+    /// the retry policy to the caller.
+    pub async fn transmit_raw_with_meta(
+        &mut self,
+        data: &[u8],
+        metadata: &[u8],
+    ) -> Result<(), TxError<UlcpError>> {
+        if data.len() > self.max_frame_size {
+            return Err(TxError::Io(UlcpError::FrameTooLarge(data.len())));
+        }
+        let skips_cca = metadata
+            .get(1)
+            .is_some_and(|flags| flags & TX_FLAG_NOCCA != 0);
+        let cca_deadline = (!skips_cca).then(Instant::now);
+        self.send_confirmed(data, metadata, cca_deadline).await
+    }
+
+    /// Poll for one inbound frame, preserving its metadata bytes.
+    ///
+    /// [`Radio::poll_receive`] decodes the metadata into [`RxInfo`],
+    /// which cannot represent it faithfully: the "unsupported" sentinels
+    /// collapse to zero and the buffered-frame extension is discarded
+    /// entirely. A bridge relays the metadata rather than interpreting
+    /// it, so it needs the bytes.
+    pub fn poll_receive_raw(
+        &mut self,
+        cx: &mut core::task::Context<'_>,
+    ) -> core::task::Poll<Result<RawRxFrame, UlcpError>> {
+        loop {
+            if let Some(status) = self.seen_reset.take() {
+                return core::task::Poll::Ready(Err(UlcpError::UnexpectedReset(status)));
+            }
+            if let Some(packet) = self.rx_queue.pop_front() {
+                return core::task::Poll::Ready(Ok(RawRxFrame {
+                    data: packet.data,
+                    metadata: packet.raw_meta,
+                }));
+            }
+
+            match self.link.poll_recv_frame(cx) {
+                core::task::Poll::Ready(Ok(frame)) => {
+                    self.ingest_frame(&frame);
+                }
+                core::task::Poll::Ready(Err(error)) => return core::task::Poll::Ready(Err(error)),
+                core::task::Poll::Pending => return core::task::Poll::Pending,
+            }
+        }
+    }
+
+    /// Await one inbound frame with its metadata bytes intact.
+    ///
+    /// Cancel-safe: the frame is only removed from the inbound queue
+    /// once this future is ready to return it.
+    pub async fn receive_raw(&mut self) -> Result<RawRxFrame, UlcpError> {
+        core::future::poll_fn(|cx| self.poll_receive_raw(cx)).await
+    }
+}
+
+/// One inbound `STR_PHY_RAW` frame with its trailing metadata exactly as
+/// the device sent it.
+#[derive(Clone, Debug)]
+pub struct RawRxFrame {
+    pub data: Vec<u8>,
+    pub metadata: Vec<u8>,
 }
 
 #[cfg(feature = "serial-radio")]
@@ -2243,46 +2364,8 @@ where
             .encode(&mut meta_buf)
             .expect("buffer sized with WIRE_LEN");
 
-        loop {
-            let tid = self.alloc_tid();
-            let mut frame_buf = vec![0u8; data.len() + 16];
-            let frame_len = frame::str_send(
-                &mut frame_buf,
-                tid,
-                stream::PHY_RAW,
-                data,
-                &meta_buf[..meta_len],
-            )
-            .map_err(|_| TxError::Io(UlcpError::Protocol("frame encode")))?;
-            self.send(&frame_buf[..frame_len])
-                .await
-                .map_err(TxError::Io)?;
-
-            // The confirmation arrives only after the frame is on the
-            // air (or definitively failed), so allow for airtime.
-            let deadline = Instant::now()
-                + self.config.response_timeout
-                + Duration::from_millis(u64::from(self.t_frame_ms) * 2);
-            let response = self
-                .wait_response(tid, deadline)
-                .await
-                .map_err(TxError::Io)?;
-            if response.kind != ResponseKind::Is || response.key != prop::LAST_STATUS {
-                return Err(TxError::Io(UlcpError::Protocol(
-                    "unexpected transmit response",
-                )));
-            }
-            match decode_status(&response.value) {
-                Status::OK => return Ok(()),
-                Status::CCA_FAILURE => match cca_deadline {
-                    Some(deadline) if Instant::now() < deadline => {
-                        tokio::time::sleep(CCA_RETRY_DELAY).await;
-                    }
-                    _ => return Err(TxError::CadTimeout),
-                },
-                status => return Err(TxError::Io(UlcpError::Status(status))),
-            }
-        }
+        self.send_confirmed(data, &meta_buf[..meta_len], cca_deadline)
+            .await
     }
 
     fn poll_receive(
