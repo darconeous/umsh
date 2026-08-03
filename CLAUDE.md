@@ -34,12 +34,15 @@ costs of migration before considering implementing it.
   - `umsh-ux-tracker` — single-button/LED/buzzer UX for tracker boards
   - `umsh-ux-display-tracker` — menu + display-attention + input-gate UX shared by display trackers (t-echo, heltec-v3, wio-tracker-l1)
   - `umsh-cli` / `umsh-app-ulcp-cli` — host CLI + CLI-console firmware logic
-- `umsh/` — umbrella crate re-exporting the workspace; defines the `Platform` trait + Tokio/Embassy adapters. Host binary: `umshctl` (`src/bin/umshctl/`, clap + rustyline; capture is a subcommand).
+- `umsh/` — umbrella crate re-exporting the workspace; defines the `Platform` trait + Tokio/Embassy adapters. **Library only** — host binaries live in `tools/`, which is what keeps clap/rustyline out of the umbrella's dependency tree.
 - `firmware/` — nRF52840 firmware (thumbv7em, UF2/DFU). **One shipping image per board** (t1000e / techo / sensecap-solar / wio-tracker-l1) — there is no separate repeater build; role is configuration. All four are thin manifests over the shared `firmware/nrf52-tracker/src/main.rs`, differing only by their `board-*` feature. The `*-console` builds are per-board bringup harnesses, not products.
 - `firmware-esp32/` — **separate cargo workspace** for Xtensa boards (Heltec LoRa32 V2 parked, V3 active). Own `rust-toolchain.toml` pinning `channel = "esp"`.
 - `apps/ios/` — SwiftUI app; `packages/UMSHMobileCore` — UniFFI Swift package.
+- `tools/` — host binaries and dev tooling (`crates/` is reserved for library crates):
+  - `umshctl` — the radio tool (clap + rustyline; capture is a subcommand)
+  - `ulcp-web-debugger`, `uniffi-bindgen`
 - `docs/` — protocol spec (`protocol/`), per-board hardware docs, firmware/feature plans, UX.
-- `dissectors/umsh/` — Wireshark Lua dissector. `diag/`, `tools/`, `scripts/flash.py`.
+- `dissectors/umsh/` — Wireshark Lua dissector. `diag/`, `scripts/flash.py`.
 
 ## Build / test
 

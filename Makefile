@@ -139,10 +139,7 @@ flash-heltec-v3: build-heltec-v3
 
 
 install-umshctl:
-	cargo install --path umsh \
-		--features tokio-support \
-		--features serial-radio \
-		--features ble-radio
+	cargo install --path tools/umshctl
 
 # ─── Wireshark ───────────────────────────────────────────────────────────────
 #

@@ -65,12 +65,12 @@ tables, no clock synchronization. The Rust implementation is `no_std` (although 
 | [`docs/protocol/`](docs/protocol/) | Full mdBook specification for the protocol, including comparisons and test vectors |
 | [`docs/hardware/`](docs/hardware/) | Per-board hardware references — pin maps, power, radio and display wiring |
 | [`crates/`](crates/) | Layered `no_std` Rust library crates implementing the protocol stack |
-| [`umsh/`](umsh/) | Integration crate with runtime adapters and runnable examples; builds the `umshctl` host tool |
+| [`umsh/`](umsh/) | Integration crate with runtime adapters and runnable examples |
 | [`firmware/`](firmware/) | nRF52840 device firmware — one shipping image per board, plus per-board bringup consoles |
 | [`firmware-esp32/`](firmware-esp32/) | Separate workspace for Espressif boards, which need the Xtensa toolchain |
 | [`apps/ios/`](apps/ios/) | SwiftUI iOS application |
 | [`packages/UMSHMobileCore`](packages/) | UniFFI Swift package wrapping the Rust core for the app |
-| [`tools/`](tools/) | Browser-based ULCP protocol debugger and the UniFFI binding generator |
+| [`tools/`](tools/) | Host binaries — the `umshctl` radio tool — plus the browser-based ULCP debugger and the UniFFI binding generator |
 | [`dissectors/`](dissectors/) | Wireshark Lua dissector, fixtures, and dissector-specific tests |
 
 ### Protocol specification
@@ -96,7 +96,7 @@ are available at <https://darconeous.github.io/umsh/docs/rust/>.
 inspection, provisioning, device identity, persistence, pairing, radio configuration, and
 packet capture. It attaches administratively, so pointing it at an autonomously operating
 board never disturbs that board. It runs one-shot commands or opens an interactive shell,
-and it is built from the [`umsh/`](umsh/) crate — see
+and it lives in [`tools/umshctl/`](tools/umshctl/) — see
 [Manage a radio with `umshctl`](#manage-a-radio-with-umshctl) below.
 
 ### Device firmware
@@ -244,7 +244,7 @@ administratively, using the non-resetting handshake, so pointing it at an autono
 operating board never disturbs the board — only the command given changes anything.
 
 ```sh
-cargo build -p umsh --bin umshctl --features serial-radio,ble-radio
+cargo build -p umshctl
 ```
 
 Given a command it runs that command and exits:
@@ -294,7 +294,7 @@ disconnect other BLE-central apps such as nRF Connect; only one host session can
 radio at a time. Then run, from the repository root:
 
 ```sh
-cargo run -p umsh --bin umshctl --features ble-radio -- capture
+cargo run -p umshctl -- capture
 ```
 
 With no connection flag the tool discovers a radio itself: one match is used, and several
@@ -302,7 +302,7 @@ offer a numbered choice. If more than one ULCP device is nearby, select the boar
 advertised name — each advertises as `UMSH <board>`, such as `UMSH T-Echo`:
 
 ```sh
-cargo run -p umsh --bin umshctl --features ble-radio -- \
+cargo run -p umshctl -- \
     --ble="UMSH T-1000E" capture
 ```
 
@@ -319,7 +319,7 @@ Naming any RF parameter overrides the radio's configuration for the session — 
 never saved, and reported as a change:
 
 ```sh
-cargo run -p umsh --bin umshctl --features ble-radio -- \
+cargo run -p umshctl -- \
     --ble="UMSH T-1000E" capture \
     --freq-khz=910525 --bw-hz=62500 --sf=7 --cr=5 --sync-word=0x1424
 ```
@@ -335,7 +335,7 @@ frames; `--layers=ulcp` instead records the complete Spinel-inspired host/device
 exchange, and `--layers=both` records both:
 
 ```sh
-cargo run -p umsh --bin umshctl --features ble-radio -- \
+cargo run -p umshctl -- \
     capture --pcap=techo.pcap --layers=both --umsh-only
 ```
 

@@ -3461,9 +3461,7 @@ checksum = "562d481066bde0658276a35467c4af00bdc6ee726305698a55b86e61d7ad82bb"
 name = "umsh"
 version = "0.1.0"
 dependencies = [
- "anyhow",
  "btleplug",
- "clap",
  "critical-section",
  "embassy-executor 0.7.0",
  "embassy-time",
@@ -3471,11 +3469,8 @@ dependencies = [
  "futures-util",
  "hamaddr",
  "heapless 0.8.0",
- "libc",
  "rand 0.10.1",
  "rand_core 0.6.4",
- "rustyline",
- "shlex",
  "socket2",
  "tokio",
  "tokio-serial",
@@ -3825,6 +3820,21 @@ dependencies = [
 [[package]]
 name = "umsh-ux-tracker"
 version = "0.1.0"
+
+[[package]]
+name = "umshctl"
+version = "0.1.0"
+dependencies = [
+ "anyhow",
+ "clap",
+ "hamaddr",
+ "libc",
+ "rustyline",
+ "shlex",
+ "tokio",
+ "tokio-serial",
+ "umsh",
+]
 
 [[package]]
 name = "unescaper"

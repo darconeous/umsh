@@ -1,0 +1,32 @@
+[package]
+name = "umshctl"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+repository.workspace = true
+description = "Inspect, configure, and capture from ULCP radio devices"
+
+# Both transports are on by default: the tool is useless without a way to
+# reach a radio, and which one that is belongs to the invocation, not the
+# build.
+[features]
+default = ["serial-radio", "ble-radio"]
+serial-radio = ["umsh/serial-radio", "dep:tokio-serial"]
+ble-radio = ["umsh/ble-radio"]
+
+[dependencies]
+umsh = { path = "../../umsh", features = ["tokio-support"] }
+hamaddr.workspace = true
+anyhow = "1"
+clap = { version = "4", features = ["derive", "env", "wrap_help"] }
+rustyline = { version = "18", features = ["derive"] }
+shlex = "1"
+tokio = { version = "1", features = ["io-std", "io-util", "macros", "net", "rt", "signal", "sync", "time"] }
+tokio-serial = { version = "5", optional = true }
+# Only for pointing stdout at stderr in the Wireshark extcap capture
+# path, where a print into an undrained pipe would park the capture.
+libc = "0.2"
+
+[[bin]]
+name = "umshctl"
+path = "src/main.rs"
