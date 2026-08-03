@@ -36,6 +36,7 @@ pub fn check(path: &Path) -> Result<()> {
             println!("listen:      {address}");
         }
         println!("radio:       {}", server.radio.describe());
+        println!("cca retry:   {}", describe_retry(&server.transmit));
         println!("exit clamp:  {} hop(s)", server.forwarding.exit_clamp);
         if server.forwarding.regions.is_empty() {
             println!("regions:     any");
@@ -93,10 +94,21 @@ pub fn check(path: &Path) -> Result<()> {
         println!("server:      {}", client.server);
         println!("server pin:  {}", client.server_address);
         println!("radio:       {}", client.radio.describe());
+        println!("cca retry:   {}", describe_retry(&client.transmit));
     }
 
     println!("ok: {}", path.display());
     Ok(())
+}
+
+/// A zero budget is worth spelling out: it reads as a number that does
+/// nothing, and it means a frame refused for a busy channel is dropped
+/// on the spot.
+fn describe_retry(transmit: &crate::config::TransmitConfig) -> String {
+    match transmit.cca_retry_ms {
+        0 => "none (one attempt per frame)".to_string(),
+        ms => format!("{ms} ms"),
+    }
 }
 
 fn other_interfaces(all: &[String], mine: &str) -> Vec<String> {

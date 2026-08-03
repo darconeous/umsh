@@ -77,6 +77,7 @@ pub async fn run(identity: BridgeIdentity, config: Config) -> Result<()> {
             std::mem::take(&mut server.radio),
             inbound.clone(),
             iface.egress.clone(),
+            Duration::from_millis(server.transmit.cca_retry_ms),
         );
         tokio::task::spawn_local(async move { relay.run().await });
         spawn_ingress(inbound, radio, ingress_tx.clone());

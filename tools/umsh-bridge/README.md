@@ -231,6 +231,18 @@ Selected by `type`; each type accepts only its own keys.
 | `queue_depth` | 32 | Frames held per tunnel before the oldest is dropped. |
 | `reconnect_min_secs` / `reconnect_max_secs` | 1 / 60 | Jittered backoff bounds for reconnection. |
 
+### `[server.transmit]` / `[client.transmit]`
+
+| Key | Default | Description |
+| --- | --- | --- |
+| `cca_retry_ms` | 4000 | How long to keep offering a frame the radio refused because the channel was busy. ULCP carries no retry count, so one `CMD_STR_SEND` is one channel-access attempt and persistence is the bridge's job: it re-offers the frame on a jittered backoff growing from 50 ms to 1 s, while continuing to drain the device's receive path. Zero attempts once and drops. Must not exceed `max_frame_age_secs`, since a frame retried that long is discarded as stale before the budget runs out. |
+
+A frame that loses the channel for the whole budget is logged at warn —
+it is a real loss, not a routine event. Seeing those means the segment
+is congested enough that the bridge's own traffic cannot get out;
+raising the budget trades latency for delivery, but the honest fix is
+usually less traffic or a quieter channel.
+
 ### `[[server.clients]]` — one per admitted client
 
 | Key | Default | Description |

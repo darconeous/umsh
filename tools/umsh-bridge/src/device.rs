@@ -11,11 +11,13 @@
 //!
 //! [Radio Attachment]: https://darconeous.github.io/umsh/docs/protocol/internet-bridging.html#radio-attachment
 
+use std::future::Future;
 use std::sync::Arc;
 use std::task::{Context, Poll};
 use std::time::Duration;
 
 use anyhow::{Result, anyhow, bail};
+use tokio::time::Instant;
 use umsh::ulcp::{RawRxFrame, UlcpError};
 use umsh_hal::TxError;
 
@@ -34,6 +36,13 @@ use crate::udp_radio::UdpFakeRadio;
 /// unplugged and plugged back in should come back on its own, and a
 /// radio that is simply gone should not spin the CPU about it.
 const REOPEN_DELAY: Duration = Duration::from_secs(3);
+
+/// Channel-access retry pacing. The first re-offer comes quickly, since
+/// a channel busy with one neighbour's frame clears within a frame time,
+/// and the interval then grows so that a genuinely congested segment is
+/// not answered with a stream of command traffic.
+const CCA_BACKOFF_MIN: Duration = Duration::from_millis(50);
+const CCA_BACKOFF_MAX: Duration = Duration::from_millis(1_000);
 
 /// The RF parameters carried by a device configuration are applied only
 /// by the resetting attach, which a bridge never performs: radio
@@ -230,6 +239,52 @@ async fn open_serial_link(
     Ok(umsh::ulcp::SerialFrameLink::new(stream))
 }
 
+/// The channel-access retry schedule for one frame.
+///
+/// Separated from the relay so the policy can be exercised without a
+/// radio: it is pure arithmetic over the clock, and the relay only asks
+/// it how long to wait next.
+struct CcaBackoff {
+    deadline: Instant,
+    next: Duration,
+}
+
+impl CcaBackoff {
+    fn new(budget: Duration) -> Self {
+        Self {
+            deadline: Instant::now() + budget,
+            next: CCA_BACKOFF_MIN,
+        }
+    }
+
+    /// How long to wait before offering the frame again, or `None` when
+    /// the budget is spent and the frame should be given up on.
+    ///
+    /// A zero budget yields `None` on the first ask, which is the single
+    /// attempt a segment with no other traffic wants.
+    fn next_wait(&mut self) -> Option<Duration> {
+        let remaining = self.deadline.saturating_duration_since(Instant::now());
+        if remaining.is_zero() {
+            return None;
+        }
+        let wait = jittered(self.next).min(remaining);
+        self.next = (self.next * 2).min(CCA_BACKOFF_MAX);
+        Some(wait)
+    }
+}
+
+/// Spread each wait across the upper half of its interval.
+///
+/// Two bridges backing off from the same busy channel must not converge
+/// on one retry instant, and the tunnel's additive reconnect jitter is
+/// the wrong shape for that — here the randomness has to be a meaningful
+/// fraction of the wait itself, while still guaranteeing the interval
+/// grows.
+fn jittered(backoff: Duration) -> Duration {
+    let millis = backoff.as_millis() as u64;
+    Duration::from_millis(millis / 2 + rand::random_range(0..=millis / 2))
+}
+
 /// One interface's two queues, from the relay's point of view.
 pub struct DeviceRelay {
     config: RadioConfig,
@@ -237,14 +292,22 @@ pub struct DeviceRelay {
     inbound: Arc<TunnelQueue>,
     /// Frames to put on the air.
     outbound: Arc<TunnelQueue>,
+    /// How long a frame refused for a busy channel keeps being offered.
+    cca_retry: Duration,
 }
 
 impl DeviceRelay {
-    pub fn new(config: RadioConfig, inbound: Arc<TunnelQueue>, outbound: Arc<TunnelQueue>) -> Self {
+    pub fn new(
+        config: RadioConfig,
+        inbound: Arc<TunnelQueue>,
+        outbound: Arc<TunnelQueue>,
+        cca_retry: Duration,
+    ) -> Self {
         Self {
             config,
             inbound,
             outbound,
+            cca_retry,
         }
     }
 
@@ -308,12 +371,7 @@ impl DeviceRelay {
                 Event::Received(Err(error)) => {
                     return Err(anyhow!("receiving from the device: {error:?}"));
                 }
-                Event::Received(Ok(raw)) => {
-                    tracing::trace!(len = raw.data.len(), "device rx");
-                    if self.inbound.push(TunnelFrame::new(raw.data, raw.metadata)) {
-                        tracing::warn!("inbound queue full; dropped the oldest frame");
-                    }
-                }
+                Event::Received(Ok(raw)) => self.accept(raw),
                 Event::Send(frame) => {
                     if frame.data.len() > max_frame_size {
                         tracing::debug!(
@@ -323,20 +381,88 @@ impl DeviceRelay {
                         );
                         continue;
                     }
-                    match device.transmit(&frame).await {
-                        Ok(()) => tracing::trace!(len = frame.data.len(), "device tx"),
-                        // A busy channel or a spent duty budget is the
-                        // device doing its job, not a link failure.
-                        Err(TxError::CadTimeout) => {
-                            tracing::debug!("transmit abandoned: the channel was busy");
-                        }
-                        Err(TxError::Io(UlcpError::Status(status))) => {
-                            tracing::debug!(?status, "device refused a transmit");
-                        }
-                        Err(error) => return Err(anyhow!("transmitting: {error:?}")),
-                    }
+                    self.transmit(&mut device, &frame).await?;
                 }
             }
+        }
+    }
+
+    /// Put one frame on the air, offering it again for as long as the
+    /// radio reports the channel busy.
+    ///
+    /// ULCP carries no retry count, so one `CMD_STR_SEND` buys exactly
+    /// one channel-access attempt: a device that finds the channel busy
+    /// answers `STATUS_CCA_FAILURE` straight away, and the only way to
+    /// try again is for the host to offer the frame again. That makes
+    /// persistence the bridge's job rather than the radio's.
+    async fn transmit(&self, device: &mut Device, frame: &TunnelFrame) -> Result<()> {
+        let mut backoff = CcaBackoff::new(self.cca_retry);
+        let mut attempts = 0u32;
+
+        loop {
+            attempts += 1;
+            match device.transmit(frame).await {
+                Ok(()) => {
+                    if attempts > 1 {
+                        tracing::debug!(attempts, "device tx, after waiting out a busy channel");
+                    } else {
+                        tracing::trace!(len = frame.data.len(), "device tx");
+                    }
+                    return Ok(());
+                }
+                Err(TxError::CadTimeout) => {
+                    let Some(wait) = backoff.next_wait() else {
+                        tracing::warn!(
+                            attempts,
+                            len = frame.data.len(),
+                            "dropped a frame: the channel stayed busy for the whole retry budget"
+                        );
+                        return Ok(());
+                    };
+                    self.listen_during(device, wait).await?;
+                }
+                // A spent duty budget is the device doing its job, and
+                // unlike a busy channel it is not worth re-offering:
+                // the budget replenishes over minutes, not milliseconds.
+                Err(TxError::Io(UlcpError::Status(status))) => {
+                    tracing::debug!(?status, "device refused a transmit");
+                    return Ok(());
+                }
+                Err(error) => bail!("transmitting: {error:?}"),
+            }
+        }
+    }
+
+    /// Wait out a backoff without going deaf.
+    ///
+    /// Reception cannot pause while the relay waits for the channel: a
+    /// frame left sitting in the device is a frame the device may have
+    /// to drop, so a busy channel would otherwise cost inbound traffic
+    /// on top of the outbound frame it is already delaying.
+    async fn listen_during(&self, device: &mut Device, wait: Duration) -> Result<()> {
+        let sleep = tokio::time::sleep(wait);
+        tokio::pin!(sleep);
+
+        core::future::poll_fn(|cx| {
+            loop {
+                match device.poll_receive_raw(cx) {
+                    Poll::Ready(Ok(raw)) => self.accept(raw),
+                    Poll::Ready(Err(error)) => {
+                        return Poll::Ready(Err(anyhow!("receiving from the device: {error:?}")));
+                    }
+                    Poll::Pending => break,
+                }
+            }
+            sleep.as_mut().poll(cx).map(Ok)
+        })
+        .await
+    }
+
+    /// One received frame, on its way to whoever consumes this interface.
+    fn accept(&self, raw: RawRxFrame) {
+        tracing::trace!(len = raw.data.len(), "device rx");
+        if self.inbound.push(TunnelFrame::new(raw.data, raw.metadata)) {
+            tracing::warn!("inbound queue full; dropped the oldest frame");
         }
     }
 }
@@ -345,4 +471,77 @@ enum Event {
     Received(Result<RawRxFrame, UlcpError>),
     Send(TunnelFrame),
     Ended,
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// Spend a whole budget, returning what was waited each time.
+    async fn schedule(budget: Duration) -> Vec<Duration> {
+        let mut backoff = CcaBackoff::new(budget);
+        let mut waits = Vec::new();
+        while let Some(wait) = backoff.next_wait() {
+            waits.push(wait);
+            tokio::time::sleep(wait).await;
+        }
+        waits
+    }
+
+    #[tokio::test(start_paused = true)]
+    async fn a_busy_channel_is_retried_until_the_budget_is_spent() {
+        let waits = schedule(Duration::from_secs(4)).await;
+        assert!(
+            waits.len() > 4,
+            "a four-second budget should buy several attempts, got {}",
+            waits.len()
+        );
+        let total: Duration = waits.iter().sum();
+        assert!(
+            total <= Duration::from_secs(4),
+            "waited {total:?}, past the budget"
+        );
+    }
+
+    #[tokio::test(start_paused = true)]
+    async fn the_interval_grows_and_then_holds_at_the_ceiling() {
+        let waits = schedule(Duration::from_secs(30)).await;
+        // Jitter makes each wait a range rather than a value, so the
+        // property to assert is the envelope: nothing below half the
+        // floor, nothing above the ceiling, and the tail at the ceiling.
+        for wait in &waits {
+            assert!(*wait >= CCA_BACKOFF_MIN / 2, "{wait:?} is below the floor");
+            assert!(*wait <= CCA_BACKOFF_MAX, "{wait:?} is above the ceiling");
+        }
+        let tail = &waits[waits.len() - 3..waits.len() - 1];
+        for wait in tail {
+            assert!(
+                *wait >= CCA_BACKOFF_MAX / 2,
+                "{wait:?} should have reached the ceiling's jitter band by the tail"
+            );
+        }
+    }
+
+    #[tokio::test(start_paused = true)]
+    async fn a_zero_budget_is_a_single_attempt() {
+        // The relay asks once before its first re-offer, so a refusal
+        // with no budget must abandon immediately rather than sleep.
+        assert!(CcaBackoff::new(Duration::ZERO).next_wait().is_none());
+    }
+
+    #[tokio::test(start_paused = true)]
+    async fn the_last_wait_never_overruns_the_budget() {
+        // The final interval is clamped to what is left, so a frame is
+        // never held past the budget waiting for an attempt that the
+        // budget cannot pay for.
+        let budget = Duration::from_millis(120);
+        let started = Instant::now();
+        let waits = schedule(budget).await;
+        assert!(!waits.is_empty(), "a non-zero budget buys at least one");
+        assert!(
+            started.elapsed() <= budget,
+            "overran by {:?}",
+            started.elapsed()
+        );
+    }
 }

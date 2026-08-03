@@ -32,6 +32,7 @@ pub async fn run(identity: BridgeIdentity, mut config: ClientConfig) -> Result<(
         std::mem::take(&mut config.radio),
         to_server.clone(),
         to_device.clone(),
+        Duration::from_millis(config.transmit.cca_retry_ms),
     );
     tokio::task::spawn_local(async move { relay.run().await });
 

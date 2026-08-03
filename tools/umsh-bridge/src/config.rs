@@ -53,6 +53,8 @@ pub struct ServerConfig {
     #[serde(default)]
     pub tunnel: TunnelConfig,
     #[serde(default)]
+    pub transmit: TransmitConfig,
+    #[serde(default)]
     pub clients: Vec<ClientEntry>,
 }
 
@@ -97,6 +99,8 @@ pub struct ClientConfig {
     pub radio: RadioConfig,
     #[serde(default)]
     pub tunnel: TunnelConfig,
+    #[serde(default)]
+    pub transmit: TransmitConfig,
 }
 
 #[derive(Debug, Deserialize)]
@@ -144,6 +148,21 @@ pub struct TunnelConfig {
     pub reconnect_min_secs: u64,
     #[serde(default = "default_reconnect_max")]
     pub reconnect_max_secs: u64,
+}
+
+/// What the relay does when the radio will not take a frame.
+#[derive(Debug, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct TransmitConfig {
+    /// How long to keep re-offering a frame the radio refused because
+    /// the channel was busy.
+    ///
+    /// ULCP has no retry count to hand the device: one `CMD_STR_SEND` is
+    /// one channel-access attempt, so a retry is the host offering the
+    /// frame again. Zero attempts once and drops, which is what a
+    /// segment with no other traffic can afford.
+    #[serde(default = "default_cca_retry")]
+    pub cca_retry_ms: u64,
 }
 
 /// Which device this participant fronts.
@@ -333,6 +352,14 @@ impl Default for ForwardingConfig {
     }
 }
 
+impl Default for TransmitConfig {
+    fn default() -> Self {
+        Self {
+            cca_retry_ms: default_cca_retry(),
+        }
+    }
+}
+
 impl Default for TunnelConfig {
     fn default() -> Self {
         Self {
@@ -364,6 +391,12 @@ fn default_confirmation_window() -> u64 {
 }
 fn default_flood_contention() -> u64 {
     1_600
+}
+/// Long enough to ride out a neighbour's exchange at the slower spreading
+/// factors, and comfortably inside the default staleness limit so a frame
+/// that finally wins the channel is still worth having sent.
+fn default_cca_retry() -> u64 {
+    4_000
 }
 fn default_keepalive() -> u64 {
     10
@@ -462,6 +495,7 @@ impl ServerConfig {
                 self.tunnel.keepalive_secs
             );
         }
+        self.transmit.validate("server", &self.tunnel)?;
 
         let mut names = HashSet::new();
         let mut addresses = HashSet::new();
@@ -522,6 +556,24 @@ impl ServerConfig {
     }
 }
 
+impl TransmitConfig {
+    /// A retry budget that outlasts the staleness limit cannot be spent:
+    /// the frame is discarded on age before the last attempts happen, so
+    /// the number is a promise the relay will not keep.
+    fn validate(&self, role: &str, tunnel: &TunnelConfig) -> Result<()> {
+        let stale_ms = tunnel.max_frame_age_secs.saturating_mul(1_000);
+        if self.cca_retry_ms > stale_ms {
+            bail!(
+                "[{role}.transmit] cca_retry_ms ({}) exceeds max_frame_age_secs ({} s); a frame \
+                 retried that long is dropped as stale before the budget runs out",
+                self.cca_retry_ms,
+                tunnel.max_frame_age_secs
+            );
+        }
+        Ok(())
+    }
+}
+
 impl ClientConfig {
     fn validate(&self) -> Result<()> {
         if self.radio.is_none() {
@@ -540,6 +592,7 @@ impl ClientConfig {
         if self.tunnel.reconnect_max_secs < self.tunnel.reconnect_min_secs {
             bail!("[client.tunnel] reconnect_max_secs is below reconnect_min_secs");
         }
+        self.transmit.validate("client", &self.tunnel)?;
         if !self.server.contains(':') {
             bail!(
                 "[client] server \"{}\" needs a port; the bridge default is {DEFAULT_PORT}",
@@ -746,6 +799,39 @@ mod tests {
              [server.tunnel]\nkeepalive_secs = 30\nidle_timeout_secs = 30\n",
         );
         assert!(parse(&text).is_err());
+    }
+
+    #[test]
+    fn a_retry_budget_that_outlasts_the_staleness_limit_is_rejected() {
+        let config =
+            |extra: &str| server_config(&format!("[server.radio]\ntype = \"ble\"\n{extra}"));
+
+        // The default budget fits inside the default staleness limit.
+        let parsed = parse(&config("")).unwrap();
+        assert_eq!(parsed.server.unwrap().transmit.cca_retry_ms, 4_000);
+
+        let error = parse(&config(
+            "[server.tunnel]\nmax_frame_age_secs = 10\n[server.transmit]\ncca_retry_ms = 15000\n",
+        ))
+        .unwrap_err()
+        .to_string();
+        assert!(error.contains("stale"), "{error}");
+
+        // Raising the staleness limit makes the same budget spendable.
+        assert!(
+            parse(&config(
+                "[server.tunnel]\nmax_frame_age_secs = 20\n[server.transmit]\ncca_retry_ms = 15000\n"
+            ))
+            .is_ok()
+        );
+        // And a client gets the same treatment.
+        let client = format!(
+            "[client]\nserver = \"h:21837\"\nserver_address = \"{}\"\n\
+             [client.radio]\ntype = \"ble\"\n\
+             [client.transmit]\ncca_retry_ms = 60000\n",
+            address(1)
+        );
+        assert!(parse(&client).is_err());
     }
 
     #[test]
