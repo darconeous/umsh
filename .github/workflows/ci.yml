@@ -33,6 +33,14 @@ jobs:
 
       - uses: Swatinem/rust-cache@v2
 
+      # umsh-bridge's default `ble-radio` feature reaches BlueZ over D-Bus
+      # (btleplug → libdbus-sys), which needs the C library's dev package at
+      # build time. macOS runners need nothing — CoreBluetooth is native.
+      - name: Install libdbus (umsh-bridge BLE)
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y libdbus-1-dev pkg-config
+
       # The root manifest is virtual, so this walks every workspace member
       # (including firmware/*), not just default-members.
       - name: cargo fmt --check
