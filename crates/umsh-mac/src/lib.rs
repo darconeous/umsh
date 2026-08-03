@@ -290,6 +290,7 @@ pub trait Platform {
 
 mod cache;
 mod coordinator;
+pub mod forward_id;
 mod handle;
 mod peers;
 mod send;

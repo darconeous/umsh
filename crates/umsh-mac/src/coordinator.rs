@@ -4823,36 +4823,10 @@ impl<
 
     /// Routing identity used for duplicate suppression at repeaters.
     ///
-    /// This is intentionally not the same thing as the destination's logical
-    /// delivery identity:
-    /// - delivery identity is governed by replay windows / frame counters at
-    ///   the destination
-    /// - routing identity must remain stable across repeater rewrites of
-    ///   dynamic routing metadata
-    /// - forwarding-confirmation identity intentionally matches routing
-    ///   identity so a node can recognize "the same packet, forwarded onward"
+    /// Defined in [`crate::forward_id`], which every forwarder in the mesh
+    /// shares.
     pub(crate) fn forward_dup_key(header: &PacketHeader, frame: &[u8]) -> Option<DupCacheKey> {
-        Self::routable_packet_identity(header, frame)
-    }
-
-    fn routable_packet_identity(header: &PacketHeader, frame: &[u8]) -> Option<DupCacheKey> {
-        if !header.packet_type().is_secure() {
-            return Some(DupCacheKey::Hash32(Self::normalized_routable_hash32(
-                header, frame,
-            )));
-        }
-        let options = ParsedOptions::extract(frame, header.options_range.clone()).ok()?;
-        let mic = frame.get(header.mic_range.clone())?;
-        if mic.is_empty() || mic.len() > 16 {
-            return None;
-        }
-        let mut bytes = [0u8; 16];
-        bytes[..mic.len()].copy_from_slice(mic);
-        Some(DupCacheKey::Mic {
-            bytes,
-            len: mic.len() as u8,
-            route_retry: options.route_retry,
-        })
+        crate::forward_id::forwarding_dup_key_parsed(header, frame)
     }
 
     fn defer_pending_forward(
@@ -5076,81 +5050,7 @@ impl<
     }
 
     pub(crate) fn confirmation_key(frame: &[u8]) -> Option<DupCacheKey> {
-        let header = PacketHeader::parse(frame).ok()?;
-        Self::routable_packet_identity(&header, frame)
-    }
-
-    fn normalized_routable_hash32(header: &PacketHeader, frame: &[u8]) -> u32 {
-        let mut hash = 0x811C_9DC5u32;
-
-        Self::hash_u8(&mut hash, header.packet_type() as u8);
-        Self::hash_u8(&mut hash, header.fcf.full_source() as u8);
-
-        if !header.options_range.is_empty() {
-            for entry in umsh_core::iter_options(frame, header.options_range.clone()) {
-                let Ok((number, value)) = entry else {
-                    continue;
-                };
-                let option = OptionNumber::from(number);
-                if option.is_dynamic() {
-                    continue;
-                }
-                Self::hash_u16(&mut hash, number);
-                Self::hash_u16(&mut hash, value.len() as u16);
-                Self::hash_bytes(&mut hash, value);
-            }
-        }
-
-        match header.packet_type() {
-            PacketType::Broadcast => {
-                match header.source {
-                    umsh_core::SourceAddrRef::Hint(hint) => Self::hash_bytes(&mut hash, &hint.0),
-                    umsh_core::SourceAddrRef::FullKeyAt { offset } => {
-                        if let Some(key) = frame.get(offset..offset + 32) {
-                            Self::hash_bytes(&mut hash, key);
-                        }
-                    }
-                    umsh_core::SourceAddrRef::Encrypted { offset, len } => {
-                        if let Some(src) = frame.get(offset..offset + len) {
-                            Self::hash_bytes(&mut hash, src);
-                        }
-                    }
-                    umsh_core::SourceAddrRef::None => {}
-                }
-                if let Some(payload) = frame.get(header.body_range.clone()) {
-                    Self::hash_bytes(&mut hash, payload);
-                }
-            }
-            PacketType::MacAck => {
-                // The ack trailer (`ack_mic || ack_tag`) uniquely identifies
-                // the acknowledged exchange; the ack carries no other
-                // distinguishing fields.
-                if let Some(trailer) = frame.get(header.mic_range.clone()) {
-                    Self::hash_bytes(&mut hash, trailer);
-                }
-            }
-            _ => {
-                if let Some(bytes) = frame.get(header.body_range.clone()) {
-                    Self::hash_bytes(&mut hash, bytes);
-                }
-            }
-        }
-        hash
-    }
-
-    fn hash_u8(hash: &mut u32, value: u8) {
-        *hash ^= u32::from(value);
-        *hash = hash.wrapping_mul(0x0100_0193);
-    }
-
-    fn hash_u16(hash: &mut u32, value: u16) {
-        Self::hash_bytes(hash, &value.to_be_bytes());
-    }
-
-    fn hash_bytes(hash: &mut u32, bytes: &[u8]) {
-        for byte in bytes {
-            Self::hash_u8(hash, *byte);
-        }
+        crate::forward_id::forwarding_dup_key(frame)
     }
 
     /// Check if a received frame confirms forwarding of a pending send.
