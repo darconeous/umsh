@@ -1133,6 +1133,19 @@ final class CoreBluetoothRadioConnection: NSObject, RadioConnection, @unchecked 
         publishDisconnected(problem: nil)
     }
 
+    /// Whether the published state describes a link that had come up, as
+    /// opposed to a scan or a connection attempt that never landed.
+    private var hadLiveLink: Bool {
+        switch snapshot.linkState {
+        case .idle, .unavailable, .scanning, .discovered, .connecting, .reconnecting,
+             .waitingForRadio, .failed:
+            false
+        case .pairing, .attaching, .synchronizing, .awaitingHost, .provisioning,
+             .configuring, .attached, .ready, .disconnecting:
+            true
+        }
+    }
+
     private func disconnectOnQueue() {
         intentionalDisconnect = true
         scanRequested = false
@@ -1154,7 +1167,10 @@ final class CoreBluetoothRadioConnection: NSObject, RadioConnection, @unchecked 
         restoredPeripherals.removeAll()
         guard let peripheral = live else {
             intentionalDisconnect = false
-            publishDisconnected()
+            // Abandoning a scan or a standing request tears nothing down, so
+            // it reports no problem; only a link that had come up says it
+            // dropped.
+            publishDisconnected(problem: hadLiveLink ? "Radio disconnected" : nil)
             return
         }
         guard peripheral.state == .connected else {

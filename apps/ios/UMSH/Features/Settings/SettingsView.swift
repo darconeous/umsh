@@ -756,6 +756,17 @@ struct RadioDetailView: View {
         }
     }
 
+    /// What stopping means for the step currently in flight: before the link
+    /// is up it abandons the attempt, and once the radio is answering it
+    /// takes the link down.
+    private var inProgressCancelTitle: String {
+        switch snapshot.linkState {
+        case .scanning: "Stop Looking"
+        case .connecting, .reconnecting, .pairing: "Cancel"
+        default: "Disconnect"
+        }
+    }
+
     /// Whether the link is far enough along to carry a command.
     private var canUseRadio: Bool {
         switch snapshot.linkState {
@@ -767,11 +778,21 @@ struct RadioDetailView: View {
     @ViewBuilder
     private var connectionControl: some View {
         switch snapshot.linkState {
-        case .scanning, .connecting, .reconnecting, .pairing, .provisioning, .configuring, .disconnecting:
+        case .scanning, .connecting, .reconnecting, .pairing, .provisioning, .configuring,
+             .disconnecting:
             HStack {
                 ProgressView()
                 Text(snapshot.linkState.accessibilityLabel)
                     .foregroundStyle(.secondary)
+            }
+            // A connection attempt has no deadline of its own — Bluetooth
+            // waits indefinitely for a radio that never answers — so the way
+            // out stays available at every step rather than appearing only
+            // once the link settles.
+            if snapshot.linkState != .disconnecting {
+                Button(inProgressCancelTitle, role: .destructive) {
+                    Task { await disconnect() }
+                }
             }
         case .attaching, .synchronizing, .awaitingHost, .attached, .ready:
             if snapshot.hostState == .unclaimed {

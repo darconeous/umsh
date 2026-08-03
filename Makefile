@@ -10,6 +10,7 @@
 	build-techo flash-techo \
 	build-heltec-v3-console flash-heltec-v3-console \
 	build-heltec-v3 flash-heltec-v3 \
+	ios-mobile-core ios-archive ios-upload \
 	install-umshctl install-umsh-bridge install-dissector install-extcap
 
 # ─── Firmware build / flash ──────────────────────────────────────────────────
@@ -137,6 +138,70 @@ flash-heltec-v3: build-heltec-v3
 	espflash flash --monitor $(ESPFLASH_PORT_ARG) $(ESPFLASH_PARTITIONS) \
 		$(ESP32S3_TARGET_DIR)/firmware-heltec-v3
 
+
+# ─── iOS app (apps/ios) ──────────────────────────────────────────────────────
+#
+# Archiving and uploading are separate targets on purpose: ExportOptions.plist
+# sets `destination = upload`, so `ios-upload` hands the build to App Store
+# Connect. That step should never run as a side effect of building. The usual
+# release is `make ios-archive ios-upload` once the archive looks right.
+#
+# The build number is passed on the xcodebuild command line instead of being
+# stored in the project. GENERATE_INFOPLIST_FILE synthesizes CFBundleVersion
+# from CURRENT_PROJECT_VERSION, and App Store Connect rejects a build number it
+# has already accepted under the same MARKETING_VERSION — so every upload needs
+# a fresh one. Deriving it from the commit count keeps uploads distinct and
+# traceable back to a commit with no pbxproj edit to remember or commit.
+# ExportOptions.plist sets `manageAppVersionAndBuildNumber = false`, so the
+# number given here is the number that lands.
+#
+# The count only increases while you keep landing on main; archiving from a
+# shorter side branch reuses a number and App Store Connect rejects the
+# duplicate. Override it for that case, or any one-off:
+#
+#     make ios-archive IOS_BUILD_NUMBER=$(date -u +%s)
+#
+# The xcframework is gitignored, so a clean checkout must build umsh-mobile-core
+# before Xcode can resolve the package — hence the ios-mobile-core prerequisite.
+
+# Xcode's Organizer (Window → Organizer → Archives) lists only what sits under
+# ~/Library/Developer/Xcode/Archives/<date>/. An archive written anywhere else is
+# perfectly valid and uploads fine, it just never appears in that window — so the
+# archive path here is the Organizer's own directory, matching where Product →
+# Archive would have put it. Organizer watches the folder and picks it up live.
+
+IOS_PROJECT := apps/ios/UMSH.xcodeproj
+IOS_EXPORT_DIR := target/ios/export
+IOS_BUILD_NUMBER ?= $(shell git rev-list --count HEAD)
+IOS_ARCHIVES_ROOT := $(HOME)/Library/Developer/Xcode/Archives
+IOS_ARCHIVE ?= $(IOS_ARCHIVES_ROOT)/$(shell date +%Y-%m-%d)/UMSH-$(IOS_BUILD_NUMBER).xcarchive
+
+# Uploading resolves the newest UMSH archive rather than recomputing the path
+# above, which would miss when the archive and the upload land on opposite sides
+# of midnight. Point it somewhere specific to upload an older build:
+#
+#     make ios-upload IOS_UPLOAD_ARCHIVE=~/Library/Developer/Xcode/Archives/…
+# The glob is loose enough to also find archives made by Xcode's own Product →
+# Archive, which names them "UMSH 8-2-26, 4.08 PM.xcarchive".
+IOS_UPLOAD_ARCHIVE ?= $(shell ls -dt $(IOS_ARCHIVES_ROOT)/*/UMSH*.xcarchive 2>/dev/null | head -1)
+
+ios-mobile-core:
+	scripts/ios/build-mobile-core.sh
+
+ios-archive: ios-mobile-core
+	xcodebuild -project $(IOS_PROJECT) -scheme UMSH \
+		-destination 'generic/platform=iOS' \
+		-archivePath "$(IOS_ARCHIVE)" \
+		CURRENT_PROJECT_VERSION=$(IOS_BUILD_NUMBER) \
+		archive
+
+ios-upload:
+	@test -n "$(IOS_UPLOAD_ARCHIVE)" || \
+		{ echo "No archive found under $(IOS_ARCHIVES_ROOT) — run: make ios-archive"; exit 1; }
+	@echo "Uploading $(IOS_UPLOAD_ARCHIVE)"
+	xcodebuild -exportArchive -archivePath "$(IOS_UPLOAD_ARCHIVE)" \
+		-exportOptionsPlist apps/ios/ExportOptions.plist \
+		-exportPath $(IOS_EXPORT_DIR)
 
 install-umshctl:
 	cargo install --path tools/umshctl

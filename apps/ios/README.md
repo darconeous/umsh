@@ -15,22 +15,44 @@ under a different account.
 
 ## TestFlight
 
-`Artifacts/*.xcframework/` is gitignored, so run `scripts/ios/build-mobile-core.sh`
-before archiving on any clean checkout. Bump `CURRENT_PROJECT_VERSION` for every
-upload — App Store Connect rejects a duplicate build number under the same
-`MARKETING_VERSION`.
-
 ```sh
-scripts/ios/build-mobile-core.sh
-xcodebuild -project apps/ios/UMSH.xcodeproj -scheme UMSH \
-    -destination 'generic/platform=iOS' -archivePath build/UMSH.xcarchive archive
-xcodebuild -exportArchive -archivePath build/UMSH.xcarchive \
-    -exportOptionsPlist apps/ios/ExportOptions.plist -exportPath build/export
+make ios-archive
+make ios-upload
 ```
 
-`ExportOptions.plist` sets `destination = upload`, so the second command uploads
-straight to App Store Connect. It also sets `testFlightInternalTestingOnly`;
-drop that key when you're ready to submit a build for external Beta App Review.
+`ios-archive` rebuilds the xcframework first (`Artifacts/*.xcframework/` is
+gitignored, so a clean checkout has none), then archives into
+`~/Library/Developer/Xcode/Archives/<date>/UMSH-<build>.xcarchive`. That path is
+deliberate: Xcode's Organizer lists only archives under that directory, so an
+archive written anywhere else — a local `build/`, say — uploads fine but never
+appears in Window → Organizer → Archives. `ios-upload` uploads the most recent
+`UMSH*.xcarchive` found there, including ones made by Xcode's own Product →
+Archive; pass `IOS_UPLOAD_ARCHIVE=<path>` to send an older one.
+
+The build number is not stored in the project. `CURRENT_PROJECT_VERSION` — which
+`GENERATE_INFOPLIST_FILE` turns into `CFBundleVersion` — is passed on the
+xcodebuild command line as the repository's commit count, so every upload gets a
+distinct number that points back at a commit, and App Store Connect never sees
+the duplicate it would reject under the same `MARKETING_VERSION`. That count only
+increases while you keep landing on `main`; archiving from a shorter side branch
+reuses a number. Override it there, or for any one-off:
+
+```sh
+make ios-archive IOS_BUILD_NUMBER=$(date -u +%s)
+```
+
+`MARKETING_VERSION` is still a deliberate edit in the project — bump it in Xcode
+when you want a new user-visible version.
+
+Archiving from Xcode's UI instead (Product → Archive) bypasses all of that and
+uses the project's own `CURRENT_PROJECT_VERSION`, which stays at `1`. Use
+`make ios-archive` for anything headed to App Store Connect.
+
+`ExportOptions.plist` sets `destination = upload`, so `ios-upload` sends the
+archive straight to App Store Connect; that is why it is a separate target from
+`ios-archive` rather than a step inside it. It also sets
+`testFlightInternalTestingOnly`; drop that key when you're ready to submit a
+build for external Beta App Review.
 
 `ITSAppUsesNonExemptEncryption` is declared `false` in `Info.plist`, which stops
 App Store Connect asking the encryption questions on every upload. UMSH
