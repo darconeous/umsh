@@ -19,7 +19,8 @@ direct rather than modal, and is the first thing to add here.
 The menu contains Status, Stats, Check in, Start pairing, and Clear bonds. Row
 0 always names the device and carries the battery indicator, and row 1 always
 shows the menu cursor, so the current position is visible without remembering
-it.
+it. The indicator follows the shared
+[battery rules](../interaction-model/status-and-feedback.md).
 
 The Status page spends its remaining rows only on state that departs from
 nominal: a pairing PIN while a window is open, a link line when a host is
@@ -46,7 +47,7 @@ T-Echo and the Heltec V3. The question names the count it would destroy.
 
 Like the T-Echo, this board sees only VBUS presence and never charge
 completion, so while it is plugged in it has no trustworthy state of charge.
-The indicator shows a bare bolt in place of the battery body, and
+The indicator shows a bolt with no body beside it and never a plug, and
 `PROP_BATTERY` omits the level while still reporting voltage and charge state.
 A level returns on the first quiet sample after unplugging.
 

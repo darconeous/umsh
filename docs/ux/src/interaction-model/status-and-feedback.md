@@ -27,6 +27,103 @@ Exact colors and pitches depend on hardware. Shape and cadence carry the
 meaning so the UI remains legible to users who cannot distinguish color or
 have disabled sound.
 
+## Battery indication
+
+A battery indicator answers these questions, to the best of the hardware's
+ability:
+
+- What is the charge level of the pack?
+- Is the device connected to external power? If so:
+  - Is it still charging, or is it fully charged?
+
+They are answered independently. Either may be known without the other, and
+neither may be inferred from the other's absence — charging while the level is
+unknown is an ordinary state, not a contradiction.
+
+### Charge level
+
+Where the hardware permits it, the level is drawn as a body divided into
+segments. Bands are chosen so that each segment count sits *centred* on the
+level it depicts rather than starting at it — a body drawn half full should
+mean a pack that is roughly half full. With four segments:
+
+| Level | Segments lit |
+|---|---|
+| 0–14 % | 0 |
+| 15–36 % | 1 |
+| 37–62 % | 2 |
+| 63–84 % | 3 |
+| 85–100 % | 4 |
+
+The two end bands are deliberately narrower than the middle ones. Full and
+empty are absolute claims, and a body should not look full at 80 % nor empty at
+20 %.
+
+Coarse quantization is intended. A bistable panel diffs frames to decide how
+small a partial refresh it can get away with, so an indicator that moved on
+every sample would keep re-inking the display. Four segments change four times
+across a discharge.
+
+### No level to show
+
+When there is no level, no body is drawn. An empty body is a reading — it means
+a pack down to its last sixth — and the absence of a reading must not borrow
+it. This is the [honesty principle](../principles.md) applied to the one
+indicator users check most often: a device that has not yet established a level,
+or that has withdrawn one it can no longer substantiate, shows nothing rather
+than a shape that can be read as a number.
+
+A device reports the same way over the wire: it omits the level from its
+battery property rather than sending a value it knows to be unreliable, and
+keeps reporting what it can still measure. A host treats the omission as
+unknown at that instant and does not carry forward an earlier value in its
+place.
+
+Where a device has a diagnostic line as well as an icon, the same rule governs
+it: the line drops the percentage and says the pack is charging, rather than
+printing a figure that would look like a fresh measurement.
+
+### External power
+
+Answering the power questions fully takes two glyphs alongside the body:
+
+| Glyph | Meaning |
+|---|---|
+| Bolt | On external power, still charging |
+| Plug | On external power, charging complete |
+
+Each combines with the body rather than replacing it, because the level and
+the power state are separate answers. A bolt beside a nearly full body means
+charging and close to done; a plug beside a full body means finished. A glyph
+with no body means the power state is known and the level is not.
+
+Whichever glyph is showing holds the same position, and the same position it
+would hold if the other were showing — an indicator that slides sideways when
+the charger goes in reads as two changes rather than one.
+
+### Degrading to what the hardware can tell
+
+Most hardware cannot answer all of this, and the indicator says less rather
+than guessing:
+
+| The device can see | It draws |
+|---|---|
+| Level, external power, and completion | Body, plus bolt or plug |
+| Level and external power only | Body, plus bolt whenever powered |
+| Level only | Body alone |
+| Neither | Nothing |
+
+A board that sees external power but cannot distinguish charging from complete
+shows the bolt the whole time it is plugged in. It never shows a plug, because
+it never learns the thing a plug would assert.
+
+A board that cannot see external power at all draws neither glyph. That is
+distinct from knowing the pack is discharging, and it has a second cost: such a
+board cannot withdraw its level while charging, so its reading runs high
+whenever it is plugged in. Prefer hardware that at least exposes VBUS presence,
+and prefer hardware that exposes the charger's completion line over hardware
+that does not.
+
 ## App-level infrastructure precedes content
 
 In companion applications, endpoint-wide infrastructure state must sit outside

@@ -10,6 +10,10 @@ but the display makes status and sensitive device actions visible.
 The e-paper menu contains Status, Stats, Check in, Start pairing, and Clear
 bonds. Every frame — menu, confirmation, and the transient message screens
 alike — carries a header with the device name and a battery indicator.
+The indicator follows the shared
+[battery rules](../interaction-model/status-and-feedback.md): a four-segment
+body, no body at all when there is no level, and a bolt whenever the pack is on
+external power.
 
 The Status page shows only what departs from nominal. A pairing PIN appears
 while a window is open, and a line naming the link appears when a host is
@@ -59,8 +63,9 @@ The board sees only VBUS presence — the charger's status line reaches no GPIO
 Charging terminal voltage does not map through the discharge curve, and
 without a completion signal there is no later moment to recalibrate against,
 so for as long as the board is plugged in it has no state of charge at all.
-The indicator draws a bare bolt in place of the battery body, the diagnostic
-row reads `chg` instead of a percentage, and `PROP_BATTERY` omits the level
+The indicator therefore shows a bolt with no body beside it and never a plug,
+the diagnostic row reads `chg` instead of a percentage, and `PROP_BATTERY`
+omits the level
 while continuing to report voltage and charge state. A real level returns on
 the first quiet sample after the charger goes away.
 
