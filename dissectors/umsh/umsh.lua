@@ -67,7 +67,15 @@ f.opt_op_callsign  = ProtoField.string ("umsh.opt.op_callsign",   "Operator Call
 f.opt_sta_callsign = ProtoField.string ("umsh.opt.sta_callsign",  "Station Callsign")
 f.opt_min_rssi     = ProtoField.int8   ("umsh.opt.min_rssi",      "Min RSSI",         base.DEC)
 f.opt_min_snr      = ProtoField.int8   ("umsh.opt.min_snr",       "Min SNR",          base.DEC)
+f.opt_route_retry  = ProtoField.none   ("umsh.opt.route_retry",   "Route Retry")
+f.opt_ack_mic      = ProtoField.bytes  ("umsh.opt.ack_mic",       "Ack MIC")
+f.opt_trace_signal = ProtoField.bytes  ("umsh.opt.trace_signal",  "Trace Signal")
+f.opt_signal_hop   = ProtoField.string ("umsh.opt.signal_hop",    "Signal Quality")
 f.opt_unknown      = ProtoField.bytes  ("umsh.opt.unknown",       "Unknown Option")
+-- The piggy-backed ack names the frame it acknowledges, the same way a
+-- standalone MAC ack does.
+f.opt_ack_frame    = ProtoField.framenum("umsh.opt.ack_frame",    "Acknowledges packet in frame",
+                                         base.NONE, frametype.ACK)
 
 -- Addresses
 f.dst_hint     = ProtoField.bytes  ("umsh.dst",          "Destination Hint")
@@ -132,7 +140,9 @@ umsh.fields = {
   f.fcf, f.fcf_version, f.fcf_type, f.fcf_full_src, f.fcf_reserved, f.fcf_fhops,
   f.fhops, f.fhops_rem, f.fhops_acc,
   f.options, f.opt_region_code, f.opt_traceroute, f.opt_srcroute, f.opt_route_hop,
-  f.opt_op_callsign, f.opt_sta_callsign, f.opt_min_rssi, f.opt_min_snr, f.opt_unknown,
+  f.opt_op_callsign, f.opt_sta_callsign, f.opt_min_rssi, f.opt_min_snr,
+  f.opt_route_retry, f.opt_ack_mic, f.opt_ack_frame,
+  f.opt_trace_signal, f.opt_signal_hop, f.opt_unknown,
   f.dst_hint, f.src_hint, f.src_key, f.channel_id, f.ack_mic, f.ack_tag,
   f.src_name, f.dst_name, f.channel_name, f.src_addr, f.dst_addr, f.violation,
   f.secinfo, f.scf, f.scf_enc, f.scf_mic_size, f.scf_salt_bit,
@@ -232,10 +242,27 @@ local _ack_by_mic    = {}
 local _ack_by_frame  = {}
 local _ack_origin    = {}
 
+-- Same story for a piggy-backed ack carried as an option rather than as a
+-- packet of its own: what it resolved to has to be remembered, because
+-- _ack_by_mic holds only the most recent packet under a given prefix and a
+-- re-dissection must not answer differently from the first pass.
+local _ack_opt_origin = {}
+
 function umsh.init()
-  _ack_by_mic   = {}
-  _ack_by_frame = {}
-  _ack_origin   = {}
+  _ack_by_mic     = {}
+  _ack_by_frame   = {}
+  _ack_origin     = {}
+  _ack_opt_origin = {}
+end
+
+-- Resolve an Ack MIC option value to the frame it acknowledges. Needs no
+-- keys: the acknowledged packet published this prefix on the wire.
+local function resolve_piggyback_ack(pinfo, mic_hex)
+  if not pinfo then return nil end
+  if pinfo.visited then return _ack_opt_origin[pinfo.number] end
+  local origin = _ack_by_mic[mic_hex]
+  _ack_opt_origin[pinfo.number] = origin
+  return origin
 end
 
 -- ──────────────────────────────────────────────────────────────────────────
@@ -286,6 +313,11 @@ end
 -- anything written here during the walk would be lost.
 -- ──────────────────────────────────────────────────────────────────────────
 local _violations = {}
+
+-- Notes bound for the Info column from somewhere that runs before the
+-- per-type dissectors, which own that column and rewrite it. Anything
+-- written during the options walk would otherwise be overwritten.
+local _info_notes = {}
 
 -- What the application layer needs to know about the packet carrying it:
 -- enough to apply the rules that span both layers (which payload types a
@@ -441,7 +473,7 @@ end
 -- Populates `static_opts_out` with {number, value} pairs for AAD construction.
 -- Returns the new offset (after the 0xFF terminator, or at `bound` if absent).
 -- ──────────────────────────────────────────────────────────────────────────
-local function parse_options(buf, start_off, bound, tree, static_opts_out)
+local function parse_options(buf, start_off, bound, tree, static_opts_out, pinfo)
   if start_off >= bound then return start_off end
 
   local avail = bound - start_off
@@ -466,25 +498,20 @@ local function parse_options(buf, start_off, bound, tree, static_opts_out)
   opts_tree:set_text(string.format("Options (%d byte%s)",
                                    total_len, total_len == 1 and "" or "s"))
 
-  local region_codes = 0
-  local raw_pos = 1  -- 1-indexed position in raw string
+  local seen = {}
+  local raw_pos = 1  -- 1-indexed position in buf
   pcall(function()
     for num, val, consumed in options.decode(raw, 1) do
       local opt_off = start_off + raw_pos - 1   -- absolute offset in buf
       local val_len = #val
       local val_off = opt_off + consumed - val_len  -- offset of value bytes
 
+      seen[num] = (seen[num] or 0) + 1
+
       if num == options.OPT_REGION_CODE then
         local cs   = options.decode_arnce(val)
         local tvbr = (val_len > 0) and buf(val_off, val_len) or buf(opt_off, consumed)
-        local item = opts_tree:add(f.opt_region_code, tvbr)
-        item:set_text("Region Code: " .. cs)
-        region_codes = region_codes + 1
-        -- A repeater adds a region code only to a packet that carries none.
-        if region_codes > 1 then
-          flag_violation(item, buf(opt_off, consumed),
-            "Packet carries more than one region code")
-        end
+        opts_tree:add(f.opt_region_code, tvbr):set_text("Region Code: " .. cs)
 
       elseif num == options.OPT_TRACE_ROUTE or num == options.OPT_SOURCE_ROUTE then
         local is_trace = (num == options.OPT_TRACE_ROUTE)
@@ -532,6 +559,53 @@ local function parse_options(buf, start_off, bound, tree, static_opts_out)
             "Min SNR: (no value)")
         end
 
+      elseif num == options.OPT_ROUTE_RETRY then
+        -- A zero-length flag: the sender is re-attempting a route it had
+        -- assumed and now considers failed.
+        local item = opts_tree:add(f.opt_route_retry, buf(opt_off, consumed))
+        if val_len ~= 0 then
+          item:set_text(string.format("Route Retry (%d unexpected bytes)", val_len))
+        end
+
+      elseif num == options.OPT_ACK_MIC then
+        -- A piggy-backed MAC ack. The value is the first 4 bytes of the
+        -- acknowledged packet's on-wire MIC — the same public correlation
+        -- handle a standalone ack echoes, so it resolves with no keys.
+        local item = opts_tree:add(f.opt_ack_mic, buf(opt_off, consumed))
+        if val_len == 4 then
+          item:set_text("Ack MIC: " .. bytes_to_hex(val))
+          local origin = resolve_piggyback_ack(pinfo, bytes_to_hex(val))
+          if origin then
+            item:add(f.opt_ack_frame, buf(val_off, 4), origin.frame)
+            _info_notes[#_info_notes + 1] = "acks #" .. origin.frame
+          end
+        else
+          item:set_text(string.format("Ack MIC: %d bytes (expected 4)", val_len))
+        end
+
+      elseif num == options.OPT_TRACE_SIGNAL then
+        -- Like a trace route, but each repeater prepends what it heard:
+        -- one byte of negative RSSI in dBm, one signed byte of SNR in
+        -- centibels.
+        local item = opts_tree:add(f.opt_trace_signal, buf(opt_off, consumed))
+        if val_len == 0 then
+          item:set_text("Trace Signal: (empty)")
+        else
+          local hops  = val_len // 2
+          local extra = val_len % 2
+          item:set_text(string.format("Trace Signal: %d hop%s%s", hops,
+                                      hops == 1 and "" or "s",
+                                      extra == 1 and " + 1 trailing byte" or ""))
+          for i = 1, hops do
+            local rssi = val:byte(i * 2 - 1)
+            local snr  = val:byte(i * 2)
+            if snr >= 128 then snr = snr - 256 end
+            local text = string.format("-%d dBm, %.1f dB SNR", rssi, snr / 10)
+            item:add(f.opt_signal_hop, buf(val_off + (i - 1) * 2, 2), text)
+              :set_text(string.format("Hop %d: %s", i, text))
+          end
+        end
+
       else
         local crit = options.is_critical(num)
         local item = opts_tree:add(f.opt_unknown, buf(opt_off, consumed))
@@ -548,6 +622,17 @@ local function parse_options(buf, start_off, bound, tree, static_opts_out)
       raw_pos = raw_pos + consumed
     end
   end)
+
+  -- Several options are defined as appearing at most once, and the spec
+  -- says outright that a packet carrying two of them must be dropped.
+  -- Region Code is not among them: several may legitimately be present.
+  for num, count in pairs(seen) do
+    if count > 1 and options.SINGLETON_OPTIONS[num] then
+      flag_violation(opts_tree, buf(start_off, total_len), string.format(
+        "%s option appears %d times; at most one is allowed",
+        options.KNOWN_OPTION_NAMES[num] or ("Option " .. num), count))
+    end
+  end
 
   return start_off + total_len
 end
@@ -566,7 +651,7 @@ local function dissect_broadcast(buf, pinfo, tree, off, full_src, fcf_byte, stat
   off = off + src_len
 
   -- OPTIONS block (always present; 0xFF marker omitted for beacons with no payload)
-  off = parse_options(buf, off, buf_len, tree, static_opts)
+  off = parse_options(buf, off, buf_len, tree, static_opts, pinfo)
 
   local payload_len = buf_len - off
   set_endpoints(pinfo, src_name or addr_short(src_bytes), BROADCAST_LABEL)
@@ -592,7 +677,7 @@ local function dissect_uack(buf, pinfo, tree, off)
   -- directly, then a fixed 8-byte trailer (ack_mic(4) || ack_tag(4)). No
   -- 0xFF terminator, since the trailer is at a fixed offset from the end.
   local dummy_opts = {}
-  off = parse_options(buf, off, buf_len - 8, tree, dummy_opts)
+  off = parse_options(buf, off, buf_len - 8, tree, dummy_opts, pinfo)
 
   -- Anything between an end-of-options marker and the trailer is not part
   -- of a MAC ack: there is no payload field for it to be.
@@ -689,7 +774,7 @@ local function dissect_unicast(buf, pinfo, tree, off, full_src, fcf_byte, static
   off = new_off
 
   -- OPTIONS block (always present; 0xFF emitted iff payload follows)
-  off = parse_options(buf, off, buf_len - mic_len, tree, static_opts)
+  off = parse_options(buf, off, buf_len - mic_len, tree, static_opts, pinfo)
 
   -- Body (payload or ciphertext)
   local body_start = off
@@ -811,7 +896,7 @@ local function dissect_multicast(buf, pinfo, tree, off, full_src, fcf_byte, stat
   _ctx.is_enc = is_enc
 
   -- OPTIONS block (always present; 0xFF always present since body follows)
-  off = parse_options(buf, off, buf_len - mic_len, tree, static_opts)
+  off = parse_options(buf, off, buf_len - mic_len, tree, static_opts, pinfo)
 
   -- For E=0: SRC is in cleartext before the body
   local src_bytes, src_name
@@ -940,7 +1025,7 @@ local function dissect_blind_unicast(buf, pinfo, tree, off, full_src, fcf_byte, 
   _ctx.is_enc = is_enc
 
   -- OPTIONS block (always present; 0xFF always present since body follows)
-  off = parse_options(buf, off, buf_len - mic_len, tree, static_opts)
+  off = parse_options(buf, off, buf_len - mic_len, tree, static_opts, pinfo)
 
   -- Info column base
   local chan_hex = bytes_to_hex(chan_bytes)
@@ -1222,6 +1307,7 @@ function umsh.dissector(buf, pinfo, tree)
   local root = tree:add(umsh, buf())
 
   _violations = {}
+  _info_notes = {}
   _ctx = {
     pkt_type     = pkt_type,
     full_src     = full_src,
@@ -1295,7 +1381,10 @@ function umsh.dissector(buf, pinfo, tree)
   end
 
   -- The per-type dissectors own the Info column and rewrite it after most
-  -- of the checks have run, so the marker goes on last.
+  -- of the checks have run, so these go on last.
+  if #_info_notes > 0 then
+    pinfo.cols.info:append(" (" .. table.concat(_info_notes, ", ") .. ")")
+  end
   if #_violations > 0 then
     pinfo.cols.info:append(
       #_violations == 1 and "  [VIOLATION]"

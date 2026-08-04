@@ -334,6 +334,19 @@ carried and the summary line gets a one-line précis of it.
 Node Management payloads carry ULCP frames, which are handed to the same frame
 dissector the local-link ULCP capture uses.
 
+## MAC Options
+
+All twelve options in the spec's Defined Options table are decoded. Trace
+Route and Source Route break out their router hints per hop; Trace Signal
+breaks out the RSSI and SNR each repeater recorded; Region Code and the two
+callsign options are ARNCE-decoded.
+
+An Ack MIC option (8) is a MAC ack piggy-backed onto a reply instead of sent
+as its own packet, so it is resolved to the frame it acknowledges the same
+way a standalone ack is — by the public four-byte MIC prefix, which needs no
+keys. The acknowledged frame is linked in the tree and named on the summary
+line.
+
 ## Address Presentation
 
 Addresses render in the canonical forms from the addressing chapter: a full

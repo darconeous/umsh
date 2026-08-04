@@ -56,6 +56,10 @@ This distinction allows forwarding-related metadata (source routes, trace routes
 - If absent, no trace-route information is added automatically.
 - If more than one option with this number is present, the packet MUST be dropped.
 - Value layout: see [Trace Route Option Value](#trace-route-option-value).
+- If implemented, Trace Signal (option 10) **MUST** also be implemented.
+
+> [!IMPORTANT]
+> If a repeater supports the Trace Route option, it **MUST** also implement the Trace Signal option (even if it is just adding placeholder values). Failure to do this breaks the one-to-one relationship between the Trace option and the Trace Signal options, making the Trace Signal value useless.
 
 ### Source Route (option 3)
 - Semantics: contains an ordered list of repeater hints designating the forwarding path.

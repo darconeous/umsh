@@ -146,6 +146,44 @@ check("lookup NodeA by full key",
       keystore.lookup_node_by_key(from_hex(NODE_A_PUB)), "NodeA")
 
 -- ─────────────────────────────────────────────────────────────────────────────
+-- Option registry
+-- Every option the spec defines should be named; a gap here is an option
+-- the dissector renders as a bare "Option N" with its value undecoded.
+-- See the Defined Options table in docs/protocol/src/packet-options.md.
+-- ─────────────────────────────────────────────────────────────────────────────
+section("Option registry")
+
+local SPEC_OPTIONS = {
+  [0]  = "Reserved",          [1]  = "Unassigned",
+  [2]  = "Trace Route",       [3]  = "Source Route",
+  [4]  = "Operator Callsign", [5]  = "Min RSSI",
+  [6]  = "Route Retry",       [7]  = "Station Callsign",
+  [8]  = "Ack MIC",           [9]  = "Min SNR",
+  [10] = "Trace Signal",      [11] = "Region Code",
+}
+
+for num = 0, 11 do
+  check(string.format("option %d (%s) is named", num, SPEC_OPTIONS[num]),
+        options.KNOWN_OPTION_NAMES[num], SPEC_OPTIONS[num])
+end
+
+-- Options the spec says a packet must be dropped for carrying twice.
+check("trace route is single-occurrence",
+      options.SINGLETON_OPTIONS[options.OPT_TRACE_ROUTE], true)
+check("route retry is single-occurrence",
+      options.SINGLETON_OPTIONS[options.OPT_ROUTE_RETRY], true)
+-- Several region codes may legitimately ride one packet; the rule that a
+-- repeater must not add a second binds an action no frame records.
+check("region code is NOT single-occurrence",
+      options.SINGLETON_OPTIONS[options.OPT_REGION_CODE], nil)
+
+-- Classification comes from the option number's low two bits.
+check("trace route is non-critical", options.is_critical(2), false)
+check("source route is critical",    options.is_critical(3), true)
+check("route retry is dynamic",      options.is_static(6),   false)
+check("ack mic is static",           options.is_static(8),   true)
+
+-- ─────────────────────────────────────────────────────────────────────────────
 -- Canonical address presentation
 -- Vectors from crates/umsh-core/src/base58.rs, which is the definition.
 -- ─────────────────────────────────────────────────────────────────────────────

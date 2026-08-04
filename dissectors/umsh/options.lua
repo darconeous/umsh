@@ -203,22 +203,42 @@ end
 -- Known MAC-layer option numbers
 -- ---------------------------------------------------------------------------
 
-M.OPT_REGION_CODE      = 11  -- Critical, Dynamic, 2 bytes
-M.OPT_TRACE_ROUTE      = 2   -- Non-Critical, Dynamic
-M.OPT_SOURCE_ROUTE     = 3   -- Critical, Dynamic
-M.OPT_OP_CALLSIGN      = 4   -- Non-Critical, Static, ARNCE
-M.OPT_MIN_RSSI         = 5   -- Critical, Static,  0-1 bytes
-M.OPT_STATION_CALLSIGN = 7   -- Critical, Dynamic, ARNCE
-M.OPT_MIN_SNR          = 9   -- Critical, Static,  0-1 bytes
+M.OPT_TRACE_ROUTE      = 2   -- Non-Critical, Dynamic, 0+ bytes
+M.OPT_SOURCE_ROUTE     = 3   -- Critical,     Dynamic, 0+ bytes
+M.OPT_OP_CALLSIGN      = 4   -- Non-Critical, Static,  ARNCE
+M.OPT_MIN_RSSI         = 5   -- Critical,     Static,  0-1 bytes
+M.OPT_ROUTE_RETRY      = 6   -- Non-Critical, Dynamic, 0 bytes (flag)
+M.OPT_STATION_CALLSIGN = 7   -- Critical,     Dynamic, ARNCE
+M.OPT_ACK_MIC          = 8   -- Non-Critical, Static,  4 bytes
+M.OPT_MIN_SNR          = 9   -- Critical,     Static,  0-1 bytes
+M.OPT_TRACE_SIGNAL     = 10  -- Non-Critical, Dynamic, 2 bytes per hop
+M.OPT_REGION_CODE      = 11  -- Critical,     Dynamic, 2 bytes
 
 M.KNOWN_OPTION_NAMES = {
+  [0] = "Reserved",
+  [1] = "Unassigned",
   [2] = "Trace Route",
   [3] = "Source Route",
   [4] = "Operator Callsign",
   [5] = "Min RSSI",
+  [6] = "Route Retry",
   [7] = "Station Callsign",
+  [8] = "Ack MIC",
   [9] = "Min SNR",
+  [10] = "Trace Signal",
   [11] = "Region Code",
+}
+
+-- Options the spec says a packet must be dropped for carrying twice.
+-- Region Code is deliberately absent: several may legitimately appear on
+-- one packet, and the rule that a repeater must not *add* a second is
+-- about an action no single frame records.
+M.SINGLETON_OPTIONS = {
+  [M.OPT_TRACE_ROUTE]  = true,
+  [M.OPT_SOURCE_ROUTE] = true,
+  [M.OPT_MIN_RSSI]     = true,
+  [M.OPT_ROUTE_RETRY]  = true,
+  [M.OPT_MIN_SNR]      = true,
 }
 
 return M
