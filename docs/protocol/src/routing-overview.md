@@ -71,7 +71,7 @@ A client–server tunnel realization of an internet bridge — including the exa
 
 ## Forwarding Confirmation and Recovery
 
-UMSH provides hop-by-hop forwarding confirmation for both source-routed and flood-originated packets. After transmitting, a node listens for the next hop to retransmit the same packet. If no retransmission is heard within a timeout, the node retries with exponential backoff (up to 3 retries). The original sender does not currently receive any notification of a forwarding failure when source routing.
+UMSH provides hop-by-hop forwarding confirmation for both source-routed and flood-originated packets. After transmitting, a node listens for the next hop to retransmit the same packet. If no retransmission is heard within a timeout, the node retries after a short jittered delay (up to 3 retries). The original sender does not currently receive any notification of a forwarding failure when source routing.
 
 If a cached route fails entirely (noticed because of a timeout), the sender can fall back to flood routing for the same logical packet using the **route retry option**, which allows repeaters to forward it even if they already suppressed the original attempt.
 

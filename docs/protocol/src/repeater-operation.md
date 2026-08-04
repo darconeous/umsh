@@ -129,6 +129,8 @@ This applies to:
 - **Flood originators**: The originating node listens for any node to retransmit.
 - **Flood repeaters**: Intermediate flood-forwarding nodes MUST NOT retry. Multiple nodes may forward the same flood packet, and a repeater has no designated next hop to listen for; retrying would increase congestion without improving reliability.
 
+Confirmation, and the retry ladder below, apply whether or not the packet requests an ACK. An ack-requested sender goes on to await the ACK once forwarding is confirmed; a sender that requested no ACK is finished the moment it hears the packet carried onward, and if the retry budget runs out without that, the send simply ends — there is no failure signal to wait for. A point-to-point packet with no flood budget and no source route travels straight to its destination, confirms nothing, and MUST be transmitted exactly once.
+
 After transmitting, the node listens for the same packet — identified by its [cache key](#duplicate-suppression) — to be retransmitted. This confirmation timeout MUST be large enough to cover the worst-case forwarding delay allowed by [Channel Access](channel-access.md#flood-forwarding-contention-window), plus the airtime of the forwarded frame itself, plus a guard margin. A safe default is:
 
 ```text
@@ -139,15 +141,25 @@ where `W_max` is the maximum intentional forwarding-delay window permitted for t
 
 If the packet is heard before `confirm_timeout` expires, forwarding is confirmed.
 
-If `confirm_timeout` expires without a retransmission, the node SHOULD schedule a retry after a jittered exponential delay:
+If `confirm_timeout` expires without a retransmission, the node SHOULD schedule a retry after a jittered delay:
 
 ```text
-retry_delay_n = uniform_random(0, min(2^(n−1) × T_frame, 4 × T_frame))
+retry_delay = uniform_random(0, T_frame)
 ```
 
-where `n` is the 1-based retry number. After this delay expires, the retry is transmitted using normal CAD and backoff as described in [Channel Access](channel-access.md#backoff-procedure).
+The delay does not grow with the retry number. Its only job is to decorrelate retries between nodes, and one frame time is enough for that; every additional window would be time the payload spends undelivered. After this delay expires, the retry is transmitted using normal CAD and backoff as described in [Channel Access](channel-access.md#backoff-procedure).
 
 A node MUST NOT retry more than 3 times.
+
+### Ack Cancellation
+
+A MAC ack echoes the acknowledged packet's `ack_mic` — the first four bytes of its on-wire MIC — which any forwarder can read without keys, and which survives the mutations repeaters perform. A repeater that overhears a MAC ack (or an [Ack MIC option](packet-options.md#ack-mic-option-8)) whose `ack_mic` matches the MIC prefix of a queued, not-yet-transmitted forward of an ack-eliciting packet (UNAR or BUAR) SHOULD cancel that forward: the destination provably has the packet, and repeating it spends airtime on nothing. The [ACK protection interval](channel-access.md#ack-protection-interval) puts the ack on the air ahead of pending forwards precisely so that this observation is available.
+
+Cancellation acts on the queue, not on the future. It removes whatever matching forward is queued at that moment — a [Route Retry](packet-options.md#route-retry-option-6) copy included — and records nothing. A Route Retry copy received *after* a cancellation is a separate forwarding identity under [duplicate suppression](#duplicate-suppression) and is forwarded normally: the origin resorts to it precisely because the ack never reached it, and carrying the copy prompts the destination to acknowledge again. That copy is in turn cancelable by another overheard ack.
+
+The duplicate-cache entry for a cancelled forward remains. The packet was handled; a later copy of the same attempt is still a duplicate.
+
+A repeater cannot verify the keyed `ack_tag` half of the trailer, so cancellation rests on the public `ack_mic` alone. The [forgery this exposes](security.md#ack-tag-construction) suppresses at most one queued forward per overheard ack and is bounded by the Route Retry path.
 
 ### Route Failure Recovery
 

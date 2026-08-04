@@ -63,6 +63,8 @@ After computing the delay, the repeater waits. Other packets SHOULD continue to 
 
 If the repeater overhears the same packet forwarded by another node (identified by MIC in the duplicate cache) before the delay expires, it SHOULD defer rather than transmit. A safe default is to resample a delay using the same `W_min`/`W_max` limits — including `D_ack` when it applies, since the overheard copy may itself elicit an immediate ACK from the destination — and restart the waiting period. A repeater SHOULD NOT do this more than 3 times; after the third such deferral it SHOULD abandon the pending forward.
 
+If the repeater instead overhears a MAC ack whose `ack_mic` matches the pending packet's MIC prefix, it SHOULD [cancel the pending forward outright](repeater-operation.md#ack-cancellation) rather than defer: the destination provably has the packet.
+
 This deferral behavior is intended only for the first local forwarding decision after reception. Once a repeater has actually transmitted its own copy, any later retransmission behavior is governed by [Repeater Operation](repeater-operation.md#forwarding-confirmation).
 
 Nodes waiting for implicit forwarding confirmation MUST size their confirmation timeout to include this full forwarding-delay window. A safe default is to allow:

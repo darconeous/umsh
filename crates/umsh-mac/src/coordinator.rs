@@ -23,7 +23,8 @@ use crate::{
     peers::CachedRoute,
     peers::{ChannelTable, PeerCryptoMap, PeerId, PeerRegistry},
     send::{
-        PendingAck, PendingAckError, ResendRecord, SendOptions, SendReceipt, TxPriority, TxQueue,
+        CompletionSignal, PendingAck, PendingAckError, ResendRecord, SendOptions, SendReceipt,
+        TxPriority, TxQueue,
     },
 };
 
@@ -366,6 +367,14 @@ impl<I: NodeIdentity, const PEERS: usize, const ACKS: usize, const FRAME: usize>
     /// Borrow pending-ACK state by receipt.
     pub fn pending_ack(&self, receipt: &SendReceipt) -> Option<&PendingAck<FRAME>> {
         self.pending_acks.get(receipt)
+    }
+
+    /// Iterate every tracked in-flight send in this slot.
+    ///
+    /// Includes internally tracked repeat-confirmed sends, whose receipts are
+    /// never returned to the application.
+    pub fn pending_acks(&self) -> impl Iterator<Item = (&SendReceipt, &PendingAck<FRAME>)> {
+        self.pending_acks.iter()
     }
 
     /// Mutably borrow pending-ACK state by receipt.
@@ -814,6 +823,9 @@ pub struct MacCounters {
     pub rx_accepted: u32,
     /// Receptions this node repeated onward.
     pub forwarded: u32,
+    /// Queued forwards dropped because the destination's ack was overheard
+    /// before they went out. Airtime this node did not have to spend.
+    pub forward_cancelled: u32,
 }
 
 impl MacCounters {
@@ -1650,12 +1662,28 @@ impl<
                 options.flood_hops,
             )?;
         }
+        // A non-ACK send that rides through repeaters is tracked under an
+        // internal receipt so it can retry until a repeat is heard. The caller
+        // asked for no tracking and sees none.
+        let tracked_receipt = match receipt {
+            Some(receipt) => Some(receipt),
+            None if Self::send_has_hops(effective_source_route.as_ref(), effective_flood_hops) => {
+                Some(self.prepare_repeat_confirmed_send(
+                    from,
+                    *peer,
+                    packet.as_bytes(),
+                    effective_source_route.as_ref(),
+                    options.flood_hops,
+                )?)
+            }
+            None => None,
+        };
         let not_before_ms = self.tx_not_before_ms(options);
-        if let Err(err) = self.enqueue_packet(packet, receipt, Some(from), not_before_ms) {
-            if let Some(receipt) = receipt {
+        if let Err(err) = self.enqueue_packet(packet, tracked_receipt, Some(from), not_before_ms) {
+            if let Some(tracked_receipt) = tracked_receipt {
                 let _ = self
                     .identity_mut(from)
-                    .and_then(|slot| slot.remove_pending_ack(&receipt));
+                    .and_then(|slot| slot.remove_pending_ack(&tracked_receipt));
             }
             return Err(err);
         }
@@ -1769,12 +1797,28 @@ impl<
                 options.flood_hops,
             )?;
         }
+        // A non-ACK send that rides through repeaters is tracked under an
+        // internal receipt so it can retry until a repeat is heard. The caller
+        // asked for no tracking and sees none.
+        let tracked_receipt = match receipt {
+            Some(receipt) => Some(receipt),
+            None if Self::send_has_hops(effective_source_route.as_ref(), effective_flood_hops) => {
+                Some(self.prepare_repeat_confirmed_send(
+                    from,
+                    *peer,
+                    packet.as_bytes(),
+                    effective_source_route.as_ref(),
+                    options.flood_hops,
+                )?)
+            }
+            None => None,
+        };
         let not_before_ms = self.tx_not_before_ms(options);
-        if let Err(err) = self.enqueue_packet(packet, receipt, Some(from), not_before_ms) {
-            if let Some(receipt) = receipt {
+        if let Err(err) = self.enqueue_packet(packet, tracked_receipt, Some(from), not_before_ms) {
+            if let Some(tracked_receipt) = tracked_receipt {
                 let _ = self
                     .identity_mut(from)
-                    .and_then(|slot| slot.remove_pending_ack(&receipt));
+                    .and_then(|slot| slot.remove_pending_ack(&tracked_receipt));
             }
             return Err(err);
         }
@@ -1827,6 +1871,25 @@ impl<
 
         let receipt = queued.receipt;
         let identity_id = queued.identity_id;
+
+        // A retransmission exists only to serve a send still waiting on an
+        // outcome, and that send may have reached one while the frame sat in
+        // the queue — acknowledged, confirmed by an overheard repeat, timed
+        // out, or cancelled. All of those drop the pending entry, so its
+        // absence is what makes the frame unwanted. Only retries are judged
+        // this way: a first transmission carries a receipt for reporting
+        // (broadcast and multicast do so with no pending entry at all) and is
+        // always sent.
+        if queued.priority == TxPriority::Retry
+            && let (Some(receipt), Some(identity_id)) = (receipt, identity_id)
+            && self
+                .identity(identity_id)
+                .map(|slot| slot.pending_ack(&receipt).is_none())
+                .unwrap_or(true)
+        {
+            return Ok(None);
+        }
+
         let tx_options = if queued.priority == TxPriority::ImmediateAck {
             // Immediate ACK: the channel was clear when the packet ended, so
             // transmit without CAD (see channel-access.md § Immediate ACK).
@@ -1853,11 +1916,25 @@ impl<
                     // this tally exists to make visible.
                     MacCounters::bump(&mut self.counters.tx_abandoned);
                     // Drop with accounting: locally-originated frames report
-                    // the abandonment to the owning identity (an ACK-requested
-                    // send will never see AckReceived/AckTimeout, so this is
-                    // its terminal state). Forwarded frames (no identity) are
-                    // best-effort and dropped without an event.
-                    if let Some(identity_id) = identity_id {
+                    // the abandonment to the owning identity (a send that
+                    // never aired will see no AckReceived/AckTimeout, so this
+                    // is its terminal state). Forwarded frames (no identity)
+                    // are best-effort and dropped without an event. A
+                    // *retransmission* that lost CAD is neither: its send has
+                    // aired before and its deadlines still stand, so the
+                    // attempt is dropped quietly and the timers judge the
+                    // send.
+                    if let Some(identity_id) = identity_id
+                        && queued.priority != TxPriority::Retry
+                    {
+                        // Terminal means the tracking entry goes too; left
+                        // behind in `Queued` it would outlive every timer,
+                        // holding its slot until the identity is removed.
+                        if let Some(receipt) = receipt
+                            && let Some(slot) = self.identity_mut(identity_id)
+                        {
+                            let _ = slot.pending_acks.remove(&receipt);
+                        }
                         on_event(
                             identity_id,
                             crate::MacEventRef::TxAbandoned {
@@ -1901,7 +1978,7 @@ impl<
             );
         }
         if let Some(receipt) = receipt {
-            self.note_transmitted_ack_requested(receipt, queued.frame.as_slice());
+            self.note_transmitted_tracked(receipt, queued.frame.as_slice());
         }
         Ok(receipt)
     }
@@ -1973,9 +2050,14 @@ impl<
                         e.min(pending.ack_deadline_ms)
                     }));
                 }
+                // A confirm deadline is only a wake-up if its expiry can
+                // still queue a retry. With the retry budget spent it would
+                // report a moment that services nothing, and a deadline in
+                // the past that never clears pins the caller's timer loop.
                 if let crate::AckState::AwaitingForward {
                     confirm_deadline_ms,
                 } = pending.state
+                    && pending.retries < MAX_FORWARD_RETRIES
                 {
                     earliest = Some(
                         earliest.map_or(confirm_deadline_ms, |e: u64| e.min(confirm_deadline_ms)),
@@ -2207,6 +2289,11 @@ impl<
             let Ok(header) = PacketHeader::parse(&buf[..current_len]) else {
                 return handled_any;
             };
+            // A piggy-backed Ack MIC option is read here, before any
+            // decryption, because it is aimed at whoever happens to be
+            // carrying the acknowledged packet — not at this frame's
+            // addressee.
+            self.cancel_forwards_for_ack_mic_option(&buf[..current_len], &header);
             let forwarding_confirmed = if let Some((identity_id, receipt)) =
                 self.observe_forwarding_confirmation(&buf[..current_len])
             {
@@ -2384,6 +2471,11 @@ impl<
         }
         let mut ack_trailer = [0u8; 8];
         ack_trailer.copy_from_slice(&buf[header.mic_range.clone()]);
+        // Independent of whether this node is the ack's addressee: a node can
+        // be the origin of one exchange and a repeater for another, and the
+        // queued forward it may be holding is not this ack's business to
+        // match against.
+        self.cancel_forwards_for_ack_mic(&ack_trailer[..4]);
         if let Some(target_peer) = self.peer_for_ack_trailer(&ack_trailer)
             && let Some((identity_id, receipt)) = self.complete_ack(&target_peer, &ack_trailer)
         {
@@ -2886,23 +2978,30 @@ impl<
             };
 
             let receipt = slot.pending_acks.iter().find_map(|(receipt, pending)| {
-                (pending.peer == *peer && pending.ack_trailer == *ack_trailer).then_some(*receipt)
+                (pending.expects_ack()
+                    && pending.peer == *peer
+                    && pending.ack_trailer == *ack_trailer)
+                    .then_some(*receipt)
             });
 
             if let Some(receipt) = receipt {
                 slot.pending_acks.remove(&receipt);
+                let identity_id = LocalIdentityId(index as u8);
+                // A retransmission may already be queued behind this ack.
+                // Nothing downstream re-checks, so it would otherwise go out
+                // after the send it belongs to has been confirmed.
+                self.tx_queue.remove_all_matching(|entry| {
+                    entry.receipt == Some(receipt) && entry.identity_id == Some(identity_id)
+                });
                 if self
                     .post_tx_listen
                     .as_ref()
-                    .map(|listen| {
-                        listen.identity_id == LocalIdentityId(index as u8)
-                            && listen.receipt == receipt
-                    })
+                    .map(|listen| listen.identity_id == identity_id && listen.receipt == receipt)
                     .unwrap_or(false)
                 {
                     self.post_tx_listen = None;
                 }
-                return Some((LocalIdentityId(index as u8), receipt));
+                return Some((identity_id, receipt));
             }
         }
 
@@ -2933,6 +3032,9 @@ impl<
                 receipt: SendReceipt,
                 peer: PublicKey,
             },
+            /// A repeat-confirmed send whose ladder ran out. Nobody is
+            /// waiting on the outcome, so the entry just goes away.
+            Abandon { receipt: SendReceipt },
         }
 
         let now_ms = self.clock.now_ms();
@@ -2950,9 +3052,12 @@ impl<
                     if !matches!(pending.state, crate::AckState::Queued { .. })
                         && now_ms >= pending.ack_deadline_ms
                     {
-                        if Self::can_attempt_route_retry(pending) {
-                            let backoff_cap_ms =
-                                Self::forward_retry_backoff_cap_ms_for_t_frame(t_frame_ms, 1);
+                        if !pending.expects_ack() {
+                            actions
+                                .push(Action::Abandon { receipt: *receipt })
+                                .map_err(|_| CapacityError)?;
+                        } else if Self::can_attempt_route_retry(pending) {
+                            let backoff_cap_ms = t_frame_ms;
                             let backoff_ms = if backoff_cap_ms == 0 {
                                 0
                             } else {
@@ -2983,10 +3088,7 @@ impl<
                     {
                         if now_ms >= confirm_deadline_ms && pending.retries < MAX_FORWARD_RETRIES {
                             pending.retries = pending.retries.saturating_add(1);
-                            let backoff_cap_ms = Self::forward_retry_backoff_cap_ms_for_t_frame(
-                                t_frame_ms,
-                                pending.retries,
-                            );
+                            let backoff_cap_ms = t_frame_ms;
                             let backoff_ms = if backoff_cap_ms == 0 {
                                 0
                             } else {
@@ -3032,6 +3134,7 @@ impl<
                     } => {
                         if let Some(rewritten) = self.synthesize_route_retry_resend(&peer, &resend)
                         {
+                            let rewritten_key = Self::confirmation_key(rewritten.frame.as_slice());
                             if let Some(pending) = self
                                 .identity_mut(identity_id)
                                 .and_then(|slot| slot.pending_ack_mut(&receipt))
@@ -3041,6 +3144,10 @@ impl<
                                 pending.sent_ms = 0;
                                 pending.ack_deadline_ms = 0;
                                 pending.state = crate::AckState::RetryQueued;
+                                // The rebuilt frame is a distinct forwarding
+                                // identity; a repeat of the abandoned one no
+                                // longer confirms this attempt.
+                                pending.confirm_key = rewritten_key;
                             }
                             self.tx_queue.enqueue_with_state(
                                 TxPriority::Retry,
@@ -3065,10 +3172,21 @@ impl<
                         if let Some(slot) = self.identity_mut(identity_id) {
                             slot.pending_acks.remove(&receipt);
                         }
+                        self.tx_queue.remove_all_matching(|entry| {
+                            entry.receipt == Some(receipt) && entry.identity_id == Some(identity_id)
+                        });
                         on_event(
                             identity_id,
                             crate::MacEventRef::AckTimeout { peer, receipt },
                         );
+                    }
+                    Action::Abandon { receipt } => {
+                        if let Some(slot) = self.identity_mut(identity_id) {
+                            slot.pending_acks.remove(&receipt);
+                        }
+                        self.tx_queue.remove_all_matching(|entry| {
+                            entry.receipt == Some(receipt) && entry.identity_id == Some(identity_id)
+                        });
                     }
                 }
             }
@@ -3242,6 +3360,44 @@ impl<
             .ok_or(SendError::IdentityMissing)?;
         pending.resend = resend;
         Ok(())
+    }
+
+    /// Whether a send travels through repeaters rather than straight to its
+    /// destination.
+    fn send_has_hops(
+        source_route: Option<&Vec<RouterHint, MAX_SOURCE_ROUTE_HOPS>>,
+        flood_hops: Option<u8>,
+    ) -> bool {
+        source_route.map(|route| !route.is_empty()).unwrap_or(false) || flood_hops.unwrap_or(0) > 0
+    }
+
+    /// Track a non-ACK send that travels through repeaters.
+    ///
+    /// Such a send has no acknowledgement coming, but it is not therefore
+    /// unverifiable: hearing the next hop carry the frame onward says it was
+    /// received, and hearing nothing says the one transmission may have been
+    /// the only chance it got. The receipt is the coordinator's own — the
+    /// caller asked for no tracking and gets none — and exists so the retry
+    /// ladder has something to hang on.
+    ///
+    /// A send with no hops is left alone: there is no repeater to hear, and
+    /// repeating a direct packet nobody asked to acknowledge would be noise.
+    fn prepare_repeat_confirmed_send(
+        &mut self,
+        from: LocalIdentityId,
+        peer: PublicKey,
+        frame: &[u8],
+        source_route: Option<&Vec<RouterHint, MAX_SOURCE_ROUTE_HOPS>>,
+        requested_flood_hops: Option<u8>,
+    ) -> Result<SendReceipt, SendError> {
+        let resend = ResendRecord::try_new(frame, source_route.map(|route| route.as_slice()))
+            .map_err(|_| SendError::QueueFull)?
+            .with_requested_flood_hops(requested_flood_hops);
+        let slot = self.identity_mut(from).ok_or(SendError::IdentityMissing)?;
+        let receipt = slot.next_receipt();
+        slot.try_insert_pending_ack(receipt, PendingAck::repeat_only(peer, resend))
+            .map_err(|_| SendError::PendingAckFull)?;
+        Ok(receipt)
     }
 
     fn prepare_pending_ack(
@@ -4872,6 +5028,91 @@ impl<
         );
     }
 
+    /// Drop any queued forward the destination has already acknowledged.
+    ///
+    /// A MAC ack echoes `ack_mic` — the first four bytes of the acknowledged
+    /// packet's on-wire MIC — which every forwarder can read without keys, and
+    /// which survives the rewrites a repeater performs. A forward still sitting
+    /// in the transmit queue when that ack is overheard has been overtaken by
+    /// events: the destination has the packet, so repeating it buys nothing but
+    /// airtime. The [ACK protection interval] exists to put the ack on the air
+    /// first, which is precisely what makes this observation available.
+    ///
+    /// This cancels what is queued at this instant and leaves nothing behind. A
+    /// [route-retry] copy that arrives later carries a distinct forwarding
+    /// identity, is queued and forwarded normally — the origin resorted to it
+    /// because the ack never reached it, and carrying it prompts the
+    /// destination to acknowledge again — and is in turn cancelable by another
+    /// overheard ack.
+    ///
+    /// Only unattributed forwards are eligible. A queued frame carrying a
+    /// receipt is this node's own send, whose completion is decided by the
+    /// authenticated `ack_tag` in [`Mac::complete_ack`], never by a four-byte
+    /// public prefix.
+    ///
+    /// [ACK protection interval]: https://darconeous.github.io/umsh/docs/protocol/channel-access.html#ack-protection-interval
+    /// [route-retry]: https://darconeous.github.io/umsh/docs/protocol/packet-options.html#route-retry-option-6
+    fn cancel_forwards_for_ack_mic(&mut self, ack_mic: &[u8]) -> usize {
+        if ack_mic.len() != 4 {
+            return 0;
+        }
+        let removed = self.tx_queue.remove_all_matching(|entry| {
+            if entry.priority != TxPriority::Forward || entry.receipt.is_some() {
+                return false;
+            }
+            let frame = entry.frame.as_slice();
+            let Ok(header) = PacketHeader::parse(frame) else {
+                return false;
+            };
+            // Only the packet types whose destination emits a MAC ack can be
+            // the subject of one. Without this, a forwarded ack awaiting
+            // transmission would be cancelled by a second copy of itself: a
+            // MAC ack's own trailer opens with the same four bytes it echoes.
+            if !matches!(
+                header.packet_type(),
+                PacketType::UnicastAckReq | PacketType::BlindUnicastAckReq
+            ) {
+                return false;
+            }
+            frame
+                .get(header.mic_range.clone())
+                .and_then(|mic| mic.get(..4))
+                .map(|prefix| prefix == ack_mic)
+                .unwrap_or(false)
+        });
+        if removed > 0 {
+            MacCounters::bump(&mut self.counters.forward_cancelled);
+        }
+        removed
+    }
+
+    /// Cancel queued forwards named by a piggy-backed [Ack MIC option].
+    ///
+    /// The option carries the same correlation handle as a standalone ack, on
+    /// an ordinary authenticated packet travelling the other way. It sits in
+    /// the options block, which is not encrypted, so a forwarder reads it
+    /// under the same terms as the standalone form.
+    ///
+    /// [Ack MIC option]: https://darconeous.github.io/umsh/docs/protocol/packet-options.html#ack-mic-option-8
+    fn cancel_forwards_for_ack_mic_option(&mut self, frame: &[u8], header: &PacketHeader) {
+        if header.options_range.is_empty() {
+            return;
+        }
+        let mut ack_mic = None;
+        for entry in umsh_core::iter_options(frame, header.options_range.clone()) {
+            let Ok((number, value)) = entry else {
+                continue;
+            };
+            if OptionNumber::from(number) == OptionNumber::AckMic && value.len() == 4 {
+                ack_mic = Some([value[0], value[1], value[2], value[3]]);
+                break;
+            }
+        }
+        if let Some(ack_mic) = ack_mic {
+            self.cancel_forwards_for_ack_mic(&ack_mic);
+        }
+    }
+
     async fn service_post_tx_listen(
         &mut self,
         mut on_event: impl FnMut(LocalIdentityId, crate::MacEventRef<'_>),
@@ -4889,10 +5130,12 @@ impl<
         }
     }
 
-    fn note_transmitted_ack_requested(&mut self, receipt: SendReceipt, frame: &[u8]) {
+    /// Start the completion timers for a tracked send that just went on the air.
+    fn note_transmitted_tracked(&mut self, receipt: SendReceipt, frame: &[u8]) {
         let sent_ms = self.clock.now_ms();
         let direct_ack_deadline_ms = sent_ms.saturating_add(self.direct_ack_timeout_ms());
         let forwarded_ack_deadline_ms = sent_ms.saturating_add(self.forwarded_ack_timeout_ms());
+        let repeat_only_deadline_ms = sent_ms.saturating_add(self.repeat_confirm_timeout_ms());
         let confirm_timeout_ms = self.forward_confirm_timeout_ms();
         let confirm_key = Self::confirmation_key(frame);
 
@@ -4910,11 +5153,12 @@ impl<
             };
 
             pending.sent_ms = sent_ms;
+            pending.confirm_key = confirm_key.clone();
             if pending.ack_deadline_ms == 0 {
-                pending.ack_deadline_ms = if needs_forward_confirmation {
-                    forwarded_ack_deadline_ms
-                } else {
-                    direct_ack_deadline_ms
+                pending.ack_deadline_ms = match (pending.completion, needs_forward_confirmation) {
+                    (CompletionSignal::RepeatOnly, _) => repeat_only_deadline_ms,
+                    (CompletionSignal::Ack, true) => forwarded_ack_deadline_ms,
+                    (CompletionSignal::Ack, false) => direct_ack_deadline_ms,
                 };
             }
 
@@ -4923,12 +5167,23 @@ impl<
                 pending.state = crate::AckState::AwaitingForward {
                     confirm_deadline_ms: deadline_ms,
                 };
-                confirm_key.map(|confirm_key| PostTxListen {
-                    identity_id,
-                    receipt,
-                    confirm_key,
-                    deadline_ms,
-                })
+                // The dedicated listen window — which holds all other
+                // transmissions back for the whole confirmation wait — is
+                // reserved for sends with an ACK on the line. A repeat-only
+                // send is best-effort by construction; the pending entry
+                // matches an overheard repeat whenever the radio hears one,
+                // and stalling unrelated traffic for seconds is a price
+                // best-effort delivery does not get to charge.
+                if pending.expects_ack() {
+                    confirm_key.map(|confirm_key| PostTxListen {
+                        identity_id,
+                        receipt,
+                        confirm_key,
+                        deadline_ms,
+                    })
+                } else {
+                    None
+                }
             } else {
                 pending.state = crate::AckState::AwaitingAck;
                 None
@@ -4962,15 +5217,16 @@ impl<
             .saturating_mul(u64::from(self.repeater.flood_contention_max_window_frames))
     }
 
-    fn forward_retry_backoff_cap_ms(&self, retry_number: u8) -> u32 {
-        Self::forward_retry_backoff_cap_ms_for_t_frame(self.radio.t_frame_ms(), retry_number)
-    }
-
-    fn forward_retry_backoff_cap_ms_for_t_frame(t_frame_ms: u32, retry_number: u8) -> u32 {
-        let exponent = retry_number.saturating_sub(1).min(2);
-        t_frame_ms
-            .saturating_mul(1u32 << exponent)
-            .min(t_frame_ms.saturating_mul(4))
+    /// Jitter cap for a forwarding-confirmation retry: one frame time, flat
+    /// across the ladder.
+    ///
+    /// The jitter exists to decorrelate retries between nodes, and one frame
+    /// time is all that takes. Growing the delay would only stretch the
+    /// ladder: every window it adds is time the payload spends undelivered,
+    /// and a packet the mesh cannot carry after three prompt attempts is
+    /// better dropped than delivered tens of seconds late.
+    fn forward_retry_backoff_cap_ms(&self) -> u32 {
+        self.radio.t_frame_ms()
     }
 
     /// Whether a timed-out send carries a route assumption worth abandoning.
@@ -4988,6 +5244,12 @@ impl<
     /// undo the MAC's own narrowing, not to flood wider than the caller was
     /// willing to.
     fn can_attempt_route_retry(pending: &PendingAck<FRAME>) -> bool {
+        // Route recovery re-attempts delivery of a packet whose fate is
+        // knowable. A send with no ack to wait for never learns whether the
+        // route failed, so it has nothing to recover from.
+        if !pending.expects_ack() {
+            return false;
+        }
         let Ok(header) = PacketHeader::parse(pending.resend.frame.as_slice()) else {
             return false;
         };
@@ -5025,13 +5287,22 @@ impl<
     }
 
     fn forwarded_ack_timeout_ms(&self) -> u64 {
-        let mut total = self.forward_confirm_timeout_ms();
-        for retry_number in 1..=MAX_FORWARD_RETRIES {
-            total = total
-                .saturating_add(u64::from(self.forward_retry_backoff_cap_ms(retry_number)))
-                .saturating_add(self.forward_confirm_timeout_ms());
-        }
-        total.saturating_add(u64::from(self.radio.t_frame_ms()))
+        self.repeat_confirm_timeout_ms()
+            .saturating_add(u64::from(self.radio.t_frame_ms()))
+    }
+
+    /// How long a send waits to overhear its own packet carried onward before
+    /// the attempt is over.
+    ///
+    /// This spans the full retry ladder: every confirmation window plus the
+    /// backoff that separates them. A send with no ACK to wait for ends here;
+    /// an ACK-requested send allows a further frame time for the ack to
+    /// return.
+    fn repeat_confirm_timeout_ms(&self) -> u64 {
+        let per_retry_ms = u64::from(self.forward_retry_backoff_cap_ms())
+            .saturating_add(self.forward_confirm_timeout_ms());
+        self.forward_confirm_timeout_ms()
+            .saturating_add(per_retry_ms.saturating_mul(u64::from(MAX_FORWARD_RETRIES)))
     }
 
     fn pending_ack_mut(
@@ -5055,36 +5326,78 @@ impl<
 
     /// Check if a received frame confirms forwarding of a pending send.
     ///
-    /// Returns `Some((identity_id, receipt))` on successful confirmation
-    /// (AwaitingForward → AwaitingAck transition), `None` otherwise.
+    /// Confirmation is not tied to the post-transmit listen window. That
+    /// window governs when this node stays off the air waiting; the sender's
+    /// interest in hearing its packet carried onward outlives it. A repeat
+    /// that arrives late — or while a retransmission is already sitting in
+    /// backoff — is the same evidence it would have been a moment earlier, so
+    /// every pending send still waiting for a repeat is matched, and a retry
+    /// queued on its behalf is withdrawn.
+    ///
+    /// Returns `Some((identity_id, receipt))` on successful confirmation,
+    /// `None` otherwise. A send expecting an ACK moves on to wait for it; a
+    /// [`CompletionSignal::RepeatOnly`] send is finished by the repeat itself.
     fn observe_forwarding_confirmation(
         &mut self,
         frame: &[u8],
     ) -> Option<(LocalIdentityId, SendReceipt)> {
         self.expire_post_tx_listen_if_needed();
-        let listen = self.post_tx_listen.clone()?;
-
         let received_key = Self::confirmation_key(frame)?;
-        if received_key != listen.confirm_key {
-            return None;
+
+        // Whatever the pending table decides below, the wait itself is over.
+        if self
+            .post_tx_listen
+            .as_ref()
+            .map(|listen| listen.confirm_key == received_key)
+            .unwrap_or(false)
+        {
+            self.post_tx_listen = None;
         }
 
-        let Some(slot) = self.identity_mut(listen.identity_id) else {
-            self.post_tx_listen = None;
-            return None;
-        };
-        let Some(pending) = slot.pending_ack_mut(&listen.receipt) else {
-            self.post_tx_listen = None;
-            return None;
-        };
-        if !matches!(pending.state, crate::AckState::AwaitingForward { .. }) {
-            self.post_tx_listen = None;
-            return None;
+        let mut found = None;
+        'search: for (index, slot) in self.identities.iter().enumerate() {
+            let Some(slot) = slot.as_ref() else {
+                continue;
+            };
+            for (receipt, pending) in slot.pending_acks.iter() {
+                if !matches!(
+                    pending.state,
+                    crate::AckState::AwaitingForward { .. } | crate::AckState::RetryQueued
+                ) {
+                    continue;
+                }
+                if pending.confirm_key.as_ref() != Some(&received_key) {
+                    continue;
+                }
+                found = Some((LocalIdentityId(index as u8), *receipt, pending.completion));
+                break 'search;
+            }
         }
+        let (identity_id, receipt, completion) = found?;
 
-        pending.state = crate::AckState::AwaitingAck;
-        self.post_tx_listen = None;
-        Some((listen.identity_id, listen.receipt))
+        // A retransmission scheduled while this confirmation was in flight has
+        // been overtaken by it.
+        self.tx_queue.remove_all_matching(|entry| {
+            entry.receipt == Some(receipt) && entry.identity_id == Some(identity_id)
+        });
+
+        match completion {
+            CompletionSignal::Ack => {
+                if let Some(pending) = self
+                    .identity_mut(identity_id)
+                    .and_then(|slot| slot.pending_ack_mut(&receipt))
+                {
+                    pending.state = crate::AckState::AwaitingAck;
+                }
+            }
+            // Nothing further is coming: the repeat was the whole point.
+            CompletionSignal::RepeatOnly => {
+                if let Some(slot) = self.identity_mut(identity_id) {
+                    slot.pending_acks.remove(&receipt);
+                }
+            }
+        }
+        Some((identity_id, receipt))
     }
 
     /// Find the destination peer of the outstanding ack-requested send whose
@@ -5107,7 +5420,8 @@ impl<
         }
 
         slot.pending_acks.iter().find_map(|(_, pending)| {
-            (pending.ack_trailer == ack_trailer_bytes).then_some(pending.peer)
+            (pending.expects_ack() && pending.ack_trailer == ack_trailer_bytes)
+                .then_some(pending.peer)
         })
     }
 }

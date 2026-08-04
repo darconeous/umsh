@@ -119,6 +119,8 @@ This option represents a piggy-backed MAC ack that, when received, behaves as if
 
 The option carries only the correlation handle, not a keyed ack tag: the packet carrying the option is itself authenticated to the original sender, so its own MIC already proves the acknowledgement is genuine. The `ack_mic` value simply identifies which outstanding request the reply acknowledges.
 
+Because the option sits in the plaintext options block, forwarders read it under the same terms as a standalone MAC ack, including for [ack cancellation](repeater-operation.md#ack-cancellation).
+
 ### Minimum SNR (option 9)
 - Type: signed 1-byte integer, in dB
 - Semantics: packet must be received with at least this SNR to be flood-forwarded. This option does not apply to source-routed hops.

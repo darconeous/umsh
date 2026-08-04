@@ -318,9 +318,9 @@ pub use peers::{
     PeerId, PeerInfo, PeerRegistry, PeerRemoval,
 };
 pub use send::{
-    AckState, ChannelInfoRef, MacEventRef, PacketFamily, PendingAck, PendingAckError, QueuedTx,
-    ReceivedPacketRef, ResendRecord, RouteHops, RxMetadata, SendOptions, SendReceipt, TxPriority,
-    TxQueue,
+    AckState, ChannelInfoRef, CompletionSignal, MacEventRef, PacketFamily, PendingAck,
+    PendingAckError, QueuedTx, ReceivedPacketRef, ResendRecord, RouteHops, RxMetadata, SendOptions,
+    SendReceipt, TxPriority, TxQueue,
 };
 pub use umsh_hal::Snr;
 

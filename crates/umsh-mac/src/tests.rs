@@ -7150,6 +7150,600 @@ fn complete_ack_matches_receipt_and_clears_pending_entry() {
     );
 }
 
+/// Build a sealed pass-through UNAR (someone else's traffic) for repeater
+/// tests: full source, arbitrary destination hint, 3 flood hops.
+fn build_passing_unar(route_retry: bool) -> heapless::Vec<u8, 256> {
+    let remote = DummyIdentity::new([0xAB; 32]);
+    let keys = PairwiseKeys {
+        k_enc: [3; 16],
+        k_mic: [4; 16],
+    };
+    let mut buf = [0u8; 256];
+    let builder = PacketBuilder::new(&mut buf)
+        .unicast(NodeHint([0x77, 0x66, 0x55]))
+        .source_full(remote.public_key())
+        .frame_counter(13)
+        .ack_requested()
+        .encrypted()
+        .mic_size(umsh_core::MicSize::Mic16)
+        .flood_hops(3);
+    let builder = if route_retry {
+        builder.option(OptionNumber::RouteRetry, &[])
+    } else {
+        builder
+    };
+    let mut packet = builder.payload(b"ping").build().unwrap();
+    CryptoEngine::new(DummyAes, DummySha)
+        .seal_packet(&mut packet, &keys)
+        .unwrap();
+    let mut stored: heapless::Vec<u8, 256> = heapless::Vec::new();
+    stored.extend_from_slice(packet.as_bytes()).unwrap();
+    stored
+}
+
+fn mic_prefix(frame: &[u8]) -> [u8; 4] {
+    let header = PacketHeader::parse(frame).unwrap();
+    let mic = &frame[header.mic_range.clone()];
+    [mic[0], mic[1], mic[2], mic[3]]
+}
+
+fn make_repeater_mac() -> TestMac {
+    let mut mac = make_mac();
+    mac.repeater_config_mut().enabled = true;
+    let _ = mac.add_identity(DummyIdentity::new([0x10; 32])).unwrap();
+    mac
+}
+
+#[test]
+fn overheard_mac_ack_cancels_matching_queued_forward() {
+    let mut mac = make_repeater_mac();
+    let unar = build_passing_unar(false);
+
+    mac.radio_mut().queue_received_frame(unar.as_slice());
+    assert!(block_on(mac.receive_one(|_, _| {})).unwrap());
+    assert_eq!(mac.tx_queue().len(), 1);
+
+    // The destination's ack: the public MIC prefix, an unverifiable tag.
+    let prefix = mic_prefix(unar.as_slice());
+    let mut trailer = [0u8; 8];
+    trailer[..4].copy_from_slice(&prefix);
+    trailer[4..].copy_from_slice(&[0xDE, 0xAD, 0xBE, 0xEF]);
+    mac.radio_mut().queue_received_mac_ack(trailer);
+    let _ = block_on(mac.receive_one(|_, _| {})).unwrap();
+
+    assert!(
+        mac.tx_queue().is_empty(),
+        "the acknowledged forward is withdrawn"
+    );
+    assert_eq!(mac.counters().forward_cancelled, 1);
+
+    // The cancellation leaves the duplicate entry in place: another copy of
+    // the same attempt arriving later is not re-queued.
+    mac.radio_mut().queue_received_frame(unar.as_slice());
+    let _ = block_on(mac.receive_one(|_, _| {})).unwrap();
+    assert!(mac.tx_queue().is_empty());
+}
+
+#[test]
+fn overheard_mac_ack_cancels_a_route_retry_copy_too() {
+    let mut mac = make_repeater_mac();
+    let retry_copy = build_passing_unar(true);
+
+    mac.radio_mut().queue_received_frame(retry_copy.as_slice());
+    assert!(block_on(mac.receive_one(|_, _| {})).unwrap());
+    assert_eq!(mac.tx_queue().len(), 1);
+
+    let prefix = mic_prefix(retry_copy.as_slice());
+    let mut trailer = [0u8; 8];
+    trailer[..4].copy_from_slice(&prefix);
+    mac.radio_mut().queue_received_mac_ack(trailer);
+    let _ = block_on(mac.receive_one(|_, _| {})).unwrap();
+
+    assert!(mac.tx_queue().is_empty());
+}
+
+/// Cancellation is an event on the queue, not a standing verdict: a
+/// route-retry copy arriving *after* the original was cancelled is a fresh
+/// forwarding identity — the origin resorted to it because the ack never
+/// reached it — and must be carried, and is in turn cancelable.
+#[test]
+fn cancellation_does_not_suppress_a_later_route_retry_copy() {
+    let mut mac = make_repeater_mac();
+    let original = build_passing_unar(false);
+    let retry_copy = build_passing_unar(true);
+
+    mac.radio_mut().queue_received_frame(original.as_slice());
+    assert!(block_on(mac.receive_one(|_, _| {})).unwrap());
+    assert_eq!(mac.tx_queue().len(), 1);
+
+    let prefix = mic_prefix(original.as_slice());
+    let mut trailer = [0u8; 8];
+    trailer[..4].copy_from_slice(&prefix);
+    mac.radio_mut().queue_received_mac_ack(trailer);
+    let _ = block_on(mac.receive_one(|_, _| {})).unwrap();
+    assert!(mac.tx_queue().is_empty());
+
+    // Same MIC, distinct forwarding identity: queued and forwarded.
+    mac.radio_mut().queue_received_frame(retry_copy.as_slice());
+    assert!(block_on(mac.receive_one(|_, _| {})).unwrap());
+    assert_eq!(mac.tx_queue().len(), 1);
+
+    // And another overheard ack takes it back out.
+    mac.radio_mut().queue_received_mac_ack(trailer);
+    let _ = block_on(mac.receive_one(|_, _| {})).unwrap();
+    assert!(mac.tx_queue().is_empty());
+    assert_eq!(mac.counters().forward_cancelled, 2);
+}
+
+#[test]
+fn unrelated_mac_ack_leaves_a_queued_forward_alone() {
+    let mut mac = make_repeater_mac();
+    let unar = build_passing_unar(false);
+
+    mac.radio_mut().queue_received_frame(unar.as_slice());
+    assert!(block_on(mac.receive_one(|_, _| {})).unwrap());
+    assert_eq!(mac.tx_queue().len(), 1);
+
+    mac.radio_mut()
+        .queue_received_mac_ack([0x01, 0x02, 0x03, 0x04, 0x05, 0x06, 0x07, 0x08]);
+    let _ = block_on(mac.receive_one(|_, _| {})).unwrap();
+
+    assert_eq!(mac.tx_queue().len(), 1);
+    assert_eq!(mac.counters().forward_cancelled, 0);
+}
+
+/// A MAC ack's own trailer opens with the same four bytes it echoes, so a
+/// second copy of the ack must not cancel the queued forward of the ack
+/// itself — only the acknowledged data packet's forward is fair game.
+#[test]
+fn duplicate_mac_ack_does_not_cancel_the_queued_ack_forward() {
+    let mut mac = make_repeater_mac();
+    let trailer = [0x11, 0x22, 0x33, 0x44, 0x55, 0x66, 0x77, 0x88];
+    let mut buf = [0u8; 256];
+    let ack = PacketBuilder::new(&mut buf)
+        .mac_ack(trailer)
+        .flood_hops(3)
+        .build()
+        .unwrap();
+    let ack: heapless::Vec<u8, 256> = ack.iter().copied().collect();
+
+    mac.radio_mut().queue_received_frame(ack.as_slice());
+    assert!(block_on(mac.receive_one(|_, _| {})).unwrap());
+    assert_eq!(mac.tx_queue().len(), 1);
+
+    mac.radio_mut().queue_received_frame(ack.as_slice());
+    let _ = block_on(mac.receive_one(|_, _| {})).unwrap();
+
+    assert_eq!(mac.tx_queue().len(), 1, "the ack forward survives");
+    let queued = mac.tx_queue_mut().pop_next().unwrap();
+    let header = PacketHeader::parse(queued.frame.as_slice()).unwrap();
+    assert_eq!(header.packet_type(), PacketType::MacAck);
+    assert_eq!(mac.counters().forward_cancelled, 0);
+}
+
+/// The Ack MIC option is the piggy-backed form of the same evidence: a data
+/// packet travelling the other way names the acknowledged packet's MIC
+/// prefix, and a forwarder holding that packet reads it without any keys.
+#[test]
+fn ack_mic_option_cancels_matching_queued_forward() {
+    let mut mac = make_repeater_mac();
+    let unar = build_passing_unar(false);
+
+    mac.radio_mut().queue_received_frame(unar.as_slice());
+    assert!(block_on(mac.receive_one(|_, _| {})).unwrap());
+    assert_eq!(mac.tx_queue().len(), 1);
+
+    // A reply the repeater cannot decrypt, carrying the Ack MIC option.
+    let prefix = mic_prefix(unar.as_slice());
+    let replier = DummyIdentity::new([0xCD; 32]);
+    let reply_keys = PairwiseKeys {
+        k_enc: [5; 16],
+        k_mic: [6; 16],
+    };
+    let mut buf = [0u8; 256];
+    let mut reply = PacketBuilder::new(&mut buf)
+        .unicast(NodeHint([0x44, 0x33, 0x22]))
+        .source_full(replier.public_key())
+        .frame_counter(2)
+        .encrypted()
+        .mic_size(umsh_core::MicSize::Mic16)
+        .option(OptionNumber::AckMic, &prefix)
+        .payload(b"reply")
+        .build()
+        .unwrap();
+    CryptoEngine::new(DummyAes, DummySha)
+        .seal_packet(&mut reply, &reply_keys)
+        .unwrap();
+    mac.radio_mut().queue_received_frame(reply.as_bytes());
+    let _ = block_on(mac.receive_one(|_, _| {})).unwrap();
+
+    assert!(mac.tx_queue().is_empty());
+    assert_eq!(mac.counters().forward_cancelled, 1);
+}
+
+/// Install identity + peer + pairwise keys; the boilerplate every sender-side
+/// tracking test starts from.
+fn make_sender_mac() -> (TestMac, LocalIdentityId, PublicKey) {
+    let mut mac = make_mac();
+    let local_id = mac.add_identity(DummyIdentity::new([0x10; 32])).unwrap();
+    let peer_key = test_pubkey(0xAB);
+    let peer_id = mac.add_peer(peer_key).unwrap();
+    mac.install_pairwise_keys(
+        local_id,
+        peer_id,
+        PairwiseKeys {
+            k_enc: [1; 16],
+            k_mic: [2; 16],
+        },
+    )
+    .unwrap();
+    (mac, local_id, peer_key)
+}
+
+fn sole_tracked_receipt(mac: &TestMac, local_id: LocalIdentityId) -> SendReceipt {
+    let slot = mac.identity(local_id).unwrap();
+    let mut entries = slot.pending_acks();
+    let (receipt, _) = entries.next().expect("a tracked send");
+    assert!(entries.next().is_none(), "exactly one tracked send");
+    *receipt
+}
+
+/// A non-ACK unicast with a flood budget is tracked internally (no receipt
+/// for the caller) and walks the full retry ladder when no repeat is ever
+/// heard, ending in silence: no AckTimeout, no retry left behind.
+#[test]
+fn non_ack_unicast_with_hops_retries_until_the_ladder_ends() {
+    let (mut mac, local_id, peer_key) = make_sender_mac();
+
+    let receipt = mac
+        .queue_unicast(local_id, &peer_key, b"hello", &SendOptions::default())
+        .unwrap();
+    assert!(receipt.is_none(), "no receipt for a non-ACK send");
+    let receipt = sole_tracked_receipt(&mac, local_id);
+    assert!(
+        !mac.identity(local_id)
+            .unwrap()
+            .pending_ack(&receipt)
+            .unwrap()
+            .expects_ack()
+    );
+
+    let mut timeouts = 0u32;
+    let mut on_event = |_: LocalIdentityId, event: MacEventRef<'_>| {
+        if matches!(event, MacEventRef::AckTimeout { .. }) {
+            timeouts += 1;
+        }
+    };
+
+    let _ = block_on(mac.transmit_next(&mut on_event)).unwrap();
+    assert_eq!(mac.radio().transmitted.len(), 1);
+
+    let t_frame = u64::from(mac.radio_mut().t_frame_ms());
+    for expected_tx in 2..=(1 + u64::from(crate::MAX_FORWARD_RETRIES)) {
+        let confirm_deadline_ms = match mac
+            .identity(local_id)
+            .unwrap()
+            .pending_ack(&receipt)
+            .unwrap()
+            .state
+        {
+            AckState::AwaitingForward {
+                confirm_deadline_ms,
+            } => confirm_deadline_ms,
+            other => panic!("expected AwaitingForward, got {other:?}"),
+        };
+        mac.clock()
+            .advance_ms(confirm_deadline_ms.saturating_sub(mac.clock().now_ms()));
+        mac.service_pending_ack_timeouts(&mut on_event).unwrap();
+        assert_eq!(mac.tx_queue().len(), 1, "a retry is queued");
+        // The retry jitter is flat: at most one frame time.
+        mac.clock().advance_ms(t_frame + 1);
+        let _ = block_on(mac.transmit_next(&mut on_event)).unwrap();
+        assert_eq!(mac.radio().transmitted.len(), expected_tx as usize);
+    }
+
+    // Budget spent. The terminal deadline discards the entry in silence.
+    let deadline_ms = mac
+        .identity(local_id)
+        .unwrap()
+        .pending_ack(&receipt)
+        .unwrap()
+        .ack_deadline_ms;
+    mac.clock()
+        .advance_ms(deadline_ms.saturating_sub(mac.clock().now_ms()));
+    mac.service_pending_ack_timeouts(&mut on_event).unwrap();
+
+    assert!(
+        mac.identity(local_id)
+            .unwrap()
+            .pending_ack(&receipt)
+            .is_none()
+    );
+    assert!(mac.tx_queue().is_empty());
+    assert_eq!(timeouts, 0, "a best-effort send times out in silence");
+}
+
+/// A direct non-ACK unicast — no flood budget, no source route — is exactly
+/// one transmission: nothing tracked, nothing retried.
+#[test]
+fn non_ack_direct_unicast_is_transmitted_exactly_once() {
+    let (mut mac, local_id, peer_key) = make_sender_mac();
+
+    let receipt = mac
+        .queue_unicast(
+            local_id,
+            &peer_key,
+            b"hello",
+            &SendOptions::default().no_flood(),
+        )
+        .unwrap();
+    assert!(receipt.is_none());
+    assert!(
+        mac.identity(local_id)
+            .unwrap()
+            .pending_acks()
+            .next()
+            .is_none(),
+        "a direct non-ACK send is not tracked"
+    );
+
+    let _ = block_on(mac.transmit_next(&mut |_, _| {})).unwrap();
+    assert_eq!(mac.radio().transmitted.len(), 1);
+    assert!(mac.tx_queue().is_empty());
+
+    mac.clock().advance_ms(1_000_000);
+    mac.service_pending_ack_timeouts(|_, _| {}).unwrap();
+    assert!(mac.tx_queue().is_empty(), "nothing ever retries");
+}
+
+/// The post-transmit listen window that parks all other traffic belongs to
+/// ACK-requested sends only; a best-effort flood send must not stall the
+/// node's queue for a confirmation it is merely hoping for.
+#[test]
+fn repeat_confirmed_send_does_not_block_other_traffic() {
+    let (mut mac, local_id, peer_key) = make_sender_mac();
+
+    let _ = mac
+        .queue_unicast(local_id, &peer_key, b"hello", &SendOptions::default())
+        .unwrap();
+    let _ = block_on(mac.transmit_next(&mut |_, _| {})).unwrap();
+    assert_eq!(mac.radio().transmitted.len(), 1);
+
+    let _ = mac
+        .queue_broadcast(local_id, b"beacon", &SendOptions::default().no_flood())
+        .unwrap();
+    let _ = block_on(mac.transmit_next(&mut |_, _| {})).unwrap();
+    assert_eq!(
+        mac.radio().transmitted.len(),
+        2,
+        "no listen window holds the beacon back"
+    );
+}
+
+/// Overhearing a repeat completes a repeat-only send outright: `Forwarded`
+/// fires and the entry is gone — that repeat was the whole outcome.
+#[test]
+fn overheard_repeat_completes_a_non_ack_send() {
+    let (mut mac, local_id, peer_key) = make_sender_mac();
+
+    let _ = mac
+        .queue_unicast(local_id, &peer_key, b"hello", &SendOptions::default())
+        .unwrap();
+    let receipt = sole_tracked_receipt(&mac, local_id);
+    let _ = block_on(mac.transmit_next(&mut |_, _| {})).unwrap();
+
+    let frame = mac
+        .identity(local_id)
+        .unwrap()
+        .pending_ack(&receipt)
+        .unwrap()
+        .resend
+        .frame
+        .clone();
+    let forwarded = rewrite_forwarded_fixture(frame.as_slice());
+    mac.radio_mut().queue_received_frame(forwarded.as_slice());
+
+    let mut confirmed = None;
+    let handled = block_on(mac.receive_one(|identity, event| {
+        if let MacEventRef::Forwarded { receipt, .. } = event {
+            confirmed = Some((identity, receipt));
+        }
+    }))
+    .unwrap();
+
+    assert!(handled);
+    assert_eq!(confirmed, Some((local_id, receipt)));
+    assert!(
+        mac.identity(local_id)
+            .unwrap()
+            .pending_ack(&receipt)
+            .is_none()
+    );
+}
+
+/// A repeat that arrives while the retransmission sits in backoff still
+/// counts: the queued retry is withdrawn and the send completes.
+#[test]
+fn late_repeat_withdraws_a_queued_retry() {
+    let (mut mac, local_id, peer_key) = make_sender_mac();
+
+    let _ = mac
+        .queue_unicast(local_id, &peer_key, b"hello", &SendOptions::default())
+        .unwrap();
+    let receipt = sole_tracked_receipt(&mac, local_id);
+    let _ = block_on(mac.transmit_next(&mut |_, _| {})).unwrap();
+
+    let confirm_deadline_ms = match mac
+        .identity(local_id)
+        .unwrap()
+        .pending_ack(&receipt)
+        .unwrap()
+        .state
+    {
+        AckState::AwaitingForward {
+            confirm_deadline_ms,
+        } => confirm_deadline_ms,
+        other => panic!("expected AwaitingForward, got {other:?}"),
+    };
+    mac.clock()
+        .advance_ms(confirm_deadline_ms.saturating_sub(mac.clock().now_ms()));
+    mac.service_pending_ack_timeouts(|_, _| {}).unwrap();
+    assert_eq!(
+        mac.tx_queue().len(),
+        1,
+        "the retry is waiting out its jitter"
+    );
+
+    let frame = mac
+        .identity(local_id)
+        .unwrap()
+        .pending_ack(&receipt)
+        .unwrap()
+        .resend
+        .frame
+        .clone();
+    let forwarded = rewrite_forwarded_fixture(frame.as_slice());
+    mac.radio_mut().queue_received_frame(forwarded.as_slice());
+    assert!(block_on(mac.receive_one(|_, _| {})).unwrap());
+
+    assert!(
+        mac.identity(local_id)
+            .unwrap()
+            .pending_ack(&receipt)
+            .is_none()
+    );
+    assert!(mac.tx_queue().is_empty(), "the queued retry is withdrawn");
+}
+
+/// The same late-repeat handling serves ACK-requested sends: the queued
+/// retry is withdrawn and the send moves on to waiting for its ack.
+#[test]
+fn late_repeat_moves_an_ack_requested_send_to_awaiting_ack() {
+    let (mut mac, local_id, peer_key) = make_sender_mac();
+
+    let route = [RouterHint([1, 2])];
+    let options = SendOptions::default()
+        .with_ack_requested(true)
+        .try_with_source_route(&route)
+        .unwrap();
+    let receipt = mac
+        .queue_unicast(local_id, &peer_key, b"hello", &options)
+        .unwrap()
+        .unwrap();
+    let _ = block_on(mac.transmit_next(&mut |_, _| {})).unwrap();
+
+    let confirm_deadline_ms = match mac
+        .identity(local_id)
+        .unwrap()
+        .pending_ack(&receipt)
+        .unwrap()
+        .state
+    {
+        AckState::AwaitingForward {
+            confirm_deadline_ms,
+        } => confirm_deadline_ms,
+        other => panic!("expected AwaitingForward, got {other:?}"),
+    };
+    mac.clock()
+        .advance_ms(confirm_deadline_ms.saturating_sub(mac.clock().now_ms()));
+    mac.service_pending_ack_timeouts(|_, _| {}).unwrap();
+    assert_eq!(mac.tx_queue().len(), 1);
+
+    let frame = mac
+        .identity(local_id)
+        .unwrap()
+        .pending_ack(&receipt)
+        .unwrap()
+        .resend
+        .frame
+        .clone();
+    let forwarded = rewrite_forwarded_fixture(frame.as_slice());
+    mac.radio_mut().queue_received_frame(forwarded.as_slice());
+    assert!(block_on(mac.receive_one(|_, _| {})).unwrap());
+
+    assert!(matches!(
+        mac.identity(local_id)
+            .unwrap()
+            .pending_ack(&receipt)
+            .unwrap()
+            .state,
+        AckState::AwaitingAck
+    ));
+    assert!(mac.tx_queue().is_empty(), "the queued retry is withdrawn");
+}
+
+/// An ack that lands while a retransmission is queued must take the
+/// retransmission with it; the send is over.
+#[test]
+fn complete_ack_withdraws_a_queued_retry() {
+    let (mut mac, local_id, peer_key) = make_sender_mac();
+
+    let route = [RouterHint([1, 2])];
+    let options = SendOptions::default()
+        .with_ack_requested(true)
+        .try_with_source_route(&route)
+        .unwrap();
+    let receipt = mac
+        .queue_unicast(local_id, &peer_key, b"hello", &options)
+        .unwrap()
+        .unwrap();
+    let _ = block_on(mac.transmit_next(&mut |_, _| {})).unwrap();
+
+    let confirm_deadline_ms = match mac
+        .identity(local_id)
+        .unwrap()
+        .pending_ack(&receipt)
+        .unwrap()
+        .state
+    {
+        AckState::AwaitingForward {
+            confirm_deadline_ms,
+        } => confirm_deadline_ms,
+        other => panic!("expected AwaitingForward, got {other:?}"),
+    };
+    mac.clock()
+        .advance_ms(confirm_deadline_ms.saturating_sub(mac.clock().now_ms()));
+    mac.service_pending_ack_timeouts(|_, _| {}).unwrap();
+    assert_eq!(mac.tx_queue().len(), 1);
+
+    let ack_trailer = mac
+        .identity(local_id)
+        .unwrap()
+        .pending_ack(&receipt)
+        .unwrap()
+        .ack_trailer;
+    assert_eq!(
+        mac.complete_ack(&peer_key, &ack_trailer),
+        Some((local_id, receipt))
+    );
+    assert!(mac.tx_queue().is_empty(), "the queued retry is withdrawn");
+}
+
+/// The last line of defense: a queued retransmission whose send no longer
+/// has pending state — completed or cancelled through any path — is dropped
+/// at the radio's doorstep instead of transmitted.
+#[test]
+fn transmit_next_drops_a_retry_whose_send_is_finished() {
+    let (mut mac, local_id, _peer_key) = make_sender_mac();
+
+    mac.tx_queue_mut()
+        .enqueue_with_state(
+            TxPriority::Retry,
+            b"stale retry",
+            Some(SendReceipt(99)),
+            Some(local_id),
+            0,
+            0,
+            0,
+        )
+        .unwrap();
+
+    let result = block_on(mac.transmit_next(&mut |_, _| {})).unwrap();
+    assert!(result.is_none());
+    assert!(mac.tx_queue().is_empty());
+    assert!(mac.radio().transmitted.is_empty(), "nothing went on air");
+}
+
 fn received_of_type<'a>(
     event: &'a MacEventRef<'a>,
     packet_type: PacketType,

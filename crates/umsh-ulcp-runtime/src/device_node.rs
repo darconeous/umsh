@@ -205,7 +205,7 @@ static NODE_UP: AtomicBool = AtomicBool::new(false);
 /// cycle so a board's display can read them without borrowing the
 /// coordinator.
 ///
-/// Five plain atomics rather than a mutex: the readers are display code
+/// Plain atomics rather than a mutex: the readers are display code
 /// that wants a glance, not a consistent transaction, and a torn read
 /// across two of these counters is invisible at the resolution anyone
 /// looks at them. Publishing from inside the pump costs no extra wakeups —
@@ -215,6 +215,7 @@ static MAC_TX_ABANDONED: AtomicU32 = AtomicU32::new(0);
 static MAC_RX_FRAMES: AtomicU32 = AtomicU32::new(0);
 static MAC_RX_ACCEPTED: AtomicU32 = AtomicU32::new(0);
 static MAC_FORWARDED: AtomicU32 = AtomicU32::new(0);
+static MAC_FORWARD_CANCELLED: AtomicU32 = AtomicU32::new(0);
 
 /// The most recently published MAC tallies.
 ///
@@ -228,6 +229,7 @@ pub fn mac_counters() -> MacCounters {
         rx_frames: MAC_RX_FRAMES.load(Ordering::Relaxed),
         rx_accepted: MAC_RX_ACCEPTED.load(Ordering::Relaxed),
         forwarded: MAC_FORWARDED.load(Ordering::Relaxed),
+        forward_cancelled: MAC_FORWARD_CANCELLED.load(Ordering::Relaxed),
     }
 }
 
@@ -237,6 +239,7 @@ fn publish_mac_counters(counters: MacCounters) {
     MAC_RX_FRAMES.store(counters.rx_frames, Ordering::Relaxed);
     MAC_RX_ACCEPTED.store(counters.rx_accepted, Ordering::Relaxed);
     MAC_FORWARDED.store(counters.forwarded, Ordering::Relaxed);
+    MAC_FORWARD_CANCELLED.store(counters.forward_cancelled, Ordering::Relaxed);
 }
 
 /// The transmit power the radio was last configured with, in dBm, offset

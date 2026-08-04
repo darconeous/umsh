@@ -508,6 +508,7 @@ pub enum OptionNumber {
     MinRssi,
     RouteRetry,
     StationCallsign,
+    AckMic,
     MinSnr,
     Unknown(u16),
 }
@@ -523,6 +524,7 @@ impl OptionNumber {
             Self::MinRssi => 5,
             Self::RouteRetry => 6,
             Self::StationCallsign => 7,
+            Self::AckMic => 8,
             Self::MinSnr => 9,
             Self::Unknown(value) => value,
         }
@@ -548,6 +550,7 @@ impl From<u16> for OptionNumber {
             5 => Self::MinRssi,
             6 => Self::RouteRetry,
             7 => Self::StationCallsign,
+            8 => Self::AckMic,
             9 => Self::MinSnr,
             11 => Self::RegionCode,
             other => Self::Unknown(other),

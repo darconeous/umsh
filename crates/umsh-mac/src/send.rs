@@ -6,7 +6,9 @@ use umsh_core::{
 };
 use umsh_hal::Snr;
 
-use crate::{CapacityError, LocalIdentityId, MAX_RESEND_FRAME_LEN, MAX_SOURCE_ROUTE_HOPS};
+use crate::{
+    CapacityError, LocalIdentityId, MAX_RESEND_FRAME_LEN, MAX_SOURCE_ROUTE_HOPS, cache::DupCacheKey,
+};
 
 /// Opaque tracking token returned for ACK-requested transmissions.
 ///
@@ -292,10 +294,27 @@ impl<const FRAME: usize> ResendRecord<FRAME> {
     }
 }
 
-/// Complete tracking state for one in-flight ACK-requested transmission.
+/// The signal that completes a tracked in-flight transmission.
+///
+/// An ACK-requested send finishes when the destination's transport ACK comes
+/// back. A send that asked for no ACK but still travels through repeaters —
+/// flood hops or a source route — has no such signal; the closest thing the
+/// sender can observe is the next hop repeating the frame, so the overheard
+/// repeat itself is the completion.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum CompletionSignal {
+    /// A transport ACK is expected; `PendingAck::ack_trailer` is meaningful.
+    Ack,
+    /// No ACK will ever arrive; overhearing a repeat completes the send.
+    RepeatOnly,
+}
+
+/// Complete tracking state for one in-flight tracked transmission.
 ///
 /// The coordinator's [`IdentitySlot`](crate::IdentitySlot) maintains a `LinearMap` of
-/// `PendingAck` records keyed by [`SendReceipt`], one per active ACK-requested send. The
+/// `PendingAck` records keyed by [`SendReceipt`], one per active tracked send — every
+/// ACK-requested send, plus every non-ACK unicast or blind unicast that travels through
+/// repeaters and therefore retries until a repeat is heard ([`CompletionSignal`]). The
 /// record holds everything needed to detect completion, detect timeout, and retransmit:
 ///
 /// - **`ack_trailer`** — the 8-byte `ack_mic || ack_tag` value that will appear as the
@@ -315,12 +334,14 @@ impl<const FRAME: usize> ResendRecord<FRAME> {
 /// - **`state`** — current position in the [`AckState`] lifecycle (forwarding confirmation
 ///   wait or final-ACK wait).
 ///
-/// Use [`PendingAck::direct`] for sends to nodes in direct radio range, or
-/// [`PendingAck::forwarded`] when routing through a repeater.
+/// Use [`PendingAck::direct`] for sends to nodes in direct radio range,
+/// [`PendingAck::forwarded`] when routing through a repeater, or
+/// [`PendingAck::repeat_only`] for a non-ACK send that completes on an
+/// overheard repeat.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct PendingAck<const FRAME: usize = MAX_RESEND_FRAME_LEN> {
     /// Expected 8-byte MAC ack trailer (`ack_mic || ack_tag`) used for inbound
-    /// matching.
+    /// matching. Never matched for [`CompletionSignal::RepeatOnly`] entries.
     pub ack_trailer: [u8; 8],
     /// Final destination peer.
     pub peer: PublicKey,
@@ -328,12 +349,20 @@ pub struct PendingAck<const FRAME: usize = MAX_RESEND_FRAME_LEN> {
     pub resend: ResendRecord<FRAME>,
     /// Initial send timestamp in milliseconds.
     pub sent_ms: u64,
-    /// Absolute deadline for the final ACK.
+    /// Absolute deadline for the final ACK — or, for a
+    /// [`CompletionSignal::RepeatOnly`] entry, the terminal deadline after
+    /// which the entry is silently discarded.
     pub ack_deadline_ms: u64,
     /// Number of retries already attempted.
     pub retries: u8,
     /// Current state in the ACK lifecycle.
     pub state: AckState,
+    /// Which observation completes this send.
+    pub completion: CompletionSignal,
+    /// Routing identity of the transmitted frame, recorded at transmit time so
+    /// an overheard repeat can be matched against this entry even after the
+    /// post-transmit listen window has lapsed.
+    pub confirm_key: Option<DupCacheKey>,
 }
 
 impl<const FRAME: usize> PendingAck<FRAME> {
@@ -349,6 +378,8 @@ impl<const FRAME: usize> PendingAck<FRAME> {
             state: AckState::Queued {
                 needs_forward_confirmation: false,
             },
+            completion: CompletionSignal::Ack,
+            confirm_key: None,
         }
     }
 
@@ -364,7 +395,32 @@ impl<const FRAME: usize> PendingAck<FRAME> {
             state: AckState::Queued {
                 needs_forward_confirmation: true,
             },
+            completion: CompletionSignal::Ack,
+            confirm_key: None,
         }
+    }
+
+    /// Create tracking state for a non-ACK send that completes when a repeat
+    /// of the frame is overheard.
+    pub fn repeat_only(peer: PublicKey, resend: ResendRecord<FRAME>) -> Self {
+        Self {
+            ack_trailer: [0u8; 8],
+            peer,
+            resend,
+            sent_ms: 0,
+            ack_deadline_ms: 0,
+            retries: 0,
+            state: AckState::Queued {
+                needs_forward_confirmation: true,
+            },
+            completion: CompletionSignal::RepeatOnly,
+            confirm_key: None,
+        }
+    }
+
+    /// Whether a transport ACK is expected for this entry.
+    pub fn expects_ack(&self) -> bool {
+        self.completion == CompletionSignal::Ack
     }
 }
 
@@ -647,6 +703,27 @@ impl<const N: usize, const FRAME: usize> TxQueue<N, FRAME> {
             .enumerate()
             .find_map(|(index, entry)| predicate(entry).then_some(index))?;
         Some(self.entries.swap_remove(index))
+    }
+
+    /// Remove every queued frame matching `predicate`, returning how many were
+    /// dropped.
+    pub fn remove_all_matching(
+        &mut self,
+        mut predicate: impl FnMut(&QueuedTx<FRAME>) -> bool,
+    ) -> usize {
+        let mut removed = 0;
+        let mut index = 0;
+        while index < self.entries.len() {
+            if predicate(&self.entries[index]) {
+                // `swap_remove` moves the last entry into this slot, so the
+                // index is deliberately not advanced.
+                let _ = self.entries.swap_remove(index);
+                removed += 1;
+            } else {
+                index += 1;
+            }
+        }
+        removed
     }
 }
 
