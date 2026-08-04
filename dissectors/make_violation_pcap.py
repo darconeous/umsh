@@ -68,6 +68,15 @@ VECTORS = [
         h("C1" "40", SRC_A, "FF", "02" "01"),
     ),
     (
+        # Valid: a request naming one node by hint draws a single reply
+        # however far it travels, so its hop count is unconstrained. This
+        # must not be reported despite being flooded.
+        "Broadcast identity request, hint-filtered and flooded (valid)",
+        h("C1" "40", SRC_A, "FF",
+          "02" "01"
+          "33" "6C 28 FD"),   # option 3 FILTER_NODE_HINT
+    ),
+    (
         "Beacon with the reserved FCF bit set",
         h("C2", SRC_A),
     ),

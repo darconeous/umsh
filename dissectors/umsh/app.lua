@@ -48,6 +48,9 @@ local PKT_TYPE_NAME = {
   [4]="multicast", [6]="blind unicast", [7]="blind unicast",
 }
 
+-- Holes in the registry, alongside everything from 128 up.
+local RESERVED_PAYLOAD_TYPES = {[0x04] = true, [0x06] = true}
+
 -- ──────────────────────────────────────────────────────────────────────────
 -- Protocol and fields — registered at load time (Wireshark requires all
 -- Protos and their fields to be set up before any dissection begins).
@@ -216,7 +219,6 @@ end
 local function dissect_node_identity(payload, subtree, tvb, ctx, pinfo)
   local len = #payload
   local off = 1  -- 1-indexed in Lua string
-  local saw_nonce = false
   local role, node_name
 
   -- Role (1 byte)
@@ -303,9 +305,7 @@ local function dissect_node_identity(payload, subtree, tvb, ctx, pinfo)
                                      v_len / 2,
                                      (v_len == 2) and "" or "s"))
         elseif num == 5 then
-          -- Echoed from the Identity Request that solicited this payload,
-          -- so its presence marks the identity as a response.
-          saw_nonce = true
+          -- Echoed from the Identity Request that solicited this payload.
           opts_tree:add(f.ni_nonce, tvb(opts_start - 1 + raw_pos - 1 + consumed - v_len, v_len))
         else
           opts_tree:add(f.ni_unknown, opt_tvb)
@@ -347,13 +347,11 @@ local function dissect_node_identity(payload, subtree, tvb, ctx, pinfo)
       "Signed broadcast advertisement must carry its source address in full-key form (S=1)")
   end
 
-  -- An identity answering a request stays within the single hop the
-  -- request was allowed to cross, so it carries no flood hop count. The
-  -- echoed nonce is what marks this payload as a response.
-  if saw_nonce and ctx.fhops ~= nil then
-    ctx.flag(subtree, tvb(0, 1),
-      "Identity response must not carry a FHOPS field")
-  end
+  -- Not checked here: "the response MUST NOT carry a FHOPS field". That
+  -- rule holds for a response to a request confined to its requester's
+  -- neighbourhood, and a response frame does not record which kind of
+  -- request drew it — the echoed nonce marks it as a response but says
+  -- nothing about how the request was addressed or filtered.
 end
 
 -- ──────────────────────────────────────────────────────────────────────────
@@ -385,6 +383,7 @@ local function dissect_mac_command(payload, subtree, tvb, ctx, pinfo)
     pcall(function() opts_module = require("options") end)
 
     local n_filters = 0
+    local saw_hint_filter = false
     if opts_module and rest > 0 then
       pcall(function()
         local pos = 1  -- offset within the option block, 1-indexed
@@ -398,6 +397,7 @@ local function dissect_mac_command(payload, subtree, tvb, ctx, pinfo)
             subtree:add(f.mac_nonce, val_tvb)
           elseif num == 3 then
             n_filters = n_filters + 1
+            saw_hint_filter = true
             subtree:add(f.mac_filt_hint, opt_tvb, base58.node_hint_full(val))
           elseif num == 5 then
             n_filters = n_filters + 1
@@ -418,16 +418,20 @@ local function dissect_mac_command(payload, subtree, tvb, ctx, pinfo)
       detail = string.format("%d filter%s", n_filters, n_filters == 1 and "" or "s")
     end
 
-    -- A request that is not aimed at one node reaches everyone it touches,
-    -- so a flooded one has to narrow the field with at least one filter.
     if ctx and ctx.flag and (ctx.pkt_type == 0 or ctx.pkt_type == 4) then
+      -- A request that is not aimed at one node reaches everyone it
+      -- touches, so a flooded one has to narrow the field.
       if n_filters == 0 then
         ctx.flag(subtree, tvb(0, 1),
           "Broadcast or multicast Identity Request must carry at least one filter option")
       end
-      if ctx.fhops ~= nil and ctx.fhops ~= 0 then
+      -- The hop limit is confined only for a request that selects by role
+      -- or capability, since every node it reaches may answer. One naming
+      -- a single node by hint draws a single reply however far it travels,
+      -- so its hop count is its own business.
+      if not saw_hint_filter and ctx.fhops ~= nil and ctx.fhops ~= 0 then
         ctx.flag(subtree, tvb(0, 1), string.format(
-          "Broadcast or multicast Identity Request must have FHOPS absent or 0x00 (is 0x%02X)",
+          "Identity Request without a node-hint filter must have FHOPS absent or 0x00 (is 0x%02X)",
           ctx.fhops))
       end
     end
@@ -837,7 +841,7 @@ function M.dissect(payload_bytes, parent_tree, pinfo, ks, crypto_mod, ctx)
 
   -- Not every payload type may ride every packet type.
   if ctx and ctx.flag and ctx.pkt_type then
-    if ptype >= 0x80 then
+    if ptype >= 0x80 or RESERVED_PAYLOAD_TYPES[ptype] then
       ctx.flag(subtree, tvb(0, 1), string.format(
         "Payload type 0x%02X is reserved", ptype))
     elseif ALLOWED_IN[ptype] and not ALLOWED_IN[ptype][ctx.pkt_type] then
