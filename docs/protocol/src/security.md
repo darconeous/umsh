@@ -304,13 +304,13 @@ The associated data (AAD) binds the immutable header fields to the MIC so that a
 
 The AAD is constructed by concatenating the following fields in order:
 
-1. **FCF** (1 byte)
+1. **FCF** (1 byte, with the flood-hops-present (`H`) bit cleared)
 2. **Static options** — re-encoded as type-length-value (see below)
 3. **DST** (3-byte destination hint, unicast) or **CHANNEL** (2 bytes, multicast)
 4. **SRC** (3-byte hint or 32-byte full key) — included only when the source field is outside the ciphertext
 5. **SECINFO** (5 or 7 bytes)
 
-Dynamic options and the flood hop count are excluded from the AAD because they may be modified by repeaters during forwarding.
+Dynamic options and the flood hop count are excluded from the AAD because they may be modified by repeaters during forwarding. The FCF's flood-hops-present (`H`) bit is part of that budget rather than of the packet's identity, and is cleared before the byte enters the AAD: a sender abandoning a source route re-floods a packet that is already sealed, which adds `FHOPS` where the original had none. Masking the bit does not weaken the binding. Flipping it on the wire shifts every field the parser reads after it, so DST/CHANNEL, SRC, and SECINFO enter the AAD as different values and the MIC check still fails.
 
 Note that the AAD ordering above is **canonical** and differs from wire ordering. On the wire, static options appear after SECINFO (immediately before the payload); in the AAD they appear at position 2, before DST/CHANNEL. Wire ordering and AAD ordering are intentionally decoupled so that the canonical AAD structure remains stable regardless of where options sit on the wire.
 

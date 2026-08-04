@@ -12,7 +12,7 @@ use rand::{Rng, TryCryptoRng, TryRng};
 use std::collections::BTreeMap;
 use umsh_core::{
     ChannelId, ChannelKey, FloodHops, NodeHint, OptionNumber, PacketBuilder, PacketHeader,
-    PacketType, ParsedOptions, PayloadType, PublicKey, RouterHint, iter_options,
+    PacketType, ParsedOptions, PayloadType, PublicKey, RouterHint, feed_aad, iter_options,
 };
 use umsh_crypto::{
     AesCipher, AesProvider, CryptoEngine, DerivedChannelKeys, NodeIdentity, PairwiseKeys,
@@ -6834,7 +6834,10 @@ fn service_pending_ack_timeouts_reroutes_failed_source_route_once() {
         .unwrap();
     assert!(matches!(pending.state, AckState::RetryQueued));
     assert_eq!(pending.retries, 0);
-    assert_eq!(pending.ack_deadline_ms, 0);
+    assert!(
+        pending.ack_deadline_ms > mac.clock().now_ms(),
+        "the rewritten attempt needs a live window while it waits in the queue"
+    );
     assert!(pending.resend.source_route.is_none());
     let pending_header = PacketHeader::parse(pending.resend.frame.as_slice()).unwrap();
     let pending_options = ParsedOptions::extract(
@@ -6843,6 +6846,138 @@ fn service_pending_ack_timeouts_reroutes_failed_source_route_once() {
     )
     .unwrap();
     assert!(pending_options.route_retry);
+}
+
+/// A route retry waits out a backoff in the transmit queue. The sweep that
+/// scheduled it runs again in that window — and must not read the fresh
+/// attempt as an expired one, which would report the send failed and pull the
+/// retry back out of the queue before it ever aired.
+#[test]
+fn route_retry_survives_a_timeout_sweep_before_it_airs() {
+    let mut mac = make_mac();
+    let local_id = mac.add_identity(DummyIdentity::new([0x10; 32])).unwrap();
+    let peer_key = test_pubkey(0xAB);
+    let peer_id = mac.add_peer(peer_key).unwrap();
+    mac.install_pairwise_keys(
+        local_id,
+        peer_id,
+        PairwiseKeys {
+            k_enc: [1; 16],
+            k_mic: [2; 16],
+        },
+    )
+    .unwrap();
+
+    let mut route = heapless::Vec::new();
+    route.push(RouterHint([1, 2])).unwrap();
+    let mut options = SendOptions::default().with_ack_requested(true).no_flood();
+    options.source_route = Some(route);
+
+    let receipt = mac
+        .queue_unicast(local_id, &peer_key, b"hello", &options)
+        .unwrap()
+        .unwrap();
+    let _original = mac.tx_queue_mut().pop_next().unwrap();
+
+    let pending = mac
+        .identity_mut(local_id)
+        .unwrap()
+        .pending_ack_mut(&receipt)
+        .unwrap();
+    pending.state = AckState::AwaitingAck;
+    pending.ack_deadline_ms = 0;
+
+    mac.service_pending_ack_timeouts(|_, _| {}).unwrap();
+    assert_eq!(mac.tx_queue_mut().len(), 1);
+    let now_ms = mac.clock().now_ms();
+    assert!(
+        !mac.tx_queue_mut().has_ready(now_ms),
+        "this test only means something while the retry is still held back"
+    );
+
+    // The retry is eligible only later, so the wake-up scheduler must not be
+    // pointed at a deadline that has already passed.
+    assert!(
+        mac.earliest_deadline_ms().unwrap() > mac.clock().now_ms(),
+        "an already-expired deadline spins the loop straight back into the sweep"
+    );
+
+    let mut timeout_seen = false;
+    mac.service_pending_ack_timeouts(|_, event| {
+        if matches!(event, MacEventRef::AckTimeout { .. }) {
+            timeout_seen = true;
+        }
+    })
+    .unwrap();
+
+    assert!(!timeout_seen, "the retry had not aired yet");
+    assert_eq!(mac.tx_queue_mut().len(), 1, "the retry is still queued");
+    assert!(
+        mac.identity(local_id)
+            .unwrap()
+            .pending_ack(&receipt)
+            .is_some(),
+        "the ack trailer must stay correlatable or the ack cannot be matched"
+    );
+}
+
+/// The rewritten attempt reuses the original's MIC verbatim, so every byte the
+/// AAD covers has to survive the rewrite — including the FCF, whose
+/// flood-hops-present bit flips when a source route is abandoned for a flood.
+#[test]
+fn route_retry_preserves_the_authenticated_header() {
+    let mut mac = make_mac();
+    let local_id = mac.add_identity(DummyIdentity::new([0x10; 32])).unwrap();
+    let peer_key = test_pubkey(0xAB);
+    let peer_id = mac.add_peer(peer_key).unwrap();
+    mac.install_pairwise_keys(
+        local_id,
+        peer_id,
+        PairwiseKeys {
+            k_enc: [1; 16],
+            k_mic: [2; 16],
+        },
+    )
+    .unwrap();
+
+    let mut route = heapless::Vec::new();
+    route.push(RouterHint([1, 2])).unwrap();
+    let mut options = SendOptions::default().with_ack_requested(true).no_flood();
+    options.source_route = Some(route);
+
+    let receipt = mac
+        .queue_unicast(local_id, &peer_key, b"hello", &options)
+        .unwrap()
+        .unwrap();
+    let original = mac.tx_queue_mut().pop_next().unwrap();
+
+    let pending = mac
+        .identity_mut(local_id)
+        .unwrap()
+        .pending_ack_mut(&receipt)
+        .unwrap();
+    pending.state = AckState::AwaitingAck;
+    pending.ack_deadline_ms = 0;
+    mac.service_pending_ack_timeouts(|_, _| {}).unwrap();
+    let retry = mac.tx_queue_mut().pop_next().unwrap();
+
+    let collect_aad = |frame: &[u8]| {
+        let header = PacketHeader::parse(frame).unwrap();
+        let mut aad = std::vec::Vec::new();
+        feed_aad(&header, frame, |chunk| aad.extend_from_slice(chunk));
+        aad
+    };
+
+    assert_ne!(
+        original.frame.as_slice()[0],
+        retry.frame.as_slice()[0],
+        "the rewrite is expected to add FHOPS, changing the FCF on the wire"
+    );
+    assert_eq!(
+        collect_aad(original.frame.as_slice()),
+        collect_aad(retry.frame.as_slice()),
+        "the copied MIC only verifies if the AAD is byte-identical"
+    );
 }
 
 /// A peer cached as directly reachable transmits at

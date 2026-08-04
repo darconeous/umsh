@@ -228,7 +228,9 @@ end
 
 function M.build_aad(fcf_byte, static_opts, dst_or_chan_bytes,
                      src_bytes_or_nil, secinfo_bytes)
-  local parts = {fcf_byte}
+  -- The flood-hops-present bit is masked off: FHOPS is a mutable forwarding
+  -- budget, and its presence bit travels with it.
+  local parts = {string.char(fcf_byte:byte(1) & 0xFE)}
   for _, opt in ipairs(static_opts or {}) do
     parts[#parts+1] = uint16_be(opt.number)
     parts[#parts+1] = uint16_be(#opt.value)

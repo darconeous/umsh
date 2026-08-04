@@ -175,6 +175,20 @@ impl Fcf {
     pub const fn flood_hops_present(self) -> bool {
         self.0 & 0x01 != 0
     }
+
+    /// Return the FCF as it enters the AAD, with the flood-hops-present bit
+    /// cleared.
+    ///
+    /// `FHOPS` is a forwarding budget, excluded from the AAD because repeaters
+    /// rewrite it. Whether the byte is present at all is the same budget
+    /// expressed one bit up, and a sender that abandons a source route for a
+    /// flood adds it to a packet already sealed. Clearing the bit is not a
+    /// hole: flipping it on the wire shifts every field the parser reads after
+    /// it, so `DST`/`SRC`/`SECINFO` reach the AAD as different values and the
+    /// MIC still fails.
+    pub const fn aad_byte(self) -> u8 {
+        self.0 & !0x01
+    }
 }
 
 /// Security-control field wrapper.
@@ -986,7 +1000,7 @@ pub fn iter_options<'a>(buf: &'a [u8], range: Range<usize>) -> OptionDecoder<'a>
 }
 
 pub fn feed_aad(header: &PacketHeader, packet_buf: &[u8], mut sink: impl FnMut(&[u8])) {
-    sink(&packet_buf[..1]);
+    sink(&[header.fcf.aad_byte()]);
     for option in iter_options(packet_buf, header.options_range.clone()) {
         let Ok((number, value)) = option else {
             return;

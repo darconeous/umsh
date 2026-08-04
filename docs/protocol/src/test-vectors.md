@@ -176,13 +176,13 @@ An encrypted unicast with a region code option, an empty trace-route option, and
 | SCF | E=1, MIC=3 (16-byte), S=0 | `E0` |
 | Frame Counter | 10 | `00 00 00 0A` |
 | Options | Trace route + region code + end marker | `20 92 78 53 FF` |
-| Payload | Encrypted `68 65 79` (`"hey"`) | `79 F8 9D` |
-| MIC | 16 bytes | `96 91 3C 78 8E 38 5F 64 04 DA 6B 4F 90 4A 7B 38` |
+| Payload | Encrypted `68 65 79` (`"hey"`) | `F4 CF 71` |
+| MIC | 16 bytes | `C4 91 19 48 E1 C8 F1 32 05 6A 16 B1 06 34 74 D5` |
 
 ```text
 D1 40 6C 28 FD ED 54 A5 E0 00 00 00 0A 20 92 78
-53 FF 79 F8 9D 96 91 3C 78 8E 38 5F 64 04 DA 6B
-4F 90 4A 7B 38
+53 FF F4 CF 71 C4 91 19 48 E1 C8 F1 32 05 6A 16
+B1 06 34 74 D5
 ```
 
 Total: 37 bytes.

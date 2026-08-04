@@ -58,6 +58,8 @@ In practice, "proven unreachable" usually means that an ack-requested packet sen
 - include a trace-route option so that a fresh source route can be learned from the peer's reply
 - set the [Route Retry option](packet-options.md#route-retry-option-6) so intermediate repeaters treat the rerouted attempt as a new forwarding opportunity even though the packet's MIC and frame counter are unchanged
 
+Trading a source route for flood hops rewrites only fields the [associated data](security.md#associated-data) excludes. Adding `FHOPS` sets the FCF's `H` bit, which the AAD clears, so the MIC carries over unchanged.
+
 Once the peer replies and a fresher trace route is learned, the sender can resume normal source-routed transmission using the replacement route.
 
 ## Scoping Flood Hops to a Known Route

@@ -40,7 +40,7 @@ Where:
 - `PKT TYPE` = packet type
 - `S` = full 32-byte source address included (when clear, a compact source hint is used instead; see [Source Address](addressing.md#source-address) for hint size by packet type)
 - `R` = reserved; senders MUST set to 0; receivers MUST drop packets where this bit is non-zero
-- `H` = flood hop count present. Zero if direct.
+- `H` = flood hop count present. Zero if direct. Cleared before the byte enters the [AAD](security.md#associated-data)
 
 ### Packet Type Values
 

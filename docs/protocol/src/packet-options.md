@@ -101,6 +101,8 @@ This distinction allows forwarding-related metadata (source routes, trace routes
   - includes a trace-route option to learn a replacement route
   - preserves the same frame counter and payload
 
+  Each of these rewrites a field the [associated data](security.md#associated-data) excludes, which is what lets the retry reuse the original MIC unchanged. Adding `FHOPS` to a packet that had none also sets the FCF's `H` bit, and the AAD clears that bit for this reason.
+
 ### Station Callsign (option 7)
 - Encoding: ARNCE/HAM-64 (2, 4, 6, or 8 bytes; encodes callsigns up to 12 characters)
 - Semantics: identifies the transmitting station's amateur radio callsign.

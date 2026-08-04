@@ -3135,6 +3135,17 @@ impl<
                         if let Some(rewritten) = self.synthesize_route_retry_resend(&peer, &resend)
                         {
                             let rewritten_key = Self::confirmation_key(rewritten.frame.as_slice());
+                            // The rewritten attempt always floods, so it earns
+                            // the forwarded window. It is armed here, from the
+                            // moment the frame becomes eligible to air, rather
+                            // than left at zero for the transmit path to fill
+                            // in: an unarmed deadline reads as *already
+                            // expired* to both the timeout sweep and
+                            // `earliest_deadline_ms`, which would retire the
+                            // send — and drop the frame back out of the queue —
+                            // before the retry it just scheduled ever aired.
+                            let retry_deadline_ms =
+                                not_before_ms.saturating_add(self.forwarded_ack_timeout_ms());
                             if let Some(pending) = self
                                 .identity_mut(identity_id)
                                 .and_then(|slot| slot.pending_ack_mut(&receipt))
@@ -3142,7 +3153,7 @@ impl<
                                 pending.resend = rewritten.clone();
                                 pending.retries = 0;
                                 pending.sent_ms = 0;
-                                pending.ack_deadline_ms = 0;
+                                pending.ack_deadline_ms = retry_deadline_ms;
                                 pending.state = crate::AckState::RetryQueued;
                                 // The rebuilt frame is a distinct forwarding
                                 // identity; a repeat of the abandoned one no
@@ -5154,6 +5165,10 @@ impl<
 
             pending.sent_ms = sent_ms;
             pending.confirm_key = confirm_key.clone();
+            // Zero means the send has never aired and its window is still to
+            // be set. A route retry arrives here already armed — it has to be,
+            // to survive the wait in the queue — and keeps the deadline it was
+            // scheduled with.
             if pending.ack_deadline_ms == 0 {
                 pending.ack_deadline_ms = match (pending.completion, needs_forward_confirmation) {
                     (CompletionSignal::RepeatOnly, _) => repeat_only_deadline_ms,

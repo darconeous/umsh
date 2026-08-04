@@ -181,6 +181,8 @@ A practical recovery rule is:
    - include a trace-route option if route rediscovery is desired
    - set the [Route Retry option](packet-options.md#route-retry-option-6)
 
+These edits touch only fields the [associated data](security.md#associated-data) excludes, which is what lets the MIC carry over. Adding `FHOPS` where the original had none also sets the FCF's `H` bit, and the AAD clears that bit for this reason.
+
 The restored flood radius SHOULD be the one the sending application asked for. A radius the application chose for itself is not a failed cache entry, and recovery MUST NOT widen it: a sender that was told to reach no further than one hop has not made a stale assumption, it has been given an instruction.
 
 This recovery transmission is intentionally the same logical packet, not a new application message. The destination therefore still accepts it at most once according to the normal replay rules. The Route Retry option exists only to let repeaters forward the re-attempted packet even if they already suppressed the original as a duplicate.
