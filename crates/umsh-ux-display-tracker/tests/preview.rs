@@ -193,7 +193,9 @@ fn frames(layout: &Layout) -> Vec<Panel> {
     // Status page across the battery range, with a pairing window open.
     for (level, charge) in [
         (Some(100), Some(ChargeClass::Charged)),
+        (Some(70), Some(ChargeClass::Discharging)),
         (Some(45), Some(ChargeClass::Discharging)),
+        (Some(25), Some(ChargeClass::Discharging)),
         (Some(8), Some(ChargeClass::Discharging)),
         (None, None),
         // Charging with no derivable level: bolt only, no body.

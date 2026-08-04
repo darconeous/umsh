@@ -66,22 +66,22 @@ const LINE: usize = 32;
 /// quarters means the icon changes four times across a discharge.
 pub const BATTERY_SEGMENTS: u8 = 4;
 
-/// Number of lit segments for a *known* charge level, from 1 to
+/// Number of lit segments for a *known* charge level, from 0 to
 /// [`BATTERY_SEGMENTS`].
 ///
-/// Never zero. An empty body is how the indicator says it has no reading
-/// yet, so a pack that is nearly flat has to keep a bar — otherwise the
-/// one state the user most needs to act on is drawn identically to a
-/// sensor that has not reported. The remaining three steps divide the
-/// range evenly, which puts the single-bar warning at 16 % and under.
+/// The bands centre each bar count on the level it depicts: two of four
+/// bars covers 37–63 %, so a half-full pack draws half a body. The two
+/// end bands are deliberately narrower than the middle ones — full and
+/// empty are absolute claims, and a body should not look full at 80 %
+/// nor empty at 20 %.
 pub const fn battery_segments(level_percent: u8) -> u8 {
-    let level = if level_percent > 100 {
-        100
-    } else {
-        level_percent
-    } as u16;
-    let span = (BATTERY_SEGMENTS - 1) as u16;
-    1 + ((level * span + 50) / 100) as u8
+    match level_percent {
+        0..=14 => 0,
+        15..=36 => 1,
+        37..=62 => 2,
+        63..=84 => 3,
+        _ => BATTERY_SEGMENTS,
+    }
 }
 
 /// Battery indicator geometry, in pixels.
@@ -236,8 +236,9 @@ pub enum PairingState {
 /// Charge level and charging state, as far as the board can tell.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub struct BatteryIndicator {
-    /// `None` before the level estimator has had a resting sample —
-    /// drawn as an empty body rather than as zero.
+    /// `None` when there is no level to show — before the estimator has
+    /// had a resting sample, or while charging on a board whose charger
+    /// reports no completion. Nothing is drawn in its place.
     pub level_percent: Option<u8>,
     /// `None` on a board whose charger reports nothing to the MCU, which
     /// is different from knowing the pack is discharging.
@@ -245,7 +246,7 @@ pub struct BatteryIndicator {
 }
 
 impl BatteryIndicator {
-    /// Nothing known yet: empty body, no bolt.
+    /// Nothing known yet: no body, no bolt.
     pub const UNKNOWN: Self = Self {
         level_percent: None,
         charge: None,
@@ -253,29 +254,18 @@ impl BatteryIndicator {
 
     /// Whether the indicator should carry a charging bolt.
     ///
-    /// `Charged` draws one too. It means the pack is full *and still on
-    /// external power*, and no board in this class can currently
-    /// distinguish the two anyway — only the T-1000E, which has no panel,
-    /// reads a real charge-status line.
+    /// `Charged` draws one too, which is a deliberate degradation. The
+    /// full vocabulary is a bolt for "charging" and a plug for "charging
+    /// complete"; no board in this class can tell the two apart — only
+    /// the T-1000E reads a real charge-status line, and it has no panel
+    /// — so a board that sees external power flies the bolt for as long
+    /// as it is plugged in rather than asserting a completion it never
+    /// learns. Add the plug when a display board can substantiate it.
     const fn shows_bolt(&self) -> bool {
         matches!(
             self.charge,
             Some(ChargeClass::Charging) | Some(ChargeClass::Charged)
         )
-    }
-
-    /// Whether the bolt should replace the battery body rather than sit
-    /// beside it.
-    ///
-    /// A charging pack has no state of charge that resting terminal
-    /// voltage can supply, and on the boards in this class the charger
-    /// reports no completion either — so there is nothing to fill a body
-    /// with. Drawing an empty or stale one would be a claim; a bare bolt
-    /// says only what is actually known, which is that the pack is on
-    /// external power. A board that *can* see completion still supplies a
-    /// level and keeps its body.
-    const fn bolt_stands_alone(&self) -> bool {
-        self.shows_bolt() && self.level_percent.is_none()
     }
 }
 
@@ -435,30 +425,38 @@ pub fn draw_battery_icon<D>(
         .build();
     let solid = PrimitiveStyle::with_fill(BinaryColor::On);
 
-    // Charging with nothing to fill a body with: the bolt is the whole
-    // indicator. It keeps the zone's right edge rather than centering in
-    // it, so the indicator stays anchored to the same corner whatever it
-    // is currently drawing — a marker that slides sideways when the
-    // charger goes in reads as a second change on top of the real one.
-    if indicator.bolt_stands_alone() {
-        let zone = Size::new(metrics.zone_width(), metrics.body.height);
-        let bolt = metrics.solo_bolt;
-        let at = Point::new(
-            top_left.x + zone.width.saturating_sub(bolt.width) as i32,
-            top_left.y + (zone.height.saturating_sub(bolt.height) / 2) as i32,
-        );
-        draw_bolt(target, at, bolt, solid);
-        return;
+    // Two independent facts, drawn independently: whether there is a
+    // level to show, and whether the pack is charging. Either, both, or
+    // neither.
+    //
+    // The bolt takes its reserved column beside a body when there is one
+    // to sit beside, and the whole zone when there is not. It keeps the
+    // zone's right edge either way, so the indicator stays anchored to
+    // the same corner whatever it is currently drawing.
+    if indicator.shows_bolt() {
+        if indicator.level_percent.is_some() {
+            draw_bolt(
+                target,
+                top_left,
+                Size::new(metrics.bolt_width, metrics.body.height),
+                solid,
+            );
+        } else {
+            let bolt = metrics.solo_bolt;
+            let at = Point::new(
+                top_left.x + metrics.zone_width().saturating_sub(bolt.width) as i32,
+                top_left.y + (metrics.body.height.saturating_sub(bolt.height) / 2) as i32,
+            );
+            draw_bolt(target, at, bolt, solid);
+        }
     }
 
-    if indicator.shows_bolt() {
-        draw_bolt(
-            target,
-            top_left,
-            Size::new(metrics.bolt_width, metrics.body.height),
-            solid,
-        );
-    }
+    // No level, no body. An empty body means a pack down to its last
+    // sixth; a level the device has not established is drawn as nothing
+    // at all.
+    let Some(level) = indicator.level_percent else {
+        return;
+    };
 
     let body_left = top_left.x + (metrics.bolt_width + metrics.spacing) as i32;
     let _ = Rectangle::new(Point::new(body_left, top_left.y), metrics.body)
@@ -473,15 +471,12 @@ pub fn draw_battery_icon<D>(
     .into_styled(solid)
     .draw(target);
 
-    let Some(level) = indicator.level_percent else {
-        return;
-    };
-    let lit = u32::from(battery_segments(level));
     let inset = metrics.border + metrics.pad;
     let inner = Size::new(
         metrics.body.width.saturating_sub(2 * inset),
         metrics.body.height.saturating_sub(2 * inset),
     );
+    let lit = u32::from(battery_segments(level));
     let count = u32::from(BATTERY_SEGMENTS);
     let seg_width = inner
         .width
@@ -905,19 +900,31 @@ mod tests {
     }
 
     #[test]
-    fn segments_quantize_the_level_without_ever_emptying_the_body() {
-        // A known level always keeps a bar: an empty body means "no
-        // reading", and a flat pack must not borrow that look.
-        assert_eq!(battery_segments(0), 1);
-        assert_eq!(battery_segments(16), 1);
-        assert_eq!(battery_segments(17), 2);
-        assert_eq!(battery_segments(49), 2);
-        assert_eq!(battery_segments(50), 3);
-        assert_eq!(battery_segments(83), 3);
-        assert_eq!(battery_segments(84), 4);
+    fn segments_centre_each_bar_count_on_the_level_it_depicts() {
+        assert_eq!(battery_segments(0), 0);
+        assert_eq!(battery_segments(14), 0);
+        assert_eq!(battery_segments(15), 1);
+        assert_eq!(battery_segments(36), 1);
+        assert_eq!(battery_segments(37), 2);
+        assert_eq!(battery_segments(62), 2);
+        assert_eq!(battery_segments(63), 3);
+        assert_eq!(battery_segments(84), 3);
+        assert_eq!(battery_segments(85), 4);
         assert_eq!(battery_segments(100), 4);
         // Clamped rather than wrapped, so a bad sample cannot overdraw.
         assert_eq!(battery_segments(200), 4);
+
+        // Just over half draws half a body, not three quarters of one.
+        assert_eq!(battery_segments(55), 2);
+
+        // Never falls as the level rises, and never overdraws.
+        let mut previous = 0;
+        for level in 0..=255u8 {
+            let bars = battery_segments(level);
+            assert!(bars >= previous, "{level} % lost a bar");
+            assert!(bars <= BATTERY_SEGMENTS, "{level} % overdrew");
+            previous = bars;
+        }
     }
 
     /// The requirement that started this: a battery reading on every
@@ -953,12 +960,12 @@ mod tests {
     }
 
     #[test]
-    fn fill_grows_with_the_level_and_an_unknown_level_draws_an_empty_body() {
+    fn fill_grows_with_the_level_and_an_unknown_level_draws_nothing() {
         for layout in layouts() {
             let zone = layout.battery_zone();
             let mut previous = 0;
-            // One level from each of the four bands.
-            for level in [0, 25, 60, 100] {
+            // One level from each of the five bands, lowest first.
+            for level in [5, 25, 50, 75, 100] {
                 let mut panel = TestPanel::new(layout.size);
                 let mut status = demo_status();
                 status.battery.level_percent = Some(level);
@@ -973,27 +980,27 @@ mod tests {
                 previous = lit;
             }
 
-            // "No reading yet" and "nearly flat" are different things to
-            // tell someone, so they must not draw the same picture.
-            let mut empty = TestPanel::new(layout.size);
+            // An empty body means a flat pack, and only that. "No
+            // reading" is said by drawing no indicator at all.
+            let mut flat = TestPanel::new(layout.size);
+            let mut status = demo_status();
+            status.battery.level_percent = Some(0);
+            render_frame(&mut flat, &layout, &UiModel::new(MenuItems::all()), &status);
+            assert!(flat.lit_in(zone) > 0, "a flat pack drew no body at all");
+
+            let mut unknown = TestPanel::new(layout.size);
             let mut status = demo_status();
             status.battery = BatteryIndicator::UNKNOWN;
             render_frame(
-                &mut empty,
+                &mut unknown,
                 &layout,
                 &UiModel::new(MenuItems::all()),
                 &status,
             );
-            let outline = empty.lit_in(zone);
-            assert!(outline > 0, "unknown level drew no body at all");
-
-            let mut zero = TestPanel::new(layout.size);
-            let mut status = demo_status();
-            status.battery.level_percent = Some(0);
-            render_frame(&mut zero, &layout, &UiModel::new(MenuItems::all()), &status);
-            assert!(
-                zero.lit_in(zone) > outline,
-                "a flat pack drew the same empty body as an unknown one"
+            assert_eq!(
+                unknown.lit_in(zone),
+                0,
+                "an unknown level drew something in the zone"
             );
         }
     }
@@ -1334,8 +1341,8 @@ mod tests {
         assert_eq!(with_notice.lit_in(row_area(&layout, 3)), pin_row);
     }
 
-    /// Charging with no level draws a bolt and nothing else: no body to
-    /// fill, and no empty body either, which would read as a flat pack.
+    /// Charging with no level draws a bolt and nothing else: there is no
+    /// level, so there is no body — the two are drawn independently.
     #[test]
     fn charging_without_a_level_replaces_the_body_with_a_bolt() {
         for layout in layouts() {
