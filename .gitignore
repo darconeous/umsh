@@ -9,3 +9,4 @@ xcuserdata/
 /.claude
 *.identity
 build
+__pycache__/

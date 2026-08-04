@@ -78,11 +78,28 @@ local function add_malformed(item, message)
   item:add_proto_expert_info(malformed, message)
 end
 
-function proto.dissector(buf, pinfo, tree)
-  pinfo.cols.protocol = "UMSH-ULCP"
+-- The same decoder over a Lua string, for callers holding raw payload bytes
+-- rather than a Tvb. Returns value, bytes consumed (1-indexed position).
+function M.decode_pui_str(s, pos)
+  local value, shift = 0, 0
+  for i = 0, 2 do
+    if pos + i > #s then return nil, 0 end
+    local byte = s:byte(pos + i)
+    value = value | ((byte & 0x7f) << shift)
+    if (byte & 0x80) == 0 then return value, i + 1 end
+    shift = shift + 7
+  end
+  return nil, 0
+end
+
+-- Dissect one ULCP frame into `tree`, returning the summary line.
+--
+-- Split out from proto.dissector so that Node Management payloads can reuse
+-- it over the mesh, where the direction comes from the payload's own R flag
+-- rather than from a UDP port, and the protocol column belongs to whoever
+-- called us.
+local function dissect_frame(buf, pinfo, tree, direction)
   local root = tree:add(proto, buf())
-  local src_port = tonumber(tostring(pinfo.src_port)) or 0
-  local direction = src_port == 4243 and "Host → Device" or "Device → Host"
   root:add(f.direction, direction)
 
   if buf:len() < 2 then
@@ -162,7 +179,17 @@ function proto.dissector(buf, pinfo, tree)
     root:add(f.payload, buf(2))
   end
 
-  pinfo.cols.info = info
+  return info
+end
+
+M.dissect_frame = dissect_frame
+
+function proto.dissector(buf, pinfo, tree)
+  pinfo.cols.protocol = "UMSH-ULCP"
+  local src_port = tonumber(tostring(pinfo.src_port)) or 0
+  local direction = src_port == 4243 and "Host → Device" or "Device → Host"
+  local info = dissect_frame(buf, pinfo, tree, direction)
+  if info then pinfo.cols.info = info end
 end
 
 function M.register()

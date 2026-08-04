@@ -127,8 +127,10 @@ end
 -- HKDF-SHA256 (RFC 5869)
 -- ---------------------------------------------------------------------------
 
+-- Built on HMAC-SHA256 alone, so it works with no AES backend present.
+-- Channel IDs derive through here, and identifying a channel by name is
+-- worth doing even where nothing can be decrypted.
 function M.hkdf(ikm, salt, info, out_len)
-  if not _has_aes then return nil, "no crypto" end
   local prk = M.hmac_sha256(salt, ikm)
   local t_prev = ""
   local okm_parts = {}

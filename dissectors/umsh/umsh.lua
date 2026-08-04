@@ -14,6 +14,7 @@ package.path = _dir .. "?.lua;" .. package.path
 -- ──────────────────────────────────────────────────────────────────────────
 local options  = require("options")
 local keystore = require("keystore")
+local base58   = require("base58")
 local crypto; do local ok, m = pcall(require, "crypto"); if ok then crypto = m end end
 local app;    do local ok, m = pcall(require, "app");    if ok then app    = m end end
 
@@ -61,6 +62,7 @@ f.options          = ProtoField.bytes  ("umsh.options",           "Options")
 f.opt_region_code  = ProtoField.bytes  ("umsh.opt.region_code",   "Region Code")
 f.opt_traceroute   = ProtoField.bytes  ("umsh.opt.trace_route",   "Trace Route")
 f.opt_srcroute     = ProtoField.bytes  ("umsh.opt.source_route",  "Source Route")
+f.opt_route_hop    = ProtoField.string ("umsh.opt.route_hop",     "Router Hint")
 f.opt_op_callsign  = ProtoField.string ("umsh.opt.op_callsign",   "Operator Callsign")
 f.opt_sta_callsign = ProtoField.string ("umsh.opt.sta_callsign",  "Station Callsign")
 f.opt_min_rssi     = ProtoField.int8   ("umsh.opt.min_rssi",      "Min RSSI",         base.DEC)
@@ -79,6 +81,20 @@ f.ack_tag      = ProtoField.bytes  ("umsh.ack_tag",      "ACK Tag")
 f.src_name     = ProtoField.string ("umsh.src_name",     "Source Name")
 f.dst_name     = ProtoField.string ("umsh.dst_name",     "Destination Name")
 f.channel_name = ProtoField.string ("umsh.channel_name", "Channel Name")
+
+-- Canonical addresses, in the base58 forms from the addressing chapter.
+--
+-- Added hidden, the way `ip.addr` is: the address is already written on the
+-- item covering the bytes it came from, so showing it again on a row of its
+-- own says the same thing twice. These exist to be filtered on
+-- (`umsh.src_addr == "GySV"`), not to be read.
+f.src_addr     = ProtoField.string ("umsh.src_addr",     "Source Address")
+f.dst_addr     = ProtoField.string ("umsh.dst_addr",     "Destination Address")
+
+-- Protocol prohibitions. Carrying the text in a field rather than only in
+-- expert info is what lets a coloring rule find these frames: see
+-- umsh-colorfilters in this directory.
+f.violation    = ProtoField.string ("umsh.violation",    "Protocol Violation")
 
 -- SECINFO
 f.secinfo      = ProtoField.bytes  ("umsh.secinfo",        "Security Information")
@@ -115,10 +131,10 @@ f.ack_verified  = ProtoField.bool    ("umsh.ack.verified",      "Keyed ACK Tag V
 umsh.fields = {
   f.fcf, f.fcf_version, f.fcf_type, f.fcf_full_src, f.fcf_reserved, f.fcf_fhops,
   f.fhops, f.fhops_rem, f.fhops_acc,
-  f.options, f.opt_region_code, f.opt_traceroute, f.opt_srcroute,
+  f.options, f.opt_region_code, f.opt_traceroute, f.opt_srcroute, f.opt_route_hop,
   f.opt_op_callsign, f.opt_sta_callsign, f.opt_min_rssi, f.opt_min_snr, f.opt_unknown,
   f.dst_hint, f.src_hint, f.src_key, f.channel_id, f.ack_mic, f.ack_tag,
-  f.src_name, f.dst_name, f.channel_name,
+  f.src_name, f.dst_name, f.channel_name, f.src_addr, f.dst_addr, f.violation,
   f.secinfo, f.scf, f.scf_enc, f.scf_mic_size, f.scf_salt_bit,
   f.frame_ctr, f.salt, f.mic,
   f.payload_raw, f.payload_dec, f.enc_body, f.enc_addr, f.dec_dst, f.dec_src,
@@ -137,10 +153,14 @@ ef.mic_ok       = ProtoExpert.new("umsh.mic_ok",       "MIC verified OK",       
 ef.no_key       = ProtoExpert.new("umsh.no_key",       "No key for decryption",    expert.group.UNDECODED,  expert.severity.NOTE)
 ef.unk_crit_opt = ProtoExpert.new("umsh.unknown_crit", "Unknown critical option",  expert.group.PROTOCOL,   expert.severity.WARN)
 ef.rsvd_type    = ProtoExpert.new("umsh.reserved_type","Reserved packet type",     expert.group.PROTOCOL,   expert.severity.WARN)
+-- Named apart from the `umsh.violation` field on purpose: an expert and a
+-- field share one namespace, and giving both the same abbreviation makes
+-- the filter match two things at once.
+ef.violation    = ProtoExpert.new("umsh.prohibited",   "Protocol violation",       expert.group.PROTOCOL,   expert.severity.ERROR)
 
 umsh.experts = {
   ef.bad_version, ef.truncated, ef.mic_bad, ef.mic_ok,
-  ef.no_key, ef.unk_crit_opt, ef.rsvd_type,
+  ef.no_key, ef.unk_crit_opt, ef.rsvd_type, ef.violation,
 }
 
 -- ──────────────────────────────────────────────────────────────────────────
@@ -151,22 +171,28 @@ umsh.experts = {
 local _has_uat = pcall(function()
   umsh.prefs.keys = Pref.uat("Decryption Keys", {
     {"type",  "pubkey = name only (no decrypt), privkey = decrypt unicast, channel = decrypt multicast"},
-    {"key",   "Hex key (64 hex chars), or umsh:cs:<name> for named channels"},
+    {"key",   "64 hex chars, 44 base58 chars, or a umsh:n:/umsh:ck:/umsh:cs: URI"},
     {"label", "Human-readable display name"},
   }, "Type: pubkey (Ed25519 public key, display name only), "
   .. "privkey (Ed25519 seed, enables unicast decryption), "
-  .. "channel (symmetric key or umsh:cs:<name>, enables multicast decryption)",
+  .. "channel (symmetric key or umsh:cs:<name>, enables multicast decryption). "
+  .. "Keys may be written as 64 hex characters or as the 44-character base58 "
+  .. "address form, so an address copied from umshctl or the app pastes in "
+  .. "directly.",
   "umsh_keys")
 end)
 
 if not _has_uat then
   -- Fallback for Wireshark < 4.6: three separate string preferences
   umsh.prefs.node_names   = Pref.string("Node names",   "",
-    "One per line: <64-hex-pubkey>:<display-name>")
+    "One per line: <key>:<display-name>\n"
+    .. "<key> is 64 hex chars, 44 base58 chars, or umsh:n:<base58>")
   umsh.prefs.privkeys     = Pref.string("Private keys", "",
-    "One per line: <64-hex-ed25519-seed>:<display-name>")
+    "One per line: <ed25519-seed>:<display-name>\n"
+    .. "The seed is 64 hex chars or 44 base58 chars")
   umsh.prefs.channel_keys = Pref.string("Channel keys", "",
-    "One per line:\n  <64-hex-key>:<display-name>\n  umsh:cs:<name>:<display-name>")
+    "One per line:\n  <key>:<display-name>\n  umsh:ck:<base58>:<display-name>"
+    .. "\n  umsh:cs:<name>:<display-name>")
 end
 
 umsh.prefs.udp_port     = Pref.uint  ("UDP Port", 0, "UDP port to dissect as UMSH (0 = disabled)")
@@ -225,9 +251,80 @@ local function bytes_to_hex(s)
   end))
 end
 
--- Format 3-byte hint as "XX:XX:XX"
-local function hint_hex(s)
-  return string.format("%02X:%02X:%02X", s:byte(1), s:byte(2), s:byte(3))
+-- Canonical rendering, per docs/protocol/src/addressing.md: a 3-byte node
+-- hint as its star-truncated base58 form, a full key as its 44 base58
+-- digits.
+--
+-- Tree items carry the byte form alongside the hint, since that is what the
+-- bytes they cover actually say. The address columns take the canonical
+-- form alone — a keystore name displaces it whenever one is known, and the
+-- detail pane is where the bytes belong.
+local function hint_label(s)
+  return base58.node_hint_full(s)
+end
+
+local function hint_short(s)
+  return base58.node_hint(s) or bytes_to_hex(s)
+end
+
+local function addr_short(s)
+  if #s == 32 then return base58.key_full(s) end
+  return hint_short(s)
+end
+
+-- ──────────────────────────────────────────────────────────────────────────
+-- Protocol violations
+--
+-- Frames that break a prohibition the spec states as a sender MUST NOT, and
+-- that a single frame is enough to prove. Each one lands in the tree as a
+-- `umsh.violation` field (so a coloring rule can find the frame), as expert
+-- info (so it is red in the detail pane and listed under Expert Information),
+-- and in the Info column.
+--
+-- The Info column marker is appended once at the end of dissection: the
+-- per-type dissectors overwrite that column after most checks have run, so
+-- anything written here during the walk would be lost.
+-- ──────────────────────────────────────────────────────────────────────────
+local _violations = {}
+
+-- What the application layer needs to know about the packet carrying it:
+-- enough to apply the rules that span both layers (which payload types a
+-- packet type may carry, what the well-known channels require). Rebuilt at
+-- the top of each dissection and handed to app.dissect.
+local _ctx = {}
+
+local function flag_violation(tree, tvbr, text, expert_kind)
+  local item = tree:add(f.violation, tvbr, text)
+  item:set_generated()
+  item:add_proto_expert_info(expert_kind or ef.violation, text)
+  _violations[#_violations + 1] = text
+end
+
+-- A channel ID is a 2-byte hint of a key, and the spec allows collisions:
+-- a frame belongs to whichever key authenticates it. A rule keyed on the
+-- channel is therefore only proven once the MIC verifies under that
+-- channel's key, and is qualified until then.
+local function channel_caveat(mic_verified)
+  if mic_verified then return "" end
+  return " (channel identified by ID only)"
+end
+
+-- Rules the two well-known channels attach to their names. Only the ones a
+-- MAC-layer view can decide are here; the ones that depend on the payload
+-- type live in app.lua, which is the layer that can see it.
+local function check_channel_rules(tree, tvbr, ch_entry, opts)
+  if not ch_entry or not ch_entry.builtin then return end
+  local caveat = channel_caveat(opts.mic_verified)
+
+  if ch_entry.builtin == "emergency" and opts.is_enc then
+    flag_violation(tree, tvbr,
+      "Emergency channel traffic must not be encrypted — it must be " ..
+      "readable by every node in range" .. caveat)
+
+  elseif ch_entry.builtin == "public" and opts.blind then
+    flag_violation(tree, tvbr,
+      "Blind unicast on the public channel is forbidden" .. caveat)
+  end
 end
 
 -- The destination shown for a packet addressed to everyone.
@@ -253,6 +350,40 @@ local BROADCAST_LABEL = "*"
 local function set_endpoints(pinfo, src, dst)
   if src then pinfo.cols.src = src end
   if dst then pinfo.cols.dst = dst end
+end
+
+-- ──────────────────────────────────────────────────────────────────────────
+-- Address tree items
+-- Each address lands three times: the bytes on the wire, the canonical form
+-- as a filterable generated field, and the keystore name when one is known.
+-- ──────────────────────────────────────────────────────────────────────────
+local function add_dst_hint(tree, buf, off, dst_bytes)
+  tree:add(f.dst_hint, buf(off, 3)):set_text(
+    "Destination Hint: " .. hint_label(dst_bytes))
+  tree:add(f.dst_addr, buf(off, 3), hint_short(dst_bytes)):set_hidden()
+  local name = keystore.lookup_node(dst_bytes)
+  if name and name ~= "" then tree:add(f.dst_name, buf(off, 3), name) end
+  return name
+end
+
+-- SRC is a 3-byte hint or a full 32-byte key, per the FCF S flag.
+local function add_src_addr(tree, buf, off, src_bytes, full_src)
+  local name, pubkey
+  if full_src then
+    tree:add(f.src_key, buf(off, 32)):set_text(
+      "Source Public Key: " .. base58.key_full(src_bytes))
+    name   = keystore.lookup_node_by_key(src_bytes)
+    pubkey = src_bytes
+  else
+    tree:add(f.src_hint, buf(off, 3)):set_text(
+      "Source Hint: " .. hint_label(src_bytes))
+    name, pubkey = keystore.lookup_node(src_bytes)
+  end
+  tree:add(f.src_addr, buf(off, #src_bytes), addr_short(src_bytes)):set_hidden()
+  if name and name ~= "" then
+    tree:add(f.src_name, buf(off, #src_bytes), name)
+  end
+  return name, pubkey
 end
 
 -- ──────────────────────────────────────────────────────────────────────────
@@ -287,6 +418,12 @@ local function parse_secinfo(buf, off, tree)
   scf_tree:add(f.scf_enc,      buf(off, 1))
   scf_tree:add(f.scf_mic_size, buf(off, 1))
   scf_tree:add(f.scf_salt_bit, buf(off, 1))
+  -- The low four SCF bits are reserved and must be zero; an unknown bit
+  -- there could change how everything after SECINFO is read.
+  if (scf & 0x0F) ~= 0 then
+    flag_violation(scf_tree, buf(off, 1),
+      string.format("SCF reserved bits must be zero (low nibble is 0x%X)", scf & 0x0F))
+  end
   off = off + 1
   si_tree:add(f.frame_ctr, buf(off, 4))
   off = off + 4
@@ -317,8 +454,19 @@ local function parse_options(buf, start_off, bound, tree, static_opts_out)
     return start_off
   end
 
-  local opts_tree = tree:add(f.options, buf(start_off, total_len))
+  -- A block that is nothing but its terminator carries no options. Adding a
+  -- subtree for it puts an `Options: ff` row in the majority of packets that
+  -- says nothing at all, so it is left out; the byte itself is still visible
+  -- in the bytes pane.
+  if total_len == 1 and raw:byte(1) == 0xFF then
+    return start_off + 1
+  end
 
+  local opts_tree = tree:add(f.options, buf(start_off, total_len))
+  opts_tree:set_text(string.format("Options (%d byte%s)",
+                                   total_len, total_len == 1 and "" or "s"))
+
+  local region_codes = 0
   local raw_pos = 1  -- 1-indexed position in raw string
   pcall(function()
     for num, val, consumed in options.decode(raw, 1) do
@@ -329,15 +477,36 @@ local function parse_options(buf, start_off, bound, tree, static_opts_out)
       if num == options.OPT_REGION_CODE then
         local cs   = options.decode_arnce(val)
         local tvbr = (val_len > 0) and buf(val_off, val_len) or buf(opt_off, consumed)
-        opts_tree:add(f.opt_region_code, tvbr):set_text("Region Code: " .. cs)
+        local item = opts_tree:add(f.opt_region_code, tvbr)
+        item:set_text("Region Code: " .. cs)
+        region_codes = region_codes + 1
+        -- A repeater adds a region code only to a packet that carries none.
+        if region_codes > 1 then
+          flag_violation(item, buf(opt_off, consumed),
+            "Packet carries more than one region code")
+        end
 
-      elseif num == options.OPT_TRACE_ROUTE then
-        local item = opts_tree:add(f.opt_traceroute, buf(opt_off, consumed))
-        if val_len == 0 then item:set_text("Trace Route: (empty)") end
-
-      elseif num == options.OPT_SOURCE_ROUTE then
-        local item = opts_tree:add(f.opt_srcroute, buf(opt_off, consumed))
-        if val_len == 0 then item:set_text("Source Route: (empty)") end
+      elseif num == options.OPT_TRACE_ROUTE or num == options.OPT_SOURCE_ROUTE then
+        local is_trace = (num == options.OPT_TRACE_ROUTE)
+        local label    = is_trace and "Trace Route" or "Source Route"
+        local item = opts_tree:add(is_trace and f.opt_traceroute or f.opt_srcroute,
+                                   buf(opt_off, consumed))
+        if val_len == 0 then
+          item:set_text(label .. ": (empty)")
+        else
+          -- The value is a run of 2-byte router hints, one per hop.
+          local hops = val_len // 2
+          local extra = val_len % 2
+          item:set_text(string.format("%s: %d hop%s%s", label, hops,
+                                      hops == 1 and "" or "s",
+                                      extra == 1 and " + 1 trailing byte" or ""))
+          for i = 1, hops do
+            local hop = val:sub(i * 2 - 1, i * 2)
+            item:add(f.opt_route_hop, buf(val_off + (i - 1) * 2, 2),
+                     base58.router_hint(hop) or ""):set_text(
+              string.format("Hop %d: %s", i, base58.router_hint_full(hop)))
+          end
+        end
 
       elseif num == options.OPT_OP_CALLSIGN then
         opts_tree:add(f.opt_op_callsign, buf(opt_off, consumed)):set_text(
@@ -393,30 +562,20 @@ local function dissect_broadcast(buf, pinfo, tree, off, full_src, fcf_byte, stat
   if off + src_len > buf_len then tree:add_proto_expert_info(ef.truncated); return end
 
   local src_bytes = tvb_bytes(buf, off, src_len)
-  local src_name
-  if full_src then
-    tree:add(f.src_key, buf(off, 32))
-    src_name = keystore.lookup_node_by_key(src_bytes)
-  else
-    tree:add(f.src_hint, buf(off, 3))
-    src_name = keystore.lookup_node(src_bytes)
-  end
-  if src_name and src_name ~= "" then
-    tree:add(f.src_name, buf(off, src_len), src_name)
-  end
+  local src_name  = add_src_addr(tree, buf, off, src_bytes, full_src)
   off = off + src_len
 
   -- OPTIONS block (always present; 0xFF marker omitted for beacons with no payload)
   off = parse_options(buf, off, buf_len, tree, static_opts)
 
   local payload_len = buf_len - off
-  set_endpoints(pinfo, src_name or hint_hex(src_bytes:sub(1, 3)), BROADCAST_LABEL)
+  set_endpoints(pinfo, src_name or addr_short(src_bytes), BROADCAST_LABEL)
   if payload_len > 0 then
     local payload_bytes = tvb_bytes(buf, off, payload_len)
     tree:add(f.payload_raw, buf(off, payload_len))
     pinfo.cols.info = "UMSH BCST"
     if app then
-      pcall(app.dissect, payload_bytes, tree, pinfo, keystore, crypto)
+      pcall(app.dissect, payload_bytes, tree, pinfo, keystore, crypto, _ctx)
     end
   else
     pinfo.cols.info = "UMSH BCST [Beacon]"
@@ -434,6 +593,14 @@ local function dissect_uack(buf, pinfo, tree, off)
   -- 0xFF terminator, since the trailer is at a fixed offset from the end.
   local dummy_opts = {}
   off = parse_options(buf, off, buf_len - 8, tree, dummy_opts)
+
+  -- Anything between an end-of-options marker and the trailer is not part
+  -- of a MAC ack: there is no payload field for it to be.
+  if off < buf_len - 8 then
+    flag_violation(tree, buf(off, buf_len - 8 - off),
+      string.format("%d byte%s between end of options and ack trailer",
+                    buf_len - 8 - off, (buf_len - 8 - off) == 1 and "" or "s"))
+  end
 
   if off + 8 > buf_len then tree:add_proto_expert_info(ef.truncated); return end
   local mic_bytes = tvb_bytes(buf, off, 4)      -- ack_mic (public correlation)
@@ -506,27 +673,14 @@ local function dissect_unicast(buf, pinfo, tree, off, full_src, fcf_byte, static
   -- DST hint (3 bytes)
   if off + 3 > buf_len then tree:add_proto_expert_info(ef.truncated); return end
   local dst_bytes = tvb_bytes(buf, off, 3)
-  tree:add(f.dst_hint, buf(off, 3))
-  local dst_name = keystore.lookup_node(dst_bytes)
-  if dst_name and dst_name ~= "" then tree:add(f.dst_name, buf(off, 3), dst_name) end
+  local dst_name  = add_dst_hint(tree, buf, off, dst_bytes)
   off = off + 3
 
   -- SRC (3 or 32 bytes)
   local src_len = full_src and 32 or 3
   if off + src_len > buf_len then tree:add_proto_expert_info(ef.truncated); return end
   local src_bytes = tvb_bytes(buf, off, src_len)
-  local src_name, src_pubkey
-  if full_src then
-    tree:add(f.src_key, buf(off, 32))
-    src_name   = keystore.lookup_node_by_key(src_bytes)
-    src_pubkey = src_bytes
-  else
-    tree:add(f.src_hint, buf(off, 3))
-    src_name, src_pubkey = keystore.lookup_node(src_bytes)
-  end
-  if src_name and src_name ~= "" then
-    tree:add(f.src_name, buf(off, src_len), src_name)
-  end
+  local src_name, src_pubkey = add_src_addr(tree, buf, off, src_bytes, full_src)
   off = off + src_len
 
   -- SECINFO
@@ -550,8 +704,8 @@ local function dissect_unicast(buf, pinfo, tree, off, full_src, fcf_byte, static
   tree:add(f.mic, buf(off, mic_len))
 
   -- Info column
-  local sl = src_name or hint_hex(src_bytes:sub(1, 3))
-  local dl = dst_name or hint_hex(dst_bytes)
+  local sl = src_name or addr_short(src_bytes)
+  local dl = dst_name or hint_short(dst_bytes)
   set_endpoints(pinfo, sl, dl)
   pinfo.cols.info = ack_req and "UMSH UNAR" or "UMSH UNIC"
 
@@ -593,7 +747,8 @@ local function dissect_unicast(buf, pinfo, tree, off, full_src, fcf_byte, static
       tree:add(f.payload_dec, buf(body_start, body_len)):set_text(
         "Decrypted Payload (" .. #plain .. " B): " .. bytes_to_hex(plain))
     end
-    if app then pcall(app.dissect, plain, tree, pinfo, keystore, crypto) end
+    _ctx.mic_verified = true
+    if app then pcall(app.dissect, plain, tree, pinfo, keystore, crypto, _ctx) end
 
     -- ACK tracking: compute the expected keyed ACK tag for UNAR packets and
     -- attach it to the (already recorded) ack_mic entry, so a matched ack can
@@ -638,18 +793,22 @@ local function dissect_multicast(buf, pinfo, tree, off, full_src, fcf_byte, stat
 
   -- CHANNEL (2 bytes)
   if off + 2 > buf_len then tree:add_proto_expert_info(ef.truncated); return end
+  local chan_off   = off
   local chan_bytes = tvb_bytes(buf, off, 2)
   tree:add(f.channel_id, buf(off, 2))
   local ch_entry = keystore.get_channel_by_id(chan_bytes)
   if ch_entry and ch_entry.name ~= "" then
     tree:add(f.channel_name, buf(off, 2), ch_entry.name)
   end
+  _ctx.channel   = ch_entry
+  _ctx.chan_tvbr = buf(chan_off, 2)
   off = off + 2
 
   -- SECINFO
   local new_off, scf, mic_len, secinfo_raw, is_enc = parse_secinfo(buf, off, tree)
   if not new_off then return end
   off = new_off
+  _ctx.is_enc = is_enc
 
   -- OPTIONS block (always present; 0xFF always present since body follows)
   off = parse_options(buf, off, buf_len - mic_len, tree, static_opts)
@@ -660,16 +819,7 @@ local function dissect_multicast(buf, pinfo, tree, off, full_src, fcf_byte, stat
     local src_len = full_src and 32 or 3
     if off + src_len > buf_len then tree:add_proto_expert_info(ef.truncated); return end
     src_bytes = tvb_bytes(buf, off, src_len)
-    if full_src then
-      tree:add(f.src_key, buf(off, 32))
-      src_name = keystore.lookup_node_by_key(src_bytes)
-    else
-      tree:add(f.src_hint, buf(off, 3))
-      src_name = keystore.lookup_node(src_bytes)
-    end
-    if src_name and src_name ~= "" then
-      tree:add(f.src_name, buf(off, src_len), src_name)
-    end
+    src_name  = add_src_addr(tree, buf, off, src_bytes, full_src)
     off = off + src_len
   end
 
@@ -691,16 +841,13 @@ local function dissect_multicast(buf, pinfo, tree, off, full_src, fcf_byte, stat
   set_endpoints(pinfo, src_name, ch_label)
   pinfo.cols.info = "UMSH MCST"
 
-  -- Crypto
-  if not crypto then return end
+  -- Crypto. Whether the MIC verifies decides how firmly the channel rules
+  -- can be put: the 2-byte channel ID is a hint that may collide, but a MIC
+  -- that verifies under the channel key proves which channel it is.
+  if not crypto or not ch_entry or not ch_entry.derived_keys then
+    if crypto then tree:add_proto_expert_info(ef.no_key) end
 
-  if not ch_entry or not ch_entry.derived_keys then
-    tree:add_proto_expert_info(ef.no_key)
-    return
-  end
-  local dk = ch_entry.derived_keys
-
-  if is_enc then
+  elseif is_enc then
     -- E=1: body = ENCRYPT(SRC || PAYLOAD); use try_decrypt_multicast
     local pkt_info = {
       fcf_byte         = fcf_byte,
@@ -717,13 +864,16 @@ local function dissect_multicast(buf, pinfo, tree, off, full_src, fcf_byte, stat
       pcall(crypto.try_decrypt_multicast, pkt_info, keystore.get_all_channels(), full_src)
     if ok2 and payload then
       tree:add_proto_expert_info(ef.mic_ok)
+      _ctx.mic_verified = true
       local src_len = full_src and 32 or 3
       if dec_src then
         local dec_name = full_src and keystore.lookup_node_by_key(dec_src)
                                    or keystore.lookup_node(dec_src)
-        local dec_label = dec_name or bytes_to_hex(dec_src)
+        local dec_label = dec_name or addr_short(dec_src)
         tree:add(f.dec_src, buf(body_start, src_len)):set_text(
-          "Decrypted SRC: " .. dec_label)
+          "Decrypted SRC: " .. (dec_name or base58.addr(dec_src)))
+        tree:add(f.src_addr, buf(body_start, src_len),
+                 addr_short(dec_src)):set_hidden()
         -- The sender was inside the ciphertext; now that it is readable it
         -- belongs in the address column like any other.
         set_endpoints(pinfo, dec_label, nil)
@@ -731,7 +881,7 @@ local function dissect_multicast(buf, pinfo, tree, off, full_src, fcf_byte, stat
       if #payload > 0 then
         tree:add(f.payload_dec, buf(body_start + src_len, body_len - src_len)):set_text(
           "Decrypted Payload (" .. #payload .. " B): " .. bytes_to_hex(payload))
-        if app then pcall(app.dissect, payload, tree, pinfo, keystore, crypto) end
+        if app then pcall(app.dissect, payload, tree, pinfo, keystore, crypto, _ctx) end
       end
     elseif ok2 and status == "mic_mismatch" then
       tree:add_proto_expert_info(ef.mic_bad)
@@ -751,10 +901,12 @@ local function dissect_multicast(buf, pinfo, tree, off, full_src, fcf_byte, stat
       mic_bytes        = mic_bytes,
       is_encrypted     = false,
     }
-    local ok2, plain, status = pcall(crypto.verify_and_decrypt, dk, pkt_info)
+    local ok2, plain, status =
+      pcall(crypto.verify_and_decrypt, ch_entry.derived_keys, pkt_info)
     if ok2 and plain then
       tree:add_proto_expert_info(ef.mic_ok)
-      if app then pcall(app.dissect, plain, tree, pinfo, keystore, crypto) end
+      _ctx.mic_verified = true
+      if app then pcall(app.dissect, plain, tree, pinfo, keystore, crypto, _ctx) end
     elseif ok2 and status == "mic_mismatch" then
       tree:add_proto_expert_info(ef.mic_bad)
     else
@@ -771,18 +923,21 @@ local function dissect_blind_unicast(buf, pinfo, tree, off, full_src, fcf_byte, 
 
   -- CHANNEL (2 bytes)
   if off + 2 > buf_len then tree:add_proto_expert_info(ef.truncated); return end
+  local chan_off   = off
   local chan_bytes = tvb_bytes(buf, off, 2)
   tree:add(f.channel_id, buf(off, 2))
   local ch_entry = keystore.get_channel_by_id(chan_bytes)
   if ch_entry and ch_entry.name ~= "" then
     tree:add(f.channel_name, buf(off, 2), ch_entry.name)
   end
+  _ctx.channel = ch_entry
   off = off + 2
 
   -- SECINFO
   local new_off, scf, mic_len, secinfo_raw, is_enc = parse_secinfo(buf, off, tree)
   if not new_off then return end
   off = new_off
+  _ctx.is_enc = is_enc
 
   -- OPTIONS block (always present; 0xFF always present since body follows)
   off = parse_options(buf, off, buf_len - mic_len, tree, static_opts)
@@ -792,6 +947,10 @@ local function dissect_blind_unicast(buf, pinfo, tree, off, full_src, fcf_byte, 
   local ch_label = (ch_entry and ch_entry.name ~= "" and ch_entry.name) or chan_hex
   local type_label = ack_req and "UMSH BUAR" or "UMSH BUNI"
   pinfo.cols.info = type_label .. " [" .. ch_label .. "]"
+
+  -- The channel rules run once, from the main dissector, so that a packet
+  -- truncated part way through still gets them.
+  _ctx.chan_tvbr = buf(chan_off, 2)
 
   if is_enc then
     -- E=1: ENC_DST_SRC (6 or 35 bytes) | ENC_PAYLOAD | MIC
@@ -849,20 +1008,24 @@ local function dissect_blind_unicast(buf, pinfo, tree, off, full_src, fcf_byte, 
       if dst_hint then
         d_name = keystore.lookup_node(dst_hint)
         tree:add(f.dec_dst, buf(addr_start, 3)):set_text(
-          "Decrypted DST: " .. (d_name or hint_hex(dst_hint)))
+          "Decrypted DST: " .. (d_name or hint_label(dst_hint)))
+        tree:add(f.dst_addr, buf(addr_start, 3),
+                 hint_short(dst_hint)):set_hidden()
       end
       if dec_src then
         local src_disp_len = full_src and 32 or 3
         s_name = full_src and keystore.lookup_node_by_key(dec_src)
                             or keystore.lookup_node(dec_src)
         tree:add(f.dec_src, buf(addr_start + 3, src_disp_len)):set_text(
-          "Decrypted SRC: " .. (s_name or bytes_to_hex(dec_src)))
-        if s_name then set_endpoints(pinfo, s_name, nil) end
+          "Decrypted SRC: " .. (s_name or base58.addr(dec_src)))
+        tree:add(f.src_addr, buf(addr_start + 3, src_disp_len),
+                 addr_short(dec_src)):set_hidden()
+        set_endpoints(pinfo, s_name or addr_short(dec_src), nil)
       end
       if #payload > 0 then
         tree:add(f.payload_dec, buf(body_start, body_len)):set_text(
           "Decrypted Payload (" .. #payload .. " B): " .. bytes_to_hex(payload))
-        if app then pcall(app.dissect, payload, tree, pinfo, keystore, crypto) end
+        if app then pcall(app.dissect, payload, tree, pinfo, keystore, crypto, _ctx) end
       end
       -- ACK tracking for BUAR
       if ack_req and dec_keys and full_cmac then
@@ -877,8 +1040,8 @@ local function dissect_blind_unicast(buf, pinfo, tree, off, full_src, fcf_byte, 
               frame     = pinfo.number,
               timestamp = pinfo.abs_ts,
             }
-            entry.src_label   = s_name or (dec_src and bytes_to_hex(dec_src:sub(1,3))) or "?"
-            entry.dst_label   = d_name or (dst_hint and hint_hex(dst_hint)) or "?"
+            entry.src_label   = s_name or (dec_src and addr_short(dec_src)) or "?"
+            entry.dst_label   = d_name or (dst_hint and hint_short(dst_hint)) or "?"
             entry.exp_tag_hex = tag_hex
             _ack_by_mic[mic_hex] = entry
           end
@@ -901,26 +1064,13 @@ local function dissect_blind_unicast(buf, pinfo, tree, off, full_src, fcf_byte, 
     -- E=0: DST(3) | SRC(3/32) | PAYLOAD | MIC — all in cleartext
     if off + 3 > buf_len then tree:add_proto_expert_info(ef.truncated); return end
     local dst_bytes = tvb_bytes(buf, off, 3)
-    tree:add(f.dst_hint, buf(off, 3))
-    local dst_name = keystore.lookup_node(dst_bytes)
-    if dst_name and dst_name ~= "" then tree:add(f.dst_name, buf(off, 3), dst_name) end
+    local dst_name  = add_dst_hint(tree, buf, off, dst_bytes)
     off = off + 3
 
     local src_len = full_src and 32 or 3
     if off + src_len > buf_len then tree:add_proto_expert_info(ef.truncated); return end
     local src_bytes = tvb_bytes(buf, off, src_len)
-    local src_name, src_pubkey
-    if full_src then
-      tree:add(f.src_key, buf(off, 32))
-      src_name   = keystore.lookup_node_by_key(src_bytes)
-      src_pubkey = src_bytes
-    else
-      tree:add(f.src_hint, buf(off, 3))
-      src_name, src_pubkey = keystore.lookup_node(src_bytes)
-    end
-    if src_name and src_name ~= "" then
-      tree:add(f.src_name, buf(off, src_len), src_name)
-    end
+    local src_name, src_pubkey = add_src_addr(tree, buf, off, src_bytes, full_src)
     off = off + src_len
 
     local body_len = buf_len - off - mic_len
@@ -933,8 +1083,8 @@ local function dissect_blind_unicast(buf, pinfo, tree, off, full_src, fcf_byte, 
     local mic_bytes = tvb_bytes(buf, off, mic_len)
     tree:add(f.mic, buf(off, mic_len))
 
-    local sl = src_name or hint_hex(src_bytes:sub(1, 3))
-    local dl = dst_name or hint_hex(dst_bytes)
+    local sl = src_name or addr_short(src_bytes)
+    local dl = dst_name or hint_short(dst_bytes)
     -- The channel stays in Info: for a blind unicast it is the envelope
     -- the packet was addressed under, not the endpoint it is bound for.
     set_endpoints(pinfo, sl, dl)
@@ -1002,7 +1152,8 @@ local function dissect_blind_unicast(buf, pinfo, tree, off, full_src, fcf_byte, 
         end)
         if ok2 and plain then
           tree:add_proto_expert_info(ef.mic_ok)
-          if app then pcall(app.dissect, plain, tree, pinfo, keystore, crypto) end
+          _ctx.mic_verified = true
+          if app then pcall(app.dissect, plain, tree, pinfo, keystore, crypto, _ctx) end
           -- ACK tracking for E=0 BUAR
           if ack_req and blind_keys and full_cmac then
             local ack_tag = crypto.compute_ack_tag(full_cmac, blind_keys.k_enc)
@@ -1070,6 +1221,17 @@ function umsh.dissector(buf, pinfo, tree)
 
   local root = tree:add(umsh, buf())
 
+  _violations = {}
+  _ctx = {
+    pkt_type     = pkt_type,
+    full_src     = full_src,
+    fhops        = nil,
+    channel      = nil,
+    is_enc       = false,
+    mic_verified = false,
+    flag         = flag_violation,
+  }
+
   -- FCF subtree
   local fcf_tree = root:add(f.fcf, buf(0, 1))
   fcf_tree:add(f.fcf_version,  buf(0, 1))
@@ -1084,6 +1246,11 @@ function umsh.dissector(buf, pinfo, tree)
     return 1
   end
 
+  -- The reserved FCF bit must be zero; a receiver drops a packet that sets it.
+  if (fcf_val & 0x02) ~= 0 then
+    flag_violation(fcf_tree, buf(0, 1), "FCF reserved bit (R) must be zero")
+  end
+
   local off = 1
   local static_opts = {}
 
@@ -1093,6 +1260,7 @@ function umsh.dissector(buf, pinfo, tree)
     local fh_tree = root:add(f.fhops, buf(off, 1))
     fh_tree:add(f.fhops_rem, buf(off, 1))
     fh_tree:add(f.fhops_acc, buf(off, 1))
+    _ctx.fhops = buf(off, 1):uint()
     off = off + 1
   end
 
@@ -1110,9 +1278,28 @@ function umsh.dissector(buf, pinfo, tree)
   elseif pkt_type == 4 then
     dissect_multicast(buf, pinfo, root, off, full_src, fcf_byte, static_opts)
   elseif pkt_type == 5 then
-    root:add_proto_expert_info(ef.rsvd_type)
+    flag_violation(root, buf(0, 1), "Packet type 5 is reserved", ef.rsvd_type)
   elseif pkt_type == 6 or pkt_type == 7 then
     dissect_blind_unicast(buf, pinfo, root, off, full_src, fcf_byte, static_opts, pkt_type == 7)
+  end
+
+  -- Rules attached to the well-known channel names. Run here rather than
+  -- inside the per-type dissectors so that a packet truncated part way
+  -- through still gets them, and so the MIC verdict is already known.
+  if _ctx.channel then
+    check_channel_rules(root, _ctx.chan_tvbr or buf(0, 1), _ctx.channel, {
+      is_enc       = _ctx.is_enc,
+      blind        = (pkt_type == 6 or pkt_type == 7),
+      mic_verified = _ctx.mic_verified,
+    })
+  end
+
+  -- The per-type dissectors own the Info column and rewrite it after most
+  -- of the checks have run, so the marker goes on last.
+  if #_violations > 0 then
+    pinfo.cols.info:append(
+      #_violations == 1 and "  [VIOLATION]"
+                        or string.format("  [%d VIOLATIONS]", #_violations))
   end
 
   return buf_len
@@ -1179,6 +1366,12 @@ local function apply_prefs()
 
   -- Merge optional key file (silently ignored if path is empty or file missing)
   keystore.load_keyfile(umsh.prefs.keyfile)
+
+  -- The two well-known channels derive from names the spec fixes, so their
+  -- keys are public knowledge and cost nothing to carry: emergency traffic
+  -- verifies and public traffic decrypts with no configuration at all.
+  -- Added after the key file, which rebuilds the tables from scratch.
+  keystore.add_builtin_channels()
 
   -- Recompute channel crypto after rebuild
   if crypto then keystore.refresh_channel_crypto() end

@@ -36,8 +36,9 @@ VECTORS = [
     (
         "Example 3: Encrypted Unicast (S=0)",
         bytes.fromhex(
-            "D0 6C 28 FD ED 54 A5 E0 00 00 00 2A 4F A0 84 B2"
-            " 92 EA 32 F4 91 09 E8 D4 E6 01 16 73 C1 5B 31 84 F0"
+            "D0 6C 28 FD ED 54 A5 E0 00 00 00 2A FF 71 35 36"
+            " 4B C1 97 6D DC 92 2E BA 11 B7 2E 6B B1 7B 36 49"
+            " C5 4A"
             .replace(" ", "")
         ),
     ),
@@ -46,42 +47,44 @@ VECTORS = [
         bytes.fromhex(
             "DC 6C 28 FD ED 54 A5 9F B1 AC 3A 51 23 93 51 36"
             " 29 41 B8 68 E8 5A 60 E3 D7 B2 48 5D 82 88 21 DC"
-            " 7A 69 C2 79 E0 00 00 00 01 68 CF 7B 96 3F CE BA"
-            " 86 8C 92 96 DD E2 E5 0F 5B 54 42 3F"
+            " 7A 69 C2 79 E0 00 00 00 01 FF 9C 77 59 E9 9F 4C"
+            " 5F 9D 3E 4F 4E D3 CC B2 1E F5 C0 01 97"
             .replace(" ", "")
         ),
     ),
     (
         "Example 5: Encrypted Multicast (E=1)",
         bytes.fromhex(
-            "E0 B0 8D E0 00 00 00 05 9B B6 F2 5E C7 DA 95 D2"
-            " 30 35 87 B0 01 F2 17 98 7A 08 1C F5 6E DC 85 36"
+            "E0 B0 8D E0 00 00 00 05 FF 39 E5 95 FE 97 AF A8"
+            " 90 30 E3 26 92 83 DB 9A 69 AB 12 64 1E B3 22 42"
+            " D6"
             .replace(" ", "")
         ),
     ),
     (
         "Example 6: Authenticated Multicast (E=0)",
         bytes.fromhex(
-            "E0 B0 8D 60 00 00 00 03 ED 54 A5 03 48 65 6C 6C"
-            " 6F 7C 9A 9C 4B C0 DD B4 96 65 6A 9D F1 5F 5B 9C C4"
+            "E0 B0 8D 60 00 00 00 03 FF ED 54 A5 03 48 65 6C"
+            " 6C 6F 53 A5 E2 91 F5 40 0A B9 87 FE C7 14 9D F8"
+            " 97 24"
             .replace(" ", "")
         ),
     ),
     (
         "Example 7: Encrypted Unicast with Options and Flood Hops",
         bytes.fromhex(
-            "D3 20 92 78 53 FF 40 6C 28 FD ED 54 A5 E0 00 00"
-            " 00 0A AB 87 DC 83 07 00 18 AA 22 DB FC 93 86 B8"
-            " D1 F0 74 85 39"
+            "D1 40 6C 28 FD ED 54 A5 E0 00 00 00 0A 20 92 78"
+            " 53 FF 79 F8 9D 96 91 3C 78 8E 38 5F 64 04 DA 6B"
+            " 4F 90 4A 7B 38"
             .replace(" ", "")
         ),
     ),
     (
         "Example 8: Blind Unicast (S=0)",
         bytes.fromhex(
-            "F0 B0 8D E0 00 00 00 07 9C A3 DF 8D F8 A6 1A 3B"
-            " 73 CD 1B 42 9D E6 DD 47 AD 3A 6B E5 FF 89 BB 16"
-            " 15 E8 7A"
+            "F0 B0 8D E0 00 00 00 07 FF A4 FB D3 6A A0 87 4E"
+            " 55 F2 08 51 F6 21 C9 8C 78 F7 90 92 34 0D E7 12"
+            " AA 07 AE 77"
             .replace(" ", "")
         ),
     ),

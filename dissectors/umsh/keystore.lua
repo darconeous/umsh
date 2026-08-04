@@ -3,6 +3,8 @@
 
 local M = {}
 
+local base58 = require("base58")
+
 -- Forward reference to crypto module (set after crypto.lua is loaded)
 local crypto_ref = nil
 function M.set_crypto(c) crypto_ref = c end
@@ -49,12 +51,15 @@ local function derive_named_channel_key(name)
   return crypto_ref.hmac_sha256("UMSH-CHANNEL-V1", name)
 end
 
-local function compute_channel_entry(raw_key_bytes, name)
+local function compute_channel_entry(raw_key_bytes, name, builtin)
   local entry = {
     raw_key_bytes = raw_key_bytes,
     name          = name or "",
     channel_id    = nil,
     derived_keys  = nil,
+    -- Set for the well-known channels, whose names carry protocol rules a
+    -- 2-byte channel ID cannot be trusted to identify on its own.
+    builtin       = builtin,
   }
   if crypto_ref then
     local ok, cid = pcall(crypto_ref.derive_channel_id, raw_key_bytes)
@@ -71,32 +76,74 @@ end
 -- Parsing helpers
 -- ---------------------------------------------------------------------------
 
--- Parse a multi-line preference string where each non-blank, non-comment line is:
---   <hex_value>:<name>   or just <hex_value>
--- Returns a list of {hex, name} pairs.
-local function parse_hex_name_lines(pref_str)
+-- Decode a 32-byte key written in any of the forms the rest of the project
+-- hands out, so an address copied from umshctl, the phone, or this
+-- dissector's own display can be pasted straight in.
+--
+--   64 hex characters                  the historical form
+--   44 base58 characters               what an address looks like everywhere else
+--   umsh:n:<44>  / umsh:ck:<44>        node and channel-key URIs
+--
+-- Hex and base58 are told apart by length, the same rule PublicKey::FromStr
+-- uses in crates/umsh-core/src/packet.rs. `scheme` names the URI prefix this
+-- kind of key accepts, if any; a URI of any other kind is refused rather
+-- than quietly read as the wrong sort of key.
+local function parse_key_material(str, scheme)
+  if not str then return nil end
+  str = str:gsub("%s+", "")
+  if str == "" then return nil end
+
+  local uri_scheme, body = str:match("^umsh:(%a+):(.+)$")
+  if uri_scheme then
+    if uri_scheme ~= scheme then return nil end
+    -- URIs may carry `?k=v` parameters; the key is what precedes them.
+    str = body:match("^([^?]+)") or body
+  end
+
+  if #str == 64 and str:match("^[0-9a-fA-F]+$") then
+    return hex_to_bytes(str)
+  end
+  if #str == base58.ENCODED_LEN then
+    return base58.decode32(str)
+  end
+  return nil
+end
+
+-- Split a configuration line into its key part and its label.
+--
+-- The key may itself be a URI containing colons, so the split cannot simply
+-- be at the first one.
+local function split_key_label(line)
+  local uri, label = line:match("^(umsh:%a+:[^:]+):(.*)$")
+  if uri then return uri, label end
+  if line:match("^umsh:%a+:") then return line, "" end
+
+  local key, lbl = line:match("^([^:]+):(.*)$")
+  if key then return key, lbl end
+  return line, ""
+end
+
+-- Iterate the non-blank, non-comment lines of a preference string, yielding
+-- the key text and its label.
+local function parse_key_name_lines(pref_str)
   if not pref_str or pref_str == "" then return {} end
   local result = {}
   for line in (pref_str .. "\n"):gmatch("([^\n]*)\n") do
     line = line:match("^%s*(.-)%s*$")  -- trim
     if line ~= "" and line:sub(1,1) ~= "#" then
-      local hex, name = line:match("^([0-9a-fA-F]+):(.*)$")
-      if not hex then
-        hex  = line:match("^([0-9a-fA-F]+)$")
-        name = ""
-      end
-      if hex then
-        result[#result+1] = {hex=hex, name=(name or ""):match("^%s*(.-)%s*$")}
-      end
+      local key, name = split_key_label(line)
+      result[#result+1] = {key=key, name=(name or ""):match("^%s*(.-)%s*$")}
     end
   end
   return result
 end
 
--- Parse a multi-line preference string where lines are:
---   <hex_key>:<name>           (raw 32-byte channel key, 64 hex chars)
---   umsh:cs:<channel-name>:<display-name>   (named channel derivation)
---   umsh:cs:<channel-name>                  (named channel, no display name)
+-- Parse a multi-line channel preference string. Lines are either a key in
+-- any form parse_key_material accepts, or a channel *name* to derive from:
+--   <key>:<label>                           raw 32-byte channel key
+--   umsh:ck:<44-base58>:<label>             channel-key URI
+--   umsh:cs:<channel-name>:<display-name>   named channel derivation
+--   umsh:cs:<channel-name>                  named channel, no display name
 local function parse_channel_lines(pref_str)
   if not pref_str or pref_str == "" then return {} end
   local result = {}
@@ -113,14 +160,10 @@ local function parse_channel_lines(pref_str)
         result[#result+1] = {kind="named", chan_name=chan_name,
                              name=(display or chan_name):match("^%s*(.-)%s*$")}
       else
-        -- Raw hex key
-        local hex, name = line:match("^([0-9a-fA-F]+):(.*)$")
-        if not hex then
-          hex  = line:match("^([0-9a-fA-F]+)$")
-          name = ""
-        end
-        if hex and #hex == 64 then
-          result[#result+1] = {kind="raw", hex=hex,
+        local key, name = split_key_label(line)
+        local bytes = parse_key_material(key, "ck")
+        if bytes then
+          result[#result+1] = {kind="raw", bytes=bytes,
                                name=(name or ""):match("^%s*(.-)%s*$")}
         end
       end
@@ -138,49 +181,42 @@ function M.rebuild(node_pref, privkey_pref, channel_pref)
   privkeys = {}
   channels = {}
 
-  -- Node name mappings (64-hex pubkey : name)
-  for _, item in ipairs(parse_hex_name_lines(node_pref or "")) do
-    if #item.hex == 64 then
-      local b, err = hex_to_bytes(item.hex)
-      if b then
-        nodes[#nodes+1] = {
-          pubkey_hex   = item.hex:lower(),
-          pubkey_bytes = b,
-          hint3_bytes  = b:sub(1, 3),
-          name         = item.name,
-        }
-      end
+  -- Node name mappings (public key : name)
+  for _, item in ipairs(parse_key_name_lines(node_pref or "")) do
+    local b = parse_key_material(item.key, "n")
+    if b then
+      nodes[#nodes+1] = {
+        pubkey_hex   = bytes_to_hex(b),
+        pubkey_bytes = b,
+        hint3_bytes  = b:sub(1, 3),
+        name         = item.name,
+      }
     end
   end
 
-  -- Private keys (64-hex seed : name)
+  -- Private keys (Ed25519 seed : name)
   -- We store only seeds; X25519 public keys are derived for cross-pair decryption.
-  for _, item in ipairs(parse_hex_name_lines(privkey_pref or "")) do
-    if #item.hex == 64 then
-      local b, err = hex_to_bytes(item.hex)
-      if b then
-        local x25519_pub = nil
-        if crypto_ref then
-          local ok, p = pcall(crypto_ref.x25519_pubkey_from_seed, b)
-          if ok then x25519_pub = p end
-        end
-        privkeys[#privkeys+1] = {
-          seed_bytes    = b,
-          seed_hex      = item.hex:lower(),
-          name          = item.name,
-          x25519_pubkey = x25519_pub,
-        }
+  for _, item in ipairs(parse_key_name_lines(privkey_pref or "")) do
+    local b = parse_key_material(item.key)
+    if b then
+      local x25519_pub = nil
+      if crypto_ref then
+        local ok, p = pcall(crypto_ref.x25519_pubkey_from_seed, b)
+        if ok then x25519_pub = p end
       end
+      privkeys[#privkeys+1] = {
+        seed_bytes    = b,
+        seed_hex      = bytes_to_hex(b),
+        name          = item.name,
+        x25519_pubkey = x25519_pub,
+      }
     end
   end
 
   -- Channel keys
   for _, item in ipairs(parse_channel_lines(channel_pref or "")) do
     if item.kind == "raw" then
-      local b, err = hex_to_bytes(item.hex)
-      if b then
-        channels[#channels+1] = compute_channel_entry(b, item.name)
-      end
+      channels[#channels+1] = compute_channel_entry(item.bytes, item.name)
     elseif item.kind == "named" then
       if crypto_ref then
         local key = derive_named_channel_key(item.chan_name)
@@ -208,36 +244,30 @@ function M.rebuild_from_uat(uat_rows)
     local label = (row[3] or ""):match("^%s*(.-)%s*$")
 
     if ktype == "pubkey" or ktype == "node" then
-      local hex = key:gsub("%s+", "")
-      if #hex == 64 then
-        local b = hex_to_bytes(hex)
-        if b then
-          nodes[#nodes+1] = {
-            pubkey_hex   = hex:lower(),
-            pubkey_bytes = b,
-            hint3_bytes  = b:sub(1, 3),
-            name         = label,
-          }
-        end
+      local b = parse_key_material(key, "n")
+      if b then
+        nodes[#nodes+1] = {
+          pubkey_hex   = bytes_to_hex(b),
+          pubkey_bytes = b,
+          hint3_bytes  = b:sub(1, 3),
+          name         = label,
+        }
       end
 
     elseif ktype == "privkey" then
-      local hex = key:gsub("%s+", "")
-      if #hex == 64 then
-        local b = hex_to_bytes(hex)
-        if b then
-          local x25519_pub = nil
-          if crypto_ref then
-            local ok, p = pcall(crypto_ref.x25519_pubkey_from_seed, b)
-            if ok then x25519_pub = p end
-          end
-          privkeys[#privkeys+1] = {
-            seed_bytes    = b,
-            seed_hex      = hex:lower(),
-            name          = label,
-            x25519_pubkey = x25519_pub,
-          }
+      local b = parse_key_material(key)
+      if b then
+        local x25519_pub = nil
+        if crypto_ref then
+          local ok, p = pcall(crypto_ref.x25519_pubkey_from_seed, b)
+          if ok then x25519_pub = p end
         end
+        privkeys[#privkeys+1] = {
+          seed_bytes    = b,
+          seed_hex      = bytes_to_hex(b),
+          name          = label,
+          x25519_pubkey = x25519_pub,
+        }
       end
 
     elseif ktype == "channel" then
@@ -251,14 +281,42 @@ function M.rebuild_from_uat(uat_rows)
           end
         end
       else
-        -- Raw hex key
-        local hex = key:gsub("%s+", "")
-        if #hex == 64 then
-          local b = hex_to_bytes(hex)
-          if b then
-            channels[#channels+1] = compute_channel_entry(b, label)
-          end
+        local b = parse_key_material(key, "ck")
+        if b then
+          channels[#channels+1] = compute_channel_entry(b, label)
         end
+      end
+    end
+  end
+end
+
+-- ---------------------------------------------------------------------------
+-- Well-known channels
+--
+-- `public` and `emergency` are derived from names the spec fixes, so their
+-- keys are known to everyone by construction. Adding them unconditionally
+-- means emergency traffic verifies and public traffic decrypts with no
+-- configuration at all — which is the point of a channel whose key is
+-- public knowledge.
+-- ---------------------------------------------------------------------------
+
+local BUILTIN_CHANNELS = {"public", "emergency"}
+
+function M.add_builtin_channels()
+  if not crypto_ref then return end
+  for _, chan_name in ipairs(BUILTIN_CHANNELS) do
+    local key = derive_named_channel_key(chan_name)
+    if key then
+      local existing
+      for _, ch in ipairs(channels) do
+        if ch.raw_key_bytes == key then existing = ch; break end
+      end
+      if existing then
+        -- Already configured by hand: keep the operator's own label, but
+        -- tag it so the rules attached to the name still apply.
+        existing.builtin = chan_name
+      else
+        channels[#channels+1] = compute_channel_entry(key, chan_name, chan_name)
       end
     end
   end
@@ -353,12 +411,10 @@ function M.load_keyfile(path)
     elseif section == "privkeys" then priv_lines[#priv_lines+1] = line
     elseif section == "channels" then chan_lines[#chan_lines+1] = line
     else
-      -- flat file without sections: auto-detect by key length
-      local hex = line:match("^([0-9a-fA-F]+)")
-      if hex then
-        if #hex == 64 then
-          node_lines[#node_lines+1] = line  -- treat as node by default
-        end
+      -- Flat file without sections: anything that reads as a key is a node.
+      local key = split_key_label(line)
+      if parse_key_material(key, "n") then
+        node_lines[#node_lines+1] = line
       end
     end
   end

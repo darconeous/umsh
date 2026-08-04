@@ -123,7 +123,9 @@ section("Keystore")
 
 local NODE_A_PUB = ("ED54A59FB1AC3A5123935136294 1B868E85A60E3D7B2485D828821DC7A69C279"):gsub("%s","")
 local NODE_B_PUB = "6C28FD058C18C88C6CCE2AF981D2D11C851B123ED5B69B7876773ED099EA3F83"
-local CHAN_KEY   = ("5A"):rep(64)
+-- 32 bytes: the all-0x5A channel key from docs/protocol/src/test-vectors.md,
+-- whose channel ID is B0 8D.
+local CHAN_KEY   = ("5A"):rep(32)
 
 keystore.rebuild(
   NODE_A_PUB .. ":NodeA\n" .. NODE_B_PUB .. ":NodeB",
@@ -144,6 +146,64 @@ check("lookup NodeA by full key",
       keystore.lookup_node_by_key(from_hex(NODE_A_PUB)), "NodeA")
 
 -- ─────────────────────────────────────────────────────────────────────────────
+-- Canonical address presentation
+-- Vectors from crates/umsh-core/src/base58.rs, which is the definition.
+-- ─────────────────────────────────────────────────────────────────────────────
+section("Base58 addresses")
+
+local base58 = require("base58")
+
+check("encode32 all-zero = 44 ones",
+      base58.encode32(string.rep("\x00", 32)), ("1"):rep(44))
+check("encode32 all-FF",
+      base58.encode32(string.rep("\xFF", 32)),
+      "JEKNVnkbo3jma5nREBBJCDoXFVeKkD56V3xKrvRmWxFG")
+check("encode32 value 1 (fixed width, left-padded)",
+      base58.encode32(string.rep("\x00", 31) .. "\x01"), ("1"):rep(43) .. "2")
+
+local seq = {}
+for i = 0, 31 do seq[#seq+1] = string.char(i) end
+check("encode32 00..1F",
+      base58.encode32(table.concat(seq)),
+      "111thX6LZfHDZZKUs92febYZhYRcXddmzfzF2NvTkPNE")
+
+check("encode32 rejects wrong length", base58.encode32("\x00"), nil)
+
+-- Star truncation: characters are emitted only while every key matching the
+-- hint would produce them, so the star marks where the hint stops proving.
+check("node hint ED54A5",   base58.node_hint(from_hex("ED54A5")),   "GySV")
+check("node hint 6C28FD",   base58.node_hint(from_hex("6C28FD")),   "8HDH")
+check("router hint ED54",   base58.router_hint(from_hex("ED54")),   "Gy*")
+check("router hint 6C28",   base58.router_hint(from_hex("6C28")),   "8H*")
+check("node hint never exceeds its budget",
+      #base58.node_hint(from_hex("000000")) <= 4, true)
+check("hint agrees with the full key it came from",
+      base58.encode32(from_hex(NODE_A_PUB)):sub(1, 4),
+      base58.node_hint(from_hex("ED54A5")))
+
+check("node hint carries the byte form",
+      base58.node_hint_full(from_hex("ED54A5")), "GySV (ED:54:A5)")
+check("router hint carries the byte form",
+      base58.router_hint_full(from_hex("ED54")), "Gy* (ED:54)")
+check("addr picks the full key form by length",
+      base58.addr(from_hex(NODE_A_PUB)),
+      "GySVDr1omr3GTodgWFH7qD1ZKav9C5NMPFjdpwb33LvU")
+
+-- Decoding, so an address can be pasted back in wherever one is displayed.
+check("decode32 round-trips Node A",
+      base58.decode32(base58.encode32(from_hex(NODE_A_PUB))), from_hex(NODE_A_PUB))
+check("decode32 all-zero", base58.decode32(("1"):rep(44)), string.rep("\0", 32))
+check("decode32 all-FF",
+      base58.decode32("JEKNVnkbo3jma5nREBBJCDoXFVeKkD56V3xKrvRmWxFG"),
+      string.rep("\xFF", 32))
+-- The alphabet leaves out 0/O/I/l so the characters people misread are
+-- rejected outright rather than decoded as something else.
+check("decode32 rejects '0'", base58.decode32(("1"):rep(43) .. "0"), nil)
+check("decode32 rejects 'O'", base58.decode32(("1"):rep(43) .. "O"), nil)
+check("decode32 rejects a short string", base58.decode32("111"), nil)
+check("decode32 rejects a value over 32 bytes", base58.decode32(("z"):rep(44)), nil)
+
+-- ─────────────────────────────────────────────────────────────────────────────
 -- Keystore rebuild_from_uat tests
 -- ─────────────────────────────────────────────────────────────────────────────
 section("Keystore UAT")
@@ -160,6 +220,105 @@ check("UAT lookup NodeB by hint",
       keystore.lookup_node(from_hex("6C28FD")), "UatNodeB")
 check("UAT lookup NodeA by full key",
       keystore.lookup_node_by_key(from_hex(NODE_A_PUB)), "UatNodeA")
+
+-- ─────────────────────────────────────────────────────────────────────────────
+-- Key input forms
+-- Anywhere a key is configured, it may be written the way the rest of the
+-- project writes one: hex, base58, or the matching URI.
+-- ─────────────────────────────────────────────────────────────────────────────
+section("Key input forms")
+
+local NODE_A_B58 = "GySVDr1omr3GTodgWFH7qD1ZKav9C5NMPFjdpwb33LvU"
+
+keystore.rebuild(NODE_A_B58 .. ":FromBase58", "", "")
+check("node key as base58",
+      keystore.lookup_node_by_key(from_hex(NODE_A_PUB)), "FromBase58")
+
+keystore.rebuild("umsh:n:" .. NODE_A_B58 .. ":FromUri", "", "")
+check("node key as umsh:n: URI",
+      keystore.lookup_node_by_key(from_hex(NODE_A_PUB)), "FromUri")
+
+-- URIs carry `?k=v` parameters; the key is what precedes them.
+keystore.rebuild("umsh:n:" .. NODE_A_B58 .. "?n=Base%20Camp:WithParams", "", "")
+check("node URI with parameters",
+      keystore.lookup_node_by_key(from_hex(NODE_A_PUB)), "WithParams")
+
+keystore.rebuild(NODE_A_PUB .. ":FromHex", "", "")
+check("node key as hex still works",
+      keystore.lookup_node_by_key(from_hex(NODE_A_PUB)), "FromHex")
+
+-- A label is optional, and a key with none still lands.
+keystore.rebuild(NODE_A_B58, "", "")
+check("base58 key with no label",
+      keystore.lookup_node_by_key(from_hex(NODE_A_PUB)), "")
+
+-- Garbage is dropped rather than half-read.
+keystore.rebuild("not-a-key:Nope\n" .. NODE_A_B58 .. ":Good", "", "")
+check("malformed key line is skipped",
+      keystore.lookup_node_by_key(from_hex(NODE_A_PUB)), "Good")
+
+-- A URI of the wrong kind is refused rather than read as this kind of key.
+keystore.rebuild("umsh:ck:" .. NODE_A_B58 .. ":WrongScheme", "", "")
+check("channel-key URI is not accepted as a node",
+      keystore.lookup_node_by_key(from_hex(NODE_A_PUB)), nil)
+
+-- Channel keys take the same forms, and the ID derives either way.
+if crypto then
+  local CHAN_B58 = base58.encode32(from_hex(CHAN_KEY))
+  keystore.rebuild("", "", CHAN_B58 .. ":ChanFromBase58")
+  local ch = keystore.get_channel_by_id(from_hex("B08D"))
+  check("channel key as base58", ch and ch.name, "ChanFromBase58")
+
+  keystore.rebuild("", "", "umsh:ck:" .. CHAN_B58 .. ":ChanFromUri")
+  ch = keystore.get_channel_by_id(from_hex("B08D"))
+  check("channel key as umsh:ck: URI", ch and ch.name, "ChanFromUri")
+
+  -- Private keys too, checked through the X25519 public key they derive.
+  keystore.rebuild("", NODE_A_B58 .. ":SeedFromBase58", "")
+  local pks = keystore.get_all_privkeys()
+  check("private key as base58", #pks == 1 and pks[1].seed_bytes, from_hex(NODE_A_PUB))
+end
+
+-- ─────────────────────────────────────────────────────────────────────────────
+-- Well-known channels
+-- The keys derive from names the spec fixes, so both the keys and the
+-- channel IDs they hash to are constants a capture can rely on.
+-- ─────────────────────────────────────────────────────────────────────────────
+section("Well-known channels")
+
+if not crypto then
+  io.write("  SKIP  (crypto module not loaded)\n")
+else
+  check("public channel key",
+        crypto.hmac_sha256("UMSH-CHANNEL-V1", "public"),
+        from_hex("fb9b7adddc36e25d01f4c90e6babd20212536985dbcd8e5c3971375b6d511b51"))
+  check("emergency channel key",
+        crypto.hmac_sha256("UMSH-CHANNEL-V1", "emergency"),
+        from_hex("a11c5e7491f9622ba7c05ae417e47135b9b392d5939b338849cd6fc2b4ba9cf2"))
+
+  -- Added on top of whatever the operator configured, and findable by the
+  -- 2-byte channel ID that appears on the wire.
+  keystore.rebuild("", "", "")
+  keystore.add_builtin_channels()
+
+  local pub = keystore.get_channel_by_id(from_hex("0AD6"))
+  check("public channel ID 0AD6 resolves",     pub and pub.builtin, "public")
+  local emg = keystore.get_channel_by_id(from_hex("26C7"))
+  check("emergency channel ID 26C7 resolves",  emg and emg.builtin, "emergency")
+  check("built-in channels carry transport keys",
+        pub and pub.derived_keys and #pub.derived_keys.k_enc, 16)
+  check("built-in channel count", #keystore.get_all_channels(), 2)
+
+  -- A hand-configured well-known channel keeps its own label rather than
+  -- gaining a second entry under the same key.
+  keystore.rebuild("", "", "umsh:cs:public:MyPublic")
+  keystore.add_builtin_channels()
+  check("configured well-known channel is not duplicated",
+        #keystore.get_all_channels(), 2)
+  local mine = keystore.get_channel_by_id(from_hex("0AD6"))
+  check("configured label wins", mine and mine.name, "MyPublic")
+  check("configured entry still tagged built-in", mine and mine.builtin, "public")
+end
 
 -- Restore original keystore state for crypto tests
 keystore.rebuild(
@@ -262,15 +421,10 @@ else
         hmac_out,
         from_hex("5bdcc146bf60754e6a042426089575c75a003f089d2739839dec58b964ec3843"))
 
-  -- HKDF test: derive channel ID for all-5A key → B08D
-  -- (HKDF requires AES backend for the guard, but the HMAC part is pure Lua.
-  -- This test verifies the HMAC/HKDF chain; it will SKIP if no AES backend.)
-  if crypto.available() then
-    local chan_id = crypto.derive_channel_id(from_hex(CHAN_KEY))
-    check("HKDF derive_channel_id(5A*32) = B08D", chan_id, from_hex("B08D"))
-  else
-    io.write("  SKIP  HKDF (no AES backend in test environment)\n")
-  end
+  -- HKDF test: derive channel ID for all-5A key → B08D.
+  -- HKDF is HMAC-SHA256 all the way down, so this runs with no AES backend.
+  local chan_id = crypto.derive_channel_id(from_hex(CHAN_KEY))
+  check("HKDF derive_channel_id(5A*32) = B08D", chan_id, from_hex("B08D"))
 end
 
 -- ─────────────────────────────────────────────────────────────────────────────

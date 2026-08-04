@@ -111,8 +111,15 @@ SECINFO, and MIC fields.
 
 ## Enabling Decryption
 
-Without keys, the dissector shows the raw wire structure but cannot verify MICs
-or decrypt payloads. To enable full decryption:
+The `public` and `emergency` channels need no configuration. Both derive their
+keys from names the spec fixes, so the keys are public knowledge by
+construction and the dissector carries them: emergency traffic has its MIC
+verified and public traffic is decrypted out of the box. Adding either channel
+by hand still works and keeps whatever label you give it.
+
+Everything else needs keys. Without them the dissector shows the raw wire
+structure but cannot verify MICs or decrypt payloads. To enable full
+decryption:
 
 1. Go to **Edit > Preferences > Protocols > UMSH**
 2. Click the **Decryption Keys** button to open the key table editor
@@ -124,17 +131,8 @@ The key table has three columns:
 | Column | Description |
 |---|---|
 | **type** | One of: `pubkey`, `privkey`, or `channel` |
-| **key** | Hex key (64 hex chars), or `umsh:cs:<name>` for named channels |
+| **key** | The key, in any form below |
 | **label** | Human-readable display name |
-
-Example rows:
-
-| type | key | label |
-|---|---|---|
-| `pubkey` | `ED54A59FB1AC3A51...` | Alice |
-| `privkey` | `1112131415161718...` | MyNode |
-| `channel` | `5A5A5A5A5A5A5A5A...` | TestChannel |
-| `channel` | `umsh:cs:public` | Public |
 
 Key types:
 - **pubkey** — maps a 32-byte Ed25519 public key to a display name (annotates
@@ -142,8 +140,35 @@ Key types:
 - **privkey** — a 32-byte Ed25519 seed used for unicast and blind unicast
   decryption
 - **channel** — a 32-byte symmetric channel key used for multicast and blind
-  unicast decryption; alternatively `umsh:cs:<name>` for well-known named
-  channels
+  unicast decryption
+
+#### Key formats
+
+A key may be written any of these ways, in the key table and in the
+preference strings and key files alike. Hex and base58 are told apart by
+length, the same rule `PublicKey::FromStr` uses in the reference
+implementation, so an address copied from `umshctl`, the phone app, or this
+dissector's own display pastes straight in.
+
+| Form | Example | Valid for |
+|---|---|---|
+| 64 hex characters | `ED54A59FB1AC3A51…` | all three types |
+| 44 base58 characters | `GySVDr1omr3GTodgWFH7qD1ZKav9C5NMPFjdpwb33LvU` | all three types |
+| `umsh:n:<44-base58>` | `umsh:n:GySVDr1omr3GTodg…` | `pubkey` |
+| `umsh:ck:<44-base58>` | `umsh:ck:75hbt6uvDqjPZ9Wg…` | `channel` |
+| `umsh:cs:<name>` | `umsh:cs:public` | `channel` (derives the key from the name) |
+
+URI `?k=v` parameters are ignored, so a scanned QR code works unedited. A URI
+of the wrong kind is refused rather than read as the wrong sort of key.
+
+Example rows:
+
+| type | key | label |
+|---|---|---|
+| `pubkey` | `GySVDr1omr3GTodgWFH7qD1ZKav9C5NMPFjdpwb33LvU` | Alice |
+| `privkey` | `1112131415161718...` | MyNode |
+| `channel` | `5A5A5A5A5A5A5A5A...` | TestChannel |
+| `channel` | `umsh:cs:public` | Public |
 
 ### Fallback for Wireshark < 4.6
 
@@ -152,9 +177,12 @@ separate string preferences are shown:
 
 | Preference | Format |
 |---|---|
-| **Node names** | `<64-hex-pubkey>:<name>` (one per line) |
-| **Private keys** | `<64-hex-ed25519-seed>:<name>` (one per line) |
-| **Channel keys** | `<64-hex-key>:<name>` or `umsh:cs:<name>:<label>` (one per line) |
+| **Node names** | `<key>:<name>` (one per line) |
+| **Private keys** | `<key>:<name>` (one per line) |
+| **Channel keys** | `<key>:<name>` or `umsh:cs:<name>:<label>` (one per line) |
+
+`<key>` takes any of the forms in [Key formats](#key-formats) above. The label
+is optional.
 
 ### Extracting keys from desktop_chat
 
@@ -189,14 +217,56 @@ ED54A59FB1AC3A512393513629...:<display-name>
 5A5A5A5A5A5A5A5A5A5A5A5A...:<display-name>
 ```
 
+## Protocol Violations
+
+Frames that break a prohibition the spec states as a sender MUST NOT, and that
+a single frame is enough to prove, are reported three ways: as a
+`umsh.violation` field carrying the text, as error-severity expert info, and as
+a `[VIOLATION]` marker on the summary line. What is checked includes reserved
+bits that must be zero, payload types carried by a packet type that may not
+carry them (a broadcast echo request, say), the requirements the `public` and
+`emergency` channels attach to their names, and the flood-management rules for
+a broadcast Identity Request.
+
+A channel ID is a 2-byte hint of a key and the spec permits collisions, so a
+finding that rests on one says "channel identified by ID only" until the MIC
+verifies under that channel's key and settles which channel it really is.
+
+To colour those frames — red background, white text — install the coloring
+rule:
+
+```sh
+make install-colorfilters
+```
+
+A Lua dissector cannot colour a packet-list row on its own, which is why this
+is a separate step; the `umsh.violation` field exists for the rule to match on.
+The target seeds a personal rule set from Wireshark's stock rules if you have
+none, puts the UMSH rule at the top (rules are first-match-wins), and does
+nothing if it is already installed. To do it by hand instead, import
+`dissectors/umsh/umsh-colorfilters` from **View > Coloring Rules > Import** and
+drag it above the transport rules. `umsh.violation` also works as an ordinary
+display filter for pulling every offending frame out of a capture.
+
 ## Test Vectors
 
 The `test_vectors.pcap` file contains all 8 protocol test-vector packets
 wrapped as UDP payloads on port 4242. Open it in Wireshark with the dissector
-installed to verify the plugin is working. To regenerate it:
+installed to verify the plugin is working. Every frame in it is valid, and the
+bytes are the ones in `docs/protocol/src/test-vectors.md`. To regenerate it:
 
 ```sh
 python3 dissectors/make_test_pcap.py dissectors/test_vectors.pcap
+```
+
+`violations.pcap` is the counterpart: deliberately non-conformant frames that
+exercise the violation reporting and the application-layer summary lines.
+Nothing in it is a reference for how to build a packet. Most of its frames are
+broadcasts, which carry no MIC and so let the application dissectors run with
+no key configured.
+
+```sh
+python3 dissectors/make_violation_pcap.py dissectors/violations.pcap
 ```
 
 ## ULCP Capture Files
@@ -246,3 +316,30 @@ test vectors. Without `luagcrypt`, crypto tests are skipped.
 | 4 | MCST (Multicast) | Channel key required |
 | 6 | BUNI (Blind Unicast) | Channel key + private key required |
 | 7 | BUAR (Blind Unicast Ack-Req) | Channel key + private key required |
+
+## Supported Payload Types
+
+Once a payload is readable, the protocol column names the application protocol
+carried and the summary line gets a one-line précis of it.
+
+| Type | Name | Protocol column |
+|---:|---|---|
+| 1 | Node Identity | `UMSH-ID` |
+| 2 | MAC Command | `UMSH-MC` |
+| 3 | Text Message | `UMSH-TC` |
+| 5 | Chat-Room Message | `UMSH-CR` |
+| 7 | CoAP-over-UMSH | `CoAP` (from the built-in CoAP dissector) |
+| 8 | Node Management | `UMSH-NM` |
+
+Node Management payloads carry ULCP frames, which are handed to the same frame
+dissector the local-link ULCP capture uses.
+
+## Address Presentation
+
+Addresses render in the canonical forms from the addressing chapter: a full
+32-byte key as its 44 base58 digits, and a hint in the star-truncated form,
+with the bytes it was read from alongside — `GySV (ED:54:A5)` for a node hint,
+`Gy* (ED:54)` for a router hint. Characters before the star are ones every key
+matching that hint would produce; the star marks where the hint stops proving
+anything. `umsh.src_addr` and `umsh.dst_addr` carry the canonical text for
+filtering, and the address columns use it whenever no keystore name is known.

@@ -12,7 +12,8 @@
 	build-heltec-v3-console flash-heltec-v3-console \
 	build-heltec-v3 flash-heltec-v3 \
 	ios-mobile-core ios-archive ios-upload \
-	install-umshctl install-umsh-bridge install-dissector install-extcap
+	install-umshctl install-umsh-bridge install-dissector install-extcap \
+	install-colorfilters
 
 # ─── Firmware build / flash ──────────────────────────────────────────────────
 #
@@ -255,6 +256,37 @@ endif
 install-dissector:
 	mkdir -p $(WIRESHARK_PLUGIN_DIR)
 	ln -sfn "$(CURDIR)/dissectors/umsh" $(WIRESHARK_PLUGIN_DIR)/umsh
+
+# Coloring rules cannot come from the dissector — a Lua dissector has no way
+# to colour a packet-list row — so the rule that inverts protocol violations
+# has to be installed into Wireshark's own rule set.
+#
+# The rule goes at the TOP: rules are first-match-wins, and the stock set ends
+# with broad transport rules (UDP, TCP) that would otherwise claim a UMSH frame
+# carried over the capture encapsulation before this one is reached.
+#
+# Seeding from the global file first matters. A personal colorfilters file
+# replaces the defaults rather than extending them, so writing one that holds
+# only this rule would silently discard every stock rule the user has.
+WIRESHARK_COLORFILTERS := $(HOME)/.config/wireshark/colorfilters
+WIRESHARK_STOCK_COLORFILTERS := $(shell $(TSHARK) -G folders 2>/dev/null \
+	| awk -F'\t' '/^Global configuration:/ {print $$NF"/colorfilters"}')
+
+install-colorfilters:
+	@mkdir -p $(dir $(WIRESHARK_COLORFILTERS))
+	@if [ ! -f "$(WIRESHARK_COLORFILTERS)" ] && [ -f "$(WIRESHARK_STOCK_COLORFILTERS)" ]; then \
+		cp "$(WIRESHARK_STOCK_COLORFILTERS)" "$(WIRESHARK_COLORFILTERS)"; \
+		echo "seeded $(WIRESHARK_COLORFILTERS) from the stock rules"; \
+	fi
+	@if grep -q 'umsh\.violation' "$(WIRESHARK_COLORFILTERS)" 2>/dev/null; then \
+		echo "UMSH coloring rule already installed"; \
+	else \
+		cat "$(CURDIR)/dissectors/umsh/umsh-colorfilters" "$(WIRESHARK_COLORFILTERS)" \
+			2>/dev/null > "$(WIRESHARK_COLORFILTERS).tmp"; \
+		mv "$(WIRESHARK_COLORFILTERS).tmp" "$(WIRESHARK_COLORFILTERS)"; \
+		echo "UMSH coloring rule added to $(WIRESHARK_COLORFILTERS)"; \
+		echo "(restart Wireshark, or View -> Coloring Rules -> OK, to pick it up)"; \
+	fi
 
 # The dissector is a prerequisite, not a convenience: a live capture
 # arriving with no dissector installed renders as undissected bytes.

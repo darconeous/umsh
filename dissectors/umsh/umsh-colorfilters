@@ -1,0 +1,11 @@
+# UMSH coloring rules — import from Wireshark's View → Coloring Rules → Import,
+# or run `make install-colorfilters` to prepend this to the personal rule set.
+#
+# A Lua dissector cannot colour a packet-list row; only a coloring rule can.
+# The dissector puts the text of each prohibition it finds in a `umsh.violation`
+# field for exactly this rule to match on.
+#
+# Rules are evaluated top to bottom and the first match wins, so this has to sit
+# above the generic transport rules (UDP in particular) to reach a UMSH frame
+# carried over the synthetic capture encapsulation.
+@UMSH Protocol Violation@umsh.violation@[65535,0,0][65535,65535,65535]
