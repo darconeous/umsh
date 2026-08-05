@@ -263,7 +263,7 @@ mod tests {
             NodeRole::Tracker,
             NodeCapabilities::empty(),
         );
-        let here = NodeLocation::from_e7(-1_224_194_000, 377_749_000, 5);
+        let here = NodeLocation::from_e7(377_749_000, -1_224_194_000, 5);
         profile.location = Some(here);
         profile.altitude_m = Some(-17);
         profile.clock = || Some(1_785_000_000);

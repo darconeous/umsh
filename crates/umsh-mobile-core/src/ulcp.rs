@@ -373,8 +373,8 @@ fn gnss_record(snapshot: &GnssSnapshot) -> UlcpGnssRecord {
     UlcpGnssRecord {
         fix: UlcpFixKind::from_wire(snapshot.fix),
         location: bytes.to_vec(),
-        latitude_deg: placed.map(|(_, latitude)| latitude.into()),
-        longitude_deg: placed.map(|(longitude, _)| longitude.into()),
+        latitude_deg: placed.map(|(latitude, _)| latitude.into()),
+        longitude_deg: placed.map(|(_, longitude)| longitude.into()),
         location_cell_meters: (!bytes.is_empty())
             .then(|| ulcp_location_cell_meters(bytes.len() as u8))
             .flatten(),
@@ -5042,7 +5042,7 @@ mod tests {
 
     /// A five-byte fix — a ~38 m cell, the default identity precision.
     fn placed_location() -> NodeLocation {
-        NodeLocation::from_e7(-1_224_194_160, 377_749_290, 5)
+        NodeLocation::from_e7(377_749_290, -1_224_194_160, 5)
     }
 
     #[test]
@@ -5076,9 +5076,9 @@ mod tests {
         assert_eq!(gnss.location, placed_location().as_bytes());
         // The center of the cell the fix named, which is as close to the
         // encoded position as a cell that size can be.
-        let (longitude, latitude) = (gnss.longitude_deg.unwrap(), gnss.latitude_deg.unwrap());
-        assert!((longitude + 122.419_416).abs() < 5e-4, "{longitude}");
+        let (latitude, longitude) = (gnss.latitude_deg.unwrap(), gnss.longitude_deg.unwrap());
         assert!((latitude - 37.774_929).abs() < 5e-4, "{latitude}");
+        assert!((longitude + 122.419_416).abs() < 5e-4, "{longitude}");
         assert!((38.0..39.0).contains(&gnss.location_cell_meters.unwrap()));
     }
 

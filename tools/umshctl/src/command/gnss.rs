@@ -178,7 +178,7 @@ fn format_location(bytes: &[u8]) -> String {
 /// matches its decimal places to the encoded precision, so the digits
 /// stop where the grid code stops saying anything.
 fn format_position(bytes: &[u8]) -> String {
-    format!("{} (lon, lat)", NodeLocation::from_bytes(bytes))
+    format!("{} (lat, lon)", NodeLocation::from_bytes(bytes))
 }
 
 /// The approximate cell size one precision names, at the equator. What
@@ -222,7 +222,7 @@ mod tests {
         // stops — the same grid code as the test above.
         assert_eq!(
             format_position(&[0x8a, 0x1f, 0x4c]),
-            "1.80, 33.60 (lon, lat)"
+            "0.90, 67.19 (lat, lon)"
         );
     }
 }

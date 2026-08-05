@@ -224,8 +224,8 @@ pub fn to_snapshot(fix: &Fix) -> GnssSnapshot {
 
 /// The fix's position at the cache precision, or `None` without one.
 fn fix_location(fix: &Fix) -> Option<NodeLocation> {
-    match (fix.longitude_e7, fix.latitude_e7) {
-        (Some(lon), Some(lat)) => Some(NodeLocation::from_e7(lon, lat, CACHE_PRECISION)),
+    match (fix.latitude_e7, fix.longitude_e7) {
+        (Some(lat), Some(lon)) => Some(NodeLocation::from_e7(lat, lon, CACHE_PRECISION)),
         _ => None,
     }
 }
@@ -478,7 +478,7 @@ mod tests {
         }
     }
 
-    fn fixed_at(lon_e7: i32, lat_e7: i32) -> Fix {
+    fn fixed_at(lat_e7: i32, lon_e7: i32) -> Fix {
         Fix {
             quality: FixQuality::ThreeD,
             latitude_e7: Some(lat_e7),
@@ -501,7 +501,7 @@ mod tests {
 
     #[test]
     fn a_fix_becomes_the_property_surface() {
-        let snapshot = to_snapshot(&fixed_at(115_166_666, 481_173_000));
+        let snapshot = to_snapshot(&fixed_at(481_173_000, 115_166_666));
         assert_eq!(snapshot.fix, umsh_ulcp::gnss::FixKind::ThreeD);
         assert_eq!(snapshot.sats_used, 9);
         assert_eq!(snapshot.sats_in_view, Some(13));
@@ -514,7 +514,7 @@ mod tests {
         // where you are is a different disclosure from telling everyone.
         assert_eq!(
             snapshot.location(),
-            NodeLocation::from_e7(115_166_666, 481_173_000, MAX_PRECISION).as_bytes()
+            NodeLocation::from_e7(481_173_000, 115_166_666, MAX_PRECISION).as_bytes()
         );
     }
 
@@ -533,7 +533,7 @@ mod tests {
     /// Half a coordinate pair is not a position.
     #[test]
     fn a_partial_coordinate_pair_yields_no_location() {
-        let mut fix = fixed_at(115_166_666, 481_173_000);
+        let mut fix = fixed_at(481_173_000, 115_166_666);
         fix.longitude_e7 = None;
         assert!(to_snapshot(&fix).location().is_empty());
     }
@@ -545,23 +545,23 @@ mod tests {
     #[test]
     fn only_a_change_of_advertised_cell_is_a_move() {
         let precision = policy().identity_precision;
-        let here = fix_location(&fixed_at(115_166_666, 481_173_000))
+        let here = fix_location(&fixed_at(481_173_000, 115_166_666))
             .unwrap()
             .clamped(precision);
         // A jitter of a few centimetres.
-        let jittered = fix_location(&fixed_at(115_166_680, 481_173_010))
+        let jittered = fix_location(&fixed_at(481_173_010, 115_166_680))
             .unwrap()
             .clamped(precision);
         assert_eq!(here, jittered, "a sub-cell jitter changed the cell");
 
-        let elsewhere = fix_location(&fixed_at(120_000_000, 490_000_000))
+        let elsewhere = fix_location(&fixed_at(490_000_000, 120_000_000))
             .unwrap()
             .clamped(precision);
         assert_ne!(here, elsewhere);
 
         // The advertised value is coarser than the cached one, and is a
         // prefix of it: the same position, said less precisely.
-        let cached = fix_location(&fixed_at(115_166_666, 481_173_000)).unwrap();
+        let cached = fix_location(&fixed_at(481_173_000, 115_166_666)).unwrap();
         assert_eq!(here.precision(), precision);
         assert_eq!(here.as_bytes(), &cached.as_bytes()[..precision as usize]);
     }
@@ -581,9 +581,9 @@ mod tests {
         // Undated fixes throughout: what the clock does with a fix is a
         // separate decision with its own tests, and letting these set it
         // would leave a wall clock behind for whatever runs next.
-        let untimed = |lon_e7, lat_e7| Fix {
+        let untimed = |lat_e7, lon_e7| Fix {
             time: None,
-            ..fixed_at(lon_e7, lat_e7)
+            ..fixed_at(lat_e7, lon_e7)
         };
         let updating = Policy {
             update_identity: true,
@@ -599,7 +599,7 @@ mod tests {
         assert_eq!(blank.altitude_m, None, "an altitude with no position");
 
         // The first fix moves it; a second in the same cell does not.
-        let here = untimed(115_166_666, 481_173_000);
+        let here = untimed(481_173_000, 115_166_666);
         assert!(absorb(&here, updating).identity_moved);
         assert!(!absorb(&here, updating).identity_moved);
         let advertised = advertised_location().expect("a fix went unadvertised");
@@ -611,7 +611,7 @@ mod tests {
         assert_eq!(located.altitude_m, Some(31));
 
         // Far enough to leave the cell.
-        assert!(absorb(&untimed(120_000_000, 490_000_000), updating).identity_moved);
+        assert!(absorb(&untimed(490_000_000, 120_000_000), updating).identity_moved);
 
         // Turning the switch off retracts what it advertised, rather than
         // leaving a position nothing is refreshing any more.

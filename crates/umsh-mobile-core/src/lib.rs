@@ -578,7 +578,7 @@ fn node_identity_record(
     let (latitude, longitude, location_precision) = match location {
         None => (None, None, None),
         Some(location) => {
-            let (lon, lat) = location.center();
+            let (lat, lon) = location.center();
             (
                 Some(f64::from(lat)),
                 Some(f64::from(lon)),
@@ -1035,7 +1035,7 @@ mod tests {
                 | umsh_node::NodeCapabilities::MOBILE,
             name: Some("Basecamp".into()),
             location: Some(umsh_node::location::NodeLocation::from_lat_lon(
-                -123.09, 44.05, 4,
+                44.05, -123.09, 4,
             )),
             altitude_m: Some(72),
             timestamp: Some(1_760_000_000),

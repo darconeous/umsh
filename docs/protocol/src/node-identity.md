@@ -92,17 +92,19 @@ The node location is encoded as a string of one or more bytes, where each byte n
 
 #### Grid Subdivision
 
-Each byte splits its parent cell into a 16×16 grid of children. Within each byte, the high nibble indexes along longitude and the low nibble indexes along latitude:
+Each byte splits its parent cell into a 16×16 grid of children. Within each byte, the high nibble indexes along latitude and the low nibble indexes along longitude:
 
 ```text
   7   6   5   4   3   2   1   0
 +---------------+---------------+
-|   LON NIBBLE  |   LAT NIBBLE  |
+|   LAT NIBBLE  |   LON NIBBLE  |
 +---------------+---------------+
      4 bits          4 bits
 ```
 
-The first byte subdivides the entire globe (longitude in 16 slices of 22.5°, latitude in 16 slices of 11.25°). Each subsequent byte subdivides the cell selected by the byte before it, using the same high-nibble-longitude, low-nibble-latitude convention.
+The first byte subdivides the entire globe (latitude in 16 slices of 11.25°, longitude in 16 slices of 22.5°). Each subsequent byte subdivides the cell selected by the byte before it, using the same high-nibble-latitude, low-nibble-longitude convention.
+
+Latitude leads here for the same reason it leads everywhere else in UMSH: a coordinate pair is written, spoken, and passed as `(latitude, longitude)`, and an encoding that reversed the pair would be the one place the convention did not hold.
 
 #### Encoding a Location
 
@@ -112,13 +114,13 @@ Given latitude `LAT` in degrees (-90..+90) and longitude `LON` in degrees (-180.
 
 Compute two 4N-bit indices over the full desired precision:
 
-- `lon_index = floor((LON + 180) × 16^N / 360)`
 - `lat_index = floor((LAT +  90) × 16^N / 180)`
+- `lon_index = floor((LON + 180) × 16^N / 360)`
 
 Then read nibbles from most significant to least significant:
 
-- byte _k_ high nibble = `(lon_index >> (4 × (N − 1 − k))) & 0xF`
-- byte _k_ low  nibble = `(lat_index >> (4 × (N − 1 − k))) & 0xF`
+- byte _k_ high nibble = `(lat_index >> (4 × (N − 1 − k))) & 0xF`
+- byte _k_ low  nibble = `(lon_index >> (4 × (N − 1 − k))) & 0xF`
 
 This form makes the hierarchy explicit: truncating an N-byte code to _k_ bytes yields exactly the _k_-byte code for the same position.
 
@@ -126,15 +128,15 @@ Edge cases: `LON = +180°` is equivalent to `LON = −180°` and wraps `lon_inde
 
 ##### Iterative form
 
-Emitting one byte at a time, with `lon_step = 22.5° / 16^k` and `lat_step = 11.25° / 16^k`:
+Emitting one byte at a time, with `lat_step = 11.25° / 16^k` and `lon_step = 22.5° / 16^k`:
 
-- byte _k_ high nibble = `floor(((LON + 180) mod (16 × lon_step)) / lon_step)`
-- byte _k_ low  nibble = `floor(((LAT +  90) mod (16 × lat_step)) / lat_step)`
+- byte _k_ high nibble = `floor(((LAT +  90) mod (16 × lat_step)) / lat_step)`
+- byte _k_ low  nibble = `floor(((LON + 180) mod (16 × lon_step)) / lon_step)`
 
-For byte 0 (`k = 0`), `lon_step = 22.5°` and `lat_step = 11.25°`, so the modulus is a no-op for valid inputs and the formulas reduce to:
+For byte 0 (`k = 0`), `lat_step = 11.25°` and `lon_step = 22.5°`, so the modulus is a no-op for valid inputs and the formulas reduce to:
 
-- `high_nibble = floor((LON + 180) / 22.5)`
-- `low_nibble  = floor((LAT +  90) / 11.25)`
+- `high_nibble = floor((LAT +  90) / 11.25)`
+- `low_nibble  = floor((LON + 180) / 22.5)`
 
 The same edge cases apply as in the direct form: `LON = +180°` wraps to nibble 0 naturally via the modulus, but `LAT = +90°` must be clamped to nibble `0xF` at every position — the modulus would otherwise wrap it to nibble 0.
 
@@ -144,18 +146,18 @@ Encode `(LAT, LON) = (37.331°, −121.883°)` (San Jose, CA) at 3-byte precisio
 
 Direct form:
 
-- `lon_index = floor((−121.883 + 180) × 4096 / 360) = floor(661.24) = 661 = 0x295`
 - `lat_index = floor((  37.331 +  90) × 4096 / 180) = floor(2897.49) = 2897 = 0xB51`
+- `lon_index = floor((−121.883 + 180) × 4096 / 360) = floor(661.24) = 661 = 0x295`
 
 Reading nibbles most-significant first:
 
-| Byte | High (lon) | Low (lat) | Value  |
+| Byte | High (lat) | Low (lon) | Value  |
 |-----:|:----------:|:---------:|:------:|
-|   0  |    `0x2`   |   `0xB`   | `0x2B` |
-|   1  |    `0x9`   |   `0x5`   | `0x95` |
-|   2  |    `0x5`   |   `0x1`   | `0x51` |
+|   0  |    `0xB`   |   `0x2`   | `0xB2` |
+|   1  |    `0x5`   |   `0x9`   | `0x59` |
+|   2  |    `0x1`   |   `0x5`   | `0x15` |
 
-Final code: `2B 95 51`.
+Final code: `B2 59 15`.
 
 #### Decoding a Location
 
@@ -163,21 +165,21 @@ An N-byte code denotes the entire cell it selects, not a point. When a single co
 
 #### Precision Scaling
 
-Each additional byte divides both the longitude and latitude spans by 16. The span shrinks geometrically, so just a few bytes yield very fine precision:
+Each additional byte divides both the latitude and longitude spans by 16. The span shrinks geometrically, so just a few bytes yield very fine precision:
 
-| Bytes | Longitude cell  | Latitude cell   | Equator cell size (approx.) |
+| Bytes | Latitude cell   | Longitude cell  | Equator cell size (approx.) |
 |---:|---|---|---|
-| 1 | 22.5°            | 11.25°            | 2,500 × 1,250 km |
-| 2 | 1.40625°         | 0.703125°         | 156 × 78 km      |
-| 3 | 0.0879°          | 0.0439°           | 9.8 × 4.9 km     |
-| 4 | 0.00549°         | 0.00275°          | 610 × 305 m      |
-| 5 | 0.000343°        | 0.000172°         | 38 × 19 m        |
-| 6 | 2.15 × 10⁻⁵°     | 1.07 × 10⁻⁵°      | 2.4 × 1.2 m      |
-| 7 | 1.34 × 10⁻⁶°     | 6.71 × 10⁻⁷°      | 15 × 7.5 cm      |
+| 1 | 11.25°            | 22.5°            | 1,250 × 2,500 km |
+| 2 | 0.703125°         | 1.40625°         | 78 × 156 km      |
+| 3 | 0.0439°           | 0.0879°          | 4.9 × 9.8 km     |
+| 4 | 0.00275°          | 0.00549°         | 305 × 610 m      |
+| 5 | 0.000172°         | 0.000343°        | 19 × 38 m        |
+| 6 | 1.07 × 10⁻⁵°      | 2.15 × 10⁻⁵°     | 1.2 × 2.4 m      |
+| 7 | 6.71 × 10⁻⁷°      | 1.34 × 10⁻⁶°     | 7.5 × 15 cm      |
 
 Longitude cells narrow with latitude, so cells are physically smaller in east-west extent away from the equator.
 
-> **Comparison with float32:** Two single-precision floats (8 bytes) give non-uniform resolution: ~1.7 m longitude and ~85 cm latitude worst-case near ±180°/±90°, improving to ~1 cm near 0°. At 7 bytes, this encoding achieves ~15 × 7.5 cm uniformly across the globe — better than the float32 worst case while using one fewer byte. At 8 bytes — beyond the 7-byte wire limit, considered here only for an apples-to-apples comparison against the 8 bytes two floats occupy — the cell shrinks to ~9 × 5 mm, better than float32 everywhere.
+> **Comparison with float32:** Two single-precision floats (8 bytes) give non-uniform resolution: ~85 cm latitude and ~1.7 m longitude worst-case near ±90°/±180°, improving to ~1 cm near 0°. At 7 bytes, this encoding achieves ~7.5 × 15 cm uniformly across the globe — better than the float32 worst case while using one fewer byte. At 8 bytes — beyond the 7-byte wire limit, considered here only for an apples-to-apples comparison against the 8 bytes two floats occupy — the cell shrinks to ~5 × 9 mm, better than float32 everywhere.
 
 #### Properties
 
