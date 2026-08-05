@@ -7711,6 +7711,69 @@ fn non_ack_routed_unicast_without_flood_is_tracked() {
     );
 }
 
+/// The overheard repeat that confirms a repeat-only send is a *real* repeater
+/// rewrite — FHOPS decremented, a router hint prepended to the trace route, a
+/// region code inserted, the frame visibly longer — not the pristine frame the
+/// sender transmitted. The confirmation key rides on the MIC, which a repeater
+/// may not touch, so the rewrite must still match.
+#[test]
+fn a_real_repeater_rewrite_confirms_the_senders_repeat_only_entry() {
+    let (mut sender, local_id, peer_key) = make_sender_mac();
+    let _ = sender
+        .queue_unicast(
+            local_id,
+            &peer_key,
+            b"hello",
+            &SendOptions::default().with_trace_route(),
+        )
+        .unwrap();
+    let receipt = sole_tracked_receipt(&sender, local_id);
+    let _ = block_on(sender.transmit_next(&mut |_, _| {})).unwrap();
+    let original = sender.radio().transmitted[0].clone();
+
+    let mut repeater = make_mac();
+    repeater.repeater_config_mut().enabled = true;
+    repeater.repeater_config_mut().default_region = Some([0x78, 0x53]);
+    let _ = repeater
+        .add_identity(DummyIdentity::new([0x30; 32]))
+        .unwrap();
+    repeater
+        .radio_mut()
+        .queue_received_frame(original.as_slice());
+    let handled = block_on(repeater.receive_one(|_, _| {})).unwrap();
+    assert!(handled, "the repeater accepts the flood forward");
+    let rewritten = repeater
+        .tx_queue_mut()
+        .pop_next()
+        .expect("a queued forward");
+    assert!(
+        rewritten.frame.len() > original.len(),
+        "the rewrite grew the frame (trace hint + region code)"
+    );
+
+    sender
+        .radio_mut()
+        .queue_received_frame(rewritten.frame.as_slice());
+    let mut confirmed = None;
+    let handled = block_on(sender.receive_one(|identity, event| {
+        if let MacEventRef::Forwarded { receipt, .. } = event {
+            confirmed = Some((identity, receipt));
+        }
+    }))
+    .unwrap();
+
+    assert!(handled);
+    assert_eq!(confirmed, Some((local_id, receipt)));
+    assert!(
+        sender
+            .identity(local_id)
+            .unwrap()
+            .pending_ack(&receipt)
+            .is_none(),
+        "the overheard rewrite completed the send"
+    );
+}
+
 /// The post-transmit listen window that parks all other traffic belongs to
 /// ACK-requested sends only; a best-effort flood send must not stall the
 /// node's queue for a confirmation it is merely hoping for.

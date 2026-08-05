@@ -970,41 +970,50 @@ fn parse_region_code(value: &[u8]) -> Result<Option<[u8; REGION_CODE_LEN]>, Stat
     }
 }
 
-/// Number of recently-transmitted ack-requested frames whose ack MICs we
-/// remember for filtering returning MAC acks. Sized to cover the acks that
-/// can be in flight over a round trip; 4 bytes each, so the whole ring is
-/// tiny.
-const EXPECTED_ACK_MIC_SLOTS: usize = 16;
+/// Number of recently-transmitted frames whose MIC prefixes we remember for
+/// receive filtering. Sized to cover what can still produce an echo — a
+/// returning ack over a round trip, a repeat within the confirmation window;
+/// 4 bytes each, so the whole ring is tiny.
+const TRANSMITTED_MIC_SLOTS: usize = 16;
 
-/// A small ring of `ack_mic` values (the first 4 bytes of an ack-requested
-/// frame's on-wire MIC) for frames this radio has transmitted. A returning
-/// MAC ack carries no destination hint, so this is how a filtering host
-/// recognizes an ack as belonging to one of its own sends.
+/// A small ring of 4-byte MIC prefixes for frames this radio has
+/// transmitted. Two kinds of returning traffic identify themselves by such a
+/// prefix and nothing else the filter can hold on to:
+///
+/// - a **MAC ack**, which carries no destination hint; its public `ack_mic`
+///   is defined as the first 4 bytes of the acknowledged frame's MIC
+/// - a **repeat** of our own frame carried onward by a repeater, whose
+///   destination hint is the remote peer's; the rewrite may touch only
+///   mutable routing state, so the MIC rides through unchanged — the same
+///   identity the host's forwarding-confirmation machinery keys on
+///
+/// One table serves both: whatever the packet type, a trailer opening with a
+/// remembered prefix is an echo of something we sent.
 ///
 /// Eviction is **lazy**: entries are displaced oldest-first only when the
 /// ring fills, and are *never* removed on a match. A single send can be
-/// acknowledged by several acks arriving over different routes (flood copies,
-/// source-routed copies) carrying distinct routing state; keeping the entry
-/// live lets the host collect all of them.
+/// echoed several times — acks arriving over different routes, repeats from
+/// different repeaters — each carrying distinct routing state; keeping the
+/// entry live lets the host collect all of them.
 #[derive(Default)]
-struct ExpectedAckMics {
-    slots: [[u8; 4]; EXPECTED_ACK_MIC_SLOTS],
-    /// Number of populated slots, saturating at `EXPECTED_ACK_MIC_SLOTS`.
+struct TransmittedMics {
+    slots: [[u8; 4]; TRANSMITTED_MIC_SLOTS],
+    /// Number of populated slots, saturating at `TRANSMITTED_MIC_SLOTS`.
     filled: usize,
     /// Next write position (ring cursor).
     cursor: usize,
 }
 
-impl ExpectedAckMics {
-    /// Record an expected `ack_mic`, skipping duplicates so repeated sends of
-    /// the same frame don't crowd out other pending acks.
+impl TransmittedMics {
+    /// Record a transmitted frame's MIC prefix, skipping duplicates so
+    /// retransmissions of the same frame don't crowd out other entries.
     fn note(&mut self, mic: [u8; 4]) {
         if self.contains(&mic) {
             return;
         }
         self.slots[self.cursor] = mic;
-        self.cursor = (self.cursor + 1) % EXPECTED_ACK_MIC_SLOTS;
-        if self.filled < EXPECTED_ACK_MIC_SLOTS {
+        self.cursor = (self.cursor + 1) % TRANSMITTED_MIC_SLOTS;
+        if self.filled < TRANSMITTED_MIC_SLOTS {
             self.filled += 1;
         }
     }
@@ -1034,9 +1043,10 @@ struct HostDomain {
     auto_ack: bool,
     /// The inbound queue, populated while the host is detached.
     queue: RxQueue,
-    /// Ack MICs of ack-requested frames we have transmitted, used to
-    /// recognize returning MAC acks (which carry no destination hint).
-    expected_ack_mics: ExpectedAckMics,
+    /// MIC prefixes of frames we have transmitted, used to recognize
+    /// returning echoes: MAC acks (which carry no destination hint) and
+    /// repeats of our own sends (whose destination hint is the peer's).
+    transmitted_mics: TransmittedMics,
 }
 
 impl HostDomain {
@@ -1051,24 +1061,24 @@ impl HostDomain {
         self.peer_keys = PeerKeyTable::default();
         self.auto_ack = false;
         self.queue.clear();
-        self.expected_ack_mics = ExpectedAckMics::default();
+        self.transmitted_mics = TransmittedMics::default();
     }
 
-    /// Record the public `ack_mic` of an ack-requested frame we are about to
-    /// transmit, so its returning MAC ack can be recognized as ours. Non
-    /// ack-requested frames (including MAC acks we relay or emit) are ignored.
-    fn note_tx_ack_mic(&mut self, frame: &[u8]) {
+    /// Record the MIC prefix of a frame we are about to transmit, so its
+    /// echoes — a returning MAC ack, a repeater's onward copy — can be
+    /// recognized as ours. MAC acks we emit ourselves are skipped: their
+    /// trailer names the *other* side's frame, which needs no pass-through.
+    fn note_tx_mic(&mut self, frame: &[u8]) {
         let Ok(header) = PacketHeader::parse(frame) else {
             return;
         };
-        if !header.ack_requested() {
+        if header.fcf.packet_type() == PacketType::MacAck {
             return;
         }
         if let Some(mic) = frame.get(header.mic_range.clone())
             && mic.len() >= 4
         {
-            self.expected_ack_mics
-                .note([mic[0], mic[1], mic[2], mic[3]]);
+            self.transmitted_mics.note([mic[0], mic[1], mic[2], mic[3]]);
         }
     }
 
@@ -1106,18 +1116,23 @@ impl HostDomain {
         let Ok(header) = PacketHeader::parse(data) else {
             return false;
         };
-        // MAC acks carry no destination hint. We can only ever receive an ack
-        // for an ack-requested frame we transmitted, so accept one implicitly
-        // when its public ack_mic (the leading 4 bytes of the trailer) matches
-        // a frame we sent. Entries evict lazily, so duplicate acks for the same
-        // send — arriving over different routes — all pass. A miss falls
-        // through to the explicit filters below (a FILTER_PKT_TYPE entry for
-        // MacAck must still be honored), preserving the union-of-filters rule.
-        if header.fcf.packet_type() == PacketType::MacAck
-            && let Some(ack_mic) = data.get(header.mic_range.start..header.mic_range.start + 4)
+        // A frame whose trailer opens with the MIC prefix of something we
+        // transmitted is an echo of our own send, accepted regardless of
+        // packet type: a MAC ack's public ack_mic is defined as those 4
+        // bytes, and a repeater's onward copy carries the MIC verbatim.
+        // Neither is addressed to us — the ack has no destination hint at
+        // all, the repeat names the remote peer — so without this rule the
+        // host could never see its ack arrive or its frame carried onward,
+        // and its forwarding-confirmation machinery would retry sends the
+        // mesh already accepted. Entries evict lazily, so multiple echoes of
+        // one send — acks over different routes, repeats from different
+        // repeaters — all pass. A miss falls through to the explicit filters
+        // below (a FILTER_PKT_TYPE entry for MacAck must still be honored),
+        // preserving the union-of-filters rule.
+        if let Some(mic) = data.get(header.mic_range.start..header.mic_range.start + 4)
             && self
-                .expected_ack_mics
-                .contains(&[ack_mic[0], ack_mic[1], ack_mic[2], ack_mic[3]])
+                .transmitted_mics
+                .contains(&[mic[0], mic[1], mic[2], mic[3]])
         {
             return true;
         }
@@ -3504,9 +3519,10 @@ impl<A: AesProvider, S: Sha256Provider, const TX: usize> Session<A, S, TX> {
             nocca: tx_meta.flags & meta::TX_FLAG_NOCCA != 0,
         });
         debug_assert!(queued.is_ok(), "queue fullness checked above");
-        // Remember this frame's ack_mic if it requests an ack, so the
-        // returning (destination-hintless) MAC ack can be recognized as ours.
-        self.host.note_tx_ack_mic(payload.data);
+        // Remember this frame's MIC prefix so its echoes — the returning
+        // (destination-hintless) MAC ack, a repeater's onward copy — can be
+        // recognized as ours.
+        self.host.note_tx_mic(payload.data);
         was_empty.then_some(Effect::StartTransmit)
     }
 
@@ -5740,6 +5756,56 @@ mod tests {
             &mut session,
             &mac_ack_with_mic([0x99, 0x88, 0x77, 0x66])
         ));
+    }
+
+    /// A repeater's onward copy of a frame the host transmitted passes the
+    /// filter even though its destination hint names the remote peer: the
+    /// MIC prefix marks it as an echo of our own send, which is exactly what
+    /// the host's forwarding-confirmation machinery waits to overhear.
+    /// Without this rule a bridged host retries every hop send it makes,
+    /// because the confirmation can never reach it.
+    #[test]
+    fn repeat_of_a_transmitted_frame_passes_the_filter() {
+        let mut session = test_session();
+        enable(&mut session);
+        install_host_key(&mut session, &HOST_PUB);
+
+        // A non-ack unicast from the host out to a remote peer, flooding.
+        let mut buf = [0u8; 96];
+        let mut packet = PacketBuilder::new(&mut buf)
+            .unicast(NodeHint([PEER_PUB[0], PEER_PUB[1], PEER_PUB[2]]))
+            .source_hint(NodeHint([HOST_PUB[0], HOST_PUB[1], HOST_PUB[2]]))
+            .frame_counter(9)
+            .flood_hops(5)
+            .mic_size(MicSize::Mic8)
+            .payload(&[4, 5, 6])
+            .build()
+            .unwrap();
+        test_engine()
+            .seal_packet(&mut packet, &test_pairwise())
+            .unwrap();
+        let frame = packet.as_bytes().to_vec();
+
+        // The repeat: mutable routing state rewritten, MIC untouched — what
+        // a repeater is permitted to do.
+        let header = PacketHeader::parse(&frame).unwrap();
+        let mut repeat = frame.clone();
+        repeat[1] = header.flood_hops.unwrap().decremented().0;
+        assert_ne!(repeat, frame);
+
+        // Before the host transmits, the same bytes are just somebody
+        // else's unicast.
+        assert!(!delivered(&mut session, &repeat));
+
+        let (_emitted, effect) = send_packet(&mut session, 4, &frame, &[], 0);
+        assert_eq!(effect, Some(Effect::StartTransmit));
+        session.on_tx_result(TxOutcome::Sent, 0, &mut |_: &[u8]| {});
+
+        // Now it is an echo of our own send: accepted, and — like a
+        // returning ack — not evicted on match, so a second repeater's copy
+        // passes too.
+        assert!(delivered(&mut session, &repeat));
+        assert!(delivered(&mut session, &repeat));
     }
 
     #[test]

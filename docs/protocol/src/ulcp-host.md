@@ -358,14 +358,21 @@ matched through its channel filter (its destination hint is concealed on
 the wire); the device MAY additionally use a provisioned channel key to
 decrypt the address block and narrow the match.
 
-[MAC Ack](packet-types.md#mac-ack-packet) packets carry no destination hint,
-so no implicit filter can address them. Instead the device records the public
-`ack_mic` of each ack-requesting frame it transmits on the host's behalf and
-implicitly accepts a MAC Ack whose `ack_mic` matches one — the only acks the
-host can legitimately receive are for frames it sent. These records evict
-lazily, so multiple acks for one send (arriving over different return routes)
-are all delivered. A MAC Ack whose `ack_mic` matches no recorded frame is
-still accepted if an explicit `FILTER_PKT_TYPE` entry selects it.
+Two kinds of returning traffic identify themselves only by the MIC of a frame
+the host previously sent, so no destination or channel filter can address
+them: a [MAC Ack](packet-types.md#mac-ack-packet) carries no destination hint
+and its public `ack_mic` is the first 4 bytes of the acknowledged frame's
+MIC, and a repeater's onward copy of a host frame keeps the host's MIC while
+its destination hint names the remote peer. The device therefore records the
+leading 4 MIC bytes of each frame it transmits on the host's behalf and
+implicitly accepts any received frame whose trailer opens with a recorded
+value — for a MAC Ack this matches the returning acknowledgement, and for
+other packet types it matches the host's own send being carried onward, which
+the host's forwarding-confirmation machinery must overhear to stop
+retransmitting. These records evict lazily, so multiple echoes of one send —
+acks arriving over different return routes, repeats from different
+repeaters — are all delivered. A MAC Ack whose `ack_mic` matches no recorded
+frame is still accepted if an explicit `FILTER_PKT_TYPE` entry selects it.
 
 Broadcast packets — payload-carrying broadcasts and beacons alike — are
 implicitly accepted **for live delivery**: a broadcast is addressed to
