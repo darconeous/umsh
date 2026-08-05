@@ -1667,7 +1667,7 @@ impl<
         // asked for no tracking and sees none.
         let tracked_receipt = match receipt {
             Some(receipt) => Some(receipt),
-            None if Self::send_has_hops(effective_source_route.as_ref(), effective_flood_hops) => {
+            None if Self::frame_solicits_repeat(packet.as_bytes()) => {
                 Some(self.prepare_repeat_confirmed_send(
                     from,
                     *peer,
@@ -1802,7 +1802,7 @@ impl<
         // asked for no tracking and sees none.
         let tracked_receipt = match receipt {
             Some(receipt) => Some(receipt),
-            None if Self::send_has_hops(effective_source_route.as_ref(), effective_flood_hops) => {
+            None if Self::frame_solicits_repeat(packet.as_bytes()) => {
                 Some(self.prepare_repeat_confirmed_send(
                     from,
                     *peer,
@@ -3373,13 +3373,32 @@ impl<
         Ok(())
     }
 
-    /// Whether a send travels through repeaters rather than straight to its
-    /// destination.
-    fn send_has_hops(
-        source_route: Option<&Vec<RouterHint, MAX_SOURCE_ROUTE_HOPS>>,
-        flood_hops: Option<u8>,
-    ) -> bool {
-        source_route.map(|route| !route.is_empty()).unwrap_or(false) || flood_hops.unwrap_or(0) > 0
+    /// Whether the frame, as built, asks a repeater to carry it: a nonzero
+    /// `FHOPS_REM` nibble or a non-empty source-route option.
+    ///
+    /// This is the arming condition for every retry a non-acknowledged send
+    /// gets: such a send is confirmed only by overhearing a repeat, so a retry
+    /// is defensible if and only if the frame visibly solicits one. The
+    /// question is answered by parsing the frame itself rather than by the
+    /// option values the send was built from — the builder is allowed to
+    /// narrow or drop what was requested, and a prediction that drifts from
+    /// the wire arms a retry ladder for a frame nothing will ever repeat.
+    fn frame_solicits_repeat(frame: &[u8]) -> bool {
+        let Ok(header) = PacketHeader::parse(frame) else {
+            return false;
+        };
+        if header
+            .flood_hops
+            .map(|hops| hops.remaining() > 0)
+            .unwrap_or(false)
+        {
+            return true;
+        }
+        ParsedOptions::extract(frame, header.options_range.clone())
+            .ok()
+            .and_then(|options| options.source_route)
+            .map(|range| !range.is_empty())
+            .unwrap_or(false)
     }
 
     /// Track a non-ACK send that travels through repeaters.
@@ -3425,12 +3444,10 @@ impl<
         cmac.update(packet.body());
         let full_mac = cmac.finalize();
         let ack_trailer = self.crypto.compute_ack_trailer(&full_mac, &keys.k_enc);
-        let is_forwarded = options
-            .source_route
-            .as_ref()
-            .map(|route| !route.is_empty())
-            .unwrap_or(false)
-            || options.flood_hops.unwrap_or(0) > 0;
+        // Judged from the frame, not the requested options: whether the wait
+        // for the ack includes a forwarding-confirmation phase depends on
+        // whether the frame as built actually asks anyone to forward it.
+        let is_forwarded = Self::frame_solicits_repeat(packet.as_bytes());
         let resend = ResendRecord::try_new(
             packet.as_bytes(),
             options.source_route.as_ref().map(|route| route.as_slice()),
@@ -3539,7 +3556,11 @@ impl<
             (None, None) => MAX_FLOOD_HOPS,
         };
 
-        Some(requested.min(ceiling))
+        // The ceiling arithmetic can exceed what the nibble holds (a cached
+        // flood distance of 15 plus slack); an unclamped value would be
+        // silently dropped by the builder, sending the frame with no flood
+        // hops at all.
+        Some(requested.min(ceiling).min(MAX_FLOOD_HOPS))
     }
 
     fn cache_peer_crypto(

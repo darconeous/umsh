@@ -7631,6 +7631,86 @@ fn non_ack_direct_unicast_is_transmitted_exactly_once() {
     assert!(mac.tx_queue().is_empty(), "nothing ever retries");
 }
 
+/// A tracked non-ACK send must air a frame that solicits the repeat it waits
+/// for. A peer cached at the nibble's maximum flood distance pushes the
+/// effective budget past what `FHOPS_REM` can encode; without the clamp the
+/// builder silently dropped the field, so the frame flew hop-less while the
+/// tracking state armed a retry ladder for a repeat no one could ever send.
+#[test]
+fn an_unencodable_flood_ceiling_still_airs_hops_on_a_tracked_send() {
+    let (mut mac, local_id, peer_key, peer_id) = mac_with_keyed_peer();
+    mac.peer_registry_mut().update_route(
+        peer_id,
+        CachedRoute::Flood {
+            hops: MAX_FLOOD_HOPS,
+            regions: heapless::Vec::new(),
+        },
+    );
+
+    let receipt = mac
+        .queue_unicast(
+            local_id,
+            &peer_key,
+            b"hello",
+            &SendOptions::default().with_flood_hops(MAX_FLOOD_HOPS + 1),
+        )
+        .unwrap();
+    assert!(receipt.is_none(), "no receipt for a non-ACK send");
+
+    let tracked = mac
+        .identity(local_id)
+        .unwrap()
+        .pending_acks()
+        .next()
+        .is_some();
+    let queued = mac.tx_queue_mut().pop_next().expect("queued unicast");
+    let header = PacketHeader::parse(queued.frame.as_slice()).unwrap();
+    let rem = header.flood_hops.map(|hops| hops.remaining());
+
+    assert_eq!(
+        rem,
+        Some(MAX_FLOOD_HOPS),
+        "the budget is clamped, not dropped"
+    );
+    assert!(tracked, "a flooded non-ACK send is repeat-confirmed");
+}
+
+/// The route half of the arming rule: a source-routed send with no flood
+/// budget at all still names a repeater that will carry it, so it is tracked.
+#[test]
+fn non_ack_routed_unicast_without_flood_is_tracked() {
+    let (mut mac, local_id, peer_key) = make_sender_mac();
+    let route = [RouterHint([0x21, 0x43])];
+
+    let receipt = mac
+        .queue_unicast(
+            local_id,
+            &peer_key,
+            b"hello",
+            // `no_flood` last: `try_with_source_route` back-fills a flood
+            // budget when none is set.
+            &SendOptions::default()
+                .try_with_source_route(&route)
+                .unwrap()
+                .no_flood(),
+        )
+        .unwrap();
+    assert!(receipt.is_none(), "no receipt for a non-ACK send");
+
+    let queued = mac.tx_queue_mut().pop_next().expect("queued unicast");
+    let header = PacketHeader::parse(queued.frame.as_slice()).unwrap();
+    assert!(header.flood_hops.is_none(), "no flood budget was attached");
+
+    assert!(
+        mac.identity(local_id)
+            .unwrap()
+            .pending_acks()
+            .next()
+            .is_some(),
+        "the routed hop is expected to repeat, so the send is tracked"
+    );
+}
+
 /// The post-transmit listen window that parks all other traffic belongs to
 /// ACK-requested sends only; a best-effort flood send must not stall the
 /// node's queue for a confirmation it is merely hoping for.
