@@ -987,7 +987,6 @@ struct AdvertisedIdentityRows: View {
             LabeledContent("Location") {
                 VStack(alignment: .trailing) {
                     Text(Self.coordinate(latitude, longitude))
-                        .textSelection(.enabled)
                     if let precision = identity.locationPrecision {
                         Text("within \(Self.precisionLabel(precision))")
                             .font(.caption)
@@ -995,6 +994,11 @@ struct AdvertisedIdentityRows: View {
                     }
                 }
             }
+            .coordinateActions(
+                latitude: latitude,
+                longitude: longitude,
+                pinName: identity.name
+            )
         }
         if let altitude = identity.altitudeMeters {
             LabeledContent("Altitude", value: "\(altitude) m")

@@ -799,6 +799,36 @@ final class CoreBluetoothRadioConnection: NSObject, RadioConnection, @unchecked 
         }
     }
 
+    func configurePositioning(
+        gnss: UlcpGnssSettingsRecord?,
+        timeZoneOffsetMinutes: Int16?
+    ) async throws {
+        try await withCheckedThrowingContinuation { (result: CheckedContinuation<Void, any Error>) in
+            bluetoothQueue.async { [self] in
+                guard let peripheral, peripheral.state == .connected else {
+                    result.resume(throwing: RadioConnectionError.radioNotFound)
+                    return
+                }
+                guard configurationWaiter == nil, !refreshInProgress else {
+                    result.resume(throwing: RadioConnectionError.operationInProgress)
+                    return
+                }
+                configurationWaiter = result
+                do {
+                    try applySessionUpdate(
+                        ulcpSession.configurePositioning(
+                            gnss: gnss,
+                            tzOffsetMin: timeZoneOffsetMinutes
+                        ),
+                        from: peripheral
+                    )
+                } catch {
+                    finishConfiguration(throwing: error)
+                }
+            }
+        }
+    }
+
     func addDevicePeer(_ publicKey: Data) async throws {
         try await performDevicePeerOperation { session in
             try session.insertDevicePeer(publicKey: publicKey)

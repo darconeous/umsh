@@ -94,9 +94,32 @@ struct RadioSnapshot: Equatable, Sendable {
             hostPeerCount: 3,
             autoAcknowledgementEnabled: false,
             supportsDeviceIdentity: true,
-            devPeerAddresses: []
+            devPeerAddresses: [],
+            supportsTime: true,
+            supportsGnss: true,
+            timeZoneOffsetMinutes: -420,
+            gnss: UlcpGnssSettingsRecord(
+                enabled: true,
+                identUpdate: true,
+                identPrecision: 5,
+                timeTrust: true
+            )
         ),
         alert: RadioAlertState.none,
+        clock: RadioClock(date: .now, readAt: .now),
+        position: RadioPosition(
+            UlcpGnssRecord(
+                fix: .threeD,
+                location: Data([0xB2, 0x59, 0x15, 0x00, 0x00]),
+                latitudeDeg: 37.7749,
+                longitudeDeg: -122.4194,
+                locationCellMeters: 38.2,
+                altitudeM: 71,
+                accuracyDm: 62,
+                satellitesUsed: 9,
+                satellitesInView: 14
+            )
+        ),
         problemDescription: nil
     )
 
@@ -311,15 +334,20 @@ struct RadioPosition: Equatable, Sendable {
         }
     }
 
-    var coordinateText: String? {
-        guard let latitude, let longitude else { return nil }
-        // Decimal places matched to the cell the device reported: digits
-        // finer than the grid code resolves would be invented.
-        let places = cellMeters.map { cell in
+    /// Decimal places worth showing, matched to the cell the device
+    /// reported: digits finer than the grid code resolves would be
+    /// invented.
+    var coordinateDecimals: Int {
+        cellMeters.map { cell in
             let degreeMeters = 111_320.0
             return max(0, min(7, Int(log10(degreeMeters / max(cell, 0.01)).rounded(.up))))
         } ?? 5
-        let format = FloatingPointFormatStyle<Double>.number.precision(.fractionLength(places))
+    }
+
+    var coordinateText: String? {
+        guard let latitude, let longitude else { return nil }
+        let format = FloatingPointFormatStyle<Double>.number
+            .precision(.fractionLength(coordinateDecimals))
         return "\(latitude.formatted(format)), \(longitude.formatted(format))"
     }
 

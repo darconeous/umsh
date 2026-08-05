@@ -343,6 +343,16 @@ actor FakeRadioConnection: RadioConnection {
         publish(updated)
     }
 
+    func configurePositioning(
+        gnss: UlcpGnssSettingsRecord?,
+        timeZoneOffsetMinutes: Int16?
+    ) async throws {
+        var updated = snapshot
+        updated.provisioning?.gnss = gnss
+        updated.provisioning?.timeZoneOffsetMinutes = timeZoneOffsetMinutes
+        publish(updated)
+    }
+
     func setTime(epochSeconds: UInt32?) async throws {
         var updated = snapshot
         updated.clock = RadioClock(

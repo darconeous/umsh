@@ -347,12 +347,19 @@ struct DeviceConfigView: View {
             if let position = controller.snapshot.position {
                 LabeledContent("Fix", value: position.fixLabel(receiverEnabled: sync.gnss?.enabled))
                 LabeledContent("Satellites", value: position.satellitesText)
-                if let coordinates = position.coordinateText {
+                if let coordinates = position.coordinateText,
+                   let latitude = position.latitude,
+                   let longitude = position.longitude {
                     LabeledContent("Coordinates") {
                         Text(coordinates)
                             .font(.caption.monospaced())
-                            .textSelection(.enabled)
                     }
+                    .coordinateActions(
+                        latitude: latitude,
+                        longitude: longitude,
+                        fractionDigits: position.coordinateDecimals,
+                        pinName: controller.snapshot.name
+                    )
                 }
             }
             Toggle("Share location in identity", isOn: $gnssIdentUpdate)

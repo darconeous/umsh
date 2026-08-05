@@ -1,4 +1,5 @@
 import SwiftUI
+import UMSHMobileCore
 
 struct SettingsView: View {
     let identity: LocalIdentitySnapshot?
@@ -341,6 +342,7 @@ struct RadioDetailView: View {
     var factoryReset: () async throws -> Void = {}
     var setAlert: (RadioAlertState) async throws -> Void = { _ in }
     var setTime: (UInt32?) async throws -> Void = { _ in }
+    var configurePositioning: (UlcpGnssSettingsRecord?, Int16?) async throws -> Void = { _, _ in }
     let discoverRadios: () async -> AsyncStream<[DiscoveredRadio]>
     let selectRadio: (UUID) async throws -> Void
     let stopDiscovery: () async -> Void
@@ -363,6 +365,16 @@ struct RadioDetailView: View {
     @State private var alertRequestInFlight = false
     @State private var clockProblem: String?
     @State private var clockRequestInFlight = false
+    @State private var positioningProblem: String?
+    @State private var positioningRequestInFlight = false
+    /// What was asked for while a positioning write is in flight.
+    ///
+    /// Without it a toggle would show the tapped position, snap back to
+    /// the radio's old value on the next render, and only reach the new
+    /// one when the radio answers — a visible flip-flop for the length of
+    /// a write and a save. Cleared on completion, at which point the
+    /// radio's own answer is what shows, whether the write took or not.
+    @State private var pendingPositioning: UlcpGnssSettingsRecord?
 
     var body: some View {
         List {
@@ -765,14 +777,45 @@ struct RadioDetailView: View {
         }
     }
 
-    /// Where the radio thinks it is, on a radio with a receiver
-    /// (`CAP_GNSS`). Read-only here: whether the receiver runs and what is
-    /// done with a fix are saved settings of the radio's own domain, and
-    /// are edited through device setup alongside its forwarding policy.
+    /// Where the radio thinks it is, and the policy governing it
+    /// (`CAP_GNSS`).
+    ///
+    /// The policy is editable here rather than only through device setup:
+    /// commissioning is for a radio this phone is *not* tethered to, and
+    /// switching your own radio's receiver on should not require walking
+    /// through a setup flow that also wants to restate its role and
+    /// forwarding policy. Each change writes the whole four-property
+    /// group and saves, because a receiver running under half a policy is
+    /// the thing worth avoiding.
     @ViewBuilder
     private var positionSection: some View {
         Section("Position") {
+            let policy = pendingPositioning ?? snapshot.provisioning?.gnss
             let enabled = snapshot.provisioning?.gnss?.enabled
+            if let policy {
+                Toggle(
+                    "GNSS receiver",
+                    isOn: positioningBinding(policy, \.enabled)
+                )
+                Toggle(
+                    "Share location in identity",
+                    isOn: positioningBinding(policy, \.identUpdate)
+                )
+                if policy.identUpdate {
+                    Picker(
+                        "Shared precision",
+                        selection: positioningBinding(policy, \.identPrecision)
+                    ) {
+                        ForEach(UInt8(1)...UInt8(7), id: \.self) { precision in
+                            Text(locationCellLabel(precision)).tag(precision)
+                        }
+                    }
+                }
+                Toggle(
+                    "Trust receiver time",
+                    isOn: positioningBinding(policy, \.timeTrust)
+                )
+            }
             if let position = snapshot.position {
                 LabeledContent("Receiver") {
                     Label(
@@ -782,12 +825,19 @@ struct RadioDetailView: View {
                     .labelStyle(.titleAndIcon)
                 }
                 LabeledContent("Satellites", value: position.satellitesText)
-                if let coordinates = position.coordinateText {
+                if let coordinates = position.coordinateText,
+                   let latitude = position.latitude,
+                   let longitude = position.longitude {
                     LabeledContent("Coordinates") {
                         Text(coordinates)
                             .font(.caption.monospaced())
-                            .textSelection(.enabled)
                     }
+                    .coordinateActions(
+                        latitude: latitude,
+                        longitude: longitude,
+                        fractionDigits: position.coordinateDecimals,
+                        pinName: snapshot.name
+                    )
                     if let cell = position.cellText {
                         LabeledContent("Reported area", value: cell)
                     }
@@ -802,11 +852,91 @@ struct RadioDetailView: View {
                 LabeledContent("Receiver", value: enabled == false ? "Off" : "No report yet")
             }
             Text(enabled == false
-                 ? "The receiver is powered down. Turn it on in device setup, where the positioning settings are saved on the radio."
+                 ? "The receiver is powered down to the lowest state this board can reach. On most of them it is the largest continuous load there is."
                  : "A position names a grid cell rather than a point, and the accuracy figure is the receiver's own estimate rather than a measured error.")
                 .font(.caption)
                 .foregroundStyle(.secondary)
+            if let positioningProblem {
+                Label(positioningProblem, systemImage: "exclamationmark.circle")
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+            }
         }
+        .disabled(positioningRequestInFlight || !canUseRadio)
+    }
+
+    /// A binding over one field of the positioning policy that writes the
+    /// whole policy back to the radio.
+    ///
+    /// The four properties are written as a set — the radio's own rule,
+    /// not this screen's — so a single toggle still sends all of them.
+    /// Once the write settles, what shows is the radio's own answer: a
+    /// setting it refused springs back to what it actually holds.
+    private func positioningBinding<Value>(
+        _ policy: UlcpGnssSettingsRecord,
+        _ field: WritableKeyPath<UlcpGnssSettingsRecord, Value>
+    ) -> Binding<Value> {
+        Binding(
+            get: { policy[keyPath: field] },
+            set: { newValue in
+                var desired = policy
+                desired[keyPath: field] = newValue
+                writePositioning(desired)
+            }
+        )
+    }
+
+    private func writePositioning(_ desired: UlcpGnssSettingsRecord) {
+        positioningProblem = nil
+        positioningRequestInFlight = true
+        pendingPositioning = desired
+        Task {
+            do {
+                try await configurePositioning(
+                    desired,
+                    snapshot.provisioning?.timeZoneOffsetMinutes
+                )
+            } catch {
+                positioningProblem = "The radio did not take that setting. It still holds the one shown."
+            }
+            pendingPositioning = nil
+            positioningRequestInFlight = false
+        }
+    }
+
+    /// The zone travels with the positioning policy, since both are saved
+    /// device-domain settings written by the same call.
+    private func timeZoneBinding(_ offset: Int16) -> Binding<Int16> {
+        Binding(
+            get: { offset },
+            set: { minutes in
+                clockProblem = nil
+                positioningRequestInFlight = true
+                Task {
+                    do {
+                        try await configurePositioning(
+                            snapshot.provisioning?.gnss,
+                            minutes
+                        )
+                    } catch {
+                        clockProblem = "The radio did not take that time zone. It still holds the one shown."
+                    }
+                    positioningRequestInFlight = false
+                }
+            }
+        )
+    }
+
+    /// A location precision named by the area it discloses, which is the
+    /// only thing about it a person can weigh.
+    private func locationCellLabel(_ precision: UInt8) -> String {
+        guard let meters = ulcpLocationCellMeters(precisionBytes: precision) else {
+            return "\(precision) bytes"
+        }
+        if meters >= 1_000 {
+            return "\((meters / 1_000).formatted(.number.precision(.fractionLength(0)))) km"
+        }
+        return "\(meters.formatted(.number.precision(.fractionLength(meters < 10 ? 1 : 0)))) m"
     }
 
     /// The radio's wall clock (`PROP_TIME`), and the one action that
@@ -832,7 +962,12 @@ struct RadioDetailView: View {
                 LabeledContent("Radio clock", value: "Not read yet")
             }
             if let offset = snapshot.provisioning?.timeZoneOffsetMinutes {
-                LabeledContent("Time zone", value: formattedUTCOffset(offset))
+                Picker("Time zone", selection: timeZoneBinding(offset)) {
+                    ForEach(deviceTimeZoneOffsets, id: \.self) { candidate in
+                        Text(formattedUTCOffset(candidate)).tag(candidate)
+                    }
+                }
+                .disabled(positioningRequestInFlight || !canUseRadio)
             }
             Button {
                 clockProblem = nil
@@ -849,7 +984,7 @@ struct RadioDetailView: View {
                 Label("Set From iPhone", systemImage: "clock.arrow.trianglehead.counterclockwise.rotate.90")
             }
             .disabled(clockRequestInFlight || !canUseRadio)
-            Text("The clock is not saved on the radio: a radio that finds its own time from GNSS keeps it, and one that does not starts each power-up not knowing. The time zone is saved, and is set in device setup.")
+            Text("The clock is not saved on the radio: a radio that finds its own time from GNSS keeps it, and one that does not starts each power-up not knowing. The zone is saved, and is an offset rather than a place — the radio has no zone database, so it will not follow daylight saving on its own.")
                 .font(.caption)
                 .foregroundStyle(.secondary)
             if let clockProblem {

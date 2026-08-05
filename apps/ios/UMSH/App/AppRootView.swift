@@ -349,6 +349,7 @@ struct AppRootView: View {
                     factoryReset: factoryResetRadio,
                     setAlert: setRadioAlert,
                     setTime: setRadioTime,
+                    configurePositioning: configureRadioPositioning,
                     discoverRadios: discoverRadios,
                     selectRadio: selectRadio,
                     stopDiscovery: stopRadioDiscovery,
@@ -700,6 +701,16 @@ struct AppRootView: View {
 
     private func setRadioTime(_ epochSeconds: UInt32?) async throws {
         try await radioConnection.setTime(epochSeconds: epochSeconds)
+    }
+
+    private func configureRadioPositioning(
+        _ gnss: UlcpGnssSettingsRecord?,
+        _ timeZoneOffsetMinutes: Int16?
+    ) async throws {
+        try await radioConnection.configurePositioning(
+            gnss: gnss,
+            timeZoneOffsetMinutes: timeZoneOffsetMinutes
+        )
     }
 
     private func claimRadio() async {

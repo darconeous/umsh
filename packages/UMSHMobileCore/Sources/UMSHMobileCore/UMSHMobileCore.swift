@@ -2205,6 +2205,25 @@ public protocol MobileUlcpSessionProtocol: AnyObject, Sendable {
     func configureDevice(configuration: UlcpDeviceConfigRecord) throws  -> UlcpSessionUpdateRecord
 
     /**
+     * Apply and persist the time zone and the positioning policy, and
+     * nothing else.
+     *
+     * [`Self::configure_device`] can write these too, as part of a whole
+     * device domain — that is what commissioning does. This exists for
+     * the case commissioning does not cover: a phone changing the
+     * positioning settings of the radio it is *tethered* to, which has
+     * no reason to restate that radio's role, discoverability, or
+     * forwarding policy in order to switch a receiver on.
+     *
+     * Each argument must be present exactly when the device advertises
+     * the matching capability, and the four positioning properties
+     * travel together for the reason [`UlcpGnssSettingsRecord`] gives.
+     * The write is echo-verified property by property and closed with a
+     * save, like any other configuration pass.
+     */
+    func configurePositioning(gnss: UlcpGnssSettingsRecord?, tzOffsetMin: Int16?) throws  -> UlcpSessionUpdateRecord
+
+    /**
      * Consume one complete ULCP frame and advance the session reducer.
      */
     func consume(frame: Data) throws  -> UlcpSessionUpdateRecord
@@ -2521,6 +2540,34 @@ open func configureDevice(configuration: UlcpDeviceConfigRecord)throws  -> UlcpS
     uniffi_umsh_mobile_core_fn_method_mobileulcpsession_configure_device(
             self.uniffiCloneHandle(),
         FfiConverterTypeUlcpDeviceConfigRecord_lower(configuration),uniffiCallStatus
+    )
+})
+}
+
+    /**
+     * Apply and persist the time zone and the positioning policy, and
+     * nothing else.
+     *
+     * [`Self::configure_device`] can write these too, as part of a whole
+     * device domain — that is what commissioning does. This exists for
+     * the case commissioning does not cover: a phone changing the
+     * positioning settings of the radio it is *tethered* to, which has
+     * no reason to restate that radio's role, discoverability, or
+     * forwarding policy in order to switch a receiver on.
+     *
+     * Each argument must be present exactly when the device advertises
+     * the matching capability, and the four positioning properties
+     * travel together for the reason [`UlcpGnssSettingsRecord`] gives.
+     * The write is echo-verified property by property and closed with a
+     * save, like any other configuration pass.
+     */
+open func configurePositioning(gnss: UlcpGnssSettingsRecord?, tzOffsetMin: Int16?)throws  -> UlcpSessionUpdateRecord  {
+    return try  FfiConverterTypeUlcpSessionUpdateRecord_lift(try rustCallWithError(FfiConverterTypeMobileError_lift) {
+        uniffiCallStatus in
+    uniffi_umsh_mobile_core_fn_method_mobileulcpsession_configure_positioning(
+            self.uniffiCloneHandle(),
+        FfiConverterOptionTypeUlcpGnssSettingsRecord.lower(gnss),
+        FfiConverterOptionInt16.lower(tzOffsetMin),uniffiCallStatus
     )
 })
 }
@@ -10134,6 +10181,9 @@ private let initializationResult: InitializationResult = {
         return InitializationResult.apiChecksumMismatch
     }
     if (uniffi_umsh_mobile_core_checksum_method_mobileulcpsession_configure_device() != 26744) {
+        return InitializationResult.apiChecksumMismatch
+    }
+    if (uniffi_umsh_mobile_core_checksum_method_mobileulcpsession_configure_positioning() != 41309) {
         return InitializationResult.apiChecksumMismatch
     }
     if (uniffi_umsh_mobile_core_checksum_method_mobileulcpsession_consume() != 10958) {

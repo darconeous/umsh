@@ -49,4 +49,76 @@ extension View {
             }
         }
     }
+
+    /// Offer a coordinate for copying and for opening in Maps.
+    ///
+    /// The sibling of [`copyable`](View/copyable(_:)), and deliberately
+    /// built the same way: a modifier over the row rather than a control
+    /// wrapped around it. A coordinate row is a readout, and a readout
+    /// that is also a `Menu` or a `Button` acquires that control's
+    /// chrome — a tinted label, a filled capsule — and stops looking like
+    /// the rows above and below it. A modifier contributes no appearance
+    /// at all, so there is nothing to style back.
+    ///
+    /// `fractionDigits` should match what the row displays: a location
+    /// names a cell, and digits past what the grid code resolves would be
+    /// invented. `pinName` names the pin Maps drops.
+    func coordinateActions(
+        latitude: Double,
+        longitude: Double,
+        fractionDigits: Int = 4,
+        pinName: String? = nil
+    ) -> some View {
+        modifier(
+            CoordinateActions(
+                latitude: latitude,
+                longitude: longitude,
+                fractionDigits: fractionDigits,
+                pinName: pinName
+            )
+        )
+    }
+}
+
+/// The actions behind [`coordinateActions`](View/coordinateActions(latitude:longitude:fractionDigits:pinName:)).
+///
+/// A modifier rather than a free function because opening Maps needs the
+/// environment's URL opener.
+private struct CoordinateActions: ViewModifier {
+    let latitude: Double
+    let longitude: Double
+    let fractionDigits: Int
+    let pinName: String?
+
+    @Environment(\.openURL) private var openURL
+
+    private var latitudeText: String { String(format: "%.\(fractionDigits)f", latitude) }
+    private var longitudeText: String { String(format: "%.\(fractionDigits)f", longitude) }
+
+    /// What goes on the pasteboard: the pair and nothing else — no label,
+    /// no degree signs, no parentheses. It is meant to be pasted into a
+    /// search field or a message and work there unedited.
+    private var plain: String { "\(latitudeText), \(longitudeText)" }
+
+    private var mapsURL: URL? {
+        var components = URLComponents(string: "https://maps.apple.com/")
+        components?.queryItems = [
+            URLQueryItem(name: "ll", value: "\(latitudeText),\(longitudeText)"),
+            URLQueryItem(name: "q", value: pinName ?? "Reported location"),
+        ]
+        return components?.url
+    }
+
+    func body(content: Content) -> some View {
+        content.contextMenu {
+            Button("Copy", systemImage: "doc.on.doc") {
+                UIPasteboard.general.string = plain
+            }
+            if let mapsURL {
+                Button("Show in Maps…", systemImage: "map") {
+                    openURL(mapsURL)
+                }
+            }
+        }
+    }
 }

@@ -891,6 +891,44 @@ impl MobileUlcpSession {
         Ok(state.update(outbound))
     }
 
+    /// Apply and persist the time zone and the positioning policy, and
+    /// nothing else.
+    ///
+    /// [`Self::configure_device`] can write these too, as part of a whole
+    /// device domain — that is what commissioning does. This exists for
+    /// the case commissioning does not cover: a phone changing the
+    /// positioning settings of the radio it is *tethered* to, which has
+    /// no reason to restate that radio's role, discoverability, or
+    /// forwarding policy in order to switch a receiver on.
+    ///
+    /// Each argument must be present exactly when the device advertises
+    /// the matching capability, and the four positioning properties
+    /// travel together for the reason [`UlcpGnssSettingsRecord`] gives.
+    /// The write is echo-verified property by property and closed with a
+    /// save, like any other configuration pass.
+    pub fn configure_positioning(
+        &self,
+        gnss: Option<UlcpGnssSettingsRecord>,
+        tz_offset_min: Option<i16>,
+    ) -> Result<UlcpSessionUpdateRecord, MobileError> {
+        let mut state = self.inner.lock().expect("ULCP session mutex poisoned");
+        if state.stage != SessionStage::Attached {
+            return Err(MobileError::InvalidUlcpFrame);
+        }
+        let values = positioning_values(gnss, tz_offset_min, &state)?;
+        // A radio with neither capability has nothing here to configure,
+        // which is a caller mistake rather than an empty success.
+        if values.is_empty() {
+            return Err(MobileError::UnsupportedCapability);
+        }
+
+        state.expected.clear();
+        state.configuration_queue = state.writable(values);
+        let mut outbound = Vec::new();
+        state.start_configuration(&mut outbound)?;
+        Ok(state.update(outbound))
+    }
+
     /// Re-read every capability-gated property represented by the mobile
     /// snapshot. The existing snapshot remains usable while the bounded
     /// refresh is in flight; authoritative provisioning is published when
@@ -2668,11 +2706,37 @@ fn validate_device_settings(
         ]);
     }
 
+    values.extend(positioning_values(
+        configuration.gnss,
+        configuration.tz_offset_min,
+        state,
+    )?);
+    Ok(values)
+}
+
+/// Reduce the zone and the positioning policy to property writes.
+///
+/// Split out because these are the one part of a device's own domain a
+/// phone changes on its *companion* radio without commissioning it —
+/// [`MobileUlcpSession::configure_positioning`] writes exactly this list
+/// and nothing else, where [`validate_device_settings`] folds it into a
+/// whole-domain write. Same values either way, so the two paths cannot
+/// drift apart.
+///
+/// Each field must be present exactly when its capability is: these
+/// state a whole desired setting rather than a patch.
+fn positioning_values(
+    gnss: Option<UlcpGnssSettingsRecord>,
+    tz_offset_min: Option<i16>,
+    state: &UlcpSessionState,
+) -> Result<Vec<(u32, Vec<u8>)>, MobileError> {
+    let mut values = Vec::new();
+
     let keeps_time = state.has_capability(cap::TIME)?;
-    if configuration.tz_offset_min.is_some() != keeps_time {
+    if tz_offset_min.is_some() != keeps_time {
         return Err(MobileError::InvalidUlcpFrame);
     }
-    if let Some(minutes) = configuration.tz_offset_min {
+    if let Some(minutes) = tz_offset_min {
         // The extremes of the zone database, not of the encoding: a
         // fourteen-hour offset is Kiritimati, and anything past it is a
         // caller mistake rather than a place.
@@ -2683,10 +2747,10 @@ fn validate_device_settings(
     }
 
     let positioning = state.has_capability(cap::GNSS)?;
-    if configuration.gnss.is_some() != positioning {
+    if gnss.is_some() != positioning {
         return Err(MobileError::InvalidUlcpFrame);
     }
-    if let Some(gnss) = configuration.gnss {
+    if let Some(gnss) = gnss {
         if !(1..=MAX_PRECISION).contains(&gnss.ident_precision) {
             return Err(MobileError::InvalidUlcpFrame);
         }
@@ -5260,6 +5324,86 @@ mod tests {
                 "{policy}"
             );
         }
+    }
+
+    #[test]
+    fn a_tethered_phone_changes_positioning_without_restating_the_domain() {
+        // The companion case: switching a receiver on must not require
+        // saying anything about the radio's role or what it forwards.
+        let session = MobileUlcpSession::new();
+        attach_positioning(&session);
+
+        let configured = session
+            .configure_positioning(
+                Some(UlcpGnssSettingsRecord {
+                    enabled: false,
+                    ident_update: false,
+                    ident_precision: 3,
+                    time_trust: false,
+                }),
+                Some(0),
+            )
+            .unwrap();
+        let (written, order, save_tid) = drive_configuration(&session, configured.outbound_frames);
+
+        assert_eq!(
+            written,
+            HashMap::from([
+                (prop::TZ_OFFSET, 0i16.to_le_bytes().to_vec()),
+                (prop::GNSS_IDENT_UPDATE, vec![0]),
+                (prop::GNSS_IDENT_PRECISION, vec![3]),
+                (prop::GNSS_TIME_TRUST, vec![0]),
+                (prop::GNSS_ENABLED, vec![0]),
+            ]),
+            "only the zone and the positioning policy are written"
+        );
+        assert_eq!(order.last(), Some(&prop::GNSS_ENABLED));
+
+        // It closes like any configuration pass: a save, then the
+        // device's own answers reduced into a fresh snapshot.
+        let attached = session
+            .consume(property_response(save_tid, prop::LAST_STATUS, &[0]))
+            .unwrap();
+        assert_eq!(attached.snapshot.phase, UlcpSessionPhase::Attached);
+        assert_eq!(
+            attached.snapshot.provisioning.unwrap().gnss,
+            Some(UlcpGnssSettingsRecord {
+                enabled: false,
+                ident_update: false,
+                ident_precision: 3,
+                time_trust: false,
+            })
+        );
+    }
+
+    #[test]
+    fn positioning_on_its_own_still_matches_the_capabilities() {
+        let session = MobileUlcpSession::new();
+        attach_positioning(&session);
+        let whole = UlcpGnssSettingsRecord {
+            enabled: true,
+            ident_update: false,
+            ident_precision: 5,
+            time_trust: true,
+        };
+        // The same presence rule as the whole-domain write.
+        assert_eq!(
+            session.configure_positioning(Some(whole), None),
+            Err(MobileError::InvalidUlcpFrame)
+        );
+        assert_eq!(
+            session.configure_positioning(None, Some(0)),
+            Err(MobileError::InvalidUlcpFrame)
+        );
+
+        // And a radio with neither capability has nothing to configure,
+        // which is a caller mistake rather than an empty success.
+        let plain = MobileUlcpSession::new();
+        attach_commissionable(&plain, Some(vec![0xAA; 32]), vec![0xAA; 32]);
+        assert_eq!(
+            plain.configure_positioning(None, None),
+            Err(MobileError::UnsupportedCapability)
+        );
     }
 
     #[test]

@@ -56,6 +56,18 @@ protocol RadioConnection: AnyObject, Sendable {
     func setTime(epochSeconds: UInt32?) async throws
     func refresh() async throws -> RadioSnapshot
     func configure(_ settings: RadioSettings) async throws
+    /// Apply and persist the radio's time zone and positioning policy.
+    ///
+    /// Separate from `configure` because it touches the radio's own
+    /// domain rather than its PHY, and separate from the commissioning
+    /// path because changing where a tethered radio's receiver stands has
+    /// no business restating that radio's role or forwarding policy.
+    /// Each argument must be present exactly when the radio advertises
+    /// the matching capability.
+    func configurePositioning(
+        gnss: UlcpGnssSettingsRecord?,
+        timeZoneOffsetMinutes: Int16?
+    ) async throws
     /// Store a peer public key on the radio's device identity
     /// (`PROP_DEV_PEERS`), persisting it with a chained save. Idempotent:
     /// a key the radio already holds resolves as success.
