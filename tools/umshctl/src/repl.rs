@@ -29,6 +29,10 @@ pub enum ReplCommand {
         /// path.
         #[arg(value_name = "SELECTOR")]
         selector: Option<String>,
+
+        /// Choose from a numbered listing, ignoring the saved default.
+        #[arg(long, conflicts_with = "selector")]
+        pick: bool,
     },
 
     /// Detach from the current radio without leaving the shell.
@@ -223,8 +227,8 @@ async fn process_line(app: &mut App, line: &str) -> Result<bool> {
             }
             return Ok(true);
         }
-        ReplCommand::Connect { selector } => {
-            connect(app, selector).await?;
+        ReplCommand::Connect { selector, pick } => {
+            connect(app, selector, pick).await?;
             return Ok(true);
         }
         ReplCommand::Shared(command) => {
@@ -239,7 +243,7 @@ async fn process_line(app: &mut App, line: &str) -> Result<bool> {
 }
 
 /// `connect`: rediscover, or attach to the radio the user named.
-async fn connect(app: &mut App, selector: Option<String>) -> Result<()> {
+async fn connect(app: &mut App, selector: Option<String>, pick: bool) -> Result<()> {
     let target = match selector {
         // A bare number refers to the last `scan` listing, which is the
         // whole reason the REPL keeps it.
@@ -262,7 +266,12 @@ async fn connect(app: &mut App, selector: Option<String>) -> Result<()> {
             },
         },
         None => {
-            let Some(target) = connection::discover(&app.prefs, app.interactive).await? else {
+            let how = if pick {
+                connection::Discovery::Ask
+            } else {
+                app.discovery
+            };
+            let Some(target) = connection::discover(&app.prefs, app.interactive, how).await? else {
                 anyhow::bail!("no ULCP radios found");
             };
             target
@@ -300,9 +309,20 @@ mod tests {
         assert!(matches!(
             parse("connect 2").unwrap(),
             ReplCommand::Connect {
-                selector: Some(ref s)
+                selector: Some(ref s),
+                pick: false,
             } if s == "2"
         ));
+        assert!(matches!(
+            parse("connect --pick").unwrap(),
+            ReplCommand::Connect {
+                selector: None,
+                pick: true,
+            }
+        ));
+        // Naming a radio and asking to be shown the listing are two
+        // different requests.
+        assert!(parse("connect --pick 2").is_err());
         assert!(matches!(
             parse("info").unwrap(),
             ReplCommand::Shared(Command::Info(_))

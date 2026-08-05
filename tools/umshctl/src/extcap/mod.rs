@@ -306,9 +306,11 @@ async fn resolve_target(args: &ExtcapArgs, prefs: &Prefs) -> Result<Target> {
     // No person is watching, so an ambiguous scan has to fail rather
     // than ask which radio was meant. Naming the dialog is the actionable
     // part: that is where the choice can be made once and remembered.
-    connection::discover(prefs, false).await?.context(
-        "no radio selected: pick one in the interface's capture options, or name a serial port",
-    )
+    connection::discover(prefs, false, connection::Discovery::Auto)
+        .await?
+        .context(
+            "no radio selected: pick one in the interface's capture options, or name a serial port",
+        )
 }
 
 /// Point stdout at stderr for the rest of the process.

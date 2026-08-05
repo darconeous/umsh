@@ -30,7 +30,7 @@ use clap::Parser;
 use umsh::ulcp::UlcpDevice;
 
 use command::Command;
-use connection::{Found, Prefs, Session, SessionLink, Target};
+use connection::{Discovery, Found, Prefs, Session, SessionLink, Target};
 use output::ColorChoice;
 
 #[derive(Debug, Parser)]
@@ -45,7 +45,8 @@ board keeps its configuration unless the command changes it.
 
 With no command, opens an interactive shell against one attachment.
 With no connection, discovers a radio over BLE: one match is used, and
-several offer a numbered choice. A serial port is used only when named,
+several offer a numbered choice, which --pick asks for outright. A
+serial port is used only when named,
 because identifying one means opening it, and opening a port can reset
 or DFU-trigger hardware that is not a ULCP radio at all.
 
@@ -83,6 +84,14 @@ pub struct ToolArgs {
     )]
     ble: Option<Option<String>>,
 
+    /// Choose the radio from a numbered listing, ignoring the saved
+    /// default.
+    ///
+    /// The listing appears on its own whenever the answer is ambiguous;
+    /// this asks for it even when it is not.
+    #[arg(long, global = true)]
+    pick: bool,
+
     /// Serial bit rate.
     #[arg(long, default_value_t = 115_200, value_name = "N", global = true)]
     baud: u32,
@@ -104,6 +113,16 @@ pub struct ToolArgs {
     command: Option<Command>,
 }
 
+impl ToolArgs {
+    fn discovery(&self) -> Discovery {
+        if self.pick {
+            Discovery::Ask
+        } else {
+            Discovery::Auto
+        }
+    }
+}
+
 /// Everything a command may need beyond the device itself: the
 /// attachment, the settings, and the difference between a shell and a
 /// one-shot invocation.
@@ -116,6 +135,9 @@ pub struct App {
     pub trace: bool,
     pub no_save: bool,
     pub baud: u32,
+    /// How a bare `connect` resolves a scan — `--pick` at launch keeps
+    /// asking for the rest of the shell session.
+    pub discovery: Discovery,
     /// The last `scan` listing, so `connect <N>` can refer to it.
     pub last_scan: Vec<Found>,
 }
@@ -166,6 +188,7 @@ impl App {
             trace: false,
             no_save: true,
             baud,
+            discovery: Discovery::Auto,
             last_scan: Vec::new(),
         }
     }
@@ -223,6 +246,9 @@ fn announce_attached(session: &Session) {
 /// Work out which radio to talk to, from the flags, the environment,
 /// the saved default, and finally the air.
 async fn resolve(args: &ToolArgs, prefs: &Prefs) -> Result<Option<Target>> {
+    if args.pick && (args.port.is_some() || matches!(args.ble, Some(Some(_)))) {
+        bail!("--pick chooses a radio from a listing; --port and --ble=SELECTOR already name one");
+    }
     if let Some(port) = &args.port {
         if args.ble.is_some() {
             bail!("--port and --ble name different radios; give one");
@@ -239,7 +265,8 @@ async fn resolve(args: &ToolArgs, prefs: &Prefs) -> Result<Option<Target>> {
         }));
     }
     // Bare `--ble`, or nothing at all: the tool finds the radio itself.
-    let target = connection::discover(prefs, std::io::stdin().is_terminal()).await?;
+    let target =
+        connection::discover(prefs, std::io::stdin().is_terminal(), args.discovery()).await?;
     if let Some(target) = &target {
         // A mutating one-shot must never act on a silently chosen radio.
         eprintln!("discovered: {}", target.provisional_label());
@@ -257,6 +284,7 @@ async fn run(args: ToolArgs) -> Result<()> {
         trace: args.trace,
         no_save: args.no_save,
         baud: args.baud,
+        discovery: args.discovery(),
         last_scan: Vec::new(),
     };
 
@@ -345,6 +373,19 @@ mod tests {
         // unambiguous.
         let collision = parse(&["--ble=info", "info"]).unwrap();
         assert_eq!(collision.ble, Some(Some("info".into())));
+    }
+
+    #[test]
+    fn pick_asks_and_pairs_only_with_discovery() {
+        assert_eq!(parse(&[]).unwrap().discovery(), Discovery::Auto);
+        let picked = parse(&["--pick", "info"]).unwrap();
+        assert_eq!(picked.discovery(), Discovery::Ask);
+        // Bare `--ble` still discovers, so it composes; a named radio
+        // does not, but that is a resolve-time check, not a grammar one.
+        assert_eq!(
+            parse(&["--pick", "--ble"]).unwrap().discovery(),
+            Discovery::Ask
+        );
     }
 
     #[test]

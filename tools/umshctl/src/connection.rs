@@ -438,15 +438,28 @@ impl From<&Found> for Target {
     }
 }
 
+/// How a scan result set is resolved into one radio.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub enum Discovery {
+    /// Take the saved default when it answers, and ask only when the
+    /// answer is genuinely ambiguous.
+    #[default]
+    Auto,
+    /// Always show the listing and ask. The saved default is not
+    /// consulted at all — the point of asking is to reach the radio the
+    /// preference does not name.
+    Ask,
+}
+
 /// Find the device to talk to when the command line named none.
 ///
 /// Returns `None` when nothing was found, which the caller turns into an
 /// unattached REPL or a one-shot error.
-pub async fn discover(prefs: &Prefs, interactive: bool) -> Result<Option<Target>> {
+pub async fn discover(prefs: &Prefs, interactive: bool, how: Discovery) -> Result<Option<Target>> {
     let mut seen = scan(DISCOVERY_WINDOW).await?;
     let mut extended = false;
 
-    if let Some(saved) = &prefs.default_device {
+    if let (Discovery::Auto, Some(saved)) = (how, &prefs.default_device) {
         if let Some(found) = saved.find_in(&seen) {
             return Ok(Some(Target::from(found)));
         }
@@ -466,25 +479,32 @@ pub async fn discover(prefs: &Prefs, interactive: bool) -> Result<Option<Target>
         merge_found(&mut seen, scan(DISCOVERY_EXTENSION).await?);
     }
 
-    choose(seen, interactive)
+    choose(seen, interactive, how)
 }
 
 /// Turn a scan result set into a single target, asking the user when the
-/// answer is ambiguous.
-pub fn choose(found: Vec<Found>, interactive: bool) -> Result<Option<Target>> {
+/// answer is ambiguous — or, under [`Discovery::Ask`], whenever there is
+/// anything to ask about.
+pub fn choose(found: Vec<Found>, interactive: bool, how: Discovery) -> Result<Option<Target>> {
     match found.len() {
         0 => Ok(None),
-        1 => Ok(Some(Target::from(&found[0]))),
+        // One radio is only an answer when nobody asked to be shown the
+        // question.
+        1 if how == Discovery::Auto => Ok(Some(Target::from(&found[0]))),
         _ => {
-            if !interactive {
-                render_found(&found);
-                bail!(
-                    "{} ULCP radios are in range; name one with --ble=SELECTOR (or set a \
-                     default with `default set`)",
-                    found.len()
-                );
-            }
             render_found(&found);
+            if !interactive {
+                match how {
+                    Discovery::Ask => bail!(
+                        "choosing a radio needs a terminal; name one with --ble=SELECTOR instead"
+                    ),
+                    Discovery::Auto => bail!(
+                        "{} ULCP radios are in range; name one with --ble=SELECTOR (or set a \
+                         default with `default set`)",
+                        found.len()
+                    ),
+                }
+            }
             let index = prompt_index(found.len())?;
             Ok(index.map(|index| Target::from(&found[index])))
         }
@@ -700,9 +720,13 @@ mod tests {
 
     #[test]
     fn a_single_radio_needs_no_chooser() {
-        let target = choose(vec![found("id-a", Some("T-Echo"), None)], false)
-            .unwrap()
-            .unwrap();
+        let target = choose(
+            vec![found("id-a", Some("T-Echo"), None)],
+            false,
+            Discovery::Auto,
+        )
+        .unwrap()
+        .unwrap();
         assert_eq!(
             target,
             Target::Ble {
@@ -713,6 +737,19 @@ mod tests {
     }
 
     #[test]
+    fn asking_explicitly_asks_even_about_a_single_radio() {
+        // Without a terminal there is nobody to answer, which is the
+        // observable half of "it asked" in a test.
+        let error = choose(
+            vec![found("id-a", Some("T-Echo"), None)],
+            false,
+            Discovery::Ask,
+        )
+        .unwrap_err();
+        assert!(error.to_string().contains("terminal"), "{error}");
+    }
+
+    #[test]
     fn several_radios_fail_loudly_without_a_terminal() {
         let error = choose(
             vec![
@@ -720,6 +757,7 @@ mod tests {
                 found("id-b", Some("Solar"), None),
             ],
             false,
+            Discovery::Auto,
         )
         .unwrap_err();
         assert!(error.to_string().contains("--ble"), "{error}");
@@ -727,7 +765,8 @@ mod tests {
 
     #[test]
     fn no_radios_is_not_an_error_here() {
-        assert_eq!(choose(Vec::new(), false).unwrap(), None);
+        assert_eq!(choose(Vec::new(), false, Discovery::Auto).unwrap(), None);
+        assert_eq!(choose(Vec::new(), false, Discovery::Ask).unwrap(), None);
     }
 
     #[test]

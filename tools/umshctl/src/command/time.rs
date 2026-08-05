@@ -44,6 +44,13 @@ pub enum TzOp {
         #[arg(value_name = "±HH:MM|MINUTES", allow_hyphen_values = true)]
         offset: TzOffsetArg,
     },
+    /// Set the offset from this host's current time zone.
+    ///
+    /// It is the offset in effect right now that is copied, not the
+    /// zone: a device configured in July under daylight saving keeps
+    /// that offset into the winter, because the device has no zone
+    /// database to shift it with.
+    Sync,
 }
 
 /// A time-zone offset in minutes east of UTC.
@@ -148,6 +155,11 @@ pub async fn run(app: &mut App, op: Option<TimeOp>) -> Result<()> {
                 let stored = device.set_tz_offset(offset.0).await?;
                 println!("time zone {}", format_tz(stored));
             }
+            TzOp::Sync => {
+                let offset = host_tz_offset()?;
+                let stored = device.set_tz_offset(offset).await?;
+                println!("time zone {} (from this host)", format_tz(stored));
+            }
         },
     }
     persist(device, no_save).await
@@ -165,6 +177,33 @@ fn host_epoch() -> Result<u32> {
     let now = std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH)?;
     u32::try_from(now.as_secs())
         .map_err(|_| anyhow::anyhow!("this host's clock is outside the range PROP_TIME can carry"))
+}
+
+/// This host's current UTC offset, in minutes east.
+///
+/// Read through the C library rather than a date crate: `localtime_r`
+/// resolves `TZ`, the zone database, and today's daylight-saving state
+/// the same way every other program on the machine does, which is what
+/// "the system time zone" means to the person typing this.
+#[cfg(unix)]
+fn host_tz_offset() -> Result<i16> {
+    let now = std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH)?;
+    let seconds = libc::time_t::try_from(now.as_secs())
+        .map_err(|_| anyhow::anyhow!("this host's clock is outside the range time_t can carry"))?;
+    let mut parts: libc::tm = unsafe { std::mem::zeroed() };
+    // SAFETY: both pointers are to live, correctly typed locals, and
+    // `localtime_r` writes only through the second.
+    if unsafe { libc::localtime_r(&seconds, &mut parts) }.is_null() {
+        bail!("this host has no readable local time zone");
+    }
+    let minutes = parts.tm_gmtoff / 60;
+    i16::try_from(minutes)
+        .map_err(|_| anyhow::anyhow!("this host's UTC offset ({minutes} minutes) is not a zone"))
+}
+
+#[cfg(not(unix))]
+fn host_tz_offset() -> Result<i16> {
+    bail!("this platform exposes no system time zone; give the offset with `time tz set`")
 }
 
 fn format_utc(epoch: u32) -> String {
@@ -225,6 +264,14 @@ mod tests {
         assert_eq!(format_tz(-480), "UTC-08:00");
         assert_eq!(format_tz(330), "UTC+05:30");
         assert_eq!(format_tz(-30), "UTC-00:30");
+    }
+
+    #[test]
+    fn the_host_zone_is_a_real_zone() {
+        // Whatever the build machine's TZ is, the answer has to be one a
+        // device would accept — the same range `TzOffsetArg` enforces.
+        let minutes = host_tz_offset().expect("a host has a time zone");
+        assert!((-12 * 60..=14 * 60).contains(&minutes), "{minutes}");
     }
 
     #[test]
