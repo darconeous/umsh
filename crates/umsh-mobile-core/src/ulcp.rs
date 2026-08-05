@@ -4,9 +4,11 @@ use std::{
 };
 
 use umsh_core::RegionCode;
+use umsh_node::location::{MAX_PRECISION, NodeLocation};
 use umsh_ulcp::{
     AlertState, BatteryChargeState, BatteryStatus, Cmd, Frame, StreamPayload, frame,
     gatt::{self, MAX_FRAME, Reassembler},
+    gnss::{FixKind, GnssSnapshot},
     host::{PropertyNotification, PropertyNotificationKind, TidAllocator},
     ids::{INTERFACE_TYPE, PROTOCOL_MAJOR_VERSION, PROTOCOL_MINOR_VERSION, cap, prop, saved},
     items::{self, Filter},
@@ -88,6 +90,108 @@ pub struct UlcpRepeaterSettingsRecord {
     pub min_snr_db: Option<i8>,
 }
 
+/// The device's positioning policy: whether the receiver runs, and what
+/// is done with what it finds.
+///
+/// Read and written as a whole, like [`UlcpRepeaterSettingsRecord`] and
+/// for the same reason — a receiver switched on under half a policy
+/// starts advertising a position nobody just agreed to. `enabled` is
+/// written last so the rest is already in force when it does.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, uniffi::Record)]
+pub struct UlcpGnssSettingsRecord {
+    /// `PROP_GNSS_ENABLED`: whether the receiver is powered. Off is the
+    /// lowest power state the board can reach, and on most of them the
+    /// receiver is the largest continuous load there is.
+    pub enabled: bool,
+    /// `PROP_GNSS_IDENT_UPDATE`: whether fixes refresh the location the
+    /// node advertises in its identity.
+    pub ident_update: bool,
+    /// `PROP_GNSS_IDENT_PRECISION`: how many location bytes that
+    /// advertised position is clamped to, 1 (coarsest) through 7. This is
+    /// a disclosure control — see [`ulcp_location_cell_meters`].
+    pub ident_precision: u8,
+    /// `PROP_GNSS_TIME_TRUST`: whether receiver-derived time may set the
+    /// wall clock. Cleared, a hand-set clock is safe from a jammed or
+    /// spoofed sky; position reporting is unaffected.
+    pub time_trust: bool,
+}
+
+/// `PROP_GNSS_FIX`: what kind of position solution the receiver has.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, uniffi::Enum)]
+pub enum UlcpFixKind {
+    /// No solution — the receiver is off, or on and still searching.
+    #[default]
+    None,
+    /// Position without altitude.
+    TwoD,
+    /// Position and altitude.
+    ThreeD,
+}
+
+impl UlcpFixKind {
+    fn from_wire(fix: FixKind) -> Self {
+        match fix {
+            FixKind::None => Self::None,
+            FixKind::TwoD => Self::TwoD,
+            FixKind::ThreeD => Self::ThreeD,
+        }
+    }
+}
+
+/// What the receiver currently reports, folded from the five positioning
+/// telemetry properties.
+///
+/// Unlike a battery reading this is carried on *every* snapshot rather
+/// than reported once: it is state the UI mirrors — a map pin does not
+/// disappear because an unrelated property arrived — and the receiver
+/// announces position and fix changes on its own schedule.
+#[derive(Clone, Debug, PartialEq, uniffi::Record)]
+pub struct UlcpGnssRecord {
+    pub fix: UlcpFixKind,
+    /// `PROP_GNSS_LOCATION` as it travels: the interleaved
+    /// variable-precision grid code, empty without a fix. Carried
+    /// verbatim so a caller can compare or forward the cell itself
+    /// rather than re-encoding degrees.
+    pub location: Vec<u8>,
+    /// Center of the encoded cell, in degrees. `None` without a fix.
+    ///
+    /// A location names a cell rather than a point; `location_cell_meters`
+    /// says how large that cell is, and rendering a pin without it claims
+    /// a precision the device did not report. Widened from the f32 the
+    /// decoder works in, because that is the shape every consumer of a
+    /// coordinate wants.
+    pub latitude_deg: Option<f64>,
+    pub longitude_deg: Option<f64>,
+    /// Approximate width of the encoded cell at the equator, in meters.
+    pub location_cell_meters: Option<f64>,
+    /// `PROP_GNSS_ALTITUDE` in meters above the WGS-84 ellipsoid.
+    pub altitude_m: Option<i32>,
+    /// `PROP_GNSS_PRECISION`: estimated horizontal accuracy in
+    /// decimeters. An estimate scaled from dilution of precision, not a
+    /// measured error bound.
+    pub accuracy_dm: Option<u16>,
+    /// Satellites contributing to the solution. Reads 0 while the
+    /// receiver is off.
+    pub satellites_used: u8,
+    /// Satellites in view, when the receiver reports them.
+    pub satellites_in_view: Option<u8>,
+}
+
+/// `PROP_TIME`: what the device's wall clock read when it last reported.
+///
+/// Take-once, like a battery reading and for the same reason: a clock
+/// value means nothing without the instant it was received, so a consumer
+/// stamps what arrives. Republishing it on unrelated updates would
+/// restamp a stale reading as a fresh one.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, uniffi::Record)]
+pub struct UlcpTimeRecord {
+    /// Seconds since the Unix epoch, or `None` when the device does not
+    /// know what time it is. A device that has never had a fix, a manual
+    /// set, or a retained RTC is in that state, and says so rather than
+    /// reporting zero.
+    pub epoch_seconds: Option<u32>,
+}
+
 /// Read-only, capability-gated device state gathered after host ownership
 /// has been resolved. Counts describe digest forms and contain no key material.
 #[derive(Clone, Debug, PartialEq, Eq, uniffi::Record)]
@@ -110,6 +214,13 @@ pub struct UlcpSyncRecord {
     /// The device has an identity domain of its own (`CAP_DEV_IDENTITY`),
     /// including the `PROP_DEV_PEERS` list.
     pub supports_device_identity: bool,
+    /// The device keeps a wall clock (`CAP_TIME`). It says nothing about
+    /// where the time comes from, or whether the device currently knows
+    /// it — an unset clock is a device with `CAP_TIME` and no epoch.
+    pub supports_time: bool,
+    /// A GNSS receiver is fitted (`CAP_GNSS`), so the positioning
+    /// properties exist and the device can locate itself.
+    pub supports_gnss: bool,
     pub phy_enabled: bool,
     pub frequency_khz: u32,
     pub transmit_power_dbm: i8,
@@ -150,6 +261,16 @@ pub struct UlcpSyncRecord {
     /// Identity Requests. Present when `supports_device_identity` and the
     /// device reported it.
     pub dev_discoverable: Option<bool>,
+    /// `PROP_TZ_OFFSET` in minutes east of UTC. Present when
+    /// `supports_time` and the device reported it.
+    ///
+    /// The zone is configuration and the epoch is not: where a device is
+    /// meant to be is known even when what time it is is not, which is
+    /// why this is here and the clock reading is on the session snapshot.
+    pub tz_offset_min: Option<i16>,
+    /// The positioning policy. Present when `supports_gnss` and the
+    /// device reported the whole of it.
+    pub gnss: Option<UlcpGnssSettingsRecord>,
     /// Capability-gated properties the device advertised but would not
     /// report, in ascending order.
     ///
@@ -233,6 +354,51 @@ pub struct UlcpDeviceConfigRecord {
     /// The flood-forwarding policy. Present exactly when the device
     /// advertises `CAP_REPEATER`.
     pub repeater: Option<UlcpRepeaterSettingsRecord>,
+    /// `PROP_TZ_OFFSET` in minutes east of UTC. Present exactly when the
+    /// device advertises `CAP_TIME`.
+    ///
+    /// The clock itself is not here: it is live state rather than
+    /// configuration, is never saved, and is set with
+    /// [`MobileUlcpSession::set_time`].
+    pub tz_offset_min: Option<i16>,
+    /// The positioning policy. Present exactly when the device advertises
+    /// `CAP_GNSS`.
+    pub gnss: Option<UlcpGnssSettingsRecord>,
+}
+
+/// Present one folded [`GnssSnapshot`] as the record Swift sees.
+fn gnss_record(snapshot: &GnssSnapshot) -> UlcpGnssRecord {
+    let bytes = snapshot.location();
+    let placed = (!bytes.is_empty()).then(|| NodeLocation::from_bytes(bytes).center());
+    UlcpGnssRecord {
+        fix: UlcpFixKind::from_wire(snapshot.fix),
+        location: bytes.to_vec(),
+        latitude_deg: placed.map(|(_, latitude)| latitude.into()),
+        longitude_deg: placed.map(|(longitude, _)| longitude.into()),
+        location_cell_meters: (!bytes.is_empty())
+            .then(|| ulcp_location_cell_meters(bytes.len() as u8))
+            .flatten(),
+        altitude_m: snapshot.altitude_m,
+        accuracy_dm: snapshot.accuracy_dm,
+        satellites_used: snapshot.sats_used,
+        satellites_in_view: snapshot.sats_in_view,
+    }
+}
+
+/// Approximate width, at the equator, of the cell one location precision
+/// names — 2,500 km at one byte down to 15 cm at seven. `None` outside
+/// 1–7.
+///
+/// This is what makes a precision mean something to a person: the setting
+/// is a disclosure control, and how much it discloses is an area, not a
+/// byte count. Fractional because the finest two cells are smaller than a
+/// meter, which a whole number could only report as zero.
+#[uniffi::export]
+pub fn ulcp_location_cell_meters(precision_bytes: u8) -> Option<f64> {
+    // 360° of longitude divided into 16^N cells, at 111,320 m per degree.
+    (1..=MAX_PRECISION)
+        .contains(&precision_bytes)
+        .then(|| 360.0 * 111_320.0 / 16f64.powi(precision_bytes.into()))
 }
 
 /// `PROP_ALERT`: what the radio is doing to make itself findable.
@@ -273,7 +439,10 @@ pub enum UlcpHostOwnership {
 }
 
 /// Typed state published after each bounded ULCP-session transition.
-#[derive(Clone, Debug, PartialEq, Eq, uniffi::Record)]
+///
+/// Not `Eq`: a position is degrees, and floating point has no total
+/// equality to offer.
+#[derive(Clone, Debug, PartialEq, uniffi::Record)]
 pub struct UlcpSessionSnapshotRecord {
     pub generation: u64,
     pub phase: UlcpSessionPhase,
@@ -288,6 +457,13 @@ pub struct UlcpSessionSnapshotRecord {
     /// alert on its own — a button press or its deadline — so the button
     /// must follow the radio rather than what the phone last asked for.
     pub alert: Option<UlcpAlertState>,
+    /// A clock reading that arrived with this update, on a `CAP_TIME`
+    /// device. Reported once — see [`UlcpTimeRecord`].
+    pub time: Option<UlcpTimeRecord>,
+    /// What the receiver reports, on a `CAP_GNSS` device, or `None` until
+    /// the first positioning property is read. Mirrored like `alert`
+    /// rather than taken like `battery`.
+    pub gnss: Option<UlcpGnssRecord>,
     pub provisioning: Option<UlcpSyncRecord>,
 }
 
@@ -321,7 +497,7 @@ pub struct UlcpOperationErrorRecord {
 /// Work produced by the Rust ULCP session. Frames are complete ULCP
 /// frames; the platform adapter remains responsible for GATT segmentation and
 /// write backpressure.
-#[derive(Clone, Debug, PartialEq, Eq, uniffi::Record)]
+#[derive(Clone, Debug, PartialEq, uniffi::Record)]
 pub struct UlcpSessionUpdateRecord {
     pub outbound_frames: Vec<Vec<u8>>,
     pub received_frames: Vec<UlcpReceivedFrameRecord>,
@@ -433,6 +609,14 @@ struct UlcpSessionState {
     /// permanently on a radio without `CAP_ALERT`). Held rather than
     /// taken: it is a state to mirror, not an event to report once.
     alert: Option<UlcpAlertState>,
+    /// A `PROP_TIME` reading not yet reported. Taken, for the reason
+    /// [`UlcpTimeRecord`] gives.
+    time: Option<UlcpTimeRecord>,
+    /// The receiver's view of the world, folded from whichever
+    /// positioning properties have arrived. Held: the properties are
+    /// announced separately, so taking it would report a fix without the
+    /// satellite count that came a frame earlier.
+    gnss: Option<GnssSnapshot>,
     provisioning: Option<UlcpSyncRecord>,
     stage_failure_pending: bool,
 }
@@ -455,6 +639,8 @@ impl Default for UlcpSessionState {
             device_name: None,
             battery: None,
             alert: None,
+            time: None,
+            gnss: None,
             provisioning: None,
             stage_failure_pending: false,
         }
@@ -620,6 +806,43 @@ impl MobileUlcpSession {
             .expected
             .insert(tid, ExpectedResponse::Property(prop::ALERT));
         let frame = ulcp_prop_set(tid, prop::ALERT, value[..len].to_vec())?;
+        Ok(session.update(vec![frame]))
+    }
+
+    /// Set — or clear — the device's wall clock (`PROP_TIME`).
+    ///
+    /// Live state rather than configuration, and never saved: an epoch
+    /// written to flash would come back arbitrarily wrong, since nothing
+    /// bounds how long a device spends powered off. So this is not part
+    /// of [`Self::configure_device`], which carries the time *zone* —
+    /// where the device is meant to be is worth persisting even when what
+    /// time it is is not.
+    ///
+    /// `None` clears the clock back to unknown, which is what a device
+    /// reports before its first fix. On a device whose receiver is
+    /// trusted for time, a fix will overwrite whatever is set here.
+    ///
+    /// The device answers with the epoch it now holds; that answer, not
+    /// the value written, is what the session snapshot reports.
+    pub fn set_time(
+        &self,
+        epoch_seconds: Option<u32>,
+    ) -> Result<UlcpSessionUpdateRecord, MobileError> {
+        let mut session = self.inner.lock().expect("ULCP session mutex poisoned");
+        if session.stage != SessionStage::Attached {
+            return Err(MobileError::InvalidUlcpFrame);
+        }
+        if !session.has_capability(cap::TIME)? {
+            return Err(MobileError::UnsupportedCapability);
+        }
+        let value = epoch_seconds
+            .map(|epoch| epoch.to_le_bytes().to_vec())
+            .unwrap_or_default();
+        let tid = session.allocate_tid();
+        session
+            .expected
+            .insert(tid, ExpectedResponse::Property(prop::TIME));
+        let frame = ulcp_prop_set(tid, prop::TIME, value)?;
         Ok(session.update(vec![frame]))
     }
 
@@ -1440,6 +1663,8 @@ impl UlcpSessionState {
                 // actually carries a new measurement.
                 battery: self.battery.take(),
                 alert: self.alert,
+                time: self.time.take(),
+                gnss: self.gnss.as_ref().map(gnss_record),
                 provisioning: self.provisioning.clone(),
             },
             waiting_for_responses: !self.expected.is_empty(),
@@ -1478,6 +1703,24 @@ impl UlcpSessionState {
                 // Arrives both as the answer to a write and unsolicited,
                 // when the radio ends the alert itself.
                 self.alert = Some(inspect_ulcp_alert(response.value.clone())?);
+            }
+            prop::TIME => {
+                // Announced when the clock goes from unknown to known and
+                // whenever it steps, which is how a phone learns the
+                // device found the time on its own.
+                self.time = Some(UlcpTimeRecord {
+                    epoch_seconds: decode_optional(&response.value, decode_u32)?,
+                });
+            }
+            key if umsh_ulcp::gnss::is_positioning_property(key) => {
+                // Position and fix are announced; the rest arrive when
+                // read. Folding rather than replacing is what lets one
+                // announced property update the view without erasing the
+                // others.
+                self.gnss
+                    .get_or_insert(GnssSnapshot::SEARCHING)
+                    .absorb(key, &response.value)
+                    .map_err(|_| MobileError::InvalidUlcpFrame)?;
             }
             prop::HOST_KEY => {
                 if !response.value.is_empty() && response.value.len() != items::PUBLIC_KEY_LEN {
@@ -1885,6 +2128,26 @@ pub fn ulcp_inspection_properties(capabilities: Vec<u8>) -> Result<Vec<u32>, Mob
         // alert it left running rather than a stale "off".
         properties.push(prop::ALERT);
     }
+    if has(cap::TIME) {
+        // The clock is live rather than configuration, but it is read
+        // here for the same reason the alert is: a phone that just
+        // attached should know whether the device knows the time, not
+        // wait for the next announcement to find out.
+        properties.extend([prop::TIME, prop::TZ_OFFSET]);
+    }
+    if has(cap::GNSS) {
+        properties.extend([
+            prop::GNSS_ENABLED,
+            prop::GNSS_LOCATION,
+            prop::GNSS_ALTITUDE,
+            prop::GNSS_FIX,
+            prop::GNSS_PRECISION,
+            prop::GNSS_SATELLITES,
+            prop::GNSS_IDENT_UPDATE,
+            prop::GNSS_IDENT_PRECISION,
+            prop::GNSS_TIME_TRUST,
+        ]);
+    }
     Ok(properties)
 }
 
@@ -2016,6 +2279,24 @@ pub fn inspect_ulcp_sync(
     let ident_mobile = expected.read(ident, prop::IDENT_MOBILE, decode_bool);
     let dev_discoverable = expected.read(dev_identity, prop::DEV_DISCOVERABLE, decode_bool);
 
+    let tz_offset_min = expected.read(has(cap::TIME), prop::TZ_OFFSET, decode_i16);
+
+    // Read whole, like the forwarding policy above and for the same
+    // reason: this is written as a set.
+    let positioning = has(cap::GNSS);
+    let gnss_enabled = expected.read(positioning, prop::GNSS_ENABLED, decode_bool);
+    let ident_update = expected.read(positioning, prop::GNSS_IDENT_UPDATE, decode_bool);
+    let ident_precision = expected.read(positioning, prop::GNSS_IDENT_PRECISION, decode_precision);
+    let time_trust = expected.read(positioning, prop::GNSS_TIME_TRUST, decode_bool);
+    let gnss = (|| {
+        Some(UlcpGnssSettingsRecord {
+            enabled: gnss_enabled?,
+            ident_update: ident_update?,
+            ident_precision: ident_precision?,
+            time_trust: time_trust?,
+        })
+    })();
+
     let mut unreadable_properties = expected.unreadable;
     unreadable_properties.sort_unstable();
 
@@ -2034,6 +2315,8 @@ pub fn inspect_ulcp_sync(
         supports_repeater: has(cap::REPEATER),
         supports_ident: has(cap::IDENT),
         supports_device_identity: has(cap::DEV_IDENTITY),
+        supports_time: has(cap::TIME),
+        supports_gnss: positioning,
         phy_enabled,
         frequency_khz,
         transmit_power_dbm,
@@ -2055,6 +2338,8 @@ pub fn inspect_ulcp_sync(
         ident_role,
         ident_mobile,
         dev_discoverable,
+        tz_offset_min,
+        gnss,
         unreadable_properties,
     })
 }
@@ -2063,7 +2348,7 @@ pub fn inspect_ulcp_sync(
 /// or part of a forwarding policy leaves the device running a configuration
 /// nobody asked for, so one unreadable member withdraws the whole group.
 /// These are the same groupings the reduction reports as a unit.
-const WHOLE_WRITE_GROUPS: [&[u32]; 2] = [
+const WHOLE_WRITE_GROUPS: [&[u32]; 3] = [
     &[prop::PHY_LORA_BW, prop::PHY_LORA_SF, prop::PHY_LORA_CR],
     &[
         prop::MAC_REPEATER_ENABLED,
@@ -2071,6 +2356,12 @@ const WHOLE_WRITE_GROUPS: [&[u32]; 2] = [
         prop::MAC_REPEATER_DEFAULT_REGION,
         prop::MAC_REPEATER_MIN_RSSI,
         prop::MAC_REPEATER_MIN_SNR,
+    ],
+    &[
+        prop::GNSS_ENABLED,
+        prop::GNSS_IDENT_UPDATE,
+        prop::GNSS_IDENT_PRECISION,
+        prop::GNSS_TIME_TRUST,
     ],
 ];
 
@@ -2140,6 +2431,9 @@ fn validate_capability_dependencies(capabilities: &[u32]) -> Result<(), MobileEr
         // and nothing to advertise.
         || has(cap::REPEATER) && !has(cap::DEV_IDENTITY)
         || has(cap::IDENT) && !has(cap::DEV_IDENTITY)
+        // A receiver that cannot set a clock is still a receiver, but the
+        // device also dates its fixes, so CAP_GNSS implies CAP_TIME.
+        || has(cap::GNSS) && !has(cap::TIME)
     {
         return Err(MobileError::InvalidUlcpFrame);
     }
@@ -2188,6 +2482,16 @@ fn decode_u8(value: &[u8]) -> Result<u8, MobileError> {
 
 fn decode_i8(value: &[u8]) -> Result<i8, MobileError> {
     decode_u8(value).map(|value| value as i8)
+}
+
+/// A location precision, which is only ever 1–7 bytes. A device
+/// reporting anything else is reporting a setting this phone cannot
+/// present, so it is recorded as unreadable rather than shown.
+fn decode_precision(value: &[u8]) -> Result<u8, MobileError> {
+    decode_u8(value)
+        .ok()
+        .filter(|bytes| (1..=MAX_PRECISION).contains(bytes))
+        .ok_or(MobileError::InvalidUlcpFrame)
 }
 
 fn decode_i16(value: &[u8]) -> Result<i16, MobileError> {
@@ -2361,6 +2665,39 @@ fn validate_device_settings(
                     .unwrap_or_default(),
             ),
             (prop::MAC_REPEATER_ENABLED, vec![repeater.enabled as u8]),
+        ]);
+    }
+
+    let keeps_time = state.has_capability(cap::TIME)?;
+    if configuration.tz_offset_min.is_some() != keeps_time {
+        return Err(MobileError::InvalidUlcpFrame);
+    }
+    if let Some(minutes) = configuration.tz_offset_min {
+        // The extremes of the zone database, not of the encoding: a
+        // fourteen-hour offset is Kiritimati, and anything past it is a
+        // caller mistake rather than a place.
+        if !(-12 * 60..=14 * 60).contains(&minutes) {
+            return Err(MobileError::InvalidUlcpFrame);
+        }
+        values.push((prop::TZ_OFFSET, minutes.to_le_bytes().to_vec()));
+    }
+
+    let positioning = state.has_capability(cap::GNSS)?;
+    if configuration.gnss.is_some() != positioning {
+        return Err(MobileError::InvalidUlcpFrame);
+    }
+    if let Some(gnss) = configuration.gnss {
+        if !(1..=MAX_PRECISION).contains(&gnss.ident_precision) {
+            return Err(MobileError::InvalidUlcpFrame);
+        }
+        // Enabled last, so a receiver that starts looking does it under
+        // the disclosure and trust policy just written rather than the
+        // one it happened to be holding.
+        values.extend([
+            (prop::GNSS_IDENT_UPDATE, vec![gnss.ident_update as u8]),
+            (prop::GNSS_IDENT_PRECISION, vec![gnss.ident_precision]),
+            (prop::GNSS_TIME_TRUST, vec![gnss.time_trust as u8]),
+            (prop::GNSS_ENABLED, vec![gnss.enabled as u8]),
         ]);
     }
     Ok(values)
@@ -3426,6 +3763,8 @@ mod tests {
                     min_rssi_dbm: None,
                     min_snr_db: None,
                 }),
+                tz_offset_min: None,
+                gnss: None,
             })
             .unwrap();
         let (written, _, _) = drive_configuration(&session, configured.outbound_frames);
@@ -3478,6 +3817,8 @@ mod tests {
                     min_rssi_dbm: Some(-115),
                     min_snr_db: Some(-7),
                 }),
+                tz_offset_min: None,
+                gnss: None,
             })
             .unwrap();
         assert_eq!(configured.snapshot.phase, UlcpSessionPhase::Configuring);
@@ -3566,6 +3907,8 @@ mod tests {
                 ident_mobile,
                 dev_discoverable,
                 repeater,
+                tz_offset_min: None,
+                gnss: None,
             })
         };
 
@@ -4665,6 +5008,460 @@ mod tests {
         assert!(inspect_ulcp_alert(vec![2]).is_err());
         assert!(inspect_ulcp_alert(vec![1, 0]).is_err());
         assert!(inspect_ulcp_alert(Vec::new()).is_err());
+    }
+
+    /// A commissionable device that also keeps a clock and has a receiver
+    /// holding a three-dimensional fix.
+    fn attach_positioning(session: &MobileUlcpSession) -> UlcpSessionUpdateRecord {
+        let mut capabilities = commissionable_capabilities();
+        capabilities.extend([cap::TIME, cap::GNSS]);
+        let begin = session.begin(Some(vec![0xAA; 32])).unwrap();
+        drive_reads(
+            session,
+            begin.outbound_frames,
+            move |property| match property {
+                prop::CAPS => (property, encoded_capabilities(&capabilities)),
+                prop::HOST_KEY => (property, vec![0xAA; 32]),
+                prop::TIME => (property, 1_754_000_000u32.to_le_bytes().to_vec()),
+                // Pacific daylight time, which is an offset and not a zone
+                // — the device has no database to shift itself with.
+                prop::TZ_OFFSET => (property, (-420i16).to_le_bytes().to_vec()),
+                prop::GNSS_ENABLED | prop::GNSS_IDENT_UPDATE | prop::GNSS_TIME_TRUST => {
+                    (property, vec![1])
+                }
+                prop::GNSS_LOCATION => (property, placed_location().as_bytes().to_vec()),
+                prop::GNSS_ALTITUDE => (property, 71i32.to_le_bytes().to_vec()),
+                prop::GNSS_FIX => (property, vec![2]),
+                prop::GNSS_PRECISION => (property, 62u16.to_le_bytes().to_vec()),
+                prop::GNSS_SATELLITES => (property, vec![9, 14]),
+                prop::GNSS_IDENT_PRECISION => (property, vec![5]),
+                _ => commissionable_value(property),
+            },
+        )
+    }
+
+    /// A five-byte fix — a ~38 m cell, the default identity precision.
+    fn placed_location() -> NodeLocation {
+        NodeLocation::from_e7(-1_224_194_160, 377_749_290, 5)
+    }
+
+    #[test]
+    fn a_positioning_device_reports_its_fix_and_its_policy() {
+        let session = MobileUlcpSession::new();
+        let attached = attach_positioning(&session);
+        assert_eq!(attached.snapshot.phase, UlcpSessionPhase::Attached);
+
+        let sync = attached.snapshot.provisioning.clone().expect("described");
+        assert!(sync.supports_time && sync.supports_gnss);
+        assert_eq!(sync.tz_offset_min, Some(-420));
+        assert_eq!(
+            sync.gnss,
+            Some(UlcpGnssSettingsRecord {
+                enabled: true,
+                ident_update: true,
+                ident_precision: 5,
+                time_trust: true,
+            })
+        );
+        assert!(sync.unreadable_properties.is_empty());
+
+        let gnss = attached.snapshot.gnss.expect("a receiver was read");
+        assert_eq!(gnss.fix, UlcpFixKind::ThreeD);
+        assert_eq!(gnss.altitude_m, Some(71));
+        assert_eq!(gnss.accuracy_dm, Some(62));
+        assert_eq!(
+            (gnss.satellites_used, gnss.satellites_in_view),
+            (9, Some(14))
+        );
+        assert_eq!(gnss.location, placed_location().as_bytes());
+        // The center of the cell the fix named, which is as close to the
+        // encoded position as a cell that size can be.
+        let (longitude, latitude) = (gnss.longitude_deg.unwrap(), gnss.latitude_deg.unwrap());
+        assert!((longitude + 122.419_416).abs() < 5e-4, "{longitude}");
+        assert!((latitude - 37.774_929).abs() < 5e-4, "{latitude}");
+        assert!((38.0..39.0).contains(&gnss.location_cell_meters.unwrap()));
+    }
+
+    #[test]
+    fn the_clock_is_reported_once_and_the_fix_is_mirrored() {
+        let session = MobileUlcpSession::new();
+        attach_positioning(&session);
+
+        // Unrelated news must not restamp the clock read at attach as a
+        // fresh one, but it must not lose the position either: the pin
+        // stays on the map, the clock does not get a new timestamp.
+        let unrelated = session
+            .consume(property_response(
+                frame::TID_UNSOLICITED,
+                prop::DEV_NAME,
+                b"Ridge repeater",
+            ))
+            .unwrap();
+        assert_eq!(unrelated.snapshot.time, None);
+        assert_eq!(
+            unrelated.snapshot.gnss.expect("still known").fix,
+            UlcpFixKind::ThreeD
+        );
+
+        // An announced fix change folds into what is already known rather
+        // than replacing it: the satellite count came a frame earlier and
+        // is still true.
+        let lost = session
+            .consume(property_response(
+                frame::TID_UNSOLICITED,
+                prop::GNSS_FIX,
+                &[1],
+            ))
+            .unwrap();
+        let gnss = lost.snapshot.gnss.expect("still known");
+        assert_eq!(gnss.fix, UlcpFixKind::TwoD);
+        assert_eq!(gnss.satellites_used, 9);
+        assert_eq!(gnss.altitude_m, Some(71));
+
+        // The device finding the time on its own is announced, and is
+        // reported once like any other reading.
+        let stepped = session
+            .consume(property_response(
+                frame::TID_UNSOLICITED,
+                prop::TIME,
+                &1_754_000_600u32.to_le_bytes(),
+            ))
+            .unwrap();
+        assert_eq!(
+            stepped.snapshot.time,
+            Some(UlcpTimeRecord {
+                epoch_seconds: Some(1_754_000_600)
+            })
+        );
+        assert_eq!(stepped.snapshot.phase, UlcpSessionPhase::Attached);
+    }
+
+    #[test]
+    fn setting_the_clock_writes_the_epoch_and_clearing_it_writes_nothing() {
+        let session = MobileUlcpSession::new();
+        attach_positioning(&session);
+
+        let request = session.set_time(Some(1_754_000_900)).unwrap();
+        let [frame] = &request.outbound_frames[..] else {
+            panic!("one CMD_PROP_SET");
+        };
+        let parsed = Frame::parse(frame).unwrap();
+        let payload = PropPayload::parse(parsed.payload).unwrap();
+        assert_eq!(payload.key, prop::TIME);
+        assert_eq!(payload.value, &1_754_000_900u32.to_le_bytes()[..]);
+
+        // What the device answers is what the snapshot reports, even when
+        // it is not what was written — a trusted receiver may have moved
+        // the clock between the write and the echo.
+        let set = session
+            .consume(property_response(
+                parsed.header.tid(),
+                prop::TIME,
+                &1_754_000_901u32.to_le_bytes(),
+            ))
+            .unwrap();
+        assert_eq!(
+            set.snapshot.time,
+            Some(UlcpTimeRecord {
+                epoch_seconds: Some(1_754_000_901)
+            })
+        );
+
+        // The empty value is how a clock goes back to unknown.
+        let clearing = session.set_time(None).unwrap();
+        let parsed = Frame::parse(&clearing.outbound_frames[0]).unwrap();
+        let payload = PropPayload::parse(parsed.payload).unwrap();
+        assert_eq!((payload.key, payload.value), (prop::TIME, &[][..]));
+        let cleared = session
+            .consume(property_response(parsed.header.tid(), prop::TIME, &[]))
+            .unwrap();
+        assert_eq!(
+            cleared.snapshot.time,
+            Some(UlcpTimeRecord {
+                epoch_seconds: None
+            })
+        );
+    }
+
+    #[test]
+    fn the_clock_needs_the_capability() {
+        let session = MobileUlcpSession::new();
+        attach_commissionable(&session, Some(vec![0xAA; 32]), vec![0xAA; 32]);
+        assert_eq!(
+            session.set_time(Some(1_754_000_900)).unwrap_err(),
+            MobileError::UnsupportedCapability
+        );
+        let sync = session
+            .refresh()
+            .unwrap()
+            .snapshot
+            .provisioning
+            .expect("described");
+        assert!(!sync.supports_time && !sync.supports_gnss);
+        assert_eq!((sync.tz_offset_min, sync.gnss), (None, None));
+    }
+
+    #[test]
+    fn positioning_settings_are_written_whole_with_the_receiver_last() {
+        let session = MobileUlcpSession::administrative();
+        attach_positioning(&session);
+
+        let configured = session
+            .configure_device(UlcpDeviceConfigRecord {
+                radio: UlcpRadioSettingsRecord {
+                    device_name: None,
+                    phy_enabled: true,
+                    frequency_khz: 915_000,
+                    transmit_power_dbm: 14,
+                    bandwidth_hz: None,
+                    spreading_factor: None,
+                    coding_rate_denom: None,
+                    duty_cycle_limit: None,
+                },
+                ident_role: None,
+                ident_mobile: Some(false),
+                dev_discoverable: Some(true),
+                repeater: Some(UlcpRepeaterSettingsRecord {
+                    enabled: false,
+                    regions: Vec::new(),
+                    default_region: None,
+                    min_rssi_dbm: None,
+                    min_snr_db: None,
+                }),
+                tz_offset_min: Some(60),
+                gnss: Some(UlcpGnssSettingsRecord {
+                    enabled: true,
+                    ident_update: false,
+                    ident_precision: 3,
+                    time_trust: false,
+                }),
+            })
+            .unwrap();
+        let (written, order, _) = drive_configuration(&session, configured.outbound_frames);
+        assert_eq!(
+            written.get(&prop::TZ_OFFSET),
+            Some(&60i16.to_le_bytes().to_vec())
+        );
+        assert_eq!(written.get(&prop::GNSS_IDENT_UPDATE), Some(&vec![0]));
+        assert_eq!(written.get(&prop::GNSS_IDENT_PRECISION), Some(&vec![3]));
+        assert_eq!(written.get(&prop::GNSS_TIME_TRUST), Some(&vec![0]));
+        assert_eq!(written.get(&prop::GNSS_ENABLED), Some(&vec![1]));
+
+        // The receiver starts under the disclosure and trust policy just
+        // written, never the one it happened to be holding.
+        let switch = order.iter().position(|key| *key == prop::GNSS_ENABLED);
+        for policy in [
+            prop::GNSS_IDENT_UPDATE,
+            prop::GNSS_IDENT_PRECISION,
+            prop::GNSS_TIME_TRUST,
+        ] {
+            assert!(
+                order.iter().position(|key| *key == policy) < switch,
+                "{policy}"
+            );
+        }
+    }
+
+    #[test]
+    fn a_positioning_record_must_match_what_the_device_can_do() {
+        let session = MobileUlcpSession::administrative();
+        attach_positioning(&session);
+
+        let whole = UlcpDeviceConfigRecord {
+            radio: UlcpRadioSettingsRecord {
+                device_name: None,
+                phy_enabled: true,
+                frequency_khz: 915_000,
+                transmit_power_dbm: 14,
+                bandwidth_hz: None,
+                spreading_factor: None,
+                coding_rate_denom: None,
+                duty_cycle_limit: None,
+            },
+            ident_role: None,
+            ident_mobile: Some(false),
+            dev_discoverable: Some(true),
+            repeater: Some(UlcpRepeaterSettingsRecord {
+                enabled: false,
+                regions: Vec::new(),
+                default_region: None,
+                min_rssi_dbm: None,
+                min_snr_db: None,
+            }),
+            tz_offset_min: Some(0),
+            gnss: Some(UlcpGnssSettingsRecord {
+                enabled: true,
+                ident_update: false,
+                ident_precision: 5,
+                time_trust: true,
+            }),
+        };
+
+        // Both gated fields are required on a device that has them.
+        assert_eq!(
+            session.configure_device(UlcpDeviceConfigRecord {
+                tz_offset_min: None,
+                ..whole.clone()
+            }),
+            Err(MobileError::InvalidUlcpFrame)
+        );
+        assert_eq!(
+            session.configure_device(UlcpDeviceConfigRecord {
+                gnss: None,
+                ..whole.clone()
+            }),
+            Err(MobileError::InvalidUlcpFrame)
+        );
+        // A precision outside 1–7 names no cell.
+        assert_eq!(
+            session.configure_device(UlcpDeviceConfigRecord {
+                gnss: Some(UlcpGnssSettingsRecord {
+                    ident_precision: 8,
+                    ..whole.gnss.unwrap()
+                }),
+                ..whole.clone()
+            }),
+            Err(MobileError::InvalidUlcpFrame)
+        );
+        // And an offset no zone on Earth uses.
+        assert_eq!(
+            session.configure_device(UlcpDeviceConfigRecord {
+                tz_offset_min: Some(15 * 60),
+                ..whole.clone()
+            }),
+            Err(MobileError::InvalidUlcpFrame)
+        );
+    }
+
+    #[test]
+    fn half_a_positioning_policy_is_withdrawn_whole() {
+        let session = MobileUlcpSession::administrative();
+        let mut capabilities = commissionable_capabilities();
+        capabilities.extend([cap::TIME, cap::GNSS]);
+        let begin = session.begin(Some(vec![0xAA; 32])).unwrap();
+        let attached = drive_reads(
+            &session,
+            begin.outbound_frames,
+            move |property| match property {
+                prop::CAPS => (property, encoded_capabilities(&capabilities)),
+                prop::HOST_KEY => (property, vec![0xAA; 32]),
+                // Firmware older than the capability it advertises.
+                prop::GNSS_TIME_TRUST => (
+                    prop::LAST_STATUS,
+                    vec![umsh_ulcp::Status::PROP_NOT_FOUND.0 as u8],
+                ),
+                prop::TIME => (property, Vec::new()),
+                prop::TZ_OFFSET => (property, 0i16.to_le_bytes().to_vec()),
+                prop::GNSS_ENABLED | prop::GNSS_IDENT_UPDATE => (property, vec![0]),
+                prop::GNSS_IDENT_PRECISION => (property, vec![5]),
+                prop::GNSS_LOCATION | prop::GNSS_ALTITUDE | prop::GNSS_PRECISION => {
+                    (property, Vec::new())
+                }
+                prop::GNSS_FIX => (property, vec![0]),
+                prop::GNSS_SATELLITES => (property, vec![0]),
+                _ => commissionable_value(property),
+            },
+        );
+
+        let sync = attached.snapshot.provisioning.clone().expect("described");
+        assert!(sync.supports_gnss);
+        assert_eq!(sync.gnss, None);
+        assert_eq!(sync.unreadable_properties, vec![prop::GNSS_TIME_TRUST]);
+        // A receiver that is off answers the facts it is sure of and
+        // leaves the position empty.
+        let gnss = attached.snapshot.gnss.expect("the receiver was read");
+        assert_eq!(gnss.fix, UlcpFixKind::None);
+        assert!(gnss.location.is_empty());
+        assert_eq!(gnss.latitude_deg, None);
+
+        // None of the group is written, because a receiver switched on
+        // under half a policy is worse than one left alone.
+        let configured = session
+            .configure_device(UlcpDeviceConfigRecord {
+                radio: UlcpRadioSettingsRecord {
+                    device_name: None,
+                    phy_enabled: true,
+                    frequency_khz: 915_000,
+                    transmit_power_dbm: 14,
+                    bandwidth_hz: None,
+                    spreading_factor: None,
+                    coding_rate_denom: None,
+                    duty_cycle_limit: None,
+                },
+                ident_role: None,
+                ident_mobile: Some(false),
+                dev_discoverable: Some(true),
+                repeater: Some(UlcpRepeaterSettingsRecord {
+                    enabled: false,
+                    regions: Vec::new(),
+                    default_region: None,
+                    min_rssi_dbm: None,
+                    min_snr_db: None,
+                }),
+                tz_offset_min: Some(0),
+                gnss: Some(UlcpGnssSettingsRecord {
+                    enabled: true,
+                    ident_update: true,
+                    ident_precision: 5,
+                    time_trust: true,
+                }),
+            })
+            .unwrap();
+        let (written, _, _) = drive_configuration(&session, configured.outbound_frames);
+        for property in [
+            prop::GNSS_ENABLED,
+            prop::GNSS_IDENT_UPDATE,
+            prop::GNSS_IDENT_PRECISION,
+            prop::GNSS_TIME_TRUST,
+        ] {
+            assert!(!written.contains_key(&property), "property {property}");
+        }
+        // The zone is its own property and is unaffected.
+        assert_eq!(
+            written.get(&prop::TZ_OFFSET),
+            Some(&0i16.to_le_bytes().to_vec())
+        );
+    }
+
+    #[test]
+    fn a_receiver_without_a_clock_is_not_a_device_this_phone_believes() {
+        // CAP_GNSS requires CAP_TIME: the device dates its own fixes, so a
+        // receiver with no clock to date them against is a malformed
+        // capability set rather than a limited device.
+        assert_eq!(
+            ulcp_inspection_properties(encoded_capabilities(&[cap::GNSS])),
+            Err(MobileError::InvalidUlcpFrame)
+        );
+
+        // The clock is read at attach along with the policy, so a phone
+        // that has just connected knows whether the device knows the time
+        // rather than waiting for the next announcement to find out.
+        let asked =
+            ulcp_inspection_properties(encoded_capabilities(&[cap::TIME, cap::GNSS])).unwrap();
+        for property in [
+            prop::TIME,
+            prop::TZ_OFFSET,
+            prop::GNSS_ENABLED,
+            prop::GNSS_LOCATION,
+            prop::GNSS_FIX,
+            prop::GNSS_SATELLITES,
+            prop::GNSS_TIME_TRUST,
+        ] {
+            assert!(asked.contains(&property), "property {property}");
+        }
+        // And a device with a clock and no receiver is asked for neither.
+        let clock_only = ulcp_inspection_properties(encoded_capabilities(&[cap::TIME])).unwrap();
+        assert!(clock_only.contains(&prop::TIME));
+        assert!(!clock_only.contains(&prop::GNSS_ENABLED));
+    }
+
+    #[test]
+    fn a_precision_outside_the_encoding_names_no_cell() {
+        assert_eq!(ulcp_location_cell_meters(0), None);
+        assert_eq!(ulcp_location_cell_meters(8), None);
+        // The default identity precision discloses a ~38 m cell.
+        let five = ulcp_location_cell_meters(5).unwrap();
+        assert!((38.0..39.0).contains(&five), "{five}");
     }
 
     #[test]

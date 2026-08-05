@@ -29,6 +29,10 @@ struct AdministeredDeviceSnapshot: Equatable, Sendable {
     /// `PROP_ALERT`, or `nil` on a device that cannot make itself
     /// conspicuous (no `CAP_ALERT`).
     var alert: RadioAlertState?
+    /// The device's wall clock as of when it last reported one.
+    var clock: RadioClock?
+    /// What the device's receiver reports, on a device with `CAP_GNSS`.
+    var position: RadioPosition?
     var problemDescription: String?
 
     static let idle = Self(
@@ -42,6 +46,8 @@ struct AdministeredDeviceSnapshot: Equatable, Sendable {
         batteryVoltageMillivolts: nil,
         chargeState: nil,
         alert: nil,
+        clock: nil,
+        position: nil,
         problemDescription: nil
     )
 }
@@ -435,6 +441,18 @@ final class AdministrativeDeviceSession: NSObject, @unchecked Sendable {
         _ = try await perform { session in try session.setAlert(state: state.wire) }
     }
 
+    /// Set — or clear — the device's wall clock (`PROP_TIME`).
+    ///
+    /// Live state like the alert, and for the same kind of reason: the
+    /// clock is never saved, so it is not part of a configuration write.
+    /// The time *zone* is, and travels with `configureDevice`.
+    func setTime(epochSeconds: UInt32?) async throws {
+        Self.logger.notice(
+            "action: user \(epochSeconds == nil ? "cleared" : "set", privacy: .public) the device clock"
+        )
+        _ = try await perform { session in try session.setTime(epochSeconds: epochSeconds) }
+    }
+
     /// Re-read the device's authoritative configuration and return it.
     ///
     /// A write is already echo-verified property by property, so this is not
@@ -552,6 +570,15 @@ final class AdministrativeDeviceSession: NSObject, @unchecked Sendable {
         // on its own — a button press or its deadline — so the control has
         // to follow the device rather than what was last asked for.
         snapshot.alert = update.snapshot.alert.map(RadioAlertState.init)
+        // Stamped on arrival, like battery: an epoch says nothing without
+        // the instant it was read.
+        if let time = update.snapshot.time {
+            snapshot.clock = RadioClock(
+                date: time.epochSeconds.map { Date(timeIntervalSince1970: TimeInterval($0)) },
+                readAt: .now
+            )
+        }
+        snapshot.position = update.snapshot.gnss.map(RadioPosition.init)
         if let provisioning = update.snapshot.provisioning {
             snapshot.sync = provisioning
         }

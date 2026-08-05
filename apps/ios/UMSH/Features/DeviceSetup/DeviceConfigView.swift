@@ -34,10 +34,17 @@ struct DeviceConfigView: View {
     @State private var defaultRegion: Data?
     @State private var minRssiDBm: Int16?
     @State private var minSnrDB: Int8?
+    @State private var timeZoneOffsetMinutes: Int16
+    @State private var gnssEnabled: Bool
+    @State private var gnssIdentUpdate: Bool
+    @State private var gnssIdentPrecision: UInt8
+    @State private var gnssTimeTrust: Bool
 
     @State private var isSaving = false
     @State private var alertRequestInFlight = false
     @State private var alertProblem: String?
+    @State private var clockRequestInFlight = false
+    @State private var clockProblem: String?
     /// The configuration the device confirmed, as the form ended up holding
     /// it. Kept rather than a flag so that adopting a value the device
     /// reported back does not read as an unsaved edit, and so any real edit
@@ -83,6 +90,14 @@ struct DeviceConfigView: View {
         _defaultRegion = State(initialValue: repeater?.defaultRegion)
         _minRssiDBm = State(initialValue: repeater?.minRssiDbm)
         _minSnrDB = State(initialValue: repeater?.minSnrDb)
+        // A device with no zone set is one nobody has told where it is,
+        // and the phone doing the setup is standing next to it.
+        _timeZoneOffsetMinutes = State(initialValue: sync.tzOffsetMin ?? phoneUTCOffsetMinutes)
+        let gnss = sync.gnss
+        _gnssEnabled = State(initialValue: gnss?.enabled ?? false)
+        _gnssIdentUpdate = State(initialValue: gnss?.identUpdate ?? false)
+        _gnssIdentPrecision = State(initialValue: gnss?.identPrecision ?? 5)
+        _gnssTimeTrust = State(initialValue: gnss?.timeTrust ?? true)
     }
 
     var body: some View {
@@ -147,6 +162,14 @@ struct DeviceConfigView: View {
 
             if showsIdentity {
                 identitySection
+            }
+
+            if showsPositioning {
+                positioningSection
+            }
+
+            if sync.supportsTime {
+                timeSection
             }
 
             if sync.supportsRepeater, sync.repeater != nil {
@@ -311,6 +334,118 @@ struct DeviceConfigView: View {
         }
     }
 
+    /// The receiver and what is done with a fix.
+    ///
+    /// The switch and the three policy settings are written as a set —
+    /// Rust puts the switch last, so a receiver that starts looking does
+    /// it under the disclosure and trust policy on this form rather than
+    /// the one the device happened to be holding.
+    @ViewBuilder
+    private var positioningSection: some View {
+        Section {
+            Toggle("GNSS receiver", isOn: $gnssEnabled)
+            if let position = controller.snapshot.position {
+                LabeledContent("Fix", value: position.fixLabel(receiverEnabled: sync.gnss?.enabled))
+                LabeledContent("Satellites", value: position.satellitesText)
+                if let coordinates = position.coordinateText {
+                    LabeledContent("Coordinates") {
+                        Text(coordinates)
+                            .font(.caption.monospaced())
+                            .textSelection(.enabled)
+                    }
+                }
+            }
+            Toggle("Share location in identity", isOn: $gnssIdentUpdate)
+            if gnssIdentUpdate {
+                Picker("Shared precision", selection: $gnssIdentPrecision) {
+                    ForEach(UInt8(1)...UInt8(7), id: \.self) { precision in
+                        Text(precisionLabel(precision)).tag(precision)
+                    }
+                }
+            }
+            Toggle("Trust receiver time", isOn: $gnssTimeTrust)
+        } header: {
+            Text("Positioning")
+        } footer: {
+            Text(positioningFooter)
+        }
+    }
+
+    private var positioningFooter: String {
+        var footer = gnssEnabled
+            ? "The receiver is usually the largest continuous load on a battery-powered node."
+            : "The receiver is powered down to the lowest state this board can reach."
+        footer += gnssIdentUpdate
+            ? " Nodes that can read this device's identity are told a \(precisionLabel(gnssIdentPrecision)) area it is inside — never a more precise position than that."
+            : " The device does not put its location in the identity it advertises."
+        footer += gnssTimeTrust
+            ? " Fixes set the device's clock."
+            : " Fixes never touch the clock, so a hand-set time is safe from a jammed or spoofed sky. Positions are unaffected."
+        return footer
+    }
+
+    /// A precision named by the area it discloses, which is the only thing
+    /// about it a person can weigh.
+    private func precisionLabel(_ precision: UInt8) -> String {
+        guard let meters = ulcpLocationCellMeters(precisionBytes: precision) else {
+            return "\(precision) bytes"
+        }
+        if meters >= 1_000 {
+            return "\((meters / 1_000).formatted(.number.precision(.fractionLength(0)))) km"
+        }
+        return "\(meters.formatted(.number.precision(.fractionLength(meters < 10 ? 1 : 0)))) m"
+    }
+
+    /// The device's zone, which is saved, and its clock, which is not.
+    ///
+    /// They are on the same screen and travel by different routes for a
+    /// reason worth stating: an epoch in flash comes back arbitrarily
+    /// wrong, because nothing bounds how long a device spends powered off.
+    @ViewBuilder
+    private var timeSection: some View {
+        Section {
+            if showsTimeZone {
+                Picker("Time zone", selection: $timeZoneOffsetMinutes) {
+                    ForEach(deviceTimeZoneOffsets, id: \.self) { offset in
+                        Text(formattedUTCOffset(offset)).tag(offset)
+                    }
+                }
+            }
+            if let clock = controller.snapshot.clock {
+                LabeledContent(
+                    "Device clock",
+                    value: clock.date?.formatted(date: .abbreviated, time: .standard) ?? "Not set"
+                )
+            }
+            Button {
+                clockProblem = nil
+                clockRequestInFlight = true
+                Task {
+                    do {
+                        try await controller.setTime(epochSeconds: UInt32(Date.now.timeIntervalSince1970))
+                    } catch {
+                        clockProblem = "The device did not answer. It may have moved out of range."
+                    }
+                    clockRequestInFlight = false
+                }
+            } label: {
+                Label("Set Clock From iPhone", systemImage: "clock.arrow.trianglehead.counterclockwise.rotate.90")
+            }
+            .disabled(clockRequestInFlight || isLinkDown)
+            if let clockProblem {
+                Label(clockProblem, systemImage: "exclamationmark.circle")
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+            }
+        } header: {
+            Text("Time")
+        } footer: {
+            Text(showsTimeZone
+                 ? "The zone is an offset, not a place: the device has no zone database, so it will not follow daylight saving on its own. Setting the clock takes effect immediately and is not saved — it is not part of Apply."
+                 : "Setting the clock takes effect immediately and is not saved — it is not part of Apply.")
+        }
+    }
+
     @ViewBuilder
     private var radioSection: some View {
         Section {
@@ -443,6 +578,14 @@ struct DeviceConfigView: View {
         sync.supportsDeviceIdentity && sync.devDiscoverable != nil
     }
 
+    /// The positioning policy is one setting in four properties: a device
+    /// that reported only part of it has not reported it.
+    private var showsPositioning: Bool { sync.supportsGnss && sync.gnss != nil }
+
+    /// The zone alone. A device that would not report it can still be
+    /// given a clock, so only the picker hides — the section stays.
+    private var showsTimeZone: Bool { sync.supportsTime && sync.tzOffsetMin != nil }
+
     /// A preset sets every radio parameter at once, so it is only offered
     /// when every parameter it sets is one this device will accept.
     private var showsPresets: Bool {
@@ -460,6 +603,8 @@ struct DeviceConfigView: View {
         if sync.supportsIdent, !showsIdentity { settings.append("its advertised identity") }
         if sync.supportsDeviceIdentity, !showsDiscoverable { settings.append("discoverability") }
         if sync.supportsRepeater, sync.repeater == nil { settings.append("its forwarding policy") }
+        if sync.supportsGnss, !showsPositioning { settings.append("its positioning settings") }
+        if sync.supportsTime, !showsTimeZone { settings.append("its time zone") }
         return settings
     }
 
@@ -536,6 +681,15 @@ struct DeviceConfigView: View {
                     defaultRegion: defaultRegion,
                     minRssiDbm: minRssiDBm,
                     minSnrDb: minSnrDB
+                )
+                : nil,
+            tzOffsetMin: sync.supportsTime ? timeZoneOffsetMinutes : nil,
+            gnss: sync.supportsGnss
+                ? UlcpGnssSettingsRecord(
+                    enabled: gnssEnabled,
+                    identUpdate: gnssIdentUpdate,
+                    identPrecision: gnssIdentPrecision,
+                    timeTrust: gnssTimeTrust
                 )
                 : nil
         )
@@ -665,5 +819,7 @@ struct DeviceConfigView: View {
             ?? reported(requested.identMobile, readback.identMobile, "device mobility")
             ?? reported(requested.devDiscoverable, readback.devDiscoverable, "discoverability")
             ?? reported(requested.repeater, readback.repeater, "the repeater policy")
+            ?? reported(requested.tzOffsetMin, readback.tzOffsetMin, "the time zone")
+            ?? reported(requested.gnss, readback.gnss, "the positioning settings")
     }
 }

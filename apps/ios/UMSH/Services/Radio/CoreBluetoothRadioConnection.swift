@@ -928,6 +928,29 @@ final class CoreBluetoothRadioConnection: NSObject, RadioConnection, @unchecked 
         }
     }
 
+    func setTime(epochSeconds: UInt32?) async throws {
+        try await withCheckedThrowingContinuation { (result: CheckedContinuation<Void, any Error>) in
+            bluetoothQueue.async { [self] in
+                guard let peripheral, peripheral.state == .connected else {
+                    result.resume(throwing: RadioConnectionError.radioNotFound)
+                    return
+                }
+                Self.logger.notice(
+                    "action: user \(epochSeconds == nil ? "cleared" : "set") the radio clock"
+                )
+                do {
+                    try applySessionUpdate(
+                        ulcpSession.setTime(epochSeconds: epochSeconds),
+                        from: peripheral
+                    )
+                    result.resume()
+                } catch {
+                    result.resume(throwing: RadioConnectionError.incompatibleProtocol)
+                }
+            }
+        }
+    }
+
     func factoryReset() async throws {
         try await withCheckedThrowingContinuation { (result: CheckedContinuation<Void, any Error>) in
             bluetoothQueue.async { [self] in
@@ -1704,6 +1727,18 @@ final class CoreBluetoothRadioConnection: NSObject, RadioConnection, @unchecked 
         // alert on its own — a button press or its deadline — and the
         // button has to follow the radio, not what we last asked for.
         snapshot.alert = update.snapshot.alert.map(RadioAlertState.init)
+        // Reported once, like battery: an epoch means nothing without the
+        // instant it arrived, so the reading is stamped here and the
+        // previous one stands when no news comes.
+        if let time = update.snapshot.time {
+            snapshot.clock = RadioClock(
+                date: time.epochSeconds.map { Date(timeIntervalSince1970: TimeInterval($0)) },
+                readAt: .now
+            )
+        }
+        // Mirrored like the alert: a position is state, and a pin does not
+        // disappear because an unrelated property arrived.
+        snapshot.position = update.snapshot.gnss.map(RadioPosition.init)
         snapshot.provisioning = update.snapshot.provisioning.map {
             RadioProvisioningSummary(
                 capabilityCount: Int($0.capabilityCount),
@@ -1740,7 +1775,11 @@ final class CoreBluetoothRadioConnection: NSObject, RadioConnection, @unchecked 
                 // The host key tables are read exactly when the radio
                 // advertises CAP_HOST_KEYS, so a reported count is the
                 // capability.
-                supportsHostKeys: $0.hostChannelCount != nil
+                supportsHostKeys: $0.hostChannelCount != nil,
+                supportsTime: $0.supportsTime,
+                supportsGnss: $0.supportsGnss,
+                timeZoneOffsetMinutes: $0.tzOffsetMin,
+                gnss: $0.gnss
             )
         }
         snapshot.problemDescription = nil

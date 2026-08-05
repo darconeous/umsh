@@ -348,6 +348,7 @@ struct AppRootView: View {
                     forget: forgetRadio,
                     factoryReset: factoryResetRadio,
                     setAlert: setRadioAlert,
+                    setTime: setRadioTime,
                     discoverRadios: discoverRadios,
                     selectRadio: selectRadio,
                     stopDiscovery: stopRadioDiscovery,
@@ -695,6 +696,10 @@ struct AppRootView: View {
 
     private func setRadioAlert(_ state: RadioAlertState) async throws {
         try await radioConnection.setAlert(state)
+    }
+
+    private func setRadioTime(_ epochSeconds: UInt32?) async throws {
+        try await radioConnection.setTime(epochSeconds: epochSeconds)
     }
 
     private func claimRadio() async {

@@ -46,6 +46,14 @@ protocol RadioConnection: AnyObject, Sendable {
     /// the radio ends it on a button press or its own deadline, reported
     /// back through `RadioSnapshot.alert`.
     func setAlert(_ state: RadioAlertState) async throws
+    /// Set the radio's wall clock (`PROP_TIME`), or clear it back to
+    /// unknown with `nil`.
+    ///
+    /// Live state, never saved: an epoch written to flash comes back
+    /// arbitrarily wrong, since nothing bounds how long a radio spends
+    /// powered off. The time *zone* is saved configuration and travels
+    /// with a device-configuration write instead.
+    func setTime(epochSeconds: UInt32?) async throws
     func refresh() async throws -> RadioSnapshot
     func configure(_ settings: RadioSettings) async throws
     /// Store a peer public key on the radio's device identity

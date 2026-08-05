@@ -343,6 +343,15 @@ actor FakeRadioConnection: RadioConnection {
         publish(updated)
     }
 
+    func setTime(epochSeconds: UInt32?) async throws {
+        var updated = snapshot
+        updated.clock = RadioClock(
+            date: epochSeconds.map { Date(timeIntervalSince1970: TimeInterval($0)) },
+            readAt: .now
+        )
+        publish(updated)
+    }
+
     func publish(_ newSnapshot: RadioSnapshot) {
         snapshot = newSnapshot
         for continuation in continuations.values {

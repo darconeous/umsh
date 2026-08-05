@@ -2325,6 +2325,25 @@ public protocol MobileUlcpSessionProtocol: AnyObject, Sendable {
     func setAlert(state: UlcpAlertState) throws  -> UlcpSessionUpdateRecord
 
     /**
+     * Set — or clear — the device's wall clock (`PROP_TIME`).
+     *
+     * Live state rather than configuration, and never saved: an epoch
+     * written to flash would come back arbitrarily wrong, since nothing
+     * bounds how long a device spends powered off. So this is not part
+     * of [`Self::configure_device`], which carries the time *zone* —
+     * where the device is meant to be is worth persisting even when what
+     * time it is is not.
+     *
+     * `None` clears the clock back to unknown, which is what a device
+     * reports before its first fix. On a device whose receiver is
+     * trusted for time, a fix will overwrite whatever is set here.
+     *
+     * The device answers with the epoch it now holds; that answer, not
+     * the value written, is what the session snapshot reports.
+     */
+    func setTime(epochSeconds: UInt32?) throws  -> UlcpSessionUpdateRecord
+
+    /**
      * Queue one complete raw UMSH frame on `STR_PHY_RAW`.
      *
      * The platform adapter supplies only opaque bytes from `MobileMeshSession`;
@@ -2699,6 +2718,33 @@ open func setAlert(state: UlcpAlertState)throws  -> UlcpSessionUpdateRecord  {
     uniffi_umsh_mobile_core_fn_method_mobileulcpsession_set_alert(
             self.uniffiCloneHandle(),
         FfiConverterTypeUlcpAlertState_lower(state),uniffiCallStatus
+    )
+})
+}
+
+    /**
+     * Set — or clear — the device's wall clock (`PROP_TIME`).
+     *
+     * Live state rather than configuration, and never saved: an epoch
+     * written to flash would come back arbitrarily wrong, since nothing
+     * bounds how long a device spends powered off. So this is not part
+     * of [`Self::configure_device`], which carries the time *zone* —
+     * where the device is meant to be is worth persisting even when what
+     * time it is is not.
+     *
+     * `None` clears the clock back to unknown, which is what a device
+     * reports before its first fix. On a device whose receiver is
+     * trusted for time, a fix will overwrite whatever is set here.
+     *
+     * The device answers with the epoch it now holds; that answer, not
+     * the value written, is what the session snapshot reports.
+     */
+open func setTime(epochSeconds: UInt32?)throws  -> UlcpSessionUpdateRecord  {
+    return try  FfiConverterTypeUlcpSessionUpdateRecord_lift(try rustCallWithError(FfiConverterTypeMobileError_lift) {
+        uniffiCallStatus in
+    uniffi_umsh_mobile_core_fn_method_mobileulcpsession_set_time(
+            self.uniffiCloneHandle(),
+        FfiConverterOptionUInt32.lower(epochSeconds),uniffiCallStatus
     )
 })
 }
@@ -4979,6 +5025,20 @@ public struct UlcpDeviceConfigRecord: Equatable, Hashable {
      * advertises `CAP_REPEATER`.
      */
     public var repeater: UlcpRepeaterSettingsRecord?
+    /**
+     * `PROP_TZ_OFFSET` in minutes east of UTC. Present exactly when the
+     * device advertises `CAP_TIME`.
+     *
+     * The clock itself is not here: it is live state rather than
+     * configuration, is never saved, and is set with
+     * [`MobileUlcpSession::set_time`].
+     */
+    public var tzOffsetMin: Int16?
+    /**
+     * The positioning policy. Present exactly when the device advertises
+     * `CAP_GNSS`.
+     */
+    public var gnss: UlcpGnssSettingsRecord?
 
     // Default memberwise initializers are never public by default, so we
     // declare one manually.
@@ -5004,12 +5064,26 @@ public struct UlcpDeviceConfigRecord: Equatable, Hashable {
         /**
          * The flood-forwarding policy. Present exactly when the device
          * advertises `CAP_REPEATER`.
-         */repeater: UlcpRepeaterSettingsRecord?) {
+         */repeater: UlcpRepeaterSettingsRecord?,
+        /**
+         * `PROP_TZ_OFFSET` in minutes east of UTC. Present exactly when the
+         * device advertises `CAP_TIME`.
+         *
+         * The clock itself is not here: it is live state rather than
+         * configuration, is never saved, and is set with
+         * [`MobileUlcpSession::set_time`].
+         */tzOffsetMin: Int16?,
+        /**
+         * The positioning policy. Present exactly when the device advertises
+         * `CAP_GNSS`.
+         */gnss: UlcpGnssSettingsRecord?) {
         self.radio = radio
         self.identRole = identRole
         self.identMobile = identMobile
         self.devDiscoverable = devDiscoverable
         self.repeater = repeater
+        self.tzOffsetMin = tzOffsetMin
+        self.gnss = gnss
     }
 
 
@@ -5032,7 +5106,9 @@ public struct FfiConverterTypeUlcpDeviceConfigRecord: FfiConverterRustBuffer {
                 identRole: FfiConverterOptionUInt8.read(from: &buf),
                 identMobile: FfiConverterOptionBool.read(from: &buf),
                 devDiscoverable: FfiConverterOptionBool.read(from: &buf),
-                repeater: FfiConverterOptionTypeUlcpRepeaterSettingsRecord.read(from: &buf)
+                repeater: FfiConverterOptionTypeUlcpRepeaterSettingsRecord.read(from: &buf),
+                tzOffsetMin: FfiConverterOptionInt16.read(from: &buf),
+                gnss: FfiConverterOptionTypeUlcpGnssSettingsRecord.read(from: &buf)
         )
     }
 
@@ -5042,6 +5118,8 @@ public struct FfiConverterTypeUlcpDeviceConfigRecord: FfiConverterRustBuffer {
         FfiConverterOptionBool.write(value.identMobile, into: &buf)
         FfiConverterOptionBool.write(value.devDiscoverable, into: &buf)
         FfiConverterOptionTypeUlcpRepeaterSettingsRecord.write(value.repeater, into: &buf)
+        FfiConverterOptionInt16.write(value.tzOffsetMin, into: &buf)
+        FfiConverterOptionTypeUlcpGnssSettingsRecord.write(value.gnss, into: &buf)
     }
 }
 
@@ -5058,6 +5136,272 @@ public func FfiConverterTypeUlcpDeviceConfigRecord_lift(_ buf: RustBuffer) throw
 #endif
 public func FfiConverterTypeUlcpDeviceConfigRecord_lower(_ value: UlcpDeviceConfigRecord) -> RustBuffer {
     return FfiConverterTypeUlcpDeviceConfigRecord.lower(value)
+}
+
+
+/**
+ * What the receiver currently reports, folded from the five positioning
+ * telemetry properties.
+ *
+ * Unlike a battery reading this is carried on *every* snapshot rather
+ * than reported once: it is state the UI mirrors — a map pin does not
+ * disappear because an unrelated property arrived — and the receiver
+ * announces position and fix changes on its own schedule.
+ */
+public struct UlcpGnssRecord: Equatable, Hashable {
+    public var fix: UlcpFixKind
+    /**
+     * `PROP_GNSS_LOCATION` as it travels: the interleaved
+     * variable-precision grid code, empty without a fix. Carried
+     * verbatim so a caller can compare or forward the cell itself
+     * rather than re-encoding degrees.
+     */
+    public var location: Data
+    /**
+     * Center of the encoded cell, in degrees. `None` without a fix.
+     *
+     * A location names a cell rather than a point; `location_cell_meters`
+     * says how large that cell is, and rendering a pin without it claims
+     * a precision the device did not report. Widened from the f32 the
+     * decoder works in, because that is the shape every consumer of a
+     * coordinate wants.
+     */
+    public var latitudeDeg: Double?
+    public var longitudeDeg: Double?
+    /**
+     * Approximate width of the encoded cell at the equator, in meters.
+     */
+    public var locationCellMeters: Double?
+    /**
+     * `PROP_GNSS_ALTITUDE` in meters above the WGS-84 ellipsoid.
+     */
+    public var altitudeM: Int32?
+    /**
+     * `PROP_GNSS_PRECISION`: estimated horizontal accuracy in
+     * decimeters. An estimate scaled from dilution of precision, not a
+     * measured error bound.
+     */
+    public var accuracyDm: UInt16?
+    /**
+     * Satellites contributing to the solution. Reads 0 while the
+     * receiver is off.
+     */
+    public var satellitesUsed: UInt8
+    /**
+     * Satellites in view, when the receiver reports them.
+     */
+    public var satellitesInView: UInt8?
+
+    // Default memberwise initializers are never public by default, so we
+    // declare one manually.
+    public init(fix: UlcpFixKind,
+        /**
+         * `PROP_GNSS_LOCATION` as it travels: the interleaved
+         * variable-precision grid code, empty without a fix. Carried
+         * verbatim so a caller can compare or forward the cell itself
+         * rather than re-encoding degrees.
+         */location: Data,
+        /**
+         * Center of the encoded cell, in degrees. `None` without a fix.
+         *
+         * A location names a cell rather than a point; `location_cell_meters`
+         * says how large that cell is, and rendering a pin without it claims
+         * a precision the device did not report. Widened from the f32 the
+         * decoder works in, because that is the shape every consumer of a
+         * coordinate wants.
+         */latitudeDeg: Double?, longitudeDeg: Double?,
+        /**
+         * Approximate width of the encoded cell at the equator, in meters.
+         */locationCellMeters: Double?,
+        /**
+         * `PROP_GNSS_ALTITUDE` in meters above the WGS-84 ellipsoid.
+         */altitudeM: Int32?,
+        /**
+         * `PROP_GNSS_PRECISION`: estimated horizontal accuracy in
+         * decimeters. An estimate scaled from dilution of precision, not a
+         * measured error bound.
+         */accuracyDm: UInt16?,
+        /**
+         * Satellites contributing to the solution. Reads 0 while the
+         * receiver is off.
+         */satellitesUsed: UInt8,
+        /**
+         * Satellites in view, when the receiver reports them.
+         */satellitesInView: UInt8?) {
+        self.fix = fix
+        self.location = location
+        self.latitudeDeg = latitudeDeg
+        self.longitudeDeg = longitudeDeg
+        self.locationCellMeters = locationCellMeters
+        self.altitudeM = altitudeM
+        self.accuracyDm = accuracyDm
+        self.satellitesUsed = satellitesUsed
+        self.satellitesInView = satellitesInView
+    }
+
+
+
+
+}
+
+#if compiler(>=6)
+extension UlcpGnssRecord: Sendable {}
+#endif
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public struct FfiConverterTypeUlcpGnssRecord: FfiConverterRustBuffer {
+    public static func read(from buf: inout (data: Data, offset: Data.Index)) throws -> UlcpGnssRecord {
+        return
+            try UlcpGnssRecord(
+                fix: FfiConverterTypeUlcpFixKind.read(from: &buf),
+                location: FfiConverterData.read(from: &buf),
+                latitudeDeg: FfiConverterOptionDouble.read(from: &buf),
+                longitudeDeg: FfiConverterOptionDouble.read(from: &buf),
+                locationCellMeters: FfiConverterOptionDouble.read(from: &buf),
+                altitudeM: FfiConverterOptionInt32.read(from: &buf),
+                accuracyDm: FfiConverterOptionUInt16.read(from: &buf),
+                satellitesUsed: FfiConverterUInt8.read(from: &buf),
+                satellitesInView: FfiConverterOptionUInt8.read(from: &buf)
+        )
+    }
+
+    public static func write(_ value: UlcpGnssRecord, into buf: inout [UInt8]) {
+        FfiConverterTypeUlcpFixKind.write(value.fix, into: &buf)
+        FfiConverterData.write(value.location, into: &buf)
+        FfiConverterOptionDouble.write(value.latitudeDeg, into: &buf)
+        FfiConverterOptionDouble.write(value.longitudeDeg, into: &buf)
+        FfiConverterOptionDouble.write(value.locationCellMeters, into: &buf)
+        FfiConverterOptionInt32.write(value.altitudeM, into: &buf)
+        FfiConverterOptionUInt16.write(value.accuracyDm, into: &buf)
+        FfiConverterUInt8.write(value.satellitesUsed, into: &buf)
+        FfiConverterOptionUInt8.write(value.satellitesInView, into: &buf)
+    }
+}
+
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public func FfiConverterTypeUlcpGnssRecord_lift(_ buf: RustBuffer) throws -> UlcpGnssRecord {
+    return try FfiConverterTypeUlcpGnssRecord.lift(buf)
+}
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public func FfiConverterTypeUlcpGnssRecord_lower(_ value: UlcpGnssRecord) -> RustBuffer {
+    return FfiConverterTypeUlcpGnssRecord.lower(value)
+}
+
+
+/**
+ * The device's positioning policy: whether the receiver runs, and what
+ * is done with what it finds.
+ *
+ * Read and written as a whole, like [`UlcpRepeaterSettingsRecord`] and
+ * for the same reason — a receiver switched on under half a policy
+ * starts advertising a position nobody just agreed to. `enabled` is
+ * written last so the rest is already in force when it does.
+ */
+public struct UlcpGnssSettingsRecord: Equatable, Hashable {
+    /**
+     * `PROP_GNSS_ENABLED`: whether the receiver is powered. Off is the
+     * lowest power state the board can reach, and on most of them the
+     * receiver is the largest continuous load there is.
+     */
+    public var enabled: Bool
+    /**
+     * `PROP_GNSS_IDENT_UPDATE`: whether fixes refresh the location the
+     * node advertises in its identity.
+     */
+    public var identUpdate: Bool
+    /**
+     * `PROP_GNSS_IDENT_PRECISION`: how many location bytes that
+     * advertised position is clamped to, 1 (coarsest) through 7. This is
+     * a disclosure control — see [`ulcp_location_cell_meters`].
+     */
+    public var identPrecision: UInt8
+    /**
+     * `PROP_GNSS_TIME_TRUST`: whether receiver-derived time may set the
+     * wall clock. Cleared, a hand-set clock is safe from a jammed or
+     * spoofed sky; position reporting is unaffected.
+     */
+    public var timeTrust: Bool
+
+    // Default memberwise initializers are never public by default, so we
+    // declare one manually.
+    public init(
+        /**
+         * `PROP_GNSS_ENABLED`: whether the receiver is powered. Off is the
+         * lowest power state the board can reach, and on most of them the
+         * receiver is the largest continuous load there is.
+         */enabled: Bool,
+        /**
+         * `PROP_GNSS_IDENT_UPDATE`: whether fixes refresh the location the
+         * node advertises in its identity.
+         */identUpdate: Bool,
+        /**
+         * `PROP_GNSS_IDENT_PRECISION`: how many location bytes that
+         * advertised position is clamped to, 1 (coarsest) through 7. This is
+         * a disclosure control — see [`ulcp_location_cell_meters`].
+         */identPrecision: UInt8,
+        /**
+         * `PROP_GNSS_TIME_TRUST`: whether receiver-derived time may set the
+         * wall clock. Cleared, a hand-set clock is safe from a jammed or
+         * spoofed sky; position reporting is unaffected.
+         */timeTrust: Bool) {
+        self.enabled = enabled
+        self.identUpdate = identUpdate
+        self.identPrecision = identPrecision
+        self.timeTrust = timeTrust
+    }
+
+
+
+
+}
+
+#if compiler(>=6)
+extension UlcpGnssSettingsRecord: Sendable {}
+#endif
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public struct FfiConverterTypeUlcpGnssSettingsRecord: FfiConverterRustBuffer {
+    public static func read(from buf: inout (data: Data, offset: Data.Index)) throws -> UlcpGnssSettingsRecord {
+        return
+            try UlcpGnssSettingsRecord(
+                enabled: FfiConverterBool.read(from: &buf),
+                identUpdate: FfiConverterBool.read(from: &buf),
+                identPrecision: FfiConverterUInt8.read(from: &buf),
+                timeTrust: FfiConverterBool.read(from: &buf)
+        )
+    }
+
+    public static func write(_ value: UlcpGnssSettingsRecord, into buf: inout [UInt8]) {
+        FfiConverterBool.write(value.enabled, into: &buf)
+        FfiConverterBool.write(value.identUpdate, into: &buf)
+        FfiConverterUInt8.write(value.identPrecision, into: &buf)
+        FfiConverterBool.write(value.timeTrust, into: &buf)
+    }
+}
+
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public func FfiConverterTypeUlcpGnssSettingsRecord_lift(_ buf: RustBuffer) throws -> UlcpGnssSettingsRecord {
+    return try FfiConverterTypeUlcpGnssSettingsRecord.lift(buf)
+}
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public func FfiConverterTypeUlcpGnssSettingsRecord_lower(_ value: UlcpGnssSettingsRecord) -> RustBuffer {
+    return FfiConverterTypeUlcpGnssSettingsRecord.lower(value)
 }
 
 
@@ -5527,6 +5871,9 @@ public func FfiConverterTypeUlcpRepeaterSettingsRecord_lower(_ value: UlcpRepeat
 
 /**
  * Typed state published after each bounded ULCP-session transition.
+ *
+ * Not `Eq`: a position is degrees, and floating point has no total
+ * equality to offer.
  */
 public struct UlcpSessionSnapshotRecord: Equatable, Hashable {
     public var generation: UInt64
@@ -5544,6 +5891,17 @@ public struct UlcpSessionSnapshotRecord: Equatable, Hashable {
      * must follow the radio rather than what the phone last asked for.
      */
     public var alert: UlcpAlertState?
+    /**
+     * A clock reading that arrived with this update, on a `CAP_TIME`
+     * device. Reported once — see [`UlcpTimeRecord`].
+     */
+    public var time: UlcpTimeRecord?
+    /**
+     * What the receiver reports, on a `CAP_GNSS` device, or `None` until
+     * the first positioning property is read. Mirrored like `alert`
+     * rather than taken like `battery`.
+     */
+    public var gnss: UlcpGnssRecord?
     public var provisioning: UlcpSyncRecord?
 
     // Default memberwise initializers are never public by default, so we
@@ -5556,7 +5914,16 @@ public struct UlcpSessionSnapshotRecord: Equatable, Hashable {
          * reported once: it is state the UI mirrors, and the radio ends an
          * alert on its own — a button press or its deadline — so the button
          * must follow the radio rather than what the phone last asked for.
-         */alert: UlcpAlertState?, provisioning: UlcpSyncRecord?) {
+         */alert: UlcpAlertState?,
+        /**
+         * A clock reading that arrived with this update, on a `CAP_TIME`
+         * device. Reported once — see [`UlcpTimeRecord`].
+         */time: UlcpTimeRecord?,
+        /**
+         * What the receiver reports, on a `CAP_GNSS` device, or `None` until
+         * the first positioning property is read. Mirrored like `alert`
+         * rather than taken like `battery`.
+         */gnss: UlcpGnssRecord?, provisioning: UlcpSyncRecord?) {
         self.generation = generation
         self.phase = phase
         self.hostOwnership = hostOwnership
@@ -5564,6 +5931,8 @@ public struct UlcpSessionSnapshotRecord: Equatable, Hashable {
         self.deviceName = deviceName
         self.battery = battery
         self.alert = alert
+        self.time = time
+        self.gnss = gnss
         self.provisioning = provisioning
     }
 
@@ -5590,6 +5959,8 @@ public struct FfiConverterTypeUlcpSessionSnapshotRecord: FfiConverterRustBuffer 
                 deviceName: FfiConverterOptionString.read(from: &buf),
                 battery: FfiConverterOptionTypeUlcpBatteryRecord.read(from: &buf),
                 alert: FfiConverterOptionTypeUlcpAlertState.read(from: &buf),
+                time: FfiConverterOptionTypeUlcpTimeRecord.read(from: &buf),
+                gnss: FfiConverterOptionTypeUlcpGnssRecord.read(from: &buf),
                 provisioning: FfiConverterOptionTypeUlcpSyncRecord.read(from: &buf)
         )
     }
@@ -5602,6 +5973,8 @@ public struct FfiConverterTypeUlcpSessionSnapshotRecord: FfiConverterRustBuffer 
         FfiConverterOptionString.write(value.deviceName, into: &buf)
         FfiConverterOptionTypeUlcpBatteryRecord.write(value.battery, into: &buf)
         FfiConverterOptionTypeUlcpAlertState.write(value.alert, into: &buf)
+        FfiConverterOptionTypeUlcpTimeRecord.write(value.time, into: &buf)
+        FfiConverterOptionTypeUlcpGnssRecord.write(value.gnss, into: &buf)
         FfiConverterOptionTypeUlcpSyncRecord.write(value.provisioning, into: &buf)
     }
 }
@@ -5768,6 +6141,17 @@ public struct UlcpSyncRecord: Equatable, Hashable {
      * including the `PROP_DEV_PEERS` list.
      */
     public var supportsDeviceIdentity: Bool
+    /**
+     * The device keeps a wall clock (`CAP_TIME`). It says nothing about
+     * where the time comes from, or whether the device currently knows
+     * it — an unset clock is a device with `CAP_TIME` and no epoch.
+     */
+    public var supportsTime: Bool
+    /**
+     * A GNSS receiver is fitted (`CAP_GNSS`), so the positioning
+     * properties exist and the device can locate itself.
+     */
+    public var supportsGnss: Bool
     public var phyEnabled: Bool
     public var frequencyKhz: UInt32
     public var transmitPowerDbm: Int8
@@ -5821,6 +6205,20 @@ public struct UlcpSyncRecord: Equatable, Hashable {
      */
     public var devDiscoverable: Bool?
     /**
+     * `PROP_TZ_OFFSET` in minutes east of UTC. Present when
+     * `supports_time` and the device reported it.
+     *
+     * The zone is configuration and the epoch is not: where a device is
+     * meant to be is known even when what time it is is not, which is
+     * why this is here and the clock reading is on the session snapshot.
+     */
+    public var tzOffsetMin: Int16?
+    /**
+     * The positioning policy. Present when `supports_gnss` and the
+     * device reported the whole of it.
+     */
+    public var gnss: UlcpGnssSettingsRecord?
+    /**
      * Capability-gated properties the device advertised but would not
      * report, in ascending order.
      *
@@ -5849,7 +6247,16 @@ public struct UlcpSyncRecord: Equatable, Hashable {
         /**
          * The device has an identity domain of its own (`CAP_DEV_IDENTITY`),
          * including the `PROP_DEV_PEERS` list.
-         */supportsDeviceIdentity: Bool, phyEnabled: Bool, frequencyKhz: UInt32, transmitPowerDbm: Int8, bandwidthHz: UInt32?, spreadingFactor: UInt8?, codingRateDenom: UInt8?, dutyCycleNow: UInt16?, dutyCycleLimit: UInt16?, saved: SavedSnapshotRecord?, queuedFrames: UInt16?, droppedFrames: UInt32?, filterCount: UInt32?, hostChannelCount: UInt32?, hostPeerCount: UInt32?, autoAck: Bool?,
+         */supportsDeviceIdentity: Bool,
+        /**
+         * The device keeps a wall clock (`CAP_TIME`). It says nothing about
+         * where the time comes from, or whether the device currently knows
+         * it — an unset clock is a device with `CAP_TIME` and no epoch.
+         */supportsTime: Bool,
+        /**
+         * A GNSS receiver is fitted (`CAP_GNSS`), so the positioning
+         * properties exist and the device can locate itself.
+         */supportsGnss: Bool, phyEnabled: Bool, frequencyKhz: UInt32, transmitPowerDbm: Int8, bandwidthHz: UInt32?, spreadingFactor: UInt8?, codingRateDenom: UInt8?, dutyCycleNow: UInt16?, dutyCycleLimit: UInt16?, saved: SavedSnapshotRecord?, queuedFrames: UInt16?, droppedFrames: UInt32?, filterCount: UInt32?, hostChannelCount: UInt32?, hostPeerCount: UInt32?, autoAck: Bool?,
         /**
          * Present when `supports_repeater` and the device reported the whole
          * policy.
@@ -5882,6 +6289,18 @@ public struct UlcpSyncRecord: Equatable, Hashable {
          * device reported it.
          */devDiscoverable: Bool?,
         /**
+         * `PROP_TZ_OFFSET` in minutes east of UTC. Present when
+         * `supports_time` and the device reported it.
+         *
+         * The zone is configuration and the epoch is not: where a device is
+         * meant to be is known even when what time it is is not, which is
+         * why this is here and the clock reading is on the session snapshot.
+         */tzOffsetMin: Int16?,
+        /**
+         * The positioning policy. Present when `supports_gnss` and the
+         * device reported the whole of it.
+         */gnss: UlcpGnssSettingsRecord?,
+        /**
          * Capability-gated properties the device advertised but would not
          * report, in ascending order.
          *
@@ -5902,6 +6321,8 @@ public struct UlcpSyncRecord: Equatable, Hashable {
         self.supportsRepeater = supportsRepeater
         self.supportsIdent = supportsIdent
         self.supportsDeviceIdentity = supportsDeviceIdentity
+        self.supportsTime = supportsTime
+        self.supportsGnss = supportsGnss
         self.phyEnabled = phyEnabled
         self.frequencyKhz = frequencyKhz
         self.transmitPowerDbm = transmitPowerDbm
@@ -5923,6 +6344,8 @@ public struct UlcpSyncRecord: Equatable, Hashable {
         self.identRole = identRole
         self.identMobile = identMobile
         self.devDiscoverable = devDiscoverable
+        self.tzOffsetMin = tzOffsetMin
+        self.gnss = gnss
         self.unreadableProperties = unreadableProperties
     }
 
@@ -5953,6 +6376,8 @@ public struct FfiConverterTypeUlcpSyncRecord: FfiConverterRustBuffer {
                 supportsRepeater: FfiConverterBool.read(from: &buf),
                 supportsIdent: FfiConverterBool.read(from: &buf),
                 supportsDeviceIdentity: FfiConverterBool.read(from: &buf),
+                supportsTime: FfiConverterBool.read(from: &buf),
+                supportsGnss: FfiConverterBool.read(from: &buf),
                 phyEnabled: FfiConverterBool.read(from: &buf),
                 frequencyKhz: FfiConverterUInt32.read(from: &buf),
                 transmitPowerDbm: FfiConverterInt8.read(from: &buf),
@@ -5974,6 +6399,8 @@ public struct FfiConverterTypeUlcpSyncRecord: FfiConverterRustBuffer {
                 identRole: FfiConverterOptionUInt8.read(from: &buf),
                 identMobile: FfiConverterOptionBool.read(from: &buf),
                 devDiscoverable: FfiConverterOptionBool.read(from: &buf),
+                tzOffsetMin: FfiConverterOptionInt16.read(from: &buf),
+                gnss: FfiConverterOptionTypeUlcpGnssSettingsRecord.read(from: &buf),
                 unreadableProperties: FfiConverterSequenceUInt32.read(from: &buf)
         )
     }
@@ -5990,6 +6417,8 @@ public struct FfiConverterTypeUlcpSyncRecord: FfiConverterRustBuffer {
         FfiConverterBool.write(value.supportsRepeater, into: &buf)
         FfiConverterBool.write(value.supportsIdent, into: &buf)
         FfiConverterBool.write(value.supportsDeviceIdentity, into: &buf)
+        FfiConverterBool.write(value.supportsTime, into: &buf)
+        FfiConverterBool.write(value.supportsGnss, into: &buf)
         FfiConverterBool.write(value.phyEnabled, into: &buf)
         FfiConverterUInt32.write(value.frequencyKhz, into: &buf)
         FfiConverterInt8.write(value.transmitPowerDbm, into: &buf)
@@ -6011,6 +6440,8 @@ public struct FfiConverterTypeUlcpSyncRecord: FfiConverterRustBuffer {
         FfiConverterOptionUInt8.write(value.identRole, into: &buf)
         FfiConverterOptionBool.write(value.identMobile, into: &buf)
         FfiConverterOptionBool.write(value.devDiscoverable, into: &buf)
+        FfiConverterOptionInt16.write(value.tzOffsetMin, into: &buf)
+        FfiConverterOptionTypeUlcpGnssSettingsRecord.write(value.gnss, into: &buf)
         FfiConverterSequenceUInt32.write(value.unreadableProperties, into: &buf)
     }
 }
@@ -6028,6 +6459,76 @@ public func FfiConverterTypeUlcpSyncRecord_lift(_ buf: RustBuffer) throws -> Ulc
 #endif
 public func FfiConverterTypeUlcpSyncRecord_lower(_ value: UlcpSyncRecord) -> RustBuffer {
     return FfiConverterTypeUlcpSyncRecord.lower(value)
+}
+
+
+/**
+ * `PROP_TIME`: what the device's wall clock read when it last reported.
+ *
+ * Take-once, like a battery reading and for the same reason: a clock
+ * value means nothing without the instant it was received, so a consumer
+ * stamps what arrives. Republishing it on unrelated updates would
+ * restamp a stale reading as a fresh one.
+ */
+public struct UlcpTimeRecord: Equatable, Hashable {
+    /**
+     * Seconds since the Unix epoch, or `None` when the device does not
+     * know what time it is. A device that has never had a fix, a manual
+     * set, or a retained RTC is in that state, and says so rather than
+     * reporting zero.
+     */
+    public var epochSeconds: UInt32?
+
+    // Default memberwise initializers are never public by default, so we
+    // declare one manually.
+    public init(
+        /**
+         * Seconds since the Unix epoch, or `None` when the device does not
+         * know what time it is. A device that has never had a fix, a manual
+         * set, or a retained RTC is in that state, and says so rather than
+         * reporting zero.
+         */epochSeconds: UInt32?) {
+        self.epochSeconds = epochSeconds
+    }
+
+
+
+
+}
+
+#if compiler(>=6)
+extension UlcpTimeRecord: Sendable {}
+#endif
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public struct FfiConverterTypeUlcpTimeRecord: FfiConverterRustBuffer {
+    public static func read(from buf: inout (data: Data, offset: Data.Index)) throws -> UlcpTimeRecord {
+        return
+            try UlcpTimeRecord(
+                epochSeconds: FfiConverterOptionUInt32.read(from: &buf)
+        )
+    }
+
+    public static func write(_ value: UlcpTimeRecord, into buf: inout [UInt8]) {
+        FfiConverterOptionUInt32.write(value.epochSeconds, into: &buf)
+    }
+}
+
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public func FfiConverterTypeUlcpTimeRecord_lift(_ buf: RustBuffer) throws -> UlcpTimeRecord {
+    return try FfiConverterTypeUlcpTimeRecord.lift(buf)
+}
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public func FfiConverterTypeUlcpTimeRecord_lower(_ value: UlcpTimeRecord) -> RustBuffer {
+    return FfiConverterTypeUlcpTimeRecord.lower(value)
 }
 
 
@@ -7500,6 +8001,91 @@ public func FfiConverterTypeUlcpChargeState_lower(_ value: UlcpChargeState) -> R
 
 
 /**
+ * `PROP_GNSS_FIX`: what kind of position solution the receiver has.
+ */
+
+public enum UlcpFixKind: Equatable, Hashable {
+
+    /**
+     * No solution — the receiver is off, or on and still searching.
+     */
+    case none
+    /**
+     * Position without altitude.
+     */
+    case twoD
+    /**
+     * Position and altitude.
+     */
+    case threeD
+
+
+
+
+
+}
+
+#if compiler(>=6)
+extension UlcpFixKind: Sendable {}
+#endif
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public struct FfiConverterTypeUlcpFixKind: FfiConverterRustBuffer {
+    typealias SwiftType = UlcpFixKind
+
+    public static func read(from buf: inout (data: Data, offset: Data.Index)) throws -> UlcpFixKind {
+        let variant: Int32 = try readInt(&buf)
+        switch variant {
+
+        case 1: return .none
+
+        case 2: return .twoD
+
+        case 3: return .threeD
+
+        default: throw UniffiInternalError.unexpectedEnumCase
+        }
+    }
+
+    public static func write(_ value: UlcpFixKind, into buf: inout [UInt8]) {
+        switch value {
+
+
+        case .none:
+            writeInt(&buf, Int32(1))
+
+
+        case .twoD:
+            writeInt(&buf, Int32(2))
+
+
+        case .threeD:
+            writeInt(&buf, Int32(3))
+
+        }
+    }
+}
+
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public func FfiConverterTypeUlcpFixKind_lift(_ buf: RustBuffer) throws -> UlcpFixKind {
+    return try FfiConverterTypeUlcpFixKind.lift(buf)
+}
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public func FfiConverterTypeUlcpFixKind_lower(_ value: UlcpFixKind) -> RustBuffer {
+    return FfiConverterTypeUlcpFixKind.lower(value)
+}
+
+
+
+/**
  * Authoritative comparison of `PROP_HOST_KEY` with the selected phone identity.
  */
 
@@ -8108,6 +8694,54 @@ fileprivate struct FfiConverterOptionTypeUlcpBatteryRecord: FfiConverterRustBuff
 #if swift(>=5.8)
 @_documentation(visibility: private)
 #endif
+fileprivate struct FfiConverterOptionTypeUlcpGnssRecord: FfiConverterRustBuffer {
+    typealias SwiftType = UlcpGnssRecord?
+
+    public static func write(_ value: SwiftType, into buf: inout [UInt8]) {
+        guard let value = value else {
+            writeInt(&buf, Int8(0))
+            return
+        }
+        writeInt(&buf, Int8(1))
+        FfiConverterTypeUlcpGnssRecord.write(value, into: &buf)
+    }
+
+    public static func read(from buf: inout (data: Data, offset: Data.Index)) throws -> SwiftType {
+        switch try readInt(&buf) as Int8 {
+        case 0: return nil
+        case 1: return try FfiConverterTypeUlcpGnssRecord.read(from: &buf)
+        default: throw UniffiInternalError.unexpectedOptionalTag
+        }
+    }
+}
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+fileprivate struct FfiConverterOptionTypeUlcpGnssSettingsRecord: FfiConverterRustBuffer {
+    typealias SwiftType = UlcpGnssSettingsRecord?
+
+    public static func write(_ value: SwiftType, into buf: inout [UInt8]) {
+        guard let value = value else {
+            writeInt(&buf, Int8(0))
+            return
+        }
+        writeInt(&buf, Int8(1))
+        FfiConverterTypeUlcpGnssSettingsRecord.write(value, into: &buf)
+    }
+
+    public static func read(from buf: inout (data: Data, offset: Data.Index)) throws -> SwiftType {
+        switch try readInt(&buf) as Int8 {
+        case 0: return nil
+        case 1: return try FfiConverterTypeUlcpGnssSettingsRecord.read(from: &buf)
+        default: throw UniffiInternalError.unexpectedOptionalTag
+        }
+    }
+}
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
 fileprivate struct FfiConverterOptionTypeUlcpOperationErrorRecord: FfiConverterRustBuffer {
     typealias SwiftType = UlcpOperationErrorRecord?
 
@@ -8196,6 +8830,30 @@ fileprivate struct FfiConverterOptionTypeUlcpSyncRecord: FfiConverterRustBuffer 
         switch try readInt(&buf) as Int8 {
         case 0: return nil
         case 1: return try FfiConverterTypeUlcpSyncRecord.read(from: &buf)
+        default: throw UniffiInternalError.unexpectedOptionalTag
+        }
+    }
+}
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+fileprivate struct FfiConverterOptionTypeUlcpTimeRecord: FfiConverterRustBuffer {
+    typealias SwiftType = UlcpTimeRecord?
+
+    public static func write(_ value: SwiftType, into buf: inout [UInt8]) {
+        guard let value = value else {
+            writeInt(&buf, Int8(0))
+            return
+        }
+        writeInt(&buf, Int8(1))
+        FfiConverterTypeUlcpTimeRecord.write(value, into: &buf)
+    }
+
+    public static func read(from buf: inout (data: Data, offset: Data.Index)) throws -> SwiftType {
+        switch try readInt(&buf) as Int8 {
+        case 0: return nil
+        case 1: return try FfiConverterTypeUlcpTimeRecord.read(from: &buf)
         default: throw UniffiInternalError.unexpectedOptionalTag
         }
     }
@@ -9162,6 +9820,24 @@ public func ulcpInspectionProperties(capabilities: Data)throws  -> [UInt32]  {
 })
 }
 /**
+ * Approximate width, at the equator, of the cell one location precision
+ * names — 2,500 km at one byte down to 15 cm at seven. `None` outside
+ * 1–7.
+ *
+ * This is what makes a precision mean something to a person: the setting
+ * is a disclosure control, and how much it discloses is an area, not a
+ * byte count. Fractional because the finest two cells are smaller than a
+ * meter, which a whole number could only report as zero.
+ */
+public func ulcpLocationCellMeters(precisionBytes: UInt8) -> Double?  {
+    return try!  FfiConverterOptionDouble.lift(try! rustCall() {
+        uniffiCallStatus in
+    uniffi_umsh_mobile_core_fn_func_ulcp_location_cell_meters(
+        FfiConverterUInt8.lower(precisionBytes),uniffiCallStatus
+    )
+})
+}
+/**
  * Capacity of the device identity's channel list (`PROP_DEV_CHANNEL_KEYS`).
  *
  * A label constant, like [`ulcp_max_dev_peers`].
@@ -9320,6 +9996,9 @@ private let initializationResult: InitializationResult = {
         return InitializationResult.apiChecksumMismatch
     }
     if (uniffi_umsh_mobile_core_checksum_func_ulcp_inspection_properties() != 61576) {
+        return InitializationResult.apiChecksumMismatch
+    }
+    if (uniffi_umsh_mobile_core_checksum_func_ulcp_location_cell_meters() != 468) {
         return InitializationResult.apiChecksumMismatch
     }
     if (uniffi_umsh_mobile_core_checksum_func_ulcp_max_dev_channels() != 32655) {
@@ -9485,6 +10164,9 @@ private let initializationResult: InitializationResult = {
         return InitializationResult.apiChecksumMismatch
     }
     if (uniffi_umsh_mobile_core_checksum_method_mobileulcpsession_set_alert() != 38831) {
+        return InitializationResult.apiChecksumMismatch
+    }
+    if (uniffi_umsh_mobile_core_checksum_method_mobileulcpsession_set_time() != 36585) {
         return InitializationResult.apiChecksumMismatch
     }
     if (uniffi_umsh_mobile_core_checksum_method_mobileulcpsession_transmit_raw() != 57973) {

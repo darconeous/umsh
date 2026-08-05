@@ -19,6 +19,13 @@ struct RadioSnapshot: Equatable, Sendable {
     /// rather than shown disabled. Defaulted so the many
     /// no-radio-attached snapshots stay unchanged.
     var alert: RadioAlertState? = nil
+    /// The device's wall clock as of when it last reported one, or `nil`
+    /// on a radio without `CAP_TIME` and until the first reading arrives.
+    var clock: RadioClock? = nil
+    /// What the receiver reports, on a radio with `CAP_GNSS`. Carried on
+    /// every update rather than taken once — a position is state to
+    /// mirror, not an event.
+    var position: RadioPosition? = nil
     var problemDescription: String?
 
     static let idle = Self(
@@ -233,6 +240,113 @@ enum RadioLinkState: String, Equatable, Sendable {
     }
 }
 
+/// A device's wall clock (`PROP_TIME`), paired with the instant it was
+/// read.
+///
+/// The pairing is the point: a device reports an epoch, and an epoch alone
+/// cannot be told apart from one read an hour ago. `readAt` is what lets a
+/// screen say how far off the device is *now*.
+struct RadioClock: Equatable, Sendable {
+    /// What the device said the time was, or `nil` when it does not know
+    /// — a device that has had no fix, no manual set, and no retained
+    /// clock says so rather than reporting an epoch of zero.
+    let date: Date?
+    let readAt: Date
+
+    /// How far the device's clock is from this phone's, accounting for
+    /// the time since it was read. `nil` when the device has no clock.
+    func drift(asOf now: Date = .now) -> TimeInterval? {
+        date.map { $0.addingTimeInterval(now.timeIntervalSince(readAt)).timeIntervalSince(now) }
+    }
+
+    /// The drift stated the way a person would, or `nil` when the clocks
+    /// agree closely enough that saying anything would be noise.
+    func driftSummary(asOf now: Date = .now) -> String? {
+        guard let drift = drift(asOf: now), abs(drift) >= 2 else { return nil }
+        let magnitude = Duration.seconds(abs(drift.rounded()))
+            .formatted(.units(allowed: [.days, .hours, .minutes, .seconds], maximumUnitCount: 2))
+        return drift > 0 ? "\(magnitude) ahead of this iPhone" : "\(magnitude) behind this iPhone"
+    }
+}
+
+/// What a device's GNSS receiver reports (`PROP_GNSS_*`).
+struct RadioPosition: Equatable, Sendable {
+    let fix: UlcpFixKind
+    /// Center of the reported cell. A location names a cell rather than a
+    /// point, and `cellMeters` is how large that cell is — a pin drawn
+    /// without it claims a precision the device did not report.
+    let latitude: Double?
+    let longitude: Double?
+    let cellMeters: Double?
+    let altitudeMeters: Int32?
+    let accuracyDecimeters: UInt16?
+    let satellitesUsed: UInt8
+    let satellitesInView: UInt8?
+
+    init(_ record: UlcpGnssRecord) {
+        fix = record.fix
+        latitude = record.latitudeDeg
+        longitude = record.longitudeDeg
+        cellMeters = record.locationCellMeters
+        altitudeMeters = record.altitudeM
+        accuracyDecimeters = record.accuracyDm
+        satellitesUsed = record.satellitesUsed
+        satellitesInView = record.satellitesInView
+    }
+
+    /// What the receiver is doing. "Searching" and "off" look identical
+    /// on the wire, so the caller supplies whether the receiver is
+    /// powered; without that, an off receiver would read as one failing
+    /// to find the sky.
+    func fixLabel(receiverEnabled: Bool?) -> String {
+        switch fix {
+        case .none:
+            switch receiverEnabled {
+            case false: "Receiver off"
+            case true: "Searching"
+            case nil: "No fix"
+            }
+        case .twoD: "2D fix"
+        case .threeD: "3D fix"
+        }
+    }
+
+    var coordinateText: String? {
+        guard let latitude, let longitude else { return nil }
+        // Decimal places matched to the cell the device reported: digits
+        // finer than the grid code resolves would be invented.
+        let places = cellMeters.map { cell in
+            let degreeMeters = 111_320.0
+            return max(0, min(7, Int(log10(degreeMeters / max(cell, 0.01)).rounded(.up))))
+        } ?? 5
+        let format = FloatingPointFormatStyle<Double>.number.precision(.fractionLength(places))
+        return "\(latitude.formatted(format)), \(longitude.formatted(format))"
+    }
+
+    /// How large an area the reported cell covers, stated plainly.
+    var cellText: String? {
+        cellMeters.map { meters in
+            meters >= 1_000
+                ? "\((meters / 1_000).formatted(.number.precision(.fractionLength(0)))) km cell"
+                : "\(meters.formatted(.number.precision(.fractionLength(meters < 10 ? 1 : 0)))) m cell"
+        }
+    }
+
+    /// The receiver's own accuracy estimate. Scaled from dilution of
+    /// precision rather than measured, and labelled as such wherever it
+    /// is shown.
+    var accuracyText: String? {
+        accuracyDecimeters.map { decimeters in
+            "±\((Double(decimeters) / 10).formatted(.number.precision(.fractionLength(1)))) m"
+        }
+    }
+
+    var satellitesText: String {
+        satellitesInView.map { "\(satellitesUsed) used of \($0) in view" }
+            ?? "\(satellitesUsed) used"
+    }
+}
+
 /// What the radio is doing to make itself findable (`PROP_ALERT`).
 enum RadioAlertState: String, Equatable, Sendable {
     case none
@@ -325,6 +439,47 @@ struct RadioProvisioningSummary: Equatable, Sendable {
     /// Whether the radio keeps key tables on the phone identity's behalf
     /// (`CAP_HOST_KEYS`), which is what host channel reconciliation needs.
     var supportsHostKeys: Bool = false
+    /// `CAP_TIME`: the radio keeps a wall clock. Says nothing about
+    /// whether it currently knows what time it is.
+    var supportsTime: Bool = false
+    /// `CAP_GNSS`: a receiver is fitted, so the radio can locate itself.
+    var supportsGnss: Bool = false
+    /// `PROP_TZ_OFFSET` in minutes east of UTC. Present exactly when
+    /// `supportsTime` and the radio reported it.
+    var timeZoneOffsetMinutes: Int16? = nil
+    /// The positioning policy. Present exactly when `supportsGnss` and
+    /// the radio reported the whole of it.
+    var gnss: UlcpGnssSettingsRecord? = nil
+}
+
+/// The UTC offsets a device can be given, at the quarter-hour steps the
+/// world's zones actually use.
+///
+/// An offset rather than a zone: the device has no zone database, so what
+/// travels is the offset in effect when it is set. It does not follow
+/// daylight saving on its own.
+let deviceTimeZoneOffsets: [Int16] = stride(from: Int16(-12 * 60), through: 14 * 60, by: 15).map { $0 }
+
+/// An offset in minutes east of UTC as "UTC−07:00".
+func formattedUTCOffset(_ minutes: Int16) -> String {
+    let sign = minutes < 0 ? "−" : "+"
+    let magnitude = abs(Int(minutes))
+    return String(format: "UTC%@%02d:%02d", sign, magnitude / 60, magnitude % 60)
+}
+
+/// This iPhone's current offset from UTC, in minutes east — the offset in
+/// effect right now, daylight saving included.
+var phoneUTCOffsetMinutes: Int16 {
+    Int16(TimeZone.current.secondsFromGMT() / 60)
+}
+
+extension UlcpFixKind {
+    var symbolName: String {
+        switch self {
+        case .none: "location.slash"
+        case .twoD, .threeD: "location.fill"
+        }
+    }
 }
 
 /// Capacity of a radio's device-identity peer list, for labels only —

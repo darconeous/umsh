@@ -340,6 +340,7 @@ struct RadioDetailView: View {
     var forget: () async -> Void = {}
     var factoryReset: () async throws -> Void = {}
     var setAlert: (RadioAlertState) async throws -> Void = { _ in }
+    var setTime: (UInt32?) async throws -> Void = { _ in }
     let discoverRadios: () async -> AsyncStream<[DiscoveredRadio]>
     let selectRadio: (UUID) async throws -> Void
     let stopDiscovery: () async -> Void
@@ -360,6 +361,8 @@ struct RadioDetailView: View {
     @State private var showsRadioPicker = false
     @State private var alertProblem: String?
     @State private var alertRequestInFlight = false
+    @State private var clockProblem: String?
+    @State private var clockRequestInFlight = false
 
     var body: some View {
         List {
@@ -459,6 +462,12 @@ struct RadioDetailView: View {
                         LabeledContent("Charge state", value: chargeState.label)
                     }
                 }
+            }
+            if snapshot.provisioning?.supportsGnss == true {
+                positionSection
+            }
+            if snapshot.provisioning?.supportsTime == true {
+                clockSection
             }
             if let provisioning = snapshot.provisioning {
                 Section("Radio state") {
@@ -750,6 +759,101 @@ struct RadioDetailView: View {
             }
             if let alertProblem {
                 Label(alertProblem, systemImage: "exclamationmark.circle")
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+            }
+        }
+    }
+
+    /// Where the radio thinks it is, on a radio with a receiver
+    /// (`CAP_GNSS`). Read-only here: whether the receiver runs and what is
+    /// done with a fix are saved settings of the radio's own domain, and
+    /// are edited through device setup alongside its forwarding policy.
+    @ViewBuilder
+    private var positionSection: some View {
+        Section("Position") {
+            let enabled = snapshot.provisioning?.gnss?.enabled
+            if let position = snapshot.position {
+                LabeledContent("Receiver") {
+                    Label(
+                        position.fixLabel(receiverEnabled: enabled),
+                        systemImage: position.fix.symbolName
+                    )
+                    .labelStyle(.titleAndIcon)
+                }
+                LabeledContent("Satellites", value: position.satellitesText)
+                if let coordinates = position.coordinateText {
+                    LabeledContent("Coordinates") {
+                        Text(coordinates)
+                            .font(.caption.monospaced())
+                            .textSelection(.enabled)
+                    }
+                    if let cell = position.cellText {
+                        LabeledContent("Reported area", value: cell)
+                    }
+                }
+                if let altitude = position.altitudeMeters {
+                    LabeledContent("Altitude", value: "\(altitude) m")
+                }
+                if let accuracy = position.accuracyText {
+                    LabeledContent("Accuracy", value: accuracy)
+                }
+            } else {
+                LabeledContent("Receiver", value: enabled == false ? "Off" : "No report yet")
+            }
+            Text(enabled == false
+                 ? "The receiver is powered down. Turn it on in device setup, where the positioning settings are saved on the radio."
+                 : "A position names a grid cell rather than a point, and the accuracy figure is the receiver's own estimate rather than a measured error.")
+                .font(.caption)
+                .foregroundStyle(.secondary)
+        }
+    }
+
+    /// The radio's wall clock (`PROP_TIME`), and the one action that
+    /// changes it.
+    ///
+    /// Setting the clock is live and never saved — an epoch stored in
+    /// flash comes back arbitrarily wrong, because nothing bounds how long
+    /// a radio spends powered off. The time *zone* is saved configuration
+    /// and belongs with the rest of the radio's own domain.
+    @ViewBuilder
+    private var clockSection: some View {
+        Section("Time") {
+            if let clock = snapshot.clock {
+                if let date = clock.date {
+                    LabeledContent("Radio clock", value: date.formatted(date: .abbreviated, time: .standard))
+                    if let drift = clock.driftSummary() {
+                        LabeledContent("Difference", value: drift)
+                    }
+                } else {
+                    LabeledContent("Radio clock", value: "Not set")
+                }
+            } else {
+                LabeledContent("Radio clock", value: "Not read yet")
+            }
+            if let offset = snapshot.provisioning?.timeZoneOffsetMinutes {
+                LabeledContent("Time zone", value: formattedUTCOffset(offset))
+            }
+            Button {
+                clockProblem = nil
+                clockRequestInFlight = true
+                Task {
+                    do {
+                        try await setTime(UInt32(Date.now.timeIntervalSince1970))
+                    } catch {
+                        clockProblem = "The radio did not answer. It may be out of range."
+                    }
+                    clockRequestInFlight = false
+                }
+            } label: {
+                Label("Set From iPhone", systemImage: "clock.arrow.trianglehead.counterclockwise.rotate.90")
+            }
+            .disabled(clockRequestInFlight || !canUseRadio)
+            Text("The clock is not saved on the radio: a radio that finds its own time from GNSS keeps it, and one that does not starts each power-up not knowing. The time zone is saved, and is set in device setup.")
+                .font(.caption)
+                .foregroundStyle(.secondary)
+            if let clockProblem {
+                Label(clockProblem, systemImage: "exclamationmark.circle")
                     .font(.caption)
                     .foregroundStyle(.secondary)
             }

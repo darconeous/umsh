@@ -267,6 +267,13 @@ final class AdminFlowController {
         try await session.setAlert(state)
     }
 
+    /// Set the device's wall clock, or clear it. Like the alert this is
+    /// live rather than configured: it takes effect on tap and is
+    /// unaffected by applying or abandoning the form.
+    func setTime(epochSeconds: UInt32?) async throws {
+        try await session.setTime(epochSeconds: epochSeconds)
+    }
+
     // MARK: - Configuration
 
     /// Write the configuration, then read the device back. Returns the

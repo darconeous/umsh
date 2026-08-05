@@ -3,7 +3,7 @@ import Foundation
 @main
 struct MobileCoreSmokeTest {
     static func main() throws {
-        precondition(mobileApiVersion() == 36)
+        precondition(mobileApiVersion() == 37)
         precondition(ulcpMaxDevPeers() == 8)
 
         let hint = try renderNodeHint(bytes: Data([0xA1, 0xB2, 0x03]))
@@ -97,6 +97,15 @@ struct MobileCoreSmokeTest {
 
         precondition(!sync.supportsRepeater)
         precondition(sync.repeater == nil)
+        precondition(!sync.supportsTime)
+        precondition(!sync.supportsGnss)
+        precondition(sync.tzOffsetMin == nil)
+        precondition(sync.gnss == nil)
+
+        // The default identity precision, and what it discloses: a ~38 m
+        // cell at the equator.
+        precondition((38.0...39.0).contains(ulcpLocationCellMeters(precisionBytes: 5)!))
+        precondition(ulcpLocationCellMeters(precisionBytes: 0) == nil)
 
         let sjc = try regionCodeFromString(text: "SJC")
         precondition(sjc == Data([0x78, 0x53]))
@@ -135,7 +144,9 @@ struct MobileCoreSmokeTest {
                         defaultRegion: sjc,
                         minRssiDbm: -115,
                         minSnrDb: -7
-                    )
+                    ),
+                    tzOffsetMin: nil,
+                    gnss: nil
                 )
             )
             preconditionFailure("Configuration unexpectedly succeeded before attaching")
