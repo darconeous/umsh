@@ -86,3 +86,4 @@ Docs: `make docs` (mdBook), `make rust-docs`, `make docs-serve`, `make web-debug
 - **Don't take credit for stuff you aren't sure you wrote**: Unless you are absolutely certain the changes are yours, DO NOT add a "LLM: ..." line in the git commit log.
 - **NRF52 DFU Touch**: To perform a 1200 baud DFU touch (resetting the board into bootloader mode by opening and closing the serial port at 1200 baud) using the stty command on Linux, run `stty -F /dev/ttyACM0 1200` (or `stty -f /dev/cu.usbmodemXXXX 1200` on macOS) immediately before launching your flashing tool.
 - **ESP32 Build Environment**: You may run into problems building ESP32 targets unless you source the file `~/export-esp.sh` (assuming it exists).
+- **Use tools to make edits instead of writing inline python scripts**: Unless it is for an unusually large edit, prefer using the normal file editing tools instead of writing in-line python scripts.
