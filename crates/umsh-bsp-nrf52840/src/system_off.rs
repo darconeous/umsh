@@ -74,6 +74,7 @@ const PIN_CNF_OFFSET: usize = 0x700;
 const IN_OFFSET: usize = 0x510;
 const OUTSET_OFFSET: usize = 0x508;
 const OUTCLR_OFFSET: usize = 0x50C;
+const LATCH_OFFSET: usize = 0x520;
 const POWER_SYSTEMOFF: *mut u32 = 0x4000_0500 as *mut u32;
 
 const PIN_CNF_SENSE_SHIFT: u32 = 16;
@@ -220,11 +221,27 @@ pub fn configure_wake_low(pin: WakePin) {
 /// resets on DETECT) or, when a debugger is attached, behaves like an
 /// infinite WFI per the product spec (we still spin to keep the diverging
 /// return type honest).
+///
+/// Clears both ports' `LATCH` immediately before the trigger. `embassy-nrf`
+/// puts the GPIOs in LDETECT mode, where the wake signal is derived from
+/// `LATCH` rather than from live pin state, so a bit left set by an earlier
+/// asynchronous pin wait holds that signal asserted — and writing
+/// `SYSTEMOFF` with it asserted resets the chip instead of powering it down.
 pub fn enter_system_off() -> ! {
     // Mask all maskable interrupts so nothing preempts between the final
     // peripheral state and the SYSTEMOFF write. (Matches the pattern in
     // [`crate::gpregret::reset_with_gpregret`].)
     cortex_m::interrupt::disable();
+    // With interrupts masked the GPIOTE port handler can no longer drain
+    // LATCH, so this is the last chance to clear it. Bits are cleared by
+    // writing ones. A wake condition that is genuinely asserted right now
+    // re-sets its bit within the cycle, which is the intended wake rather
+    // than a race.
+    for base in [P0_BASE, P1_BASE] {
+        // SAFETY: LATCH is a memory-mapped W1C register at GPIO base +
+        // 0x520 (§22 GPIO, nRF52840 product spec).
+        unsafe { core::ptr::write_volatile((base + LATCH_OFFSET) as *mut u32, 0xFFFF_FFFF) };
+    }
     // SAFETY: POWER.SYSTEMOFF is a write-only trigger register (§13.1.5
     // POWER Registers, nRF52840 product spec). Writing 1 starts the
     // System OFF sequence.

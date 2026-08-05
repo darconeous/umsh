@@ -101,7 +101,9 @@ mod firmware {
         NvmcChannelStore, NvmcCounterStore, NvmcPeerStore, NvmcStorage,
     };
     use umsh_bsp_nrf52840::panic_persist::PanicSlot;
-    use umsh_bsp_nrf52840::system_off::{Port, WakePin, WakeSense, power_off, tristate_pin};
+    use umsh_bsp_nrf52840::system_off::{
+        Port, WakePin, WakeSense, drive_pin_high, drive_pin_low, power_off, tristate_pin,
+    };
     use umsh_bsp_nrf52840::{EmbassyClock, Nrf52840Rng};
     use umsh_bsp_techo::{PowerSignaler, SHUTDOWN_SIGNAL, TechoMac, TechoPlatform, display};
     use umsh_core::{ChannelKey, PayloadType, PublicKey};
@@ -499,6 +501,12 @@ mod firmware {
         // tristate_pin() writes PIN_CNF = 0x02 (DIR=input, INPUT=disconnect,
         // PULL=none, DRIVE=0, SENSE=disabled) — clearing any SENSE bits.
         //
+        // The status LED is active-low and still owned by the blink task;
+        // a driven level is retained through System OFF, and the RGB LED
+        // hangs off the always-on rail rather than the switched one. Nothing
+        // below this point awaits, so the blink task cannot take it back.
+        drive_pin_high(Port::P0, 14);
+
         // E-paper SPI bus (SPIM2): SCK=P0.31, MISO=P1.07, MOSI=P0.29
         // E-paper control:         CS=P0.30, DC=P0.28, RST=P0.02, BUSY=P0.03
         // Radio SPI bus (TWISPI1): SCK=P0.19, MOSI=P0.22, MISO=P0.23
@@ -524,7 +532,12 @@ mod firmware {
 
         // Drop the peripheral rail so the LoRa module, GNSS, sensors, and
         // e-paper bias generator all lose power before we enter System OFF.
+        //
+        // Dropping the `Output` alone is not enough: embassy writes
+        // PIN_CNF = INPUT:Disconnect with no pull, which leaves the
+        // active-high rail enable floating rather than off. Pin it low.
         drop(peripheral_power);
+        drive_pin_low(Port::P0, 12);
 
         // P1.10 is the side user button. Active-low, pull-up → DETECT-low wakes.
         power_off(&[WakePin {

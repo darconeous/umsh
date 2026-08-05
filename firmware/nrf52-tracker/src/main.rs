@@ -178,9 +178,13 @@ mod firmware {
         feature = "t1000e"
     ))]
     use umsh_bsp_nrf52840::system_off::Port;
-    #[cfg(feature = "t1000e")]
-    use umsh_bsp_nrf52840::system_off::drive_pin_low;
-    #[cfg(feature = "system-off-wio")]
+    #[cfg(feature = "system-off-techo")]
+    use umsh_bsp_nrf52840::system_off::drive_pin_high;
+    #[cfg(any(
+        feature = "t1000e",
+        feature = "system-off-wio",
+        feature = "system-off-techo"
+    ))]
     use umsh_bsp_nrf52840::system_off::drive_pin_low;
     #[cfg(any(feature = "system-off-techo", feature = "system-off-wio"))]
     use umsh_bsp_nrf52840::system_off::{WakePin, WakeSense, power_off, tristate_pin};
@@ -3526,12 +3530,26 @@ mod firmware {
         // rather than tri-stating, so the FET gate is pinned instead of
         // floating and the divider's quiescent draw is provably gone.
         drive_pin_low(Port::P0, 4);
+        // The L76K GNSS shares the always-on rail and is otherwise untouched
+        // by this firmware, so its standby line (active-high wake) has been
+        // floating since boot and the module's state is whatever it decides
+        // on its own — potentially tens of milliamps, which would dwarf
+        // everything else here. Pin it low so the module is at least asked
+        // to sleep while it still has the power to act on it. It is left
+        // floating during normal operation, so this only takes effect at
+        // shutdown; polarity is inferred from the board notes, not metered.
+        drive_pin_low(Port::P1, 9);
+        // Three more control lines that drive real loads. Same argument as
+        // the divider gate above: a tri-stated gate is not a gate that is
+        // provably off, and driven levels are retained through System OFF.
+        drive_pin_low(Port::P1, 8); // RXEN, active-high → LNA unbiased
+        drive_pin_low(Port::P1, 1); // user LED, active-high
+        drive_pin_low(Port::P1, 0); // piezo
 
         // OLED I²C (TWIM0):      SDA=P0.06, SCL=P0.05
         // Radio SPI (TWISPI1):   SCK=P0.30, MISO=P0.03, MOSI=P0.28
         // Radio control:         CS=P1.14, BUSY=P1.10, DIO1=P0.07
-        //                        RXEN=P1.08 (RST held low above)
-        // Other outputs:         LED=P1.01, buzzer=P1.00
+        //                        (RST, RXEN, LED, and piezo pinned above)
         // The display, radio, and battery tasks still own these pins;
         // direct PIN_CNF writes are deliberate here because every task is
         // about to lose its clock.
@@ -3544,9 +3562,6 @@ mod firmware {
             (Port::P1, 14u8),
             (Port::P1, 10u8),
             (Port::P0, 7u8), // radio DIO1 ← has SENSE set by async radio wait
-            (Port::P1, 8u8), // RXEN: leave the LNA unbiased
-            (Port::P1, 1u8),
-            (Port::P1, 0u8),
         ] {
             tristate_pin(port, pin);
         }
@@ -3658,6 +3673,27 @@ mod firmware {
         }
         Timer::after(Duration::from_millis(50)).await;
 
+        // Nothing below this point awaits, so the heartbeat task cannot run
+        // again and take the status LED back.
+        //
+        // The LED and the e-paper backlight are the two pins still driving a
+        // load, and driven levels are retained through System OFF. Both are
+        // pinned to their off state rather than tri-stated: their loads hang
+        // off the always-on rail, where a floating pin is not provably dark.
+        // The other two RGB channels (P0.13, P0.15) are never configured by
+        // this firmware, so they sit at reset — disconnected inputs that
+        // cannot sink the LED.
+        drive_pin_high(Port::P0, 14); // status LED, active-low → high is off
+        drive_pin_low(Port::P1, 11); // e-paper backlight, active-high
+
+        // The L76K GNSS standby line (active-high wake), floating since boot
+        // because this firmware does not use the GNSS. Dropping the rail
+        // below is the stronger off-switch, so this is defence in depth for
+        // the case where the load switch does not fully open — which means
+        // it has to happen here, while the module is still powered enough to
+        // sample the level. Polarity is inferred from the board notes.
+        drive_pin_low(Port::P1, 2);
+
         // E-paper SPI bus (SPIM2): SCK=P0.31, MISO=P1.07, MOSI=P0.29
         // E-paper control:         CS=P0.30, DC=P0.28, RST=P0.02, BUSY=P0.03
         // Radio SPI bus (TWISPI1): SCK=P0.19, MOSI=P0.22, MISO=P0.23
@@ -3673,7 +3709,6 @@ mod firmware {
             (Port::P0, 2u8),
             (Port::P0, 3u8),
             (Port::P0, 11u8), // touch input ← async wait may have set SENSE
-            (Port::P1, 11u8), // e-paper backlight
             (Port::P0, 19u8),
             (Port::P0, 22u8),
             (Port::P0, 23u8),
@@ -3685,7 +3720,15 @@ mod firmware {
             tristate_pin(port, pin);
         }
 
+        // Dropping the `Output` only hands P0.12 back to embassy, which
+        // writes PIN_CNF = INPUT:Disconnect with no pull — the rail enable
+        // would be left floating, and whether the load switch then opens
+        // depends on an external pulldown this board's documentation does
+        // not promise. Pin it low afterwards so the LoRa module, GNSS,
+        // sensors, and e-paper bias generator are provably unpowered rather
+        // than left to a floating gate.
         drop(peripheral_power);
+        drive_pin_low(Port::P0, 12);
 
         // P1.10 is the side user button. Active-low, pull-up → DETECT-low wakes.
         power_off(&[WakePin {
