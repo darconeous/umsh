@@ -42,10 +42,29 @@ enum MeshIdentitySignatureState: Hashable, Sendable {
     case invalid
 }
 
+/// The advertised capability bits, in wire order.
+///
+/// The labels a node advertises alongside these are what the detail view
+/// prints; these are what filtering asks questions of, so a filter never has
+/// to match on rendered English.
+struct MeshNodeCapabilities: OptionSet, Hashable, Sendable {
+    let rawValue: UInt8
+
+    static let repeater = MeshNodeCapabilities(rawValue: 0x01)
+    static let mobile = MeshNodeCapabilities(rawValue: 0x02)
+    static let textMessages = MeshNodeCapabilities(rawValue: 0x04)
+    static let telemetry = MeshNodeCapabilities(rawValue: 0x08)
+    static let chatRoom = MeshNodeCapabilities(rawValue: 0x10)
+    static let coap = MeshNodeCapabilities(rawValue: 0x20)
+}
+
 struct MeshNodeIdentity: Hashable, Sendable {
     let roleCode: UInt8
     let roleLabel: String
     let capabilities: [String]
+    /// The same capabilities the labels name, as bits. A node may set bits
+    /// this build has no label for; they survive here and match nothing.
+    let capabilityBits: MeshNodeCapabilities
     let name: String?
     let latitude: Double?
     let longitude: Double?

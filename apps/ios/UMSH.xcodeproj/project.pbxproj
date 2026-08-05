@@ -59,6 +59,11 @@
 		10000000000000000000003C /* UMSH/Features/Conversations/ChatMessageBubble.swift in Sources */ = {isa = PBXBuildFile; fileRef = 20000000000000000000003C /* UMSH/Features/Conversations/ChatMessageBubble.swift */; };
 		10000000000000000000003D /* UMSH/Features/Conversations/MessageComposer.swift in Sources */ = {isa = PBXBuildFile; fileRef = 20000000000000000000003D /* UMSH/Features/Conversations/MessageComposer.swift */; };
 		10000000000000000000003E /* UMSH/Features/Map/NodeMapView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 20000000000000000000003E /* UMSH/Features/Map/NodeMapView.swift */; };
+		10000000000000000000003F /* UMSH/Features/Map/MapNodeModels.swift in Sources */ = {isa = PBXBuildFile; fileRef = 20000000000000000000003F /* UMSH/Features/Map/MapNodeModels.swift */; };
+		100000000000000000000040 /* UMSH/Features/Map/NodeMapAnnotationViews.swift in Sources */ = {isa = PBXBuildFile; fileRef = 200000000000000000000040 /* UMSH/Features/Map/NodeMapAnnotationViews.swift */; };
+		100000000000000000000041 /* UMSH/Features/Map/MapBottomCard.swift in Sources */ = {isa = PBXBuildFile; fileRef = 200000000000000000000041 /* UMSH/Features/Map/MapBottomCard.swift */; };
+		100000000000000000000042 /* UMSH/Features/Map/MapNodeListCard.swift in Sources */ = {isa = PBXBuildFile; fileRef = 200000000000000000000042 /* UMSH/Features/Map/MapNodeListCard.swift */; };
+		100000000000000000000043 /* UMSH/DesignSystem/LocationPresentation.swift in Sources */ = {isa = PBXBuildFile; fileRef = 200000000000000000000043 /* UMSH/DesignSystem/LocationPresentation.swift */; };
 		100000000000000000000050 /* UMSH/PrivacyInfo.xcprivacy in Resources */ = {isa = PBXBuildFile; fileRef = 200000000000000000000050 /* UMSH/PrivacyInfo.xcprivacy */; };
 /* End PBXBuildFile section */
 
@@ -115,6 +120,11 @@
 		20000000000000000000003C /* UMSH/Features/Conversations/ChatMessageBubble.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = UMSH/Features/Conversations/ChatMessageBubble.swift; sourceTree = "<group>"; };
 		20000000000000000000003D /* UMSH/Features/Conversations/MessageComposer.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = UMSH/Features/Conversations/MessageComposer.swift; sourceTree = "<group>"; };
 		20000000000000000000003E /* UMSH/Features/Map/NodeMapView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = UMSH/Features/Map/NodeMapView.swift; sourceTree = "<group>"; };
+		20000000000000000000003F /* UMSH/Features/Map/MapNodeModels.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = UMSH/Features/Map/MapNodeModels.swift; sourceTree = "<group>"; };
+		200000000000000000000040 /* UMSH/Features/Map/NodeMapAnnotationViews.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = UMSH/Features/Map/NodeMapAnnotationViews.swift; sourceTree = "<group>"; };
+		200000000000000000000041 /* UMSH/Features/Map/MapBottomCard.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = UMSH/Features/Map/MapBottomCard.swift; sourceTree = "<group>"; };
+		200000000000000000000042 /* UMSH/Features/Map/MapNodeListCard.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = UMSH/Features/Map/MapNodeListCard.swift; sourceTree = "<group>"; };
+		200000000000000000000043 /* UMSH/DesignSystem/LocationPresentation.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = UMSH/DesignSystem/LocationPresentation.swift; sourceTree = "<group>"; };
 		200000000000000000000050 /* UMSH/PrivacyInfo.xcprivacy */ = {isa = PBXFileReference; lastKnownFileType = text.plist.xml; path = UMSH/PrivacyInfo.xcprivacy; sourceTree = "<group>"; };
 /* End PBXFileReference section */
 
@@ -156,6 +166,10 @@
 				20000000000000000000002E /* UMSH/Features/Peers/NodeImportView.swift */,
 				20000000000000000000002F /* UMSH/Features/Peers/DiscoverPeersView.swift */,
 				20000000000000000000003E /* UMSH/Features/Map/NodeMapView.swift */,
+				20000000000000000000003F /* UMSH/Features/Map/MapNodeModels.swift */,
+				200000000000000000000040 /* UMSH/Features/Map/NodeMapAnnotationViews.swift */,
+				200000000000000000000041 /* UMSH/Features/Map/MapBottomCard.swift */,
+				200000000000000000000042 /* UMSH/Features/Map/MapNodeListCard.swift */,
 				200000000000000000000032 /* UMSH/Features/Channels/ChannelsView.swift */,
 				200000000000000000000033 /* UMSH/Features/Channels/ChannelJoinView.swift */,
 				200000000000000000000034 /* UMSH/Features/Channels/ChannelCreateView.swift */,
@@ -170,6 +184,7 @@
 				20000000000000000000003C /* UMSH/Features/Conversations/ChatMessageBubble.swift */,
 				20000000000000000000003D /* UMSH/Features/Conversations/MessageComposer.swift */,
 				20000000000000000000000F /* UMSH/DesignSystem/CanonicalAddressView.swift */,
+				200000000000000000000043 /* UMSH/DesignSystem/LocationPresentation.swift */,
 				200000000000000000000015 /* UMSH/DesignSystem/IdentityQRCodeView.swift */,
 				200000000000000000000016 /* UMSH/Services/Notifications/ChatNotificationService.swift */,
 				200000000000000000000010 /* UMSH/Services/Identity/IdentityVault.swift */,
@@ -296,6 +311,10 @@
 				10000000000000000000002E /* UMSH/Features/Peers/NodeImportView.swift in Sources */,
 				10000000000000000000002F /* UMSH/Features/Peers/DiscoverPeersView.swift in Sources */,
 				10000000000000000000003E /* UMSH/Features/Map/NodeMapView.swift in Sources */,
+				10000000000000000000003F /* UMSH/Features/Map/MapNodeModels.swift in Sources */,
+				100000000000000000000040 /* UMSH/Features/Map/NodeMapAnnotationViews.swift in Sources */,
+				100000000000000000000041 /* UMSH/Features/Map/MapBottomCard.swift in Sources */,
+				100000000000000000000042 /* UMSH/Features/Map/MapNodeListCard.swift in Sources */,
 				100000000000000000000032 /* UMSH/Features/Channels/ChannelsView.swift in Sources */,
 				100000000000000000000033 /* UMSH/Features/Channels/ChannelJoinView.swift in Sources */,
 				100000000000000000000034 /* UMSH/Features/Channels/ChannelCreateView.swift in Sources */,
@@ -310,6 +329,7 @@
 				10000000000000000000003C /* UMSH/Features/Conversations/ChatMessageBubble.swift in Sources */,
 				10000000000000000000003D /* UMSH/Features/Conversations/MessageComposer.swift in Sources */,
 				10000000000000000000000F /* UMSH/DesignSystem/CanonicalAddressView.swift in Sources */,
+				100000000000000000000043 /* UMSH/DesignSystem/LocationPresentation.swift in Sources */,
 				100000000000000000000015 /* UMSH/DesignSystem/IdentityQRCodeView.swift in Sources */,
 				100000000000000000000016 /* UMSH/Services/Notifications/ChatNotificationService.swift in Sources */,
 				100000000000000000000010 /* UMSH/Services/Identity/IdentityVault.swift in Sources */,

@@ -104,7 +104,7 @@ Guided setup flows built on top of that primitive:
 	- [x] ordering selectable: alphabetic, heard recently, or latest messages
 	- [x] filterable by role, string, favorite, etc.
 	- [x] Display as list
-    - [ ] Display on a map
+    - [x] Display on a map
 - [x] View/list transient peers (peers that have given us their full address but
   aren't on our peer list. They may have sent us a unicast message or it could be from an identity announcement)
 - [x] Add a saved peer

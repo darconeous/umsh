@@ -194,6 +194,7 @@ actor RustMeshEngine: MeshEngine {
             roleCode: record.roleCode,
             roleLabel: record.roleLabel,
             capabilities: record.capabilities,
+            capabilityBits: MeshNodeCapabilities(rawValue: record.capabilityBits),
             name: record.name,
             latitude: record.latitude,
             longitude: record.longitude,

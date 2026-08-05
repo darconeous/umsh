@@ -4632,6 +4632,11 @@ public struct NodeIdentityRecord: Equatable, Hashable {
      * Canonical capability labels in wire bit order.
      */
     public var capabilities: [String]
+    /**
+     * The same capabilities as the advertised bitfield, for filtering. Bits
+     * this build has no label for are still set here.
+     */
+    public var capabilityBits: UInt8
     public var name: String?
     /**
      * Center of the advertised location grid cell, in degrees.
@@ -4657,7 +4662,11 @@ public struct NodeIdentityRecord: Equatable, Hashable {
          */roleLabel: String,
         /**
          * Canonical capability labels in wire bit order.
-         */capabilities: [String], name: String?,
+         */capabilities: [String],
+        /**
+         * The same capabilities as the advertised bitfield, for filtering. Bits
+         * this build has no label for are still set here.
+         */capabilityBits: UInt8, name: String?,
         /**
          * Center of the advertised location grid cell, in degrees.
          */latitude: Double?, longitude: Double?,
@@ -4670,6 +4679,7 @@ public struct NodeIdentityRecord: Equatable, Hashable {
         self.roleCode = roleCode
         self.roleLabel = roleLabel
         self.capabilities = capabilities
+        self.capabilityBits = capabilityBits
         self.name = name
         self.latitude = latitude
         self.longitude = longitude
@@ -4698,6 +4708,7 @@ public struct FfiConverterTypeNodeIdentityRecord: FfiConverterRustBuffer {
                 roleCode: FfiConverterUInt8.read(from: &buf),
                 roleLabel: FfiConverterString.read(from: &buf),
                 capabilities: FfiConverterSequenceString.read(from: &buf),
+                capabilityBits: FfiConverterUInt8.read(from: &buf),
                 name: FfiConverterOptionString.read(from: &buf),
                 latitude: FfiConverterOptionDouble.read(from: &buf),
                 longitude: FfiConverterOptionDouble.read(from: &buf),
@@ -4712,6 +4723,7 @@ public struct FfiConverterTypeNodeIdentityRecord: FfiConverterRustBuffer {
         FfiConverterUInt8.write(value.roleCode, into: &buf)
         FfiConverterString.write(value.roleLabel, into: &buf)
         FfiConverterSequenceString.write(value.capabilities, into: &buf)
+        FfiConverterUInt8.write(value.capabilityBits, into: &buf)
         FfiConverterOptionString.write(value.name, into: &buf)
         FfiConverterOptionDouble.write(value.latitude, into: &buf)
         FfiConverterOptionDouble.write(value.longitude, into: &buf)

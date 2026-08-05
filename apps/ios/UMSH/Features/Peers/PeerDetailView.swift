@@ -984,11 +984,19 @@ struct AdvertisedIdentityRows: View {
             }
         }
         if let latitude = identity.latitude, let longitude = identity.longitude {
+            let cellMeters = identity.locationPrecision
+                .flatMap { LocationPresentation.cellMeters(precisionBytes: $0) }
             LabeledContent("Location") {
                 VStack(alignment: .trailing) {
-                    Text(Self.coordinate(latitude, longitude))
-                    if let precision = identity.locationPrecision {
-                        Text("within \(Self.precisionLabel(precision))")
+                    Text(
+                        LocationPresentation.coordinateText(
+                            latitude: latitude,
+                            longitude: longitude,
+                            cellMeters: cellMeters
+                        )
+                    )
+                    if let cellMeters {
+                        Text("within \(LocationPresentation.cellLabel(meters: cellMeters))")
                             .font(.caption)
                             .foregroundStyle(.secondary)
                     }
@@ -997,6 +1005,7 @@ struct AdvertisedIdentityRows: View {
             .coordinateActions(
                 latitude: latitude,
                 longitude: longitude,
+                fractionDigits: LocationPresentation.coordinateDecimals(cellMeters: cellMeters),
                 pinName: identity.name
             )
         }
@@ -1013,22 +1022,6 @@ struct AdvertisedIdentityRows: View {
         }
     }
 
-    private static func coordinate(_ latitude: Double, _ longitude: Double) -> String {
-        String(format: "%.4f°, %.4f°", latitude, longitude)
-    }
-
-    /// Approximate equator cell size for each grid-code precision.
-    private static func precisionLabel(_ precision: UInt8) -> String {
-        switch precision {
-        case 1: "about 2,500 km"
-        case 2: "about 156 km"
-        case 3: "about 10 km"
-        case 4: "about 610 m"
-        case 5: "about 38 m"
-        case 6: "about 2.4 m"
-        default: "about 15 cm"
-        }
-    }
 }
 
 private enum PeerPingStatus: Equatable {

@@ -51,7 +51,7 @@ uniffi::setup_scaffolding!();
 ///
 /// Increment this when a binding-visible operation, record, or error contract
 /// changes incompatibly. It is independent of the UMSH wire version.
-pub const MOBILE_API_VERSION: u16 = 37;
+pub const MOBILE_API_VERSION: u16 = 38;
 
 /// Stable error categories consumed by platform adapters.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, uniffi::Error)]
@@ -196,6 +196,9 @@ pub struct NodeIdentityRecord {
     pub role_label: String,
     /// Canonical capability labels in wire bit order.
     pub capabilities: Vec<String>,
+    /// The same capabilities as the advertised bitfield, for filtering. Bits
+    /// this build has no label for are still set here.
+    pub capability_bits: u8,
     pub name: Option<String>,
     /// Center of the advertised location grid cell, in degrees.
     pub latitude: Option<f64>,
@@ -573,6 +576,7 @@ fn node_identity_record(
     .filter(|(bit, _)| identity.capabilities.contains(*bit))
     .map(|(_, label)| label.to_owned())
     .collect();
+    let capability_bits = identity.capabilities.bits();
 
     let location = identity.location.filter(|loc| !loc.is_unspecified());
     let (latitude, longitude, location_precision) = match location {
@@ -591,6 +595,7 @@ fn node_identity_record(
         role_code: identity.role.as_byte(),
         role_label,
         capabilities,
+        capability_bits,
         name: identity.name,
         latitude,
         longitude,
@@ -1061,6 +1066,11 @@ mod tests {
         assert_eq!(
             record.capabilities,
             vec!["Mobile".to_owned(), "Text messages".to_owned()]
+        );
+        assert_eq!(
+            record.capability_bits,
+            (umsh_node::NodeCapabilities::TEXT_MESSAGES | umsh_node::NodeCapabilities::MOBILE)
+                .bits()
         );
         assert_eq!(record.altitude_m, Some(72));
         assert_eq!(record.timestamp, Some(1_760_000_000));

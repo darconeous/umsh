@@ -228,7 +228,32 @@ struct AppRootView: View {
             .tag(AppTab.peers)
 
             NavigationStack {
-                NodeMapView()
+                NodeMapView(
+                    radioSnapshot: $radioSnapshot,
+                    conversations: $conversations,
+                    peers: peers,
+                    isLoading: isBootstrapping,
+                    peerActions: peerActions,
+                    updateDraft: updateDraft,
+                    sendMessage: { conversation, body in
+                        await sendMessage(.direct(conversation), body)
+                    },
+                    messageActions: ChatMessageActions(
+                        edit: editMessage,
+                        delete: deleteMessage,
+                        clearMessages: clearConversationMessages,
+                        countMessages: countConversationMessages
+                    ),
+                    openPeersList: { selectedTab = .peers },
+                    openConversation: { conversation in
+                        selectedTab = .conversations
+                        openedConversation = conversation
+                    },
+                    advertiseIdentity: advertiseIdentity,
+                    advertisedName: advertisedName,
+                    clearDiscoveredNodes: clearDiscoveredNodes,
+                    solicitNearbyIdentities: solicitNearbyIdentities
+                )
                     .appRadioToolbar(radioSnapshot) {
                         showsRadioDetail = true
                     }
