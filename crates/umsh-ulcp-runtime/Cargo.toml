@@ -100,6 +100,14 @@ heapless = { workspace = true }
 lora-phy = { workspace = true }
 umsh-hal = { path = "../umsh-hal", default-features = false }
 umsh-ulcp = { path = "../umsh-ulcp" }
+# gnss's host-run unit tests build a node identity profile, which is keyed
+# by a `PublicKey`. Only the `device-node` feature needs this at build time.
+umsh-core = { path = "../umsh-core", default-features = false }
 # Host critical-section impl for embassy-sync under test; the target build
 # gets its implementation from the firmware's controller stack.
 critical-section = { version = "1", features = ["std"] }
+# A stub time driver for the host tests, registered in `gnss`'s test
+# module. `embassy-time`'s own `mock-driver` cannot be used: enabling a
+# feature on `embassy-time` unifies across the whole workspace build and
+# drags the executor's timer queue into crates that have no executor.
+embassy-time-driver = { version = "0.2", default-features = false }

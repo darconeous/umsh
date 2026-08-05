@@ -2826,6 +2826,32 @@ impl<A: AesProvider, S: Sha256Provider, const TX: usize> Session<A, S, TX> {
         self.clear_alert(emit)
     }
 
+    /// Flip `PROP_GNSS_ENABLED` from the device itself — a button on a
+    /// board that offers the receiver as a user-facing switch.
+    ///
+    /// Returns the new state, or `None` on a device without `CAP_GNSS`
+    /// (so a board can report a press unconditionally). No effect is
+    /// returned: the switch reaches the platform through the
+    /// device-domain mirror, the same path a host write, a boot restore
+    /// and a `CMD_RST` all take.
+    ///
+    /// The transition is announced like any the host did not command.
+    /// `PROP_GNSS_ENABLED` is not otherwise an asynchronous property —
+    /// nothing else moves it behind the host's back — but a switch the
+    /// operator can reach is exactly a thing that does.
+    pub fn toggle_gnss(&mut self, emit: &mut impl FnMut(&[u8])) -> Option<bool> {
+        if self.config.gnss.is_none() {
+            return None;
+        }
+        let enabled = !self.device.gnss_enabled;
+        self.device.gnss_enabled = enabled;
+        self.bump_dev_domain();
+        if self.attached {
+            self.announce_prop_is(prop::GNSS_ENABLED, &[enabled as u8], emit);
+        }
+        Some(enabled)
+    }
+
     /// Return to `ALERT_NONE` for a reason the host did not command,
     /// announcing it with an unsolicited `CMD_PROP_IS`.
     fn clear_alert(&mut self, emit: &mut impl FnMut(&[u8])) -> Option<Effect> {
@@ -3095,15 +3121,28 @@ impl<A: AesProvider, S: Sha256Provider, const TX: usize> Session<A, S, TX> {
     pub fn respond_save(&mut self, tid: u8, result: Result<(), ()>, emit: &mut impl FnMut(&[u8])) {
         match result {
             Ok(()) => {
-                self.saved = Some(SavedState::capture(
-                    &self.device,
-                    self.config.duty.limit(),
-                    self.dev_key,
-                ));
+                self.note_snapshot_saved();
                 self.complete(tid, Status::OK, emit);
             }
             Err(()) => self.complete(tid, Status::FAILURE, emit),
         }
+    }
+
+    /// Note that the live state was persisted without a host having
+    /// asked — a device-initiated save, such as a switch the operator
+    /// flipped at the board.
+    ///
+    /// Required after any such write. The session answers `CMD_RST` and
+    /// `CMD_RESTORE` from its own copy of the snapshot rather than by
+    /// re-reading flash, so a save it was not told about would leave the
+    /// device restoring the values it had at boot and silently undoing
+    /// what the operator did.
+    pub fn note_snapshot_saved(&mut self) {
+        self.saved = Some(SavedState::capture(
+            &self.device,
+            self.config.duty.limit(),
+            self.dev_key,
+        ));
     }
 
     /// Complete the durable erase requested via [`Effect::ClearSaved`],
@@ -4827,6 +4866,53 @@ mod tests {
             assert_eq!(pui::decode(&value).unwrap().0, Status::INVALID_ARGUMENT.0);
         }
         assert_eq!(session.gnss_ident_precision(), 3);
+    }
+
+    /// A switch the operator can reach moves the property, the mirror,
+    /// and an attached host's view of it.
+    #[test]
+    fn a_local_toggle_flips_the_switch_and_announces_it() {
+        let mut session = test_session();
+        assert!(!session.gnss_enabled());
+        let before = session.dev_domain_version();
+
+        let mut emitted = Vec::new();
+        let enabled = session.toggle_gnss(&mut |bytes: &[u8]| emitted.push(bytes.to_vec()));
+        assert_eq!(enabled, Some(true));
+        assert!(session.gnss_enabled());
+        assert_eq!(get(&mut session, prop::GNSS_ENABLED), [1]);
+        assert_ne!(
+            session.dev_domain_version(),
+            before,
+            "the receiver never heard about it"
+        );
+        let (tid, key, value) = parse_prop_is(&emitted[0]);
+        assert_eq!(
+            (tid, key, value),
+            (TID_UNSOLICITED, prop::GNSS_ENABLED, vec![1])
+        );
+
+        // It is a toggle, not a set.
+        emitted.clear();
+        assert_eq!(
+            session.toggle_gnss(&mut |bytes: &[u8]| emitted.push(bytes.to_vec())),
+            Some(false)
+        );
+        assert!(!session.gnss_enabled());
+    }
+
+    /// A press on a board with no receiver is nothing at all, so a board
+    /// can report the press without knowing what it has.
+    #[test]
+    fn a_local_toggle_without_the_capability_is_inert() {
+        let mut session: TestSession =
+            Session::new(timeless_config(), Status::RESET_POWER_ON, test_engine());
+        let mut emitted = Vec::new();
+        assert_eq!(
+            session.toggle_gnss(&mut |bytes: &[u8]| emitted.push(bytes.to_vec())),
+            None
+        );
+        assert!(emitted.is_empty());
     }
 
     /// A board without a receiver reports the switch as off rather than

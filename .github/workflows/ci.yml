@@ -63,6 +63,13 @@ jobs:
       - name: cargo test
         run: cargo test --locked
 
+      # umsh-ulcp-runtime's heavier modules are behind features no host
+      # crate turns on, so their unit tests are invisible to the run above
+      # — `gnss` carries the fix-folding rules, which are host-testable and
+      # are exactly the part worth catching before it reaches a board.
+      - name: cargo test (umsh-ulcp-runtime gnss)
+        run: cargo test --locked -p umsh-ulcp-runtime --features gnss
+
       # Report-only for now: there are pre-existing clippy warnings in the
       # tree (collapsible-if, needless-borrow, too-many-arguments). Flip to
       # `cargo clippy -- -D warnings` once those are cleaned up.

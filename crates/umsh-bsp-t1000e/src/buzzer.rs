@@ -111,6 +111,34 @@ pub async fn run(
                     Either4::Fourth(()) => {}
                 }
             }
+            BuzzerDecision::Rest { next_deadline_ms } => {
+                // A gap between notes, not the end of the melody. The
+                // driver chip stays powered and the tone is stopped by
+                // dropping the duty to zero: powering it down would cost
+                // the next note a cold start, and a cold start rewinds
+                // the melody — which would make any melody containing a
+                // rest repeat until something else displaced it.
+                if driving {
+                    pwm.set_duty(0, DutyCycle::normal(0));
+                }
+                match select4(
+                    BUZZER_SIGNAL.wait(),
+                    BUZZER_SILENCE_SET.wait(),
+                    crate::indicator::BUZZER_ALERT_SET.wait(),
+                    Timer::at(Instant::from_millis(next_deadline_ms)),
+                )
+                .await
+                {
+                    Either4::First(melody) => {
+                        engine.play(melody, Instant::now().as_millis());
+                    }
+                    Either4::Second(silenced) => {
+                        apply_silence_state(&mut engine, &mut silence_pending, silenced)
+                    }
+                    Either4::Third(active) => apply_alert_state(&mut engine, active),
+                    Either4::Fourth(()) => {}
+                }
+            }
             BuzzerDecision::Silent => {
                 if driving {
                     pwm.disable();

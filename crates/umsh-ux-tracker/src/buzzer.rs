@@ -115,6 +115,61 @@ pub mod melodies {
         },
     ]);
 
+    /// Receiver switched on: two pips at one pitch, then a higher held
+    /// note — "searching, and now looking".
+    ///
+    /// Deliberately not another rising ramp. `POWER_ON` and `POWER_OFF`
+    /// already own that shape, and a fourth ramp would be a tone the
+    /// operator has to stop and decode. The repeated pip is what marks
+    /// this pair as being about the receiver.
+    pub static GNSS_ON: Melody = Melody::new(&[
+        Tone {
+            frequency_hz: 1_900,
+            duration: Duration::from_millis(45),
+        },
+        Tone {
+            frequency_hz: 0,
+            duration: Duration::from_millis(45),
+        },
+        Tone {
+            frequency_hz: 1_900,
+            duration: Duration::from_millis(45),
+        },
+        Tone {
+            frequency_hz: 0,
+            duration: Duration::from_millis(45),
+        },
+        Tone {
+            frequency_hz: 2_600,
+            duration: Duration::from_millis(170),
+        },
+    ]);
+
+    /// Receiver switched off: the held note first, falling away into two
+    /// low pips — [`GNSS_ON`] in reverse.
+    pub static GNSS_OFF: Melody = Melody::new(&[
+        Tone {
+            frequency_hz: 2_600,
+            duration: Duration::from_millis(170),
+        },
+        Tone {
+            frequency_hz: 0,
+            duration: Duration::from_millis(45),
+        },
+        Tone {
+            frequency_hz: 1_500,
+            duration: Duration::from_millis(45),
+        },
+        Tone {
+            frequency_hz: 0,
+            duration: Duration::from_millis(45),
+        },
+        Tone {
+            frequency_hz: 1_500,
+            duration: Duration::from_millis(45),
+        },
+    ]);
+
     /// Bright blip played when the buzzer is un-silenced.
     pub static UNSILENCE: Melody = Melody::new(&[Tone {
         frequency_hz: 2_000,
@@ -136,6 +191,14 @@ pub mod melodies {
 pub enum BuzzerDecision {
     /// No tone; driver should disable the buzzer.
     Silent,
+    /// A rest *inside* a melody that is still playing: no tone, but the
+    /// sequence continues at `next_deadline_ms`.
+    ///
+    /// Distinct from [`Silent`](Self::Silent) because a driver that
+    /// powers its sounder down between notes pays a warm-up to bring it
+    /// back, and a warm-up that rewinds the melody turns every rest into
+    /// a loop. A driver with nothing to warm up may treat the two alike.
+    Rest { next_deadline_ms: u64 },
     /// Drive a tone at `frequency_hz`. Re-invoke [`BuzzerEngine::tick`]
     /// at `next_deadline_ms` to advance to the next note.
     Tone {
@@ -163,6 +226,26 @@ impl ActiveMelody {
     /// Resolve the current note. Returns `Some((tone, end_of_note_ms))`
     /// if the melody is still playing, `None` if it has completed.
     fn resolve(&self, now_ms: u64) -> Option<(Tone, u64)> {
+        self.step(now_ms).map(|step| match step {
+            Step::Note(tone, end_ms) => (tone, end_ms),
+            Step::Gap(end_ms) => (
+                Tone {
+                    frequency_hz: 0,
+                    duration: Duration::from_millis(0),
+                },
+                end_ms,
+            ),
+        })
+    }
+
+    /// Resolve the current position, distinguishing a rest written into
+    /// the melody from the gap a repeating melody waits out between
+    /// passes.
+    ///
+    /// The difference is invisible on the wire and decisive at the
+    /// driver: a gap is dead time a board should power its sounder down
+    /// for, while a rest is part of a phrase that is still playing.
+    fn step(&self, now_ms: u64) -> Option<Step> {
         let elapsed = now_ms.saturating_sub(self.started_at_ms);
         // A repeating melody folds the clock into one period; the
         // remainder of the period past the last note is the rest before
@@ -183,20 +266,23 @@ impl ActiveMelody {
             let dur_ms = tone.duration.as_millis() as u64;
             cumulative_ms = cumulative_ms.saturating_add(dur_ms);
             if elapsed < cumulative_ms {
-                return Some((tone, cycle_start_ms + cumulative_ms));
+                return Some(Step::Note(tone, cycle_start_ms + cumulative_ms));
             }
         }
         // Past the last note. A one-shot melody is done; a repeating one
         // rests until the next period boundary.
         let period = self.repeat_every_ms?;
-        Some((
-            Tone {
-                frequency_hz: 0,
-                duration: Duration::from_millis(0),
-            },
-            cycle_start_ms.saturating_add(period),
-        ))
+        Some(Step::Gap(cycle_start_ms.saturating_add(period)))
     }
+}
+
+/// Where a playing melody currently stands.
+enum Step {
+    /// A note written into the melody — a tone, or a rest when its
+    /// frequency is zero — ending at the given deadline.
+    Note(Tone, u64),
+    /// The dead time a repeating melody waits out before its next pass.
+    Gap(u64),
 }
 
 /// Buzzer melody engine.
@@ -327,10 +413,16 @@ impl BuzzerEngine {
         let Some(active) = &self.active else {
             return BuzzerDecision::Silent;
         };
-        match active.resolve(now_ms) {
-            Some((tone, end_ms)) => {
+        match active.step(now_ms) {
+            // The gap between passes of a repeating melody is dead time,
+            // not a phrase in progress: a board is free to power its
+            // sounder down for it, and `next_deadline_ms` brings it back.
+            Some(Step::Gap(_)) => BuzzerDecision::Silent,
+            Some(Step::Note(tone, end_ms)) => {
                 if tone.frequency_hz == 0 {
-                    BuzzerDecision::Silent
+                    BuzzerDecision::Rest {
+                        next_deadline_ms: end_ms,
+                    }
                 } else {
                     BuzzerDecision::Tone {
                         frequency_hz: tone.frequency_hz,
@@ -421,6 +513,87 @@ mod tests {
                 w[1].frequency_hz
             );
         }
+    }
+
+    /// A gap between notes has to be distinguishable from the end of
+    /// the melody. A driver that powers its sounder down for the one
+    /// pays a warm-up to bring it back, and the T1000-E's warm-up
+    /// rewinds the engine — so reporting a rest as `Silent` made every
+    /// melody containing one restart at each gap and play forever.
+    #[test]
+    fn a_rest_is_not_the_end_of_the_melody() {
+        let mut e = BuzzerEngine::new();
+        e.play(&melodies::GNSS_ON, 0);
+
+        // Pip, gap, pip — the gap reports as a rest that still carries
+        // the sequence forward.
+        assert_eq!(
+            e.tick(0),
+            BuzzerDecision::Tone {
+                frequency_hz: 1_900,
+                next_deadline_ms: 45
+            }
+        );
+        assert_eq!(
+            e.tick(45),
+            BuzzerDecision::Rest {
+                next_deadline_ms: 90
+            }
+        );
+        assert_eq!(
+            e.tick(90),
+            BuzzerDecision::Tone {
+                frequency_hz: 1_900,
+                next_deadline_ms: 135
+            }
+        );
+
+        // And the melody does end, once: the held note runs to 350, and
+        // nothing follows it.
+        assert_eq!(
+            e.tick(300),
+            BuzzerDecision::Tone {
+                frequency_hz: 2_600,
+                next_deadline_ms: 350
+            }
+        );
+        assert_eq!(e.tick(350), BuzzerDecision::Silent);
+    }
+
+    /// The two directions of the receiver switch must not be a
+    /// transposition of each other: told apart by ear is the whole job.
+    #[test]
+    fn the_receiver_switch_sounds_different_each_way() {
+        /// The first and last note a listener actually hears, rests
+        /// skipped.
+        fn voiced(melody: &Melody) -> (u16, u16) {
+            let mut heard = melody
+                .notes
+                .iter()
+                .map(|tone| tone.frequency_hz)
+                .filter(|frequency| *frequency != 0);
+            let first = heard.next().expect("a melody with no notes");
+            (first, heard.last().unwrap_or(first))
+        }
+
+        assert!(
+            melodies::GNSS_ON
+                .notes
+                .iter()
+                .map(|tone| tone.frequency_hz)
+                .ne(melodies::GNSS_OFF
+                    .notes
+                    .iter()
+                    .map(|tone| tone.frequency_hz))
+        );
+
+        let (on_first, on_last) = voiced(&melodies::GNSS_ON);
+        assert!(on_last > on_first, "switching on should resolve upward");
+        let (off_first, off_last) = voiced(&melodies::GNSS_OFF);
+        assert!(
+            off_last < off_first,
+            "switching off should resolve downward"
+        );
     }
 
     #[test]
@@ -606,7 +779,7 @@ mod tests {
     }
 
     #[test]
-    fn rest_note_is_silent_within_melody() {
+    fn rest_note_makes_no_tone_within_melody() {
         // Custom melody with a rest in the middle.
         static REST_MELODY: Melody = Melody::new(&[
             Tone {
@@ -633,8 +806,14 @@ mod tests {
             } => {}
             d => panic!("expected 1000 Hz tone, got {:?}", d),
         }
-        // 50..100: rest → silent
-        assert_eq!(e.tick(75), BuzzerDecision::Silent);
+        // 50..100: a rest, carrying the sequence to the next note. Not
+        // `Silent`, which is how a driver knows the melody has ended.
+        assert_eq!(
+            e.tick(75),
+            BuzzerDecision::Rest {
+                next_deadline_ms: 100
+            }
+        );
         // 100..150: tone 2000
         match e.tick(125) {
             BuzzerDecision::Tone {

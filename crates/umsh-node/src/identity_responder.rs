@@ -44,6 +44,15 @@ pub struct NodeIdentityProfile {
     pub location: Option<NodeLocation>,
     pub altitude_m: Option<i32>,
     pub supported_regions: Option<Vec<u8>>,
+    /// Where identity option 3 comes from: the current Unix time, or
+    /// `None` on a node that does not know what time it is.
+    ///
+    /// A source rather than a value, because option 3 dates the *payload*
+    /// and every payload is built fresh — a stored number would be the
+    /// time some earlier payload was built. It lives here so that the one
+    /// canonical builder stamps every framing identically; a node with no
+    /// clock keeps the default and simply omits the option.
+    pub clock: fn() -> Option<u32>,
 }
 
 impl NodeIdentityProfile {
@@ -57,6 +66,7 @@ impl NodeIdentityProfile {
             location: None,
             altitude_m: None,
             supported_regions: None,
+            clock: || None,
         }
     }
 
@@ -94,7 +104,11 @@ impl NodeIdentityProfile {
             name: self.name.clone(),
             location: self.location,
             altitude_m: self.altitude_m,
-            timestamp: None,
+            // Option 3 dates this payload, so it is read now rather than
+            // carried: the freshness marker exists to stop a captured
+            // identity being presented indefinitely, and a stamp copied
+            // from an earlier build would be exactly that capture.
+            timestamp: (self.clock)(),
             supported_regions: self.supported_regions.clone(),
             nonce,
             signature: None,
@@ -231,5 +245,48 @@ impl IdentityResponder {
             no_flood: solicitation && !ctx.filters.hint_filtered(),
             framed: Vec::from(&buf[..len]),
         })
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::location::NodeLocation;
+
+    /// A profile's position reaches the wire, and every payload built
+    /// from it is dated when it was built rather than carrying a stamp
+    /// from some earlier one.
+    #[test]
+    fn a_profile_position_reaches_the_wire_dated_at_build_time() {
+        let mut profile = NodeIdentityProfile::new(
+            PublicKey([9; 32]),
+            NodeRole::Tracker,
+            NodeCapabilities::empty(),
+        );
+        let here = NodeLocation::from_e7(-1_224_194_000, 377_749_000, 5);
+        profile.location = Some(here);
+        profile.altitude_m = Some(-17);
+        profile.clock = || Some(1_785_000_000);
+
+        let payload = profile.to_payload(None);
+        let mut buf = [0u8; 192];
+        let len = payload.encode(&mut buf).expect("encode");
+        let decoded = NodeIdentityPayload::from_bytes(&buf[..len]).expect("decode");
+
+        assert_eq!(decoded.location, Some(here));
+        assert_eq!(decoded.altitude_m, Some(-17));
+        assert_eq!(decoded.timestamp, Some(1_785_000_000));
+    }
+
+    /// A node that does not know what time it is omits option 3 rather
+    /// than inventing a date for the payload.
+    #[test]
+    fn a_clockless_node_omits_the_timestamp() {
+        let profile = NodeIdentityProfile::new(
+            PublicKey([9; 32]),
+            NodeRole::Tracker,
+            NodeCapabilities::empty(),
+        );
+        assert_eq!(profile.to_payload(None).timestamp, None);
     }
 }

@@ -34,6 +34,12 @@ pub enum LedSequence {
     PowerOff,
     /// Quick double-blink on outgoing location advert.
     LocationAdvert,
+    /// The GNSS receiver was switched on: two pips resolving into a
+    /// long hold.
+    GnssOn,
+    /// The GNSS receiver was switched off: a long hold breaking into
+    /// two pips — the mirror of [`GnssOn`](Self::GnssOn).
+    GnssOff,
 }
 
 impl LedSequence {
@@ -43,6 +49,8 @@ impl LedSequence {
             Self::PowerOn => &patterns::POWER_ON,
             Self::PowerOff => &patterns::POWER_OFF,
             Self::LocationAdvert => &patterns::LOCATION_ADVERT,
+            Self::GnssOn => &patterns::GNSS_ON,
+            Self::GnssOff => &patterns::GNSS_OFF,
         }
     }
 }
@@ -311,6 +319,35 @@ mod patterns {
             Duration::from_millis(50),
             Duration::from_millis(50),
             Duration::from_millis(50),
+        ],
+    };
+
+    /// Receiver switched on: ON 60, OFF 60, ON 60, OFF 60, ON 500.
+    ///
+    /// The long segment lands *last*, which is the whole design: at a
+    /// glance the operator reads where the light lingers, and a switch
+    /// whose two directions differ only in tempo would be a switch
+    /// nobody can read in daylight from a jacket pocket.
+    pub static GNSS_ON: Pattern = Pattern {
+        steps: &[
+            Duration::from_millis(60),
+            Duration::from_millis(60),
+            Duration::from_millis(60),
+            Duration::from_millis(60),
+            Duration::from_millis(500),
+        ],
+    };
+
+    /// Receiver switched off: ON 500, OFF 60, ON 60, OFF 60, ON 60 —
+    /// [`GNSS_ON`] played backwards, so the light dies away rather than
+    /// settling.
+    pub static GNSS_OFF: Pattern = Pattern {
+        steps: &[
+            Duration::from_millis(500),
+            Duration::from_millis(60),
+            Duration::from_millis(60),
+            Duration::from_millis(60),
+            Duration::from_millis(60),
         ],
     };
 

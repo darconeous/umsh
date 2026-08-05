@@ -419,6 +419,18 @@ pub async fn dev_sync_loop<CS: CounterStore + 'static>(
             let mut profile = NodeIdentityProfile::new(PublicKey(node_key), role, capabilities);
             profile.name = profile_name();
             profile.supported_regions = supported_regions;
+            // Identity option 3 dates each payload as it is built, so the
+            // profile carries the clock rather than a reading. A device
+            // that does not know the time omits the option, which is the
+            // same answer the default gives.
+            profile.clock = umsh_hal::wall_clock::now;
+            // The rebuild is from scratch, so the position has to be put
+            // back with everything else — otherwise toggling
+            // discoverability, or any other device-domain write, would
+            // quietly drop the advertised location until the node next
+            // moved far enough to earn a new one.
+            #[cfg(feature = "gnss")]
+            crate::gnss::stamp_identity(&mut profile);
             node.enable_identity_responder_default(profile);
         } else {
             node.disable_identity_responder();
@@ -573,15 +585,14 @@ pub async fn pump_loop<CS: CounterStore + 'static>(
     panic!("device node host exited");
 }
 
-/// Turns beacon triggers into node sends on the device identity: a plain
-/// beacon for the button slot, a signed solicited advertisement for an
-/// Advertisement Request.
+/// Turns beacon triggers into node sends on the device identity: a signed
+/// advertisement either way — unsolicited for the button slot, echoing a
+/// nonce for an Advertisement Request.
 pub async fn beacon_loop<CS: CounterStore + 'static>(
     node: DeviceNode<CS>,
     identity: SoftwareIdentity,
     hooks: NodeHooks,
 ) {
-    use umsh_node::Transport as _;
     loop {
         let trigger = BEACON_TRIGGER.receive().await;
         // A factory-cleared identity leaves the slot inert, exactly like
@@ -591,13 +602,12 @@ pub async fn beacon_loop<CS: CounterStore + 'static>(
         }
         match trigger {
             BeaconTrigger::Button => {
-                // A beacon's whole job is "I am here, and here is a path
-                // back to me". The trace route is what carries the second
-                // half: repeaters prepend their hints as they forward, so a
-                // listener that already knows this node learns a usable
-                // source route from a packet that costs no payload at all.
-                let options = SendOptions::default().with_trace_route();
-                if node.send_all(&[], &options).await.is_ok() {
+                // Currently a full signed identity rather than the empty
+                // trace-route beacon: a listener that has never seen this
+                // node learns nothing from a bare packet, and until the
+                // node is reachable by discovery the button is the only
+                // way to introduce it. Costs airtime a beacon does not.
+                if send_advertisement(&node, &identity, None).await {
                     (hooks.beacon_confirm)();
                 }
             }
@@ -666,6 +676,30 @@ pub async fn identity_profile_loop<CS: CounterStore + 'static>(node: DeviceNode<
         NAME_CHANGED.wait().await;
         let name = profile_name();
         node.update_identity_profile(move |profile| profile.name = name);
+    }
+}
+
+/// Keeps the advertised identity's position synced to what the receiver
+/// has settled on, under `PROP_GNSS_IDENT_UPDATE`.
+///
+/// Wakes on a change of the *advertised* cell rather than on each fix:
+/// at the default precision a stationary node's fixes all land in the
+/// same cell, and this would otherwise rewrite the profile every second
+/// to say exactly what it already said.
+///
+/// Nothing here runs on a timer. The identity's freshness marker dates
+/// each payload as it is built, so a stationary node has nothing to
+/// restate — the position it is advertising is still the position it is
+/// at, and rewriting it would change no byte.
+#[cfg(feature = "gnss")]
+pub async fn location_profile_loop<CS: CounterStore + 'static>(node: DeviceNode<CS>) {
+    let Some(mut moved) = crate::gnss::identity_updates() else {
+        debug_assert!(false, "node: location_profile_loop is single-caller");
+        return;
+    };
+    loop {
+        node.update_identity_profile(crate::gnss::stamp_identity);
+        moved.changed().await;
     }
 }
 

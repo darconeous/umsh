@@ -48,6 +48,12 @@ async fn node_identity_profile_task(node_handle: DeviceNode) {
     node::identity_profile_loop(node_handle).await
 }
 
+#[cfg(feature = "cap-gnss")]
+#[embassy_executor::task]
+async fn node_location_profile_task(node_handle: DeviceNode) {
+    node::location_profile_loop(node_handle).await
+}
+
 #[embassy_executor::task]
 async fn node_identity_blob_task(node_handle: DeviceNode, identity: SoftwareIdentity) {
     node::identity_blob_loop(node_handle, identity).await
@@ -126,6 +132,8 @@ pub async fn bring_up(
     );
     spawner.spawn(node_dev_sync_task(parts.node.clone(), parts.mac, parts.node_key).unwrap());
     spawner.spawn(node_identity_profile_task(parts.node.clone()).unwrap());
+    #[cfg(feature = "cap-gnss")]
+    spawner.spawn(node_location_profile_task(parts.node.clone()).unwrap());
     spawner.spawn(
         node_beacon_task(
             parts.node,

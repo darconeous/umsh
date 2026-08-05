@@ -73,7 +73,11 @@ pub async fn run(mut pwm: SimplePwm<'static>) {
                     Either3::Third(()) => {}
                 }
             }
-            BuzzerDecision::Silent => {
+            // A rest needs no special handling here: this PWM starts a
+            // tone immediately, so nothing is lost by dropping the
+            // driver between notes and the engine's own deadline brings
+            // the melody back on time.
+            BuzzerDecision::Silent | BuzzerDecision::Rest { .. } => {
                 if driving {
                     pwm.disable();
                     driving = false;

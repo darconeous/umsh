@@ -36,7 +36,7 @@ use umsh_radio_loraphy::{
 };
 use umsh_ulcp_device::{
     Effect, IdentitySource, MAX_CHANNEL_KEYS, MAX_DEV_PEERS, MAX_REPEATER_REGIONS, SNAPSHOT_MAX,
-    Session, TxOutcome, TxPower,
+    SavedStatus, Session, TxOutcome, TxPower,
 };
 
 use crate::transport_policy::{SessionArbitration, Transport};
@@ -89,6 +89,10 @@ pub enum InEvent {
     /// button press of whoever found the radio. Ignored when no alert is
     /// running, so a board may report the press unconditionally.
     CancelAlert,
+    /// The receiver switch was flipped at the device, on a board that
+    /// offers GNSS as a user-facing control. Ignored without `CAP_GNSS`,
+    /// so a board may report the press unconditionally.
+    ToggleGnss,
 }
 
 /// The inbound event channel the board's tasks feed: every transport
@@ -365,6 +369,17 @@ pub trait DeviceEnv {
     /// without `CAP_ALERT` never see this and keep the default.
     fn set_alert(&mut self, state: umsh_ulcp::alert::AlertState) {
         let _ = state;
+    }
+    /// The receiver switch was flipped at the device, and is now
+    /// `enabled`.
+    ///
+    /// Only for the local gesture: a host write already knows what it
+    /// asked for, and a board that indicated one would announce the
+    /// phone's own settings screen back at it. Carries the resulting
+    /// state rather than the fact of a press, because "on" and "off"
+    /// are what the operator needs told apart.
+    fn gnss_switched(&mut self, enabled: bool) {
+        let _ = enabled;
     }
     /// A covered frame was queued for an attached-or-future host
     /// (T-1000E: request the attention LED).
@@ -823,6 +838,31 @@ where
                 let effect = session.cancel_alert(&mut |frame: &[u8]| emitter.push(frame));
                 emitter.flush(arbitration.destination(), rt.out).await;
                 apply_effect(&session, effect, &rt, &mut env).await;
+            }
+            Either4::First(InEvent::ToggleGnss) => {
+                // The switch itself reaches the receiver through the
+                // device-domain mirror at the bottom of this loop, like
+                // every other write to it.
+                if let Some(enabled) = session.toggle_gnss(&mut |frame: &[u8]| emitter.push(frame))
+                {
+                    emitter.flush(arbitration.destination(), rt.out).await;
+                    env.gnss_switched(enabled);
+                    // Keep an existing snapshot in step, so a switch the
+                    // operator flipped is still flipped after a reboot.
+                    // A device with nothing saved gets nothing saved:
+                    // manufacturing a snapshot from a button press would
+                    // persist every other live-only value with it.
+                    if session.saved_status() != SavedStatus::None
+                        && let Some(len) = session.encode_snapshot(&mut snapshot_buf)
+                        && env.persist_snapshot(&snapshot_buf[..len]).await.is_ok()
+                    {
+                        session.note_snapshot_saved();
+                    }
+                    crate::log::debug_log(format_args!(
+                        "ulcp: gnss {} at the device",
+                        if enabled { "ON" } else { "off" }
+                    ));
+                }
             }
             Either4::First(InEvent::Frame(transport, frame_bytes)) => {
                 if arbitration.accepts_frame(transport) {

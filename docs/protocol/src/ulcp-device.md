@@ -640,12 +640,18 @@ A device returns to `ALERT_NONE` three ways:
 ### PROP 88: `PROP_GNSS_ENABLED` {#prop-gnss-enabled}
 
 * Type: Single-Value, Read-Write
-* Asynchronous Updates: No
+* Asynchronous Updates: Yes
 * Required: `CAP_GNSS`
 * Value Type: BOOL
 * Post-Reset Value: 0 (false), or restored from saved state
 
 Whether the GNSS receiver is powered.
+
+Asynchronous because a device **MAY** offer the receiver as a control the
+operator can reach — a button, a menu entry — and a switch someone can
+flip is a value that moves without the host asking. A device that flips
+it locally **MUST** publish the new value like any other transition the
+host did not command.
 
 False means the lowest power state the board can put the receiver in, not
 merely an idle one: on a battery-powered node the receiver is typically
@@ -863,11 +869,22 @@ that decision on the operator's behalf.
 
 When on, the device clamps each fix to
 [`PROP_GNSS_IDENT_PRECISION`](ulcp-device.md#prop-gnss-ident-precision)
-before advertising it. A device **SHOULD** re-sign its node identity only
-when the clamped position actually changes or after a substantial
-interval, rather than on every fix: at a coarse precision a stationary
-node's fixes all land in the same cell, and re-advertising each one
-spends airtime to say nothing.
+before advertising it. A device **SHOULD** act on a fix only when the
+clamped position actually changes, rather than on every fix: at a coarse
+precision a stationary node's fixes all land in the same cell, and
+re-advertising each one spends airtime to say nothing.
+
+Switching it off **retracts** the advertised position rather than
+freezing the last one. So does switching the receiver off. A position
+that nothing is refreshing any more is a claim the device cannot
+support, and it ages into a false one at whatever speed the device
+moves; a device therefore drops the location and the altitude together
+when it stops updating them.
+
+Note that the [Unix Timestamp](node-identity.md#unix-timestamp-option-3)
+option dates the identity payload, not the position — a node that has
+been stationary for a day still stamps each payload with the moment it
+was built.
 
 ### PROP 4869: `PROP_GNSS_IDENT_PRECISION` {#prop-gnss-ident-precision}
 

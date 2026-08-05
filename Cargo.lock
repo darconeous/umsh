@@ -4173,6 +4173,7 @@ dependencies = [
  "embassy-futures",
  "embassy-sync 0.8.0",
  "embassy-time",
+ "embassy-time-driver",
  "heapless 0.8.0",
  "lora-phy",
  "rand 0.10.1",

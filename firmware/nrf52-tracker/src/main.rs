@@ -1561,6 +1561,25 @@ mod firmware {
             set_alert_indication(state.is_active());
         }
 
+        #[cfg(all(feature = "cap-gnss", feature = "t1000e"))]
+        fn gnss_switched(&mut self, enabled: bool) {
+            // Two indications rather than one confirmation blink: the
+            // gesture is a toggle, so "it worked" tells the operator
+            // nothing they did not already know. Which way it went is
+            // the only thing worth reporting, and the buzzer carries it
+            // for a device still in a pocket.
+            umsh_bsp_t1000e::indicator::LED_SEQUENCE_SIGNAL.signal(if enabled {
+                LedSequence::GnssOn
+            } else {
+                LedSequence::GnssOff
+            });
+            umsh_bsp_t1000e::BUZZER_SIGNAL.signal(if enabled {
+                &umsh_ux_tracker::buzzer::melodies::GNSS_ON
+            } else {
+                &umsh_ux_tracker::buzzer::melodies::GNSS_OFF
+            });
+        }
+
         fn trace(&mut self, args: core::fmt::Arguments<'_>) {
             debug_log(args);
         }
@@ -3601,8 +3620,19 @@ mod firmware {
                     let _ = persist_ux_preferences(&mut ux_store, preferences).await;
                 }
                 Some(ButtonEvent::Triple) => {
-                    // Reserved for GPS power control. The device does not own
-                    // GNSS, so the slot remains inert.
+                    // The receiver switch, which the UX profile reserves
+                    // this slot for. Routed through the ULCP session rather
+                    // than straight at the pins, so the property, an
+                    // attached host and the saved snapshot all see the same
+                    // flip — poking the driver here would be undone by the
+                    // next device-domain sync. A build with no receiver
+                    // leaves the slot inert, confirmation included.
+                    //
+                    // Nothing is indicated here: the press does not know
+                    // which way the switch went, and the session answers
+                    // that through `gnss_switched`.
+                    #[cfg(feature = "cap-gnss")]
+                    INPUT_CH.send(InEvent::ToggleGnss).await;
                 }
                 Some(ButtonEvent::Long) => {
                     pressed = false;
