@@ -60,16 +60,17 @@ Guided setup flows built on top of that primitive:
 - [x] Minimum SNR to flood-forward
 
 ### GNSS
-- [ ] Enabled / disabled
-- [ ] Location auto-update
-  - [ ] Enabled / disabled
-  - [ ] Default precision (0–7, higher is more precise)
+- [x] Enabled / disabled
+- [x] Location auto-update
+  - [x] Enabled / disabled
+  - [x] Default precision (0–7, higher is more precise)
+- [x] Trust receiver time (when off, the receiver never sets the clock)
 
 ### Local UX & power
 - [ ] Button functions
 - [ ] Silent mode
 - [ ] Power schedule
-- [ ] Time / date
+- [x] Time / date — set, sync from the phone, clear, and a timezone offset
 
 ### BLE security
 - [ ] Pairing bonds: view / rename / delete
