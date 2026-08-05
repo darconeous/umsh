@@ -220,6 +220,10 @@ mod firmware {
     type BoardGnss = umsh_bsp_techo::gnss::Gnss<'static>;
     #[cfg(all(feature = "cap-gnss", feature = "t1000e"))]
     type BoardGnss = umsh_bsp_t1000e::gnss::Gnss<'static>;
+    #[cfg(all(feature = "cap-gnss", feature = "board-wio-tracker-l1"))]
+    type BoardGnss = umsh_bsp_wio_tracker_l1::gnss::Gnss<'static>;
+    #[cfg(all(feature = "cap-gnss", feature = "board-sensecap-solar"))]
+    type BoardGnss = umsh_bsp_sensecap_solar::gnss::Gnss<'static>;
     /// The byte stream the pump reads.
     #[cfg(feature = "cap-gnss")]
     type GnssUart = BufferedUarte<'static>;
@@ -269,10 +273,14 @@ mod firmware {
     use umsh_ux_tracker::button::ButtonTimings;
     #[cfg(feature = "t1000e")]
     use umsh_ux_tracker::buzzer::melodies as buzzer_melodies;
+    #[cfg(feature = "t1000e")]
+    use umsh_ux_tracker::led::T1000eLedEngine;
     #[cfg(not(feature = "t1000e"))]
     use umsh_ux_tracker::led::{LedEngine, LedTimings};
-    #[cfg(feature = "t1000e")]
-    use umsh_ux_tracker::led::{LedSequence, T1000eLedEngine};
+    // The Solar P1's attention LED plays the same sequences from the
+    // generic engine.
+    #[cfg(any(feature = "t1000e", feature = "power-button"))]
+    use umsh_ux_tracker::led::LedSequence;
 
     bind_interrupts!(struct Irqs {
         USBD        => embassy_nrf::usb::InterruptHandler<peripherals::USBD>;
@@ -329,7 +337,7 @@ mod firmware {
     const DEFAULT_DEVICE_NAME: &str = "UMSH T-1000E";
     // Board default + " XXXX" suffix must stay within trouble's 22-byte
     // GAP device-name limit; a longer name fails GATT-server construction
-    // (the cause of the SenseCAP first-bringup boot loop).
+    // (the cause of the Solar P1 first-bringup boot loop).
     #[cfg(feature = "board-sensecap-solar")]
     const DEFAULT_DEVICE_NAME: &str = "UMSH Solar";
     #[cfg(feature = "board-wio-tracker-l1")]
@@ -427,7 +435,7 @@ mod firmware {
             #[cfg(not(feature = "cap-battery-saadc"))]
             battery: Some(BatteryFields::NONE),
             // Every board here can make itself conspicuous: the T-1000E
-            // with its buzzer, the T-Echo and SenseCAP with their
+            // with its buzzer, the T-Echo and Solar P1 with their
             // indicator LEDs. `CAP_ALERT` says only that *something*
             // happens, so the difference stays a board matter.
             alert: Some(AlertConfig::DEFAULT),
@@ -436,8 +444,16 @@ mod firmware {
             // and no battery-backed RTC simply reports that it does not
             // know what time it is until a host tells it.
             time: Some(TimeConfig),
-            #[cfg(feature = "cap-gnss")]
-            gnss: Some(GnssConfig),
+            // The Solar P1 is the one board here that runs its receiver
+            // by default. It is a fixed outdoor node with a panel rather
+            // than a pocket tracker on a cell: the load it is worried
+            // about is the one it can see coming, and a node that has to
+            // be told to find itself after every reset is the worse
+            // failure. Everywhere else the receiver waits to be asked.
+            #[cfg(all(feature = "cap-gnss", feature = "board-sensecap-solar"))]
+            gnss: Some(GnssConfig::ALWAYS_ON),
+            #[cfg(all(feature = "cap-gnss", not(feature = "board-sensecap-solar")))]
+            gnss: Some(GnssConfig::DEFAULT),
             #[cfg(not(feature = "cap-gnss"))]
             gnss: None,
         }
@@ -3785,14 +3801,18 @@ mod firmware {
         // rather than tri-stating, so the FET gate is pinned instead of
         // floating and the divider's quiescent draw is provably gone.
         drive_pin_low(Port::P0, 4);
-        // The L76K GNSS shares the always-on rail and is otherwise untouched
-        // by this firmware, so its standby line (active-high wake) has been
-        // floating since boot and the module's state is whatever it decides
-        // on its own — potentially tens of milliamps, which would dwarf
-        // everything else here. Pin it low so the module is at least asked
-        // to sleep while it still has the power to act on it. It is left
-        // floating during normal operation, so this only takes effect at
-        // shutdown; polarity is inferred from the board notes, not metered.
+        // The L76K GNSS shares the always-on rail, so System OFF does not
+        // reach it: its standby line (active-high wake) is the only thing
+        // that decides whether the board's floor is microamps or the tens
+        // of milliamps an acquiring receiver draws. The BSP has driven it
+        // since boot and the pump leaves it wherever `PROP_GNSS_ENABLED`
+        // last put it, so this is only the belt to that suspenders — but
+        // it has to happen here, while the module can still act on it.
+        //
+        // Deliberately *not* a full teardown: the module keeps its power
+        // and its backup domain through System OFF, which is where this
+        // board's clock comes from on the next boot. Asking it to sleep is
+        // the whole intent; taking anything else away would cost the time.
         drive_pin_low(Port::P1, 9);
         // Three more control lines that drive real loads. Same argument as
         // the divider gate above: a tri-stated gate is not a gate that is
@@ -3830,15 +3850,16 @@ mod firmware {
     }
 
     /// Dedicated power-button (P1.01, active-low) state machine for the
-    /// SenseCAP Solar Node. This board has a button reserved for power, so —
-    /// unlike the single-button boards that overload one button into a
-    /// gesture FSM — it drives *nothing but power*: a hold past `HOLD_OFF`
-    /// acknowledges with a blink on LED_A (white) and requests System OFF; a
-    /// short press does nothing while running. Powering back on happens by
-    /// pressing it while in System OFF — the press resets the chip.
+    /// Solar P1. This board has a button reserved for power, so — unlike the
+    /// single-button boards that overload one button into a gesture FSM — it
+    /// drives *nothing but power*: a hold past `HOLD_OFF` acknowledges on
+    /// LED_A and requests System OFF, and a short press does nothing at all.
+    /// Everything a user might otherwise want from a press is on USR; see
+    /// [`sensecap_usr_button_task`]. Powering back on happens by pressing USR
+    /// while in System OFF — a PWR press there reaches the bootloader instead.
     #[cfg(feature = "power-button")]
     #[embassy_executor::task]
-    async fn sensecap_pwr_button_task(mut button: Input<'static>, mut led: Output<'static>) {
+    async fn sensecap_pwr_button_task(mut button: Input<'static>) {
         const HOLD_OFF: Duration = Duration::from_millis(1500);
         const DEBOUNCE: Duration = Duration::from_millis(20);
 
@@ -3858,30 +3879,140 @@ mod firmware {
                 continue; // bounce
             }
             // Power off only if held past HOLD_OFF; release before that is a
-            // short press with no power action.
+            // short press, which this button deliberately ignores.
             match select(button.wait_for_high(), Timer::after(HOLD_OFF)).await {
-                // A short press is otherwise inert on this board, which
-                // makes it exactly the right way to silence a locate
-                // alert. The power-off hold below still works during one.
-                Either::First(()) => {
-                    if alert_active() {
-                        INPUT_CH.send(InEvent::CancelAlert).await;
-                    }
-                }
+                Either::First(()) => {}
                 Either::Second(()) => {
-                    // Hold accepted: blink LED_A (white, active-high) to
-                    // acknowledge, then request the System OFF teardown.
-                    for _ in 0..3 {
-                        led.set_high();
-                        Timer::after(Duration::from_millis(120)).await;
-                        led.set_low();
-                        Timer::after(Duration::from_millis(120)).await;
-                    }
+                    // Hold accepted: acknowledge on LED_A and wait for the
+                    // blinks to finish before tearing the board down, or the
+                    // teardown would cut the acknowledgement it just asked
+                    // for. Bounded, so a wedged indicator cannot block
+                    // powering off.
+                    ATTENTION_LED.signal(LedSequence::PowerOff);
+                    let _ = select(
+                        ATTENTION_LED_DONE.wait(),
+                        Timer::after(Duration::from_millis(1500)),
+                    )
+                    .await;
                     umsh_bsp_sensecap_solar::power::SHUTDOWN_SIGNAL.signal(());
                     // The shutdown task waits for PWR release before arming
                     // wake; park here until it powers us off.
                     button.wait_for_high().await;
                 }
+            }
+        }
+    }
+
+    /// The user button (USR / P1.07, active-low) on the Solar P1.
+    ///
+    /// This is the board's whole interactive surface while running — PWR
+    /// does power and nothing else — so it carries the primary-action slot
+    /// the UX profile describes: a press asks the device node to beacon,
+    /// putting a signed identity (with its position, when the identity
+    /// auto-update is on) on the air.
+    ///
+    /// Except while the locate alert is running, when the first press
+    /// silences it and does nothing else. Whoever found the blinking radio
+    /// gets to stop it with whatever they press; fumbling for it must not
+    /// also fire off a beacon.
+    ///
+    /// No confirmation is emitted here. The node answers an accepted send
+    /// through `NodeHooks::beacon_confirm`, so a board with no identity —
+    /// where the node is dormant and the slot is genuinely inert — stays
+    /// silent rather than acknowledging something that did not happen.
+    #[cfg(feature = "power-button")]
+    #[embassy_executor::task]
+    async fn sensecap_usr_button_task(mut button: Input<'static>) {
+        const DEBOUNCE: Duration = Duration::from_millis(20);
+
+        // The press that woke the board from System OFF, or the one that
+        // ran the force-pairing ceremony, is still down. Neither is a
+        // beacon request.
+        if button.is_low() {
+            button.wait_for_high().await;
+            Timer::after(DEBOUNCE).await;
+        }
+
+        loop {
+            button.wait_for_low().await;
+            Timer::after(DEBOUNCE).await;
+            if button.is_high() {
+                continue; // bounce
+            }
+            if alert_active() {
+                INPUT_CH.send(InEvent::CancelAlert).await;
+            } else {
+                super::device_node::request_beacon(super::device_node::BeaconTrigger::Button);
+            }
+            // One action per press, however long it is held.
+            button.wait_for_high().await;
+            Timer::after(DEBOUNCE).await;
+        }
+    }
+
+    /// One-shot sequences for LED_A, the Solar P1's attention indicator.
+    #[cfg(feature = "power-button")]
+    static ATTENTION_LED: Signal<ThreadModeRawMutex, LedSequence> = Signal::new();
+
+    /// Fires when a requested sequence has finished playing, so a caller
+    /// that is about to take the board down can let it finish.
+    #[cfg(feature = "power-button")]
+    static ATTENTION_LED_DONE: Signal<ThreadModeRawMutex, ()> = Signal::new();
+
+    /// Confirm an accepted local action on LED_A. Reachable as a plain
+    /// `fn()` because that is the shape `NodeHooks` takes.
+    #[cfg(feature = "power-button")]
+    pub fn confirm_attention_action() {
+        ATTENTION_LED.signal(LedSequence::ActionConfirm);
+    }
+
+    /// Drives LED_A (P0.15, white, active-high) on the Solar P1.
+    ///
+    /// The board has two LEDs and gives them separate jobs. LED_B (blue) is
+    /// the status light: heartbeat, BLE pairing blink — the "this thing is
+    /// alive, here is its link state" story, which is worth glancing at and
+    /// not worth looking up for. LED_A is the one meant to catch an eye
+    /// across a field: the locate alert, and the short confirmations that
+    /// answer a button press.
+    ///
+    /// It idles dark. A second heartbeat would only compete with the first.
+    #[cfg(feature = "power-button")]
+    #[embassy_executor::task]
+    async fn sensecap_attention_led_task(mut led: Output<'static>) -> ! {
+        let mut engine = LedEngine::attention_only(Instant::now().as_millis());
+        loop {
+            // On a board with no buzzer the blink is the entire alert, and
+            // it outranks the confirmations inside the engine.
+            if alert_active() {
+                engine.start_alert(Instant::now().as_millis());
+            } else {
+                engine.stop_alert();
+            }
+
+            let decision = engine.tick(Instant::now().as_millis());
+            if decision.on {
+                led.set_high();
+            } else {
+                led.set_low();
+            }
+            // Nothing pending and nothing to show: report the sequence
+            // finished, for whoever is waiting on it before powering off.
+            if !decision.on && !engine.alert_active() {
+                ATTENTION_LED_DONE.signal(());
+            }
+
+            match select3(
+                Timer::at(Instant::from_millis(decision.next_deadline_ms)),
+                ALERT_CHANGED.wait(),
+                ATTENTION_LED.wait(),
+            )
+            .await
+            {
+                Either3::Third(sequence) => {
+                    ATTENTION_LED_DONE.reset();
+                    engine.play(sequence, Instant::now().as_millis());
+                }
+                Either3::First(()) | Either3::Second(()) => {}
             }
         }
     }
@@ -4555,7 +4686,7 @@ mod firmware {
         }
 
         // ── SX1262 LoRa radio (Wio Tracker L1) ──────────────────────────────
-        // The board the SenseCAP block above was itself ported from
+        // The board the Solar P1 block above was itself ported from
         // (external RXEN, DIO2 internal RF switch, DIO3 1.8 V TCXO):
         //   SPI TWISPI1 @16MHz: SCK=P0.30, MISO=P0.03, MOSI=P0.28, CS=P1.14
         //   RST=P1.07, BUSY=P1.10, DIO1=P0.07, RXEN=P1.08 (rf_switch_rx)
@@ -5090,6 +5221,46 @@ mod firmware {
             );
             let divider_gate = Output::new(p.P0_14, Level::High, OutputDrive::Standard);
             spawner.spawn(sensecap_power_task(saadc, divider_gate).unwrap());
+
+            // Quectel L76K on UARTE0, behind the one enable in this family
+            // that really cuts the module's power — which on a solar node
+            // is the whole point. `BufferedUarte` rather than a plain one
+            // because NMEA arrives as lines of unpredictable length: a
+            // plain read would block until its buffer filled, holding a
+            // complete sentence hostage to the start of the next one.
+            //
+            // TIMER1 and PPI 0/1 with group 0 are free — MPSL holds
+            // TIMER0 and PPI 19/30/31, the softdevice controller holds
+            // 17/18 and 20–29, and the freeze diagnostics hold TIMER2.
+            #[cfg(feature = "cap-gnss")]
+            {
+                let mut gnss_config = UarteConfig::default();
+                gnss_config.baudrate = UarteBaudrate::Baud9600;
+                static GNSS_RX: StaticCell<[u8; 256]> = StaticCell::new();
+                static GNSS_TX: StaticCell<[u8; 16]> = StaticCell::new();
+                let gnss_uart = BufferedUarte::new(
+                    p.UARTE0,
+                    p.TIMER1,
+                    p.PPI_CH0,
+                    p.PPI_CH1,
+                    p.PPI_GROUP0,
+                    // rxd, then txd. The `GPS_TX_PIN` / `GPS_RX_PIN` names
+                    // on this board are the same trap as everywhere else in
+                    // the family; measured, the module's output is P1.12 —
+                    // the family rule that `GPS_RX_PIN` is the MCU's RX.
+                    // See docs/hardware/sensecap-solar-node-p1-pro-hardware.md.
+                    p.P1_12,
+                    p.P1_11,
+                    Irqs,
+                    gnss_config,
+                    GNSS_RX.init([0; 256]),
+                    // Nothing is sent to this receiver: the L76K needs no
+                    // configuration to emit what UMSH reads. The buffer is
+                    // the smallest the driver will take.
+                    GNSS_TX.init([0; 16]),
+                );
+                spawner.spawn(gnss_task(gnss_uart, BoardGnss::new(p.P1_05, p.P0_02)).unwrap());
+            }
         }
 
         // XIAO nRF52840 kit peripherals. Same SAADC channel and the same
@@ -5184,6 +5355,44 @@ mod firmware {
             let button = Input::new(p.P0_08, Pull::Up);
             spawner.spawn(button_task(button).unwrap());
             spawner.spawn(wio_shutdown_task().unwrap());
+
+            // Quectel L76K on UARTE0. `BufferedUarte` rather than a plain
+            // one because NMEA arrives as lines of unpredictable length:
+            // a plain read would block until its buffer filled, holding a
+            // complete sentence hostage to the start of the next one.
+            //
+            // TIMER1 and PPI 0/1 with group 0 are free — MPSL holds
+            // TIMER0 and PPI 19/30/31, the softdevice controller holds
+            // 17/18 and 20–29, and the freeze diagnostics hold TIMER2.
+            #[cfg(feature = "cap-gnss")]
+            {
+                let mut gnss_config = UarteConfig::default();
+                gnss_config.baudrate = UarteBaudrate::Baud9600;
+                static GNSS_RX: StaticCell<[u8; 256]> = StaticCell::new();
+                static GNSS_TX: StaticCell<[u8; 16]> = StaticCell::new();
+                let gnss_uart = BufferedUarte::new(
+                    p.UARTE0,
+                    p.TIMER1,
+                    p.PPI_CH0,
+                    p.PPI_CH1,
+                    p.PPI_GROUP0,
+                    // rxd, then txd. The board notes contradict themselves
+                    // about which of D6/D7 carries NMEA; measured, it is
+                    // P0.26 — the family rule that `GPS_RX_PIN` is the
+                    // MCU's RX, which now holds on all four boards. See
+                    // docs/hardware/seeed-wio-tracker-l1-pro-hardware.md.
+                    p.P0_26,
+                    p.P0_27,
+                    Irqs,
+                    gnss_config,
+                    GNSS_RX.init([0; 256]),
+                    // Nothing is sent to this receiver: the L76K needs no
+                    // configuration to emit what UMSH reads. The buffer is
+                    // the smallest the driver will take.
+                    GNSS_TX.init([0; 16]),
+                );
+                spawner.spawn(gnss_task(gnss_uart, BoardGnss::new(p.P1_09)).unwrap());
+            }
         }
 
         // Dedicated power button (enclosure "PWR", P1.01) + System OFF
@@ -5195,7 +5404,11 @@ mod firmware {
         #[cfg(feature = "power-button")]
         {
             let pwr_button = Input::new(p.P1_01, Pull::Up);
-            spawner.spawn(sensecap_pwr_button_task(pwr_button, pwr_led).unwrap());
+            spawner.spawn(sensecap_pwr_button_task(pwr_button).unwrap());
+            // LED_A passes from the boot ceremony to the task that owns it
+            // for the rest of the run.
+            spawner.spawn(sensecap_attention_led_task(pwr_led).unwrap());
+            spawner.spawn(sensecap_usr_button_task(usr_button).unwrap());
             spawner.spawn(sensecap_shutdown_task().unwrap());
         }
 
@@ -5229,13 +5442,26 @@ mod firmware {
             // including the pairing blink: someone is looking for this
             // board right now, and on a board with no buzzer the blink
             // is the entire alert.
+            //
+            // Not on the Solar P1, which has a second LED. There the alert
+            // belongs on LED_A (white) alongside the other things meant to
+            // be seen from a distance, and this one stays the status light
+            // — see `sensecap_attention_led_task`.
+            #[cfg(not(feature = "power-button"))]
             if alert_active() {
                 engine.start_alert(Instant::now().as_millis());
             } else {
                 engine.stop_alert();
             }
+            // The pairing blink yields to the alert on a one-LED board,
+            // where they would otherwise be fighting over the same pin. On
+            // the Solar P1 they are on different LEDs and can both run.
+            #[cfg(not(feature = "power-button"))]
+            let alert_holds_the_led = alert_active();
+            #[cfg(feature = "power-button")]
+            let alert_holds_the_led = false;
             let ble_mode = BLE_LED_MODE.load(Ordering::Acquire);
-            if ble_mode != 0 && !alert_active() {
+            if ble_mode != 0 && !alert_holds_the_led {
                 let phase = Instant::now().as_millis() % 2_000;
                 let on = if ble_mode == 1 {
                     phase < 100 || (500..600).contains(&phase)
@@ -5258,7 +5484,7 @@ mod firmware {
                 continue;
             }
             let decision = engine.tick(Instant::now().as_millis());
-            // Active-low (T-Echo P0.14) inverts; active-high (SenseCAP LED_B
+            // Active-low (T-Echo P0.14) inverts; active-high (Solar P1 LED_B
             // P0.19) drives directly.
             #[cfg(feature = "led-active-low")]
             if decision.on {
@@ -5273,12 +5499,19 @@ mod firmware {
                 led.set_low()
             }
             // An alert edge must reach the LED without waiting out the
-            // heartbeat's multi-second deadline.
+            // heartbeat's multi-second deadline. A `Signal` has one useful
+            // consumer, so on the Solar P1 this arm is gone entirely and
+            // `ALERT_CHANGED` belongs to the attention LED that shows the
+            // alert — two waiters would leave whichever registered first
+            // asleep through the edge.
+            #[cfg(not(feature = "power-button"))]
             let _ = select(
                 Timer::at(Instant::from_millis(decision.next_deadline_ms)),
                 ALERT_CHANGED.wait(),
             )
             .await;
+            #[cfg(feature = "power-button")]
+            Timer::at(Instant::from_millis(decision.next_deadline_ms)).await;
         }
     }
 

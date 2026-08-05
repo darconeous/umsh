@@ -60,6 +60,9 @@
 //! | QSPI flash (P25Q16H)         | 21–26   | see hw doc   | reserved, unused (NV store is internal NVMC) |
 
 #[cfg(target_os = "none")]
+pub mod gnss;
+
+#[cfg(target_os = "none")]
 pub mod platform;
 
 #[cfg(target_os = "none")]
@@ -78,4 +81,3 @@ pub use power::PowerSignaler;
 //            (SAADC AIN7/P0.31, gated divider P0.14) with calibrated
 //            slope/offset constants.
 //   Phase 6: low-battery System OFF + LPCOMP solar-recovery wake.
-//   Phase 7: pub mod gnss   — L76K UART/NMEA (P1.11/P1.12).

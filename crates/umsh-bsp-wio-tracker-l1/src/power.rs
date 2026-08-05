@@ -102,7 +102,7 @@ mod monitor {
     const DIVIDER_MICRO: u32 = 7_200;
 
     /// How long the gated divider needs to settle after P0.04 goes high
-    /// before the sample is trustworthy. Same allowance the SenseCAP
+    /// before the sample is trustworthy. Same allowance the Solar P1
     /// monitor makes for its own gate.
     const DIVIDER_SETTLE: Duration = Duration::from_millis(10);
 

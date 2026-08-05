@@ -314,7 +314,7 @@ fn session_config() -> SessionConfig {
         // that matter most — a clock that is not set, and a receiver that
         // is switched off.
         time: Some(TimeConfig),
-        gnss: Some(GnssConfig),
+        gnss: Some(GnssConfig::DEFAULT),
     }
 }
 

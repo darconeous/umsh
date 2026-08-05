@@ -643,7 +643,8 @@ A device returns to `ALERT_NONE` three ways:
 * Asynchronous Updates: Yes
 * Required: `CAP_GNSS`
 * Value Type: BOOL
-* Post-Reset Value: 0 (false), or restored from saved state
+* Post-Reset Value: device-defined, conventionally 0 (false), or restored
+  from saved state
 
 Whether the GNSS receiver is powered.
 
@@ -656,9 +657,16 @@ host did not command.
 False means the lowest power state the board can put the receiver in, not
 merely an idle one: on a battery-powered node the receiver is typically
 the largest continuous load there is, and a property that only stopped
-*reporting* would be a property that solved nothing. The default is off,
-because a device that has never been told to care where it is should not
-be spending a battery finding out.
+*reporting* would be a property that solved nothing.
+
+The post-reset value is the device's to choose, and it **SHOULD** be
+false: a device that has never been told to care where it is should not
+be spending a battery finding out. A device whose purpose is to know
+where it is — a fixed outdoor node with a panel rather than a pocket
+tracker on a cell — **MAY** default it true instead, and **SHOULD**
+document that it does. Either way the value is only a starting point:
+saved state overrides it in both directions, and a host that wants a
+particular state sets it rather than assuming one.
 
 Disabling the receiver does not clear the wall clock. Time already
 obtained stays as good as the device's oscillator keeps it, which is the

@@ -34,8 +34,8 @@
 //!   driven output retains its level through System OFF, which is what
 //!   makes it work at all without a switchable rail.
 //! - **keeps `P0.14` driven LOW.** This is the one place this board's
-//!   teardown deliberately diverges from its relatives: the SenseCAP
-//!   Solar and Wio Tracker L1 raise their divider gates here to recover
+//!   teardown deliberately diverges from its relatives: the Solar P1 and
+//!   the Wio Tracker L1 raise their divider gates here to recover
 //!   the quiescent draw, and doing the same thing on this board would put
 //!   `P0.31` at its `VDD + 0.3` absolute maximum. Tri-stating it, the
 //!   other intuitive move, is worse still — the tap floats to the full

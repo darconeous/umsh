@@ -250,7 +250,11 @@ using the consistently agreed serial mapping:
 - MCU UART TX: logical pin 6
 - MCU UART RX: logical pin 7
 
-Then verify that NMEA data is received on pin 7 at 9600 baud.
+That is also the reading that turned out to be right on the other three
+boards in this family — the T-Echo, the T1000-E, and the Wio Tracker L1 —
+on each of which `GPS_RX_PIN` is the MCU's RX. **Confirmed here too,
+2026-08-05:** UARTE0 with RXD=P1.12 / TXD=P1.11 at 9600 gets sentences
+immediately and a 3D fix from cold. Treat it as the family rule.
 
 ### Power behavior
 
@@ -272,13 +276,38 @@ GNSS start:
     begin parsing NMEA at 9600 baud
 ```
 
-The exact active polarity of `GPS_EN` and `PIN_GPS_STANDBY` should be verified on
-hardware before implementing aggressive GNSS power cycling. Existing firmware
-names imply active-high enable, but neither board-support file contains a
-complete GNSS power sequence.
+`umsh_bsp_sensecap_solar::gnss` implements exactly that sequence, and both
+polarities in it are **confirmed on hardware, 2026-08-05**:
 
-Logical pin 17 should initially be left as an input unless reset behavior has
-been verified.
+- `GPS_EN` (logical 18 / P1.05) is **active-high**. High powers the
+  module; low removes power, taking the backup domain and the ephemeris
+  with it.
+- Standby (logical 0 / P0.02) is **active-high wake**, the same as the
+  T-Echo's identical L76K.
+
+The driver raises the enable, waits 50 ms for the rail, raises standby,
+and allows 150 ms before reading. Switching the receiver off over ULCP
+drops standby first and then the enable, and the property surface goes
+blank as it should rather than merely stopping at the last fix.
+
+Logical pin 17 is left untouched as an input: a rail that can be cut is a
+stronger reset than a line whose connection has never been confirmed.
+
+Unlike every other board in this family, this one really can take the
+module's power away — and does, because GNSS is its largest discretionary
+load. The cost is that nothing here keeps time across an off state: the
+backup domain goes with the rail, so the clock comes from the next fix or
+a manual set. On a node that will see the sky daily, that is the right
+trade.
+
+### The receiver defaults to on
+
+This is the one board in the tree whose post-reset `PROP_GNSS_ENABLED` is
+true (`GnssConfig::ALWAYS_ON`). It is a fixed outdoor node with a panel
+rather than a pocket tracker on a cell: the load it worries about is the
+one it can see coming, and a node that has to be told to find itself after
+every reset is the worse failure. Saved state still overrides it in both
+directions, and `CMD_RST` returns to it — verified on hardware.
 
 ## Battery pack and charging system
 
@@ -932,15 +961,30 @@ rather than embedding Arduino IDs in low-level drivers.
 - Measure current and radiated/connector power before using 22 dBm.
 - Confirm LED_B/pin 12 does not interfere with any shared function.
 
-### Phase 4: GNSS
+### Phase 4: GNSS — **done 2026-08-05**
 
-- Hold pin 17 as input.
-- Enable pin 18.
-- Receive NMEA on MCU RX logical pin 7 at 9600 baud.
-- Test logical pin 0 standby/wakeup polarity.
+`umsh_bsp_sensecap_solar::gnss`, reached over ULCP as
+`PROP_GNSS_ENABLED`. One `umshctl gnss status` settled all three
+inferences at once: sentences arrived immediately, GSV reported 8
+satellites in view indoors, and a 3D fix followed within a couple of
+minutes. UART direction, `GPS_EN` polarity, and standby polarity are all
+as assumed — see the GNSS section above.
+
+Also verified: switching the receiver off blanks the property surface,
+and `CMD_RST` returns it to this board's on-by-default post-reset value.
+
+Left for a bench with a meter:
+
+- Meter the module rail with GNSS off, to confirm `GPS_EN` low really
+  removes power rather than merely idling the module. The property
+  behaves correctly either way, so this is a power question, not a
+  correctness one.
 - Measure cold-start and warm-start current.
-- Determine whether pin 17 is necessary for reliable reset.
-- Verify behavior when GNSS is disabled before System OFF.
+- Determine whether pin 17 is necessary for reliable reset. It is held as
+  an input today and the rail is used as the reset instead.
+- Confirm the clock does *not* survive System OFF here, unlike its
+  relatives: cutting the rail takes the L76K's backup domain with it, so
+  the board should come back not knowing the time.
 
 ### Phase 5: solar and charging
 
@@ -986,8 +1030,10 @@ rather than embedding Arduino IDs in low-level drivers.
     `USER_BUTTON`). Active polarity still unverified — presumed active-low.
 12. Is logical pin 17 connected to L76K reset, and what is its required idle
     state?
-13. What are the exact active levels and timing requirements of GNSS enable and
-    standby/wakeup?
+13. ~~What are the exact active levels and timing requirements of GNSS enable
+    and standby/wakeup?~~ **Resolved** 2026-08-05: both active-high, enable
+    then 50 ms then standby, sentences within a second. Timing *margins* are
+    still unprobed — the delays are generous rather than measured.
 14. Is Grove power switched or permanently tied to the main regulated rail?
 15. Are any QSPI regions reserved by the factory bootloader or firmware?
 16. Are P1 and P1-Pro controller boards electrically identical aside from the

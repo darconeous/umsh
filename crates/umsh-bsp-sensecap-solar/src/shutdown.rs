@@ -10,7 +10,7 @@
 //! - hold the SX1262 in reset (P0.28 low) to collapse its draw,
 //! - disconnect the battery divider (active-low gate P0.14 driven HIGH) so
 //!   the 1 MΩ/512 kΩ bridge stops drawing in System OFF,
-//! - keep GNSS powered down (P1.05 low),
+//! - keep GNSS powered down (enable P1.05 low, standby P0.02 low),
 //! - tri-state every remaining peripheral signal pin so embassy's leftover
 //!   SENSE bits can't fire DETECT and reverse current can't leak into the
 //!   unpowered radio,
@@ -60,8 +60,13 @@ async fn enter_off() -> ! {
     // output retains its level through System OFF, so the bridge stays
     // disconnected and its quiescent draw is removed.
     drive_pin_high(Port::P0, 14);
-    // Keep GNSS powered down (enable P1.05 low).
+    // Keep GNSS powered down (enable P1.05 low), and pin its standby line
+    // (P0.02) low with it. Standby sits on the module's side of the load
+    // switch, so a pin left driving into an unpowered module is current
+    // through its protection diodes — the same argument as the divider
+    // gate above, and the reason both are driven rather than released.
     drive_pin_low(Port::P1, 5);
+    drive_pin_low(Port::P0, 2);
 
     // Tri-state the remaining peripheral signal pins. Embassy's async GPIO
     // `wait_for_*` leaves PIN_CNF SENSE bits set on in-flight waits; any pin

@@ -74,8 +74,9 @@ async fn node_beacon_task(
 ///
 /// The T-1000E marks each completed node transmit for its battery-level
 /// estimator (voltage sampled near a transmission is sagged, not resting
-/// OCV) and confirms a button beacon with its LED and buzzer; the T-Echo
-/// has neither.
+/// OCV) and confirms a button beacon with its LED and buzzer. The Solar
+/// P1 marks the load too, and confirms on its white attention LED. The
+/// T-Echo has neither.
 fn hooks() -> node::NodeHooks {
     #[allow(unused_mut)]
     let mut hooks = node::NodeHooks::default();
@@ -94,6 +95,10 @@ fn hooks() -> node::NodeHooks {
                 .signal(umsh_ux_tracker::led::LedSequence::ActionConfirm);
             umsh_bsp_t1000e::BUZZER_SIGNAL.signal(&umsh_ux_tracker::buzzer::melodies::BEACON_ACK);
         };
+    }
+    #[cfg(feature = "power-button")]
+    {
+        hooks.beacon_confirm = crate::firmware::confirm_attention_action;
     }
     hooks
 }

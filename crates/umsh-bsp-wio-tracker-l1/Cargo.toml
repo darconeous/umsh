@@ -22,14 +22,14 @@ repository.workspace = true
 #   * SAADC battery monitor (AIN7/P0.31 + active-high gate P0.04)
 #   * piezo buzzer (P1.00)
 #
-# Not yet wired: Quectel L76K GNSS UART, joystick / trackball, Grove
-# expansion I²C, QSPI external flash.
+# Not yet wired: joystick / trackball, Grove expansion I²C, QSPI
+# external flash.
 #
 # See docs/firmware-plan-wio-tracker-l1.md and
 # docs/hardware/seeed-wio-tracker-l1-pro-hardware.md.
 
 [features]
-default = ["display", "platform", "power", "battery", "buzzer"]
+default = ["display", "platform", "power", "battery", "buzzer", "gnss"]
 display = ["dep:embassy-nrf", "dep:embedded-graphics"]
 platform = ["dep:umsh-crypto", "dep:umsh-mac", "dep:umsh-radio-loraphy"]
 power = ["dep:cortex-m"]
@@ -44,10 +44,15 @@ battery = [
 ]
 # Piezo buzzer on P1.00, driven straight from a PWM channel.
 buzzer = ["dep:embassy-futures", "dep:embassy-nrf", "dep:umsh-ux-tracker"]
+# Standby control for the on-board Quectel L76K, as a `umsh-gnss` Power
+# implementation. The parser and the pump live in `umsh-gnss`; only the
+# pin handling is board business.
+gnss = ["dep:embassy-nrf", "dep:umsh-gnss"]
 
 [dependencies]
 umsh-bsp-nrf52840 = { path = "../umsh-bsp-nrf52840", default-features = false }
 umsh-hal          = { path = "../umsh-hal", default-features = false }
+umsh-gnss         = { path = "../umsh-gnss", default-features = false, features = ["pump"], optional = true }
 
 # Used by the `Platform` type bundle.
 umsh-mac    = { path = "../umsh-mac", default-features = false, optional = true }

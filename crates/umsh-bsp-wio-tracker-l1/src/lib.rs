@@ -15,6 +15,8 @@
 //! - [`power`] — `PowerControl` bridge, shutdown signal, and the SAADC
 //!   battery monitor (AIN7/P0.31, divider gated active-high on P0.04)
 //! - [`buzzer`] — piezo on P1.00, driven straight from PWM
+//! - [`gnss`] — Quectel L76K standby control (P1.09); the module has no
+//!   rail this board can cut, so its backup domain is the board's clock
 //! - [`platform`] — the `Platform` type bundle used by the console
 //!   bringup harness
 //!
@@ -23,8 +25,8 @@
 //! (P0.08) are chosen by the firmware, following the pattern the other
 //! nRF52840 tracker boards use.
 //!
-//! Not yet wired: the Quectel L76K GNSS UART, the joystick / trackball,
-//! the Grove expansion I²C bus, and the QSPI external flash.
+//! Not yet wired: the joystick / trackball, the Grove expansion I²C bus,
+//! and the QSPI external flash.
 //!
 //! See `docs/hardware/seeed-wio-tracker-l1-pro-hardware.md` for the
 //! firmware-derived hardware reference.
@@ -34,6 +36,9 @@ pub mod buzzer;
 
 #[cfg(all(target_os = "none", feature = "display"))]
 pub mod display;
+
+#[cfg(all(target_os = "none", feature = "gnss"))]
+pub mod gnss;
 
 #[cfg(all(target_os = "none", feature = "platform"))]
 pub mod platform;

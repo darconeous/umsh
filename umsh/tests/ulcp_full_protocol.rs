@@ -76,7 +76,7 @@ fn session_config() -> SessionConfig {
         // wrappers for both are exercised against the real session
         // rather than only against a firmware nobody can run in CI.
         time: Some(umsh_ulcp_device::TimeConfig),
-        gnss: Some(umsh_ulcp_device::GnssConfig),
+        gnss: Some(umsh_ulcp_device::GnssConfig::DEFAULT),
     }
 }
 

@@ -27,8 +27,9 @@ repository.workspace = true
 #   * calibrated battery measurement (SAADC AIN7/P0.31 + gated divider) — Phase 2
 #   * SX1262 LoRa radio + external RXEN pin (P0.05) — Phase 3
 #
+#   * Quectel L76K GNSS power sequencing (P1.05 enable, P0.02 standby) — Phase 7
+#
 # Out of scope for bringup (planned but not yet):
-#   * Quectel L76K GNSS UART (P1.11/P1.12) — Phase 7, deferrable
 #   * Grove / expansion I²C bus (P0.09/P0.10, NFC pins)
 #   * QSPI external flash (P25Q16H) — reserved, NV stays on internal NVMC
 #   * Low-battery System OFF + LPCOMP solar-recovery wake — Phase 6
@@ -39,6 +40,10 @@ default = []
 [dependencies]
 umsh-bsp-nrf52840 = { path = "../umsh-bsp-nrf52840", default-features = false }
 umsh-hal          = { path = "../umsh-hal", default-features = false }
+# Power sequencing for the on-board Quectel L76K, as a `umsh-gnss` Power
+# implementation. The parser and the pump live in `umsh-gnss`; only the
+# pin handling is board business.
+umsh-gnss         = { path = "../umsh-gnss", default-features = false, features = ["pump"] }
 
 # Used by the `Platform` type bundle.
 umsh-mac    = { path = "../umsh-mac", default-features = false }

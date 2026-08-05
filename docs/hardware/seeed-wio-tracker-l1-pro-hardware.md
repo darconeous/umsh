@@ -218,9 +218,9 @@ The board uses a Quectel L76K / L76KB GNSS module.
 
 | Function | Logical pin | nRF52840 pin | Firmware names | Notes |
 |---|---:|---:|---|---|
-| GNSS standby / wake / enable | D0 | P1.09 | `PIN_GPS_STANDBY`, `PIN_GPS_EN` | Standby/wakeup control line. |
-| GNSS TX / MCU RX path | D6 | P0.27 | `GPS_TX_PIN`, `PIN_SERIAL1_TX` in Meshtastic naming | Watch direction carefully; Meshtastic comments say this is data from the MCU in one place. |
-| GNSS RX / MCU TX path | D7 | P0.26 | `GPS_RX_PIN`, `PIN_SERIAL1_RX` in Meshtastic naming | Watch direction carefully; firmware names are board-signal names, not always “MCU perspective.” |
+| **GNSS standby / wake** | D0 | **P1.09** | `PIN_GPS_STANDBY`, `PIN_GPS_EN` | **Confirmed.** High wakes, low sleeps. |
+| **GPS TX → MCU RX** | D7 | **P0.26** | `GPS_RX_PIN`, `PIN_SERIAL1_RX` | **Confirmed.** Data from the L76K to the nRF52840, despite the pin names. |
+| **GPS RX ← MCU TX** | D6 | **P0.27** | `GPS_TX_PIN`, `PIN_SERIAL1_TX` | **Confirmed.** Data from the nRF52840 to the L76K. Unused — the receiver needs no commands. |
 | GNSS baud rate | — | — | `GPS_BAUDRATE`, `GPS_BAUD_RATE` | 9600 baud. |
 
 The Meshtastic and MeshCore variants both indicate L76K/L76KB GNSS and 9600 baud.
@@ -236,7 +236,53 @@ The naming around `GPS_TX_PIN` and `GPS_RX_PIN` is potentially confusing. In Mes
 #define PIN_SERIAL1_TX GPS_TX_PIN
 ```
 
-So for firmware work, use the framework-provided `PIN_SERIAL1_RX` and `PIN_SERIAL1_TX` definitions rather than trying to infer direction from the bare `GPS_TX_PIN` / `GPS_RX_PIN` labels.
+Both aliases are named from the *module's* point of view, so `GPS_RX_PIN`
+is the pin wired to the module's RX in one reading and the MCU's own RX in
+the other — and `PIN_SERIAL1_RX`, which ought to settle it, is defined
+from the same ambiguous macro rather than independently.
+
+Settled on hardware, 2026-08-05: **P0.26 carries NMEA**, and configuring
+UARTE0 with RXD=P0.26 / TXD=P0.27 at 9600 gets a 3D fix in under 45
+seconds from cold. That is the same reading that turned out to be correct
+on the T-Echo and the T1000-E — `GPS_RX_PIN` is the MCU's RX on all three
+— so treat that as the family rule and the `PIN_SERIAL1_*` pair as noise.
+
+### Standby is the whole control surface
+
+The board brings out no reset line and no enable for the module's supply:
+the L76K sits on the battery rail and D0 is the only control. Driving it
+low is confirmed to stop the sentence stream, so the property really does
+switch the receiver off rather than merely stop reporting it.
+
+Two consequences follow, and UMSH depends on both:
+
+- A receiver that keeps its supply keeps its clock. The L76K's backup
+  domain counts through an nRF52840 System OFF, which no firmware-held
+  clock survives, so **this module is the board's RTC** — the boot path
+  wakes it just long enough to read a dated RMC back out (the firmware's
+  `gnss-holds-the-clock`) and returns it to standby.
+- "Off" is the module's own standby current and nothing lower. Before the
+  UMSH driver existed the pin was left floating from boot, so the module
+  chose its own state and the board's idle floor was whatever that turned
+  out to be. It is now driven from board init.
+
+Confirmed 2026-08-05, with the receiver's own switch **off**: set the
+clock from a fix, `gnss off`, four-second nav-button hold into System OFF,
+wake — and the time comes back. That the receiver was disabled is the
+important half. It proves the boot read is gated on
+`PROP_GNSS_TIME_TRUST` and not on `PROP_GNSS_ENABLED`, which is the
+design claim: a device with positioning switched off still wants to know
+what time it is.
+
+State the retention precisely — **the backup domain survives System OFF,
+not a battery disconnect.** The mechanical power switch is a hard
+disconnect of the same rail the L76K sits on, and the board carries no
+coin cell and no supercap, so the RTC domain dies with everything else.
+Confirmed in the same session: switch off, switch on, no clock. "The Wio
+keeps time across power-off" is half true in the misleading direction.
+
+What the standby current actually is remains unmeasured, and it is now
+the board's System OFF floor — the thing to put a meter on next.
 
 ## OLED display / L1 Pro display
 
@@ -493,9 +539,20 @@ This means MeshCore can use an RTC if it discovers one on the I²C bus, but fall
 
 Practical interpretation:
 
-- The board definitions do not prove an onboard always-powered RTC.
-- Wall-clock retention across System OFF should not be assumed unless you verify a real RTC on the board or attach one over I²C/Grove.
-- GNSS can restore time after a fix, and firmware can maintain volatile time while running, but that is not the same as persistent wall-clock time while “off.”
+- The board definitions do not prove an onboard always-powered RTC, and
+  none has been found on the I²C bus.
+- There is nevertheless a clock that survives System OFF, and it is the
+  one nobody labelled: the L76K's backup domain. The module sits on the
+  battery rail with no enable this board can cut, so standby is as far
+  down as it goes and the domain keeps counting. UMSH treats it as the
+  board's RTC and reads it back at boot — see the GNSS section above.
+- The retention boundary is the battery, not the power state. System OFF
+  keeps the clock; the mechanical power switch is a hard disconnect of
+  that same rail and does not, because there is no coin cell or supercap
+  behind it. Both halves confirmed on hardware 2026-08-05.
+- The clock is also only as trustworthy as the sky it was last set from,
+  which is why reading it back is gated on `PROP_GNSS_TIME_TRUST` rather
+  than on the receiver being enabled.
 
 ## Displays and Pro/e-ink distinction
 
@@ -550,9 +607,16 @@ nRF52840
 - Use D11/P1.01 as the active-high user/TX LED.
 - Use D12/P1.00 as the buzzer output.
 - Treat joystick/trackball inputs as pullup/active-low/falling-edge signals.
-- Do not assume an onboard RTC unless verified.
+- Configure the GNSS UART as RXD=D7/P0.26, TXD=D6/P0.27 — measured, and
+  the opposite of what one reading of the alias names suggests.
+- Drive D0/P1.09 from board init rather than leaving it floating; it is
+  the only GNSS control and the board's System OFF current floor.
+- There is no I²C RTC, but the L76K's backup domain keeps time through
+  System OFF and can be read back over the UART. It does not survive the
+  mechanical power switch — that is a battery disconnect.
 - Do not assume firmware-visible charger status or PMIC control.
-- Do not assume System OFF cuts power to all peripherals.
+- Do not assume System OFF cuts power to all peripherals — on this board
+  it cuts power to none of them.
 
 ## Source references
 

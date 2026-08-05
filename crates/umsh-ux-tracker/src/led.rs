@@ -414,6 +414,28 @@ impl LedEngine {
         }
     }
 
+    /// An engine for an indicator that idles **dark**: no heartbeat, only
+    /// the locate alert and one-shot sequences.
+    ///
+    /// For a board with two LEDs, where one carries the "this board is
+    /// alive and here is its link state" story and the other is reserved
+    /// for the things meant to catch an eye. A second heartbeat would
+    /// only compete with the first.
+    ///
+    /// Implemented as a zero-length heartbeat pulse, which
+    /// [`heartbeat_decision`](Self::heartbeat_decision) resolves to
+    /// permanently off. The interval then only sets how often the loop
+    /// wakes to find nothing to do, so it is long.
+    pub fn attention_only(start_ms: u64) -> Self {
+        Self::new(
+            LedTimings {
+                heartbeat_interval: Duration::from_secs(60),
+                heartbeat_pulse: Duration::ZERO,
+            },
+            start_ms,
+        )
+    }
+
     /// How often the locate blink repeats.
     const ALERT_PERIOD_MS: u64 = 1_500;
 
@@ -490,6 +512,8 @@ impl LedEngine {
         let cycle_start = now_ms - (elapsed % interval);
         let phase = elapsed % interval;
 
+        // A zero-length pulse is never entered, which is what makes
+        // `attention_only` idle dark.
         if phase < pulse {
             LedDecision {
                 on: true,
@@ -829,5 +853,29 @@ mod tests {
         assert_eq!(e.tick(100).brightness, 0);
         assert_eq!(e.tick(200).brightness, 1_000);
         assert_eq!(e.tick(300).brightness, 0);
+    }
+
+    /// An attention-only indicator says nothing on its own — including at
+    /// t=0, where an ordinary engine's first heartbeat pulse begins.
+    #[test]
+    fn an_attention_only_engine_idles_dark() {
+        let mut e = LedEngine::attention_only(0);
+        for now in [0, 1, 20, 4_000, 60_000, 123_456] {
+            assert!(!e.tick(now).on, "lit with nothing to say at {now}");
+        }
+    }
+
+    /// It is still an indicator: what it is *for* still reaches it, and
+    /// the alert still outranks a sequence.
+    #[test]
+    fn an_attention_only_engine_still_confirms_and_alerts() {
+        let mut e = LedEngine::attention_only(0);
+        e.play(LedSequence::ActionConfirm, 1_000);
+        assert!(e.tick(1_000).on);
+
+        e.start_alert(2_000);
+        assert!(e.tick(2_000).on);
+        e.stop_alert();
+        assert!(!e.tick(30_000).on);
     }
 }

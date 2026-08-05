@@ -128,11 +128,37 @@ pub struct TimeConfig;
 
 /// That this board has a GNSS receiver (`CAP_GNSS`).
 ///
-/// A marker, like [`TimeConfig`], and dependent on it: a board that
-/// advertises this without a wall clock would be claiming a time source
-/// for a clock it does not have.
+/// Dependent on [`TimeConfig`]: a board that advertises this without a
+/// wall clock would be claiming a time source for a clock it does not
+/// have.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub struct GnssConfig;
+pub struct GnssConfig {
+    /// Post-reset value of `PROP_GNSS_ENABLED`.
+    ///
+    /// Off almost everywhere, because on a battery a receiver nobody
+    /// asked for is the largest thing on the bill. The exception is a
+    /// board whose whole job is to sit outdoors and know where it is —
+    /// there, off is the surprising answer, and a fixed node that has to
+    /// be told to find itself after every reset is a worse default than
+    /// the power it costs.
+    ///
+    /// This is the *post-reset* value, so it decides only what an
+    /// unconfigured board does. A saved snapshot overrides it in either
+    /// direction, and `CMD_RST` returns to it.
+    pub default_enabled: bool,
+}
+
+impl GnssConfig {
+    /// A receiver that stays off until asked.
+    pub const DEFAULT: Self = Self {
+        default_enabled: false,
+    };
+
+    /// A receiver that runs unless switched off.
+    pub const ALWAYS_ON: Self = Self {
+        default_enabled: true,
+    };
+}
 
 /// Post-reset value of `PROP_GNSS_IDENT_PRECISION`: a ~38 × 19 m cell,
 /// fine enough to place a node on a street and coarse enough not to place
@@ -432,9 +458,11 @@ struct DeviceDomain {
     tz_offset_min: i16,
     /// `PROP_GNSS_ENABLED`: whether the receiver is powered.
     ///
-    /// Off by default. A receiver is the largest continuous load on most
-    /// of these boards, and a device that has never been told to care
-    /// where it is should not be spending a battery finding out.
+    /// Off by default on most boards. A receiver is the largest
+    /// continuous load on a battery, and a device that has never been
+    /// told to care where it is should not be spending one finding out.
+    /// A board whose job is to know where it is says otherwise through
+    /// [`GnssConfig::default_enabled`].
     gnss_enabled: bool,
     /// `PROP_GNSS_IDENT_UPDATE`: whether fixes refresh the advertised node
     /// identity's location. Off by default: broadcasting where you are is
@@ -478,7 +506,7 @@ impl DeviceDomain {
             ident_mobile: false,
             dev_discoverable: true,
             tz_offset_min: 0,
-            gnss_enabled: false,
+            gnss_enabled: config.gnss.is_some_and(|gnss| gnss.default_enabled),
             gnss_ident_update: false,
             gnss_ident_precision: DEFAULT_IDENT_PRECISION,
             gnss_time_trust: true,
@@ -1512,7 +1540,11 @@ impl SavedState {
             ident_mobile: false,
             dev_discoverable: true,
             tz_offset_min: 0,
-            gnss_enabled: false,
+            // Must track `DeviceDomain::post_reset`: this is the baseline
+            // a snapshot's absent options decode against, so a board that
+            // boots its receiver on has to see that here too, or a
+            // snapshot saved while it was on would restore it off.
+            gnss_enabled: config.gnss.is_some_and(|gnss| gnss.default_enabled),
             gnss_ident_update: false,
             gnss_ident_precision: DEFAULT_IDENT_PRECISION,
             gnss_time_trust: true,
@@ -4454,7 +4486,7 @@ mod tests {
             }),
             alert: Some(AlertConfig::DEFAULT),
             time: Some(TimeConfig),
-            gnss: Some(GnssConfig),
+            gnss: Some(GnssConfig::DEFAULT),
         }
     }
 
@@ -4866,6 +4898,46 @@ mod tests {
             assert_eq!(pui::decode(&value).unwrap().0, Status::INVALID_ARGUMENT.0);
         }
         assert_eq!(session.gnss_ident_precision(), 3);
+    }
+
+    /// A board whose job is to know where it is boots its receiver on,
+    /// and every path that decides "what does unconfigured mean" agrees.
+    ///
+    /// The subtle one is the saved baseline. A snapshot omits nothing
+    /// scalar, but the baseline is what an *older* snapshot's absent
+    /// options decode against — so if `SavedState::defaults` kept saying
+    /// `false` here, restoring such a snapshot would switch the receiver
+    /// off on the one board that wants it on.
+    #[test]
+    fn a_board_can_boot_its_receiver_on() {
+        let config = SessionConfig {
+            gnss: Some(GnssConfig::ALWAYS_ON),
+            ..test_config()
+        };
+        let always_on = || {
+            let mut session = Session::new(config, Status::RESET_POWER_ON, test_engine());
+            session.attach(true);
+            session
+        };
+
+        let mut session = always_on();
+        assert_eq!(get(&mut session, prop::GNSS_ENABLED), [1]);
+        assert!(session.gnss_enabled());
+
+        // Switching it off and saving means off — a board default is a
+        // starting point, not a policy the operator has to fight.
+        set(&mut session, prop::GNSS_ENABLED, &[0]);
+        let mut buf = [0u8; 512];
+        let len = session.encode_snapshot(&mut buf).expect("snapshot");
+        let saved = SavedState::decode(&config, &buf[..len]).expect("decode");
+        assert!(!saved.gnss_enabled);
+
+        // And `CMD_RST` returns to the board default, not the protocol's.
+        let mut fresh = always_on();
+        set(&mut fresh, prop::GNSS_ENABLED, &[0]);
+        assert!(!fresh.gnss_enabled());
+        fresh.reset(Status::RESET_SOFTWARE, &mut |_: &[u8]| {});
+        assert!(fresh.gnss_enabled(), "reset dropped the board default");
     }
 
     /// A switch the operator can reach moves the property, the mirror,

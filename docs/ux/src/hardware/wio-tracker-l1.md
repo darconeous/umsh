@@ -10,9 +10,14 @@ This page covers the OLED variants — L1, L1 Pro, and L1 Lite share a pin map a
 one firmware image. The L1 e-ink variant drives a different panel on a second SPI
 bus and is not supported.
 
-The board also carries a five-way joystick and a GNSS receiver. Neither is wired
-to the interaction model yet; the joystick is the obvious way to make navigation
-direct rather than modal, and is the first thing to add here.
+The board also carries a five-way joystick, which is not wired to the
+interaction model yet; making navigation direct rather than modal is the first
+thing to add here.
+
+Its GNSS receiver is driven, and is also the board's only clock: the module
+sits on the battery rail with no enable, so its backup domain keeps time
+through System OFF and the boot path reads it back. That does not extend to
+the mechanical power switch, which is a hard battery disconnect.
 
 ## Implemented behavior
 
