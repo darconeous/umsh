@@ -59,7 +59,7 @@ led-active-low = []
 # LFCLK from the internal RC oscillator (crystal-less XIAO-based boards).
 lfclk-rc = []
 # Dedicated hardware power button + System OFF teardown / GPIO-DETECT wake
-# (SenseCAP Solar PWR button on P1.07). A board with a button reserved for
+# (Solar P1 PWR button on P1.01). A board with a button reserved for
 # power, distinct from the single-button gesture FSM.
 power-button = []
 boot-pairing-window = []

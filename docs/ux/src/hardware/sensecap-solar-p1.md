@@ -25,10 +25,6 @@ has to be.
 | Power | **PWR** | P1.01 | Hold ~1.5 s → power off. A short press does nothing. | Any press reaches the bootloader — see below |
 | User | **USR** | P1.07 | Press → beacon, or cancel a running locate alert | Press → powers the node on. Held through boot → force pairing |
 
-The enclosure's injection-moulded labels are the only ones a user ever sees;
-the PCB silkscreen disagrees with them and is invisible once assembled.
-Follow the enclosure.
-
 **PWR is not a wake button.** Any press of it while the node is in System OFF
 — a bare tap, duration irrelevant — enters the stock bootloader's DFU mode
 rather than starting the firmware. That is a property of the shipped

@@ -41,7 +41,7 @@ led-active-low = []
 # LFCLK from the internal RC oscillator (crystal-less XIAO-based boards).
 lfclk-rc = []
 # Dedicated hardware power button + System OFF teardown / GPIO-DETECT wake
-# (SenseCAP Solar PWR button on P1.07).
+# (Solar P1 PWR button on P1.01).
 power-button = []
 boot-pairing-window = []
 # Diagnostic build: skip MPSL/SDC/Trouble entirely (USB-only device).

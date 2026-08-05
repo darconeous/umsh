@@ -119,14 +119,14 @@ should not be treated as general-purpose application pins.
 | SPI MOSI | 10 | P1.15 | `PIN_SPI_MOSI` | `PIN_SPI_MOSI` | Shared with SX1262. |
 | Firmware-controlled LED A | 11 | P0.15 | `PIN_LED2`, `LED_BLUE` | `LED_WHITE` | **CONFIRMED white, active-high (2026-07-23).** "User LED". |
 | Firmware-controlled LED B / TX LED | 12 | P0.19 | `PIN_LED1`, `LED_GREEN` | `LED_BLUE`, `PIN_LED`, `P_LORA_TX_LED` | **CONFIRMED blue, active-high (2026-07-23).** "Breathing"/mesh-heartbeat/TX LED; `variant.h`'s P1.15 comment is wrong; no green LED exists. |
-| Program/user button → **power button** | 13 | P1.01 | `BUTTON_PIN`, `D13` | `PIN_BUTTON1`, `PIN_USER_BTN` | **CONFIRMED active-low (2026-07-23)** on internal pull-up. **This is the functional power button** (NCP: hold → System OFF, press → wake), despite the "PWR" silkscreen being on P1.07. Matches MeshCore's `PIN_USER_BTN` power/wake choice. |
+| Program/user button → **power button ("PWR")** | 13 | P1.01 | `BUTTON_PIN`, `D13` | `PIN_BUTTON1`, `PIN_USER_BTN` | **CONFIRMED active-low (2026-07-23)** on internal pull-up. **This is the power button**: hold → System OFF. Matches MeshCore's `PIN_USER_BTN` power choice. **Any press from System OFF reaches the bootloader, not the application** — it cannot wake the node usefully. |
 | Grove SDA | 14 | P0.09 | `PIN_WIRE_SDA`, `D14` | `PIN_WIRE_SDA` | High agreement. Pin is also an NFC-capable nRF pin. |
 | Grove SCL | 15 | P0.10 | `PIN_WIRE_SCL`, `D15` | `PIN_WIRE_SCL` | High agreement. Pin is also an NFC-capable nRF pin. |
 | Battery ADC | 16 | P0.31 / AIN7 | `PIN_VBAT`, `BATTERY_PIN`, `D16` | `BATTERY_PIN` | High agreement on signal and ADC channel. Scaling differs. |
 | GNSS reset | 17 | P1.03 | `D17`, comment only | not defined | Meshtastic identifies the signal but does not actively define a GNSS reset macro. MeshCore omits it. |
 | GNSS power enable | 18 | P1.05 | `GPS_EN`, `D18` | `GPS_EN` | High agreement. |
 | Battery-divider enable | 19 | P0.14 | `BAT_READ`, `D19` | `VBAT_ENABLE` | Active-low in MeshCore. Meshtastic's generic power code must be checked before assuming identical drive behavior. |
-| "PWR"-labeled / secondary user button | 20 | P1.07 | `BUTTON_PIN_TOUCH` | `PIN_BUTTON2` | **CONFIRMED: silkscreen "PWR", active-low, soft momentary (2026-07-23).** Not capacitive. Despite the label it is **not** the firmware power button (that is P1.01); firmware uses it only as a secondary wake source. **Quirk:** waking via P1.07 can enter a non-standard bootloader mode — prefer P1.01 for wake. |
+| Second user button ("USR") | 20 | P1.07 | `BUTTON_PIN_TOUCH` | `PIN_BUTTON2` | **CONFIRMED active-low, soft momentary (2026-07-23).** Not capacitive despite Meshtastic's `TOUCH` naming. Carries the primary action while running, and is **the only button that powers the node on** — its wake press reaches the application. |
 | QSPI SCK | 21 | P0.21 | `PIN_QSPI_SCK` | `PIN_QSPI_SCK` | Dedicated external flash signal. Physical pin from `variant.cpp`. |
 | QSPI CS | 22 | P0.25 | `PIN_QSPI_CS` | `PIN_QSPI_CS` | Dedicated external flash signal. Physical pin from `variant.cpp`. |
 | QSPI IO0 | 23 | P0.20 | `PIN_QSPI_IO0` | `PIN_QSPI_IO0` | Dedicated external flash signal. Physical pin from `variant.cpp`. |
@@ -505,66 +505,38 @@ capacitive on this board: it is a second mechanical button. Neither reviewed
 implementation uses it as the primary power-off or wake pin.
 
 **Confirmed on hardware (2026-07-23, in-hand P1-Pro, via the Phase 1
-bringup firmware).** The physical button for logical pin 20 / **P1.07 is
-labeled "PWR"** on the board. It reads **active-low** on the internal
-pull-up (LOW while pressed, HIGH when released), same as the primary
-button, and is a **soft momentary button**: the MCU kept running normally
-through a press, so it does **not** hard-cut the MCU rail. (An additional
-hardware slide switch on the enclosure, if any, is uncharacterized — see
-below.)
+bringup firmware).** P1.07 reads **active-low** on the internal pull-up
+(LOW while pressed, HIGH when released), same as the primary button, and
+is a **soft momentary button**: the MCU kept running normally through a
+press, so it does **not** hard-cut the MCU rail. (An additional hardware
+slide switch on the enclosure, if any, is uncharacterized — see below.)
 
-**Power UX resolved on hardware (2026-07-23, companion-NCP power
-feature) — the silkscreen label is misleading.** Despite the "PWR"
-silkscreen on P1.07, the button that behaves as the power control in
-practice is the **primary button, P1.01**. The NCP firmware therefore
-uses P1.01 as the dedicated power button:
+### Button labels and the wake asymmetry
 
-- **hold P1.01 (~1.5 s)** → 3× white-LED (LED_A/P0.15) acknowledgement →
-  System OFF (verified: USB drops and stays down);
-- **press either button (P1.01 or P1.07)** → wake from System OFF →
-  normal cold boot (`RESETREAS.OFF`), node powers back on.
+The labels agree with the pin map: **"PWR" = P1.01**, **"USR" = P1.07**.
+P1.01 is the button both reviewed implementations name
+`PIN_USER_BTN`/`BUTTON_PIN`, and it is the one that behaves as the power
+control.
 
-Power-*off* is **P1.01-only**; holding P1.07 does nothing. Both buttons
-are armed as GPIO-DETECT wake sources.
+- **Hold PWR (P1.01) ~1.5 s** → 3× white-LED (LED_A/P0.15)
+  acknowledgement → System OFF (verified 2026-07-23: USB drops and stays
+  down). Power-off is **PWR-only**; holding USR does nothing.
+- **Any press of PWR while the device is in System OFF enters the stock
+  bootloader's DFU mode — always** (confirmed 2026-07-27 on an enclosed
+  unit). Duration is irrelevant; a bare tap does it. The wake press never
+  reaches the application, and escaping the mode requires replacing the
+  bootloader.
+- **USR (P1.07) is therefore the only usable power-on button.** The
+  System OFF teardown arms both pins as GPIO-DETECT wake sources, but
+  only the USR path reaches the application.
 
-**Known quirk (left as-is 2026-07-23):** waking via **P1.07** sometimes
-lands the device in a *non-standard bootloader mode* (not the normal
-double-tap-RESET UF2 DFU). Waking via P1.01 boots normally. The P1.07
-wake path is likely entangled with a bootloader GPIO behavior on this
-board; not investigated further this pass. Prefer P1.01 for wake; P1.07
-wake works but may need a reset to reach the application.
+Two consequences: **P1.01 cannot carry a hold-at-boot gesture**, because
+the wake press never arrives; and the operational UX is asymmetric —
+**hold PWR to turn off, press USR to turn on.**
 
-### Corrected button mapping and wake behavior (2026-07-27)
-
-**The two paragraphs above are wrong about which button misbehaves, and
-about P1.01 wake working at all.** They were written from PCB silkscreen,
-which is invisible in the assembled product. Corrected from direct
-observation on an enclosed unit:
-
-- The **enclosure injection-molding** labels are the only ones a user ever
-  sees. **"PWR" = P1.01** (the firmware's hold-to-power-off button);
-  **"USR" = P1.07**. So the case labelling agrees with the firmware's
-  functional assignment — the "buttons are swapped" framing applies only
-  to the PCB silkscreen and is irrelevant to operation.
-- **Any press of PWR (P1.01) while the device is in System OFF enters a
-  bootloader/DFU mode — always.** Duration is irrelevant; a bare tap does
-  it. This is not the occasional quirk previously attributed to P1.07.
-  Escaping it requires replacing the bootloader.
-
-Two consequences:
-
-1. **P1.01 cannot carry a hold-at-boot gesture**, because the wake press
-   itself never reaches the application.
-2. **USR (P1.07) is the only usable power-on button.** The System OFF
-   teardown arms both pins as GPIO-DETECT wake sources, but only the
-   P1.07 path reaches the application. The operational UX is therefore
-   asymmetric: **hold PWR to turn off, press USR to turn on.**
-
-**P1.07 is clean through reset (confirmed 2026-07-27).** A held USR press
+**USR is clean through reset (confirmed 2026-07-27).** A held USR press
 spanning power-on reaches the application; the bootloader does not
-consume it. The earlier "waking via P1.07 enters a non-standard
-bootloader mode" note is therefore **wrong** — it was the PWR/P1.01
-behavior misattributed to the wrong button. Disregard it.
+consume it.
 
 ### Force-pairing boot gesture (USR / P1.07)
 
@@ -1025,9 +997,9 @@ Left for a bench with a meter:
 9. Does the CN3165 implementation include temperature-qualified charging?
 10. Can firmware detect solar-input presence independently of battery voltage?
 11. ~~What is the exact function and active polarity of logical pin 20?~~
-    **Partially resolved**: it is a second mechanical button on P1.07
-    (hardware inspection found nothing capacitive; `variant.cpp` comments it
-    `USER_BUTTON`). Active polarity still unverified — presumed active-low.
+    **Resolved** 2026-07-23: the "USR" mechanical button on P1.07, active-low
+    on an internal pull-up (hardware inspection found nothing capacitive;
+    `variant.cpp` comments it `USER_BUTTON`).
 12. Is logical pin 17 connected to L76K reset, and what is its required idle
     state?
 13. ~~What are the exact active levels and timing requirements of GNSS enable
@@ -1086,13 +1058,9 @@ The radio pinout is strongly corroborated between MeshCore and Meshtastic. GNSS
 UART and enable pins are also well corroborated once the signal-naming
 convention is normalized.
 
-The most important uncertainties for UMSH are:
+The bring-up program has since closed most of the early uncertainties —
+LED colors, button polarities, GNSS sequencing. What remains for UMSH is:
 
-- battery ADC calibration;
-- LED color mapping (physical pins are known: P0.15 and P0.19);
-- GNSS standby/reset polarity and sequencing;
-- second-button (P1.07) polarity;
+- battery ADC calibration (the divider constant is nominal, not fitted);
+- the GNSS reset candidate on P1.03, never driven;
 - pack-level and charger-level protection behavior.
-
-Those uncertainties are narrow enough that a short hardware bring-up program
-should resolve most of them without needing a full schematic.

@@ -45,7 +45,7 @@ led-active-low = []
 # hardware, add `lfclk-rc` to `board-wio-tracker-l1` above.
 lfclk-rc = []
 # Dedicated hardware power button + System OFF teardown / GPIO-DETECT wake
-# (SenseCAP Solar PWR button on P1.07).
+# (Solar P1 PWR button on P1.01).
 power-button = []
 boot-pairing-window = []
 # Diagnostic build: skip MPSL/SDC/Trouble entirely (USB-only device).
