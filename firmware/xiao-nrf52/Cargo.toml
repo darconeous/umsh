@@ -22,13 +22,20 @@ repository.workspace = true
 # both upstream firmwares define USE_LFXO), so this board does NOT take
 # `lfclk-rc`.
 default = ["board-xiao-nrf52"]
-board-techo = ["display-epd", "button-nav", "system-off-techo", "led-active-low", "cap-battery-saadc"]
-board-t1000e = ["t1000e", "cap-battery-saadc"]
+board-techo = ["display-epd", "button-nav", "system-off-techo", "led-active-low", "cap-battery-saadc", "cap-gnss"]
+board-t1000e = ["t1000e", "cap-battery-saadc", "cap-gnss", "gnss-holds-the-clock"]
 board-sensecap-solar = ["cap-battery-saadc", "power-button"]
 board-wio-tracker-l1 = ["display-oled", "button-nav", "system-off-wio", "cap-battery-saadc", "cap-buzzer"]
 board-xiao-nrf52 = ["cap-battery-saadc", "led-active-low", "boot-pairing-window"]
 t1000e = []
 cap-battery-saadc = []
+# A GNSS receiver is fitted. Advertises `CAP_GNSS` and spawns the pump;
+# the receiver stays powered down until `PROP_GNSS_ENABLED` says
+# otherwise.
+cap-gnss = []
+# The GNSS receiver's own backup domain is this board's only real-time
+# clock, so the boot path reads the time back out of the receiver.
+gnss-holds-the-clock = []
 cap-buzzer = []
 has-display = []
 display-epd = ["has-display"]

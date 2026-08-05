@@ -6,12 +6,14 @@
 
 pub mod capture;
 pub mod duty;
+pub mod gnss;
 pub mod info;
 pub mod lifecycle;
 pub mod phy;
 pub mod provision;
 pub mod repeater;
 pub mod tables;
+pub mod time;
 pub mod values;
 
 use anyhow::{Result, bail};
@@ -89,6 +91,18 @@ pub enum Command {
     Repeater {
         #[command(subcommand)]
         op: Option<repeater::RepeaterOp>,
+    },
+
+    /// Show or set the device's wall clock and time zone.
+    Time {
+        #[command(subcommand)]
+        op: Option<time::TimeOp>,
+    },
+
+    /// Show or set the GNSS receiver and what is done with its fixes.
+    Gnss {
+        #[command(subcommand)]
+        op: Option<gnss::GnssOp>,
     },
 
     /// Device-identity channel keys: the multicast this device's own
@@ -190,6 +204,8 @@ impl Command {
             Self::Phy { op } => phy::run(app, op).await,
             Self::Duty { op } => duty::run(app, op).await,
             Self::Repeater { op } => repeater::run(app, op).await,
+            Self::Time { op } => time::run(app, op).await,
+            Self::Gnss { op } => gnss::run(app, op).await,
             Self::DevChannel { op } => {
                 tables::run(app, prop::DEV_CHANNEL_KEYS, "channel", op).await
             }

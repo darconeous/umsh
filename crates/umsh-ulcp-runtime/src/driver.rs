@@ -173,6 +173,44 @@ pub struct DevDomainSnapshot {
     /// `PROP_DEV_DISCOVERABLE`: whether the device identity answers
     /// Identity Requests.
     pub discoverable: bool,
+    /// `PROP_TZ_OFFSET`: minutes east of UTC, for whatever renders a
+    /// local time.
+    pub tz_offset_min: i16,
+    /// `PROP_GNSS_ENABLED`: whether the receiver should be powered.
+    /// Always false on a board without `CAP_GNSS`.
+    ///
+    /// Carried here rather than as an effect of its own so that a host
+    /// write, a boot restore, and a `CMD_RST` all reach the receiver by
+    /// the same path — the mirror is published whenever the device domain
+    /// moves, which is exactly the set of moments this can change.
+    pub gnss_enabled: bool,
+    /// `PROP_GNSS_IDENT_UPDATE`: whether fixes refresh the advertised
+    /// node identity's location.
+    pub gnss_ident_update: bool,
+    /// `PROP_GNSS_IDENT_PRECISION`: how far the advertised location is
+    /// clamped down from the fix.
+    pub gnss_ident_precision: u8,
+    /// `PROP_GNSS_TIME_TRUST`: whether receiver-derived time may set the
+    /// wall clock.
+    pub gnss_time_trust: bool,
+}
+
+/// A device-initiated property publication, yielded by
+/// [`DeviceEnv::publish_event`].
+///
+/// The driver has exactly one select arm for everything the board pushes
+/// unasked, because a hook per property would need one `&mut self` borrow
+/// per arm and no two of those can coexist. One arm, one enum, and the
+/// board decides internally which of its sources woke it.
+pub enum PublishEvent {
+    /// An unsolicited `PROP_BATTERY`.
+    Battery(umsh_ulcp::battery::BatteryStatus),
+    /// An unsolicited `PROP_TIME`; `None` is a clock that has gone back
+    /// to not knowing what time it is.
+    Time(Option<u32>),
+    /// An unsolicited positioning property, named by its key, encoded
+    /// from the accompanying snapshot.
+    Gnss(u32, umsh_ulcp::gnss::GnssSnapshot),
 }
 
 /// Board couplings of the session driver. Everything the loop needs from
@@ -244,6 +282,48 @@ pub trait DeviceEnv {
     /// nothing to the select.
     async fn battery_event(&mut self) -> umsh_ulcp::battery::BatteryStatus {
         core::future::pending().await
+    }
+    /// Wait for anything the board wants to publish unasked, across every
+    /// property it pushes.
+    ///
+    /// This is the driver's single select arm for device-initiated
+    /// publication. The default delegates to
+    /// [`battery_event`](Self::battery_event), so a board that pushes only
+    /// battery measurements implements that and nothing else. A board that
+    /// also pushes time or position overrides this instead and selects
+    /// over its own sources — which it can do without fighting the
+    /// borrow checker, since those are its own fields rather than three
+    /// `&mut self` calls.
+    ///
+    /// Cancellation-safe on the same terms as
+    /// [`battery_event`](Self::battery_event).
+    async fn publish_event(&mut self) -> PublishEvent {
+        PublishEvent::Battery(self.battery_event().await)
+    }
+    /// Read the platform wall clock (`Effect::ReadTime`): Unix seconds,
+    /// or `None` when the device does not know what time it is.
+    ///
+    /// Not knowing is the honest answer for a board that has never had a
+    /// fix and was never told, and it is what stops a display from
+    /// showing a clock. The default is exactly that, so a board without
+    /// `CAP_TIME` never has to implement it.
+    async fn read_time(&mut self) -> Option<u32> {
+        None
+    }
+    /// Apply a `PROP_TIME` write (`Effect::ApplyTime`): set the wall
+    /// clock, or return it to not knowing.
+    ///
+    /// A manual set outranks every receiver-derived one, so this applies
+    /// regardless of `PROP_GNSS_TIME_TRUST`.
+    async fn apply_time(&mut self, epoch: Option<u32>) {
+        let _ = epoch;
+    }
+    /// Sample the receiver's current view of position and constellation
+    /// (`Effect::SampleGnss`). Only emitted on a board whose
+    /// `SessionConfig::gnss` advertises the capability, so the default
+    /// refuses.
+    async fn sample_gnss(&mut self) -> Result<umsh_ulcp::gnss::GnssSnapshot, ()> {
+        Err(())
     }
     /// Build and sign the device identity's node-identity blob into
     /// `out` (`Effect::SignIdentity`), returning its length.
@@ -465,11 +545,16 @@ async fn apply_effect<A, S, const TXQ: usize, M, const RX: usize, const TX: usiz
         Some(Effect::ApplyAlert(state)) => {
             env.set_alert(state);
         }
+        Some(Effect::ApplyTime { epoch }) => {
+            env.apply_time(epoch).await;
+        }
         // Deferred effects needing `&mut Session` + the emitter are
         // handled inline in the run loop rather than here.
         Some(Effect::SampleRssi { .. })
         | Some(Effect::SignIdentity { .. })
         | Some(Effect::SampleBattery { .. })
+        | Some(Effect::ReadTime { .. })
+        | Some(Effect::SampleGnss { .. })
         | Some(Effect::SetPairingPin { .. })
         | Some(Effect::DrainQueue)
         | Some(Effect::SaveSnapshot { .. })
@@ -548,6 +633,11 @@ fn sync_dev_domain<A, S, const TXQ: usize, E>(
         ident_role: session.ident_role(),
         ident_mobile: session.ident_mobile(),
         discoverable: session.dev_discoverable(),
+        tz_offset_min: session.tz_offset_min(),
+        gnss_enabled: session.gnss_enabled(),
+        gnss_ident_update: session.gnss_ident_update(),
+        gnss_ident_precision: session.gnss_ident_precision(),
+        gnss_time_trust: session.gnss_time_trust(),
     };
     for key in session.dev_channel_keys() {
         let _ = snapshot.channel_keys.push(key);
@@ -641,10 +731,6 @@ where
                     env.trace(format_args!("proto-store boot-restore=ok"));
                 }
                 apply_effect(&session, Some(effect), &rt, &mut env).await;
-                // Replay the restored device-domain tables into the
-                // device node before any host interaction: detached
-                // multicast processing must not wait for an attach.
-                sync_dev_domain(&session, &mut dev_domain_synced, &mut env);
             }
             Err(_) => {
                 env.trace(format_args!("proto-store boot-restore=BARE"));
@@ -652,6 +738,18 @@ where
             }
         }
     }
+
+    // Publish the device domain once before any host interaction, on every
+    // boot path rather than only after a successful restore.
+    //
+    // Two things depend on it. Detached multicast processing needs the
+    // restored tables without waiting for an attach — the original reason.
+    // And anything that waits for the domain to be published before acting
+    // needs that publication to happen on a device that has never been
+    // configured, where the answer is "the post-reset defaults" rather than
+    // silence: the boot-time GNSS clock read waits on exactly this, and on
+    // a bare device it would otherwise wait for a host that may never come.
+    sync_dev_domain(&session, &mut dev_domain_synced, &mut env);
 
     loop {
         // Resolve the next event in its own statement so the select's
@@ -674,7 +772,7 @@ where
             // advertises CAP_ALERT, including ones whose UX layer has no
             // timer of its own. Idle (never completes) while no alert is
             // running. It borrows `session` immutably, alongside
-            // `tx_done` — only `battery_event` touches `env`.
+            // `tx_done` — only `publish_event` touches `env`.
             let alert_deadline = async {
                 match session.alert_deadline_ms() {
                     Some(deadline) => Timer::at(Instant::from_millis(deadline)).await,
@@ -685,7 +783,7 @@ where
                 rt.input.receive(),
                 rt.radio.rx.receive(),
                 tx_done,
-                select(env.battery_event(), alert_deadline),
+                select(env.publish_event(), alert_deadline),
             )
             .await
         };
@@ -766,6 +864,19 @@ where
                             // answer the deferred PROP_BATTERY get.
                             let sample = env.sample_battery().await;
                             session.respond_battery(tid, sample, &mut |frame: &[u8]| {
+                                emitter.push(frame)
+                            });
+                            emitter.flush(arbitration.destination(), rt.out).await;
+                        }
+                        Some(Effect::ReadTime { tid }) => {
+                            let epoch = env.read_time().await;
+                            session
+                                .respond_time(tid, epoch, &mut |frame: &[u8]| emitter.push(frame));
+                            emitter.flush(arbitration.destination(), rt.out).await;
+                        }
+                        Some(Effect::SampleGnss { tid, key }) => {
+                            let sample = env.sample_gnss().await;
+                            session.respond_gnss(tid, key, sample, &mut |frame: &[u8]| {
                                 emitter.push(frame)
                             });
                             emitter.flush(arbitration.destination(), rt.out).await;
@@ -927,12 +1038,23 @@ where
                 emitter.flush(arbitration.destination(), rt.out).await;
                 apply_effect(&session, effect, &rt, &mut env).await;
             }
-            Either4::Fourth(Either::First(sample)) => {
-                // The board decided this measurement is worth
-                // announcing; publish it as an unsolicited PROP_BATTERY.
-                // Dropped silently while no host is attached, and no
-                // effect can result — a publication is not an operation.
-                session.publish_battery(sample, &mut |frame: &[u8]| emitter.push(frame));
+            Either4::Fourth(Either::First(event)) => {
+                // The board decided this is worth announcing; publish it
+                // unsolicited. Dropped silently while no host is
+                // attached, and no effect can result — a publication is
+                // not an operation.
+                let emit = &mut |frame: &[u8]| emitter.push(frame);
+                match event {
+                    PublishEvent::Battery(sample) => {
+                        session.publish_battery(sample, emit);
+                    }
+                    PublishEvent::Time(epoch) => {
+                        session.publish_time(epoch, emit);
+                    }
+                    PublishEvent::Gnss(key, snapshot) => {
+                        session.publish_gnss(key, &snapshot, emit);
+                    }
+                }
                 emitter.flush(arbitration.destination(), rt.out).await;
             }
             Either4::Fourth(Either::Second(())) => {

@@ -114,6 +114,47 @@ impl NodeLocation {
         Self::from_lat_lon(lon as f32, lat as f32, precision)
     }
 
+    /// Encode a `(longitude, latitude)` position given in units of 1e-7
+    /// degrees, exactly and without floating point.
+    ///
+    /// This is the constructor to use for a position that arrived as
+    /// decimal digits — a GNSS receiver's `ddmm.mmmm` fields, most of
+    /// all. [`from_lat_lon`](Self::from_lat_lon) has to round the value
+    /// into a binary float first, which at 6–7 byte precision can land it
+    /// in the neighbouring cell; this cannot, at any precision, with or
+    /// without the `f64` feature.
+    ///
+    /// `precision` is clamped to [`MAX_PRECISION`]; coordinates are
+    /// clamped to their valid ranges.
+    pub fn from_e7(lon_e7: i32, lat_e7: i32, precision: u8) -> Self {
+        const LON_SPAN_E7: i64 = 3_600_000_000;
+        const LAT_SPAN_E7: i64 = 1_800_000_000;
+
+        let precision = precision.min(MAX_PRECISION);
+        if precision == 0 {
+            return Self::UNSPECIFIED;
+        }
+        let lon = i64::from(lon_e7).clamp(-LON_SPAN_E7 / 2, LON_SPAN_E7 / 2);
+        let lat = i64::from(lat_e7).clamp(-LAT_SPAN_E7 / 2, LAT_SPAN_E7 / 2);
+        // 16^7 × 3.6e9 is ~2.6e17, comfortably inside i64.
+        let cells = 1i64 << (4 * precision as u32);
+        let max_index = (cells - 1) as u32;
+        let lon_idx = (((lon + LON_SPAN_E7 / 2) * cells) / LON_SPAN_E7).min(i64::from(max_index));
+        let lat_idx = (((lat + LAT_SPAN_E7 / 2) * cells) / LAT_SPAN_E7).min(i64::from(max_index));
+
+        let mut bytes = [0u8; MAX_PRECISION as usize];
+        for k in 0..precision as usize {
+            let shift = 4 * (precision as usize - 1 - k);
+            let hi = ((lon_idx >> shift) & 0xF) as u8;
+            let lo = ((lat_idx >> shift) & 0xF) as u8;
+            bytes[k] = (hi << 4) | lo;
+        }
+        Self {
+            len: precision,
+            bytes,
+        }
+    }
+
     /// The raw encoded bytes.
     pub fn as_bytes(&self) -> &[u8] {
         &self.bytes[..self.len as usize]
@@ -139,10 +180,17 @@ impl NodeLocation {
     /// Because the encoding is strictly hierarchical, the truncated value is the
     /// correct encoding of the same position at the lower precision.
     pub fn clamped(&self, precision: u8) -> Self {
-        Self {
-            len: self.len.min(precision.min(MAX_PRECISION)),
-            bytes: self.bytes,
-        }
+        let len = self.len.min(precision.min(MAX_PRECISION));
+        // Bytes past `len` are cleared, not merely ignored. Every
+        // constructor maintains that invariant, and the derived
+        // `PartialEq`/`Hash` compare the whole array — so a `clamped`
+        // value that kept its dropped tail would fail to equal the
+        // identical encoding built any other way, and callers that
+        // compare cells to decide whether a position has moved would see
+        // a change that did not happen.
+        let mut bytes = [0u8; MAX_PRECISION as usize];
+        bytes[..len as usize].copy_from_slice(&self.bytes[..len as usize]);
+        Self { len, bytes }
     }
 
     /// The grid cell as `((lon_min, lat_min), (lon_max, lat_max))`, in degrees.
@@ -331,6 +379,101 @@ mod tests {
         // (LON, LAT) = (−121.883°, 37.331°) → 2B 95 51 per spec worked example.
         let loc = NodeLocation::from_lat_lon(-121.883, 37.331, 3);
         assert_eq!(loc.as_bytes(), &[0x2B, 0x95, 0x51]);
+    }
+
+    // --- from_e7 ---
+
+    #[test]
+    fn from_e7_matches_the_spec_worked_example() {
+        // The same San Jose point, from integer degrees.
+        let loc = NodeLocation::from_e7(-1_218_830_000, 373_310_000, 3);
+        assert_eq!(loc.as_bytes(), &[0x2B, 0x95, 0x51]);
+    }
+
+    /// The integer path agrees with the float one wherever the float one
+    /// is trustworthy — precisions 1 through 5, which is exactly the
+    /// range `from_lat_lon` documents as reliable under `f32`.
+    #[test]
+    fn from_e7_agrees_with_the_float_path_where_that_path_is_sound() {
+        let places = [
+            (-1_218_830_000i32, 373_310_000i32),
+            (134_050_000, 525_200_000),
+            (0, 0),
+            (1_746_000_000, -410_000_000),
+            (-700_000_000, -330_000_000),
+        ];
+        for (lon_e7, lat_e7) in places {
+            for precision in 1..=5u8 {
+                let integer = NodeLocation::from_e7(lon_e7, lat_e7, precision);
+                let float =
+                    NodeLocation::from_lat_lon(lon_e7 as f32 / 1e7, lat_e7 as f32 / 1e7, precision);
+                assert_eq!(
+                    integer.as_bytes(),
+                    float.as_bytes(),
+                    "disagreement at ({lon_e7}, {lat_e7}) precision {precision}"
+                );
+            }
+        }
+    }
+
+    /// The truncation property has to survive the integer path too: a
+    /// shorter encoding of a point is the prefix of a longer one.
+    #[test]
+    fn from_e7_is_prefix_truncation_safe_at_every_precision() {
+        let (lon_e7, lat_e7) = (-1_218_830_123, 373_310_456);
+        let full = NodeLocation::from_e7(lon_e7, lat_e7, MAX_PRECISION);
+        for precision in 1..=MAX_PRECISION {
+            let short = NodeLocation::from_e7(lon_e7, lat_e7, precision);
+            assert_eq!(
+                short.as_bytes(),
+                &full.as_bytes()[..precision as usize],
+                "precision {precision} is not a prefix of the full encoding"
+            );
+            assert_eq!(short, full.clamped(precision));
+        }
+    }
+
+    /// Two locations naming the same cell at the same precision must
+    /// compare equal however each was built. They did not: `clamped` kept
+    /// the bytes it had dropped, and equality compares the whole array.
+    #[test]
+    fn a_clamped_location_equals_the_same_cell_built_directly() {
+        let full = NodeLocation::from_e7(-1_218_830_123, 373_310_456, MAX_PRECISION);
+        for precision in 0..=MAX_PRECISION {
+            let clamped = full.clamped(precision);
+            let direct = NodeLocation::from_bytes(&full.as_bytes()[..precision as usize]);
+            assert_eq!(clamped, direct, "at precision {precision}");
+        }
+    }
+
+    #[test]
+    fn from_e7_clamps_rather_than_wrapping_at_the_extremes() {
+        // The poles and the antimeridian land in the last cell, not the
+        // first: an index one past the end would read as the far side of
+        // the world.
+        let corner = NodeLocation::from_e7(1_800_000_000, 900_000_000, 2);
+        assert_eq!(corner.as_bytes(), &[0xFF, 0xFF]);
+        let opposite = NodeLocation::from_e7(-1_800_000_000, -900_000_000, 2);
+        assert_eq!(opposite.as_bytes(), &[0x00, 0x00]);
+        // Out-of-range inputs clamp to the same cells rather than wrap.
+        assert_eq!(
+            NodeLocation::from_e7(i32::MAX, i32::MAX, 2).as_bytes(),
+            corner.as_bytes()
+        );
+        assert_eq!(
+            NodeLocation::from_e7(i32::MIN, i32::MIN, 2).as_bytes(),
+            opposite.as_bytes()
+        );
+    }
+
+    #[test]
+    fn from_e7_at_zero_precision_is_unspecified() {
+        assert!(NodeLocation::from_e7(134_050_000, 525_200_000, 0).is_unspecified());
+        // And past the maximum it clamps rather than overflowing.
+        assert_eq!(
+            NodeLocation::from_e7(134_050_000, 525_200_000, 20).len(),
+            MAX_PRECISION as usize
+        );
     }
 
     #[test]

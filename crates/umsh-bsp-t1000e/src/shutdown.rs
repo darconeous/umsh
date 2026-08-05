@@ -12,8 +12,8 @@ use embassy_nrf::gpio::Input;
 use embassy_nrf::pwm::{DutyCycle, SimplePwm};
 use embassy_time::{Duration, Instant, Timer};
 use umsh_bsp_nrf52840::system_off::{
-    Port, WakePin, WakePull, WakeSense, configure_wake_input, connect_input, drive_pin_low,
-    enter_system_off as system_off, read_pin, tristate_pin,
+    Port, WakePin, WakePull, WakeSense, configure_wake_input, connect_input, drive_pin_high,
+    drive_pin_low, enter_system_off as system_off, read_pin, tristate_pin,
 };
 use umsh_ux_tracker::buzzer::melodies as buzzer_melodies;
 
@@ -134,6 +134,9 @@ async fn enter_system_off() -> ! {
     // wake source because hardware validation showed it can remain asserted
     // after the magnetic cable is removed.
     // P1.10 (LR1110 RESET) is left driving LOW intentionally.
+    //
+    // The AG3335 GNSS is handled just below, and is the one peripheral here
+    // that is deliberately not fully powered down.
     tristate_pin(Port::P0, 24); // LED
     tristate_pin(Port::P0, 25); // Buzzer PWM
     tristate_pin(Port::P1, 5); // Buzzer enable
@@ -147,6 +150,38 @@ async fn enter_system_off() -> ! {
     tristate_pin(Port::P1, 9); // SPI MOSI
     tristate_pin(Port::P0, 5); // External-power detect (status hint only)
     tristate_pin(Port::P1, 3); // Charge-active status
+
+    // The AG3335 GNSS. Its pins were never parked here before, which left
+    // the receiver's state across System OFF up to whatever the last task
+    // to touch them happened to leave behind — including, for a firmware
+    // that never drove them at all, the reset configuration.
+    //
+    // This is upstream's "sleep" teardown rather than its "stop" one: the
+    // receiver proper is shut down while the backup domain below stays up.
+    // Reset and the stop line are both *asserted*, which for these two
+    // means high and low respectively — the polarities are the module's,
+    // not a convention. The UART line into the module is driven low
+    // because a pin idling high against a powered-down input back-powers
+    // it through the protection diodes; the module's own output is
+    // released rather than driven, since this chip never drives it.
+    drive_pin_low(Port::P1, 11); // GPS_EN, main domain off
+    drive_pin_high(Port::P1, 15); // GPS_RESET, active high → asserted
+    drive_pin_high(Port::P1, 12); // GPS_SLEEP_INT
+    drive_pin_low(Port::P0, 15); // GPS_RTC_INT, no wake requested
+    drive_pin_low(Port::P1, 14); // GPS_RESETB, driven low to stop
+    drive_pin_low(Port::P0, 13); // MCU TX → module
+    tristate_pin(Port::P0, 14); // module TX → MCU
+
+    // The one exception, and the reason for it: P0.08 gates the AG3335's
+    // backup domain, which is the only real-time clock this board has.
+    // Driven levels are retained through System OFF, so holding it high
+    // here is what lets the device still know what time it is when the
+    // button wakes it. The domain draws microamps; the alternative is a
+    // device that boots with no idea when it is.
+    //
+    // Driven explicitly rather than left to whatever `Gnss` did, because
+    // the shutdown path also runs on boots where no `Gnss` was ever built.
+    drive_pin_high(Port::P0, 8); // GPS_VRTC_EN
 
     // Button is active-high with pull-down → wake on rising edge.
     configure_wake_input(

@@ -231,6 +231,10 @@ fn session_config() -> SessionConfig {
         // while the alert runs — neither is worth the wiring for a bench
         // board that never leaves a desk.
         alert: None,
+        // No clock and no receiver. A permanently-wired bench board reads
+        // the time from the host it is wired to.
+        time: None,
+        gnss: None,
     }
 }
 
@@ -1686,6 +1690,9 @@ fn ui_status(name: &DeviceName) -> screen::StatusModel<'_> {
             screen::PairingState::Closed
         },
         stats: ui_stats(),
+        // This board advertises no `CAP_TIME`, so it never knows what
+        // time it is and must not indicate one.
+        clock: None,
     }
 }
 

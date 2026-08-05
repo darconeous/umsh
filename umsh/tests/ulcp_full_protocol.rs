@@ -72,6 +72,11 @@ fn session_config() -> SessionConfig {
         // A simulated device has nothing to flash or beep with, so it
         // does not advertise CAP_ALERT.
         alert: None,
+        // It does keep a clock and a synthetic receiver, so the host
+        // wrappers for both are exercised against the real session
+        // rather than only against a firmware nobody can run in CI.
+        time: Some(umsh_ulcp_device::TimeConfig),
+        gnss: Some(umsh_ulcp_device::GnssConfig),
     }
 }
 
@@ -91,6 +96,8 @@ struct SimDevice {
     /// Deterministic stand-in for the hardware TRNG.
     identity_seed: u8,
     now_ms: u64,
+    /// The simulated wall clock, unset until something sets it.
+    epoch: Option<u32>,
     /// Per-command capture, both directions.
     log: Vec<String>,
 }
@@ -105,8 +112,25 @@ impl SimDevice {
             identity: None,
             identity_seed: 0,
             now_ms: 0,
+            epoch: None,
             log: Vec::new(),
         }))
+    }
+
+    /// The synthetic receiver's view: a three-dimensional fix while the
+    /// receiver is enabled, and the searching state while it is not.
+    fn gnss_sample(&self) -> umsh_ulcp::gnss::GnssSnapshot {
+        if !self.session.gnss_enabled() {
+            return umsh_ulcp::gnss::GnssSnapshot::SEARCHING;
+        }
+        let mut snapshot = umsh_ulcp::gnss::GnssSnapshot::SEARCHING;
+        snapshot.fix = umsh_ulcp::gnss::FixKind::ThreeD;
+        snapshot.altitude_m = Some(31);
+        snapshot.accuracy_dm = Some(60);
+        snapshot.sats_used = 9;
+        snapshot.sats_in_view = Some(13);
+        snapshot.set_location(&[0x8a, 0x1f, 0x4c, 0x00, 0xd3]);
+        snapshot
     }
 
     /// Execute one session effect the way the firmware's effect arms
@@ -144,6 +168,14 @@ impl SimDevice {
             }
             Some(Effect::SetPairingPin { tid, .. }) => {
                 self.session.respond_pin_set(tid, Ok(()), &mut emit);
+            }
+            Some(Effect::ReadTime { tid }) => {
+                self.session.respond_time(tid, self.epoch, &mut emit);
+            }
+            Some(Effect::ApplyTime { epoch }) => self.epoch = epoch,
+            Some(Effect::SampleGnss { tid, key }) => {
+                let sample = self.gnss_sample();
+                self.session.respond_gnss(tid, key, Ok(sample), &mut emit);
             }
             Some(Effect::DrainQueue) => while self.session.drain_step(self.now_ms, &mut emit) {},
             Some(Effect::SaveSnapshot { tid }) => {
@@ -665,4 +697,78 @@ async fn battery_status_samples_through_the_typed_accessor() {
         status.charge_state,
         Some(umsh::ulcp_wire::battery::BatteryChargeState::Charging)
     );
+}
+
+/// The clock a device does not have is reported as not having one, which
+/// is the state a device with a screen must show nothing for.
+#[tokio::test]
+async fn the_wall_clock_starts_unset_and_survives_a_round_trip() {
+    let sim = SimDevice::new();
+    let mut radio = attached_host(&sim).await;
+
+    let time = radio
+        .time()
+        .await
+        .unwrap()
+        .expect("simulator advertises CAP_TIME");
+    assert_eq!(time.epoch, None, "a device starts not knowing the time");
+    assert_eq!(time.tz_offset_min, 0);
+
+    assert_eq!(
+        radio.set_time(Some(1_780_000_000)).await.unwrap(),
+        Some(1_780_000_000)
+    );
+    assert_eq!(radio.set_tz_offset(-480).await.unwrap(), -480);
+    let time = radio.time().await.unwrap().unwrap();
+    assert_eq!(time.epoch, Some(1_780_000_000));
+    assert_eq!(time.tz_offset_min, -480);
+
+    // Clearing is a legitimate operation, not an error: it returns the
+    // device to not knowing.
+    assert_eq!(radio.set_time(None).await.unwrap(), None);
+    assert_eq!(radio.time().await.unwrap().unwrap().epoch, None);
+    // The zone is configuration and is unaffected by the clock.
+    assert_eq!(radio.time().await.unwrap().unwrap().tz_offset_min, -480);
+}
+
+/// Every positioning property folds back into one snapshot, and a
+/// receiver that is off reports being off rather than failing.
+#[tokio::test]
+async fn positioning_reports_the_receiver_state_and_the_fix() {
+    let sim = SimDevice::new();
+    let mut radio = attached_host(&sim).await;
+
+    let status = radio
+        .gnss_status()
+        .await
+        .unwrap()
+        .expect("simulator advertises CAP_GNSS");
+    assert!(!status.enabled, "the receiver starts off");
+    assert_eq!(status.fix.fix, umsh::ulcp_wire::gnss::FixKind::None);
+    assert_eq!(status.fix.sats_used, 0);
+    assert_eq!(status.fix.location(), &[] as &[u8]);
+    assert_eq!(status.fix.altitude_m, None);
+    assert_eq!(status.fix.accuracy_dm, None);
+    assert!(status.time_trust, "time trust is on by default");
+    assert!(!status.ident_update);
+    assert_eq!(status.ident_precision, 5);
+
+    assert!(radio.set_gnss_enabled(true).await.unwrap());
+    let status = radio.gnss_status().await.unwrap().unwrap();
+    assert!(status.enabled);
+    assert_eq!(status.fix.fix, umsh::ulcp_wire::gnss::FixKind::ThreeD);
+    assert_eq!(status.fix.location(), &[0x8a, 0x1f, 0x4c, 0x00, 0xd3]);
+    assert_eq!(status.fix.altitude_m, Some(31));
+    assert_eq!(status.fix.accuracy_dm, Some(60));
+    assert_eq!(status.fix.sats_used, 9);
+    assert_eq!(status.fix.sats_in_view, Some(13));
+
+    // The policy is independent of the switch.
+    assert!(radio.set_gnss_ident_update(true).await.unwrap());
+    assert_eq!(radio.set_gnss_ident_precision(3).await.unwrap(), 3);
+    assert!(!radio.set_gnss_time_trust(false).await.unwrap());
+    let status = radio.gnss_status().await.unwrap().unwrap();
+    assert!(status.ident_update);
+    assert_eq!(status.ident_precision, 3);
+    assert!(!status.time_trust);
 }

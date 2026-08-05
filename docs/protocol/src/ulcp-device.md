@@ -54,14 +54,32 @@ Code | Name               | Requires           | Grants
 40   | `CAP_REPEATER`     | `CAP_DEV_IDENTITY` | Autonomous repeater forwarding by the device identity: `PROP_MAC_REPEATER_ENABLED`, `PROP_MAC_REPEATER_REGIONS`, `PROP_MAC_REPEATER_DEFAULT_REGION`, `PROP_MAC_REPEATER_MIN_RSSI`, `PROP_MAC_REPEATER_MIN_SNR`
 41   | `CAP_IDENT`        | `CAP_DEV_IDENTITY` | `PROP_IDENT`, `PROP_IDENT_ROLE`, `PROP_IDENT_MOBILE` — serving and configuring the device identity's advertised node identity
 42   | `CAP_ALERT`        | —                  | Some means of making the device physically conspicuous on demand, and `PROP_ALERT`
+44   | `CAP_TIME`         | —                  | A wall clock: `PROP_TIME`, `PROP_TZ_OFFSET`
+45   | `CAP_GNSS`         | `CAP_TIME`         | A GNSS receiver: `PROP_GNSS_ENABLED`, `PROP_GNSS_LOCATION`, `PROP_GNSS_ALTITUDE`, `PROP_GNSS_FIX`, `PROP_GNSS_PRECISION`, `PROP_GNSS_SATELLITES`, `PROP_GNSS_IDENT_UPDATE`, `PROP_GNSS_IDENT_PRECISION`, `PROP_GNSS_TIME_TRUST`
+
+`CAP_TIME` states that the device keeps a wall clock and nothing else. It
+says nothing about where the time comes from, how accurate it is, or how
+much of a power cycle it survives — a device that has one and does not
+currently know what time it is is a normal state, reported by the empty
+[`PROP_TIME`](ulcp-device.md#prop-time).
+
+`CAP_GNSS` requires `CAP_TIME` because a receiver is, among other things,
+a clock: a device advertising one without the other would be claiming a
+time source for a clock it does not have.
 
 ## Properties
 
 The device domain occupies property identifiers 64–95. Identifiers 70–95
 are the device-behavior range: 70–78 are the repeater policy and
-advertised node identity settings, 79 is the locate alert, and 80–95 are
-reserved for future definition (periodic advertisement in 80–87,
-positioning in 88–95).
+advertised node identity settings, 79 is the locate alert, 80–87 are
+reserved for periodic advertisement, and 88–95 are positioning — 88 the
+receiver switch, 89–93 the fix telemetry, 94–95 reserved.
+
+A single-octet identifier is the scarce resource, so the positioning
+range holds the properties a host reads and the device announces
+continually. The positioning **configuration** — which is written during
+commissioning and rarely again — lives at 4868–4870 in the extended
+device range, alongside the wall clock at 4866–4867.
 
 Id | Mnemonic                    | Commands                 | Description
 ---|-----------------------------|--------------------------|-------------
@@ -81,6 +99,17 @@ Id | Mnemonic                    | Commands                 | Description
 77 | `PROP_MAC_REPEATER_MIN_SNR` | Get, Set                 | Minimum received SNR for flood forwarding
 78 | `PROP_DEV_DISCOVERABLE`     | Get, Set                 | Whether the device identity answers Identity Requests
 79 | `PROP_ALERT`                | Get, Set, Is             | Locate alert state
+88 | `PROP_GNSS_ENABLED`         | Get, Set                 | Whether the GNSS receiver is powered
+89 | `PROP_GNSS_LOCATION`        | Get, Is                  | Position of the last fix
+90 | `PROP_GNSS_ALTITUDE`        | Get                      | Altitude of the last fix
+91 | `PROP_GNSS_FIX`             | Get, Is                  | Fix quality
+92 | `PROP_GNSS_PRECISION`       | Get                      | Estimated horizontal accuracy of the last fix
+93 | `PROP_GNSS_SATELLITES`      | Get                      | Satellites used, and optionally in view
+4866 | `PROP_TIME`               | Get, Set, Is             | Wall clock, or empty when unknown
+4867 | `PROP_TZ_OFFSET`          | Get, Set                 | Local time-zone offset from UTC
+4868 | `PROP_GNSS_IDENT_UPDATE`  | Get, Set                 | Whether fixes update the advertised node identity
+4869 | `PROP_GNSS_IDENT_PRECISION` | Get, Set               | Precision the advertised location is clamped to
+4870 | `PROP_GNSS_TIME_TRUST`    | Get, Set                 | Whether receiver-derived time may set the clock
 
 The RF configuration is also device-domain state, but is specified in
 [Radio Control](ulcp-radio.md); so is the transport configuration in
@@ -607,6 +636,291 @@ A device returns to `ALERT_NONE` three ways:
    in `ALERT_LOCATE`; a few minutes is **RECOMMENDED**. Writing
    `ALERT_LOCATE` while it is already in effect succeeds and restarts the
    deadline, which is how a host holds an alert open for a longer search.
+
+### PROP 88: `PROP_GNSS_ENABLED` {#prop-gnss-enabled}
+
+* Type: Single-Value, Read-Write
+* Asynchronous Updates: No
+* Required: `CAP_GNSS`
+* Value Type: BOOL
+* Post-Reset Value: 0 (false), or restored from saved state
+
+Whether the GNSS receiver is powered.
+
+False means the lowest power state the board can put the receiver in, not
+merely an idle one: on a battery-powered node the receiver is typically
+the largest continuous load there is, and a property that only stopped
+*reporting* would be a property that solved nothing. The default is off,
+because a device that has never been told to care where it is should not
+be spending a battery finding out.
+
+Disabling the receiver does not clear the wall clock. Time already
+obtained stays as good as the device's oscillator keeps it, which is the
+whole point of having acquired it.
+
+One exception is permitted, and only for boards where the receiver's own
+real-time-clock domain is the *only* clock the board has: that domain
+**MAY** remain powered while this property is false, and the device
+**MAY** briefly power the receiver at boot to read the time back out of
+it. That is a clock operation, not a positioning one — position data
+observed during it is discarded, and it is governed by
+[`PROP_GNSS_TIME_TRUST`](ulcp-device.md#prop-gnss-time-trust) rather than
+by this property.
+
+### PROP 89: `PROP_GNSS_LOCATION` {#prop-gnss-location}
+
+* Type: Single-Value, Read-Only
+* Asynchronous Updates: Yes
+* Required: `CAP_GNSS`
+* Value Type: 0–7 octets
+* Post-Reset Value: Empty
+
+The position of the most recent fix, in the [variable-precision
+location](node-identity.md#variable-precision-location-format) encoding — the same nibble-interleaved
+grid code node identities carry, so a host never has to convert between
+two position formats.
+
+An **empty** value means no fix has been obtained since the receiver was
+last powered. The device reports the position it actually has rather than
+the last one it remembers across a power cycle: a position that was true
+somewhere else is worse than no position at all.
+
+The length is the device's own honest precision for that fix and **MAY**
+vary between reads. A host **MUST NOT** read more precision into a value
+than its length carries; the encoding's truncation property means a
+shorter value is a correct lower-precision statement of the same
+position, never a different one.
+
+Read-only in this revision. A manually-placed fixed node is a real use,
+but writing a position requires a rule for which source wins when the
+receiver also has one, and this revision does not define that rule.
+
+### PROP 90: `PROP_GNSS_ALTITUDE` {#prop-gnss-altitude}
+
+* Type: Single-Value, Read-Only
+* Asynchronous Updates: No
+* Required: `CAP_GNSS`
+* Value Type: `INT32_LE`, or empty
+* Post-Reset Value: Empty
+
+Altitude of the most recent fix, in meters, in the same units and
+reference as the node identity's altitude option, so the two are directly
+interchangeable.
+
+Empty when there is no three-dimensional fix — including while the
+receiver holds a two-dimensional one, which has a position but no
+altitude. Read-only for the same reason as
+[`PROP_GNSS_LOCATION`](ulcp-device.md#prop-gnss-location).
+
+### PROP 91: `PROP_GNSS_FIX` {#prop-gnss-fix}
+
+* Type: Single-Value, Read-Only
+* Asynchronous Updates: Yes
+* Required: `CAP_GNSS`
+* Value Type: `UINT8`
+* Post-Reset Value: 0
+
+The quality of the current position solution.
+
+Value | Meaning
+------|---------
+0     | No fix
+1     | Two-dimensional fix — position without altitude
+2     | Three-dimensional fix
+
+Unlike the three properties that describe a position, this one is never
+empty: a device that is not fixed **knows** it is not fixed, so it reports
+0. A receiver that is switched off reports 0 for the same reason. This is
+the distinction the whole positioning surface rests on — zero for the
+facts the device is sure of, empty for the position it does not have.
+
+### PROP 92: `PROP_GNSS_PRECISION` {#prop-gnss-precision}
+
+* Type: Single-Value, Read-Only
+* Asynchronous Updates: No
+* Required: `CAP_GNSS`
+* Value Type: `UINT16_LE`, or empty
+* Post-Reset Value: Empty
+
+Estimated horizontal accuracy of the current fix, in decimeters. Empty
+when there is no fix.
+
+An **estimate**, not a measured error bound. Receivers generally report a
+dilution of precision, which becomes a distance only after multiplying by
+an assumed range error; a device that has a real accuracy figure
+**SHOULD** report that instead. Hosts **MUST** treat the value as
+indicative and **MUST NOT** present it as a guarantee.
+
+Deliberately distinct from the length of
+[`PROP_GNSS_LOCATION`](ulcp-device.md#prop-gnss-location): that is how
+precisely the device is *willing to say* where it is, and this is how
+precisely it *knows*. The two move independently.
+
+### PROP 93: `PROP_GNSS_SATELLITES` {#prop-gnss-satellites}
+
+* Type: Single-Value, Read-Only
+* Asynchronous Updates: No
+* Required: `CAP_GNSS`
+* Value Type: `UINT8`, optionally followed by a second `UINT8`
+* Post-Reset Value: 0
+
+The number of satellites contributing to the current solution, optionally
+followed by the number the receiver can see at all.
+
+A device that cannot distinguish the two reports only the first octet. As
+with [`PROP_GNSS_FIX`](ulcp-device.md#prop-gnss-fix), a receiver that is
+off or searching reports 0 rather than the empty value.
+
+Chiefly a diagnostic: it is what distinguishes an antenna fault from a
+sky that is simply obstructed, which is otherwise invisible to anyone not
+holding the device.
+
+### PROP 4866: `PROP_TIME` {#prop-time}
+
+* Type: Single-Value, Read-Write
+* Asynchronous Updates: Yes
+* Required: `CAP_TIME`
+* Value Type: `UINT32_LE`, or empty
+* Post-Reset Value: Unchanged
+
+The device's wall clock, as seconds since the Unix epoch, UTC.
+
+The count is **unsigned**, which puts the end of the representable range
+at 2106-02-07T06:28:15Z rather than at the 2038 rollover of the signed
+encoding. Nothing in this revision needs to handle a wrap.
+
+An **empty** value means the device does not know what time it is. This
+is a normal state, not a fault: a device with no receiver, no
+battery-backed clock, and no host to ask has genuinely never been told.
+A device **MUST** report the empty value rather than an invented one, a
+zero, or a build timestamp.
+
+**A device that does not know the time MUST NOT display a clock**, or any
+other indication of the current time, on any local user interface. A
+plausible-looking wrong time is worse than a blank space: an operator
+reads a displayed clock as a fact about the device, and a device with a
+screen is exactly the device somebody will trust.
+
+Setting the property sets the clock. Setting the **empty** value returns
+the device to not knowing — the operator's way of saying that whatever
+the device believes is wrong. A host-supplied time outranks every
+receiver-derived one, including while
+[`PROP_GNSS_TIME_TRUST`](ulcp-device.md#prop-gnss-time-trust) is clear:
+the operator is the more authoritative source by definition.
+
+The clock is **not** part of the saved snapshot. An epoch written to
+flash accumulates unbounded error while the device is off, so a clock is
+restored from a real time source — a receiver, a battery-backed
+real-time clock, or a host — or not at all. `CMD_RST` does not clear it;
+only an empty write does.
+
+Devices announce this asynchronously. The transition from not knowing to
+knowing is the one worth announcing; a routine re-synchronization that
+agrees with the current value is not, and a device **SHOULD NOT** publish
+one.
+
+### PROP 4867: `PROP_TZ_OFFSET` {#prop-tz-offset}
+
+* Type: Single-Value, Read-Write
+* Asynchronous Updates: No
+* Required: `CAP_TIME`
+* Value Type: `INT16_LE`
+* Post-Reset Value: 0, or restored from saved state
+
+The local time-zone offset from UTC, in minutes east of UTC. Negative
+values are west.
+
+Unlike [`PROP_TIME`](ulcp-device.md#prop-time) this **always** has a
+value. Where a device is meant to be is configuration and is known from
+the moment it is commissioned; what time it is is a measurement and may
+not be. Separating them is what lets a device render a local time the
+instant it acquires a clock, with no second round trip.
+
+A minute offset rather than an hour one, because several real zones are
+not whole hours. Values outside the range of real civil offsets
+(−720 through +840) are rejected with `STATUS_INVALID_ARGUMENT`: outside
+it, a value is a unit or byte-order mistake, and a device that accepted
+one would display a confidently wrong local time.
+
+Carries an offset and not a zone identifier. Devices do not carry a
+zone database, so daylight-saving transitions are the host's business:
+whatever adjusts the device's clock adjusts its offset.
+
+### PROP 4868: `PROP_GNSS_IDENT_UPDATE` {#prop-gnss-ident-update}
+
+* Type: Single-Value, Read-Write
+* Asynchronous Updates: No
+* Required: `CAP_GNSS`
+* Value Type: BOOL
+* Post-Reset Value: 0 (false), or restored from saved state
+
+Whether position fixes refresh the location the device identity
+advertises in its [node identity](node-identity.md).
+
+Off by default. Broadcasting where you are is a decision, and a device
+that started doing it because a receiver was switched on would be making
+that decision on the operator's behalf.
+
+When on, the device clamps each fix to
+[`PROP_GNSS_IDENT_PRECISION`](ulcp-device.md#prop-gnss-ident-precision)
+before advertising it. A device **SHOULD** re-sign its node identity only
+when the clamped position actually changes or after a substantial
+interval, rather than on every fix: at a coarse precision a stationary
+node's fixes all land in the same cell, and re-advertising each one
+spends airtime to say nothing.
+
+### PROP 4869: `PROP_GNSS_IDENT_PRECISION` {#prop-gnss-ident-precision}
+
+* Type: Single-Value, Read-Write
+* Asynchronous Updates: No
+* Required: `CAP_GNSS`
+* Value Type: `UINT8`
+* Post-Reset Value: 5, or restored from saved state
+
+How many octets of [variable-precision
+location](node-identity.md#variable-precision-location-format) the advertised position is clamped
+to, 1 (coarsest) through 7 (finest).
+
+The default of 5 is a cell of roughly 38 × 19 m at the equator: fine
+enough to place a node on a street, coarse enough not to place it in a
+room. That trade — not the receiver's accuracy — is what this property
+exists to control, which is why it is separate from
+[`PROP_GNSS_PRECISION`](ulcp-device.md#prop-gnss-precision).
+
+0 is rejected with `STATUS_INVALID_ARGUMENT` rather than read as
+"advertise nothing":
+[`PROP_GNSS_IDENT_UPDATE`](ulcp-device.md#prop-gnss-ident-update) is how
+the advertisement is switched off, and a precision that silently meant
+the opposite of a precision would be a trap. Values above 7 are rejected
+for the same reason the encoding stops there.
+
+Writable while auto-update is off, so a whole positioning policy can be
+staged and enabled last.
+
+### PROP 4870: `PROP_GNSS_TIME_TRUST` {#prop-gnss-time-trust}
+
+* Type: Single-Value, Read-Write
+* Asynchronous Updates: No
+* Required: `CAP_GNSS`
+* Value Type: BOOL
+* Post-Reset Value: 1 (true), or restored from saved state
+
+Whether time derived from the GNSS receiver may set the wall clock.
+
+On by default: the sky is normally the best clock a device of this class
+has, and a node that sets itself needs no operator at all.
+
+When clear, **no** receiver-derived time touches
+[`PROP_TIME`](ulcp-device.md#prop-time) — not a fix's time, and not a
+read of the receiver's own real-time clock at boot. This is the opt-out
+for a receiver whose time cannot be trusted: a jammed or spoofed sky can
+carry a plausible and badly wrong time, and a clock silently reset to it
+is worse than a clock that has stopped, because everything downstream
+will believe it.
+
+Position reporting is unaffected. The two are separable, and an operator
+who distrusts the time may still want to know where the device thinks it
+is — including in order to notice that it is wrong.
 
 Every transition to `ALERT_NONE` that the host did not command **MUST**
 be reported with an unsolicited `CMD_PROP_IS`.

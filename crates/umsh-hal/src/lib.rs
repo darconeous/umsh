@@ -15,6 +15,8 @@ mod embassy_clock;
 #[cfg(feature = "embassy")]
 pub use embassy_clock::EmbassyClock;
 
+pub mod wall_clock;
+
 /// Signal-to-noise ratio represented in centibels (0.1 dB units).
 ///
 /// This uses a slightly finer unit than whole decibels while still staying

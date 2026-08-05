@@ -1,0 +1,25 @@
+[package]
+name = "umsh-gnss"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+repository.workspace = true
+description = "NMEA parsing and receiver orchestration for UMSH GNSS boards"
+
+[features]
+default = ["pump"]
+# The receiver orchestration loop. Gated so a host-side consumer that
+# only wants the parser — a capture decoder, a test — pays for neither
+# embassy nor an async I/O trait.
+pump = ["dep:embassy-futures", "dep:embedded-hal-async", "dep:embedded-io-async"]
+
+[dependencies]
+embassy-futures = { version = "0.1", optional = true }
+# Delays arrive as a trait rather than through `embassy-time`, which
+# would drag a global time driver into every consumer — including a host
+# test, which then cannot link without one.
+embedded-hal-async = { workspace = true, optional = true }
+embedded-io-async = { version = "0.7", optional = true }
+
+[dev-dependencies]
+heapless.workspace = true

@@ -8,10 +8,11 @@ use umsh_crypto::{
     software::{SoftwareAes, SoftwareIdentity, SoftwareSha256},
 };
 use umsh_ulcp::battery::{BatteryChargeState, BatteryStatus};
+use umsh_ulcp::gnss::{FixKind, GnssSnapshot};
 use umsh_ulcp::{Status, hdlc};
 use umsh_ulcp_device::{
-    AlertConfig, BatteryFields, DutyLedger, Effect, IdentitySource, RadioSettings, SNAPSHOT_MAX,
-    Session, SessionConfig, TxOutcome,
+    AlertConfig, BatteryFields, DutyLedger, Effect, GnssConfig, IdentitySource, RadioSettings,
+    SNAPSHOT_MAX, Session, SessionConfig, TimeConfig, TxOutcome,
 };
 
 const WIRE_CAPACITY: usize = umsh_ulcp::gatt::MAX_FRAME;
@@ -32,6 +33,14 @@ pub struct SimulatedDevice {
     pairing_pin: Option<u32>,
     air: Vec<Vec<u8>>,
     now_ms: u64,
+    /// The simulated wall clock, as a Unix second, or `None` for a device
+    /// that has not been told and has never had a fix. Starts unset so the
+    /// property's most interesting state is the one you see first.
+    epoch: Option<u32>,
+    /// Where the simulated receiver currently thinks it is. Advanced one
+    /// step per sample so a host watching `PROP_GNSS_LOCATION` sees a
+    /// track rather than a fixed point.
+    fix_step: u32,
 }
 
 impl Default for SimulatedDevice {
@@ -56,6 +65,8 @@ impl SimulatedDevice {
             pairing_pin: None,
             air: Vec::new(),
             now_ms: 0,
+            epoch: None,
+            fix_step: 0,
         }
     }
 
@@ -204,6 +215,16 @@ impl SimulatedDevice {
                     CryptoEngine::new(SoftwareAes, SoftwareSha256),
                 );
             }
+            Some(Effect::ReadTime { tid }) => {
+                self.session.respond_time(tid, self.epoch, &mut emit);
+            }
+            Some(Effect::ApplyTime { epoch }) => {
+                self.epoch = epoch;
+            }
+            Some(Effect::SampleGnss { tid, key }) => {
+                let sample = self.gnss_sample();
+                self.session.respond_gnss(tid, key, Ok(sample), &mut emit);
+            }
             Some(Effect::ProvisionIdentity { tid }) => {
                 let result = match self.session.identity_request() {
                     Some(source) => {
@@ -223,6 +244,28 @@ impl SimulatedDevice {
                 self.session.respond_identity(tid, result, &mut emit);
             }
         }
+    }
+
+    /// The simulated receiver's view, walked one cell east per sample.
+    ///
+    /// A receiver that has been switched off reports
+    /// [`GnssSnapshot::SEARCHING`] — zero for the facts it is sure of,
+    /// empty for the position it does not have — which is the state most
+    /// worth being able to see in a debugger.
+    fn gnss_sample(&mut self) -> GnssSnapshot {
+        if !self.session.gnss_enabled() {
+            return GnssSnapshot::SEARCHING;
+        }
+        self.fix_step = self.fix_step.wrapping_add(1);
+        let mut snapshot = GnssSnapshot::SEARCHING;
+        snapshot.fix = FixKind::ThreeD;
+        snapshot.altitude_m = Some(64);
+        snapshot.accuracy_dm = Some(GnssSnapshot::accuracy_from_hdop_centi(120));
+        snapshot.sats_used = 9;
+        snapshot.sats_in_view = Some(14);
+        let step = (self.fix_step % 16) as u8;
+        snapshot.set_location(&[0x8a, 0x1f, 0x4c, 0x00, 0xd0 | step]);
+        snapshot
     }
 
     fn queue_emitted(&mut self, emitted: Vec<Vec<u8>>) {
@@ -265,6 +308,13 @@ fn session_config() -> SessionConfig {
         // Advertised so the property surface is explorable, even though
         // a browser tab has nothing to actually flash or beep.
         alert: Some(AlertConfig::DEFAULT),
+        // Likewise for the clock and the receiver: the simulator keeps a
+        // settable epoch and walks a scripted track, which is enough to
+        // exercise every state of the property surface including the two
+        // that matter most — a clock that is not set, and a receiver that
+        // is switched off.
+        time: Some(TimeConfig),
+        gnss: Some(GnssConfig),
     }
 }
 

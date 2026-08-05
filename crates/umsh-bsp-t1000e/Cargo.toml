@@ -31,6 +31,10 @@ umsh-crypto = { path = "../umsh-crypto", default-features = false, features = ["
 [target.'cfg(target_os = "none")'.dependencies]
 umsh-radio-loraphy = { path = "../umsh-radio-loraphy", default-features = false }
 umsh-ux-tracker   = { path = "../umsh-ux-tracker", default-features = false }
+# Power sequencing for the on-board AG3335, as a `umsh-gnss` Power
+# implementation. The parser and the pump live in `umsh-gnss`; only the
+# pins are the board's business.
+umsh-gnss         = { path = "../umsh-gnss", default-features = false, features = ["pump"] }
 embassy-nrf = { version = "0.11", default-features = false, features = ["nrf52840", "time-driver-rtc1", "gpiote", "rt"] }
 embassy-time      = { version = "0.5", default-features = false }
 embassy-sync = { version = "0.8", default-features = false }

@@ -61,7 +61,12 @@ pub mod prop {
     ///
     /// First of the device-behavior settings range (70–95), which is
     /// subdivided as 70–79 repeater and identity, 80–87 advertisement
-    /// policy, 88–95 positioning. A persisted, device-domain boolean: when
+    /// policy, 88–95 positioning (88–93 allocated, 94–95 spare). A
+    /// single-octet identifier is the scarce resource, so the positioning
+    /// range holds the enable toggle and the fix telemetry a host reads
+    /// and the device announces continually; the rarely-touched
+    /// positioning *configuration* lives in the extended device range
+    /// alongside `PROP_TIME`. A persisted, device-domain boolean: when
     /// set, the device identity's on-board MAC forwards overheard routable
     /// frames and advertises the `REP` capability bit. The advertised
     /// *role* is a separate matter — see `IDENT_ROLE`.
@@ -99,6 +104,32 @@ pub mod prop {
     /// saved, unaffected by `CMD_RST`, `ALERT_NONE` after every reset.
     /// Requires `CAP_ALERT`.
     pub const ALERT: u32 = 79;
+    /// Whether the GNSS receiver is powered (`PROP_GNSS_ENABLED`) — BOOL,
+    /// default 0. Off means the lowest power state the receiver reaches;
+    /// a board whose receiver RTC is the board's only clock keeps that
+    /// domain alive regardless. Requires `CAP_GNSS`.
+    pub const GNSS_ENABLED: u32 = 88;
+    /// Last position fix (`PROP_GNSS_LOCATION`) — 0–7 octets in the
+    /// variable-precision interleaved format. Empty means no fix has been
+    /// obtained this power cycle. Requires `CAP_GNSS`.
+    pub const GNSS_LOCATION: u32 = 89;
+    /// Altitude of the last fix (`PROP_GNSS_ALTITUDE`) — `INT32_LE`
+    /// meters above the WGS-84 ellipsoid, matching the units of node
+    /// identity option 2. Empty when there is no fix. Requires `CAP_GNSS`.
+    pub const GNSS_ALTITUDE: u32 = 90;
+    /// Fix quality (`PROP_GNSS_FIX`) — `UINT8`, 0 none, 1 two-dimensional,
+    /// 2 three-dimensional. Reads 0 while the receiver is disabled.
+    /// Requires `CAP_GNSS`.
+    pub const GNSS_FIX: u32 = 91;
+    /// Estimated horizontal accuracy of the last fix
+    /// (`PROP_GNSS_PRECISION`) — `UINT16_LE` decimeters. An estimate
+    /// derived from the receiver's dilution of precision, not a measured
+    /// error bound. Empty when there is no fix. Requires `CAP_GNSS`.
+    pub const GNSS_PRECISION: u32 = 92;
+    /// Satellite counts (`PROP_GNSS_SATELLITES`) — `UINT8` satellites used
+    /// in the solution, optionally followed by `UINT8` satellites in view.
+    /// Reads 0 while the receiver is disabled. Requires `CAP_GNSS`.
+    pub const GNSS_SATELLITES: u32 = 93;
     /// Tethered host identity public key (`PROP_HOST_KEY`).
     pub const HOST_KEY: u32 = 96;
     /// Host channel keys (`PROP_HOST_CHANNEL_KEYS`).
@@ -121,6 +152,29 @@ pub mod prop {
     pub const PHY_DUTY_LIMIT: u32 = 4822;
     /// Persisted, write-only BLE pairing passkey (`PROP_BLE_PAIRING_PIN`).
     pub const BLE_PAIRING_PIN: u32 = 4864;
+    /// Wall-clock time (`PROP_TIME`) — `UINT32_LE` seconds since the Unix
+    /// epoch, or **empty** when the device does not know what time it is.
+    /// Unsigned, so the encoding is wrap-free into 2106. Requires
+    /// `CAP_TIME`.
+    pub const TIME: u32 = 4866;
+    /// Local time-zone offset from UTC (`PROP_TZ_OFFSET`) — `INT16_LE`
+    /// minutes, default 0. Unlike `PROP_TIME` this always has a value:
+    /// where the device is configured to be is known even when what time
+    /// it is is not. Requires `CAP_TIME`.
+    pub const TZ_OFFSET: u32 = 4867;
+    /// Whether position fixes update the advertised node identity
+    /// (`PROP_GNSS_IDENT_UPDATE`) — BOOL, default 0. Requires `CAP_GNSS`.
+    pub const GNSS_IDENT_UPDATE: u32 = 4868;
+    /// Precision the advertised location is clamped to
+    /// (`PROP_GNSS_IDENT_PRECISION`) — `UINT8` 1–7, default 5. Requires
+    /// `CAP_GNSS`.
+    pub const GNSS_IDENT_PRECISION: u32 = 4869;
+    /// Whether receiver-derived time may set the wall clock
+    /// (`PROP_GNSS_TIME_TRUST`) — BOOL, default 1. Cleared, neither a fix
+    /// nor a receiver-RTC read touches `PROP_TIME`, which leaves a
+    /// manually-set clock proof against a jammed or spoofed sky. Position
+    /// reporting is unaffected. Requires `CAP_GNSS`.
+    pub const GNSS_TIME_TRUST: u32 = 4870;
 }
 
 /// `PROP_SAVED` values.
@@ -180,6 +234,14 @@ pub mod cap {
     /// physically conspicuous on demand (`PROP_ALERT`). It says nothing
     /// about *which* means, so a host must not assume audibility.
     pub const ALERT: u32 = 42;
+    /// `CAP_TIME` — the device keeps a wall clock (`PROP_TIME`,
+    /// `PROP_TZ_OFFSET`). It says nothing about where the time comes from
+    /// or whether it survives a power cycle.
+    pub const TIME: u32 = 44;
+    /// `CAP_GNSS` — a GNSS receiver is fitted, so the positioning
+    /// properties exist and the wall clock has a source that can set
+    /// itself. Requires `CAP_TIME`.
+    pub const GNSS: u32 = 45;
 }
 
 /// Value used in `PROP_PHY_DUTY_LIMIT` to disable duty-cycle limiting.

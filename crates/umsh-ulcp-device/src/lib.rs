@@ -33,7 +33,8 @@ pub mod session;
 
 pub use duty::{DutyExceeded, DutyLedger, DutyTracker};
 pub use session::{
-    AlertConfig, BatteryFields, Effect, IdentitySource, MAX_CHANNEL_KEYS, MAX_DEV_PEERS,
-    MAX_DEVICE_NAME_LEN, MAX_REPEATER_REGIONS, PRIVATE_KEY_LEN, RadioSettings, SNAPSHOT_MAX,
-    SavedStatus, Session, SessionConfig, SnapshotError, TxOutcome, TxPower,
+    AlertConfig, BatteryFields, DEFAULT_IDENT_PRECISION, Effect, GnssConfig, IdentitySource,
+    MAX_CHANNEL_KEYS, MAX_DEV_PEERS, MAX_DEVICE_NAME_LEN, MAX_IDENT_PRECISION,
+    MAX_REPEATER_REGIONS, PRIVATE_KEY_LEN, RadioSettings, SNAPSHOT_MAX, SavedStatus, Session,
+    SessionConfig, SnapshotError, TimeConfig, TxOutcome, TxPower,
 };

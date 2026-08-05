@@ -48,6 +48,12 @@ pub const fn property_name(key: u32) -> Option<&'static str> {
         prop::MAC_REPEATER_MIN_SNR => "PROP_MAC_REPEATER_MIN_SNR",
         prop::DEV_DISCOVERABLE => "PROP_DEV_DISCOVERABLE",
         prop::ALERT => "PROP_ALERT",
+        prop::GNSS_ENABLED => "PROP_GNSS_ENABLED",
+        prop::GNSS_LOCATION => "PROP_GNSS_LOCATION",
+        prop::GNSS_ALTITUDE => "PROP_GNSS_ALTITUDE",
+        prop::GNSS_FIX => "PROP_GNSS_FIX",
+        prop::GNSS_PRECISION => "PROP_GNSS_PRECISION",
+        prop::GNSS_SATELLITES => "PROP_GNSS_SATELLITES",
         prop::HOST_KEY => "PROP_HOST_KEY",
         prop::HOST_CHANNEL_KEYS => "PROP_HOST_CHANNEL_KEYS",
         prop::HOST_PEER_KEYS => "PROP_HOST_PEER_KEYS",
@@ -59,6 +65,11 @@ pub const fn property_name(key: u32) -> Option<&'static str> {
         prop::PHY_DUTY_NOW => "PROP_PHY_DUTY_NOW",
         prop::PHY_DUTY_LIMIT => "PROP_PHY_DUTY_LIMIT",
         prop::BLE_PAIRING_PIN => "PROP_BLE_PAIRING_PIN",
+        prop::TIME => "PROP_TIME",
+        prop::TZ_OFFSET => "PROP_TZ_OFFSET",
+        prop::GNSS_IDENT_UPDATE => "PROP_GNSS_IDENT_UPDATE",
+        prop::GNSS_IDENT_PRECISION => "PROP_GNSS_IDENT_PRECISION",
+        prop::GNSS_TIME_TRUST => "PROP_GNSS_TIME_TRUST",
         _ => return None,
     })
 }
@@ -80,6 +91,8 @@ pub const fn capability_name(code: u32) -> Option<&'static str> {
         cap::REPEATER => "REPEATER",
         cap::IDENT => "IDENT",
         cap::ALERT => "ALERT",
+        cap::TIME => "TIME",
+        cap::GNSS => "GNSS",
         _ => return None,
     })
 }
@@ -204,7 +217,45 @@ mod tests {
         assert_eq!(capability_name(cap::BATTERY), Some("BATTERY"));
         assert_eq!(capability_name(cap::REPEATER), Some("REPEATER"));
         assert_eq!(capability_name(cap::IDENT), Some("IDENT"));
+        assert_eq!(capability_name(cap::TIME), Some("TIME"));
+        assert_eq!(capability_name(cap::GNSS), Some("GNSS"));
         assert_eq!(capability_name(60_000), None);
+    }
+
+    #[test]
+    fn names_time_and_positioning_properties() {
+        assert_eq!(property_name(prop::TIME), Some("PROP_TIME"));
+        assert_eq!(property_name(prop::TZ_OFFSET), Some("PROP_TZ_OFFSET"));
+        assert_eq!(property_name(prop::GNSS_ENABLED), Some("PROP_GNSS_ENABLED"));
+        assert_eq!(
+            property_name(prop::GNSS_LOCATION),
+            Some("PROP_GNSS_LOCATION")
+        );
+        assert_eq!(
+            property_name(prop::GNSS_ALTITUDE),
+            Some("PROP_GNSS_ALTITUDE")
+        );
+        assert_eq!(property_name(prop::GNSS_FIX), Some("PROP_GNSS_FIX"));
+        assert_eq!(
+            property_name(prop::GNSS_PRECISION),
+            Some("PROP_GNSS_PRECISION")
+        );
+        assert_eq!(
+            property_name(prop::GNSS_SATELLITES),
+            Some("PROP_GNSS_SATELLITES")
+        );
+        assert_eq!(
+            property_name(prop::GNSS_IDENT_UPDATE),
+            Some("PROP_GNSS_IDENT_UPDATE")
+        );
+        assert_eq!(
+            property_name(prop::GNSS_IDENT_PRECISION),
+            Some("PROP_GNSS_IDENT_PRECISION")
+        );
+        assert_eq!(
+            property_name(prop::GNSS_TIME_TRUST),
+            Some("PROP_GNSS_TIME_TRUST")
+        );
     }
 
     #[test]

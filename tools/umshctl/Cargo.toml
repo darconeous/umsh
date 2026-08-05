@@ -16,6 +16,7 @@ ble-radio = ["umsh/ble-radio"]
 
 [dependencies]
 umsh = { path = "../../umsh", features = ["tokio-support"] }
+umsh-gnss = { path = "../../crates/umsh-gnss" }
 hamaddr.workspace = true
 anyhow = "1"
 clap = { version = "4", features = ["derive", "env", "wrap_help"] }

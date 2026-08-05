@@ -64,6 +64,12 @@ Id   | Mnemonic                                                                 
 77   | [`PROP_MAC_REPEATER_MIN_SNR`](ulcp-device.md#prop-mac-repeater-min-snr)    | Get, Set                 | `CAP_REPEATER`
 78   | [`PROP_DEV_DISCOVERABLE`](ulcp-device.md#prop-dev-discoverable)            | Get, Set                 | `CAP_DEV_IDENTITY`
 79   | [`PROP_ALERT`](ulcp-device.md#prop-alert)                                  | Get, Set, Is             | `CAP_ALERT`
+88   | [`PROP_GNSS_ENABLED`](ulcp-device.md#prop-gnss-enabled)                    | Get, Set                 | `CAP_GNSS`
+89   | [`PROP_GNSS_LOCATION`](ulcp-device.md#prop-gnss-location)                  | Get, Is                  | `CAP_GNSS`
+90   | [`PROP_GNSS_ALTITUDE`](ulcp-device.md#prop-gnss-altitude)                  | Get                      | `CAP_GNSS`
+91   | [`PROP_GNSS_FIX`](ulcp-device.md#prop-gnss-fix)                            | Get, Is                  | `CAP_GNSS`
+92   | [`PROP_GNSS_PRECISION`](ulcp-device.md#prop-gnss-precision)                | Get                      | `CAP_GNSS`
+93   | [`PROP_GNSS_SATELLITES`](ulcp-device.md#prop-gnss-satellites)              | Get                      | `CAP_GNSS`
 96   | [`PROP_HOST_KEY`](ulcp-host.md#prop-host-key)                              | Get, Set                 | `CAP_HOST_FILTER`
 97   | [`PROP_HOST_CHANNEL_KEYS`](ulcp-host.md#prop-host-channel-keys)            | Get, Set, Insert, Remove | `CAP_HOST_KEYS`
 98   | [`PROP_HOST_PEER_KEYS`](ulcp-host.md#prop-host-peer-keys)                  | Get, Set, Insert, Remove | `CAP_HOST_KEYS`
@@ -77,6 +83,11 @@ Id   | Mnemonic                                                                 
 4822 | [`PROP_PHY_DUTY_LIMIT`](ulcp-radio.md#prop-phy-duty-limit)                 | Get, Set                 | `CAP_PHY_DUTY_LIMIT`
 4864 | [`PROP_BLE_PAIRING_PIN`](ulcp-ble.md#prop-ble-pairing-pin)                 | Set                      | BLE transport
 4865 | [`PROP_DEV_ADMINS`](app-node-management.md#prop-dev-admins)                | Get, Set, Insert, Remove | `CAP_ADMIN`
+4866 | [`PROP_TIME`](ulcp-device.md#prop-time)                                    | Get, Set, Is             | `CAP_TIME`
+4867 | [`PROP_TZ_OFFSET`](ulcp-device.md#prop-tz-offset)                          | Get, Set                 | `CAP_TIME`
+4868 | [`PROP_GNSS_IDENT_UPDATE`](ulcp-device.md#prop-gnss-ident-update)          | Get, Set                 | `CAP_GNSS`
+4869 | [`PROP_GNSS_IDENT_PRECISION`](ulcp-device.md#prop-gnss-ident-precision)    | Get, Set                 | `CAP_GNSS`
+4870 | [`PROP_GNSS_TIME_TRUST`](ulcp-device.md#prop-gnss-time-trust)              | Get, Set                 | `CAP_GNSS`
 
 ## Capabilities
 
@@ -99,6 +110,8 @@ Code | Name                      | Defined in
 41   | `CAP_IDENT`               | [Device Domain](ulcp-device.md#capabilities)
 42   | `CAP_ALERT`               | [Device Domain](ulcp-device.md#capabilities)
 43   | `CAP_ADMIN`               | [Node Management](app-node-management.md#capabilities)
+44   | `CAP_TIME`                | [Device Domain](ulcp-device.md#capabilities)
+45   | `CAP_GNSS`                | [Device Domain](ulcp-device.md#capabilities)
 515  | `CAP_PHY_LORA`            | [Radio Control](ulcp-radio.md#capabilities)
 
 ## Status Codes
@@ -141,5 +154,6 @@ Enumeration | Values | Defined in
 Filter types | 0 `FILTER_DEST_HINT`, 1 `FILTER_CHANNEL_ID`, 2 `FILTER_PKT_TYPE` | [`PROP_HOST_RX_FILTERS`](ulcp-host.md#prop-host-rx-filters)
 Charge states | 0 discharging, 1 charging, 2 charged | [`PROP_BATTERY`](ulcp-device.md#prop-battery)
 Alert states | 0 `ALERT_NONE`, 1 `ALERT_LOCATE` | [`PROP_ALERT`](ulcp-device.md#prop-alert)
+Fix quality | 0 none, 1 two-dimensional, 2 three-dimensional | [`PROP_GNSS_FIX`](ulcp-device.md#prop-gnss-fix)
 Transmit flags | bit 0 `TX_FLAG_NOCCA`, bit 1 `TX_FLAG_NODUTY` | [`STR_PHY_RAW`](ulcp-transport.md#str-radio-raw)
 Receive flags | bit 0 `RX_FLAG_BUFFERED`, bit 1 `RX_FLAG_ACKED` | [Buffered-Frame Metadata](ulcp-transport.md#buffered-metadata)

@@ -16,6 +16,9 @@ pub use umsh_bsp_nrf52840::panic_persist;
 pub mod buzzer;
 
 #[cfg(target_os = "none")]
+pub mod gnss;
+
+#[cfg(target_os = "none")]
 pub mod indicator;
 
 #[cfg(target_os = "none")]
@@ -51,7 +54,6 @@ pub use radio::RF_SWITCH;
 //   pub mod board;          // `Board::init()` + the composed Platform impl.
 //   pub mod rails;          // SwitchedRails (sensor/accel/buzzer enables).
 //   pub mod radio;          // LR1110 wiring (SPI + IRQ + BUSY + RESET).
-//   pub mod gnss;           // AG3335 over UART with power sequencing.
 //   pub mod accel;          // QMA6100P over I2C.
 //   pub mod inputs;          // Button (P0.06, active-high, DETECT-aware).
 //   pub mod indicators;      // LED (P0.24), buzzer (P0.25 + EN P1.05).

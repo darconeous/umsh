@@ -47,14 +47,14 @@ The public product and firmware documentation describe it as an nRF52840 + LR111
 | LR1110 reset | P1.10 | `LORA_RESET` | LR1110 reset. |
 | LR1110 IRQ | P1.01 | `LORA_DIO1`, `LR1110_IRQ_PIN` | LR1110 interrupt. |
 | LR1110 busy | P0.07 | `LORA_DIO2`, `LR1110_BUSY_PIN` | Named DIO2 in Meshtastic, used as busy. |
-| GNSS UART RX | P0.14 | `GPS_RX_PIN`, `PIN_SERIAL1_RX` | 115200 baud. |
-| GNSS UART TX | P0.13 | `GPS_TX_PIN`, `PIN_SERIAL1_TX` | 115200 baud. |
-| GNSS main enable | P1.11 | `PIN_GPS_EN` / `GPS_EN` | Main GPS enable. |
-| GNSS reset | P1.15 | `PIN_GPS_RESET` / `GPS_RESET` | GPS reset control. |
-| GNSS RTC power enable | P0.08 | `GPS_VRTC_EN` | RTC / backup domain power control. |
-| GNSS sleep interrupt | P1.12 | `GPS_SLEEP_INT` | Held high by firmware during normal use. |
-| GNSS RTC interrupt | P0.15 | `GPS_RTC_INT` | Normal low, wake by high according to Meshtastic comments. |
-| GNSS reset/status output | P1.14 | `GPS_RESETB_OUT` / `GPS_RESETB` | Usually input pullup; MeshCore sometimes drives it low during sleep/off. |
+| GNSS UART RX ← module TX | P0.14 | `GPS_RX_PIN`, `PIN_SERIAL1_RX` | 115200 baud. Carries NMEA. **Confirmed.** |
+| GNSS UART TX → module RX | P0.13 | `GPS_TX_PIN`, `PIN_SERIAL1_TX` | 115200 baud. **Confirmed.** |
+| GNSS main enable | P1.11 | `PIN_GPS_EN` / `GPS_EN` | Active **high** (`GPS_EN_ACTIVE HIGH`). **Confirmed.** |
+| GNSS reset | P1.15 | `PIN_GPS_RESET` / `GPS_RESET` | Active **high** (`GPS_RESET_MODE HIGH`) — pulsed high, then **held low** while running. **Confirmed.** |
+| GNSS RTC power enable | P0.08 | `GPS_VRTC_EN` | Backup / RTC domain. High from boot, and kept high through System OFF. **Confirmed.** |
+| GNSS sleep interrupt | P1.12 | `GPS_SLEEP_INT` | Driven high while the receiver is wanted. **Confirmed.** |
+| GNSS RTC interrupt | P0.15 | `GPS_RTC_INT` | An **input to the module**: must be driven low. High is a wake request. **Confirmed.** |
+| GNSS stop line | P1.14 | `GPS_RESETB_OUT` / `GPS_RESETB` | An **input to the module** despite the `_OUT` suffix: input-pull-up to run, driven low to stop. **Confirmed.** |
 | Temperature ADC | P0.31 / AIN7 | `T1000X_NTC_PIN` / `TEMP_SENSOR` | NTC divider. |
 | Light ADC | P0.29 / AIN5 | `T1000X_LUX_PIN` / `LUX_SENSOR` | Firmware maps to 0–100%, not true lux. |
 
@@ -185,24 +185,160 @@ but the firmware alone does not prove those details.
 
 ## GNSS / GPS control
 
-The GNSS module is connected over UART1:
+The AG3335 is on UART1 — RX P0.14, TX P0.13, 115200 baud — with six control
+pins. Direction and polarities below are confirmed: the receiver produces
+fixes under this sequence, and did not under any other combination tried.
 
-- RX: P0.14
-- TX: P0.13
-- Baud rate: 115200
+### Three pins that do not behave like their names
 
-The firmware uses several control pins:
+Getting a fix out of this module took a bringup session, and every hour of
+it went to one of these:
 
-- `GPS_EN` / `PIN_GPS_EN`: P1.11
-- `GPS_RESET` / `PIN_GPS_RESET`: P1.15
-- `GPS_VRTC_EN`: P0.08
-- `GPS_SLEEP_INT`: P1.12
-- `GPS_RTC_INT`: P0.15
-- `GPS_RESETB` / `GPS_RESETB_OUT`: P1.14
+1. **`GPS_RESET` (P1.15) is active high.** It is pulsed *high* to reset and
+   then **held low** for the entire time the receiver runs. Resting it high
+   — the safe-looking choice, and the correct one for the L76K boards
+   elsewhere in this tree — holds the module in reset indefinitely.
+2. **`GPS_RTC_INT` (P0.15) is an input to the module**, not a status
+   output. It must be driven low; high is a wake request. Left floating,
+   the receiver does not run.
+3. **`GPS_RESETB` (P1.14) is also an input**, despite the `_OUT` suffix it
+   carries in some variant files. It needs a pull-up while running, and
+   upstream drives it low as part of stopping the module.
 
-MeshCore’s start sequence enables GPS power, enables GPS VRTC, manipulates reset, sets sleep/wake pins, and configures `GPS_RESETB` as input pullup.
+The failure mode all three share is the reason this was expensive: a
+receiver held off this way leaves **both UART lines sitting high with no
+transitions**, because they are externally pulled up. That is
+indistinguishable from a correctly wired, idle port — the pin-sweep
+technique that found the T-Echo's reversed UART reports "no edges
+anywhere" here and cannot say why. Sweeping enable, reset and sleep
+polarities against edge counts also finds nothing, because two of the
+three pins that matter are not in the sweep.
 
-MeshCore’s sleep/stop sequences turn off or reduce GPS power and sometimes drive `GPS_RESETB` low. This implies the GNSS module has both a main power domain and a backup/RTC domain exposed to firmware.
+The upstream variant definitions settle all of it directly, and are worth
+reading before instrumenting anything on this board.
+
+### Sequences
+
+Power on (`start_gps` upstream, ~10 ms between steps):
+
+| Step | Pin | Level |
+|---|---|---|
+| 1 | `GPS_EN` P1.11 | high |
+| 2 | `GPS_VRTC_EN` P0.08 | high (already high here — raised at boot) |
+| 3 | `GPS_RESET` P1.15 | high, then **low** after ~10 ms |
+| 4 | `GPS_SLEEP_INT` P1.12 | high |
+| 5 | `GPS_RTC_INT` P0.15 | low |
+| 6 | `GPS_RESETB` P1.14 | input, pull-up |
+
+Sleep — the receiver off, the clock still running. This is what UMSH uses
+for both `PROP_GNSS_ENABLED = 0` and System OFF:
+
+| Pin | Level |
+|---|---|
+| `GPS_VRTC_EN` P0.08 | **high** — the backup domain stays up |
+| `GPS_EN` P1.11 | low |
+| `GPS_RESET` P1.15 | high (asserted) |
+| `GPS_SLEEP_INT` P1.12 | high |
+| `GPS_RTC_INT` P0.15 | low |
+| `GPS_RESETB` P1.14 | output, low |
+
+Stop is the same but with `GPS_VRTC_EN` low. UMSH never does this: that
+rail is the board's only real-time clock (see below), and dropping it buys
+microamps at the cost of the device knowing what time it is.
+
+### The backup domain is this board's RTC
+
+The T1000-E has no dedicated RTC chip. The AG3335's backup domain, gated by
+`GPS_VRTC_EN` and independent of the main enable, is the only clock that
+survives. nRF52840 System OFF retains driven pin levels, so holding P0.08
+high through shutdown keeps it counting; `crates/umsh-bsp-t1000e/src/shutdown.rs`
+does exactly that and parks the other five pins in their sleep levels.
+
+Reading it back needs the main domain briefly up, since the backup domain
+cannot drive a UART on its own — `umsh_gnss::pump::rtc_read_once` raises
+the enable, takes the first dated `RMC`, and returns the receiver to off.
+That is a clock operation, so it is gated on `PROP_GNSS_TIME_TRUST` and not
+on `PROP_GNSS_ENABLED`.
+
+### The receiver remembers which sentences to emit
+
+This unit emits **only `GGA` and `RMC`** — no `GSA`, no `GSV`, no `GLL`,
+no `VTG` — and that survives reflashing our firmware.
+
+The mechanism is the Airoha `$PAIR` command set: `$PAIR062,<type>,<enable>`
+selects which NMEA sentences the receiver emits, and `$PAIR513` writes the
+current configuration to the receiver's own non-volatile memory. Which
+sentences arrive is therefore a property of the board's history rather than
+of the chip, and it outlives anything the host MCU does.
+
+What is **observed**: the sentence set above, and that `$PAIR062,2,1` /
+`$PAIR062,3,1` sent at wake time did not change it.
+
+What is **inferred**, not verified: that Meshtastic is what disabled them.
+Its `src/gps/GPS.cpp` sends exactly `$PAIR062,2,0` (GSA off),
+`$PAIR062,3,0` (GSV off), `$PAIR062,1,0`, `$PAIR062,5,0` and then
+`$PAIR513`, and these units ship with Meshtastic — but the write was not
+watched happening, and a factory-default AG3335 may well emit the same
+reduced set anyway. Distinguishing the two needs a receiver that has never
+run Meshtastic.
+
+Not permanent, then, but persistent: the configuration is writable, and a
+`$PAIR062,…,1` followed by `$PAIR513` would presumably restore the missing
+sentences. UMSH does not do that — writing another project's configuration
+into a chip's flash to make its own boot work is not a fix, and the missing
+sentences turn out to cost almost nothing (below).
+
+Observed on this board:
+
+```
+$GNGGA,082303.000,4208.0391,N,12237.0552,W,1,15,0.70,689.4,M,-22.4,M,,*41
+$GNRMC,082303.000,A,4208.0391,N,12237.0552,W,0.01,0.00,050826,,,A,V*18
+```
+
+Sending `$PAIR062,2,1` / `$PAIR062,3,1` at wake time does **not** bring
+`GSA` and `GSV` back — tried, and the sentence set was unchanged. Whether
+they need `$PAIR513` to stick, or a quiet window after boot that a wake-time
+write does not give them, was not pursued: UMSH does not write another
+project's configuration into a chip's flash to make its own boot work, and
+`GGA` turns out to carry nearly everything anyway.
+
+What this costs, and what it does not:
+
+| Property | Source | Available |
+|---|---|---|
+| `PROP_GNSS_LOCATION` | `RMC` / `GGA` | yes |
+| `PROP_GNSS_ALTITUDE` | `GGA` field 9 | yes |
+| `PROP_GNSS_PRECISION` | `GGA` field 8 (HDOP) | yes |
+| `PROP_GNSS_SATELLITES` (used) | `GGA` field 7 | yes |
+| `PROP_GNSS_SATELLITES` (in view) | `GSV` | **no** — reads as absent |
+| `PROP_GNSS_FIX` 2D vs 3D | `GSA`, else altitude presence | yes, inferred |
+| `PROP_TIME` | `RMC` | yes |
+
+`umsh-gnss` reads HDOP from `GGA` as well as `GSA` for this reason, and
+falls back to "an altitude means three dimensions" when no `GSA` arrives —
+NMEA has no dimension indicator anywhere else, since `GGA`'s quality field
+says only *whether* the receiver is fixed.
+
+### Still unmeasured
+
+* **System OFF current.** The five GNSS pins are parked and `GPS_VRTC_EN`
+  is held high, but what the backup domain actually costs has not been put
+  on a meter.
+* **Retention across a real System OFF.** The boot-time read path is
+  confirmed working, and confirmed to *reject* a receiver whose clock was
+  lost — but not yet confirmed to restore a good time after a button
+  shutdown and wake. Note that a DFU reflash is not a valid test: entering
+  the bootloader drops `GPS_VRTC_EN` and resets the backup domain, so it
+  exercises the rejection path instead.
+* **Time injection.** Whether the AG3335 accepts having its clock set is
+  untested, and looks unpromising given that `$PAIR062` had no effect at
+  wake time. Without it, a manually set time does not survive System OFF
+  on this board — the accepted fallback.
+
+Upstream references: [MeshCore `variants/t1000-e`](https://github.com/meshcore-dev/MeshCore/tree/main/variants/t1000-e)
+(`target.cpp` `start_gps` / `sleep_gps` / `stop_gps`, `variant.h` pin
+numbers) and [Meshtastic `variants/nrf52840/tracker-t1000-e/variant.h`](https://github.com/meshtastic/firmware/blob/master/variants/nrf52840/tracker-t1000-e/variant.h)
+(`GPS_EN_ACTIVE`, `GPS_RESET_MODE`).
 
 ## Sensors
 

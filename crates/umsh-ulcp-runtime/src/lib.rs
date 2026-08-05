@@ -35,6 +35,8 @@ pub mod device_node;
 pub mod driver;
 #[cfg(feature = "driver")]
 pub mod duty_gate;
+#[cfg(feature = "gnss")]
+pub mod gnss;
 #[cfg(feature = "counters")]
 pub mod journal;
 #[cfg(feature = "counters")]

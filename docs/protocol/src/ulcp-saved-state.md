@@ -39,6 +39,13 @@ acknowledging on the host's behalf.
   changed only by explicit provisioning or `CMD_CLEAR` — neither
   `CMD_RESTORE` nor a reboot can revert the device identity to an earlier
   key.
+
+  [`PROP_TIME`](ulcp-device.md#prop-time) is excluded for a third reason:
+  a stored epoch is wrong by however long the device was off, by an amount
+  nothing can bound, so restoring one would be restoring a confidently
+  incorrect clock. A device recovers the time from a real source or
+  reports that it does not know it. Its time *zone* is ordinary
+  configuration and is saved.
 * At boot, if a snapshot exists, the device **MUST** restore it and resume
   operation accordingly *before* processing any host command: the RF
   configuration is applied and the PHY is re-enabled if it was enabled

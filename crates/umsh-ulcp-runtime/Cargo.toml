@@ -40,6 +40,16 @@ driver = [
     "dep:embassy-time",
     "dep:heapless",
 ]
+# What a board does with a GNSS fix: the ULCP positioning properties,
+# the wall clock, and the advertised identity's location. The receiver
+# itself belongs to `umsh-gnss`; this is what a fix *means*, and both
+# cargo workspaces share it.
+gnss = [
+    "driver",
+    "dep:umsh-gnss",
+    "dep:umsh-node",
+    "umsh-hal/embassy",
+]
 # The device node: a full MAC/node stack for the device identity, sharing
 # the radio through the mux. Generic over the board's counter store.
 device-node = [
@@ -76,6 +86,7 @@ heapless = { workspace = true, optional = true }
 umsh-core = { path = "../umsh-core", default-features = false, optional = true }
 umsh-mac = { path = "../umsh-mac", default-features = false, features = ["software-crypto"], optional = true }
 umsh-node = { path = "../umsh-node", default-features = false, features = ["alloc", "software-crypto"], optional = true }
+umsh-gnss = { path = "../umsh-gnss", default-features = false, features = ["pump"], optional = true }
 umsh-sync = { path = "../umsh-sync", default-features = false, optional = true }
 rand = { workspace = true, optional = true }
 rand_core = { workspace = true, optional = true }

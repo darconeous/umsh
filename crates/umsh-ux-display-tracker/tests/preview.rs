@@ -161,6 +161,13 @@ fn status(
             tx_power_dbm: Some(22),
             duty_permille: 13,
         },
+        // The preview shows a device that has a clock; the "no clock at
+        // all" state has its own unit test, and a blank corner makes for
+        // a poor reference image.
+        clock: Some(ClockModel {
+            hour: 14,
+            minute: 30,
+        }),
     }
 }
 

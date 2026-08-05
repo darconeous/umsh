@@ -29,6 +29,7 @@ use umsh_ulcp::airtime::lora_airtime_ms;
 use umsh_ulcp::alert::AlertState;
 use umsh_ulcp::battery::BatteryStatus;
 use umsh_ulcp::frame::{self, Cmd, Frame, StreamPayload, TID_UNSOLICITED};
+use umsh_ulcp::gnss::GnssSnapshot;
 use umsh_ulcp::hdlc;
 use umsh_ulcp::host::{PropertyNotification, PropertyNotificationKind, TidAllocator};
 use umsh_ulcp::ids::{self, cap, prop, stream};
@@ -357,6 +358,41 @@ pub struct RepeaterPolicy {
     pub min_rssi: Option<i16>,
     /// `PROP_MAC_REPEATER_MIN_SNR` in dB. `None` accepts any.
     pub min_snr: Option<i8>,
+}
+
+/// The wall clock of a `CAP_TIME` device.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct DeviceTime {
+    /// `PROP_TIME`: Unix seconds, or `None` when the device does not know
+    /// what time it is. Unsigned, so the encoding is wrap-free into 2106.
+    pub epoch: Option<u32>,
+    /// `PROP_TZ_OFFSET`: minutes east of UTC. Always present — where the
+    /// device is meant to be is known even when the time is not.
+    pub tz_offset_min: i16,
+}
+
+/// Everything a `CAP_GNSS` device reports about positioning: the switch,
+/// the current fix, and the policy that governs what is done with it.
+///
+/// A report rather than a transaction, like [`RepeaterPolicy`]: the
+/// properties are written separately, and reading this back after a
+/// partial write shows exactly what the device holds.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct GnssStatus {
+    /// `PROP_GNSS_ENABLED`: whether the receiver is powered. Everything in
+    /// `fix` reads as searching while this is false.
+    pub enabled: bool,
+    /// The five positioning telemetry properties, folded into one value.
+    pub fix: GnssSnapshot,
+    /// `PROP_GNSS_IDENT_UPDATE`: whether fixes refresh the advertised
+    /// node identity's location.
+    pub ident_update: bool,
+    /// `PROP_GNSS_IDENT_PRECISION`: location bytes the advertised
+    /// position is clamped to.
+    pub ident_precision: u8,
+    /// `PROP_GNSS_TIME_TRUST`: whether receiver-derived time may set the
+    /// wall clock.
+    pub time_trust: bool,
 }
 
 /// The host-domain state [`UlcpDevice::provision`] establishes on
@@ -1310,6 +1346,133 @@ where
         let authoritative = self.set_prop(prop::MAC_REPEATER_MIN_SNR, value).await?;
         decode_opt_i8(&authoritative)
             .ok_or(UlcpError::Protocol("malformed PROP_MAC_REPEATER_MIN_SNR"))
+    }
+
+    /// Read the device's wall clock and time zone (`PROP_TIME`,
+    /// `PROP_TZ_OFFSET`).
+    ///
+    /// `Ok(None)` means the device does not advertise `CAP_TIME`.
+    /// `Ok(Some(time))` with `time.epoch == None` means it has one and
+    /// does not know what time it is — the state in which a device with a
+    /// screen must show no clock at all.
+    pub async fn time(&mut self) -> Result<Option<DeviceTime>, UlcpError> {
+        if !self.capabilities().await?.contains(&cap::TIME) {
+            return Ok(None);
+        }
+        let epoch = decode_epoch(&self.get_prop(prop::TIME).await?)?;
+        let tz_offset_min = decode_tz_offset(&self.get_prop(prop::TZ_OFFSET).await?)?;
+        Ok(Some(DeviceTime {
+            epoch,
+            tz_offset_min,
+        }))
+    }
+
+    /// Set the device's wall clock (`PROP_TIME`). `None` returns it to not
+    /// knowing what time it is.
+    ///
+    /// A manual set outranks every receiver-derived one, including while
+    /// `PROP_GNSS_TIME_TRUST` is clear.
+    pub async fn set_time(&mut self, epoch: Option<u32>) -> Result<Option<u32>, UlcpError> {
+        let encoded = epoch.map(u32::to_le_bytes).unwrap_or_default();
+        let value: &[u8] = match epoch {
+            Some(_) => &encoded,
+            None => &[],
+        };
+        let authoritative = self.set_prop(prop::TIME, value).await?;
+        decode_epoch(&authoritative)
+    }
+
+    /// Set the device's local time-zone offset in minutes east of UTC
+    /// (`PROP_TZ_OFFSET`).
+    pub async fn set_tz_offset(&mut self, minutes: i16) -> Result<i16, UlcpError> {
+        let authoritative = self
+            .set_prop(prop::TZ_OFFSET, &minutes.to_le_bytes())
+            .await?;
+        decode_tz_offset(&authoritative)
+    }
+
+    /// Read everything the device reports about positioning
+    /// (`PROP_GNSS_*`).
+    ///
+    /// `Ok(None)` means the device does not advertise `CAP_GNSS`. The fix
+    /// is live telemetry, so a disabled or searching receiver reports
+    /// [`GnssSnapshot::SEARCHING`] rather than an error.
+    pub async fn gnss_status(&mut self) -> Result<Option<GnssStatus>, UlcpError> {
+        if !self.capabilities().await?.contains(&cap::GNSS) {
+            return Ok(None);
+        }
+        let enabled = decode_bool(
+            &self.get_prop(prop::GNSS_ENABLED).await?,
+            "PROP_GNSS_ENABLED",
+        )?;
+        let mut fix = GnssSnapshot::SEARCHING;
+        for key in [
+            prop::GNSS_FIX,
+            prop::GNSS_LOCATION,
+            prop::GNSS_ALTITUDE,
+            prop::GNSS_PRECISION,
+            prop::GNSS_SATELLITES,
+        ] {
+            let value = self.get_prop(key).await?;
+            fix.absorb(key, &value)
+                .map_err(|_| UlcpError::Protocol("malformed PROP_GNSS_* value"))?;
+        }
+        let ident_update = decode_bool(
+            &self.get_prop(prop::GNSS_IDENT_UPDATE).await?,
+            "PROP_GNSS_IDENT_UPDATE",
+        )?;
+        let ident_precision = match self.get_prop(prop::GNSS_IDENT_PRECISION).await?[..] {
+            [precision] => precision,
+            _ => return Err(UlcpError::Protocol("malformed PROP_GNSS_IDENT_PRECISION")),
+        };
+        let time_trust = decode_bool(
+            &self.get_prop(prop::GNSS_TIME_TRUST).await?,
+            "PROP_GNSS_TIME_TRUST",
+        )?;
+        Ok(Some(GnssStatus {
+            enabled,
+            fix,
+            ident_update,
+            ident_precision,
+            time_trust,
+        }))
+    }
+
+    /// Power the GNSS receiver on or off (`PROP_GNSS_ENABLED`).
+    pub async fn set_gnss_enabled(&mut self, enabled: bool) -> Result<bool, UlcpError> {
+        let authoritative = self.set_prop(prop::GNSS_ENABLED, &[enabled as u8]).await?;
+        decode_bool(&authoritative, "PROP_GNSS_ENABLED")
+    }
+
+    /// Set whether fixes refresh the advertised node identity's location
+    /// (`PROP_GNSS_IDENT_UPDATE`).
+    pub async fn set_gnss_ident_update(&mut self, enabled: bool) -> Result<bool, UlcpError> {
+        let authoritative = self
+            .set_prop(prop::GNSS_IDENT_UPDATE, &[enabled as u8])
+            .await?;
+        decode_bool(&authoritative, "PROP_GNSS_IDENT_UPDATE")
+    }
+
+    /// Set the precision the advertised location is clamped to, in
+    /// location bytes (`PROP_GNSS_IDENT_PRECISION`).
+    pub async fn set_gnss_ident_precision(&mut self, precision: u8) -> Result<u8, UlcpError> {
+        let authoritative = self
+            .set_prop(prop::GNSS_IDENT_PRECISION, &[precision])
+            .await?;
+        match authoritative[..] {
+            [stored] => Ok(stored),
+            _ => Err(UlcpError::Protocol("malformed PROP_GNSS_IDENT_PRECISION")),
+        }
+    }
+
+    /// Set whether receiver-derived time may set the wall clock
+    /// (`PROP_GNSS_TIME_TRUST`).
+    ///
+    /// Clearing it leaves a manually-set clock proof against a jammed or
+    /// spoofed sky; position reporting is unaffected.
+    pub async fn set_gnss_time_trust(&mut self, trust: bool) -> Result<bool, UlcpError> {
+        let authoritative = self.set_prop(prop::GNSS_TIME_TRUST, &[trust as u8]).await?;
+        decode_bool(&authoritative, "PROP_GNSS_TIME_TRUST")
     }
 
     async fn initialize(&mut self) -> Result<(), UlcpError> {
@@ -2470,6 +2633,34 @@ fn decode_alert(value: &[u8]) -> Result<AlertState, UlcpError> {
         return Err(UlcpError::Protocol(MALFORMED));
     }
     AlertState::from_code(code).ok_or(UlcpError::Protocol(MALFORMED))
+}
+
+/// Decode a `PROP_TIME` value. Empty means the device does not know what
+/// time it is, which is an answer rather than a malformed one.
+fn decode_epoch(value: &[u8]) -> Result<Option<u32>, UlcpError> {
+    match value {
+        [] => Ok(None),
+        [a, b, c, d] => Ok(Some(u32::from_le_bytes([*a, *b, *c, *d]))),
+        _ => Err(UlcpError::Protocol("malformed PROP_TIME")),
+    }
+}
+
+/// Decode a `PROP_TZ_OFFSET` value: minutes east of UTC, always present.
+fn decode_tz_offset(value: &[u8]) -> Result<i16, UlcpError> {
+    match value {
+        [low, high] => Ok(i16::from_le_bytes([*low, *high])),
+        _ => Err(UlcpError::Protocol("malformed PROP_TZ_OFFSET")),
+    }
+}
+
+/// Decode a single-octet boolean property, naming the property in the
+/// error so a malformed one is attributable.
+fn decode_bool(value: &[u8], what: &'static str) -> Result<bool, UlcpError> {
+    match value {
+        [0] => Ok(false),
+        [1] => Ok(true),
+        _ => Err(UlcpError::Protocol(what)),
+    }
 }
 
 /// Decode a digest table of fixed-size items.

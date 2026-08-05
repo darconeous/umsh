@@ -116,16 +116,47 @@ Meshtastic includes a shutdown-specific detail: before powering off, it sets e-p
 
 | Function | nRF52840 pin | Arduino pin | Firmware names | Notes |
 |---|---:|---:|---|---|
-| GPS TX → MCU RX | P1.08 | 40 | `GPS_TX_PIN`, `PIN_GPS_RX`, `PIN_SERIAL1_RX` | Data from L76K to nRF52840. |
-| GPS RX ← MCU TX | P1.09 | 41 | `GPS_RX_PIN`, `PIN_GPS_TX`, `PIN_SERIAL1_TX` | Data from nRF52840 to L76K. |
-| GPS PPS | P1.04 | 36 | `PIN_GPS_PPS` | PPS input. LilyGO table gives P1.4 / Arduino 36. |
-| GPS wakeup / standby | P1.02 | 34 | `PIN_GPS_STANDBY`, `GPS_EN` | Meshtastic: high forces wake; low allows sleep. MeshCore names this `GPS_EN`. |
-| GPS reset | P1.05 | 37 | `PIN_GPS_REINIT`, `PIN_GPS_RESET` | Active-low reset in MeshCore build flags; Meshtastic comment says low for >100 ms resets L76K. |
+| **GPS TX → MCU RX** | **P1.09** | 41 | `GPS_RX_PIN`, `PIN_GPS_TX`, `PIN_SERIAL1_TX` | **Measured.** Data from L76K to nRF52840, despite the pin names. |
+| **GPS RX ← MCU TX** | **P1.08** | 40 | `GPS_TX_PIN`, `PIN_GPS_RX`, `PIN_SERIAL1_RX` | **Measured.** Data from nRF52840 to L76K. |
+| GPS PPS | P1.04 | 36 | `PIN_GPS_PPS` | PPS input. LilyGO table gives P1.4 / Arduino 36. Never observed to toggle; not used. |
+| GPS wakeup / standby | P1.02 | 34 | `PIN_GPS_STANDBY`, `GPS_EN` | High wakes, low sleeps. Confirmed: the module stops transmitting within a second of the pin going low. |
+| GPS reset | P1.05 | 37 | `PIN_GPS_REINIT`, `PIN_GPS_RESET` | Active low, held >100 ms. |
+
+**The UART direction is the reverse of what the pin names suggest.** The
+upstream variant files name these from the *module's* point of view in
+one macro and the *MCU's* in another, and the two disagree; the
+`PIN_SERIAL1_RX`/`PIN_SERIAL1_TX` pair in particular reads backwards.
+Measured on hardware by sampling each candidate pin against the internal
+pull-down while the module was awake: **P1.09 is the line carrying NMEA**,
+driven high at idle and showing ~350 edges in 60 ms of traffic. P1.08 was
+undriven under every standby/reset combination.
+
+The same ambiguity is flagged for the SenseCAP Solar's L76K — see
+[`sensecap-solar-node-p1-pro-hardware.md`](sensecap-solar-node-p1-pro-hardware.md#gnss)
+— so treat the direction as unverified on any board carrying this module
+until it has been sampled.
 
 The GNSS baud rate differs by firmware convention:
 
 - Meshtastic variant defines a 50 ms GPS thread interval but does not define baud rate in the variant file excerpt.
 - MeshCore sets `GPS_BAUD_RATE=9600`.
+
+9600 is correct and is what UMSH uses.
+
+### Observed behavior
+
+Confirmed on hardware 2026-08-04 with the UMSH firmware:
+
+- The module emits NMEA continuously at ~730 B/s once woken — GGA, GSA,
+  GSV and RMC — and reaches a 3D fix indoors near a window (15 satellites
+  used of 17 in view, HDOP giving a ~4.5 m accuracy estimate).
+- Driving P1.02 low stops the stream: the byte counter freezes, which is
+  what makes `PROP_GNSS_ENABLED` a real power control rather than a
+  reporting switch.
+- The module shares the P0.12 peripheral rail with the e-paper, the LoRa
+  module and the sensors, so it cannot be unpowered independently. Its
+  internal clock and ephemeris therefore survive a disable — a re-enable
+  is a warm start — but not a shutdown.
 
 ### I²C bus
 

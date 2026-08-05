@@ -1549,6 +1549,7 @@ dependencies = [
  "umsh-bsp-t1000e",
  "umsh-core",
  "umsh-crypto",
+ "umsh-gnss",
  "umsh-hal",
  "umsh-journal-store",
  "umsh-mac",
@@ -1627,6 +1628,7 @@ dependencies = [
  "umsh-bsp-techo",
  "umsh-core",
  "umsh-crypto",
+ "umsh-gnss",
  "umsh-hal",
  "umsh-journal-store",
  "umsh-mac",
@@ -3922,6 +3924,7 @@ dependencies = [
  "lora-phy",
  "umsh-bsp-nrf52840",
  "umsh-crypto",
+ "umsh-gnss",
  "umsh-hal",
  "umsh-mac",
  "umsh-radio-loraphy",
@@ -3940,6 +3943,7 @@ dependencies = [
  "embedded-graphics",
  "umsh-bsp-nrf52840",
  "umsh-crypto",
+ "umsh-gnss",
  "umsh-hal",
  "umsh-mac",
  "umsh-radio-loraphy",
@@ -4041,9 +4045,20 @@ dependencies = [
 ]
 
 [[package]]
+name = "umsh-gnss"
+version = "0.1.0"
+dependencies = [
+ "embassy-futures",
+ "embedded-hal-async",
+ "embedded-io-async 0.7.0",
+ "heapless 0.8.0",
+]
+
+[[package]]
 name = "umsh-hal"
 version = "0.1.0"
 dependencies = [
+ "embassy-sync 0.8.0",
  "embassy-time",
 ]
 
@@ -4166,6 +4181,7 @@ dependencies = [
  "static_cell",
  "umsh-core",
  "umsh-crypto",
+ "umsh-gnss",
  "umsh-hal",
  "umsh-journal-store",
  "umsh-mac",
@@ -4185,6 +4201,7 @@ dependencies = [
  "serde_json",
  "umsh-core",
  "umsh-crypto",
+ "umsh-gnss",
  "umsh-ulcp",
  "umsh-ulcp-device",
  "wasm-bindgen",
@@ -4231,6 +4248,7 @@ dependencies = [
  "tokio",
  "tokio-serial",
  "umsh",
+ "umsh-gnss",
 ]
 
 [[package]]

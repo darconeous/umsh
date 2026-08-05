@@ -130,6 +130,8 @@ mod firmware {
     #[cfg(any(feature = "has-display", feature = "button-nav", feature = "t1000e"))]
     use embassy_futures::select::{Either4, select4};
     use embassy_nrf::bind_interrupts;
+    #[cfg(feature = "cap-gnss")]
+    use embassy_nrf::buffered_uarte::BufferedUarte;
     use embassy_nrf::gpio::{Input, Level, Output, OutputDrive, Pull};
     use embassy_nrf::mode::Async;
     use embassy_nrf::pac;
@@ -142,6 +144,8 @@ mod firmware {
     #[cfg(feature = "cap-battery-saadc")]
     use embassy_nrf::saadc::{ChannelConfig, Config as SaadcConfig, Saadc};
     use embassy_nrf::spim::{Config as SpimConfig, Frequency, Spim};
+    #[cfg(feature = "cap-gnss")]
+    use embassy_nrf::uarte::{Baudrate as UarteBaudrate, Config as UarteConfig};
     use embassy_nrf::usb::Driver;
     use embassy_nrf::usb::vbus_detect::SoftwareVbusDetect;
     use embassy_nrf::wdt::{Config as WdtConfig, Watchdog, WatchdogHandle};
@@ -208,11 +212,24 @@ mod firmware {
     use umsh_bsp_wio_tracker_l1::power as board_power;
     #[cfg(all(feature = "cap-battery-saadc", feature = "board-xiao-nrf52"))]
     use umsh_bsp_xiao_nrf52::power as board_power;
+    // Board-selected GNSS power control. One board feature is active per
+    // image, so this alias resolves to exactly one type and the pump's
+    // task shim stays concrete — which is what `#[embassy_executor::task]`
+    // requires, since a task function cannot be generic.
+    #[cfg(all(feature = "cap-gnss", feature = "board-techo"))]
+    type BoardGnss = umsh_bsp_techo::gnss::Gnss<'static>;
+    #[cfg(all(feature = "cap-gnss", feature = "t1000e"))]
+    type BoardGnss = umsh_bsp_t1000e::gnss::Gnss<'static>;
+    /// The byte stream the pump reads.
+    #[cfg(feature = "cap-gnss")]
+    type GnssUart = BufferedUarte<'static>;
     use umsh_crypto::CryptoEngine;
     use umsh_crypto::software::{SoftwareAes, SoftwareSha256};
     use umsh_ulcp::{Status, gatt, hdlc};
+    #[cfg(feature = "cap-gnss")]
+    use umsh_ulcp_device::GnssConfig;
     use umsh_ulcp_device::{
-        AlertConfig, BatteryFields, MAX_DEVICE_NAME_LEN, RadioSettings, SessionConfig,
+        AlertConfig, BatteryFields, MAX_DEVICE_NAME_LEN, RadioSettings, SessionConfig, TimeConfig,
     };
 
     /// The ULCP session instantiated with this firmware's crypto
@@ -280,6 +297,11 @@ mod firmware {
         // SPIM2 → SSD1681 e-paper SPI bus. embassy-nrf names this interrupt SPI2.
         SPI2        => embassy_nrf::spim::InterruptHandler<peripherals::SPI2>;
         SAADC       => embassy_nrf::saadc::InterruptHandler;
+        // UARTE0 → the GNSS receiver, on every board that has one. Bound
+        // unconditionally rather than per-board: an unused handler for a
+        // peripheral nothing instantiates costs a vector-table entry and
+        // saves a `cfg` fork in the one block that must stay readable.
+        UARTE0      => embassy_nrf::buffered_uarte::InterruptHandler<peripherals::UARTE0>;
     });
 
     // ─── Configuration ───────────────────────────────────────────────────────
@@ -409,6 +431,15 @@ mod firmware {
             // indicator LEDs. `CAP_ALERT` says only that *something*
             // happens, so the difference stays a board matter.
             alert: Some(AlertConfig::DEFAULT),
+            // Every board here keeps a wall clock. What it does *not*
+            // claim is that the clock is set: a board with no receiver
+            // and no battery-backed RTC simply reports that it does not
+            // know what time it is until a host tells it.
+            time: Some(TimeConfig),
+            #[cfg(feature = "cap-gnss")]
+            gnss: Some(GnssConfig),
+            #[cfg(not(feature = "cap-gnss"))]
+            gnss: None,
         }
     }
 
@@ -1280,6 +1311,12 @@ mod firmware {
         /// cadence and the change policy; this only forwards.
         #[cfg(feature = "cap-battery-saadc")]
         battery: embassy_sync::watch::DynReceiver<'static, board_power::BatterySample>,
+        /// Positioning changes worth publishing unasked. The runtime's
+        /// GNSS sink owns the policy — a stationary receiver produces a
+        /// fix a second and almost none of them are news — so this only
+        /// forwards what it decided to raise.
+        #[cfg(feature = "cap-gnss")]
+        gnss_announce: umsh_ulcp_runtime::gnss::Announcer,
     }
 
     impl DeviceEnv for BoardDeviceEnv {
@@ -1352,6 +1389,77 @@ mod firmware {
             }
         }
 
+        async fn read_time(&mut self) -> Option<u32> {
+            umsh_hal::wall_clock::now()
+        }
+
+        /// A host wrote `PROP_TIME`. An operator outranks every other
+        /// source, including a receiver whose time is being distrusted —
+        /// distrusting the sky is precisely why somebody would set the
+        /// clock by hand.
+        ///
+        /// The empty write is not a failure to parse: it is the host
+        /// saying the device should go back to not knowing, which is what
+        /// takes the clock off a board's display.
+        async fn apply_time(&mut self, epoch: Option<u32>) {
+            match epoch {
+                Some(seconds) => {
+                    umsh_hal::wall_clock::set_manual(seconds);
+                }
+                None => umsh_hal::wall_clock::clear(),
+            }
+            // The clock appearing or vanishing is a visible change the
+            // user asked for, so redraw now rather than at whatever the
+            // next event happens to be.
+            UI_REFRESH.signal(());
+        }
+
+        /// The receiver's current view. Cached by the runtime rather than
+        /// re-read from the receiver, because "what did it last say" is
+        /// the only question a UART emitting one cycle a second can
+        /// answer promptly.
+        #[cfg(feature = "cap-gnss")]
+        async fn sample_gnss(&mut self) -> Result<umsh_ulcp::gnss::GnssSnapshot, ()> {
+            Ok(umsh_ulcp_runtime::gnss::snapshot())
+        }
+
+        /// Everything this board publishes unasked, on one select arm.
+        ///
+        /// The driver has exactly one, because a hook per property would
+        /// need one `&mut self` borrow apiece. These are disjoint fields
+        /// rather than three method calls, which is what makes selecting
+        /// over them legal.
+        #[cfg(feature = "cap-gnss")]
+        async fn publish_event(&mut self) -> driver::PublishEvent {
+            loop {
+                #[cfg(feature = "cap-battery-saadc")]
+                let event = select(self.battery.changed(), self.gnss_announce.changed()).await;
+                #[cfg(not(feature = "cap-battery-saadc"))]
+                let event = Either::Second(self.gnss_announce.changed().await) as Either<(), _>;
+
+                match event {
+                    #[cfg(feature = "cap-battery-saadc")]
+                    Either::First(sample) => {
+                        // A sample this board cannot reduce to its
+                        // advertised field set is skipped rather than
+                        // published — the same fail-closed rule the
+                        // on-demand read applies.
+                        if let Ok(snapshot) = battery_snapshot(sample) {
+                            return driver::PublishEvent::Battery(snapshot);
+                        }
+                    }
+                    #[cfg(not(feature = "cap-battery-saadc"))]
+                    Either::First(()) => unreachable!("no battery source on this board"),
+                    Either::Second(umsh_ulcp_runtime::gnss::Announce::Gnss(key, snapshot)) => {
+                        return driver::PublishEvent::Gnss(key, snapshot);
+                    }
+                    Either::Second(umsh_ulcp_runtime::gnss::Announce::Time(epoch)) => {
+                        return driver::PublishEvent::Time(epoch);
+                    }
+                }
+            }
+        }
+
         async fn apply_pairing_pin(&mut self, pin: Option<u32>) -> bool {
             PAIRING_CONFIG_CH.send(pin).await;
             PAIRING_CONFIG_ACK.wait().await
@@ -1415,6 +1523,20 @@ mod firmware {
         }
 
         fn publish_dev_domain(&mut self, snapshot: driver::DevDomainSnapshot) {
+            // The zone and the positioning policy ride the device-domain
+            // mirror, so a host write, a boot restore, and a `CMD_RST`
+            // all reach the clock and the receiver by the same path —
+            // and neither needs anything to remember to push it.
+            umsh_hal::wall_clock::set_tz(snapshot.tz_offset_min);
+            #[cfg(feature = "cap-gnss")]
+            umsh_ulcp_runtime::gnss::configure(
+                snapshot.gnss_enabled,
+                umsh_ulcp_runtime::gnss::Policy {
+                    trust_time: snapshot.gnss_time_trust,
+                    update_identity: snapshot.gnss_ident_update,
+                    identity_precision: snapshot.gnss_ident_precision,
+                },
+            );
             super::device_node::DEV_SYNC.signal(snapshot);
         }
 
@@ -2618,6 +2740,9 @@ mod firmware {
                 battery: board_power::BATTERY_ANNOUNCE
                     .dyn_receiver()
                     .expect("BATTERY_ANNOUNCE receiver slot"),
+                #[cfg(feature = "cap-gnss")]
+                gnss_announce: umsh_ulcp_runtime::gnss::announcer()
+                    .expect("GNSS announcement receiver slot"),
             },
         )
         .await
@@ -2659,6 +2784,13 @@ mod firmware {
             } else {
                 screen::PairingState::Closed
             },
+            // `None` whenever the device does not know what time it is,
+            // which the renderer draws as nothing at all. There is
+            // deliberately no fallback here: a placeholder would be an
+            // indication of the current time, and a device that does not
+            // have one must not give any.
+            clock: umsh_hal::wall_clock::local_hhmm()
+                .map(|(hour, minute)| screen::ClockModel { hour, minute }),
         }
     }
 
@@ -2714,6 +2846,93 @@ mod firmware {
         board_power::BATTERY_UI_CHANGED.wait().await;
         #[cfg(not(feature = "cap-battery-saadc"))]
         core::future::pending::<()>().await
+    }
+
+    /// Drive the board's GNSS receiver.
+    ///
+    /// The whole of the per-board GNSS code: construct the UART and the
+    /// board's power control, then hand both to the shared pump. An
+    /// `#[embassy_executor::task]` cannot be generic, which is the only
+    /// reason this shim exists at all — the loop it delegates to lives in
+    /// `umsh_gnss::pump` and is common to both cargo workspaces.
+    ///
+    /// The receiver stays powered down until `PROP_GNSS_ENABLED` says
+    /// otherwise, including on a board that has never been configured.
+    #[cfg(feature = "cap-gnss")]
+    #[embassy_executor::task]
+    async fn gnss_task(
+        #[allow(unused_mut)] mut uart: GnssUart,
+        #[allow(unused_mut)] mut control: BoardGnss,
+    ) {
+        let Some(enable) = umsh_ulcp_runtime::gnss::EnableSource::new() else {
+            debug_log(format_args!("gnss: enable receiver already taken"));
+            return;
+        };
+
+        // On a board whose only surviving real-time clock lives inside the
+        // receiver, read it back before the pump takes over — otherwise a
+        // device that was switched off knowing the time boots not knowing
+        // it, and the clock the backup domain was kept powered to preserve
+        // is never actually consulted.
+        //
+        // Gated on trust and not on `PROP_GNSS_ENABLED`, because this is a
+        // clock operation: a device with positioning switched off still
+        // wants to know what time it is. Waiting for the device domain is
+        // what makes the trust flag mean the saved setting rather than the
+        // post-reset default.
+        #[cfg(feature = "gnss-holds-the-clock")]
+        {
+            umsh_ulcp_runtime::gnss::wait_configured().await;
+            if !umsh_hal::wall_clock::is_set() && umsh_ulcp_runtime::gnss::policy().trust_time {
+                match umsh_gnss::pump::rtc_read_once(&mut uart, &mut control, embassy_time::Delay)
+                    .await
+                    .and_then(|at| at.to_unix())
+                {
+                    Some(epoch) => {
+                        umsh_hal::wall_clock::apply(
+                            epoch,
+                            umsh_hal::wall_clock::TimeSource::GnssRtc,
+                            true,
+                        );
+                        debug_log(format_args!("gnss: clock restored from receiver RTC"));
+                    }
+                    // What a receiver whose backup domain lost power looks
+                    // like. The device simply does not know the time.
+                    None => debug_log(format_args!("gnss: receiver RTC had no time")),
+                }
+            }
+        }
+
+        umsh_gnss::pump::run(
+            uart,
+            control,
+            enable,
+            umsh_ulcp_runtime::gnss::FixSink,
+            embassy_time::Delay,
+        )
+        .await
+    }
+
+    /// Completes at the next minute boundary, so a clock row can advance.
+    ///
+    /// The display layer's standing rule is that panels redraw on events
+    /// and never on a timer, because a timer on a bistable panel is a
+    /// battery drain that reports nothing. A clock is the one thing that
+    /// has to move on its own, so this is the sanctioned exception — and
+    /// it is bounded to exactly the case that needs it. It never
+    /// completes unless the panel is already awake (`awake`) *and* the
+    /// device knows what time it is, so a sleeping panel is never woken
+    /// by it and a device with no clock never arms it at all. A panel
+    /// that was asleep catches up on its next event-driven redraw.
+    #[cfg(feature = "has-display")]
+    async fn clock_tick(awake: bool) {
+        if !awake {
+            core::future::pending::<()>().await;
+        }
+        match umsh_hal::wall_clock::millis_to_next_minute() {
+            Some(millis) => Timer::after_millis(u64::from(millis)).await,
+            None => core::future::pending().await,
+        }
     }
 
     #[cfg(feature = "has-display")]
@@ -2843,7 +3062,7 @@ mod firmware {
                     UI_REFRESH.wait(),
                     UI_NOTICE.wait(),
                     UI_ALERT_CHANGED.wait(),
-                    battery_ui_changed(),
+                    select(battery_ui_changed(), clock_tick(attention.accepts_redraw())),
                 ),
                 DISPLAY_SHUTDOWN.wait(),
                 lapse,
@@ -2911,14 +3130,14 @@ mod firmware {
                                 redraw = false;
                             }
                         }
-                        // A battery sample is the one thing here nobody
-                        // asked for, so it redraws without counting as
-                        // attention — waking on it would reset the lapse
-                        // timer every few minutes forever. The panel is
-                        // bistable and already showing the old reading, so
-                        // the redraw is a partial refresh of the indicator
-                        // and little else.
-                        Either4::Fourth(()) => {}
+                        // A battery sample and a minute boundary are the
+                        // two things here nobody asked for, so they
+                        // redraw without counting as attention — waking
+                        // on either would reset the lapse timer forever.
+                        // The panel is bistable and already showing the
+                        // old reading, so the redraw is a partial refresh
+                        // of the indicator or the clock and little else.
+                        Either4::Fourth(_) => {}
                     }
                 }
                 Either4::Third(()) => {
@@ -3171,10 +3390,14 @@ mod firmware {
             match select4(
                 UI_INPUT_CH.receive(),
                 select4(
-                    // Both are "content moved, redraw if the panel is
-                    // already lit"; they differ only in what they do to
-                    // the model, so they share an arm.
-                    select(UI_REFRESH.wait(), battery_ui_changed()),
+                    // All three are "content moved, redraw if the panel
+                    // is already lit"; they differ only in what they do
+                    // to the model, so they share an arm.
+                    select3(
+                        UI_REFRESH.wait(),
+                        battery_ui_changed(),
+                        clock_tick(attention.accepts_redraw()),
+                    ),
                     UI_NOTICE.wait(),
                     UI_WAKE.wait(),
                     UI_ALERT_CHANGED.wait(),
@@ -3205,11 +3428,13 @@ mod firmware {
                     // panel is already lit, but never light it. That rule
                     // is what keeps a battery sample from waking a tracker
                     // in a drawer every few minutes.
-                    Either4::First(Either::First(())) => {
+                    Either4::First(Either3::First(())) => {
                         model.clear_notice();
                         redraw = true;
                     }
-                    Either4::First(Either::Second(())) => redraw = true,
+                    // A battery sample and a minute boundary both move
+                    // content without touching the model.
+                    Either4::First(Either3::Second(()) | Either3::Third(())) => redraw = true,
                     Either4::Second(notice) => {
                         model.set_notice(notice);
                         transition = attention.wake(Instant::now().as_millis());
@@ -3686,13 +3911,21 @@ mod firmware {
         drive_pin_high(Port::P0, 14); // status LED, active-low → high is off
         drive_pin_low(Port::P1, 11); // e-paper backlight, active-high
 
-        // The L76K GNSS standby line (active-high wake), floating since boot
-        // because this firmware does not use the GNSS. Dropping the rail
-        // below is the stronger off-switch, so this is defence in depth for
-        // the case where the load switch does not fully open — which means
-        // it has to happen here, while the module is still powered enough to
-        // sample the level. Polarity is inferred from the board notes.
+        // The L76K GNSS. Dropping the rail below is the stronger off-switch,
+        // so this is defence in depth for the case where the load switch does
+        // not fully open — which means it has to happen here, while the module
+        // is still powered enough to sample the levels.
+        //
+        // Standby (P1.02) is active-high wake, confirmed on hardware. Reset
+        // (P1.05) is active-low and idles high, and the UART line into the
+        // module (P1.08) idles high as a UART must; once the rail is gone,
+        // both are pins driving current into an unpowered module's protection
+        // diodes. Drive them low. P1.09 carries the module's output and is
+        // never driven by this chip, so it is only released.
         drive_pin_low(Port::P1, 2);
+        drive_pin_low(Port::P1, 5);
+        drive_pin_low(Port::P1, 8);
+        tristate_pin(Port::P1, 9);
 
         // E-paper SPI bus (SPIM2): SCK=P0.31, MISO=P1.07, MOSI=P0.29
         // E-paper control:         CS=P0.30, DC=P0.28, RST=P0.02, BUSY=P0.03
@@ -3756,6 +3989,29 @@ mod firmware {
         // buffers until a transport is up, so installing it this early
         // costs nothing and means the journal mount lines are not lost.
         umsh_ulcp_runtime::log::set_debug_log(debug_log);
+
+        // Re-power the GNSS backup domain as the very first thing this
+        // image does, before embassy init and before any peripheral is
+        // touched.
+        //
+        // nRF52840 System OFF retains driven pin levels *while it is off*,
+        // but waking from it is a reset: GPIO returns to its disconnected
+        // reset configuration, and stays there until something drives it
+        // again. On this board that pin gates the only real-time clock
+        // there is, so every millisecond between the reset and this write
+        // is a millisecond the clock is running on whatever charge is left
+        // on the rail. Asserting it in the normal peripheral-init block —
+        // after the bootloader, embassy, the radio and the journal — is
+        // far too late to expect it to survive.
+        //
+        // Whether it survives even from here is a question about the
+        // bootloader's own startup time and the rail's capacitance, not
+        // about this firmware. If it does not, the receiver comes back
+        // reporting its own epoch, which `umsh-gnss` rejects, and the
+        // device honestly reports that it does not know the time.
+        #[cfg(all(feature = "gnss-holds-the-clock", feature = "t1000e"))]
+        umsh_bsp_nrf52840::system_off::drive_pin_high(umsh_bsp_nrf52840::system_off::Port::P0, 8);
+
         let (previous_crumb, previous_beats) = super::panic::breadcrumb_take();
         PREV_BOOT_CRUMB.store(previous_crumb, Ordering::Release);
         PREV_BOOT_BEATS.store(previous_beats, Ordering::Release);
@@ -4674,6 +4930,40 @@ mod firmware {
             let button = Input::new(p.P1_10, Pull::Up);
             spawner.spawn(button_task(button).unwrap());
             spawner.spawn(shutdown_task(peripheral_power).unwrap());
+
+            // Quectel L76K on UARTE0. `BufferedUarte` rather than a plain
+            // one because NMEA arrives as lines of unpredictable length:
+            // a plain read would block until its buffer filled, holding a
+            // complete sentence hostage to the start of the next one.
+            //
+            // TIMER1 and PPI 0/1 with group 0 are free — MPSL holds
+            // TIMER0 and PPI 19/30/31, the softdevice controller holds
+            // 17/18 and 20–29, and the freeze diagnostics hold TIMER2.
+            let mut gnss_config = UarteConfig::default();
+            gnss_config.baudrate = UarteBaudrate::Baud9600;
+            static GNSS_RX: StaticCell<[u8; 256]> = StaticCell::new();
+            static GNSS_TX: StaticCell<[u8; 16]> = StaticCell::new();
+            let gnss_uart = BufferedUarte::new(
+                p.UARTE0,
+                p.TIMER1,
+                p.PPI_CH0,
+                p.PPI_CH1,
+                p.PPI_GROUP0,
+                // rxd, then txd. Measured, not taken from the variant
+                // files: the module's TX — the line carrying NMEA — is
+                // P1.09, the opposite of what the upstream pin names
+                // suggest. See docs/hardware/lilygo-techo-hardware.md.
+                p.P1_09,
+                p.P1_08,
+                Irqs,
+                gnss_config,
+                GNSS_RX.init([0; 256]),
+                // Nothing is sent to this receiver: the L76K needs no
+                // configuration to emit what UMSH reads. The buffer is
+                // the smallest the driver will take.
+                GNSS_TX.init([0; 16]),
+            );
+            spawner.spawn(gnss_task(gnss_uart, BoardGnss::new(p.P1_02, p.P1_05)).unwrap());
         }
 
         #[cfg(feature = "t1000e")]
@@ -4704,6 +4994,55 @@ mod firmware {
             );
             spawner.spawn(t1000e_button_task(button, force_pairing_at_boot, ux_store).unwrap());
             spawner.spawn(t1000e_shutdown_task().unwrap());
+
+            // VRTC, main enable, sleep interrupt, reset, RTC interrupt,
+            // and the stop line. All six matter: the receiver stays silent
+            // if the last two are left floating.
+            #[allow(unused_mut)]
+            let mut gnss_control =
+                BoardGnss::new(p.P0_08, p.P1_11, p.P1_12, p.P1_15, p.P0_15, p.P1_14);
+
+            // Airoha AG3335 on UARTE0, at 115200 rather than the L76K
+            // boards' 9600. `BufferedUarte` rather than a plain one because
+            // NMEA arrives as lines of unpredictable length: a plain read
+            // would block until its buffer filled, holding a complete
+            // sentence hostage to the start of the next one.
+            //
+            // TIMER1 and PPI 0/1 with group 0 are free — MPSL holds TIMER0
+            // and PPI 19/30/31, the softdevice controller holds 17/18 and
+            // 20–29, and the freeze diagnostics hold TIMER2.
+            let mut gnss_config = UarteConfig::default();
+            gnss_config.baudrate = UarteBaudrate::Baud115200;
+            // Twice the L76K boards' buffer. The same sentences arrive
+            // twelve times faster here, and an overrun costs a whole fix
+            // cycle rather than a sentence.
+            static GNSS_RX: StaticCell<[u8; 512]> = StaticCell::new();
+            // Big enough for the whole wake command in one pass, so
+            // enabling the optional sentences is not several round trips.
+            static GNSS_TX: StaticCell<[u8; 64]> = StaticCell::new();
+            let gnss_uart = BufferedUarte::new(
+                p.UARTE0,
+                p.TIMER1,
+                p.PPI_CH0,
+                p.PPI_CH1,
+                p.PPI_GROUP0,
+                // rxd, then txd. Unlike the T-Echo, the upstream names here
+                // agree with the electrical direction: `GPS_RX_PIN` is the
+                // MCU's RX, and P0.14 carries NMEA. That is the same
+                // reading of `GPS_RX_PIN` that turned out to be correct on
+                // the T-Echo once its contradictory `PIN_SERIAL1_*` names
+                // were discarded. See docs/hardware/t1000e-hardware.md.
+                p.P0_14,
+                p.P0_13,
+                Irqs,
+                gnss_config,
+                GNSS_RX.init([0; 512]),
+                // Used: the AG3335 persists its NMEA output selection, so
+                // the BSP re-enables GSA and GSV on every wake. See
+                // `umsh_bsp_t1000e::gnss`.
+                GNSS_TX.init([0; 64]),
+            );
+            spawner.spawn(gnss_task(gnss_uart, gnss_control).unwrap());
         }
 
         // SenseCAP Solar battery monitor: SAADC on AIN7/P0.31, resistor

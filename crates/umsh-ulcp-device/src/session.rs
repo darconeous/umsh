@@ -12,6 +12,7 @@ use umsh_ulcp::airtime::lora_airtime_ms;
 use umsh_ulcp::alert::AlertState;
 use umsh_ulcp::battery::{self, BatteryStatus};
 use umsh_ulcp::frame::{self, Cmd, Frame, PropPayload, StreamPayload, TID_UNSOLICITED};
+use umsh_ulcp::gnss::{self, GnssSnapshot};
 use umsh_ulcp::ids::{self, cap, prop, stream};
 use umsh_ulcp::items::{self, Filter, ItemError, REGION_CODE_LEN};
 use umsh_ulcp::meta::{self, BufferedRxMeta, RX_FLAG_ACKED, RX_FLAG_BUFFERED, RxMeta, TxMeta};
@@ -116,6 +117,32 @@ impl AlertConfig {
     };
 }
 
+/// That this board keeps a wall clock (`CAP_TIME`).
+///
+/// A marker: the capability's whole statement is that `PROP_TIME` and
+/// `PROP_TZ_OFFSET` exist, and it says nothing about where the time comes
+/// from or how much of a power cycle it survives. Both of those are
+/// platform business, and neither is anything the session could answer.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct TimeConfig;
+
+/// That this board has a GNSS receiver (`CAP_GNSS`).
+///
+/// A marker, like [`TimeConfig`], and dependent on it: a board that
+/// advertises this without a wall clock would be claiming a time source
+/// for a clock it does not have.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct GnssConfig;
+
+/// Post-reset value of `PROP_GNSS_IDENT_PRECISION`: a ~38 × 19 m cell,
+/// fine enough to place a node on a street and coarse enough not to place
+/// it in a room.
+pub const DEFAULT_IDENT_PRECISION: u8 = 5;
+
+/// Largest `PROP_GNSS_IDENT_PRECISION`, matching the location encoding's
+/// own maximum.
+pub const MAX_IDENT_PRECISION: u8 = gnss::MAX_LOCATION_LEN as u8;
+
 /// Fixed properties of the device this session runs on.
 #[derive(Clone, Copy, Debug)]
 pub struct SessionConfig {
@@ -155,6 +182,13 @@ pub struct SessionConfig {
     /// `CAP_ALERT` is absent and `PROP_ALERT` is unknown. `Some`: the
     /// capability is advertised and the config carries the deadline.
     pub alert: Option<AlertConfig>,
+    /// `None`: the board keeps no wall clock; `CAP_TIME` is absent and
+    /// `PROP_TIME` / `PROP_TZ_OFFSET` are unknown.
+    pub time: Option<TimeConfig>,
+    /// `None`: no GNSS receiver; `CAP_GNSS` is absent and the positioning
+    /// properties are unknown. Meaningful only alongside
+    /// [`time`](Self::time) — see [`GnssConfig`].
+    pub gnss: Option<GnssConfig>,
 }
 
 /// Physical-radio outcome of the transmit started by
@@ -199,6 +233,26 @@ pub enum Effect {
     /// Apply and persist a new BLE pairing PIN, then complete the deferred
     /// property transaction with [`Session::respond_pin_set`].
     SetPairingPin { tid: u8, pin: Option<u32> },
+    /// Read the platform's wall clock and feed it back with
+    /// [`Session::respond_time`], quoting this `tid`. Emitted for a
+    /// `PROP_TIME` get: the clock belongs to the platform, which is the
+    /// only layer that knows whether it has been set and how far it has
+    /// advanced since.
+    ReadTime { tid: u8 },
+    /// A `PROP_TIME` write. `Some` sets the platform wall clock to that
+    /// Unix second; `None` returns it to not knowing what time it is,
+    /// which is what stops a device with a screen from displaying a clock.
+    ///
+    /// A manual set outranks every receiver-derived one — the operator is
+    /// the more authoritative source by definition — so the platform
+    /// applies this unconditionally, including while
+    /// `PROP_GNSS_TIME_TRUST` is clear.
+    ApplyTime { epoch: Option<u32> },
+    /// Sample the receiver's current view of position and constellation
+    /// and feed it back with [`Session::respond_gnss`], quoting this `tid`
+    /// and `key`. Emitted for a get of any positioning property; the
+    /// session never caches a reading, so every get samples.
+    SampleGnss { tid: u8, key: u32 },
     /// The live human-readable device name changed. Transports that expose a
     /// name should refresh it without disrupting the active session.
     DeviceNameChanged,
@@ -372,6 +426,27 @@ struct DeviceDomain {
     /// infrastructure, and being askable is most of the point; the
     /// property is the opt-out.
     dev_discoverable: bool,
+    /// `PROP_TZ_OFFSET`: minutes east of UTC. Configuration rather than
+    /// measurement — where a device is meant to be is known even when the
+    /// time is not — so unlike `PROP_TIME` it always has a value.
+    tz_offset_min: i16,
+    /// `PROP_GNSS_ENABLED`: whether the receiver is powered.
+    ///
+    /// Off by default. A receiver is the largest continuous load on most
+    /// of these boards, and a device that has never been told to care
+    /// where it is should not be spending a battery finding out.
+    gnss_enabled: bool,
+    /// `PROP_GNSS_IDENT_UPDATE`: whether fixes refresh the advertised node
+    /// identity's location. Off by default: broadcasting where you are is
+    /// a decision, not a default.
+    gnss_ident_update: bool,
+    /// `PROP_GNSS_IDENT_PRECISION`: how far the advertised location is
+    /// clamped down from what the receiver actually knows.
+    gnss_ident_precision: u8,
+    /// `PROP_GNSS_TIME_TRUST`: whether receiver-derived time may set the
+    /// wall clock. On by default — the sky is normally the best clock a
+    /// board has — and the opt-out for when it demonstrably is not.
+    gnss_time_trust: bool,
 }
 
 impl DeviceDomain {
@@ -402,6 +477,11 @@ impl DeviceDomain {
             ident_role: None,
             ident_mobile: false,
             dev_discoverable: true,
+            tz_offset_min: 0,
+            gnss_enabled: false,
+            gnss_ident_update: false,
+            gnss_ident_precision: DEFAULT_IDENT_PRECISION,
+            gnss_time_trust: true,
         }
     }
 }
@@ -1272,8 +1352,21 @@ const SAVED_SCHEMA: &[SavedProperty] = &[
     saved(prop::MAC_REPEATER_MIN_RSSI, ApplyPhase::Config, false),
     saved(prop::MAC_REPEATER_MIN_SNR, ApplyPhase::Config, false),
     saved(prop::DEV_DISCOVERABLE, ApplyPhase::Config, false),
+    saved(prop::GNSS_ENABLED, ApplyPhase::Config, false),
     saved(prop::PHY_DUTY_LIMIT, ApplyPhase::Config, false),
+    saved(prop::TZ_OFFSET, ApplyPhase::Config, false),
+    saved(prop::GNSS_IDENT_UPDATE, ApplyPhase::Config, false),
+    saved(prop::GNSS_IDENT_PRECISION, ApplyPhase::Config, false),
+    saved(prop::GNSS_TIME_TRUST, ApplyPhase::Config, false),
 ];
+
+/// [`SavedState::decode`] tracks which single-valued properties it has
+/// already seen in one `u32` of schema-index bits, so the schema cannot
+/// outgrow that word without the repeat check silently going blind.
+const _: () = assert!(
+    SAVED_SCHEMA.len() <= u32::BITS as usize,
+    "SAVED_SCHEMA outgrew the duplicate-detection bitmask"
+);
 
 /// Why a stored snapshot payload was rejected. Rejection is never
 /// silent: the boot path walks back a generation and reports through
@@ -1354,6 +1447,11 @@ struct SavedState {
     ident_role: Option<u8>,
     ident_mobile: bool,
     dev_discoverable: bool,
+    tz_offset_min: i16,
+    gnss_enabled: bool,
+    gnss_ident_update: bool,
+    gnss_ident_precision: u8,
+    gnss_time_trust: bool,
 }
 
 impl SavedState {
@@ -1379,6 +1477,11 @@ impl SavedState {
             ident_role: device.ident_role,
             ident_mobile: device.ident_mobile,
             dev_discoverable: device.dev_discoverable,
+            tz_offset_min: device.tz_offset_min,
+            gnss_enabled: device.gnss_enabled,
+            gnss_ident_update: device.gnss_ident_update,
+            gnss_ident_precision: device.gnss_ident_precision,
+            gnss_time_trust: device.gnss_time_trust,
         }
     }
 
@@ -1408,6 +1511,11 @@ impl SavedState {
             ident_role: None,
             ident_mobile: false,
             dev_discoverable: true,
+            tz_offset_min: 0,
+            gnss_enabled: false,
+            gnss_ident_update: false,
+            gnss_ident_precision: DEFAULT_IDENT_PRECISION,
+            gnss_time_trust: true,
         }
     }
 
@@ -1485,7 +1593,12 @@ impl SavedState {
                 None => Ok(()),
             },
             prop::DEV_DISCOVERABLE => encoder.put(number, &[self.dev_discoverable as u8]),
+            prop::GNSS_ENABLED => encoder.put(number, &[self.gnss_enabled as u8]),
             prop::PHY_DUTY_LIMIT => encoder.put(number, &self.duty_limit.to_le_bytes()),
+            prop::TZ_OFFSET => encoder.put(number, &self.tz_offset_min.to_le_bytes()),
+            prop::GNSS_IDENT_UPDATE => encoder.put(number, &[self.gnss_ident_update as u8]),
+            prop::GNSS_IDENT_PRECISION => encoder.put(number, &[self.gnss_ident_precision]),
+            prop::GNSS_TIME_TRUST => encoder.put(number, &[self.gnss_time_trust as u8]),
             _ => unreachable!("SAVED_SCHEMA row without an encoder arm"),
         }
     }
@@ -1597,7 +1710,16 @@ impl SavedState {
                 self.repeater_min_snr = Some(parse_i8(value).map_err(invalid)?)
             }
             prop::DEV_DISCOVERABLE => self.dev_discoverable = parse_bool(value).map_err(invalid)?,
+            prop::GNSS_ENABLED => self.gnss_enabled = parse_bool(value).map_err(invalid)?,
             prop::PHY_DUTY_LIMIT => self.duty_limit = parse_u16(value).map_err(invalid)?,
+            prop::TZ_OFFSET => self.tz_offset_min = validate_tz_offset(value).map_err(invalid)?,
+            prop::GNSS_IDENT_UPDATE => {
+                self.gnss_ident_update = parse_bool(value).map_err(invalid)?
+            }
+            prop::GNSS_IDENT_PRECISION => {
+                self.gnss_ident_precision = validate_ident_precision(value).map_err(invalid)?
+            }
+            prop::GNSS_TIME_TRUST => self.gnss_time_trust = parse_bool(value).map_err(invalid)?,
             _ => unreachable!("SAVED_SCHEMA row without a decoder arm"),
         }
         Ok(())
@@ -1983,7 +2105,20 @@ impl<A: AesProvider, S: Sha256Provider, const TX: usize> Session<A, S, TX> {
                         self.device.repeater_min_snr = saved.repeater_min_snr
                     }
                     prop::DEV_DISCOVERABLE => self.device.dev_discoverable = saved.dev_discoverable,
+                    // The receiver comes back up exactly as it was left.
+                    // Unlike the PHY this needs no identity check: where
+                    // the device is is a fact about the hardware, not a
+                    // claim made under an identity.
+                    prop::GNSS_ENABLED => self.device.gnss_enabled = saved.gnss_enabled,
                     prop::PHY_DUTY_LIMIT => self.config.duty.set_limit(saved.duty_limit),
+                    prop::TZ_OFFSET => self.device.tz_offset_min = saved.tz_offset_min,
+                    prop::GNSS_IDENT_UPDATE => {
+                        self.device.gnss_ident_update = saved.gnss_ident_update
+                    }
+                    prop::GNSS_IDENT_PRECISION => {
+                        self.device.gnss_ident_precision = saved.gnss_ident_precision
+                    }
+                    prop::GNSS_TIME_TRUST => self.device.gnss_time_trust = saved.gnss_time_trust,
                     _ => unreachable!("SAVED_SCHEMA row without an apply arm"),
                 }
             }
@@ -2549,6 +2684,18 @@ impl<A: AesProvider, S: Sha256Provider, const TX: usize> Session<A, S, TX> {
             self.send_prop_is(tid, prop::BATTERY, &[], emit);
             return None;
         }
+        // The wall clock belongs to the platform: only it knows whether
+        // the clock has been set and how far it has run since. Deferring
+        // is also what keeps "we do not know what time it is" honest —
+        // the session has nothing to answer with, rather than a stale
+        // reading it would have to decide the age of.
+        if key == prop::TIME && self.config.time.is_some() {
+            return Some(Effect::ReadTime { tid });
+        }
+        // Positioning telemetry is a measurement, not stored state.
+        if gnss::is_positioning_property(key) && self.config.gnss.is_some() {
+            return Some(Effect::SampleGnss { tid, key });
+        }
         let mut value = [0u8; PROP_BUF];
         match self.encode_prop(key, now_ms, &mut value) {
             PropValue::Encoded(len) => self.send_prop_is(tid, key, &value[..len], emit),
@@ -2604,6 +2751,37 @@ impl<A: AesProvider, S: Sha256Provider, const TX: usize> Session<A, S, TX> {
     /// Identity Requests.
     pub fn dev_discoverable(&self) -> bool {
         self.device.dev_discoverable
+    }
+
+    /// `PROP_TZ_OFFSET`: minutes east of UTC.
+    pub fn tz_offset_min(&self) -> i16 {
+        self.device.tz_offset_min
+    }
+
+    /// `PROP_GNSS_ENABLED`: whether the receiver should be powered.
+    ///
+    /// Always false on a board without `CAP_GNSS`, so a platform can act
+    /// on it without first asking whether it has a receiver.
+    pub fn gnss_enabled(&self) -> bool {
+        self.config.gnss.is_some() && self.device.gnss_enabled
+    }
+
+    /// `PROP_GNSS_IDENT_UPDATE`: whether fixes refresh the advertised
+    /// node identity's location.
+    pub fn gnss_ident_update(&self) -> bool {
+        self.config.gnss.is_some() && self.device.gnss_ident_update
+    }
+
+    /// `PROP_GNSS_IDENT_PRECISION`: the precision the advertised location
+    /// is clamped to.
+    pub fn gnss_ident_precision(&self) -> u8 {
+        self.device.gnss_ident_precision
+    }
+
+    /// `PROP_GNSS_TIME_TRUST`: whether receiver-derived time may set the
+    /// wall clock.
+    pub fn gnss_time_trust(&self) -> bool {
+        self.device.gnss_time_trust
     }
 
     /// `PROP_ALERT`: what the device is currently doing to draw
@@ -2726,6 +2904,90 @@ impl<A: AesProvider, S: Sha256Provider, const TX: usize> Session<A, S, TX> {
             }
             Ok(_) | Err(()) => self.complete(tid, Status::FAILURE, emit),
         }
+    }
+
+    /// Complete a deferred `PROP_TIME` read requested via
+    /// [`Effect::ReadTime`]. `epoch` is the platform's wall clock in Unix
+    /// seconds, or `None` when the device does not know what time it is.
+    /// Quote the same `tid` the effect carried.
+    ///
+    /// Not knowing is a legitimate answer, not a failure: it is reported
+    /// as the empty value, which is precisely what tells a host — and a
+    /// device's own display — that there is no clock to show.
+    pub fn respond_time(&mut self, tid: u8, epoch: Option<u32>, emit: &mut impl FnMut(&[u8])) {
+        match epoch {
+            Some(seconds) => self.send_prop_is(tid, prop::TIME, &seconds.to_le_bytes(), emit),
+            None => self.send_prop_is(tid, prop::TIME, &[], emit),
+        }
+    }
+
+    /// Publish an unsolicited `PROP_TIME` (spec §PROP_TIME,
+    /// *Asynchronous Updates: Yes*).
+    ///
+    /// The platform decides what is worth announcing — it owns the clock
+    /// and is the only layer that sees every source that touches it. A
+    /// clock going from unknown to known is the announcement that matters
+    /// most; a fresh fix agreeing with the clock to the second is not.
+    ///
+    /// Returns whether a frame was emitted; nothing is published while no
+    /// host is attached.
+    pub fn publish_time(&mut self, epoch: Option<u32>, emit: &mut impl FnMut(&[u8])) -> bool {
+        if !self.attached || self.config.time.is_none() {
+            return false;
+        }
+        match epoch {
+            Some(seconds) => self.announce_prop_is(prop::TIME, &seconds.to_le_bytes(), emit),
+            None => self.announce_prop_is(prop::TIME, &[], emit),
+        }
+    }
+
+    /// Complete a deferred positioning read requested via
+    /// [`Effect::SampleGnss`]. `sample` is the receiver's current view, or
+    /// `Err` if it could not be obtained. Quote the same `tid` and `key`
+    /// the effect carried.
+    ///
+    /// A receiver that is off or still searching is not a failure — it
+    /// reports [`GnssSnapshot::SEARCHING`], which answers zero for the
+    /// facts it is sure of and empty for the position it does not have.
+    pub fn respond_gnss(
+        &mut self,
+        tid: u8,
+        key: u32,
+        sample: Result<GnssSnapshot, ()>,
+        emit: &mut impl FnMut(&[u8]),
+    ) {
+        let mut value = [0u8; gnss::MAX_VALUE_LEN];
+        match sample.and_then(|snapshot| snapshot.encode(key, &mut value).map_err(|_| ())) {
+            Ok(len) => self.send_prop_is(tid, key, &value[..len], emit),
+            Err(()) => self.complete(tid, Status::FAILURE, emit),
+        }
+    }
+
+    /// Publish one positioning property as an unsolicited `CMD_PROP_IS`
+    /// (spec §PROP_GNSS_LOCATION / §PROP_GNSS_FIX, *Asynchronous Updates:
+    /// Yes*).
+    ///
+    /// The platform decides the cadence, as it does for `PROP_BATTERY`:
+    /// it sees every sentence the receiver produces and is the only layer
+    /// that can tell a meaningful change from a jittering last digit.
+    ///
+    /// Returns whether a frame was emitted. `key` must be a positioning
+    /// property; anything else, and any publication while no host is
+    /// attached, is dropped.
+    pub fn publish_gnss(
+        &mut self,
+        key: u32,
+        snapshot: &GnssSnapshot,
+        emit: &mut impl FnMut(&[u8]),
+    ) -> bool {
+        if !self.attached || self.config.gnss.is_none() {
+            return false;
+        }
+        let mut value = [0u8; gnss::MAX_VALUE_LEN];
+        let Ok(len) = snapshot.encode(key, &mut value) else {
+            return false;
+        };
+        self.announce_prop_is(key, &value[..len], emit)
     }
 
     /// Advance the drain started by [`Effect::DrainQueue`] one step,
@@ -3036,6 +3298,24 @@ impl<A: AesProvider, S: Sha256Provider, const TX: usize> Session<A, S, TX> {
             self.send_prop_is(tid, key, &echo[..len], emit);
             return Some(Effect::ApplyAlert(state));
         }
+        // The wall clock lives in the platform, not in session state, so
+        // a write completes with its own effect. The empty value is not a
+        // malformed `UINT32_LE` — it is the host saying the device should
+        // go back to not knowing what time it is.
+        if key == prop::TIME && self.config.time.is_some() {
+            let epoch = match value {
+                [] => None,
+                _ => match parse_u32(value) {
+                    Ok(seconds) => Some(seconds),
+                    Err(status) => {
+                        self.complete(tid, status, emit);
+                        return None;
+                    }
+                },
+            };
+            self.send_prop_is(tid, key, value, emit);
+            return Some(Effect::ApplyTime { epoch });
+        }
         if key == prop::DEV_NAME {
             if !valid_device_name(value) {
                 self.complete(tid, Status::INVALID_ARGUMENT, emit);
@@ -3251,6 +3531,38 @@ impl<A: AesProvider, S: Sha256Provider, const TX: usize> Session<A, S, TX> {
                 self.bump_dev_domain();
                 Ok(false)
             }
+            // The receiver switch and the positioning policy. All reach
+            // the platform through the device-domain mirror rather than
+            // through an effect of their own, which is what makes a host
+            // write, a boot restore, and a `CMD_RST` land identically.
+            prop::TZ_OFFSET if self.config.time.is_some() => {
+                self.device.tz_offset_min = validate_tz_offset(value)?;
+                self.bump_dev_domain();
+                Ok(false)
+            }
+            prop::GNSS_ENABLED if self.config.gnss.is_some() => {
+                self.device.gnss_enabled = parse_bool(value)?;
+                self.bump_dev_domain();
+                Ok(false)
+            }
+            prop::GNSS_IDENT_UPDATE if self.config.gnss.is_some() => {
+                self.device.gnss_ident_update = parse_bool(value)?;
+                self.bump_dev_domain();
+                Ok(false)
+            }
+            // Accepted while auto-update is off, like the repeater policy:
+            // an administrator stages the whole configuration and turns it
+            // on last.
+            prop::GNSS_IDENT_PRECISION if self.config.gnss.is_some() => {
+                self.device.gnss_ident_precision = validate_ident_precision(value)?;
+                self.bump_dev_domain();
+                Ok(false)
+            }
+            prop::GNSS_TIME_TRUST if self.config.gnss.is_some() => {
+                self.device.gnss_time_trust = parse_bool(value)?;
+                self.bump_dev_domain();
+                Ok(false)
+            }
             // This device's queue size is fixed; adjustment is optional in
             // the spec and unimplemented here.
             prop::HOST_RX_QUEUE_CAPACITY => Err(Status::UNIMPLEMENTED),
@@ -3269,6 +3581,15 @@ impl<A: AesProvider, S: Sha256Provider, const TX: usize> Session<A, S, TX> {
             | prop::HOST_RX_QUEUE_DROPPED
             | prop::SAVED => Err(Status::INVALID_ARGUMENT),
             prop::BATTERY if self.config.battery.is_some() => Err(Status::INVALID_ARGUMENT),
+            // Positioning telemetry reports what the receiver found and
+            // is not writable. `PROP_GNSS_LOCATION` and
+            // `PROP_GNSS_ALTITUDE` are the ones that could plausibly
+            // become writable — a fixed node placed by hand — but that
+            // needs a rule for which source wins over the other, so they
+            // stay read-only until there is one.
+            key if gnss::is_positioning_property(key) && self.config.gnss.is_some() => {
+                Err(Status::INVALID_ARGUMENT)
+            }
             _ => Err(Status::PROP_NOT_FOUND),
         }
     }
@@ -3538,6 +3859,20 @@ impl<A: AesProvider, S: Sha256Provider, const TX: usize> Session<A, S, TX> {
         if key == prop::ALERT {
             return self.config.alert.is_some();
         }
+        if matches!(key, prop::TIME | prop::TZ_OFFSET) {
+            return self.config.time.is_some();
+        }
+        if gnss::is_positioning_property(key)
+            || matches!(
+                key,
+                prop::GNSS_ENABLED
+                    | prop::GNSS_IDENT_UPDATE
+                    | prop::GNSS_IDENT_PRECISION
+                    | prop::GNSS_TIME_TRUST
+            )
+        {
+            return self.config.gnss.is_some();
+        }
         matches!(
             key,
             prop::LAST_STATUS
@@ -3624,6 +3959,12 @@ impl<A: AesProvider, S: Sha256Provider, const TX: usize> Session<A, S, TX> {
                 if self.config.alert.is_some() {
                     len += pui::encode(cap::ALERT, &mut out[len..]).unwrap_or(0);
                 }
+                if self.config.time.is_some() {
+                    len += pui::encode(cap::TIME, &mut out[len..]).unwrap_or(0);
+                }
+                if self.config.gnss.is_some() {
+                    len += pui::encode(cap::GNSS, &mut out[len..]).unwrap_or(0);
+                }
                 len
             }
             prop::PHY_ENABLED => {
@@ -3693,6 +4034,31 @@ impl<A: AesProvider, S: Sha256Provider, const TX: usize> Session<A, S, TX> {
             }
             prop::ALERT if self.config.alert.is_some() => {
                 pui::encode(self.alert.code(), out).unwrap_or(0)
+            }
+            // Deferred-read like PHY_RSSI: prop_get intercepts and asks
+            // the platform; these arms are only fallbacks.
+            prop::TIME if self.config.time.is_some() => return PropValue::Unimplemented,
+            key if gnss::is_positioning_property(key) && self.config.gnss.is_some() => {
+                return PropValue::Unimplemented;
+            }
+            prop::TZ_OFFSET if self.config.time.is_some() => {
+                put(out, &self.device.tz_offset_min.to_le_bytes())
+            }
+            prop::GNSS_ENABLED if self.config.gnss.is_some() => {
+                out[0] = self.device.gnss_enabled as u8;
+                1
+            }
+            prop::GNSS_IDENT_UPDATE if self.config.gnss.is_some() => {
+                out[0] = self.device.gnss_ident_update as u8;
+                1
+            }
+            prop::GNSS_IDENT_PRECISION if self.config.gnss.is_some() => {
+                out[0] = self.device.gnss_ident_precision;
+                1
+            }
+            prop::GNSS_TIME_TRUST if self.config.gnss.is_some() => {
+                out[0] = self.device.gnss_time_trust as u8;
+                1
             }
             prop::MAC_REPEATER_REGIONS => put(out, self.device.repeater_regions.as_slice()),
             prop::MAC_REPEATER_DEFAULT_REGION => match &self.device.repeater_default_region {
@@ -3964,6 +4330,34 @@ fn validate_cr(value: &[u8]) -> Result<u8, Status> {
     Ok(cr)
 }
 
+/// `PROP_TZ_OFFSET`, in minutes east of UTC.
+///
+/// Bounded by the real range of civil offsets — UTC−12:00 through
+/// UTC+14:00 — rather than the width of the field. Everything outside it
+/// is a byte-order or unit mistake, and a device that accepted one would
+/// display a confidently wrong local time.
+fn validate_tz_offset(value: &[u8]) -> Result<i16, Status> {
+    let minutes = parse_i16(value)?;
+    if !(-12 * 60..=14 * 60).contains(&minutes) {
+        return Err(Status::INVALID_ARGUMENT);
+    }
+    Ok(minutes)
+}
+
+/// `PROP_GNSS_IDENT_PRECISION`, in location bytes.
+///
+/// Zero is rejected rather than read as "advertise nothing": switching the
+/// advertisement off is what `PROP_GNSS_IDENT_UPDATE` is for, and a
+/// precision that silently means the opposite of a precision would be a
+/// trap.
+fn validate_ident_precision(value: &[u8]) -> Result<u8, Status> {
+    let precision = parse_u8(value)?;
+    if !(1..=MAX_IDENT_PRECISION).contains(&precision) {
+        return Err(Status::INVALID_ARGUMENT);
+    }
+    Ok(precision)
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -4020,6 +4414,18 @@ mod tests {
                 charge_state: true,
             }),
             alert: Some(AlertConfig::DEFAULT),
+            time: Some(TimeConfig),
+            gnss: Some(GnssConfig),
+        }
+    }
+
+    /// A board with neither a clock nor a receiver, for the tests that
+    /// check the capability gates actually hide the properties.
+    fn timeless_config() -> SessionConfig {
+        SessionConfig {
+            time: None,
+            gnss: None,
+            ..test_config()
         }
     }
 
@@ -4161,9 +4567,276 @@ mod tests {
                 cap::REPEATER,
                 cap::IDENT,
                 cap::BATTERY,
-                cap::ALERT
+                cap::ALERT,
+                cap::TIME,
+                cap::GNSS
             ]
         );
+    }
+
+    /// The clock and the receiver are separate claims, and a board that
+    /// makes neither must not have the properties at all.
+    #[test]
+    fn caps_omit_time_and_gnss_when_unconfigured() {
+        let mut session: TestSession =
+            Session::new(timeless_config(), Status::RESET_POWER_ON, test_engine());
+        session.attach(true);
+        let raw = get(&mut session, prop::CAPS);
+        let mut caps = Vec::new();
+        let mut offset = 0;
+        while offset < raw.len() {
+            let (value, used) = pui::decode(&raw[offset..]).unwrap();
+            caps.push(value);
+            offset += used;
+        }
+        assert!(!caps.contains(&cap::TIME));
+        assert!(!caps.contains(&cap::GNSS));
+
+        for key in [
+            prop::TIME,
+            prop::TZ_OFFSET,
+            prop::GNSS_ENABLED,
+            prop::GNSS_LOCATION,
+            prop::GNSS_ALTITUDE,
+            prop::GNSS_FIX,
+            prop::GNSS_PRECISION,
+            prop::GNSS_SATELLITES,
+            prop::GNSS_IDENT_UPDATE,
+            prop::GNSS_IDENT_PRECISION,
+            prop::GNSS_TIME_TRUST,
+        ] {
+            let mut buf = [0u8; 16];
+            let len = frame::prop_get(&mut buf, 6, key).unwrap();
+            let (emitted, effect) = dispatch(&mut session, &buf[..len], 0);
+            assert_eq!(effect, None, "prop {key} produced an effect");
+            let (_, status_key, value) = parse_prop_is(&emitted[0]);
+            assert_eq!(status_key, prop::LAST_STATUS);
+            assert_eq!(
+                pui::decode(&value).unwrap().0,
+                Status::PROP_NOT_FOUND.0,
+                "prop {key} is visible without its capability"
+            );
+        }
+    }
+
+    /// The clock is the platform's, not the session's: a get defers, a
+    /// set hands the platform the new value, and "we do not know" is the
+    /// empty value in both directions.
+    #[test]
+    fn time_reads_and_writes_defer_to_the_platform() {
+        let mut session = test_session();
+
+        let mut buf = [0u8; 16];
+        let len = frame::prop_get(&mut buf, 7, prop::TIME).unwrap();
+        let (emitted, effect) = dispatch(&mut session, &buf[..len], 0);
+        assert!(emitted.is_empty(), "no response until the clock is read");
+        assert_eq!(effect, Some(Effect::ReadTime { tid: 7 }));
+
+        let mut out = Vec::new();
+        session.respond_time(7, Some(1_780_000_000), &mut |bytes: &[u8]| {
+            out.push(bytes.to_vec())
+        });
+        let (tid, key, value) = parse_prop_is(&out[0]);
+        assert_eq!((tid, key), (7, prop::TIME));
+        assert_eq!(value, 1_780_000_000u32.to_le_bytes());
+
+        // A device that does not know what time it is says so with the
+        // empty value rather than failing the read.
+        let mut out = Vec::new();
+        session.respond_time(4, None, &mut |bytes: &[u8]| out.push(bytes.to_vec()));
+        let (_, _, value) = parse_prop_is(&out[0]);
+        assert_eq!(value, Vec::<u8>::new());
+
+        let (_, effect) = set(&mut session, prop::TIME, &1_780_000_042u32.to_le_bytes());
+        assert_eq!(
+            effect,
+            Some(Effect::ApplyTime {
+                epoch: Some(1_780_000_042)
+            })
+        );
+        // The empty write is not a malformed integer: it is the host
+        // telling the device to forget what time it is.
+        let (_, effect) = set(&mut session, prop::TIME, &[]);
+        assert_eq!(effect, Some(Effect::ApplyTime { epoch: None }));
+        // A width that is neither is still an error.
+        let (emitted, effect) = set(&mut session, prop::TIME, &[0, 0]);
+        assert_eq!(effect, None);
+        let (_, _, value) = parse_prop_is(&emitted[0]);
+        assert_eq!(pui::decode(&value).unwrap().0, Status::INVALID_ARGUMENT.0);
+    }
+
+    /// A publication reaches an attached host and nobody else.
+    #[test]
+    fn time_publishes_only_while_attached() {
+        let mut session = test_session();
+        let mut out = Vec::new();
+        assert!(
+            session.publish_time(Some(1_780_000_000), &mut |bytes: &[u8]| {
+                out.push(bytes.to_vec())
+            })
+        );
+        let (tid, key, value) = parse_prop_is(&out[0]);
+        assert_eq!((tid, key), (TID_UNSOLICITED, prop::TIME));
+        assert_eq!(value, 1_780_000_000u32.to_le_bytes());
+
+        session.detach();
+        let mut out = Vec::new();
+        assert!(
+            !session.publish_time(Some(1_780_000_000), &mut |bytes: &[u8]| {
+                out.push(bytes.to_vec())
+            })
+        );
+        assert!(out.is_empty());
+    }
+
+    /// The time zone is configuration, so unlike the clock it always has
+    /// a value, it is saved, and the session answers it directly.
+    #[test]
+    fn timezone_is_always_known_and_bounded() {
+        let mut session = test_session();
+        assert_eq!(get(&mut session, prop::TZ_OFFSET), [0, 0]);
+        assert_eq!(session.tz_offset_min(), 0);
+
+        // UTC−08:00.
+        set(&mut session, prop::TZ_OFFSET, &(-480i16).to_le_bytes());
+        assert_eq!(get(&mut session, prop::TZ_OFFSET), (-480i16).to_le_bytes());
+        assert_eq!(session.tz_offset_min(), -480);
+
+        // The extremes of the civil range are accepted; past them is a
+        // unit or byte-order mistake, not a place.
+        for minutes in [-12 * 60i16, 14 * 60] {
+            let (_, effect) = set(&mut session, prop::TZ_OFFSET, &minutes.to_le_bytes());
+            assert_eq!(effect, None);
+            assert_eq!(session.tz_offset_min(), minutes);
+        }
+        for minutes in [-12 * 60i16 - 1, 14 * 60 + 1] {
+            let (emitted, _) = set(&mut session, prop::TZ_OFFSET, &minutes.to_le_bytes());
+            let (_, _, value) = parse_prop_is(&emitted[0]);
+            assert_eq!(pui::decode(&value).unwrap().0, Status::INVALID_ARGUMENT.0);
+        }
+    }
+
+    /// Positioning telemetry is a measurement: every get samples, and the
+    /// answer is whatever the platform reports right now.
+    #[test]
+    fn positioning_gets_sample_and_are_never_writable() {
+        let mut session = test_session();
+        let mut buf = [0u8; 16];
+        let len = frame::prop_get(&mut buf, 5, prop::GNSS_LOCATION).unwrap();
+        let (emitted, effect) = dispatch(&mut session, &buf[..len], 0);
+        assert!(emitted.is_empty());
+        assert_eq!(
+            effect,
+            Some(Effect::SampleGnss {
+                tid: 5,
+                key: prop::GNSS_LOCATION
+            })
+        );
+
+        let mut snapshot = GnssSnapshot::SEARCHING;
+        snapshot.fix = umsh_ulcp::gnss::FixKind::ThreeD;
+        snapshot.altitude_m = Some(112);
+        snapshot.accuracy_dm = Some(45);
+        snapshot.sats_used = 8;
+        snapshot.sats_in_view = Some(11);
+        snapshot.set_location(&[0x8a, 0x1f, 0x4c, 0x00, 0xd3]);
+        let mut out = Vec::new();
+        session.respond_gnss(
+            5,
+            prop::GNSS_LOCATION,
+            Ok(snapshot),
+            &mut |bytes: &[u8]| out.push(bytes.to_vec()),
+        );
+        let (tid, key, value) = parse_prop_is(&out[0]);
+        assert_eq!((tid, key), (5, prop::GNSS_LOCATION));
+        assert_eq!(value, [0x8a, 0x1f, 0x4c, 0x00, 0xd3]);
+
+        // None of the five accepts a write.
+        for key in [
+            prop::GNSS_LOCATION,
+            prop::GNSS_ALTITUDE,
+            prop::GNSS_FIX,
+            prop::GNSS_PRECISION,
+            prop::GNSS_SATELLITES,
+        ] {
+            let (emitted, _) = set(&mut session, key, &[0]);
+            let (_, _, value) = parse_prop_is(&emitted[0]);
+            assert_eq!(
+                pui::decode(&value).unwrap().0,
+                Status::INVALID_ARGUMENT.0,
+                "prop {key} accepted a write"
+            );
+        }
+    }
+
+    /// A receiver that is off still answers the two questions it is sure
+    /// of, and stays silent about the position it does not have.
+    #[test]
+    fn a_searching_receiver_reports_zero_rather_than_nothing() {
+        let mut session = test_session();
+        for (key, expected) in [
+            (prop::GNSS_FIX, vec![0u8]),
+            (prop::GNSS_SATELLITES, vec![0u8]),
+            (prop::GNSS_LOCATION, vec![]),
+            (prop::GNSS_ALTITUDE, vec![]),
+            (prop::GNSS_PRECISION, vec![]),
+        ] {
+            let mut out = Vec::new();
+            session.respond_gnss(
+                3,
+                key,
+                Ok(GnssSnapshot::SEARCHING),
+                &mut |bytes: &[u8]| out.push(bytes.to_vec()),
+            );
+            let (_, answered, value) = parse_prop_is(&out[0]);
+            assert_eq!(answered, key);
+            assert_eq!(value, expected, "prop {key}");
+        }
+    }
+
+    /// The receiver switch and the positioning policy are device-domain
+    /// settings: readable, bounded, saved, and restored.
+    #[test]
+    fn gnss_settings_round_trip_and_are_bounded() {
+        let mut session = test_session();
+        assert_eq!(get(&mut session, prop::GNSS_ENABLED), [0]);
+        assert_eq!(get(&mut session, prop::GNSS_IDENT_UPDATE), [0]);
+        assert_eq!(
+            get(&mut session, prop::GNSS_IDENT_PRECISION),
+            [DEFAULT_IDENT_PRECISION]
+        );
+        assert_eq!(get(&mut session, prop::GNSS_TIME_TRUST), [1]);
+        assert!(!session.gnss_enabled());
+        assert!(session.gnss_time_trust());
+
+        set(&mut session, prop::GNSS_ENABLED, &[1]);
+        set(&mut session, prop::GNSS_IDENT_UPDATE, &[1]);
+        set(&mut session, prop::GNSS_IDENT_PRECISION, &[3]);
+        set(&mut session, prop::GNSS_TIME_TRUST, &[0]);
+        assert!(session.gnss_enabled());
+        assert!(session.gnss_ident_update());
+        assert_eq!(session.gnss_ident_precision(), 3);
+        assert!(!session.gnss_time_trust());
+
+        // Precision names a location width; zero and past the maximum are
+        // both outside it. Turning the advertisement off is a different
+        // property's job.
+        for precision in [0u8, MAX_IDENT_PRECISION + 1] {
+            let (emitted, _) = set(&mut session, prop::GNSS_IDENT_PRECISION, &[precision]);
+            let (_, _, value) = parse_prop_is(&emitted[0]);
+            assert_eq!(pui::decode(&value).unwrap().0, Status::INVALID_ARGUMENT.0);
+        }
+        assert_eq!(session.gnss_ident_precision(), 3);
+    }
+
+    /// A board without a receiver reports the switch as off rather than
+    /// leaving the platform to ask whether it has one.
+    #[test]
+    fn gnss_accessors_are_false_without_the_capability() {
+        let session: TestSession =
+            Session::new(timeless_config(), Status::RESET_POWER_ON, test_engine());
+        assert!(!session.gnss_enabled());
+        assert!(!session.gnss_ident_update());
     }
 
     /// Role, mobility and forwarding are three independent dimensions.
@@ -7053,6 +7726,52 @@ mod tests {
         assert_eq!(get(&mut fresh, prop::SAVED), [ids::saved::NONE]);
         fresh.note_snapshot_rejected();
         assert_eq!(get(&mut fresh, prop::SAVED), [ids::saved::UNREADABLE]);
+    }
+
+    /// The receiver comes back up as it was left, and so does the whole
+    /// positioning policy. `PROP_TIME` deliberately does not: an epoch
+    /// written to flash accumulates unbounded error while the device is
+    /// off, so the clock is restored from a real time source or not at
+    /// all.
+    #[test]
+    fn positioning_settings_survive_a_save_and_the_clock_does_not() {
+        let mut session = test_session();
+        set(&mut session, prop::GNSS_ENABLED, &[1]);
+        set(&mut session, prop::TZ_OFFSET, &(-300i16).to_le_bytes());
+        set(&mut session, prop::GNSS_IDENT_UPDATE, &[1]);
+        set(&mut session, prop::GNSS_IDENT_PRECISION, &[6]);
+        set(&mut session, prop::GNSS_TIME_TRUST, &[0]);
+        set(&mut session, prop::TIME, &1_780_000_000u32.to_le_bytes());
+
+        let mut bytes = [0u8; SNAPSHOT_MAX];
+        let len = session.encode_snapshot(&mut bytes).unwrap();
+
+        let mut booted: TestSession =
+            Session::new(test_config(), Status::RESET_POWER_ON, test_engine());
+        booted.restore_at_boot(&bytes[..len]).unwrap();
+        assert!(booted.gnss_enabled());
+        assert_eq!(booted.tz_offset_min(), -300);
+        assert!(booted.gnss_ident_update());
+        assert_eq!(booted.gnss_ident_precision(), 6);
+        assert!(!booted.gnss_time_trust());
+        booted.attach(true);
+        assert_eq!(get(&mut booted, prop::GNSS_ENABLED), [1]);
+        assert_eq!(get(&mut booted, prop::GNSS_TIME_TRUST), [0]);
+        // The clock is the platform's; a restore has nothing to say about
+        // it, so a get still defers.
+        let mut buf = [0u8; 16];
+        let get_len = frame::prop_get(&mut buf, 3, prop::TIME).unwrap();
+        let (_, effect) = dispatch(&mut booted, &buf[..get_len], 0);
+        assert_eq!(effect, Some(Effect::ReadTime { tid: 3 }));
+
+        // A reset reverts to the saved snapshot rather than to the
+        // factory values, so the receiver stays on across it.
+        let mut out = Vec::new();
+        booted.reset(Status::RESET_SOFTWARE, &mut |bytes: &[u8]| {
+            out.push(bytes.to_vec())
+        });
+        assert!(booted.gnss_enabled());
+        assert_eq!(booted.tz_offset_min(), -300);
     }
 
     /// Restoring a saved repeater domain onto different hardware must

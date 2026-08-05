@@ -113,6 +113,14 @@ flash-xiao-nrf52: build-xiao-nrf52
 build-t1000e:
 	cd firmware/t1000e && cargo build --release
 
+flash-t1000e: build-t1000e
+	scripts/flash.py --board t1000e --copy-default \
+		$(TARGET_DIR)/firmware-t1000e
+
+# The button bootloader (hold the button while plugging in) exposes only a
+# serial DFU endpoint, with no UF2 drive to copy to. A 1200-baud touch
+# against a running image mounts the drive as usual, so prefer the target
+# above and reach for this one when the board is already stuck in DFU.
 flash-t1000e-serial: build-t1000e
 	scripts/flash.py --board t1000e --serial-dfu $(DFU_SERIAL_PORT) \
 		$(TARGET_DIR)/firmware-t1000e

@@ -420,6 +420,116 @@ const PROPERTY_SPECS: &[PropertySpec] = &[
         Some(umsh_ulcp::ids::cap::ALERT),
     ),
     spec(
+        prop::GNSS_ENABLED,
+        "Positioning",
+        "Whether the GNSS receiver is powered",
+        true,
+        true,
+        "boolean",
+        None,
+        Some(umsh_ulcp::ids::cap::GNSS),
+    ),
+    spec(
+        prop::GNSS_LOCATION,
+        "Positioning",
+        "Position of the last fix, or empty for no fix",
+        true,
+        false,
+        "none",
+        None,
+        Some(umsh_ulcp::ids::cap::GNSS),
+    ),
+    spec(
+        prop::GNSS_ALTITUDE,
+        "Positioning",
+        "Altitude of the last fix",
+        true,
+        false,
+        "none",
+        Some("m"),
+        Some(umsh_ulcp::ids::cap::GNSS),
+    ),
+    spec(
+        prop::GNSS_FIX,
+        "Positioning",
+        "Fix quality (0 while off or searching, never empty)",
+        true,
+        false,
+        "none",
+        None,
+        Some(umsh_ulcp::ids::cap::GNSS),
+    ),
+    spec(
+        prop::GNSS_PRECISION,
+        "Positioning",
+        "Estimated horizontal accuracy of the last fix",
+        true,
+        false,
+        "none",
+        Some("dm"),
+        Some(umsh_ulcp::ids::cap::GNSS),
+    ),
+    spec(
+        prop::GNSS_SATELLITES,
+        "Positioning",
+        "Satellites used, and optionally in view",
+        true,
+        false,
+        "none",
+        None,
+        Some(umsh_ulcp::ids::cap::GNSS),
+    ),
+    spec(
+        prop::TIME,
+        "Positioning",
+        "Wall clock in Unix seconds; empty means the device does not know",
+        true,
+        true,
+        "integer",
+        Some("s"),
+        Some(umsh_ulcp::ids::cap::TIME),
+    ),
+    spec(
+        prop::TZ_OFFSET,
+        "Positioning",
+        "Local time-zone offset east of UTC",
+        true,
+        true,
+        "integer",
+        Some("min"),
+        Some(umsh_ulcp::ids::cap::TIME),
+    ),
+    spec(
+        prop::GNSS_IDENT_UPDATE,
+        "Positioning",
+        "Refresh the advertised node identity's location from fixes",
+        true,
+        true,
+        "boolean",
+        None,
+        Some(umsh_ulcp::ids::cap::GNSS),
+    ),
+    spec(
+        prop::GNSS_IDENT_PRECISION,
+        "Positioning",
+        "Precision the advertised location is clamped to",
+        true,
+        true,
+        "integer",
+        Some("bytes"),
+        Some(umsh_ulcp::ids::cap::GNSS),
+    ),
+    spec(
+        prop::GNSS_TIME_TRUST,
+        "Positioning",
+        "Whether receiver-derived time may set the wall clock",
+        true,
+        true,
+        "boolean",
+        None,
+        Some(umsh_ulcp::ids::cap::GNSS),
+    ),
+    spec(
         prop::HOST_KEY,
         "Host",
         "Attached host identity",
@@ -1278,11 +1388,74 @@ fn decode_property(key: u32, value: &[u8]) -> Option<DecodedValue> {
                 },
             )
         }
-        prop::PHY_ENABLED | prop::MAC_PROMISCUOUS | prop::SAVED | prop::HOST_AUTO_ACK
+        prop::PHY_ENABLED
+        | prop::MAC_PROMISCUOUS
+        | prop::SAVED
+        | prop::HOST_AUTO_ACK
+        | prop::GNSS_ENABLED
+        | prop::GNSS_IDENT_UPDATE
+        | prop::GNSS_TIME_TRUST
             if value.len() == 1 && value[0] <= 1 =>
         {
             ("boolean", (value[0] != 0).to_string())
         }
+        // The state worth being able to see at a glance: a device that
+        // does not know what time it is, and must therefore show no clock.
+        prop::TIME if value.is_empty() => ("time", "not set".into()),
+        prop::TIME if value.len() == 4 => {
+            let epoch = u32::from_le_bytes(value.try_into().ok()?);
+            let at = umsh_gnss::DateTime::from_unix(epoch);
+            (
+                "time",
+                format!(
+                    "{:04}-{:02}-{:02} {:02}:{:02}:{:02}Z ({epoch})",
+                    at.year, at.month, at.day, at.hour, at.minute, at.second
+                ),
+            )
+        }
+        prop::TZ_OFFSET if value.len() == 2 => {
+            let minutes = i16::from_le_bytes(value.try_into().ok()?);
+            let magnitude = minutes.unsigned_abs();
+            (
+                "tz_offset",
+                format!(
+                    "UTC{}{:02}:{:02}",
+                    if minutes < 0 { '-' } else { '+' },
+                    magnitude / 60,
+                    magnitude % 60
+                ),
+            )
+        }
+        prop::GNSS_FIX if value.len() == 1 => (
+            "enum",
+            match umsh_ulcp::gnss::FixKind::from_code(value[0])? {
+                umsh_ulcp::gnss::FixKind::None => "no fix",
+                umsh_ulcp::gnss::FixKind::TwoD => "2D",
+                umsh_ulcp::gnss::FixKind::ThreeD => "3D",
+            }
+            .to_string(),
+        ),
+        prop::GNSS_LOCATION if value.is_empty() => ("location", "no fix".into()),
+        prop::GNSS_LOCATION if value.len() <= 7 => (
+            "location",
+            format!("{} ({} bytes precision)", hex(value), value.len()),
+        ),
+        prop::GNSS_ALTITUDE if value.is_empty() => ("int32", "unknown".into()),
+        prop::GNSS_ALTITUDE if value.len() == 4 => (
+            "int32",
+            format!("{} m", i32::from_le_bytes(value.try_into().ok()?)),
+        ),
+        prop::GNSS_PRECISION if value.is_empty() => ("uint16", "unknown".into()),
+        prop::GNSS_PRECISION if value.len() == 2 => {
+            let dm = u16::from_le_bytes(value.try_into().ok()?);
+            ("uint16", format!("~{}.{} m (estimated)", dm / 10, dm % 10))
+        }
+        prop::GNSS_SATELLITES => match value {
+            [used] => ("satellites", format!("{used} used")),
+            [used, in_view] => ("satellites", format!("{used} used of {in_view} in view")),
+            _ => return None,
+        },
+        prop::GNSS_IDENT_PRECISION if value.len() == 1 => ("uint8", format!("{} bytes", value[0])),
         prop::PHY_TX_POWER | prop::PHY_RSSI if value.len() == 1 => {
             ("dbm", format!("{} dBm", value[0] as i8))
         }
@@ -1384,11 +1557,25 @@ fn decode_property(key: u32, value: &[u8]) -> Option<DecodedValue> {
 
 fn editable_property_text(key: u32, value: &[u8]) -> Option<String> {
     match key {
-        prop::PHY_ENABLED | prop::MAC_PROMISCUOUS | prop::HOST_AUTO_ACK
+        prop::PHY_ENABLED
+        | prop::MAC_PROMISCUOUS
+        | prop::HOST_AUTO_ACK
+        | prop::GNSS_ENABLED
+        | prop::GNSS_IDENT_UPDATE
+        | prop::GNSS_TIME_TRUST
             if value.len() == 1 && value[0] <= 1 =>
         {
             Some((value[0] != 0).to_string())
         }
+        // An unset clock has no text to edit; typing one is how it is set,
+        // and an empty write is how it goes back to unset.
+        prop::TIME if value.len() == 4 => {
+            Some(u32::from_le_bytes(value.try_into().ok()?).to_string())
+        }
+        prop::TZ_OFFSET if value.len() == 2 => {
+            Some(i16::from_le_bytes(value.try_into().ok()?).to_string())
+        }
+        prop::GNSS_IDENT_PRECISION if value.len() == 1 => Some(value[0].to_string()),
         prop::PHY_TX_POWER if value.len() == 1 => Some((value[0] as i8).to_string()),
         prop::PHY_LORA_SF | prop::PHY_LORA_CR if value.len() == 1 => Some(value[0].to_string()),
         prop::PHY_MTU | prop::HOST_RX_QUEUE_CAPACITY | prop::PHY_DUTY_LIMIT if value.len() == 2 => {
@@ -1410,7 +1597,12 @@ fn encode_property_text(key: u32, value: &str) -> Result<Vec<u8>, String> {
     let text = value;
     let value = value.trim();
     match key {
-        prop::PHY_ENABLED | prop::MAC_PROMISCUOUS | prop::HOST_AUTO_ACK => {
+        prop::PHY_ENABLED
+        | prop::MAC_PROMISCUOUS
+        | prop::HOST_AUTO_ACK
+        | prop::GNSS_ENABLED
+        | prop::GNSS_IDENT_UPDATE
+        | prop::GNSS_TIME_TRUST => {
             let parsed = match value.to_ascii_lowercase().as_str() {
                 "true" | "1" | "on" | "yes" => 1,
                 "false" | "0" | "off" | "no" => 0,
@@ -1418,6 +1610,24 @@ fn encode_property_text(key: u32, value: &str) -> Result<Vec<u8>, String> {
             };
             Ok(vec![parsed])
         }
+        // An empty write returns the device to not knowing what time it
+        // is, so it is a legitimate value rather than a parse failure.
+        prop::TIME if value.is_empty() => Ok(Vec::new()),
+        prop::TIME => Ok(
+            parse_integer::<u32>(value, "Unix seconds, or empty to clear the clock")?
+                .to_le_bytes()
+                .to_vec(),
+        ),
+        prop::TZ_OFFSET => Ok(parse_integer::<i16>(
+            value,
+            "minutes east of UTC, from -720 to 840",
+        )?
+        .to_le_bytes()
+        .to_vec()),
+        prop::GNSS_IDENT_PRECISION => Ok(vec![parse_integer::<u8>(
+            value,
+            "a location precision from 1 to 7 bytes",
+        )?]),
         prop::PHY_TX_POWER => Ok(vec![
             parse_integer::<i8>(value, "an 8-bit signed integer")? as u8
         ]),

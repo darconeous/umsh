@@ -29,6 +29,7 @@ serde_json = "1"
 umsh-ulcp = { path = "../../../crates/umsh-ulcp" }
 umsh-ulcp-device = { path = "../../../crates/umsh-ulcp-device", optional = true }
 umsh-core = { path = "../../../crates/umsh-core" }
+umsh-gnss = { path = "../../../crates/umsh-gnss" }
 umsh-crypto = { path = "../../../crates/umsh-crypto", features = ["software-crypto"], optional = true }
 
 [target.'cfg(target_arch = "wasm32")'.dependencies]

@@ -320,6 +320,37 @@ pub struct StatusModel<'a> {
     pub bonds: u8,
     pub pairing: PairingState,
     pub stats: StatsModel,
+    /// The local time to show in the header, or `None` when the device
+    /// does not know what time it is.
+    ///
+    /// `None` draws nothing at all — not a placeholder, not dashes, not a
+    /// zeroed clock. A device that does not know the time **must not**
+    /// indicate one, and enforcing that here rather than in each panel is
+    /// what keeps it true: there is no way to render a clock without a
+    /// reading to render.
+    pub clock: Option<ClockModel>,
+}
+
+/// A local wall-clock reading for the header.
+///
+/// Hours and minutes only. A seconds field would commit every panel to
+/// redrawing once a second, which an e-paper cannot do and a
+/// battery-powered OLED should not.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct ClockModel {
+    /// Local hour, 0–23.
+    pub hour: u8,
+    /// Local minute, 0–59.
+    pub minute: u8,
+}
+
+impl ClockModel {
+    /// Render the status-page row, labelled to match the battery row
+    /// beside it — a bare `14:30` on a line of its own reads as a
+    /// measurement without a name.
+    fn write(&self, out: &mut String<LINE>) {
+        let _ = write!(out, "time {:02}:{:02}", self.hour, self.minute);
+    }
 }
 
 // ─── Entry points ────────────────────────────────────────────────────────────
@@ -543,7 +574,22 @@ where
     line.clear();
     write_battery(line, status);
     draw_row(target, layout, row, line);
-    row + 1
+    row += 1;
+
+    // Last, so that on a panel whose rows have run out the clock is what
+    // falls off rather than the battery: how much charge is left is a
+    // fact somebody is deciding something with, and what time it is is
+    // not. Absent entirely when the device does not know the time —
+    // there is no placeholder row, because a row that says the time is
+    // unknown is still an indication about the time.
+    if let Some(clock) = status.clock {
+        line.clear();
+        clock.write(line);
+        draw_row(target, layout, row, line);
+        row += 1;
+    }
+
+    row
 }
 
 /// Radio activity: what the node has actually done on the air.
@@ -596,6 +642,14 @@ where
     // rather than being allowed to run under the indicator and off the
     // panel. Blanking the zone afterwards keeps that true no matter what
     // else the header grows.
+    //
+    // The clock is deliberately *not* here. It fits, but only by taking
+    // the room from the device name, and on the 200 px e-paper's
+    // twenty-pixel font that cut the name from fourteen characters to
+    // seven — which across a fleet of `umsh-`-prefixed radios is the
+    // difference between identifying one and guessing. The clock lives on
+    // the status page instead, where a row costs nothing that was being
+    // read.
     let zone = layout.battery_zone();
     let room = (zone.top_left.x - layout.left).max(0) as u32;
     draw_row(target, layout, 0, clip(layout, status.device_name, room));
@@ -892,6 +946,9 @@ mod tests {
                 tx_power_dbm: Some(22),
                 duty_permille: 4,
             },
+            // The device does not know what time it is, which is the
+            // state every panel must render as no clock at all.
+            clock: None,
         }
     }
 
@@ -957,6 +1014,188 @@ mod tests {
             render_frame(&mut panel, &layout, &model, &demo_status());
             assert!(panel.lit_in(zone) > 0, "confirm frame lost the battery");
         }
+    }
+
+    /// Whether the panel renders `text` as one of its rows.
+    ///
+    /// Draws the row alone on a reference panel and checks every lit
+    /// pixel of it is also lit on `panel` — the closest a bitmap target
+    /// gets to reading text back off the glass.
+    fn shows_row(panel: &TestPanel, layout: &Layout, text: &str) -> bool {
+        (1..layout.rows).any(|row| {
+            let mut reference = TestPanel::new(layout.size);
+            draw_row(&mut reference, layout, row, text);
+            let top = layout.row_top(row);
+            let bottom = top + layout.font.character_size.height as i32;
+            let mut any = false;
+            for y in top..bottom {
+                for x in 0..layout.size.width {
+                    if reference.lit(x, y as u32) {
+                        any = true;
+                        if !panel.lit(x, y as u32) {
+                            return false;
+                        }
+                    }
+                }
+            }
+            any
+        })
+    }
+
+    /// The requirement this whole feature is conditioned on: a device
+    /// that does not know what time it is shows **nothing** about the
+    /// time — not a placeholder, not zeros, not dashes, and not a row
+    /// saying it does not know.
+    #[test]
+    fn an_unknown_time_draws_no_clock_at_all() {
+        for layout in layouts() {
+            let mut status = demo_status();
+            status.pairing = PairingState::Closed;
+
+            let mut known = TestPanel::new(layout.size);
+            status.clock = Some(ClockModel {
+                hour: 23,
+                minute: 5,
+            });
+            render_frame(
+                &mut known,
+                &layout,
+                &UiModel::new(MenuItems::all()),
+                &status,
+            );
+            assert!(
+                shows_row(&known, &layout, "time 23:05"),
+                "the reference case drew no clock, so the negative proves nothing"
+            );
+
+            let mut unknown = TestPanel::new(layout.size);
+            status.clock = None;
+            render_frame(
+                &mut unknown,
+                &layout,
+                &UiModel::new(MenuItems::all()),
+                &status,
+            );
+            assert!(
+                !shows_row(&unknown, &layout, "time 23:05"),
+                "a device that does not know the time indicated one"
+            );
+            // The row is absent rather than blanked, so nothing about the
+            // time is left on the panel at all.
+            for label in ["time --:--", "time 00:00", "time"] {
+                assert!(
+                    !shows_row(&unknown, &layout, label),
+                    "an unset clock rendered {label:?}"
+                );
+            }
+        }
+    }
+
+    #[test]
+    fn a_known_time_draws_a_clock_row_on_the_status_page() {
+        for layout in layouts() {
+            let mut status = demo_status();
+            // A quiet device, so the status page has room for every row
+            // it wants; the crowding behavior has its own test.
+            status.pairing = PairingState::Closed;
+
+            for (clock, expected) in [
+                (
+                    ClockModel {
+                        hour: 23,
+                        minute: 5,
+                    },
+                    "time 23:05",
+                ),
+                // Midnight is a real reading, not an absent one: 00:00
+                // must draw, or the minute a day it is midnight would
+                // look like a device that has forgotten the time.
+                (ClockModel { hour: 0, minute: 0 }, "time 00:00"),
+            ] {
+                status.clock = Some(clock);
+                let mut panel = TestPanel::new(layout.size);
+                render_frame(
+                    &mut panel,
+                    &layout,
+                    &UiModel::new(MenuItems::all()),
+                    &status,
+                );
+                assert!(
+                    shows_row(&panel, &layout, expected),
+                    "the status page lost {expected:?}"
+                );
+            }
+        }
+    }
+
+    /// The clock lives in the body, so it takes nothing from the header —
+    /// a long device name reads exactly as far as it did before there was
+    /// a clock at all.
+    #[test]
+    fn the_clock_costs_the_device_name_nothing() {
+        for layout in layouts() {
+            let header = Rectangle::new(
+                Point::new(0, layout.row_top(0)),
+                Size::new(layout.size.width, layout.font.character_size.height),
+            );
+            let mut status = demo_status();
+            status.device_name = "a-very-long-device-name-indeed";
+
+            let mut without = TestPanel::new(layout.size);
+            status.clock = None;
+            render_frame(
+                &mut without,
+                &layout,
+                &UiModel::new(MenuItems::all()),
+                &status,
+            );
+
+            let mut with = TestPanel::new(layout.size);
+            status.clock = Some(ClockModel {
+                hour: 14,
+                minute: 30,
+            });
+            render_frame(&mut with, &layout, &UiModel::new(MenuItems::all()), &status);
+
+            assert!(without.lit_in(header) > 0, "the name drew nothing");
+            assert_eq!(
+                with.lit_in(header),
+                without.lit_in(header),
+                "the clock moved the header"
+            );
+        }
+    }
+
+    /// On a panel that has run out of rows the clock is what falls off,
+    /// never the battery: how much charge is left is a fact somebody is
+    /// deciding something with, and what time it is is not.
+    #[test]
+    fn a_crowded_status_page_drops_the_clock_before_the_battery() {
+        // The five-row OLED with every optional row asking for space.
+        let layout = Layout::OLED_128X64;
+        let mut status = demo_status();
+        status.pairing = PairingState::Open { pin: Some(123_456) };
+        status.link = LinkState::Attached;
+        status.clock = Some(ClockModel {
+            hour: 14,
+            minute: 30,
+        });
+
+        let mut panel = TestPanel::new(layout.size);
+        render_frame(
+            &mut panel,
+            &layout,
+            &UiModel::new(MenuItems::all()),
+            &status,
+        );
+        assert!(
+            shows_row(&panel, &layout, "batt 3950 mV 75%"),
+            "the battery row was displaced"
+        );
+        assert!(
+            !shows_row(&panel, &layout, "time 14:30"),
+            "the clock survived a page with no room for it"
+        );
     }
 
     #[test]

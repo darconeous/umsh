@@ -12,8 +12,9 @@
 //! - blue LED (P0.14, active-low)
 //! - e-paper SPI bus + control pins for the SSD1681 display
 //! - battery voltage / charge state (SAADC on AIN2/P0.04)
+//! - GNSS power sequencing for the Quectel L76K
 //!
-//! Future expansion (LoRa, GNSS, I²C peripherals, QSPI flash, buttons,
+//! Future expansion (LoRa, I²C peripherals, QSPI flash, buttons,
 //! Plus-only back-panel) is welcome but is not yet implemented. The
 //! T-Echo is not a tracker-class device — when a "real" T-Echo firmware
 //! arrives, it should be designed against a new `umsh-ux-handheld` (or
@@ -24,6 +25,9 @@
 
 #[cfg(all(target_os = "none", feature = "display"))]
 pub mod display;
+
+#[cfg(all(target_os = "none", feature = "gnss"))]
+pub mod gnss;
 
 #[cfg(all(target_os = "none", feature = "platform"))]
 pub mod platform;

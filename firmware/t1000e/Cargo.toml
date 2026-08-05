@@ -11,13 +11,20 @@ repository.workspace = true
 # rationale; this block is kept identical across the device boards, only the
 # `default` differs. Default build = T-1000E.
 default = ["board-t1000e"]
-board-techo = ["display-epd", "button-nav", "system-off-techo", "led-active-low", "cap-battery-saadc"]
-board-t1000e = ["t1000e", "cap-battery-saadc"]
+board-techo = ["display-epd", "button-nav", "system-off-techo", "led-active-low", "cap-battery-saadc", "cap-gnss"]
+board-t1000e = ["t1000e", "cap-battery-saadc", "cap-gnss", "gnss-holds-the-clock"]
 board-sensecap-solar = ["cap-battery-saadc", "power-button"]
 board-wio-tracker-l1 = ["display-oled", "button-nav", "system-off-wio", "cap-battery-saadc", "cap-buzzer"]
 board-xiao-nrf52 = ["cap-battery-saadc", "led-active-low", "boot-pairing-window"]
 t1000e = []
 cap-battery-saadc = []
+# A GNSS receiver is fitted. Advertises `CAP_GNSS` and spawns the pump;
+# the receiver stays powered down until `PROP_GNSS_ENABLED` says
+# otherwise.
+cap-gnss = []
+# The GNSS receiver's own backup domain is this board's only real-time
+# clock, so the boot path reads the time back out of the receiver.
+gnss-holds-the-clock = []
 cap-buzzer = []
 has-display = []
 display-epd = ["has-display"]
@@ -54,7 +61,8 @@ umsh-ulcp = { path = "../../crates/umsh-ulcp" }
 umsh-ulcp-device = { path = "../../crates/umsh-ulcp-device" }
 # Board-agnostic device runtime shared with the other nRF52840 tracker boards
 # (same main.rs) and the ESP32 port: leaf modules + the session driver.
-umsh-ulcp-runtime = { path = "../../crates/umsh-ulcp-runtime", features = ["device-node", "node-thread-mode-mutex"] }
+umsh-ulcp-runtime = { path = "../../crates/umsh-ulcp-runtime", features = ["device-node", "node-thread-mode-mutex", "gnss"] }
+umsh-gnss = { path = "../../crates/umsh-gnss" }
 umsh-crypto = { path = "../../crates/umsh-crypto", default-features = false, features = ["software-crypto"] }
 umsh-hal = { path = "../../crates/umsh-hal", default-features = false }
 umsh-journal-store = { path = "../../crates/umsh-journal-store" }
