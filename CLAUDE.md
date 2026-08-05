@@ -84,3 +84,4 @@ Docs: `make docs` (mdBook), `make rust-docs`, `make docs-serve`, `make web-debug
 - **Remember your current directory**: Avoid unnecessarily prepending `cd <PROJECTDIR> &&` to bash commands,  as this causes unnecessary permission prompts.
 - **Use the label `LLM: ...` instead of `Co-Authored-By: ...` in commit logs**: `Co-Authored-By` attributions cause a Claude logo to appear on our GitHub project which is unacceptable.
 - **Don't take credit for stuff you aren't sure you wrote**: Unless you are absolutely certain the changes are yours, DO NOT add a "LLM: ..." line in the git commit log.
+- **NRF52 DFU Touch**: To perform a 1200 baud DFU touch (resetting the board into bootloader mode by opening and closing the serial port at 1200 baud) using the stty command on Linux, run `stty -F /dev/ttyACM0 1200` (or `stty -f /dev/cu.usbmodemXXXX 1200` on macOS) immediately before launching your flashing tool.
