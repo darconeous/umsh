@@ -34,6 +34,7 @@ use umsh_mac::{Mac, MacHandle, OperatingPolicy, RepeaterConfig, SendOptions};
 use umsh_node::{
     Host, LocalNode, MacBackend, NodeCapabilities, NodeIdentityPayload, NodeIdentityProfile,
     NodeRole, PacketFamily, SendProgressTicket, Transport,
+    location::{MAX_PRECISION, NodeLocation},
 };
 use umsh_sync::AsyncRefCell;
 use umsh_text::engine::{ArchiveResult, DeliveryState, Destination};
@@ -71,6 +72,10 @@ pub enum MobileMeshError {
     /// The conversation address was malformed, or named a channel this
     /// session holds no key for.
     UnknownConversation,
+    /// A shared location did not name a place: a non-finite or
+    /// out-of-range coordinate, or a precision the cell code cannot
+    /// carry.
+    InvalidLocation,
 }
 
 impl fmt::Display for MobileMeshError {
@@ -86,6 +91,7 @@ impl fmt::Display for MobileMeshError {
             Self::InvalidChannelKey => "MESH_INVALID_CHANNEL_KEY",
             Self::ChannelCapacity => "MESH_CHANNEL_CAPACITY",
             Self::UnknownConversation => "MESH_UNKNOWN_CONVERSATION",
+            Self::InvalidLocation => "MESH_INVALID_LOCATION",
         })
     }
 }
@@ -200,6 +206,21 @@ pub struct MobileMeshAdvertisementRecord {
     /// advertisement has no MIC, so it is `false` and the platform must
     /// require a `Valid` embedded signature before trusting any claim.
     pub source_authenticated: bool,
+}
+
+/// The position this phone is willing to put in its identity.
+///
+/// Precision is the disclosure decision: the wire format carries a cell,
+/// not a point, and the coordinate is reduced to that cell before it goes
+/// anywhere. The platform hands over its best reading and the chosen cell
+/// size; the truncation happens here, on this side of every send.
+#[derive(Clone, Copy, Debug, PartialEq, uniffi::Record)]
+pub struct MobileMeshSharedLocationRecord {
+    pub latitude_degrees: f64,
+    pub longitude_degrees: f64,
+    /// Cell-code precision in bytes, 1–7. `ulcp_location_cell_meters`
+    /// names the cell size each buys.
+    pub precision_bytes: u8,
 }
 
 /// Evidence that a peer was on the air, emitted for every accepted frame
@@ -432,6 +453,11 @@ enum WorkerCommand {
     SetDiscoverable {
         enabled: bool,
         name: Option<String>,
+        response: oneshot::Sender<()>,
+    },
+    /// Already reduced to the disclosed cell; `None` stops sharing.
+    SetAdvertisedLocation {
+        location: Option<NodeLocation>,
         response: oneshot::Sender<()>,
     },
     SetChatDisplayName {
@@ -1070,6 +1096,30 @@ impl MobileMeshSession {
             .map_err(|_| MobileMeshError::SessionUnavailable)
     }
 
+    /// Set the position this phone's identity carries, or `None` to stop
+    /// sharing one.
+    ///
+    /// Reaches every *live* identity payload — advertisements, manual and
+    /// scheduled, and Identity Request replies while discoverable — but
+    /// never the shareable QR/URI bundle: that bundle is durable, and a
+    /// position frozen into it would go stale and then travel wherever
+    /// the QR is pasted. The coordinate is reduced to the cell named by
+    /// `precision_bytes` before it is stored, so nothing finer ever sits
+    /// in this session, whatever later reads it.
+    pub async fn set_advertised_location(
+        &self,
+        location: Option<MobileMeshSharedLocationRecord>,
+    ) -> Result<(), MobileMeshError> {
+        let location = location.map(disclosed_cell).transpose()?;
+        let (response, result) = oneshot::channel();
+        self.commands
+            .send(WorkerCommand::SetAdvertisedLocation { location, response })
+            .map_err(|_| MobileMeshError::SessionUnavailable)?;
+        result
+            .await
+            .map_err(|_| MobileMeshError::SessionUnavailable)
+    }
+
     /// Report the route the MAC will use for the next frame sent to `peer`.
     ///
     /// Read-only: an unregistered peer reads as `Unknown` rather than being
@@ -1589,10 +1639,37 @@ impl Drop for MobileMeshSession {
     }
 }
 
+/// Reduce a platform reading to the cell it discloses.
+///
+/// The integer path (`from_e7`) rather than the float one: it is exact at
+/// every precision the format carries, so the cell a listener decodes is
+/// the cell that was chosen, not its floating-point neighbour.
+fn disclosed_cell(record: MobileMeshSharedLocationRecord) -> Result<NodeLocation, MobileMeshError> {
+    if !(1..=MAX_PRECISION).contains(&record.precision_bytes)
+        || !record.latitude_degrees.is_finite()
+        || record.latitude_degrees.abs() > 90.0
+        || !record.longitude_degrees.is_finite()
+        || record.longitude_degrees.abs() > 180.0
+    {
+        return Err(MobileMeshError::InvalidLocation);
+    }
+    Ok(NodeLocation::from_e7(
+        (record.latitude_degrees * 1e7).round() as i32,
+        (record.longitude_degrees * 1e7).round() as i32,
+        record.precision_bytes,
+    ))
+}
+
 /// The identity profile the phone's Identity Request responder serves:
 /// the same role Chat / Mobile + Text messages statement the signed
-/// advertisement makes, with the display name truncated identically.
-fn phone_identity_profile(public_key: PublicKey, name: Option<&str>) -> NodeIdentityProfile {
+/// advertisement makes, with the display name truncated identically and
+/// the same disclosed location, so a node that asks and a node that
+/// listens hear one description.
+fn phone_identity_profile(
+    public_key: PublicKey,
+    name: Option<&str>,
+    location: Option<NodeLocation>,
+) -> NodeIdentityProfile {
     let mut profile = NodeIdentityProfile::new(
         public_key,
         NodeRole::Chat,
@@ -1607,18 +1684,20 @@ fn phone_identity_profile(public_key: PublicKey, name: Option<&str>) -> NodeIden
             name[..end].to_owned()
         })
         .filter(|name| !name.is_empty());
+    profile.location = location;
     profile
 }
 
 /// Build the signed standalone node-identity bundle for this phone: role
 /// Chat, capabilities Mobile + Text messages, optional display name
-/// (truncated to the 24-byte wire limit on a character boundary). The
-/// result is ROLE through the trailing 64-byte signature, without the
-/// payload-type byte.
+/// (truncated to the 24-byte wire limit on a character boundary), and the
+/// disclosed location when one is being shared. The result is ROLE
+/// through the trailing 64-byte signature, without the payload-type byte.
 async fn build_signed_identity_bundle(
     signer: &SoftwareIdentity,
     name: Option<&str>,
     timestamp: Option<u32>,
+    location: Option<NodeLocation>,
 ) -> Result<Vec<u8>, MobileMeshError> {
     let name = name
         .map(|name| {
@@ -1633,7 +1712,7 @@ async fn build_signed_identity_bundle(
         role: NodeRole::Chat,
         capabilities: NodeCapabilities::MOBILE | NodeCapabilities::TEXT_MESSAGES,
         name,
-        location: None,
+        location,
         altitude_m: None,
         timestamp,
         supported_regions: None,
@@ -1708,10 +1787,20 @@ async fn run_worker(
 
     let mut host = Host::new(handle);
     let node = host.add_node(identity_id);
-    // The session starts discoverable with no name; the app pushes the
-    // stored preference and display name via `set_discoverable` right
-    // after install.
-    node.enable_identity_responder_default(phone_identity_profile(local_key, None));
+    // What this phone currently says about itself. The session starts
+    // discoverable with no name and no location; the app pushes the
+    // stored preferences via `set_discoverable` and
+    // `set_advertised_location` right after install. Held here because
+    // the responder profile is rebuilt whole whenever any of it changes,
+    // and the advertisement arms read the location at send time.
+    let mut discoverable = true;
+    let mut responder_name: Option<String> = None;
+    let mut advertised_location: Option<NodeLocation> = None;
+    node.enable_identity_responder_default(phone_identity_profile(
+        local_key,
+        responder_name.as_deref(),
+        advertised_location,
+    ));
     // Held outside the chat state: rejecting a batch rebuilds the reducer,
     // and the channels the platform registered must outlive that.
     let channel_registry = Rc::new(RefCell::new(ChannelRegistry::default()));
@@ -2015,6 +2104,7 @@ async fn run_worker(
                                 &signer,
                                 name.as_deref(),
                                 timestamp,
+                                advertised_location,
                             )
                             .await
                             {
@@ -2074,10 +2164,15 @@ async fn run_worker(
                             let _ = response.send(result);
                         }
                         Some(WorkerCommand::SignIdentityBundle { name, timestamp, response }) => {
+                            // Never the location: this bundle outlives the
+                            // moment — pasted into messages, printed as a
+                            // QR — and a position frozen into it goes
+                            // stale and then travels wherever it does.
                             let result = build_signed_identity_bundle(
                                 &signer,
                                 name.as_deref(),
                                 timestamp,
+                                None,
                             )
                             .await;
                             let _ = response.send(result);
@@ -2147,13 +2242,31 @@ async fn run_worker(
                             let _ = response.send(());
                         }
                         Some(WorkerCommand::SetDiscoverable { enabled, name, response }) => {
-                            if enabled {
+                            discoverable = enabled;
+                            responder_name = name;
+                            if discoverable {
                                 node.enable_identity_responder_default(phone_identity_profile(
                                     local_key,
-                                    name.as_deref(),
+                                    responder_name.as_deref(),
+                                    advertised_location,
                                 ));
                             } else {
                                 node.disable_identity_responder();
+                            }
+                            let _ = response.send(());
+                        }
+                        Some(WorkerCommand::SetAdvertisedLocation { location, response }) => {
+                            advertised_location = location;
+                            // The installed profile is a copy, so a live
+                            // responder is reinstalled to serve the new
+                            // position. Not discoverable means not
+                            // installed — nothing to refresh.
+                            if discoverable {
+                                node.enable_identity_responder_default(phone_identity_profile(
+                                    local_key,
+                                    responder_name.as_deref(),
+                                    advertised_location,
+                                ));
                             }
                             let _ = response.send(());
                         }
@@ -3301,6 +3414,15 @@ mod tests {
         bob.set_discoverable(true, Some("Bob's phone".into()))
             .await
             .unwrap();
+        // And under a shared location: the responder serves the same
+        // description an advertisement carries.
+        bob.set_advertised_location(Some(MobileMeshSharedLocationRecord {
+            latitude_degrees: 48.1173,
+            longitude_degrees: 11.5167,
+            precision_bytes: 5,
+        }))
+        .await
+        .unwrap();
 
         alice.discover_identities(None, None).await.unwrap();
 
@@ -3344,6 +3466,13 @@ mod tests {
         assert!(event.source_authenticated);
         let payload = umsh_node::NodeIdentityPayload::from_bytes(&event.payload).unwrap();
         assert_eq!(payload.name.as_deref(), Some("Bob's phone"));
+        let cell = payload
+            .location
+            .expect("the reply serves the shared location");
+        assert_eq!(cell.precision(), 5);
+        let (lat, lon) = cell.center();
+        assert!((f64::from(lat) - 48.1173).abs() < 0.01);
+        assert!((f64::from(lon) - 11.5167).abs() < 0.01);
 
         // Opting out is honored: a fresh ask earns silence from Bob.
         bob.set_discoverable(false, None).await.unwrap();
@@ -3585,6 +3714,127 @@ mod tests {
             assert!(Instant::now() < deadline, "advertisement not received");
             std::thread::sleep(Duration::from_millis(5));
         }
+    }
+
+    /// The location policy in one pass: a shared cell rides every live
+    /// advertisement, never the durable QR/URI bundle, and clearing it
+    /// removes it from the next send rather than lingering.
+    #[tokio::test]
+    async fn a_shared_location_rides_adverts_but_never_the_durable_bundle() {
+        let directory = tempfile::tempdir().unwrap();
+        let alice_identity = identity(51);
+        let bob_identity = identity(53);
+        let alice_store =
+            MobileCounterStore::new(directory.path().join("alice").display().to_string()).unwrap();
+        let bob_store =
+            MobileCounterStore::new(directory.path().join("bob").display().to_string()).unwrap();
+        let alice = MobileMeshSession::new(alice_identity.clone(), alice_store)
+            .await
+            .unwrap();
+        let bob = MobileMeshSession::new(bob_identity, bob_store)
+            .await
+            .unwrap();
+
+        alice
+            .set_advertised_location(Some(MobileMeshSharedLocationRecord {
+                latitude_degrees: 37.774_929,
+                longitude_degrees: -122.419_416,
+                precision_bytes: 5,
+            }))
+            .await
+            .unwrap();
+
+        // The durable bundle stays location-free while a location is live:
+        // it outlives the moment and travels wherever the QR is pasted.
+        let bundle = alice
+            .sign_identity_bundle(Some("Alice's Phone".to_owned()), None)
+            .await
+            .unwrap();
+        let record = crate::decode_node_identity(address(&alice_identity), bundle).unwrap();
+        assert_eq!(record.signature, crate::IdentitySignatureState::Valid);
+        assert!(
+            record.latitude.is_none(),
+            "a QR bundle never places its owner"
+        );
+
+        // One advertisement while sharing, one after clearing.
+        let mut received = Vec::new();
+        for share in [true, false] {
+            if !share {
+                alice.set_advertised_location(None).await.unwrap();
+            }
+            alice.advertise_identity(None, None).await.unwrap();
+            let deadline = Instant::now() + Duration::from_secs(10);
+            'advert: loop {
+                for frame in alice.poll_update().outbound_frames {
+                    alice.complete_outbound_frame(frame.id, true).unwrap();
+                    bob.receive(MobileMeshRxRecord {
+                        data: frame.data,
+                        rssi_dbm: Some(-50),
+                        lqi: None,
+                        snr_cb: None,
+                    })
+                    .unwrap();
+                }
+                for event in bob.poll_update().advertisement_events {
+                    received.push(
+                        crate::decode_node_identity(event.peer_address, event.payload).unwrap(),
+                    );
+                    break 'advert;
+                }
+                assert!(Instant::now() < deadline, "advertisement not received");
+                std::thread::sleep(Duration::from_millis(5));
+            }
+        }
+
+        let shared = &received[0];
+        assert_eq!(shared.location_precision, Some(5));
+        assert!((shared.latitude.unwrap() - 37.774_929).abs() < 0.01);
+        assert!((shared.longitude.unwrap() + 122.419_416).abs() < 0.01);
+        // Clearing is complete: the next advertisement places nobody.
+        assert!(received[1].latitude.is_none());
+    }
+
+    /// The refusals: a coordinate that names no place, at either end of
+    /// the record, never reaches the worker.
+    #[test]
+    fn a_location_that_names_no_place_is_refused() {
+        let valid = MobileMeshSharedLocationRecord {
+            latitude_degrees: 37.774_929,
+            longitude_degrees: -122.419_416,
+            precision_bytes: 5,
+        };
+        for broken in [
+            // Precision zero encodes "unspecified", which the API spells
+            // `None`; a record saying both is a confusion to reject.
+            MobileMeshSharedLocationRecord {
+                precision_bytes: 0,
+                ..valid
+            },
+            MobileMeshSharedLocationRecord {
+                precision_bytes: MAX_PRECISION + 1,
+                ..valid
+            },
+            MobileMeshSharedLocationRecord {
+                latitude_degrees: 90.1,
+                ..valid
+            },
+            MobileMeshSharedLocationRecord {
+                longitude_degrees: -180.1,
+                ..valid
+            },
+            MobileMeshSharedLocationRecord {
+                latitude_degrees: f64::NAN,
+                ..valid
+            },
+        ] {
+            assert!(matches!(
+                disclosed_cell(broken),
+                Err(MobileMeshError::InvalidLocation)
+            ));
+        }
+        let cell = disclosed_cell(valid).unwrap();
+        assert_eq!(cell.precision(), 5);
     }
 
     /// A beacon carries no payload at all, so what reaches a listener is

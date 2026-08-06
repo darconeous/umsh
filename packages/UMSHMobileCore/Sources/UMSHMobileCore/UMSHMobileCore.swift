@@ -1297,6 +1297,20 @@ public protocol MobileMeshSessionProtocol: AnyObject, Sendable {
     func sendBeacon() async throws
 
     /**
+     * Set the position this phone's identity carries, or `None` to stop
+     * sharing one.
+     *
+     * Reaches every *live* identity payload — advertisements, manual and
+     * scheduled, and Identity Request replies while discoverable — but
+     * never the shareable QR/URI bundle: that bundle is durable, and a
+     * position frozen into it would go stale and then travel wherever
+     * the QR is pasted. The coordinate is reduced to the cell named by
+     * `precision_bytes` before it is stored, so nothing finer ever sits
+     * in this session, whatever later reads it.
+     */
+    func setAdvertisedLocation(location: MobileMeshSharedLocationRecord?) async throws
+
+    /**
      * Set whether this phone answers Identity Requests with its own
      * identity — the passive counterpart of [`discover_identities`]:
      * discoverable phones show up in other people's Discover sessions.
@@ -1882,6 +1896,34 @@ open func sendBeacon()async throws   {
             rustFutureFunc: {
                 uniffi_umsh_mobile_core_fn_method_mobilemeshsession_send_beacon(
                         self.uniffiCloneHandle()
+                )
+            },
+            pollFunc: ffi_umsh_mobile_core_rust_future_poll_void,
+            completeFunc: ffi_umsh_mobile_core_rust_future_complete_void,
+            freeFunc: ffi_umsh_mobile_core_rust_future_free_void,
+            liftFunc: { $0 },
+            errorHandler: FfiConverterTypeMobileMeshError_lift
+        )
+}
+
+    /**
+     * Set the position this phone's identity carries, or `None` to stop
+     * sharing one.
+     *
+     * Reaches every *live* identity payload — advertisements, manual and
+     * scheduled, and Identity Request replies while discoverable — but
+     * never the shareable QR/URI bundle: that bundle is durable, and a
+     * position frozen into it would go stale and then travel wherever
+     * the QR is pasted. The coordinate is reduced to the cell named by
+     * `precision_bytes` before it is stored, so nothing finer ever sits
+     * in this session, whatever later reads it.
+     */
+open func setAdvertisedLocation(location: MobileMeshSharedLocationRecord?)async throws   {
+    return
+        try  await uniffiRustCallAsync(
+            rustFutureFunc: {
+                uniffi_umsh_mobile_core_fn_method_mobilemeshsession_set_advertised_location(
+                        self.uniffiCloneHandle(),FfiConverterOptionTypeMobileMeshSharedLocationRecord.lower(location)
                 )
             },
             pollFunc: ffi_umsh_mobile_core_rust_future_poll_void,
@@ -4692,6 +4734,80 @@ public func FfiConverterTypeMobileMeshSessionUpdateRecord_lift(_ buf: RustBuffer
 #endif
 public func FfiConverterTypeMobileMeshSessionUpdateRecord_lower(_ value: MobileMeshSessionUpdateRecord) -> RustBuffer {
     return FfiConverterTypeMobileMeshSessionUpdateRecord.lower(value)
+}
+
+
+/**
+ * The position this phone is willing to put in its identity.
+ *
+ * Precision is the disclosure decision: the wire format carries a cell,
+ * not a point, and the coordinate is reduced to that cell before it goes
+ * anywhere. The platform hands over its best reading and the chosen cell
+ * size; the truncation happens here, on this side of every send.
+ */
+public struct MobileMeshSharedLocationRecord: Equatable, Hashable {
+    public var latitudeDegrees: Double
+    public var longitudeDegrees: Double
+    /**
+     * Cell-code precision in bytes, 1–7. `ulcp_location_cell_meters`
+     * names the cell size each buys.
+     */
+    public var precisionBytes: UInt8
+
+    // Default memberwise initializers are never public by default, so we
+    // declare one manually.
+    public init(latitudeDegrees: Double, longitudeDegrees: Double,
+        /**
+         * Cell-code precision in bytes, 1–7. `ulcp_location_cell_meters`
+         * names the cell size each buys.
+         */precisionBytes: UInt8) {
+        self.latitudeDegrees = latitudeDegrees
+        self.longitudeDegrees = longitudeDegrees
+        self.precisionBytes = precisionBytes
+    }
+
+
+
+
+}
+
+#if compiler(>=6)
+extension MobileMeshSharedLocationRecord: Sendable {}
+#endif
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public struct FfiConverterTypeMobileMeshSharedLocationRecord: FfiConverterRustBuffer {
+    public static func read(from buf: inout (data: Data, offset: Data.Index)) throws -> MobileMeshSharedLocationRecord {
+        return
+            try MobileMeshSharedLocationRecord(
+                latitudeDegrees: FfiConverterDouble.read(from: &buf),
+                longitudeDegrees: FfiConverterDouble.read(from: &buf),
+                precisionBytes: FfiConverterUInt8.read(from: &buf)
+        )
+    }
+
+    public static func write(_ value: MobileMeshSharedLocationRecord, into buf: inout [UInt8]) {
+        FfiConverterDouble.write(value.latitudeDegrees, into: &buf)
+        FfiConverterDouble.write(value.longitudeDegrees, into: &buf)
+        FfiConverterUInt8.write(value.precisionBytes, into: &buf)
+    }
+}
+
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public func FfiConverterTypeMobileMeshSharedLocationRecord_lift(_ buf: RustBuffer) throws -> MobileMeshSharedLocationRecord {
+    return try FfiConverterTypeMobileMeshSharedLocationRecord.lift(buf)
+}
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public func FfiConverterTypeMobileMeshSharedLocationRecord_lower(_ value: MobileMeshSharedLocationRecord) -> RustBuffer {
+    return FfiConverterTypeMobileMeshSharedLocationRecord.lower(value)
 }
 
 
@@ -7706,6 +7822,12 @@ enum MobileMeshError: Swift.Error, Equatable, Hashable, Foundation.LocalizedErro
      * session holds no key for.
      */
     case UnknownConversation
+    /**
+     * A shared location did not name a place: a non-finite or
+     * out-of-range coordinate, or a precision the cell code cannot
+     * carry.
+     */
+    case InvalidLocation
 
 
 
@@ -7745,6 +7867,7 @@ public struct FfiConverterTypeMobileMeshError: FfiConverterRustBuffer {
         case 8: return .InvalidChannelKey
         case 9: return .ChannelCapacity
         case 10: return .UnknownConversation
+        case 11: return .InvalidLocation
 
          default: throw UniffiInternalError.unexpectedEnumCase
         }
@@ -7795,6 +7918,10 @@ public struct FfiConverterTypeMobileMeshError: FfiConverterRustBuffer {
 
         case .UnknownConversation:
             writeInt(&buf, Int32(10))
+
+
+        case .InvalidLocation:
+            writeInt(&buf, Int32(11))
 
         }
     }
@@ -8969,6 +9096,30 @@ fileprivate struct FfiConverterOptionTypeMobileChatRxMetadataRecord: FfiConverte
         switch try readInt(&buf) as Int8 {
         case 0: return nil
         case 1: return try FfiConverterTypeMobileChatRxMetadataRecord.read(from: &buf)
+        default: throw UniffiInternalError.unexpectedOptionalTag
+        }
+    }
+}
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+fileprivate struct FfiConverterOptionTypeMobileMeshSharedLocationRecord: FfiConverterRustBuffer {
+    typealias SwiftType = MobileMeshSharedLocationRecord?
+
+    public static func write(_ value: SwiftType, into buf: inout [UInt8]) {
+        guard let value = value else {
+            writeInt(&buf, Int8(0))
+            return
+        }
+        writeInt(&buf, Int8(1))
+        FfiConverterTypeMobileMeshSharedLocationRecord.write(value, into: &buf)
+    }
+
+    public static func read(from buf: inout (data: Data, offset: Data.Index)) throws -> SwiftType {
+        switch try readInt(&buf) as Int8 {
+        case 0: return nil
+        case 1: return try FfiConverterTypeMobileMeshSharedLocationRecord.read(from: &buf)
         default: throw UniffiInternalError.unexpectedOptionalTag
         }
     }
@@ -10459,6 +10610,9 @@ private let initializationResult: InitializationResult = {
         return InitializationResult.apiChecksumMismatch
     }
     if (uniffi_umsh_mobile_core_checksum_method_mobilemeshsession_send_beacon() != 41898) {
+        return InitializationResult.apiChecksumMismatch
+    }
+    if (uniffi_umsh_mobile_core_checksum_method_mobilemeshsession_set_advertised_location() != 61213) {
         return InitializationResult.apiChecksumMismatch
     }
     if (uniffi_umsh_mobile_core_checksum_method_mobilemeshsession_set_chat_display_name() != 47050) {

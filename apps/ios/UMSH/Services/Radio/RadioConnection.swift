@@ -19,6 +19,12 @@ protocol RadioConnection: AnyObject, Sendable {
     /// Broadcast an empty beacon: it publishes the path back to this
     /// phone rather than who this phone is, for a fraction of the airtime.
     func sendBeacon() async throws
+    /// Set the position this phone's identity carries, already reduced to
+    /// the disclosed cell, or nil to stop sharing one. Reaches live
+    /// identity payloads — advertisements and Identity Request replies —
+    /// and never the durable QR/URI bundle. Best-effort, like
+    /// discoverability: the value is reapplied on every session install.
+    func setAdvertisedLocation(_ location: MobileMeshSharedLocationRecord?) async
     /// Set whether this phone answers nearby nodes' Identity Requests with
     /// its own identity, and the display name those replies carry.
     /// Best-effort: the preference is reapplied on every session install.

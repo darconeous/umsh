@@ -1,3 +1,4 @@
+import CoreLocation
 import CryptoKit
 import SwiftUI
 import OSLog
@@ -45,6 +46,19 @@ struct AppRootView: View {
     /// air on a timer is a decision rather than a default.
     @AppStorage("phone.advertIntervalSeconds") private var phoneAdvertInterval = 0
     @AppStorage("phone.beaconIntervalSeconds") private var phoneBeaconInterval = 0
+    /// Whether this phone's identity carries its location, and at what
+    /// cell size. Off by default for the same reason the schedules are:
+    /// where a phone is, is where its owner is, and putting that on the
+    /// air is a decision rather than a default.
+    @AppStorage("phone.shareLocation") private var phoneSharesLocation = false
+    @AppStorage("phone.locationPrecision") private var phoneLocationPrecision = 5
+    /// The one CoreLocation seam; a reference in `@State`, never
+    /// reassigned, like the bookkeeping below.
+    @State private var locationService = PhoneLocationService()
+    /// The last cell pushed into the mesh session, kept so a session
+    /// reinstall — which starts with none — can resume with it rather
+    /// than waiting for the phone to move.
+    @State private var sharedLocation: MobileMeshSharedLocationRecord?
     /// Bookkeeping that must survive body re-evaluation without itself being
     /// a source of invalidation. A reference held in `@State` is never
     /// reassigned, so mutating it costs nothing in the view graph.
@@ -442,6 +456,12 @@ struct AppRootView: View {
                 try await radioConnection.sendBeacon()
             }
         }
+        // Keyed on one Int so either change — the toggle or the cell
+        // size — restarts the readings; zero is "off", which no precision
+        // can be.
+        .task(id: phoneSharesLocation ? phoneLocationPrecision : 0) {
+            await applyLocationSharing()
+        }
         .task {
             for await snapshot in await radioConnection.snapshots() {
                 // A snapshot is published for every ULCP frame the radio
@@ -679,6 +699,61 @@ struct AppRootView: View {
         // Unaffected by the discoverable preference: that governs answering
         // identity requests, not signing what we say.
         try? await radioConnection.setChatDisplayName(advertisedName)
+        // The shared location rides the same reinstall rail: a fresh
+        // session holds none, and the last accepted cell is what it
+        // should resume with rather than waiting for the phone to move.
+        await radioConnection.setAdvertisedLocation(sharedLocation)
+    }
+
+    /// Start or stop location readings to match the stored preference.
+    ///
+    /// The readings only need to be good to the disclosed cell, so the
+    /// chosen precision sizes both the accuracy asked of CoreLocation and
+    /// how far the phone must move before a new cell is pushed. Each
+    /// reading goes to the mesh session immediately — the session holds
+    /// exactly one current cell, so there is no backlog to manage — and
+    /// switching off clears the session's copy rather than letting the
+    /// last position linger in every later advertisement.
+    private func applyLocationSharing() async {
+        guard phoneSharesLocation else {
+            locationService.stop()
+            if sharedLocation != nil {
+                sharedLocation = nil
+                await radioConnection.setAdvertisedLocation(nil)
+            }
+            return
+        }
+        let precision = UInt8(clamping: phoneLocationPrecision)
+        // A precision change must not wait for the phone to move: the
+        // retained reading is re-disclosed at the new cell size now, or
+        // the old — possibly finer — cell would stay on the air until a
+        // fresh reading cleared the new distance filter.
+        if var record = sharedLocation, record.precisionBytes != precision {
+            record.precisionBytes = precision
+            sharedLocation = record
+            await radioConnection.setAdvertisedLocation(record)
+        }
+        let cellMeters = LocationPresentation.cellMeters(precisionBytes: precision) ?? 40
+        locationService.start(
+            cellMeters: cellMeters,
+            onReading: { reading in
+                let record = MobileMeshSharedLocationRecord(
+                    latitudeDegrees: reading.coordinate.latitude,
+                    longitudeDegrees: reading.coordinate.longitude,
+                    precisionBytes: precision
+                )
+                sharedLocation = record
+                Task { await radioConnection.setAdvertisedLocation(record) }
+            },
+            onAuthorizationLost: {
+                // Access revoked in iOS Settings while sharing: readings
+                // stop arriving, and the last cell must not outlive the
+                // permission it was read under. A later re-grant resumes
+                // readings and re-shares on its own.
+                sharedLocation = nil
+                Task { await radioConnection.setAdvertisedLocation(nil) }
+            }
+        )
     }
 
     /// Broadcast a signed identity advertisement. Returns a user-facing

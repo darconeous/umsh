@@ -68,6 +68,8 @@ actor FakeRadioConnection: RadioConnection {
         throw RadioConnectionError.identityUnavailable
     }
 
+    func setAdvertisedLocation(_ location: MobileMeshSharedLocationRecord?) async {}
+
     func setPhoneDiscoverable(_ enabled: Bool, name: String?) async {}
 
     func requestIdentity(peerAddress: String) async throws {

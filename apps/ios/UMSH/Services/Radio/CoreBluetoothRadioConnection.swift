@@ -305,6 +305,11 @@ final class CoreBluetoothRadioConnection: NSObject, RadioConnection, @unchecked 
         try await currentMeshSession().sendBeacon()
     }
 
+    func setAdvertisedLocation(_ location: MobileMeshSharedLocationRecord?) async {
+        guard let session = try? await currentMeshSession() else { return }
+        try? await session.setAdvertisedLocation(location: location)
+    }
+
     func setPhoneDiscoverable(_ enabled: Bool, name: String?) async {
         guard let session = try? await currentMeshSession() else { return }
         try? await session.setDiscoverable(enabled: enabled, name: name)

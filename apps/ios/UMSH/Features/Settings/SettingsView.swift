@@ -1,3 +1,4 @@
+import CoreLocation
 import SwiftUI
 import UMSHMobileCore
 
@@ -213,6 +214,8 @@ struct IdentityDetailView: View {
     /// closure round trip would only add a way for the two to disagree.
     @AppStorage("phone.advertIntervalSeconds") private var phoneAdvertInterval = 0
     @AppStorage("phone.beaconIntervalSeconds") private var phoneBeaconInterval = 0
+    @AppStorage("phone.shareLocation") private var phoneSharesLocation = false
+    @AppStorage("phone.locationPrecision") private var phoneLocationPrecision = 5
 
     var body: some View {
         List {
@@ -289,6 +292,29 @@ struct IdentityDetailView: View {
                 Text("Both run only while UMSH is open — iOS gives a suspended app no way to keep talking to the mesh. A beacon publishes the path back to this phone; an identity announcement carries your name and reaches only nodes that can hear you directly. Each interval is a minimum: periods run a little longer at random, so phones on the same schedule do not all transmit at once.")
             }
 
+            Section {
+                Toggle("Share location in identity", isOn: $phoneSharesLocation)
+                if phoneSharesLocation {
+                    Picker("Shared precision", selection: $phoneLocationPrecision) {
+                        ForEach(1...7, id: \.self) { precision in
+                            Text(precisionLabel(UInt8(precision))).tag(precision)
+                        }
+                    }
+                    if locationAccessDenied {
+                        Label(
+                            "Location access for UMSH is off in iOS Settings, so nothing is shared.",
+                            systemImage: "location.slash"
+                        )
+                        .font(.caption)
+                        .foregroundStyle(.secondary)
+                    }
+                }
+            } header: {
+                Text("Location")
+            } footer: {
+                Text(locationFooter)
+            }
+
             Section("Storage") {
                 LabeledContent("Private key", value: "Device-only Keychain")
                 Text("Private key bytes are never displayed, copied, synchronized, or included in diagnostics.")
@@ -312,6 +338,30 @@ struct IdentityDetailView: View {
                 : " This phone ignores nearby nodes that ask it to identify itself."
         }
         return footer
+    }
+
+    private var locationFooter: String {
+        guard phoneSharesLocation else {
+            return "Your identity says nothing about where you are."
+        }
+        return "Identity announcements and replies name a \(precisionLabel(UInt8(clamping: phoneLocationPrecision))) area you are inside — never a more precise position than that. The shareable QR code never carries it, and your location is read only while UMSH is open."
+    }
+
+    /// Live enough for a footer: re-read on every body evaluation, so it
+    /// catches up when the user returns from iOS Settings.
+    private var locationAccessDenied: Bool {
+        let status = CLLocationManager().authorizationStatus
+        return status == .denied || status == .restricted
+    }
+
+    /// A precision named by the area it discloses, which is the only
+    /// thing about it a person can weigh. Bare sizes, matching the
+    /// radio's precision picker.
+    private func precisionLabel(_ precision: UInt8) -> String {
+        guard let meters = LocationPresentation.cellMeters(precisionBytes: precision) else {
+            return "\(precision) bytes"
+        }
+        return LocationPresentation.cellSizeText(meters: meters)
     }
 
     private func commitName() async {
