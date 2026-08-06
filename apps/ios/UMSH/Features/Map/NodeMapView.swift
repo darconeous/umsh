@@ -246,26 +246,30 @@ struct NodeMapView: View {
                 }
             }
             .pickerStyle(.inline)
-            Menu("Capabilities") {
-                Button {
-                    capabilityFilterBits = 0
-                } label: {
-                    Label(
-                        "Any capability",
-                        systemImage: capabilityFilter.isEmpty ? "checkmark" : ""
+            // A section rather than a submenu, because a submenu cannot be
+            // used for this: selecting inside one always collapses it back
+            // to its parent, so choosing three capabilities meant opening
+            // it three times. Flat, every toggle leaves the menu exactly
+            // where it was, which is what a multiple choice needs.
+            Section("Capabilities") {
+                Toggle(
+                    "Any capability",
+                    isOn: Binding(
+                        get: { capabilityFilter.isEmpty },
+                        // Turning it off names no capability to filter on,
+                        // so there is nothing to do; selecting one of the
+                        // six below is what turns it off.
+                        set: { isOn in if isOn { capabilityFilterBits = 0 } }
                     )
-                }
-                Divider()
+                )
                 ForEach(MapCapabilityFilterOption.all) { option in
-                    Button {
-                        toggle(option.capability)
-                    } label: {
-                        Label(
-                            option.label,
-                            systemImage: capabilityFilter.contains(option.capability)
-                                ? "checkmark" : ""
+                    Toggle(
+                        option.label,
+                        isOn: Binding(
+                            get: { capabilityFilter.contains(option.capability) },
+                            set: { _ in toggle(option.capability) }
                         )
-                    }
+                    )
                 }
             }
             if isFiltered {
@@ -280,6 +284,11 @@ struct NodeMapView: View {
                     : "line.3.horizontal.decrease.circle"
             )
         }
+        // Without this every toggle closes the menu, which for a filter
+        // that is meant to be built up a piece at a time makes the second
+        // piece cost a full reopen. Selecting a tier no longer closes the
+        // menu either; that is the price, and it is small.
+        .menuActionDismissBehavior(.disabled)
     }
 
     private func toggle(_ capability: MeshNodeCapabilities) {
