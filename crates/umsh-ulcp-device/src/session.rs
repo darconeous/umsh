@@ -218,6 +218,10 @@ pub struct SessionConfig {
     /// properties are unknown. Meaningful only alongside
     /// [`time`](Self::time) — see [`GnssConfig`].
     pub gnss: Option<GnssConfig>,
+    /// Whether an ambient light sensor is fitted. When set,
+    /// `CAP_ILLUMINANCE` is advertised and `PROP_ILLUMINANCE` samples on
+    /// every read; otherwise the property is unknown.
+    pub illuminance: bool,
 }
 
 /// Physical-radio outcome of the transmit started by
@@ -259,6 +263,11 @@ pub enum Effect {
     /// measurement is reported; the session never caches readings, so
     /// every get samples.
     SampleBattery { tid: u8 },
+    /// Take an ambient light measurement and feed it back with
+    /// [`Session::respond_illuminance`], quoting this `tid`. Emitted for a
+    /// `PROP_ILLUMINANCE` get; like the battery, nothing is cached, so
+    /// every get samples.
+    SampleIlluminance { tid: u8 },
     /// Apply and persist a new BLE pairing PIN, then complete the deferred
     /// property transaction with [`Session::respond_pin_set`].
     SetPairingPin { tid: u8, pin: Option<u32> },
@@ -2777,6 +2786,11 @@ impl<A: AesProvider, S: Sha256Provider, const TX: usize> Session<A, S, TX> {
         if gnss::is_positioning_property(key) && self.config.gnss.is_some() {
             return Some(Effect::SampleGnss { tid, key });
         }
+        // Ambient light, likewise: the sensor is read on demand and the
+        // session caches nothing.
+        if key == prop::ILLUMINANCE && self.config.illuminance {
+            return Some(Effect::SampleIlluminance { tid });
+        }
         let mut value = [0u8; PROP_BUF];
         match self.encode_prop(key, now_ms, &mut value) {
             PropValue::Encoded(len) => self.send_prop_is(tid, key, &value[..len], emit),
@@ -3027,6 +3041,28 @@ impl<A: AesProvider, S: Sha256Provider, const TX: usize> Session<A, S, TX> {
                 }
             }
             Ok(_) | Err(()) => self.complete(tid, Status::FAILURE, emit),
+        }
+    }
+
+    /// Complete a deferred `PROP_ILLUMINANCE` read requested via
+    /// [`Effect::SampleIlluminance`]. `millilux` is the measurement, or
+    /// `None` when the sensor could not be read. Quote the same `tid` the
+    /// effect carried.
+    ///
+    /// A failed read is the empty value rather than an error status: the
+    /// property is a measurement, and "no reading right now" is the same
+    /// answer `PROP_TIME` gives for a clock that has never been set.
+    pub fn respond_illuminance(
+        &mut self,
+        tid: u8,
+        millilux: Option<u32>,
+        emit: &mut impl FnMut(&[u8]),
+    ) {
+        match millilux {
+            Some(value) => {
+                self.send_prop_is(tid, prop::ILLUMINANCE, &value.to_le_bytes(), emit);
+            }
+            None => self.send_prop_is(tid, prop::ILLUMINANCE, &[], emit),
         }
     }
 
@@ -3745,6 +3781,7 @@ impl<A: AesProvider, S: Sha256Provider, const TX: usize> Session<A, S, TX> {
             key if gnss::is_positioning_property(key) && self.config.gnss.is_some() => {
                 Err(Status::INVALID_ARGUMENT)
             }
+            prop::ILLUMINANCE if self.config.illuminance => Err(Status::INVALID_ARGUMENT),
             _ => Err(Status::PROP_NOT_FOUND),
         }
     }
@@ -4014,6 +4051,9 @@ impl<A: AesProvider, S: Sha256Provider, const TX: usize> Session<A, S, TX> {
         if key == prop::ALERT {
             return self.config.alert.is_some();
         }
+        if key == prop::ILLUMINANCE {
+            return self.config.illuminance;
+        }
         if matches!(key, prop::TIME | prop::TZ_OFFSET) {
             return self.config.time.is_some();
         }
@@ -4124,6 +4164,9 @@ impl<A: AesProvider, S: Sha256Provider, const TX: usize> Session<A, S, TX> {
                 if self.config.gnss.is_some() {
                     len += pui::encode(cap::GNSS, &mut out[len..]).unwrap_or(0);
                 }
+                if self.config.illuminance {
+                    len += pui::encode(cap::ILLUMINANCE, &mut out[len..]).unwrap_or(0);
+                }
                 len
             }
             prop::PHY_ENABLED => {
@@ -4139,6 +4182,7 @@ impl<A: AesProvider, S: Sha256Provider, const TX: usize> Session<A, S, TX> {
             // Deferred-read like PHY_RSSI: prop_get intercepts and
             // samples; this arm is only a fallback.
             prop::BATTERY if self.config.battery.is_some() => return PropValue::Unimplemented,
+            prop::ILLUMINANCE if self.config.illuminance => return PropValue::Unimplemented,
             prop::PHY_LORA_BW => put(out, &self.device.settings.bw_hz.to_le_bytes()),
             prop::PHY_LORA_SF => {
                 out[0] = self.device.settings.sf;
@@ -4599,6 +4643,7 @@ mod tests {
             alert: Some(AlertConfig::DEFAULT),
             time: Some(TimeConfig),
             gnss: Some(GnssConfig::DEFAULT),
+            illuminance: true,
         }
     }
 
@@ -4753,7 +4798,8 @@ mod tests {
                 cap::BATTERY,
                 cap::ALERT,
                 cap::TIME,
-                cap::GNSS
+                cap::GNSS,
+                cap::ILLUMINANCE
             ]
         );
     }
@@ -5909,6 +5955,65 @@ mod tests {
         let len = frame::prop_remove(&mut buf, 4, prop::BATTERY, &[0]).unwrap();
         let (emitted, _) = dispatch(&mut session, &buf[..len], 0);
         expect_status(&emitted[0], 4, Status::INVALID_ARGUMENT);
+    }
+
+    #[test]
+    fn illuminance_get_samples_on_request() {
+        let mut session = test_session();
+        let mut buf = [0u8; 16];
+        let len = frame::prop_get(&mut buf, 5, prop::ILLUMINANCE).unwrap();
+        let (emitted, effect) = dispatch(&mut session, &buf[..len], 0);
+        assert!(emitted.is_empty(), "no response until the sensor is read");
+        assert_eq!(effect, Some(Effect::SampleIlluminance { tid: 5 }));
+
+        let mut out = Vec::new();
+        session.respond_illuminance(5, Some(12_345), &mut |bytes: &[u8]| {
+            out.push(bytes.to_vec())
+        });
+        let (tid, key, value) = parse_prop_is(&out[0]);
+        assert_eq!((tid, key), (5, prop::ILLUMINANCE));
+        assert_eq!(value, 12_345u32.to_le_bytes());
+    }
+
+    /// A sensor that could not be read reports no reading, not a failure —
+    /// the same shape `PROP_TIME` uses for a clock that was never set.
+    #[test]
+    fn illuminance_reports_a_failed_read_as_empty() {
+        let mut session = test_session();
+        let mut out = Vec::new();
+        session.respond_illuminance(4, None, &mut |bytes: &[u8]| out.push(bytes.to_vec()));
+        let (tid, key, value) = parse_prop_is(&out[0]);
+        assert_eq!((tid, key, value), (4, prop::ILLUMINANCE, Vec::new()));
+    }
+
+    #[test]
+    fn illuminance_without_the_sensor_is_unknown() {
+        let mut config = test_config();
+        config.illuminance = false;
+        let mut session = Session::new(config, Status::RESET_POWER_ON, test_engine());
+        session.attach(true);
+
+        let raw = get(&mut session, prop::CAPS);
+        let mut offset = 0;
+        while offset < raw.len() {
+            let (value, used) = pui::decode(&raw[offset..]).unwrap();
+            assert_ne!(value, cap::ILLUMINANCE);
+            offset += used;
+        }
+
+        let mut buf = [0u8; 16];
+        let len = frame::prop_get(&mut buf, 1, prop::ILLUMINANCE).unwrap();
+        let (emitted, effect) = dispatch(&mut session, &buf[..len], 0);
+        assert!(effect.is_none());
+        expect_status(&emitted[0], 1, Status::PROP_NOT_FOUND);
+    }
+
+    #[test]
+    fn illuminance_rejects_mutation() {
+        let mut session = test_session();
+        let (emitted, effect) = set(&mut session, prop::ILLUMINANCE, &0u32.to_le_bytes());
+        assert!(effect.is_none());
+        expect_status(&emitted[0], 2, Status::INVALID_ARGUMENT);
     }
 
     /// `CMD_PROP_SET` of `PROP_ALERT` at a chosen clock reading.

@@ -77,6 +77,9 @@ fn session_config() -> SessionConfig {
         // rather than only against a firmware nobody can run in CI.
         time: Some(umsh_ulcp_device::TimeConfig),
         gnss: Some(umsh_ulcp_device::GnssConfig::DEFAULT),
+        // And a synthetic light sensor, so the host wrapper is exercised
+        // against the real session too.
+        illuminance: true,
     }
 }
 
@@ -165,6 +168,11 @@ impl SimDevice {
                     }),
                     &mut emit,
                 );
+            }
+            Some(Effect::SampleIlluminance { tid }) => {
+                // A stable simulated reading: ordinary office lighting.
+                self.session
+                    .respond_illuminance(tid, Some(320_000), &mut emit);
             }
             Some(Effect::SetPairingPin { tid, .. }) => {
                 self.session.respond_pin_set(tid, Ok(()), &mut emit);

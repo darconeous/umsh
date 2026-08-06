@@ -174,6 +174,11 @@ impl SimulatedDevice {
                     &mut emit,
                 );
             }
+            Some(Effect::SampleIlluminance { tid }) => {
+                // A stable simulated reading: ordinary office lighting.
+                self.session
+                    .respond_illuminance(tid, Some(320_000), &mut emit);
+            }
             // The web simulator has no device node and no signing key,
             // so PROP_IDENT reads report failure rather than a blob.
             Some(Effect::SignIdentity { tid }) => {
@@ -315,6 +320,7 @@ fn session_config() -> SessionConfig {
         // is switched off.
         time: Some(TimeConfig),
         gnss: Some(GnssConfig::DEFAULT),
+        illuminance: true,
     }
 }
 

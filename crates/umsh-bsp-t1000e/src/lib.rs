@@ -21,6 +21,8 @@ pub mod gnss;
 #[cfg(target_os = "none")]
 pub mod indicator;
 
+pub mod light;
+
 #[cfg(target_os = "none")]
 pub mod platform;
 

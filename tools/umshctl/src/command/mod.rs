@@ -125,6 +125,9 @@ pub enum Command {
         op: Option<tables::TableOp>,
     },
 
+    /// Take one ambient light reading.
+    Illuminance,
+
     /// Show or drive the locate alert: make the radio conspicuous so it
     /// can be found.
     Alert {
@@ -218,6 +221,7 @@ impl Command {
                 tables::run(app, prop::DEV_CHANNEL_KEYS, "channel", op).await
             }
             Self::DevPeer { op } => tables::run(app, prop::DEV_PEERS, "peer", op).await,
+            Self::Illuminance => info::illuminance(app.device()?).await,
             Self::Alert { op } => lifecycle::alert(app.device()?, op).await,
             Self::Capture(args) => capture::run(app, args).await,
             Self::Scan { timeout } => scan(app, timeout).await,

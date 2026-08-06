@@ -57,6 +57,7 @@ pub const fn property_name(key: u32) -> Option<&'static str> {
         prop::GNSS_FIX => "PROP_GNSS_FIX",
         prop::GNSS_PRECISION => "PROP_GNSS_PRECISION",
         prop::GNSS_SATELLITES => "PROP_GNSS_SATELLITES",
+        prop::ILLUMINANCE => "PROP_ILLUMINANCE",
         prop::HOST_KEY => "PROP_HOST_KEY",
         prop::HOST_CHANNEL_KEYS => "PROP_HOST_CHANNEL_KEYS",
         prop::HOST_PEER_KEYS => "PROP_HOST_PEER_KEYS",
@@ -97,6 +98,7 @@ pub const fn capability_name(code: u32) -> Option<&'static str> {
         cap::TIME => "TIME",
         cap::GNSS => "GNSS",
         cap::ADVERT => "ADVERT",
+        cap::ILLUMINANCE => "ILLUMINANCE",
         _ => return None,
     })
 }

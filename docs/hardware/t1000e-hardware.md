@@ -56,7 +56,7 @@ The public product and firmware documentation describe it as an nRF52840 + LR111
 | GNSS RTC interrupt | P0.15 | `GPS_RTC_INT` | An **input to the module**: must be driven low. High is a wake request. **Confirmed.** |
 | GNSS stop line | P1.14 | `GPS_RESETB_OUT` / `GPS_RESETB` | An **input to the module** despite the `_OUT` suffix: input-pull-up to run, driven low to stop. **Confirmed.** |
 | Temperature ADC | P0.31 / AIN7 | `T1000X_NTC_PIN` / `TEMP_SENSOR` | NTC divider. |
-| Light ADC | P0.29 / AIN5 | `T1000X_LUX_PIN` / `LUX_SENSOR` | Firmware maps to 0–100%, not true lux. |
+| Light ADC | P0.29 / AIN5 | `T1000X_LUX_PIN` / `LUX_SENSOR` | Phototransistor; see [Ambient light sensor](#ambient-light-sensor). |
 
 ## Charger and battery interface
 
@@ -348,9 +348,109 @@ The device appears to have:
 - NTC temperature sensor on ADC P0.31
 - Light sensor on ADC P0.29
 
-The light sensor reading in MeshCore is mapped to a 0–100% scale, not reported as a calibrated lux value. MeshCore comments explicitly say Seeed’s firmware maps the photocell reading to a percentage rather than lux.
-
 Temperature is calculated from an NTC lookup table and related resistor constants.
+
+### Ambient light sensor
+
+Read as SAADC channel AIN5 on P0.29, behind two active-high enables that
+must both be raised: the shared sensor 3.3 V rail on P1.06 and the
+sensor's own enable on P0.04. Settle 10 ms after raising them; drop both
+afterwards.
+
+**Hold the green LED (P0.24) dark for the whole measurement.** It sits
+beside the sensor and its light reaches it directly, so a reading taken
+while the LED is lit measures the indicator. Because the indicator
+normally *blinks*, successive readings catch different parts of the blink
+and disagree by more than every other noise source here put together —
+and none of them can help, because this is real light falling on a light
+sensor. The firmware gates every duty write on this board through a
+blanking flag the sampler raises, and waits for the LED task to confirm
+the LED is off before it starts integrating.
+
+**Sample the light channel on its own.** The battery divider is on AIN0
+of the same converter, but enabling both puts the SAADC in scan mode, and
+scan mode forfeits the part's hardware oversampling — the single most
+effective noise tool it has. It also makes the two inputs share a
+sample-and-hold, so the high-impedance light node reads partly as
+whatever converted before it. The firmware therefore builds a
+single-channel converter per measurement, configured for whichever
+measurement is being taken. The two are never wanted at the same instant.
+
+With one channel enabled, the light path uses:
+
+- **40 µs acquisition time**, not the 10 µs default. 10 µs is rated for a
+  source impedance around 100 kΩ and the phototransistor node sits above
+  that, so a shorter window leaves the sample-and-hold short of the true
+  voltage.
+- **14-bit resolution** — the quantization step is a quarter of the
+  12-bit one the vendor driver works in.
+- **`Over32x` hardware oversampling**, which with `BURST` set makes one
+  conversion request run the whole 32-sample accumulation internally.
+
+On top of that, 25 points spaced 2 ms apart — 800 hardware conversions in
+all. The spacing is what handles **mains flicker**: artificial light
+pulses at twice the mains frequency, so a sub-millisecond reading lands
+wherever in that cycle it happens to and swings wildly between reads. 50 ms
+is a whole number of half-cycles at both 50 Hz (5) and 60 Hz (6), so the
+flicker integrates away for either mains rather than aliasing. No amount
+of oversampling within a single point can do this — the window has to be
+wide, which is what the vendor driver's back-to-back burst of 15 misses.
+
+Finally, the largest and smallest points are dropped and the remaining 23
+are converted to millilux **as a sum, divided last**. Rounding a
+fractional mean to whole counts first would quantize the result to the
+very step the averaging exists to get below.
+
+The part is a phototransistor loaded to ground rather than a photocell:
+the node voltage is linear in illuminance from a small dark offset up to
+a saturation point where the load resistor takes over. Upstream (both
+MeshCore's `t1000e_sensors.cpp` and Meshtastic's `T1000xSensor.cpp` carry
+Seeed's routine verbatim) treats 80 mV as dark and clamps at 2.48 V,
+mapping the span onto 0–100 % rather than to any physical unit.
+
+This firmware reports **millilux** through
+[`PROP_ILLUMINANCE`](../protocol/src/ulcp-device.md), converting with a
+two-constant linear fit — dark offset and slope — clamped at both ends;
+the constants live in `crates/umsh-bsp-t1000e/src/light.rs`. At 14-bit
+over a 3.6 V full scale (`Gain1_6` against the 0.6 V internal reference)
+one count is 0.2197 mV, so Seeed's two voltages correspond to raw counts
+of about 364 and 11287.
+
+Calibrated 2026-08-06 against a reference lux meter, in averaged raw
+counts at 14-bit:
+
+| Raw counts | Meter      | Note |
+|------------|------------|------|
+| 0.2        | darkness   | the dark offset |
+| 8965.086   | 185 lux    | the shipped fit |
+| 13478.391  | flashlight | the hard rail |
+
+The response is linear across the usable range, verified against the meter
+after fitting, so a single slope through the origin describes it: **20.636
+mlux per count**.
+
+Two findings contradicted the values inherited from Seeed:
+
+- **There is essentially no dark current.** 0.2 counts is 44 µV. Seeed's
+  80 mV floor is a software noise guard, not a property of the part;
+  subtracting it discarded the whole bottom of the range — precisely the
+  region an indicator-brightness policy works in. The fit passes through
+  the origin.
+- **The hard rail is at 13478 counts, not 11287.** The node bottoms out
+  against its load resistor at 2.96 V of the 3.3 V rail, so Seeed's 2.48 V
+  was conservative by about 20 %.
+
+The clamp is set at **12288 counts (2.7 V)** — a judgement between the two,
+rather than either. Sitting it on the measured rail leaves no margin for
+part-to-part or temperature variation in where that rail lands; Seeed's
+figure discards range the part demonstrably has. 2.7 V keeps a margin while
+retaining most of the range, and puts the ceiling near 253 lux. Everything
+from a bright room upward reports that clamped maximum.
+
+At the dark end, which is what this part is for, it does well: one count is
+21 mlux, so full moonlight (~300 mlux) sits about 15 counts up with a 4 mlux
+noise floor beneath it. Anything wanting a daylight figure needs a different
+sensor.
 
 ## LR1110 radio wiring
 

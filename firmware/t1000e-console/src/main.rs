@@ -94,12 +94,12 @@ mod firmware {
     use embassy_executor::Spawner;
     use embassy_futures::join::join;
     use embassy_futures::select::{Either, Either4, select, select4};
+    use embassy_nrf::Peri;
     use embassy_nrf::bind_interrupts;
     use embassy_nrf::gpio::{Input, Level, Output, OutputDrive, Pull};
     use embassy_nrf::nvmc::Nvmc;
     use embassy_nrf::peripherals;
     use embassy_nrf::pwm::{DutyCycle, Prescaler, SimpleConfig, SimplePwm};
-    use embassy_nrf::saadc::{ChannelConfig, Config as SaadcConfig, Saadc};
     use embassy_nrf::spim::{Config as SpimConfig, Frequency, Spim};
     use embassy_nrf::usb::Driver;
     use embassy_nrf::usb::vbus_detect::HardwareVbusDetect;
@@ -405,14 +405,21 @@ mod firmware {
     /// Body lives in `umsh_bsp_t1000e::power`.
     #[embassy_executor::task]
     async fn power_task(
-        saadc: Saadc<'static, 1>,
+        saadc: Peri<'static, peripherals::SAADC>,
+        battery_pin: Peri<'static, peripherals::P0_02>,
+        light_pin: Peri<'static, peripherals::P0_29>,
         sensor_rail: Output<'static>,
+        sensor_enable: Output<'static>,
         external_power: Input<'static>,
         charge_active: Input<'static>,
     ) {
         umsh_bsp_t1000e::power::run_battery_monitor(
             saadc,
+            Irqs,
+            battery_pin,
+            light_pin,
             sensor_rail,
+            sensor_enable,
             external_power,
             charge_active,
         )
@@ -430,17 +437,30 @@ mod firmware {
             let decision = engine.tick(Instant::now().as_millis());
             let duty =
                 ((u32::from(led.max_duty()) * u32::from(decision.brightness)) / 1_000) as u16;
-            led.set_duty(0, DutyCycle::inverted(duty));
-            match select4(
-                Timer::at(Instant::from_millis(decision.next_deadline_ms)),
-                umsh_bsp_t1000e::BATTERY_STATE_CHANGED.wait(),
-                umsh_bsp_t1000e::indicator::INDICATOR_CHANGED.wait(),
-                umsh_bsp_t1000e::indicator::LED_SEQUENCE_SIGNAL.wait(),
+            // The LED sits beside the ambient light sensor, so a
+            // measurement in flight outranks whatever the engine wants to
+            // show. Confirmed after the write, never before.
+            let blanking = umsh_bsp_t1000e::indicator::blank_requested();
+            led.set_duty(0, DutyCycle::inverted(if blanking { 0 } else { duty }));
+            if blanking {
+                umsh_bsp_t1000e::indicator::confirm_blanked();
+            }
+            match select(
+                select4(
+                    Timer::at(Instant::from_millis(decision.next_deadline_ms)),
+                    umsh_bsp_t1000e::BATTERY_STATE_CHANGED.wait(),
+                    umsh_bsp_t1000e::indicator::INDICATOR_CHANGED.wait(),
+                    umsh_bsp_t1000e::indicator::LED_SEQUENCE_SIGNAL.wait(),
+                ),
+                umsh_bsp_t1000e::indicator::LED_BLANK_CHANGED.wait(),
             )
             .await
             {
-                Either4::First(()) | Either4::Second(_) | Either4::Third(()) => {}
-                Either4::Fourth(sequence) => {
+                Either::First(Either4::First(()))
+                | Either::First(Either4::Second(_))
+                | Either::First(Either4::Third(()))
+                | Either::Second(()) => {}
+                Either::First(Either4::Fourth(sequence)) => {
                     engine.play(sequence, Instant::now().as_millis());
                 }
             }
@@ -744,15 +764,12 @@ mod firmware {
         let (tx, raw_rx, ctrl) = class.split_with_control();
         let rx = CdcAcmRescue::new(raw_rx, ctrl);
 
-        // ── Battery ADC ───────────────────────────────────────────────────────
+        // ── Battery + ambient light ADC ───────────────────────────────────────
         // P0.02 = AIN0 via 2:1 divider; sensor rail P1.06 gates the path.
+        // P0.29 = AIN5 is the light sensor, behind its own enable on P0.04.
+        // The BSP builds a single-channel converter per measurement.
         let sensor_rail = Output::new(p.P1_06, Level::Low, OutputDrive::Standard);
-        let saadc = Saadc::new(
-            p.SAADC,
-            Irqs,
-            SaadcConfig::default(), // 12-bit, no oversample
-            [ChannelConfig::single_ended(p.P0_02)],
-        );
+        let sensor_enable = Output::new(p.P0_04, Level::Low, OutputDrive::Standard);
         let external_power = Input::new(p.P0_05, Pull::Down);
         let charge_active = Input::new(p.P1_03, Pull::Up);
 
@@ -800,7 +817,18 @@ mod firmware {
         spawner.spawn(output_task(tx).unwrap());
         spawner.spawn(button_task(button, storage).unwrap());
         spawner.spawn(shutdown_task(storage).unwrap());
-        spawner.spawn(power_task(saadc, sensor_rail, external_power, charge_active).unwrap());
+        spawner.spawn(
+            power_task(
+                p.SAADC,
+                p.P0_02,
+                p.P0_29,
+                sensor_rail,
+                sensor_enable,
+                external_power,
+                charge_active,
+            )
+            .unwrap(),
+        );
         spawner.spawn(mac_task(host).unwrap());
         spawner.spawn(beacon_task(beacon_node).unwrap());
         spawner

@@ -410,6 +410,16 @@ const PROPERTY_SPECS: &[PropertySpec] = &[
         Some(umsh_ulcp::ids::cap::BATTERY),
     ),
     spec(
+        prop::ILLUMINANCE,
+        "Device",
+        "Ambient illuminance (sampled on request)",
+        true,
+        false,
+        "none",
+        Some("mlux"),
+        Some(umsh_ulcp::ids::cap::ILLUMINANCE),
+    ),
+    spec(
         prop::ALERT,
         "Device",
         "Locate alert: make the device conspicuous so it can be found",
@@ -1486,6 +1496,14 @@ fn decode_property(key: u32, value: &[u8]) -> Option<DecodedValue> {
             _ => return None,
         },
         prop::GNSS_IDENT_PRECISION if value.len() == 1 => ("uint8", format!("{} bytes", value[0])),
+        prop::ILLUMINANCE if value.is_empty() => ("uint32", "no reading".into()),
+        prop::ILLUMINANCE if value.len() == 4 => {
+            let millilux = u32::from_le_bytes(value.try_into().ok()?);
+            (
+                "uint32",
+                format!("{}.{:03} lux", millilux / 1000, millilux % 1000),
+            )
+        }
         prop::ADVERT_INTERVAL | prop::BEACON_INTERVAL if value.len() == 4 => {
             let seconds = u32::from_le_bytes(value.try_into().ok()?);
             match seconds {

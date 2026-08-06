@@ -141,7 +141,13 @@ mod firmware {
     #[cfg(any(feature = "t1000e", feature = "cap-buzzer"))]
     use embassy_nrf::pwm::{Prescaler, SimpleConfig, SimplePwm};
     use embassy_nrf::rng;
-    #[cfg(feature = "cap-battery-saadc")]
+    // The T-1000E is the one board whose converter is built in the BSP,
+    // per measurement, because its battery and light channels want
+    // different resolutions and oversampling. Every other board hands the
+    // BSP a ready-made single-channel `Saadc` from here.
+    #[cfg(feature = "t1000e")]
+    use embassy_nrf::Peri;
+    #[cfg(all(feature = "cap-battery-saadc", not(feature = "t1000e")))]
     use embassy_nrf::saadc::{ChannelConfig, Config as SaadcConfig, Saadc};
     use embassy_nrf::spim::{Config as SpimConfig, Frequency, Spim};
     #[cfg(feature = "cap-gnss")]
@@ -456,6 +462,9 @@ mod firmware {
             gnss: Some(GnssConfig::DEFAULT),
             #[cfg(not(feature = "cap-gnss"))]
             gnss: None,
+            // The T-1000E is the one board here with an ambient light
+            // sensor fitted.
+            illuminance: cfg!(feature = "cap-illuminance"),
         }
     }
 
@@ -977,6 +986,22 @@ mod firmware {
         Err(())
     }
 
+    /// The platform light source behind `Effect::SampleIlluminance`: a
+    /// request/reply round trip into the same BSP monitor that owns the
+    /// SAADC, which raises both sensor enables, settles, averages, and
+    /// replies in millilux. The timeout covers the monitor having exited
+    /// for critical-battery shutdown — a device on its way down reports
+    /// no reading rather than hanging the transaction.
+    #[cfg(feature = "cap-illuminance")]
+    async fn sample_illuminance_millilux() -> Option<u32> {
+        embassy_time::with_timeout(
+            Duration::from_secs(2),
+            umsh_bsp_t1000e::light::sample_illuminance(),
+        )
+        .await
+        .ok()
+    }
+
     /// Published session epoch, checked by each transport at framing edges.
     static SESSION_GEN: AtomicU32 = AtomicU32::new(0);
 
@@ -1385,6 +1410,11 @@ mod firmware {
 
         async fn sample_battery(&mut self) -> Result<umsh_ulcp::battery::BatteryStatus, ()> {
             sample_battery_snapshot().await
+        }
+
+        #[cfg(feature = "cap-illuminance")]
+        async fn sample_illuminance(&mut self) -> Option<u32> {
+            sample_illuminance_millilux().await
         }
 
         /// Forward the monitor's announce-worthy samples. A sample that
@@ -3671,14 +3701,25 @@ mod firmware {
     #[cfg(feature = "t1000e")]
     #[embassy_executor::task]
     async fn t1000e_power_task(
-        saadc: Saadc<'static, 1>,
+        saadc: Peri<'static, peripherals::SAADC>,
+        battery_pin: Peri<'static, peripherals::P0_02>,
+        light_pin: Peri<'static, peripherals::P0_29>,
         sensor_rail: Output<'static>,
+        sensor_enable: Output<'static>,
         external_power: Input<'static>,
         charge_active: Input<'static>,
     ) {
+        // The BSP builds a single-channel converter per measurement — the
+        // battery's and the light sensor's configurations have nothing in
+        // common — so it takes the peripheral and `Irqs` rather than a
+        // built `Saadc`. This shim is where `Irqs` is named concretely.
         umsh_bsp_t1000e::power::run_battery_monitor(
             saadc,
+            Irqs,
+            battery_pin,
+            light_pin,
             sensor_rail,
+            sensor_enable,
             external_power,
             charge_active,
         )
@@ -5142,16 +5183,25 @@ mod firmware {
             umsh_bsp_t1000e::BUZZER_SIGNAL.signal(&buzzer_melodies::POWER_ON);
 
             let sensor_rail = Output::new(p.P1_06, Level::Low, OutputDrive::Standard);
-            let saadc = Saadc::new(
-                p.SAADC,
-                Irqs,
-                SaadcConfig::default(),
-                [ChannelConfig::single_ended(p.P0_02)],
-            );
+            // The light sensor's own enable, downstream of the rail.
+            let sensor_enable = Output::new(p.P0_04, Level::Low, OutputDrive::Standard);
+            // AIN0 the battery divider, AIN5 the ambient light sensor. The
+            // two are never wanted at the same instant and want opposite
+            // converter configurations, so the BSP builds a single-channel
+            // `Saadc` per measurement rather than scanning both.
             let external_power = Input::new(p.P0_05, Pull::Down);
             let charge_active = Input::new(p.P1_03, Pull::Up);
             spawner.spawn(
-                t1000e_power_task(saadc, sensor_rail, external_power, charge_active).unwrap(),
+                t1000e_power_task(
+                    p.SAADC,
+                    p.P0_02,
+                    p.P0_29,
+                    sensor_rail,
+                    sensor_enable,
+                    external_power,
+                    charge_active,
+                )
+                .unwrap(),
             );
             spawner.spawn(t1000e_button_task(button, force_pairing_at_boot, ux_store).unwrap());
             spawner.spawn(t1000e_shutdown_task().unwrap());
@@ -5515,6 +5565,22 @@ mod firmware {
         }
     }
 
+    /// Write one LED duty, honouring the ambient-light blanking gate.
+    ///
+    /// Every duty write on this board goes through here so no future
+    /// indicator state can accidentally light the LED during a
+    /// measurement. The confirmation is raised **after** the write, so
+    /// the sampler is told the LED is dark only once it actually is.
+    #[cfg(feature = "t1000e")]
+    fn write_led_duty(led: &mut SimplePwm<'static>, duty: u16) {
+        let blanking = umsh_bsp_t1000e::indicator::blank_requested();
+        let duty = if blanking { 0 } else { duty };
+        led.set_duty(0, DutyCycle::inverted(duty));
+        if blanking {
+            umsh_bsp_t1000e::indicator::confirm_blanked();
+        }
+    }
+
     #[cfg(feature = "t1000e")]
     #[embassy_executor::task]
     async fn heartbeat(mut led: SimplePwm<'static>, mut wdt: WatchdogHandle) -> ! {
@@ -5551,28 +5617,43 @@ mod firmware {
                     phase < 100 || (200..300).contains(&phase) || (400..500).contains(&phase)
                 };
                 let duty = if on { led.max_duty() } else { 0 };
-                led.set_duty(0, DutyCycle::inverted(duty));
-                Timer::after_millis(50).await;
+                write_led_duty(&mut led, duty);
+                match select(
+                    Timer::after_millis(50),
+                    umsh_bsp_t1000e::indicator::LED_BLANK_CHANGED.wait(),
+                )
+                .await
+                {
+                    Either::First(()) | Either::Second(()) => {}
+                }
                 continue;
             }
 
             let decision = engine.tick(Instant::now().as_millis());
             let duty =
                 ((u32::from(led.max_duty()) * u32::from(decision.brightness)) / 1_000) as u16;
-            led.set_duty(0, DutyCycle::inverted(duty));
-            match select4(
-                select(
-                    Timer::at(Instant::from_millis(decision.next_deadline_ms)),
-                    ALERT_CHANGED.wait(),
+            write_led_duty(&mut led, duty);
+            match select(
+                select4(
+                    select(
+                        Timer::at(Instant::from_millis(decision.next_deadline_ms)),
+                        ALERT_CHANGED.wait(),
+                    ),
+                    umsh_bsp_t1000e::BATTERY_STATE_CHANGED.wait(),
+                    umsh_bsp_t1000e::indicator::INDICATOR_CHANGED.wait(),
+                    umsh_bsp_t1000e::indicator::LED_SEQUENCE_SIGNAL.wait(),
                 ),
-                umsh_bsp_t1000e::BATTERY_STATE_CHANGED.wait(),
-                umsh_bsp_t1000e::indicator::INDICATOR_CHANGED.wait(),
-                umsh_bsp_t1000e::indicator::LED_SEQUENCE_SIGNAL.wait(),
+                // An ambient light measurement wants the LED dark, and
+                // wants it now — it waits on the confirmation below.
+                umsh_bsp_t1000e::indicator::LED_BLANK_CHANGED.wait(),
             )
             .await
             {
-                Either4::First(_) | Either4::Second(_) | Either4::Third(()) => {}
-                Either4::Fourth(sequence) => {
+                Either::First(Either4::First(_))
+                | Either::First(Either4::Second(_))
+                | Either::First(Either4::Third(()))
+                | Either::Second(()) => {}
+                Either::First(Either4::Fourth(sequence)) => {
                     engine.play(sequence, Instant::now().as_millis());
                 }
             }

@@ -1221,6 +1221,26 @@ where
         }
     }
 
+    /// Fetch a live ambient illuminance reading in millilux
+    /// (`PROP_ILLUMINANCE`).
+    ///
+    /// `Ok(None)` means either that the device does not advertise
+    /// `CAP_ILLUMINANCE` — no light sensor is fitted — or that a device
+    /// which does could not read the sensor just now. Both are "there is
+    /// no reading", which is what a caller acts on; neither is an error.
+    /// Live telemetry, so deliberately not part of [`UlcpDevice::sync`].
+    pub async fn illuminance(&mut self) -> Result<Option<u32>, UlcpError> {
+        if !self.capabilities().await?.contains(&cap::ILLUMINANCE) {
+            return Ok(None);
+        }
+        let value = self.get_prop(prop::ILLUMINANCE).await?;
+        match value.len() {
+            0 => Ok(None),
+            4 => Ok(Some(u32::from_le_bytes(value[..4].try_into().unwrap()))),
+            _ => Err(UlcpError::Protocol("malformed PROP_ILLUMINANCE")),
+        }
+    }
+
     /// Read the device's locate-alert state (`PROP_ALERT`).
     ///
     /// `Ok(None)` means the device does not advertise `CAP_ALERT` — it has

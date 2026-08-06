@@ -235,6 +235,8 @@ fn session_config() -> SessionConfig {
         // the time from the host it is wired to.
         time: None,
         gnss: None,
+        // No ambient light sensor.
+        illuminance: false,
     }
 }
 

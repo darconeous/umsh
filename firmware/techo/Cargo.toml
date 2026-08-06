@@ -10,7 +10,7 @@ repository.workspace = true
 # ─── Board identity (irreducibly per-board: concrete pins, BSP module,
 #     USB/identity strings, peripheral-init blocks). Exactly one is on. ───
 board-techo = ["display-epd", "button-nav", "system-off-techo", "led-active-low", "cap-battery-saadc", "cap-gnss"]
-board-t1000e = ["t1000e", "cap-battery-saadc", "cap-gnss", "gnss-holds-the-clock"]
+board-t1000e = ["t1000e", "cap-battery-saadc", "cap-gnss", "gnss-holds-the-clock", "cap-illuminance"]
 board-sensecap-solar = ["cap-battery-saadc", "power-button", "cap-gnss"]
 board-wio-tracker-l1 = ["display-oled", "button-nav", "system-off-wio", "cap-battery-saadc", "cap-buzzer", "cap-gnss", "gnss-holds-the-clock"]
 board-xiao-nrf52 = ["cap-battery-saadc", "led-active-low", "boot-pairing-window"]
@@ -26,6 +26,9 @@ t1000e = []
 # battery snapshot / load-hint code; the concrete SAADC pins + BSP module
 # are still board-selected.
 cap-battery-saadc = []
+# An ambient light sensor is fitted. Advertises `CAP_ILLUMINANCE` and
+# answers `PROP_ILLUMINANCE` with a measurement taken on each read.
+cap-illuminance = []
 # A GNSS receiver is fitted. Advertises `CAP_GNSS` and spawns the pump;
 # the receiver stays powered down until `PROP_GNSS_ENABLED` says
 # otherwise.

@@ -959,6 +959,8 @@ Code | Name                      | Requires                             | Define
 43   | `CAP_ADMIN`               | `CAP_DEV_IDENTITY`                   | [Node Management](app-node-management.md#capabilities)
 44   | `CAP_TIME`                | —                                    | [Device Domain](ulcp-device.md#capabilities)
 45   | `CAP_GNSS`                | `CAP_TIME`                           | [Device Domain](ulcp-device.md#capabilities)
+46   | `CAP_ADVERT`              | `CAP_DEV_IDENTITY`                   | [Device Domain](ulcp-device.md#capabilities)
+47   | `CAP_ILLUMINANCE`         | —                                    | [Device Domain](ulcp-device.md#capabilities)
 515  | `CAP_PHY_LORA`            | —                                    | [Radio Control](ulcp-radio.md#capabilities)
 
 A device **MUST NOT** advertise a capability without also advertising the

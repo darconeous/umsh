@@ -61,8 +61,9 @@ pub mod prop {
     ///
     /// First of the device-behavior settings range (70–95), which is
     /// subdivided as 70–79 repeater and identity, 80–87 advertisement
-    /// policy (80–82 allocated, 83–87 spare), 88–95 positioning (88–93
-    /// allocated, 94–95 spare). A
+    /// policy (80–82 allocated, 83–87 spare), 88–93 positioning, 94–95
+    /// environmental sensing (94 illuminance, 95 spare — the board's
+    /// thermistor is the expected claimant). A
     /// single-octet identifier is the scarce resource, so the positioning
     /// range holds the enable toggle and the fix telemetry a host reads
     /// and the device announces continually; the rarely-touched
@@ -150,6 +151,14 @@ pub mod prop {
     /// in the solution, optionally followed by `UINT8` satellites in view.
     /// Reads 0 while the receiver is disabled. Requires `CAP_GNSS`.
     pub const GNSS_SATELLITES: u32 = 93;
+    /// Ambient illuminance (`PROP_ILLUMINANCE`) — `UINT32_LE` millilux.
+    /// Millilux rather than lux because the interesting region for an
+    /// indicator that should not be intrusive at night is below one lux.
+    /// Sampled when read; empty when the sensor could not be read. A
+    /// board reports its clamped maximum above the sensor's saturation
+    /// point rather than extrapolating past it. Requires
+    /// `CAP_ILLUMINANCE`.
+    pub const ILLUMINANCE: u32 = 94;
     /// Tethered host identity public key (`PROP_HOST_KEY`).
     pub const HOST_KEY: u32 = 96;
     /// Host channel keys (`PROP_HOST_CHANNEL_KEYS`).
@@ -267,6 +276,9 @@ pub mod cap {
     /// `PROP_STARTUP_BEACON`). Requires `CAP_DEV_IDENTITY`, since what an
     /// advertisement carries is the device identity.
     pub const ADVERT: u32 = 46;
+    /// `CAP_ILLUMINANCE` — an ambient light sensor is fitted, so
+    /// `PROP_ILLUMINANCE` reads a measurement rather than nothing.
+    pub const ILLUMINANCE: u32 = 47;
 }
 
 /// Value used in `PROP_PHY_DUTY_LIMIT` to disable duty-cycle limiting.

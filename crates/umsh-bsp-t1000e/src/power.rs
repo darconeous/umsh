@@ -10,10 +10,14 @@
 
 use core::sync::atomic::{AtomicU8, AtomicU32, Ordering};
 
-use embassy_futures::select::{Either4, select4};
+use embassy_futures::select::{Either, Either4, select, select4};
 use embassy_nrf::gpio::{Input, Output};
-use embassy_nrf::pac;
-use embassy_nrf::saadc::Saadc;
+use embassy_nrf::interrupt::typelevel::{Binding, SAADC as SaadcIrq};
+use embassy_nrf::saadc::{
+    ChannelConfig, Config as SaadcConfig, InterruptHandler as SaadcInterruptHandler, Oversample,
+    Resolution, Saadc, Time as SaadcTime,
+};
+use embassy_nrf::{Peri, pac, peripherals};
 use embassy_sync::blocking_mutex::raw::ThreadModeRawMutex;
 use embassy_sync::signal::Signal;
 use embassy_sync::watch::Watch;
@@ -142,7 +146,8 @@ impl umsh_hal::PowerControl for PowerSignaler {
     }
 }
 
-/// Monitors battery voltage via the nRF52840 SAADC (P0.02 = AIN0, 2:1 divider).
+/// Monitors battery voltage via the nRF52840 SAADC (P0.02 = AIN0, 2:1 divider),
+/// and serves on-demand ambient light readings from P0.29 (AIN5).
 ///
 /// The sensor rail (P1.06) must be enabled during sampling — it gates the
 /// analog path to the battery divider. The rail is dropped immediately after
@@ -155,14 +160,41 @@ impl umsh_hal::PowerControl for PowerSignaler {
 /// 3.1 V low threshold → raw ≈ 1764. Ten consecutive under-threshold
 /// samples trigger a protective shutdown via [`SHUTDOWN_SIGNAL`].
 ///
-/// Wrap in `#[embassy_executor::task]` in the firmware binary so the
-/// linker sees a concrete monomorphisation.
-pub async fn run_battery_monitor(
-    mut saadc: Saadc<'static, 1>,
+/// This task is the sole owner of the SAADC and of both sensor enables, so
+/// the light sensor is served here rather than by a competing task. It
+/// takes the peripheral and the two pins rather than a built `Saadc`, and
+/// constructs a **single-channel** converter for each measurement: the
+/// nRF52 SAADC's hardware oversampling is only available when one channel
+/// is enabled, and it is by far the most effective noise tool on the part.
+/// Enabling both at once would also put the converter in scan mode, where
+/// the high-impedance light input shares a sample-and-hold with the
+/// battery divider. Neither measurement is ever wanted at the same instant
+/// as the other, so there is nothing to trade away.
+///
+/// The battery policy is unaffected: its converter is configured exactly
+/// as it was before the light sensor existed, and light requests never
+/// feed the level estimator, the announce filter, or the critical-battery
+/// cutoff.
+///
+/// Generic over the interrupt binding so the BSP can build converters
+/// itself; wrap in `#[embassy_executor::task]` in the firmware binary,
+/// which names `Irqs` concretely, so the linker sees one monomorphisation.
+// A flat list of hardware handles, one per pin the monitor owns, matching
+// every other board's power task. Bundling them in a struct would move the
+// same seven fields somewhere else and break that symmetry.
+#[allow(clippy::too_many_arguments)]
+pub async fn run_battery_monitor<I>(
+    mut saadc: Peri<'static, peripherals::SAADC>,
+    irq: I,
+    mut battery_pin: Peri<'static, peripherals::P0_02>,
+    mut light_pin: Peri<'static, peripherals::P0_29>,
     mut sensor_rail: Output<'static>,
+    mut sensor_enable: Output<'static>,
     mut external_power: Input<'static>,
     mut charge_active: Input<'static>,
-) {
+) where
+    I: Binding<SaadcIrq, SaadcInterruptHandler> + Copy + 'static,
+{
     const CONSECUTIVE_NEEDED: u8 = 10;
     /// Normal cadence. The cell discharges over days and the level
     /// estimator quantizes to 5 %, so nothing is learned by sampling the
@@ -188,14 +220,24 @@ pub async fn run_battery_monitor(
     let mut announced: Option<(ChargeClass, Option<u8>)> = None;
 
     loop {
-        // Gate the sensor rail, settle, sample, then drop the rail.
+        // Gate the sensor rail, settle, sample, then drop the rail. The
+        // light-sensor enable stays low: the battery divider does not need
+        // it.
         sensor_rail.set_high();
         Timer::after(Duration::from_millis(5)).await;
-        let mut buf = [0i16; 1];
-        saadc.sample(&mut buf).await;
+        let raw = {
+            let mut converter = Saadc::new(
+                saadc.reborrow(),
+                irq,
+                SaadcConfig::default(),
+                [ChannelConfig::single_ended(battery_pin.reborrow())],
+            );
+            let mut buf = [0i16; 1];
+            converter.sample(&mut buf).await;
+            u32::from(buf[0].max(0) as u16)
+        };
         sensor_rail.set_low();
 
-        let raw = u32::from(buf[0].max(0) as u16);
         let battery_mv = ((raw * 7_200) / 4_096).min(u32::from(u16::MAX)) as u16;
         let state = classify(
             battery_mv,
@@ -273,19 +315,168 @@ pub async fn run_battery_monitor(
         } else {
             SAMPLE_INTERVAL
         };
-        match select4(
-            Timer::after(interval),
-            external_power.wait_for_any_edge(),
-            charge_active.wait_for_any_edge(),
-            BATTERY_SAMPLE_REQUEST.wait(),
-        )
-        .await
-        {
-            Either4::First(()) => {}
-            Either4::Second(()) | Either4::Third(()) => Timer::after(EDGE_DEBOUNCE).await,
-            // An on-demand request: sample immediately and reply from
-            // the top of the loop.
-            Either4::Fourth(()) => reply_pending = true,
+        // Wait for the next battery iteration. Light requests are serviced
+        // inside this wait and do not end it: they have their own enable,
+        // settle and averaging, and must not pull a battery sample forward
+        // — the estimator, the announce filter and the critical-battery
+        // cutoff all count iterations.
+        let mut deadline = Timer::after(interval);
+        loop {
+            match select(
+                select4(
+                    &mut deadline,
+                    external_power.wait_for_any_edge(),
+                    charge_active.wait_for_any_edge(),
+                    BATTERY_SAMPLE_REQUEST.wait(),
+                ),
+                crate::light::LIGHT_SAMPLE_REQUEST.wait(),
+            )
+            .await
+            {
+                Either::First(Either4::First(())) => {}
+                Either::First(Either4::Second(())) | Either::First(Either4::Third(())) => {
+                    Timer::after(EDGE_DEBOUNCE).await
+                }
+                // An on-demand request: sample immediately and reply from
+                // the top of the loop.
+                Either::First(Either4::Fourth(())) => reply_pending = true,
+                Either::Second(()) => {
+                    let millilux = sample_light(
+                        &mut saadc,
+                        irq,
+                        &mut light_pin,
+                        &mut sensor_rail,
+                        &mut sensor_enable,
+                    )
+                    .await;
+                    crate::light::LIGHT_SAMPLE_REPLY.signal(millilux);
+                    continue;
+                }
+            }
+            break;
         }
     }
+}
+
+/// Points taken per reading. Two of them are discarded, so this is two
+/// more than the number that end up in the average.
+const LIGHT_POINTS: u32 = 25;
+
+/// Spacing between points. Chosen with [`LIGHT_POINTS`] so the reading
+/// spans exactly 50 ms — see [`sample_light`].
+const LIGHT_POINT_SPACING: Duration = Duration::from_millis(2);
+
+/// Hardware conversions accumulated and averaged by the SAADC itself for
+/// each point. Available only because the light converter enables a
+/// single channel; the `BURST` bit embassy sets alongside it makes one
+/// `sample` call run the whole 32-conversion accumulation internally.
+///
+/// At the 40 µs acquisition time below this is ~1.3 ms of continuous
+/// integration per point, comfortably inside [`LIGHT_POINT_SPACING`].
+const LIGHT_OVERSAMPLE: Oversample = Oversample::Over32x;
+
+/// One ambient light measurement, in millilux.
+///
+/// Raises both enables, settles, then takes [`LIGHT_POINTS`] points
+/// spaced [`LIGHT_POINT_SPACING`] apart before dropping the enables
+/// again — 800 hardware conversions in total.
+///
+/// Three separate things make the raw reading noisy, and each needs its
+/// own treatment:
+///
+/// **Converter noise.** Answered in hardware by [`LIGHT_OVERSAMPLE`] and
+/// by 14-bit resolution, which puts the quantization step four times
+/// below the 12-bit one the vendor driver works in.
+///
+/// **Mains flicker.** Artificial light is not steady; it pulses at twice
+/// the mains frequency, so a reading taken in under a millisecond
+/// measures wherever in that cycle it happened to land and varies wildly
+/// between reads. The points are therefore spread over 50 ms, which is a
+/// whole number of half-cycles at both 50 Hz (5) and 60 Hz (6) — the
+/// flicker integrates away for either mains, rather than aliasing. No
+/// amount of oversampling inside a single point can do this; the window
+/// has to be wide.
+///
+/// **Outliers.** The single largest and single smallest points are
+/// dropped before averaging, so one disturbed point — a shadow crossing
+/// the sensor, a transient on the shared rail — moves the result by
+/// nothing instead of by a twenty-fifth of its excursion.
+///
+/// The kept points are handed to
+/// [`millilux_from_sum`](crate::light::millilux_from_sum) as a sum rather
+/// than a mean, so the sub-count resolution all of the above buys is not
+/// rounded away in the last step.
+///
+/// Before any of that, the **LED is held dark** for the whole
+/// measurement — see [`blank_requested`](crate::indicator::blank_requested).
+/// It sits beside the sensor and its light reaches it, so a reading taken
+/// while it is lit measures the indicator; because the indicator usually
+/// blinks, successive readings catch different parts of the blink and
+/// disagree by more than every other source here combined. That is real
+/// light falling on the sensor, so no amount of filtering addresses it.
+async fn sample_light<I>(
+    saadc: &mut Peri<'static, peripherals::SAADC>,
+    irq: I,
+    light_pin: &mut Peri<'static, peripherals::P0_29>,
+    sensor_rail: &mut Output<'static>,
+    sensor_enable: &mut Output<'static>,
+) -> u32
+where
+    I: Binding<SaadcIrq, SaadcInterruptHandler> + Copy + 'static,
+{
+    /// Settle time after raising the enables, from the vendor driver.
+    const LIGHT_SETTLE: Duration = Duration::from_millis(10);
+    /// How long to wait for the LED task to confirm the LED is off. A
+    /// task wake and one duty write; generous by orders of magnitude.
+    /// Bounded rather than open-ended because this runs inside the loop
+    /// that guards the cell — a firmware with no LED task must give a
+    /// polluted reading, never a stalled battery monitor.
+    const LED_BLANK_TIMEOUT: Duration = Duration::from_millis(20);
+
+    crate::indicator::request_blank();
+    let _ = embassy_time::with_timeout(LED_BLANK_TIMEOUT, crate::indicator::wait_blanked()).await;
+
+    sensor_rail.set_high();
+    sensor_enable.set_high();
+    Timer::after(LIGHT_SETTLE).await;
+
+    // The light channel needs the long acquisition time: the default
+    // 10 µs is rated for a source impedance around 100 kΩ and the
+    // phototransistor node sits above that, so a shorter window leaves
+    // the sample-and-hold short of the true voltage.
+    let mut channel = ChannelConfig::single_ended(light_pin.reborrow());
+    channel.time = SaadcTime::_40US;
+    let mut converter = Saadc::new(
+        saadc.reborrow(),
+        irq,
+        {
+            let mut config = SaadcConfig::default();
+            config.resolution = Resolution::_14bit;
+            config.oversample = LIGHT_OVERSAMPLE;
+            config
+        },
+        [channel],
+    );
+
+    let mut total: u32 = 0;
+    let mut lowest = u32::MAX;
+    let mut highest = 0;
+    for index in 0..LIGHT_POINTS {
+        if index > 0 {
+            Timer::after(LIGHT_POINT_SPACING).await;
+        }
+        let mut buf = [0i16; 1];
+        converter.sample(&mut buf).await;
+        let raw = u32::from(buf[0].max(0) as u16);
+        total += raw;
+        lowest = lowest.min(raw);
+        highest = highest.max(raw);
+    }
+    drop(converter);
+
+    sensor_enable.set_low();
+    sensor_rail.set_low();
+    crate::indicator::release_blank();
+
+    crate::light::millilux_from_sum(total - lowest - highest, LIGHT_POINTS - 2)
 }

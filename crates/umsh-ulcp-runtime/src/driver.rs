@@ -275,6 +275,15 @@ pub trait DeviceEnv {
     async fn sample_battery(&mut self) -> Result<umsh_ulcp::battery::BatteryStatus, ()> {
         Err(())
     }
+    /// One fresh ambient light measurement in millilux
+    /// (`Effect::SampleIlluminance`). Only emitted on a board whose
+    /// `SessionConfig::illuminance` is set, so the default reports nothing.
+    ///
+    /// `None` is a legitimate answer — the sensor exists but could not be
+    /// read — and reaches the host as the empty value rather than an error.
+    async fn sample_illuminance(&mut self) -> Option<u32> {
+        None
+    }
     /// Wait for a battery measurement the board considers worth
     /// announcing, for publication as an unsolicited `PROP_BATTERY`
     /// (`Session::publish_battery`).
@@ -576,6 +585,7 @@ async fn apply_effect<A, S, const TXQ: usize, M, const RX: usize, const TX: usiz
         Some(Effect::SampleRssi { .. })
         | Some(Effect::SignIdentity { .. })
         | Some(Effect::SampleBattery { .. })
+        | Some(Effect::SampleIlluminance { .. })
         | Some(Effect::ReadTime { .. })
         | Some(Effect::SampleGnss { .. })
         | Some(Effect::SetPairingPin { .. })
@@ -915,6 +925,13 @@ where
                             // answer the deferred PROP_BATTERY get.
                             let sample = env.sample_battery().await;
                             session.respond_battery(tid, sample, &mut |frame: &[u8]| {
+                                emitter.push(frame)
+                            });
+                            emitter.flush(arbitration.destination(), rt.out).await;
+                        }
+                        Some(Effect::SampleIlluminance { tid }) => {
+                            let millilux = env.sample_illuminance().await;
+                            session.respond_illuminance(tid, millilux, &mut |frame: &[u8]| {
                                 emitter.push(frame)
                             });
                             emitter.flush(arbitration.destination(), rt.out).await;

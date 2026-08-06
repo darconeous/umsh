@@ -73,6 +73,7 @@ Id   | Mnemonic                                                                 
 91   | [`PROP_GNSS_FIX`](ulcp-device.md#prop-gnss-fix)                            | Get, Is                  | `CAP_GNSS`
 92   | [`PROP_GNSS_PRECISION`](ulcp-device.md#prop-gnss-precision)                | Get                      | `CAP_GNSS`
 93   | [`PROP_GNSS_SATELLITES`](ulcp-device.md#prop-gnss-satellites)              | Get                      | `CAP_GNSS`
+94   | [`PROP_ILLUMINANCE`](ulcp-device.md#prop-illuminance)                      | Get                      | `CAP_ILLUMINANCE`
 96   | [`PROP_HOST_KEY`](ulcp-host.md#prop-host-key)                              | Get, Set                 | `CAP_HOST_FILTER`
 97   | [`PROP_HOST_CHANNEL_KEYS`](ulcp-host.md#prop-host-channel-keys)            | Get, Set, Insert, Remove | `CAP_HOST_KEYS`
 98   | [`PROP_HOST_PEER_KEYS`](ulcp-host.md#prop-host-peer-keys)                  | Get, Set, Insert, Remove | `CAP_HOST_KEYS`
@@ -116,6 +117,7 @@ Code | Name                      | Defined in
 44   | `CAP_TIME`                | [Device Domain](ulcp-device.md#capabilities)
 45   | `CAP_GNSS`                | [Device Domain](ulcp-device.md#capabilities)
 46   | `CAP_ADVERT`              | [Device Domain](ulcp-device.md#capabilities)
+47   | `CAP_ILLUMINANCE`         | [Device Domain](ulcp-device.md#capabilities)
 515  | `CAP_PHY_LORA`            | [Radio Control](ulcp-radio.md#capabilities)
 
 ## Status Codes

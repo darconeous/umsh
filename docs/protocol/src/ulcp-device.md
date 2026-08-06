@@ -57,6 +57,7 @@ Code | Name               | Requires           | Grants
 44   | `CAP_TIME`         | —                  | A wall clock: `PROP_TIME`, `PROP_TZ_OFFSET`
 45   | `CAP_GNSS`         | `CAP_TIME`         | A GNSS receiver: `PROP_GNSS_ENABLED`, `PROP_GNSS_LOCATION`, `PROP_GNSS_ALTITUDE`, `PROP_GNSS_FIX`, `PROP_GNSS_PRECISION`, `PROP_GNSS_SATELLITES`, `PROP_GNSS_IDENT_UPDATE`, `PROP_GNSS_IDENT_PRECISION`, `PROP_GNSS_TIME_TRUST`
 46   | `CAP_ADVERT`       | `CAP_DEV_IDENTITY` | Announcing itself on a schedule of its own: `PROP_ADVERT_INTERVAL`, `PROP_BEACON_INTERVAL`, `PROP_STARTUP_BEACON`
+47   | `CAP_ILLUMINANCE`  | —                  | An ambient light sensor and `PROP_ILLUMINANCE`
 
 `CAP_ADVERT` requires `CAP_DEV_IDENTITY` because what a scheduled
 advertisement carries *is* the device identity, and a beacon's source
@@ -77,9 +78,9 @@ time source for a clock it does not have.
 The device domain occupies property identifiers 64–95. Identifiers 70–95
 are the device-behavior range: 70–78 are the repeater policy and
 advertised node identity settings, 79 is the locate alert, 80–87 are the
-advertisement policy — 80–82 allocated, 83–87 reserved — and 88–95 are
-positioning: 88 the receiver switch, 89–93 the fix telemetry, 94–95
-reserved.
+advertisement policy — 80–82 allocated, 83–87 reserved — 88–93 are
+positioning (88 the receiver switch, 89–93 the fix telemetry), and 94–95
+are environmental sensing: 94 illuminance, 95 reserved.
 
 A single-octet identifier is the scarce resource, so the positioning
 range holds the properties a host reads and the device announces
@@ -114,6 +115,7 @@ Id | Mnemonic                    | Commands                 | Description
 91 | `PROP_GNSS_FIX`             | Get, Is                  | Fix quality
 92 | `PROP_GNSS_PRECISION`       | Get                      | Estimated horizontal accuracy of the last fix
 93 | `PROP_GNSS_SATELLITES`      | Get                      | Satellites used, and optionally in view
+94 | `PROP_ILLUMINANCE`          | Get                      | Ambient illuminance in millilux
 4866 | `PROP_TIME`               | Get, Set, Is             | Wall clock, or empty when unknown
 4867 | `PROP_TZ_OFFSET`          | Get, Set                 | Local time-zone offset from UTC
 4868 | `PROP_GNSS_IDENT_UPDATE`  | Get, Set                 | Whether fixes update the advertised node identity
@@ -912,6 +914,39 @@ off or searching reports 0 rather than the empty value.
 Chiefly a diagnostic: it is what distinguishes an antenna fault from a
 sky that is simply obstructed, which is otherwise invisible to anyone not
 holding the device.
+
+### PROP 94: `PROP_ILLUMINANCE` {#prop-illuminance}
+
+* Type: Single-Value, Read-Only
+* Asynchronous Updates: No
+* Required: `CAP_ILLUMINANCE`
+* Value Type: `UINT32_LE`, or empty
+* Post-Reset Value: Not applicable
+
+The ambient illuminance at the device, in **millilux**.
+
+Millilux rather than lux because the readings that matter are at the dark
+end: a full moon is around 0.3 lux and starlight two orders of magnitude
+below that, so a device deciding how bright to make an indicator at night
+is working entirely inside what whole lux would round to zero. The
+unsigned 32-bit range still reaches past direct sunlight.
+
+The value is a **measurement taken when the property is read**, not
+stored state, so a device samples on each get rather than answering from
+a cache. It follows that nothing about it is saved or reset: `CMD_RST`
+leaves it alone because there is nothing to leave.
+
+An **empty** value means the device has no reading — the sensor did not
+answer, or is unavailable for as long as some other part of the device
+holds the hardware it shares. This is the same "we do not know" that
+[`PROP_TIME`](ulcp-device.md#prop-time) reports for an unset clock, and
+is not an error: a host that asked for the light level and got no answer
+has learned what it needed to.
+
+A sensor that saturates reports its **clamped maximum** rather than an
+extrapolation past the point where it stopped responding to light. The
+alternative — a number derived from a transfer function outside the range
+it was fitted in — is indistinguishable at the host from a real reading.
 
 ### PROP 4866: `PROP_TIME` {#prop-time}
 

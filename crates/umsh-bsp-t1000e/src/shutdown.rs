@@ -141,7 +141,9 @@ async fn enter_system_off() -> ! {
     tristate_pin(Port::P0, 25); // Buzzer PWM
     tristate_pin(Port::P1, 5); // Buzzer enable
     tristate_pin(Port::P1, 6); // Sensor rail enable
+    tristate_pin(Port::P0, 4); // Light sensor enable
     tristate_pin(Port::P0, 2); // Battery ADC (AIN0)
+    tristate_pin(Port::P0, 29); // Light sensor ADC (AIN5)
     tristate_pin(Port::P0, 11); // SPI SCK
     tristate_pin(Port::P0, 12); // SPI CS
     tristate_pin(Port::P0, 7); // LR1110 BUSY

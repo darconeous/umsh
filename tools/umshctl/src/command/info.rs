@@ -131,6 +131,14 @@ pub async fn run<L: FrameLink>(device: &mut UlcpDevice<L>, args: InfoArgs) -> Re
             Err(error) => field("battery", format!("unavailable ({error})")),
         }
     }
+    if sync.has_capability(cap::ILLUMINANCE) {
+        // Live telemetry, like the battery: reading it takes a sample.
+        match device.illuminance().await {
+            Ok(Some(millilux)) => field("illuminance", format_millilux(millilux)),
+            Ok(None) => field("illuminance", "no reading".to_string()),
+            Err(error) => field("illuminance", format!("unavailable ({error})")),
+        }
+    }
     if let Some(saved) = sync.saved {
         field(
             "saved",
@@ -231,6 +239,34 @@ fn battery_display(status: &BatteryStatus) -> String {
         None => "charge state unsupported",
     };
     format!("{voltage}, {level}, {state}")
+}
+
+/// `illuminance`: one ambient light reading, on its own.
+///
+/// Separate from `info` because calibrating the sensor against a
+/// reference meter means taking readings in a tight loop, and a full
+/// report per data point is unusable for that.
+pub async fn illuminance<L: FrameLink>(device: &mut UlcpDevice<L>) -> Result<()> {
+    if !device.capabilities().await?.contains(&cap::ILLUMINANCE) {
+        field("illuminance", "unsupported (no CAP_ILLUMINANCE)");
+        return Ok(());
+    }
+    match device.illuminance().await? {
+        Some(millilux) => field(
+            "illuminance",
+            format!("{} ({millilux} mlux)", format_millilux(millilux)),
+        ),
+        None => field("illuminance", "no reading".to_string()),
+    }
+    Ok(())
+}
+
+/// Millilux as lux to three decimal places. Fixed rather than adaptive
+/// because the readings this is used to calibrate span moonlight to
+/// daylight, and a column that keeps its shape is easier to compare
+/// against a meter than one that keeps rescaling.
+pub fn format_millilux(millilux: u32) -> String {
+    format!("{}.{:03} lux", millilux / 1000, millilux % 1000)
 }
 
 #[cfg(test)]
