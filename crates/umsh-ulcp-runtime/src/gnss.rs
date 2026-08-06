@@ -21,11 +21,20 @@
 //! "the most recent thing the receiver said" has to live somewhere the
 //! sampler can reach, and this is it.
 //!
-//! What is *announced* is a different question, and a narrower one. A
-//! stationary receiver produces a fix a second, every one of them
-//! differing in the last digit; publishing each would spend a frame on
-//! nothing. Only a change big enough to matter at the announced precision
-//! is published — see [`Announce`].
+//! **A position is never announced.** Where the device is, how high, how
+//! well it knows, and off how many satellites are all poll-only: a host
+//! that wants them asks, and asks no more often than it has something to
+//! do with the answer. Announcing them instead would put this board on
+//! the air continuously for no one — a receiver reports about a fix a
+//! second, and at the precision the cache keeps, ordinary noise from a
+//! receiver that has not moved is enough to make consecutive readings
+//! differ. Every one of those would have cost a BLE notification and a
+//! wakeup at both ends.
+//!
+//! The fix *indicator* is the exception, and the reason it is one is that
+//! it is not a measurement: it changes when the receiver acquires or
+//! loses a solution, which is a handful of times a session, and it is how
+//! a host knows whether asking is worth anything at all.
 
 use core::cell::Cell;
 use core::sync::atomic::{AtomicBool, Ordering};
@@ -244,15 +253,12 @@ pub fn absorb(fix: &Fix, policy: Policy) -> Outcome {
     let location = fix_location(fix);
     SNAPSHOT.lock(|cell| cell.set(current));
 
-    // The fix indicator is what a host watches to know whether the
-    // device is located at all, so its transitions are always worth a
-    // frame; the position itself is announced only when it has actually
-    // moved by something a host could act on.
+    // The fix indicator is what a host watches to know whether the device
+    // is located at all, so its transitions are always worth a frame. The
+    // position, altitude, accuracy and satellite count are not announced
+    // at any threshold — see the module docs. They are read.
     if current.fix != previous.fix {
         publish(Announce::Gnss(prop::GNSS_FIX, current));
-    }
-    if current.location() != previous.location() && !current.location().is_empty() {
-        publish(Announce::Gnss(prop::GNSS_LOCATION, current));
     }
 
     // ─── The wall clock ──────────────────────────────────────────────

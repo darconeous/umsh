@@ -274,6 +274,14 @@ final class AdminFlowController {
         try await session.setTime(epochSeconds: epochSeconds)
     }
 
+    /// Sample where the device is, for the positioning section.
+    ///
+    /// Silent on failure: it runs on a timer behind a view, and a device
+    /// that dropped out mid-poll is already reported by the link state.
+    func refreshPositioning() async {
+        _ = try? await session.refreshPositioning()
+    }
+
     // MARK: - Configuration
 
     /// Write the configuration, then read the device back. Returns the

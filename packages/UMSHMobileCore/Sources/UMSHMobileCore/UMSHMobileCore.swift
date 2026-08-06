@@ -2300,6 +2300,21 @@ public protocol MobileUlcpSessionProtocol: AnyObject, Sendable {
     func refresh() throws  -> UlcpSessionUpdateRecord
 
     /**
+     * Sample where the device is, and how well it knows.
+     *
+     * The device announces a fix indicator and nothing else about a
+     * position — a receiver reports about a fix a second and ordinary
+     * noise moves the reading, so announcing any of this would keep the
+     * radio transmitting for a host that may not be looking. A host that
+     * *is* looking asks, at whatever rate it can use the answer.
+     *
+     * Deliberately narrower than [`refresh`](Self::refresh): the five
+     * positioning properties and nothing else, so a screen watching a
+     * position does not re-read the PHY triple every time it looks.
+     */
+    func refreshPositioning() throws  -> UlcpSessionUpdateRecord
+
+    /**
      * Remove one channel key from the radio's device identity
      * (`PROP_DEV_CHANNEL_KEYS`), then persist with a chained `CMD_SAVE` when
      * the device can.
@@ -2689,6 +2704,28 @@ open func refresh()throws  -> UlcpSessionUpdateRecord  {
     return try  FfiConverterTypeUlcpSessionUpdateRecord_lift(try rustCallWithError(FfiConverterTypeMobileError_lift) {
         uniffiCallStatus in
     uniffi_umsh_mobile_core_fn_method_mobileulcpsession_refresh(
+            self.uniffiCloneHandle(),uniffiCallStatus
+    )
+})
+}
+
+    /**
+     * Sample where the device is, and how well it knows.
+     *
+     * The device announces a fix indicator and nothing else about a
+     * position — a receiver reports about a fix a second and ordinary
+     * noise moves the reading, so announcing any of this would keep the
+     * radio transmitting for a host that may not be looking. A host that
+     * *is* looking asks, at whatever rate it can use the answer.
+     *
+     * Deliberately narrower than [`refresh`](Self::refresh): the five
+     * positioning properties and nothing else, so a screen watching a
+     * position does not re-read the PHY triple every time it looks.
+     */
+open func refreshPositioning()throws  -> UlcpSessionUpdateRecord  {
+    return try  FfiConverterTypeUlcpSessionUpdateRecord_lift(try rustCallWithError(FfiConverterTypeMobileError_lift) {
+        uniffiCallStatus in
+    uniffi_umsh_mobile_core_fn_method_mobileulcpsession_refresh_positioning(
             self.uniffiCloneHandle(),uniffiCallStatus
     )
 })
@@ -10214,6 +10251,9 @@ private let initializationResult: InitializationResult = {
         return InitializationResult.apiChecksumMismatch
     }
     if (uniffi_umsh_mobile_core_checksum_method_mobileulcpsession_refresh() != 49124) {
+        return InitializationResult.apiChecksumMismatch
+    }
+    if (uniffi_umsh_mobile_core_checksum_method_mobileulcpsession_refresh_positioning() != 7506) {
         return InitializationResult.apiChecksumMismatch
     }
     if (uniffi_umsh_mobile_core_checksum_method_mobileulcpsession_remove_device_channel_key() != 59231) {

@@ -252,7 +252,8 @@ struct AppRootView: View {
                     advertiseIdentity: advertiseIdentity,
                     advertisedName: advertisedName,
                     clearDiscoveredNodes: clearDiscoveredNodes,
-                    solicitNearbyIdentities: solicitNearbyIdentities
+                    solicitNearbyIdentities: solicitNearbyIdentities,
+                    refreshPosition: refreshRadioPosition
                 )
                     .appRadioToolbar(radioSnapshot) {
                         showsRadioDetail = true
@@ -368,6 +369,7 @@ struct AppRootView: View {
                     reconnect: reconnectRadio,
                     claim: claimRadio,
                     refresh: refreshRadio,
+                    refreshPosition: refreshRadioPosition,
                     configure: configureRadio,
                     disconnect: disconnectRadio,
                     forget: forgetRadio,
@@ -753,6 +755,18 @@ struct AppRootView: View {
 
     private func refreshRadio() async {
         if let refreshed = try? await radioConnection.refresh() {
+            radioSnapshot = refreshed
+        }
+    }
+
+    /// Sample the radio's position, for a screen that is showing one.
+    ///
+    /// Failures are swallowed on purpose: this runs on a timer behind a
+    /// view, and a radio that walked out of range mid-poll is a state the
+    /// link already reports. An error banner per missed sample would say
+    /// the same thing once a minute.
+    private func refreshRadioPosition() async {
+        if let refreshed = try? await radioConnection.refreshPositioning() {
             radioSnapshot = refreshed
         }
     }

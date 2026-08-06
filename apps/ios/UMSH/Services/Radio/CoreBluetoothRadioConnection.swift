@@ -1145,6 +1145,33 @@ final class CoreBluetoothRadioConnection: NSObject, RadioConnection, @unchecked 
         }
     }
 
+    func refreshPositioning() async throws -> RadioSnapshot {
+        try await withCheckedThrowingContinuation { (result: CheckedContinuation<RadioSnapshot, any Error>) in
+            bluetoothQueue.async { [self] in
+                guard let peripheral, peripheral.state == .connected else {
+                    result.resume(throwing: RadioConnectionError.radioNotFound)
+                    return
+                }
+                guard configurationWaiter == nil else {
+                    result.resume(throwing: RadioConnectionError.operationInProgress)
+                    return
+                }
+                // Shares the refresh waiters, because it shares the
+                // machinery: both are a bounded read whose completion is
+                // the same event. A caller polling this cannot starve a
+                // full refresh — it joins it.
+                refreshWaiters.append(result)
+                guard !refreshInProgress else { return }
+                refreshInProgress = true
+                do {
+                    try applySessionUpdate(ulcpSession.refreshPositioning(), from: peripheral)
+                } catch {
+                    finishRefresh(throwing: error)
+                }
+            }
+        }
+    }
+
     func disconnect() async {
         await withCheckedContinuation { result in
             bluetoothQueue.async { [self] in

@@ -199,6 +199,12 @@ struct DeviceConfigView: View {
         }
         .navigationTitle(controller.snapshot.name ?? "Device")
         .navigationBarTitleDisplayMode(.inline)
+        // Switching a receiver on and watching it find itself is what this
+        // section is for, and a device never announces a position.
+        .radioPositionPoll(
+            isNeeded: showsPositioning,
+            sample: controller.refreshPositioning
+        )
         .toolbar {
             ToolbarItem(placement: .confirmationAction) {
                 if applied {

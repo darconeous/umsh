@@ -27,6 +27,9 @@ struct NodeMapView: View {
     var advertisedName: String = ""
     var clearDiscoveredNodes: (() async -> Void)? = nil
     var solicitNearbyIdentities: ((PeerRole?) async -> Bool)? = nil
+    /// Ask the radio where it is. Driven on a cadence by
+    /// ``RadioPositionPoll`` — the radio never volunteers this.
+    var refreshPosition: (() async -> Void)? = nil
 
     @AppStorage("map.tier") private var tierFilter: MapTierFilter = .all
     /// The capability filter, as raw bits. `AppStorage` stores what it can
@@ -96,6 +99,13 @@ struct NodeMapView: View {
             map(nodes: nodes)
                 .ignoresSafeArea()
         }
+        // The map is the one screen that keeps asking: it draws the radio's
+        // marker and measures every row's distance from it. A radio with no
+        // receiver has nothing to answer with, so it is never asked.
+        .radioPositionPoll(
+            isNeeded: radioSnapshot.provisioning?.supportsGnss == true,
+            sample: refreshPosition
+        )
         .navigationTitle("Map")
         .navigationBarTitleDisplayMode(.inline)
         .toolbar {

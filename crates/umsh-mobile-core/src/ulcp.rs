@@ -950,6 +950,45 @@ impl MobileUlcpSession {
         Ok(state.update(outbound))
     }
 
+    /// Sample where the device is, and how well it knows.
+    ///
+    /// The device announces a fix indicator and nothing else about a
+    /// position — a receiver reports about a fix a second and ordinary
+    /// noise moves the reading, so announcing any of this would keep the
+    /// radio transmitting for a host that may not be looking. A host that
+    /// *is* looking asks, at whatever rate it can use the answer.
+    ///
+    /// Deliberately narrower than [`refresh`](Self::refresh): the five
+    /// positioning properties and nothing else, so a screen watching a
+    /// position does not re-read the PHY triple every time it looks.
+    pub fn refresh_positioning(&self) -> Result<UlcpSessionUpdateRecord, MobileError> {
+        let mut state = self.inner.lock().expect("ULCP session mutex poisoned");
+        if state.stage != SessionStage::Attached || !state.expected.is_empty() {
+            return Err(MobileError::InvalidUlcpFrame);
+        }
+        let capabilities = state
+            .responses
+            .get(&prop::CAPS)
+            .ok_or(MobileError::InvalidUlcpFrame)?
+            .value
+            .clone();
+        // A device without the capability has nothing to sample, and
+        // asking anyway would earn a refusal per property.
+        if !decode_capabilities(&capabilities)?.contains(&cap::GNSS) {
+            return Err(MobileError::InvalidUlcpFrame);
+        }
+        state.inspection_queue = VecDeque::from(vec![
+            prop::GNSS_LOCATION,
+            prop::GNSS_ALTITUDE,
+            prop::GNSS_FIX,
+            prop::GNSS_PRECISION,
+            prop::GNSS_SATELLITES,
+        ]);
+        let mut outbound = Vec::new();
+        state.start_refresh(&mut outbound)?;
+        Ok(state.update(outbound))
+    }
+
     /// Store one channel key on the radio's device identity
     /// (`PROP_DEV_CHANNEL_KEYS`), then persist with a chained `CMD_SAVE` when
     /// the device can.
@@ -1751,10 +1790,12 @@ impl UlcpSessionState {
                 });
             }
             key if umsh_ulcp::gnss::is_positioning_property(key) => {
-                // Position and fix are announced; the rest arrive when
-                // read. Folding rather than replacing is what lets one
-                // announced property update the view without erasing the
-                // others.
+                // Read or announced, indifferently: a device is meant to
+                // announce only the fix indicator and leave a position to
+                // be sampled, but one that volunteers a position anyway is
+                // carrying the value a read would have returned, so this
+                // takes it. Folding rather than replacing is what lets a
+                // single property arrive without erasing the others.
                 self.gnss
                     .get_or_insert(GnssSnapshot::SEARCHING)
                     .absorb(key, &response.value)
@@ -5198,6 +5239,67 @@ mod tests {
             })
         );
         assert_eq!(stepped.snapshot.phase, UlcpSessionPhase::Attached);
+    }
+
+    #[test]
+    fn sampling_a_position_asks_for_the_position_and_nothing_else() {
+        let session = MobileUlcpSession::new();
+        attach_positioning(&session);
+
+        // The device never announces where it is — a receiver reports
+        // about a fix a second and noise moves the reading, so a host that
+        // wants a position asks for one.
+        let poll = session.refresh_positioning().unwrap();
+        let asked: Vec<u32> = poll
+            .outbound_frames
+            .iter()
+            .map(|frame| {
+                let parsed = Frame::parse(frame).unwrap();
+                PropPayload::parse(parsed.payload).unwrap().key
+            })
+            .collect();
+        assert_eq!(
+            asked,
+            vec![
+                prop::GNSS_LOCATION,
+                prop::GNSS_ALTITUDE,
+                prop::GNSS_FIX,
+                prop::GNSS_PRECISION,
+                prop::GNSS_SATELLITES,
+            ]
+        );
+
+        // Narrower than a full refresh, which is the point: a screen
+        // watching a position must not re-read the radio's whole
+        // configuration once a minute to do it.
+        assert!(!asked.contains(&prop::PHY_FREQ));
+        assert!(!asked.contains(&prop::DEV_NAME));
+
+        // The answers land in the same snapshot field the announcements
+        // used to fill, so nothing downstream can tell the two apart.
+        let sampled = answer_requests(&session, poll.outbound_frames, |property| match property {
+            prop::GNSS_LOCATION => (property, placed_location().as_bytes().to_vec()),
+            prop::GNSS_ALTITUDE => (property, 88i32.to_le_bytes().to_vec()),
+            prop::GNSS_FIX => (property, vec![2]),
+            prop::GNSS_PRECISION => (property, 40u16.to_le_bytes().to_vec()),
+            prop::GNSS_SATELLITES => (property, vec![11, 15]),
+            _ => unreachable!("{property}"),
+        });
+        let gnss = sampled.snapshot.gnss.expect("a receiver was sampled");
+        assert_eq!(gnss.altitude_m, Some(88));
+        assert_eq!(gnss.satellites_used, 11);
+        assert_eq!(sampled.snapshot.phase, UlcpSessionPhase::Attached);
+    }
+
+    #[test]
+    fn a_radio_without_a_receiver_is_never_asked_where_it_is() {
+        // Every positioning property would be refused one at a time; the
+        // question is not worth asking at all.
+        let session = attached_battery_session();
+        assert_eq!(
+            session.refresh_positioning(),
+            Err(MobileError::InvalidUlcpFrame)
+        );
     }
 
     #[test]

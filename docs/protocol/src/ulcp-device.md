@@ -705,6 +705,21 @@ than its length carries; the encoding's truncation property means a
 shorter value is a correct lower-precision statement of the same
 position, never a different one.
 
+A device **MUST** generally avoid announcing this property, and a host
+that wants a position **MUST** be prepared to read one. A receiver
+produces a fix about once a second, and at fine precision the readings
+of a receiver standing perfectly still still differ from each other, so
+a device that published every change would transmit continuously — and
+wake its host every time — on behalf of a host that may not be looking.
+No threshold rescues this: the one that would be quiet enough to be
+worth having is coarse enough that the announcements it does send are
+too late to be the point.
+
+A host **SHOULD** nonetheless accept an announcement that arrives. The
+value carries what a read would have returned, a device may have its own
+reason to volunteer one, and a host that treats it as a protocol error
+gains nothing for the strictness.
+
 Read-only in this revision. A manually-placed fixed node is a real use,
 but writing a position requires a rule for which source wins when the
 receiver also has one, and this revision does not define that rule.
@@ -747,6 +762,14 @@ empty: a device that is not fixed **knows** it is not fixed, so it reports
 0. A receiver that is switched off reports 0 for the same reason. This is
 the distinction the whole positioning surface rests on — zero for the
 facts the device is sure of, empty for the position it does not have.
+
+This is the positioning property a device **SHOULD** announce, and the
+reason it is the exception to
+[`PROP_GNSS_LOCATION`](ulcp-device.md#prop-gnss-location)'s silence is
+that it is not a measurement. It changes when the receiver acquires or
+loses a solution, which is a few times in a session rather than a few
+times a second, and it is what tells a host whether reading a position
+is worth anything at all.
 
 ### PROP 92: `PROP_GNSS_PRECISION` {#prop-gnss-precision}
 

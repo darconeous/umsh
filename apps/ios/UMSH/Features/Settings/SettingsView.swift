@@ -336,6 +336,9 @@ struct RadioDetailView: View {
     let reconnect: () async -> Void
     let claim: () async -> Void
     let refresh: () async -> Void
+    /// Ask the radio where it is, for the position section. The radio
+    /// never volunteers this — see ``RadioPositionPoll``.
+    var refreshPosition: (() async -> Void)? = nil
     let configure: (RadioSettings) async throws -> Void
     let disconnect: () async -> Void
     var forget: () async -> Void = {}
@@ -575,6 +578,12 @@ struct RadioDetailView: View {
         .task {
             await refresh()
         }
+        // The position section is live while this sheet is open; the full
+        // refresh above happens once, on appear.
+        .radioPositionPoll(
+            isNeeded: snapshot.provisioning?.supportsGnss == true,
+            sample: refreshPosition
+        )
         .refreshable {
             await refresh()
         }

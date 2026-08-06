@@ -55,6 +55,18 @@ protocol RadioConnection: AnyObject, Sendable {
     /// with a device-configuration write instead.
     func setTime(epochSeconds: UInt32?) async throws
     func refresh() async throws -> RadioSnapshot
+    /// Sample where the radio is, and how well it knows.
+    ///
+    /// The radio announces a fix indicator and nothing else about a
+    /// position: a receiver reports about a fix a second, and at the
+    /// precision it keeps, ordinary noise from a receiver standing still
+    /// moves the reading. Announcing that would keep the radio
+    /// transmitting, and the phone waking, for a screen that may not even
+    /// be open — so a position is asked for, by whoever is showing one,
+    /// no more often than they can use the answer.
+    ///
+    /// Throws on a radio without `CAP_GNSS`, which has nothing to sample.
+    func refreshPositioning() async throws -> RadioSnapshot
     func configure(_ settings: RadioSettings) async throws
     /// Apply and persist the radio's time zone and positioning policy.
     ///

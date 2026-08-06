@@ -463,6 +463,18 @@ final class AdministrativeDeviceSession: NSObject, @unchecked Sendable {
         try await perform { session in try session.refresh() }
     }
 
+    /// Sample where the device is, and how well it knows.
+    ///
+    /// A device announces a fix indicator and nothing else about a
+    /// position — see ``RadioPositionPoll``. Commissioning is where that
+    /// matters most: switching a receiver on and watching it acquire is
+    /// the whole point of the positioning section, and without asking, the
+    /// screen would show the reading taken at attach forever.
+    @discardableResult
+    func refreshPositioning() async throws -> UlcpSyncRecord? {
+        try await perform { session in try session.refreshPositioning() }
+    }
+
     /// Run one post-attach exchange to completion, answering with the device
     /// state as of that completion.
     private func perform(
