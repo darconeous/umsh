@@ -62,6 +62,11 @@ async fn node_beacon_task(
     node::beacon_loop(node_handle, identity, hooks).await
 }
 
+#[embassy_executor::task]
+async fn node_advert_task(mac: DeviceNodeHandle) {
+    node::advert_loop(mac).await
+}
+
 // ─── Bring-up ────────────────────────────────────────────────────────────────
 
 /// This board has no battery-level estimator to feed and no indicator
@@ -112,4 +117,5 @@ pub async fn bring_up(
         )
         .unwrap(),
     );
+    spawner.spawn(node_advert_task(parts.mac).unwrap());
 }

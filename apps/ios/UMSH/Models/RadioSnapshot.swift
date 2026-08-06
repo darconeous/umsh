@@ -97,12 +97,18 @@ struct RadioSnapshot: Equatable, Sendable {
             devPeerAddresses: [],
             supportsTime: true,
             supportsGnss: true,
+            supportsAdvert: true,
             timeZoneOffsetMinutes: -420,
             gnss: UlcpGnssSettingsRecord(
                 enabled: true,
                 identUpdate: true,
                 identPrecision: 5,
                 timeTrust: true
+            ),
+            advert: UlcpAdvertSettingsRecord(
+                advertIntervalSeconds: 4 * 3600,
+                beaconIntervalSeconds: 3600,
+                startupBeacon: true
             )
         ),
         alert: RadioAlertState.none,
@@ -472,12 +478,43 @@ struct RadioProvisioningSummary: Equatable, Sendable {
     var supportsTime: Bool = false
     /// `CAP_GNSS`: a receiver is fitted, so the radio can locate itself.
     var supportsGnss: Bool = false
+    /// `CAP_ADVERT`: the radio announces itself on a schedule of its own.
+    var supportsAdvert: Bool = false
     /// `PROP_TZ_OFFSET` in minutes east of UTC. Present exactly when
     /// `supportsTime` and the radio reported it.
     var timeZoneOffsetMinutes: Int16? = nil
     /// The positioning policy. Present exactly when `supportsGnss` and
     /// the radio reported the whole of it.
     var gnss: UlcpGnssSettingsRecord? = nil
+    /// The advertisement policy. Present exactly when `supportsAdvert`
+    /// and the radio reported the whole of it.
+    var advert: UlcpAdvertSettingsRecord? = nil
+}
+
+/// The intervals the settings UI offers, in seconds, with 0 meaning off.
+///
+/// A short list of round periods rather than a free number field: the
+/// choice is how much of the mesh's airtime this radio claims, and an
+/// operator picks that from sensible options rather than typing seconds.
+/// Every entry sits inside the protocol's accepted range — 20 minutes to
+/// 24 hours — so the picker cannot compose a policy the radio refuses.
+let advertisementIntervalChoices: [UInt32] = [0, 3600, 4 * 3600, 12 * 3600, 24 * 3600]
+let beaconIntervalChoices: [UInt32] = [0, 1200, 1800, 3600, 4 * 3600]
+
+/// The fraction of an interval by which each period is scattered later, to
+/// keep nodes on the same schedule from transmitting in lockstep. Matches
+/// `ANNOUNCE_JITTER_SHIFT` on the device side; scatter only ever delays,
+/// so a chosen interval stays a floor.
+let announcementJitterFraction = 0.25
+
+/// An interval as "Every 4 hours", or "Off" for zero.
+func formattedAnnouncementInterval(_ seconds: UInt32) -> String {
+    guard seconds > 0 else { return "Off" }
+    let formatter = DateComponentsFormatter()
+    formatter.allowedUnits = [.hour, .minute]
+    formatter.unitsStyle = .full
+    let spelled = formatter.string(from: TimeInterval(seconds)) ?? "\(seconds) seconds"
+    return "Every \(spelled)"
 }
 
 /// The UTC offsets a device can be given, at the quarter-hour steps the

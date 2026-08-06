@@ -952,6 +952,39 @@ fn queue_blind_unicast_requires_known_channel() {
     );
 }
 
+/// Options go on the wire in ascending number order, so an originated frame
+/// that carries both a region code (11) and an operator callsign (4) only
+/// builds if the callsign is emitted first.
+#[test]
+fn originated_frame_carries_both_a_region_code_and_an_operator_callsign() {
+    let mut mac = make_mac();
+    mac.operating_policy_mut().operator_callsign =
+        Some(HamAddr::try_from_callsign("KZ2X").unwrap());
+    let local_id = mac.add_identity(DummyIdentity::new([0x10; 32])).unwrap();
+
+    mac.queue_broadcast(
+        local_id,
+        b"hello",
+        &SendOptions::default().with_region_code([0x78, 0x53]),
+    )
+    .unwrap();
+
+    let frame = mac.tx_queue_mut().pop_next().unwrap();
+    let frame = frame.frame.as_slice();
+    let header = PacketHeader::parse(frame).unwrap();
+    let numbers: heapless::Vec<u16, 8> = umsh_core::iter_options(frame, header.options_range)
+        .map(|entry| entry.unwrap().0)
+        .collect();
+
+    assert_eq!(
+        numbers.as_slice(),
+        &[
+            OptionNumber::OperatorCallsign.as_u16(),
+            OptionNumber::RegionCode.as_u16()
+        ]
+    );
+}
+
 #[test]
 fn licensed_only_mode_rejects_encrypted_unicast() {
     let mut mac = make_mac();
@@ -4326,6 +4359,142 @@ fn repeater_forwards_a_repeated_beacon_again_once_the_duplicate_entry_ages_out()
         mac.tx_queue_mut().pop_next().is_some(),
         "the node is heard again once its entry has aged out"
     );
+}
+
+/// Trace signal is only useful if entry N lines up with trace-route hint N,
+/// so a repeater that prepends a router hint must prepend its reading in the
+/// same pass (packet-options.md § Trace Signal).
+#[test]
+fn repeater_prepends_its_signal_reading_alongside_the_router_hint() {
+    let mut mac = make_mac();
+    mac.repeater_config_mut().enabled = true;
+    mac.radio_mut().rx_rssi = -93;
+    mac.radio_mut().rx_snr = Snr::from_centibels(-45);
+    let _repeater_id = mac.add_identity(DummyIdentity::new([0x10; 32])).unwrap();
+
+    let source = DummyIdentity::new([0xAB; 32]);
+    let mut buf = [0u8; 256];
+    let beacon = PacketBuilder::new(&mut buf)
+        .broadcast()
+        .source_full(source.public_key())
+        .flood_hops(3)
+        .trace_route()
+        .trace_signal()
+        .build()
+        .unwrap();
+    let beacon: heapless::Vec<u8, 256> = beacon.iter().copied().collect();
+
+    mac.radio_mut().queue_received_frame(beacon.as_slice());
+    assert!(block_on(mac.receive_one(|_, _| {})).unwrap());
+    let forwarded = mac.tx_queue_mut().pop_next().unwrap();
+
+    let frame = forwarded.frame.as_slice();
+    let header = PacketHeader::parse(frame).unwrap();
+    let options = ParsedOptions::extract(frame, header.options_range.clone()).unwrap();
+    let hint = &frame[options.trace_route.clone().unwrap()];
+    let signal = &frame[options.trace_signal.clone().unwrap()];
+
+    assert_eq!(hint.len(), 2, "one hop means one router hint");
+    assert_eq!(
+        signal,
+        // -93 dBm carried as its magnitude, -4.5 dB as -45 centibels.
+        &[93u8, (-45i8) as u8],
+        "the reading is prepended as negative RSSI then signed centibel SNR"
+    );
+}
+
+/// A reading past what one byte each can carry has to land on the nearest
+/// representable value: a wrapped byte would read as a strong signal.
+#[test]
+fn trace_signal_saturates_rather_than_wrapping() {
+    let mut mac = make_mac();
+    mac.repeater_config_mut().enabled = true;
+    mac.radio_mut().rx_rssi = -300;
+    mac.radio_mut().rx_snr = Snr::from_centibels(-2000);
+    let _repeater_id = mac.add_identity(DummyIdentity::new([0x10; 32])).unwrap();
+
+    let source = DummyIdentity::new([0xAB; 32]);
+    let mut buf = [0u8; 256];
+    let beacon = PacketBuilder::new(&mut buf)
+        .broadcast()
+        .source_full(source.public_key())
+        .flood_hops(3)
+        .trace_route()
+        .trace_signal()
+        .build()
+        .unwrap();
+    let beacon: heapless::Vec<u8, 256> = beacon.iter().copied().collect();
+
+    mac.radio_mut().queue_received_frame(beacon.as_slice());
+    assert!(block_on(mac.receive_one(|_, _| {})).unwrap());
+    let forwarded = mac.tx_queue_mut().pop_next().unwrap();
+
+    let frame = forwarded.frame.as_slice();
+    let header = PacketHeader::parse(frame).unwrap();
+    let options = ParsedOptions::extract(frame, header.options_range.clone()).unwrap();
+    let signal = &frame[options.trace_signal.clone().unwrap()];
+
+    assert_eq!(signal, &[255u8, (-128i8) as u8]);
+}
+
+/// A trace accumulated past what this repeater can extend is over-limit
+/// input from the air. The forward is declined — quietly, like any other
+/// rewrite that will not fit — rather than trusted as a buffer index.
+#[test]
+fn repeater_declines_to_forward_an_overgrown_trace_rather_than_panicking() {
+    for option in [OptionNumber::TraceRoute, OptionNumber::TraceSignal] {
+        let mut mac = make_mac();
+        mac.repeater_config_mut().enabled = true;
+        let _repeater_id = mac.add_identity(DummyIdentity::new([0x10; 32])).unwrap();
+
+        let source = DummyIdentity::new([0xAB; 32]);
+        let mut buf = [0u8; 256];
+        let oversized = [0x22u8; crate::MAX_SOURCE_ROUTE_HOPS * 2 + 2];
+        let beacon = PacketBuilder::new(&mut buf)
+            .broadcast()
+            .source_full(source.public_key())
+            .flood_hops(3)
+            .option(option, &oversized)
+            .build()
+            .unwrap();
+        let beacon: heapless::Vec<u8, 256> = beacon.iter().copied().collect();
+
+        mac.radio_mut().queue_received_frame(beacon.as_slice());
+        assert!(block_on(mac.receive_one(|_, _| {})).unwrap());
+        assert!(
+            mac.tx_queue_mut().pop_next().is_none(),
+            "an overgrown {option:?} drops the forward instead"
+        );
+    }
+}
+
+/// A frame that asked for neither trace option must not grow one: the
+/// repeater reports the path it was asked about, and nothing else.
+#[test]
+fn repeater_does_not_add_trace_signal_to_a_frame_that_carries_no_trace() {
+    let mut mac = make_mac();
+    mac.repeater_config_mut().enabled = true;
+    let _repeater_id = mac.add_identity(DummyIdentity::new([0x10; 32])).unwrap();
+
+    let source = DummyIdentity::new([0xAB; 32]);
+    let mut buf = [0u8; 256];
+    let beacon = PacketBuilder::new(&mut buf)
+        .broadcast()
+        .source_full(source.public_key())
+        .flood_hops(3)
+        .build()
+        .unwrap();
+    let beacon: heapless::Vec<u8, 256> = beacon.iter().copied().collect();
+
+    mac.radio_mut().queue_received_frame(beacon.as_slice());
+    assert!(block_on(mac.receive_one(|_, _| {})).unwrap());
+    let forwarded = mac.tx_queue_mut().pop_next().unwrap();
+
+    let frame = forwarded.frame.as_slice();
+    let header = PacketHeader::parse(frame).unwrap();
+    let options = ParsedOptions::extract(frame, header.options_range.clone()).unwrap();
+    assert!(options.trace_signal.is_none());
+    assert!(options.trace_route.is_none());
 }
 
 /// Hearing our own broadcast — off a repeater, off a reflection, off our own
@@ -8580,6 +8749,11 @@ struct DummyRadio {
     cad_responses: heapless::Deque<bool, 16>,
     cad_calls: u32,
     received: heapless::Deque<heapless::Vec<u8, 256>, 16>,
+    /// Signal quality reported for every received frame. Defaults to the
+    /// zeroes `RxInfo::default` would give, so tests that do not care read
+    /// exactly as they did before this was settable.
+    rx_rssi: i16,
+    rx_snr: Snr,
 }
 
 impl DummyRadio {
@@ -8969,8 +9143,8 @@ impl Radio for DummyRadio {
         buf[..frame.len()].copy_from_slice(frame.as_slice());
         Poll::Ready(Ok(RxInfo {
             len: frame.len(),
-            rssi: 0,
-            snr: Snr::from_decibels(0),
+            rssi: self.rx_rssi,
+            snr: self.rx_snr,
             lqi: None,
         }))
     }

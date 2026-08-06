@@ -64,6 +64,9 @@ Id   | Mnemonic                                                                 
 77   | [`PROP_MAC_REPEATER_MIN_SNR`](ulcp-device.md#prop-mac-repeater-min-snr)    | Get, Set                 | `CAP_REPEATER`
 78   | [`PROP_DEV_DISCOVERABLE`](ulcp-device.md#prop-dev-discoverable)            | Get, Set                 | `CAP_DEV_IDENTITY`
 79   | [`PROP_ALERT`](ulcp-device.md#prop-alert)                                  | Get, Set, Is             | `CAP_ALERT`
+80   | [`PROP_ADVERT_INTERVAL`](ulcp-device.md#prop-advert-interval)              | Get, Set                 | `CAP_ADVERT`
+81   | [`PROP_BEACON_INTERVAL`](ulcp-device.md#prop-beacon-interval)              | Get, Set                 | `CAP_ADVERT`
+82   | [`PROP_STARTUP_BEACON`](ulcp-device.md#prop-startup-beacon)                | Get, Set                 | `CAP_ADVERT`
 88   | [`PROP_GNSS_ENABLED`](ulcp-device.md#prop-gnss-enabled)                    | Get, Set                 | `CAP_GNSS`
 89   | [`PROP_GNSS_LOCATION`](ulcp-device.md#prop-gnss-location)                  | Get, Is                  | `CAP_GNSS`
 90   | [`PROP_GNSS_ALTITUDE`](ulcp-device.md#prop-gnss-altitude)                  | Get                      | `CAP_GNSS`
@@ -112,6 +115,7 @@ Code | Name                      | Defined in
 43   | `CAP_ADMIN`               | [Node Management](app-node-management.md#capabilities)
 44   | `CAP_TIME`                | [Device Domain](ulcp-device.md#capabilities)
 45   | `CAP_GNSS`                | [Device Domain](ulcp-device.md#capabilities)
+46   | `CAP_ADVERT`              | [Device Domain](ulcp-device.md#capabilities)
 515  | `CAP_PHY_LORA`            | [Radio Control](ulcp-radio.md#capabilities)
 
 ## Status Codes

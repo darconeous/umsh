@@ -497,6 +497,28 @@ struct ForwardPlan {
     insert_region_code: Option<[u8; 2]>,
     delay_ms: u64,
     station_action: ForwardStationAction,
+    /// Signal quality this repeater received the frame at, prepended to a
+    /// trace-signal option so its entries pair with the trace-route hints.
+    signal: TraceSignalEntry,
+}
+
+/// One trace-signal entry: negative RSSI in dBm, then SNR in centibels
+/// (packet-options.md § Trace Signal). Both fields saturate rather than
+/// wrap, so an out-of-range reading reports the nearest representable
+/// value instead of a plausible-looking wrong one.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+struct TraceSignalEntry([u8; 2]);
+
+impl TraceSignalEntry {
+    fn from_rx(rx: &RxInfo) -> Self {
+        let rssi = rx.rssi.clamp(-255, 0).unsigned_abs().min(255) as u8;
+        let snr = rx.snr.as_centibels().clamp(-128, 127) as i8;
+        Self([rssi, snr as u8])
+    }
+
+    fn as_bytes(&self) -> [u8; 2] {
+        self.0
+    }
 }
 
 /// Local transmission policy enforced by the [`Mac`] coordinator on all outgoing frames.
@@ -1413,11 +1435,14 @@ impl<
         {
             builder = builder.source_route(route.as_slice());
         }
-        if let Some(region_code) = options.region_code {
-            builder = builder.region_code(region_code);
-        }
         if let Some(callsign) = self.operating_policy.operator_callsign {
             builder = builder.option(OptionNumber::OperatorCallsign, callsign.as_trimmed_slice());
+        }
+        if options.trace_signal {
+            builder = builder.trace_signal();
+        }
+        if let Some(region_code) = options.region_code {
+            builder = builder.region_code(region_code);
         }
         let frame = builder.payload(payload).build()?;
         if frame.len() > self.radio.max_frame_size() {
@@ -1510,11 +1535,14 @@ impl<
         {
             builder = builder.source_route(route.as_slice());
         }
-        if let Some(region_code) = options.region_code {
-            builder = builder.region_code(region_code);
-        }
         if let Some(callsign) = self.operating_policy.operator_callsign {
             builder = builder.option(OptionNumber::OperatorCallsign, callsign.as_trimmed_slice());
+        }
+        if options.trace_signal {
+            builder = builder.trace_signal();
+        }
+        if let Some(region_code) = options.region_code {
+            builder = builder.region_code(region_code);
         }
         let mut packet = builder.payload(payload).build()?;
         self.crypto.seal_packet(&mut packet, &keys)?;
@@ -1636,11 +1664,14 @@ impl<
         if let Some(route) = effective_source_route.as_ref() {
             builder = builder.source_route(route.as_slice());
         }
-        if let Some(region_code) = options.region_code {
-            builder = builder.region_code(region_code);
-        }
         if let Some(callsign) = self.operating_policy.operator_callsign {
             builder = builder.option(OptionNumber::OperatorCallsign, callsign.as_trimmed_slice());
+        }
+        if options.trace_signal {
+            builder = builder.trace_signal();
+        }
+        if let Some(region_code) = options.region_code {
+            builder = builder.region_code(region_code);
         }
         let mut packet = builder.payload(payload).build()?;
 
@@ -1769,11 +1800,14 @@ impl<
         if let Some(route) = effective_source_route.as_ref() {
             builder = builder.source_route(route.as_slice());
         }
-        if let Some(region_code) = options.region_code {
-            builder = builder.region_code(region_code);
-        }
         if let Some(callsign) = self.operating_policy.operator_callsign {
             builder = builder.option(OptionNumber::OperatorCallsign, callsign.as_trimmed_slice());
+        }
+        if options.trace_signal {
+            builder = builder.trace_signal();
+        }
+        if let Some(region_code) = options.region_code {
+            builder = builder.region_code(region_code);
         }
         let mut packet = builder.payload(payload).build()?;
 
@@ -4542,6 +4576,7 @@ impl<
             insert_region_code,
             delay_ms,
             station_action,
+            signal: TraceSignalEntry::from_rx(rx),
         })
     }
 
@@ -4699,9 +4734,30 @@ impl<
                         inserted_region = true;
                         encoder.put(number, value).map_err(|_| CapacityError)?;
                     }
+                    // Both trace arms bound the incoming value before the
+                    // copy: the accumulated trace arrives from the air, and
+                    // one grown past what the local buffer can extend is
+                    // over-limit input to drop, not to index by.
                     OptionNumber::TraceRoute => {
                         let mut trace = [0u8; crate::MAX_SOURCE_ROUTE_HOPS * 2 + 2];
+                        if value.len() > crate::MAX_SOURCE_ROUTE_HOPS * 2 {
+                            return Err(CapacityError);
+                        }
                         trace[..2].copy_from_slice(&plan.router_hint.0);
+                        trace[2..2 + value.len()].copy_from_slice(value);
+                        encoder
+                            .put(number, &trace[..2 + value.len()])
+                            .map_err(|_| CapacityError)?;
+                    }
+                    // Prepended in lockstep with the router hint above: entry
+                    // N of this option is the signal quality at which the
+                    // repeater named by hint N received the frame.
+                    OptionNumber::TraceSignal => {
+                        let mut trace = [0u8; crate::MAX_SOURCE_ROUTE_HOPS * 2 + 2];
+                        if value.len() > crate::MAX_SOURCE_ROUTE_HOPS * 2 {
+                            return Err(CapacityError);
+                        }
+                        trace[..2].copy_from_slice(&plan.signal.as_bytes());
                         trace[2..2 + value.len()].copy_from_slice(value);
                         encoder
                             .put(number, &trace[..2 + value.len()])

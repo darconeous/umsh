@@ -48,6 +48,9 @@ pub const fn property_name(key: u32) -> Option<&'static str> {
         prop::MAC_REPEATER_MIN_SNR => "PROP_MAC_REPEATER_MIN_SNR",
         prop::DEV_DISCOVERABLE => "PROP_DEV_DISCOVERABLE",
         prop::ALERT => "PROP_ALERT",
+        prop::ADVERT_INTERVAL => "PROP_ADVERT_INTERVAL",
+        prop::BEACON_INTERVAL => "PROP_BEACON_INTERVAL",
+        prop::STARTUP_BEACON => "PROP_STARTUP_BEACON",
         prop::GNSS_ENABLED => "PROP_GNSS_ENABLED",
         prop::GNSS_LOCATION => "PROP_GNSS_LOCATION",
         prop::GNSS_ALTITUDE => "PROP_GNSS_ALTITUDE",
@@ -93,6 +96,7 @@ pub const fn capability_name(code: u32) -> Option<&'static str> {
         cap::ALERT => "ALERT",
         cap::TIME => "TIME",
         cap::GNSS => "GNSS",
+        cap::ADVERT => "ADVERT",
         _ => return None,
     })
 }

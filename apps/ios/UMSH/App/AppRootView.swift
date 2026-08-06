@@ -39,6 +39,12 @@ struct AppRootView: View {
     /// preference outlives the mesh session, which starts discoverable, so
     /// it is reapplied on every session install.
     @AppStorage("phone.discoverable") private var phoneDiscoverable = true
+    /// How often this phone announces itself unasked, in seconds, with 0
+    /// for never. Both default to off: a radio is deployed to be part of
+    /// the mesh, but a phone is carried, and putting its identity on the
+    /// air on a timer is a decision rather than a default.
+    @AppStorage("phone.advertIntervalSeconds") private var phoneAdvertInterval = 0
+    @AppStorage("phone.beaconIntervalSeconds") private var phoneBeaconInterval = 0
     /// Bookkeeping that must survive body re-evaluation without itself being
     /// a source of invalidation. A reference held in `@State` is never
     /// reassigned, so mutating it costs nothing in the view graph.
@@ -377,6 +383,7 @@ struct AppRootView: View {
                     setAlert: setRadioAlert,
                     setTime: setRadioTime,
                     configurePositioning: configureRadioPositioning,
+                    configureAdvertising: configureRadioAdvertising,
                     discoverRadios: discoverRadios,
                     selectRadio: selectRadio,
                     stopDiscovery: stopRadioDiscovery,
@@ -418,6 +425,22 @@ struct AppRootView: View {
         .onChange(of: scenePhase) { _, phase in
             guard phase == .active else { return }
             Task { await retryIdentityLoadIfNeeded() }
+        }
+        // One task per schedule, keyed so a changed interval restarts it
+        // rather than waiting out the old one. Both stop when the app
+        // does, which is the honest bound: nothing here can keep the
+        // phone talking to the mesh while iOS has it suspended.
+        .task(id: phoneAdvertInterval) {
+            await runAnnouncementSchedule(seconds: phoneAdvertInterval) {
+                try await radioConnection.advertiseIdentityScheduled(
+                    name: advertisedName.isEmpty ? nil : advertisedName
+                )
+            }
+        }
+        .task(id: phoneBeaconInterval) {
+            await runAnnouncementSchedule(seconds: phoneBeaconInterval) {
+                try await radioConnection.sendBeacon()
+            }
         }
         .task {
             for await snapshot in await radioConnection.snapshots() {
@@ -670,6 +693,35 @@ struct AppRootView: View {
         }
     }
 
+    /// Sleep out one interval, send, repeat, until the task is cancelled.
+    ///
+    /// The first send waits a full interval rather than firing at launch:
+    /// an app opened and closed repeatedly would otherwise transmit on
+    /// every launch, which is the one thing an interval is supposed to
+    /// prevent. A failed send is skipped rather than retried — the next
+    /// interval is the retry, and there is no backlog worth keeping.
+    ///
+    /// Each period is scattered later by up to a quarter, as on the radio,
+    /// so that phones sharing a schedule do not transmit together. Only
+    /// ever later: the chosen interval stays the shortest gap between two
+    /// announcements. `Double.random` draws from the system generator,
+    /// which is seeded from the same entropy the Keychain relies on.
+    private func runAnnouncementSchedule(
+        seconds: Int,
+        send: @escaping () async throws -> Void
+    ) async {
+        guard seconds > 0 else { return }
+        while !Task.isCancelled {
+            let scatter = Double.random(in: 0...(Double(seconds) * announcementJitterFraction))
+            do {
+                try await Task.sleep(for: .seconds(Double(seconds) + scatter))
+            } catch {
+                return
+            }
+            try? await send()
+        }
+    }
+
     /// The shareable identity URI: bundle-bearing (name, role, capabilities,
     /// signed) when the mesh session can sign, bare public key otherwise.
     private func identityShareURI() async -> String {
@@ -738,6 +790,10 @@ struct AppRootView: View {
             gnss: gnss,
             timeZoneOffsetMinutes: timeZoneOffsetMinutes
         )
+    }
+
+    private func configureRadioAdvertising(_ advert: UlcpAdvertSettingsRecord?) async throws {
+        try await radioConnection.configureAdvertising(advert)
     }
 
     private func claimRadio() async {

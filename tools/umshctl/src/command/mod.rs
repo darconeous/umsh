@@ -4,6 +4,7 @@
 //! grammar, the REPL line grammar, `--help` at every level, and the
 //! completion tree the REPL's tab handler walks.
 
+pub mod advert;
 pub mod capture;
 pub mod duty;
 pub mod gnss;
@@ -103,6 +104,12 @@ pub enum Command {
     Gnss {
         #[command(subcommand)]
         op: Option<gnss::GnssOp>,
+    },
+
+    /// Show or set what the device announces on its own schedule.
+    Advert {
+        #[command(subcommand)]
+        op: Option<advert::AdvertOp>,
     },
 
     /// Device-identity channel keys: the multicast this device's own
@@ -206,6 +213,7 @@ impl Command {
             Self::Repeater { op } => repeater::run(app, op).await,
             Self::Time { op } => time::run(app, op).await,
             Self::Gnss { op } => gnss::run(app, op).await,
+            Self::Advert { op } => advert::run(app, op).await,
             Self::DevChannel { op } => {
                 tables::run(app, prop::DEV_CHANNEL_KEYS, "channel", op).await
             }

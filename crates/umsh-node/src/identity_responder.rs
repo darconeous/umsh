@@ -175,6 +175,16 @@ pub fn default_respond_policy(ctx: &IdentityRequestContext<'_>) -> RespondDecisi
     }
 }
 
+/// A respond policy that answers nothing.
+///
+/// Lets a node keep a live profile while declining to be discovered. The
+/// profile is what unsolicited advertisements are built from, so silencing
+/// the responder this way — rather than by uninstalling it — is what keeps
+/// the two behaviours independent.
+pub fn never_respond_policy(_ctx: &IdentityRequestContext<'_>) -> RespondDecision {
+    RespondDecision::Ignore
+}
+
 /// Installed responder state: the profile plus the active policy.
 pub(crate) struct IdentityResponder {
     pub(crate) profile: NodeIdentityProfile,

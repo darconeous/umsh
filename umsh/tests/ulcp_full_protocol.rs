@@ -731,6 +731,47 @@ async fn the_wall_clock_starts_unset_and_survives_a_round_trip() {
     assert_eq!(radio.time().await.unwrap().unwrap().tz_offset_min, -480);
 }
 
+/// The two announcement schedules are independent knobs, and both are
+/// device-domain settings a power cycle restores.
+#[tokio::test]
+async fn advertisement_policy_is_two_independent_schedules_that_persist() {
+    let sim = SimDevice::new();
+    let mut radio = attached_host(&sim).await;
+
+    let policy = radio
+        .advert_policy()
+        .await
+        .unwrap()
+        .expect("simulator advertises CAP_ADVERT");
+    assert_eq!(policy.advert_interval_s, 4 * 60 * 60);
+    assert_eq!(policy.beacon_interval_s, 60 * 60);
+    assert!(policy.startup_beacon);
+
+    // Each moves without disturbing the other, and zero is the off
+    // switch rather than a rejected value.
+    assert_eq!(radio.set_advert_interval(0).await.unwrap(), 0);
+    assert_eq!(radio.set_beacon_interval(1800).await.unwrap(), 1800);
+    assert!(!radio.set_startup_beacon(false).await.unwrap());
+    let policy = radio.advert_policy().await.unwrap().unwrap();
+    assert_eq!(policy.advert_interval_s, 0);
+    assert_eq!(policy.beacon_interval_s, 1800);
+    assert!(!policy.startup_beacon);
+
+    // Outside the bounds at either end is a mistake, not a schedule.
+    assert!(radio.set_beacon_interval(30).await.is_err());
+    assert!(radio.set_beacon_interval(48 * 60 * 60).await.is_err());
+
+    radio.save().await.unwrap();
+    drop(radio);
+    detach(&sim);
+    power_cycle(&sim);
+    let mut radio = attached_host(&sim).await;
+    let policy = radio.advert_policy().await.unwrap().unwrap();
+    assert_eq!(policy.advert_interval_s, 0);
+    assert_eq!(policy.beacon_interval_s, 1800);
+    assert!(!policy.startup_beacon);
+}
+
 /// Every positioning property folds back into one snapshot, and a
 /// receiver that is off reports being off rather than failing.
 #[tokio::test]

@@ -395,6 +395,18 @@ pub struct GnssStatus {
     pub time_trust: bool,
 }
 
+/// What a device announces without being asked.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct AdvertPolicy {
+    /// `PROP_ADVERT_INTERVAL`: seconds between signed identity
+    /// advertisements, 0 for none.
+    pub advert_interval_s: u32,
+    /// `PROP_BEACON_INTERVAL`: seconds between empty beacons, 0 for none.
+    pub beacon_interval_s: u32,
+    /// `PROP_STARTUP_BEACON`: whether one beacon goes out at bring-up.
+    pub startup_beacon: bool,
+}
+
 /// The host-domain state [`UlcpDevice::provision`] establishes on
 /// the device.
 #[derive(Clone, Debug)]
@@ -1436,6 +1448,55 @@ where
             ident_precision,
             time_trust,
         }))
+    }
+
+    /// Read the device's advertisement policy, or `None` on a device
+    /// without `CAP_ADVERT`.
+    pub async fn advert_policy(&mut self) -> Result<Option<AdvertPolicy>, UlcpError> {
+        if !self.capabilities().await?.contains(&cap::ADVERT) {
+            return Ok(None);
+        }
+        let advert_interval_s = self.get_interval(prop::ADVERT_INTERVAL).await?;
+        let beacon_interval_s = self.get_interval(prop::BEACON_INTERVAL).await?;
+        let startup_beacon = decode_bool(
+            &self.get_prop(prop::STARTUP_BEACON).await?,
+            "PROP_STARTUP_BEACON",
+        )?;
+        Ok(Some(AdvertPolicy {
+            advert_interval_s,
+            beacon_interval_s,
+            startup_beacon,
+        }))
+    }
+
+    async fn get_interval(&mut self, key: u32) -> Result<u32, UlcpError> {
+        decode_interval(&self.get_prop(key).await?)
+    }
+
+    /// Set the seconds between signed identity advertisements, 0 for none
+    /// (`PROP_ADVERT_INTERVAL`).
+    pub async fn set_advert_interval(&mut self, seconds: u32) -> Result<u32, UlcpError> {
+        let authoritative = self
+            .set_prop(prop::ADVERT_INTERVAL, &seconds.to_le_bytes())
+            .await?;
+        decode_interval(&authoritative)
+    }
+
+    /// Set the seconds between empty beacons, 0 for none
+    /// (`PROP_BEACON_INTERVAL`).
+    pub async fn set_beacon_interval(&mut self, seconds: u32) -> Result<u32, UlcpError> {
+        let authoritative = self
+            .set_prop(prop::BEACON_INTERVAL, &seconds.to_le_bytes())
+            .await?;
+        decode_interval(&authoritative)
+    }
+
+    /// Set whether one beacon goes out at bring-up (`PROP_STARTUP_BEACON`).
+    pub async fn set_startup_beacon(&mut self, enabled: bool) -> Result<bool, UlcpError> {
+        let authoritative = self
+            .set_prop(prop::STARTUP_BEACON, &[enabled as u8])
+            .await?;
+        decode_bool(&authoritative, "PROP_STARTUP_BEACON")
     }
 
     /// Power the GNSS receiver on or off (`PROP_GNSS_ENABLED`).
@@ -2660,6 +2721,14 @@ fn decode_bool(value: &[u8], what: &'static str) -> Result<bool, UlcpError> {
         [0] => Ok(false),
         [1] => Ok(true),
         _ => Err(UlcpError::Protocol(what)),
+    }
+}
+
+/// Decode a `UINT32_LE` announcement interval in seconds.
+fn decode_interval(value: &[u8]) -> Result<u32, UlcpError> {
+    match value {
+        [a, b, c, d] => Ok(u32::from_le_bytes([*a, *b, *c, *d])),
+        _ => Err(UlcpError::Protocol("malformed announcement interval")),
     }
 }
 

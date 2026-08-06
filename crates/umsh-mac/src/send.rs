@@ -84,6 +84,8 @@ pub struct SendOptions {
     pub flood_hops: Option<u8>,
     /// Whether to include a trace-route option.
     pub trace_route: bool,
+    /// Whether to include a trace-signal option.
+    pub trace_signal: bool,
     /// Optional explicit source route.
     pub source_route: Option<Vec<RouterHint, MAX_SOURCE_ROUTE_HOPS>>,
     /// Optional region-code option.
@@ -109,6 +111,7 @@ impl Default for SendOptions {
             full_source: false,
             flood_hops: Some(5),
             trace_route: false,
+            trace_signal: false,
             source_route: None,
             region_code: None,
             salt: false,
@@ -145,6 +148,15 @@ impl SendOptions {
     /// Request that a trace-route option be added.
     pub fn with_trace_route(mut self) -> Self {
         self.trace_route = true;
+        self
+    }
+
+    /// Request that a trace-signal option be added. Each repeater prepends
+    /// the signal quality it received the frame at, one entry per trace-route
+    /// hint, so this is only useful together with
+    /// [`with_trace_route`](Self::with_trace_route).
+    pub fn with_trace_signal(mut self) -> Self {
+        self.trace_signal = true;
         self
     }
 

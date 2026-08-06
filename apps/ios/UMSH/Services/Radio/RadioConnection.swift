@@ -11,6 +11,14 @@ protocol RadioConnection: AnyObject, Sendable {
     /// for nodes that are reachable but have nothing to say.
     func peerHeardEvents() async -> AsyncStream<RadioPeerHeardEvent>
     func advertiseIdentity(name: String?) async throws
+    /// The same advertisement, sent because the phone's own interval came
+    /// round rather than because someone asked for it. Reaches only direct
+    /// neighbours, since a restatement on a timer does not need to cross
+    /// the mesh the way an introduction does.
+    func advertiseIdentityScheduled(name: String?) async throws
+    /// Broadcast an empty beacon: it publishes the path back to this
+    /// phone rather than who this phone is, for a fraction of the airtime.
+    func sendBeacon() async throws
     /// Set whether this phone answers nearby nodes' Identity Requests with
     /// its own identity, and the display name those replies carry.
     /// Best-effort: the preference is reapplied on every session install.
@@ -80,6 +88,14 @@ protocol RadioConnection: AnyObject, Sendable {
         gnss: UlcpGnssSettingsRecord?,
         timeZoneOffsetMinutes: Int16?
     ) async throws
+    /// Apply and persist what the radio announces on its own schedule.
+    ///
+    /// Separate from `configurePositioning` for the same reason that one
+    /// is separate from `configure`: it is its own decision, and a phone
+    /// changing how often its radio speaks has no business restating
+    /// anything else. Must be present exactly when the radio advertises
+    /// `CAP_ADVERT`.
+    func configureAdvertising(_ advert: UlcpAdvertSettingsRecord?) async throws
     /// Store a peer public key on the radio's device identity
     /// (`PROP_DEV_PEERS`), persisting it with a chained save. Idempotent:
     /// a key the radio already holds resolves as success.

@@ -16,6 +16,11 @@ A beacon with a trace-route option can inform listeners of both:
 
 This is particularly useful when a receiver already knows the node's identity information.
 
+Pairing the trace-route option with [Trace
+Signal](packet-options.md#trace-signal-option-10) makes the beacon report
+the quality of each hop as well as its identity, which is what
+distinguishes a path that merely works from one worth using.
+
 ## Advertisements
 
 An **advertisement** is a broadcast or multicast packet whose payload is a
@@ -25,6 +30,40 @@ announcing presence, name, role, and capabilities. To obtain a specific
 node's identity, use the [Identity Request](mac-commands.md#identity-request-1)
 MAC command, which is answered with a targeted unicast identity response
 rather than a broadcast advertisement.
+
+## Announcing on a Schedule
+
+A node MAY emit beacons and advertisements on periods of its own. The two
+are configured separately because they announce different things at very
+different costs: a beacon publishes a path for a handful of bytes, while
+an advertisement carries a signed identity and is the largest frame a node
+originates unprompted. A mesh is normally best served by refreshing the
+path often and restating the identity rarely.
+
+A scheduled advertisement SHOULD be sent without flood hops. What it
+carries is a standing statement rather than news, so flooding it across
+the mesh on every period spends airtime out of proportion to what a
+distant listener learns; a node that wants to be findable further away
+publishes a path with a beacon instead.
+
+A configured period is a minimum rather than an exact cadence. A node
+SHOULD scatter each period by a random fraction of it — a quarter is a
+reasonable choice — and that scatter MUST only delay an announcement,
+never bring it forward, so the configured value remains a floor on how
+often the node transmits unasked. Nodes commissioned alike and powered on
+together otherwise stay in step for as long as they run, colliding every
+period and colliding again on each retry, since a shared schedule makes
+them contend from the same instant every time. Carrier sensing resolves
+the individual collision; the scatter is what keeps the mesh from having
+to resolve one on every period.
+
+A node that has just restarted is the node whose neighbours hold the
+stalest paths to it, so emitting one beacon at bring-up is RECOMMENDED.
+That beacon is not delayed: nodes do not restart in unison, so bring-up
+is already scattered by whatever staggered it.
+
+On a device managed over [ULCP](ulcp-device.md#prop-advert-interval),
+these periods are the advertisement-policy properties.
 
 ## Path Discovery
 

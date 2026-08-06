@@ -35,9 +35,12 @@ Guided setup flows built on top of that primitive:
 - [x] Mobile / fixed
 - [ ] Location
 - [ ] Advertisements
-  - [ ] Send advertisement on boot
-  - [ ] Broadcast interval (default: 4 hours)
-  - [ ] Include full key in advertisement (default: false)
+  - [x] Send a beacon on boot (`PROP_STARTUP_BEACON`, default on)
+  - [x] Advertisement interval (`PROP_ADVERT_INTERVAL`, default: 4 hours)
+  - [x] Beacon interval (`PROP_BEACON_INTERVAL`, default: 1 hour)
+  - [ ] Include full key in advertisement (default: false) — a signed
+        broadcast advertisement must carry its full key, so this would
+        only apply to a form that is not currently sent
   - [ ] Channel used for automatic advertisements
 - [ ] Channel membership — the channels the *device identity* has joined. Used for the device's own advertisements, blind unicast addressing, and repeater filtering. Not used by the phone identity.
 

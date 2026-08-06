@@ -177,6 +177,14 @@ pub struct DevDomainSnapshot {
     /// `PROP_DEV_DISCOVERABLE`: whether the device identity answers
     /// Identity Requests.
     pub discoverable: bool,
+    /// `PROP_ADVERT_INTERVAL`: seconds between unsolicited
+    /// advertisements, 0 for none.
+    pub advert_interval_s: u32,
+    /// `PROP_BEACON_INTERVAL`: seconds between unsolicited beacons, 0 for
+    /// none.
+    pub beacon_interval_s: u32,
+    /// `PROP_STARTUP_BEACON`: whether one beacon goes out at bring-up.
+    pub startup_beacon: bool,
     /// `PROP_TZ_OFFSET`: minutes east of UTC, for whatever renders a
     /// local time.
     pub tz_offset_min: i16,
@@ -648,6 +656,9 @@ fn sync_dev_domain<A, S, const TXQ: usize, E>(
         ident_role: session.ident_role(),
         ident_mobile: session.ident_mobile(),
         discoverable: session.dev_discoverable(),
+        advert_interval_s: session.advert_interval_s(),
+        beacon_interval_s: session.beacon_interval_s(),
+        startup_beacon: session.startup_beacon(),
         tz_offset_min: session.tz_offset_min(),
         gnss_enabled: session.gnss_enabled(),
         gnss_ident_update: session.gnss_ident_update(),

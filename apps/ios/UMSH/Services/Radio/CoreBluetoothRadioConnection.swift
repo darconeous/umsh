@@ -293,6 +293,18 @@ final class CoreBluetoothRadioConnection: NSObject, RadioConnection, @unchecked 
         )
     }
 
+    func advertiseIdentityScheduled(name: String?) async throws {
+        let session = try await currentMeshSession()
+        try await session.advertiseIdentityScheduled(
+            name: name,
+            timestamp: UInt32(clamping: Int(Date.now.timeIntervalSince1970))
+        )
+    }
+
+    func sendBeacon() async throws {
+        try await currentMeshSession().sendBeacon()
+    }
+
     func setPhoneDiscoverable(_ enabled: Bool, name: String?) async {
         guard let session = try? await currentMeshSession() else { return }
         try? await session.setDiscoverable(enabled: enabled, name: name)
@@ -820,6 +832,30 @@ final class CoreBluetoothRadioConnection: NSObject, RadioConnection, @unchecked 
                             gnss: gnss,
                             tzOffsetMin: timeZoneOffsetMinutes
                         ),
+                        from: peripheral
+                    )
+                } catch {
+                    finishConfiguration(throwing: error)
+                }
+            }
+        }
+    }
+
+    func configureAdvertising(_ advert: UlcpAdvertSettingsRecord?) async throws {
+        try await withCheckedThrowingContinuation { (result: CheckedContinuation<Void, any Error>) in
+            bluetoothQueue.async { [self] in
+                guard let peripheral, peripheral.state == .connected else {
+                    result.resume(throwing: RadioConnectionError.radioNotFound)
+                    return
+                }
+                guard configurationWaiter == nil, !refreshInProgress else {
+                    result.resume(throwing: RadioConnectionError.operationInProgress)
+                    return
+                }
+                configurationWaiter = result
+                do {
+                    try applySessionUpdate(
+                        ulcpSession.configureAdvertising(advert: advert),
                         from: peripheral
                     )
                 } catch {
@@ -1835,8 +1871,10 @@ final class CoreBluetoothRadioConnection: NSObject, RadioConnection, @unchecked 
                 supportsHostKeys: $0.hostChannelCount != nil,
                 supportsTime: $0.supportsTime,
                 supportsGnss: $0.supportsGnss,
+                supportsAdvert: $0.supportsAdvert,
                 timeZoneOffsetMinutes: $0.tzOffsetMin,
-                gnss: $0.gnss
+                gnss: $0.gnss,
+                advert: $0.advert
             )
         }
         snapshot.problemDescription = nil

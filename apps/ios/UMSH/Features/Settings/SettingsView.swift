@@ -208,6 +208,11 @@ struct IdentityDetailView: View {
     @State private var isAdvertising = false
     @State private var advertiseFeedback: AdvertiseFeedback?
     @State private var discoverableDraft = true
+    /// Read straight from storage here rather than passed in: these drive
+    /// the schedules in `AppRootView`, which reads the same keys, so a
+    /// closure round trip would only add a way for the two to disagree.
+    @AppStorage("phone.advertIntervalSeconds") private var phoneAdvertInterval = 0
+    @AppStorage("phone.beaconIntervalSeconds") private var phoneBeaconInterval = 0
 
     var body: some View {
         List {
@@ -265,6 +270,23 @@ struct IdentityDetailView: View {
                 Text("Advertised identity")
             } footer: {
                 Text(advertisedIdentityFooter)
+            }
+
+            Section {
+                Picker("Beacon", selection: $phoneBeaconInterval) {
+                    ForEach(beaconIntervalChoices, id: \.self) { seconds in
+                        Text(formattedAnnouncementInterval(seconds)).tag(Int(seconds))
+                    }
+                }
+                Picker("Identity", selection: $phoneAdvertInterval) {
+                    ForEach(advertisementIntervalChoices, id: \.self) { seconds in
+                        Text(formattedAnnouncementInterval(seconds)).tag(Int(seconds))
+                    }
+                }
+            } header: {
+                Text("Announce on a schedule")
+            } footer: {
+                Text("Both run only while UMSH is open — iOS gives a suspended app no way to keep talking to the mesh. A beacon publishes the path back to this phone; an identity announcement carries your name and reaches only nodes that can hear you directly. Each interval is a minimum: periods run a little longer at random, so phones on the same schedule do not all transmit at once.")
             }
 
             Section("Storage") {
@@ -346,6 +368,7 @@ struct RadioDetailView: View {
     var setAlert: (RadioAlertState) async throws -> Void = { _ in }
     var setTime: (UInt32?) async throws -> Void = { _ in }
     var configurePositioning: (UlcpGnssSettingsRecord?, Int16?) async throws -> Void = { _, _ in }
+    var configureAdvertising: (UlcpAdvertSettingsRecord?) async throws -> Void = { _ in }
     let discoverRadios: () async -> AsyncStream<[DiscoveredRadio]>
     let selectRadio: (UUID) async throws -> Void
     let stopDiscovery: () async -> Void
@@ -378,6 +401,11 @@ struct RadioDetailView: View {
     /// a write and a save. Cleared on completion, at which point the
     /// radio's own answer is what shows, whether the write took or not.
     @State private var pendingPositioning: UlcpGnssSettingsRecord?
+    @State private var advertProblem: String?
+    @State private var advertRequestInFlight = false
+    /// The same optimistic hold as `pendingPositioning`, for the same
+    /// reason: the schedule is written as a group and saved.
+    @State private var pendingAdvert: UlcpAdvertSettingsRecord?
 
     var body: some View {
         List {
@@ -480,6 +508,9 @@ struct RadioDetailView: View {
             }
             if snapshot.provisioning?.supportsGnss == true {
                 positionSection
+            }
+            if snapshot.provisioning?.supportsAdvert == true {
+                announcementsSection
             }
             if snapshot.provisioning?.supportsTime == true {
                 clockSection
@@ -872,6 +903,68 @@ struct RadioDetailView: View {
             }
         }
         .disabled(positioningRequestInFlight || !canUseRadio)
+    }
+
+    /// What the radio says about itself unasked (`CAP_ADVERT`).
+    ///
+    /// Two schedules rather than one, because the two announcements cost
+    /// very different amounts of airtime and say different things: a
+    /// beacon is an empty broadcast that collects the path back to this
+    /// radio as it travels, while an advertisement carries the signed
+    /// identity and reaches only the radio's own neighbours.
+    @ViewBuilder
+    private var announcementsSection: some View {
+        Section("Announcements") {
+            if let policy = pendingAdvert ?? snapshot.provisioning?.advert {
+                Picker("Beacon", selection: advertBinding(policy, \.beaconIntervalSeconds)) {
+                    ForEach(beaconIntervalChoices, id: \.self) { seconds in
+                        Text(formattedAnnouncementInterval(seconds)).tag(seconds)
+                    }
+                }
+                Picker("Identity", selection: advertBinding(policy, \.advertIntervalSeconds)) {
+                    ForEach(advertisementIntervalChoices, id: \.self) { seconds in
+                        Text(formattedAnnouncementInterval(seconds)).tag(seconds)
+                    }
+                }
+                Toggle("Beacon at startup", isOn: advertBinding(policy, \.startupBeacon))
+                Text("A beacon publishes the path back to this radio and costs very little. An identity announcement carries this radio's name and role, and only reaches nodes that can hear it directly. Each interval is a minimum: periods run a little longer at random, so radios on the same schedule do not all transmit at once.")
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+            }
+            if let advertProblem {
+                Label(advertProblem, systemImage: "exclamationmark.circle")
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+            }
+        }
+        .disabled(advertRequestInFlight || !canUseRadio)
+    }
+
+    /// A binding over one field of the advertisement policy that writes
+    /// the whole policy back, for the reason `positioningBinding` gives.
+    private func advertBinding<Value>(
+        _ policy: UlcpAdvertSettingsRecord,
+        _ field: WritableKeyPath<UlcpAdvertSettingsRecord, Value>
+    ) -> Binding<Value> {
+        Binding(
+            get: { policy[keyPath: field] },
+            set: { newValue in
+                var desired = policy
+                desired[keyPath: field] = newValue
+                advertProblem = nil
+                advertRequestInFlight = true
+                pendingAdvert = desired
+                Task {
+                    do {
+                        try await configureAdvertising(desired)
+                    } catch {
+                        advertProblem = "The radio did not take that schedule. It still holds the one shown."
+                    }
+                    pendingAdvert = nil
+                    advertRequestInFlight = false
+                }
+            }
+        )
     }
 
     /// A binding over one field of the positioning policy that writes the

@@ -420,6 +420,36 @@ const PROPERTY_SPECS: &[PropertySpec] = &[
         Some(umsh_ulcp::ids::cap::ALERT),
     ),
     spec(
+        prop::ADVERT_INTERVAL,
+        "Device",
+        "Seconds between unsolicited advertisements, 0 for none",
+        true,
+        true,
+        "integer",
+        Some("s"),
+        Some(umsh_ulcp::ids::cap::ADVERT),
+    ),
+    spec(
+        prop::BEACON_INTERVAL,
+        "Device",
+        "Seconds between unsolicited beacons, 0 for none",
+        true,
+        true,
+        "integer",
+        Some("s"),
+        Some(umsh_ulcp::ids::cap::ADVERT),
+    ),
+    spec(
+        prop::STARTUP_BEACON,
+        "Device",
+        "Whether a beacon goes out once the device comes up",
+        true,
+        true,
+        "boolean",
+        None,
+        Some(umsh_ulcp::ids::cap::ADVERT),
+    ),
+    spec(
         prop::GNSS_ENABLED,
         "Positioning",
         "Whether the GNSS receiver is powered",
@@ -1456,6 +1486,13 @@ fn decode_property(key: u32, value: &[u8]) -> Option<DecodedValue> {
             _ => return None,
         },
         prop::GNSS_IDENT_PRECISION if value.len() == 1 => ("uint8", format!("{} bytes", value[0])),
+        prop::ADVERT_INTERVAL | prop::BEACON_INTERVAL if value.len() == 4 => {
+            let seconds = u32::from_le_bytes(value.try_into().ok()?);
+            match seconds {
+                0 => ("uint32", "off".to_string()),
+                seconds => ("uint32", format!("every {seconds} s")),
+            }
+        }
         prop::PHY_TX_POWER | prop::PHY_RSSI if value.len() == 1 => {
             ("dbm", format!("{} dBm", value[0] as i8))
         }
@@ -1585,7 +1622,9 @@ fn editable_property_text(key: u32, value: &[u8]) -> Option<String> {
             "0x{:04x}",
             u16::from_le_bytes(value.try_into().ok()?)
         )),
-        prop::PHY_FREQ | prop::PHY_LORA_BW if value.len() == 4 => {
+        prop::PHY_FREQ | prop::PHY_LORA_BW | prop::ADVERT_INTERVAL | prop::BEACON_INTERVAL
+            if value.len() == 4 =>
+        {
             Some(u32::from_le_bytes(value.try_into().ok()?).to_string())
         }
         prop::DEV_NAME => String::from_utf8(value.to_vec()).ok(),
@@ -1628,6 +1667,12 @@ fn encode_property_text(key: u32, value: &str) -> Result<Vec<u8>, String> {
             value,
             "a location precision from 1 to 7 bytes",
         )?]),
+        prop::ADVERT_INTERVAL | prop::BEACON_INTERVAL => Ok(parse_integer::<u32>(
+            value,
+            "seconds, from 1200 (20 m) to 86400 (24 h), or 0 to send none",
+        )?
+        .to_le_bytes()
+        .to_vec()),
         prop::PHY_TX_POWER => Ok(vec![
             parse_integer::<i8>(value, "an 8-bit signed integer")? as u8
         ]),

@@ -61,7 +61,8 @@ pub mod prop {
     ///
     /// First of the device-behavior settings range (70–95), which is
     /// subdivided as 70–79 repeater and identity, 80–87 advertisement
-    /// policy, 88–95 positioning (88–93 allocated, 94–95 spare). A
+    /// policy (80–82 allocated, 83–87 spare), 88–95 positioning (88–93
+    /// allocated, 94–95 spare). A
     /// single-octet identifier is the scarce resource, so the positioning
     /// range holds the enable toggle and the fix telemetry a host reads
     /// and the device announces continually; the rarely-touched
@@ -104,6 +105,25 @@ pub mod prop {
     /// saved, unaffected by `CMD_RST`, `ALERT_NONE` after every reset.
     /// Requires `CAP_ALERT`.
     pub const ALERT: u32 = 79;
+    /// Seconds between unsolicited advertisements (`PROP_ADVERT_INTERVAL`)
+    /// — UINT32, 0 to send none. An advertisement carries the signed node
+    /// identity and goes out with no flood hops and no source route, so it
+    /// reaches the neighbours that can hear the device directly and stops
+    /// there. The accepted range is [`MIN_AUTO_ANNOUNCE_INTERVAL_S`] to
+    /// [`MAX_AUTO_ANNOUNCE_INTERVAL_S`], and the value is a floor rather
+    /// than a period: the device scatters each send later by up to a
+    /// quarter of it. Requires `CAP_ADVERT`.
+    pub const ADVERT_INTERVAL: u32 = 80;
+    /// Seconds between unsolicited beacons (`PROP_BEACON_INTERVAL`) —
+    /// UINT32, 0 to send none. A beacon carries no payload and goes out
+    /// with a flood budget and the trace-route and trace-signal options,
+    /// so what it announces is the path back to the device rather than who
+    /// the device is. Same range and same scatter as
+    /// [`ADVERT_INTERVAL`]. Requires `CAP_ADVERT`.
+    pub const BEACON_INTERVAL: u32 = 81;
+    /// Whether the device emits one beacon once it comes up
+    /// (`PROP_STARTUP_BEACON`) — BOOL, default 1. Requires `CAP_ADVERT`.
+    pub const STARTUP_BEACON: u32 = 82;
     /// Whether the GNSS receiver is powered (`PROP_GNSS_ENABLED`) — BOOL,
     /// default 0. Off means the lowest power state the receiver reaches;
     /// a board whose receiver RTC is the board's only clock keeps that
@@ -242,7 +262,37 @@ pub mod cap {
     /// properties exist and the wall clock has a source that can set
     /// itself. Requires `CAP_TIME`.
     pub const GNSS: u32 = 45;
+    /// `CAP_ADVERT` — the device announces itself on a schedule of its own
+    /// (`PROP_ADVERT_INTERVAL`, `PROP_BEACON_INTERVAL`,
+    /// `PROP_STARTUP_BEACON`). Requires `CAP_DEV_IDENTITY`, since what an
+    /// advertisement carries is the device identity.
+    pub const ADVERT: u32 = 46;
 }
 
 /// Value used in `PROP_PHY_DUTY_LIMIT` to disable duty-cycle limiting.
 pub const DUTY_LIMIT_DISABLED: u16 = 0xFFFF;
+
+/// Shortest accepted `PROP_ADVERT_INTERVAL` / `PROP_BEACON_INTERVAL`, in
+/// seconds.
+///
+/// An absolute floor, and one a device may only ever round *up* from:
+/// scheduling jitter delays an announcement and never brings it forward,
+/// so no configuration can put an unsolicited broadcast on the air more
+/// often than this. The duty ledger remains the airtime control; this is
+/// what keeps a mistyped interval from spending the whole budget on
+/// announcements before anything else can speak.
+pub const MIN_AUTO_ANNOUNCE_INTERVAL_S: u32 = 20 * 60;
+
+/// Longest accepted `PROP_ADVERT_INTERVAL` / `PROP_BEACON_INTERVAL`, in
+/// seconds.
+///
+/// A ceiling on how stale the mesh's picture of a node may get while that
+/// node still considers itself to be announcing. Past a day the schedule
+/// has stopped being one, and 0 says so more honestly.
+pub const MAX_AUTO_ANNOUNCE_INTERVAL_S: u32 = 24 * 60 * 60;
+
+/// Default `PROP_ADVERT_INTERVAL`, in seconds.
+pub const DEFAULT_ADVERT_INTERVAL_S: u32 = 4 * 60 * 60;
+
+/// Default `PROP_BEACON_INTERVAL`, in seconds.
+pub const DEFAULT_BEACON_INTERVAL_S: u32 = 60 * 60;

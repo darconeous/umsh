@@ -1145,6 +1145,16 @@ public protocol MobileMeshSessionProtocol: AnyObject, Sendable {
      */
     func advertiseIdentity(name: String?, timestamp: UInt32?) async throws
 
+    /**
+     * The same advertisement, sent because the phone's own interval came
+     * round rather than because someone asked for it.
+     *
+     * Reaches only direct neighbours. A repeated statement of who this
+     * phone is does not need to cross the mesh every time; introducing
+     * it, which is what the manual send does, is the case that does.
+     */
+    func advertiseIdentityScheduled(name: String?, timestamp: UInt32?) async throws
+
     func applyChatArchiveResult(requestId: UInt32, kind: MobileChatArchiveResultKind, payload: Data) throws
 
     /**
@@ -1277,6 +1287,15 @@ public protocol MobileMeshSessionProtocol: AnyObject, Sendable {
 
     func restoreChat(checkpoints: [MobileChatCheckpointRecord]) async throws
 
+    func sendAdvertisement(name: String?, timestamp: UInt32?, scheduled: Bool) async throws
+
+    /**
+     * Broadcast an empty beacon: no payload, so what it publishes is the
+     * path back to this phone rather than who this phone is. Costs a
+     * fraction of an advertisement.
+     */
+    func sendBeacon() async throws
+
     /**
      * Set whether this phone answers Identity Requests with its own
      * identity — the passive counterpart of [`discover_identities`]:
@@ -1407,6 +1426,30 @@ open func advertiseIdentity(name: String?, timestamp: UInt32?)async throws   {
         try  await uniffiRustCallAsync(
             rustFutureFunc: {
                 uniffi_umsh_mobile_core_fn_method_mobilemeshsession_advertise_identity(
+                        self.uniffiCloneHandle(),FfiConverterOptionString.lower(name),FfiConverterOptionUInt32.lower(timestamp)
+                )
+            },
+            pollFunc: ffi_umsh_mobile_core_rust_future_poll_void,
+            completeFunc: ffi_umsh_mobile_core_rust_future_complete_void,
+            freeFunc: ffi_umsh_mobile_core_rust_future_free_void,
+            liftFunc: { $0 },
+            errorHandler: FfiConverterTypeMobileMeshError_lift
+        )
+}
+
+    /**
+     * The same advertisement, sent because the phone's own interval came
+     * round rather than because someone asked for it.
+     *
+     * Reaches only direct neighbours. A repeated statement of who this
+     * phone is does not need to cross the mesh every time; introducing
+     * it, which is what the manual send does, is the case that does.
+     */
+open func advertiseIdentityScheduled(name: String?, timestamp: UInt32?)async throws   {
+    return
+        try  await uniffiRustCallAsync(
+            rustFutureFunc: {
+                uniffi_umsh_mobile_core_fn_method_mobilemeshsession_advertise_identity_scheduled(
                         self.uniffiCloneHandle(),FfiConverterOptionString.lower(name),FfiConverterOptionUInt32.lower(timestamp)
                 )
             },
@@ -1812,6 +1855,43 @@ open func restoreChat(checkpoints: [MobileChatCheckpointRecord])async throws   {
         )
 }
 
+open func sendAdvertisement(name: String?, timestamp: UInt32?, scheduled: Bool)async throws   {
+    return
+        try  await uniffiRustCallAsync(
+            rustFutureFunc: {
+                uniffi_umsh_mobile_core_fn_method_mobilemeshsession_send_advertisement(
+                        self.uniffiCloneHandle(),FfiConverterOptionString.lower(name),FfiConverterOptionUInt32.lower(timestamp),FfiConverterBool.lower(scheduled)
+                )
+            },
+            pollFunc: ffi_umsh_mobile_core_rust_future_poll_void,
+            completeFunc: ffi_umsh_mobile_core_rust_future_complete_void,
+            freeFunc: ffi_umsh_mobile_core_rust_future_free_void,
+            liftFunc: { $0 },
+            errorHandler: FfiConverterTypeMobileMeshError_lift
+        )
+}
+
+    /**
+     * Broadcast an empty beacon: no payload, so what it publishes is the
+     * path back to this phone rather than who this phone is. Costs a
+     * fraction of an advertisement.
+     */
+open func sendBeacon()async throws   {
+    return
+        try  await uniffiRustCallAsync(
+            rustFutureFunc: {
+                uniffi_umsh_mobile_core_fn_method_mobilemeshsession_send_beacon(
+                        self.uniffiCloneHandle()
+                )
+            },
+            pollFunc: ffi_umsh_mobile_core_rust_future_poll_void,
+            completeFunc: ffi_umsh_mobile_core_rust_future_complete_void,
+            freeFunc: ffi_umsh_mobile_core_rust_future_free_void,
+            liftFunc: { $0 },
+            errorHandler: FfiConverterTypeMobileMeshError_lift
+        )
+}
+
     /**
      * Set whether this phone answers Identity Requests with its own
      * identity — the passive counterpart of [`discover_identities`]:
@@ -2193,6 +2273,16 @@ public protocol MobileUlcpSessionProtocol: AnyObject, Sendable {
     func configure(settings: UlcpRadioSettingsRecord) throws  -> UlcpSessionUpdateRecord
 
     /**
+     * Apply and persist the advertisement policy, and nothing else.
+     *
+     * The tethered-radio counterpart of [`Self::configure_positioning`]:
+     * a phone changing how often its own radio announces itself has no
+     * reason to restate that radio's role, forwarding policy, or
+     * receiver settings to do it.
+     */
+    func configureAdvertising(advert: UlcpAdvertSettingsRecord?) throws  -> UlcpSessionUpdateRecord
+
+    /**
      * Apply, verify, and persist a complete configuration of the device's
      * own domain: its radio, the role it advertises, and whether and how
      * it forwards for the mesh on its own.
@@ -2535,6 +2625,24 @@ open func configure(settings: UlcpRadioSettingsRecord)throws  -> UlcpSessionUpda
     uniffi_umsh_mobile_core_fn_method_mobileulcpsession_configure(
             self.uniffiCloneHandle(),
         FfiConverterTypeUlcpRadioSettingsRecord_lower(settings),uniffiCallStatus
+    )
+})
+}
+
+    /**
+     * Apply and persist the advertisement policy, and nothing else.
+     *
+     * The tethered-radio counterpart of [`Self::configure_positioning`]:
+     * a phone changing how often its own radio announces itself has no
+     * reason to restate that radio's role, forwarding policy, or
+     * receiver settings to do it.
+     */
+open func configureAdvertising(advert: UlcpAdvertSettingsRecord?)throws  -> UlcpSessionUpdateRecord  {
+    return try  FfiConverterTypeUlcpSessionUpdateRecord_lift(try rustCallWithError(FfiConverterTypeMobileError_lift) {
+        uniffiCallStatus in
+    uniffi_umsh_mobile_core_fn_method_mobileulcpsession_configure_advertising(
+            self.uniffiCloneHandle(),
+        FfiConverterOptionTypeUlcpAdvertSettingsRecord.lower(advert),uniffiCallStatus
     )
 })
 }
@@ -5007,6 +5115,97 @@ public func FfiConverterTypeRouterHintRecord_lower(_ value: RouterHintRecord) ->
 
 
 /**
+ * What the device announces without being asked.
+ *
+ * Read and written as a whole, like [`UlcpGnssSettingsRecord`], because
+ * the two schedules are how much of the mesh's airtime this device
+ * claims and an operator sets that as one decision.
+ */
+public struct UlcpAdvertSettingsRecord: Equatable, Hashable {
+    /**
+     * `PROP_ADVERT_INTERVAL`: seconds between signed identity
+     * advertisements, 0 for none. An advertisement reaches only the
+     * device's own neighbours.
+     */
+    public var advertIntervalSeconds: UInt32
+    /**
+     * `PROP_BEACON_INTERVAL`: seconds between empty beacons, 0 for none.
+     * A beacon floods, collecting the path back to the device as it
+     * goes, and costs a fraction of an advertisement.
+     */
+    public var beaconIntervalSeconds: UInt32
+    /**
+     * `PROP_STARTUP_BEACON`: whether one beacon goes out at bring-up.
+     */
+    public var startupBeacon: Bool
+
+    // Default memberwise initializers are never public by default, so we
+    // declare one manually.
+    public init(
+        /**
+         * `PROP_ADVERT_INTERVAL`: seconds between signed identity
+         * advertisements, 0 for none. An advertisement reaches only the
+         * device's own neighbours.
+         */advertIntervalSeconds: UInt32,
+        /**
+         * `PROP_BEACON_INTERVAL`: seconds between empty beacons, 0 for none.
+         * A beacon floods, collecting the path back to the device as it
+         * goes, and costs a fraction of an advertisement.
+         */beaconIntervalSeconds: UInt32,
+        /**
+         * `PROP_STARTUP_BEACON`: whether one beacon goes out at bring-up.
+         */startupBeacon: Bool) {
+        self.advertIntervalSeconds = advertIntervalSeconds
+        self.beaconIntervalSeconds = beaconIntervalSeconds
+        self.startupBeacon = startupBeacon
+    }
+
+
+
+
+}
+
+#if compiler(>=6)
+extension UlcpAdvertSettingsRecord: Sendable {}
+#endif
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public struct FfiConverterTypeUlcpAdvertSettingsRecord: FfiConverterRustBuffer {
+    public static func read(from buf: inout (data: Data, offset: Data.Index)) throws -> UlcpAdvertSettingsRecord {
+        return
+            try UlcpAdvertSettingsRecord(
+                advertIntervalSeconds: FfiConverterUInt32.read(from: &buf),
+                beaconIntervalSeconds: FfiConverterUInt32.read(from: &buf),
+                startupBeacon: FfiConverterBool.read(from: &buf)
+        )
+    }
+
+    public static func write(_ value: UlcpAdvertSettingsRecord, into buf: inout [UInt8]) {
+        FfiConverterUInt32.write(value.advertIntervalSeconds, into: &buf)
+        FfiConverterUInt32.write(value.beaconIntervalSeconds, into: &buf)
+        FfiConverterBool.write(value.startupBeacon, into: &buf)
+    }
+}
+
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public func FfiConverterTypeUlcpAdvertSettingsRecord_lift(_ buf: RustBuffer) throws -> UlcpAdvertSettingsRecord {
+    return try FfiConverterTypeUlcpAdvertSettingsRecord.lift(buf)
+}
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public func FfiConverterTypeUlcpAdvertSettingsRecord_lower(_ value: UlcpAdvertSettingsRecord) -> RustBuffer {
+    return FfiConverterTypeUlcpAdvertSettingsRecord.lower(value)
+}
+
+
+/**
  * UI-relevant fields from a validated `PROP_BATTERY` value.
  */
 public struct UlcpBatteryRecord: Equatable, Hashable {
@@ -5135,6 +5334,11 @@ public struct UlcpDeviceConfigRecord: Equatable, Hashable {
      * `CAP_GNSS`.
      */
     public var gnss: UlcpGnssSettingsRecord?
+    /**
+     * The advertisement policy. Present exactly when the device
+     * advertises `CAP_ADVERT`.
+     */
+    public var advert: UlcpAdvertSettingsRecord?
 
     // Default memberwise initializers are never public by default, so we
     // declare one manually.
@@ -5172,7 +5376,11 @@ public struct UlcpDeviceConfigRecord: Equatable, Hashable {
         /**
          * The positioning policy. Present exactly when the device advertises
          * `CAP_GNSS`.
-         */gnss: UlcpGnssSettingsRecord?) {
+         */gnss: UlcpGnssSettingsRecord?,
+        /**
+         * The advertisement policy. Present exactly when the device
+         * advertises `CAP_ADVERT`.
+         */advert: UlcpAdvertSettingsRecord?) {
         self.radio = radio
         self.identRole = identRole
         self.identMobile = identMobile
@@ -5180,6 +5388,7 @@ public struct UlcpDeviceConfigRecord: Equatable, Hashable {
         self.repeater = repeater
         self.tzOffsetMin = tzOffsetMin
         self.gnss = gnss
+        self.advert = advert
     }
 
 
@@ -5204,7 +5413,8 @@ public struct FfiConverterTypeUlcpDeviceConfigRecord: FfiConverterRustBuffer {
                 devDiscoverable: FfiConverterOptionBool.read(from: &buf),
                 repeater: FfiConverterOptionTypeUlcpRepeaterSettingsRecord.read(from: &buf),
                 tzOffsetMin: FfiConverterOptionInt16.read(from: &buf),
-                gnss: FfiConverterOptionTypeUlcpGnssSettingsRecord.read(from: &buf)
+                gnss: FfiConverterOptionTypeUlcpGnssSettingsRecord.read(from: &buf),
+                advert: FfiConverterOptionTypeUlcpAdvertSettingsRecord.read(from: &buf)
         )
     }
 
@@ -5216,6 +5426,7 @@ public struct FfiConverterTypeUlcpDeviceConfigRecord: FfiConverterRustBuffer {
         FfiConverterOptionTypeUlcpRepeaterSettingsRecord.write(value.repeater, into: &buf)
         FfiConverterOptionInt16.write(value.tzOffsetMin, into: &buf)
         FfiConverterOptionTypeUlcpGnssSettingsRecord.write(value.gnss, into: &buf)
+        FfiConverterOptionTypeUlcpAdvertSettingsRecord.write(value.advert, into: &buf)
     }
 }
 
@@ -6248,6 +6459,11 @@ public struct UlcpSyncRecord: Equatable, Hashable {
      * properties exist and the device can locate itself.
      */
     public var supportsGnss: Bool
+    /**
+     * The device announces itself on a schedule of its own
+     * (`CAP_ADVERT`).
+     */
+    public var supportsAdvert: Bool
     public var phyEnabled: Bool
     public var frequencyKhz: UInt32
     public var transmitPowerDbm: Int8
@@ -6315,6 +6531,11 @@ public struct UlcpSyncRecord: Equatable, Hashable {
      */
     public var gnss: UlcpGnssSettingsRecord?
     /**
+     * The advertisement policy. Present when `supports_advert` and the
+     * device reported the whole of it.
+     */
+    public var advert: UlcpAdvertSettingsRecord?
+    /**
      * Capability-gated properties the device advertised but would not
      * report, in ascending order.
      *
@@ -6352,7 +6573,11 @@ public struct UlcpSyncRecord: Equatable, Hashable {
         /**
          * A GNSS receiver is fitted (`CAP_GNSS`), so the positioning
          * properties exist and the device can locate itself.
-         */supportsGnss: Bool, phyEnabled: Bool, frequencyKhz: UInt32, transmitPowerDbm: Int8, bandwidthHz: UInt32?, spreadingFactor: UInt8?, codingRateDenom: UInt8?, dutyCycleNow: UInt16?, dutyCycleLimit: UInt16?, saved: SavedSnapshotRecord?, queuedFrames: UInt16?, droppedFrames: UInt32?, filterCount: UInt32?, hostChannelCount: UInt32?, hostPeerCount: UInt32?, autoAck: Bool?,
+         */supportsGnss: Bool,
+        /**
+         * The device announces itself on a schedule of its own
+         * (`CAP_ADVERT`).
+         */supportsAdvert: Bool, phyEnabled: Bool, frequencyKhz: UInt32, transmitPowerDbm: Int8, bandwidthHz: UInt32?, spreadingFactor: UInt8?, codingRateDenom: UInt8?, dutyCycleNow: UInt16?, dutyCycleLimit: UInt16?, saved: SavedSnapshotRecord?, queuedFrames: UInt16?, droppedFrames: UInt32?, filterCount: UInt32?, hostChannelCount: UInt32?, hostPeerCount: UInt32?, autoAck: Bool?,
         /**
          * Present when `supports_repeater` and the device reported the whole
          * policy.
@@ -6397,6 +6622,10 @@ public struct UlcpSyncRecord: Equatable, Hashable {
          * device reported the whole of it.
          */gnss: UlcpGnssSettingsRecord?,
         /**
+         * The advertisement policy. Present when `supports_advert` and the
+         * device reported the whole of it.
+         */advert: UlcpAdvertSettingsRecord?,
+        /**
          * Capability-gated properties the device advertised but would not
          * report, in ascending order.
          *
@@ -6419,6 +6648,7 @@ public struct UlcpSyncRecord: Equatable, Hashable {
         self.supportsDeviceIdentity = supportsDeviceIdentity
         self.supportsTime = supportsTime
         self.supportsGnss = supportsGnss
+        self.supportsAdvert = supportsAdvert
         self.phyEnabled = phyEnabled
         self.frequencyKhz = frequencyKhz
         self.transmitPowerDbm = transmitPowerDbm
@@ -6442,6 +6672,7 @@ public struct UlcpSyncRecord: Equatable, Hashable {
         self.devDiscoverable = devDiscoverable
         self.tzOffsetMin = tzOffsetMin
         self.gnss = gnss
+        self.advert = advert
         self.unreadableProperties = unreadableProperties
     }
 
@@ -6474,6 +6705,7 @@ public struct FfiConverterTypeUlcpSyncRecord: FfiConverterRustBuffer {
                 supportsDeviceIdentity: FfiConverterBool.read(from: &buf),
                 supportsTime: FfiConverterBool.read(from: &buf),
                 supportsGnss: FfiConverterBool.read(from: &buf),
+                supportsAdvert: FfiConverterBool.read(from: &buf),
                 phyEnabled: FfiConverterBool.read(from: &buf),
                 frequencyKhz: FfiConverterUInt32.read(from: &buf),
                 transmitPowerDbm: FfiConverterInt8.read(from: &buf),
@@ -6497,6 +6729,7 @@ public struct FfiConverterTypeUlcpSyncRecord: FfiConverterRustBuffer {
                 devDiscoverable: FfiConverterOptionBool.read(from: &buf),
                 tzOffsetMin: FfiConverterOptionInt16.read(from: &buf),
                 gnss: FfiConverterOptionTypeUlcpGnssSettingsRecord.read(from: &buf),
+                advert: FfiConverterOptionTypeUlcpAdvertSettingsRecord.read(from: &buf),
                 unreadableProperties: FfiConverterSequenceUInt32.read(from: &buf)
         )
     }
@@ -6515,6 +6748,7 @@ public struct FfiConverterTypeUlcpSyncRecord: FfiConverterRustBuffer {
         FfiConverterBool.write(value.supportsDeviceIdentity, into: &buf)
         FfiConverterBool.write(value.supportsTime, into: &buf)
         FfiConverterBool.write(value.supportsGnss, into: &buf)
+        FfiConverterBool.write(value.supportsAdvert, into: &buf)
         FfiConverterBool.write(value.phyEnabled, into: &buf)
         FfiConverterUInt32.write(value.frequencyKhz, into: &buf)
         FfiConverterInt8.write(value.transmitPowerDbm, into: &buf)
@@ -6538,6 +6772,7 @@ public struct FfiConverterTypeUlcpSyncRecord: FfiConverterRustBuffer {
         FfiConverterOptionBool.write(value.devDiscoverable, into: &buf)
         FfiConverterOptionInt16.write(value.tzOffsetMin, into: &buf)
         FfiConverterOptionTypeUlcpGnssSettingsRecord.write(value.gnss, into: &buf)
+        FfiConverterOptionTypeUlcpAdvertSettingsRecord.write(value.advert, into: &buf)
         FfiConverterSequenceUInt32.write(value.unreadableProperties, into: &buf)
     }
 }
@@ -8766,6 +9001,30 @@ fileprivate struct FfiConverterOptionTypeNodeIdentityRecord: FfiConverterRustBuf
 #if swift(>=5.8)
 @_documentation(visibility: private)
 #endif
+fileprivate struct FfiConverterOptionTypeUlcpAdvertSettingsRecord: FfiConverterRustBuffer {
+    typealias SwiftType = UlcpAdvertSettingsRecord?
+
+    public static func write(_ value: SwiftType, into buf: inout [UInt8]) {
+        guard let value = value else {
+            writeInt(&buf, Int8(0))
+            return
+        }
+        writeInt(&buf, Int8(1))
+        FfiConverterTypeUlcpAdvertSettingsRecord.write(value, into: &buf)
+    }
+
+    public static func read(from buf: inout (data: Data, offset: Data.Index)) throws -> SwiftType {
+        switch try readInt(&buf) as Int8 {
+        case 0: return nil
+        case 1: return try FfiConverterTypeUlcpAdvertSettingsRecord.read(from: &buf)
+        default: throw UniffiInternalError.unexpectedOptionalTag
+        }
+    }
+}
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
 fileprivate struct FfiConverterOptionTypeUlcpBatteryRecord: FfiConverterRustBuffer {
     typealias SwiftType = UlcpBatteryRecord?
 
@@ -10127,6 +10386,9 @@ private let initializationResult: InitializationResult = {
     if (uniffi_umsh_mobile_core_checksum_method_mobilemeshsession_advertise_identity() != 53415) {
         return InitializationResult.apiChecksumMismatch
     }
+    if (uniffi_umsh_mobile_core_checksum_method_mobilemeshsession_advertise_identity_scheduled() != 33487) {
+        return InitializationResult.apiChecksumMismatch
+    }
     if (uniffi_umsh_mobile_core_checksum_method_mobilemeshsession_apply_chat_archive_result() != 29458) {
         return InitializationResult.apiChecksumMismatch
     }
@@ -10193,6 +10455,12 @@ private let initializationResult: InitializationResult = {
     if (uniffi_umsh_mobile_core_checksum_method_mobilemeshsession_restore_chat() != 28606) {
         return InitializationResult.apiChecksumMismatch
     }
+    if (uniffi_umsh_mobile_core_checksum_method_mobilemeshsession_send_advertisement() != 48655) {
+        return InitializationResult.apiChecksumMismatch
+    }
+    if (uniffi_umsh_mobile_core_checksum_method_mobilemeshsession_send_beacon() != 41898) {
+        return InitializationResult.apiChecksumMismatch
+    }
     if (uniffi_umsh_mobile_core_checksum_method_mobilemeshsession_set_chat_display_name() != 47050) {
         return InitializationResult.apiChecksumMismatch
     }
@@ -10227,6 +10495,9 @@ private let initializationResult: InitializationResult = {
         return InitializationResult.apiChecksumMismatch
     }
     if (uniffi_umsh_mobile_core_checksum_method_mobileulcpsession_configure() != 23539) {
+        return InitializationResult.apiChecksumMismatch
+    }
+    if (uniffi_umsh_mobile_core_checksum_method_mobileulcpsession_configure_advertising() != 47058) {
         return InitializationResult.apiChecksumMismatch
     }
     if (uniffi_umsh_mobile_core_checksum_method_mobileulcpsession_configure_device() != 26744) {

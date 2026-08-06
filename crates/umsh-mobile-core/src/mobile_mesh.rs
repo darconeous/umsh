@@ -51,6 +51,9 @@ use crate::{MobileCounterStore, MobileError, MobileIdentity};
 
 const MAX_FRAME_SIZE: usize = 256;
 const DEFAULT_FRAME_TIME_MS: u32 = 800;
+/// Flood-hop budget on a beacon. A beacon exists to publish a path, so it
+/// has to travel far enough for there to be a path worth publishing.
+const BEACON_FLOOD_HOPS: u8 = 5;
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq, uniffi::Error)]
 pub enum MobileMeshError {
@@ -398,6 +401,13 @@ enum WorkerCommand {
     Advertise {
         name: Option<String>,
         timestamp: Option<u32>,
+        /// Whether this is the phone's own schedule speaking rather than
+        /// someone tapping a button. A scheduled advertisement reaches
+        /// only the neighbours that can hear the phone directly.
+        scheduled: bool,
+        response: oneshot::Sender<Result<(), MobileMeshError>>,
+    },
+    Beacon {
         response: oneshot::Sender<Result<(), MobileMeshError>>,
     },
     SignIdentityBundle {
@@ -891,13 +901,50 @@ impl MobileMeshSession {
         name: Option<String>,
         timestamp: Option<u32>,
     ) -> Result<(), MobileMeshError> {
+        self.send_advertisement(name, timestamp, false).await
+    }
+
+    /// The same advertisement, sent because the phone's own interval came
+    /// round rather than because someone asked for it.
+    ///
+    /// Reaches only direct neighbours. A repeated statement of who this
+    /// phone is does not need to cross the mesh every time; introducing
+    /// it, which is what the manual send does, is the case that does.
+    pub async fn advertise_identity_scheduled(
+        &self,
+        name: Option<String>,
+        timestamp: Option<u32>,
+    ) -> Result<(), MobileMeshError> {
+        self.send_advertisement(name, timestamp, true).await
+    }
+
+    async fn send_advertisement(
+        &self,
+        name: Option<String>,
+        timestamp: Option<u32>,
+        scheduled: bool,
+    ) -> Result<(), MobileMeshError> {
         let (response, result) = oneshot::channel();
         self.commands
             .send(WorkerCommand::Advertise {
                 name,
                 timestamp,
+                scheduled,
                 response,
             })
+            .map_err(|_| MobileMeshError::SessionUnavailable)?;
+        result
+            .await
+            .map_err(|_| MobileMeshError::SessionUnavailable)?
+    }
+
+    /// Broadcast an empty beacon: no payload, so what it publishes is the
+    /// path back to this phone rather than who this phone is. Costs a
+    /// fraction of an advertisement.
+    pub async fn send_beacon(&self) -> Result<(), MobileMeshError> {
+        let (response, result) = oneshot::channel();
+        self.commands
+            .send(WorkerCommand::Beacon { response })
             .map_err(|_| MobileMeshError::SessionUnavailable)?;
         result
             .await
@@ -1963,7 +2010,7 @@ async fn run_worker(
                                 emit_ping_failure(&events, operation_id);
                             }
                         }
-                        Some(WorkerCommand::Advertise { name, timestamp, response }) => {
+                        Some(WorkerCommand::Advertise { name, timestamp, scheduled, response }) => {
                             let result = match build_signed_identity_bundle(
                                 &signer,
                                 name.as_deref(),
@@ -1975,22 +2022,49 @@ async fn run_worker(
                                     let mut frame = Vec::with_capacity(bundle.len() + 1);
                                     frame.push(PayloadType::NodeIdentity as u8);
                                     frame.extend_from_slice(&bundle);
-                                    // Full source so the detached signature
-                                    // is checkable; trace route so a listener
-                                    // learns a path back to this phone from
-                                    // the same frame.
-                                    node.send_all(
-                                        &frame,
-                                        &SendOptions::default()
-                                            .with_full_source()
-                                            .with_trace_route(),
-                                    )
-                                    .await
-                                    .map(|_| ())
-                                    .map_err(|_| MobileMeshError::SendFailed)
+                                    // Full source either way, so the detached
+                                    // signature is checkable.
+                                    let options = SendOptions::default().with_full_source();
+                                    let options = if scheduled {
+                                        // No flood budget and no trace: a
+                                        // restatement on a timer belongs to
+                                        // the neighbours who can hear it.
+                                        options.no_flood()
+                                    } else {
+                                        // Trace route so a listener learns a
+                                        // path back to this phone from the
+                                        // same frame.
+                                        options.with_trace_route()
+                                    };
+                                    node.send_all(&frame, &options)
+                                        .await
+                                        .map(|_| ())
+                                        .map_err(|_| MobileMeshError::SendFailed)
                                 }
                                 Err(error) => Err(error),
                             };
+                            if result.is_ok()
+                                && handle.service_counter_persistence().await.is_err()
+                            {
+                                let _ = response.send(Err(MobileMeshError::SendFailed));
+                                return;
+                            }
+                            let _ = response.send(result);
+                        }
+                        Some(WorkerCommand::Beacon { response }) => {
+                            // Trace route to learn the path, trace signal to
+                            // learn what that path costs.
+                            let result = node
+                                .send_all(
+                                    &[],
+                                    &SendOptions::default()
+                                        .with_flood_hops(BEACON_FLOOD_HOPS)
+                                        .with_trace_route()
+                                        .with_trace_signal(),
+                                )
+                                .await
+                                .map(|_| ())
+                                .map_err(|_| MobileMeshError::SendFailed);
                             if result.is_ok()
                                 && handle.service_counter_persistence().await.is_err()
                             {
@@ -3509,6 +3583,108 @@ mod tests {
                 break;
             }
             assert!(Instant::now() < deadline, "advertisement not received");
+            std::thread::sleep(Duration::from_millis(5));
+        }
+    }
+
+    /// A beacon carries no payload at all, so what reaches a listener is
+    /// presence and a trace — never an advertisement.
+    #[tokio::test]
+    async fn a_beacon_reports_presence_and_carries_nothing() {
+        let directory = tempfile::tempdir().unwrap();
+        let alice_identity = identity(31);
+        let bob_identity = identity(33);
+        let alice_store =
+            MobileCounterStore::new(directory.path().join("alice").display().to_string()).unwrap();
+        let bob_store =
+            MobileCounterStore::new(directory.path().join("bob").display().to_string()).unwrap();
+        let alice = MobileMeshSession::new(alice_identity.clone(), alice_store)
+            .await
+            .unwrap();
+        let bob = MobileMeshSession::new(bob_identity, bob_store)
+            .await
+            .unwrap();
+
+        alice.send_beacon().await.unwrap();
+
+        let deadline = Instant::now() + Duration::from_secs(10);
+        loop {
+            for frame in alice.poll_update().outbound_frames {
+                let header = umsh_core::PacketHeader::parse(&frame.data).unwrap();
+                assert!(header.is_beacon(), "a beacon carries no body");
+                let options =
+                    umsh_core::ParsedOptions::extract(&frame.data, header.options_range.clone())
+                        .unwrap();
+                assert!(options.trace_route.is_some());
+                assert!(
+                    options.trace_signal.is_some(),
+                    "the pair is what makes the trace worth collecting"
+                );
+                alice.complete_outbound_frame(frame.id, true).unwrap();
+                bob.receive(MobileMeshRxRecord {
+                    data: frame.data,
+                    rssi_dbm: Some(-50),
+                    lqi: None,
+                    snr_cb: None,
+                })
+                .unwrap();
+            }
+            let bob_update = bob.poll_update();
+            assert!(
+                bob_update.advertisement_events.is_empty(),
+                "an empty beacon identifies nobody"
+            );
+            if let Some(heard) = bob_update.peer_heard_events.into_iter().next() {
+                // Hint-only, not a full key: a beacon is the cheapest
+                // thing this phone can say, and the 29 bytes a key costs
+                // buy nothing a listener who already knows it needs.
+                assert_eq!(heard.peer_address, None);
+                assert_eq!(heard.node_hint, Some(hint_of(&alice_identity)));
+                assert!(!heard.source_authenticated);
+                break;
+            }
+            assert!(Instant::now() < deadline, "beacon not received");
+            std::thread::sleep(Duration::from_millis(5));
+        }
+    }
+
+    /// The two advertisement paths differ only in reach: a manual one
+    /// floods and traces so a stranger can find its way back, a scheduled
+    /// one restates to whoever can already hear this phone.
+    #[tokio::test]
+    async fn a_scheduled_advertisement_stays_with_the_neighbours() {
+        let directory = tempfile::tempdir().unwrap();
+        let local_identity = identity(41);
+        let store =
+            MobileCounterStore::new(directory.path().join("local").display().to_string()).unwrap();
+        let session = MobileMeshSession::new(local_identity, store).await.unwrap();
+
+        session
+            .advertise_identity_scheduled(Some("Phone".to_owned()), None)
+            .await
+            .unwrap();
+
+        let deadline = Instant::now() + Duration::from_secs(10);
+        loop {
+            let frames = session.poll_update().outbound_frames;
+            if let Some(frame) = frames.into_iter().next() {
+                let header = umsh_core::PacketHeader::parse(&frame.data).unwrap();
+                assert!(
+                    header.flood_hops.is_none(),
+                    "a scheduled advertisement is not flooded"
+                );
+                let options =
+                    umsh_core::ParsedOptions::extract(&frame.data, header.options_range.clone())
+                        .unwrap();
+                assert!(options.trace_route.is_none());
+                assert!(
+                    header.fcf.full_source(),
+                    "the detached signature is only checkable against the key"
+                );
+                session.complete_outbound_frame(frame.id, true).unwrap();
+                break;
+            }
+            assert!(Instant::now() < deadline, "advertisement never queued");
             std::thread::sleep(Duration::from_millis(5));
         }
     }

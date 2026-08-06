@@ -29,9 +29,9 @@
 //! holds it until the reboot that completes the wipe).
 //!
 //! Beacon requests arrive through [`BEACON_TRIGGER`] rather than from any
-//! specific button handler: the trigger is an input, because wake- and
-//! timer-driven advertisement policy (reserved device-domain properties
-//! 80–87) will feed the same path later.
+//! specific button handler: the trigger is an input, so a button press,
+//! bring-up, and the advertisement-policy timers in [`advert_loop`] all
+//! reach the radio by one path.
 //!
 //! # Board seam
 //!
@@ -46,10 +46,13 @@ extern crate alloc;
 use core::cell::RefCell;
 use core::sync::atomic::{AtomicBool, AtomicU16, AtomicU32, Ordering};
 
+use embassy_futures::select::{Either, select};
 use embassy_sync::blocking_mutex::Mutex as BlockingMutex;
 use embassy_sync::blocking_mutex::raw::CriticalSectionRawMutex;
 use embassy_sync::channel::Channel;
 use embassy_sync::signal::Signal;
+use embassy_sync::watch::Watch;
+use embassy_time::{Duration, Instant, Timer};
 use static_cell::StaticCell;
 
 use umsh_core::{ChannelKey, PublicKey};
@@ -57,7 +60,10 @@ use umsh_crypto::CryptoEngine;
 use umsh_crypto::software::{SoftwareAes, SoftwareIdentity, SoftwareSha256};
 use umsh_hal::{CounterStore, EmbassyClock, NoKeyValueStore};
 use umsh_mac::{MacCounters, MacHandle, OperatingPolicy, RepeaterConfig, SendOptions};
-use umsh_node::{Host, LocalNode, NodeCapabilities, NodeIdentityProfile, NodeRole};
+use umsh_node::{
+    Host, LocalNode, NodeCapabilities, NodeIdentityProfile, NodeRole, default_respond_policy,
+    never_respond_policy,
+};
 use umsh_sync::AsyncRefCell;
 use umsh_ulcp_device::{MAX_CHANNEL_KEYS, MAX_DEV_PEERS, MAX_DEVICE_NAME_LEN};
 
@@ -410,30 +416,28 @@ pub async fn dev_sync_loop<CS: CounterStore + 'static>(
             snapshot.ident_role,
         );
         let supported_regions = advertised_regions(&snapshot);
-        // `PROP_DEV_DISCOVERABLE` gates the Identity Request responder.
-        // Enable rebuilds the whole profile rather than patching it:
-        // disabling drops the profile with the responder, so a later
-        // opt-back-in must not depend on a name change to become
-        // correct.
+        // The profile is rebuilt from scratch on every snapshot rather than
+        // patched, so the position has to be put back with everything else —
+        // otherwise any device-domain write would quietly drop the advertised
+        // location until the node next moved far enough to earn a new one.
+        let mut profile = NodeIdentityProfile::new(PublicKey(node_key), role, capabilities);
+        profile.name = profile_name();
+        profile.supported_regions = supported_regions;
+        // Identity option 3 dates each payload as it is built, so the
+        // profile carries the clock rather than a reading. A device
+        // that does not know the time omits the option, which is the
+        // same answer the default gives.
+        profile.clock = umsh_hal::wall_clock::now;
+        #[cfg(feature = "gnss")]
+        crate::gnss::stamp_identity(&mut profile);
+        // `PROP_DEV_DISCOVERABLE` gates only the *responder*. The profile
+        // stays installed either way because unsolicited advertisements are
+        // built from it, and the spec keeps those governed by advertisement
+        // policy rather than by discoverability.
         if snapshot.discoverable {
-            let mut profile = NodeIdentityProfile::new(PublicKey(node_key), role, capabilities);
-            profile.name = profile_name();
-            profile.supported_regions = supported_regions;
-            // Identity option 3 dates each payload as it is built, so the
-            // profile carries the clock rather than a reading. A device
-            // that does not know the time omits the option, which is the
-            // same answer the default gives.
-            profile.clock = umsh_hal::wall_clock::now;
-            // The rebuild is from scratch, so the position has to be put
-            // back with everything else — otherwise toggling
-            // discoverability, or any other device-domain write, would
-            // quietly drop the advertised location until the node next
-            // moved far enough to earn a new one.
-            #[cfg(feature = "gnss")]
-            crate::gnss::stamp_identity(&mut profile);
-            node.enable_identity_responder_default(profile);
+            node.enable_identity_responder(profile, default_respond_policy);
         } else {
-            node.disable_identity_responder();
+            node.enable_identity_responder(profile, never_respond_policy);
         }
         if NODE_IS_REPEATER.swap(snapshot.repeater_enabled, Ordering::Relaxed)
             != snapshot.repeater_enabled
@@ -499,6 +503,15 @@ pub async fn dev_sync_loop<CS: CounterStore + 'static>(
         if !snapshot.peers.is_empty() {
             let _ = mac.load_all_persisted_rx_counters().await;
         }
+        // Published last, once the profile an advertisement is built from
+        // is installed and `NODE_ACTIVE` reflects this snapshot. That
+        // ordering is the whole reason `advert_loop` waits on this rather
+        // than starting its own clock at bring-up.
+        ADVERT_POLICY.sender().send(AdvertPolicy {
+            advert_interval_s: snapshot.advert_interval_s,
+            beacon_interval_s: snapshot.beacon_interval_s,
+            startup_beacon: snapshot.startup_beacon,
+        });
         debug_log(format_args!(
             "node dev-sync: {} channels, {} peers, identity-matches-live={}",
             snapshot.channel_keys.len(),
@@ -511,8 +524,7 @@ pub async fn dev_sync_loop<CS: CounterStore + 'static>(
 // ─── Beacon trigger input ────────────────────────────────────────────────────
 
 /// Why a beacon was requested. Carried through [`BEACON_TRIGGER`] so the
-/// send path never assumes a button: beacon-at-wake and periodic beacons
-/// (device-domain advertisement policy) are planned triggers.
+/// send path never assumes a button.
 #[derive(Clone, Copy)]
 pub enum BeaconTrigger {
     /// The board's primary-action button slot. Boards without one carry
@@ -524,6 +536,18 @@ pub enum BeaconTrigger {
     /// (with a targeted unicast reply) is a follow-up; the generator is
     /// kept for that pass.
     Advertise { nonce: Option<u32> },
+    /// Emit an advertisement on the device's own schedule
+    /// (`PROP_ADVERT_INTERVAL`) or at bring-up.
+    ///
+    /// Distinct from [`Button`](Self::Button) because it goes out with no
+    /// flood budget: a scheduled advertisement is a standing statement
+    /// rather than an introduction, so it reaches the neighbours that can
+    /// hear the device and stops, and repeating it across the mesh every
+    /// interval would cost far more airtime than it is worth.
+    AutoAdvertise,
+    /// Emit a beacon — a broadcast with no payload at all — which
+    /// announces a path back to the device rather than who it is.
+    Beacon,
 }
 
 /// Beacon requests into the node. On a boot that skipped node bring-up
@@ -538,6 +562,37 @@ pub static BEACON_TRIGGER: Channel<NodeMutex, BeaconTrigger, 2> = Channel::new()
 pub fn request_beacon(trigger: BeaconTrigger) {
     let _ = BEACON_TRIGGER.try_send(trigger);
 }
+
+/// Flood-hop budget on an unsolicited beacon.
+///
+/// A beacon exists to publish a path, so it has to travel far enough for
+/// there to be a path worth publishing.
+const BEACON_FLOOD_HOPS: u8 = 5;
+
+/// What the device announces without being asked, mirrored from the
+/// device domain's advertisement-policy properties.
+#[derive(Clone, Copy, PartialEq, Eq)]
+pub struct AdvertPolicy {
+    /// `PROP_ADVERT_INTERVAL`, in seconds. 0 disables.
+    pub advert_interval_s: u32,
+    /// `PROP_BEACON_INTERVAL`, in seconds. 0 disables.
+    pub beacon_interval_s: u32,
+    /// `PROP_STARTUP_BEACON`.
+    pub startup_beacon: bool,
+}
+
+/// The live advertisement policy.
+///
+/// A `Watch` for the same reasons [`crate::gnss`] uses one: [`advert_loop`]
+/// arrives after the first device-domain sync and must still see it, and it
+/// selects this against a timer, so the wait is dropped and rebuilt
+/// constantly and must not lose an edge it was cancelled on.
+///
+/// Publishing it from [`dev_sync_loop`] rather than from each board is
+/// what orders the startup beacon correctly: the first value can only
+/// appear once the identity profile has been built and `NODE_ACTIVE`
+/// settled, so nothing scheduled here can go out under a default profile.
+static ADVERT_POLICY: Watch<NodeMutex, AdvertPolicy, 1> = Watch::new();
 
 /// Board couplings the node cannot express itself.
 #[derive(Clone, Copy)]
@@ -607,18 +662,51 @@ pub async fn beacon_loop<CS: CounterStore + 'static>(
                 // node learns nothing from a bare packet, and until the
                 // node is reachable by discovery the button is the only
                 // way to introduce it. Costs airtime a beacon does not.
-                if send_advertisement(&node, &identity, None).await {
+                if send_advertisement(&node, &identity, None, AdvertReach::Mesh).await {
                     (hooks.beacon_confirm)();
                 }
             }
             BeaconTrigger::Advertise { nonce } => {
-                let accepted = send_advertisement(&node, &identity, nonce).await;
+                let accepted = send_advertisement(&node, &identity, nonce, AdvertReach::Mesh).await;
                 debug_log(format_args!(
                     "node advert: nonce={nonce:?} accepted={accepted}"
                 ));
             }
+            BeaconTrigger::AutoAdvertise => {
+                let accepted =
+                    send_advertisement(&node, &identity, None, AdvertReach::Neighbours).await;
+                debug_log(format_args!("node advert: scheduled accepted={accepted}"));
+            }
+            BeaconTrigger::Beacon => {
+                let accepted = send_beacon(&node).await;
+                debug_log(format_args!("node beacon: accepted={accepted}"));
+            }
         }
     }
+}
+
+/// How far a scheduled or solicited advertisement is allowed to travel.
+#[derive(Clone, Copy, PartialEq, Eq)]
+enum AdvertReach {
+    /// Flood across the mesh under the default budget.
+    Mesh,
+    /// Direct neighbours only — no flood hops, no source route.
+    Neighbours,
+}
+
+/// Broadcast an empty beacon: no payload, so nothing identifies the sender
+/// beyond its source address, and the whole packet is the trace the
+/// options collect on the way out.
+async fn send_beacon<CS: CounterStore + 'static>(node: &DeviceNode<CS>) -> bool {
+    use umsh_node::Transport as _;
+    // Trace route to learn the path, trace signal to learn what that path
+    // costs — the pair is what makes a beacon worth more than the fact
+    // that the sender is alive.
+    let options = SendOptions::default()
+        .with_flood_hops(BEACON_FLOOD_HOPS)
+        .with_trace_route()
+        .with_trace_signal();
+    node.send_all(&[], &options).await.is_ok()
 }
 
 /// Build, sign, and broadcast a solicited advertisement: the node
@@ -629,6 +717,7 @@ async fn send_advertisement<CS: CounterStore + 'static>(
     node: &DeviceNode<CS>,
     identity: &SoftwareIdentity,
     nonce: Option<u32>,
+    reach: AdvertReach,
 ) -> bool {
     use umsh_crypto::NodeIdentity as _;
     use umsh_node::Transport as _;
@@ -661,10 +750,145 @@ async fn send_advertisement<CS: CounterStore + 'static>(
     // checkable against the sender's public key, and a broadcast carries no
     // MIC to authenticate it otherwise. A hint-only advertisement is
     // unverifiable by anyone who does not already hold the key, which is
-    // exactly the audience an advertisement is for. Trace route for the same
-    // reason a beacon carries one.
-    let options = SendOptions::default().with_full_source().with_trace_route();
+    // exactly the audience an advertisement is for.
+    let options = SendOptions::default().with_full_source();
+    let options = match reach {
+        // Trace route for the same reason a beacon carries one.
+        AdvertReach::Mesh => options.with_trace_route(),
+        // No flood budget and no trace: a scheduled advertisement is
+        // already the largest packet this node originates, and the path
+        // back to it is what the beacon interval is for.
+        AdvertReach::Neighbours => options.no_flood(),
+    };
     node.send_all(&buf[..len], &options).await.is_ok()
+}
+
+/// Emits the device's unsolicited announcements: one beacon at bring-up
+/// under `PROP_STARTUP_BEACON`, then whatever `PROP_ADVERT_INTERVAL` and
+/// `PROP_BEACON_INTERVAL` ask for.
+///
+/// The two intervals run independently rather than sharing a period. They
+/// announce different things at very different costs — a beacon is a
+/// path, an advertisement is a signed identity — so a mesh normally wants
+/// the cheap one far more often than the expensive one, and one knob
+/// could not express that.
+///
+/// Every period is scattered by up to [`ANNOUNCE_JITTER_SHIFT`] of the
+/// interval. Two nodes configured alike and switched on together would
+/// otherwise stay in step indefinitely, colliding on the air every period
+/// and — worse — colliding again on each retry, since a shared schedule
+/// makes them contend from the same starting instant every time. CAD and
+/// backoff settle the individual collision; the scatter is what keeps the
+/// mesh from having to.
+///
+/// The startup beacon itself is not delayed. Devices do not power on in
+/// unison, so bring-up is already dispersed by whatever staggered them,
+/// and a node that has just come up is the one whose neighbours most need
+/// to hear from it.
+pub async fn advert_loop<CS: CounterStore + 'static>(mac: DeviceNodeHandle<CS>) {
+    let Some(mut policy_rx) = ADVERT_POLICY.receiver() else {
+        debug_assert!(false, "node: advert_loop is single-caller");
+        return;
+    };
+    // The first value doubles as the go-ahead: it cannot arrive until the
+    // device domain has been synced, which is what makes the startup
+    // beacon carry a real node rather than a half-built one.
+    let mut policy = policy_rx.changed().await;
+    if policy.startup_beacon {
+        request_beacon(BeaconTrigger::Beacon);
+    }
+
+    let mut next_advert = schedule(&mac, policy.advert_interval_s).await;
+    let mut next_beacon = schedule(&mac, policy.beacon_interval_s).await;
+    loop {
+        // A disabled interval has no deadline, so the arm is simply the
+        // other one; with both off there is nothing to wait for but a
+        // change of policy.
+        let due = match (next_advert, next_beacon) {
+            (Some(advert), Some(beacon)) => Some(advert.min(beacon)),
+            (deadline, None) | (None, deadline) => deadline,
+        };
+        match due {
+            Some(deadline) => {
+                match select(Timer::at(deadline), policy_rx.changed()).await {
+                    Either::First(()) => {
+                        // Both fire when they fall due together: one
+                        // announces the path, the other who is on it.
+                        if next_advert == Some(deadline) {
+                            request_beacon(BeaconTrigger::AutoAdvertise);
+                            next_advert = schedule(&mac, policy.advert_interval_s).await;
+                        }
+                        if next_beacon == Some(deadline) {
+                            request_beacon(BeaconTrigger::Beacon);
+                            next_beacon = schedule(&mac, policy.beacon_interval_s).await;
+                        }
+                    }
+                    Either::Second(updated) => {
+                        // A rewritten interval restarts from now. Keeping
+                        // the old deadline would make a host that shortens
+                        // the period wait out the longer one first.
+                        if updated.advert_interval_s != policy.advert_interval_s {
+                            next_advert = schedule(&mac, updated.advert_interval_s).await;
+                        }
+                        if updated.beacon_interval_s != policy.beacon_interval_s {
+                            next_beacon = schedule(&mac, updated.beacon_interval_s).await;
+                        }
+                        policy = updated;
+                    }
+                }
+            }
+            None => {
+                let updated = policy_rx.changed().await;
+                next_advert = schedule(&mac, updated.advert_interval_s).await;
+                next_beacon = schedule(&mac, updated.beacon_interval_s).await;
+                policy = updated;
+            }
+        }
+    }
+}
+
+/// How far past its interval a period may be scattered, as a right shift
+/// of the interval. Two is a quarter.
+const ANNOUNCE_JITTER_SHIFT: u32 = 2;
+
+/// When an interval next falls due, or `None` when it is switched off.
+///
+/// The wait is the whole interval plus a uniform draw between zero and a
+/// quarter of it. The scatter only ever *delays*, which is what lets
+/// `MIN_AUTO_ANNOUNCE_INTERVAL_S` be an absolute floor: no configuration
+/// and no draw can put an unsolicited announcement on the air sooner than
+/// the interval a host asked for.
+///
+/// The randomness is the MAC's ChaCha20 generator, seeded at boot from the
+/// board's hardware TRNG. The node has one generator and this borrows it
+/// rather than growing a second — a scheduling scatter does not need
+/// unpredictability, but a node that keeps a weak generator around for the
+/// undemanding cases eventually uses it for a demanding one.
+async fn schedule<CS: CounterStore + 'static>(
+    mac: &DeviceNodeHandle<CS>,
+    interval_s: u32,
+) -> Option<Instant> {
+    if interval_s == 0 {
+        return None;
+    }
+    let mut draw = [0u8; 4];
+    mac.fill_random(&mut draw).await;
+    let delay_s = jittered_delay_s(interval_s, u32::from_le_bytes(draw));
+    Some(Instant::now() + Duration::from_secs(delay_s))
+}
+
+/// The seconds to wait for one period, given one random draw.
+///
+/// Split from [`schedule`] so the arithmetic can be checked without an
+/// executor or a MAC: what matters about it is the bound it never
+/// crosses, and that is a property of the numbers alone.
+fn jittered_delay_s(interval_s: u32, draw: u32) -> u64 {
+    // Fixed-point scaling rather than a modulus: it lands in `0..=spread`
+    // for any spread, without a division or a rejection loop, and without
+    // the modulo bias a `%` would leave at the top of the range.
+    let spread = u64::from(interval_s >> ANNOUNCE_JITTER_SHIFT);
+    let jitter = (u64::from(draw) * (spread + 1)) >> 32;
+    u64::from(interval_s) + jitter
 }
 
 /// Keeps the Identity Request responder's profile name synced to the live
@@ -908,5 +1132,54 @@ pub async fn bring_up<CS: CounterStore + 'static>(
         node: node.clone(),
         mac: MacHandle::new(mac_cell),
         node_key,
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use umsh_ulcp::ids::{MAX_AUTO_ANNOUNCE_INTERVAL_S, MIN_AUTO_ANNOUNCE_INTERVAL_S};
+
+    /// The property the whole scheme rests on: scatter delays a period and
+    /// never brings it forward, so a configured interval is the shortest
+    /// gap between two unsolicited announcements no matter what is drawn.
+    /// Without this the protocol's floor would not be a floor.
+    #[test]
+    fn scatter_only_ever_delays_a_period() {
+        for interval in [
+            MIN_AUTO_ANNOUNCE_INTERVAL_S,
+            3_600,
+            14_400,
+            MAX_AUTO_ANNOUNCE_INTERVAL_S,
+        ] {
+            for draw in [0, 1, u32::MAX / 3, u32::MAX / 2, u32::MAX - 1, u32::MAX] {
+                let delay = jittered_delay_s(interval, draw);
+                assert!(
+                    delay >= u64::from(interval),
+                    "interval {interval} draw {draw} came early at {delay}"
+                );
+                assert!(
+                    delay <= u64::from(interval) + u64::from(interval / 4),
+                    "interval {interval} draw {draw} ran long at {delay}"
+                );
+            }
+        }
+    }
+
+    /// Both ends of the draw are reachable, so the scatter actually
+    /// spreads rather than clustering at one end of its range.
+    #[test]
+    fn the_scatter_spans_a_quarter_of_the_interval() {
+        let interval = 14_400;
+        assert_eq!(jittered_delay_s(interval, 0), u64::from(interval));
+        assert_eq!(
+            jittered_delay_s(interval, u32::MAX),
+            u64::from(interval) + u64::from(interval / 4)
+        );
+        // Midway through the draw is midway through the scatter.
+        assert_eq!(
+            jittered_delay_s(interval, u32::MAX / 2),
+            u64::from(interval) + u64::from(interval / 8)
+        );
     }
 }

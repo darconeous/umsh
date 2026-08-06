@@ -1,7 +1,7 @@
 //! This board's binding of the shared device node.
 //!
 //! The node itself — the MAC/`Host` pump, the device-domain sync, the
-//! beacon and identity paths — lives in
+//! beacon, advertisement, and identity paths — lives in
 //! [`umsh_ulcp_runtime::device_node`], shared with every other UMSH
 //! device firmware. What stays here is what cannot be shared: the
 //! counter-store type (backed by this board's flash), the board's UX
@@ -66,6 +66,11 @@ async fn node_beacon_task(
     hooks: node::NodeHooks,
 ) {
     node::beacon_loop(node_handle, identity, hooks).await
+}
+
+#[embassy_executor::task]
+async fn node_advert_task(mac: DeviceNodeHandle) {
+    node::advert_loop(mac).await
 }
 
 // ─── Bring-up ────────────────────────────────────────────────────────────────
@@ -147,4 +152,5 @@ pub async fn bring_up(
         )
         .unwrap(),
     );
+    spawner.spawn(node_advert_task(parts.mac).unwrap());
 }

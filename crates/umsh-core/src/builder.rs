@@ -453,6 +453,13 @@ macro_rules! impl_configuring_common {
                 self
             }
 
+            /// Add an empty trace-signal option. Pairs entry-for-entry with
+            /// trace route, so it is only meaningful alongside it.
+            pub fn trace_signal(mut self) -> Self {
+                self.push_option(OptionNumber::TraceSignal.as_u16(), &[]);
+                self
+            }
+
             /// Add a source-route option from a router-hint slice.
             pub fn source_route(mut self, hops: &[crate::RouterHint]) -> Self {
                 let mut encoded = [0u8; 30];

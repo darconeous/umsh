@@ -39,6 +39,9 @@ struct DeviceConfigView: View {
     @State private var gnssIdentUpdate: Bool
     @State private var gnssIdentPrecision: UInt8
     @State private var gnssTimeTrust: Bool
+    @State private var advertIntervalSeconds: UInt32
+    @State private var beaconIntervalSeconds: UInt32
+    @State private var startupBeacon: Bool
 
     @State private var isSaving = false
     @State private var alertRequestInFlight = false
@@ -98,6 +101,10 @@ struct DeviceConfigView: View {
         _gnssIdentUpdate = State(initialValue: gnss?.identUpdate ?? false)
         _gnssIdentPrecision = State(initialValue: gnss?.identPrecision ?? 5)
         _gnssTimeTrust = State(initialValue: gnss?.timeTrust ?? true)
+        let advert = sync.advert
+        _advertIntervalSeconds = State(initialValue: advert?.advertIntervalSeconds ?? 4 * 3600)
+        _beaconIntervalSeconds = State(initialValue: advert?.beaconIntervalSeconds ?? 3600)
+        _startupBeacon = State(initialValue: advert?.startupBeacon ?? true)
     }
 
     var body: some View {
@@ -166,6 +173,10 @@ struct DeviceConfigView: View {
 
             if showsPositioning {
                 positioningSection
+            }
+
+            if showsAnnouncements {
+                announcementsSection
             }
 
             if sync.supportsTime {
@@ -384,6 +395,41 @@ struct DeviceConfigView: View {
         }
     }
 
+    /// What the device says about itself unasked, on its own schedule.
+    @ViewBuilder
+    private var announcementsSection: some View {
+        Section {
+            Picker("Beacon", selection: $beaconIntervalSeconds) {
+                ForEach(beaconIntervalChoices, id: \.self) { seconds in
+                    Text(formattedAnnouncementInterval(seconds)).tag(seconds)
+                }
+            }
+            Picker("Identity", selection: $advertIntervalSeconds) {
+                ForEach(advertisementIntervalChoices, id: \.self) { seconds in
+                    Text(formattedAnnouncementInterval(seconds)).tag(seconds)
+                }
+            }
+            Toggle("Beacon at startup", isOn: $startupBeacon)
+        } header: {
+            Text("Announcements")
+        } footer: {
+            Text(announcementsFooter)
+        }
+    }
+
+    private var announcementsFooter: String {
+        var footer = beaconIntervalSeconds > 0
+            ? "A beacon carries no payload and collects the path back to this device as it travels, so it publishes a route for very little airtime."
+            : "The device sends no beacons, so nothing refreshes the mesh's route back to it."
+        footer += advertIntervalSeconds > 0
+            ? " An identity announcement carries this device's name, role, and capabilities, and reaches only the nodes that can hear it directly."
+            : " The device announces its identity only when asked."
+        if beaconIntervalSeconds > 0 || advertIntervalSeconds > 0 {
+            footer += " Each interval is a minimum: periods run a little longer at random, so devices on the same schedule do not all transmit at once."
+        }
+        return footer
+    }
+
     private var positioningFooter: String {
         var footer = gnssEnabled
             ? "The receiver is usually the largest continuous load on a battery-powered node."
@@ -595,6 +641,9 @@ struct DeviceConfigView: View {
     /// that reported only part of it has not reported it.
     private var showsPositioning: Bool { sync.supportsGnss && sync.gnss != nil }
 
+    /// Likewise the announcement schedule, which is three properties.
+    private var showsAnnouncements: Bool { sync.supportsAdvert && sync.advert != nil }
+
     /// The zone alone. A device that would not report it can still be
     /// given a clock, so only the picker hides — the section stays.
     private var showsTimeZone: Bool { sync.supportsTime && sync.tzOffsetMin != nil }
@@ -617,6 +666,9 @@ struct DeviceConfigView: View {
         if sync.supportsDeviceIdentity, !showsDiscoverable { settings.append("discoverability") }
         if sync.supportsRepeater, sync.repeater == nil { settings.append("its forwarding policy") }
         if sync.supportsGnss, !showsPositioning { settings.append("its positioning settings") }
+        if sync.supportsAdvert, !showsAnnouncements {
+            settings.append("what it announces on its own")
+        }
         if sync.supportsTime, !showsTimeZone { settings.append("its time zone") }
         return settings
     }
@@ -703,6 +755,13 @@ struct DeviceConfigView: View {
                     identUpdate: gnssIdentUpdate,
                     identPrecision: gnssIdentPrecision,
                     timeTrust: gnssTimeTrust
+                )
+                : nil,
+            advert: sync.supportsAdvert
+                ? UlcpAdvertSettingsRecord(
+                    advertIntervalSeconds: advertIntervalSeconds,
+                    beaconIntervalSeconds: beaconIntervalSeconds,
+                    startupBeacon: startupBeacon
                 )
                 : nil
         )

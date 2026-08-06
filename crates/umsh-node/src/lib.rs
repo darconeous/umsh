@@ -166,6 +166,7 @@ pub use host::{Host, HostError};
 pub use identity::{NodeCapabilities, NodeIdentityPayload, NodeRole};
 pub use identity_responder::{
     IdentityRequestContext, NodeIdentityProfile, RespondDecision, default_respond_policy,
+    never_respond_policy,
 };
 pub use mac::{MacBackend, MacBackendError};
 pub use mac_command::OwnedMacCommand;
@@ -1153,6 +1154,32 @@ mod tests {
         assert!(
             node.evaluate_identity_request(&packet, PublicKey([0x41; 32]), &options)
                 .is_none()
+        );
+    }
+
+    /// Advertisements are built from the installed profile, so a node that
+    /// has opted out of being discovered must still be able to read it back.
+    /// Silencing the responder with a policy rather than uninstalling it is
+    /// what keeps the two independent.
+    #[cfg(all(feature = "software-crypto", feature = "unsafe-advanced"))]
+    #[test]
+    fn never_respond_policy_keeps_the_profile_readable() {
+        let mac = FakeMac::new(Vec::new());
+        let node = responder_node(&mac);
+        let our_key = PublicKey([0x11; 32]);
+        node.enable_identity_responder(test_profile(our_key), crate::never_respond_policy);
+
+        let options = crate::mac_command::IdentityRequestBuilder::new().build();
+        let packet = test_unicast_packet(PublicKey([0x41; 32]), &[]);
+        assert!(
+            node.evaluate_identity_request(&packet, PublicKey([0x41; 32]), &options)
+                .is_none(),
+            "a silenced responder answers nothing"
+        );
+        assert_eq!(
+            node.with_identity_profile(|profile| profile.public_key),
+            Some(our_key),
+            "yet the profile an advertisement is built from is still there"
         );
     }
 

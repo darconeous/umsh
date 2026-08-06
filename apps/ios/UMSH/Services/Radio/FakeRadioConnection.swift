@@ -60,6 +60,14 @@ actor FakeRadioConnection: RadioConnection {
         throw RadioConnectionError.identityUnavailable
     }
 
+    func advertiseIdentityScheduled(name: String?) async throws {
+        throw RadioConnectionError.identityUnavailable
+    }
+
+    func sendBeacon() async throws {
+        throw RadioConnectionError.identityUnavailable
+    }
+
     func setPhoneDiscoverable(_ enabled: Bool, name: String?) async {}
 
     func requestIdentity(peerAddress: String) async throws {
@@ -355,6 +363,12 @@ actor FakeRadioConnection: RadioConnection {
         var updated = snapshot
         updated.provisioning?.gnss = gnss
         updated.provisioning?.timeZoneOffsetMinutes = timeZoneOffsetMinutes
+        publish(updated)
+    }
+
+    func configureAdvertising(_ advert: UlcpAdvertSettingsRecord?) async throws {
+        var updated = snapshot
+        updated.provisioning?.advert = advert
         publish(updated)
     }
 

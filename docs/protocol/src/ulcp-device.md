@@ -56,6 +56,11 @@ Code | Name               | Requires           | Grants
 42   | `CAP_ALERT`        | —                  | Some means of making the device physically conspicuous on demand, and `PROP_ALERT`
 44   | `CAP_TIME`         | —                  | A wall clock: `PROP_TIME`, `PROP_TZ_OFFSET`
 45   | `CAP_GNSS`         | `CAP_TIME`         | A GNSS receiver: `PROP_GNSS_ENABLED`, `PROP_GNSS_LOCATION`, `PROP_GNSS_ALTITUDE`, `PROP_GNSS_FIX`, `PROP_GNSS_PRECISION`, `PROP_GNSS_SATELLITES`, `PROP_GNSS_IDENT_UPDATE`, `PROP_GNSS_IDENT_PRECISION`, `PROP_GNSS_TIME_TRUST`
+46   | `CAP_ADVERT`       | `CAP_DEV_IDENTITY` | Announcing itself on a schedule of its own: `PROP_ADVERT_INTERVAL`, `PROP_BEACON_INTERVAL`, `PROP_STARTUP_BEACON`
+
+`CAP_ADVERT` requires `CAP_DEV_IDENTITY` because what a scheduled
+advertisement carries *is* the device identity, and a beacon's source
+address names it.
 
 `CAP_TIME` states that the device keeps a wall clock and nothing else. It
 says nothing about where the time comes from, how accurate it is, or how
@@ -71,9 +76,10 @@ time source for a clock it does not have.
 
 The device domain occupies property identifiers 64–95. Identifiers 70–95
 are the device-behavior range: 70–78 are the repeater policy and
-advertised node identity settings, 79 is the locate alert, 80–87 are
-reserved for periodic advertisement, and 88–95 are positioning — 88 the
-receiver switch, 89–93 the fix telemetry, 94–95 reserved.
+advertised node identity settings, 79 is the locate alert, 80–87 are the
+advertisement policy — 80–82 allocated, 83–87 reserved — and 88–95 are
+positioning: 88 the receiver switch, 89–93 the fix telemetry, 94–95
+reserved.
 
 A single-octet identifier is the scarce resource, so the positioning
 range holds the properties a host reads and the device announces
@@ -99,6 +105,9 @@ Id | Mnemonic                    | Commands                 | Description
 77 | `PROP_MAC_REPEATER_MIN_SNR` | Get, Set                 | Minimum received SNR for flood forwarding
 78 | `PROP_DEV_DISCOVERABLE`     | Get, Set                 | Whether the device identity answers Identity Requests
 79 | `PROP_ALERT`                | Get, Set, Is             | Locate alert state
+80 | `PROP_ADVERT_INTERVAL`      | Get, Set                 | Seconds between unsolicited advertisements
+81 | `PROP_BEACON_INTERVAL`      | Get, Set                 | Seconds between unsolicited beacons
+82 | `PROP_STARTUP_BEACON`       | Get, Set                 | Whether a beacon goes out at bring-up
 88 | `PROP_GNSS_ENABLED`         | Get, Set                 | Whether the GNSS receiver is powered
 89 | `PROP_GNSS_LOCATION`        | Get, Is                  | Position of the last fix
 90 | `PROP_GNSS_ALTITUDE`        | Get                      | Altitude of the last fix
@@ -575,9 +584,13 @@ being askable is most of what makes it administrable in the field. The
 property is the opt-out for deployments where the device should not
 volunteer its identity to arbitrary nearby askers.
 
-Affects only Identity Request responses. Unsolicited advertisements,
-beacons, and the device's participation in forwarding are governed
-elsewhere and are unchanged by this property.
+Affects only Identity Request responses. Unsolicited advertisements and
+beacons are governed by the [advertisement
+policy](#prop-advert-interval), and the device's participation in
+forwarding by `PROP_MAC_REPEATER_ENABLED`; neither is changed by this
+property. A device that is not discoverable still advertises on its own
+schedule if it has one — declining to answer strangers and declining to
+speak are different decisions.
 
 ### PROP 79: `PROP_ALERT` {#prop-alert}
 
@@ -636,6 +649,94 @@ A device returns to `ALERT_NONE` three ways:
    in `ALERT_LOCATE`; a few minutes is **RECOMMENDED**. Writing
    `ALERT_LOCATE` while it is already in effect succeeds and restarts the
    deadline, which is how a host holds an alert open for a longer search.
+
+### PROP 80: `PROP_ADVERT_INTERVAL` {#prop-advert-interval}
+
+* Type: Single-Value, Read-Write
+* Asynchronous Updates: No
+* Required: `CAP_ADVERT`
+* Value Type: UINT32
+* Post-Reset Value: 14400 (four hours), or restored from saved state
+
+Seconds between unsolicited [advertisements](beacons.md) — broadcasts
+carrying the device's signed [node identity](node-identity.md). Zero
+sends none.
+
+An automatic advertisement is sent with no flood hops and no source
+route, so it reaches the nodes that can hear the device directly and
+stops there. It is the largest frame the device originates, and what it
+carries is a standing statement rather than news; repeating that
+statement across the whole mesh every interval would spend airtime out
+of all proportion to what a distant listener learns. A device that wants
+to be findable further away publishes a path with
+[`PROP_BEACON_INTERVAL`](#prop-beacon-interval) instead, which costs a
+fraction as much.
+
+Because the advertisement is a signed broadcast, it carries its source
+in full-key form (§[Node Identity](node-identity.md)).
+
+A device **MUST** reject a non-zero interval outside 1200 seconds
+(twenty minutes) to 86400 seconds (twenty-four hours) with
+`STATUS_INVALID_ARGUMENT`. Neither bound is an airtime control — the
+[duty limit](ulcp-radio.md#prop-phy-duty-limit) is that — but the two
+ends fail differently. Below the floor a device spends the mesh's
+airtime restating what it already said; above the ceiling the schedule
+has stopped being one, and zero says so more plainly.
+
+The interval is a minimum rather than an exact cadence: each period is
+[scattered](beacons.md#announcing-on-a-schedule) later by a random
+fraction of it, never earlier, so the configured value is the shortest
+gap between two unsolicited announcements.
+
+Scheduled sends are subject to the same duty accounting and channel
+access as any other transmission: a send the device cannot make when it
+falls due is skipped, not queued.
+
+### PROP 81: `PROP_BEACON_INTERVAL` {#prop-beacon-interval}
+
+* Type: Single-Value, Read-Write
+* Asynchronous Updates: No
+* Required: `CAP_ADVERT`
+* Value Type: UINT32
+* Post-Reset Value: 3600 (one hour), or restored from saved state
+
+Seconds between unsolicited [beacons](beacons.md) — broadcasts with no
+payload at all. Zero sends none.
+
+A beacon is sent with a flood budget and both the [Trace
+Route](packet-options.md#trace-route-option-2) and [Trace
+Signal](packet-options.md#trace-signal-option-10) options, so what
+arrives at a distant node is a usable path back to the device and the
+signal quality of every hop along it. What it does not carry is any
+statement of who the device is: that is what an advertisement is for,
+and a listener that has never met this device learns only that something
+with a given source hint is reachable.
+
+The two intervals are independent because they announce different things
+at very different costs. A mesh usually wants the path refreshed often
+and the identity restated rarely.
+
+The accepted range, the per-period scatter, and the duty accounting are
+as described for [`PROP_ADVERT_INTERVAL`](#prop-advert-interval).
+
+### PROP 82: `PROP_STARTUP_BEACON` {#prop-startup-beacon}
+
+* Type: Single-Value, Read-Write
+* Asynchronous Updates: No
+* Required: `CAP_ADVERT`
+* Value Type: BOOL
+* Post-Reset Value: 1 (true), or restored from saved state
+
+Whether the device emits one beacon once it has come up. On by default:
+a node that has just restarted is exactly the node whose neighbours hold
+the stalest paths to it, and a single empty broadcast is the cheapest
+correction available.
+
+The beacon is emitted after the device's own configuration has been
+applied, so it reflects the device as it will actually run rather than
+as it booted. Unlike a scheduled period it is not scattered: devices do
+not restart in unison, so bring-up is already spread out by whatever
+staggered it.
 
 ### PROP 88: `PROP_GNSS_ENABLED` {#prop-gnss-enabled}
 

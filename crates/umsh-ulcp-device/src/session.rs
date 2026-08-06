@@ -13,7 +13,10 @@ use umsh_ulcp::alert::AlertState;
 use umsh_ulcp::battery::{self, BatteryStatus};
 use umsh_ulcp::frame::{self, Cmd, Frame, PropPayload, StreamPayload, TID_UNSOLICITED};
 use umsh_ulcp::gnss::{self, GnssSnapshot};
-use umsh_ulcp::ids::{self, cap, prop, stream};
+use umsh_ulcp::ids::{
+    self, DEFAULT_ADVERT_INTERVAL_S, DEFAULT_BEACON_INTERVAL_S, MAX_AUTO_ANNOUNCE_INTERVAL_S,
+    MIN_AUTO_ANNOUNCE_INTERVAL_S, cap, prop, stream,
+};
 use umsh_ulcp::items::{self, Filter, ItemError, REGION_CODE_LEN};
 use umsh_ulcp::meta::{self, BufferedRxMeta, RX_FLAG_ACKED, RX_FLAG_BUFFERED, RxMeta, TxMeta};
 use umsh_ulcp::pui;
@@ -452,6 +455,20 @@ struct DeviceDomain {
     /// infrastructure, and being askable is most of the point; the
     /// property is the opt-out.
     dev_discoverable: bool,
+    /// `PROP_ADVERT_INTERVAL`: seconds between unsolicited advertisements,
+    /// 0 for none. Independent of `dev_discoverable`, which governs only
+    /// whether the device answers when asked.
+    advert_interval_s: u32,
+    /// `PROP_BEACON_INTERVAL`: seconds between unsolicited beacons, 0 for
+    /// none. Separate from the advertisement interval because the two
+    /// announce different things at different costs — a beacon is a path,
+    /// an advertisement is an identity — and a mesh usually wants the
+    /// cheap one far more often than the expensive one.
+    beacon_interval_s: u32,
+    /// `PROP_STARTUP_BEACON`: whether one beacon goes out once the device
+    /// comes up. On by default: a node that has just rebooted is exactly
+    /// the node whose neighbours' cached paths are most likely stale.
+    startup_beacon: bool,
     /// `PROP_TZ_OFFSET`: minutes east of UTC. Configuration rather than
     /// measurement — where a device is meant to be is known even when the
     /// time is not — so unlike `PROP_TIME` it always has a value.
@@ -505,6 +522,9 @@ impl DeviceDomain {
             ident_role: None,
             ident_mobile: false,
             dev_discoverable: true,
+            advert_interval_s: DEFAULT_ADVERT_INTERVAL_S,
+            beacon_interval_s: DEFAULT_BEACON_INTERVAL_S,
+            startup_beacon: true,
             tz_offset_min: 0,
             gnss_enabled: config.gnss.is_some_and(|gnss| gnss.default_enabled),
             gnss_ident_update: false,
@@ -1380,6 +1400,9 @@ const SAVED_SCHEMA: &[SavedProperty] = &[
     saved(prop::MAC_REPEATER_MIN_RSSI, ApplyPhase::Config, false),
     saved(prop::MAC_REPEATER_MIN_SNR, ApplyPhase::Config, false),
     saved(prop::DEV_DISCOVERABLE, ApplyPhase::Config, false),
+    saved(prop::ADVERT_INTERVAL, ApplyPhase::Config, false),
+    saved(prop::BEACON_INTERVAL, ApplyPhase::Config, false),
+    saved(prop::STARTUP_BEACON, ApplyPhase::Config, false),
     saved(prop::GNSS_ENABLED, ApplyPhase::Config, false),
     saved(prop::PHY_DUTY_LIMIT, ApplyPhase::Config, false),
     saved(prop::TZ_OFFSET, ApplyPhase::Config, false),
@@ -1475,6 +1498,9 @@ struct SavedState {
     ident_role: Option<u8>,
     ident_mobile: bool,
     dev_discoverable: bool,
+    advert_interval_s: u32,
+    beacon_interval_s: u32,
+    startup_beacon: bool,
     tz_offset_min: i16,
     gnss_enabled: bool,
     gnss_ident_update: bool,
@@ -1505,6 +1531,9 @@ impl SavedState {
             ident_role: device.ident_role,
             ident_mobile: device.ident_mobile,
             dev_discoverable: device.dev_discoverable,
+            advert_interval_s: device.advert_interval_s,
+            beacon_interval_s: device.beacon_interval_s,
+            startup_beacon: device.startup_beacon,
             tz_offset_min: device.tz_offset_min,
             gnss_enabled: device.gnss_enabled,
             gnss_ident_update: device.gnss_ident_update,
@@ -1539,6 +1568,9 @@ impl SavedState {
             ident_role: None,
             ident_mobile: false,
             dev_discoverable: true,
+            advert_interval_s: DEFAULT_ADVERT_INTERVAL_S,
+            beacon_interval_s: DEFAULT_BEACON_INTERVAL_S,
+            startup_beacon: true,
             tz_offset_min: 0,
             // Must track `DeviceDomain::post_reset`: this is the baseline
             // a snapshot's absent options decode against, so a board that
@@ -1625,6 +1657,9 @@ impl SavedState {
                 None => Ok(()),
             },
             prop::DEV_DISCOVERABLE => encoder.put(number, &[self.dev_discoverable as u8]),
+            prop::ADVERT_INTERVAL => encoder.put(number, &self.advert_interval_s.to_le_bytes()),
+            prop::BEACON_INTERVAL => encoder.put(number, &self.beacon_interval_s.to_le_bytes()),
+            prop::STARTUP_BEACON => encoder.put(number, &[self.startup_beacon as u8]),
             prop::GNSS_ENABLED => encoder.put(number, &[self.gnss_enabled as u8]),
             prop::PHY_DUTY_LIMIT => encoder.put(number, &self.duty_limit.to_le_bytes()),
             prop::TZ_OFFSET => encoder.put(number, &self.tz_offset_min.to_le_bytes()),
@@ -1742,6 +1777,13 @@ impl SavedState {
                 self.repeater_min_snr = Some(parse_i8(value).map_err(invalid)?)
             }
             prop::DEV_DISCOVERABLE => self.dev_discoverable = parse_bool(value).map_err(invalid)?,
+            prop::ADVERT_INTERVAL => {
+                self.advert_interval_s = validate_announce_interval(value).map_err(invalid)?
+            }
+            prop::BEACON_INTERVAL => {
+                self.beacon_interval_s = validate_announce_interval(value).map_err(invalid)?
+            }
+            prop::STARTUP_BEACON => self.startup_beacon = parse_bool(value).map_err(invalid)?,
             prop::GNSS_ENABLED => self.gnss_enabled = parse_bool(value).map_err(invalid)?,
             prop::PHY_DUTY_LIMIT => self.duty_limit = parse_u16(value).map_err(invalid)?,
             prop::TZ_OFFSET => self.tz_offset_min = validate_tz_offset(value).map_err(invalid)?,
@@ -2137,6 +2179,13 @@ impl<A: AesProvider, S: Sha256Provider, const TX: usize> Session<A, S, TX> {
                         self.device.repeater_min_snr = saved.repeater_min_snr
                     }
                     prop::DEV_DISCOVERABLE => self.device.dev_discoverable = saved.dev_discoverable,
+                    prop::ADVERT_INTERVAL => {
+                        self.device.advert_interval_s = saved.advert_interval_s
+                    }
+                    prop::BEACON_INTERVAL => {
+                        self.device.beacon_interval_s = saved.beacon_interval_s
+                    }
+                    prop::STARTUP_BEACON => self.device.startup_beacon = saved.startup_beacon,
                     // The receiver comes back up exactly as it was left.
                     // Unlike the PHY this needs no identity check: where
                     // the device is is a fact about the hardware, not a
@@ -2783,6 +2832,23 @@ impl<A: AesProvider, S: Sha256Provider, const TX: usize> Session<A, S, TX> {
     /// Identity Requests.
     pub fn dev_discoverable(&self) -> bool {
         self.device.dev_discoverable
+    }
+
+    /// `PROP_ADVERT_INTERVAL`: seconds between unsolicited advertisements,
+    /// 0 for none.
+    pub fn advert_interval_s(&self) -> u32 {
+        self.device.advert_interval_s
+    }
+
+    /// `PROP_BEACON_INTERVAL`: seconds between unsolicited beacons, 0 for
+    /// none.
+    pub fn beacon_interval_s(&self) -> u32 {
+        self.device.beacon_interval_s
+    }
+
+    /// `PROP_STARTUP_BEACON`: whether one beacon goes out at bring-up.
+    pub fn startup_beacon(&self) -> bool {
+        self.device.startup_beacon
     }
 
     /// `PROP_TZ_OFFSET`: minutes east of UTC.
@@ -3567,6 +3633,24 @@ impl<A: AesProvider, S: Sha256Provider, const TX: usize> Session<A, S, TX> {
                 self.bump_dev_domain();
                 Ok(false)
             }
+            // Advertisement policy. Each interval stands alone: a mesh
+            // usually wants cheap beacons often and expensive identity
+            // advertisements rarely, and a single knob could not say that.
+            prop::ADVERT_INTERVAL => {
+                self.device.advert_interval_s = validate_announce_interval(value)?;
+                self.bump_dev_domain();
+                Ok(false)
+            }
+            prop::BEACON_INTERVAL => {
+                self.device.beacon_interval_s = validate_announce_interval(value)?;
+                self.bump_dev_domain();
+                Ok(false)
+            }
+            prop::STARTUP_BEACON => {
+                self.device.startup_beacon = parse_bool(value)?;
+                self.bump_dev_domain();
+                Ok(false)
+            }
             // The forwarding policy. All four are accepted while
             // forwarding is disabled and simply take effect when it is
             // enabled, so an administrator can stage a whole repeater
@@ -3974,6 +4058,9 @@ impl<A: AesProvider, S: Sha256Provider, const TX: usize> Session<A, S, TX> {
                 | prop::IDENT_ROLE
                 | prop::IDENT_MOBILE
                 | prop::DEV_DISCOVERABLE
+                | prop::ADVERT_INTERVAL
+                | prop::BEACON_INTERVAL
+                | prop::STARTUP_BEACON
                 | prop::PHY_DUTY_NOW
                 | prop::PHY_DUTY_LIMIT
                 | prop::BLE_PAIRING_PIN
@@ -4021,6 +4108,7 @@ impl<A: AesProvider, S: Sha256Provider, const TX: usize> Session<A, S, TX> {
                     cap::DEV_IDENTITY,
                     cap::REPEATER,
                     cap::IDENT,
+                    cap::ADVERT,
                 ] {
                     len += pui::encode(capability, &mut out[len..]).unwrap_or(0);
                 }
@@ -4101,6 +4189,12 @@ impl<A: AesProvider, S: Sha256Provider, const TX: usize> Session<A, S, TX> {
             }
             prop::DEV_DISCOVERABLE => {
                 out[0] = self.device.dev_discoverable as u8;
+                1
+            }
+            prop::ADVERT_INTERVAL => put(out, &self.device.advert_interval_s.to_le_bytes()),
+            prop::BEACON_INTERVAL => put(out, &self.device.beacon_interval_s.to_le_bytes()),
+            prop::STARTUP_BEACON => {
+                out[0] = self.device.startup_beacon as u8;
                 1
             }
             prop::ALERT if self.config.alert.is_some() => {
@@ -4429,6 +4523,24 @@ fn validate_ident_precision(value: &[u8]) -> Result<u8, Status> {
     Ok(precision)
 }
 
+/// `PROP_ADVERT_INTERVAL` / `PROP_BEACON_INTERVAL`, in seconds.
+///
+/// Zero is the off switch, so the bounds apply only above it. Neither is
+/// an airtime control — the duty ledger is — but the two ends fail
+/// differently: too short spends everyone's airtime on this device's
+/// announcements, while too long is a schedule that has stopped being
+/// one. Refusing both at the write is cheaper than discovering either on
+/// the air.
+fn validate_announce_interval(value: &[u8]) -> Result<u32, Status> {
+    let seconds = parse_u32(value)?;
+    if seconds != 0
+        && !(MIN_AUTO_ANNOUNCE_INTERVAL_S..=MAX_AUTO_ANNOUNCE_INTERVAL_S).contains(&seconds)
+    {
+        return Err(Status::INVALID_ARGUMENT);
+    }
+    Ok(seconds)
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -4637,6 +4749,7 @@ mod tests {
                 cap::DEV_IDENTITY,
                 cap::REPEATER,
                 cap::IDENT,
+                cap::ADVERT,
                 cap::BATTERY,
                 cap::ALERT,
                 cap::TIME,
@@ -4995,6 +5108,104 @@ mod tests {
             Session::new(timeless_config(), Status::RESET_POWER_ON, test_engine());
         assert!(!session.gnss_enabled());
         assert!(!session.gnss_ident_update());
+    }
+
+    #[test]
+    fn advertisement_policy_round_trips_and_survives_a_reboot() {
+        let mut session = test_session();
+        assert_eq!(
+            get(&mut session, prop::ADVERT_INTERVAL),
+            DEFAULT_ADVERT_INTERVAL_S.to_le_bytes()
+        );
+        assert_eq!(
+            get(&mut session, prop::BEACON_INTERVAL),
+            DEFAULT_BEACON_INTERVAL_S.to_le_bytes()
+        );
+        assert_eq!(get(&mut session, prop::STARTUP_BEACON), [1]);
+
+        let (emitted, effect) = set(&mut session, prop::ADVERT_INTERVAL, &7200u32.to_le_bytes());
+        assert!(effect.is_none());
+        let (_, key, value) = parse_prop_is(&emitted[0]);
+        assert_eq!(key, prop::ADVERT_INTERVAL);
+        assert_eq!(value, 7200u32.to_le_bytes());
+        // Zero is the off switch, and each interval moves alone.
+        set(&mut session, prop::BEACON_INTERVAL, &0u32.to_le_bytes());
+        set(&mut session, prop::STARTUP_BEACON, &[0]);
+        assert_eq!(session.advert_interval_s(), 7200);
+        assert_eq!(session.beacon_interval_s(), 0);
+        assert!(!session.startup_beacon());
+
+        save(&mut session);
+        let mut bytes = [0u8; SNAPSHOT_MAX];
+        let len = session.encode_snapshot(&mut bytes).unwrap();
+        let mut booted: TestSession =
+            Session::new(test_config(), Status::RESET_POWER_ON, test_engine());
+        booted.restore_at_boot(&bytes[..len]).unwrap();
+        assert_eq!(booted.advert_interval_s(), 7200);
+        assert_eq!(booted.beacon_interval_s(), 0);
+        assert!(!booted.startup_beacon());
+    }
+
+    /// The bounds exist to catch a mistyped interval, so they must not
+    /// also catch the one value that legitimately means "never", and both
+    /// ends themselves have to be reachable.
+    #[test]
+    fn announce_interval_holds_to_its_bounds_but_accepts_zero() {
+        let mut session = test_session();
+        for &key in &[prop::ADVERT_INTERVAL, prop::BEACON_INTERVAL] {
+            for rejected in [
+                MIN_AUTO_ANNOUNCE_INTERVAL_S - 1,
+                MAX_AUTO_ANNOUNCE_INTERVAL_S + 1,
+                u32::MAX,
+            ] {
+                let (emitted, _) = set(&mut session, key, &rejected.to_le_bytes());
+                expect_status(&emitted[0], 2, Status::INVALID_ARGUMENT);
+            }
+
+            for accepted in [
+                MIN_AUTO_ANNOUNCE_INTERVAL_S,
+                MAX_AUTO_ANNOUNCE_INTERVAL_S,
+                // Zero is the off switch, not a too-short interval.
+                0,
+            ] {
+                let (emitted, _) = set(&mut session, key, &accepted.to_le_bytes());
+                let (_, response_key, value) = parse_prop_is(&emitted[0]);
+                assert_eq!(response_key, key);
+                assert_eq!(value, accepted.to_le_bytes());
+            }
+        }
+    }
+
+    /// A snapshot written before these properties existed carries none of
+    /// them, and absence has to decode as the documented default rather
+    /// than as zero — otherwise an upgrade would silently switch every
+    /// automatic announcement off.
+    #[test]
+    fn a_snapshot_without_advertisement_options_restores_the_defaults() {
+        let mut session = test_session();
+        set(&mut session, prop::ADVERT_INTERVAL, &0u32.to_le_bytes());
+        set(&mut session, prop::STARTUP_BEACON, &[0]);
+        save(&mut session);
+        let mut bytes = [0u8; SNAPSHOT_MAX];
+        let len = session.encode_snapshot(&mut bytes).unwrap();
+
+        // Strip the three advertisement options, leaving what an older
+        // writer would have produced.
+        let stripped = strip_snapshot_options(
+            &bytes[..len],
+            &[
+                prop::ADVERT_INTERVAL,
+                prop::BEACON_INTERVAL,
+                prop::STARTUP_BEACON,
+            ],
+        );
+
+        let mut booted: TestSession =
+            Session::new(test_config(), Status::RESET_POWER_ON, test_engine());
+        booted.restore_at_boot(&stripped).unwrap();
+        assert_eq!(booted.advert_interval_s(), DEFAULT_ADVERT_INTERVAL_S);
+        assert_eq!(booted.beacon_interval_s(), DEFAULT_BEACON_INTERVAL_S);
+        assert!(booted.startup_beacon());
     }
 
     /// Role, mobility and forwarding are three independent dimensions.
@@ -6333,15 +6544,19 @@ mod tests {
             prop::MAC_REPEATER_DEFAULT_REGION,
             prop::MAC_REPEATER_MIN_RSSI,
             prop::MAC_REPEATER_MIN_SNR,
+            // Advertisement policy is likewise whole-value.
+            prop::ADVERT_INTERVAL,
+            prop::BEACON_INTERVAL,
+            prop::STARTUP_BEACON,
         ] {
             let len = frame::prop_insert(&mut buf, 1, known, &[0; 4]).unwrap();
             let (emitted, effect) = dispatch(&mut session, &buf[..len], 0);
             assert!(effect.is_none());
             expect_status(&emitted[0], 1, Status::INVALID_ARGUMENT);
         }
-        // An unknown property is not found; 80 opens the advertisement
-        // sub-range, which is reserved but not yet assigned.
-        for unknown in [80, 1_234] {
+        // An unknown property is not found; 83 is still-spare space in
+        // the advertisement sub-range.
+        for unknown in [83, 1_234] {
             let len = frame::prop_remove(&mut buf, 2, unknown, &[0; 4]).unwrap();
             let (emitted, effect) = dispatch(&mut session, &buf[..len], 0);
             assert!(effect.is_none());
@@ -7749,6 +7964,25 @@ mod tests {
     }
 
     // ─── CAP_SAVE gate ───────────────────────────────────────────────
+
+    /// Re-encode a snapshot with the named options left out, standing in
+    /// for one written by a firmware that did not have them yet.
+    fn strip_snapshot_options(bytes: &[u8], drop: &[u32]) -> Vec<u8> {
+        let (format, options) = bytes.split_first().unwrap();
+        let mut out = vec![0u8; bytes.len()];
+        out[0] = *format;
+        let mut encoder = OptionEncoder::new(&mut out[1..]);
+        for item in OptionDecoder::new(options) {
+            let (number, value) = item.unwrap();
+            if drop.contains(&u32::from(number)) {
+                continue;
+            }
+            encoder.put(number, value).unwrap();
+        }
+        let len = 1 + encoder.finish();
+        out.truncate(len);
+        out
+    }
 
     /// Issue CMD_SAVE and complete the durable write successfully.
     fn save(session: &mut TestSession) {

@@ -10,7 +10,10 @@ use umsh_ulcp::{
     gatt::{self, MAX_FRAME, Reassembler},
     gnss::{FixKind, GnssSnapshot},
     host::{PropertyNotification, PropertyNotificationKind, TidAllocator},
-    ids::{INTERFACE_TYPE, PROTOCOL_MAJOR_VERSION, PROTOCOL_MINOR_VERSION, cap, prop, saved},
+    ids::{
+        INTERFACE_TYPE, MAX_AUTO_ANNOUNCE_INTERVAL_S, MIN_AUTO_ANNOUNCE_INTERVAL_S,
+        PROTOCOL_MAJOR_VERSION, PROTOCOL_MINOR_VERSION, cap, prop, saved,
+    },
     items::{self, Filter},
     meta::{BufferedRxMeta, RX_FLAG_ACKED, RX_FLAG_BUFFERED},
     pui,
@@ -114,6 +117,25 @@ pub struct UlcpGnssSettingsRecord {
     /// wall clock. Cleared, a hand-set clock is safe from a jammed or
     /// spoofed sky; position reporting is unaffected.
     pub time_trust: bool,
+}
+
+/// What the device announces without being asked.
+///
+/// Read and written as a whole, like [`UlcpGnssSettingsRecord`], because
+/// the two schedules are how much of the mesh's airtime this device
+/// claims and an operator sets that as one decision.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, uniffi::Record)]
+pub struct UlcpAdvertSettingsRecord {
+    /// `PROP_ADVERT_INTERVAL`: seconds between signed identity
+    /// advertisements, 0 for none. An advertisement reaches only the
+    /// device's own neighbours.
+    pub advert_interval_seconds: u32,
+    /// `PROP_BEACON_INTERVAL`: seconds between empty beacons, 0 for none.
+    /// A beacon floods, collecting the path back to the device as it
+    /// goes, and costs a fraction of an advertisement.
+    pub beacon_interval_seconds: u32,
+    /// `PROP_STARTUP_BEACON`: whether one beacon goes out at bring-up.
+    pub startup_beacon: bool,
 }
 
 /// `PROP_GNSS_FIX`: what kind of position solution the receiver has.
@@ -221,6 +243,9 @@ pub struct UlcpSyncRecord {
     /// A GNSS receiver is fitted (`CAP_GNSS`), so the positioning
     /// properties exist and the device can locate itself.
     pub supports_gnss: bool,
+    /// The device announces itself on a schedule of its own
+    /// (`CAP_ADVERT`).
+    pub supports_advert: bool,
     pub phy_enabled: bool,
     pub frequency_khz: u32,
     pub transmit_power_dbm: i8,
@@ -271,6 +296,9 @@ pub struct UlcpSyncRecord {
     /// The positioning policy. Present when `supports_gnss` and the
     /// device reported the whole of it.
     pub gnss: Option<UlcpGnssSettingsRecord>,
+    /// The advertisement policy. Present when `supports_advert` and the
+    /// device reported the whole of it.
+    pub advert: Option<UlcpAdvertSettingsRecord>,
     /// Capability-gated properties the device advertised but would not
     /// report, in ascending order.
     ///
@@ -364,6 +392,9 @@ pub struct UlcpDeviceConfigRecord {
     /// The positioning policy. Present exactly when the device advertises
     /// `CAP_GNSS`.
     pub gnss: Option<UlcpGnssSettingsRecord>,
+    /// The advertisement policy. Present exactly when the device
+    /// advertises `CAP_ADVERT`.
+    pub advert: Option<UlcpAdvertSettingsRecord>,
 }
 
 /// Present one folded [`GnssSnapshot`] as the record Swift sees.
@@ -918,6 +949,34 @@ impl MobileUlcpSession {
         let values = positioning_values(gnss, tz_offset_min, &state)?;
         // A radio with neither capability has nothing here to configure,
         // which is a caller mistake rather than an empty success.
+        if values.is_empty() {
+            return Err(MobileError::UnsupportedCapability);
+        }
+
+        state.expected.clear();
+        state.configuration_queue = state.writable(values);
+        let mut outbound = Vec::new();
+        state.start_configuration(&mut outbound)?;
+        Ok(state.update(outbound))
+    }
+
+    /// Apply and persist the advertisement policy, and nothing else.
+    ///
+    /// The tethered-radio counterpart of [`Self::configure_positioning`]:
+    /// a phone changing how often its own radio announces itself has no
+    /// reason to restate that radio's role, forwarding policy, or
+    /// receiver settings to do it.
+    pub fn configure_advertising(
+        &self,
+        advert: Option<UlcpAdvertSettingsRecord>,
+    ) -> Result<UlcpSessionUpdateRecord, MobileError> {
+        let mut state = self.inner.lock().expect("ULCP session mutex poisoned");
+        if state.stage != SessionStage::Attached {
+            return Err(MobileError::InvalidUlcpFrame);
+        }
+        let values = advert_values(advert, &state)?;
+        // A radio that announces nothing on its own has nothing here to
+        // configure, which is a caller mistake rather than a no-op.
         if values.is_empty() {
             return Err(MobileError::UnsupportedCapability);
         }
@@ -2227,6 +2286,13 @@ pub fn ulcp_inspection_properties(capabilities: Vec<u8>) -> Result<Vec<u32>, Mob
             prop::GNSS_TIME_TRUST,
         ]);
     }
+    if has(cap::ADVERT) {
+        properties.extend([
+            prop::ADVERT_INTERVAL,
+            prop::BEACON_INTERVAL,
+            prop::STARTUP_BEACON,
+        ]);
+    }
     Ok(properties)
 }
 
@@ -2376,6 +2442,20 @@ pub fn inspect_ulcp_sync(
         })
     })();
 
+    // Also read whole: the two schedules together are how much airtime
+    // this device claims, which is one decision.
+    let announces = has(cap::ADVERT);
+    let advert_interval = expected.read(announces, prop::ADVERT_INTERVAL, decode_u32);
+    let beacon_interval = expected.read(announces, prop::BEACON_INTERVAL, decode_u32);
+    let startup_beacon = expected.read(announces, prop::STARTUP_BEACON, decode_bool);
+    let advert = (|| {
+        Some(UlcpAdvertSettingsRecord {
+            advert_interval_seconds: advert_interval?,
+            beacon_interval_seconds: beacon_interval?,
+            startup_beacon: startup_beacon?,
+        })
+    })();
+
     let mut unreadable_properties = expected.unreadable;
     unreadable_properties.sort_unstable();
 
@@ -2396,6 +2476,7 @@ pub fn inspect_ulcp_sync(
         supports_device_identity: has(cap::DEV_IDENTITY),
         supports_time: has(cap::TIME),
         supports_gnss: positioning,
+        supports_advert: announces,
         phy_enabled,
         frequency_khz,
         transmit_power_dbm,
@@ -2419,6 +2500,7 @@ pub fn inspect_ulcp_sync(
         dev_discoverable,
         tz_offset_min,
         gnss,
+        advert,
         unreadable_properties,
     })
 }
@@ -2427,7 +2509,7 @@ pub fn inspect_ulcp_sync(
 /// or part of a forwarding policy leaves the device running a configuration
 /// nobody asked for, so one unreadable member withdraws the whole group.
 /// These are the same groupings the reduction reports as a unit.
-const WHOLE_WRITE_GROUPS: [&[u32]; 3] = [
+const WHOLE_WRITE_GROUPS: [&[u32]; 4] = [
     &[prop::PHY_LORA_BW, prop::PHY_LORA_SF, prop::PHY_LORA_CR],
     &[
         prop::MAC_REPEATER_ENABLED,
@@ -2441,6 +2523,11 @@ const WHOLE_WRITE_GROUPS: [&[u32]; 3] = [
         prop::GNSS_IDENT_UPDATE,
         prop::GNSS_IDENT_PRECISION,
         prop::GNSS_TIME_TRUST,
+    ],
+    &[
+        prop::ADVERT_INTERVAL,
+        prop::BEACON_INTERVAL,
+        prop::STARTUP_BEACON,
     ],
 ];
 
@@ -2510,6 +2597,8 @@ fn validate_capability_dependencies(capabilities: &[u32]) -> Result<(), MobileEr
         // and nothing to advertise.
         || has(cap::REPEATER) && !has(cap::DEV_IDENTITY)
         || has(cap::IDENT) && !has(cap::DEV_IDENTITY)
+        // What a scheduled advertisement carries *is* the device identity.
+        || has(cap::ADVERT) && !has(cap::DEV_IDENTITY)
         // A receiver that cannot set a clock is still a receiver, but the
         // device also dates its fixes, so CAP_GNSS implies CAP_TIME.
         || has(cap::GNSS) && !has(cap::TIME)
@@ -2752,7 +2841,50 @@ fn validate_device_settings(
         configuration.tz_offset_min,
         state,
     )?);
+    values.extend(advert_values(configuration.advert, state)?);
     Ok(values)
+}
+
+/// Reduce the advertisement policy to property writes.
+///
+/// Split out for the same reason [`positioning_values`] is: a tethered
+/// phone changes these on its companion radio without commissioning it,
+/// and both paths have to produce the same writes.
+fn advert_values(
+    advert: Option<UlcpAdvertSettingsRecord>,
+    state: &UlcpSessionState,
+) -> Result<Vec<(u32, Vec<u8>)>, MobileError> {
+    let announces = state.has_capability(cap::ADVERT)?;
+    if advert.is_some() != announces {
+        return Err(MobileError::InvalidUlcpFrame);
+    }
+    let Some(advert) = advert else {
+        return Ok(Vec::new());
+    };
+    // The device refuses these too. Catching them here means an
+    // out-of-range interval fails before any of the group has been
+    // written, rather than leaving the schedule half-changed.
+    for interval in [
+        advert.advert_interval_seconds,
+        advert.beacon_interval_seconds,
+    ] {
+        if interval != 0
+            && !(MIN_AUTO_ANNOUNCE_INTERVAL_S..=MAX_AUTO_ANNOUNCE_INTERVAL_S).contains(&interval)
+        {
+            return Err(MobileError::InvalidUlcpFrame);
+        }
+    }
+    Ok(vec![
+        (
+            prop::ADVERT_INTERVAL,
+            advert.advert_interval_seconds.to_le_bytes().to_vec(),
+        ),
+        (
+            prop::BEACON_INTERVAL,
+            advert.beacon_interval_seconds.to_le_bytes().to_vec(),
+        ),
+        (prop::STARTUP_BEACON, vec![advert.startup_beacon as u8]),
+    ])
 }
 
 /// Reduce the zone and the positioning policy to property writes.
@@ -3870,6 +4002,7 @@ mod tests {
                 }),
                 tz_offset_min: None,
                 gnss: None,
+                advert: None,
             })
             .unwrap();
         let (written, _, _) = drive_configuration(&session, configured.outbound_frames);
@@ -3924,6 +4057,7 @@ mod tests {
                 }),
                 tz_offset_min: None,
                 gnss: None,
+                advert: None,
             })
             .unwrap();
         assert_eq!(configured.snapshot.phase, UlcpSessionPhase::Configuring);
@@ -4014,6 +4148,7 @@ mod tests {
                 repeater,
                 tz_offset_min: None,
                 gnss: None,
+                advert: None,
             })
         };
 
@@ -5145,6 +5280,137 @@ mod tests {
         )
     }
 
+    fn attach_advertising(session: &MobileUlcpSession) -> UlcpSessionUpdateRecord {
+        let mut capabilities = commissionable_capabilities();
+        capabilities.push(cap::ADVERT);
+        let begin = session.begin(Some(vec![0xAA; 32])).unwrap();
+        drive_reads(
+            session,
+            begin.outbound_frames,
+            move |property| match property {
+                prop::CAPS => (property, encoded_capabilities(&capabilities)),
+                prop::HOST_KEY => (property, vec![0xAA; 32]),
+                prop::ADVERT_INTERVAL => (property, 14_400u32.to_le_bytes().to_vec()),
+                prop::BEACON_INTERVAL => (property, 3_600u32.to_le_bytes().to_vec()),
+                prop::STARTUP_BEACON => (property, vec![1]),
+                _ => commissionable_value(property),
+            },
+        )
+    }
+
+    #[test]
+    fn advertisement_policy_folds_into_the_sync_record() {
+        let session = MobileUlcpSession::administrative();
+        let update = attach_advertising(&session);
+        let sync = update.snapshot.provisioning.expect("device described");
+
+        assert!(sync.supports_advert);
+        assert_eq!(
+            sync.advert,
+            Some(UlcpAdvertSettingsRecord {
+                advert_interval_seconds: 14_400,
+                beacon_interval_seconds: 3_600,
+                startup_beacon: true,
+            })
+        );
+    }
+
+    /// A device that never claimed `CAP_ADVERT` has no schedule to report,
+    /// and the read must not go looking for one.
+    #[test]
+    fn a_device_without_the_capability_reports_no_advertisement_policy() {
+        let session = MobileUlcpSession::administrative();
+        let update = attach_commissionable(&session, Some(vec![0xAA; 32]), vec![0xAA; 32]);
+        let sync = update.snapshot.provisioning.expect("device described");
+
+        assert!(!sync.supports_advert);
+        assert_eq!(sync.advert, None);
+    }
+
+    #[test]
+    fn configure_advertising_writes_the_whole_schedule() {
+        let session = MobileUlcpSession::administrative();
+        attach_advertising(&session);
+
+        let configured = session
+            .configure_advertising(Some(UlcpAdvertSettingsRecord {
+                advert_interval_seconds: 0,
+                beacon_interval_seconds: 1_800,
+                startup_beacon: false,
+            }))
+            .unwrap();
+        let (written, _, _) = drive_configuration(&session, configured.outbound_frames);
+        assert_eq!(
+            written.get(&prop::ADVERT_INTERVAL).map(Vec::as_slice),
+            Some(&0u32.to_le_bytes()[..])
+        );
+        assert_eq!(
+            written.get(&prop::BEACON_INTERVAL).map(Vec::as_slice),
+            Some(&1_800u32.to_le_bytes()[..])
+        );
+        assert_eq!(
+            written.get(&prop::STARTUP_BEACON).map(Vec::as_slice),
+            Some(&[0u8][..])
+        );
+    }
+
+    /// Catching the bounds here means an out-of-range interval fails
+    /// before any of the group is written, rather than half-changing the
+    /// schedule.
+    #[test]
+    fn an_advertisement_record_must_match_what_the_device_can_do() {
+        let session = MobileUlcpSession::administrative();
+        attach_advertising(&session);
+        let whole = UlcpAdvertSettingsRecord {
+            advert_interval_seconds: 14_400,
+            beacon_interval_seconds: 3_600,
+            startup_beacon: true,
+        };
+
+        // Absent on a device that advertises the capability.
+        assert_eq!(
+            session.configure_advertising(None),
+            Err(MobileError::InvalidUlcpFrame)
+        );
+        for out_of_range in [
+            MIN_AUTO_ANNOUNCE_INTERVAL_S - 1,
+            MAX_AUTO_ANNOUNCE_INTERVAL_S + 1,
+        ] {
+            assert_eq!(
+                session.configure_advertising(Some(UlcpAdvertSettingsRecord {
+                    beacon_interval_seconds: out_of_range,
+                    ..whole
+                })),
+                Err(MobileError::InvalidUlcpFrame)
+            );
+        }
+        // Zero is the off switch, not a too-short interval.
+        assert!(
+            session
+                .configure_advertising(Some(UlcpAdvertSettingsRecord {
+                    beacon_interval_seconds: 0,
+                    ..whole
+                }))
+                .is_ok()
+        );
+    }
+
+    /// Present on a device that does not advertise the capability is the
+    /// mirror-image mistake, and is refused the same way.
+    #[test]
+    fn an_advertisement_record_is_refused_without_the_capability() {
+        let session = MobileUlcpSession::administrative();
+        attach_commissionable(&session, Some(vec![0xAA; 32]), vec![0xAA; 32]);
+        assert_eq!(
+            session.configure_advertising(Some(UlcpAdvertSettingsRecord {
+                advert_interval_seconds: 14_400,
+                beacon_interval_seconds: 3_600,
+                startup_beacon: true,
+            })),
+            Err(MobileError::InvalidUlcpFrame)
+        );
+    }
+
     /// A five-byte fix — a ~38 m cell, the default identity precision.
     fn placed_location() -> NodeLocation {
         NodeLocation::from_e7(377_749_290, -1_224_194_160, 5)
@@ -5401,6 +5667,7 @@ mod tests {
                     ident_precision: 3,
                     time_trust: false,
                 }),
+                advert: None,
             })
             .unwrap();
         let (written, order, _) = drive_configuration(&session, configured.outbound_frames);
@@ -5541,6 +5808,7 @@ mod tests {
                 ident_precision: 5,
                 time_trust: true,
             }),
+            advert: None,
         };
 
         // Both gated fields are required on a device that has them.
@@ -5651,6 +5919,7 @@ mod tests {
                     ident_precision: 5,
                     time_trust: true,
                 }),
+                advert: None,
             })
             .unwrap();
         let (written, _, _) = drive_configuration(&session, configured.outbound_frames);

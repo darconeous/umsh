@@ -524,6 +524,7 @@ pub enum OptionNumber {
     StationCallsign,
     AckMic,
     MinSnr,
+    TraceSignal,
     Unknown(u16),
 }
 
@@ -540,6 +541,7 @@ impl OptionNumber {
             Self::StationCallsign => 7,
             Self::AckMic => 8,
             Self::MinSnr => 9,
+            Self::TraceSignal => 10,
             Self::Unknown(value) => value,
         }
     }
@@ -566,6 +568,7 @@ impl From<u16> for OptionNumber {
             7 => Self::StationCallsign,
             8 => Self::AckMic,
             9 => Self::MinSnr,
+            10 => Self::TraceSignal,
             11 => Self::RegionCode,
             other => Self::Unknown(other),
         }
@@ -899,6 +902,7 @@ pub struct ParsedOptions {
     pub region_code: Option<[u8; 2]>,
     pub source_route: Option<Range<usize>>,
     pub trace_route: Option<Range<usize>>,
+    pub trace_signal: Option<Range<usize>>,
     pub min_rssi: Option<i16>,
     pub min_snr: Option<i8>,
     pub route_retry: bool,
@@ -922,6 +926,7 @@ impl ParsedOptions {
                     parsed.region_code = Some([value[0], value[1]]);
                 }
                 OptionNumber::TraceRoute => parsed.trace_route = Some(value_range),
+                OptionNumber::TraceSignal => parsed.trace_signal = Some(value_range),
                 OptionNumber::SourceRoute => parsed.source_route = Some(value_range),
                 OptionNumber::RouteRetry if value.is_empty() => parsed.route_retry = true,
                 // Minimum RSSI (option 5): unsigned 1-byte value read as a
