@@ -24,9 +24,9 @@ struct MapNodeListCard: View {
     var messageActions: ChatMessageActions = .unavailable
 
     /// The row's own tap belongs to the map — it selects and focuses, which
-    /// is what a list beside a map is for. Details are a long press or a
-    /// swipe away rather than a control in the row, so nothing competes with
-    /// the distance for the trailing edge.
+    /// is what a list beside a map is for. Details are a press or a swipe
+    /// away rather than a control in the row, so nothing competes with the
+    /// distance for the trailing edge.
     @State private var nodePendingDetail: PeerSummary?
 
     var body: some View {
@@ -127,13 +127,25 @@ struct MapNodeListCard: View {
         .contentShape(.rect)
         .onTapGesture { selectedNodeID = node.id }
         // The tap belongs to the map — select and focus — so the deeper
-        // commitment gets the longer gesture. Copy and Show in Maps still
-        // exist; they moved with the rest of the detail onto the page this
-        // opens.
-        .onLongPressGesture { nodePendingDetail = node.peer }
+        // commitment gets the longer gesture, as a menu rather than a bare
+        // `onLongPressGesture`. The recognizer navigates on its own but draws
+        // nothing: no lift, no blur, no haptic, so a press that has not yet
+        // fired is indistinguishable from a row that ignores presses. The
+        // menu is the system's own press treatment, and it is the same one
+        // the coordinate readouts elsewhere in the app already use.
+        .coordinateActions(
+            latitude: node.latitude,
+            longitude: node.longitude,
+            fractionDigits: LocationPresentation.coordinateDecimals(cellMeters: node.cellMeters),
+            pinName: node.peer.displayName
+        ) {
+            Button("Details", systemImage: "info.circle") {
+                nodePendingDetail = node.peer
+            }
+        }
         // The tap gesture confers nothing on VoiceOver: without the trait
-        // the row reads as static text, and Details would exist only as a
-        // swipe nobody is told about.
+        // the row reads as static text, and Details would exist only in a
+        // menu and a swipe nobody is told about.
         .accessibilityElement(children: .combine)
         .accessibilityAddTraits(.isButton)
         .accessibilityAction { selectedNodeID = node.id }

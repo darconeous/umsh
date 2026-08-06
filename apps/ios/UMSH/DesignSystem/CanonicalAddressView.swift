@@ -69,12 +69,36 @@ extension View {
         fractionDigits: Int = 4,
         pinName: String? = nil
     ) -> some View {
+        coordinateActions(
+            latitude: latitude,
+            longitude: longitude,
+            fractionDigits: fractionDigits,
+            pinName: pinName
+        ) {
+            EmptyView()
+        }
+    }
+
+    /// The same, for a row that has business of its own in the menu.
+    ///
+    /// `ownActions` are listed first, because a row that offers something
+    /// beyond its coordinate is a row where the coordinate is the detail. A
+    /// second `contextMenu` would not do: the later one replaces the earlier
+    /// rather than adding to it, so anything wanting both has to say so here.
+    func coordinateActions<Own: View>(
+        latitude: Double,
+        longitude: Double,
+        fractionDigits: Int = 4,
+        pinName: String? = nil,
+        @ViewBuilder ownActions: () -> Own
+    ) -> some View {
         modifier(
             CoordinateActions(
                 latitude: latitude,
                 longitude: longitude,
                 fractionDigits: fractionDigits,
-                pinName: pinName
+                pinName: pinName,
+                ownActions: ownActions()
             )
         )
     }
@@ -84,11 +108,12 @@ extension View {
 ///
 /// A modifier rather than a free function because opening Maps needs the
 /// environment's URL opener.
-private struct CoordinateActions: ViewModifier {
+private struct CoordinateActions<Own: View>: ViewModifier {
     let latitude: Double
     let longitude: Double
     let fractionDigits: Int
     let pinName: String?
+    let ownActions: Own
 
     @Environment(\.openURL) private var openURL
 
@@ -111,7 +136,8 @@ private struct CoordinateActions: ViewModifier {
 
     func body(content: Content) -> some View {
         content.contextMenu {
-            Button("Copy", systemImage: "doc.on.doc") {
+            ownActions
+            Button("Copy coordinates", systemImage: "doc.on.doc") {
                 UIPasteboard.general.string = plain
             }
             if let mapsURL {
