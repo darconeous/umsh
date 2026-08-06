@@ -167,7 +167,12 @@ struct PeerDetailView: View {
                             Button {
                                 Task { await openConversation() }
                             } label: {
-                                Label("Message", systemImage: "message")
+                                // A Button's label inside a Form row is tinted
+                                // with the accent color, which the prominent
+                                // style overrides for the title but not for the
+                                // icon — leaving a blue glyph on a blue fill.
+                                Label("Message", systemImage: "message.fill")
+                                    .foregroundStyle(.white)
                                     .frame(maxWidth: .infinity)
                             }
                             .buttonStyle(.borderedProminent)
