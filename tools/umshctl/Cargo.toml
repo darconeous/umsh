@@ -24,9 +24,10 @@ rustyline = { version = "18", features = ["derive"] }
 shlex = "1"
 tokio = { version = "1", features = ["io-std", "io-util", "macros", "net", "rt", "signal", "sync", "time"] }
 tokio-serial = { version = "5", optional = true }
-# Two narrow uses: pointing stdout at stderr in the Wireshark extcap
-# capture path, where a print into an undrained pipe would park the
-# capture, and reading the host's UTC offset for `time tz sync`.
+# Two narrow uses: silencing both standard streams in the Wireshark
+# extcap capture path, where a print reaches either an undrained pipe or
+# Wireshark's error dialog, and reading the host's UTC offset for
+# `time tz sync`.
 libc = "0.2"
 
 [[bin]]

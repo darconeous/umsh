@@ -207,9 +207,14 @@ async fn capture(args: ExtcapArgs) -> Result<()> {
 
     // Everything downstream narrates the capture on stdout, which here is
     // a pipe Wireshark does not promise to drain — a full pipe would park
-    // the capture forever. Send it where Wireshark's extcap log will show
-    // it instead.
-    redirect_stdout_to_stderr()?;
+    // the capture forever. Stderr is no place for it either: Wireshark
+    // reads this process's stderr as a fault report and raises whatever
+    // accumulated there when the capture ends, so a progress line becomes
+    // an error dialog. Silence both.
+    //
+    // Declared before the radio so it is dropped after it: attaching,
+    // recovering, and detaching all narrate too.
+    let _silence = Silenced::install()?;
     output::set_color(false);
 
     // Before the radio: opening the FIFO and declaring the link type is
@@ -313,28 +318,86 @@ async fn resolve_target(args: &ExtcapArgs, prefs: &Prefs) -> Result<Target> {
         )
 }
 
-/// Point stdout at stderr for the rest of the process.
+/// Both standard streams pointed at `/dev/null`, with the originals
+/// restored when the value is dropped.
 ///
 /// A blunt instrument on purpose: it catches every print in the capture
 /// path, including ones added later, which auditing call sites would not.
+/// Restoring on the way out is what keeps the one message Wireshark's
+/// error dialog is good for — the fatal error `main` reports — from being
+/// silenced along with the narration.
 #[cfg(unix)]
-fn redirect_stdout_to_stderr() -> Result<()> {
-    use std::os::fd::AsRawFd;
+struct Silenced {
+    stdout: std::os::fd::OwnedFd,
+    stderr: std::os::fd::OwnedFd,
+}
 
-    std::io::stdout().flush().ok();
-    let stderr = std::io::stderr();
-    // SAFETY: both descriptors are open for the life of the process, and
-    // dup2 is defined for any two valid descriptors.
-    let result = unsafe { libc::dup2(stderr.as_raw_fd(), libc::STDOUT_FILENO) };
-    if result < 0 {
-        return Err(std::io::Error::last_os_error()).context("redirecting stdout");
+#[cfg(unix)]
+impl Silenced {
+    fn install() -> Result<Self> {
+        use std::os::fd::AsRawFd as _;
+
+        let null = std::fs::OpenOptions::new()
+            .write(true)
+            .open("/dev/null")
+            .context("opening /dev/null")?;
+        let stdout = duplicate(libc::STDOUT_FILENO)?;
+        let stderr = duplicate(libc::STDERR_FILENO)?;
+
+        std::io::stdout().flush().ok();
+        point_at(null.as_raw_fd(), libc::STDOUT_FILENO).context("silencing stdout")?;
+        point_at(null.as_raw_fd(), libc::STDERR_FILENO).context("silencing stderr")?;
+        Ok(Self { stdout, stderr })
+    }
+}
+
+#[cfg(unix)]
+impl Drop for Silenced {
+    fn drop(&mut self) {
+        use std::os::fd::AsRawFd as _;
+
+        // Anything still buffered was written while silenced and belongs
+        // to /dev/null, not to the stream being restored.
+        std::io::stdout().flush().ok();
+        let _ = point_at(self.stdout.as_raw_fd(), libc::STDOUT_FILENO);
+        let _ = point_at(self.stderr.as_raw_fd(), libc::STDERR_FILENO);
+    }
+}
+
+/// `dup`, as a descriptor that closes itself.
+#[cfg(unix)]
+fn duplicate(fd: std::os::fd::RawFd) -> Result<std::os::fd::OwnedFd> {
+    use std::os::fd::FromRawFd as _;
+
+    // SAFETY: `fd` is a standard stream, open for the life of the process.
+    let copy = unsafe { libc::dup(fd) };
+    if copy < 0 {
+        return Err(std::io::Error::last_os_error())
+            .with_context(|| format!("duplicating descriptor {fd}"));
+    }
+    // SAFETY: dup returned a fresh descriptor that nothing else owns.
+    Ok(unsafe { std::os::fd::OwnedFd::from_raw_fd(copy) })
+}
+
+/// Make `target` refer to whatever `source` refers to.
+#[cfg(unix)]
+fn point_at(source: std::os::fd::RawFd, target: std::os::fd::RawFd) -> std::io::Result<()> {
+    // SAFETY: both descriptors are valid, and dup2 is defined for any two
+    // valid descriptors.
+    if unsafe { libc::dup2(source, target) } < 0 {
+        return Err(std::io::Error::last_os_error());
     }
     Ok(())
 }
 
 #[cfg(not(unix))]
-fn redirect_stdout_to_stderr() -> Result<()> {
-    Ok(())
+struct Silenced;
+
+#[cfg(not(unix))]
+impl Silenced {
+    fn install() -> Result<Self> {
+        Ok(Self)
+    }
 }
 
 #[cfg(test)]
