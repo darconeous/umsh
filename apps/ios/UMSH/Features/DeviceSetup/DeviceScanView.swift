@@ -39,7 +39,7 @@ struct DeviceScanView: View {
                                 isBusy: controller.busyDevice == device.id
                             )
                         }
-                        .disabled(controller.isBusy || isBlocked(device))
+                        .disabled(controller.isBusy || controller.isCompanion(device))
                     }
                 }
             } header: {
@@ -48,7 +48,7 @@ struct DeviceScanView: View {
                 footer
             }
         }
-        .navigationTitle(controller.goal.scanTitle)
+        .navigationTitle("Choose a Device")
         .onAppear { controller.startDiscovery() }
         .onDisappear {
             // Connecting already stopped the scan; this covers backing out.
@@ -62,18 +62,10 @@ struct DeviceScanView: View {
         }
     }
 
-    /// The companion radio can be adopted (it already is this phone's) but
-    /// not administered over a second link.
-    private func isBlocked(_ device: DiscoveredRadio) -> Bool {
-        controller.isCompanion(device) && controller.goal != .companion
-    }
-
     @ViewBuilder
     private var footer: some View {
         if let problem = controller.problem {
             Text(problem).foregroundStyle(.red)
-        } else if controller.goal == .companion, controller.companionName != nil {
-            Text("Choosing a radio here replaces the one this phone uses now. Messages, keys, and queued traffic move to the new radio.")
         } else if controller.devices.contains(where: controller.isCompanion) {
             Text("This phone's own radio is listed but cannot be set up from here — use the companion radio screen for that. Devices drop out of the list a few seconds after they stop advertising.")
         } else {

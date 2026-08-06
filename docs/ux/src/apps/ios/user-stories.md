@@ -193,9 +193,12 @@ my phone without giving up the radio my phone is already using.
 Acceptance criteria:
 
 - Device setup is reachable from Settings and runs as a foreground sheet.
+- The sheet asks what the device is for before it scans for one.
 - The companion radio stays connected and usable throughout, and setup never
   redirects the phone's traffic to the device being configured.
 - The scan list marks the phone's own radio and does not offer it for setup.
+- Devices are listed in the order they were first heard and are not reordered
+  when a name arrives later; insertions and removals are animated.
 - The device's host ownership — not configured, this phone, or another host — is
   stated as information; a device belonging to another phone remains editable
   and its host domain is untouched.
@@ -234,21 +237,28 @@ Acceptance criteria:
 - Applying writes the whole policy as one operation, saves it on the device, and
   reads it back; a value the device reports differently is named.
 
-### IOS-RAD-08: Adopt a configured device as this phone's radio
+### IOS-RAD-08: Set up a tracker without answering for the whole device
 
-**As a user who has just set up a device,** I want to start using it as my
-companion radio without pairing it a second time.
+**As someone taking a new board out of its box,** I want to say what it is for
+and be asked only about the things I am the one who knows.
 
 Acceptance criteria:
 
-- Adoption is available from the editor and as a goal of its own.
-- The setup session ends and releases the device before the companion
-  connection takes it.
-- The Bluetooth pairing established during setup is reused.
-- When a radio is already bound, the app names it and asks before replacing it,
-  and states that the replaced radio keeps its own settings and pairing.
-- After adoption the device is subject to the ordinary companion rules,
-  including host identity provisioning.
+- Choosing a setup goal presents a short sheet, not the full editor.
+- Everything the role settles — forwarding, the radio switch, the advertised
+  role, mobility, the time zone, the clock — is decided without being recited
+  back.
+- The radio profile is the exception and is shown, because a node on the wrong
+  profile is not broken, it is alone. It is copied from the phone's own radio,
+  and asked for when there is no radio to copy from.
+- The sheet carries no live readings: no fix, no coordinates, no battery, no
+  find-this-device.
+- A device that cannot serve the goal is refused when it attaches, with the
+  reason, rather than offered a sheet that would not work.
+- A device that merely cannot do part of it is set up anyway, and the sheet
+  says which part.
+- Applying reports one result for the whole write, and offers to save the device
+  to Peers, to review every setting, or to set up another device.
 
 ## Import, discovery, and saved nodes
 

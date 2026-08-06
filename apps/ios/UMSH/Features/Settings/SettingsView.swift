@@ -154,7 +154,7 @@ struct SettingsView: View {
             } header: {
                 Text("Devices")
             } footer: {
-                Text("Configure any nearby UMSH device — a repeater, a tracker, or a radio for another phone — without disturbing this phone's own connection.")
+                Text("Configure any nearby UMSH device — a repeater or a tracker — without disturbing this phone's own connection.")
             }
 
             #if DEBUG
@@ -186,7 +186,10 @@ struct SettingsView: View {
                 hostIdentity: identity?.publicIdentity,
                 companionIdentifier: radioSnapshot.localIdentifier,
                 companionName: radioSnapshot.name,
-                promoteRadio: selectRadio,
+                companionProfile: CompanionRadioProfile(
+                    radioSnapshot.provisioning,
+                    name: radioSnapshot.name
+                ),
                 saveDevicePeer: saveDevicePeer,
                 isPeerSaved: isPeerSaved,
                 peerActions: peerActions

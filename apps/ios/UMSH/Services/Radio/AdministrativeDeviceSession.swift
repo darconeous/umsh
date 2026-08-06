@@ -80,6 +80,12 @@ final class AdministrativeDeviceSession: NSObject, @unchecked Sendable {
     /// pairing prompt in front of the user, and someone reading a PIN off
     /// an e-paper display is not in a hurry.
     private static let attachTimeoutSeconds: TimeInterval = 60
+    /// Budget for one post-attach exchange. No user gesture is involved, the
+    /// link is already up, and the device has already proved it answers — so
+    /// this is short. It exists because a wedged device holds the link open
+    /// while answering nothing, and CoreBluetooth has no failure to report;
+    /// without a deadline the caller waits forever.
+    private static let operationTimeoutSeconds: TimeInterval = 20
     /// How long a device may go unheard before it leaves the scan list.
     private static let discoveryStaleSeconds: UInt64 = 6
 
@@ -88,7 +94,16 @@ final class AdministrativeDeviceSession: NSObject, @unchecked Sendable {
         var name: String?
         var rssiDBm: Int
         var lastSeen: DispatchTime
+        /// When this device was first heard, as a sequence number. Assigned
+        /// once and never revised, which is the whole point: it is the only
+        /// property of a discovered device that cannot change while the user
+        /// is looking at the list.
+        let discoveryOrder: UInt64
     }
+
+    /// Source of `DiscoveredEntry.discoveryOrder`. Reset with the list, so a
+    /// fresh scan numbers from zero rather than carrying on from the last.
+    private var nextDiscoveryOrder: UInt64 = 0
 
     private let queue = DispatchQueue(
         label: "com.umsh.radio.administrative",
@@ -117,7 +132,12 @@ final class AdministrativeDeviceSession: NSObject, @unchecked Sendable {
     private var pendingWrites: [Data] = []
     private var writeInProgress = false
 
-    private var attachWaiter: CheckedContinuation<Void, any Error>?
+    /// The caller awaiting the attach. Like `operationWaiter` below it resumes
+    /// *with* the configuration the device reported, rather than leaving the
+    /// caller to look for it on `snapshots()`: that stream is drained by a
+    /// separate task with no ordering against this continuation, so a caller
+    /// reading the mirror could still see the state from before the attach.
+    private var attachWaiter: CheckedContinuation<UlcpSyncRecord?, any Error>?
     private var attachGeneration = UUID()
     /// The caller awaiting a post-attach exchange — a configuration write or
     /// a re-read. Both complete on the same condition (the session is back
@@ -130,6 +150,7 @@ final class AdministrativeDeviceSession: NSObject, @unchecked Sendable {
     /// comparing what it wrote against a snapshot could be comparing against
     /// the previous one.
     private var operationWaiter: CheckedContinuation<UlcpSyncRecord?, any Error>?
+    private var operationGeneration = UUID()
 
     /// A flow abandoned without calling `disconnect()` — the sheet is
     /// dismissed, the controller goes away — must not leave the device
@@ -222,6 +243,7 @@ final class AdministrativeDeviceSession: NSObject, @unchecked Sendable {
     private func startDiscoveryOnQueue() {
         discoveryRequested = true
         discovered.removeAll()
+        nextDiscoveryOrder = 0
         yieldDiscoveryList()
         guard let central else {
             central = CBCentralManager(delegate: self, queue: queue)
@@ -252,6 +274,7 @@ final class AdministrativeDeviceSession: NSObject, @unchecked Sendable {
         discoveryRequested = false
         discoveryPruneGeneration = UUID()
         discovered.removeAll()
+        nextDiscoveryOrder = 0
         yieldDiscoveryList()
         if wasScanning { central?.stopScan() }
     }
@@ -263,12 +286,17 @@ final class AdministrativeDeviceSession: NSObject, @unchecked Sendable {
     ) {
         let advertisedName = advertisementData[CBAdvertisementDataLocalNameKey] as? String
         var entry = discovered[peripheral.identifier]
-            ?? DiscoveredEntry(
+        if entry == nil {
+            entry = DiscoveredEntry(
                 peripheral: peripheral,
                 name: advertisedName ?? peripheral.name,
                 rssiDBm: rssi.intValue,
-                lastSeen: .now()
+                lastSeen: .now(),
+                discoveryOrder: nextDiscoveryOrder
             )
+            nextDiscoveryOrder += 1
+        }
+        guard var entry else { return }
         entry.peripheral = peripheral
         if let advertisedName { entry.name = advertisedName }
         else if entry.name == nil { entry.name = peripheral.name }
@@ -280,7 +308,18 @@ final class AdministrativeDeviceSession: NSObject, @unchecked Sendable {
     }
 
     private func currentDiscoveryList() -> [DiscoveredRadio] {
+        // Arrival order, and nothing else. Every other property of a
+        // discovered device changes while the list is on screen — RSSI with
+        // every advertisement, and the name when one finally arrives, since a
+        // device is first heard with only whatever `CBPeripheral.name` gives
+        // us. Sorting on any of them moves rows under the user's finger.
+        //
+        // The companion radio is deliberately *not* pinned to the top here,
+        // unlike companion discovery: it cannot be set up from this list, and
+        // a list that opens with an untappable row is worse than one that
+        // does not.
         discovered.values
+            .sorted { $0.discoveryOrder < $1.discoveryOrder }
             .map { entry in
                 DiscoveredRadio(
                     id: entry.peripheral.identifier,
@@ -288,17 +327,6 @@ final class AdministrativeDeviceSession: NSObject, @unchecked Sendable {
                     rssiDBm: entry.rssiDBm,
                     isRemembered: entry.peripheral.identifier == companionIdentifier
                 )
-            }
-            // Same ordering rule as companion discovery, and for the same
-            // reason: RSSI is shown per row but never sorted on, so a device
-            // does not migrate under the user's finger on a busy bench.
-            .sorted { lhs, rhs in
-                if lhs.isRemembered != rhs.isRemembered { return lhs.isRemembered }
-                if (lhs.name == nil) != (rhs.name == nil) { return rhs.name == nil }
-                if let lhsName = lhs.name, let rhsName = rhs.name, lhsName != rhsName {
-                    return lhsName.localizedCaseInsensitiveCompare(rhsName) == .orderedAscending
-                }
-                return lhs.id.uuidString < rhs.id.uuidString
             }
     }
 
@@ -326,17 +354,19 @@ final class AdministrativeDeviceSession: NSObject, @unchecked Sendable {
 
     // MARK: - Connection
 
-    /// Connect to `id` and synchronize with it, resolving once the ULCP
-    /// session is attached and its configuration has been read.
+    /// Connect to `id` and synchronize with it, resolving with the device's
+    /// configuration once the ULCP session is attached and that configuration
+    /// has been read.
     ///
     /// Throws if the device cannot be reached, refuses the protocol, or the
     /// whole exchange overruns its budget. A drop *after* this resolves is
     /// not thrown anywhere — it arrives on `snapshots()` as a failed link,
     /// because by then the caller is a UI showing an editor, not an
     /// `await`.
-    func connect(_ id: UUID) async throws {
+    @discardableResult
+    func connect(_ id: UUID) async throws -> UlcpSyncRecord? {
         try await withCheckedThrowingContinuation {
-            (result: CheckedContinuation<Void, any Error>) in
+            (result: CheckedContinuation<UlcpSyncRecord?, any Error>) in
             queue.async { [self] in
                 guard let central, central.state == .poweredOn else {
                     result.resume(throwing: RadioConnectionError.bluetoothUnavailable)
@@ -492,6 +522,8 @@ final class AdministrativeDeviceSession: NSObject, @unchecked Sendable {
                     return
                 }
                 operationWaiter = result
+                operationGeneration = UUID()
+                scheduleOperationTimeout(generation: operationGeneration)
                 do {
                     try applySessionUpdate(start(ulcpSession), from: peripheral)
                 } catch {
@@ -665,12 +697,30 @@ final class AdministrativeDeviceSession: NSObject, @unchecked Sendable {
         guard let waiter = attachWaiter else { return }
         attachWaiter = nil
         attachGeneration = UUID()
-        if let error { waiter.resume(throwing: error) } else { waiter.resume() }
+        if let error {
+            waiter.resume(throwing: error)
+        } else {
+            waiter.resume(returning: snapshot.sync)
+        }
+    }
+
+    /// Give up on an exchange the device never answered, without tearing the
+    /// session down: the link is still up and the device may well answer the
+    /// next thing asked of it. What it did with this request is unknown, which
+    /// is what `operationTimedOut` says and a rejection would not.
+    private func scheduleOperationTimeout(generation: UUID) {
+        queue.asyncAfter(deadline: .now() + Self.operationTimeoutSeconds) { [weak self] in
+            guard let self, self.operationGeneration == generation,
+                  self.operationWaiter != nil else { return }
+            Self.logger.error("administrative operation timed out")
+            self.finishOperation(throwing: RadioConnectionError.operationTimedOut)
+        }
     }
 
     private func finishOperation(throwing error: (any Error)?) {
         guard let waiter = operationWaiter else { return }
         operationWaiter = nil
+        operationGeneration = UUID()
         if let error {
             waiter.resume(throwing: error)
         } else {

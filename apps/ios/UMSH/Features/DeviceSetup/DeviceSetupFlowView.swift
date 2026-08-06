@@ -1,61 +1,6 @@
 import SwiftUI
 import UMSHMobileCore
 
-/// What the operator is trying to accomplish, chosen before any device is
-/// touched.
-///
-/// The goal never restricts what can be edited — every flow lands in the
-/// same editor against the same device domain. What it changes is the
-/// starting point: a tracker and a repeater differ by two properties, and
-/// asking up front is cheaper than making someone infer which two.
-enum DeviceSetupGoal: String, CaseIterable, Identifiable, Hashable {
-    /// A node that reports its own position and does not forward.
-    case tracker
-    /// A node that forwards other people's traffic.
-    case repeaterNode
-    /// Adopt the device as this phone's companion radio.
-    case companion
-    /// Open the editor on whatever the device already is.
-    case revisit
-
-    var id: String { rawValue }
-
-    var title: String {
-        switch self {
-        case .tracker: "Set up a tracker"
-        case .repeaterNode: "Set up a repeater"
-        case .companion: "Use as this phone's radio"
-        case .revisit: "Change a device's settings"
-        }
-    }
-
-    var detail: String {
-        switch self {
-        case .tracker:
-            "A mobile node that carries its own identity and does not forward other traffic."
-        case .repeaterNode:
-            "A node that forwards traffic for the mesh, optionally limited to particular routing regions."
-        case .companion:
-            "Bind the device to this phone as its companion radio. This phone's messages go through it."
-        case .revisit:
-            "Connect to a device that is already set up and edit what it is doing."
-        }
-    }
-
-    var symbol: String {
-        switch self {
-        case .tracker: "location.circle"
-        case .repeaterNode: "arrow.triangle.branch"
-        case .companion: "iphone.radiowaves.left.and.right"
-        case .revisit: "slider.horizontal.3"
-        }
-    }
-
-    var scanTitle: String {
-        self == .companion ? "Choose a Radio" : "Choose a Device"
-    }
-}
-
 /// The state behind the device-setup sheet.
 ///
 /// This is a deliberate, contained exception to the app's no-view-model
@@ -71,31 +16,43 @@ enum DeviceSetupGoal: String, CaseIterable, Identifiable, Hashable {
 final class AdminFlowController {
     enum Step: Hashable {
         case scan
-        case configure
+        /// The goal's short sheet.
+        case commission
+        /// Every setting the device supports.
+        case editor
     }
 
     private(set) var goal: DeviceSetupGoal = .revisit
+    var plan: DeviceSetupPlan { goal.plan }
     var path: [Step] = []
     private(set) var snapshot = AdministeredDeviceSnapshot.idle
     private(set) var devices: [DiscoveredRadio] = []
-    /// The device a connect or promotion is currently in flight for.
+    /// The configuration being edited, for as long as a device is attached.
+    ///
+    /// Owned here rather than by a screen because its lifetime is the
+    /// session's, not any one view's — and because a navigation destination
+    /// holding it as `@State` would fork it the moment a second screen
+    /// pushed over the same device.
+    private(set) var draft: DeviceConfigDraft?
+    /// The device a connect is currently in flight for.
     private(set) var busyDevice: UUID?
     var problem: String?
-    /// Set once the device has been adopted as the companion radio; the
-    /// sheet closes on it, because from that point the ordinary companion
-    /// screens own the device.
-    private(set) var promoted = false
-    /// A device awaiting confirmation that it should displace the radio
-    /// this phone already uses.
-    var pendingPromotion: UUID?
 
     /// The phone's current companion radio, so the flow can mark it in the
-    /// scan list and warn before replacing it.
+    /// scan list. It is never selectable here — the companion connection
+    /// already holds that peripheral.
     let companionIdentifier: UUID?
     let companionName: String?
+    /// The PHY a commissioned device is put on, taken from the phone's own
+    /// radio.
+    ///
+    /// Captured when the sheet opens rather than sampled live. A mesh profile
+    /// that changed halfway through a commissioning session would be worse
+    /// than a slightly stale one — the operator would have no way to know
+    /// which of the two any given device ended up on.
+    let companionProfile: CompanionRadioProfile?
 
     private let hostIdentity: MeshPublicIdentity?
-    private let promoteRadio: (UUID) async throws -> Void
     private let saveDevicePeer: ((MeshPublicIdentity, String?, PeerRole) async -> Bool)?
     private let session = AdministrativeDeviceSession()
     private var snapshotTask: Task<Void, Never>?
@@ -105,13 +62,13 @@ final class AdminFlowController {
         hostIdentity: MeshPublicIdentity?,
         companionIdentifier: UUID?,
         companionName: String?,
-        promoteRadio: @escaping (UUID) async throws -> Void,
+        companionProfile: CompanionRadioProfile? = nil,
         saveDevicePeer: ((MeshPublicIdentity, String?, PeerRole) async -> Bool)? = nil
     ) {
         self.hostIdentity = hostIdentity
         self.companionIdentifier = companionIdentifier
         self.companionName = companionName
-        self.promoteRadio = promoteRadio
+        self.companionProfile = companionProfile
         self.saveDevicePeer = saveDevicePeer
     }
 
@@ -152,9 +109,27 @@ final class AdminFlowController {
         }
     }
 
+    /// Build the draft from what the device reported as it attached.
+    private func makeDraft(_ sync: UlcpSyncRecord) -> DeviceConfigDraft {
+        let plan = plan
+        return DeviceConfigDraft(
+            sync: sync,
+            reportedName: snapshot.name,
+            plan: plan,
+            // The editor asks about every radio parameter directly, so it
+            // opens on what the device already holds. Only a sheet that
+            // decided the profile has one to explain.
+            resolvedProfile: plan.isAbbreviated
+                ? .resolve(companion: companionProfile, target: sync)
+                : nil,
+            writer: self
+        )
+    }
+
     /// Release the BLE session. Safe to call more than once and from a
     /// disappearing view.
     func end() async {
+        draft = nil
         discoveryTask?.cancel()
         discoveryTask = nil
         snapshotTask?.cancel()
@@ -168,6 +143,22 @@ final class AdminFlowController {
         path = [.scan]
     }
 
+    /// Open the full editor over the device that was just set up, on the same
+    /// draft — which is the whole reason the draft is owned here.
+    func reviewAllSettings() {
+        guard path.last != .editor else { return }
+        path.append(.editor)
+    }
+
+    /// Let go of this device and start again at the goal chooser, not the scan
+    /// list: the next device may be a different kind of thing.
+    func startOver() async {
+        draft = nil
+        problem = nil
+        await session.disconnect()
+        path = []
+    }
+
     // MARK: - Discovery
 
     func startDiscovery() {
@@ -176,7 +167,10 @@ final class AdminFlowController {
         let companion = companionIdentifier
         discoveryTask = Task { @MainActor [weak self] in
             for await list in await session.discover(companionIdentifier: companion) {
-                self?.devices = list
+                // Animated here rather than in the view: the list arrives
+                // wholesale-replaced, so the view has no change to animate
+                // unless the assignment itself carries a transaction.
+                withAnimation(.easeInOut(duration: 0.2)) { self?.devices = list }
             }
         }
     }
@@ -194,14 +188,32 @@ final class AdminFlowController {
         guard busyDevice == nil else { return }
         busyDevice = device.id
         problem = nil
+        // Backing out of a device and picking another one must not inherit
+        // the first one's unsaved edits.
+        draft = nil
         defer { busyDevice = nil }
-        if goal == .companion {
-            requestPromotion(device.id)
-            return
-        }
         do {
-            try await session.connect(device.id)
-            path = [.scan, .configure]
+            // `connect` resolves with what the device reported rather than
+            // leaving this to read `snapshot`, which is mirrored by another
+            // task and may still be carrying the pre-attach state.
+            let sync = try await session.connect(device.id)
+            guard let sync else {
+                problem = """
+                    That device connected but did not report its settings. \
+                    It may be running firmware this app does not understand.
+                    """
+                await disconnectAndResumeDiscovery()
+                return
+            }
+            // A device that cannot do the thing being asked of it is refused
+            // here rather than offered a sheet it would disappoint.
+            if let blocker = plan.blocker(for: sync) {
+                problem = blocker
+                await disconnectAndResumeDiscovery()
+                return
+            }
+            draft = makeDraft(sync)
+            path = [.scan, plan.isAbbreviated ? .commission : .editor]
         } catch {
             // The published snapshot carries the same explanation, but which
             // of the two lands first is not ordered, so this path states the
@@ -223,39 +235,16 @@ final class AdminFlowController {
         startDiscovery()
     }
 
-    /// Begin adopting `identifier`, asking first when doing so would
-    /// displace the radio this phone is already using.
-    func requestPromotion(_ identifier: UUID) {
-        guard companionIdentifier != nil else {
-            Task { await adoptAsCompanion(identifier) }
-            return
-        }
-        pendingPromotion = identifier
-    }
-
-    func confirmPromotion() async {
-        guard let identifier = pendingPromotion else { return }
-        pendingPromotion = nil
-        await adoptAsCompanion(identifier)
-    }
-
-    /// Hand the device over to the companion connection.
+    /// Back out of a device that attached but will not be used, and put the
+    /// operator back in front of the list.
     ///
-    /// The administrative link is dropped *first* — including its claim on
-    /// the peripheral — so the companion path connects to a device nobody
-    /// else is holding, and the registry never has a stale entry for a
-    /// device the companion now owns.
-    func adoptAsCompanion(_ identifier: UUID) async {
-        do {
-            await end()
-            try await promoteRadio(identifier)
-            promoted = true
-        } catch {
-            problem = """
-                That device could not be adopted as this phone's radio. \
-                Try again from the companion radio screen.
-                """
-        }
+    /// The disconnect is not optional: restarting the scan alone would leave
+    /// the peripheral connected and its `AdminSessionRegistry` claim standing,
+    /// so the device would keep refusing every later session — including the
+    /// next attempt at this one.
+    private func disconnectAndResumeDiscovery() async {
+        await session.disconnect()
+        await resumeDiscovery()
     }
 
     // MARK: - Live device controls
@@ -296,20 +285,49 @@ final class AdminFlowController {
             try await session.configureDevice(configuration)
             return try await session.refresh()
         } catch {
-            problem = """
-                The device rejected these settings. Its previous configuration \
-                is still in effect.
-                """
+            problem = Self.writeFailureText(error)
             return nil
+        }
+    }
+
+    /// Why a write did not land, in terms that do not accuse the device of
+    /// something it did not do.
+    ///
+    /// A refusal, a device that went quiet, and this app talking over itself
+    /// leave the operator in three different places, and calling all three
+    /// "the device rejected these settings" sends them looking for a fault in
+    /// the two cases where there is none.
+    private static func writeFailureText(_ error: any Error) -> String {
+        switch error as? RadioConnectionError {
+        case .operationTimedOut:
+            """
+            The device stopped answering while saving. It may or may not have \
+            kept these settings — connect to it again and check.
+            """
+        case .operationInProgress:
+            """
+            The app was still reading from the device. Wait a moment and try \
+            again; nothing was changed on it.
+            """
+        default:
+            """
+            The device rejected these settings. Its previous configuration \
+            is still in effect.
+            """
         }
     }
 }
 
+/// Both members already exist above with these signatures; the conformance
+/// only narrows what a draft is allowed to reach.
+extension AdminFlowController: DeviceConfigurationWriting {}
+
 /// Guided setup for a device this phone is not tethered to.
 ///
 /// Nothing here touches the companion radio: the sheet runs its own BLE
-/// session, and the only path that changes which radio this phone uses is
-/// the explicit "use as this phone's radio" choice.
+/// session, and no path through it changes which radio this phone uses.
+/// Adopting a radio belongs to the companion radio screen, which is the one
+/// place that decision is made.
 struct DeviceSetupFlowView: View {
     @Environment(\.dismiss) private var dismiss
     @State private var controller: AdminFlowController
@@ -322,7 +340,7 @@ struct DeviceSetupFlowView: View {
         hostIdentity: MeshPublicIdentity?,
         companionIdentifier: UUID?,
         companionName: String?,
-        promoteRadio: @escaping (UUID) async throws -> Void,
+        companionProfile: CompanionRadioProfile? = nil,
         saveDevicePeer: ((MeshPublicIdentity, String?, PeerRole) async -> Bool)? = nil,
         isPeerSaved: @escaping (String) -> Bool = { _ in false },
         peerActions: PeerActions = .unavailable
@@ -334,7 +352,7 @@ struct DeviceSetupFlowView: View {
                 hostIdentity: hostIdentity,
                 companionIdentifier: companionIdentifier,
                 companionName: companionName,
-                promoteRadio: promoteRadio,
+                companionProfile: companionProfile,
                 saveDevicePeer: saveDevicePeer
             )
         )
@@ -347,50 +365,64 @@ struct DeviceSetupFlowView: View {
                     switch step {
                     case .scan:
                         DeviceScanView(controller: controller)
-                    case .configure:
-                        if let sync = controller.snapshot.sync {
-                            DeviceConfigView(
-                                controller: controller,
-                                sync: sync,
-                                isPeerSaved: isPeerSaved,
-                                peerActions: peerActions,
-                                finish: { dismiss() }
-                            )
-                        } else {
-                            ContentUnavailableView(
-                                "Configuration unavailable",
-                                systemImage: "antenna.radiowaves.left.and.right.slash",
-                                description: Text(
-                                    "The device did not finish reporting its settings. Go back and connect to it again."
-                                )
-                            )
-                        }
+                    case .commission:
+                        settings(
+                            sections: controller.plan.sections,
+                            title: controller.plan.title,
+                            applyTitle: controller.plan.applyTitle,
+                            note: controller.draft.flatMap {
+                                controller.plan.note(for: $0.sync)
+                            },
+                            isCommissioning: true
+                        )
+                    case .editor:
+                        settings(
+                            sections: DeviceSetupPlan.revisit.sections,
+                            title: controller.snapshot.name ?? "Device",
+                            applyTitle: "Apply",
+                            note: nil,
+                            isCommissioning: false
+                        )
                     }
                 }
         }
         .task { await controller.begin() }
-        .onChange(of: controller.promoted) { _, promoted in
-            if promoted { dismiss() }
-        }
-        .confirmationDialog(
-            "Replace this phone's radio?",
-            isPresented: Binding(
-                get: { controller.pendingPromotion != nil },
-                set: { if !$0 { controller.pendingPromotion = nil } }
-            ),
-            titleVisibility: .visible
-        ) {
-            Button("Use This Device", role: .destructive) {
-                Task { await controller.confirmPromotion() }
-            }
-            Button("Cancel", role: .cancel) { controller.pendingPromotion = nil }
-        } message: {
-            Text(controller.companionName.map {
-                "This phone stops using \($0) and connects to the chosen device instead. \($0) keeps its own settings and Bluetooth pairing."
-            } ?? "This phone connects to the chosen device instead of its current radio.")
-        }
         .onDisappear {
             Task { await controller.end() }
+        }
+    }
+
+    /// The settings form over the live draft, or an explanation when the
+    /// device never reported enough to build one.
+    @ViewBuilder
+    private func settings(
+        sections: [DeviceSetupSection],
+        title: String,
+        applyTitle: String,
+        note: String?,
+        isCommissioning: Bool
+    ) -> some View {
+        if let draft = controller.draft {
+            DeviceSettingsView(
+                controller: controller,
+                draft: draft,
+                sections: sections,
+                title: title,
+                applyTitle: applyTitle,
+                note: note,
+                isCommissioning: isCommissioning,
+                isPeerSaved: isPeerSaved,
+                peerActions: peerActions,
+                finish: { dismiss() }
+            )
+        } else {
+            ContentUnavailableView(
+                "Configuration unavailable",
+                systemImage: "antenna.radiowaves.left.and.right.slash",
+                description: Text(
+                    "The device did not finish reporting its settings. Go back and connect to it again."
+                )
+            )
         }
     }
 

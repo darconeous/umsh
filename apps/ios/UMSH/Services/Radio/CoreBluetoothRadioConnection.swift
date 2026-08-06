@@ -37,7 +37,13 @@ final class CoreBluetoothRadioConnection: NSObject, RadioConnection, @unchecked 
         var name: String?
         var rssiDBm: Int
         var lastSeen: DispatchTime
+        /// When this radio was first heard, as a sequence number. Assigned
+        /// once and never revised — see `currentDiscoveryList()`.
+        let discoveryOrder: UInt64
     }
+
+    /// Source of `DiscoveredEntry.discoveryOrder`, reset with the list.
+    private var nextDiscoveryOrder: UInt64 = 0
 
     private enum PreferenceKey {
         /// The radio the app is bound to. Set when a session first attaches,
@@ -435,6 +441,7 @@ final class CoreBluetoothRadioConnection: NSObject, RadioConnection, @unchecked 
         // A fresh discovery session always starts from an empty list so a
         // powered-off radio from a previous session does not linger.
         discovered.removeAll()
+        nextDiscoveryOrder = 0
         yieldDiscoveryList()
         if central == nil {
             central = CBCentralManager(
@@ -539,6 +546,7 @@ final class CoreBluetoothRadioConnection: NSObject, RadioConnection, @unchecked 
         discoveryRequested = false
         discoveryPruneGeneration = UUID()
         discovered.removeAll()
+        nextDiscoveryOrder = 0
         yieldDiscoveryList()
     }
 
@@ -549,12 +557,17 @@ final class CoreBluetoothRadioConnection: NSObject, RadioConnection, @unchecked 
     ) {
         let advertisedName = advertisementData[CBAdvertisementDataLocalNameKey] as? String
         var entry = discovered[peripheral.identifier]
-            ?? DiscoveredEntry(
+        if entry == nil {
+            entry = DiscoveredEntry(
                 peripheral: peripheral,
                 name: advertisedName ?? displayName(for: peripheral),
                 rssiDBm: rssi.intValue,
-                lastSeen: DispatchTime.now()
+                lastSeen: DispatchTime.now(),
+                discoveryOrder: nextDiscoveryOrder
             )
+            nextDiscoveryOrder += 1
+        }
+        guard var entry else { return }
         entry.peripheral = peripheral
         if let advertisedName { entry.name = advertisedName }
         else if entry.name == nil { entry.name = peripheral.name }
@@ -567,7 +580,22 @@ final class CoreBluetoothRadioConnection: NSObject, RadioConnection, @unchecked 
 
     private func currentDiscoveryList() -> [DiscoveredRadio] {
         let remembered = rememberedPeripheralIdentifier
+        // The saved radio stays pinned to the top — it is what most people
+        // opening this list are looking for — and everything else sits in the
+        // order it was first heard.
+        //
+        // Arrival order rather than name: RSSI churns with every
+        // advertisement, and a name is not stable either, because a radio is
+        // first heard with only whatever `CBPeripheral.name` gives us and
+        // picks up its advertised name a moment later. Sorting on either moves
+        // rows under the user's finger on a busy bench.
         return discovered.values
+            .sorted { lhs, rhs in
+                let lhsRemembered = lhs.peripheral.identifier == remembered
+                let rhsRemembered = rhs.peripheral.identifier == remembered
+                if lhsRemembered != rhsRemembered { return lhsRemembered }
+                return lhs.discoveryOrder < rhs.discoveryOrder
+            }
             .map { entry in
                 DiscoveredRadio(
                     id: entry.peripheral.identifier,
@@ -575,22 +603,6 @@ final class CoreBluetoothRadioConnection: NSObject, RadioConnection, @unchecked 
                     rssiDBm: entry.rssiDBm,
                     isRemembered: entry.peripheral.identifier == remembered
                 )
-            }
-            // Stable ordering: the saved radio stays pinned to the top, then
-            // strictly alphabetical by name with the identifier as a final
-            // deterministic tiebreak. RSSI is deliberately NOT a sort key — it
-            // updates with every advertisement and would churn the list order,
-            // making a specific radio hard to tap on a busy bench. Signal
-            // strength is still shown per-row.
-            .sorted { lhs, rhs in
-                if lhs.isRemembered != rhs.isRemembered { return lhs.isRemembered }
-                // Named radios sort above unnamed ones; within each group,
-                // alphabetical, then by identifier for a total, stable order.
-                if (lhs.name == nil) != (rhs.name == nil) { return rhs.name == nil }
-                if let lhsName = lhs.name, let rhsName = rhs.name, lhsName != rhsName {
-                    return lhsName.localizedCaseInsensitiveCompare(rhsName) == .orderedAscending
-                }
-                return lhs.id.uuidString < rhs.id.uuidString
             }
     }
 

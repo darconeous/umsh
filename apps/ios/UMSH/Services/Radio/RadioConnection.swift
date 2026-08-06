@@ -337,6 +337,11 @@ enum RadioConnectionError: Error, Equatable, Sendable {
     case takeoverNotAllowed
     case operationInProgress
     case operationRejected(String)
+    /// The device stopped answering partway through an exchange the link never
+    /// reported as broken. Distinct from `operationRejected`: a refusal is the
+    /// device saying no, and this is the device saying nothing — so whether it
+    /// acted on the request is unknown.
+    case operationTimedOut
 }
 
 /// Failures of device-identity peer mutations, shaped for the UI's

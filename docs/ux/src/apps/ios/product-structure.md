@@ -681,7 +681,7 @@ age where applicable.
 
 A single **Set up a device…** row opens the device-setup sheet. It is the entry
 point for configuring any nearby UMSH device over its local control interface —
-a repeater, a tracker, or a radio destined for another phone.
+a repeater or a tracker.
 
 Device setup is a foreground session and is deliberately unlike the companion
 binding:
@@ -695,22 +695,105 @@ binding:
   and a retry rather than a background wait; and
 - the device's own Bluetooth pairing still gates every connection.
 
-The sheet opens on a goal: tracker, repeater, this phone's radio, or changing an
-existing device's settings. The goal decides only where the editor starts. Every
-flow reaches the same editor over the same device settings, and any field
-remains editable in any flow.
+The sheet asks what the device is for before it looks for one: **Set up a
+tracker**, **Set up a repeater**, or **Change a device's settings**. The goal
+comes first because it decides the rest — which devices can serve it, which
+settings a person should be asked about, and which the role itself answers.
+
+The two setup goals present a short sheet rather than the full editor. The full
+editor is reached from the sheet, but only after the write.
+
+#### What each goal decides
+
+A goal decides what it can from context and asks about the rest. Assumed values
+are not recited back — a goal named "set up a tracker" already says the device
+will not forward — with one exception, the radio profile below, whose failure
+mode is silent.
+
+| | Decided | Asked |
+|---|---|---|
+| **Tracker** | forwarding off · radio on · role Tracker · mobile · the phone's time zone · the clock, on apply | radio profile · name · discoverability · positioning policy · announcements |
+| **Repeater** | forwarding on · radio on · role left derived · stationary · the phone's time zone · the clock, on apply | radio profile · name · forwarding policy · discoverability · positioning policy · announcements |
+| **Change settings** | nothing | everything the device supports |
+
+Setup is not monitoring: a setup sheet carries no live readouts, no
+find-this-device, and no battery. Those belong to the editor reached afterwards.
+The positioning **policy** — receiver, disclosure, precision, clock trust — is a
+decision and appears; the fix, satellite count, and coordinates are readings and
+do not.
+
+#### Radio profile
+
+Putting a node on a mesh means putting it on the mesh's profile, and the one
+profile the phone can be sure of is the one its own radio is using. A setup
+sheet copies it, reduced to what the target device accepts, and shows the result
+as a single row naming the profile and its numbers — including transmit power,
+so copying a handheld's power onto a mast-mounted repeater is visible and
+correctable. The row pushes the preset picker and the manual PHY fields.
+
+With no companion radio attached, or one that reported no modem settings, the
+row asks instead of guessing, and answering it is what releases Apply. When
+there is also nothing safe to offer — the device would not report the modem
+settings a profile has to set — the device is left on the profile it already
+had, and the row says so.
+
+#### Goals a device cannot serve
+
+A goal is refused only when the device cannot do the thing being asked of it,
+and the refusal happens as the device attaches, with the reason and a way back
+to the list. A tracker needs its own node identity and a way to announce it. A
+repeater needs to be able to forward, and to have reported what its forwarding
+policy currently is — a policy that cannot be read is one a sheet must not
+overwrite.
+
+Everything else degrades and says so in a line at the top of the sheet: a device
+with no receiver, one that cannot be told a role, or one that keeps no clock is
+still set up in every other respect.
 
 The scan list marks the phone's own companion radio and does not offer it for
-setup, because the companion connection already holds it. That device is
-selectable only for the adoption path below.
+setup, because the companion connection already holds it. Devices are listed in
+the order they were first heard, and appear and disappear with an animation: a
+list of things in the room should not rearrange itself, and a name arriving on a
+later advertisement should not move the row it names.
 
 The editor states whose device it is — **Not configured**, **This phone**, or
-**Another host** — as information, not as a gate. It groups device name, radio
-profile and PHY parameters, advertised identity, and repeater policy. The whole
-editor is applied as one operation: the radio is disabled first and re-enabled
-last, the device saves, and the app reads the saved settings back before
-reporting success, so what is confirmed is what the device will boot with. A
-field the device reports back differently is named rather than quietly accepted.
+**Another host** — as information, not as a gate. A setup sheet reduces that to
+the one case worth interrupting for: a device that is another phone's companion
+radio. It groups device name, radio profile and PHY parameters, advertised
+identity, and repeater policy. The whole editor is applied as one operation: the
+radio is disabled first and re-enabled last, the device saves, and the app reads
+the saved settings back before reporting success, so what is confirmed is what
+the device will boot with. A field the device reports back differently is named
+rather than quietly accepted.
+
+A device accepts its configuration whole. Settings a device advertises a
+capability for but will not report are still written, from this sheet's values,
+because the write is all-or-nothing — the interface says so rather than
+promising they are left alone.
+
+#### Finishing a setup
+
+Applying a setup sheet is two exchanges — the configuration, then the clock,
+which is written live because a saved epoch comes back arbitrarily wrong — and
+they are reported as one result. Apply raises a modal that says what it is doing
+and cannot be dismissed while the write is in flight, then resolves in place:
+
+- **success** — a congratulation naming what was set up, a **Save to Peers**
+  row, **Review all settings**, and **Set up another device**;
+- **success without the clock** — the same, plus a line saying the clock did not
+  take, because the device is set up and the retry is one tap away in the
+  editor;
+- **reported differently** — not a congratulation. It names the field and says
+  to read the device again before relying on it; and
+- **the write did not land** — the modal goes away and the sheet behind it
+  carries the reason, so the operator can correct and retry without dismissing
+  anything first.
+
+Save to Peers is offered here rather than before the write, because the device's
+advertised role is only certain once it has been set. **Review all settings**
+opens the full editor over the same draft. **Set up another device** returns to
+the goal chooser, not the scan list, since the next device may be a different
+kind of thing.
 
 #### Device identity
 
@@ -734,6 +817,10 @@ the editor states the resulting role in place rather than making the user infer
 it. An explicit role is advertised verbatim, so a mobile repeater and a
 stationary tracker both remain expressible.
 
+The repeater goal chooses to leave the role derived, so what the device says it
+is cannot drift from what it does. The tracker goal names the role, because a
+tracker that stops moving is still a tracker.
+
 #### Repeater policy
 
 Repeater settings appear only for a device that can forward:
@@ -756,14 +843,8 @@ The default-region choice includes an explicit **None — don't tag**, so taggin
 untagged traffic is opt-in. Only a region already in the forwarding list can be
 chosen, which keeps a device from advertising a region it does not relay.
 
-#### Adopting a device as this phone's radio
-
-**Use as this phone's radio** is available from the editor and as a goal of its
-own. It ends the setup session, releases the device, and hands it to the
-ordinary companion-radio path; the Bluetooth pairing established during setup is
-reused. When a companion radio is already bound, the app names it and confirms
-before replacing it, and says that the replaced radio keeps its own settings and
-pairing.
+Adopting a device as this phone's radio is not part of device setup. It belongs
+to the companion radio screen, which is the one place that decision is made.
 
 ### Notifications and privacy
 

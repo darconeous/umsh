@@ -58,7 +58,10 @@ struct RadioPickerView: View {
         }
         .task {
             for await list in await discoverRadios() {
-                radios = list
+                // The list arrives wholesale-replaced, so the animation has
+                // to ride on the assignment; there is no change for the view
+                // to notice on its own.
+                withAnimation(.easeInOut(duration: 0.2)) { radios = list }
             }
         }
         .task {
