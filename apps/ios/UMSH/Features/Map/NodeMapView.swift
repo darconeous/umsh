@@ -43,6 +43,29 @@ struct NodeMapView: View {
     @State private var selectedNodeID: Int64?
     @State private var cardDetent: MapCardDetent = .peek
     @State private var showsDiscovery = false
+    @State private var viewport = MapViewport()
+
+    /// Enough of the card for the grabber, the header, and one whole row. A
+    /// shorter peek saves a little map and cuts the first row through the
+    /// middle of its text, which reads as a rendering fault rather than as
+    /// more to come — and everything the 132 points hold is text, so the
+    /// height has to grow with the reader's type size or large text
+    /// recreates that fault.
+    @ScaledMetric(relativeTo: .body) private var cardPeekHeight: CGFloat = 132
+
+    /// What the camera has to aim around.
+    ///
+    /// The map draws edge to edge while the card rests on the tab bar, so the
+    /// part of the map anyone can actually see is neither the map's frame nor
+    /// the layout region: it is the map less whatever the card covers.
+    private struct MapViewport: Equatable {
+        /// The map's own size, safe areas included — it ignores them.
+        var mapSize: CGSize = .zero
+        /// The region the card's detents are a fraction of.
+        var cardRegionHeight: CGFloat = 0
+        /// The strip below that region, which the card also spans.
+        var bottomInset: CGFloat = 0
+    }
 
     private var capabilityFilter: MeshNodeCapabilities {
         MeshNodeCapabilities(rawValue: UInt8(truncatingIfNeeded: capabilityFilterBits))
@@ -98,6 +121,29 @@ struct NodeMapView: View {
         .background {
             map(nodes: nodes)
                 .ignoresSafeArea()
+        }
+        // The same geometry the reader above hands the card, kept where the
+        // camera can reach it: framing and focusing happen in `onChange`,
+        // long after the layout pass that knew the size.
+        .onGeometryChange(for: MapViewport.self) { proxy in
+            MapViewport(
+                mapSize: CGSize(
+                    width: proxy.size.width,
+                    height: proxy.size.height
+                        + proxy.safeAreaInsets.top
+                        + proxy.safeAreaInsets.bottom
+                ),
+                cardRegionHeight: proxy.size.height,
+                bottomInset: proxy.safeAreaInsets.bottom
+            )
+        } action: { newViewport in
+            // The first framing may have run before the map had a size, in
+            // which case it was uncorrected. Nothing later re-frames, so the
+            // arrival of a size is the only chance to put that right — and
+            // only that first arrival, or a rotation would yank a pan.
+            let wasUnknown = viewport.mapSize == .zero
+            viewport = newViewport
+            if wasUnknown { frameNodesIfNeeded(nodes) }
         }
         // The map is the one screen that keeps asking: it draws the radio's
         // marker and measures every row's distance from it. A radio with no
@@ -196,7 +242,8 @@ struct NodeMapView: View {
         MapBottomCard(
             detent: $cardDetent,
             availableHeight: availableHeight,
-            bottomInset: bottomInset
+            bottomInset: bottomInset,
+            peekHeight: cardPeekHeight
         ) {
             cardHeader(nodes: nodes)
         } content: {
@@ -343,23 +390,88 @@ struct NodeMapView: View {
         // antenna when it does. Only a frame that holds nodes is the one
         // the camera keeps.
         hasFramedNodes = !nodes.isEmpty
-        camera = .region(region)
+        camera = .region(regionClearingCard(region, at: cardDetent))
     }
 
     private func focus(on node: MapNode) {
+        // The card lifts out of a tall detent as part of focusing, so the
+        // camera aims around where the card is going rather than where the
+        // tap found it.
+        let detent: MapCardDetent = cardDetent == .tall ? .half : cardDetent
         // Zoom to the cell, not to the street: a node that named a 10 km
         // square has not told us which building it is in.
         let span = max(node.cellMeters ?? 0, 400) * 4
+        let region = regionClearingCard(
+            MKCoordinateRegion(
+                center: node.coordinate,
+                latitudinalMeters: span,
+                longitudinalMeters: span
+            ),
+            at: detent
+        )
         withAnimation(.spring(response: 0.4, dampingFraction: 0.9)) {
-            camera = .region(
-                MKCoordinateRegion(
-                    center: node.coordinate,
-                    latitudinalMeters: span,
-                    longitudinalMeters: span
-                )
-            )
+            camera = .region(region)
         }
-        if cardDetent == .tall { cardDetent = .half }
+        cardDetent = detent
+    }
+
+    /// `region`, restated so it lands in the part of the map the card is not
+    /// sitting on.
+    ///
+    /// A camera region is measured against the whole map view, and the card
+    /// covers its bottom — nearly half of it at the middle detent. So a
+    /// region centered honestly puts its subject behind the card, which is
+    /// the one place a reader who just tapped its row will not look. Growing
+    /// the span by the fraction the card hides and pushing the center down by
+    /// half of that leaves the subject in the middle of what is left.
+    ///
+    /// The resting height and not the live one: this aims a camera, and a
+    /// drag in progress is not where the card is going to end up.
+    ///
+    /// The span is squared to the map's shape first, because MapKit widens
+    /// whichever axis it must to fill the view — and a shift measured against
+    /// the span we asked for rather than the one we got would fall short.
+    private func regionClearingCard(
+        _ region: MKCoordinateRegion,
+        at detent: MapCardDetent
+    ) -> MKCoordinateRegion {
+        let size = viewport.mapSize
+        let covered = detent.height(
+            availableHeight: viewport.cardRegionHeight,
+            peekHeight: cardPeekHeight
+        ) + viewport.bottomInset
+        let visibleHeight = size.height - covered
+        guard size.width > 0, visibleHeight > 0 else { return region }
+
+        // Mercator: a degree of longitude is a degree of latitude narrowed by
+        // the cosine, and on screen the two axes share a scale.
+        let cosLatitude = max(cos(region.center.latitude * .pi / 180), 0.01)
+        var latitudeDelta = max(
+            region.span.latitudeDelta,
+            region.span.longitudeDelta * cosLatitude * visibleHeight / size.width
+        )
+        latitudeDelta = min(latitudeDelta * size.height / visibleHeight, 180)
+        let longitudeDelta = min(
+            latitudeDelta * size.width / size.height / cosLatitude,
+            360
+        )
+        return MKCoordinateRegion(
+            center: CLLocationCoordinate2D(
+                latitude: min(
+                    max(
+                        region.center.latitude
+                            - latitudeDelta * covered / (2 * size.height),
+                        -90
+                    ),
+                    90
+                ),
+                longitude: region.center.longitude
+            ),
+            span: MKCoordinateSpan(
+                latitudeDelta: latitudeDelta,
+                longitudeDelta: longitudeDelta
+            )
+        )
     }
 
     /// A region holding every coordinate, with room around the edges so

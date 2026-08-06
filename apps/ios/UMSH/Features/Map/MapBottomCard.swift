@@ -10,6 +10,25 @@ enum MapCardDetent: CaseIterable {
     case tall
 }
 
+extension MapCardDetent {
+    /// How tall the card rests here, out of a region `availableHeight` tall.
+    ///
+    /// On the detent rather than inside the card because the map behind the
+    /// card needs the same answer: this is how much of itself it cannot show,
+    /// and a camera that does not know that aims at ground the card is
+    /// sitting on. Two copies of the fractions would drift.
+    ///
+    /// Never the whole height, at any detent: the map has to stay visible
+    /// enough to say where the list's contents are.
+    func height(availableHeight: CGFloat, peekHeight: CGFloat) -> CGFloat {
+        switch self {
+        case .peek: peekHeight
+        case .half: max(peekHeight, availableHeight * 0.45)
+        case .tall: max(peekHeight, availableHeight * 0.88)
+        }
+    }
+}
+
 /// A panel that sits over the map and can be dragged between three heights.
 ///
 /// A sheet would have been the idiomatic way to build this, and it is not
@@ -36,6 +55,10 @@ struct MapBottomCard<Header: View, Content: View>: View {
     /// amount becomes the list's bottom scroll margin, so every row can
     /// scroll clear of the bar.
     var bottomInset: CGFloat = 0
+    /// How much shows at the lowest detent. Supplied for the same reason as
+    /// the rest of the geometry: what the card covers is a fact the map has
+    /// to aim around, and the map cannot ask the card after the fact.
+    let peekHeight: CGFloat
     @ViewBuilder var header: () -> Header
     @ViewBuilder var content: () -> Content
 
@@ -48,13 +71,6 @@ struct MapBottomCard<Header: View, Content: View>: View {
     /// so a swipe that starts horizontal stays a row's swipe even if the
     /// finger wanders.
     @State private var dragIsVertical: Bool?
-
-    /// Enough for the grabber, the header, and one whole row. A shorter peek
-    /// saves a little map and cuts the first row through the middle of its
-    /// text, which reads as a rendering fault rather than as more to come —
-    /// and everything the 132 points hold is text, so the height has to grow
-    /// with the reader's type size or large text recreates that fault.
-    @ScaledMetric(relativeTo: .body) private var peekHeight: CGFloat = 132
 
     var body: some View {
         VStack(spacing: 0) {
@@ -160,14 +176,8 @@ struct MapBottomCard<Header: View, Content: View>: View {
     }
 
     private func restingHeight(for detent: MapCardDetent) -> CGFloat {
-        switch detent {
-        case .peek: peekHeight
-        case .half: max(peekHeight, availableHeight * 0.45)
-        case .tall: maxHeight
-        }
+        detent.height(availableHeight: availableHeight, peekHeight: peekHeight)
     }
 
-    /// Never the whole height: the map has to stay visible enough to say
-    /// where the list's contents are.
-    private var maxHeight: CGFloat { max(peekHeight, availableHeight * 0.88) }
+    private var maxHeight: CGFloat { restingHeight(for: .tall) }
 }
