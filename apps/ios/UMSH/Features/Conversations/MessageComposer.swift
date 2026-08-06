@@ -153,6 +153,15 @@ struct HardwareAwareMessageEditor: UIViewRepresentable {
         textView.textContainerInset = textInsets
         textView.isScrollEnabled = true
         textView.onHardwareReturn = onHardwareReturn
+        // A focused text view with a hardware keyboard attached raises the
+        // shortcut bar, docked across the bottom of the window. On the Mac
+        // runtime that bar lives outside this app's window and its frame never
+        // reaches the safe area, so nothing moves out from under it and it
+        // settles on top of the composer. Emptying the assistant item collapses
+        // it. What that costs is the undo/redo/paste shortcuts, which only ever
+        // appeared on the platforms that also had the collision.
+        textView.inputAssistantItem.leadingBarButtonGroups = []
+        textView.inputAssistantItem.trailingBarButtonGroups = []
         return textView
     }
 
