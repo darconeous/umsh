@@ -43,7 +43,10 @@ The tables below use the firmware-confirmed mapping from Meshtastic and MeshCore
 
 Known LilyGO README pin-table conflicts handled in this document:
 
-- RGB LED red/green channels: use P0.13/P0.14/P0.15 from firmware, not the README's P1.03/P1.01 red/green entries.
+- P0.13: the schematic names it `PWR_EN` — the peripheral rail's actual
+  gate node — and hardware behavior confirms it (see the power-control
+  section). The Meshtastic/MeshCore variant files call it the red LED
+  channel; treat that as wrong for this pin.
 - E-paper SPI MOSI: use P0.29 from firmware, not the README's conflicting display-MOSI entry.
 
 ## Reconstructed pin map
@@ -52,14 +55,16 @@ Known LilyGO README pin-table conflicts handled in this document:
 
 | Function | nRF52840 pin | Arduino pin | Firmware names | Notes |
 |---|---:|---:|---|---|
-| Peripheral power enable | P0.12 | 12 | `PIN_POWER_EN`, `PIN_PWR_EN` | Meshtastic comment: controls power for all peripherals: e-paper, GPS, LoRa, sensors. MeshCore turns this low in `powerOff()`. |
+| Peripheral power on | P0.12 | 12 | `PIN_POWER_EN`, `PIN_PWR_EN` | Schematic: `PWR_ON`. One term of the `VDD_POWR` gate only — does **not** feed the SX1262 branch, and VBUS ORs with it. MeshCore turns this low in `powerOff()`; the Meshtastic "controls power for all peripherals" comment overstates it. See the power-control section. |
+| Peripheral power enable | P0.13 | 13 | schematic `PWR_EN`; misnamed `LED_RED`/`PIN_LED3` in variant files | The master gate: sole supply gate for the SX1262, AND-term for `VDD_POWR`, and the only input that turns the rail off while VBUS is present. **Hardware-confirmed 2026-08-06:** left floating (its MCU reset state), the rail can half-collapse — L76K browned-up, PPS pull-up faintly lighting the internal blue LED. Driven low alongside P0.12 everything collapses; no red LED lights, in either state. Drive both low at shutdown. |
 | Battery ADC | P0.04 | 4 | `BATTERY_PIN`, `PIN_A0`, `PIN_VBAT_READ` | Battery voltage sense input. |
 | User button | P1.10 | 42 | `PIN_BUTTON1`, `BUTTON_PIN`, `PIN_USER_BTN` | Active low. |
 | Reset button | P0.18 | 18 | `PIN_BUTTON2` in Meshtastic; reset in LilyGO docs | LilyGO describes this as reset / DFU button. Meshtastic notes the bootloader configures it as a regular GPIO. |
 | Touch button | P0.11 | 11 | `PIN_BUTTON_TOUCH`, `TP_SER_IO`, `PIN_BUTTON2` in MeshCore | Firmware-confirmed touch-button input. Polarity differs by firmware abstraction; verify behavior in the button driver before relying on edge polarity. |
-| Red LED | P0.13 | 13 | `LED_RED`, `PIN_LED3` | RGB LED red channel. Active low in firmware. |
 | Blue LED | P0.14 | 14 | `LED_BLUE`, `PIN_LED1` | RGB LED blue channel. Active low in firmware. |
 | Green LED | P0.15 | 15 | `LED_GREEN`, `PIN_LED2` | RGB LED green channel. Active low in firmware. |
+| Red LED | unverified | — | `LED_RED`, `PIN_LED3` in variant files point at P0.13 | P0.13 is `PWR_EN`, not an LED (confirmed: driving it low lights nothing). If a red MCU channel exists at all it may be the README's P1.03; unverified. |
+| GNSS 1PPS LED | driven by L76K | — | — | Internal blue LED on the module's 1PPS pin through 1 kΩ (schematic). A faint steady glow when "off" means the peripheral rail has not fully collapsed — see P0.13. |
 | Charger-status LED | not MCU-controlled | — | — | Separate red LED controlled by charger circuit: on = charging, blink = battery fault/not connected, off = full. |
 
 ### LoRa / SX1262
@@ -119,8 +124,8 @@ Meshtastic includes a shutdown-specific detail: before powering off, it sets e-p
 | **GPS TX → MCU RX** | **P1.09** | 41 | `GPS_RX_PIN`, `PIN_GPS_TX`, `PIN_SERIAL1_TX` | **Measured.** Data from L76K to nRF52840, despite the pin names. |
 | **GPS RX ← MCU TX** | **P1.08** | 40 | `GPS_TX_PIN`, `PIN_GPS_RX`, `PIN_SERIAL1_RX` | **Measured.** Data from nRF52840 to L76K. |
 | GPS PPS | P1.04 | 36 | `PIN_GPS_PPS` | PPS input. LilyGO table gives P1.4 / Arduino 36. Never observed to toggle; not used. |
-| GPS wakeup / standby | P1.02 | 34 | `PIN_GPS_STANDBY`, `GPS_EN` | High wakes, low sleeps. Confirmed: the module stops transmitting within a second of the pin going low. |
-| GPS reset | P1.05 | 37 | `PIN_GPS_REINIT`, `PIN_GPS_RESET` | Active low, held >100 ms. |
+| GPS wakeup / standby | P1.02 | 34 | `PIN_GPS_STANDBY`, `GPS_EN` | High wakes, low sleeps. Confirmed: the module stops transmitting within a second of the pin going low. Quectel HW design: internally pulled up — **floating means awake**, so it must be actively driven low to sleep. |
+| GPS reset | P1.05 | 37 | `PIN_GPS_REINIT`, `PIN_GPS_RESET` | Active low, held >100 ms. Quectel HW design: `RESET_N` internally pulled up to 3.3 V, "leave N/C if unused" — tri-stating releases it. Do **not** park it driven low: on USB the module stays powered regardless of the PWR pins, and a powered module held in reset is its worst state (and lights the 1PPS LED via its pull-up). |
 
 **The UART direction is the reverse of what the pin names suggest.** The
 upstream variant files name these from the *module's* point of view in
@@ -222,17 +227,24 @@ The README also warns that battery ADC readings are inaccurate while USB is plug
 
 The README further warns that a USB-A to USB-C cable is required for power, and that with a USB-C to USB-C cable the supply may refuse to power the device. That implies the USB-C port likely lacks full USB-C CC sink negotiation / pull-down behavior, or at least LilyGO does not consider C-to-C behavior reliable.
 
-### RGB LED pin correction
+### RGB LED pins
 
-The RGB LED channels should be treated as definitively connected to:
+Confirmed channels, active-low:
 
 ```text
-Red   → P0.13 / Arduino 13
 Blue  → P0.14 / Arduino 14
 Green → P0.15 / Arduino 15
 ```
 
-Some LilyGO README material appears to list the red and green LED channels as P1.03 / Arduino 35 and P1.01 / Arduino 33. That mapping conflicts with both Meshtastic and MeshCore firmware definitions and is most likely a documentation error. For firmware work, use P0.13, P0.14, and P0.15. The RGB LED channels are active-low.
+An earlier revision of this document sided with the Meshtastic/MeshCore
+variant files and called P0.13 the red channel "definitively". The
+schematic names P0.13 `PWR_EN`, and hardware agrees: driving it low
+lights no LED and gates the peripheral rail (see the power-control
+section). This is a case where every firmware inherited the same wrong
+pin table — it went unnoticed because driving P0.13 high as "LED off"
+also happens to enable the rail. Whether a red MCU-driven channel exists
+elsewhere (the README's P1.03?) is unverified; the red LED normally seen
+on this board is the hardware-driven charger LED.
 
 ### Firmware-visible charger interface
 
@@ -266,14 +278,61 @@ MeshCore defines the same basic line as:
 
 and drives it low in `powerOff()` before entering nRF52 System OFF.
 
-This strongly suggests P0.12 controls a load switch or regulator enable feeding the board’s peripherals. The nRF52840 remains powered so that it can wake from System OFF, but the peripheral rail can be disabled.
+The schematic tells a fuller story than either firmware: power is
+controlled by a *pair* of nets, `PWR_ON` (P0.12) and `PWR_EN` (P0.13 —
+the pin the variant files misname `LED_RED`), and they gate two
+different things (schematic-derived; the interconnection is non-obvious
+to read):
+
+```text
+SX1262 supply = PWR_EN
+VDD_POWR      = PWR_EN AND (PWR_ON OR VBUS)
+```
+
+`VDD_POWR` is the peripheral rail — GNSS, sensors, e-ink, and the I²C
+pull-ups. The PCF8563 RTC is **not** on `VDD_POWR` and is untouched by
+both PWR pins — it keeps time through every power state short of a dead
+battery, which is what makes it the board's clock across a power cycle.
+Consequences of the gating:
+
+- `PWR_EN` is the master gate on battery: low, and both the radio and
+  the rail are unpowered no matter what `PWR_ON` says.
+- `PWR_EN` high with `PWR_ON` low is a radio-only state: SX1262 powered,
+  peripheral rail down (and e-paper retains its image unpowered).
+- **The VBUS term is not actually gated by `PWR_EN`** — the schematic
+  reads as though it is, but hardware disagrees (observed 2026-08-06):
+  with *both* pins driven low in System OFF, the L76K stays powered on
+  USB (its 1PPS LED can light) and goes fully dark on battery with the
+  identical pin state. The USB-side feed reaches the module downstream
+  of the `PWR_EN` element, exact path untraced. Practical rule: on USB
+  the GNSS module is powered *no matter what firmware does*, so its
+  off-state must be a valid state for a powered module (Standby via
+  WAKEUP low, reset released) — not just safe levels for a dead one.
+- Consequently the SX1262 branch is the one PWR_EN provably kills in
+  every case; the pre-fix floating `PWR_EN` left the radio sitting on a
+  soft rail in POR limbo through the entire off state, which was the
+  real battery drain — the GNSS LED was only the visible symptom.
+
+Hardware-confirmed: a floating `PWR_EN` (its MCU reset state) is not a
+solid level — it can half-enable the chain, leaving `VDD_POWR` partially
+up with the L76K browned-out and its 1PPS pull-up faintly lighting the
+module's internal blue LED. Both pins driven low fully collapse the
+rail; the nRF52840 remains powered either way so it can wake from
+System OFF.
+
+Neither Meshtastic nor MeshCore ever drives P0.13 low: both hold it
+*high* through their off state as "red LED off". Per the truth table
+that leaves the **SX1262 powered indefinitely while "off"**, and on USB
+(VBUS ≡ `PWR_ON`) their off state keeps the whole peripheral rail up as
+well. Their dark 1PPS LED on battery comes from `PWR_ON` floating low
+dropping `VDD_POWR`, not from a deliberately deeper off state.
 
 ### Device “off” behavior
 
 The device does not appear to hard-disconnect the battery from the whole board under firmware control. “Off” is best understood as:
 
 1. Turn off LEDs and display backlight / leakage paths.
-2. Disable the peripheral power rail using P0.12.
+2. Disable the peripheral power rail: P0.12 **and** P0.13 low.
 3. Enter nRF52840 System OFF using `sd_power_system_off()`.
 4. Wake by button / reset / USB/bootloader behavior depending on bootloader and pin configuration.
 
@@ -386,6 +445,13 @@ For lowest sleep current, firmware should:
 
 The PCF8563 RTC is on the shared I²C bus at address 0x51, with IRQ on P0.16.
 
+Per the schematic it is **not** powered from `VDD_POWR` and is controlled
+by neither PWR pin — it keeps time through every power state including
+full shutdown, which is what makes it the board's clock across a power
+cycle. Note the asymmetry this creates: the RTC itself survives a rail
+collapse, but its I²C bus doesn't — the pull-ups are on `VDD_POWR`, so
+the RTC is unreachable (not dead) while the rail is down.
+
 The presence of a dedicated RTC interrupt line means firmware can potentially use the RTC for timed wakeups, depending on how the nRF GPIO sense and System OFF wake sources are configured.
 
 ## BME280 environmental sensor
@@ -473,7 +539,7 @@ nRF52840
 
 ## Practical firmware notes
 
-- Treat `P0.12` as the main peripheral rail enable.
+- Power gating: SX1262 = `PWR_EN` (P0.13); `VDD_POWR` = `PWR_EN` ∧ (`PWR_ON` (P0.12) ∨ VBUS). Drive **both** low at shutdown — P0.13 floating can leave the chain half-alive, and on USB only P0.13 turns the rail off. P0.13 is not the red LED, whatever the variant files say. The PCF8563 is on neither gate.
 - Do not assume USB-C to USB-C powering works reliably; LilyGO explicitly warns that USB-A to USB-C may be required.
 - Do not treat charger status as firmware-visible unless you verify a charger IC/status pin in the schematic.
 - Use the charger LED for human-visible charge state.

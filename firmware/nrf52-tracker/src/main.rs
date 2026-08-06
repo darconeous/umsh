@@ -4082,7 +4082,7 @@ mod firmware {
     /// peripheral signal pins, drop the rail, and enter System OFF.
     #[cfg(feature = "system-off-techo")]
     #[embassy_executor::task]
-    async fn shutdown_task(peripheral_power: Output<'static>) -> ! {
+    async fn shutdown_task(peripheral_power: Output<'static>, power_enable: Output<'static>) -> ! {
         // Two producers on the T-Echo: the button's four-second hold (the
         // local signal) and the battery monitor's protective low-voltage
         // cutoff (the BSP's). Either one runs the same teardown.
@@ -4121,25 +4121,35 @@ mod firmware {
         // load, and driven levels are retained through System OFF. Both are
         // pinned to their off state rather than tri-stated: their loads hang
         // off the always-on rail, where a floating pin is not provably dark.
-        // The other two RGB channels (P0.13, P0.15) are never configured by
-        // this firmware, so they sit at reset — disconnected inputs that
-        // cannot sink the LED.
+        // The remaining RGB channel (P0.15) is never configured by this
+        // firmware, so it sits at reset — a disconnected input that cannot
+        // sink the LED. (P0.13, which the Meshtastic/MeshCore variant files
+        // call the red channel, is PWR_EN per the schematic and is handled
+        // with the rail below.)
         drive_pin_high(Port::P0, 14); // status LED, active-low → high is off
         drive_pin_low(Port::P1, 11); // e-paper backlight, active-high
 
-        // The L76K GNSS. Dropping the rail below is the stronger off-switch,
-        // so this is defence in depth for the case where the load switch does
-        // not fully open — which means it has to happen here, while the module
-        // is still powered enough to sample the levels.
+        // The L76K GNSS. Dropping the rail below unpowers it on battery, but
+        // not on USB: VBUS keeps VDD_POWR alive through a path PWR_EN does
+        // not gate (hw-observed 2026-08-06), so this state must be correct
+        // for a module that stays powered indefinitely, not just for one
+        // about to lose its rail.
         //
-        // Standby (P1.02) is active-high wake, confirmed on hardware. Reset
-        // (P1.05) is active-low and idles high, and the UART line into the
-        // module (P1.08) idles high as a UART must; once the rail is gone,
-        // both are pins driving current into an unpowered module's protection
-        // diodes. Drive them low. P1.09 carries the module's output and is
-        // never driven by this chip, so it is only released.
+        // Standby/WAKEUP (P1.02) is internally pulled up — floating means
+        // awake — so it is driven low: a valid logic low into a powered
+        // module (Standby, its proper low-power state) and no current into
+        // an unpowered one. Reset (P1.05) is tri-stated, NOT driven: the
+        // L76K hardware design has RESET_N internally pulled up ("leave
+        // N/C if unused"), so released it idles high on a powered module —
+        // holding it low instead pinned the powered module in reset, its
+        // *worst* state, with the PPS pull-up faintly lighting the internal
+        // blue LED as the tell. The UART line into the module (P1.08) is
+        // driven low: low is a legal idle-adjacent level either way,
+        // whereas its usual high idle would back-power a dead module.
+        // P1.09 carries the module's output and is never driven by this
+        // chip, so it is only released.
         drive_pin_low(Port::P1, 2);
-        drive_pin_low(Port::P1, 5);
+        tristate_pin(Port::P1, 5);
         drive_pin_low(Port::P1, 8);
         tristate_pin(Port::P1, 9);
 
@@ -4169,15 +4179,26 @@ mod firmware {
             tristate_pin(port, pin);
         }
 
-        // Dropping the `Output` only hands P0.12 back to embassy, which
-        // writes PIN_CNF = INPUT:Disconnect with no pull — the rail enable
-        // would be left floating, and whether the load switch then opens
-        // depends on an external pulldown this board's documentation does
-        // not promise. Pin it low afterwards so the LoRa module, GNSS,
-        // sensors, and e-paper bias generator are provably unpowered rather
-        // than left to a floating gate.
+        // The rail is switched by two pins, not one: per the schematic,
+        // SX1262 = PWR_EN (P0.13), VDD_POWR = PWR_EN ∧ (PWR_ON (P0.12)
+        // ∨ VBUS). PWR_EN is the master gate — and because VBUS stands in
+        // for PWR_ON, it is the only input that keeps "off" off while the
+        // board is on USB. (The Meshtastic/MeshCore variant files call
+        // P0.13 the red LED channel; the schematic disagrees, and it was
+        // the schematic that explained the off-state symptom: with PWR_EN
+        // left floating, the rail only half-collapsed, and the L76K sat
+        // browned-up with its PPS pull-up faintly lighting the internal
+        // blue LED.)
+        //
+        // Dropping the `Output`s only hands the pins back to embassy,
+        // which writes PIN_CNF = INPUT:Disconnect with no pull — floating,
+        // the same trap. Pin both low so the LoRa module, GNSS, sensors,
+        // and e-paper bias generator are provably unpowered rather than
+        // left to a floating gate.
         drop(peripheral_power);
+        drop(power_enable);
         drive_pin_low(Port::P0, 12);
+        drive_pin_low(Port::P0, 13);
 
         // P1.10 is the side user button. Active-low, pull-up → DETECT-low wakes.
         power_off(&[WakePin {
@@ -4404,10 +4425,17 @@ mod firmware {
             set_connection_trace_handler(Some(trouble_connection_trace));
         }
 
-        // Peripheral power enable (P0.12). Must be high before the LoRa
-        // module is addressed. Ownership transfers to shutdown_task.
+        // Board power (schematic): SX1262 = PWR_EN (P0.13); VDD_POWR =
+        // PWR_EN ∧ (PWR_ON (P0.12) ∨ VBUS). Both must be high before the
+        // LoRa module is addressed. PWR_EN floating happens to work — its
+        // reset state leaks enough to run the board, which is exactly how
+        // the half-collapsed off-state rail went unnoticed — but the
+        // radio's supply gate deserves a driven level, not a lucky float.
+        // Ownership of both transfers to shutdown_task.
         #[cfg(feature = "system-off-techo")]
         let peripheral_power = Output::new(p.P0_12, Level::High, OutputDrive::Standard);
+        #[cfg(feature = "system-off-techo")]
+        let power_enable = Output::new(p.P0_13, Level::High, OutputDrive::Standard);
 
         // On T-1000E, seize LR1110 reset before any lengthy initialization.
         // The user button is active-high. Holding it through power-on is the
@@ -5145,7 +5173,7 @@ mod firmware {
 
             let button = Input::new(p.P1_10, Pull::Up);
             spawner.spawn(button_task(button).unwrap());
-            spawner.spawn(shutdown_task(peripheral_power).unwrap());
+            spawner.spawn(shutdown_task(peripheral_power, power_enable).unwrap());
 
             // Quectel L76K on UARTE0. `BufferedUarte` rather than a plain
             // one because NMEA arrives as lines of unpredictable length:
