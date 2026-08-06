@@ -87,6 +87,53 @@ pub struct BrightnessDecision {
     pub next_deadline_ms: u64,
 }
 
+/// Illuminance at or above which the indicator runs at full brightness:
+/// 10 lux, in millilux.
+pub const DIM_FULL_MLUX: u32 = 10_000;
+
+/// The dimming floor, in permille of normal brightness: 1/20th. Reached
+/// at zero illuminance.
+pub const DIM_MIN_PERMILLE: u16 = 50;
+
+/// Ambient dimming scale, in permille of normal brightness: 1000 at or
+/// above [`DIM_FULL_MLUX`], falling linearly to [`DIM_MIN_PERMILLE`] at
+/// zero. `None` — no reading yet — is full brightness, so a board whose
+/// sensor never answers keeps its ordinary indicator.
+///
+/// A free function rather than an engine method so writers that bypass
+/// the engine (the firmware's BLE status blink) and future consumers of
+/// ambient light apply the same curve.
+pub fn ambient_dim_permille(millilux: Option<u32>) -> u16 {
+    let Some(millilux) = millilux else {
+        return 1_000;
+    };
+    if millilux >= DIM_FULL_MLUX {
+        return 1_000;
+    }
+    let span = u32::from(1_000 - DIM_MIN_PERMILLE);
+    (u32::from(DIM_MIN_PERMILLE) + span * millilux / DIM_FULL_MLUX) as u16
+}
+
+/// Scale a decision's brightness by the ambient dim factor. Deadlines
+/// are untouched: dimming changes how bright a phase is, never when the
+/// next one starts.
+fn dim_decision(decision: BrightnessDecision, dim_permille: u16) -> BrightnessDecision {
+    BrightnessDecision {
+        brightness: ((u32::from(decision.brightness) * u32::from(dim_permille)) / 1_000) as u16,
+        next_deadline_ms: decision.next_deadline_ms,
+    }
+}
+
+/// Scale a binary pulse's duration by the ambient dim factor, floored at
+/// one millisecond so the pulse never disappears entirely.
+///
+/// The heartbeat dims by *shortening* rather than by duty: a brief
+/// full-brightness tick stays legible as a heartbeat in the dark, where
+/// the same energy spread over 20 ms would read as a dim smudge.
+fn dim_pulse_ms(pulse_ms: u64, dim_permille: u16) -> u64 {
+    (pulse_ms * u64::from(dim_permille) / 1_000).max(1)
+}
+
 /// State-aware T1000-E LED policy. One-shot confirmations preempt persistent
 /// state; Charging and Low Battery preempt Attention; Attention replaces only
 /// the ordinary heartbeat.
@@ -96,6 +143,9 @@ pub struct T1000eLedEngine {
     heartbeat_anchor_ms: u64,
     battery: BatteryState,
     attention: bool,
+    /// Most recent ambient light reading, for [`ambient_dim_permille`];
+    /// `None` until one exists.
+    ambient_millilux: Option<u32>,
     active: Option<ActiveSequence>,
     /// A running locate alert; see [`LedEngine::start_alert`].
     alert_since_ms: Option<u64>,
@@ -108,6 +158,7 @@ impl T1000eLedEngine {
             heartbeat_anchor_ms: start_ms,
             battery: BatteryState::BatteryOnly,
             attention: false,
+            ambient_millilux: None,
             active: None,
             alert_since_ms: None,
         }
@@ -136,6 +187,15 @@ impl T1000eLedEngine {
 
     pub fn set_attention(&mut self, attention: bool) {
         self.attention = attention;
+    }
+
+    /// Feed the most recent ambient light reading. Everything the engine
+    /// shows except the locate alert dims with it — the alert stays at
+    /// full brightness because a radio being searched for values being
+    /// seen over being comfortable, the same priority that lets it
+    /// outrank the critical-battery blackout.
+    pub fn set_ambient_millilux(&mut self, millilux: Option<u32>) {
+        self.ambient_millilux = millilux;
     }
 
     pub fn play(&mut self, sequence: LedSequence, now_ms: u64) {
@@ -167,41 +227,53 @@ impl T1000eLedEngine {
                 },
             };
         }
+        let dim = ambient_dim_permille(self.ambient_millilux);
         if let Some(sequence) = &self.active {
             if let Some((on, deadline)) = sequence.resolve(now_ms) {
-                return BrightnessDecision {
-                    brightness: if on { 1_000 } else { 0 },
-                    next_deadline_ms: deadline,
-                };
+                return dim_decision(
+                    BrightnessDecision {
+                        brightness: if on { 1_000 } else { 0 },
+                        next_deadline_ms: deadline,
+                    },
+                    dim,
+                );
             }
             self.active = None;
         }
 
+        // The binary heartbeats dim by pulse duration (see
+        // [`dim_pulse_ms`]); everything else is a shape whose meaning
+        // lives in its envelope, so those dim by brightness.
         match self.battery {
-            BatteryState::BatteryCharging => breathing(now_ms, 3_000, 20),
-            BatteryState::BatteryLow => low_battery(now_ms, self.heartbeat_anchor_ms, 4_000),
+            BatteryState::BatteryCharging => dim_decision(breathing(now_ms, 3_000, 20), dim),
+            BatteryState::BatteryLow => {
+                dim_decision(low_battery(now_ms, self.heartbeat_anchor_ms, 4_000), dim)
+            }
             BatteryState::BatteryCritical => BrightnessDecision {
                 brightness: 0,
                 next_deadline_ms: now_ms.saturating_add(1_000),
             },
             BatteryState::BatteryOnly | BatteryState::BatteryCharged if self.attention => {
-                attention_pulse(
-                    now_ms,
-                    self.heartbeat_anchor_ms,
-                    self.timings.heartbeat_interval.as_millis() as u64,
+                dim_decision(
+                    attention_pulse(
+                        now_ms,
+                        self.heartbeat_anchor_ms,
+                        self.timings.heartbeat_interval.as_millis() as u64,
+                    ),
+                    dim,
                 )
             }
             BatteryState::BatteryCharged => binary_heartbeat(
                 now_ms,
                 self.heartbeat_anchor_ms,
                 self.timings.heartbeat_interval.as_millis() as u64,
-                60,
+                dim_pulse_ms(60, dim),
             ),
             BatteryState::BatteryOnly => binary_heartbeat(
                 now_ms,
                 self.heartbeat_anchor_ms,
                 self.timings.heartbeat_interval.as_millis() as u64,
-                self.timings.heartbeat_pulse.as_millis() as u64,
+                dim_pulse_ms(self.timings.heartbeat_pulse.as_millis() as u64, dim),
             ),
         }
     }
@@ -853,6 +925,52 @@ mod tests {
         assert_eq!(e.tick(100).brightness, 0);
         assert_eq!(e.tick(200).brightness, 1_000);
         assert_eq!(e.tick(300).brightness, 0);
+    }
+
+    #[test]
+    fn ambient_dim_is_linear_between_the_floor_and_full() {
+        assert_eq!(ambient_dim_permille(None), 1_000, "no reading = full");
+        assert_eq!(ambient_dim_permille(Some(DIM_FULL_MLUX)), 1_000);
+        assert_eq!(ambient_dim_permille(Some(u32::MAX)), 1_000);
+        assert_eq!(ambient_dim_permille(Some(0)), DIM_MIN_PERMILLE);
+        // Halfway in lux is halfway between the floor and full.
+        assert_eq!(ambient_dim_permille(Some(DIM_FULL_MLUX / 2)), 525);
+    }
+
+    /// The heartbeat dims by duration, not duty: in darkness the default
+    /// 20 ms pulse becomes a 1 ms full-brightness tick.
+    #[test]
+    fn darkness_shortens_the_heartbeat_pulse() {
+        let mut e = T1000eLedEngine::new(0);
+        e.set_ambient_millilux(Some(0));
+        let d = e.tick(0);
+        assert_eq!(d.brightness, 1_000, "duty stays full");
+        assert_eq!(d.next_deadline_ms, 1, "1/20th of 20 ms, floored at 1");
+        assert_eq!(e.tick(1).brightness, 0);
+    }
+
+    /// PWM envelopes — the charging breathe here — dim by brightness,
+    /// and a one-shot sequence dims the same way.
+    #[test]
+    fn darkness_dims_pwm_envelopes_by_duty() {
+        let mut e = T1000eLedEngine::new(0);
+        e.set_battery(BatteryState::BatteryCharging);
+        assert_eq!(e.tick(1_500).brightness, 1_000, "lit room: full peak");
+        e.set_ambient_millilux(Some(0));
+        assert_eq!(e.tick(1_500).brightness, DIM_MIN_PERMILLE);
+
+        e.play(LedSequence::PowerOn, 3_000);
+        assert_eq!(e.tick(3_000).brightness, DIM_MIN_PERMILLE);
+    }
+
+    /// The locate alert is exempt: a radio being searched for shows
+    /// itself at full brightness however dark the room is.
+    #[test]
+    fn the_locate_alert_ignores_ambient_dimming() {
+        let mut e = T1000eLedEngine::new(0);
+        e.set_ambient_millilux(Some(0));
+        e.start_alert(0);
+        assert_eq!(e.tick(0).brightness, 1_000);
     }
 
     /// An attention-only indicator says nothing on its own — including at

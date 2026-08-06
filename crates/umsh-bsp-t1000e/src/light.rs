@@ -126,6 +126,8 @@ pub fn raw_to_millilux(raw: u16) -> u32 {
 
 #[cfg(target_os = "none")]
 mod sampling {
+    use core::sync::atomic::{AtomicU32, Ordering};
+
     use embassy_sync::blocking_mutex::raw::ThreadModeRawMutex;
     use embassy_sync::signal::Signal;
 
@@ -133,6 +135,44 @@ mod sampling {
     /// [`sample_illuminance`]).
     pub(crate) static LIGHT_SAMPLE_REQUEST: Signal<ThreadModeRawMutex, ()> = Signal::new();
     pub(crate) static LIGHT_SAMPLE_REPLY: Signal<ThreadModeRawMutex, u32> = Signal::new();
+
+    /// The most recent measurement, however it was triggered, in
+    /// millilux. `u32::MAX` until one exists — that cannot be a reading,
+    /// because the conversion tops out at
+    /// [`MAX_REPORTABLE_MLUX`](super::MAX_REPORTABLE_MLUX).
+    static AMBIENT_MILLILUX: AtomicU32 = AtomicU32::new(u32::MAX);
+
+    /// The most recent illuminance measurement in millilux, whoever asked
+    /// for it; `None` until the first one completes.
+    ///
+    /// This is the consumer side of [`request_sample`], but every
+    /// measurement lands here — an on-demand [`sample_illuminance`] for a
+    /// protocol read refreshes it too.
+    pub fn ambient_millilux() -> Option<u32> {
+        match AMBIENT_MILLILUX.load(Ordering::Acquire) {
+            u32::MAX => None,
+            millilux => Some(millilux),
+        }
+    }
+
+    /// Record a completed measurement. Called by the sampler in
+    /// [`crate::power`] for every measurement it takes.
+    pub(crate) fn publish_ambient(millilux: u32) {
+        AMBIENT_MILLILUX.store(millilux, Ordering::Release);
+    }
+
+    /// Ask for a measurement without waiting for it: the result appears
+    /// in [`ambient_millilux`] once taken. For callers that must not
+    /// block on the monitor — the LED task requests from inside the
+    /// select loop that also answers the sampler's blanking handshake.
+    ///
+    /// The request latches, so duplicates coalesce, and the reply signal
+    /// is left alone: [`sample_illuminance`] resets it before waiting, so
+    /// an unconsumed reply from this path cannot satisfy a later
+    /// on-demand read.
+    pub fn request_sample() {
+        LIGHT_SAMPLE_REQUEST.signal(());
+    }
 
     /// Ask [`run_battery_monitor`](crate::power::run_battery_monitor) —
     /// the sole SAADC and sensor-rail owner — for a fresh illuminance
@@ -149,9 +189,9 @@ mod sampling {
 }
 
 #[cfg(target_os = "none")]
-pub use sampling::sample_illuminance;
+pub(crate) use sampling::{LIGHT_SAMPLE_REPLY, LIGHT_SAMPLE_REQUEST, publish_ambient};
 #[cfg(target_os = "none")]
-pub(crate) use sampling::{LIGHT_SAMPLE_REPLY, LIGHT_SAMPLE_REQUEST};
+pub use sampling::{ambient_millilux, request_sample, sample_illuminance};
 
 #[cfg(test)]
 mod tests {

@@ -452,6 +452,18 @@ At the dark end, which is what this part is for, it does well: one count is
 noise floor beneath it. Anything wanting a daylight figure needs a different
 sensor.
 
+The shipping firmware is also its own consumer: the indicator dims with
+ambient light (see `docs/ux/src/hardware/t1000e.md`). The LED task requests
+a measurement at most once per 60 s on battery and every 10 s on external
+power, and only when it has just written a near-dark duty, so the LED
+blackout the sampler requires lands in a dark phase of whatever the
+indicator is showing — the charging breathe in particular is never visibly
+interrupted. A button press-down also triggers a measurement outside the
+cadence: it is the moment the user is looking at the LED, and it completes
+during click recognition, before any confirmation plays. Every measurement,
+including an on-demand `PROP_ILLUMINANCE` read, refreshes the published
+reading the dimmer works from.
+
 ## LR1110 radio wiring
 
 The LR1110 is wired over SPI:

@@ -3632,6 +3632,20 @@ mod firmware {
                 match select(edge_fut, Timer::at(Instant::from_millis(deadline))).await {
                     Either::First(edge) => {
                         pressed = matches!(edge, ButtonEdge::Press);
+                        // A press means eyes on the LED and, likely, an
+                        // environment that just changed — a device pulled
+                        // from a pocket should not confirm at last
+                        // minute's brightness. Re-evaluate ambient light
+                        // now: the ~80 ms measurement completes well
+                        // inside click recognition, so whatever
+                        // confirmation follows renders at the fresh
+                        // level, and at press-down the LED is almost
+                        // certainly in a dark phase, so the sampler's
+                        // blanking is invisible. User-initiated, so it
+                        // deliberately bypasses the battery cadence.
+                        if pressed {
+                            umsh_bsp_t1000e::light::request_sample();
+                        }
                         fsm.on_edge(edge, Instant::now().as_millis())
                     }
                     Either::Second(()) => fsm.poll(Instant::now().as_millis()),
@@ -5565,6 +5579,59 @@ mod firmware {
         }
     }
 
+    /// Ambient-sampling cadence for indicator dimming while on battery.
+    /// Room light changes on the scale of minutes, and every sample
+    /// cycles the sensor rail through 800 conversions, so once a minute
+    /// is as often as the battery should pay for it.
+    #[cfg(feature = "t1000e")]
+    const AMBIENT_INTERVAL_BATTERY: Duration = Duration::from_secs(60);
+
+    /// Cadence on external power, where the energy is free and the
+    /// indicator can follow changing light closely.
+    #[cfg(feature = "t1000e")]
+    const AMBIENT_INTERVAL_EXTERNAL: Duration = Duration::from_secs(10);
+
+    /// Written brightness (permille) at or below which the indicator is
+    /// dark enough that the sampler's ~80 ms LED blackout is invisible.
+    /// Wide enough that the charging breathe spends a comfortable window
+    /// under it around each trough.
+    #[cfg(feature = "t1000e")]
+    const AMBIENT_NEAR_DARK_PERMILLE: u16 = 20;
+
+    /// Request an ambient light sample when one is due and the duty just
+    /// written is near-dark.
+    ///
+    /// The LED task drives the cadence because only it knows the
+    /// animation phase: a request made at a dark phase lets the
+    /// sampler's blanking handshake confirm against an LED that is
+    /// already off, so the measurement never visibly interrupts what the
+    /// indicator is showing — the charging breathe in particular. Every
+    /// state has dark phases (heartbeat gap, breathing trough, blink
+    /// gaps), so sampling is never starved for a window.
+    ///
+    /// Fire-and-forget: the result is read back from
+    /// [`ambient_millilux`](umsh_bsp_t1000e::light::ambient_millilux)
+    /// on a later iteration, so this task keeps servicing the blanking
+    /// handshake while the measurement runs.
+    #[cfg(feature = "t1000e")]
+    fn maybe_request_ambient_sample(last_sample: &mut Option<Instant>, brightness_permille: u16) {
+        if brightness_permille > AMBIENT_NEAR_DARK_PERMILLE {
+            return;
+        }
+        // Evaluated against the current power source on every
+        // opportunity, so an unplug can never carry the fast external
+        // cadence onto the battery.
+        let interval = if umsh_bsp_t1000e::power::usb_power_present() {
+            AMBIENT_INTERVAL_EXTERNAL
+        } else {
+            AMBIENT_INTERVAL_BATTERY
+        };
+        if last_sample.is_none_or(|taken| taken.elapsed() >= interval) {
+            *last_sample = Some(Instant::now());
+            umsh_bsp_t1000e::light::request_sample();
+        }
+    }
+
     /// Write one LED duty, honouring the ambient-light blanking gate.
     ///
     /// Every duty write on this board goes through here so no future
@@ -5587,12 +5654,16 @@ mod firmware {
         led.set_period(1_000);
         led.enable();
         let mut engine = T1000eLedEngine::new(Instant::now().as_millis());
+        // `None` at boot, so the first dark phase — within the first
+        // heartbeat interval — takes the first reading.
+        let mut last_ambient_sample: Option<Instant> = None;
         loop {
             wdt.pet();
             super::panic::breadcrumb_beat();
             let battery = umsh_bsp_t1000e::battery_state();
             engine.set_battery(battery);
             engine.set_attention(umsh_bsp_t1000e::indicator::attention_requested());
+            engine.set_ambient_millilux(umsh_bsp_t1000e::light::ambient_millilux());
             // Outranks the pairing blink, the battery states, and the
             // one-shot sequences alike (see `T1000eLedEngine::tick`).
             if alert_active() {
@@ -5616,8 +5687,19 @@ mod firmware {
                 } else {
                     phase < 100 || (200..300).contains(&phase) || (400..500).contains(&phase)
                 };
-                let duty = if on { led.max_duty() } else { 0 };
+                // This branch bypasses the engine, so it applies the
+                // ambient dim itself — the connection blink dims with
+                // the room like everything else.
+                let brightness = if on {
+                    umsh_ux_tracker::led::ambient_dim_permille(
+                        umsh_bsp_t1000e::light::ambient_millilux(),
+                    )
+                } else {
+                    0
+                };
+                let duty = ((u32::from(led.max_duty()) * u32::from(brightness)) / 1_000) as u16;
                 write_led_duty(&mut led, duty);
+                maybe_request_ambient_sample(&mut last_ambient_sample, brightness);
                 match select(
                     Timer::after_millis(50),
                     umsh_bsp_t1000e::indicator::LED_BLANK_CHANGED.wait(),
@@ -5633,6 +5715,7 @@ mod firmware {
             let duty =
                 ((u32::from(led.max_duty()) * u32::from(decision.brightness)) / 1_000) as u16;
             write_led_duty(&mut led, duty);
+            maybe_request_ambient_sample(&mut last_ambient_sample, decision.brightness);
             match select(
                 select4(
                     select(

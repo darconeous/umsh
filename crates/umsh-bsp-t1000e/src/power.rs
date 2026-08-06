@@ -349,6 +349,7 @@ pub async fn run_battery_monitor<I>(
                         &mut sensor_enable,
                     )
                     .await;
+                    crate::light::publish_ambient(millilux);
                     crate::light::LIGHT_SAMPLE_REPLY.signal(millilux);
                     continue;
                 }
