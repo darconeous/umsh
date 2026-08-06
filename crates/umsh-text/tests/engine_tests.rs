@@ -8,8 +8,8 @@ use umsh_text::codec;
 use umsh_text::engine::sequence::MessageHandle;
 use umsh_text::engine::{
     ArchiveResult, CompletionStatus, ComposeError, ComposeIntent, ComposeRef, DeliveryState,
-    Destination, Diagnostic, Engine, EngineConfig, Event, MutationKind, Output, Presence,
-    RepairOutcome, ResolvedRef, StreamCheckpoint, destination_for,
+    Destination, Diagnostic, Direction, Engine, EngineConfig, Event, MutationKind, Output,
+    Presence, RegardingRef, RepairOutcome, ResolvedRef, StreamCheckpoint, destination_for,
 };
 use umsh_text::validate::{DeliveryPath, DirectChannelProfile, Envelope};
 use umsh_text::{
@@ -627,7 +627,7 @@ fn compose_reply_uses_conversation_reference_form() {
             1,
             ComposeIntent::Reply {
                 body: "+1",
-                regarding: *handle,
+                regarding: RegardingRef::Handle(*handle),
                 status: true,
             },
             1,
@@ -650,6 +650,286 @@ fn compose_reply_uses_conversation_reference_form() {
             message_id: 9,
             source_prefix: MEMBER_HINT,
         })
+    );
+}
+
+#[test]
+fn reaction_to_inbound_message_by_wire_ref() {
+    // Reacting to a message received before this process started: the store
+    // remembers the coordinates, the engine has no stream for it at all.
+    let mut engine = engine();
+    engine
+        .compose(
+            group_conv(),
+            1,
+            ComposeIntent::Reply {
+                body: "+1",
+                regarding: RegardingRef::Wire {
+                    message_id: 9,
+                    direction: Direction::Inbound,
+                    sender_hint: Some(MEMBER_HINT),
+                    epoch: Some(0),
+                },
+                status: true,
+            },
+            0,
+        )
+        .expect("wire-referenced emote composes without a live inbound stream");
+    let outputs = drain(&mut engine);
+
+    let Some(Drained::Transmit { payload, .. }) = outputs
+        .iter()
+        .find(|output| matches!(output, Drained::Transmit { .. }))
+    else {
+        panic!("expected transmit");
+    };
+    let message = parse_payload(payload);
+    assert_eq!(message.message_type, MessageType::Status);
+    assert_eq!(
+        message.regarding,
+        Some(umsh_text::Regarding::Multicast {
+            message_id: 9,
+            source_prefix: MEMBER_HINT,
+        }),
+        "the emote names the member's own stream, not ours"
+    );
+
+    let Some(Drained::Insert { regarding, .. }) = outputs
+        .iter()
+        .find(|output| matches!(output, Drained::Insert { .. }))
+    else {
+        panic!("expected insert");
+    };
+    assert_eq!(
+        *regarding,
+        Some(ResolvedRef::Unresolved(WireRef::SenderScoped {
+            sender: SenderScope::ClaimedMember(MEMBER_HINT),
+            message_id: 9,
+        })),
+        "no live handle backs the target; the platform matches it"
+    );
+}
+
+#[test]
+fn reaction_to_inbound_group_message_needs_a_sender_hint() {
+    // A bare ID is meaningless in a channel group: every member numbers its
+    // own stream.
+    let mut engine = engine();
+    let error = engine
+        .compose(
+            group_conv(),
+            1,
+            ComposeIntent::Reply {
+                body: "+1",
+                regarding: RegardingRef::Wire {
+                    message_id: 9,
+                    direction: Direction::Inbound,
+                    sender_hint: None,
+                    epoch: None,
+                },
+                status: true,
+            },
+            0,
+        )
+        .unwrap_err();
+    assert_eq!(error, ComposeError::UnknownRegarding);
+}
+
+#[test]
+fn reaction_after_restart_targets_own_message_by_wire() {
+    // Reacting to something we ourselves sent in an earlier process.
+    let mut first = engine();
+    first
+        .compose(
+            direct_conv(),
+            1,
+            ComposeIntent::Text {
+                body: "mine",
+                status: false,
+            },
+            0,
+        )
+        .unwrap();
+    let outputs = drain(&mut first);
+    let Some(Drained::StoreCheckpoint { next_id, .. }) = outputs
+        .iter()
+        .find(|output| matches!(output, Drained::StoreCheckpoint { .. }))
+    else {
+        panic!("expected checkpoint");
+    };
+
+    let mut restarted = engine();
+    restarted.restore(
+        &[StreamCheckpoint {
+            conversation: direct_conv(),
+            next_id: *next_id,
+            epoch: 0,
+        }],
+        0,
+    );
+    restarted
+        .compose(
+            direct_conv(),
+            2,
+            ComposeIntent::Reply {
+                body: "<3",
+                regarding: RegardingRef::Wire {
+                    message_id: 0,
+                    direction: Direction::Outbound,
+                    sender_hint: None,
+                    epoch: Some(0),
+                },
+                status: true,
+            },
+            1,
+        )
+        .expect("wire-referenced emote composes after restart");
+    let outputs = drain(&mut restarted);
+    let Some(Drained::Transmit { payload, .. }) = outputs
+        .iter()
+        .find(|output| matches!(output, Drained::Transmit { .. }))
+    else {
+        panic!("expected transmit");
+    };
+    let message = parse_payload(payload);
+    assert_eq!(
+        message.regarding,
+        Some(umsh_text::Regarding::Unicast { message_id: 0 })
+    );
+    assert!(outputs.iter().any(|output| matches!(
+        output,
+        Drained::Insert {
+            regarding: Some(ResolvedRef::Unresolved(WireRef::SenderScoped {
+                sender: SenderScope::Local,
+                message_id: 0,
+            })),
+            ..
+        }
+    )));
+}
+
+#[test]
+fn wire_referenced_reaction_is_rejected_without_continuity() {
+    // A stream that will announce a Sequence Reset has no valid older IDs.
+    let mut engine = engine();
+    let error = engine
+        .compose(
+            direct_conv(),
+            1,
+            ComposeIntent::Reply {
+                body: "<3",
+                regarding: RegardingRef::Wire {
+                    message_id: 0,
+                    direction: Direction::Outbound,
+                    sender_hint: None,
+                    epoch: Some(0),
+                },
+                status: true,
+            },
+            0,
+        )
+        .unwrap_err();
+    assert_eq!(error, ComposeError::UnknownRegarding);
+
+    // A restored stream in a newer epoch rejects an older epoch's reference.
+    let mut restarted = self::engine();
+    restarted.restore(
+        &[StreamCheckpoint {
+            conversation: direct_conv(),
+            next_id: 4,
+            epoch: 3,
+        }],
+        0,
+    );
+    let error = restarted
+        .compose(
+            direct_conv(),
+            1,
+            ComposeIntent::Reply {
+                body: "<3",
+                regarding: RegardingRef::Wire {
+                    message_id: 2,
+                    direction: Direction::Outbound,
+                    sender_hint: None,
+                    epoch: Some(2),
+                },
+                status: true,
+            },
+            0,
+        )
+        .unwrap_err();
+    assert_eq!(error, ComposeError::UnknownRegarding);
+}
+
+#[test]
+fn empty_body_emote_composes_and_inserts() {
+    // Withdrawing a reaction is an emote with no body. It must never be
+    // mistaken for a delete — that meaning belongs to an empty *edit*.
+    let mut sender = engine();
+    feed(
+        &mut sender,
+        &direct_envelope(),
+        None,
+        &sequenced(4, "hi"),
+        0,
+    );
+    let _ = drain(&mut sender);
+    sender
+        .compose(
+            direct_conv(),
+            1,
+            ComposeIntent::Reply {
+                body: "",
+                regarding: RegardingRef::Wire {
+                    message_id: 4,
+                    direction: Direction::Inbound,
+                    sender_hint: None,
+                    epoch: Some(0),
+                },
+                status: true,
+            },
+            1,
+        )
+        .expect("empty emote composes");
+    let outputs = drain(&mut sender);
+    assert!(
+        outputs.iter().any(|output| matches!(
+            output,
+            Drained::Insert { body, message_type: MessageType::Status, regarding: Some(_), .. }
+                if body.is_empty()
+        )),
+        "withdrawal is an insert, not a delete: {outputs:?}"
+    );
+
+    let Some(Drained::Transmit { payload, .. }) = outputs
+        .iter()
+        .find(|output| matches!(output, Drained::Transmit { .. }))
+    else {
+        panic!("expected transmit");
+    };
+    let message = parse_payload(payload);
+    assert!(message.body.is_empty());
+    assert_eq!(message.editing, None, "no Editing option: not a delete");
+
+    // The receiving side agrees.
+    let mut receiver = engine();
+    receiver
+        .receive(&direct_envelope(), None, payload, 2)
+        .expect("withdrawal validates");
+    let outputs = drain(&mut receiver);
+    assert!(
+        outputs.iter().any(|output| matches!(
+            output,
+            Drained::Insert { body, message_type: MessageType::Status, regarding: Some(_), .. }
+                if body.is_empty()
+        )),
+        "receiver inserts the withdrawal: {outputs:?}"
+    );
+    assert!(
+        !outputs
+            .iter()
+            .any(|output| matches!(output, Drained::Delete { .. })),
+        "receiver must not read it as a delete"
     );
 }
 
@@ -1637,6 +1917,126 @@ fn inbound_edit_delete_and_reply_resolve_to_original() {
         output,
         Drained::Delete { original: ResolvedRef::Handle(handle) } if *handle == original
     )));
+}
+
+#[test]
+fn inbound_reaction_regarding_edit_id_resolves_to_original() {
+    // Senders are supposed to reference the original, but one that references
+    // the edit instead still means the same message.
+    let mut engine = engine();
+    feed(
+        &mut engine,
+        &direct_envelope(),
+        None,
+        &sequenced(4, "v1"),
+        0,
+    );
+    let outputs = drain(&mut engine);
+    let Some(Drained::Insert { handle, .. }) = outputs
+        .iter()
+        .find(|output| matches!(output, Drained::Insert { .. }))
+    else {
+        panic!("expected insert");
+    };
+    let original = *handle;
+
+    let mut edit = sequenced(5, "v2");
+    edit.editing = Some(4);
+    feed(&mut engine, &direct_envelope(), None, &edit, 10);
+    let _ = drain(&mut engine);
+
+    // The emote names the edit's own ID, not the original's.
+    let mut emote = sequenced(6, "+1");
+    emote.message_type = MessageType::Status;
+    emote.regarding = Some(umsh_text::Regarding::Unicast { message_id: 5 });
+    feed(&mut engine, &direct_envelope(), None, &emote, 20);
+    let outputs = drain(&mut engine);
+    assert!(
+        outputs.iter().any(|output| matches!(
+            output,
+            Drained::Insert { regarding: Some(ResolvedRef::Handle(handle)), .. }
+                if *handle == original
+        )),
+        "reaction lands on the edited message's original slot: {outputs:?}"
+    );
+
+    // An edit of the edit collapses too, rather than forming a chain.
+    let mut second = sequenced(7, "v3");
+    second.editing = Some(5);
+    feed(&mut engine, &direct_envelope(), None, &second, 30);
+    let _ = drain(&mut engine);
+    let mut later = sequenced(8, "<3");
+    later.message_type = MessageType::Status;
+    later.regarding = Some(umsh_text::Regarding::Unicast { message_id: 7 });
+    feed(&mut engine, &direct_envelope(), None, &later, 40);
+    let outputs = drain(&mut engine);
+    assert!(
+        outputs.iter().any(|output| matches!(
+            output,
+            Drained::Insert { regarding: Some(ResolvedRef::Handle(handle)), .. }
+                if *handle == original
+        )),
+        "edit-of-edit collapses to the first original: {outputs:?}"
+    );
+}
+
+#[test]
+fn peer_reaction_to_our_edit_wire_id_resolves_to_original() {
+    // Same tolerance for our own stream: a member reacting to an edit we sent
+    // reaches the message it replaced. Group form, so the source prefix keeps
+    // the reference off the peer's identically numbered stream.
+    let mut engine = engine();
+    let original = engine
+        .compose(
+            group_conv(),
+            1,
+            ComposeIntent::Text {
+                body: "v1",
+                status: false,
+            },
+            0,
+        )
+        .unwrap();
+    let _ = drain(&mut engine);
+    engine
+        .compose(
+            group_conv(),
+            2,
+            ComposeIntent::Edit {
+                original: ComposeRef::Handle(original),
+                body: "v2",
+            },
+            1,
+        )
+        .unwrap();
+    let outputs = drain(&mut engine);
+    let Some(Drained::Transmit { payload, .. }) = outputs
+        .iter()
+        .find(|output| matches!(output, Drained::Transmit { .. }))
+    else {
+        panic!("expected transmit");
+    };
+    let edit_id = parse_payload(payload)
+        .sequence
+        .expect("sequenced")
+        .message_id;
+
+    let mut emote = sequenced(0, "+1");
+    emote.message_type = MessageType::Status;
+    emote.regarding = Some(umsh_text::Regarding::Multicast {
+        message_id: edit_id,
+        source_prefix: NodeHint([LOCAL.0[0], LOCAL.0[1], LOCAL.0[2]]),
+    });
+    feed(&mut engine, &group_envelope(), None, &emote, 20);
+    let outputs = drain(&mut engine);
+    assert!(
+        outputs.iter().any(|output| matches!(
+            output,
+            Drained::Insert { regarding: Some(ResolvedRef::Handle(handle)), .. }
+                if *handle == original
+        )),
+        "reaction to our edit lands on our original: {outputs:?}"
+    );
 }
 
 #[test]

@@ -336,6 +336,12 @@ struct ChatMessageSummary: Identifiable, Hashable, Sendable {
     var senderNodeHint: MeshNodeHint? = nil
     /// What the radio observed of the frame this message arrived on.
     var reception: StoredMessageReception? = nil
+    /// Reactions to this message, at most one per person, oldest first.
+    var reactions: [MessageReaction] = []
+
+    /// The reaction this user has on this message, if any. What the picker
+    /// shows as chosen, and what tapping the same emoji again withdraws.
+    var myReaction: MessageReaction? { reactions.first(where: \.isMine) }
 
     /// A short, stable label for a member known only by their hint.
     var senderHintLabel: String? {
@@ -350,6 +356,93 @@ struct ChatMessageSummary: Identifiable, Hashable, Sendable {
     }
 }
 
+/// One person's reaction to one message.
+struct MessageReaction: Identifiable, Hashable, Sendable {
+    var id: String { "\(sessionID):\(handle)" }
+    /// The emote body as it arrived, before normalization.
+    let body: String
+    let isMine: Bool
+    let senderAddress: String?
+    let senderHint: Data?
+    let sessionID: String
+    let handle: UInt32
+    let wireID: UInt8?
+    let epoch: UInt16?
+    /// One of ours the radio could not deliver. Drawn faded; everything else
+    /// — including a reaction still in flight — looks normal, because being
+    /// in flight is the ordinary case and not worth alarming anyone about.
+    let isFailed: Bool
+
+    /// The single glyph this reaction renders as.
+    var glyph: String { ReactionEmoji.displayGlyph(for: body) }
+
+    /// Spoken description, so a reaction is never conveyed by colour or
+    /// glyph alone.
+    var accessibilityDescription: String {
+        let name = ReactionEmoji.name(for: glyph)
+        let who = isMine ? "you" : (senderAddress.map { String($0.prefix(8)) } ?? "someone")
+        return isFailed ? "\(name) from \(who), not delivered" : "\(name) from \(who)"
+    }
+}
+
+/// The reaction vocabulary: what the picker offers, what goes on the wire,
+/// and how an arriving body becomes one glyph.
+///
+/// Short tokens are what the wire carries — they are what the protocol's own
+/// examples use, and two characters of airtime instead of four matters more
+/// here than anywhere else in the app. Reading is deliberately looser than
+/// writing: anything recognizable maps to the same glyph, and anything else
+/// falls back to its own first character rather than being dropped.
+enum ReactionEmoji {
+    /// The picker's palette, in the order it is offered.
+    static let palette: [(glyph: String, token: String)] = [
+        ("🩷", "<3"),
+        ("👍", "+1"),
+        ("👎", "-1"),
+        ("🤣", "ha"),
+        ("‼️", "!"),
+        ("❓", "?"),
+    ]
+
+    /// Bodies that stand for a palette glyph, lowercased.
+    private static let upgrades: [String: String] = [
+        "<3": "🩷", "♥": "🩷", "♥︎": "🩷", "❤": "🩷", "❤️": "🩷",
+        "+1": "👍", "👍🏻": "👍", "👍🏼": "👍", "👍🏽": "👍", "👍🏾": "👍", "👍🏿": "👍",
+        "-1": "👎", "👎🏻": "👎", "👎🏼": "👎", "👎🏽": "👎", "👎🏾": "👎", "👎🏿": "👎",
+        "ha": "🤣", "haha": "🤣", "hahaha": "🤣", "lol": "🤣", "lmao": "🤣",
+        "!": "‼️", "!!": "‼️", "❗": "‼️", "❕": "‼️",
+        "?": "❓", "??": "❓", "❔": "❓",
+    ]
+
+    private static let names: [String: String] = [
+        "🩷": "heart", "👍": "thumbs up", "👎": "thumbs down",
+        "🤣": "laughing", "‼️": "exclamation", "❓": "question",
+    ]
+
+    /// The wire token for a palette glyph, or the glyph itself for anything
+    /// outside the palette.
+    static func token(for glyph: String) -> String {
+        palette.first { $0.glyph == glyph }?.token ?? glyph
+    }
+
+    /// What a reaction body renders as: a palette glyph when the body is one
+    /// of its spellings, otherwise the body's own first character. Only ever
+    /// one glyph — a peer that sends a sentence still gets a chip.
+    static func displayGlyph(for body: String) -> String {
+        let trimmed = body.trimmingCharacters(in: .whitespacesAndNewlines)
+        if let upgraded = upgrades[trimmed.lowercased()] { return upgraded }
+        guard let first = trimmed.first else { return "" }
+        // A single character may still be a spelling we know — a bare "?"
+        // reaches this only if the table above missed it.
+        if let upgraded = upgrades[String(first).lowercased()] { return upgraded }
+        return String(first)
+    }
+
+    static func name(for glyph: String) -> String {
+        names[glyph] ?? glyph
+    }
+}
+
 enum MessageSendResult: Sendable {
     case sent(ConversationListItem)
     case failed(String)
@@ -360,6 +453,10 @@ enum MessageSendResult: Sendable {
 struct ChatMessageActions: Sendable {
     let edit: @Sendable (ConversationListItem, ChatMessageSummary, String) async -> MessageSendResult
     let delete: @Sendable (ConversationListItem, ChatMessageSummary) async -> MessageSendResult
+    /// React with one of the palette glyphs, or withdraw the existing
+    /// reaction by passing the one already chosen.
+    var react: @Sendable (ConversationListItem, ChatMessageSummary, String) async
+        -> MessageSendResult = { _, _, _ in .failed("Messaging is unavailable.") }
     /// Erase every message in the conversation at this address. Local only:
     /// nothing is sent, and everyone else keeps their copy. The conversation
     /// itself survives, as does its place in the wire stream.

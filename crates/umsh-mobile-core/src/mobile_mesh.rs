@@ -45,8 +45,8 @@ use crate::mobile_chat::{
     ChannelRegistry, MobileChatArchiveLookupRecord, MobileChatArchiveResultKind,
     MobileChatCheckpointRecord, MobileChatComposeBatchRecord, MobileChatDeliveryRecord,
     MobileChatDirection, MobileChatMutationKind, MobileChatMutationRecord, MobileChatOriginalRef,
-    MobileChatPresence, MobileChatRxMetadataRecord, MobileChatSenderResolutionRecord,
-    MobileChatState,
+    MobileChatPresence, MobileChatRegardingRef, MobileChatRxMetadataRecord,
+    MobileChatSenderResolutionRecord, MobileChatState,
 };
 use crate::{MobileCounterStore, MobileError, MobileIdentity};
 
@@ -487,6 +487,10 @@ enum ChatComposeRequest {
     },
     Delete {
         original: MobileChatOriginalRef,
+    },
+    Reaction {
+        target: MobileChatRegardingRef,
+        body: String,
     },
 }
 
@@ -1330,6 +1334,29 @@ impl MobileMeshSession {
             conversation_address,
             client_token,
             ChatComposeRequest::Delete { original },
+        )
+        .await
+    }
+
+    /// React to a message with a short emote body, or withdraw an earlier
+    /// reaction by passing an empty body. A sender has at most one live
+    /// reaction per message: sending another simply supersedes it, so there
+    /// is nothing to edit or delete.
+    ///
+    /// Unlike an edit, the target may be a message the peer sent, and usually
+    /// one persisted before this launch; the reference carries the direction
+    /// and (for channel groups) the sender hint needed to name it.
+    pub async fn compose_reaction(
+        &self,
+        conversation_address: String,
+        client_token: u32,
+        target: MobileChatRegardingRef,
+        body: String,
+    ) -> Result<MobileChatComposeBatchRecord, MobileMeshError> {
+        self.compose_chat(
+            conversation_address,
+            client_token,
+            ChatComposeRequest::Reaction { target, body },
         )
         .await
     }
@@ -2369,6 +2396,14 @@ async fn run_worker(
                                         original,
                                         now_ms,
                                     ),
+                                    ChatComposeRequest::Reaction { target, body } => chat
+                                        .compose_reaction(
+                                            conversation,
+                                            client_token,
+                                            target,
+                                            body,
+                                            now_ms,
+                                        ),
                                 };
                                 match composed {
                                     Ok(composed) => {

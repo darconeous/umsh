@@ -182,6 +182,7 @@ struct AppRootView: View {
                     messageActions: ChatMessageActions(
                         edit: editMessage,
                         delete: deleteMessage,
+                        react: reactToMessage,
                         clearMessages: clearConversationMessages,
                         countMessages: countConversationMessages
                     ),
@@ -230,6 +231,7 @@ struct AppRootView: View {
                     messageActions: ChatMessageActions(
                         edit: editMessage,
                         delete: deleteMessage,
+                        react: reactToMessage,
                         clearMessages: clearConversationMessages,
                         countMessages: countConversationMessages
                     ),
@@ -261,6 +263,7 @@ struct AppRootView: View {
                     messageActions: ChatMessageActions(
                         edit: editMessage,
                         delete: deleteMessage,
+                        react: reactToMessage,
                         clearMessages: clearConversationMessages,
                         countMessages: countConversationMessages
                     ),
@@ -324,6 +327,7 @@ struct AppRootView: View {
                     messageActions: ChatMessageActions(
                         edit: editMessage,
                         delete: deleteMessage,
+                        react: reactToMessage,
                         clearMessages: clearConversationMessages,
                         countMessages: countConversationMessages
                     ),
@@ -410,6 +414,7 @@ struct AppRootView: View {
                     messageActions: ChatMessageActions(
                         edit: editMessage,
                         delete: deleteMessage,
+                        react: reactToMessage,
                         clearMessages: clearConversationMessages,
                         countMessages: countConversationMessages
                     )
@@ -1724,6 +1729,27 @@ struct AppRootView: View {
         }
     }
 
+    /// React to a message, or withdraw the reaction already on it when the
+    /// user taps the glyph they already chose. Replacing one is just another
+    /// reaction: the newest from a sender is the one that counts, so there is
+    /// nothing to retract first.
+    private func reactToMessage(
+        _ conversation: ConversationListItem,
+        _ message: ChatMessageSummary,
+        _ glyph: String
+    ) async -> MessageSendResult {
+        let withdrawing = message.myReaction?.glyph == glyph
+        let body = withdrawing ? "" : ReactionEmoji.token(for: glyph)
+        return await performChatCompose(conversation, clearsDraft: false) { clientToken in
+            try await radioConnection.composeReaction(
+                conversationAddress: conversation.conversationAddress,
+                clientToken: clientToken,
+                target: regardingRef(message),
+                body: body
+            )
+        }
+    }
+
     /// The engine accepts either the live handle (same facade session) or
     /// the persisted wire identity (after an app restart); send both and let
     /// Rust pick, so the transcript never has to care which run composed a
@@ -1733,6 +1759,20 @@ struct AppRootView: View {
             sessionId: UInt64(message.sessionID) ?? 0,
             handle: message.handle,
             wireId: message.wireID,
+            epoch: message.epoch
+        )
+    }
+
+    /// The same idea as ``originalRef(_:)``, but for a message that may be
+    /// either party's: the direction says whose stream the wire ID belongs
+    /// to, and the hint says whose within a channel group.
+    private func regardingRef(_ message: ChatMessageSummary) -> MobileChatRegardingRef {
+        MobileChatRegardingRef(
+            sessionId: UInt64(message.sessionID) ?? 0,
+            handle: message.handle,
+            wireId: message.wireID,
+            direction: message.isOutbound ? .outbound : .inbound,
+            senderHint: message.senderHint,
             epoch: message.epoch
         )
     }
@@ -2812,7 +2852,25 @@ struct AppRootView: View {
             senderHint: stored.senderHint,
             senderHandle: stored.senderHandle,
             senderNodeHint: stored.senderHint.flatMap { nodeHints[$0] },
-            reception: stored.reception
+            reception: stored.reception,
+            reactions: stored.reactions.map(messageReaction(from:))
+        )
+    }
+
+    private static func messageReaction(from stored: StoredMessageReaction) -> MessageReaction {
+        MessageReaction(
+            body: stored.body,
+            isMine: stored.outbound,
+            senderAddress: stored.senderAddress,
+            senderHint: stored.senderHint,
+            sessionID: stored.sessionID,
+            handle: stored.handle,
+            wireID: stored.wireID,
+            epoch: stored.epoch,
+            // Only our own reactions have delivery to report, and only an
+            // outright failure is worth showing: in flight looks like any
+            // other reaction, the same way an unacknowledged bubble does.
+            isFailed: stored.outbound && stored.deliveryState?.lowercased() == "failed"
         )
     }
 

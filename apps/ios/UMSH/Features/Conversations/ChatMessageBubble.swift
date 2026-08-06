@@ -200,6 +200,10 @@ struct ChatMessageBubble: View, @MainActor Equatable {
     var onDelete: (() -> Void)?
     var onShowDetails: (() -> Void)?
     var onShowSender: (() -> Void)?
+    /// React with a palette glyph, or withdraw by passing the one already
+    /// chosen. The picker marks the current choice, so the same tap that
+    /// selects also unselects.
+    var onReact: ((String) -> Void)?
 
     @State private var showsOriginalBody = false
 
@@ -220,6 +224,7 @@ struct ChatMessageBubble: View, @MainActor Equatable {
             && lhs.senderHint == rhs.senderHint
             && (lhs.onEdit == nil) == (rhs.onEdit == nil)
             && (lhs.onDelete == nil) == (rhs.onDelete == nil)
+            && (lhs.onReact == nil) == (rhs.onReact == nil)
     }
 
     private var isFailed: Bool {
@@ -260,15 +265,25 @@ struct ChatMessageBubble: View, @MainActor Equatable {
                             .foregroundStyle(.secondary)
                             .padding(.horizontal, 12)
                     }
-                    HStack(spacing: 6) {
-                        bubble
-                        if isFailed {
-                            Image(systemName: "exclamationmark.circle.fill")
-                                .font(.title3)
-                                .foregroundStyle(.red)
-                                .accessibilityLabel("Message not delivered")
+                    reactionsAndBubble
+                        // The whole group — bubble and chips — is what the
+                        // context menu lifts. The preview mask must cover the
+                        // chips too or they are sliced at the bubble outline
+                        // the moment the menu opens; a full-rect mask works
+                        // because the lift keeps transparent pixels
+                        // transparent, so the gaps around the chips show the
+                        // dimmed transcript rather than a platter. (A custom
+                        // preview view is NOT equivalent: those are backed by
+                        // an opaque system platter.)
+                        .contentShape(.contextMenuPreview, Rectangle())
+                        .contextMenu {
+                            menuItems
                         }
-                    }
+                        .alert("Original Message", isPresented: $showsOriginalBody) {
+                            Button("OK", role: .cancel) {}
+                        } message: {
+                            Text(message.originalBody ?? "")
+                        }
                     if let caption {
                         Text(caption)
                             .font(.caption2)
@@ -308,6 +323,95 @@ struct ChatMessageBubble: View, @MainActor Equatable {
         BubbleShape(isOutbound: message.isOutbound, showsTail: presentation.isLastInRun)
     }
 
+    /// The bubble with its reaction chips laid out over the top corner — the
+    /// unit the transcript shows and the context menu lifts.
+    ///
+    /// The chips are laid out here rather than floated as an overlay: an
+    /// overlay that spills past its row gets composited under the
+    /// neighbouring bubbles, each of which is a real UITextView. Reserving
+    /// the overhang keeps them whole.
+    private var reactionsAndBubble: some View {
+        // The reserved strips above and outside the bubble are what the
+        // cluster lives in: the chips sit high, the corner chip overhangs the
+        // bubble's outer edge, and the thought-dot trail falls wholly outside
+        // it — all without anything ever poking past the group's own bounds,
+        // where the neighbouring rows (and the lift snapshot) would clip it.
+        ZStack(alignment: message.isOutbound ? .topLeading : .topTrailing) {
+            HStack(spacing: 6) {
+                bubble
+                if isFailed {
+                    Image(systemName: "exclamationmark.circle.fill")
+                        .font(.title3)
+                        .foregroundStyle(.red)
+                        .accessibilityLabel("Message not delivered")
+                }
+            }
+            .padding(.top, message.reactions.isEmpty ? 0 : ReactionBadgeView.overhang)
+            .padding(
+                message.isOutbound ? .leading : .trailing,
+                message.reactions.isEmpty ? 0 : ReactionBadgeView.outset
+            )
+            if !message.reactions.isEmpty {
+                ReactionBadgeView(
+                    reactions: message.reactions,
+                    isOutbound: message.isOutbound
+                )
+                .padding(.top, ReactionBadgeView.topInset)
+                .padding(
+                    message.isOutbound ? .leading : .trailing,
+                    ReactionBadgeView.cornerInset
+                )
+            }
+        }
+    }
+
+    @ViewBuilder
+    private var menuItems: some View {
+        if let onReact {
+            // A palette picker renders as a row of glyphs with the
+            // chosen one marked, and — unlike a row of toggles —
+            // closes the menu when one is picked, which is what makes
+            // reacting feel like one gesture rather than two.
+            Picker(
+                selection: Binding(
+                    get: { message.myReaction?.glyph ?? "" },
+                    // Picking either way is the same request: choose
+                    // this glyph, or drop it if it was already ours.
+                    set: { onReact($0) }
+                )
+            ) {
+                ForEach(ReactionEmoji.palette, id: \.glyph) { entry in
+                    Text(entry.glyph)
+                        .accessibilityLabel(ReactionEmoji.name(for: entry.glyph))
+                        .tag(entry.glyph)
+                }
+            } label: {
+                // A menu renders a picker's label as a section
+                // heading, and the glyphs need no caption; only an
+                // empty label leaves them to speak for themselves.
+                EmptyView()
+            }
+            .pickerStyle(.palette)
+        }
+        Button("Copy", systemImage: "doc.on.doc") {
+            UIPasteboard.general.string = message.body
+        }
+        if message.originalBody != nil {
+            Button("View Original", systemImage: "clock.arrow.circlepath") {
+                showsOriginalBody = true
+            }
+        }
+        if let onEdit {
+            Button("Edit", systemImage: "pencil", action: onEdit)
+        }
+        if let onShowDetails {
+            Button("Details", systemImage: "info.circle", action: onShowDetails)
+        }
+        if let onDelete {
+            Button("Delete", systemImage: "trash", role: .destructive, action: onDelete)
+        }
+    }
+
     private var bubble: some View {
         SelectableMessageText(
             text: message.body,
@@ -322,31 +426,6 @@ struct ChatMessageBubble: View, @MainActor Equatable {
                 message.isOutbound ? Color.accentColor : Color(uiColor: .systemGray5),
                 in: shape
             )
-            .contentShape(.contextMenuPreview, shape)
-            .contextMenu {
-                Button("Copy", systemImage: "doc.on.doc") {
-                    UIPasteboard.general.string = message.body
-                }
-                if message.originalBody != nil {
-                    Button("View Original", systemImage: "clock.arrow.circlepath") {
-                        showsOriginalBody = true
-                    }
-                }
-                if let onEdit {
-                    Button("Edit", systemImage: "pencil", action: onEdit)
-                }
-                if let onShowDetails {
-                    Button("Details", systemImage: "info.circle", action: onShowDetails)
-                }
-                if let onDelete {
-                    Button("Delete", systemImage: "trash", role: .destructive, action: onDelete)
-                }
-            }
-            .alert("Original Message", isPresented: $showsOriginalBody) {
-                Button("OK", role: .cancel) {}
-            } message: {
-                Text(message.originalBody ?? "")
-            }
     }
 
     private var caption: String? {

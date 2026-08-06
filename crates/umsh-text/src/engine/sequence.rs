@@ -84,6 +84,53 @@ impl RefRing {
     }
 }
 
+/// Bounded ring mapping an edit's own wire ID back to the ID it replaced.
+///
+/// Senders name the *original* when referencing an edited message, but a
+/// sender that names the edit instead is easy to accommodate and impossible
+/// to distinguish from a stale reference otherwise, so references are chased
+/// through this ring before lookup. Recording chases one hop, so an edit of
+/// an edit collapses to the first original rather than forming a chain.
+#[derive(Clone, Debug, Default)]
+pub struct EditRing {
+    entries: heapless::Vec<(u8, u8), 8>,
+}
+
+impl EditRing {
+    pub fn clear(&mut self) {
+        self.entries.clear();
+    }
+
+    /// Record `edit_id -> original_id`, collapsing through any existing
+    /// mapping of `original_id` and evicting the oldest entry when full.
+    pub fn record(&mut self, edit_id: u8, original_id: u8) {
+        let original_id = self.resolve(original_id);
+        if edit_id == original_id {
+            return;
+        }
+        self.entries.retain(|(entry_id, _)| *entry_id != edit_id);
+        if self.entries.is_full() {
+            self.entries.remove(0);
+        }
+        let _ = self.entries.push((edit_id, original_id));
+    }
+
+    /// The original an ID stands for, or the ID itself when unmapped.
+    pub fn resolve(&self, id: u8) -> u8 {
+        self.entries
+            .iter()
+            .find(|(entry_id, _)| *entry_id == id)
+            .map(|(_, original)| *original)
+            .unwrap_or(id)
+    }
+
+    /// Retire any mapping involving `id`, in either position.
+    pub fn retire(&mut self, id: u8) {
+        self.entries
+            .retain(|(edit_id, original_id)| *edit_id != id && *original_id != id);
+    }
+}
+
 /// 256-bit seen-ID bitmap with half-range window semantics.
 #[derive(Clone, Debug, Default)]
 pub struct SeenWindow {
@@ -142,6 +189,8 @@ pub struct InboundStream {
     pub baseline: Option<u8>,
     pub seen: SeenWindow,
     pub refs: RefRing,
+    /// Edit IDs on this stream, mapped back to the originals they replaced.
+    pub edit_refs: EditRing,
     pub pending: heapless::Vec<PendingRepair, 8>,
     /// Resolved full key of a claimed multicast member, when known. Needed to
     /// address group repair requests.
@@ -160,6 +209,7 @@ impl InboundStream {
             baseline: None,
             seen: SeenWindow::default(),
             refs: RefRing::default(),
+            edit_refs: EditRing::default(),
             pending: heapless::Vec::new(),
             sender_key: None,
             collided: false,
@@ -175,6 +225,7 @@ impl InboundStream {
         self.baseline = new_baseline;
         self.seen.clear();
         self.refs.clear();
+        self.edit_refs.clear();
         self.pending.clear();
         if let Some(id) = new_baseline {
             self.seen.insert(id);
@@ -206,6 +257,9 @@ pub struct OutboundStream {
     /// Include Sequence Reset on the next message sent in this conversation.
     pub announce_reset: bool,
     pub refs: RefRing,
+    /// Our own edit IDs, mapped back to the originals they replaced, so a
+    /// peer that references an edit of ours still lands on the original.
+    pub edit_refs: EditRing,
     pub last_active_ms: u64,
 }
 
@@ -216,6 +270,7 @@ impl OutboundStream {
             epoch: 0,
             announce_reset: true,
             refs: RefRing::default(),
+            edit_refs: EditRing::default(),
             last_active_ms: now_ms,
         }
     }
@@ -225,6 +280,7 @@ impl OutboundStream {
         let id = self.next_id;
         self.next_id = self.next_id.wrapping_add(1);
         self.refs.retire(id);
+        self.edit_refs.retire(id);
         id
     }
 }

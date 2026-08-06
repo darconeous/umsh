@@ -424,9 +424,11 @@ pub enum ComposeIntent<'a> {
     /// Plain text (`status` renders like IRC `/me`).
     Text { body: &'a str, status: bool },
     /// Reply to (`status: false`) or emote about (`status: true`) a message.
+    ///
+    /// An emote with an empty body withdraws the sender's earlier reaction.
     Reply {
         body: &'a str,
-        regarding: MessageHandle,
+        regarding: RegardingRef,
         status: bool,
     },
     /// Replace a previously composed message's content.
@@ -446,6 +448,52 @@ pub enum ComposeRef {
     /// as reference targets — and while the ID is within the recently
     /// allocated serial half-space.
     Wire { message_id: u8, epoch: u16 },
+}
+
+/// What a reply or emote is about.
+///
+/// Unlike [`ComposeRef`], which only ever names the local stream, a regarding
+/// target is usually a message someone else sent, and usually one this
+/// process did not witness arrive: reacting to a message read yesterday is
+/// the ordinary case, not the exotic one. The wire form therefore carries the
+/// direction and — for channel groups, where the ID alone is meaningless —
+/// the target sender's hint.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum RegardingRef {
+    /// A message this engine instance inserted or composed.
+    Handle(MessageHandle),
+    /// A persisted message addressed by the coordinates recorded with it.
+    ///
+    /// `epoch` is checked against the stream when one is live, so a reference
+    /// that predates a Sequence Reset is refused rather than mis-targeted.
+    /// For an inbound target with no live stream the reference is sent
+    /// best-effort: retention is the receiver's business, and the receiving
+    /// platform matches unresolved references against its own stored rows.
+    Wire {
+        message_id: u8,
+        direction: Direction,
+        /// The target sender's hint. Required for inbound channel-group
+        /// targets, whose wire IDs are only meaningful per member.
+        sender_hint: Option<umsh_core::NodeHint>,
+        epoch: Option<u16>,
+    },
+}
+
+/// The stream a regarding target lives on, as far as the wire is concerned.
+fn regarding_sender(
+    conversation: ConversationKey,
+    direction: Direction,
+    sender_hint: Option<umsh_core::NodeHint>,
+) -> Option<SenderScope> {
+    match direction {
+        Direction::Outbound => Some(SenderScope::Local),
+        Direction::Inbound => match conversation {
+            ConversationKey::Direct { peer }
+            | ConversationKey::ChannelDirect { peer, .. }
+            | ConversationKey::Room { room: peer } => Some(SenderScope::Peer(peer)),
+            ConversationKey::ChannelGroup { .. } => sender_hint.map(SenderScope::ClaimedMember),
+        },
+    }
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -621,7 +669,7 @@ impl<P: TextProfile, const SLOTS: usize, const PAGES: usize> Engine<P, SLOTS, PA
         intent: ComposeIntent<'_>,
         now_ms: u64,
     ) -> Result<MessageHandle, ComposeError> {
-        let (body, status_type, regarding_handle, edit_original) = match intent {
+        let (body, status_type, regarding_target, edit_original) = match intent {
             ComposeIntent::Text { body, status } => (body, status, None, None),
             ComposeIntent::Reply {
                 body,
@@ -635,18 +683,18 @@ impl<P: TextProfile, const SLOTS: usize, const PAGES: usize> Engine<P, SLOTS, PA
             return Err(ComposeError::TooLarge);
         }
 
-        // Resolve references before allocating a wire ID.
-        let regarding = match regarding_handle {
-            None => None,
-            Some(handle) => Some(
-                self.wire_reference_for(conversation, handle)
-                    .ok_or(ComposeError::UnknownRegarding)?,
-            ),
-        };
         // Wire references may target a stream restored from a checkpoint
         // that has not composed yet in this process; materialize it first so
         // its epoch is available for validation.
         self.ensure_outbound(conversation, now_ms);
+        // Resolve references before allocating a wire ID.
+        let (regarding, regarding_ref) = match regarding_target {
+            None => (None, None),
+            Some(target) => {
+                let (wire, resolved) = self.resolve_regarding(conversation, target)?;
+                (Some(wire), Some(resolved))
+            }
+        };
         let editing = match edit_original {
             None => None,
             Some(ComposeRef::Handle(handle)) => {
@@ -724,10 +772,12 @@ impl<P: TextProfile, const SLOTS: usize, const PAGES: usize> Engine<P, SLOTS, PA
         self.encode_and_queue(conversation, handle, &template, body.as_bytes(), message_id)?;
 
         // Record the mapping only for original messages; edit IDs must not
-        // become reference targets.
-        if editing.is_none() {
-            let stream = self.outbound.get_mut(&conversation).expect("present");
-            stream.refs.record(message_id, handle);
+        // become reference targets. They do get remembered as aliases, so a
+        // peer that references the edit still reaches the original.
+        let stream = self.outbound.get_mut(&conversation).expect("present");
+        match editing {
+            None => stream.refs.record(message_id, handle),
+            Some(original_id) => stream.edit_refs.record(message_id, original_id),
         }
 
         // Superseded content must never re-air. Retire the original ID's
@@ -781,7 +831,7 @@ impl<P: TextProfile, const SLOTS: usize, const PAGES: usize> Engine<P, SLOTS, PA
                 epoch,
                 client_token: Some(client_token),
                 sender_handle: None,
-                regarding: regarding_handle.map(ResolvedRef::Handle),
+                regarding: regarding_ref,
                 bg_color: None,
                 text_color: None,
                 body: body_ref,
@@ -1197,7 +1247,14 @@ impl<P: TextProfile, const SLOTS: usize, const PAGES: usize> Engine<P, SLOTS, PA
             .get(&key)
             .and_then(|stream| stream.refs.lookup(id));
 
-        if let Some(original_id) = content.editing {
+        if let Some(mut original_id) = content.editing {
+            if let Some(stream) = self.inbound.get_mut(&key) {
+                // An edit may itself name an earlier edit; collapse the chain
+                // so every later reference lands on the slot the transcript
+                // actually holds, and remember this edit as an alias for it.
+                original_id = stream.edit_refs.resolve(original_id);
+                stream.edit_refs.record(id, original_id);
+            }
             // The backfilled frame turned out to be an edit, not a standalone
             // bubble: retire the spinner and apply the edit to its target.
             if let Some(handle) = placeholder {
@@ -1498,12 +1555,16 @@ impl<P: TextProfile, const SLOTS: usize, const PAGES: usize> Engine<P, SLOTS, PA
         }
 
         if complete && is_edit {
-            let original_id = self.pool.slots[slot_index]
+            let mut original_id = self.pool.slots[slot_index]
                 .as_ref()
                 .expect("occupied")
                 .meta
                 .editing
                 .expect("checked");
+            if let Some(stream) = self.inbound.get_mut(&key) {
+                original_id = stream.edit_refs.resolve(original_id);
+                stream.edit_refs.record(id, original_id);
+            }
             let original = self
                 .inbound
                 .get(&key)
@@ -2371,6 +2432,84 @@ impl<P: TextProfile, const SLOTS: usize, const PAGES: usize> Engine<P, SLOTS, PA
         None
     }
 
+    /// Resolve a compose-time regarding target into the wire form to send and
+    /// the reference to export on the transcript mutation.
+    fn resolve_regarding(
+        &self,
+        conversation: ConversationKey,
+        target: RegardingRef,
+    ) -> Result<(Regarding, ResolvedRef), ComposeError> {
+        let (message_id, direction, sender_hint, epoch) = match target {
+            RegardingRef::Handle(handle) => {
+                let wire = self
+                    .wire_reference_for(conversation, handle)
+                    .ok_or(ComposeError::UnknownRegarding)?;
+                return Ok((wire, ResolvedRef::Handle(handle)));
+            }
+            RegardingRef::Wire {
+                message_id,
+                direction,
+                sender_hint,
+                epoch,
+            } => (message_id, direction, sender_hint, epoch),
+        };
+
+        let sender = regarding_sender(conversation, direction, sender_hint)
+            .ok_or(ComposeError::UnknownRegarding)?;
+        match direction {
+            Direction::Outbound => {
+                let stream = self
+                    .outbound
+                    .get(&conversation)
+                    .ok_or(ComposeError::UnknownRegarding)?;
+                // A reference that predates a Sequence Reset names an ID the
+                // receiver has already discarded as a target.
+                if stream.announce_reset || epoch.is_some_and(|epoch| stream.epoch != epoch) {
+                    return Err(ComposeError::UnknownRegarding);
+                }
+                // The ID must lie in the already allocated serial half-space.
+                let delta = stream.next_id.wrapping_sub(message_id);
+                if delta == 0 || delta > 128 {
+                    return Err(ComposeError::UnknownRegarding);
+                }
+            }
+            Direction::Inbound => {
+                let live = self.inbound.get(&StreamKey {
+                    conversation,
+                    sender,
+                });
+                if let Some(stream) = live
+                    && epoch.is_some_and(|epoch| stream.epoch != epoch)
+                {
+                    return Err(ComposeError::UnknownRegarding);
+                }
+            }
+        }
+
+        let wire = if conversation.uses_multicast_references() {
+            let source_prefix = match direction {
+                Direction::Outbound => umsh_core::NodeHint([
+                    self.local_key.0[0],
+                    self.local_key.0[1],
+                    self.local_key.0[2],
+                ]),
+                Direction::Inbound => sender.hint().ok_or(ComposeError::UnknownRegarding)?,
+            };
+            Regarding::Multicast {
+                message_id,
+                source_prefix,
+            }
+        } else {
+            Regarding::Unicast { message_id }
+        };
+        // No live handle backs a wire-addressed target; the platform matches
+        // the exported reference against its own persisted rows.
+        Ok((
+            wire,
+            ResolvedRef::Unresolved(crate::model::WireRef::SenderScoped { sender, message_id }),
+        ))
+    }
+
     /// Resolve a received wire reference to a stable handle when unambiguous.
     fn resolved_from_wire(
         &self,
@@ -2389,49 +2528,56 @@ impl<P: TextProfile, const SLOTS: usize, const PAGES: usize> Engine<P, SLOTS, PA
                     self.local_key.0[2],
                 ]);
                 if source_prefix == local_prefix
-                    && let Some(handle) = self
-                        .outbound
-                        .get(&conversation)
-                        .and_then(|stream| stream.refs.lookup(message_id))
+                    && let Some(stream) = self.outbound.get(&conversation)
                 {
-                    return ResolvedRef::Handle(handle);
+                    let message_id = stream.edit_refs.resolve(message_id);
+                    if let Some(handle) = stream.refs.lookup(message_id) {
+                        return ResolvedRef::Handle(handle);
+                    }
                 }
                 let key = StreamKey {
                     conversation,
                     sender: SenderScope::ClaimedMember(source_prefix),
                 };
+                // A reference naming an edit stands for the message it
+                // replaced; carry the collapsed ID into the fallback too, so
+                // the platform matches the row it actually stored.
+                let message_id = self
+                    .inbound
+                    .get(&key)
+                    .map(|stream| stream.edit_refs.resolve(message_id))
+                    .unwrap_or(message_id);
+                let unresolved = ResolvedRef::Unresolved(crate::model::WireRef::SenderScoped {
+                    sender: SenderScope::ClaimedMember(source_prefix),
+                    message_id,
+                });
                 match self.inbound.get(&key) {
                     Some(stream) if !stream.collided => stream
                         .refs
                         .lookup(message_id)
                         .map(ResolvedRef::Handle)
-                        .unwrap_or(ResolvedRef::Unresolved(
-                            crate::model::WireRef::SenderScoped {
-                                sender: SenderScope::ClaimedMember(source_prefix),
-                                message_id,
-                            },
-                        )),
-                    _ => ResolvedRef::Unresolved(crate::model::WireRef::SenderScoped {
-                        sender: SenderScope::ClaimedMember(source_prefix),
-                        message_id,
-                    }),
+                        .unwrap_or(unresolved),
+                    _ => unresolved,
                 }
             }
             Regarding::Unicast { message_id } => {
                 // In a one-to-one conversation the reference may target
                 // either party's stream; resolve only when unambiguous.
-                let inbound = sender.and_then(|sender| {
-                    self.inbound
-                        .get(&StreamKey {
-                            conversation,
-                            sender,
-                        })
-                        .and_then(|stream| stream.refs.lookup(message_id))
+                let inbound_key = sender.map(|sender| StreamKey {
+                    conversation,
+                    sender,
                 });
-                let outbound = self
-                    .outbound
-                    .get(&conversation)
-                    .and_then(|stream| stream.refs.lookup(message_id));
+                let inbound_stream = inbound_key.and_then(|key| self.inbound.get(&key));
+                let outbound_stream = self.outbound.get(&conversation);
+                // Either side may have edited the target; collapse through
+                // whichever stream knows the ID as an edit of its own.
+                let message_id = inbound_stream
+                    .map(|stream| stream.edit_refs.resolve(message_id))
+                    .filter(|resolved| *resolved != message_id)
+                    .or_else(|| outbound_stream.map(|stream| stream.edit_refs.resolve(message_id)))
+                    .unwrap_or(message_id);
+                let inbound = inbound_stream.and_then(|stream| stream.refs.lookup(message_id));
+                let outbound = outbound_stream.and_then(|stream| stream.refs.lookup(message_id));
                 match (inbound, outbound) {
                     (Some(handle), None) | (None, Some(handle)) => ResolvedRef::Handle(handle),
                     _ => ResolvedRef::Unresolved(match sender {
@@ -2479,6 +2625,7 @@ impl<P: TextProfile, const SLOTS: usize, const PAGES: usize> Engine<P, SLOTS, PA
                     epoch,
                     announce_reset: false,
                     refs: Default::default(),
+                    edit_refs: Default::default(),
                     last_active_ms: now_ms,
                 }
             }

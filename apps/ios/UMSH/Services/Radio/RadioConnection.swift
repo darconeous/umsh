@@ -175,6 +175,15 @@ protocol RadioConnection: AnyObject, Sendable {
         clientToken: UInt32,
         original: MobileChatOriginalRef
     ) async throws -> MobileChatComposeBatchRecord
+    /// React to a message, or withdraw a reaction with an empty body. The
+    /// target may be either party's message, usually one stored before this
+    /// launch, so it is named by wire coordinates rather than a live handle.
+    func composeReaction(
+        conversationAddress: String,
+        clientToken: UInt32,
+        target: MobileChatRegardingRef,
+        body: String
+    ) async throws -> MobileChatComposeBatchRecord
     func commitChatBatch(_ batchID: UInt64) async throws
     func rejectChatBatch(
         _ batchID: UInt64,

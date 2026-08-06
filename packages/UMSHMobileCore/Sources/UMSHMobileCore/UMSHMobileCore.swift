@@ -1191,6 +1191,18 @@ public protocol MobileMeshSessionProtocol: AnyObject, Sendable {
     func composeEdit(conversationAddress: String, clientToken: UInt32, original: MobileChatOriginalRef, body: String) async throws  -> MobileChatComposeBatchRecord
 
     /**
+     * React to a message with a short emote body, or withdraw an earlier
+     * reaction by passing an empty body. A sender has at most one live
+     * reaction per message: sending another simply supersedes it, so there
+     * is nothing to edit or delete.
+     *
+     * Unlike an edit, the target may be a message the peer sent, and usually
+     * one persisted before this launch; the reference carries the direction
+     * and (for channel groups) the sender hint needed to name it.
+     */
+    func composeReaction(conversationAddress: String, clientToken: UInt32, target: MobileChatRegardingRef, body: String) async throws  -> MobileChatComposeBatchRecord
+
+    /**
      * Compose a message into a conversation, addressed either by a peer's
      * address or by a channel's conversation address.
      */
@@ -1579,6 +1591,32 @@ open func composeEdit(conversationAddress: String, clientToken: UInt32, original
             rustFutureFunc: {
                 uniffi_umsh_mobile_core_fn_method_mobilemeshsession_compose_edit(
                         self.uniffiCloneHandle(),FfiConverterString.lower(conversationAddress),FfiConverterUInt32.lower(clientToken),FfiConverterTypeMobileChatOriginalRef_lower(original),FfiConverterString.lower(body)
+                )
+            },
+            pollFunc: ffi_umsh_mobile_core_rust_future_poll_rust_buffer,
+            completeFunc: ffi_umsh_mobile_core_rust_future_complete_rust_buffer,
+            freeFunc: ffi_umsh_mobile_core_rust_future_free_rust_buffer,
+            liftFunc: FfiConverterTypeMobileChatComposeBatchRecord_lift,
+            errorHandler: FfiConverterTypeMobileMeshError_lift
+        )
+}
+
+    /**
+     * React to a message with a short emote body, or withdraw an earlier
+     * reaction by passing an empty body. A sender has at most one live
+     * reaction per message: sending another simply supersedes it, so there
+     * is nothing to edit or delete.
+     *
+     * Unlike an edit, the target may be a message the peer sent, and usually
+     * one persisted before this launch; the reference carries the direction
+     * and (for channel groups) the sender hint needed to name it.
+     */
+open func composeReaction(conversationAddress: String, clientToken: UInt32, target: MobileChatRegardingRef, body: String)async throws  -> MobileChatComposeBatchRecord  {
+    return
+        try  await uniffiRustCallAsync(
+            rustFutureFunc: {
+                uniffi_umsh_mobile_core_fn_method_mobilemeshsession_compose_reaction(
+                        self.uniffiCloneHandle(),FfiConverterString.lower(conversationAddress),FfiConverterUInt32.lower(clientToken),FfiConverterTypeMobileChatRegardingRef_lower(target),FfiConverterString.lower(body)
                 )
             },
             pollFunc: ffi_umsh_mobile_core_rust_future_poll_rust_buffer,
@@ -3654,6 +3692,16 @@ public struct MobileChatMutationRecord: Equatable, Hashable {
     public var clientToken: UInt32?
     public var senderHandle: String?
     public var regardingHandle: UInt32?
+    /**
+     * When a reply or emote references a message the engine holds no live
+     * handle for, these export the wire reference the same way the
+     * `original_*` fields do for edits: the target's wire ID within
+     * `regarding_direction`'s stream, plus the hint identifying which
+     * member's stream in a channel group.
+     */
+    public var regardingWireId: UInt8?
+    public var regardingDirection: MobileChatDirection?
+    public var regardingSenderHint: Data?
     public var backgroundColor: Data?
     public var textColor: Data?
     public var originalHandle: UInt32?
@@ -3713,7 +3761,14 @@ public struct MobileChatMutationRecord: Equatable, Hashable {
          * The sender's 3-byte claimed hint, for a channel group message. The
          * only sender identity a multicast frame is required to carry; present
          * whether or not `sender_address` could be resolved.
-         */senderHint: Data?, direction: MobileChatDirection?, messageType: UInt8?, wireId: UInt8?, epoch: UInt16?, clientToken: UInt32?, senderHandle: String?, regardingHandle: UInt32?, backgroundColor: Data?, textColor: Data?, originalHandle: UInt32?,
+         */senderHint: Data?, direction: MobileChatDirection?, messageType: UInt8?, wireId: UInt8?, epoch: UInt16?, clientToken: UInt32?, senderHandle: String?, regardingHandle: UInt32?,
+        /**
+         * When a reply or emote references a message the engine holds no live
+         * handle for, these export the wire reference the same way the
+         * `original_*` fields do for edits: the target's wire ID within
+         * `regarding_direction`'s stream, plus the hint identifying which
+         * member's stream in a channel group.
+         */regardingWireId: UInt8?, regardingDirection: MobileChatDirection?, regardingSenderHint: Data?, backgroundColor: Data?, textColor: Data?, originalHandle: UInt32?,
         /**
          * When an edit/delete references a message the engine no longer holds a
          * live handle for (composed before a restart), these export the wire
@@ -3760,6 +3815,9 @@ public struct MobileChatMutationRecord: Equatable, Hashable {
         self.clientToken = clientToken
         self.senderHandle = senderHandle
         self.regardingHandle = regardingHandle
+        self.regardingWireId = regardingWireId
+        self.regardingDirection = regardingDirection
+        self.regardingSenderHint = regardingSenderHint
         self.backgroundColor = backgroundColor
         self.textColor = textColor
         self.originalHandle = originalHandle
@@ -3807,6 +3865,9 @@ public struct FfiConverterTypeMobileChatMutationRecord: FfiConverterRustBuffer {
                 clientToken: FfiConverterOptionUInt32.read(from: &buf),
                 senderHandle: FfiConverterOptionString.read(from: &buf),
                 regardingHandle: FfiConverterOptionUInt32.read(from: &buf),
+                regardingWireId: FfiConverterOptionUInt8.read(from: &buf),
+                regardingDirection: FfiConverterOptionTypeMobileChatDirection.read(from: &buf),
+                regardingSenderHint: FfiConverterOptionData.read(from: &buf),
                 backgroundColor: FfiConverterOptionData.read(from: &buf),
                 textColor: FfiConverterOptionData.read(from: &buf),
                 originalHandle: FfiConverterOptionUInt32.read(from: &buf),
@@ -3840,6 +3901,9 @@ public struct FfiConverterTypeMobileChatMutationRecord: FfiConverterRustBuffer {
         FfiConverterOptionUInt32.write(value.clientToken, into: &buf)
         FfiConverterOptionString.write(value.senderHandle, into: &buf)
         FfiConverterOptionUInt32.write(value.regardingHandle, into: &buf)
+        FfiConverterOptionUInt8.write(value.regardingWireId, into: &buf)
+        FfiConverterOptionTypeMobileChatDirection.write(value.regardingDirection, into: &buf)
+        FfiConverterOptionData.write(value.regardingSenderHint, into: &buf)
         FfiConverterOptionData.write(value.backgroundColor, into: &buf)
         FfiConverterOptionData.write(value.textColor, into: &buf)
         FfiConverterOptionUInt32.write(value.originalHandle, into: &buf)
@@ -3939,6 +4003,85 @@ public func FfiConverterTypeMobileChatOriginalRef_lift(_ buf: RustBuffer) throws
 #endif
 public func FfiConverterTypeMobileChatOriginalRef_lower(_ value: MobileChatOriginalRef) -> RustBuffer {
     return FfiConverterTypeMobileChatOriginalRef.lower(value)
+}
+
+
+/**
+ * Platform-persisted identity of the message a reply or emote is about.
+ *
+ * Unlike [`MobileChatOriginalRef`], which only ever names a message we
+ * composed, this can name either party's: `direction` says whose stream the
+ * wire ID belongs to, and `sender_hint` says which member's within a channel
+ * group. Reacting to a message read before the app last launched is the
+ * ordinary case, so the wire fields carry the weight here.
+ */
+public struct MobileChatRegardingRef: Equatable, Hashable {
+    public var sessionId: UInt64
+    public var handle: UInt32
+    public var wireId: UInt8?
+    public var direction: MobileChatDirection?
+    public var senderHint: Data?
+    public var epoch: UInt16?
+
+    // Default memberwise initializers are never public by default, so we
+    // declare one manually.
+    public init(sessionId: UInt64, handle: UInt32, wireId: UInt8?, direction: MobileChatDirection?, senderHint: Data?, epoch: UInt16?) {
+        self.sessionId = sessionId
+        self.handle = handle
+        self.wireId = wireId
+        self.direction = direction
+        self.senderHint = senderHint
+        self.epoch = epoch
+    }
+
+
+
+
+}
+
+#if compiler(>=6)
+extension MobileChatRegardingRef: Sendable {}
+#endif
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public struct FfiConverterTypeMobileChatRegardingRef: FfiConverterRustBuffer {
+    public static func read(from buf: inout (data: Data, offset: Data.Index)) throws -> MobileChatRegardingRef {
+        return
+            try MobileChatRegardingRef(
+                sessionId: FfiConverterUInt64.read(from: &buf),
+                handle: FfiConverterUInt32.read(from: &buf),
+                wireId: FfiConverterOptionUInt8.read(from: &buf),
+                direction: FfiConverterOptionTypeMobileChatDirection.read(from: &buf),
+                senderHint: FfiConverterOptionData.read(from: &buf),
+                epoch: FfiConverterOptionUInt16.read(from: &buf)
+        )
+    }
+
+    public static func write(_ value: MobileChatRegardingRef, into buf: inout [UInt8]) {
+        FfiConverterUInt64.write(value.sessionId, into: &buf)
+        FfiConverterUInt32.write(value.handle, into: &buf)
+        FfiConverterOptionUInt8.write(value.wireId, into: &buf)
+        FfiConverterOptionTypeMobileChatDirection.write(value.direction, into: &buf)
+        FfiConverterOptionData.write(value.senderHint, into: &buf)
+        FfiConverterOptionUInt16.write(value.epoch, into: &buf)
+    }
+}
+
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public func FfiConverterTypeMobileChatRegardingRef_lift(_ buf: RustBuffer) throws -> MobileChatRegardingRef {
+    return try FfiConverterTypeMobileChatRegardingRef.lift(buf)
+}
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public func FfiConverterTypeMobileChatRegardingRef_lower(_ value: MobileChatRegardingRef) -> RustBuffer {
+    return FfiConverterTypeMobileChatRegardingRef.lower(value)
 }
 
 
@@ -10559,6 +10702,9 @@ private let initializationResult: InitializationResult = {
         return InitializationResult.apiChecksumMismatch
     }
     if (uniffi_umsh_mobile_core_checksum_method_mobilemeshsession_compose_edit() != 61543) {
+        return InitializationResult.apiChecksumMismatch
+    }
+    if (uniffi_umsh_mobile_core_checksum_method_mobilemeshsession_compose_reaction() != 47417) {
         return InitializationResult.apiChecksumMismatch
     }
     if (uniffi_umsh_mobile_core_checksum_method_mobilemeshsession_compose_text() != 46919) {

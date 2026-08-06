@@ -325,6 +325,15 @@ actor FakeRadioConnection: RadioConnection {
         throw RadioConnectionError.incompatibleProtocol
     }
 
+    func composeReaction(
+        conversationAddress: String,
+        clientToken: UInt32,
+        target: MobileChatRegardingRef,
+        body: String
+    ) async throws -> MobileChatComposeBatchRecord {
+        throw RadioConnectionError.incompatibleProtocol
+    }
+
     func commitChatBatch(_ batchID: UInt64) async throws {}
 
     func rejectChatBatch(

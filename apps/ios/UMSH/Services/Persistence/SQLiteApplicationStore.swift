@@ -218,6 +218,10 @@ struct StoredChatMessage: Equatable, Sendable, Identifiable {
     /// message's keyset cursor. Ordering key only — `(sessionID, handle)`
     /// remains the durable identity.
     let rowID: Int64
+    /// Reactions about this message, at most one per sender, oldest first.
+    /// Folded at read time from the emote rows that name it — they are
+    /// messages in their own right, but never transcript rows.
+    var reactions: [StoredMessageReaction] = []
 
     var isGapPlaceholder: Bool { presence == 1 }
     var isUnavailable: Bool { presence == 2 }
@@ -262,6 +266,27 @@ struct StoredChatMessagePage: Equatable, Sendable {
     static let empty = StoredChatMessagePage(messages: [], hasOlder: false, hasNewer: false)
 }
 
+/// One person's reaction to one message.
+///
+/// Carries its own durable identity because it is a message: the sender may
+/// replace it, and an outbound one is delivered and acknowledged like
+/// anything else, which is what lets the transcript show a reaction that has
+/// not reached anyone yet.
+struct StoredMessageReaction: Hashable, Sendable {
+    /// The emote body as it arrived — a short token, not necessarily an
+    /// emoji. Presentation normalizes it.
+    let body: String
+    let outbound: Bool
+    let senderAddress: String?
+    let senderHint: Data?
+    let sessionID: String
+    let handle: UInt32
+    let wireID: UInt8?
+    let epoch: UInt16?
+    let createdAtMilliseconds: Int64
+    let deliveryState: String?
+}
+
 /// The radio's view of one received message, for the message-details sheet.
 struct StoredMessageReception: Hashable, Sendable {
     let rssiDbm: Int?
@@ -295,7 +320,7 @@ actor SQLiteApplicationStore {
     /// store refuses to open any database above this constant, so a stale value
     /// lets the new schema apply once and then locks the user out of their own
     /// data on the next launch. ``migrate(_:)`` checks the two agree.
-    static let currentSchemaVersion: Int32 = 16
+    static let currentSchemaVersion: Int32 = 17
 
     nonisolated(unsafe) private let database: OpaquePointer
 
@@ -1017,6 +1042,7 @@ actor SQLiteApplicationStore {
             FROM chat_message
             WHERE owner_identity_id = ? AND session_id = ? AND handle = ?
                 AND direction = 0 AND deleted = 0 AND presence = 0 AND body <> ''
+                AND is_reaction = 0
             """
         )
         defer { sqlite3_finalize(statement) }
@@ -1133,6 +1159,7 @@ actor SQLiteApplicationStore {
           WHERE u.owner_identity_id = \(owner)
             AND u.conversation_address = \(address)
             AND u.direction = 0 AND u.deleted = 0 AND u.presence = 0
+            AND u.is_reaction = 0
             AND u.created_at_ms > c.last_read_at_ms)
         """
     }
@@ -1142,6 +1169,7 @@ actor SQLiteApplicationStore {
         LEFT JOIN chat_message lm ON lm.rowid = (
             SELECT m.rowid FROM chat_message m
             WHERE m.owner_identity_id = \(owner) AND m.conversation_address = \(address)
+                AND m.is_reaction = 0
             ORDER BY m.created_at_ms DESC, m.rowid DESC
             LIMIT 1
         )
@@ -1763,6 +1791,7 @@ actor SQLiteApplicationStore {
             SELECT \(Self.chatMessageColumns)
             FROM chat_message
             WHERE owner_identity_id = ? AND conversation_address = ?
+              AND is_reaction = 0
               AND (created_at_ms, rowid) \(including ? ">=" : ">") (?, ?)
             ORDER BY created_at_ms ASC, rowid ASC
             LIMIT ?
@@ -1789,10 +1818,13 @@ actor SQLiteApplicationStore {
                 before: $0.cursor
             )
         } ?? false
-        return StoredChatMessagePage(
-            messages: messages,
-            hasOlder: hasOlder,
-            hasNewer: hasNewer
+        return try withReactions(
+            ownerIdentityID: ownerIdentityID,
+            StoredChatMessagePage(
+                messages: messages,
+                hasOlder: hasOlder,
+                hasNewer: hasNewer
+            )
         )
     }
 
@@ -1881,6 +1913,7 @@ actor SQLiteApplicationStore {
             """
             SELECT 1 FROM chat_message
             WHERE owner_identity_id = ? AND conversation_address = ?
+              AND is_reaction = 0
               AND (created_at_ms, rowid) < (?, ?)
             LIMIT 1
             """
@@ -1976,7 +2009,7 @@ actor SQLiteApplicationStore {
         let statement = try prepare(
             """
             SELECT COUNT(*) FROM chat_message
-            WHERE owner_identity_id = ? AND conversation_address = ?
+            WHERE owner_identity_id = ? AND conversation_address = ? AND is_reaction = 0
             """
         )
         defer { sqlite3_finalize(statement) }
@@ -2004,6 +2037,7 @@ actor SQLiteApplicationStore {
             SELECT \(Self.chatMessageColumns)
             FROM chat_message
             WHERE owner_identity_id = ? AND conversation_address = ?
+              AND is_reaction = 0
               \(cursorClause ?? "")
             ORDER BY created_at_ms DESC, rowid DESC
             LIMIT ?
@@ -2022,10 +2056,13 @@ actor SQLiteApplicationStore {
         var messages = try readChatMessages(statement)
         let hasOlder = messages.count > bounded
         if hasOlder { messages.removeLast(messages.count - bounded) }
-        return StoredChatMessagePage(
-            messages: messages.reversed(),
-            hasOlder: hasOlder,
-            hasNewer: hasNewer
+        return try withReactions(
+            ownerIdentityID: ownerIdentityID,
+            StoredChatMessagePage(
+                messages: messages.reversed(),
+                hasOlder: hasOlder,
+                hasNewer: hasNewer
+            )
         )
     }
 
@@ -2037,6 +2074,118 @@ actor SQLiteApplicationStore {
             case SQLITE_DONE: return messages
             case let code: throw Self.sqliteFailure(database, code)
             }
+        }
+    }
+
+    /// Attach each message's reactions.
+    ///
+    /// Reactions are not transcript rows, and the messages they are about may
+    /// sit anywhere in history, so this is a second read keyed by the page's
+    /// own identities rather than anything the page query could join.
+    private func withReactions(
+        ownerIdentityID: String,
+        _ page: StoredChatMessagePage
+    ) throws -> StoredChatMessagePage {
+        guard !page.messages.isEmpty else { return page }
+        let grouped = try reactions(
+            ownerIdentityID: ownerIdentityID,
+            targets: page.messages.map { ($0.sessionID, $0.handle) }
+        )
+        guard !grouped.isEmpty else { return page }
+        return StoredChatMessagePage(
+            messages: page.messages.map { message in
+                var message = message
+                message.reactions = grouped[message.id] ?? []
+                return message
+            },
+            hasOlder: page.hasOlder,
+            hasNewer: page.hasNewer
+        )
+    }
+
+    /// Live reactions for the given messages, keyed by `StoredChatMessage.id`.
+    ///
+    /// A sender has one reaction per message: the newest emote they sent about
+    /// it wins, and if that one has no body it is a withdrawal and they have
+    /// none. Both rules are settled here rather than on the wire, where every
+    /// emote is just another message.
+    private func reactions(
+        ownerIdentityID: String,
+        targets: [(sessionID: String, handle: UInt32)]
+    ) throws -> [String: [StoredMessageReaction]] {
+        // Newest-per-sender needs arrival order, and a withdrawal has to be
+        // able to erase what came before it, so fold rather than aggregate.
+        var newest: [String: [String: StoredMessageReaction]] = [:]
+        var order: [String: [String]] = [:]
+        // Two bound parameters per target, well inside SQLite's limit while
+        // keeping the number of statements small.
+        for chunk in stride(from: 0, to: targets.count, by: 200).map({ start in
+            targets[start..<min(start + 200, targets.count)]
+        }) {
+            let tuples = Array(repeating: "(?, ?)", count: chunk.count).joined(separator: ", ")
+            let statement = try prepare(
+                """
+                SELECT reaction_target_session_id, reaction_target_handle,
+                    body, direction, sender_address, sender_hint,
+                    session_id, handle, wire_id, epoch, created_at_ms, delivery_state
+                FROM chat_message
+                WHERE owner_identity_id = ? AND is_reaction = 1 AND deleted = 0
+                    AND (reaction_target_session_id, reaction_target_handle) IN (\(tuples))
+                ORDER BY created_at_ms ASC, rowid ASC
+                """
+            )
+            defer { sqlite3_finalize(statement) }
+            try bind(ownerIdentityID, to: statement, at: 1)
+            var index: Int32 = 2
+            for target in chunk {
+                try bind(target.sessionID, to: statement, at: index)
+                try check(sqlite3_bind_int64(statement, index + 1, Int64(target.handle)))
+                index += 2
+            }
+            rows: while true {
+                switch sqlite3_step(statement) {
+                case SQLITE_ROW:
+                    let key = "\(Self.stringColumn(statement, at: 0))"
+                        + ":\(sqlite3_column_int64(statement, 1))"
+                    let outbound = sqlite3_column_int(statement, 3) == 1
+                    let senderAddress = Self.optionalStringColumn(statement, at: 4)
+                    let senderHint = Self.optionalDataColumn(statement, at: 5)
+                    // Whoever sent it, however little we know about them: our
+                    // own reactions collapse to one sender, and a member we
+                    // cannot name yet is still distinct by hint.
+                    let sender = outbound
+                        ? "me"
+                        : (senderAddress ?? senderHint.map { $0.map { String(format: "%02x", $0) }
+                            .joined() } ?? "peer")
+                    let reaction = StoredMessageReaction(
+                        body: Self.stringColumn(statement, at: 2),
+                        outbound: outbound,
+                        senderAddress: senderAddress,
+                        senderHint: senderHint,
+                        sessionID: Self.stringColumn(statement, at: 6),
+                        handle: UInt32(sqlite3_column_int64(statement, 7)),
+                        wireID: Self.optionalIntColumn(statement, at: 8).map { UInt8($0) },
+                        epoch: Self.optionalIntColumn(statement, at: 9).map { UInt16($0) },
+                        createdAtMilliseconds: sqlite3_column_int64(statement, 10),
+                        deliveryState: Self.optionalStringColumn(statement, at: 11)
+                    )
+                    if newest[key]?[sender] == nil {
+                        order[key, default: []].append(sender)
+                    }
+                    newest[key, default: [:]][sender] = reaction
+                case SQLITE_DONE:
+                    break rows
+                case let code:
+                    throw Self.sqliteFailure(database, code)
+                }
+            }
+        }
+        return newest.reduce(into: [:]) { result, entry in
+            let live = (order[entry.key] ?? []).compactMap { sender -> StoredMessageReaction? in
+                guard let reaction = entry.value[sender], !reaction.body.isEmpty else { return nil }
+                return reaction
+            }
+            if !live.isEmpty { result[entry.key] = live }
         }
     }
 
@@ -2222,6 +2371,21 @@ actor SQLiteApplicationStore {
                   let direction = mutation.direction,
                   let body = mutation.body
             else { return }
+            // An emote — status text about another message — is a reaction
+            // rather than a transcript row of its own. Resolve what it is
+            // about now, while the reference is in hand: the target may be
+            // named by a live handle or, far more often, by the wire
+            // coordinates of a row stored in some earlier session.
+            let isReaction = mutation.messageType == 1
+                && (mutation.regardingHandle != nil || mutation.regardingWireId != nil)
+            let reactionTarget = isReaction
+                ? try resolveReactionTarget(
+                    ownerIdentityID: ownerIdentityID,
+                    sessionID: sessionID,
+                    conversationAddress: peerAddress,
+                    mutation: mutation
+                )
+                : nil
             let statement = try prepare(
                 """
                 INSERT INTO chat_message (
@@ -2231,9 +2395,11 @@ actor SQLiteApplicationStore {
                     complete, present_fragments, fragment_count, finalized,
                     delivery_state, deleted, created_at_ms, presence, received_late,
                     sender_hint, rx_rssi_dbm, rx_snr_cb, rx_lqi, rx_hop_count,
-                    rx_route_hints, rx_source_authenticated
+                    rx_route_hints, rx_source_authenticated,
+                    is_reaction, regarding_wire_id, regarding_direction, regarding_sender_hint,
+                    reaction_target_session_id, reaction_target_handle
                 ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 0, ?, ?, ?,
-                          ?, ?, ?, ?, ?, ?, ?)
+                          ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
                 ON CONFLICT(owner_identity_id, session_id, handle) DO UPDATE SET
                     body = excluded.body,
                     complete = excluded.complete,
@@ -2296,7 +2462,31 @@ actor SQLiteApplicationStore {
                 to: statement,
                 at: 30
             )
+            try check(sqlite3_bind_int(statement, 31, isReaction ? 1 : 0))
+            try bindOptionalInt(mutation.regardingWireId.map(Int64.init), to: statement, at: 32)
+            try bindOptionalInt(
+                mutation.regardingDirection.map { Int64($0 == .outbound ? 1 : 0) },
+                to: statement,
+                at: 33
+            )
+            try bindOptional(mutation.regardingSenderHint.map { Data($0) }, to: statement, at: 34)
+            try bindOptional(reactionTarget?.sessionID, to: statement, at: 35)
+            try bindOptionalInt(reactionTarget.map { Int64($0.handle) }, to: statement, at: 36)
             try stepDone(statement)
+            // A reaction can outrun the message it is about — repaired gaps
+            // and channel-group reordering both do it. Whenever a real message
+            // lands, adopt whatever was already waiting on it.
+            if !isReaction, let wireID = mutation.wireId {
+                try bindPendingReactions(
+                    ownerIdentityID: ownerIdentityID,
+                    sessionID: sessionID,
+                    handle: mutation.handle,
+                    conversationAddress: peerAddress,
+                    wireID: wireID,
+                    outbound: direction == .outbound,
+                    senderHint: mutation.senderHint.map { Data($0) }
+                )
+            }
         case .updateBody:
             guard let body = mutation.body else { return }
             // A fragment-completion or notify-deadline update can carry a late
@@ -2402,6 +2592,80 @@ actor SQLiteApplicationStore {
                 try stepDone(statement)
             }
         }
+    }
+
+    /// Which stored row a reaction is about.
+    ///
+    /// A live handle names a row this session wrote. Otherwise the reference
+    /// arrives as wire coordinates, and the row it names is the newest
+    /// non-reaction message holding that ID on that stream — wire IDs recycle
+    /// serially, so the newest is the only one still referenceable. `nil`
+    /// when the target has not been stored yet; ``bindPendingReactions``
+    /// adopts those once it is.
+    private func resolveReactionTarget(
+        ownerIdentityID: String,
+        sessionID: String,
+        conversationAddress: String,
+        mutation: MobileChatMutationRecord
+    ) throws -> (sessionID: String, handle: UInt32)? {
+        if let handle = mutation.regardingHandle {
+            return (sessionID, handle)
+        }
+        guard let wireID = mutation.regardingWireId,
+              let direction = mutation.regardingDirection
+        else { return nil }
+        // `IS` rather than `=` so a conversation without hints — every direct
+        // one, and our own side of a group — matches null against null.
+        let statement = try prepare(
+            """
+            SELECT session_id, handle FROM chat_message
+            WHERE owner_identity_id = ? AND conversation_address = ?
+                AND direction = ? AND wire_id = ? AND is_reaction = 0
+                AND sender_hint IS ?
+            ORDER BY epoch DESC, created_at_ms DESC, rowid DESC
+            LIMIT 1
+            """
+        )
+        defer { sqlite3_finalize(statement) }
+        try bind(ownerIdentityID, to: statement, at: 1)
+        try bind(conversationAddress, to: statement, at: 2)
+        try check(sqlite3_bind_int(statement, 3, direction == .outbound ? 1 : 0))
+        try check(sqlite3_bind_int(statement, 4, Int32(wireID)))
+        try bindOptional(mutation.regardingSenderHint.map { Data($0) }, to: statement, at: 5)
+        guard sqlite3_step(statement) == SQLITE_ROW else { return nil }
+        guard let session = sqlite3_column_text(statement, 0) else { return nil }
+        return (String(cString: session), UInt32(sqlite3_column_int64(statement, 1)))
+    }
+
+    /// Adopt reactions that arrived before the message they are about.
+    private func bindPendingReactions(
+        ownerIdentityID: String,
+        sessionID: String,
+        handle: UInt32,
+        conversationAddress: String,
+        wireID: UInt8,
+        outbound: Bool,
+        senderHint: Data?
+    ) throws {
+        let statement = try prepare(
+            """
+            UPDATE chat_message
+            SET reaction_target_session_id = ?, reaction_target_handle = ?
+            WHERE owner_identity_id = ? AND conversation_address = ?
+                AND is_reaction = 1 AND reaction_target_session_id IS NULL
+                AND regarding_wire_id = ? AND regarding_direction = ?
+                AND regarding_sender_hint IS ?
+            """
+        )
+        defer { sqlite3_finalize(statement) }
+        try bind(sessionID, to: statement, at: 1)
+        try check(sqlite3_bind_int64(statement, 2, Int64(handle)))
+        try bind(ownerIdentityID, to: statement, at: 3)
+        try bind(conversationAddress, to: statement, at: 4)
+        try check(sqlite3_bind_int(statement, 5, Int32(wireID)))
+        try check(sqlite3_bind_int(statement, 6, outbound ? 1 : 0))
+        try bindOptional(senderHint, to: statement, at: 7)
+        try stepDone(statement)
     }
 
     private func transaction<T>(_ operation: () throws -> T) throws -> T {
@@ -3009,6 +3273,46 @@ actor SQLiteApplicationStore {
                         ON channel_conversation (owner_identity_id, conversation_address);
 
                     PRAGMA user_version = 16;
+                    """
+                )
+                try execute(database, sql: "COMMIT")
+            } catch {
+                try? execute(database, sql: "ROLLBACK")
+                throw error
+            }
+        }
+
+        if version < 17 {
+            try execute(database, sql: "BEGIN IMMEDIATE")
+            do {
+                // Reactions are emotes: ordinary messages carrying a Regarding
+                // reference, which is why they live in `chat_message` rather
+                // than a table of their own — they are sent, delivered,
+                // acknowledged, and repaired like anything else. What they need
+                // is somewhere to record who they are about, resolved once on
+                // arrival: the wire columns say what the frame claimed, and the
+                // `reaction_target_*` pair says which stored row that turned out
+                // to be. Reactions whose target has not arrived yet keep the
+                // pair null until it does.
+                try execute(
+                    database,
+                    sql: """
+                    ALTER TABLE chat_message ADD COLUMN is_reaction INTEGER NOT NULL DEFAULT 0;
+                    ALTER TABLE chat_message ADD COLUMN regarding_wire_id INTEGER;
+                    ALTER TABLE chat_message ADD COLUMN regarding_direction INTEGER;
+                    ALTER TABLE chat_message ADD COLUMN regarding_sender_hint BLOB;
+                    ALTER TABLE chat_message ADD COLUMN reaction_target_session_id TEXT;
+                    ALTER TABLE chat_message ADD COLUMN reaction_target_handle INTEGER;
+
+                    CREATE INDEX chat_message_reaction_target_idx
+                        ON chat_message (
+                            owner_identity_id,
+                            reaction_target_session_id,
+                            reaction_target_handle
+                        )
+                        WHERE is_reaction = 1;
+
+                    PRAGMA user_version = 17;
                     """
                 )
                 try execute(database, sql: "COMMIT")

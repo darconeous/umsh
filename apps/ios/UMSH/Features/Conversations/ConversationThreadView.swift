@@ -217,7 +217,10 @@ struct ConversationThreadView: View {
                                                 inspectedMember = message.senderHint
                                                     .map(InspectedMember.init)
                                             }
-                                            : nil
+                                            : nil,
+                                        onReact: message.isDeleted
+                                            ? nil
+                                            : { glyph in react(to: message, with: glyph) }
                                     )
                                     // Every bubble measures a UITextView, so
                                     // an unrelated invalidation (a radio
@@ -464,7 +467,14 @@ struct ConversationThreadView: View {
         .alert("Message not sent", isPresented: $showsBlockedReason) {
             Button("OK", role: .cancel) {}
         } message: {
-            Text((sendFailureMessage ?? blockedReason ?? "The message could not be queued.") + " Your draft has been preserved.")
+            // The reassurance is about the composer's draft, so it only
+            // belongs on a failure that had one. A reaction or a delete has
+            // nothing to preserve, and saying otherwise invites the reader to
+            // look for something that was never there.
+            Text(
+                (sendFailureMessage ?? blockedReason ?? "The message could not be queued.")
+                    + (draft.isEmpty ? "" : " Your draft has been preserved.")
+            )
         }
         .sheet(item: $editingMessage) { message in
             MessageEditSheet(
@@ -559,6 +569,20 @@ struct ConversationThreadView: View {
         case let .failed(reason):
             sendFailureMessage = reason
             showsBlockedReason = true
+        }
+    }
+
+    /// A reaction is fire-and-forget from the transcript's point of view: it
+    /// adds no row to follow, so nothing scrolls and the reader stays put.
+    private func react(to message: ChatMessageSummary, with glyph: String) {
+        Task {
+            switch await messageActions.react(conversation, message, glyph) {
+            case let .sent(updated):
+                conversation = updated
+            case let .failed(reason):
+                sendFailureMessage = reason
+                showsBlockedReason = true
+            }
         }
     }
 

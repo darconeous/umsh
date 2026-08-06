@@ -15,8 +15,8 @@ use umsh_core::{ChannelKey, ChannelTag, NodeHint, PublicKey};
 use umsh_text::engine::sequence::MessageHandle;
 use umsh_text::engine::{
     ArchiveKey, CompletionStatus, ComposeIntent, ComposeRef, DeliveryState, Direction, Engine,
-    EngineConfig, Event, MessageMutation, MutationKind, Output, Presence, ResolvedRef,
-    StreamCheckpoint, Transmission,
+    EngineConfig, Event, MessageMutation, MutationKind, Output, Presence, RegardingRef,
+    ResolvedRef, StreamCheckpoint, Transmission,
 };
 use umsh_text::model::{ConversationKey, SenderScope, WireRef};
 use umsh_text::validate::DirectChannelProfile;
@@ -134,6 +134,14 @@ pub struct MobileChatMutationRecord {
     pub client_token: Option<u32>,
     pub sender_handle: Option<String>,
     pub regarding_handle: Option<u32>,
+    /// When a reply or emote references a message the engine holds no live
+    /// handle for, these export the wire reference the same way the
+    /// `original_*` fields do for edits: the target's wire ID within
+    /// `regarding_direction`'s stream, plus the hint identifying which
+    /// member's stream in a channel group.
+    pub regarding_wire_id: Option<u8>,
+    pub regarding_direction: Option<MobileChatDirection>,
+    pub regarding_sender_hint: Option<Vec<u8>>,
     pub background_color: Option<Vec<u8>>,
     pub text_color: Option<Vec<u8>>,
     pub original_handle: Option<u32>,
@@ -180,6 +188,23 @@ pub struct MobileChatOriginalRef {
     pub session_id: u64,
     pub handle: u32,
     pub wire_id: Option<u8>,
+    pub epoch: Option<u16>,
+}
+
+/// Platform-persisted identity of the message a reply or emote is about.
+///
+/// Unlike [`MobileChatOriginalRef`], which only ever names a message we
+/// composed, this can name either party's: `direction` says whose stream the
+/// wire ID belongs to, and `sender_hint` says which member's within a channel
+/// group. Reacting to a message read before the app last launched is the
+/// ordinary case, so the wire fields carry the weight here.
+#[derive(Clone, Debug, PartialEq, Eq, uniffi::Record)]
+pub struct MobileChatRegardingRef {
+    pub session_id: u64,
+    pub handle: u32,
+    pub wire_id: Option<u8>,
+    pub direction: Option<MobileChatDirection>,
+    pub sender_hint: Option<Vec<u8>>,
     pub epoch: Option<u16>,
 }
 
@@ -427,6 +452,52 @@ impl MobileChatState {
         )
     }
 
+    /// Emote about a message: a reaction, or — with an empty body — the
+    /// withdrawal of one. Replacing a reaction is another emote, not an edit
+    /// of the previous one; the newest emote from a sender is the one that
+    /// counts.
+    pub fn compose_reaction(
+        &mut self,
+        conversation: ConversationKey,
+        client_token: u32,
+        target: &MobileChatRegardingRef,
+        body: &str,
+        now_ms: u64,
+    ) -> Result<ComposedChatBatch, ()> {
+        let regarding = self.regarding_ref(target).ok_or(())?;
+        self.compose_batch(
+            conversation,
+            client_token,
+            ComposeIntent::Reply {
+                body,
+                regarding,
+                status: true,
+            },
+            now_ms,
+        )
+    }
+
+    /// Resolve the platform's persisted identity of a regarding target to an
+    /// engine reference, on the same terms as [`Self::compose_ref`].
+    fn regarding_ref(&self, target: &MobileChatRegardingRef) -> Option<RegardingRef> {
+        if target.session_id == self.session_id {
+            return Some(RegardingRef::Handle(MessageHandle(target.handle)));
+        }
+        let sender_hint = match &target.sender_hint {
+            None => None,
+            Some(bytes) => Some(NodeHint(<[u8; 3]>::try_from(bytes.as_slice()).ok()?)),
+        };
+        Some(RegardingRef::Wire {
+            message_id: target.wire_id?,
+            direction: match target.direction? {
+                MobileChatDirection::Inbound => Direction::Inbound,
+                MobileChatDirection::Outbound => Direction::Outbound,
+            },
+            sender_hint,
+            epoch: target.epoch,
+        })
+    }
+
     /// Resolve the platform's persisted identity of an original message to
     /// an engine compose reference. Same facade session: the engine handle
     /// is still live. Earlier session: fall back to the persisted wire
@@ -583,6 +654,9 @@ impl MobileChatState {
             client_token: None,
             sender_handle: None,
             regarding_handle: None,
+            regarding_wire_id: None,
+            regarding_direction: None,
+            regarding_sender_hint: None,
             background_color: None,
             text_color: None,
             original_handle: None,
@@ -631,7 +705,9 @@ impl MobileChatState {
                 record.client_token = client_token;
                 record.sender_handle =
                     sender_handle.map(|value| self.engine.body(&value).to_owned());
-                record.regarding_handle = regarding.and_then(resolved_handle);
+                if let Some(regarding) = regarding {
+                    apply_regarding(&mut record, regarding);
+                }
                 record.background_color = bg_color.map(|color| color.to_vec());
                 record.text_color = text_color.map(|color| color.to_vec());
                 record.body = Some(self.engine.body(&body).to_owned());
@@ -781,13 +857,6 @@ fn apply_completion(record: &mut MobileChatMutationRecord, status: CompletionSta
     }
 }
 
-fn resolved_handle(reference: ResolvedRef) -> Option<u32> {
-    match reference {
-        ResolvedRef::Handle(MessageHandle(handle)) => Some(handle),
-        ResolvedRef::Unresolved(_) => None,
-    }
-}
-
 /// Export an edit/delete target: a live handle when resolved, otherwise the
 /// wire reference for the platform to match against its persisted rows.
 /// Room-scoped reference forms are outside this facade.
@@ -797,19 +866,38 @@ fn apply_original(record: &mut MobileChatMutationRecord, reference: ResolvedRef)
             record.original_handle = Some(handle);
         }
         ResolvedRef::Unresolved(WireRef::SenderScoped { sender, message_id }) => {
-            let direction = match sender {
-                SenderScope::Local => MobileChatDirection::Outbound,
-                // A channel member's message is inbound like any other peer's;
-                // the hint is what tells the platform whose stream it was.
-                SenderScope::Peer(_) | SenderScope::ClaimedMember(_) => {
-                    MobileChatDirection::Inbound
-                }
-            };
             record.original_wire_id = Some(message_id);
-            record.original_direction = Some(direction);
+            record.original_direction = Some(wire_ref_direction(sender));
             record.original_sender_hint = claimed_hint(sender);
         }
         ResolvedRef::Unresolved(WireRef::RoomCanonical { .. }) => {}
+    }
+}
+
+/// Export a reply/emote target, on the same terms as [`apply_original`].
+/// Reactions overwhelmingly target messages received long before this
+/// process started, so the unresolved form is the common case here rather
+/// than the exception.
+fn apply_regarding(record: &mut MobileChatMutationRecord, reference: ResolvedRef) {
+    match reference {
+        ResolvedRef::Handle(MessageHandle(handle)) => {
+            record.regarding_handle = Some(handle);
+        }
+        ResolvedRef::Unresolved(WireRef::SenderScoped { sender, message_id }) => {
+            record.regarding_wire_id = Some(message_id);
+            record.regarding_direction = Some(wire_ref_direction(sender));
+            record.regarding_sender_hint = claimed_hint(sender);
+        }
+        ResolvedRef::Unresolved(WireRef::RoomCanonical { .. }) => {}
+    }
+}
+
+fn wire_ref_direction(sender: SenderScope) -> MobileChatDirection {
+    match sender {
+        SenderScope::Local => MobileChatDirection::Outbound,
+        // A channel member's message is inbound like any other peer's; the
+        // hint is what tells the platform whose stream it was.
+        SenderScope::Peer(_) | SenderScope::ClaimedMember(_) => MobileChatDirection::Inbound,
     }
 }
 
@@ -1014,5 +1102,107 @@ mod tests {
         // rejected instead of silently starting a dangling edit.
         let mut cold = empty_state();
         assert!(cold.compose_delete(direct(), 9, &original, 0).is_err());
+    }
+
+    /// The ordinary reaction: the target is a message the peer sent, and no
+    /// live handle backs it, so the record must carry the wire coordinates
+    /// for the platform to match against its own rows.
+    #[test]
+    fn compose_reaction_exports_wire_regarding() {
+        let (mut state, tag) = state_with_channel();
+        let conversation = ConversationKey::ChannelGroup { channel: tag };
+        let hint = vec![0x33, 0x44, 0x55];
+        let target = MobileChatRegardingRef {
+            // A session that is not ours: the handle cannot be trusted.
+            session_id: state.session_id.wrapping_add(1),
+            handle: 0,
+            wire_id: Some(9),
+            direction: Some(MobileChatDirection::Inbound),
+            sender_hint: Some(hint.clone()),
+            epoch: Some(0),
+        };
+        let composed = state
+            .compose_reaction(conversation, 1, &target, "+1", 0)
+            .expect("reaction composes against a persisted target");
+        let insert = composed
+            .record
+            .mutations
+            .iter()
+            .find(|mutation| mutation.kind == MobileChatMutationKind::Insert)
+            .expect("insert mutation");
+        assert_eq!(insert.message_type, Some(1), "an emote is status text");
+        assert_eq!(insert.body.as_deref(), Some("+1"));
+        assert_eq!(insert.regarding_handle, None);
+        assert_eq!(insert.regarding_wire_id, Some(9));
+        assert_eq!(
+            insert.regarding_direction,
+            Some(MobileChatDirection::Inbound)
+        );
+        assert_eq!(insert.regarding_sender_hint, Some(hint));
+
+        // Withdrawal is the same message with nothing in it — never an edit
+        // or a delete, which would target the emote row instead.
+        let withdrawn = state
+            .compose_reaction(conversation, 2, &target, "", 1)
+            .expect("withdrawal composes");
+        let insert = withdrawn
+            .record
+            .mutations
+            .iter()
+            .find(|mutation| mutation.kind == MobileChatMutationKind::Insert)
+            .expect("withdrawal is an insert");
+        assert_eq!(insert.body.as_deref(), Some(""));
+        assert_eq!(insert.regarding_wire_id, Some(9));
+    }
+
+    /// Reacting to one of our own messages from an earlier launch: the handle
+    /// belongs to a dead session, so the persisted wire identity carries it.
+    #[test]
+    fn reaction_target_from_prior_session_uses_wire_ref() {
+        let mut first = empty_state();
+        let composed = first
+            .compose_text(direct(), 7, "mine", 0)
+            .expect("compose succeeds");
+        let insert = composed
+            .record
+            .mutations
+            .iter()
+            .find(|mutation| mutation.kind == MobileChatMutationKind::Insert)
+            .expect("insert mutation");
+        let target = MobileChatRegardingRef {
+            session_id: insert.session_id,
+            handle: insert.handle,
+            wire_id: insert.wire_id,
+            direction: Some(MobileChatDirection::Outbound),
+            sender_hint: None,
+            epoch: insert.epoch,
+        };
+        let checkpoint = composed.record.checkpoint;
+
+        let mut restarted = empty_state();
+        let _ = restarted.restore(std::slice::from_ref(&checkpoint), 0);
+        let reacted = restarted
+            .compose_reaction(direct(), 8, &target, "<3", 1)
+            .expect("wire-referenced reaction composes after restart");
+        let emote = reacted
+            .record
+            .mutations
+            .iter()
+            .find(|mutation| mutation.kind == MobileChatMutationKind::Insert)
+            .expect("insert mutation");
+        assert_eq!(emote.regarding_handle, None);
+        assert_eq!(emote.regarding_wire_id, insert.wire_id);
+        assert_eq!(
+            emote.regarding_direction,
+            Some(MobileChatDirection::Outbound)
+        );
+
+        // A cold session has no continuity, so the reference is refused
+        // rather than aimed at whatever now holds that wire ID.
+        let mut cold = empty_state();
+        assert!(
+            cold.compose_reaction(direct(), 9, &target, "<3", 0)
+                .is_err()
+        );
     }
 }
