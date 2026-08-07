@@ -712,8 +712,8 @@ mode is silent.
 
 | | Decided | Asked |
 |---|---|---|
-| **Tracker** | forwarding off · radio on · role Tracker · mobile · the phone's time zone · the clock, on apply | radio profile · name · discoverability · positioning policy · announcements |
-| **Repeater** | forwarding on · radio on · role left derived · stationary · the phone's time zone · the clock, on apply | radio profile · name · forwarding policy · discoverability · positioning policy · announcements |
+| **Tracker** | forwarding off · radio on · role Tracker · mobile · the phone's time zone · the clock, on apply | name · discoverability · positioning policy · announcements · radio profile |
+| **Repeater** | forwarding on · radio on · role left derived · stationary · the phone's time zone · the clock, on apply | name · forwarding policy · discoverability · positioning policy · announcements · radio profile |
 | **Change settings** | nothing | everything the device supports |
 
 Setup is not monitoring: a setup sheet carries no live readouts, no
@@ -730,6 +730,10 @@ sheet copies it, reduced to what the target device accepts, and shows the result
 as a single row naming the profile and its numbers — including transmit power,
 so copying a handheld's power onto a mast-mounted repeater is visible and
 correctable. The row pushes the preset picker and the manual PHY fields.
+
+It sits at the foot of the sheet rather than the head. It is shown because its
+failure mode is silent, not because it is the first thing to decide — the sheet
+opens on the device's name, which is the question only the operator can answer.
 
 With no companion radio attached, or one that reported no modem settings, the
 row asks instead of guessing, and answering it is what releases Apply. When

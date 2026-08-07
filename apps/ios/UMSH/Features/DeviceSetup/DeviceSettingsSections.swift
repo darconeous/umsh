@@ -227,14 +227,22 @@ struct DevicePowerSection: View {
 
 // MARK: - Name
 
+/// What to call this device.
+///
+/// Labelled in the row rather than only by a section header: a bare text field
+/// showing a value says nothing about what the value is, and a header reading
+/// "Device" said even less. `Required` is not decoration — a device that
+/// accepts a name will not accept an empty one, and an empty field is what
+/// keeps Apply disabled.
 struct DeviceNameSection: View {
     @Binding var name: String
 
     var body: some View {
         Section {
-            TextField("Device name", text: $name)
-        } header: {
-            Text("Device")
+            LabeledContent("Name") {
+                TextField("Required", text: $name)
+                    .multilineTextAlignment(.trailing)
+            }
         } footer: {
             Text("The device name is public and may be visible in Bluetooth discovery.")
         }

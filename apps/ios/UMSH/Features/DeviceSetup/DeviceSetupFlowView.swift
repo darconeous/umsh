@@ -36,6 +36,10 @@ final class AdminFlowController {
     private(set) var draft: DeviceConfigDraft?
     /// The device a connect is currently in flight for.
     private(set) var busyDevice: UUID?
+    /// Its advertised name, captured at the tap: connecting stops the scan and
+    /// empties the list, so by the time anything wants to say which device is
+    /// being waited on, the row it came from is gone.
+    private(set) var connectingName: String?
     var problem: String?
 
     /// The phone's current companion radio, so the flow can mark it in the
@@ -187,47 +191,75 @@ final class AdminFlowController {
     func select(_ device: DiscoveredRadio) async {
         guard busyDevice == nil else { return }
         busyDevice = device.id
+        connectingName = device.name
         problem = nil
         // Backing out of a device and picking another one must not inherit
         // the first one's unsaved edits.
         draft = nil
+        // Pushed before the connect rather than after it. Connecting takes
+        // seconds — longer against an unbonded device, which puts a system
+        // pairing prompt in the way — and `connect` stops the scan, so leaving
+        // the operator on the list means watching every device vanish under a
+        // screen that claims to be searching for them.
+        let step: Step = plan.isAbbreviated ? .commission : .editor
+        path = [.scan, step]
         defer { busyDevice = nil }
         do {
             // `connect` resolves with what the device reported rather than
             // leaving this to read `snapshot`, which is mirrored by another
             // task and may still be carrying the pre-attach state.
             let sync = try await session.connect(device.id)
+            // The operator may have left while this was in flight. A device
+            // they walked away from has to be let go, not pushed at them.
+            guard path.last == step else {
+                await abandonSelection()
+                return
+            }
             guard let sync else {
-                problem = """
+                await refuse("""
                     That device connected but did not report its settings. \
                     It may be running firmware this app does not understand.
-                    """
-                await disconnectAndResumeDiscovery()
+                    """)
                 return
             }
             // A device that cannot do the thing being asked of it is refused
             // here rather than offered a sheet it would disappoint.
             if let blocker = plan.blocker(for: sync) {
-                problem = blocker
-                await disconnectAndResumeDiscovery()
+                await refuse(blocker)
                 return
             }
             draft = makeDraft(sync)
-            path = [.scan, plan.isAbbreviated ? .commission : .editor]
         } catch {
+            guard path.last == step else {
+                await abandonSelection()
+                return
+            }
             // The published snapshot carries the same explanation, but which
             // of the two lands first is not ordered, so this path states the
             // reason itself rather than leaving a generic message to win.
-            problem = (error as? RadioConnectionError) == .pairingRequired
-                ? BluetoothErrorText.notPaired
-                : """
-                    Could not set up that device. It may have moved out of range, \
-                    or it may not be a UMSH device.
-                    """
-            // Connecting stops the scan, so the list the user is still
-            // looking at would otherwise stay empty forever.
-            await resumeDiscovery()
+            await refuse(
+                (error as? RadioConnectionError) == .pairingRequired
+                    ? BluetoothErrorText.notPaired
+                    : """
+                        Could not set up that device. It may have moved out of \
+                        range, or it may not be a UMSH device.
+                        """
+            )
         }
+    }
+
+    /// Send the operator back to the list with the reason this device is not
+    /// going to work, and leave them able to pick another one.
+    ///
+    /// `busyDevice` is cleared before the pop, not after: the list treats a
+    /// connect still in flight as something to cancel when it reappears, and
+    /// an unwind that still looks busy would have it disconnect on top of the
+    /// scan this is in the middle of restarting.
+    private func refuse(_ reason: String) async {
+        problem = reason
+        busyDevice = nil
+        path = [.scan]
+        await disconnectAndResumeDiscovery()
     }
 
     private func resumeDiscovery() async {
@@ -245,6 +277,26 @@ final class AdminFlowController {
     private func disconnectAndResumeDiscovery() async {
         await session.disconnect()
         await resumeDiscovery()
+    }
+
+    /// Release a device the operator stopped waiting for, and put the scan
+    /// back only if that is where they are. They may have closed the sheet
+    /// entirely, and restarting a scan behind a screen nobody is looking at
+    /// would keep the radio busy for no one.
+    private func abandonSelection() async {
+        await session.disconnect()
+        if path.last == .scan { await resumeDiscovery() }
+    }
+
+    /// Stop waiting for a device mid-connect.
+    ///
+    /// Disconnecting resolves the pending attach with a failure, so the
+    /// selection unwinds through its own error path rather than being left to
+    /// finish against a screen that is no longer there. Without it, backing out
+    /// leaves the list untappable for as long as the attach budget runs.
+    func cancelSelection() async {
+        guard busyDevice != nil else { return }
+        await session.disconnect()
     }
 
     // MARK: - Live device controls
@@ -414,6 +466,13 @@ struct DeviceSetupFlowView: View {
                 isPeerSaved: isPeerSaved,
                 peerActions: peerActions,
                 finish: { dismiss() }
+            )
+        } else if controller.isBusy {
+            // The ordinary case for this screen's first seconds: the device is
+            // attaching and there is nothing to edit yet.
+            DeviceConnectingView(
+                name: controller.connectingName,
+                cancel: { controller.path = [.scan] }
             )
         } else {
             ContentUnavailableView(

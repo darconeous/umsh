@@ -257,8 +257,9 @@ struct DeviceSetupPlan {
             .mobile, .phoneTimeZone, .clockFromPhone,
         ],
         sections: [
-            .link, .note, .ownershipWarning, .radioProfile, .name,
-            .discoverability, .positioningPolicy, .announcements, .applyStatus,
+            .link, .note, .ownershipWarning, .name,
+            .discoverability, .positioningPolicy, .announcements,
+            .radioProfile, .applyStatus,
         ],
         title: "Set Up a Tracker",
         applyTitle: "Set Up Tracker",
@@ -272,8 +273,9 @@ struct DeviceSetupPlan {
             .stationary, .phoneTimeZone, .clockFromPhone,
         ],
         sections: [
-            .link, .note, .ownershipWarning, .radioProfile, .name, .forwarding,
-            .discoverability, .positioningPolicy, .announcements, .applyStatus,
+            .link, .note, .ownershipWarning, .name, .forwarding,
+            .discoverability, .positioningPolicy, .announcements,
+            .radioProfile, .applyStatus,
         ],
         title: "Set Up a Repeater",
         applyTitle: "Set Up Repeater",
