@@ -13,6 +13,12 @@ set -e
 
 cd "$(git rev-parse --show-toplevel)"
 
+# Worktrees share the repo config, so this hook also fires in the content-only
+# gh-pages worktree, which carries no Rust sources at all. Nothing to check.
+if [ ! -f Cargo.toml ]; then
+    exit 0
+fi
+
 if ! cargo fmt --check; then
     echo "pre-commit: run 'cargo fmt' and re-stage." >&2
     exit 1

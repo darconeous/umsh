@@ -1,5 +1,8 @@
 # Internet Bridging
 
+> ![NOTE]
+> This section is an early work in progress and this protocol may change significantly.
+
 This appendix defines a client–server realization of the bridge described
 in [Routing Overview § Bridging](routing-overview.md#bridging): a single
 virtual repeater whose radios sit in different places, connected by an

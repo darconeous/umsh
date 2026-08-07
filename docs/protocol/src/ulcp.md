@@ -1,5 +1,8 @@
 # Local Control Protocol (ULCP)
 
+> ![NOTE]
+> This section is an early work in progress and this protocol may change significantly.
+
 The **UMSH Local Control Protocol** (ULCP) is the interface between a UMSH
 **device** — hardware that owns a physical transceiver and runs always-on
 firmware — and a **host** such as a phone, tablet, laptop, or small computer

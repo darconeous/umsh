@@ -1,5 +1,8 @@
 # Identity Export Format
 
+> ![NOTE]
+> This section is an early work in progress and this format may change significantly.
+
 This appendix defines a portable, passphrase-protected artifact for backing
 up and restoring a node identity, together with the secret material and local
 knowledge that make a restored identity immediately useful. It is produced

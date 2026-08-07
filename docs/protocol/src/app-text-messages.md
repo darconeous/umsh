@@ -1,5 +1,8 @@
 # Text Messages
 
+> ![NOTE]
+> This section is an early work in progress and this protocol may change significantly.
+
 The text message protocol carries human-readable text between nodes (unicast) or from a node to a channel (multicast).
 
 The payload consists of a CoAP-style option list terminated by a `0xFF` byte, followed by the message body. All options are non-critical — unrecognized options are ignored and the remainder of the message is displayed normally.

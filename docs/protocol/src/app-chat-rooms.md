@@ -1,5 +1,8 @@
 # Chat Rooms
 
+> ![NOTE]
+> This section is an early work in progress and this protocol may change significantly.
+
 A chat room is a special node that provides limited store-and-forward capability for text messages and potentially other types of data. Chat rooms may be polled or can push updates to joined members.
 
 ## Action Types

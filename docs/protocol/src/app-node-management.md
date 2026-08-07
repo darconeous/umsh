@@ -1,5 +1,8 @@
 # Node Management
 
+> ![NOTE]
+> This section is an early work in progress and this protocol may change significantly.
+
 A node that supports node management can be configured and observed over the
 mesh itself, using the same command grammar, property model, and numeric
 registries that [ULCP](ulcp.md) defines for the local link. A **Node
