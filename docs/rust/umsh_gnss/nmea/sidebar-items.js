@@ -1,0 +1,1 @@
+window.SIDEBAR_ITEMS = {"constant":["DEGREE_SCALE","MAX_SENTENCE"],"enum":["Sentence"],"fn":["parse"],"struct":["Assembler","Gga","Gsa","Gsv","Rmc"]};

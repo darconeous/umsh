@@ -1,0 +1,594 @@
+<!DOCTYPE HTML>
+<html lang="en" class="light sidebar-visible" dir="ltr">
+    <head>
+        <!-- Book generated using mdBook -->
+        <meta charset="UTF-8">
+        <title>Internet Bridging - UMSH Protocol Specification</title>
+
+
+        <!-- Custom HTML head -->
+
+        <meta name="description" content="">
+        <meta name="viewport" content="width=device-width, initial-scale=1">
+        <meta name="theme-color" content="#ffffff">
+
+        <link rel="icon" href="favicon-de23e50b.svg">
+        <link rel="shortcut icon" href="favicon-8114d1fc.png">
+        <link rel="stylesheet" href="css/variables-8adf115d.css">
+        <link rel="stylesheet" href="css/general-2459343d.css">
+        <link rel="stylesheet" href="css/chrome-ae938929.css">
+        <link rel="stylesheet" href="css/print-9e4910d8.css" media="print">
+
+        <!-- Fonts -->
+        <link rel="stylesheet" href="fonts/fonts-9644e21d.css">
+
+        <!-- Highlight.js Stylesheets -->
+        <link rel="stylesheet" id="mdbook-highlight-css" href="highlight-493f70e1.css">
+        <link rel="stylesheet" id="mdbook-tomorrow-night-css" href="tomorrow-night-4c0ae647.css">
+        <link rel="stylesheet" id="mdbook-ayu-highlight-css" href="ayu-highlight-3fdfc3ac.css">
+
+        <!-- Custom theme stylesheets -->
+
+
+        <!-- Provide site root and default themes to javascript -->
+        <script>
+            const path_to_root = "";
+            const default_light_theme = "light";
+            const default_dark_theme = "ayu";
+            window.path_to_searchindex_js = "searchindex-c10eed74.js";
+        </script>
+        <!-- Start loading toc.js asap -->
+        <script src="toc-438957a9.js"></script>
+    </head>
+    <body>
+    <div id="mdbook-help-container">
+        <div id="mdbook-help-popup">
+            <h2 class="mdbook-help-title">Keyboard shortcuts</h2>
+            <div>
+                <p>Press <kbd>←</kbd> or <kbd>→</kbd> to navigate between chapters</p>
+                <p>Press <kbd>S</kbd> or <kbd>/</kbd> to search in the book</p>
+                <p>Press <kbd>?</kbd> to show this help</p>
+                <p>Press <kbd>Esc</kbd> to hide this help</p>
+            </div>
+        </div>
+    </div>
+    <div id="mdbook-body-container">
+        <!-- Work around some values being stored in localStorage wrapped in quotes -->
+        <script>
+            try {
+                let theme = localStorage.getItem('mdbook-theme');
+                let sidebar = localStorage.getItem('mdbook-sidebar');
+
+                if (theme.startsWith('"') && theme.endsWith('"')) {
+                    localStorage.setItem('mdbook-theme', theme.slice(1, theme.length - 1));
+                }
+
+                if (sidebar.startsWith('"') && sidebar.endsWith('"')) {
+                    localStorage.setItem('mdbook-sidebar', sidebar.slice(1, sidebar.length - 1));
+                }
+            } catch (e) { }
+        </script>
+
+        <!-- Set the theme before any content is loaded, prevents flash -->
+        <script>
+            const default_theme = window.matchMedia("(prefers-color-scheme: dark)").matches ? default_dark_theme : default_light_theme;
+            let theme;
+            try { theme = localStorage.getItem('mdbook-theme'); } catch(e) { }
+            if (theme === null || theme === undefined) { theme = default_theme; }
+            const html = document.documentElement;
+            html.classList.remove('light')
+            html.classList.add(theme);
+            html.classList.add("js");
+        </script>
+
+        <input type="checkbox" id="mdbook-sidebar-toggle-anchor" class="hidden">
+
+        <!-- Hide / unhide sidebar before it is displayed -->
+        <script>
+            let sidebar = null;
+            const sidebar_toggle = document.getElementById("mdbook-sidebar-toggle-anchor");
+            if (document.body.clientWidth >= 1080) {
+                try { sidebar = localStorage.getItem('mdbook-sidebar'); } catch(e) { }
+                sidebar = sidebar || 'visible';
+            } else {
+                sidebar = 'hidden';
+                sidebar_toggle.checked = false;
+            }
+            if (sidebar === 'visible') {
+                sidebar_toggle.checked = true;
+            } else {
+                html.classList.remove('sidebar-visible');
+            }
+        </script>
+
+        <nav id="mdbook-sidebar" class="sidebar" aria-label="Table of contents">
+            <!-- populated by js -->
+            <mdbook-sidebar-scrollbox class="sidebar-scrollbox"></mdbook-sidebar-scrollbox>
+            <noscript>
+                <iframe class="sidebar-iframe-outer" src="toc.html"></iframe>
+            </noscript>
+            <div id="mdbook-sidebar-resize-handle" class="sidebar-resize-handle">
+                <div class="sidebar-resize-indicator"></div>
+            </div>
+        </nav>
+
+        <div id="mdbook-page-wrapper" class="page-wrapper">
+
+            <div class="page">
+                <div id="mdbook-menu-bar-hover-placeholder"></div>
+                <div id="mdbook-menu-bar" class="menu-bar sticky">
+                    <div class="left-buttons">
+                        <label id="mdbook-sidebar-toggle" class="icon-button" for="mdbook-sidebar-toggle-anchor" title="Toggle Table of Contents" aria-label="Toggle Table of Contents" aria-controls="mdbook-sidebar">
+                            <span class=fa-svg><svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 448 512"><!--! Font Awesome Free 6.2.0 by @fontawesome - https://fontawesome.com License - https://fontawesome.com/license/free (Icons: CC BY 4.0, Fonts: SIL OFL 1.1, Code: MIT License) Copyright 2022 Fonticons, Inc. --><path d="M0 96C0 78.3 14.3 64 32 64H416c17.7 0 32 14.3 32 32s-14.3 32-32 32H32C14.3 128 0 113.7 0 96zM0 256c0-17.7 14.3-32 32-32H416c17.7 0 32 14.3 32 32s-14.3 32-32 32H32c-17.7 0-32-14.3-32-32zM448 416c0 17.7-14.3 32-32 32H32c-17.7 0-32-14.3-32-32s14.3-32 32-32H416c17.7 0 32 14.3 32 32z"/></svg></span>
+                        </label>
+                        <button id="mdbook-theme-toggle" class="icon-button" type="button" title="Change theme" aria-label="Change theme" aria-haspopup="true" aria-expanded="false" aria-controls="mdbook-theme-list">
+                            <span class=fa-svg><svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 576 512"><!--! Font Awesome Free 6.2.0 by @fontawesome - https://fontawesome.com License - https://fontawesome.com/license/free (Icons: CC BY 4.0, Fonts: SIL OFL 1.1, Code: MIT License) Copyright 2022 Fonticons, Inc. --><path d="M371.3 367.1c27.3-3.9 51.9-19.4 67.2-42.9L600.2 74.1c12.6-19.5 9.4-45.3-7.6-61.2S549.7-4.4 531.1 9.6L294.4 187.2c-24 18-38.2 46.1-38.4 76.1L371.3 367.1zm-19.6 25.4l-116-104.4C175.9 290.3 128 339.6 128 400c0 3.9 .2 7.8 .6 11.6c1.8 17.5-10.2 36.4-27.8 36.4H96c-17.7 0-32 14.3-32 32s14.3 32 32 32H240c61.9 0 112-50.1 112-112c0-2.5-.1-5-.2-7.5z"/></svg></span>
+                        </button>
+                        <ul id="mdbook-theme-list" class="theme-popup" aria-label="Themes" role="menu">
+                            <li role="none"><button role="menuitem" class="theme" id="mdbook-theme-default_theme">Auto</button></li>
+                            <li role="none"><button role="menuitem" class="theme" id="mdbook-theme-light">Light</button></li>
+                            <li role="none"><button role="menuitem" class="theme" id="mdbook-theme-rust">Rust</button></li>
+                            <li role="none"><button role="menuitem" class="theme" id="mdbook-theme-coal">Coal</button></li>
+                            <li role="none"><button role="menuitem" class="theme" id="mdbook-theme-navy">Navy</button></li>
+                            <li role="none"><button role="menuitem" class="theme" id="mdbook-theme-ayu">Ayu</button></li>
+                        </ul>
+                        <button id="mdbook-search-toggle" class="icon-button" type="button" title="Search (`/`)" aria-label="Toggle Searchbar" aria-expanded="false" aria-keyshortcuts="/ s" aria-controls="mdbook-searchbar">
+                            <span class=fa-svg><svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 512 512"><!--! Font Awesome Free 6.2.0 by @fontawesome - https://fontawesome.com License - https://fontawesome.com/license/free (Icons: CC BY 4.0, Fonts: SIL OFL 1.1, Code: MIT License) Copyright 2022 Fonticons, Inc. --><path d="M416 208c0 45.9-14.9 88.3-40 122.7L502.6 457.4c12.5 12.5 12.5 32.8 0 45.3s-32.8 12.5-45.3 0L330.7 376c-34.4 25.2-76.8 40-122.7 40C93.1 416 0 322.9 0 208S93.1 0 208 0S416 93.1 416 208zM208 352c79.5 0 144-64.5 144-144s-64.5-144-144-144S64 128.5 64 208s64.5 144 144 144z"/></svg></span>
+                        </button>
+                    </div>
+
+                    <h1 class="menu-title">UMSH Protocol Specification</h1>
+
+                    <div class="right-buttons">
+                        <a href="print.html" title="Print this book" aria-label="Print this book">
+                            <span class=fa-svg id="print-button"><svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 512 512"><!--! Font Awesome Free 6.2.0 by @fontawesome - https://fontawesome.com License - https://fontawesome.com/license/free (Icons: CC BY 4.0, Fonts: SIL OFL 1.1, Code: MIT License) Copyright 2022 Fonticons, Inc. --><path d="M128 0C92.7 0 64 28.7 64 64v96h64V64H354.7L384 93.3V160h64V93.3c0-17-6.7-33.3-18.7-45.3L400 18.7C388 6.7 371.7 0 354.7 0H128zM384 352v32 64H128V384 368 352H384zm64 32h32c17.7 0 32-14.3 32-32V256c0-35.3-28.7-64-64-64H64c-35.3 0-64 28.7-64 64v96c0 17.7 14.3 32 32 32H64v64c0 35.3 28.7 64 64 64H384c35.3 0 64-28.7 64-64V384zm-16-88c-13.3 0-24-10.7-24-24s10.7-24 24-24s24 10.7 24 24s-10.7 24-24 24z"/></svg></span>
+                        </a>
+
+                    </div>
+                </div>
+
+                <div id="mdbook-search-wrapper" class="hidden">
+                    <form id="mdbook-searchbar-outer" class="searchbar-outer">
+                        <div class="search-wrapper">
+                            <input type="search" id="mdbook-searchbar" name="searchbar" placeholder="Search this book ..." aria-controls="mdbook-searchresults-outer" aria-describedby="searchresults-header">
+                            <div class="spinner-wrapper">
+                                <span class=fa-svg id="fa-spin"><svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 512 512"><!--! Font Awesome Free 6.2.0 by @fontawesome - https://fontawesome.com License - https://fontawesome.com/license/free (Icons: CC BY 4.0, Fonts: SIL OFL 1.1, Code: MIT License) Copyright 2022 Fonticons, Inc. --><path d="M304 48c0-26.5-21.5-48-48-48s-48 21.5-48 48s21.5 48 48 48s48-21.5 48-48zm0 416c0-26.5-21.5-48-48-48s-48 21.5-48 48s21.5 48 48 48s48-21.5 48-48zM48 304c26.5 0 48-21.5 48-48s-21.5-48-48-48s-48 21.5-48 48s21.5 48 48 48zm464-48c0-26.5-21.5-48-48-48s-48 21.5-48 48s21.5 48 48 48s48-21.5 48-48zM142.9 437c18.7-18.7 18.7-49.1 0-67.9s-49.1-18.7-67.9 0s-18.7 49.1 0 67.9s49.1 18.7 67.9 0zm0-294.2c18.7-18.7 18.7-49.1 0-67.9S93.7 56.2 75 75s-18.7 49.1 0 67.9s49.1 18.7 67.9 0zM369.1 437c18.7 18.7 49.1 18.7 67.9 0s18.7-49.1 0-67.9s-49.1-18.7-67.9 0s-18.7 49.1 0 67.9z"/></svg></span>
+                            </div>
+                        </div>
+                    </form>
+                    <div id="mdbook-searchresults-outer" class="searchresults-outer hidden">
+                        <div id="mdbook-searchresults-header" class="searchresults-header"></div>
+                        <ul id="mdbook-searchresults">
+                        </ul>
+                    </div>
+                </div>
+
+                <!-- Apply ARIA attributes after the sidebar and the sidebar toggle button are added to the DOM -->
+                <script>
+                    document.getElementById('mdbook-sidebar-toggle').setAttribute('aria-expanded', sidebar === 'visible');
+                    document.getElementById('mdbook-sidebar').setAttribute('aria-hidden', sidebar !== 'visible');
+                    Array.from(document.querySelectorAll('#mdbook-sidebar a')).forEach(function(link) {
+                        link.setAttribute('tabIndex', sidebar === 'visible' ? 0 : -1);
+                    });
+                </script>
+
+                <div id="mdbook-content" class="content">
+                    <main>
+                        <h1 id="internet-bridging"><a class="header" href="#internet-bridging">Internet Bridging</a></h1>
+<blockquote>
+<p>![NOTE]
+This section is an early work in progress and this protocol may change significantly.</p>
+</blockquote>
+<p>This appendix defines a client–server realization of the bridge described
+in <a href="routing-overview.html#bridging">Routing Overview § Bridging</a>: a single
+virtual repeater whose radios sit in different places, connected by an
+authenticated tunnel over a reliable stream transport such as the
+internet. It specifies the tunnel wire protocol, the forwarding rules the
+bridge applies, and how the bridge satisfies the forwarding-confirmation
+expectations of the meshes it joins.</p>
+<blockquote class="blockquote-tag blockquote-tag-caution">
+<p class="blockquote-tag-title"><svg viewbox="0 0 16 16" width="18" height="18"><path d="M4.47.22A.749.749 0 0 1 5 0h6c.199 0 .389.079.53.22l4.25 4.25c.141.14.22.331.22.53v6a.749.749 0 0 1-.22.53l-4.25 4.25A.749.749 0 0 1 11 16H5a.749.749 0 0 1-.53-.22L.22 11.53A.749.749 0 0 1 0 11V5c0-.199.079-.389.22-.53Zm.84 1.28L1.5 5.31v5.38l3.81 3.81h5.38l3.81-3.81V5.31L10.69 1.5ZM8 4a.75.75 0 0 1 .75.75v3.5a.75.75 0 0 1-1.5 0v-3.5A.75.75 0 0 1 8 4Zm0 8a1 1 0 1 1 0-2 1 1 0 0 1 0 2Z"></path></svg>Caution</p>
+<p>The cautions in <a href="routing-overview.html#bridging">Routing Overview § Bridging</a>
+apply in full: internet bridges cannot be relied upon in an emergency and
+can waste airtime with non-local chatter. This appendix exists so that
+bridges which are deployed anyway behave predictably and conservatively.</p>
+</blockquote>
+<h2 id="model"><a class="header" href="#model">Model</a></h2>
+<p>A bridge consists of one <strong>bridge server</strong> and one or more <strong>bridge
+clients</strong>.</p>
+<ul>
+<li>The server owns the bridge’s node identity. Trace routes crossing the
+bridge carry this identity’s router hint, source routes name it, and
+packets addressed to it are processed by the server whatever interface
+they arrive on.</li>
+<li>The server and each client front a ULCP device of their own, attached as
+a tethered host with promiscuous delivery enabled (see
+<a href="#radio-attachment">Radio Attachment</a>).</li>
+<li>The server’s <strong>interfaces</strong> are its own radio plus one interface per
+connected client. All forwarding decisions are made at the server;
+clients relay frames between their radio and the tunnel and apply no
+forwarding logic of their own.</li>
+</ul>
+<p>The whole assembly is <strong>one</strong> virtual repeater. It maintains a single
+<a href="repeater-operation.html#duplicate-suppression">duplicate-suppression cache</a>
+shared across all interfaces, performs hop accounting once per crossing,
+and prepends its router hint to a trace route once per crossing —
+regardless of how many interfaces or clients participate.</p>
+<p>Radio configuration is local to each participant: a client configures its
+own device, and the tunnel provides no mechanism for managing a remote
+participant’s radio.</p>
+<h2 id="tunnel-transport"><a class="header" href="#tunnel-transport">Tunnel Transport</a></h2>
+<h3 id="connection-and-authentication"><a class="header" href="#connection-and-authentication">Connection and Authentication</a></h3>
+<p>The tunnel is a TLS 1.3 connection over TCP; the client connects to the
+server. Earlier TLS versions <strong>MUST NOT</strong> be negotiated.</p>
+<p>Peer authentication uses either external pre-shared keys (TLS 1.3 PSK
+handshakes) or mutually authenticated certificates with pinned or locally
+trusted roots. Each client <strong>SHOULD</strong> hold a distinct credential: it is
+how the server identifies a client for policy and rate limiting, and it
+allows one client to be revoked without re-keying the rest.</p>
+<p>A deployment <strong>MAY</strong> use each participant’s Ed25519 node identity as its
+certificate key, each side pinning the peer’s public key rather than a
+certificate. The pinned key <strong>MUST</strong> then be held against the TLS 1.3
+<code>CertificateVerify</code> signature — proof that the peer possesses the
+identity, independent of anything the certificate claims — rather than
+against the certificate’s contents. This gives every tunnel credential a
+UMSH address, so a client’s credential can later serve as a
+mesh-addressable identity for management without re-keying.</p>
+<p>The tunnel carries no version of its own. Participants <strong>SHOULD</strong> offer
+the ALPN protocol identifier <code>umsh-bridge/1</code>, so that an incompatible
+future revision fails the handshake instead of misparsing frames.</p>
+<h3 id="message-framing"><a class="header" href="#message-framing">Message Framing</a></h3>
+<p>The tunnel is a stream of
+<a href="https://github.com/openthread/openthread/blob/thread-reference-20180926/doc/spinel-protocol-src/spinel-framing.md#hdlc-lite-hdlc-lite">HDLC-Lite</a>
+frames, exactly as ULCP uses on asynchronous serial links (see
+<a href="ulcp-core.html">Framing and Common Semantics</a>). The frame check sequence is
+redundant beneath TLS but is retained so implementations can reuse their
+existing framing code unchanged.</p>
+<p>There is no message header. A non-empty frame contains one
+<a href="ulcp-transport.html#str-radio-raw"><code>STR_PHY_RAW</code></a> structure and nothing
+else; an empty frame is a <a href="#keepalive">keepalive</a>. Because the payload is
+exactly the ULCP stream structure, a participant relays bytes without
+parsing them:</p>
+<ul>
+<li><strong>Client to server</strong>: a candidate reception — the body of the
+<a href="ulcp-transport.html#cmd-str-recv"><code>CMD_STR_RECV</code></a> that delivered the
+frame, written unmodified. The receive metadata <strong>SHOULD</strong> be present
+(sentinel-filled where the radio cannot measure), because the server’s
+<a href="#forwarding-procedure">signal-quality checks</a> depend on it.</li>
+<li><strong>Server to client</strong>: a transmit request, passed unmodified as the body
+of a <a href="ulcp-transport.html#cmd-str-send"><code>CMD_STR_SEND</code></a> on
+<code>STR_PHY_RAW</code>.</li>
+</ul>
+<p>A frame that is malformed, or larger than the receiving participant is
+prepared to transmit, is discarded.</p>
+<h3 id="keepalive"><a class="header" href="#keepalive">Keepalive and Reconnection</a></h3>
+<p>A participant writes a bare flag octet (<code>0x7E</code>) whenever it has sent
+nothing for a keepalive interval — 10 seconds is a reasonable default —
+and closes the connection once it has received nothing for an idle
+timeout, by default 30 seconds. The two directions are independent.</p>
+<p>Empty frames are the idle fill of HDLC-Lite and a conforming decoder
+already discards them, so the keepalive needs no message of its own. Two
+properties make it sufficient. Liveness is measured in received octets
+rather than decoded messages, so a discarded flag still counts as
+activity. And because the keepalive is written by the participant’s own
+relay logic, a peer whose relay has wedged stops emitting it even while
+its TLS connection stays open.</p>
+<p>A stalled <em>local</em> transmit path is not visible to the idle timer, since
+the peer keeps talking. It appears as tunnel-queue backpressure instead,
+which is bounded below.</p>
+<p>Frames queued for a tunnel that fails or backs up are stale by
+definition: participants <strong>MUST</strong> bound their tunnel queues, <strong>SHOULD</strong>
+drop the oldest frames first under backpressure, and <strong>MUST</strong> discard
+queued frames when a connection is re-established rather than flushing
+them into the new session.</p>
+<p>Staleness is enforced by the sender, and no age accompanies a frame on
+the wire. A participant <strong>SHOULD</strong> discard a frame rather than write it
+once the frame is older than a configured limit — ten seconds is a
+reasonable default — counting any device-side queueing reported through
+<a href="ulcp-transport.html#buffered-metadata">buffered-frame metadata</a>. A frame
+that old has already outlived every
+<a href="repeater-operation.html#forwarding-confirmation">forwarding-confirmation retry</a>
+that could have wanted it.</p>
+<h2 id="radio-attachment"><a class="header" href="#radio-attachment">Radio Attachment</a></h2>
+<p>Each participant attaches to its device as an ordinary tethered host and
+sets <a href="ulcp-host.html#prop-mac-promiscuous"><code>PROP_MAC_PROMISCUOUS</code></a> to true.
+The property is session-scoped and reverts on every attach, so it must be
+re-asserted after each reconnection to the device. Because
+promiscuous-only frames are never queued while the host is detached, a
+device outage leaves no stale backlog to drain — attachment starts clean
+by construction.</p>
+<p>Transmission requires the device to advertise
+<a href="ulcp-transport.html#capabilities"><code>CAP_WRITABLE_RAW_STREAM</code></a>. Participants
+<strong>SHOULD</strong> use confirmed transmissions (non-zero TID) so that duty-limit
+and channel failures are observed rather than silent, and bridged
+transmissions <strong>MUST NOT</strong> set <code>TX_FLAG_NODUTY</code>: the device’s duty-cycle
+enforcement is the backstop against a bridge that would otherwise consume
+a segment’s airtime budget.</p>
+<p>A confirmed transmission reports channel-access failure to the
+participant rather than retrying on its own, and the local control
+protocol carries no retry count to delegate one: one <code>CMD_STR_SEND</code> is
+one channel-access attempt. The
+<a href="channel-access.html#backoff-procedure">backoff procedure</a> is therefore
+the participant’s to run, and it runs the same one every other
+transmitter on that segment does. A participant <strong>MUST</strong> continue
+draining its device’s receive path while it waits out a backoff; a
+participant that stops listening in order to talk costs its segment
+other stations’ traffic as well as its own.</p>
+<p>The server provisions its host domain as any MAC-owning host would.
+Clients <strong>SHOULD NOT</strong> configure a host key or acknowledgement delegation
+on their devices; the bridge identity’s node logic lives entirely at the
+server.</p>
+<h2 id="forwarding-procedure"><a class="header" href="#forwarding-procedure">Forwarding Procedure</a></h2>
+<p>The bridge follows the
+<a href="repeater-operation.html#forwarding-procedure">repeater forwarding procedure</a>,
+adapted to multiple interfaces. For a frame arriving on interface <em>I</em>:</p>
+<ol>
+<li>
+<p><strong>Duplicate suppression</strong> — Check the shared cache using the
+<a href="repeater-operation.html#duplicate-suppression">repeater cache-key rules</a>.
+If the key is present, do not forward; see
+<a href="#re-confirmation">Re-confirmation</a> for the one transmission a
+duplicate may still trigger. A <a href="packet-options.html#route-retry-option-6">Route Retry</a>
+variant is a distinct cache key and forwards normally.</p>
+</li>
+<li>
+<p><strong>Local origin and local destination</strong> — If the source or destination
+address identifies the bridge’s own identity, do not forward. This is
+also what keeps the bridge’s own transmissions, overheard by another of
+its interfaces, from being re-bridged.</p>
+</li>
+<li>
+<p><strong>Locally handled unicast</strong> — If the frame was a unicast (blind or
+direct) fully handled by the server’s node logic, do not forward.</p>
+</li>
+<li>
+<p><strong>Unknown critical options</strong> — If the frame carries a critical option
+the bridge does not understand, do not forward.</p>
+</li>
+<li>
+<p><strong>Policy</strong> — Apply local bridge policy: per-interface and
+per-interface-pair forwarding rules, per-client rate limits, and region
+matching if configured. The bridge <strong>MUST NOT</strong> rewrite existing
+<a href="packet-options.html#region-code-option-11">region codes</a> and, unlike an
+ordinary repeater, <strong>SHOULD NOT</strong> insert one: its interfaces may sit in
+different regions, and a code added at one segment’s exit would
+misdescribe the packet everywhere else it travels.</p>
+</li>
+<li>
+<p><strong>Source-route match</strong> — If the frame carries a non-empty
+<a href="packet-options.html#source-route-option-3">source-route option</a>:
+if the next hint does not match the bridge’s router hint, do not
+forward; otherwise remove the hint, preserving the option even when it
+empties. This is a source-routed hop: skip steps 7 and 8.</p>
+</li>
+<li>
+<p><strong>Flood hop accounting</strong> — If the frame has a
+<a href="packet-structure.html#flood-hop-count">flood hop count</a> with
+<code>FHOPS_REM &gt; 0</code>, decrement <code>FHOPS_REM</code> and increment <code>FHOPS_ACC</code>.
+Otherwise, do not forward.</p>
+</li>
+<li>
+<p><strong>Signal-quality thresholds</strong> — Apply minimum-RSSI and minimum-SNR
+checks against the measurements of the radio that heard the frame —
+for a client interface, the receive metadata carried alongside the
+tunneled frame.</p>
+</li>
+<li>
+<p><strong>Exit clamp</strong> — Clamp <code>FHOPS_REM</code> to the configured exit maximum.
+The default is 1, and internet-tunneled deployments <strong>SHOULD NOT</strong>
+raise it. The clamp applies to source-routed hops as well, bounding
+the flood budget of a hybrid route that transitions to flooding beyond
+the bridge.</p>
+</li>
+<li>
+<p><strong>Trace route</strong> — If the frame carries a
+<a href="packet-options.html#trace-route-option-2">trace-route option</a>, prepend
+the bridge’s router hint; if that would exceed the maximum frame
+size, drop the frame.</p>
+</li>
+<li>
+<p><strong>Accept</strong> — Insert the cache key into the shared cache now, before
+any transmission.</p>
+</li>
+<li>
+<p><strong>Fan-out</strong> — Transmit the rewritten frame on every interface except
+<em>I</em>, subject to the policy decisions of step 5.</p>
+</li>
+<li>
+<p><strong>Confirmation copy</strong> — Transmit the confirmation copy on <em>I</em>, as
+specified in <a href="#forwarding-confirmation">Forwarding Confirmation</a>.</p>
+</li>
+</ol>
+<p>Fan-out transmissions introduce the packet to segments that have not yet
+carried it, so the <a href="channel-access.html#flood-forwarding-contention-window">flood forwarding contention window</a>
+does not apply to them; ordinary channel access does.</p>
+<h2 id="forwarding-confirmation"><a class="header" href="#forwarding-confirmation">Forwarding Confirmation</a></h2>
+<p>A bridge retransmits on the arrival interface so the previous hop can
+<a href="repeater-operation.html#forwarding-confirmation">confirm forwarding</a>, as
+<a href="routing-overview.html#bridging">Routing Overview § Bridging</a> requires. The
+<strong>confirmation copy</strong> is the rewritten frame exactly as fanned out in
+step 12, except that <code>FHOPS_REM</code> is forced to zero (when the field is
+present).</p>
+<p>This form is deliberate:</p>
+<ul>
+<li>The previous hop still recognizes it. Confirmation matches on the
+<a href="repeater-operation.html#duplicate-suppression">cache key</a>, which excludes
+the flood hop count for every packet type.</li>
+<li>It recruits no forwarders. A repeater receiving the copy rejects it at
+flood hop accounting, so the bridge is flood-neutral on the arrival
+segment: it confirms receipt without extending the local flood.</li>
+<li>It cannot sterilize the live flood. Repeaters insert cache keys only on
+acceptance for forwarding; a repeater that hears the zero-<code>FHOPS_REM</code>
+copy before the live flood reaches it caches nothing and forwards the
+live copy normally. Bridges depend on that insertion timing, which is
+therefore normative for them.</li>
+<li>Delivery from the copy is sound. A destination hearing only the
+confirmation copy processes it normally, and its <code>FHOPS_ACC</code> honestly
+counts the hop through the bridge.</li>
+</ul>
+<p>The copy is a full-length frame, so this mechanism confirms cheaply in
+forwarding terms but not in airtime; the airtime optimization remains
+open (see <a href="limitations.html#bridge-hop-confirmation">Bridge Hop Confirmation</a>).</p>
+<p>For flood hops, the confirmation copy is a flood forward on a segment
+actively carrying the packet: it <strong>SHOULD</strong> use the
+<a href="channel-access.html#flood-forwarding-contention-window">contention window</a>,
+defer when another forwarding of the same packet is overheard, and may be
+abandoned under the usual deferral rules — any overheard forwarding
+confirms the previous hop just as well. For source-routed hops the copy
+is the previous hop’s only confirmation; it uses ordinary channel access
+and is not abandoned.</p>
+<h3 id="re-confirmation"><a class="header" href="#re-confirmation">Re-confirmation</a></h3>
+<p>If the confirmation copy is lost, the previous hop retries — and the
+retry is a duplicate the cache would otherwise suppress into silence,
+letting the previous hop exhaust its retry budget and wrongly declare the
+route failed. Therefore: when a duplicate of an accepted frame arrives on
+the interface it was originally accepted from, within a bounded window of
+the original acceptance, the bridge <strong>MAY</strong> re-transmit the confirmation
+copy on that interface. It <strong>MUST NOT</strong> re-forward the frame on any other
+interface. The considerations mirror the
+<a href="security.html#duplicate-acknowledgement-window">duplicate-acknowledgement window</a>;
+thirty seconds is a reasonable default. Duplicates arriving on other
+interfaces are ordinary suppressed duplicates and trigger nothing.</p>
+<p>This requires the cache entry to record the arrival interface and
+acceptance time alongside the key.</p>
+<h2 id="acknowledgements-across-a-bridge"><a class="header" href="#acknowledgements-across-a-bridge">Acknowledgements Across a Bridge</a></h2>
+<p>The exit clamp makes flood-returned acknowledgements asymmetric. On the
+forward path the clamp already limits delivery to nodes near the bridge’s
+exit, so a destination that received the packet is bridge-adjacent. The
+returning <a href="packet-types.html#mac-ack-packet">MAC ack</a>, flooded with a
+radius taken from <code>FHOPS_ACC</code>, is clamped again on its way back — and
+dies there unless the <em>originator</em> is within the clamp of the bridge on
+its own segment. Flood routing alone therefore does not round-trip an
+acknowledgement across a bridge, and
+<a href="repeater-operation.html#route-failure-recovery">route failure recovery</a>
+cannot repair this: the restored flood is clamped the same way.</p>
+<p>Source-routed hops spend nothing from <code>FHOPS</code>, so explicit routes cross
+bridges at any depth. Ack-requesting traffic that crosses a bridge
+<strong>SHOULD</strong> either carry a
+<a href="packet-options.html#trace-route-option-2">trace-route option</a> — the
+bridge’s hint prepend is what makes the reversed trace routable — or be
+sent along a known source route. A sender with neither should not expect
+an acknowledgement back across a bridge.</p>
+<h2 id="co-located-repeater-role"><a class="header" href="#co-located-repeater-role">Co-located Repeater Role</a></h2>
+<p>A device backing a bridge interface <strong>MAY</strong> additionally run its own
+repeater role, in which case two co-located repeaters exist — the device
+and the bridge — each with its own duplicate cache and hop accounting.
+This composes, with two rules:</p>
+<ul>
+<li>The device’s repeater role <strong>MUST NOT</strong> treat the tethered host
+identity’s hints as its own for source-route matching. Routed hops
+through the bridge identity belong to the bridge.</li>
+<li>The device’s normal flood re-forward on the arrival radio already
+serves as the previous hop’s confirmation, so the bridge <strong>SHOULD</strong>
+suppress its flood-hop confirmation copies on that interface. It
+<strong>MUST</strong> still emit confirmation copies for source-routed hops, which
+the device will not forward.</li>
+</ul>
+<p>The division is imperfect: when the device’s own policy declines a
+forward, no flood confirmation is emitted by either party. This matches a
+standalone repeater declining the same packet, but deployments that want
+the bridge’s confirmation behavior to be exact <strong>SHOULD</strong> leave the
+repeater role disabled on bridge-backing devices.</p>
+<h2 id="bridge-originated-traffic"><a class="header" href="#bridge-originated-traffic">Bridge-Originated Traffic</a></h2>
+<p>The bridge is a node present on every segment it touches. Its own
+traffic — application packets, beacons, and the MAC acks it generates as
+a destination — is ordinary node behavior applied per interface, not
+subject to the forwarding procedure or the exit clamp, transmitted on
+whichever interfaces its routing state selects. It <strong>MAY</strong> beacon on all
+interfaces. Step 2 of the forwarding procedure keeps this traffic from
+being re-bridged when one of its own transmissions is overheard through
+another interface.</p>
+<h2 id="operational-guidance"><a class="header" href="#operational-guidance">Operational Guidance</a></h2>
+<ul>
+<li><strong>Rate limiting.</strong> The server <strong>SHOULD</strong> rate-limit forwarding per
+client and per interface pair. An authenticated but misbehaving client
+is the realistic failure mode, and the device duty ledger should be the
+backstop, not the policy.</li>
+<li><strong>Co-located clients.</strong> Two clients whose radios share a segment cause
+every fanned-out frame to be transmitted twice there. The shared cache
+keeps their mutual receptions from looping, but the duplicate airtime
+is real; policy (step 5) is the place to group or exclude them.</li>
+<li><strong>Region codes.</strong> A bridge whose segments sit in different regions
+should rely on region matching in step 5 rather than tagging: see the
+insertion prohibition there.</li>
+</ul>
+<h2 id="security-considerations"><a class="header" href="#security-considerations">Security Considerations</a></h2>
+<p>TLS provides tunnel authentication, integrity, and replay protection;
+the shared secret or pinned credential is the sole admission control.
+UMSH frames are already end-to-end authenticated and encrypted at the
+MAC layer, so the tunnel’s confidentiality mainly shields routing
+metadata — hints, options, traffic volume — from path observers.</p>
+<p>Using a node identity as a tunnel credential does not let the two
+protocols’ signatures be confused for one another: the TLS 1.3
+<code>CertificateVerify</code> payload is domain-separated by a fixed 64-octet
+padding prefix and context string that no UMSH signed structure begins
+with.</p>
+<p>A compromised client credential is equivalent to granting the attacker an
+RF presence on every segment the bridge touches: it can inject arbitrary
+well-formed frames and replay captured ones. It cannot forge other nodes’
+authenticated traffic. The damage is bounded by the same mechanisms that
+bound a hostile local transmitter — duplicate suppression, the exit
+clamp, per-client rate limits, and duty-cycle enforcement — plus
+revocation of the client’s credential.</p>
+<p>The bridge forwards frames it cannot decrypt; promiscuous delivery is
+what a repeater’s role requires, not an information grant. Operators
+should still treat the server as privileged infrastructure: it observes
+the metadata of every frame on every segment it bridges.</p>
+
+                    </main>
+
+                    <nav class="nav-wrapper" aria-label="Page navigation">
+                        <!-- Mobile navigation buttons -->
+                            <a rel="prev" href="identity-export.html" class="mobile-nav-chapters previous" title="Previous chapter" aria-label="Previous chapter" aria-keyshortcuts="Left">
+                                <span class=fa-svg><svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 320 512"><!--! Font Awesome Free 6.2.0 by @fontawesome - https://fontawesome.com License - https://fontawesome.com/license/free (Icons: CC BY 4.0, Fonts: SIL OFL 1.1, Code: MIT License) Copyright 2022 Fonticons, Inc. --><path d="M41.4 233.4c-12.5 12.5-12.5 32.8 0 45.3l160 160c12.5 12.5 32.8 12.5 45.3 0s12.5-32.8 0-45.3L109.3 256 246.6 118.6c12.5-12.5 12.5-32.8 0-45.3s-32.8-12.5-45.3 0l-160 160z"/></svg></span>
+                            </a>
+
+                            <a rel="next prefetch" href="security-considerations.html" class="mobile-nav-chapters next" title="Next chapter" aria-label="Next chapter" aria-keyshortcuts="Right">
+                                <span class=fa-svg><svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 320 512"><!--! Font Awesome Free 6.2.0 by @fontawesome - https://fontawesome.com License - https://fontawesome.com/license/free (Icons: CC BY 4.0, Fonts: SIL OFL 1.1, Code: MIT License) Copyright 2022 Fonticons, Inc. --><path d="M278.6 233.4c12.5 12.5 12.5 32.8 0 45.3l-160 160c-12.5 12.5-32.8 12.5-45.3 0s-12.5-32.8 0-45.3L210.7 256 73.4 118.6c-12.5-12.5-12.5-32.8 0-45.3s32.8-12.5 45.3 0l160 160z"/></svg></span>
+                            </a>
+
+                        <div style="clear: both"></div>
+                    </nav>
+                </div>
+            </div>
+
+            <nav class="nav-wide-wrapper" aria-label="Page navigation">
+                    <a rel="prev" href="identity-export.html" class="nav-chapters previous" title="Previous chapter" aria-label="Previous chapter" aria-keyshortcuts="Left">
+                        <span class=fa-svg><svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 320 512"><!--! Font Awesome Free 6.2.0 by @fontawesome - https://fontawesome.com License - https://fontawesome.com/license/free (Icons: CC BY 4.0, Fonts: SIL OFL 1.1, Code: MIT License) Copyright 2022 Fonticons, Inc. --><path d="M41.4 233.4c-12.5 12.5-12.5 32.8 0 45.3l160 160c12.5 12.5 32.8 12.5 45.3 0s12.5-32.8 0-45.3L109.3 256 246.6 118.6c12.5-12.5 12.5-32.8 0-45.3s-32.8-12.5-45.3 0l-160 160z"/></svg></span>
+                    </a>
+
+                    <a rel="next prefetch" href="security-considerations.html" class="nav-chapters next" title="Next chapter" aria-label="Next chapter" aria-keyshortcuts="Right">
+                        <span class=fa-svg><svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 320 512"><!--! Font Awesome Free 6.2.0 by @fontawesome - https://fontawesome.com License - https://fontawesome.com/license/free (Icons: CC BY 4.0, Fonts: SIL OFL 1.1, Code: MIT License) Copyright 2022 Fonticons, Inc. --><path d="M278.6 233.4c12.5 12.5 12.5 32.8 0 45.3l-160 160c-12.5 12.5-32.8 12.5-45.3 0s-12.5-32.8 0-45.3L210.7 256 73.4 118.6c-12.5-12.5-12.5-32.8 0-45.3s32.8-12.5 45.3 0l160 160z"/></svg></span>
+                    </a>
+            </nav>
+
+        </div>
+
+        <template id=fa-eye><span class=fa-svg><svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 576 512"><!--! Font Awesome Free 6.2.0 by @fontawesome - https://fontawesome.com License - https://fontawesome.com/license/free (Icons: CC BY 4.0, Fonts: SIL OFL 1.1, Code: MIT License) Copyright 2022 Fonticons, Inc. --><path d="M288 32c-80.8 0-145.5 36.8-192.6 80.6C48.6 156 17.3 208 2.5 243.7c-3.3 7.9-3.3 16.7 0 24.6C17.3 304 48.6 356 95.4 399.4C142.5 443.2 207.2 480 288 480s145.5-36.8 192.6-80.6c46.8-43.5 78.1-95.4 93-131.1c3.3-7.9 3.3-16.7 0-24.6c-14.9-35.7-46.2-87.7-93-131.1C433.5 68.8 368.8 32 288 32zM432 256c0 79.5-64.5 144-144 144s-144-64.5-144-144s64.5-144 144-144s144 64.5 144 144zM288 192c0 35.3-28.7 64-64 64c-11.5 0-22.3-3-31.6-8.4c-.2 2.8-.4 5.5-.4 8.4c0 53 43 96 96 96s96-43 96-96s-43-96-96-96c-2.8 0-5.6 .1-8.4 .4c5.3 9.3 8.4 20.1 8.4 31.6z"/></svg></span></template>
+        <template id=fa-eye-slash><span class=fa-svg><svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 640 512"><!--! Font Awesome Free 6.2.0 by @fontawesome - https://fontawesome.com License - https://fontawesome.com/license/free (Icons: CC BY 4.0, Fonts: SIL OFL 1.1, Code: MIT License) Copyright 2022 Fonticons, Inc. --><path d="M38.8 5.1C28.4-3.1 13.3-1.2 5.1 9.2S-1.2 34.7 9.2 42.9l592 464c10.4 8.2 25.5 6.3 33.7-4.1s6.3-25.5-4.1-33.7L525.6 386.7c39.6-40.6 66.4-86.1 79.9-118.4c3.3-7.9 3.3-16.7 0-24.6c-14.9-35.7-46.2-87.7-93-131.1C465.5 68.8 400.8 32 320 32c-68.2 0-125 26.3-169.3 60.8L38.8 5.1zM223.1 149.5C248.6 126.2 282.7 112 320 112c79.5 0 144 64.5 144 144c0 24.9-6.3 48.3-17.4 68.7L408 294.5c5.2-11.8 8-24.8 8-38.5c0-53-43-96-96-96c-2.8 0-5.6 .1-8.4 .4c5.3 9.3 8.4 20.1 8.4 31.6c0 10.2-2.4 19.8-6.6 28.3l-90.3-70.8zm223.1 298L373 389.9c-16.4 6.5-34.3 10.1-53 10.1c-79.5 0-144-64.5-144-144c0-6.9 .5-13.6 1.4-20.2L83.1 161.5C60.3 191.2 44 220.8 34.5 243.7c-3.3 7.9-3.3 16.7 0 24.6c14.9 35.7 46.2 87.7 93 131.1C174.5 443.2 239.2 480 320 480c47.8 0 89.9-12.9 126.2-32.5z"/></svg></span></template>
+        <template id=fa-copy><span class=fa-svg><svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 512 512"><!--! Font Awesome Free 6.2.0 by @fontawesome - https://fontawesome.com License - https://fontawesome.com/license/free (Icons: CC BY 4.0, Fonts: SIL OFL 1.1, Code: MIT License) Copyright 2022 Fonticons, Inc. --><path d="M502.6 70.63l-61.25-61.25C435.4 3.371 427.2 0 418.7 0H255.1c-35.35 0-64 28.66-64 64l.0195 256C192 355.4 220.7 384 256 384h192c35.2 0 64-28.8 64-64V93.25C512 84.77 508.6 76.63 502.6 70.63zM464 320c0 8.836-7.164 16-16 16H255.1c-8.838 0-16-7.164-16-16L239.1 64.13c0-8.836 7.164-16 16-16h128L384 96c0 17.67 14.33 32 32 32h47.1V320zM272 448c0 8.836-7.164 16-16 16H63.1c-8.838 0-16-7.164-16-16L47.98 192.1c0-8.836 7.164-16 16-16H160V128H63.99c-35.35 0-64 28.65-64 64l.0098 256C.002 483.3 28.66 512 64 512h192c35.2 0 64-28.8 64-64v-32h-47.1L272 448z"/></svg></span></template>
+        <template id=fa-play><span class=fa-svg><svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 384 512"><!--! Font Awesome Free 6.2.0 by @fontawesome - https://fontawesome.com License - https://fontawesome.com/license/free (Icons: CC BY 4.0, Fonts: SIL OFL 1.1, Code: MIT License) Copyright 2022 Fonticons, Inc. --><path d="M73 39c-14.8-9.1-33.4-9.4-48.5-.9S0 62.6 0 80V432c0 17.4 9.4 33.4 24.5 41.9s33.7 8.1 48.5-.9L361 297c14.3-8.7 23-24.2 23-41s-8.7-32.2-23-41L73 39z"/></svg></span></template>
+        <template id=fa-clock-rotate-left><span class=fa-svg><svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 512 512"><!--! Font Awesome Free 6.2.0 by @fontawesome - https://fontawesome.com License - https://fontawesome.com/license/free (Icons: CC BY 4.0, Fonts: SIL OFL 1.1, Code: MIT License) Copyright 2022 Fonticons, Inc. --><path d="M75 75L41 41C25.9 25.9 0 36.6 0 57.9V168c0 13.3 10.7 24 24 24H134.1c21.4 0 32.1-25.9 17-41l-30.8-30.8C155 85.5 203 64 256 64c106 0 192 86 192 192s-86 192-192 192c-40.8 0-78.6-12.7-109.7-34.4c-14.5-10.1-34.4-6.6-44.6 7.9s-6.6 34.4 7.9 44.6C151.2 495 201.7 512 256 512c141.4 0 256-114.6 256-256S397.4 0 256 0C185.3 0 121.3 28.7 75 75zm181 53c-13.3 0-24 10.7-24 24V256c0 6.4 2.5 12.5 7 17l72 72c9.4 9.4 24.6 9.4 33.9 0s9.4-24.6 0-33.9l-65-65V152c0-13.3-10.7-24-24-24z"/></svg></span></template>
+
+
+
+        <script>
+            window.playground_copyable = true;
+        </script>
+
+
+        <script src="elasticlunr-ef4e11c1.min.js"></script>
+        <script src="mark-09e88c2c.min.js"></script>
+        <script src="searcher-c2a407aa.js"></script>
+
+        <script src="clipboard-1626706a.min.js"></script>
+        <script src="highlight-abc7f01d.js"></script>
+        <script src="book-a0b12cfe.js"></script>
+
+        <!-- Custom JS scripts -->
+
+
+
+    </div>
+    </body>
+</html>

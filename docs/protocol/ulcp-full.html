@@ -35,10 +35,10 @@
             const path_to_root = "";
             const default_light_theme = "light";
             const default_dark_theme = "ayu";
-            window.path_to_searchindex_js = "searchindex-5216ea72.js";
+            window.path_to_searchindex_js = "searchindex-c10eed74.js";
         </script>
         <!-- Start loading toc.js asap -->
-        <script src="toc-ca16b95c.js"></script>
+        <script src="toc-438957a9.js"></script>
     </head>
     <body>
     <div id="mdbook-help-container">
@@ -1091,14 +1091,20 @@ indicate which fields are present; present fields follow in the order above.
 Bits 3–7 are reserved and <strong>MUST</strong> be zero; a host <strong>MUST</strong> treat a value
 with a reserved bit set, or whose length does not match its field flags, as
 malformed.</p>
-<p>Which fields are reported is fixed for a given hardware and firmware
-configuration: the field flags do not change while a session is attached. An
-absent field indicates only that the implementation cannot report that
-measurement. It <strong>MUST NOT</strong> be used to indicate a depleted, disconnected,
-or temporarily unreadable battery: an implementation that normally reports a
-field but cannot currently obtain a measurement fails the <code>CMD_PROP_GET</code>
-with <code>STATUS_FAILURE</code> rather than omitting the field or returning an empty
-value.</p>
+<p>Which fields a platform can report is fixed for a given hardware and firmware
+configuration; an individual snapshot carries those it can currently
+substantiate. A field is absent either because the implementation never
+reports that measurement, or because the value is not derivable in the
+device’s present state — a level estimated from resting terminal voltage is
+not obtainable while the pack is charging, and a charger that reports no
+completion signal offers no moment at which to recalibrate one. An
+implementation <strong>MUST NOT</strong> report a value it knows to be unreliable in place
+of omitting the field.</p>
+<p>Absence <strong>MUST NOT</strong> be used to indicate a depleted or disconnected battery,
+and it is not how a failed measurement is reported: an implementation whose
+attempt to take a reading fails answers <code>CMD_PROP_GET</code> with <code>STATUS_FAILURE</code>.</p>
+<p>A host <strong>MUST</strong> treat an absent field as unknown at that instant, and <strong>MUST
+NOT</strong> carry a value forward from an earlier snapshot in its place.</p>
 <p>The value returned by <code>CMD_PROP_GET</code> reflects a measurement performed when
 the request is serviced, not a previously cached reading; concurrent
 requests <strong>MAY</strong> share one measurement. How each field is produced is
@@ -1136,8 +1142,8 @@ estimates change monotonically.</dd>
 <dt id="battery_charge_state_discharging"><a class="header" href="#battery_charge_state_discharging"><code>BATTERY_CHARGE_STATE_DISCHARGING</code></a></dt>
 <dd>The charging system reports neither active charging nor charge completion.
 This is the charge state used for a disconnected battery when the
-implementation can detect that condition; an absent field remains reserved
-exclusively for unsupported reporting.</dd>
+implementation can detect that condition; an absent field never carries
+that meaning.</dd>
 <dt id="battery_charge_state_charging"><a class="header" href="#battery_charge_state_charging"><code>BATTERY_CHARGE_STATE_CHARGING</code></a></dt>
 <dd>The charging system reports that the battery is actively receiving charge.</dd>
 <dt id="battery_charge_state_charged"><a class="header" href="#battery_charge_state_charged"><code>BATTERY_CHARGE_STATE_CHARGED</code></a></dt>
@@ -1432,14 +1438,21 @@ the host identity. Encrypted blind unicast addressed to the host is
 matched through its channel filter (its destination hint is concealed on
 the wire); the device MAY additionally use a provisioned channel key to
 decrypt the address block and narrow the match.</p>
-<p><a href="packet-types.html#mac-ack-packet">MAC Ack</a> packets carry no destination hint,
-so no implicit filter can address them. Instead the device records the public
-<code>ack_mic</code> of each ack-requesting frame it transmits on the host’s behalf and
-implicitly accepts a MAC Ack whose <code>ack_mic</code> matches one — the only acks the
-host can legitimately receive are for frames it sent. These records evict
-lazily, so multiple acks for one send (arriving over different return routes)
-are all delivered. A MAC Ack whose <code>ack_mic</code> matches no recorded frame is
-still accepted if an explicit <code>FILTER_PKT_TYPE</code> entry selects it.</p>
+<p>Two kinds of returning traffic identify themselves only by the MIC of a frame
+the host previously sent, so no destination or channel filter can address
+them: a <a href="packet-types.html#mac-ack-packet">MAC Ack</a> carries no destination hint
+and its public <code>ack_mic</code> is the first 4 bytes of the acknowledged frame’s
+MIC, and a repeater’s onward copy of a host frame keeps the host’s MIC while
+its destination hint names the remote peer. The device therefore records the
+leading 4 MIC bytes of each frame it transmits on the host’s behalf and
+implicitly accepts any received frame whose trailer opens with a recorded
+value — for a MAC Ack this matches the returning acknowledgement, and for
+other packet types it matches the host’s own send being carried onward, which
+the host’s forwarding-confirmation machinery must overhear to stop
+retransmitting. These records evict lazily, so multiple echoes of one send —
+acks arriving over different return routes, repeats from different
+repeaters — are all delivered. A MAC Ack whose <code>ack_mic</code> matches no recorded
+frame is still accepted if an explicit <code>FILTER_PKT_TYPE</code> entry selects it.</p>
 <p>Broadcast packets — payload-carrying broadcasts and beacons alike — are
 implicitly accepted <strong>for live delivery</strong>: a broadcast is addressed to
 every node, the host included. The rule is live-only. While the host is

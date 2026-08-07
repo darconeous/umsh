@@ -1,1 +1,1 @@
-window.SIDEBAR_ITEMS = {"enum":["LedSequence"],"struct":["BrightnessDecision","LedDecision","LedEngine","LedTimings","Pattern","T1000eLedEngine"]};
+window.SIDEBAR_ITEMS = {"constant":["DIM_FULL_MLUX","DIM_MIN_PERMILLE"],"enum":["LedSequence"],"fn":["ambient_dim_permille"],"struct":["BrightnessDecision","LedDecision","LedEngine","LedTimings","Pattern","T1000eLedEngine"]};

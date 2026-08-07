@@ -35,10 +35,10 @@
             const path_to_root = "";
             const default_light_theme = "light";
             const default_dark_theme = "ayu";
-            window.path_to_searchindex_js = "searchindex-5216ea72.js";
+            window.path_to_searchindex_js = "searchindex-c10eed74.js";
         </script>
         <!-- Start loading toc.js asap -->
-        <script src="toc-ca16b95c.js"></script>
+        <script src="toc-438957a9.js"></script>
     </head>
     <body>
     <div id="mdbook-help-container">
@@ -206,7 +206,7 @@
 <li><code>PKT TYPE</code> = packet type</li>
 <li><code>S</code> = full 32-byte source address included (when clear, a compact source hint is used instead; see <a href="addressing.html#source-address">Source Address</a> for hint size by packet type)</li>
 <li><code>R</code> = reserved; senders MUST set to 0; receivers MUST drop packets where this bit is non-zero</li>
-<li><code>H</code> = flood hop count present. Zero if direct.</li>
+<li><code>H</code> = flood hop count present. Zero if direct. Cleared before the byte enters the <a href="security.html#associated-data">AAD</a></li>
 </ul>
 <h3 id="packet-type-values"><a class="header" href="#packet-type-values">Packet Type Values</a></h3>
 <div class="table-wrapper">

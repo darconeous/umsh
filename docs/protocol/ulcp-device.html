@@ -35,10 +35,10 @@
             const path_to_root = "";
             const default_light_theme = "light";
             const default_dark_theme = "ayu";
-            window.path_to_searchindex_js = "searchindex-5216ea72.js";
+            window.path_to_searchindex_js = "searchindex-c10eed74.js";
         </script>
         <!-- Start loading toc.js asap -->
-        <script src="toc-ca16b95c.js"></script>
+        <script src="toc-438957a9.js"></script>
     </head>
     <body>
     <div id="mdbook-help-container">
@@ -225,15 +225,36 @@ private key and every pairwise key must be provisioned explicitly (see
 <tr><td>40</td><td><code>CAP_REPEATER</code></td><td><code>CAP_DEV_IDENTITY</code></td><td>Autonomous repeater forwarding by the device identity: <code>PROP_MAC_REPEATER_ENABLED</code>, <code>PROP_MAC_REPEATER_REGIONS</code>, <code>PROP_MAC_REPEATER_DEFAULT_REGION</code>, <code>PROP_MAC_REPEATER_MIN_RSSI</code>, <code>PROP_MAC_REPEATER_MIN_SNR</code></td></tr>
 <tr><td>41</td><td><code>CAP_IDENT</code></td><td><code>CAP_DEV_IDENTITY</code></td><td><code>PROP_IDENT</code>, <code>PROP_IDENT_ROLE</code>, <code>PROP_IDENT_MOBILE</code> — serving and configuring the device identity’s advertised node identity</td></tr>
 <tr><td>42</td><td><code>CAP_ALERT</code></td><td>—</td><td>Some means of making the device physically conspicuous on demand, and <code>PROP_ALERT</code></td></tr>
+<tr><td>44</td><td><code>CAP_TIME</code></td><td>—</td><td>A wall clock: <code>PROP_TIME</code>, <code>PROP_TZ_OFFSET</code></td></tr>
+<tr><td>45</td><td><code>CAP_GNSS</code></td><td><code>CAP_TIME</code></td><td>A GNSS receiver: <code>PROP_GNSS_ENABLED</code>, <code>PROP_GNSS_LOCATION</code>, <code>PROP_GNSS_ALTITUDE</code>, <code>PROP_GNSS_FIX</code>, <code>PROP_GNSS_PRECISION</code>, <code>PROP_GNSS_SATELLITES</code>, <code>PROP_GNSS_IDENT_UPDATE</code>, <code>PROP_GNSS_IDENT_PRECISION</code>, <code>PROP_GNSS_TIME_TRUST</code></td></tr>
+<tr><td>46</td><td><code>CAP_ADVERT</code></td><td><code>CAP_DEV_IDENTITY</code></td><td>Announcing itself on a schedule of its own: <code>PROP_ADVERT_INTERVAL</code>, <code>PROP_BEACON_INTERVAL</code>, <code>PROP_STARTUP_BEACON</code></td></tr>
+<tr><td>47</td><td><code>CAP_ILLUMINANCE</code></td><td>—</td><td>An ambient light sensor and <code>PROP_ILLUMINANCE</code></td></tr>
 </tbody>
 </table>
 </div>
+<p><code>CAP_ADVERT</code> requires <code>CAP_DEV_IDENTITY</code> because what a scheduled
+advertisement carries <em>is</em> the device identity, and a beacon’s source
+address names it.</p>
+<p><code>CAP_TIME</code> states that the device keeps a wall clock and nothing else. It
+says nothing about where the time comes from, how accurate it is, or how
+much of a power cycle it survives — a device that has one and does not
+currently know what time it is is a normal state, reported by the empty
+<a href="ulcp-device.html#prop-time"><code>PROP_TIME</code></a>.</p>
+<p><code>CAP_GNSS</code> requires <code>CAP_TIME</code> because a receiver is, among other things,
+a clock: a device advertising one without the other would be claiming a
+time source for a clock it does not have.</p>
 <h2 id="properties"><a class="header" href="#properties">Properties</a></h2>
 <p>The device domain occupies property identifiers 64–95. Identifiers 70–95
 are the device-behavior range: 70–78 are the repeater policy and
-advertised node identity settings, 79 is the locate alert, and 80–95 are
-reserved for future definition (periodic advertisement in 80–87,
-positioning in 88–95).</p>
+advertised node identity settings, 79 is the locate alert, 80–87 are the
+advertisement policy — 80–82 allocated, 83–87 reserved — 88–93 are
+positioning (88 the receiver switch, 89–93 the fix telemetry), and 94–95
+are environmental sensing: 94 illuminance, 95 reserved.</p>
+<p>A single-octet identifier is the scarce resource, so the positioning
+range holds the properties a host reads and the device announces
+continually. The positioning <strong>configuration</strong> — which is written during
+commissioning and rarely again — lives at 4868–4870 in the extended
+device range, alongside the wall clock at 4866–4867.</p>
 <div class="table-wrapper">
 <table>
 <thead>
@@ -256,6 +277,21 @@ positioning in 88–95).</p>
 <tr><td>77</td><td><code>PROP_MAC_REPEATER_MIN_SNR</code></td><td>Get, Set</td><td>Minimum received SNR for flood forwarding</td></tr>
 <tr><td>78</td><td><code>PROP_DEV_DISCOVERABLE</code></td><td>Get, Set</td><td>Whether the device identity answers Identity Requests</td></tr>
 <tr><td>79</td><td><code>PROP_ALERT</code></td><td>Get, Set, Is</td><td>Locate alert state</td></tr>
+<tr><td>80</td><td><code>PROP_ADVERT_INTERVAL</code></td><td>Get, Set</td><td>Seconds between unsolicited advertisements</td></tr>
+<tr><td>81</td><td><code>PROP_BEACON_INTERVAL</code></td><td>Get, Set</td><td>Seconds between unsolicited beacons</td></tr>
+<tr><td>82</td><td><code>PROP_STARTUP_BEACON</code></td><td>Get, Set</td><td>Whether a beacon goes out at bring-up</td></tr>
+<tr><td>88</td><td><code>PROP_GNSS_ENABLED</code></td><td>Get, Set</td><td>Whether the GNSS receiver is powered</td></tr>
+<tr><td>89</td><td><code>PROP_GNSS_LOCATION</code></td><td>Get, Is</td><td>Position of the last fix</td></tr>
+<tr><td>90</td><td><code>PROP_GNSS_ALTITUDE</code></td><td>Get</td><td>Altitude of the last fix</td></tr>
+<tr><td>91</td><td><code>PROP_GNSS_FIX</code></td><td>Get, Is</td><td>Fix quality</td></tr>
+<tr><td>92</td><td><code>PROP_GNSS_PRECISION</code></td><td>Get</td><td>Estimated horizontal accuracy of the last fix</td></tr>
+<tr><td>93</td><td><code>PROP_GNSS_SATELLITES</code></td><td>Get</td><td>Satellites used, and optionally in view</td></tr>
+<tr><td>94</td><td><code>PROP_ILLUMINANCE</code></td><td>Get</td><td>Ambient illuminance in millilux</td></tr>
+<tr><td>4866</td><td><code>PROP_TIME</code></td><td>Get, Set, Is</td><td>Wall clock, or empty when unknown</td></tr>
+<tr><td>4867</td><td><code>PROP_TZ_OFFSET</code></td><td>Get, Set</td><td>Local time-zone offset from UTC</td></tr>
+<tr><td>4868</td><td><code>PROP_GNSS_IDENT_UPDATE</code></td><td>Get, Set</td><td>Whether fixes update the advertised node identity</td></tr>
+<tr><td>4869</td><td><code>PROP_GNSS_IDENT_PRECISION</code></td><td>Get, Set</td><td>Precision the advertised location is clamped to</td></tr>
+<tr><td>4870</td><td><code>PROP_GNSS_TIME_TRUST</code></td><td>Get, Set</td><td>Whether receiver-derived time may set the clock</td></tr>
 </tbody>
 </table>
 </div>
@@ -420,14 +456,20 @@ indicate which fields are present; present fields follow in the order above.
 Bits 3–7 are reserved and <strong>MUST</strong> be zero; a host <strong>MUST</strong> treat a value
 with a reserved bit set, or whose length does not match its field flags, as
 malformed.</p>
-<p>Which fields are reported is fixed for a given hardware and firmware
-configuration: the field flags do not change while a session is attached. An
-absent field indicates only that the implementation cannot report that
-measurement. It <strong>MUST NOT</strong> be used to indicate a depleted, disconnected,
-or temporarily unreadable battery: an implementation that normally reports a
-field but cannot currently obtain a measurement fails the <code>CMD_PROP_GET</code>
-with <code>STATUS_FAILURE</code> rather than omitting the field or returning an empty
-value.</p>
+<p>Which fields a platform can report is fixed for a given hardware and firmware
+configuration; an individual snapshot carries those it can currently
+substantiate. A field is absent either because the implementation never
+reports that measurement, or because the value is not derivable in the
+device’s present state — a level estimated from resting terminal voltage is
+not obtainable while the pack is charging, and a charger that reports no
+completion signal offers no moment at which to recalibrate one. An
+implementation <strong>MUST NOT</strong> report a value it knows to be unreliable in place
+of omitting the field.</p>
+<p>Absence <strong>MUST NOT</strong> be used to indicate a depleted or disconnected battery,
+and it is not how a failed measurement is reported: an implementation whose
+attempt to take a reading fails answers <code>CMD_PROP_GET</code> with <code>STATUS_FAILURE</code>.</p>
+<p>A host <strong>MUST</strong> treat an absent field as unknown at that instant, and <strong>MUST
+NOT</strong> carry a value forward from an earlier snapshot in its place.</p>
 <p>The value returned by <code>CMD_PROP_GET</code> reflects a measurement performed when
 the request is serviced, not a previously cached reading; concurrent
 requests <strong>MAY</strong> share one measurement. How each field is produced is
@@ -465,8 +507,8 @@ estimates change monotonically.</dd>
 <dt id="battery_charge_state_discharging"><a class="header" href="#battery_charge_state_discharging"><code>BATTERY_CHARGE_STATE_DISCHARGING</code></a></dt>
 <dd>The charging system reports neither active charging nor charge completion.
 This is the charge state used for a disconnected battery when the
-implementation can detect that condition; an absent field remains reserved
-exclusively for unsupported reporting.</dd>
+implementation can detect that condition; an absent field never carries
+that meaning.</dd>
 <dt id="battery_charge_state_charging"><a class="header" href="#battery_charge_state_charging"><code>BATTERY_CHARGE_STATE_CHARGING</code></a></dt>
 <dd>The charging system reports that the battery is actively receiving charge.</dd>
 <dt id="battery_charge_state_charged"><a class="header" href="#battery_charge_state_charged"><code>BATTERY_CHARGE_STATE_CHARGED</code></a></dt>
@@ -671,9 +713,13 @@ the device identity ignores every Identity Request.</p>
 being askable is most of what makes it administrable in the field. The
 property is the opt-out for deployments where the device should not
 volunteer its identity to arbitrary nearby askers.</p>
-<p>Affects only Identity Request responses. Unsolicited advertisements,
-beacons, and the device’s participation in forwarding are governed
-elsewhere and are unchanged by this property.</p>
+<p>Affects only Identity Request responses. Unsolicited advertisements and
+beacons are governed by the <a href="#prop-advert-interval">advertisement
+policy</a>, and the device’s participation in
+forwarding by <code>PROP_MAC_REPEATER_ENABLED</code>; neither is changed by this
+property. A device that is not discoverable still advertises on its own
+schedule if it has one — declining to answer strangers and declining to
+speak are different decisions.</p>
 <h3 id="prop-alert"><a class="header" href="#prop-alert">PROP 79: <code>PROP_ALERT</code></a></h3>
 <ul>
 <li>Type: Single-Value, Read-Write</li>
@@ -734,6 +780,402 @@ in <code>ALERT_LOCATE</code>; a few minutes is <strong>RECOMMENDED</strong>. Wri
 <code>ALERT_LOCATE</code> while it is already in effect succeeds and restarts the
 deadline, which is how a host holds an alert open for a longer search.</li>
 </ol>
+<h3 id="prop-advert-interval"><a class="header" href="#prop-advert-interval">PROP 80: <code>PROP_ADVERT_INTERVAL</code></a></h3>
+<ul>
+<li>Type: Single-Value, Read-Write</li>
+<li>Asynchronous Updates: No</li>
+<li>Required: <code>CAP_ADVERT</code></li>
+<li>Value Type: UINT32</li>
+<li>Post-Reset Value: 14400 (four hours), or restored from saved state</li>
+</ul>
+<p>Seconds between unsolicited <a href="beacons.html">advertisements</a> — broadcasts
+carrying the device’s signed <a href="node-identity.html">node identity</a>. Zero
+sends none.</p>
+<p>An automatic advertisement is sent with no flood hops and no source
+route, so it reaches the nodes that can hear the device directly and
+stops there. It is the largest frame the device originates, and what it
+carries is a standing statement rather than news; repeating that
+statement across the whole mesh every interval would spend airtime out
+of all proportion to what a distant listener learns. A device that wants
+to be findable further away publishes a path with
+<a href="#prop-beacon-interval"><code>PROP_BEACON_INTERVAL</code></a> instead, which costs a
+fraction as much.</p>
+<p>Because the advertisement is a signed broadcast, it carries its source
+in full-key form (§<a href="node-identity.html">Node Identity</a>).</p>
+<p>A device <strong>MUST</strong> reject a non-zero interval outside 1200 seconds
+(twenty minutes) to 86400 seconds (twenty-four hours) with
+<code>STATUS_INVALID_ARGUMENT</code>. Neither bound is an airtime control — the
+<a href="ulcp-radio.html#prop-phy-duty-limit">duty limit</a> is that — but the two
+ends fail differently. Below the floor a device spends the mesh’s
+airtime restating what it already said; above the ceiling the schedule
+has stopped being one, and zero says so more plainly.</p>
+<p>The interval is a minimum rather than an exact cadence: each period is
+<a href="beacons.html#announcing-on-a-schedule">scattered</a> later by a random
+fraction of it, never earlier, so the configured value is the shortest
+gap between two unsolicited announcements.</p>
+<p>Scheduled sends are subject to the same duty accounting and channel
+access as any other transmission: a send the device cannot make when it
+falls due is skipped, not queued.</p>
+<h3 id="prop-beacon-interval"><a class="header" href="#prop-beacon-interval">PROP 81: <code>PROP_BEACON_INTERVAL</code></a></h3>
+<ul>
+<li>Type: Single-Value, Read-Write</li>
+<li>Asynchronous Updates: No</li>
+<li>Required: <code>CAP_ADVERT</code></li>
+<li>Value Type: UINT32</li>
+<li>Post-Reset Value: 3600 (one hour), or restored from saved state</li>
+</ul>
+<p>Seconds between unsolicited <a href="beacons.html">beacons</a> — broadcasts with no
+payload at all. Zero sends none.</p>
+<p>A beacon is sent with a flood budget and both the <a href="packet-options.html#trace-route-option-2">Trace
+Route</a> and <a href="packet-options.html#trace-signal-option-10">Trace
+Signal</a> options, so what
+arrives at a distant node is a usable path back to the device and the
+signal quality of every hop along it. What it does not carry is any
+statement of who the device is: that is what an advertisement is for,
+and a listener that has never met this device learns only that something
+with a given source hint is reachable.</p>
+<p>The two intervals are independent because they announce different things
+at very different costs. A mesh usually wants the path refreshed often
+and the identity restated rarely.</p>
+<p>The accepted range, the per-period scatter, and the duty accounting are
+as described for <a href="#prop-advert-interval"><code>PROP_ADVERT_INTERVAL</code></a>.</p>
+<h3 id="prop-startup-beacon"><a class="header" href="#prop-startup-beacon">PROP 82: <code>PROP_STARTUP_BEACON</code></a></h3>
+<ul>
+<li>Type: Single-Value, Read-Write</li>
+<li>Asynchronous Updates: No</li>
+<li>Required: <code>CAP_ADVERT</code></li>
+<li>Value Type: BOOL</li>
+<li>Post-Reset Value: 1 (true), or restored from saved state</li>
+</ul>
+<p>Whether the device emits one beacon once it has come up. On by default:
+a node that has just restarted is exactly the node whose neighbours hold
+the stalest paths to it, and a single empty broadcast is the cheapest
+correction available.</p>
+<p>The beacon is emitted after the device’s own configuration has been
+applied, so it reflects the device as it will actually run rather than
+as it booted. Unlike a scheduled period it is not scattered: devices do
+not restart in unison, so bring-up is already spread out by whatever
+staggered it.</p>
+<h3 id="prop-gnss-enabled"><a class="header" href="#prop-gnss-enabled">PROP 88: <code>PROP_GNSS_ENABLED</code></a></h3>
+<ul>
+<li>Type: Single-Value, Read-Write</li>
+<li>Asynchronous Updates: Yes</li>
+<li>Required: <code>CAP_GNSS</code></li>
+<li>Value Type: BOOL</li>
+<li>Post-Reset Value: device-defined, conventionally 0 (false), or restored
+from saved state</li>
+</ul>
+<p>Whether the GNSS receiver is powered.</p>
+<p>Asynchronous because a device <strong>MAY</strong> offer the receiver as a control the
+operator can reach — a button, a menu entry — and a switch someone can
+flip is a value that moves without the host asking. A device that flips
+it locally <strong>MUST</strong> publish the new value like any other transition the
+host did not command.</p>
+<p>False means the lowest power state the board can put the receiver in, not
+merely an idle one: on a battery-powered node the receiver is typically
+the largest continuous load there is, and a property that only stopped
+<em>reporting</em> would be a property that solved nothing.</p>
+<p>The post-reset value is the device’s to choose, and it <strong>SHOULD</strong> be
+false: a device that has never been told to care where it is should not
+be spending a battery finding out. A device whose purpose is to know
+where it is — a fixed outdoor node with a panel rather than a pocket
+tracker on a cell — <strong>MAY</strong> default it true instead, and <strong>SHOULD</strong>
+document that it does. Either way the value is only a starting point:
+saved state overrides it in both directions, and a host that wants a
+particular state sets it rather than assuming one.</p>
+<p>Disabling the receiver does not clear the wall clock. Time already
+obtained stays as good as the device’s oscillator keeps it, which is the
+whole point of having acquired it.</p>
+<p>One exception is permitted, and only for boards where the receiver’s own
+real-time-clock domain is the <em>only</em> clock the board has: that domain
+<strong>MAY</strong> remain powered while this property is false, and the device
+<strong>MAY</strong> briefly power the receiver at boot to read the time back out of
+it. That is a clock operation, not a positioning one — position data
+observed during it is discarded, and it is governed by
+<a href="ulcp-device.html#prop-gnss-time-trust"><code>PROP_GNSS_TIME_TRUST</code></a> rather than
+by this property.</p>
+<h3 id="prop-gnss-location"><a class="header" href="#prop-gnss-location">PROP 89: <code>PROP_GNSS_LOCATION</code></a></h3>
+<ul>
+<li>Type: Single-Value, Read-Only</li>
+<li>Asynchronous Updates: Yes</li>
+<li>Required: <code>CAP_GNSS</code></li>
+<li>Value Type: 0–7 octets</li>
+<li>Post-Reset Value: Empty</li>
+</ul>
+<p>The position of the most recent fix, in the <a href="node-identity.html#variable-precision-location-format">variable-precision
+location</a> encoding — the same nibble-interleaved
+grid code node identities carry, so a host never has to convert between
+two position formats.</p>
+<p>An <strong>empty</strong> value means no fix has been obtained since the receiver was
+last powered. The device reports the position it actually has rather than
+the last one it remembers across a power cycle: a position that was true
+somewhere else is worse than no position at all.</p>
+<p>The length is the device’s own honest precision for that fix and <strong>MAY</strong>
+vary between reads. A host <strong>MUST NOT</strong> read more precision into a value
+than its length carries; the encoding’s truncation property means a
+shorter value is a correct lower-precision statement of the same
+position, never a different one.</p>
+<p>A device <strong>MUST</strong> generally avoid announcing this property, and a host
+that wants a position <strong>MUST</strong> be prepared to read one. A receiver
+produces a fix about once a second, and at fine precision the readings
+of a receiver standing perfectly still still differ from each other, so
+a device that published every change would transmit continuously — and
+wake its host every time — on behalf of a host that may not be looking.
+No threshold rescues this: the one that would be quiet enough to be
+worth having is coarse enough that the announcements it does send are
+too late to be the point.</p>
+<p>A host <strong>SHOULD</strong> nonetheless accept an announcement that arrives. The
+value carries what a read would have returned, a device may have its own
+reason to volunteer one, and a host that treats it as a protocol error
+gains nothing for the strictness.</p>
+<p>Read-only in this revision. A manually-placed fixed node is a real use,
+but writing a position requires a rule for which source wins when the
+receiver also has one, and this revision does not define that rule.</p>
+<h3 id="prop-gnss-altitude"><a class="header" href="#prop-gnss-altitude">PROP 90: <code>PROP_GNSS_ALTITUDE</code></a></h3>
+<ul>
+<li>Type: Single-Value, Read-Only</li>
+<li>Asynchronous Updates: No</li>
+<li>Required: <code>CAP_GNSS</code></li>
+<li>Value Type: <code>INT32_LE</code>, or empty</li>
+<li>Post-Reset Value: Empty</li>
+</ul>
+<p>Altitude of the most recent fix, in meters, in the same units and
+reference as the node identity’s altitude option, so the two are directly
+interchangeable.</p>
+<p>Empty when there is no three-dimensional fix — including while the
+receiver holds a two-dimensional one, which has a position but no
+altitude. Read-only for the same reason as
+<a href="ulcp-device.html#prop-gnss-location"><code>PROP_GNSS_LOCATION</code></a>.</p>
+<h3 id="prop-gnss-fix"><a class="header" href="#prop-gnss-fix">PROP 91: <code>PROP_GNSS_FIX</code></a></h3>
+<ul>
+<li>Type: Single-Value, Read-Only</li>
+<li>Asynchronous Updates: Yes</li>
+<li>Required: <code>CAP_GNSS</code></li>
+<li>Value Type: <code>UINT8</code></li>
+<li>Post-Reset Value: 0</li>
+</ul>
+<p>The quality of the current position solution.</p>
+<div class="table-wrapper">
+<table>
+<thead>
+<tr><th>Value</th><th>Meaning</th></tr>
+</thead>
+<tbody>
+<tr><td>0</td><td>No fix</td></tr>
+<tr><td>1</td><td>Two-dimensional fix — position without altitude</td></tr>
+<tr><td>2</td><td>Three-dimensional fix</td></tr>
+</tbody>
+</table>
+</div>
+<p>Unlike the three properties that describe a position, this one is never
+empty: a device that is not fixed <strong>knows</strong> it is not fixed, so it reports
+0. A receiver that is switched off reports 0 for the same reason. This is
+the distinction the whole positioning surface rests on — zero for the
+facts the device is sure of, empty for the position it does not have.</p>
+<p>This is the positioning property a device <strong>SHOULD</strong> announce, and the
+reason it is the exception to
+<a href="ulcp-device.html#prop-gnss-location"><code>PROP_GNSS_LOCATION</code></a>’s silence is
+that it is not a measurement. It changes when the receiver acquires or
+loses a solution, which is a few times in a session rather than a few
+times a second, and it is what tells a host whether reading a position
+is worth anything at all.</p>
+<h3 id="prop-gnss-precision"><a class="header" href="#prop-gnss-precision">PROP 92: <code>PROP_GNSS_PRECISION</code></a></h3>
+<ul>
+<li>Type: Single-Value, Read-Only</li>
+<li>Asynchronous Updates: No</li>
+<li>Required: <code>CAP_GNSS</code></li>
+<li>Value Type: <code>UINT16_LE</code>, or empty</li>
+<li>Post-Reset Value: Empty</li>
+</ul>
+<p>Estimated horizontal accuracy of the current fix, in decimeters. Empty
+when there is no fix.</p>
+<p>An <strong>estimate</strong>, not a measured error bound. Receivers generally report a
+dilution of precision, which becomes a distance only after multiplying by
+an assumed range error; a device that has a real accuracy figure
+<strong>SHOULD</strong> report that instead. Hosts <strong>MUST</strong> treat the value as
+indicative and <strong>MUST NOT</strong> present it as a guarantee.</p>
+<p>Deliberately distinct from the length of
+<a href="ulcp-device.html#prop-gnss-location"><code>PROP_GNSS_LOCATION</code></a>: that is how
+precisely the device is <em>willing to say</em> where it is, and this is how
+precisely it <em>knows</em>. The two move independently.</p>
+<h3 id="prop-gnss-satellites"><a class="header" href="#prop-gnss-satellites">PROP 93: <code>PROP_GNSS_SATELLITES</code></a></h3>
+<ul>
+<li>Type: Single-Value, Read-Only</li>
+<li>Asynchronous Updates: No</li>
+<li>Required: <code>CAP_GNSS</code></li>
+<li>Value Type: <code>UINT8</code>, optionally followed by a second <code>UINT8</code></li>
+<li>Post-Reset Value: 0</li>
+</ul>
+<p>The number of satellites contributing to the current solution, optionally
+followed by the number the receiver can see at all.</p>
+<p>A device that cannot distinguish the two reports only the first octet. As
+with <a href="ulcp-device.html#prop-gnss-fix"><code>PROP_GNSS_FIX</code></a>, a receiver that is
+off or searching reports 0 rather than the empty value.</p>
+<p>Chiefly a diagnostic: it is what distinguishes an antenna fault from a
+sky that is simply obstructed, which is otherwise invisible to anyone not
+holding the device.</p>
+<h3 id="prop-illuminance"><a class="header" href="#prop-illuminance">PROP 94: <code>PROP_ILLUMINANCE</code></a></h3>
+<ul>
+<li>Type: Single-Value, Read-Only</li>
+<li>Asynchronous Updates: No</li>
+<li>Required: <code>CAP_ILLUMINANCE</code></li>
+<li>Value Type: <code>UINT32_LE</code>, or empty</li>
+<li>Post-Reset Value: Not applicable</li>
+</ul>
+<p>The ambient illuminance at the device, in <strong>millilux</strong>.</p>
+<p>Millilux rather than lux because the readings that matter are at the dark
+end: a full moon is around 0.3 lux and starlight two orders of magnitude
+below that, so a device deciding how bright to make an indicator at night
+is working entirely inside what whole lux would round to zero. The
+unsigned 32-bit range still reaches past direct sunlight.</p>
+<p>The value is a <strong>measurement taken when the property is read</strong>, not
+stored state, so a device samples on each get rather than answering from
+a cache. It follows that nothing about it is saved or reset: <code>CMD_RST</code>
+leaves it alone because there is nothing to leave.</p>
+<p>An <strong>empty</strong> value means the device has no reading — the sensor did not
+answer, or is unavailable for as long as some other part of the device
+holds the hardware it shares. This is the same “we do not know” that
+<a href="ulcp-device.html#prop-time"><code>PROP_TIME</code></a> reports for an unset clock, and
+is not an error: a host that asked for the light level and got no answer
+has learned what it needed to.</p>
+<p>A sensor that saturates reports its <strong>clamped maximum</strong> rather than an
+extrapolation past the point where it stopped responding to light. The
+alternative — a number derived from a transfer function outside the range
+it was fitted in — is indistinguishable at the host from a real reading.</p>
+<h3 id="prop-time"><a class="header" href="#prop-time">PROP 4866: <code>PROP_TIME</code></a></h3>
+<ul>
+<li>Type: Single-Value, Read-Write</li>
+<li>Asynchronous Updates: Yes</li>
+<li>Required: <code>CAP_TIME</code></li>
+<li>Value Type: <code>UINT32_LE</code>, or empty</li>
+<li>Post-Reset Value: Unchanged</li>
+</ul>
+<p>The device’s wall clock, as seconds since the Unix epoch, UTC.</p>
+<p>The count is <strong>unsigned</strong>, which puts the end of the representable range
+at 2106-02-07T06:28:15Z rather than at the 2038 rollover of the signed
+encoding. Nothing in this revision needs to handle a wrap.</p>
+<p>An <strong>empty</strong> value means the device does not know what time it is. This
+is a normal state, not a fault: a device with no receiver, no
+battery-backed clock, and no host to ask has genuinely never been told.
+A device <strong>MUST</strong> report the empty value rather than an invented one, a
+zero, or a build timestamp.</p>
+<p><strong>A device that does not know the time MUST NOT display a clock</strong>, or any
+other indication of the current time, on any local user interface. A
+plausible-looking wrong time is worse than a blank space: an operator
+reads a displayed clock as a fact about the device, and a device with a
+screen is exactly the device somebody will trust.</p>
+<p>Setting the property sets the clock. Setting the <strong>empty</strong> value returns
+the device to not knowing — the operator’s way of saying that whatever
+the device believes is wrong. A host-supplied time outranks every
+receiver-derived one, including while
+<a href="ulcp-device.html#prop-gnss-time-trust"><code>PROP_GNSS_TIME_TRUST</code></a> is clear:
+the operator is the more authoritative source by definition.</p>
+<p>The clock is <strong>not</strong> part of the saved snapshot. An epoch written to
+flash accumulates unbounded error while the device is off, so a clock is
+restored from a real time source — a receiver, a battery-backed
+real-time clock, or a host — or not at all. <code>CMD_RST</code> does not clear it;
+only an empty write does.</p>
+<p>Devices announce this asynchronously. The transition from not knowing to
+knowing is the one worth announcing; a routine re-synchronization that
+agrees with the current value is not, and a device <strong>SHOULD NOT</strong> publish
+one.</p>
+<h3 id="prop-tz-offset"><a class="header" href="#prop-tz-offset">PROP 4867: <code>PROP_TZ_OFFSET</code></a></h3>
+<ul>
+<li>Type: Single-Value, Read-Write</li>
+<li>Asynchronous Updates: No</li>
+<li>Required: <code>CAP_TIME</code></li>
+<li>Value Type: <code>INT16_LE</code></li>
+<li>Post-Reset Value: 0, or restored from saved state</li>
+</ul>
+<p>The local time-zone offset from UTC, in minutes east of UTC. Negative
+values are west.</p>
+<p>Unlike <a href="ulcp-device.html#prop-time"><code>PROP_TIME</code></a> this <strong>always</strong> has a
+value. Where a device is meant to be is configuration and is known from
+the moment it is commissioned; what time it is is a measurement and may
+not be. Separating them is what lets a device render a local time the
+instant it acquires a clock, with no second round trip.</p>
+<p>A minute offset rather than an hour one, because several real zones are
+not whole hours. Values outside the range of real civil offsets
+(−720 through +840) are rejected with <code>STATUS_INVALID_ARGUMENT</code>: outside
+it, a value is a unit or byte-order mistake, and a device that accepted
+one would display a confidently wrong local time.</p>
+<p>Carries an offset and not a zone identifier. Devices do not carry a
+zone database, so daylight-saving transitions are the host’s business:
+whatever adjusts the device’s clock adjusts its offset.</p>
+<h3 id="prop-gnss-ident-update"><a class="header" href="#prop-gnss-ident-update">PROP 4868: <code>PROP_GNSS_IDENT_UPDATE</code></a></h3>
+<ul>
+<li>Type: Single-Value, Read-Write</li>
+<li>Asynchronous Updates: No</li>
+<li>Required: <code>CAP_GNSS</code></li>
+<li>Value Type: BOOL</li>
+<li>Post-Reset Value: 0 (false), or restored from saved state</li>
+</ul>
+<p>Whether position fixes refresh the location the device identity
+advertises in its <a href="node-identity.html">node identity</a>.</p>
+<p>Off by default. Broadcasting where you are is a decision, and a device
+that started doing it because a receiver was switched on would be making
+that decision on the operator’s behalf.</p>
+<p>When on, the device clamps each fix to
+<a href="ulcp-device.html#prop-gnss-ident-precision"><code>PROP_GNSS_IDENT_PRECISION</code></a>
+before advertising it. A device <strong>SHOULD</strong> act on a fix only when the
+clamped position actually changes, rather than on every fix: at a coarse
+precision a stationary node’s fixes all land in the same cell, and
+re-advertising each one spends airtime to say nothing.</p>
+<p>Switching it off <strong>retracts</strong> the advertised position rather than
+freezing the last one. So does switching the receiver off. A position
+that nothing is refreshing any more is a claim the device cannot
+support, and it ages into a false one at whatever speed the device
+moves; a device therefore drops the location and the altitude together
+when it stops updating them.</p>
+<p>Note that the <a href="node-identity.html#unix-timestamp-option-3">Unix Timestamp</a>
+option dates the identity payload, not the position — a node that has
+been stationary for a day still stamps each payload with the moment it
+was built.</p>
+<h3 id="prop-gnss-ident-precision"><a class="header" href="#prop-gnss-ident-precision">PROP 4869: <code>PROP_GNSS_IDENT_PRECISION</code></a></h3>
+<ul>
+<li>Type: Single-Value, Read-Write</li>
+<li>Asynchronous Updates: No</li>
+<li>Required: <code>CAP_GNSS</code></li>
+<li>Value Type: <code>UINT8</code></li>
+<li>Post-Reset Value: 5, or restored from saved state</li>
+</ul>
+<p>How many octets of <a href="node-identity.html#variable-precision-location-format">variable-precision
+location</a> the advertised position is clamped
+to, 1 (coarsest) through 7 (finest).</p>
+<p>The default of 5 is a cell of roughly 38 × 19 m at the equator: fine
+enough to place a node on a street, coarse enough not to place it in a
+room. That trade — not the receiver’s accuracy — is what this property
+exists to control, which is why it is separate from
+<a href="ulcp-device.html#prop-gnss-precision"><code>PROP_GNSS_PRECISION</code></a>.</p>
+<p>0 is rejected with <code>STATUS_INVALID_ARGUMENT</code> rather than read as
+“advertise nothing”:
+<a href="ulcp-device.html#prop-gnss-ident-update"><code>PROP_GNSS_IDENT_UPDATE</code></a> is how
+the advertisement is switched off, and a precision that silently meant
+the opposite of a precision would be a trap. Values above 7 are rejected
+for the same reason the encoding stops there.</p>
+<p>Writable while auto-update is off, so a whole positioning policy can be
+staged and enabled last.</p>
+<h3 id="prop-gnss-time-trust"><a class="header" href="#prop-gnss-time-trust">PROP 4870: <code>PROP_GNSS_TIME_TRUST</code></a></h3>
+<ul>
+<li>Type: Single-Value, Read-Write</li>
+<li>Asynchronous Updates: No</li>
+<li>Required: <code>CAP_GNSS</code></li>
+<li>Value Type: BOOL</li>
+<li>Post-Reset Value: 1 (true), or restored from saved state</li>
+</ul>
+<p>Whether time derived from the GNSS receiver may set the wall clock.</p>
+<p>On by default: the sky is normally the best clock a device of this class
+has, and a node that sets itself needs no operator at all.</p>
+<p>When clear, <strong>no</strong> receiver-derived time touches
+<a href="ulcp-device.html#prop-time"><code>PROP_TIME</code></a> — not a fix’s time, and not a
+read of the receiver’s own real-time clock at boot. This is the opt-out
+for a receiver whose time cannot be trusted: a jammed or spoofed sky can
+carry a plausible and badly wrong time, and a clock silently reset to it
+is worse than a clock that has stopped, because everything downstream
+will believe it.</p>
+<p>Position reporting is unaffected. The two are separable, and an operator
+who distrusts the time may still want to know where the device thinks it
+is — including in order to notice that it is wrong.</p>
 <p>Every transition to <code>ALERT_NONE</code> that the host did not command <strong>MUST</strong>
 be reported with an unsolicited <code>CMD_PROP_IS</code>.</p>
 <p>The deadline is the only bound. In particular, the alert is <strong>not</strong>

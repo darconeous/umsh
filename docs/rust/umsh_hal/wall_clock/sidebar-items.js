@@ -1,0 +1,1 @@
+window.SIDEBAR_ITEMS = {"constant":["NOTABLE_STEP_SECS"],"enum":["TimeSource","Update"],"fn":["apply","clear","is_set","local_hhmm","millis_to_next_minute","now","set_manual","set_tz","snapshot","tz_offset_min"],"struct":["WallClockState"]};

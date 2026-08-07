@@ -1,0 +1,1 @@
+window.SIDEBAR_ITEMS = {"struct":["Ingress","Interface","Interfaces"],"type":["InterfaceId"]};

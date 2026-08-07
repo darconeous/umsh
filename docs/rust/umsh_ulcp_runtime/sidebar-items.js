@@ -1,1 +1,1 @@
-window.SIDEBAR_ITEMS = {"mod":["ble_security","counter_map","device_node","driver","duty_gate","journal","log","node_counters","radio_mux","transport_policy"]};
+window.SIDEBAR_ITEMS = {"mod":["ble_security","counter_map","device_node","driver","duty_gate","gnss","journal","log","node_counters","radio_mux","transport_policy"]};

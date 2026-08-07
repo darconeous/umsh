@@ -1,0 +1,1 @@
+window.SIDEBAR_ITEMS = {"constant":["RELOAD_SCAN"],"fn":["capture","capture_args","duplicate","expect_interface","is_extcap_invocation","point_at","reload","resolve_target","rf_override","run"],"mod":["protocol"],"struct":["ExtcapArgs","Silenced"]};

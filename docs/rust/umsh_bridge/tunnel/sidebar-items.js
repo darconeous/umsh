@@ -1,0 +1,1 @@
+window.SIDEBAR_ITEMS = {"constant":["MAX_BODY"],"enum":["Dequeued","ReadError"],"fn":["pump_writer"],"struct":["TunnelFrame","TunnelQueue","TunnelReader","TunnelWriter"]};

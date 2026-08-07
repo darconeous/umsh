@@ -36,10 +36,10 @@
             const path_to_root = "";
             const default_light_theme = "light";
             const default_dark_theme = "ayu";
-            window.path_to_searchindex_js = "searchindex-5216ea72.js";
+            window.path_to_searchindex_js = "searchindex-c10eed74.js";
         </script>
         <!-- Start loading toc.js asap -->
-        <script src="toc-ca16b95c.js"></script>
+        <script src="toc-438957a9.js"></script>
     </head>
     <body>
     <div id="mdbook-help-container">
@@ -473,7 +473,7 @@ The protocol differentiates between source-routed hops and flood-routed hops.</d
 <li><code>PKT TYPE</code> = packet type</li>
 <li><code>S</code> = full 32-byte source address included (when clear, a compact source hint is used instead; see <a href="#source-address">Source Address</a> for hint size by packet type)</li>
 <li><code>R</code> = reserved; senders MUST set to 0; receivers MUST drop packets where this bit is non-zero</li>
-<li><code>H</code> = flood hop count present. Zero if direct.</li>
+<li><code>H</code> = flood hop count present. Zero if direct. Cleared before the byte enters the <a href="#associated-data">AAD</a></li>
 </ul>
 <h3 id="packet-type-values"><a class="header" href="#packet-type-values">Packet Type Values</a></h3>
 <div class="table-wrapper">
@@ -751,7 +751,12 @@ unicast semantics without encryption.</p>
 <li>If absent, no trace-route information is added automatically.</li>
 <li>If more than one option with this number is present, the packet MUST be dropped.</li>
 <li>Value layout: see <a href="#trace-route-option-value">Trace Route Option Value</a>.</li>
+<li>If implemented, Trace Signal (option 10) <strong>MUST</strong> also be implemented.</li>
 </ul>
+<blockquote class="blockquote-tag blockquote-tag-important">
+<p class="blockquote-tag-title"><svg viewbox="0 0 16 16" width="18" height="18"><path d="M0 1.75C0 .784.784 0 1.75 0h12.5C15.216 0 16 .784 16 1.75v9.5A1.75 1.75 0 0 1 14.25 13H8.06l-2.573 2.573A1.458 1.458 0 0 1 3 14.543V13H1.75A1.75 1.75 0 0 1 0 11.25Zm1.75-.25a.25.25 0 0 0-.25.25v9.5c0 .138.112.25.25.25h2a.75.75 0 0 1 .75.75v2.19l2.72-2.72a.749.749 0 0 1 .53-.22h6.5a.25.25 0 0 0 .25-.25v-9.5a.25.25 0 0 0-.25-.25Zm7 2.25v2.5a.75.75 0 0 1-1.5 0v-2.5a.75.75 0 0 1 1.5 0ZM9 9a1 1 0 1 1-2 0 1 1 0 0 1 2 0Z"></path></svg>Important</p>
+<p>If a repeater supports the Trace Route option, it <strong>MUST</strong> also implement the Trace Signal option (even if it is just adding placeholder values). Failure to do this breaks the one-to-one relationship between the Trace option and the Trace Signal options, making the Trace Signal value useless.</p>
+</blockquote>
 <h3 id="source-route-option-3"><a class="header" href="#source-route-option-3">Source Route (option 3)</a></h3>
 <ul>
 <li>Semantics: contains an ordered list of repeater hints designating the forwarding path.</li>
@@ -789,20 +794,36 @@ unicast semantics without encryption.</p>
 </ul>
 <h3 id="route-retry-option-6"><a class="header" href="#route-retry-option-6">Route Retry (option 6)</a></h3>
 <ul>
-<li>Type: zero-length flag</li>
-<li>Semantics: indicates that the originator is re-attempting forwarding of the same logical packet after a route it had assumed was considered failed.</li>
-<li>If more than one option with this number is present, the packet MUST be dropped.</li>
-<li>This option is intended for sender-originated route recovery, not for ordinary first transmission.</li>
-<li>The failed assumption need not be a source route. A sender that narrowed <code>FHOPS</code> because it believed the destination was directly reachable, or reachable within a known flood distance, has made the same kind of assumption; nothing on the wire distinguishes that packet from an ordinary short-radius flood, and the recovery is the same.</li>
-<li>When present, repeaters treat the packet as a distinct forwarding attempt for duplicate-suppression purposes even though the MIC and frame counter are unchanged.</li>
-<li>The destination does <strong>not</strong> treat this option as creating a new logical packet. Replay acceptance and duplicate application delivery remain governed by the packet’s normal security state, especially its frame counter.</li>
-<li>A sender using this option for route recovery typically:
+<li>
+<p>Type: zero-length flag</p>
+</li>
+<li>
+<p>Semantics: indicates that the originator is re-attempting forwarding of the same logical packet after a route it had assumed was considered failed.</p>
+</li>
+<li>
+<p>If more than one option with this number is present, the packet MUST be dropped.</p>
+</li>
+<li>
+<p>This option is intended for sender-originated route recovery, not for ordinary first transmission.</p>
+</li>
+<li>
+<p>The failed assumption need not be a source route. A sender that narrowed <code>FHOPS</code> because it believed the destination was directly reachable, or reachable within a known flood distance, has made the same kind of assumption; nothing on the wire distinguishes that packet from an ordinary short-radius flood, and the recovery is the same.</p>
+</li>
+<li>
+<p>When present, repeaters treat the packet as a distinct forwarding attempt for duplicate-suppression purposes even though the MIC and frame counter are unchanged.</p>
+</li>
+<li>
+<p>The destination does <strong>not</strong> treat this option as creating a new logical packet. Replay acceptance and duplicate application delivery remain governed by the packet’s normal security state, especially its frame counter.</p>
+</li>
+<li>
+<p>A sender using this option for route recovery typically:</p>
 <ul>
 <li>removes the stale source-route option, if one was present</li>
 <li>adds or refreshes flood hops, up to but not beyond the budget the sending application was willing to spend</li>
 <li>includes a trace-route option to learn a replacement route</li>
 <li>preserves the same frame counter and payload</li>
 </ul>
+<p>Each of these rewrites a field the <a href="#associated-data">associated data</a> excludes, which is what lets the retry reuse the original MIC unchanged. Adding <code>FHOPS</code> to a packet that had none also sets the FCF’s <code>H</code> bit, and the AAD clears that bit for this reason.</p>
 </li>
 </ul>
 <h3 id="station-callsign-option-7"><a class="header" href="#station-callsign-option-7">Station Callsign (option 7)</a></h3>
@@ -825,6 +846,7 @@ unicast semantics without encryption.</p>
 <li>Type: 4-byte ack MIC — the first 4 bytes of the acknowledged packet’s on-wire MIC (see <a href="#ack-tag-construction">Ack Tag Construction</a>).</li>
 </ul>
 <p>The option carries only the correlation handle, not a keyed ack tag: the packet carrying the option is itself authenticated to the original sender, so its own MIC already proves the acknowledgement is genuine. The <code>ack_mic</code> value simply identifies which outstanding request the reply acknowledges.</p>
+<p>Because the option sits in the plaintext options block, forwarders read it under the same terms as a standalone MAC ack, including for <a href="#ack-cancellation">ack cancellation</a>.</p>
 <h3 id="minimum-snr-option-9"><a class="header" href="#minimum-snr-option-9">Minimum SNR (option 9)</a></h3>
 <ul>
 <li>Type: signed 1-byte integer, in dB</li>
@@ -1166,13 +1188,13 @@ K_mic = okm[16..31]
 <p>The associated data (AAD) binds the immutable header fields to the MIC so that any modification is detected.</p>
 <p>The AAD is constructed by concatenating the following fields in order:</p>
 <ol>
-<li><strong>FCF</strong> (1 byte)</li>
+<li><strong>FCF</strong> (1 byte, with the flood-hops-present (<code>H</code>) bit cleared)</li>
 <li><strong>Static options</strong> — re-encoded as type-length-value (see below)</li>
 <li><strong>DST</strong> (3-byte destination hint, unicast) or <strong>CHANNEL</strong> (2 bytes, multicast)</li>
 <li><strong>SRC</strong> (3-byte hint or 32-byte full key) — included only when the source field is outside the ciphertext</li>
 <li><strong>SECINFO</strong> (5 or 7 bytes)</li>
 </ol>
-<p>Dynamic options and the flood hop count are excluded from the AAD because they may be modified by repeaters during forwarding.</p>
+<p>Dynamic options and the flood hop count are excluded from the AAD because they may be modified by repeaters during forwarding. The FCF’s flood-hops-present (<code>H</code>) bit is part of that budget rather than of the packet’s identity, and is cleared before the byte enters the AAD: a sender abandoning a source route re-floods a packet that is already sealed, which adds <code>FHOPS</code> where the original had none. Masking the bit does not weaken the binding. Flipping it on the wire shifts every field the parser reads after it, so DST/CHANNEL, SRC, and SECINFO enter the AAD as different values and the MIC check still fails.</p>
 <p>Note that the AAD ordering above is <strong>canonical</strong> and differs from wire ordering. On the wire, static options appear after SECINFO (immediately before the payload); in the AAD they appear at position 2, before DST/CHANNEL. Wire ordering and AAD ordering are intentionally decoupled so that the canonical AAD structure remains stable regardless of where options sit on the wire.</p>
 <h4 id="static-option-encoding-in-aad"><a class="header" href="#static-option-encoding-in-aad">Static Option Encoding in AAD</a></h4>
 <p>Static options are not included in their wire delta-length form. Instead, each static option present in the packet is re-encoded using absolute type-length-value triples:</p>
@@ -1203,7 +1225,7 @@ K_mic = okm[16..31]
 <li><code>full_16B_CMAC</code> is the full 16-byte AES-CMAC computed during packet processing, before truncation to the on-wire MIC length</li>
 </ul>
 <p>The standalone <a href="#mac-ack-packet">MAC Ack</a> carries both fields (<code>ack_mic</code> followed by <code>ack_tag</code>, 8 bytes total). The <a href="#ack-mic-option-8">Ack MIC option</a> carries only <code>ack_mic</code>, because the packet carrying the option is itself authenticated to the original sender and therefore needs no separate keyed tag.</p>
-<p>The <code>ack_mic</code> is a prefix of the original packet’s on-wire MIC, so it was already visible to anyone who received that packet. The keyed <code>ack_tag</code>, by contrast, never appears in the original packet: producing it requires knowledge of <code>K_enc</code>, so a passive observer who intercepts the original packet cannot forge a valid standalone ack even though <code>ack_mic</code> is public. With a 4-byte keyed tag, a blind forgery succeeds with probability <code>2^-32</code> per attempt; over a bandwidth-limited LoRa channel, online guessing at that scale is infeasible. A successful forgery would cause the sender to treat an undelivered packet as delivered and suppress retransmission — a reliability denial-of-service, not a confidentiality or integrity break.</p>
+<p>The <code>ack_mic</code> is a prefix of the original packet’s on-wire MIC, so it was already visible to anyone who received that packet. The keyed <code>ack_tag</code>, by contrast, never appears in the original packet: producing it requires knowledge of <code>K_enc</code>, so a passive observer who intercepts the original packet cannot forge a valid standalone ack even though <code>ack_mic</code> is public. With a 4-byte keyed tag, a blind forgery succeeds with probability <code>2^-32</code> per attempt; over a bandwidth-limited LoRa channel, online guessing at that scale is infeasible. A successful forgery would cause the sender to treat an undelivered packet as delivered and suppress retransmission — a reliability denial-of-service, not a confidentiality or integrity break. A weaker variant needs no forged tag at all: repeaters <a href="#ack-cancellation">cancel queued forwards</a> on the public <code>ack_mic</code> alone, so an observer who saw the original packet can suppress its pending forwards at repeaters within earshot. The exposure is the same reliability class, costs the attacker a transmission per suppression, and is bounded by the sender’s <a href="#route-retry-option-6">Route Retry</a> recovery.</p>
 <p>The correlation exposed by <code>ack_mic</code> is deliberate. To an observer who already received the original packet, it confirms that the packet was delivered and links the ack to that packet. Because the MAC ack carries no destination hint, it adds no explicit endpoint identifier of its own — which removes the direct sender-identity leak a destination hint would introduce. This is not a guarantee of unlinkability: a determined adversary may still correlate an ack with its endpoints through timing, RF fingerprinting, return-path analysis, or by tying the <code>ack_mic</code> back to an original packet that itself exposed endpoint hints. For blind unicast, whose forward frame reveals no endpoint identity to a non-channel observer, omitting the destination hint keeps that concealment from being undone by the ack.</p>
 <p>AES-ECB on a single 16-byte block is the raw AES block cipher — a pseudorandom permutation — and does not have the pattern-leakage weakness associated with multi-block ECB encryption.</p>
 <h3 id="blind-unicast-address-encryption"><a class="header" href="#blind-unicast-address-encryption">Blind Unicast Address Encryption</a></h3>
@@ -1299,8 +1321,9 @@ because 1) they cannot be relied upon in an emergency, and 2) they can waste air
 non-local chatter. Moreso than other types of bridges, internet bridges MUST limit the flood hop count
 of packets which transit the bridge.</p>
 </blockquote>
+<p>A client–server tunnel realization of an internet bridge — including the exact form of the inbound-medium retransmission — is specified in <a href="#internet-bridging">Internet Bridging</a>.</p>
 <h2 id="forwarding-confirmation-and-recovery"><a class="header" href="#forwarding-confirmation-and-recovery">Forwarding Confirmation and Recovery</a></h2>
-<p>UMSH provides hop-by-hop forwarding confirmation for both source-routed and flood-originated packets. After transmitting, a node listens for the next hop to retransmit the same packet. If no retransmission is heard within a timeout, the node retries with exponential backoff (up to 3 retries). The original sender does not currently receive any notification of a forwarding failure when source routing.</p>
+<p>UMSH provides hop-by-hop forwarding confirmation for both source-routed and flood-originated packets. After transmitting, a node listens for the next hop to retransmit the same packet. If no retransmission is heard within a timeout, the node retries after a short jittered delay (up to 3 retries). The original sender does not currently receive any notification of a forwarding failure when source routing.</p>
 <p>If a cached route fails entirely (noticed because of a timeout), the sender can fall back to flood routing for the same logical packet using the <strong>route retry option</strong>, which allows repeaters to forward it even if they already suppressed the original attempt.</p>
 <p>A cached source route is the visible case, but not the only one. A sender that believes the destination is directly reachable, or reachable within a known flood distance, narrows <code>FHOPS</code> accordingly and carries no option recording that it did so. When such a packet goes unacknowledged, the cached distance is as stale as a dead source-route hint, and the recovery transmission restores the flood budget the sending application originally allowed. A radius the application itself chose is not a stale assumption and is not widened.</p>
 <p>See <a href="#forwarding-confirmation">Repeater Operation § Forwarding Confirmation</a> and <a href="#route-failure-recovery">Repeater Operation § Route Failure Recovery</a>.</p>
@@ -1524,6 +1547,7 @@ delay   = D_ack + uniform_random(0, W)
 <p>If SNR is unavailable but RSSI is, the same formula MAY be applied with RSSI values substituted for SNR, using appropriate threshold and range parameters.</p>
 <p>After computing the delay, the repeater waits. Other packets SHOULD continue to be be forwarded while waiting, assuming the channel is clear.</p>
 <p>If the repeater overhears the same packet forwarded by another node (identified by MIC in the duplicate cache) before the delay expires, it SHOULD defer rather than transmit. A safe default is to resample a delay using the same <code>W_min</code>/<code>W_max</code> limits — including <code>D_ack</code> when it applies, since the overheard copy may itself elicit an immediate ACK from the destination — and restart the waiting period. A repeater SHOULD NOT do this more than 3 times; after the third such deferral it SHOULD abandon the pending forward.</p>
+<p>If the repeater instead overhears a MAC ack whose <code>ack_mic</code> matches the pending packet’s MIC prefix, it SHOULD <a href="#ack-cancellation">cancel the pending forward outright</a> rather than defer: the destination provably has the packet.</p>
 <p>This deferral behavior is intended only for the first local forwarding decision after reception. Once a repeater has actually transmitted its own copy, any later retransmission behavior is governed by <a href="#forwarding-confirmation">Repeater Operation</a>.</p>
 <p>Nodes waiting for implicit forwarding confirmation MUST size their confirmation timeout to include this full forwarding-delay window. A safe default is to allow:</p>
 <ul>
@@ -1718,16 +1742,22 @@ delay   = D_ack + uniform_random(0, W)
 <li><strong>Flood originators</strong>: The originating node listens for any node to retransmit.</li>
 <li><strong>Flood repeaters</strong>: Intermediate flood-forwarding nodes MUST NOT retry. Multiple nodes may forward the same flood packet, and a repeater has no designated next hop to listen for; retrying would increase congestion without improving reliability.</li>
 </ul>
+<p>Confirmation, and the retry ladder below, apply whether or not the packet requests an ACK. An ack-requested sender goes on to await the ACK once forwarding is confirmed; a sender that requested no ACK is finished the moment it hears the packet carried onward, and if the retry budget runs out without that, the send simply ends — there is no failure signal to wait for. A point-to-point packet with no flood budget and no source route travels straight to its destination, confirms nothing, and MUST be transmitted exactly once.</p>
 <p>After transmitting, the node listens for the same packet — identified by its <a href="#duplicate-suppression-1">cache key</a> — to be retransmitted. This confirmation timeout MUST be large enough to cover the worst-case forwarding delay allowed by <a href="#flood-forwarding-contention-window">Channel Access</a>, plus the airtime of the forwarded frame itself, plus a guard margin. A safe default is:</p>
 <pre><code class="language-text">confirm_timeout = 2 × T_frame + W_max + D_ack
 </code></pre>
 <p>where <code>W_max</code> is the maximum intentional forwarding-delay window permitted for the path and <code>D_ack</code> is the <a href="#ack-protection-interval">ACK protection interval</a> when it applies. With the suggested defaults <code>W_max = 2 × T_frame</code> and <code>D_ack = 0.25 × T_frame</code>, this yields <code>confirm_timeout = 4.25 × T_frame</code>.</p>
 <p>If the packet is heard before <code>confirm_timeout</code> expires, forwarding is confirmed.</p>
-<p>If <code>confirm_timeout</code> expires without a retransmission, the node SHOULD schedule a retry after a jittered exponential delay:</p>
-<pre><code class="language-text">retry_delay_n = uniform_random(0, min(2^(n−1) × T_frame, 4 × T_frame))
+<p>If <code>confirm_timeout</code> expires without a retransmission, the node SHOULD schedule a retry after a jittered delay:</p>
+<pre><code class="language-text">retry_delay = uniform_random(0, T_frame)
 </code></pre>
-<p>where <code>n</code> is the 1-based retry number. After this delay expires, the retry is transmitted using normal CAD and backoff as described in <a href="#backoff-procedure">Channel Access</a>.</p>
+<p>The delay does not grow with the retry number. Its only job is to decorrelate retries between nodes, and one frame time is enough for that; every additional window would be time the payload spends undelivered. After this delay expires, the retry is transmitted using normal CAD and backoff as described in <a href="#backoff-procedure">Channel Access</a>.</p>
 <p>A node MUST NOT retry more than 3 times.</p>
+<h3 id="ack-cancellation"><a class="header" href="#ack-cancellation">Ack Cancellation</a></h3>
+<p>A MAC ack echoes the acknowledged packet’s <code>ack_mic</code> — the first four bytes of its on-wire MIC — which any forwarder can read without keys, and which survives the mutations repeaters perform. A repeater that overhears a MAC ack (or an <a href="#ack-mic-option-8">Ack MIC option</a>) whose <code>ack_mic</code> matches the MIC prefix of a queued, not-yet-transmitted forward of an ack-eliciting packet (UNAR or BUAR) SHOULD cancel that forward: the destination provably has the packet, and repeating it spends airtime on nothing. The <a href="#ack-protection-interval">ACK protection interval</a> puts the ack on the air ahead of pending forwards precisely so that this observation is available.</p>
+<p>Cancellation acts on the queue, not on the future. It removes whatever matching forward is queued at that moment — a <a href="#route-retry-option-6">Route Retry</a> copy included — and records nothing. A Route Retry copy received <em>after</em> a cancellation is a separate forwarding identity under <a href="#duplicate-suppression-1">duplicate suppression</a> and is forwarded normally: the origin resorts to it precisely because the ack never reached it, and carrying the copy prompts the destination to acknowledge again. That copy is in turn cancelable by another overheard ack.</p>
+<p>The duplicate-cache entry for a cancelled forward remains. The packet was handled; a later copy of the same attempt is still a duplicate.</p>
+<p>A repeater cannot verify the keyed <code>ack_tag</code> half of the trailer, so cancellation rests on the public <code>ack_mic</code> alone. The <a href="#ack-tag-construction">forgery this exposes</a> suppresses at most one queued forward per overheard ack and is bounded by the Route Retry path.</p>
 <h3 id="route-failure-recovery"><a class="header" href="#route-failure-recovery">Route Failure Recovery</a></h3>
 <p>When a node sends an ack-requested unicast or blind-unicast packet against a cached route and that attempt fails, it needs a way to re-attempt delivery without causing duplicate application delivery at the final destination.</p>
 <p>Two kinds of cached route can fail this way, and they fail identically from the sender’s point of view:</p>
@@ -1749,6 +1779,7 @@ delay   = D_ack + uniform_random(0, W)
 </ul>
 </li>
 </ol>
+<p>These edits touch only fields the <a href="#associated-data">associated data</a> excludes, which is what lets the MIC carry over. Adding <code>FHOPS</code> where the original had none also sets the FCF’s <code>H</code> bit, and the AAD clears that bit for this reason.</p>
 <p>The restored flood radius SHOULD be the one the sending application asked for. A radius the application chose for itself is not a failed cache entry, and recovery MUST NOT widen it: a sender that was told to reach no further than one hop has not made a stale assumption, it has been given an instruction.</p>
 <p>This recovery transmission is intentionally the same logical packet, not a new application message. The destination therefore still accepts it at most once according to the normal replay rules. The Route Retry option exists only to let repeaters forward the re-attempted packet even if they already suppressed the original as a duplicate.</p>
 <p>This preserves a useful separation of responsibilities:</p>
@@ -1783,6 +1814,10 @@ delay   = D_ack + uniform_random(0, W)
 <li>a repeater path that may be usable to reach it</li>
 </ul>
 <p>This is particularly useful when a receiver already knows the node’s identity information.</p>
+<p>Pairing the trace-route option with <a href="#trace-signal-option-10">Trace
+Signal</a> makes the beacon report
+the quality of each hop as well as its identity, which is what
+distinguishes a path that merely works from one worth using.</p>
 <h2 id="advertisements"><a class="header" href="#advertisements">Advertisements</a></h2>
 <p>An <strong>advertisement</strong> is a broadcast or multicast packet whose payload is a
 <a href="#node-identity">node identity</a> payload — a beacon that additionally
@@ -1791,6 +1826,34 @@ announcing presence, name, role, and capabilities. To obtain a specific
 node’s identity, use the <a href="#identity-request-1">Identity Request</a>
 MAC command, which is answered with a targeted unicast identity response
 rather than a broadcast advertisement.</p>
+<h2 id="announcing-on-a-schedule"><a class="header" href="#announcing-on-a-schedule">Announcing on a Schedule</a></h2>
+<p>A node MAY emit beacons and advertisements on periods of its own. The two
+are configured separately because they announce different things at very
+different costs: a beacon publishes a path for a handful of bytes, while
+an advertisement carries a signed identity and is the largest frame a node
+originates unprompted. A mesh is normally best served by refreshing the
+path often and restating the identity rarely.</p>
+<p>A scheduled advertisement SHOULD be sent without flood hops. What it
+carries is a standing statement rather than news, so flooding it across
+the mesh on every period spends airtime out of proportion to what a
+distant listener learns; a node that wants to be findable further away
+publishes a path with a beacon instead.</p>
+<p>A configured period is a minimum rather than an exact cadence. A node
+SHOULD scatter each period by a random fraction of it — a quarter is a
+reasonable choice — and that scatter MUST only delay an announcement,
+never bring it forward, so the configured value remains a floor on how
+often the node transmits unasked. Nodes commissioned alike and powered on
+together otherwise stay in step for as long as they run, colliding every
+period and colliding again on each retry, since a shared schedule makes
+them contend from the same instant every time. Carrier sensing resolves
+the individual collision; the scatter is what keeps the mesh from having
+to resolve one on every period.</p>
+<p>A node that has just restarted is the node whose neighbours hold the
+stalest paths to it, so emitting one beacon at bring-up is RECOMMENDED.
+That beacon is not delayed: nodes do not restart in unison, so bring-up
+is already scattered by whatever staggered it.</p>
+<p>On a device managed over <a href="#prop-advert-interval">ULCP</a>,
+these periods are the advertisement-policy properties.</p>
 <h2 id="path-discovery"><a class="header" href="#path-discovery">Path Discovery</a></h2>
 <p>UMSH does not define a dedicated path-discovery packet type. Instead, path discovery is performed using existing primitives:</p>
 <ol>
@@ -1823,6 +1886,7 @@ rather than a broadcast advertisement.</p>
 <li>include a trace-route option so that a fresh source route can be learned from the peer’s reply</li>
 <li>set the <a href="#route-retry-option-6">Route Retry option</a> so intermediate repeaters treat the rerouted attempt as a new forwarding opportunity even though the packet’s MIC and frame counter are unchanged</li>
 </ul>
+<p>Trading a source route for flood hops rewrites only fields the <a href="#associated-data">associated data</a> excludes. Adding <code>FHOPS</code> sets the FCF’s <code>H</code> bit, which the AAD clears, so the MIC carries over unchanged.</p>
 <p>Once the peer replies and a fresher trace route is learned, the sender can resume normal source-routed transmission using the replacement route.</p>
 <h2 id="scoping-flood-hops-to-a-known-route"><a class="header" href="#scoping-flood-hops-to-a-known-route">Scoping Flood Hops to a Known Route</a></h2>
 <p>A wide flood hop count is a first-contact cost. Once routing state exists for a destination, the sender SHOULD scope <code>FHOPS_REM</code> to what the known path actually costs, plus a small margin:</p>
@@ -1870,7 +1934,7 @@ rather than a broadcast advertisement.</p>
 <tr><td style="text-align: right">5</td><td>Chat-Room Message</td></tr>
 <tr><td style="text-align: right">6</td><td><em>RESERVED</em></td></tr>
 <tr><td style="text-align: right">7</td><td>CoAP-over-UMSH</td></tr>
-<tr><td style="text-align: right">8</td><td>Node Management Command</td></tr>
+<tr><td style="text-align: right">8</td><td><a href="#node-management">Node Management Command</a></td></tr>
 </tbody>
 </table>
 </div>
@@ -1888,7 +1952,7 @@ rather than a broadcast advertisement.</p>
 <tr><td>Text Message</td><td style="text-align: center">Yes</td><td style="text-align: center">Yes</td><td style="text-align: center">No</td></tr>
 <tr><td>Chat-Room Message</td><td style="text-align: center">Yes</td><td style="text-align: center">No</td><td style="text-align: center">No</td></tr>
 <tr><td>CoAP-over-UMSH</td><td style="text-align: center">Yes</td><td style="text-align: center">Yes</td><td style="text-align: center">No</td></tr>
-<tr><td>Node Management Cmd</td><td style="text-align: center">Yes</td><td style="text-align: center">Yes</td><td style="text-align: center">No</td></tr>
+<tr><td>Node Management Cmd</td><td style="text-align: center">Yes</td><td style="text-align: center">No</td><td style="text-align: center">No</td></tr>
 </tbody>
 </table>
 </div>
@@ -1896,8 +1960,7 @@ rather than a broadcast advertisement.</p>
 <p><strong>Note 1:</strong> Some MAC commands may be permitted on specific channels. For example, a private channel might allow echo requests to all members and receive echo responses from everyone. Whether a given MAC command is accepted over multicast is deployment-defined and not yet specified by the protocol.</p>
 <p><strong>Note 2:</strong> MAC commands are admitted to broadcast individually: a command may be carried in a broadcast only when its definition says so, and any such definition must weigh the solicitation load a broadcast can create. Currently only the <a href="#identity-request-1">Identity Request</a> permits broadcast carriage, under the flood-management restrictions defined there. Receivers drop any other MAC command arriving by broadcast.</p>
 <h2 id="in-band-node-management"><a class="header" href="#in-band-node-management">In-Band Node Management</a></h2>
-<p>Nodes may optionally support remote management via <strong>Node Management Command</strong> payloads.</p>
-<p>Support for in-band management is protocol-defined but implementation-optional.</p>
+<p>Nodes may optionally support remote management via <strong>Node Management Command</strong> payloads, which carry ULCP exchanges over the mesh itself. The payload format, authorization model, and reachable state are specified in <a href="#node-management">Node Management</a>; support is advertised through the <code>CAP_ADMIN</code> ULCP capability.</p>
 <div style="break-before: page; page-break-before: always;"></div>
 <h1 id="node-identity"><a class="header" href="#node-identity">Node Identity</a></h1>
 <p>The node identity payload is an application-layer structure carried inside the UMSH payload. Its contents — including the timestamp option below — are not interpreted or required by the MAC layer. The MAC layer itself is timestamp-free (see <a href="#frame-counter-1">Frame Counter</a>).</p>
@@ -1957,8 +2020,8 @@ rather than a broadcast advertisement.</p>
 <tr><td style="text-align: right">0</td><td>Node Name</td><td>UTF-8 string</td></tr>
 <tr><td style="text-align: right">1</td><td>Node Location</td><td>1-7 bytes, see <a href="#variable-precision-location-format">Variable-Precision Location Format</a></td></tr>
 <tr><td style="text-align: right">2</td><td>Altitude in Meters</td><td>signed integer, meters above mean sea level</td></tr>
-<tr><td style="text-align: right">3</td><td>Unix Timestamp</td><td>unsigned integer, seconds since the Unix epoch</td></tr>
-<tr><td style="text-align: right">4</td><td>Supported Regions</td><td>one or more concatenated 2-byte region codes</td></tr>
+<tr><td style="text-align: right">3</td><td>Unix Timestamp</td><td>unsigned integer, seconds since the Unix epoch, UTC</td></tr>
+<tr><td style="text-align: right">4</td><td>Supported Flood Regions</td><td>one or more concatenated 2-byte region codes</td></tr>
 <tr><td style="text-align: right">5</td><td>Nonce</td><td>4 bytes, echoed from a soliciting Identity Request</td></tr>
 </tbody>
 </table>
@@ -1978,85 +2041,86 @@ rather than a broadcast advertisement.</p>
 <h3 id="variable-precision-location-format"><a class="header" href="#variable-precision-location-format">Variable-Precision Location Format</a></h3>
 <p>The node location is encoded as a string of one or more bytes, where each byte narrows the position to a 16×16 sub-grid of the preceding byte’s cell. Additional bytes increase precision; trailing bytes may be omitted to give a coarser — and therefore more privacy-preserving — location.</p>
 <h4 id="grid-subdivision"><a class="header" href="#grid-subdivision">Grid Subdivision</a></h4>
-<p>Each byte splits its parent cell into a 16×16 grid of children. Within each byte, the high nibble indexes along longitude and the low nibble indexes along latitude:</p>
+<p>Each byte splits its parent cell into a 16×16 grid of children. Within each byte, the high nibble indexes along latitude and the low nibble indexes along longitude:</p>
 <pre><code class="language-text">  7   6   5   4   3   2   1   0
 +---------------+---------------+
-|   LON NIBBLE  |   LAT NIBBLE  |
+|   LAT NIBBLE  |   LON NIBBLE  |
 +---------------+---------------+
      4 bits          4 bits
 </code></pre>
-<p>The first byte subdivides the entire globe (longitude in 16 slices of 22.5°, latitude in 16 slices of 11.25°). Each subsequent byte subdivides the cell selected by the byte before it, using the same high-nibble-longitude, low-nibble-latitude convention.</p>
+<p>The first byte subdivides the entire globe (latitude in 16 slices of 11.25°, longitude in 16 slices of 22.5°). Each subsequent byte subdivides the cell selected by the byte before it, using the same high-nibble-latitude, low-nibble-longitude convention.</p>
+<p>Latitude leads here for the same reason it leads everywhere else in UMSH: a coordinate pair is written, spoken, and passed as <code>(latitude, longitude)</code>, and an encoding that reversed the pair would be the one place the convention did not hold.</p>
 <h4 id="encoding-a-location"><a class="header" href="#encoding-a-location">Encoding a Location</a></h4>
 <p>Given latitude <code>LAT</code> in degrees (-90..+90) and longitude <code>LON</code> in degrees (-180..+180), an N-byte code can be derived either in a single step or byte by byte. The direct form is normative; where floating-point rounding makes the iterative form disagree at the final nibble, the direct form’s result is the correct code.</p>
 <h5 id="direct-form"><a class="header" href="#direct-form">Direct form</a></h5>
 <p>Compute two 4N-bit indices over the full desired precision:</p>
 <ul>
-<li><code>lon_index = floor((LON + 180) × 16^N / 360)</code></li>
 <li><code>lat_index = floor((LAT +  90) × 16^N / 180)</code></li>
+<li><code>lon_index = floor((LON + 180) × 16^N / 360)</code></li>
 </ul>
 <p>Then read nibbles from most significant to least significant:</p>
 <ul>
-<li>byte <em>k</em> high nibble = <code>(lon_index &gt;&gt; (4 × (N − 1 − k))) &amp; 0xF</code></li>
-<li>byte <em>k</em> low  nibble = <code>(lat_index &gt;&gt; (4 × (N − 1 − k))) &amp; 0xF</code></li>
+<li>byte <em>k</em> high nibble = <code>(lat_index &gt;&gt; (4 × (N − 1 − k))) &amp; 0xF</code></li>
+<li>byte <em>k</em> low  nibble = <code>(lon_index &gt;&gt; (4 × (N − 1 − k))) &amp; 0xF</code></li>
 </ul>
 <p>This form makes the hierarchy explicit: truncating an N-byte code to <em>k</em> bytes yields exactly the <em>k</em>-byte code for the same position.</p>
 <p>Edge cases: <code>LON = +180°</code> is equivalent to <code>LON = −180°</code> and wraps <code>lon_index</code> to 0. <code>LAT = +90°</code> is a single degenerate point; clamp <code>lat_index</code> to <code>16^N − 1</code>.</p>
 <h5 id="iterative-form"><a class="header" href="#iterative-form">Iterative form</a></h5>
-<p>Emitting one byte at a time, with <code>lon_step = 22.5° / 16^k</code> and <code>lat_step = 11.25° / 16^k</code>:</p>
+<p>Emitting one byte at a time, with <code>lat_step = 11.25° / 16^k</code> and <code>lon_step = 22.5° / 16^k</code>:</p>
 <ul>
-<li>byte <em>k</em> high nibble = <code>floor(((LON + 180) mod (16 × lon_step)) / lon_step)</code></li>
-<li>byte <em>k</em> low  nibble = <code>floor(((LAT +  90) mod (16 × lat_step)) / lat_step)</code></li>
+<li>byte <em>k</em> high nibble = <code>floor(((LAT +  90) mod (16 × lat_step)) / lat_step)</code></li>
+<li>byte <em>k</em> low  nibble = <code>floor(((LON + 180) mod (16 × lon_step)) / lon_step)</code></li>
 </ul>
-<p>For byte 0 (<code>k = 0</code>), <code>lon_step = 22.5°</code> and <code>lat_step = 11.25°</code>, so the modulus is a no-op for valid inputs and the formulas reduce to:</p>
+<p>For byte 0 (<code>k = 0</code>), <code>lat_step = 11.25°</code> and <code>lon_step = 22.5°</code>, so the modulus is a no-op for valid inputs and the formulas reduce to:</p>
 <ul>
-<li><code>high_nibble = floor((LON + 180) / 22.5)</code></li>
-<li><code>low_nibble  = floor((LAT +  90) / 11.25)</code></li>
+<li><code>high_nibble = floor((LAT +  90) / 11.25)</code></li>
+<li><code>low_nibble  = floor((LON + 180) / 22.5)</code></li>
 </ul>
 <p>The same edge cases apply as in the direct form: <code>LON = +180°</code> wraps to nibble 0 naturally via the modulus, but <code>LAT = +90°</code> must be clamped to nibble <code>0xF</code> at every position — the modulus would otherwise wrap it to nibble 0.</p>
 <h5 id="worked-example"><a class="header" href="#worked-example">Worked Example</a></h5>
 <p>Encode <code>(LAT, LON) = (37.331°, −121.883°)</code> (San Jose, CA) at 3-byte precision.</p>
 <p>Direct form:</p>
 <ul>
-<li><code>lon_index = floor((−121.883 + 180) × 4096 / 360) = floor(661.24) = 661 = 0x295</code></li>
 <li><code>lat_index = floor((  37.331 +  90) × 4096 / 180) = floor(2897.49) = 2897 = 0xB51</code></li>
+<li><code>lon_index = floor((−121.883 + 180) × 4096 / 360) = floor(661.24) = 661 = 0x295</code></li>
 </ul>
 <p>Reading nibbles most-significant first:</p>
 <div class="table-wrapper">
 <table>
 <thead>
-<tr><th style="text-align: right">Byte</th><th style="text-align: center">High (lon)</th><th style="text-align: center">Low (lat)</th><th style="text-align: center">Value</th></tr>
+<tr><th style="text-align: right">Byte</th><th style="text-align: center">High (lat)</th><th style="text-align: center">Low (lon)</th><th style="text-align: center">Value</th></tr>
 </thead>
 <tbody>
-<tr><td style="text-align: right">0</td><td style="text-align: center"><code>0x2</code></td><td style="text-align: center"><code>0xB</code></td><td style="text-align: center"><code>0x2B</code></td></tr>
-<tr><td style="text-align: right">1</td><td style="text-align: center"><code>0x9</code></td><td style="text-align: center"><code>0x5</code></td><td style="text-align: center"><code>0x95</code></td></tr>
-<tr><td style="text-align: right">2</td><td style="text-align: center"><code>0x5</code></td><td style="text-align: center"><code>0x1</code></td><td style="text-align: center"><code>0x51</code></td></tr>
+<tr><td style="text-align: right">0</td><td style="text-align: center"><code>0xB</code></td><td style="text-align: center"><code>0x2</code></td><td style="text-align: center"><code>0xB2</code></td></tr>
+<tr><td style="text-align: right">1</td><td style="text-align: center"><code>0x5</code></td><td style="text-align: center"><code>0x9</code></td><td style="text-align: center"><code>0x59</code></td></tr>
+<tr><td style="text-align: right">2</td><td style="text-align: center"><code>0x1</code></td><td style="text-align: center"><code>0x5</code></td><td style="text-align: center"><code>0x15</code></td></tr>
 </tbody>
 </table>
 </div>
-<p>Final code: <code>2B 95 51</code>.</p>
+<p>Final code: <code>B2 59 15</code>.</p>
 <h4 id="decoding-a-location"><a class="header" href="#decoding-a-location">Decoding a Location</a></h4>
 <p>An N-byte code denotes the entire cell it selects, not a point. When a single coordinate is needed (e.g. to plot on a map), decoders use the center of the cell, with an uncertainty of ± half a cell in each axis. Using any other point (such as the cell’s south-west corner) would place decoded positions up to half a cell apart between implementations.</p>
 <h4 id="precision-scaling"><a class="header" href="#precision-scaling">Precision Scaling</a></h4>
-<p>Each additional byte divides both the longitude and latitude spans by 16. The span shrinks geometrically, so just a few bytes yield very fine precision:</p>
+<p>Each additional byte divides both the latitude and longitude spans by 16. The span shrinks geometrically, so just a few bytes yield very fine precision:</p>
 <div class="table-wrapper">
 <table>
 <thead>
-<tr><th style="text-align: right">Bytes</th><th>Longitude cell</th><th>Latitude cell</th><th>Equator cell size (approx.)</th></tr>
+<tr><th style="text-align: right">Bytes</th><th>Latitude cell</th><th>Longitude cell</th><th>Equator cell size (approx.)</th></tr>
 </thead>
 <tbody>
-<tr><td style="text-align: right">1</td><td>22.5°</td><td>11.25°</td><td>2,500 × 1,250 km</td></tr>
-<tr><td style="text-align: right">2</td><td>1.40625°</td><td>0.703125°</td><td>156 × 78 km</td></tr>
-<tr><td style="text-align: right">3</td><td>0.0879°</td><td>0.0439°</td><td>9.8 × 4.9 km</td></tr>
-<tr><td style="text-align: right">4</td><td>0.00549°</td><td>0.00275°</td><td>610 × 305 m</td></tr>
-<tr><td style="text-align: right">5</td><td>0.000343°</td><td>0.000172°</td><td>38 × 19 m</td></tr>
-<tr><td style="text-align: right">6</td><td>2.15 × 10⁻⁵°</td><td>1.07 × 10⁻⁵°</td><td>2.4 × 1.2 m</td></tr>
-<tr><td style="text-align: right">7</td><td>1.34 × 10⁻⁶°</td><td>6.71 × 10⁻⁷°</td><td>15 × 7.5 cm</td></tr>
+<tr><td style="text-align: right">1</td><td>11.25°</td><td>22.5°</td><td>1,250 × 2,500 km</td></tr>
+<tr><td style="text-align: right">2</td><td>0.703125°</td><td>1.40625°</td><td>78 × 156 km</td></tr>
+<tr><td style="text-align: right">3</td><td>0.0439°</td><td>0.0879°</td><td>4.9 × 9.8 km</td></tr>
+<tr><td style="text-align: right">4</td><td>0.00275°</td><td>0.00549°</td><td>305 × 610 m</td></tr>
+<tr><td style="text-align: right">5</td><td>0.000172°</td><td>0.000343°</td><td>19 × 38 m</td></tr>
+<tr><td style="text-align: right">6</td><td>1.07 × 10⁻⁵°</td><td>2.15 × 10⁻⁵°</td><td>1.2 × 2.4 m</td></tr>
+<tr><td style="text-align: right">7</td><td>6.71 × 10⁻⁷°</td><td>1.34 × 10⁻⁶°</td><td>7.5 × 15 cm</td></tr>
 </tbody>
 </table>
 </div>
 <p>Longitude cells narrow with latitude, so cells are physically smaller in east-west extent away from the equator.</p>
 <blockquote>
-<p><strong>Comparison with float32:</strong> Two single-precision floats (8 bytes) give non-uniform resolution: ~1.7 m longitude and ~85 cm latitude worst-case near ±180°/±90°, improving to ~1 cm near 0°. At 7 bytes, this encoding achieves ~15 × 7.5 cm uniformly across the globe — better than the float32 worst case while using one fewer byte. At 8 bytes — beyond the 7-byte wire limit, considered here only for an apples-to-apples comparison against the 8 bytes two floats occupy — the cell shrinks to ~9 × 5 mm, better than float32 everywhere.</p>
+<p><strong>Comparison with float32:</strong> Two single-precision floats (8 bytes) give non-uniform resolution: ~85 cm latitude and ~1.7 m longitude worst-case near ±90°/±180°, improving to ~1 cm near 0°. At 7 bytes, this encoding achieves ~7.5 × 15 cm uniformly across the globe — better than the float32 worst case while using one fewer byte. At 8 bytes — beyond the 7-byte wire limit, considered here only for an apples-to-apples comparison against the 8 bytes two floats occupy — the cell shrinks to ~5 × 9 mm, better than float32 everywhere.</p>
 </blockquote>
 <h4 id="properties"><a class="header" href="#properties">Properties</a></h4>
 <ul>
@@ -2145,12 +2209,22 @@ when its filters are broad enough to solicit a large number of replies.</li>
 </ul>
 <p>In order to manage the potential flood of responses, the following rules MUST be applied for broadcast (always) and (by default) multicast:</p>
 <ul>
-<li>The FHOPS byte must either be absent or set to 0x00, otherwise the request should be dropped.</li>
 <li>The Route option must either be absent or empty, otherwise the request should be dropped.</li>
-<li>Responses must be delayed by a random amount of time of up to 5 seconds, so
-that the selected nodes do not all answer at once. A delayed response that
-then fails channel-activity assessment follows the responder’s normal
-bounded CCA backoff-and-retry before being dropped.</li>
+<li>Responses must be delayed by a random amount of time drawn from a window of
+0.5 to 30 seconds, so that the selected nodes do not all answer at once. A
+delayed response that then fails channel-activity assessment follows the
+responder’s normal bounded CCA backoff-and-retry before being dropped.</li>
+</ul>
+<p>A <a href="#identity-request-options">FILTER_NODE_HINT</a> filter names a single node, so a
+request carrying one solicits a single reply however far it travels. A request
+without one selects by role or capability, and every node it reaches may answer;
+such a request is therefore confined to the requester’s own neighbourhood:</p>
+<ul>
+<li>The FHOPS byte must either be absent or set to 0x00. A request that is flood
+routed — FHOPS present with either nibble nonzero — MUST NOT be answered.</li>
+<li>The response MUST NOT carry a FHOPS field (the FCF flood hop count flag is
+clear), keeping the reply within the single hop the request was allowed to
+cross.</li>
 </ul>
 <p>These requirements MAY be relaxed for specific private channels, but MUST remain in place for all public channels. Note that these requirements are specifically designed to allow discovering identities from a specific repeater location on the mesh network.</p>
 <p>An Identity Request is answered with a targeted unicast identity response, never
@@ -2260,10 +2334,298 @@ Non-filter options (such as NONCE) do not participate in this matching.</p>
 <p>This command does nothing, however it will produce a UACK when sent via a packet
 type that requests an ACK.</p>
 <div style="break-before: page; page-break-before: always;"></div>
-<h1 id="node-management-protocol"><a class="header" href="#node-management-protocol">Node Management Protocol</a></h1>
-<p>TBD</p>
+<h1 id="node-management"><a class="header" href="#node-management">Node Management</a></h1>
+<blockquote>
+<p>![NOTE]
+This section is an early work in progress and this protocol may change significantly.</p>
+</blockquote>
+<p>A node that supports node management can be configured and observed over the
+mesh itself, using the same command grammar, property model, and numeric
+registries that <a href="#local-control-protocol-ulcp">ULCP</a> defines for the local link. A <strong>Node
+Management Command</strong> payload (payload type 8) carries ordinary ULCP frames
+between an <strong>administrator</strong> — a node listed in the device’s
+<a href="#prop-dev-admins">administrator list</a> — and the <strong>device</strong>, in unicast
+packets exchanged with the <a href="#device-identity">device identity</a>.
+Support is optional and advertised through <a href="#capabilities"><code>CAP_ADMIN</code></a>.</p>
+<p>Administering a device over the mesh reaches the
+<a href="#device-domain-1">device domain</a> and nothing else. An
+administrator is not a <a href="#attach-relationships">tethered host</a>: a
+remote exchange is not an attach, touches no session state, and neither sees
+nor disturbs the host domain or the assistance the device owes to whatever
+host it serves. <a href="#attach-relationships">Two Kinds of Attach</a> draws
+the same boundary on the local link; over the mesh, only the administrative
+kind exists.</p>
+<h2 id="transport-properties"><a class="header" href="#transport-properties">Transport Properties</a></h2>
+<p>The binding relies on exactly what the MAC layer guarantees for secure
+unicast: the source of every accepted packet is authenticated, payloads are
+confidential, and replay protection accepts a given frame at most once. It
+assumes nothing more — not delivery, and not ordering. The payload format
+adds what the ULCP grammar needs on such a transport:</p>
+<ul>
+<li>a <strong>token</strong> correlates responses with requests across long and variable
+round trips, in place of the TID of the local bindings;</li>
+<li><strong>retained responses</strong> make retransmission safe: a repeated request is
+answered again, not executed again;</li>
+<li><strong>batches</strong> order execution within a single payload, for writes whose
+effects depend on sequence;</li>
+<li><strong>cursors</strong> carry values larger than one frame across as many exchanges
+as needed, without per-read state on the device.</li>
+</ul>
+<p>Because wire-level duplicates are impossible, the binding has no
+deduplication window of its own; the only duplicates that can exist are an
+administrator’s own retransmissions, which the token identifies.</p>
+<h2 id="payload-format-1"><a class="header" href="#payload-format-1">Payload Format</a></h2>
+<p>A Node Management Command payload consists of, following the payload type
+byte:</p>
+<pre><code class="language-text">+-------+-------+---------+------+------------+
+| FLAGS | TOKEN | OPTIONS | 0xFF | FRAME LIST |
++-------+-------+---------+------+------------+
+  1 B     2 B    variable   1 B    variable
+</code></pre>
+<p>Node Management payloads travel only in unicast and blind unicast packets:
+requests are addressed to the device identity, and responses return to the
+requesting node as ordinary unicast replies, using whatever routing state
+the exchange has supplied (see <a href="#route-learning">Route Learning</a>).
+A device drops a Node Management payload arriving by multicast or
+broadcast, with accounting.</p>
+<h3 id="flags"><a class="header" href="#flags">Flags</a></h3>
+<pre><code class="language-text">  7   6   5   4   3   2   1   0
++---+---+---+---+---+---+---+---+
+| R |         RESERVED          |
++---+---+---+---+---+---+---+---+
+</code></pre>
+<p>Bit 7 (<code>R</code>) is clear in a request and set in a response. A device drops a
+payload with <code>R</code> set — it never solicits anything — and a node that
+receives a response matching no outstanding exchange of its own discards
+it.</p>
+<p>The reserved bits MUST be zero. A receiver drops a payload with any
+reserved bit set, with accounting: an unknown flag may change the meaning
+of everything that follows, including the token, so no response can be
+formed.</p>
+<h3 id="token"><a class="header" href="#token">Token</a></h3>
+<p>Two opaque octets chosen by the administrator and echoed verbatim in the
+response. The token correlates a response with its request and identifies
+retransmissions (see
+<a href="#at-most-once">Retries and At-Most-Once Processing</a>). An administrator
+MUST choose a token different from its previous exchange’s when beginning
+a new exchange, and MUST reuse the token when retransmitting a request
+unchanged.</p>
+<h3 id="options"><a class="header" href="#options">Options</a></h3>
+<p>Options use the CoAP-style delta-length encoding defined in
+<a href="#attribute-encoding">Packet Options</a>. As in
+<a href="#identity-request-options">MAC command options</a>,
+odd-numbered options are <strong>critical</strong> and even-numbered options are
+<strong>elective</strong>. A device that receives a request carrying an unrecognized
+critical option answers with <code>PROP_LAST_STATUS</code> of <code>STATUS_UNIMPLEMENTED</code>
+and does not process the request; unrecognized elective options are
+ignored. An administrator that receives a response carrying an
+unrecognized critical option treats the exchange as failed.</p>
+<div class="table-wrapper">
+<table>
+<thead>
+<tr><th style="text-align: right">Number</th><th>Critical</th><th>Name</th><th>Value</th></tr>
+</thead>
+<tbody>
+<tr><td style="text-align: right">1</td><td>Yes</td><td>CURSOR</td><td>1–8 octets, see <a href="#cursors">Reading Large Values</a></td></tr>
+<tr><td style="text-align: right">2</td><td>No</td><td>REMAINING</td><td>PUI, see <a href="#cursors">Reading Large Values</a></td></tr>
+</tbody>
+</table>
+</div>
+<p>The <code>0xFF</code> end-of-options marker is always present, since the frame list
+follows.</p>
+<h3 id="frame-list"><a class="header" href="#frame-list">Frame List</a></h3>
+<p>One or more ULCP frames, each preceded by its length in octets encoded as
+a <a href="#packed-unsigned-integer">packed unsigned integer</a>:</p>
+<pre><code class="language-text">+--------------+----------------------------+
+| LENGTH (PUI) | ULCP FRAME (LENGTH octets) |
++--------------+----------------------------+
+</code></pre>
+<p>Embedded frames use the exact <a href="#frame-format">frame format</a> of
+the local bindings, so a device dispatches them through the same machinery
+that serves its local link. Senders MUST set the TID bits of every
+embedded frame to zero, and receivers ignore them: correlation is by
+token, and within a payload by position. A payload containing no frames is
+dropped, with accounting.</p>
+<p>The payload, envelope included, must fit a single UMSH frame; there is no
+fragmentation. The reserved flag bits and the unassigned option numbers
+are this payload’s growth space: a future need — carrying a request larger
+than one frame, say — is met by assigning one of them, and existing
+devices already reject what they do not recognize.</p>
+<h2 id="exchanges"><a class="header" href="#exchanges">Exchanges</a></h2>
+<p>Every interaction is an <strong>exchange</strong>: one request payload from an
+administrator, one response payload from the device. The device sends
+nothing over this binding except in response to a request — <code>CMD_PROP_IS</code>
+in its unsolicited role, and <code>CMD_PROP_INSERTED</code> and <code>CMD_PROP_REMOVED</code> as
+spontaneous notifications, do not occur here. State an administrator cares
+about is read, not pushed.</p>
+<p>The response echoes the token, sets <code>R</code>, and contains one frame per
+executed request frame, in request order: exactly the frame the device
+would emit in reply on a local binding — a <code>CMD_PROP_IS</code>,
+<code>CMD_PROP_INSERTED</code>, or <code>CMD_PROP_REMOVED</code> on success, or a <code>CMD_PROP_IS</code>
+of <code>PROP_LAST_STATUS</code> reporting the error. A request frame carrying a
+Device→Host command is answered <code>STATUS_INVALID_COMMAND</code>. Long-running
+operations report <code>STATUS_IN_PROGRESS</code> as on any binding; the
+administrator observes completion by reading state in a later exchange.</p>
+<h3 id="batches"><a class="header" href="#batches">Batches</a></h3>
+<p>A payload may carry several frames; the device executes them strictly in
+order, so a batch is how an administrator expresses writes whose effects
+depend on sequence. A batch is a sequencing construct, not a transaction:
+<a href="#mutation-atomicity">Mutation Atomicity</a> applies to each
+frame alone, and an interrupted batch leaves the earlier frames applied.</p>
+<p>The device stops executing a batch at:</p>
+<ul>
+<li>the first frame whose response is a <code>PROP_LAST_STATUS</code> frame reporting
+an error — any status other than <code>STATUS_OK</code>;</li>
+<li>the first frame whose response would not fit the remaining space in the
+response payload;</li>
+<li>any frame that initiates a reset;</li>
+<li>a frame that cannot be parsed, whose response frame is
+<code>STATUS_PARSE_ERROR</code>.</li>
+</ul>
+<p>Request frames past the stopping point are not executed and produce no
+response frames. An administrator that receives fewer response frames than
+it sent request frames examines the last response frame it did receive: an
+error status means the batch stopped on that failure; a success means it
+stopped for space, and the administrator reissues the remainder as a new
+exchange. A value too large to fit whole within the remaining space stops
+the batch the same way; the administrator reads that property alone, where
+fragmentation applies (see <a href="#cursors">Reading Large Values</a>).</p>
+<p>Commands that initiate a reset — <code>CMD_RST</code>, <code>CMD_RESTORE</code> in its reset
+form, and <code>CMD_FACTORY_RESET</code> — produce <strong>no</strong> response frame and
+terminate the batch. Delivery of such a command is confirmed by requesting
+a MAC acknowledgment, and its completion by a later exchange reading
+<code>PROP_LAST_STATUS</code> for the reset code.</p>
+<h3 id="at-most-once"><a class="header" href="#at-most-once">Retries and At-Most-Once Processing</a></h3>
+<p>The MAC layer’s replay protection means a device never receives the same
+request frame twice; what it can receive twice is the same request <em>sent</em>
+twice — an administrator retransmitting because no response arrived,
+though the request may in fact have been executed. The device therefore
+retains, per administrator, the token and the complete response of the
+most recent exchange. A request whose token matches the retained token is
+answered by retransmitting the retained response, without executing
+anything. A device MAY bound how many administrators it retains an entry
+for, evicting the least recently active, but retains at least the entry
+for the most recently active administrator.</p>
+<p>An administrator that receives no response retransmits the identical
+request with the identical token, paced to the path’s round-trip
+behavior; the retained response makes this safe whether the request or
+only its response was lost. An administrator MUST NOT have more than one
+exchange outstanding with a given device.</p>
+<p>Retained entries do not survive a reset. A reset command retransmitted
+after it has already acted is therefore executed again — with the same
+result.</p>
+<h2 id="cursors"><a class="header" href="#cursors">Reading Large Values</a></h2>
+<p>A property value that does not fit one response is read across several
+exchanges. The device returns a leading fragment of the value together
+with a <strong>CURSOR</strong> option: an opaque continuation handle, one to eight
+octets, chosen entirely by the device. The administrator continues with a
+new exchange — fresh token — whose request carries the returned cursor
+verbatim alongside the same <code>CMD_PROP_GET</code>. Each response carries the
+cursor to present in the <em>next</em> request; a response without one ends the
+read, its fragment being the last. Fragment sizes are the device’s choice,
+made to fill each frame; there is no fixed block size and no position
+numbering.</p>
+<p>A request carrying a CURSOR option MUST consist of exactly one frame, a
+<code>CMD_PROP_GET</code>; anything else is answered <code>STATUS_INVALID_ARGUMENT</code>. The
+device fragments only when answering such a single-<code>GET</code> payload — within
+a larger batch, a value too large for the remaining response budget stops
+the batch instead (see <a href="#batches">Batches</a>).</p>
+<p>The contract:</p>
+<ul>
+<li>A cursor is meaningful only to the device that issued it, and only for
+the property it was issued for. The administrator returns it
+byte-for-byte and MUST NOT construct or modify one.</li>
+<li>For a multi-value property, fragment boundaries MUST fall on item
+boundaries, so that every fragment is a well-formed item sequence on
+its own, the property’s item length prefix rule applying within each
+fragment. A single-value property’s value is split at arbitrary octet
+boundaries and reassembled by concatenation.</li>
+<li>Presenting the same cursor again SHOULD yield the same fragment or an
+equivalent one; a retransmitted continuation is in any case answered
+from the retained response (see
+<a href="#at-most-once">Retries and At-Most-Once Processing</a>).</li>
+<li>Cursors are untrusted input. The device validates every cursor it
+receives and answers one it cannot honor — it does not parse, or the
+underlying data has changed out from under the position — with
+<code>STATUS_CURSOR_INVALID</code> (see <a href="#status-codes">Status Codes</a>);
+the administrator restarts from a cursor-less request. A practical
+cursor encodes the position together with a generation of the
+underlying data — a table revision, a boot count — so that every change
+that invalidates positions is detected rather than served wrong.</li>
+<li>A response MAY carry an empty fragment with a cursor equal to the one
+presented, meaning nothing further is available yet; this suits data
+that accumulates over time.</li>
+<li>A response MAY carry a <strong>REMAINING</strong> option: the approximate number of
+items not yet returned, as a packed unsigned integer. It is advisory,
+for progress reporting.</li>
+<li>The read holds no state on the device: between exchanges, the position
+lives entirely in the cursor the administrator holds.</li>
+</ul>
+<h2 id="authorization"><a class="header" href="#authorization">Authorization</a></h2>
+<p>A device executes a Node Management request only when the packet arrived
+by unicast or blind unicast, its source is authenticated by the MAC layer,
+and the source’s public key is listed in
+<a href="#prop-dev-admins"><code>PROP_DEV_ADMINS</code></a>. Everything else it drops, with
+accounting and without a response: an unlisted sender learns nothing about
+whether the device is manageable.</p>
+<p>Administrators reach the device domain and the device-scoped protocol
+state — including <code>PROP_CAPS</code>, so capability discovery works exactly as on
+the local link. Out of reach are:</p>
+<ul>
+<li><strong>session state</strong> and the <strong>host domain</strong>
+(see <a href="#state-classes">State Classes</a>): a request naming such
+a property is answered as an unrecognized property,
+<code>STATUS_PROP_NOT_FOUND</code>;</li>
+<li><code>CMD_STR_SEND</code> and <code>CMD_QUEUE_DRAIN</code>, answered as unrecognized
+commands, <code>STATUS_INVALID_COMMAND</code>;</li>
+<li><a href="#prop-dev-private-key"><code>PROP_DEV_PRIVATE_KEY</code></a>, answered
+<code>STATUS_PROP_NOT_FOUND</code>: a device identity cannot be installed over the
+mesh.</li>
+</ul>
+<p>For everything else this binding meets the transport requirement of
+<a href="#provisioning-security">Provisioning Security</a>: every
+executed request already arrives authenticated and encrypted from a listed
+administrator, so device-domain key material — channel keys, peer entries
+— may be provisioned remotely. The read-back rules are unchanged:
+key-bearing properties report their digest forms, never secrets.</p>
+<h3 id="prop-dev-admins"><a class="header" href="#prop-dev-admins">PROP 4865: <code>PROP_DEV_ADMINS</code></a></h3>
+<ul>
+<li>Type: Multiple-Value</li>
+<li>Has Item Length Prefix: No</li>
+<li>Asynchronous Updates: No</li>
+<li>Required: <code>CAP_ADMIN</code></li>
+<li>Item Type: 32 octets</li>
+<li>Post-Reset Value: Empty</li>
+</ul>
+<p>Each item is the Ed25519 public key of a node authorized as an
+administrator of this device. Items are public keys: they carry no secret
+material and are reported verbatim.</p>
+<p>An empty list disables node management entirely and is the post-reset
+default. The property is device-domain state: it participates in the
+<a href="#saved-state-1">saved snapshot</a> like any other
+device-domain property, which is how a commissioned repeater stays
+manageable across a power cycle. It is writable over the local bindings
+and over this one — a listed administrator may add or remove
+administrators, itself included.</p>
+<h2 id="capabilities"><a class="header" href="#capabilities">Capabilities</a></h2>
+<div class="table-wrapper">
+<table>
+<thead>
+<tr><th>Code</th><th>Name</th><th>Requires</th><th>Grants</th></tr>
+</thead>
+<tbody>
+<tr><td>43</td><td><code>CAP_ADMIN</code></td><td><code>CAP_DEV_IDENTITY</code></td><td>Node management: processing of Node Management Command payloads addressed to the device identity, and <code>PROP_DEV_ADMINS</code></td></tr>
+</tbody>
+</table>
+</div>
+<p>A device that does not advertise <code>CAP_ADMIN</code> drops Node Management
+payloads, with accounting.</p>
 <div style="break-before: page; page-break-before: always;"></div>
 <h1 id="text-messages"><a class="header" href="#text-messages">Text Messages</a></h1>
+<blockquote>
+<p>![NOTE]
+This section is an early work in progress and this protocol may change significantly.</p>
+</blockquote>
 <p>The text message protocol carries human-readable text between nodes (unicast) or from a node to a channel (multicast).</p>
 <p>The payload consists of a CoAP-style option list terminated by a <code>0xFF</code> byte, followed by the message body. All options are non-critical — unrecognized options are ignored and the remainder of the message is displayed normally.</p>
 <h2 id="message-options"><a class="header" href="#message-options">Message Options</a></h2>
@@ -2309,6 +2671,9 @@ type that requests an ACK.</p>
 </div>
 <p>If absent or empty, the message type defaults to 0 (basic text).</p>
 <p>The presence of the <code>Regarding</code> option changes the semantics a bit: A <strong>reply</strong> is a type 0 message with a <code>Regarding</code> option specifying which message is being replied to. An <strong>emote</strong> is a type 1 message with a <code>Regarding</code> option specifying which message is being reacted to; the body is a single Unicode emoji or a short text token such as <code>+1</code>, <code>-1</code>, <code>!</code>, or <code>?</code>. Implementations may differentiate emotes from plain status text by the presence of the Regarding option.</p>
+<p>Emote bodies SHOULD be short text tokens rather than emoji: <code>&lt;3</code>, <code>+1</code>, <code>-1</code>, <code>ha</code>, <code>!</code>, and <code>?</code> cover the common reactions in one or two bytes. Receivers SHOULD accept the equivalent spellings — <code>♥</code> for <code>&lt;3</code>, <code>haha</code> or <code>lol</code> for <code>ha</code>, <code>!!</code> for <code>!</code>, letter case being insignificant — as well as the emoji themselves, and SHOULD render an emote as a single glyph, taking the first one when a body carries more.</p>
+<p>A sender has at most one emote in force per message. Sending another supersedes the previous one, and an emote with a zero-length body withdraws it; a receiver displays the most recently received emote from each sender. (Unlike an edit, whose zero-length body means deletion, an emote is never retracted by editing it — the emote’s own identity is of no interest to anyone but its sender.)</p>
+<p>Emotes reference the original message’s ID even when the message has since been edited, as <a href="#editing">Editing</a> requires of every reference. A receiver MAY additionally tolerate an emote that names an edit’s own ID by resolving it to the message that edit replaced.</p>
 <p>A message resend request is itself not a message but a request to re-send a message that was inferred to exist but was not received. Such a request SHALL contain exactly one Message Type option with value 2 and exactly one Message Sequence option identifying the missing frame. A request with duplicate Message Type or Message Sequence options is invalid. It MAY also contain the Channel Group Resend flag described below and SHOULD NOT contain any other options. After validating the required options and the Channel Group Resend flag, receivers MUST ignore every other option and the entire body. Senders SHOULD use an empty body. The request MUST be received via unicast (for one-on-one messages) or blind-unicast (for channel messages), and SHALL be dropped if received via broadcast or multicast.</p>
 <p>A resend request identifies exactly one missing frame, and a successful response retransmits exactly one frame. The 1-byte Message Sequence form requests a message by ID without specifying a fragment; the sender responds with the unfragmented message or, if it was fragmented, with fragment zero. The fragment count carried in fragment zero lets the requester ask for any remaining fragments individually. The 3-byte form requests one specific fragment.</p>
 <p>Not all messages are available to be resent; for example, a requested message may have been deleted or evicted. In that case, the original sender SHOULD respond with Message Unavailable. A sender producing Message Unavailable SHOULD include only a Message Type option with value 3 and one Message Sequence option exactly matching the requested message or fragment. Its body SHOULD be empty.</p>
@@ -2405,6 +2770,10 @@ ignored by the receiver.</p>
 <p>The message body is a UTF-8 string.</p>
 <div style="break-before: page; page-break-before: always;"></div>
 <h1 id="chat-rooms"><a class="header" href="#chat-rooms">Chat Rooms</a></h1>
+<blockquote>
+<p>![NOTE]
+This section is an early work in progress and this protocol may change significantly.</p>
+</blockquote>
 <p>A chat room is a special node that provides limited store-and-forward capability for text messages and potentially other types of data. Chat rooms may be polled or can push updates to joined members.</p>
 <h2 id="action-types"><a class="header" href="#action-types">Action Types</a></h2>
 <p>The first byte of the payload identifies the action type.</p>
@@ -2573,6 +2942,10 @@ ignored by the receiver.</p>
 </code></pre>
 <div style="break-before: page; page-break-before: always;"></div>
 <h1 id="local-control-protocol-ulcp"><a class="header" href="#local-control-protocol-ulcp">Local Control Protocol (ULCP)</a></h1>
+<blockquote>
+<p>![NOTE]
+This section is an early work in progress and this protocol may change significantly.</p>
+</blockquote>
 <p>The <strong>UMSH Local Control Protocol</strong> (ULCP) is the interface between a UMSH
 <strong>device</strong> — hardware that owns a physical transceiver and runs always-on
 firmware — and a <strong>host</strong> such as a phone, tablet, laptop, or small computer
@@ -2597,6 +2970,9 @@ implement to be a ULCP device, and the
 identifier</li>
 <li><a href="#ulcp-over-ble">ULCP over BLE</a> binds the protocol to BLE GATT; serial
 transports (UART, USB-CDC) use HDLC-Lite framing</li>
+<li><a href="#node-management">Node Management</a> carries the same grammar over
+the mesh itself, letting an authorized administrator reach a device’s
+device domain in-band, with no local link at all</li>
 </ul>
 <p>One protocol serves every deployment of a device; the familiar deployment
 names describe configuration, not distinct firmware:</p>
@@ -3484,7 +3860,7 @@ this device. It must return the value 8.</p>
 <li>Post-Reset Value: Implementation-Specific</li>
 </ul>
 <p>Describes the supported capabilities of this device. Encoded as a list of packed
-unsigned integers. See <a href="#capabilities">Capabilities</a> for a list of values.</p>
+unsigned integers. See <a href="#capabilities-1">Capabilities</a> for a list of values.</p>
 <h2 id="state-classes"><a class="header" href="#state-classes">State Classes</a></h2>
 <p>Every piece of device state belongs to exactly one of three classes. The
 classes determine what survives a host attach, a change of host, and a
@@ -3510,6 +3886,8 @@ the duty-cycle limit</li>
 forwarding switch (<code>PROP_MAC_REPEATER_ENABLED</code>), with the rest of the
 range reserved for future definition (further repeater policy,
 positioning, periodic advertisement of the device identity, and similar)</li>
+<li>the administrator list (<a href="#prop-dev-admins"><code>PROP_DEV_ADMINS</code></a>)
+authorizing <a href="#node-management">node management</a> over the mesh</li>
 <li>transport configuration such as <code>PROP_BLE_PAIRING_PIN</code></li>
 </ul>
 <p>The RF configuration is deliberately device-domain: a site repeater keeps
@@ -3684,6 +4062,7 @@ and the <code>TID</code> of command it is referring to.</p>
 <tr><td>18</td><td><code>STATUS_CCA_FAILURE</code></td></tr>
 <tr><td>19</td><td><code>STATUS_ALREADY</code></td></tr>
 <tr><td>20</td><td><code>STATUS_ITEM_NOT_FOUND</code></td></tr>
+<tr><td>21</td><td><code>STATUS_CURSOR_INVALID</code></td></tr>
 <tr><td>32</td><td><code>STATUS_DUTY_LIMIT</code></td></tr>
 </tbody>
 </table>
@@ -3727,6 +4106,12 @@ to <code>CMD_PROP_INSERT</code> is already present in the property.</dd>
 <dt id="status_item_not_found"><a class="header" href="#status_item_not_found"><code>STATUS_ITEM_NOT_FOUND</code></a></dt>
 <dd>The item or selector passed to <code>CMD_PROP_REMOVE</code> does not match any item
 in the property.</dd>
+<dt id="status_cursor_invalid"><a class="header" href="#status_cursor_invalid"><code>STATUS_CURSOR_INVALID</code></a></dt>
+<dd>The cursor presented in a <a href="#cursors">Node Management</a>
+continuation is not one the device can honor — it does not parse, names a
+different property, or the underlying data has changed so that the
+position is meaningless. The administrator restarts the read from an
+initial, cursor-less request.</dd>
 <dt id="status_cca_failure"><a class="header" href="#status_cca_failure"><code>STATUS_CCA_FAILURE</code></a></dt>
 <dd>The packet was not sent due to a CCA failure. This status code is only
 emitted when sending data to a packet stream with a TID other than zero.</dd>
@@ -3801,7 +4186,7 @@ stack overflow.</dd>
 <dt id="status_reset_watchdog"><a class="header" href="#status_reset_watchdog"><code>STATUS_RESET_WATCHDOG</code></a></dt>
 <dd>Watchdog timer expired, forcing a reset.</dd>
 </dl>
-<h2 id="capabilities"><a class="header" href="#capabilities">Capabilities</a></h2>
+<h2 id="capabilities-1"><a class="header" href="#capabilities-1">Capabilities</a></h2>
 <p>Capabilities are how a device can advertise support for specific behaviors and
 functionalities. They can be fetched via the <code>PROP_CAPS</code> property.</p>
 <p>Each capability is defined by the chapter that specifies the behavior it
@@ -3812,20 +4197,25 @@ grants:</p>
 <tr><th>Code</th><th>Name</th><th>Requires</th><th>Defined in</th></tr>
 </thead>
 <tbody>
-<tr><td>8</td><td><code>CAP_WRITABLE_RAW_STREAM</code></td><td>—</td><td><a href="#capabilities-2">Frame Transport</a></td></tr>
-<tr><td>16</td><td><code>CAP_PHY_DUTY_LIMIT</code></td><td>—</td><td><a href="#capabilities-1">Radio Control</a></td></tr>
-<tr><td>32</td><td><code>CAP_HOST_FILTER</code></td><td>—</td><td><a href="#capabilities-5">Tethered Host Services</a></td></tr>
-<tr><td>33</td><td><code>CAP_HOST_RX_QUEUE</code></td><td><code>CAP_HOST_FILTER</code></td><td><a href="#capabilities-5">Tethered Host Services</a></td></tr>
-<tr><td>34</td><td><code>CAP_HOST_KEYS</code></td><td><code>CAP_HOST_FILTER</code></td><td><a href="#capabilities-5">Tethered Host Services</a></td></tr>
-<tr><td>35</td><td><code>CAP_HOST_AUTO_ACK</code></td><td><code>CAP_HOST_KEYS</code>, <code>CAP_HOST_RX_QUEUE</code></td><td><a href="#capabilities-5">Tethered Host Services</a></td></tr>
-<tr><td>36</td><td><code>CAP_SAVE</code></td><td>—</td><td><a href="#capabilities-4">Saved State</a></td></tr>
-<tr><td>37</td><td><code>CAP_DEV_IDENTITY</code></td><td>—</td><td><a href="#capabilities-3">Device Domain</a></td></tr>
-<tr><td>38</td><td><code>CAP_DEV_NAME</code></td><td>—</td><td><a href="#capabilities-3">Device Domain</a></td></tr>
-<tr><td>39</td><td><code>CAP_BATTERY</code></td><td>—</td><td><a href="#capabilities-3">Device Domain</a></td></tr>
-<tr><td>40</td><td><code>CAP_REPEATER</code></td><td><code>CAP_DEV_IDENTITY</code></td><td><a href="#capabilities-3">Device Domain</a></td></tr>
-<tr><td>41</td><td><code>CAP_IDENT</code></td><td><code>CAP_DEV_IDENTITY</code></td><td><a href="#capabilities-3">Device Domain</a></td></tr>
-<tr><td>42</td><td><code>CAP_ALERT</code></td><td>—</td><td><a href="#capabilities-3">Device Domain</a></td></tr>
-<tr><td>515</td><td><code>CAP_PHY_LORA</code></td><td>—</td><td><a href="#capabilities-1">Radio Control</a></td></tr>
+<tr><td>8</td><td><code>CAP_WRITABLE_RAW_STREAM</code></td><td>—</td><td><a href="#capabilities-3">Frame Transport</a></td></tr>
+<tr><td>16</td><td><code>CAP_PHY_DUTY_LIMIT</code></td><td>—</td><td><a href="#capabilities-2">Radio Control</a></td></tr>
+<tr><td>32</td><td><code>CAP_HOST_FILTER</code></td><td>—</td><td><a href="#capabilities-6">Tethered Host Services</a></td></tr>
+<tr><td>33</td><td><code>CAP_HOST_RX_QUEUE</code></td><td><code>CAP_HOST_FILTER</code></td><td><a href="#capabilities-6">Tethered Host Services</a></td></tr>
+<tr><td>34</td><td><code>CAP_HOST_KEYS</code></td><td><code>CAP_HOST_FILTER</code></td><td><a href="#capabilities-6">Tethered Host Services</a></td></tr>
+<tr><td>35</td><td><code>CAP_HOST_AUTO_ACK</code></td><td><code>CAP_HOST_KEYS</code>, <code>CAP_HOST_RX_QUEUE</code></td><td><a href="#capabilities-6">Tethered Host Services</a></td></tr>
+<tr><td>36</td><td><code>CAP_SAVE</code></td><td>—</td><td><a href="#capabilities-5">Saved State</a></td></tr>
+<tr><td>37</td><td><code>CAP_DEV_IDENTITY</code></td><td>—</td><td><a href="#capabilities-4">Device Domain</a></td></tr>
+<tr><td>38</td><td><code>CAP_DEV_NAME</code></td><td>—</td><td><a href="#capabilities-4">Device Domain</a></td></tr>
+<tr><td>39</td><td><code>CAP_BATTERY</code></td><td>—</td><td><a href="#capabilities-4">Device Domain</a></td></tr>
+<tr><td>40</td><td><code>CAP_REPEATER</code></td><td><code>CAP_DEV_IDENTITY</code></td><td><a href="#capabilities-4">Device Domain</a></td></tr>
+<tr><td>41</td><td><code>CAP_IDENT</code></td><td><code>CAP_DEV_IDENTITY</code></td><td><a href="#capabilities-4">Device Domain</a></td></tr>
+<tr><td>42</td><td><code>CAP_ALERT</code></td><td>—</td><td><a href="#capabilities-4">Device Domain</a></td></tr>
+<tr><td>43</td><td><code>CAP_ADMIN</code></td><td><code>CAP_DEV_IDENTITY</code></td><td><a href="#capabilities">Node Management</a></td></tr>
+<tr><td>44</td><td><code>CAP_TIME</code></td><td>—</td><td><a href="#capabilities-4">Device Domain</a></td></tr>
+<tr><td>45</td><td><code>CAP_GNSS</code></td><td><code>CAP_TIME</code></td><td><a href="#capabilities-4">Device Domain</a></td></tr>
+<tr><td>46</td><td><code>CAP_ADVERT</code></td><td><code>CAP_DEV_IDENTITY</code></td><td><a href="#capabilities-4">Device Domain</a></td></tr>
+<tr><td>47</td><td><code>CAP_ILLUMINANCE</code></td><td>—</td><td><a href="#capabilities-4">Device Domain</a></td></tr>
+<tr><td>515</td><td><code>CAP_PHY_LORA</code></td><td>—</td><td><a href="#capabilities-2">Radio Control</a></td></tr>
 </tbody>
 </table>
 </div>
@@ -3848,7 +4238,7 @@ gated behind <code>CAP_PHY_LORA</code>, and duty-cycle accounting behind
 it belongs to the radio rather than to whichever host is attached, it is
 part of a <a href="#saved-state-1">saved snapshot</a>, and it
 survives a change of host.</p>
-<h2 id="capabilities-1"><a class="header" href="#capabilities-1">Capabilities</a></h2>
+<h2 id="capabilities-2"><a class="header" href="#capabilities-2">Capabilities</a></h2>
 <div class="table-wrapper">
 <table>
 <thead>
@@ -4053,7 +4443,7 @@ the host is attached to observe the result. Inbound frames may be queued
 while no host is attached, which is a
 <a href="#inbound-queueing">tethered host service</a> rather than a
 property of the stream.</p>
-<h2 id="capabilities-2"><a class="header" href="#capabilities-2">Capabilities</a></h2>
+<h2 id="capabilities-3"><a class="header" href="#capabilities-3">Capabilities</a></h2>
 <div class="table-wrapper">
 <table>
 <thead>
@@ -4259,7 +4649,7 @@ key agreement and needs only peer <em>public</em> keys (see <a href="#prop-dev-p
 That is the opposite of the host identity, for which the device holds no
 private key and every pairwise key must be provisioned explicitly (see
 <a href="#ulcp-tethered-host-services">Tethered Host Services</a>).</p>
-<h2 id="capabilities-3"><a class="header" href="#capabilities-3">Capabilities</a></h2>
+<h2 id="capabilities-4"><a class="header" href="#capabilities-4">Capabilities</a></h2>
 <div class="table-wrapper">
 <table>
 <thead>
@@ -4272,15 +4662,36 @@ private key and every pairwise key must be provisioned explicitly (see
 <tr><td>40</td><td><code>CAP_REPEATER</code></td><td><code>CAP_DEV_IDENTITY</code></td><td>Autonomous repeater forwarding by the device identity: <code>PROP_MAC_REPEATER_ENABLED</code>, <code>PROP_MAC_REPEATER_REGIONS</code>, <code>PROP_MAC_REPEATER_DEFAULT_REGION</code>, <code>PROP_MAC_REPEATER_MIN_RSSI</code>, <code>PROP_MAC_REPEATER_MIN_SNR</code></td></tr>
 <tr><td>41</td><td><code>CAP_IDENT</code></td><td><code>CAP_DEV_IDENTITY</code></td><td><code>PROP_IDENT</code>, <code>PROP_IDENT_ROLE</code>, <code>PROP_IDENT_MOBILE</code> — serving and configuring the device identity’s advertised node identity</td></tr>
 <tr><td>42</td><td><code>CAP_ALERT</code></td><td>—</td><td>Some means of making the device physically conspicuous on demand, and <code>PROP_ALERT</code></td></tr>
+<tr><td>44</td><td><code>CAP_TIME</code></td><td>—</td><td>A wall clock: <code>PROP_TIME</code>, <code>PROP_TZ_OFFSET</code></td></tr>
+<tr><td>45</td><td><code>CAP_GNSS</code></td><td><code>CAP_TIME</code></td><td>A GNSS receiver: <code>PROP_GNSS_ENABLED</code>, <code>PROP_GNSS_LOCATION</code>, <code>PROP_GNSS_ALTITUDE</code>, <code>PROP_GNSS_FIX</code>, <code>PROP_GNSS_PRECISION</code>, <code>PROP_GNSS_SATELLITES</code>, <code>PROP_GNSS_IDENT_UPDATE</code>, <code>PROP_GNSS_IDENT_PRECISION</code>, <code>PROP_GNSS_TIME_TRUST</code></td></tr>
+<tr><td>46</td><td><code>CAP_ADVERT</code></td><td><code>CAP_DEV_IDENTITY</code></td><td>Announcing itself on a schedule of its own: <code>PROP_ADVERT_INTERVAL</code>, <code>PROP_BEACON_INTERVAL</code>, <code>PROP_STARTUP_BEACON</code></td></tr>
+<tr><td>47</td><td><code>CAP_ILLUMINANCE</code></td><td>—</td><td>An ambient light sensor and <code>PROP_ILLUMINANCE</code></td></tr>
 </tbody>
 </table>
 </div>
+<p><code>CAP_ADVERT</code> requires <code>CAP_DEV_IDENTITY</code> because what a scheduled
+advertisement carries <em>is</em> the device identity, and a beacon’s source
+address names it.</p>
+<p><code>CAP_TIME</code> states that the device keeps a wall clock and nothing else. It
+says nothing about where the time comes from, how accurate it is, or how
+much of a power cycle it survives — a device that has one and does not
+currently know what time it is is a normal state, reported by the empty
+<a href="#prop-time"><code>PROP_TIME</code></a>.</p>
+<p><code>CAP_GNSS</code> requires <code>CAP_TIME</code> because a receiver is, among other things,
+a clock: a device advertising one without the other would be claiming a
+time source for a clock it does not have.</p>
 <h2 id="properties-2"><a class="header" href="#properties-2">Properties</a></h2>
 <p>The device domain occupies property identifiers 64–95. Identifiers 70–95
 are the device-behavior range: 70–78 are the repeater policy and
-advertised node identity settings, 79 is the locate alert, and 80–95 are
-reserved for future definition (periodic advertisement in 80–87,
-positioning in 88–95).</p>
+advertised node identity settings, 79 is the locate alert, 80–87 are the
+advertisement policy — 80–82 allocated, 83–87 reserved — 88–93 are
+positioning (88 the receiver switch, 89–93 the fix telemetry), and 94–95
+are environmental sensing: 94 illuminance, 95 reserved.</p>
+<p>A single-octet identifier is the scarce resource, so the positioning
+range holds the properties a host reads and the device announces
+continually. The positioning <strong>configuration</strong> — which is written during
+commissioning and rarely again — lives at 4868–4870 in the extended
+device range, alongside the wall clock at 4866–4867.</p>
 <div class="table-wrapper">
 <table>
 <thead>
@@ -4303,6 +4714,21 @@ positioning in 88–95).</p>
 <tr><td>77</td><td><code>PROP_MAC_REPEATER_MIN_SNR</code></td><td>Get, Set</td><td>Minimum received SNR for flood forwarding</td></tr>
 <tr><td>78</td><td><code>PROP_DEV_DISCOVERABLE</code></td><td>Get, Set</td><td>Whether the device identity answers Identity Requests</td></tr>
 <tr><td>79</td><td><code>PROP_ALERT</code></td><td>Get, Set, Is</td><td>Locate alert state</td></tr>
+<tr><td>80</td><td><code>PROP_ADVERT_INTERVAL</code></td><td>Get, Set</td><td>Seconds between unsolicited advertisements</td></tr>
+<tr><td>81</td><td><code>PROP_BEACON_INTERVAL</code></td><td>Get, Set</td><td>Seconds between unsolicited beacons</td></tr>
+<tr><td>82</td><td><code>PROP_STARTUP_BEACON</code></td><td>Get, Set</td><td>Whether a beacon goes out at bring-up</td></tr>
+<tr><td>88</td><td><code>PROP_GNSS_ENABLED</code></td><td>Get, Set</td><td>Whether the GNSS receiver is powered</td></tr>
+<tr><td>89</td><td><code>PROP_GNSS_LOCATION</code></td><td>Get, Is</td><td>Position of the last fix</td></tr>
+<tr><td>90</td><td><code>PROP_GNSS_ALTITUDE</code></td><td>Get</td><td>Altitude of the last fix</td></tr>
+<tr><td>91</td><td><code>PROP_GNSS_FIX</code></td><td>Get, Is</td><td>Fix quality</td></tr>
+<tr><td>92</td><td><code>PROP_GNSS_PRECISION</code></td><td>Get</td><td>Estimated horizontal accuracy of the last fix</td></tr>
+<tr><td>93</td><td><code>PROP_GNSS_SATELLITES</code></td><td>Get</td><td>Satellites used, and optionally in view</td></tr>
+<tr><td>94</td><td><code>PROP_ILLUMINANCE</code></td><td>Get</td><td>Ambient illuminance in millilux</td></tr>
+<tr><td>4866</td><td><code>PROP_TIME</code></td><td>Get, Set, Is</td><td>Wall clock, or empty when unknown</td></tr>
+<tr><td>4867</td><td><code>PROP_TZ_OFFSET</code></td><td>Get, Set</td><td>Local time-zone offset from UTC</td></tr>
+<tr><td>4868</td><td><code>PROP_GNSS_IDENT_UPDATE</code></td><td>Get, Set</td><td>Whether fixes update the advertised node identity</td></tr>
+<tr><td>4869</td><td><code>PROP_GNSS_IDENT_PRECISION</code></td><td>Get, Set</td><td>Precision the advertised location is clamped to</td></tr>
+<tr><td>4870</td><td><code>PROP_GNSS_TIME_TRUST</code></td><td>Get, Set</td><td>Whether receiver-derived time may set the clock</td></tr>
 </tbody>
 </table>
 </div>
@@ -4467,14 +4893,20 @@ indicate which fields are present; present fields follow in the order above.
 Bits 3–7 are reserved and <strong>MUST</strong> be zero; a host <strong>MUST</strong> treat a value
 with a reserved bit set, or whose length does not match its field flags, as
 malformed.</p>
-<p>Which fields are reported is fixed for a given hardware and firmware
-configuration: the field flags do not change while a session is attached. An
-absent field indicates only that the implementation cannot report that
-measurement. It <strong>MUST NOT</strong> be used to indicate a depleted, disconnected,
-or temporarily unreadable battery: an implementation that normally reports a
-field but cannot currently obtain a measurement fails the <code>CMD_PROP_GET</code>
-with <code>STATUS_FAILURE</code> rather than omitting the field or returning an empty
-value.</p>
+<p>Which fields a platform can report is fixed for a given hardware and firmware
+configuration; an individual snapshot carries those it can currently
+substantiate. A field is absent either because the implementation never
+reports that measurement, or because the value is not derivable in the
+device’s present state — a level estimated from resting terminal voltage is
+not obtainable while the pack is charging, and a charger that reports no
+completion signal offers no moment at which to recalibrate one. An
+implementation <strong>MUST NOT</strong> report a value it knows to be unreliable in place
+of omitting the field.</p>
+<p>Absence <strong>MUST NOT</strong> be used to indicate a depleted or disconnected battery,
+and it is not how a failed measurement is reported: an implementation whose
+attempt to take a reading fails answers <code>CMD_PROP_GET</code> with <code>STATUS_FAILURE</code>.</p>
+<p>A host <strong>MUST</strong> treat an absent field as unknown at that instant, and <strong>MUST
+NOT</strong> carry a value forward from an earlier snapshot in its place.</p>
 <p>The value returned by <code>CMD_PROP_GET</code> reflects a measurement performed when
 the request is serviced, not a previously cached reading; concurrent
 requests <strong>MAY</strong> share one measurement. How each field is produced is
@@ -4512,8 +4944,8 @@ estimates change monotonically.</dd>
 <dt id="battery_charge_state_discharging"><a class="header" href="#battery_charge_state_discharging"><code>BATTERY_CHARGE_STATE_DISCHARGING</code></a></dt>
 <dd>The charging system reports neither active charging nor charge completion.
 This is the charge state used for a disconnected battery when the
-implementation can detect that condition; an absent field remains reserved
-exclusively for unsupported reporting.</dd>
+implementation can detect that condition; an absent field never carries
+that meaning.</dd>
 <dt id="battery_charge_state_charging"><a class="header" href="#battery_charge_state_charging"><code>BATTERY_CHARGE_STATE_CHARGING</code></a></dt>
 <dd>The charging system reports that the battery is actively receiving charge.</dd>
 <dt id="battery_charge_state_charged"><a class="header" href="#battery_charge_state_charged"><code>BATTERY_CHARGE_STATE_CHARGED</code></a></dt>
@@ -4718,9 +5150,13 @@ the device identity ignores every Identity Request.</p>
 being askable is most of what makes it administrable in the field. The
 property is the opt-out for deployments where the device should not
 volunteer its identity to arbitrary nearby askers.</p>
-<p>Affects only Identity Request responses. Unsolicited advertisements,
-beacons, and the device’s participation in forwarding are governed
-elsewhere and are unchanged by this property.</p>
+<p>Affects only Identity Request responses. Unsolicited advertisements and
+beacons are governed by the <a href="#prop-advert-interval">advertisement
+policy</a>, and the device’s participation in
+forwarding by <code>PROP_MAC_REPEATER_ENABLED</code>; neither is changed by this
+property. A device that is not discoverable still advertises on its own
+schedule if it has one — declining to answer strangers and declining to
+speak are different decisions.</p>
 <h3 id="prop-alert"><a class="header" href="#prop-alert">PROP 79: <code>PROP_ALERT</code></a></h3>
 <ul>
 <li>Type: Single-Value, Read-Write</li>
@@ -4781,6 +5217,402 @@ in <code>ALERT_LOCATE</code>; a few minutes is <strong>RECOMMENDED</strong>. Wri
 <code>ALERT_LOCATE</code> while it is already in effect succeeds and restarts the
 deadline, which is how a host holds an alert open for a longer search.</li>
 </ol>
+<h3 id="prop-advert-interval"><a class="header" href="#prop-advert-interval">PROP 80: <code>PROP_ADVERT_INTERVAL</code></a></h3>
+<ul>
+<li>Type: Single-Value, Read-Write</li>
+<li>Asynchronous Updates: No</li>
+<li>Required: <code>CAP_ADVERT</code></li>
+<li>Value Type: UINT32</li>
+<li>Post-Reset Value: 14400 (four hours), or restored from saved state</li>
+</ul>
+<p>Seconds between unsolicited <a href="#beacons--path-discovery">advertisements</a> — broadcasts
+carrying the device’s signed <a href="#node-identity">node identity</a>. Zero
+sends none.</p>
+<p>An automatic advertisement is sent with no flood hops and no source
+route, so it reaches the nodes that can hear the device directly and
+stops there. It is the largest frame the device originates, and what it
+carries is a standing statement rather than news; repeating that
+statement across the whole mesh every interval would spend airtime out
+of all proportion to what a distant listener learns. A device that wants
+to be findable further away publishes a path with
+<a href="#prop-beacon-interval"><code>PROP_BEACON_INTERVAL</code></a> instead, which costs a
+fraction as much.</p>
+<p>Because the advertisement is a signed broadcast, it carries its source
+in full-key form (§<a href="#node-identity">Node Identity</a>).</p>
+<p>A device <strong>MUST</strong> reject a non-zero interval outside 1200 seconds
+(twenty minutes) to 86400 seconds (twenty-four hours) with
+<code>STATUS_INVALID_ARGUMENT</code>. Neither bound is an airtime control — the
+<a href="#prop-phy-duty-limit">duty limit</a> is that — but the two
+ends fail differently. Below the floor a device spends the mesh’s
+airtime restating what it already said; above the ceiling the schedule
+has stopped being one, and zero says so more plainly.</p>
+<p>The interval is a minimum rather than an exact cadence: each period is
+<a href="#announcing-on-a-schedule">scattered</a> later by a random
+fraction of it, never earlier, so the configured value is the shortest
+gap between two unsolicited announcements.</p>
+<p>Scheduled sends are subject to the same duty accounting and channel
+access as any other transmission: a send the device cannot make when it
+falls due is skipped, not queued.</p>
+<h3 id="prop-beacon-interval"><a class="header" href="#prop-beacon-interval">PROP 81: <code>PROP_BEACON_INTERVAL</code></a></h3>
+<ul>
+<li>Type: Single-Value, Read-Write</li>
+<li>Asynchronous Updates: No</li>
+<li>Required: <code>CAP_ADVERT</code></li>
+<li>Value Type: UINT32</li>
+<li>Post-Reset Value: 3600 (one hour), or restored from saved state</li>
+</ul>
+<p>Seconds between unsolicited <a href="#beacons--path-discovery">beacons</a> — broadcasts with no
+payload at all. Zero sends none.</p>
+<p>A beacon is sent with a flood budget and both the <a href="#trace-route-option-2">Trace
+Route</a> and <a href="#trace-signal-option-10">Trace
+Signal</a> options, so what
+arrives at a distant node is a usable path back to the device and the
+signal quality of every hop along it. What it does not carry is any
+statement of who the device is: that is what an advertisement is for,
+and a listener that has never met this device learns only that something
+with a given source hint is reachable.</p>
+<p>The two intervals are independent because they announce different things
+at very different costs. A mesh usually wants the path refreshed often
+and the identity restated rarely.</p>
+<p>The accepted range, the per-period scatter, and the duty accounting are
+as described for <a href="#prop-advert-interval"><code>PROP_ADVERT_INTERVAL</code></a>.</p>
+<h3 id="prop-startup-beacon"><a class="header" href="#prop-startup-beacon">PROP 82: <code>PROP_STARTUP_BEACON</code></a></h3>
+<ul>
+<li>Type: Single-Value, Read-Write</li>
+<li>Asynchronous Updates: No</li>
+<li>Required: <code>CAP_ADVERT</code></li>
+<li>Value Type: BOOL</li>
+<li>Post-Reset Value: 1 (true), or restored from saved state</li>
+</ul>
+<p>Whether the device emits one beacon once it has come up. On by default:
+a node that has just restarted is exactly the node whose neighbours hold
+the stalest paths to it, and a single empty broadcast is the cheapest
+correction available.</p>
+<p>The beacon is emitted after the device’s own configuration has been
+applied, so it reflects the device as it will actually run rather than
+as it booted. Unlike a scheduled period it is not scattered: devices do
+not restart in unison, so bring-up is already spread out by whatever
+staggered it.</p>
+<h3 id="prop-gnss-enabled"><a class="header" href="#prop-gnss-enabled">PROP 88: <code>PROP_GNSS_ENABLED</code></a></h3>
+<ul>
+<li>Type: Single-Value, Read-Write</li>
+<li>Asynchronous Updates: Yes</li>
+<li>Required: <code>CAP_GNSS</code></li>
+<li>Value Type: BOOL</li>
+<li>Post-Reset Value: device-defined, conventionally 0 (false), or restored
+from saved state</li>
+</ul>
+<p>Whether the GNSS receiver is powered.</p>
+<p>Asynchronous because a device <strong>MAY</strong> offer the receiver as a control the
+operator can reach — a button, a menu entry — and a switch someone can
+flip is a value that moves without the host asking. A device that flips
+it locally <strong>MUST</strong> publish the new value like any other transition the
+host did not command.</p>
+<p>False means the lowest power state the board can put the receiver in, not
+merely an idle one: on a battery-powered node the receiver is typically
+the largest continuous load there is, and a property that only stopped
+<em>reporting</em> would be a property that solved nothing.</p>
+<p>The post-reset value is the device’s to choose, and it <strong>SHOULD</strong> be
+false: a device that has never been told to care where it is should not
+be spending a battery finding out. A device whose purpose is to know
+where it is — a fixed outdoor node with a panel rather than a pocket
+tracker on a cell — <strong>MAY</strong> default it true instead, and <strong>SHOULD</strong>
+document that it does. Either way the value is only a starting point:
+saved state overrides it in both directions, and a host that wants a
+particular state sets it rather than assuming one.</p>
+<p>Disabling the receiver does not clear the wall clock. Time already
+obtained stays as good as the device’s oscillator keeps it, which is the
+whole point of having acquired it.</p>
+<p>One exception is permitted, and only for boards where the receiver’s own
+real-time-clock domain is the <em>only</em> clock the board has: that domain
+<strong>MAY</strong> remain powered while this property is false, and the device
+<strong>MAY</strong> briefly power the receiver at boot to read the time back out of
+it. That is a clock operation, not a positioning one — position data
+observed during it is discarded, and it is governed by
+<a href="#prop-gnss-time-trust"><code>PROP_GNSS_TIME_TRUST</code></a> rather than
+by this property.</p>
+<h3 id="prop-gnss-location"><a class="header" href="#prop-gnss-location">PROP 89: <code>PROP_GNSS_LOCATION</code></a></h3>
+<ul>
+<li>Type: Single-Value, Read-Only</li>
+<li>Asynchronous Updates: Yes</li>
+<li>Required: <code>CAP_GNSS</code></li>
+<li>Value Type: 0–7 octets</li>
+<li>Post-Reset Value: Empty</li>
+</ul>
+<p>The position of the most recent fix, in the <a href="#variable-precision-location-format">variable-precision
+location</a> encoding — the same nibble-interleaved
+grid code node identities carry, so a host never has to convert between
+two position formats.</p>
+<p>An <strong>empty</strong> value means no fix has been obtained since the receiver was
+last powered. The device reports the position it actually has rather than
+the last one it remembers across a power cycle: a position that was true
+somewhere else is worse than no position at all.</p>
+<p>The length is the device’s own honest precision for that fix and <strong>MAY</strong>
+vary between reads. A host <strong>MUST NOT</strong> read more precision into a value
+than its length carries; the encoding’s truncation property means a
+shorter value is a correct lower-precision statement of the same
+position, never a different one.</p>
+<p>A device <strong>MUST</strong> generally avoid announcing this property, and a host
+that wants a position <strong>MUST</strong> be prepared to read one. A receiver
+produces a fix about once a second, and at fine precision the readings
+of a receiver standing perfectly still still differ from each other, so
+a device that published every change would transmit continuously — and
+wake its host every time — on behalf of a host that may not be looking.
+No threshold rescues this: the one that would be quiet enough to be
+worth having is coarse enough that the announcements it does send are
+too late to be the point.</p>
+<p>A host <strong>SHOULD</strong> nonetheless accept an announcement that arrives. The
+value carries what a read would have returned, a device may have its own
+reason to volunteer one, and a host that treats it as a protocol error
+gains nothing for the strictness.</p>
+<p>Read-only in this revision. A manually-placed fixed node is a real use,
+but writing a position requires a rule for which source wins when the
+receiver also has one, and this revision does not define that rule.</p>
+<h3 id="prop-gnss-altitude"><a class="header" href="#prop-gnss-altitude">PROP 90: <code>PROP_GNSS_ALTITUDE</code></a></h3>
+<ul>
+<li>Type: Single-Value, Read-Only</li>
+<li>Asynchronous Updates: No</li>
+<li>Required: <code>CAP_GNSS</code></li>
+<li>Value Type: <code>INT32_LE</code>, or empty</li>
+<li>Post-Reset Value: Empty</li>
+</ul>
+<p>Altitude of the most recent fix, in meters, in the same units and
+reference as the node identity’s altitude option, so the two are directly
+interchangeable.</p>
+<p>Empty when there is no three-dimensional fix — including while the
+receiver holds a two-dimensional one, which has a position but no
+altitude. Read-only for the same reason as
+<a href="#prop-gnss-location"><code>PROP_GNSS_LOCATION</code></a>.</p>
+<h3 id="prop-gnss-fix"><a class="header" href="#prop-gnss-fix">PROP 91: <code>PROP_GNSS_FIX</code></a></h3>
+<ul>
+<li>Type: Single-Value, Read-Only</li>
+<li>Asynchronous Updates: Yes</li>
+<li>Required: <code>CAP_GNSS</code></li>
+<li>Value Type: <code>UINT8</code></li>
+<li>Post-Reset Value: 0</li>
+</ul>
+<p>The quality of the current position solution.</p>
+<div class="table-wrapper">
+<table>
+<thead>
+<tr><th>Value</th><th>Meaning</th></tr>
+</thead>
+<tbody>
+<tr><td>0</td><td>No fix</td></tr>
+<tr><td>1</td><td>Two-dimensional fix — position without altitude</td></tr>
+<tr><td>2</td><td>Three-dimensional fix</td></tr>
+</tbody>
+</table>
+</div>
+<p>Unlike the three properties that describe a position, this one is never
+empty: a device that is not fixed <strong>knows</strong> it is not fixed, so it reports
+0. A receiver that is switched off reports 0 for the same reason. This is
+the distinction the whole positioning surface rests on — zero for the
+facts the device is sure of, empty for the position it does not have.</p>
+<p>This is the positioning property a device <strong>SHOULD</strong> announce, and the
+reason it is the exception to
+<a href="#prop-gnss-location"><code>PROP_GNSS_LOCATION</code></a>’s silence is
+that it is not a measurement. It changes when the receiver acquires or
+loses a solution, which is a few times in a session rather than a few
+times a second, and it is what tells a host whether reading a position
+is worth anything at all.</p>
+<h3 id="prop-gnss-precision"><a class="header" href="#prop-gnss-precision">PROP 92: <code>PROP_GNSS_PRECISION</code></a></h3>
+<ul>
+<li>Type: Single-Value, Read-Only</li>
+<li>Asynchronous Updates: No</li>
+<li>Required: <code>CAP_GNSS</code></li>
+<li>Value Type: <code>UINT16_LE</code>, or empty</li>
+<li>Post-Reset Value: Empty</li>
+</ul>
+<p>Estimated horizontal accuracy of the current fix, in decimeters. Empty
+when there is no fix.</p>
+<p>An <strong>estimate</strong>, not a measured error bound. Receivers generally report a
+dilution of precision, which becomes a distance only after multiplying by
+an assumed range error; a device that has a real accuracy figure
+<strong>SHOULD</strong> report that instead. Hosts <strong>MUST</strong> treat the value as
+indicative and <strong>MUST NOT</strong> present it as a guarantee.</p>
+<p>Deliberately distinct from the length of
+<a href="#prop-gnss-location"><code>PROP_GNSS_LOCATION</code></a>: that is how
+precisely the device is <em>willing to say</em> where it is, and this is how
+precisely it <em>knows</em>. The two move independently.</p>
+<h3 id="prop-gnss-satellites"><a class="header" href="#prop-gnss-satellites">PROP 93: <code>PROP_GNSS_SATELLITES</code></a></h3>
+<ul>
+<li>Type: Single-Value, Read-Only</li>
+<li>Asynchronous Updates: No</li>
+<li>Required: <code>CAP_GNSS</code></li>
+<li>Value Type: <code>UINT8</code>, optionally followed by a second <code>UINT8</code></li>
+<li>Post-Reset Value: 0</li>
+</ul>
+<p>The number of satellites contributing to the current solution, optionally
+followed by the number the receiver can see at all.</p>
+<p>A device that cannot distinguish the two reports only the first octet. As
+with <a href="#prop-gnss-fix"><code>PROP_GNSS_FIX</code></a>, a receiver that is
+off or searching reports 0 rather than the empty value.</p>
+<p>Chiefly a diagnostic: it is what distinguishes an antenna fault from a
+sky that is simply obstructed, which is otherwise invisible to anyone not
+holding the device.</p>
+<h3 id="prop-illuminance"><a class="header" href="#prop-illuminance">PROP 94: <code>PROP_ILLUMINANCE</code></a></h3>
+<ul>
+<li>Type: Single-Value, Read-Only</li>
+<li>Asynchronous Updates: No</li>
+<li>Required: <code>CAP_ILLUMINANCE</code></li>
+<li>Value Type: <code>UINT32_LE</code>, or empty</li>
+<li>Post-Reset Value: Not applicable</li>
+</ul>
+<p>The ambient illuminance at the device, in <strong>millilux</strong>.</p>
+<p>Millilux rather than lux because the readings that matter are at the dark
+end: a full moon is around 0.3 lux and starlight two orders of magnitude
+below that, so a device deciding how bright to make an indicator at night
+is working entirely inside what whole lux would round to zero. The
+unsigned 32-bit range still reaches past direct sunlight.</p>
+<p>The value is a <strong>measurement taken when the property is read</strong>, not
+stored state, so a device samples on each get rather than answering from
+a cache. It follows that nothing about it is saved or reset: <code>CMD_RST</code>
+leaves it alone because there is nothing to leave.</p>
+<p>An <strong>empty</strong> value means the device has no reading — the sensor did not
+answer, or is unavailable for as long as some other part of the device
+holds the hardware it shares. This is the same “we do not know” that
+<a href="#prop-time"><code>PROP_TIME</code></a> reports for an unset clock, and
+is not an error: a host that asked for the light level and got no answer
+has learned what it needed to.</p>
+<p>A sensor that saturates reports its <strong>clamped maximum</strong> rather than an
+extrapolation past the point where it stopped responding to light. The
+alternative — a number derived from a transfer function outside the range
+it was fitted in — is indistinguishable at the host from a real reading.</p>
+<h3 id="prop-time"><a class="header" href="#prop-time">PROP 4866: <code>PROP_TIME</code></a></h3>
+<ul>
+<li>Type: Single-Value, Read-Write</li>
+<li>Asynchronous Updates: Yes</li>
+<li>Required: <code>CAP_TIME</code></li>
+<li>Value Type: <code>UINT32_LE</code>, or empty</li>
+<li>Post-Reset Value: Unchanged</li>
+</ul>
+<p>The device’s wall clock, as seconds since the Unix epoch, UTC.</p>
+<p>The count is <strong>unsigned</strong>, which puts the end of the representable range
+at 2106-02-07T06:28:15Z rather than at the 2038 rollover of the signed
+encoding. Nothing in this revision needs to handle a wrap.</p>
+<p>An <strong>empty</strong> value means the device does not know what time it is. This
+is a normal state, not a fault: a device with no receiver, no
+battery-backed clock, and no host to ask has genuinely never been told.
+A device <strong>MUST</strong> report the empty value rather than an invented one, a
+zero, or a build timestamp.</p>
+<p><strong>A device that does not know the time MUST NOT display a clock</strong>, or any
+other indication of the current time, on any local user interface. A
+plausible-looking wrong time is worse than a blank space: an operator
+reads a displayed clock as a fact about the device, and a device with a
+screen is exactly the device somebody will trust.</p>
+<p>Setting the property sets the clock. Setting the <strong>empty</strong> value returns
+the device to not knowing — the operator’s way of saying that whatever
+the device believes is wrong. A host-supplied time outranks every
+receiver-derived one, including while
+<a href="#prop-gnss-time-trust"><code>PROP_GNSS_TIME_TRUST</code></a> is clear:
+the operator is the more authoritative source by definition.</p>
+<p>The clock is <strong>not</strong> part of the saved snapshot. An epoch written to
+flash accumulates unbounded error while the device is off, so a clock is
+restored from a real time source — a receiver, a battery-backed
+real-time clock, or a host — or not at all. <code>CMD_RST</code> does not clear it;
+only an empty write does.</p>
+<p>Devices announce this asynchronously. The transition from not knowing to
+knowing is the one worth announcing; a routine re-synchronization that
+agrees with the current value is not, and a device <strong>SHOULD NOT</strong> publish
+one.</p>
+<h3 id="prop-tz-offset"><a class="header" href="#prop-tz-offset">PROP 4867: <code>PROP_TZ_OFFSET</code></a></h3>
+<ul>
+<li>Type: Single-Value, Read-Write</li>
+<li>Asynchronous Updates: No</li>
+<li>Required: <code>CAP_TIME</code></li>
+<li>Value Type: <code>INT16_LE</code></li>
+<li>Post-Reset Value: 0, or restored from saved state</li>
+</ul>
+<p>The local time-zone offset from UTC, in minutes east of UTC. Negative
+values are west.</p>
+<p>Unlike <a href="#prop-time"><code>PROP_TIME</code></a> this <strong>always</strong> has a
+value. Where a device is meant to be is configuration and is known from
+the moment it is commissioned; what time it is is a measurement and may
+not be. Separating them is what lets a device render a local time the
+instant it acquires a clock, with no second round trip.</p>
+<p>A minute offset rather than an hour one, because several real zones are
+not whole hours. Values outside the range of real civil offsets
+(−720 through +840) are rejected with <code>STATUS_INVALID_ARGUMENT</code>: outside
+it, a value is a unit or byte-order mistake, and a device that accepted
+one would display a confidently wrong local time.</p>
+<p>Carries an offset and not a zone identifier. Devices do not carry a
+zone database, so daylight-saving transitions are the host’s business:
+whatever adjusts the device’s clock adjusts its offset.</p>
+<h3 id="prop-gnss-ident-update"><a class="header" href="#prop-gnss-ident-update">PROP 4868: <code>PROP_GNSS_IDENT_UPDATE</code></a></h3>
+<ul>
+<li>Type: Single-Value, Read-Write</li>
+<li>Asynchronous Updates: No</li>
+<li>Required: <code>CAP_GNSS</code></li>
+<li>Value Type: BOOL</li>
+<li>Post-Reset Value: 0 (false), or restored from saved state</li>
+</ul>
+<p>Whether position fixes refresh the location the device identity
+advertises in its <a href="#node-identity">node identity</a>.</p>
+<p>Off by default. Broadcasting where you are is a decision, and a device
+that started doing it because a receiver was switched on would be making
+that decision on the operator’s behalf.</p>
+<p>When on, the device clamps each fix to
+<a href="#prop-gnss-ident-precision"><code>PROP_GNSS_IDENT_PRECISION</code></a>
+before advertising it. A device <strong>SHOULD</strong> act on a fix only when the
+clamped position actually changes, rather than on every fix: at a coarse
+precision a stationary node’s fixes all land in the same cell, and
+re-advertising each one spends airtime to say nothing.</p>
+<p>Switching it off <strong>retracts</strong> the advertised position rather than
+freezing the last one. So does switching the receiver off. A position
+that nothing is refreshing any more is a claim the device cannot
+support, and it ages into a false one at whatever speed the device
+moves; a device therefore drops the location and the altitude together
+when it stops updating them.</p>
+<p>Note that the <a href="#unix-timestamp-option-3">Unix Timestamp</a>
+option dates the identity payload, not the position — a node that has
+been stationary for a day still stamps each payload with the moment it
+was built.</p>
+<h3 id="prop-gnss-ident-precision"><a class="header" href="#prop-gnss-ident-precision">PROP 4869: <code>PROP_GNSS_IDENT_PRECISION</code></a></h3>
+<ul>
+<li>Type: Single-Value, Read-Write</li>
+<li>Asynchronous Updates: No</li>
+<li>Required: <code>CAP_GNSS</code></li>
+<li>Value Type: <code>UINT8</code></li>
+<li>Post-Reset Value: 5, or restored from saved state</li>
+</ul>
+<p>How many octets of <a href="#variable-precision-location-format">variable-precision
+location</a> the advertised position is clamped
+to, 1 (coarsest) through 7 (finest).</p>
+<p>The default of 5 is a cell of roughly 38 × 19 m at the equator: fine
+enough to place a node on a street, coarse enough not to place it in a
+room. That trade — not the receiver’s accuracy — is what this property
+exists to control, which is why it is separate from
+<a href="#prop-gnss-precision"><code>PROP_GNSS_PRECISION</code></a>.</p>
+<p>0 is rejected with <code>STATUS_INVALID_ARGUMENT</code> rather than read as
+“advertise nothing”:
+<a href="#prop-gnss-ident-update"><code>PROP_GNSS_IDENT_UPDATE</code></a> is how
+the advertisement is switched off, and a precision that silently meant
+the opposite of a precision would be a trap. Values above 7 are rejected
+for the same reason the encoding stops there.</p>
+<p>Writable while auto-update is off, so a whole positioning policy can be
+staged and enabled last.</p>
+<h3 id="prop-gnss-time-trust"><a class="header" href="#prop-gnss-time-trust">PROP 4870: <code>PROP_GNSS_TIME_TRUST</code></a></h3>
+<ul>
+<li>Type: Single-Value, Read-Write</li>
+<li>Asynchronous Updates: No</li>
+<li>Required: <code>CAP_GNSS</code></li>
+<li>Value Type: BOOL</li>
+<li>Post-Reset Value: 1 (true), or restored from saved state</li>
+</ul>
+<p>Whether time derived from the GNSS receiver may set the wall clock.</p>
+<p>On by default: the sky is normally the best clock a device of this class
+has, and a node that sets itself needs no operator at all.</p>
+<p>When clear, <strong>no</strong> receiver-derived time touches
+<a href="#prop-time"><code>PROP_TIME</code></a> — not a fix’s time, and not a
+read of the receiver’s own real-time clock at boot. This is the opt-out
+for a receiver whose time cannot be trusted: a jammed or spoofed sky can
+carry a plausible and badly wrong time, and a clock silently reset to it
+is worse than a clock that has stopped, because everything downstream
+will believe it.</p>
+<p>Position reporting is unaffected. The two are separable, and an operator
+who distrusts the time may still want to know where the device thinks it
+is — including in order to notice that it is wrong.</p>
 <p>Every transition to <code>ALERT_NONE</code> that the host did not command <strong>MUST</strong>
 be reported with an unsolicited <code>CMD_PROP_IS</code>.</p>
 <p>The deadline is the only bound. In particular, the alert is <strong>not</strong>
@@ -4799,7 +5631,7 @@ forwarding, with nobody present, is infrastructure. Saved state is the
 difference: a device snapshots its device-domain configuration to
 non-volatile storage and restores it at boot before anything else
 happens.</p>
-<h2 id="capabilities-4"><a class="header" href="#capabilities-4">Capabilities</a></h2>
+<h2 id="capabilities-5"><a class="header" href="#capabilities-5">Capabilities</a></h2>
 <div class="table-wrapper">
 <table>
 <thead>
@@ -4834,6 +5666,12 @@ moment it is installed or generated (see <a href="#prop-dev-private-key"><code>P
 changed only by explicit provisioning or <code>CMD_CLEAR</code> — neither
 <code>CMD_RESTORE</code> nor a reboot can revert the device identity to an earlier
 key.</p>
+<p><a href="#prop-time"><code>PROP_TIME</code></a> is excluded for a third reason:
+a stored epoch is wrong by however long the device was off, by an amount
+nothing can bound, so restoring one would be restoring a confidently
+incorrect clock. A device recovers the time from a real source or
+reports that it does not know it. Its time <em>zone</em> is ordinary
+configuration and is saved.</p>
 </li>
 <li>
 <p>At boot, if a snapshot exists, the device <strong>MUST</strong> restore it and resume
@@ -5174,7 +6012,7 @@ with a different phone, the new host configures its own identity and the
 previous host’s keys, filters, and queued traffic cease to exist — while
 the device domain (the radio’s own identity, channels, and settings) is
 untouched.</p>
-<h2 id="capabilities-5"><a class="header" href="#capabilities-5">Capabilities</a></h2>
+<h2 id="capabilities-6"><a class="header" href="#capabilities-6">Capabilities</a></h2>
 <div class="table-wrapper">
 <table>
 <thead>
@@ -5464,14 +6302,21 @@ the host identity. Encrypted blind unicast addressed to the host is
 matched through its channel filter (its destination hint is concealed on
 the wire); the device MAY additionally use a provisioned channel key to
 decrypt the address block and narrow the match.</p>
-<p><a href="#mac-ack-packet">MAC Ack</a> packets carry no destination hint,
-so no implicit filter can address them. Instead the device records the public
-<code>ack_mic</code> of each ack-requesting frame it transmits on the host’s behalf and
-implicitly accepts a MAC Ack whose <code>ack_mic</code> matches one — the only acks the
-host can legitimately receive are for frames it sent. These records evict
-lazily, so multiple acks for one send (arriving over different return routes)
-are all delivered. A MAC Ack whose <code>ack_mic</code> matches no recorded frame is
-still accepted if an explicit <code>FILTER_PKT_TYPE</code> entry selects it.</p>
+<p>Two kinds of returning traffic identify themselves only by the MIC of a frame
+the host previously sent, so no destination or channel filter can address
+them: a <a href="#mac-ack-packet">MAC Ack</a> carries no destination hint
+and its public <code>ack_mic</code> is the first 4 bytes of the acknowledged frame’s
+MIC, and a repeater’s onward copy of a host frame keeps the host’s MIC while
+its destination hint names the remote peer. The device therefore records the
+leading 4 MIC bytes of each frame it transmits on the host’s behalf and
+implicitly accepts any received frame whose trailer opens with a recorded
+value — for a MAC Ack this matches the returning acknowledgement, and for
+other packet types it matches the host’s own send being carried onward, which
+the host’s forwarding-confirmation machinery must overhear to stop
+retransmitting. These records evict lazily, so multiple echoes of one send —
+acks arriving over different return routes, repeats from different
+repeaters — are all delivered. A MAC Ack whose <code>ack_mic</code> matches no recorded
+frame is still accepted if an explicit <code>FILTER_PKT_TYPE</code> entry selects it.</p>
 <p>Broadcast packets — payload-carrying broadcasts and beacons alike — are
 implicitly accepted <strong>for live delivery</strong>: a broadcast is addressed to
 every node, the host included. The rule is live-only. While the host is
@@ -5703,7 +6548,7 @@ requires.</p>
 </thead>
 <tbody>
 <tr><td><a href="#ulcp-radio-control">Radio Control</a> beyond the required properties</td><td><code>CAP_PHY_LORA</code>, <code>CAP_PHY_DUTY_LIMIT</code></td></tr>
-<tr><td><a href="#ulcp-device-domain">Device Domain</a></td><td><code>CAP_DEV_IDENTITY</code>, <code>CAP_DEV_NAME</code>, <code>CAP_BATTERY</code>, <code>CAP_REPEATER</code>, <code>CAP_IDENT</code>, <code>CAP_ALERT</code></td></tr>
+<tr><td><a href="#ulcp-device-domain">Device Domain</a></td><td><code>CAP_DEV_IDENTITY</code>, <code>CAP_DEV_NAME</code>, <code>CAP_BATTERY</code>, <code>CAP_REPEATER</code>, <code>CAP_IDENT</code>, <code>CAP_ALERT</code>, <code>CAP_TIME</code>, <code>CAP_GNSS</code>, <code>CAP_ADVERT</code>, <code>CAP_ILLUMINANCE</code></td></tr>
 <tr><td><a href="#ulcp-saved-state">Saved State</a></td><td><code>CAP_SAVE</code></td></tr>
 <tr><td><a href="#ulcp-tethered-host-services">Tethered Host Services</a></td><td><code>CAP_HOST_FILTER</code>, <code>CAP_HOST_KEYS</code>, <code>CAP_HOST_RX_QUEUE</code>, <code>CAP_HOST_AUTO_ACK</code></td></tr>
 </tbody>
@@ -5835,6 +6680,16 @@ it can do.</p>
 <tr><td>77</td><td><a href="#prop-mac-repeater-min-snr"><code>PROP_MAC_REPEATER_MIN_SNR</code></a></td><td>Get, Set</td><td><code>CAP_REPEATER</code></td></tr>
 <tr><td>78</td><td><a href="#prop-dev-discoverable"><code>PROP_DEV_DISCOVERABLE</code></a></td><td>Get, Set</td><td><code>CAP_DEV_IDENTITY</code></td></tr>
 <tr><td>79</td><td><a href="#prop-alert"><code>PROP_ALERT</code></a></td><td>Get, Set, Is</td><td><code>CAP_ALERT</code></td></tr>
+<tr><td>80</td><td><a href="#prop-advert-interval"><code>PROP_ADVERT_INTERVAL</code></a></td><td>Get, Set</td><td><code>CAP_ADVERT</code></td></tr>
+<tr><td>81</td><td><a href="#prop-beacon-interval"><code>PROP_BEACON_INTERVAL</code></a></td><td>Get, Set</td><td><code>CAP_ADVERT</code></td></tr>
+<tr><td>82</td><td><a href="#prop-startup-beacon"><code>PROP_STARTUP_BEACON</code></a></td><td>Get, Set</td><td><code>CAP_ADVERT</code></td></tr>
+<tr><td>88</td><td><a href="#prop-gnss-enabled"><code>PROP_GNSS_ENABLED</code></a></td><td>Get, Set</td><td><code>CAP_GNSS</code></td></tr>
+<tr><td>89</td><td><a href="#prop-gnss-location"><code>PROP_GNSS_LOCATION</code></a></td><td>Get, Is</td><td><code>CAP_GNSS</code></td></tr>
+<tr><td>90</td><td><a href="#prop-gnss-altitude"><code>PROP_GNSS_ALTITUDE</code></a></td><td>Get</td><td><code>CAP_GNSS</code></td></tr>
+<tr><td>91</td><td><a href="#prop-gnss-fix"><code>PROP_GNSS_FIX</code></a></td><td>Get, Is</td><td><code>CAP_GNSS</code></td></tr>
+<tr><td>92</td><td><a href="#prop-gnss-precision"><code>PROP_GNSS_PRECISION</code></a></td><td>Get</td><td><code>CAP_GNSS</code></td></tr>
+<tr><td>93</td><td><a href="#prop-gnss-satellites"><code>PROP_GNSS_SATELLITES</code></a></td><td>Get</td><td><code>CAP_GNSS</code></td></tr>
+<tr><td>94</td><td><a href="#prop-illuminance"><code>PROP_ILLUMINANCE</code></a></td><td>Get</td><td><code>CAP_ILLUMINANCE</code></td></tr>
 <tr><td>96</td><td><a href="#prop-host-key"><code>PROP_HOST_KEY</code></a></td><td>Get, Set</td><td><code>CAP_HOST_FILTER</code></td></tr>
 <tr><td>97</td><td><a href="#prop-host-channel-keys"><code>PROP_HOST_CHANNEL_KEYS</code></a></td><td>Get, Set, Insert, Remove</td><td><code>CAP_HOST_KEYS</code></td></tr>
 <tr><td>98</td><td><a href="#prop-host-peer-keys"><code>PROP_HOST_PEER_KEYS</code></a></td><td>Get, Set, Insert, Remove</td><td><code>CAP_HOST_KEYS</code></td></tr>
@@ -5847,32 +6702,43 @@ it can do.</p>
 <tr><td>4820</td><td><a href="#prop-phy-duty-now"><code>PROP_PHY_DUTY_NOW</code></a></td><td>Get</td><td><code>CAP_PHY_DUTY_LIMIT</code></td></tr>
 <tr><td>4822</td><td><a href="#prop-phy-duty-limit"><code>PROP_PHY_DUTY_LIMIT</code></a></td><td>Get, Set</td><td><code>CAP_PHY_DUTY_LIMIT</code></td></tr>
 <tr><td>4864</td><td><a href="#prop-ble-pairing-pin"><code>PROP_BLE_PAIRING_PIN</code></a></td><td>Set</td><td>BLE transport</td></tr>
+<tr><td>4865</td><td><a href="#prop-dev-admins"><code>PROP_DEV_ADMINS</code></a></td><td>Get, Set, Insert, Remove</td><td><code>CAP_ADMIN</code></td></tr>
+<tr><td>4866</td><td><a href="#prop-time"><code>PROP_TIME</code></a></td><td>Get, Set, Is</td><td><code>CAP_TIME</code></td></tr>
+<tr><td>4867</td><td><a href="#prop-tz-offset"><code>PROP_TZ_OFFSET</code></a></td><td>Get, Set</td><td><code>CAP_TIME</code></td></tr>
+<tr><td>4868</td><td><a href="#prop-gnss-ident-update"><code>PROP_GNSS_IDENT_UPDATE</code></a></td><td>Get, Set</td><td><code>CAP_GNSS</code></td></tr>
+<tr><td>4869</td><td><a href="#prop-gnss-ident-precision"><code>PROP_GNSS_IDENT_PRECISION</code></a></td><td>Get, Set</td><td><code>CAP_GNSS</code></td></tr>
+<tr><td>4870</td><td><a href="#prop-gnss-time-trust"><code>PROP_GNSS_TIME_TRUST</code></a></td><td>Get, Set</td><td><code>CAP_GNSS</code></td></tr>
 </tbody>
 </table>
 </div>
-<h2 id="capabilities-6"><a class="header" href="#capabilities-6">Capabilities</a></h2>
+<h2 id="capabilities-7"><a class="header" href="#capabilities-7">Capabilities</a></h2>
 <p>Advertised through <a href="#prop-caps"><code>PROP_CAPS</code></a>; the allocation
-is in <a href="#capabilities">Capabilities</a>.</p>
+is in <a href="#capabilities-1">Capabilities</a>.</p>
 <div class="table-wrapper">
 <table>
 <thead>
 <tr><th>Code</th><th>Name</th><th>Defined in</th></tr>
 </thead>
 <tbody>
-<tr><td>8</td><td><code>CAP_WRITABLE_RAW_STREAM</code></td><td><a href="#capabilities-2">Frame Transport</a></td></tr>
-<tr><td>16</td><td><code>CAP_PHY_DUTY_LIMIT</code></td><td><a href="#capabilities-1">Radio Control</a></td></tr>
-<tr><td>32</td><td><code>CAP_HOST_FILTER</code></td><td><a href="#capabilities-5">Tethered Host Services</a></td></tr>
-<tr><td>33</td><td><code>CAP_HOST_RX_QUEUE</code></td><td><a href="#capabilities-5">Tethered Host Services</a></td></tr>
-<tr><td>34</td><td><code>CAP_HOST_KEYS</code></td><td><a href="#capabilities-5">Tethered Host Services</a></td></tr>
-<tr><td>35</td><td><code>CAP_HOST_AUTO_ACK</code></td><td><a href="#capabilities-5">Tethered Host Services</a></td></tr>
-<tr><td>36</td><td><code>CAP_SAVE</code></td><td><a href="#capabilities-4">Saved State</a></td></tr>
-<tr><td>37</td><td><code>CAP_DEV_IDENTITY</code></td><td><a href="#capabilities-3">Device Domain</a></td></tr>
-<tr><td>38</td><td><code>CAP_DEV_NAME</code></td><td><a href="#capabilities-3">Device Domain</a></td></tr>
-<tr><td>39</td><td><code>CAP_BATTERY</code></td><td><a href="#capabilities-3">Device Domain</a></td></tr>
-<tr><td>40</td><td><code>CAP_REPEATER</code></td><td><a href="#capabilities-3">Device Domain</a></td></tr>
-<tr><td>41</td><td><code>CAP_IDENT</code></td><td><a href="#capabilities-3">Device Domain</a></td></tr>
-<tr><td>42</td><td><code>CAP_ALERT</code></td><td><a href="#capabilities-3">Device Domain</a></td></tr>
-<tr><td>515</td><td><code>CAP_PHY_LORA</code></td><td><a href="#capabilities-1">Radio Control</a></td></tr>
+<tr><td>8</td><td><code>CAP_WRITABLE_RAW_STREAM</code></td><td><a href="#capabilities-3">Frame Transport</a></td></tr>
+<tr><td>16</td><td><code>CAP_PHY_DUTY_LIMIT</code></td><td><a href="#capabilities-2">Radio Control</a></td></tr>
+<tr><td>32</td><td><code>CAP_HOST_FILTER</code></td><td><a href="#capabilities-6">Tethered Host Services</a></td></tr>
+<tr><td>33</td><td><code>CAP_HOST_RX_QUEUE</code></td><td><a href="#capabilities-6">Tethered Host Services</a></td></tr>
+<tr><td>34</td><td><code>CAP_HOST_KEYS</code></td><td><a href="#capabilities-6">Tethered Host Services</a></td></tr>
+<tr><td>35</td><td><code>CAP_HOST_AUTO_ACK</code></td><td><a href="#capabilities-6">Tethered Host Services</a></td></tr>
+<tr><td>36</td><td><code>CAP_SAVE</code></td><td><a href="#capabilities-5">Saved State</a></td></tr>
+<tr><td>37</td><td><code>CAP_DEV_IDENTITY</code></td><td><a href="#capabilities-4">Device Domain</a></td></tr>
+<tr><td>38</td><td><code>CAP_DEV_NAME</code></td><td><a href="#capabilities-4">Device Domain</a></td></tr>
+<tr><td>39</td><td><code>CAP_BATTERY</code></td><td><a href="#capabilities-4">Device Domain</a></td></tr>
+<tr><td>40</td><td><code>CAP_REPEATER</code></td><td><a href="#capabilities-4">Device Domain</a></td></tr>
+<tr><td>41</td><td><code>CAP_IDENT</code></td><td><a href="#capabilities-4">Device Domain</a></td></tr>
+<tr><td>42</td><td><code>CAP_ALERT</code></td><td><a href="#capabilities-4">Device Domain</a></td></tr>
+<tr><td>43</td><td><code>CAP_ADMIN</code></td><td><a href="#capabilities">Node Management</a></td></tr>
+<tr><td>44</td><td><code>CAP_TIME</code></td><td><a href="#capabilities-4">Device Domain</a></td></tr>
+<tr><td>45</td><td><code>CAP_GNSS</code></td><td><a href="#capabilities-4">Device Domain</a></td></tr>
+<tr><td>46</td><td><code>CAP_ADVERT</code></td><td><a href="#capabilities-4">Device Domain</a></td></tr>
+<tr><td>47</td><td><code>CAP_ILLUMINANCE</code></td><td><a href="#capabilities-4">Device Domain</a></td></tr>
+<tr><td>515</td><td><code>CAP_PHY_LORA</code></td><td><a href="#capabilities-2">Radio Control</a></td></tr>
 </tbody>
 </table>
 </div>
@@ -5889,8 +6755,8 @@ is in <a href="#capabilities">Capabilities</a>.</p>
 <tr><td>2</td><td><code>STATUS_UNIMPLEMENTED</code></td><td>18</td><td><code>STATUS_CCA_FAILURE</code></td></tr>
 <tr><td>3</td><td><code>STATUS_INVALID_ARGUMENT</code></td><td>19</td><td><code>STATUS_ALREADY</code></td></tr>
 <tr><td>4</td><td><code>STATUS_INVALID_STATE</code></td><td>20</td><td><code>STATUS_ITEM_NOT_FOUND</code></td></tr>
-<tr><td>5</td><td><code>STATUS_INVALID_COMMAND</code></td><td>32</td><td><code>STATUS_DUTY_LIMIT</code></td></tr>
-<tr><td>7</td><td><code>STATUS_INTERNAL_ERROR</code></td><td></td><td></td></tr>
+<tr><td>5</td><td><code>STATUS_INVALID_COMMAND</code></td><td>21</td><td><code>STATUS_CURSOR_INVALID</code></td></tr>
+<tr><td>7</td><td><code>STATUS_INTERNAL_ERROR</code></td><td>32</td><td><code>STATUS_DUTY_LIMIT</code></td></tr>
 <tr><td>9</td><td><code>STATUS_PARSE_ERROR</code></td><td></td><td></td></tr>
 <tr><td>10</td><td><code>STATUS_IN_PROGRESS</code></td><td></td><td></td></tr>
 <tr><td>11</td><td><code>STATUS_NOMEM</code></td><td></td><td></td></tr>
@@ -5926,6 +6792,7 @@ reserved for them.</p>
 <tr><td>Filter types</td><td>0 <code>FILTER_DEST_HINT</code>, 1 <code>FILTER_CHANNEL_ID</code>, 2 <code>FILTER_PKT_TYPE</code></td><td><a href="#prop-host-rx-filters"><code>PROP_HOST_RX_FILTERS</code></a></td></tr>
 <tr><td>Charge states</td><td>0 discharging, 1 charging, 2 charged</td><td><a href="#prop-battery"><code>PROP_BATTERY</code></a></td></tr>
 <tr><td>Alert states</td><td>0 <code>ALERT_NONE</code>, 1 <code>ALERT_LOCATE</code></td><td><a href="#prop-alert"><code>PROP_ALERT</code></a></td></tr>
+<tr><td>Fix quality</td><td>0 none, 1 two-dimensional, 2 three-dimensional</td><td><a href="#prop-gnss-fix"><code>PROP_GNSS_FIX</code></a></td></tr>
 <tr><td>Transmit flags</td><td>bit 0 <code>TX_FLAG_NOCCA</code>, bit 1 <code>TX_FLAG_NODUTY</code></td><td><a href="#str-radio-raw"><code>STR_PHY_RAW</code></a></td></tr>
 <tr><td>Receive flags</td><td>bit 0 <code>RX_FLAG_BUFFERED</code>, bit 1 <code>RX_FLAG_ACKED</code></td><td><a href="#buffered-metadata">Buffered-Frame Metadata</a></td></tr>
 </tbody>
@@ -7038,7 +7905,7 @@ stack overflow.</dd>
 <dt id="status_reset_watchdog-1"><a class="header" href="#status_reset_watchdog-1"><code>STATUS_RESET_WATCHDOG</code></a></dt>
 <dd>Watchdog timer expired, forcing a reset.</dd>
 </dl>
-<h2 id="capabilities-7"><a class="header" href="#capabilities-7">Capabilities</a></h2>
+<h2 id="capabilities-8"><a class="header" href="#capabilities-8">Capabilities</a></h2>
 <p>Capabilities are how a device can advertise support for specific behaviors and
 functionalities. They can be fetched via the <code>PROP_CAPS</code> property.</p>
 <p>See (#prop-caps) for more information on <code>PROP_CAPS</code>.</p>
@@ -7972,14 +8839,20 @@ indicate which fields are present; present fields follow in the order above.
 Bits 3–7 are reserved and <strong>MUST</strong> be zero; a host <strong>MUST</strong> treat a value
 with a reserved bit set, or whose length does not match its field flags, as
 malformed.</p>
-<p>Which fields are reported is fixed for a given hardware and firmware
-configuration: the field flags do not change while a session is attached. An
-absent field indicates only that the implementation cannot report that
-measurement. It <strong>MUST NOT</strong> be used to indicate a depleted, disconnected,
-or temporarily unreadable battery: an implementation that normally reports a
-field but cannot currently obtain a measurement fails the <code>CMD_PROP_GET</code>
-with <code>STATUS_FAILURE</code> rather than omitting the field or returning an empty
-value.</p>
+<p>Which fields a platform can report is fixed for a given hardware and firmware
+configuration; an individual snapshot carries those it can currently
+substantiate. A field is absent either because the implementation never
+reports that measurement, or because the value is not derivable in the
+device’s present state — a level estimated from resting terminal voltage is
+not obtainable while the pack is charging, and a charger that reports no
+completion signal offers no moment at which to recalibrate one. An
+implementation <strong>MUST NOT</strong> report a value it knows to be unreliable in place
+of omitting the field.</p>
+<p>Absence <strong>MUST NOT</strong> be used to indicate a depleted or disconnected battery,
+and it is not how a failed measurement is reported: an implementation whose
+attempt to take a reading fails answers <code>CMD_PROP_GET</code> with <code>STATUS_FAILURE</code>.</p>
+<p>A host <strong>MUST</strong> treat an absent field as unknown at that instant, and <strong>MUST
+NOT</strong> carry a value forward from an earlier snapshot in its place.</p>
 <p>The value returned by <code>CMD_PROP_GET</code> reflects a measurement performed when
 the request is serviced, not a previously cached reading; concurrent
 requests <strong>MAY</strong> share one measurement. How each field is produced is
@@ -8017,8 +8890,8 @@ estimates change monotonically.</dd>
 <dt id="battery_charge_state_discharging-1"><a class="header" href="#battery_charge_state_discharging-1"><code>BATTERY_CHARGE_STATE_DISCHARGING</code></a></dt>
 <dd>The charging system reports neither active charging nor charge completion.
 This is the charge state used for a disconnected battery when the
-implementation can detect that condition; an absent field remains reserved
-exclusively for unsupported reporting.</dd>
+implementation can detect that condition; an absent field never carries
+that meaning.</dd>
 <dt id="battery_charge_state_charging-1"><a class="header" href="#battery_charge_state_charging-1"><code>BATTERY_CHARGE_STATE_CHARGING</code></a></dt>
 <dd>The charging system reports that the battery is actively receiving charge.</dd>
 <dt id="battery_charge_state_charged-1"><a class="header" href="#battery_charge_state_charged-1"><code>BATTERY_CHARGE_STATE_CHARGED</code></a></dt>
@@ -8313,14 +9186,21 @@ the host identity. Encrypted blind unicast addressed to the host is
 matched through its channel filter (its destination hint is concealed on
 the wire); the device MAY additionally use a provisioned channel key to
 decrypt the address block and narrow the match.</p>
-<p><a href="#mac-ack-packet">MAC Ack</a> packets carry no destination hint,
-so no implicit filter can address them. Instead the device records the public
-<code>ack_mic</code> of each ack-requesting frame it transmits on the host’s behalf and
-implicitly accepts a MAC Ack whose <code>ack_mic</code> matches one — the only acks the
-host can legitimately receive are for frames it sent. These records evict
-lazily, so multiple acks for one send (arriving over different return routes)
-are all delivered. A MAC Ack whose <code>ack_mic</code> matches no recorded frame is
-still accepted if an explicit <code>FILTER_PKT_TYPE</code> entry selects it.</p>
+<p>Two kinds of returning traffic identify themselves only by the MIC of a frame
+the host previously sent, so no destination or channel filter can address
+them: a <a href="#mac-ack-packet">MAC Ack</a> carries no destination hint
+and its public <code>ack_mic</code> is the first 4 bytes of the acknowledged frame’s
+MIC, and a repeater’s onward copy of a host frame keeps the host’s MIC while
+its destination hint names the remote peer. The device therefore records the
+leading 4 MIC bytes of each frame it transmits on the host’s behalf and
+implicitly accepts any received frame whose trailer opens with a recorded
+value — for a MAC Ack this matches the returning acknowledgement, and for
+other packet types it matches the host’s own send being carried onward, which
+the host’s forwarding-confirmation machinery must overhear to stop
+retransmitting. These records evict lazily, so multiple echoes of one send —
+acks arriving over different return routes, repeats from different
+repeaters — are all delivered. A MAC Ack whose <code>ack_mic</code> matches no recorded
+frame is still accepted if an explicit <code>FILTER_PKT_TYPE</code> entry selects it.</p>
 <p>Broadcast packets — payload-carrying broadcasts and beacons alike — are
 implicitly accepted <strong>for live delivery</strong>: a broadcast is addressed to
 every node, the host included. The rule is live-only. While the host is
@@ -8566,7 +9446,7 @@ not indicate a problem.</dd>
 </dl>
 <h2 id="full-capabilities"><a class="header" href="#full-capabilities">Additional Capabilities</a></h2>
 <p>The full protocol assigns the following capability codes
-(see <a href="#capabilities-7">Capabilities</a>):</p>
+(see <a href="#capabilities-8">Capabilities</a>):</p>
 <div class="table-wrapper">
 <table>
 <thead>
@@ -8593,6 +9473,10 @@ no capability; a device that defines no mutable multi-value properties simply
 has nothing to apply them to.</p>
 <div style="break-before: page; page-break-before: always;"></div>
 <h1 id="identity-export-format"><a class="header" href="#identity-export-format">Identity Export Format</a></h1>
+<blockquote>
+<p>![NOTE]
+This section is an early work in progress and this format may change significantly.</p>
+</blockquote>
 <p>This appendix defines a portable, passphrase-protected artifact for backing
 up and restoring a node identity, together with the secret material and local
 knowledge that make a restored identity immediately useful. It is produced
@@ -8895,7 +9779,368 @@ parameters are read before any authentication is possible; the resource
 ceilings in <a href="#key-derivation">Key Derivation</a> exist so a crafted header
 cannot demand unbounded memory or time.</p>
 <div style="break-before: page; page-break-before: always;"></div>
-<h1 id="security-considerations-1"><a class="header" href="#security-considerations-1">Security Considerations</a></h1>
+<h1 id="internet-bridging"><a class="header" href="#internet-bridging">Internet Bridging</a></h1>
+<blockquote>
+<p>![NOTE]
+This section is an early work in progress and this protocol may change significantly.</p>
+</blockquote>
+<p>This appendix defines a client–server realization of the bridge described
+in <a href="#bridging">Routing Overview § Bridging</a>: a single
+virtual repeater whose radios sit in different places, connected by an
+authenticated tunnel over a reliable stream transport such as the
+internet. It specifies the tunnel wire protocol, the forwarding rules the
+bridge applies, and how the bridge satisfies the forwarding-confirmation
+expectations of the meshes it joins.</p>
+<blockquote class="blockquote-tag blockquote-tag-caution">
+<p class="blockquote-tag-title"><svg viewbox="0 0 16 16" width="18" height="18"><path d="M4.47.22A.749.749 0 0 1 5 0h6c.199 0 .389.079.53.22l4.25 4.25c.141.14.22.331.22.53v6a.749.749 0 0 1-.22.53l-4.25 4.25A.749.749 0 0 1 11 16H5a.749.749 0 0 1-.53-.22L.22 11.53A.749.749 0 0 1 0 11V5c0-.199.079-.389.22-.53Zm.84 1.28L1.5 5.31v5.38l3.81 3.81h5.38l3.81-3.81V5.31L10.69 1.5ZM8 4a.75.75 0 0 1 .75.75v3.5a.75.75 0 0 1-1.5 0v-3.5A.75.75 0 0 1 8 4Zm0 8a1 1 0 1 1 0-2 1 1 0 0 1 0 2Z"></path></svg>Caution</p>
+<p>The cautions in <a href="#bridging">Routing Overview § Bridging</a>
+apply in full: internet bridges cannot be relied upon in an emergency and
+can waste airtime with non-local chatter. This appendix exists so that
+bridges which are deployed anyway behave predictably and conservatively.</p>
+</blockquote>
+<h2 id="model"><a class="header" href="#model">Model</a></h2>
+<p>A bridge consists of one <strong>bridge server</strong> and one or more <strong>bridge
+clients</strong>.</p>
+<ul>
+<li>The server owns the bridge’s node identity. Trace routes crossing the
+bridge carry this identity’s router hint, source routes name it, and
+packets addressed to it are processed by the server whatever interface
+they arrive on.</li>
+<li>The server and each client front a ULCP device of their own, attached as
+a tethered host with promiscuous delivery enabled (see
+<a href="#radio-attachment">Radio Attachment</a>).</li>
+<li>The server’s <strong>interfaces</strong> are its own radio plus one interface per
+connected client. All forwarding decisions are made at the server;
+clients relay frames between their radio and the tunnel and apply no
+forwarding logic of their own.</li>
+</ul>
+<p>The whole assembly is <strong>one</strong> virtual repeater. It maintains a single
+<a href="#duplicate-suppression-1">duplicate-suppression cache</a>
+shared across all interfaces, performs hop accounting once per crossing,
+and prepends its router hint to a trace route once per crossing —
+regardless of how many interfaces or clients participate.</p>
+<p>Radio configuration is local to each participant: a client configures its
+own device, and the tunnel provides no mechanism for managing a remote
+participant’s radio.</p>
+<h2 id="tunnel-transport"><a class="header" href="#tunnel-transport">Tunnel Transport</a></h2>
+<h3 id="connection-and-authentication"><a class="header" href="#connection-and-authentication">Connection and Authentication</a></h3>
+<p>The tunnel is a TLS 1.3 connection over TCP; the client connects to the
+server. Earlier TLS versions <strong>MUST NOT</strong> be negotiated.</p>
+<p>Peer authentication uses either external pre-shared keys (TLS 1.3 PSK
+handshakes) or mutually authenticated certificates with pinned or locally
+trusted roots. Each client <strong>SHOULD</strong> hold a distinct credential: it is
+how the server identifies a client for policy and rate limiting, and it
+allows one client to be revoked without re-keying the rest.</p>
+<p>A deployment <strong>MAY</strong> use each participant’s Ed25519 node identity as its
+certificate key, each side pinning the peer’s public key rather than a
+certificate. The pinned key <strong>MUST</strong> then be held against the TLS 1.3
+<code>CertificateVerify</code> signature — proof that the peer possesses the
+identity, independent of anything the certificate claims — rather than
+against the certificate’s contents. This gives every tunnel credential a
+UMSH address, so a client’s credential can later serve as a
+mesh-addressable identity for management without re-keying.</p>
+<p>The tunnel carries no version of its own. Participants <strong>SHOULD</strong> offer
+the ALPN protocol identifier <code>umsh-bridge/1</code>, so that an incompatible
+future revision fails the handshake instead of misparsing frames.</p>
+<h3 id="message-framing"><a class="header" href="#message-framing">Message Framing</a></h3>
+<p>The tunnel is a stream of
+<a href="https://github.com/openthread/openthread/blob/thread-reference-20180926/doc/spinel-protocol-src/spinel-framing.md#hdlc-lite-hdlc-lite">HDLC-Lite</a>
+frames, exactly as ULCP uses on asynchronous serial links (see
+<a href="#ulcp-framing-and-common-semantics">Framing and Common Semantics</a>). The frame check sequence is
+redundant beneath TLS but is retained so implementations can reuse their
+existing framing code unchanged.</p>
+<p>There is no message header. A non-empty frame contains one
+<a href="#str-radio-raw"><code>STR_PHY_RAW</code></a> structure and nothing
+else; an empty frame is a <a href="#keepalive">keepalive</a>. Because the payload is
+exactly the ULCP stream structure, a participant relays bytes without
+parsing them:</p>
+<ul>
+<li><strong>Client to server</strong>: a candidate reception — the body of the
+<a href="#cmd-str-recv"><code>CMD_STR_RECV</code></a> that delivered the
+frame, written unmodified. The receive metadata <strong>SHOULD</strong> be present
+(sentinel-filled where the radio cannot measure), because the server’s
+<a href="#forwarding-procedure-1">signal-quality checks</a> depend on it.</li>
+<li><strong>Server to client</strong>: a transmit request, passed unmodified as the body
+of a <a href="#cmd-str-send"><code>CMD_STR_SEND</code></a> on
+<code>STR_PHY_RAW</code>.</li>
+</ul>
+<p>A frame that is malformed, or larger than the receiving participant is
+prepared to transmit, is discarded.</p>
+<h3 id="keepalive"><a class="header" href="#keepalive">Keepalive and Reconnection</a></h3>
+<p>A participant writes a bare flag octet (<code>0x7E</code>) whenever it has sent
+nothing for a keepalive interval — 10 seconds is a reasonable default —
+and closes the connection once it has received nothing for an idle
+timeout, by default 30 seconds. The two directions are independent.</p>
+<p>Empty frames are the idle fill of HDLC-Lite and a conforming decoder
+already discards them, so the keepalive needs no message of its own. Two
+properties make it sufficient. Liveness is measured in received octets
+rather than decoded messages, so a discarded flag still counts as
+activity. And because the keepalive is written by the participant’s own
+relay logic, a peer whose relay has wedged stops emitting it even while
+its TLS connection stays open.</p>
+<p>A stalled <em>local</em> transmit path is not visible to the idle timer, since
+the peer keeps talking. It appears as tunnel-queue backpressure instead,
+which is bounded below.</p>
+<p>Frames queued for a tunnel that fails or backs up are stale by
+definition: participants <strong>MUST</strong> bound their tunnel queues, <strong>SHOULD</strong>
+drop the oldest frames first under backpressure, and <strong>MUST</strong> discard
+queued frames when a connection is re-established rather than flushing
+them into the new session.</p>
+<p>Staleness is enforced by the sender, and no age accompanies a frame on
+the wire. A participant <strong>SHOULD</strong> discard a frame rather than write it
+once the frame is older than a configured limit — ten seconds is a
+reasonable default — counting any device-side queueing reported through
+<a href="#buffered-metadata">buffered-frame metadata</a>. A frame
+that old has already outlived every
+<a href="#forwarding-confirmation">forwarding-confirmation retry</a>
+that could have wanted it.</p>
+<h2 id="radio-attachment"><a class="header" href="#radio-attachment">Radio Attachment</a></h2>
+<p>Each participant attaches to its device as an ordinary tethered host and
+sets <a href="#prop-mac-promiscuous"><code>PROP_MAC_PROMISCUOUS</code></a> to true.
+The property is session-scoped and reverts on every attach, so it must be
+re-asserted after each reconnection to the device. Because
+promiscuous-only frames are never queued while the host is detached, a
+device outage leaves no stale backlog to drain — attachment starts clean
+by construction.</p>
+<p>Transmission requires the device to advertise
+<a href="#capabilities-3"><code>CAP_WRITABLE_RAW_STREAM</code></a>. Participants
+<strong>SHOULD</strong> use confirmed transmissions (non-zero TID) so that duty-limit
+and channel failures are observed rather than silent, and bridged
+transmissions <strong>MUST NOT</strong> set <code>TX_FLAG_NODUTY</code>: the device’s duty-cycle
+enforcement is the backstop against a bridge that would otherwise consume
+a segment’s airtime budget.</p>
+<p>A confirmed transmission reports channel-access failure to the
+participant rather than retrying on its own, and the local control
+protocol carries no retry count to delegate one: one <code>CMD_STR_SEND</code> is
+one channel-access attempt. The
+<a href="#backoff-procedure">backoff procedure</a> is therefore
+the participant’s to run, and it runs the same one every other
+transmitter on that segment does. A participant <strong>MUST</strong> continue
+draining its device’s receive path while it waits out a backoff; a
+participant that stops listening in order to talk costs its segment
+other stations’ traffic as well as its own.</p>
+<p>The server provisions its host domain as any MAC-owning host would.
+Clients <strong>SHOULD NOT</strong> configure a host key or acknowledgement delegation
+on their devices; the bridge identity’s node logic lives entirely at the
+server.</p>
+<h2 id="forwarding-procedure-1"><a class="header" href="#forwarding-procedure-1">Forwarding Procedure</a></h2>
+<p>The bridge follows the
+<a href="#forwarding-procedure">repeater forwarding procedure</a>,
+adapted to multiple interfaces. For a frame arriving on interface <em>I</em>:</p>
+<ol>
+<li>
+<p><strong>Duplicate suppression</strong> — Check the shared cache using the
+<a href="#duplicate-suppression-1">repeater cache-key rules</a>.
+If the key is present, do not forward; see
+<a href="#re-confirmation">Re-confirmation</a> for the one transmission a
+duplicate may still trigger. A <a href="#route-retry-option-6">Route Retry</a>
+variant is a distinct cache key and forwards normally.</p>
+</li>
+<li>
+<p><strong>Local origin and local destination</strong> — If the source or destination
+address identifies the bridge’s own identity, do not forward. This is
+also what keeps the bridge’s own transmissions, overheard by another of
+its interfaces, from being re-bridged.</p>
+</li>
+<li>
+<p><strong>Locally handled unicast</strong> — If the frame was a unicast (blind or
+direct) fully handled by the server’s node logic, do not forward.</p>
+</li>
+<li>
+<p><strong>Unknown critical options</strong> — If the frame carries a critical option
+the bridge does not understand, do not forward.</p>
+</li>
+<li>
+<p><strong>Policy</strong> — Apply local bridge policy: per-interface and
+per-interface-pair forwarding rules, per-client rate limits, and region
+matching if configured. The bridge <strong>MUST NOT</strong> rewrite existing
+<a href="#region-code-option-11">region codes</a> and, unlike an
+ordinary repeater, <strong>SHOULD NOT</strong> insert one: its interfaces may sit in
+different regions, and a code added at one segment’s exit would
+misdescribe the packet everywhere else it travels.</p>
+</li>
+<li>
+<p><strong>Source-route match</strong> — If the frame carries a non-empty
+<a href="#source-route-option-3">source-route option</a>:
+if the next hint does not match the bridge’s router hint, do not
+forward; otherwise remove the hint, preserving the option even when it
+empties. This is a source-routed hop: skip steps 7 and 8.</p>
+</li>
+<li>
+<p><strong>Flood hop accounting</strong> — If the frame has a
+<a href="#flood-hop-count">flood hop count</a> with
+<code>FHOPS_REM &gt; 0</code>, decrement <code>FHOPS_REM</code> and increment <code>FHOPS_ACC</code>.
+Otherwise, do not forward.</p>
+</li>
+<li>
+<p><strong>Signal-quality thresholds</strong> — Apply minimum-RSSI and minimum-SNR
+checks against the measurements of the radio that heard the frame —
+for a client interface, the receive metadata carried alongside the
+tunneled frame.</p>
+</li>
+<li>
+<p><strong>Exit clamp</strong> — Clamp <code>FHOPS_REM</code> to the configured exit maximum.
+The default is 1, and internet-tunneled deployments <strong>SHOULD NOT</strong>
+raise it. The clamp applies to source-routed hops as well, bounding
+the flood budget of a hybrid route that transitions to flooding beyond
+the bridge.</p>
+</li>
+<li>
+<p><strong>Trace route</strong> — If the frame carries a
+<a href="#trace-route-option-2">trace-route option</a>, prepend
+the bridge’s router hint; if that would exceed the maximum frame
+size, drop the frame.</p>
+</li>
+<li>
+<p><strong>Accept</strong> — Insert the cache key into the shared cache now, before
+any transmission.</p>
+</li>
+<li>
+<p><strong>Fan-out</strong> — Transmit the rewritten frame on every interface except
+<em>I</em>, subject to the policy decisions of step 5.</p>
+</li>
+<li>
+<p><strong>Confirmation copy</strong> — Transmit the confirmation copy on <em>I</em>, as
+specified in <a href="#forwarding-confirmation-1">Forwarding Confirmation</a>.</p>
+</li>
+</ol>
+<p>Fan-out transmissions introduce the packet to segments that have not yet
+carried it, so the <a href="#flood-forwarding-contention-window">flood forwarding contention window</a>
+does not apply to them; ordinary channel access does.</p>
+<h2 id="forwarding-confirmation-1"><a class="header" href="#forwarding-confirmation-1">Forwarding Confirmation</a></h2>
+<p>A bridge retransmits on the arrival interface so the previous hop can
+<a href="#forwarding-confirmation">confirm forwarding</a>, as
+<a href="#bridging">Routing Overview § Bridging</a> requires. The
+<strong>confirmation copy</strong> is the rewritten frame exactly as fanned out in
+step 12, except that <code>FHOPS_REM</code> is forced to zero (when the field is
+present).</p>
+<p>This form is deliberate:</p>
+<ul>
+<li>The previous hop still recognizes it. Confirmation matches on the
+<a href="#duplicate-suppression-1">cache key</a>, which excludes
+the flood hop count for every packet type.</li>
+<li>It recruits no forwarders. A repeater receiving the copy rejects it at
+flood hop accounting, so the bridge is flood-neutral on the arrival
+segment: it confirms receipt without extending the local flood.</li>
+<li>It cannot sterilize the live flood. Repeaters insert cache keys only on
+acceptance for forwarding; a repeater that hears the zero-<code>FHOPS_REM</code>
+copy before the live flood reaches it caches nothing and forwards the
+live copy normally. Bridges depend on that insertion timing, which is
+therefore normative for them.</li>
+<li>Delivery from the copy is sound. A destination hearing only the
+confirmation copy processes it normally, and its <code>FHOPS_ACC</code> honestly
+counts the hop through the bridge.</li>
+</ul>
+<p>The copy is a full-length frame, so this mechanism confirms cheaply in
+forwarding terms but not in airtime; the airtime optimization remains
+open (see <a href="#bridge-hop-confirmation">Bridge Hop Confirmation</a>).</p>
+<p>For flood hops, the confirmation copy is a flood forward on a segment
+actively carrying the packet: it <strong>SHOULD</strong> use the
+<a href="#flood-forwarding-contention-window">contention window</a>,
+defer when another forwarding of the same packet is overheard, and may be
+abandoned under the usual deferral rules — any overheard forwarding
+confirms the previous hop just as well. For source-routed hops the copy
+is the previous hop’s only confirmation; it uses ordinary channel access
+and is not abandoned.</p>
+<h3 id="re-confirmation"><a class="header" href="#re-confirmation">Re-confirmation</a></h3>
+<p>If the confirmation copy is lost, the previous hop retries — and the
+retry is a duplicate the cache would otherwise suppress into silence,
+letting the previous hop exhaust its retry budget and wrongly declare the
+route failed. Therefore: when a duplicate of an accepted frame arrives on
+the interface it was originally accepted from, within a bounded window of
+the original acceptance, the bridge <strong>MAY</strong> re-transmit the confirmation
+copy on that interface. It <strong>MUST NOT</strong> re-forward the frame on any other
+interface. The considerations mirror the
+<a href="#duplicate-acknowledgement-window">duplicate-acknowledgement window</a>;
+thirty seconds is a reasonable default. Duplicates arriving on other
+interfaces are ordinary suppressed duplicates and trigger nothing.</p>
+<p>This requires the cache entry to record the arrival interface and
+acceptance time alongside the key.</p>
+<h2 id="acknowledgements-across-a-bridge"><a class="header" href="#acknowledgements-across-a-bridge">Acknowledgements Across a Bridge</a></h2>
+<p>The exit clamp makes flood-returned acknowledgements asymmetric. On the
+forward path the clamp already limits delivery to nodes near the bridge’s
+exit, so a destination that received the packet is bridge-adjacent. The
+returning <a href="#mac-ack-packet">MAC ack</a>, flooded with a
+radius taken from <code>FHOPS_ACC</code>, is clamped again on its way back — and
+dies there unless the <em>originator</em> is within the clamp of the bridge on
+its own segment. Flood routing alone therefore does not round-trip an
+acknowledgement across a bridge, and
+<a href="#route-failure-recovery">route failure recovery</a>
+cannot repair this: the restored flood is clamped the same way.</p>
+<p>Source-routed hops spend nothing from <code>FHOPS</code>, so explicit routes cross
+bridges at any depth. Ack-requesting traffic that crosses a bridge
+<strong>SHOULD</strong> either carry a
+<a href="#trace-route-option-2">trace-route option</a> — the
+bridge’s hint prepend is what makes the reversed trace routable — or be
+sent along a known source route. A sender with neither should not expect
+an acknowledgement back across a bridge.</p>
+<h2 id="co-located-repeater-role"><a class="header" href="#co-located-repeater-role">Co-located Repeater Role</a></h2>
+<p>A device backing a bridge interface <strong>MAY</strong> additionally run its own
+repeater role, in which case two co-located repeaters exist — the device
+and the bridge — each with its own duplicate cache and hop accounting.
+This composes, with two rules:</p>
+<ul>
+<li>The device’s repeater role <strong>MUST NOT</strong> treat the tethered host
+identity’s hints as its own for source-route matching. Routed hops
+through the bridge identity belong to the bridge.</li>
+<li>The device’s normal flood re-forward on the arrival radio already
+serves as the previous hop’s confirmation, so the bridge <strong>SHOULD</strong>
+suppress its flood-hop confirmation copies on that interface. It
+<strong>MUST</strong> still emit confirmation copies for source-routed hops, which
+the device will not forward.</li>
+</ul>
+<p>The division is imperfect: when the device’s own policy declines a
+forward, no flood confirmation is emitted by either party. This matches a
+standalone repeater declining the same packet, but deployments that want
+the bridge’s confirmation behavior to be exact <strong>SHOULD</strong> leave the
+repeater role disabled on bridge-backing devices.</p>
+<h2 id="bridge-originated-traffic"><a class="header" href="#bridge-originated-traffic">Bridge-Originated Traffic</a></h2>
+<p>The bridge is a node present on every segment it touches. Its own
+traffic — application packets, beacons, and the MAC acks it generates as
+a destination — is ordinary node behavior applied per interface, not
+subject to the forwarding procedure or the exit clamp, transmitted on
+whichever interfaces its routing state selects. It <strong>MAY</strong> beacon on all
+interfaces. Step 2 of the forwarding procedure keeps this traffic from
+being re-bridged when one of its own transmissions is overheard through
+another interface.</p>
+<h2 id="operational-guidance"><a class="header" href="#operational-guidance">Operational Guidance</a></h2>
+<ul>
+<li><strong>Rate limiting.</strong> The server <strong>SHOULD</strong> rate-limit forwarding per
+client and per interface pair. An authenticated but misbehaving client
+is the realistic failure mode, and the device duty ledger should be the
+backstop, not the policy.</li>
+<li><strong>Co-located clients.</strong> Two clients whose radios share a segment cause
+every fanned-out frame to be transmitted twice there. The shared cache
+keeps their mutual receptions from looping, but the duplicate airtime
+is real; policy (step 5) is the place to group or exclude them.</li>
+<li><strong>Region codes.</strong> A bridge whose segments sit in different regions
+should rely on region matching in step 5 rather than tagging: see the
+insertion prohibition there.</li>
+</ul>
+<h2 id="security-considerations-1"><a class="header" href="#security-considerations-1">Security Considerations</a></h2>
+<p>TLS provides tunnel authentication, integrity, and replay protection;
+the shared secret or pinned credential is the sole admission control.
+UMSH frames are already end-to-end authenticated and encrypted at the
+MAC layer, so the tunnel’s confidentiality mainly shields routing
+metadata — hints, options, traffic volume — from path observers.</p>
+<p>Using a node identity as a tunnel credential does not let the two
+protocols’ signatures be confused for one another: the TLS 1.3
+<code>CertificateVerify</code> payload is domain-separated by a fixed 64-octet
+padding prefix and context string that no UMSH signed structure begins
+with.</p>
+<p>A compromised client credential is equivalent to granting the attacker an
+RF presence on every segment the bridge touches: it can inject arbitrary
+well-formed frames and replay captured ones. It cannot forge other nodes’
+authenticated traffic. The damage is bounded by the same mechanisms that
+bound a hostile local transmitter — duplicate suppression, the exit
+clamp, per-client rate limits, and duty-cycle enforcement — plus
+revocation of the client’s credential.</p>
+<p>The bridge forwards frames it cannot decrypt; promiscuous delivery is
+what a repeater’s role requires, not an information grant. Operators
+should still treat the server as privileged infrastructure: it observes
+the metadata of every frame on every segment it bridges.</p>
+<div style="break-before: page; page-break-before: always;"></div>
+<h1 id="security-considerations-2"><a class="header" href="#security-considerations-2">Security Considerations</a></h1>
 <p>This chapter consolidates the security properties, limitations, and implementation guidance that are distributed throughout the specification. It is intended as a reference for implementers and reviewers evaluating UMSH’s security posture.</p>
 <h2 id="threat-model"><a class="header" href="#threat-model">Threat Model</a></h2>
 <p>UMSH is designed for a shared radio medium where any device in range can observe and inject packets. The threat model assumes:</p>
@@ -9064,7 +10309,7 @@ as amateur-radio traffic.</p>
 <h2 id="open-issues"><a class="header" href="#open-issues">Open Issues</a></h2>
 <h3 id="bridge-hop-confirmation"><a class="header" href="#bridge-hop-confirmation">Bridge Hop Confirmation</a></h3>
 <p>A <strong>bridge</strong> is a node that relays UMSH packets over a different medium or channel than the one it received them on — for example, an internet backhaul, a wired link, or a different radio band connecting two geographically distant segments. Bridges are transparent to the protocol at the MAC layer: they consume source-route hints and forward packets exactly as repeaters do.</p>
-<p>The simplest approach to bridge confirmation is to have the bridge retransmit the packet on the same inbound medium in addition to forwarding it to the other medium. This fully preserves the existing implicit confirmation mechanism with no protocol changes — the previous-hop sender hears the retransmission and confirms delivery exactly as it would with a normal repeater. The cost is doubled on-air time for every bridged packet on the inbound segment.</p>
+<p>The simplest approach to bridge confirmation is to have the bridge retransmit the packet on the same inbound medium in addition to forwarding it to the other medium. This fully preserves the existing implicit confirmation mechanism with no protocol changes — the previous-hop sender hears the retransmission and confirms delivery exactly as it would with a normal repeater. The cost is doubled on-air time for every bridged packet on the inbound segment. <a href="#forwarding-confirmation-1">Internet Bridging § Forwarding Confirmation</a> specifies this retransmission with <code>FHOPS_REM</code> forced to zero, which confirms without recruiting additional forwarders; the airtime cost stands.</p>
 <p>Retransmitting the entire packet solely to signal receipt is wasteful. However, if the bridge does not retransmit, the previous-hop node cannot observe the bridge’s onward transmission and will assume delivery failed — triggering retries that are even more wasteful, since the bridge did receive the packet successfully.</p>
 <p>To be honest, it isn’t entirely clear that this is a problem worth optimizing. Bridges aren’t expected to exactly be common. But it is worth thinking about, so here is a possible solution:</p>
 <h4 id="possibility-hop-signal-for-non-retransmitting-bridges"><a class="header" href="#possibility-hop-signal-for-non-retransmitting-bridges">Possibility: Hop Signal for non-retransmitting bridges</a></h4>
@@ -10124,14 +11369,14 @@ D6
 <tr><td>SCF</td><td>E=1, MIC=3 (16-byte), S=0</td><td><code>E0</code></td></tr>
 <tr><td>Frame Counter</td><td>10</td><td><code>00 00 00 0A</code></td></tr>
 <tr><td>Options</td><td>Trace route + region code + end marker</td><td><code>20 92 78 53 FF</code></td></tr>
-<tr><td>Payload</td><td>Encrypted <code>68 65 79</code> (<code>"hey"</code>)</td><td><code>79 F8 9D</code></td></tr>
-<tr><td>MIC</td><td>16 bytes</td><td><code>96 91 3C 78 8E 38 5F 64 04 DA 6B 4F 90 4A 7B 38</code></td></tr>
+<tr><td>Payload</td><td>Encrypted <code>68 65 79</code> (<code>"hey"</code>)</td><td><code>F4 CF 71</code></td></tr>
+<tr><td>MIC</td><td>16 bytes</td><td><code>C4 91 19 48 E1 C8 F1 32 05 6A 16 B1 06 34 74 D5</code></td></tr>
 </tbody>
 </table>
 </div>
 <pre><code class="language-text">D1 40 6C 28 FD ED 54 A5 E0 00 00 00 0A 20 92 78
-53 FF 79 F8 9D 96 91 3C 78 8E 38 5F 64 04 DA 6B
-4F 90 4A 7B 38
+53 FF F4 CF 71 C4 91 19 48 E1 C8 F1 32 05 6A 16
+B1 06 34 74 D5
 </code></pre>
 <p>Total: 37 bytes.</p>
 <h2 id="example-8-blind-unicast-s0"><a class="header" href="#example-8-blind-unicast-s0">Example 8: Blind Unicast (S=0)</a></h2>

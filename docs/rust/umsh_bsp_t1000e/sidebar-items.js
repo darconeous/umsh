@@ -1,1 +1,1 @@
-window.SIDEBAR_ITEMS = {"mod":["panic_persist"]};
+window.SIDEBAR_ITEMS = {"mod":["light","panic_persist"]};

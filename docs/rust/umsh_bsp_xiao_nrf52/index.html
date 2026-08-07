@@ -1,0 +1,102 @@
+<!DOCTYPE html><html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1.0"><meta name="generator" content="rustdoc"><meta name="description" content="Board support for the Seeed Studio XIAO nRF52840 &#38; Wio-SX1262 Kit (SKU 102010710) — a XIAO nRF52840 controller mated to a Wio-SX1262 for XIAO radio carrier through the standard 2×7 header."><title>umsh_bsp_xiao_nrf52 - Rust</title><script>if(window.location.protocol!=="file:")document.head.insertAdjacentHTML("beforeend","SourceSerif4-Regular-6b053e98.ttf.woff2,FiraSans-Italic-81dc35de.woff2,FiraSans-Regular-0fe48ade.woff2,FiraSans-MediumItalic-ccf7e434.woff2,FiraSans-Medium-e1aa3f0a.woff2,SourceCodePro-Regular-8badfe75.ttf.woff2,SourceCodePro-Semibold-aa29a496.ttf.woff2".split(",").map(f=>`<link rel="preload" as="font" type="font/woff2"href="../static.files/${f}">`).join(""))</script><link rel="stylesheet" href="../static.files/normalize-9960930a.css"><link rel="stylesheet" href="../static.files/rustdoc-80aa586b.css"><meta name="rustdoc-vars" data-root-path="../" data-static-root-path="../static.files/" data-current-crate="umsh_bsp_xiao_nrf52" data-themes="" data-resource-suffix="" data-rustdoc-version="1.94.0-nightly (fcf67da03 2025-12-18)" data-channel="nightly" data-search-js="search-9e2438ea.js" data-stringdex-js="stringdex-a3946164.js" data-settings-js="settings-c38705f0.js" ><script src="../static.files/storage-e2aeef58.js"></script><script defer src="../crates.js"></script><script defer src="../static.files/main-3e30299d.js"></script><noscript><link rel="stylesheet" href="../static.files/noscript-ffcac47a.css"></noscript><link rel="alternate icon" type="image/png" href="../static.files/favicon-32x32-eab170b8.png"><link rel="icon" type="image/svg+xml" href="../static.files/favicon-044be391.svg"></head><body class="rustdoc mod crate"><!--[if lte IE 11]><div class="warning">This old browser is unsupported and will most likely display funky things.</div><![endif]--><rustdoc-topbar><h2><a href="#">Crate umsh_bsp_xiao_nrf52</a></h2></rustdoc-topbar><nav class="sidebar"><div class="sidebar-crate"><h2><a href="../umsh_bsp_xiao_nrf52/index.html">umsh_<wbr>bsp_<wbr>xiao_<wbr>nrf52</a><span class="version">0.1.0</span></h2></div><div class="sidebar-elems"><ul class="block"><li><a id="all-types" href="all.html">All Items</a></li></ul><section id="rustdoc-toc"><h3><a href="#">Sections</a></h3><ul class="block top-toc"><li><a href="#relationship-to-the-sensecap-solar-node" title="Relationship to the SenseCAP Solar Node">Relationship to the SenseCAP Solar Node</a></li><li><a href="#pin-map-nrf52840-schematic-confirmed" title="Pin map (nRF52840; schematic-confirmed)">Pin map (nRF52840; schematic-confirmed)</a></li><li><a href="#this-board-is-headless" title="This board is headless">This board is headless</a><ul><li><a href="#pairing-without-a-button" title="Pairing without a button">Pairing without a button</a></li><li><a href="#if-k1-is-retrofitted" title="If K1 is retrofitted">If K1 is retrofitted</a></li></ul></li></ul></section><div id="rustdoc-modnav"></div></div></nav><div class="sidebar-resizer" title="Drag to resize sidebar"></div><main><div class="width-limiter"><section id="main-content" class="content"><div class="main-heading"><h1>Crate <span>umsh_<wbr>bsp_<wbr>xiao_<wbr>nrf52</span>&nbsp;<button id="copy-path" title="Copy item path to clipboard">Copy item path</button></h1><rustdoc-toolbar></rustdoc-toolbar><span class="sub-heading"><a class="src" href="../src/umsh_bsp_xiao_nrf52/lib.rs.html#1-133">Source</a> </span></div><details class="toggle top-doc" open><summary class="hideme"><span>Expand description</span></summary><div class="docblock"><p>Board support for the Seeed Studio <strong>XIAO nRF52840 &amp; Wio-SX1262 Kit</strong>
+(SKU 102010710) — a XIAO nRF52840 controller mated to a Wio-SX1262 for
+XIAO radio carrier through the standard 2×7 header.</p>
+<p>Composes <a href="../umsh_bsp_nrf52840/index.html"><code>umsh-bsp-nrf52840</code></a> with
+this board’s pinout. Both halves of the kit have published Seeed
+schematics, so unlike most boards in this directory the pin map is
+schematic-confirmed rather than reconstructed from vendor firmware.</p>
+<p>See <code>docs/hardware/seeed-xiao-nrf52840-wio-sx1262-kit-hardware.md</code>.</p>
+<h2 id="relationship-to-the-sensecap-solar-node"><a class="doc-anchor" href="#relationship-to-the-sensecap-solar-node">§</a>Relationship to the SenseCAP Solar Node</h2>
+<p>Both are XIAO-pinout carriers around the same Wio SX1262 module, so
+the radio wiring and the battery-sense topology are shared <em>pin for
+pin</em> — the firmware’s SX1262 bring-up block is literally the same code
+for both boards. The <a href="umsh_mac::Platform"><code>Platform</code></a> bundle is a
+verbatim copy. What differs is LED polarity, the charger, the divider
+gating rule, and the complete absence of buttons.</p>
+<h2 id="pin-map-nrf52840-schematic-confirmed"><a class="doc-anchor" href="#pin-map-nrf52840-schematic-confirmed">§</a>Pin map (nRF52840; schematic-confirmed)</h2>
+<p>The BSP and firmware name the <code>P0_xx</code> / <code>P1_xx</code> embassy-nrf pins
+directly. The Arduino logical column exists only for cross-referencing
+the Meshtastic and MeshCore variant files, whose <code>g_ADigitalPinMap</code>
+arrays are byte-for-byte identical to each other.</p>
+<div><table><thead><tr><th>Function</th><th style="text-align: right">Logical</th><th>nRF pin</th><th>Notes</th></tr></thead><tbody>
+<tr><td>GNSS standby (optional L76K)</td><td style="text-align: right">0</td><td><code>P0.02</code></td><td>also the unpopulated button footprint — see below</td></tr>
+<tr><td>Radio DIO1</td><td style="text-align: right">1</td><td><code>P0.03</code></td><td></td></tr>
+<tr><td>Radio RESET</td><td style="text-align: right">2</td><td><code>P0.28</code></td><td><strong>10 kΩ pull-up on the carrier</strong> — idles released</td></tr>
+<tr><td>Radio BUSY</td><td style="text-align: right">3</td><td><code>P0.29</code></td><td></td></tr>
+<tr><td>Radio CS</td><td style="text-align: right">4</td><td><code>P0.04</code></td><td>22 Ω series</td></tr>
+<tr><td>Radio RXEN (<code>RF_SW1</code>)</td><td style="text-align: right">5</td><td><code>P0.05</code></td><td><strong>no pull</strong> — drive deterministically and early</td></tr>
+<tr><td>GNSS UART TX (MCU→L76K)</td><td style="text-align: right">6</td><td><code>P1.11</code></td><td>unconnected on the carrier</td></tr>
+<tr><td>GNSS UART RX (L76K→MCU)</td><td style="text-align: right">7</td><td><code>P1.12</code></td><td>unconnected on the carrier</td></tr>
+<tr><td>Radio SPI SCK</td><td style="text-align: right">8</td><td><code>P1.13</code></td><td>22 Ω series</td></tr>
+<tr><td>Radio SPI MISO</td><td style="text-align: right">9</td><td><code>P1.14</code></td><td>22 Ω series</td></tr>
+<tr><td>Radio SPI MOSI</td><td style="text-align: right">10</td><td><code>P1.15</code></td><td>22 Ω series</td></tr>
+<tr><td>RGB LED red</td><td style="text-align: right">11</td><td><code>P0.26</code></td><td>common anode, <strong>active low</strong>, 2.2 kΩ</td></tr>
+<tr><td>RGB LED blue</td><td style="text-align: right">12</td><td><code>P0.06</code></td><td>common anode, <strong>active low</strong>, 2.2 kΩ</td></tr>
+<tr><td>RGB LED green</td><td style="text-align: right">13</td><td><code>P0.30</code></td><td>common anode, <strong>active low</strong>, 10 kΩ — visibly dimmer</td></tr>
+<tr><td>Battery divider low side</td><td style="text-align: right">14</td><td><code>P0.14</code></td><td><strong>drive LOW always</strong> — see [<code>power</code>]</td></tr>
+<tr><td>Charge-current select (HICHG)</td><td style="text-align: right">22</td><td><code>P0.13</code></td><td>LOW → 100 mA, HIGH/input → 50 mA</td></tr>
+<tr><td>Charge status (<code>~CHG</code>)</td><td style="text-align: right">23</td><td><code>P0.17</code></td><td>BQ25100 open drain, LOW = charging. <strong>Read only</strong></td></tr>
+<tr><td>QSPI flash (P25Q16H, 2 MB)</td><td style="text-align: right">24–29</td><td>see below</td><td>reserved; NV store is internal NVMC</td></tr>
+<tr><td>NFC pads</td><td style="text-align: right">30–31</td><td><code>P0.09/0.10</code></td><td>GPIO use needs UICR <code>NFCPINS</code> cleared</td></tr>
+<tr><td>Battery ADC</td><td style="text-align: right">32</td><td><code>P0.31</code>/AIN7</td><td></td></tr>
+<tr><td>RESET</td><td style="text-align: right">—</td><td><code>P0.18</code></td><td><code>nRESET</code> via UICR <code>PSELRESET</code>; not readable as GPIO</td></tr>
+<tr><td>LF crystal</td><td style="text-align: right">—</td><td><code>P0.00/0.01</code></td><td>32.768 kHz fitted — <code>lfclk-xtal</code>, no RC fallback</td></tr>
+</tbody></table>
+</div>
+<p>QSPI, for the record: SCK <code>P0.21</code>, CSN <code>P0.25</code>, IO0 <code>P0.20</code>, IO1
+<code>P0.24</code>, IO2 <code>P0.22</code>, IO3 <code>P0.23</code>. The part <strong>is</strong> fitted despite the
+schematic’s stale <code>DNP</code> annotation. Nothing here uses it, but the pins
+must not be repurposed.</p>
+<h2 id="this-board-is-headless"><a class="doc-anchor" href="#this-board-is-headless">§</a>This board is headless</h2>
+<p>A stock kit has exactly one button: the XIAO’s RESET, which is
+<code>nRESET</code> and unreadable from the application. The radio carrier’s K1
+footprint — the one place a user button would go — <strong>ships bare, and
+so does its R2 pull-up</strong>.</p>
+<p>Every gesture UX the other UMSH boards rely on is therefore
+unavailable: no hold-to-power-off, no press-to-wake, no
+hold-at-boot force-pairing ceremony. Configuration and control come
+over USB-CDC (ULCP) or BLE. System OFF is reached only by the
+protective low-battery cutoff, and its only exits are the reset
+button, a USB attach, or a future LPCOMP battery-recovery wake. See
+[<code>shutdown</code>].</p>
+<h3 id="pairing-without-a-button"><a class="doc-anchor" href="#pairing-without-a-button">§</a>Pairing without a button</h3>
+<p>The missing force-pairing gesture is the one absence that would
+otherwise be fatal rather than merely inconvenient: with pairing mode
+normally opening only when no bonds exist, the first host to bond
+would own the radio permanently, and nothing short of a full security
+wipe over that host’s own link could ever let a second one in.</p>
+<p>So the firmware for this board builds with <code>boot-pairing-window</code>: a
+<strong>20-second BLE pairing window opens on every boot</strong>, bonded or not.
+Pressing RESET is the physical-presence ceremony here, standing in for
+the button hold the other boards use. A configured PIN still gates the
+pairing itself and the repeated-failure lockout still applies, so the
+window enables attempts rather than granting access.</p>
+<p>This is an interim measure, not a designed answer — it trades a
+recurring 20 s exposure on every reset for not locking users out, and
+a board whose reset button is reachable by anyone is a board whose
+pairing window is reachable by anyone. Revisit alongside the
+retrofitted-button profile.</p>
+<p><code>P0.02</code> is left as a <strong>disconnected</strong> input in this configuration. It
+has no external pull of any kind, and a floating pin with the input
+buffer connected sits near mid-rail and burns current through it —
+which on a board chasing a &lt; 5 µA standby figure is not a rounding
+error.</p>
+<h3 id="if-k1-is-retrofitted"><a class="doc-anchor" href="#if-k1-is-retrofitted">§</a>If K1 is retrofitted</h3>
+<p>Soldering a switch into K1 is the intended way to add a button, and
+it is a supported thing to want — but it is not what this crate
+builds today, and the requirements are sharp enough to record here
+for whoever adds it:</p>
+<ul>
+<li><strong>The internal pull-up is mandatory</strong>, not belt-and-braces: R2 is
+absent, so nothing else holds <code>P0.02</code> high.</li>
+<li>Active low, and debounce generously — a bare mechanical switch with
+no hardware RC bounces freely.</li>
+<li>Arming System OFF wake means <code>SENSE_LOW</code> <strong>with the pull-up
+retained</strong>. MeshCore’s <code>XiaoNrf52Board::powerOff()</code> passes
+<code>NRF_GPIO_PIN_NOPULL</code> here, which is correct only where an external
+pull-up exists; on this carrier it leaves the pin floating into a
+low detector, and the board wakes spuriously or immediately.</li>
+<li><code>P0.02</code> is mutually exclusive with the L76K’s standby line, so a
+button build and a GNSS build cannot be the same build.</li>
+</ul>
+</div></details></section></div></main></body></html>

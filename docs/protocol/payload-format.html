@@ -35,10 +35,10 @@
             const path_to_root = "";
             const default_light_theme = "light";
             const default_dark_theme = "ayu";
-            window.path_to_searchindex_js = "searchindex-5216ea72.js";
+            window.path_to_searchindex_js = "searchindex-c10eed74.js";
         </script>
         <!-- Start loading toc.js asap -->
-        <script src="toc-ca16b95c.js"></script>
+        <script src="toc-438957a9.js"></script>
     </head>
     <body>
     <div id="mdbook-help-container">
@@ -193,7 +193,7 @@
 <tr><td style="text-align: right">5</td><td>Chat-Room Message</td></tr>
 <tr><td style="text-align: right">6</td><td><em>RESERVED</em></td></tr>
 <tr><td style="text-align: right">7</td><td>CoAP-over-UMSH</td></tr>
-<tr><td style="text-align: right">8</td><td>Node Management Command</td></tr>
+<tr><td style="text-align: right">8</td><td><a href="app-node-management.html">Node Management Command</a></td></tr>
 </tbody>
 </table>
 </div>
@@ -211,7 +211,7 @@
 <tr><td>Text Message</td><td style="text-align: center">Yes</td><td style="text-align: center">Yes</td><td style="text-align: center">No</td></tr>
 <tr><td>Chat-Room Message</td><td style="text-align: center">Yes</td><td style="text-align: center">No</td><td style="text-align: center">No</td></tr>
 <tr><td>CoAP-over-UMSH</td><td style="text-align: center">Yes</td><td style="text-align: center">Yes</td><td style="text-align: center">No</td></tr>
-<tr><td>Node Management Cmd</td><td style="text-align: center">Yes</td><td style="text-align: center">Yes</td><td style="text-align: center">No</td></tr>
+<tr><td>Node Management Cmd</td><td style="text-align: center">Yes</td><td style="text-align: center">No</td><td style="text-align: center">No</td></tr>
 </tbody>
 </table>
 </div>
@@ -219,8 +219,7 @@
 <p><strong>Note 1:</strong> Some MAC commands may be permitted on specific channels. For example, a private channel might allow echo requests to all members and receive echo responses from everyone. Whether a given MAC command is accepted over multicast is deployment-defined and not yet specified by the protocol.</p>
 <p><strong>Note 2:</strong> MAC commands are admitted to broadcast individually: a command may be carried in a broadcast only when its definition says so, and any such definition must weigh the solicitation load a broadcast can create. Currently only the <a href="mac-commands.html#identity-request-1">Identity Request</a> permits broadcast carriage, under the flood-management restrictions defined there. Receivers drop any other MAC command arriving by broadcast.</p>
 <h2 id="in-band-node-management"><a class="header" href="#in-band-node-management">In-Band Node Management</a></h2>
-<p>Nodes may optionally support remote management via <strong>Node Management Command</strong> payloads.</p>
-<p>Support for in-band management is protocol-defined but implementation-optional.</p>
+<p>Nodes may optionally support remote management via <strong>Node Management Command</strong> payloads, which carry ULCP exchanges over the mesh itself. The payload format, authorization model, and reachable state are specified in <a href="app-node-management.html">Node Management</a>; support is advertised through the <code>CAP_ADMIN</code> ULCP capability.</p>
 
                     </main>
 

@@ -1,0 +1,1 @@
+window.SIDEBAR_ITEMS = {"constant":["DARK_OFFSET_RAW","MAX_REPORTABLE_MLUX","SATURATION_RAW","SLOPE_MLUX_DEN","SLOPE_MLUX_NUM"],"fn":["millilux_from_sum","raw_to_millilux"]};

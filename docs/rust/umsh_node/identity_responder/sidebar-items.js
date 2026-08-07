@@ -1,1 +1,1 @@
-window.SIDEBAR_ITEMS = {"enum":["RespondDecision"],"fn":["default_respond_policy"],"struct":["IdentityRequestContext","NodeIdentityProfile"],"type":["RespondPolicy"]};
+window.SIDEBAR_ITEMS = {"enum":["RespondDecision"],"fn":["default_respond_policy","never_respond_policy"],"struct":["IdentityRequestContext","NodeIdentityProfile"],"type":["RespondPolicy"]};

@@ -595,12 +595,12 @@
 <a href=#595 id=595 data-nosnippet>595</a></span><span class="kw">mod </span>tests {
 <a href=#596 id=596 data-nosnippet>596</a>    <span class="kw">use </span>super::<span class="kw-2">*</span>;
 <a href=#597 id=597 data-nosnippet>597</a>    <span class="kw">use </span><span class="kw">crate</span>::model::{ConversationKey, SenderScope};
-<a href=#598 id=598 data-nosnippet>598</a>    <span class="kw">use </span>umsh_core::ChannelId;
+<a href=#598 id=598 data-nosnippet>598</a>    <span class="kw">use </span>umsh_core::ChannelTag;
 <a href=#599 id=599 data-nosnippet>599</a>
 <a href=#600 id=600 data-nosnippet>600</a>    <span class="kw">fn </span>stream() -&gt; StreamKey {
 <a href=#601 id=601 data-nosnippet>601</a>        StreamKey {
 <a href=#602 id=602 data-nosnippet>602</a>            conversation: ConversationKey::ChannelGroup {
-<a href=#603 id=603 data-nosnippet>603</a>                channel: ChannelId([<span class="number">1</span>, <span class="number">2</span>]),
+<a href=#603 id=603 data-nosnippet>603</a>                channel: ChannelTag([<span class="number">1</span>, <span class="number">2</span>, <span class="number">3</span>, <span class="number">4</span>, <span class="number">5</span>, <span class="number">6</span>, <span class="number">7</span>, <span class="number">8</span>, <span class="number">9</span>, <span class="number">10</span>, <span class="number">11</span>, <span class="number">12</span>, <span class="number">13</span>, <span class="number">14</span>, <span class="number">15</span>, <span class="number">16</span>]),
 <a href=#604 id=604 data-nosnippet>604</a>            },
 <a href=#605 id=605 data-nosnippet>605</a>            sender: SenderScope::ClaimedMember(umsh_core::NodeHint([<span class="number">9</span>, <span class="number">9</span>, <span class="number">9</span>])),
 <a href=#606 id=606 data-nosnippet>606</a>        }

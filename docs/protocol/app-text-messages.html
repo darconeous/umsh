@@ -35,10 +35,10 @@
             const path_to_root = "";
             const default_light_theme = "light";
             const default_dark_theme = "ayu";
-            window.path_to_searchindex_js = "searchindex-5216ea72.js";
+            window.path_to_searchindex_js = "searchindex-c10eed74.js";
         </script>
         <!-- Start loading toc.js asap -->
-        <script src="toc-ca16b95c.js"></script>
+        <script src="toc-438957a9.js"></script>
     </head>
     <body>
     <div id="mdbook-help-container">
@@ -175,6 +175,10 @@
                 <div id="mdbook-content" class="content">
                     <main>
                         <h1 id="text-messages"><a class="header" href="#text-messages">Text Messages</a></h1>
+<blockquote>
+<p>![NOTE]
+This section is an early work in progress and this protocol may change significantly.</p>
+</blockquote>
 <p>The text message protocol carries human-readable text between nodes (unicast) or from a node to a channel (multicast).</p>
 <p>The payload consists of a CoAP-style option list terminated by a <code>0xFF</code> byte, followed by the message body. All options are non-critical — unrecognized options are ignored and the remainder of the message is displayed normally.</p>
 <h2 id="message-options"><a class="header" href="#message-options">Message Options</a></h2>
@@ -220,6 +224,9 @@
 </div>
 <p>If absent or empty, the message type defaults to 0 (basic text).</p>
 <p>The presence of the <code>Regarding</code> option changes the semantics a bit: A <strong>reply</strong> is a type 0 message with a <code>Regarding</code> option specifying which message is being replied to. An <strong>emote</strong> is a type 1 message with a <code>Regarding</code> option specifying which message is being reacted to; the body is a single Unicode emoji or a short text token such as <code>+1</code>, <code>-1</code>, <code>!</code>, or <code>?</code>. Implementations may differentiate emotes from plain status text by the presence of the Regarding option.</p>
+<p>Emote bodies SHOULD be short text tokens rather than emoji: <code>&lt;3</code>, <code>+1</code>, <code>-1</code>, <code>ha</code>, <code>!</code>, and <code>?</code> cover the common reactions in one or two bytes. Receivers SHOULD accept the equivalent spellings — <code>♥</code> for <code>&lt;3</code>, <code>haha</code> or <code>lol</code> for <code>ha</code>, <code>!!</code> for <code>!</code>, letter case being insignificant — as well as the emoji themselves, and SHOULD render an emote as a single glyph, taking the first one when a body carries more.</p>
+<p>A sender has at most one emote in force per message. Sending another supersedes the previous one, and an emote with a zero-length body withdraws it; a receiver displays the most recently received emote from each sender. (Unlike an edit, whose zero-length body means deletion, an emote is never retracted by editing it — the emote’s own identity is of no interest to anyone but its sender.)</p>
+<p>Emotes reference the original message’s ID even when the message has since been edited, as <a href="#editing">Editing</a> requires of every reference. A receiver MAY additionally tolerate an emote that names an edit’s own ID by resolving it to the message that edit replaced.</p>
 <p>A message resend request is itself not a message but a request to re-send a message that was inferred to exist but was not received. Such a request SHALL contain exactly one Message Type option with value 2 and exactly one Message Sequence option identifying the missing frame. A request with duplicate Message Type or Message Sequence options is invalid. It MAY also contain the Channel Group Resend flag described below and SHOULD NOT contain any other options. After validating the required options and the Channel Group Resend flag, receivers MUST ignore every other option and the entire body. Senders SHOULD use an empty body. The request MUST be received via unicast (for one-on-one messages) or blind-unicast (for channel messages), and SHALL be dropped if received via broadcast or multicast.</p>
 <p>A resend request identifies exactly one missing frame, and a successful response retransmits exactly one frame. The 1-byte Message Sequence form requests a message by ID without specifying a fragment; the sender responds with the unfragmented message or, if it was fragmented, with fragment zero. The fragment count carried in fragment zero lets the requester ask for any remaining fragments individually. The 3-byte form requests one specific fragment.</p>
 <p>Not all messages are available to be resent; for example, a requested message may have been deleted or evicted. In that case, the original sender SHOULD respond with Message Unavailable. A sender producing Message Unavailable SHOULD include only a Message Type option with value 3 and one Message Sequence option exactly matching the requested message or fragment. Its body SHOULD be empty.</p>

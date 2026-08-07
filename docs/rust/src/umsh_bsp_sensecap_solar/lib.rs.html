@@ -49,34 +49,36 @@
 <a href=#49 id=49 data-nosnippet>49</a>//! | Radio SPI MOSI               | 10      | `P1.15`      | |
 <a href=#50 id=50 data-nosnippet>50</a>//! | LED_A ("User LED")           | 11      | `P0.15`      | **white, active-high** (confirmed 2026-07-23) |
 <a href=#51 id=51 data-nosnippet>51</a>//! | LED_B ("Breathing"/TX LED)   | 12      | `P0.19`      | **blue, active-high** (confirmed); heartbeat LED |
-<a href=#52 id=52 data-nosnippet>52</a>//! | USER_BUTTON                  | 13      | `P1.01`      | active-low, internal pull-up (confirmed) |
+<a href=#52 id=52 data-nosnippet>52</a>//! | PWR button (USER_BUTTON)     | 13      | `P1.01`      | active-low, internal pull-up (confirmed); hold → System OFF. A press from System OFF reaches the bootloader, not the application |
 <a href=#53 id=53 data-nosnippet>53</a>//! | Grove SDA                    | 14      | `P0.09`      | NFC pin — NFCT off / UICR NFCPINS cleared for GPIO |
 <a href=#54 id=54 data-nosnippet>54</a>//! | Grove SCL                    | 15      | `P0.10`      | NFC pin, ditto |
 <a href=#55 id=55 data-nosnippet>55</a>//! | Battery ADC                  | 16      | `P0.31`/AIN7 | Phase 2 |
 <a href=#56 id=56 data-nosnippet>56</a>//! | GNSS RESET (candidate)       | 17      | `P1.03`      | never driven — input only until characterized |
 <a href=#57 id=57 data-nosnippet>57</a>//! | GNSS ENABLE                  | 18      | `P1.05`      | likely active-high; held inactive in bringup |
 <a href=#58 id=58 data-nosnippet>58</a>//! | Battery divider enable (n)   | 19      | `P0.14`      | active-low per MeshCore, verify (Phase 2) |
-<a href=#59 id=59 data-nosnippet>59</a>//! | PWR button (USER_BUTTON_2)   | 20      | `P1.07`      | **labeled "PWR"**, active-low, pull-up (confirmed); soft — pressing it does NOT cut the MCU rail |
+<a href=#59 id=59 data-nosnippet>59</a>//! | USR button (USER_BUTTON_2)   | 20      | `P1.07`      | active-low, pull-up (confirmed); soft — pressing it does NOT cut the MCU rail. The only button that powers the node on |
 <a href=#60 id=60 data-nosnippet>60</a>//! | QSPI flash (P25Q16H)         | 21–26   | see hw doc   | reserved, unused (NV store is internal NVMC) |
 <a href=#61 id=61 data-nosnippet>61</a>
 <a href=#62 id=62 data-nosnippet>62</a></span><span class="attr">#[cfg(target_os = <span class="string">"none"</span>)]
-<a href=#63 id=63 data-nosnippet>63</a></span><span class="kw">pub mod </span>platform;
+<a href=#63 id=63 data-nosnippet>63</a></span><span class="kw">pub mod </span>gnss;
 <a href=#64 id=64 data-nosnippet>64</a>
 <a href=#65 id=65 data-nosnippet>65</a><span class="attr">#[cfg(target_os = <span class="string">"none"</span>)]
-<a href=#66 id=66 data-nosnippet>66</a></span><span class="kw">pub mod </span>power;
+<a href=#66 id=66 data-nosnippet>66</a></span><span class="kw">pub mod </span>platform;
 <a href=#67 id=67 data-nosnippet>67</a>
 <a href=#68 id=68 data-nosnippet>68</a><span class="attr">#[cfg(target_os = <span class="string">"none"</span>)]
-<a href=#69 id=69 data-nosnippet>69</a></span><span class="kw">pub mod </span>shutdown;
+<a href=#69 id=69 data-nosnippet>69</a></span><span class="kw">pub mod </span>power;
 <a href=#70 id=70 data-nosnippet>70</a>
 <a href=#71 id=71 data-nosnippet>71</a><span class="attr">#[cfg(target_os = <span class="string">"none"</span>)]
-<a href=#72 id=72 data-nosnippet>72</a></span><span class="kw">pub use </span>platform::{SensecapSolarMac, SensecapSolarPlatform};
-<a href=#73 id=73 data-nosnippet>73</a><span class="attr">#[cfg(target_os = <span class="string">"none"</span>)]
-<a href=#74 id=74 data-nosnippet>74</a></span><span class="kw">pub use </span>power::PowerSignaler;
-<a href=#75 id=75 data-nosnippet>75</a>
-<a href=#76 id=76 data-nosnippet>76</a><span class="comment">// TODO:
-<a href=#77 id=77 data-nosnippet>77</a>//   Phase 2: pub mod power  — port the T1000-E battery monitor
-<a href=#78 id=78 data-nosnippet>78</a>//            (SAADC AIN7/P0.31, gated divider P0.14) with calibrated
-<a href=#79 id=79 data-nosnippet>79</a>//            slope/offset constants.
-<a href=#80 id=80 data-nosnippet>80</a>//   Phase 6: low-battery System OFF + LPCOMP solar-recovery wake.
-<a href=#81 id=81 data-nosnippet>81</a>//   Phase 7: pub mod gnss   — L76K UART/NMEA (P1.11/P1.12).
+<a href=#72 id=72 data-nosnippet>72</a></span><span class="kw">pub mod </span>shutdown;
+<a href=#73 id=73 data-nosnippet>73</a>
+<a href=#74 id=74 data-nosnippet>74</a><span class="attr">#[cfg(target_os = <span class="string">"none"</span>)]
+<a href=#75 id=75 data-nosnippet>75</a></span><span class="kw">pub use </span>platform::{SensecapSolarMac, SensecapSolarPlatform};
+<a href=#76 id=76 data-nosnippet>76</a><span class="attr">#[cfg(target_os = <span class="string">"none"</span>)]
+<a href=#77 id=77 data-nosnippet>77</a></span><span class="kw">pub use </span>power::PowerSignaler;
+<a href=#78 id=78 data-nosnippet>78</a>
+<a href=#79 id=79 data-nosnippet>79</a><span class="comment">// TODO:
+<a href=#80 id=80 data-nosnippet>80</a>//   Phase 2: pub mod power  — port the T1000-E battery monitor
+<a href=#81 id=81 data-nosnippet>81</a>//            (SAADC AIN7/P0.31, gated divider P0.14) with calibrated
+<a href=#82 id=82 data-nosnippet>82</a>//            slope/offset constants.
+<a href=#83 id=83 data-nosnippet>83</a>//   Phase 6: low-battery System OFF + LPCOMP solar-recovery wake.
 </span></code></pre></div></section></main></body></html>

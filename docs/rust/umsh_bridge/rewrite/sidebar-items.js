@@ -1,0 +1,1 @@
+window.SIDEBAR_ITEMS = {"enum":["RewriteError"],"fn":["next_source_route_hop","rewrite"],"struct":["RewritePlan","Rewritten"]};

@@ -35,10 +35,10 @@
             const path_to_root = "";
             const default_light_theme = "light";
             const default_dark_theme = "ayu";
-            window.path_to_searchindex_js = "searchindex-5216ea72.js";
+            window.path_to_searchindex_js = "searchindex-c10eed74.js";
         </script>
         <!-- Start loading toc.js asap -->
-        <script src="toc-ca16b95c.js"></script>
+        <script src="toc-438957a9.js"></script>
     </head>
     <body>
     <div id="mdbook-help-container">
@@ -406,13 +406,13 @@ K_mic = okm[16..31]
 <p>The associated data (AAD) binds the immutable header fields to the MIC so that any modification is detected.</p>
 <p>The AAD is constructed by concatenating the following fields in order:</p>
 <ol>
-<li><strong>FCF</strong> (1 byte)</li>
+<li><strong>FCF</strong> (1 byte, with the flood-hops-present (<code>H</code>) bit cleared)</li>
 <li><strong>Static options</strong> — re-encoded as type-length-value (see below)</li>
 <li><strong>DST</strong> (3-byte destination hint, unicast) or <strong>CHANNEL</strong> (2 bytes, multicast)</li>
 <li><strong>SRC</strong> (3-byte hint or 32-byte full key) — included only when the source field is outside the ciphertext</li>
 <li><strong>SECINFO</strong> (5 or 7 bytes)</li>
 </ol>
-<p>Dynamic options and the flood hop count are excluded from the AAD because they may be modified by repeaters during forwarding.</p>
+<p>Dynamic options and the flood hop count are excluded from the AAD because they may be modified by repeaters during forwarding. The FCF’s flood-hops-present (<code>H</code>) bit is part of that budget rather than of the packet’s identity, and is cleared before the byte enters the AAD: a sender abandoning a source route re-floods a packet that is already sealed, which adds <code>FHOPS</code> where the original had none. Masking the bit does not weaken the binding. Flipping it on the wire shifts every field the parser reads after it, so DST/CHANNEL, SRC, and SECINFO enter the AAD as different values and the MIC check still fails.</p>
 <p>Note that the AAD ordering above is <strong>canonical</strong> and differs from wire ordering. On the wire, static options appear after SECINFO (immediately before the payload); in the AAD they appear at position 2, before DST/CHANNEL. Wire ordering and AAD ordering are intentionally decoupled so that the canonical AAD structure remains stable regardless of where options sit on the wire.</p>
 <h4 id="static-option-encoding-in-aad"><a class="header" href="#static-option-encoding-in-aad">Static Option Encoding in AAD</a></h4>
 <p>Static options are not included in their wire delta-length form. Instead, each static option present in the packet is re-encoded using absolute type-length-value triples:</p>
@@ -443,7 +443,7 @@ K_mic = okm[16..31]
 <li><code>full_16B_CMAC</code> is the full 16-byte AES-CMAC computed during packet processing, before truncation to the on-wire MIC length</li>
 </ul>
 <p>The standalone <a href="packet-types.html#mac-ack-packet">MAC Ack</a> carries both fields (<code>ack_mic</code> followed by <code>ack_tag</code>, 8 bytes total). The <a href="packet-options.html#ack-mic-option-8">Ack MIC option</a> carries only <code>ack_mic</code>, because the packet carrying the option is itself authenticated to the original sender and therefore needs no separate keyed tag.</p>
-<p>The <code>ack_mic</code> is a prefix of the original packet’s on-wire MIC, so it was already visible to anyone who received that packet. The keyed <code>ack_tag</code>, by contrast, never appears in the original packet: producing it requires knowledge of <code>K_enc</code>, so a passive observer who intercepts the original packet cannot forge a valid standalone ack even though <code>ack_mic</code> is public. With a 4-byte keyed tag, a blind forgery succeeds with probability <code>2^-32</code> per attempt; over a bandwidth-limited LoRa channel, online guessing at that scale is infeasible. A successful forgery would cause the sender to treat an undelivered packet as delivered and suppress retransmission — a reliability denial-of-service, not a confidentiality or integrity break.</p>
+<p>The <code>ack_mic</code> is a prefix of the original packet’s on-wire MIC, so it was already visible to anyone who received that packet. The keyed <code>ack_tag</code>, by contrast, never appears in the original packet: producing it requires knowledge of <code>K_enc</code>, so a passive observer who intercepts the original packet cannot forge a valid standalone ack even though <code>ack_mic</code> is public. With a 4-byte keyed tag, a blind forgery succeeds with probability <code>2^-32</code> per attempt; over a bandwidth-limited LoRa channel, online guessing at that scale is infeasible. A successful forgery would cause the sender to treat an undelivered packet as delivered and suppress retransmission — a reliability denial-of-service, not a confidentiality or integrity break. A weaker variant needs no forged tag at all: repeaters <a href="repeater-operation.html#ack-cancellation">cancel queued forwards</a> on the public <code>ack_mic</code> alone, so an observer who saw the original packet can suppress its pending forwards at repeaters within earshot. The exposure is the same reliability class, costs the attacker a transmission per suppression, and is bounded by the sender’s <a href="packet-options.html#route-retry-option-6">Route Retry</a> recovery.</p>
 <p>The correlation exposed by <code>ack_mic</code> is deliberate. To an observer who already received the original packet, it confirms that the packet was delivered and links the ack to that packet. Because the MAC ack carries no destination hint, it adds no explicit endpoint identifier of its own — which removes the direct sender-identity leak a destination hint would introduce. This is not a guarantee of unlinkability: a determined adversary may still correlate an ack with its endpoints through timing, RF fingerprinting, return-path analysis, or by tying the <code>ack_mic</code> back to an original packet that itself exposed endpoint hints. For blind unicast, whose forward frame reveals no endpoint identity to a non-channel observer, omitting the destination hint keeps that concealment from being undone by the ack.</p>
 <p>AES-ECB on a single 16-byte block is the raw AES block cipher — a pseudorandom permutation — and does not have the pattern-leakage weakness associated with multi-block ECB encryption.</p>
 <h3 id="blind-unicast-address-encryption"><a class="header" href="#blind-unicast-address-encryption">Blind Unicast Address Encryption</a></h3>

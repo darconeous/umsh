@@ -35,10 +35,10 @@
             const path_to_root = "";
             const default_light_theme = "light";
             const default_dark_theme = "ayu";
-            window.path_to_searchindex_js = "searchindex-5216ea72.js";
+            window.path_to_searchindex_js = "searchindex-c10eed74.js";
         </script>
         <!-- Start loading toc.js asap -->
-        <script src="toc-ca16b95c.js"></script>
+        <script src="toc-438957a9.js"></script>
     </head>
     <body>
     <div id="mdbook-help-container">
@@ -188,6 +188,10 @@
 <li>a repeater path that may be usable to reach it</li>
 </ul>
 <p>This is particularly useful when a receiver already knows the node’s identity information.</p>
+<p>Pairing the trace-route option with <a href="packet-options.html#trace-signal-option-10">Trace
+Signal</a> makes the beacon report
+the quality of each hop as well as its identity, which is what
+distinguishes a path that merely works from one worth using.</p>
 <h2 id="advertisements"><a class="header" href="#advertisements">Advertisements</a></h2>
 <p>An <strong>advertisement</strong> is a broadcast or multicast packet whose payload is a
 <a href="node-identity.html">node identity</a> payload — a beacon that additionally
@@ -196,6 +200,34 @@ announcing presence, name, role, and capabilities. To obtain a specific
 node’s identity, use the <a href="mac-commands.html#identity-request-1">Identity Request</a>
 MAC command, which is answered with a targeted unicast identity response
 rather than a broadcast advertisement.</p>
+<h2 id="announcing-on-a-schedule"><a class="header" href="#announcing-on-a-schedule">Announcing on a Schedule</a></h2>
+<p>A node MAY emit beacons and advertisements on periods of its own. The two
+are configured separately because they announce different things at very
+different costs: a beacon publishes a path for a handful of bytes, while
+an advertisement carries a signed identity and is the largest frame a node
+originates unprompted. A mesh is normally best served by refreshing the
+path often and restating the identity rarely.</p>
+<p>A scheduled advertisement SHOULD be sent without flood hops. What it
+carries is a standing statement rather than news, so flooding it across
+the mesh on every period spends airtime out of proportion to what a
+distant listener learns; a node that wants to be findable further away
+publishes a path with a beacon instead.</p>
+<p>A configured period is a minimum rather than an exact cadence. A node
+SHOULD scatter each period by a random fraction of it — a quarter is a
+reasonable choice — and that scatter MUST only delay an announcement,
+never bring it forward, so the configured value remains a floor on how
+often the node transmits unasked. Nodes commissioned alike and powered on
+together otherwise stay in step for as long as they run, colliding every
+period and colliding again on each retry, since a shared schedule makes
+them contend from the same instant every time. Carrier sensing resolves
+the individual collision; the scatter is what keeps the mesh from having
+to resolve one on every period.</p>
+<p>A node that has just restarted is the node whose neighbours hold the
+stalest paths to it, so emitting one beacon at bring-up is RECOMMENDED.
+That beacon is not delayed: nodes do not restart in unison, so bring-up
+is already scattered by whatever staggered it.</p>
+<p>On a device managed over <a href="ulcp-device.html#prop-advert-interval">ULCP</a>,
+these periods are the advertisement-policy properties.</p>
 <h2 id="path-discovery"><a class="header" href="#path-discovery">Path Discovery</a></h2>
 <p>UMSH does not define a dedicated path-discovery packet type. Instead, path discovery is performed using existing primitives:</p>
 <ol>
@@ -228,6 +260,7 @@ rather than a broadcast advertisement.</p>
 <li>include a trace-route option so that a fresh source route can be learned from the peer’s reply</li>
 <li>set the <a href="packet-options.html#route-retry-option-6">Route Retry option</a> so intermediate repeaters treat the rerouted attempt as a new forwarding opportunity even though the packet’s MIC and frame counter are unchanged</li>
 </ul>
+<p>Trading a source route for flood hops rewrites only fields the <a href="security.html#associated-data">associated data</a> excludes. Adding <code>FHOPS</code> sets the FCF’s <code>H</code> bit, which the AAD clears, so the MIC carries over unchanged.</p>
 <p>Once the peer replies and a fresher trace route is learned, the sender can resume normal source-routed transmission using the replacement route.</p>
 <h2 id="scoping-flood-hops-to-a-known-route"><a class="header" href="#scoping-flood-hops-to-a-known-route">Scoping Flood Hops to a Known Route</a></h2>
 <p>A wide flood hop count is a first-contact cost. Once routing state exists for a destination, the sender SHOULD scope <code>FHOPS_REM</code> to what the known path actually costs, plus a small margin:</p>

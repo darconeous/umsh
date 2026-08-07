@@ -294,7 +294,7 @@
 <a href=#294 id=294 data-nosnippet>294</a>            key_bytes,
 <a href=#295 id=295 data-nosnippet>295</a>        };
 <a href=#296 id=296 data-nosnippet>296</a>        <span class="kw">if </span><span class="self">self</span>.channels.insert(hname, entry).is_err() {
-<a href=#297 id=297 data-nosnippet>297</a>            <span class="kw">let _ </span>= <span class="self">self</span>.node.leave(<span class="kw-2">&amp;</span>channel);
+<a href=#297 id=297 data-nosnippet>297</a>            <span class="kw">let _ </span>= <span class="self">self</span>.node.leave(<span class="kw-2">&amp;</span>channel).<span class="kw">await</span>;
 <a href=#298 id=298 data-nosnippet>298</a>            <span class="kw">return </span><span class="bool-val">false</span>;
 <a href=#299 id=299 data-nosnippet>299</a>        }
 <a href=#300 id=300 data-nosnippet>300</a>        <span class="bool-val">true
@@ -1329,7 +1329,7 @@
 <a href=#1329 id=1329 data-nosnippet>1329</a>                        key_bytes,
 <a href=#1330 id=1330 data-nosnippet>1330</a>                    };
 <a href=#1331 id=1331 data-nosnippet>1331</a>                    <span class="kw">if </span><span class="self">self</span>.channels.insert(hname, entry).is_err() {
-<a href=#1332 id=1332 data-nosnippet>1332</a>                        <span class="kw">let _ </span>= <span class="self">self</span>.node.leave(<span class="kw-2">&amp;</span>channel);
+<a href=#1332 id=1332 data-nosnippet>1332</a>                        <span class="kw">let _ </span>= <span class="self">self</span>.node.leave(<span class="kw-2">&amp;</span>channel).<span class="kw">await</span>;
 <a href=#1333 id=1333 data-nosnippet>1333</a>                        <span class="kw">return </span><span class="self">self</span>.write_err(<span class="string">"channel table full"</span>).<span class="kw">await</span>;
 <a href=#1334 id=1334 data-nosnippet>1334</a>                    }
 <a href=#1335 id=1335 data-nosnippet>1335</a>                    <span class="comment">// Persist (best-effort).
@@ -1364,7 +1364,7 @@
 <a href=#1364 id=1364 data-nosnippet>1364</a>            };
 <a href=#1365 id=1365 data-nosnippet>1365</a>            <span class="kw">let </span>channel_key = umsh_core::ChannelKey(key_bytes);
 <a href=#1366 id=1366 data-nosnippet>1366</a>            <span class="kw">let </span>channel = umsh_node::Channel::private(channel_key, name);
-<a href=#1367 id=1367 data-nosnippet>1367</a>            <span class="kw">let _ </span>= <span class="self">self</span>.node.leave(<span class="kw-2">&amp;</span>channel);
+<a href=#1367 id=1367 data-nosnippet>1367</a>            <span class="kw">let _ </span>= <span class="self">self</span>.node.leave(<span class="kw-2">&amp;</span>channel).<span class="kw">await</span>;
 <a href=#1368 id=1368 data-nosnippet>1368</a>            <span class="comment">// Persist deletion (best-effort).
 <a href=#1369 id=1369 data-nosnippet>1369</a>            </span><span class="kw">let _ </span>= <span class="self">self</span>.channel_store.delete_channel(name.as_bytes()).<span class="kw">await</span>;
 <a href=#1370 id=1370 data-nosnippet>1370</a>            <span class="self">self</span>.out.write_line(<span class="string">"left"</span>).<span class="kw">await</span><span class="question-mark">?</span>;

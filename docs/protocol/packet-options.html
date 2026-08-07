@@ -35,10 +35,10 @@
             const path_to_root = "";
             const default_light_theme = "light";
             const default_dark_theme = "ayu";
-            window.path_to_searchindex_js = "searchindex-5216ea72.js";
+            window.path_to_searchindex_js = "searchindex-c10eed74.js";
         </script>
         <!-- Start loading toc.js asap -->
-        <script src="toc-ca16b95c.js"></script>
+        <script src="toc-438957a9.js"></script>
     </head>
     <body>
     <div id="mdbook-help-container">
@@ -237,7 +237,12 @@
 <li>If absent, no trace-route information is added automatically.</li>
 <li>If more than one option with this number is present, the packet MUST be dropped.</li>
 <li>Value layout: see <a href="#trace-route-option-value">Trace Route Option Value</a>.</li>
+<li>If implemented, Trace Signal (option 10) <strong>MUST</strong> also be implemented.</li>
 </ul>
+<blockquote class="blockquote-tag blockquote-tag-important">
+<p class="blockquote-tag-title"><svg viewbox="0 0 16 16" width="18" height="18"><path d="M0 1.75C0 .784.784 0 1.75 0h12.5C15.216 0 16 .784 16 1.75v9.5A1.75 1.75 0 0 1 14.25 13H8.06l-2.573 2.573A1.458 1.458 0 0 1 3 14.543V13H1.75A1.75 1.75 0 0 1 0 11.25Zm1.75-.25a.25.25 0 0 0-.25.25v9.5c0 .138.112.25.25.25h2a.75.75 0 0 1 .75.75v2.19l2.72-2.72a.749.749 0 0 1 .53-.22h6.5a.25.25 0 0 0 .25-.25v-9.5a.25.25 0 0 0-.25-.25Zm7 2.25v2.5a.75.75 0 0 1-1.5 0v-2.5a.75.75 0 0 1 1.5 0ZM9 9a1 1 0 1 1-2 0 1 1 0 0 1 2 0Z"></path></svg>Important</p>
+<p>If a repeater supports the Trace Route option, it <strong>MUST</strong> also implement the Trace Signal option (even if it is just adding placeholder values). Failure to do this breaks the one-to-one relationship between the Trace option and the Trace Signal options, making the Trace Signal value useless.</p>
+</blockquote>
 <h3 id="source-route-option-3"><a class="header" href="#source-route-option-3">Source Route (option 3)</a></h3>
 <ul>
 <li>Semantics: contains an ordered list of repeater hints designating the forwarding path.</li>
@@ -275,20 +280,36 @@
 </ul>
 <h3 id="route-retry-option-6"><a class="header" href="#route-retry-option-6">Route Retry (option 6)</a></h3>
 <ul>
-<li>Type: zero-length flag</li>
-<li>Semantics: indicates that the originator is re-attempting forwarding of the same logical packet after a route it had assumed was considered failed.</li>
-<li>If more than one option with this number is present, the packet MUST be dropped.</li>
-<li>This option is intended for sender-originated route recovery, not for ordinary first transmission.</li>
-<li>The failed assumption need not be a source route. A sender that narrowed <code>FHOPS</code> because it believed the destination was directly reachable, or reachable within a known flood distance, has made the same kind of assumption; nothing on the wire distinguishes that packet from an ordinary short-radius flood, and the recovery is the same.</li>
-<li>When present, repeaters treat the packet as a distinct forwarding attempt for duplicate-suppression purposes even though the MIC and frame counter are unchanged.</li>
-<li>The destination does <strong>not</strong> treat this option as creating a new logical packet. Replay acceptance and duplicate application delivery remain governed by the packet’s normal security state, especially its frame counter.</li>
-<li>A sender using this option for route recovery typically:
+<li>
+<p>Type: zero-length flag</p>
+</li>
+<li>
+<p>Semantics: indicates that the originator is re-attempting forwarding of the same logical packet after a route it had assumed was considered failed.</p>
+</li>
+<li>
+<p>If more than one option with this number is present, the packet MUST be dropped.</p>
+</li>
+<li>
+<p>This option is intended for sender-originated route recovery, not for ordinary first transmission.</p>
+</li>
+<li>
+<p>The failed assumption need not be a source route. A sender that narrowed <code>FHOPS</code> because it believed the destination was directly reachable, or reachable within a known flood distance, has made the same kind of assumption; nothing on the wire distinguishes that packet from an ordinary short-radius flood, and the recovery is the same.</p>
+</li>
+<li>
+<p>When present, repeaters treat the packet as a distinct forwarding attempt for duplicate-suppression purposes even though the MIC and frame counter are unchanged.</p>
+</li>
+<li>
+<p>The destination does <strong>not</strong> treat this option as creating a new logical packet. Replay acceptance and duplicate application delivery remain governed by the packet’s normal security state, especially its frame counter.</p>
+</li>
+<li>
+<p>A sender using this option for route recovery typically:</p>
 <ul>
 <li>removes the stale source-route option, if one was present</li>
 <li>adds or refreshes flood hops, up to but not beyond the budget the sending application was willing to spend</li>
 <li>includes a trace-route option to learn a replacement route</li>
 <li>preserves the same frame counter and payload</li>
 </ul>
+<p>Each of these rewrites a field the <a href="security.html#associated-data">associated data</a> excludes, which is what lets the retry reuse the original MIC unchanged. Adding <code>FHOPS</code> to a packet that had none also sets the FCF’s <code>H</code> bit, and the AAD clears that bit for this reason.</p>
 </li>
 </ul>
 <h3 id="station-callsign-option-7"><a class="header" href="#station-callsign-option-7">Station Callsign (option 7)</a></h3>
@@ -311,6 +332,7 @@
 <li>Type: 4-byte ack MIC — the first 4 bytes of the acknowledged packet’s on-wire MIC (see <a href="security.html#ack-tag-construction">Ack Tag Construction</a>).</li>
 </ul>
 <p>The option carries only the correlation handle, not a keyed ack tag: the packet carrying the option is itself authenticated to the original sender, so its own MIC already proves the acknowledgement is genuine. The <code>ack_mic</code> value simply identifies which outstanding request the reply acknowledges.</p>
+<p>Because the option sits in the plaintext options block, forwarders read it under the same terms as a standalone MAC ack, including for <a href="repeater-operation.html#ack-cancellation">ack cancellation</a>.</p>
 <h3 id="minimum-snr-option-9"><a class="header" href="#minimum-snr-option-9">Minimum SNR (option 9)</a></h3>
 <ul>
 <li>Type: signed 1-byte integer, in dB</li>

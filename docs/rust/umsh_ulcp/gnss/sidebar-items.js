@@ -1,0 +1,1 @@
+window.SIDEBAR_ITEMS = {"constant":["MAX_LOCATION_LEN","MAX_VALUE_LEN"],"enum":["FixKind","GnssError"],"fn":["is_positioning_property"],"struct":["GnssSnapshot"]};

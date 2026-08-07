@@ -35,10 +35,10 @@
             const path_to_root = "";
             const default_light_theme = "light";
             const default_dark_theme = "ayu";
-            window.path_to_searchindex_js = "searchindex-5216ea72.js";
+            window.path_to_searchindex_js = "searchindex-c10eed74.js";
         </script>
         <!-- Start loading toc.js asap -->
-        <script src="toc-ca16b95c.js"></script>
+        <script src="toc-438957a9.js"></script>
     </head>
     <body>
     <div id="mdbook-help-container">
@@ -230,6 +230,7 @@ delay   = D_ack + uniform_random(0, W)
 <p>If SNR is unavailable but RSSI is, the same formula MAY be applied with RSSI values substituted for SNR, using appropriate threshold and range parameters.</p>
 <p>After computing the delay, the repeater waits. Other packets SHOULD continue to be be forwarded while waiting, assuming the channel is clear.</p>
 <p>If the repeater overhears the same packet forwarded by another node (identified by MIC in the duplicate cache) before the delay expires, it SHOULD defer rather than transmit. A safe default is to resample a delay using the same <code>W_min</code>/<code>W_max</code> limits — including <code>D_ack</code> when it applies, since the overheard copy may itself elicit an immediate ACK from the destination — and restart the waiting period. A repeater SHOULD NOT do this more than 3 times; after the third such deferral it SHOULD abandon the pending forward.</p>
+<p>If the repeater instead overhears a MAC ack whose <code>ack_mic</code> matches the pending packet’s MIC prefix, it SHOULD <a href="repeater-operation.html#ack-cancellation">cancel the pending forward outright</a> rather than defer: the destination provably has the packet.</p>
 <p>This deferral behavior is intended only for the first local forwarding decision after reception. Once a repeater has actually transmitted its own copy, any later retransmission behavior is governed by <a href="repeater-operation.html#forwarding-confirmation">Repeater Operation</a>.</p>
 <p>Nodes waiting for implicit forwarding confirmation MUST size their confirmation timeout to include this full forwarding-delay window. A safe default is to allow:</p>
 <ul>

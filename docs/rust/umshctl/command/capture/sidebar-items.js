@@ -1,1 +1,1 @@
-window.SIDEBAR_ITEMS = {"enum":["Stop"],"fn":["apply_rf","capture_once","capture_with_recovery","clear_promiscuous","dump","report_rf","run"],"mod":["decode","pcap"],"struct":["CaptureArgs","Stats"]};
+window.SIDEBAR_ITEMS = {"enum":["Stop"],"fn":["apply_rf","capture_once","capture_with_recovery","clear_promiscuous","dump","is_broken_pipe","read_rf_params","report_rf","run","run_with_writer"],"mod":["decode","pcap"],"struct":["CaptureArgs","Stats"]};

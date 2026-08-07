@@ -35,10 +35,10 @@
             const path_to_root = "";
             const default_light_theme = "light";
             const default_dark_theme = "ayu";
-            window.path_to_searchindex_js = "searchindex-5216ea72.js";
+            window.path_to_searchindex_js = "searchindex-c10eed74.js";
         </script>
         <!-- Start loading toc.js asap -->
-        <script src="toc-ca16b95c.js"></script>
+        <script src="toc-438957a9.js"></script>
     </head>
     <body>
     <div id="mdbook-help-container">
@@ -680,6 +680,8 @@ the duty-cycle limit</li>
 forwarding switch (<code>PROP_MAC_REPEATER_ENABLED</code>), with the rest of the
 range reserved for future definition (further repeater policy,
 positioning, periodic advertisement of the device identity, and similar)</li>
+<li>the administrator list (<a href="app-node-management.html#prop-dev-admins"><code>PROP_DEV_ADMINS</code></a>)
+authorizing <a href="app-node-management.html">node management</a> over the mesh</li>
 <li>transport configuration such as <code>PROP_BLE_PAIRING_PIN</code></li>
 </ul>
 <p>The RF configuration is deliberately device-domain: a site repeater keeps
@@ -854,6 +856,7 @@ and the <code>TID</code> of command it is referring to.</p>
 <tr><td>18</td><td><code>STATUS_CCA_FAILURE</code></td></tr>
 <tr><td>19</td><td><code>STATUS_ALREADY</code></td></tr>
 <tr><td>20</td><td><code>STATUS_ITEM_NOT_FOUND</code></td></tr>
+<tr><td>21</td><td><code>STATUS_CURSOR_INVALID</code></td></tr>
 <tr><td>32</td><td><code>STATUS_DUTY_LIMIT</code></td></tr>
 </tbody>
 </table>
@@ -897,6 +900,12 @@ to <code>CMD_PROP_INSERT</code> is already present in the property.</dd>
 <dt id="status_item_not_found"><a class="header" href="#status_item_not_found"><code>STATUS_ITEM_NOT_FOUND</code></a></dt>
 <dd>The item or selector passed to <code>CMD_PROP_REMOVE</code> does not match any item
 in the property.</dd>
+<dt id="status_cursor_invalid"><a class="header" href="#status_cursor_invalid"><code>STATUS_CURSOR_INVALID</code></a></dt>
+<dd>The cursor presented in a <a href="app-node-management.html#cursors">Node Management</a>
+continuation is not one the device can honor — it does not parse, names a
+different property, or the underlying data has changed so that the
+position is meaningless. The administrator restarts the read from an
+initial, cursor-less request.</dd>
 <dt id="status_cca_failure"><a class="header" href="#status_cca_failure"><code>STATUS_CCA_FAILURE</code></a></dt>
 <dd>The packet was not sent due to a CCA failure. This status code is only
 emitted when sending data to a packet stream with a TID other than zero.</dd>
@@ -995,6 +1004,11 @@ grants:</p>
 <tr><td>40</td><td><code>CAP_REPEATER</code></td><td><code>CAP_DEV_IDENTITY</code></td><td><a href="ulcp-device.html#capabilities">Device Domain</a></td></tr>
 <tr><td>41</td><td><code>CAP_IDENT</code></td><td><code>CAP_DEV_IDENTITY</code></td><td><a href="ulcp-device.html#capabilities">Device Domain</a></td></tr>
 <tr><td>42</td><td><code>CAP_ALERT</code></td><td>—</td><td><a href="ulcp-device.html#capabilities">Device Domain</a></td></tr>
+<tr><td>43</td><td><code>CAP_ADMIN</code></td><td><code>CAP_DEV_IDENTITY</code></td><td><a href="app-node-management.html#capabilities">Node Management</a></td></tr>
+<tr><td>44</td><td><code>CAP_TIME</code></td><td>—</td><td><a href="ulcp-device.html#capabilities">Device Domain</a></td></tr>
+<tr><td>45</td><td><code>CAP_GNSS</code></td><td><code>CAP_TIME</code></td><td><a href="ulcp-device.html#capabilities">Device Domain</a></td></tr>
+<tr><td>46</td><td><code>CAP_ADVERT</code></td><td><code>CAP_DEV_IDENTITY</code></td><td><a href="ulcp-device.html#capabilities">Device Domain</a></td></tr>
+<tr><td>47</td><td><code>CAP_ILLUMINANCE</code></td><td>—</td><td><a href="ulcp-device.html#capabilities">Device Domain</a></td></tr>
 <tr><td>515</td><td><code>CAP_PHY_LORA</code></td><td>—</td><td><a href="ulcp-radio.html#capabilities">Radio Control</a></td></tr>
 </tbody>
 </table>

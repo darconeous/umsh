@@ -1,0 +1,1 @@
+window.SIDEBAR_ITEMS = {"constant":["BATTERY_SEGMENTS"],"enum":["LinkState","PairingState"],"fn":["battery_segments","draw_battery_icon","render_frame","render_message"],"struct":["BatteryIconMetrics","BatteryIndicator","ClockModel","Layout","StatsModel","StatusModel"]};

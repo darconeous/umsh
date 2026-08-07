@@ -35,10 +35,10 @@
             const path_to_root = "";
             const default_light_theme = "light";
             const default_dark_theme = "ayu";
-            window.path_to_searchindex_js = "searchindex-5216ea72.js";
+            window.path_to_searchindex_js = "searchindex-c10eed74.js";
         </script>
         <!-- Start loading toc.js asap -->
-        <script src="toc-ca16b95c.js"></script>
+        <script src="toc-438957a9.js"></script>
     </head>
     <body>
     <div id="mdbook-help-container">
@@ -175,6 +175,10 @@
                 <div id="mdbook-content" class="content">
                     <main>
                         <h1 id="local-control-protocol-ulcp"><a class="header" href="#local-control-protocol-ulcp">Local Control Protocol (ULCP)</a></h1>
+<blockquote>
+<p>![NOTE]
+This section is an early work in progress and this protocol may change significantly.</p>
+</blockquote>
 <p>The <strong>UMSH Local Control Protocol</strong> (ULCP) is the interface between a UMSH
 <strong>device</strong> — hardware that owns a physical transceiver and runs always-on
 firmware — and a <strong>host</strong> such as a phone, tablet, laptop, or small computer
@@ -199,6 +203,9 @@ implement to be a ULCP device, and the
 identifier</li>
 <li><a href="ulcp-ble.html">ULCP over BLE</a> binds the protocol to BLE GATT; serial
 transports (UART, USB-CDC) use HDLC-Lite framing</li>
+<li><a href="app-node-management.html">Node Management</a> carries the same grammar over
+the mesh itself, letting an authorized administrator reach a device’s
+device domain in-band, with no local link at all</li>
 </ul>
 <p>One protocol serves every deployment of a device; the familiar deployment
 names describe configuration, not distinct firmware:</p>

@@ -35,10 +35,10 @@
             const path_to_root = "";
             const default_light_theme = "light";
             const default_dark_theme = "ayu";
-            window.path_to_searchindex_js = "searchindex-5216ea72.js";
+            window.path_to_searchindex_js = "searchindex-c10eed74.js";
         </script>
         <!-- Start loading toc.js asap -->
-        <script src="toc-ca16b95c.js"></script>
+        <script src="toc-438957a9.js"></script>
     </head>
     <body>
     <div id="mdbook-help-container">
@@ -244,6 +244,16 @@
 <tr><td>77</td><td><a href="ulcp-device.html#prop-mac-repeater-min-snr"><code>PROP_MAC_REPEATER_MIN_SNR</code></a></td><td>Get, Set</td><td><code>CAP_REPEATER</code></td></tr>
 <tr><td>78</td><td><a href="ulcp-device.html#prop-dev-discoverable"><code>PROP_DEV_DISCOVERABLE</code></a></td><td>Get, Set</td><td><code>CAP_DEV_IDENTITY</code></td></tr>
 <tr><td>79</td><td><a href="ulcp-device.html#prop-alert"><code>PROP_ALERT</code></a></td><td>Get, Set, Is</td><td><code>CAP_ALERT</code></td></tr>
+<tr><td>80</td><td><a href="ulcp-device.html#prop-advert-interval"><code>PROP_ADVERT_INTERVAL</code></a></td><td>Get, Set</td><td><code>CAP_ADVERT</code></td></tr>
+<tr><td>81</td><td><a href="ulcp-device.html#prop-beacon-interval"><code>PROP_BEACON_INTERVAL</code></a></td><td>Get, Set</td><td><code>CAP_ADVERT</code></td></tr>
+<tr><td>82</td><td><a href="ulcp-device.html#prop-startup-beacon"><code>PROP_STARTUP_BEACON</code></a></td><td>Get, Set</td><td><code>CAP_ADVERT</code></td></tr>
+<tr><td>88</td><td><a href="ulcp-device.html#prop-gnss-enabled"><code>PROP_GNSS_ENABLED</code></a></td><td>Get, Set</td><td><code>CAP_GNSS</code></td></tr>
+<tr><td>89</td><td><a href="ulcp-device.html#prop-gnss-location"><code>PROP_GNSS_LOCATION</code></a></td><td>Get, Is</td><td><code>CAP_GNSS</code></td></tr>
+<tr><td>90</td><td><a href="ulcp-device.html#prop-gnss-altitude"><code>PROP_GNSS_ALTITUDE</code></a></td><td>Get</td><td><code>CAP_GNSS</code></td></tr>
+<tr><td>91</td><td><a href="ulcp-device.html#prop-gnss-fix"><code>PROP_GNSS_FIX</code></a></td><td>Get, Is</td><td><code>CAP_GNSS</code></td></tr>
+<tr><td>92</td><td><a href="ulcp-device.html#prop-gnss-precision"><code>PROP_GNSS_PRECISION</code></a></td><td>Get</td><td><code>CAP_GNSS</code></td></tr>
+<tr><td>93</td><td><a href="ulcp-device.html#prop-gnss-satellites"><code>PROP_GNSS_SATELLITES</code></a></td><td>Get</td><td><code>CAP_GNSS</code></td></tr>
+<tr><td>94</td><td><a href="ulcp-device.html#prop-illuminance"><code>PROP_ILLUMINANCE</code></a></td><td>Get</td><td><code>CAP_ILLUMINANCE</code></td></tr>
 <tr><td>96</td><td><a href="ulcp-host.html#prop-host-key"><code>PROP_HOST_KEY</code></a></td><td>Get, Set</td><td><code>CAP_HOST_FILTER</code></td></tr>
 <tr><td>97</td><td><a href="ulcp-host.html#prop-host-channel-keys"><code>PROP_HOST_CHANNEL_KEYS</code></a></td><td>Get, Set, Insert, Remove</td><td><code>CAP_HOST_KEYS</code></td></tr>
 <tr><td>98</td><td><a href="ulcp-host.html#prop-host-peer-keys"><code>PROP_HOST_PEER_KEYS</code></a></td><td>Get, Set, Insert, Remove</td><td><code>CAP_HOST_KEYS</code></td></tr>
@@ -256,6 +266,12 @@
 <tr><td>4820</td><td><a href="ulcp-radio.html#prop-phy-duty-now"><code>PROP_PHY_DUTY_NOW</code></a></td><td>Get</td><td><code>CAP_PHY_DUTY_LIMIT</code></td></tr>
 <tr><td>4822</td><td><a href="ulcp-radio.html#prop-phy-duty-limit"><code>PROP_PHY_DUTY_LIMIT</code></a></td><td>Get, Set</td><td><code>CAP_PHY_DUTY_LIMIT</code></td></tr>
 <tr><td>4864</td><td><a href="ulcp-ble.html#prop-ble-pairing-pin"><code>PROP_BLE_PAIRING_PIN</code></a></td><td>Set</td><td>BLE transport</td></tr>
+<tr><td>4865</td><td><a href="app-node-management.html#prop-dev-admins"><code>PROP_DEV_ADMINS</code></a></td><td>Get, Set, Insert, Remove</td><td><code>CAP_ADMIN</code></td></tr>
+<tr><td>4866</td><td><a href="ulcp-device.html#prop-time"><code>PROP_TIME</code></a></td><td>Get, Set, Is</td><td><code>CAP_TIME</code></td></tr>
+<tr><td>4867</td><td><a href="ulcp-device.html#prop-tz-offset"><code>PROP_TZ_OFFSET</code></a></td><td>Get, Set</td><td><code>CAP_TIME</code></td></tr>
+<tr><td>4868</td><td><a href="ulcp-device.html#prop-gnss-ident-update"><code>PROP_GNSS_IDENT_UPDATE</code></a></td><td>Get, Set</td><td><code>CAP_GNSS</code></td></tr>
+<tr><td>4869</td><td><a href="ulcp-device.html#prop-gnss-ident-precision"><code>PROP_GNSS_IDENT_PRECISION</code></a></td><td>Get, Set</td><td><code>CAP_GNSS</code></td></tr>
+<tr><td>4870</td><td><a href="ulcp-device.html#prop-gnss-time-trust"><code>PROP_GNSS_TIME_TRUST</code></a></td><td>Get, Set</td><td><code>CAP_GNSS</code></td></tr>
 </tbody>
 </table>
 </div>
@@ -281,6 +297,11 @@ is in <a href="ulcp-core.html#capabilities">Capabilities</a>.</p>
 <tr><td>40</td><td><code>CAP_REPEATER</code></td><td><a href="ulcp-device.html#capabilities">Device Domain</a></td></tr>
 <tr><td>41</td><td><code>CAP_IDENT</code></td><td><a href="ulcp-device.html#capabilities">Device Domain</a></td></tr>
 <tr><td>42</td><td><code>CAP_ALERT</code></td><td><a href="ulcp-device.html#capabilities">Device Domain</a></td></tr>
+<tr><td>43</td><td><code>CAP_ADMIN</code></td><td><a href="app-node-management.html#capabilities">Node Management</a></td></tr>
+<tr><td>44</td><td><code>CAP_TIME</code></td><td><a href="ulcp-device.html#capabilities">Device Domain</a></td></tr>
+<tr><td>45</td><td><code>CAP_GNSS</code></td><td><a href="ulcp-device.html#capabilities">Device Domain</a></td></tr>
+<tr><td>46</td><td><code>CAP_ADVERT</code></td><td><a href="ulcp-device.html#capabilities">Device Domain</a></td></tr>
+<tr><td>47</td><td><code>CAP_ILLUMINANCE</code></td><td><a href="ulcp-device.html#capabilities">Device Domain</a></td></tr>
 <tr><td>515</td><td><code>CAP_PHY_LORA</code></td><td><a href="ulcp-radio.html#capabilities">Radio Control</a></td></tr>
 </tbody>
 </table>
@@ -298,8 +319,8 @@ is in <a href="ulcp-core.html#capabilities">Capabilities</a>.</p>
 <tr><td>2</td><td><code>STATUS_UNIMPLEMENTED</code></td><td>18</td><td><code>STATUS_CCA_FAILURE</code></td></tr>
 <tr><td>3</td><td><code>STATUS_INVALID_ARGUMENT</code></td><td>19</td><td><code>STATUS_ALREADY</code></td></tr>
 <tr><td>4</td><td><code>STATUS_INVALID_STATE</code></td><td>20</td><td><code>STATUS_ITEM_NOT_FOUND</code></td></tr>
-<tr><td>5</td><td><code>STATUS_INVALID_COMMAND</code></td><td>32</td><td><code>STATUS_DUTY_LIMIT</code></td></tr>
-<tr><td>7</td><td><code>STATUS_INTERNAL_ERROR</code></td><td></td><td></td></tr>
+<tr><td>5</td><td><code>STATUS_INVALID_COMMAND</code></td><td>21</td><td><code>STATUS_CURSOR_INVALID</code></td></tr>
+<tr><td>7</td><td><code>STATUS_INTERNAL_ERROR</code></td><td>32</td><td><code>STATUS_DUTY_LIMIT</code></td></tr>
 <tr><td>9</td><td><code>STATUS_PARSE_ERROR</code></td><td></td><td></td></tr>
 <tr><td>10</td><td><code>STATUS_IN_PROGRESS</code></td><td></td><td></td></tr>
 <tr><td>11</td><td><code>STATUS_NOMEM</code></td><td></td><td></td></tr>
@@ -335,6 +356,7 @@ reserved for them.</p>
 <tr><td>Filter types</td><td>0 <code>FILTER_DEST_HINT</code>, 1 <code>FILTER_CHANNEL_ID</code>, 2 <code>FILTER_PKT_TYPE</code></td><td><a href="ulcp-host.html#prop-host-rx-filters"><code>PROP_HOST_RX_FILTERS</code></a></td></tr>
 <tr><td>Charge states</td><td>0 discharging, 1 charging, 2 charged</td><td><a href="ulcp-device.html#prop-battery"><code>PROP_BATTERY</code></a></td></tr>
 <tr><td>Alert states</td><td>0 <code>ALERT_NONE</code>, 1 <code>ALERT_LOCATE</code></td><td><a href="ulcp-device.html#prop-alert"><code>PROP_ALERT</code></a></td></tr>
+<tr><td>Fix quality</td><td>0 none, 1 two-dimensional, 2 three-dimensional</td><td><a href="ulcp-device.html#prop-gnss-fix"><code>PROP_GNSS_FIX</code></a></td></tr>
 <tr><td>Transmit flags</td><td>bit 0 <code>TX_FLAG_NOCCA</code>, bit 1 <code>TX_FLAG_NODUTY</code></td><td><a href="ulcp-transport.html#str-radio-raw"><code>STR_PHY_RAW</code></a></td></tr>
 <tr><td>Receive flags</td><td>bit 0 <code>RX_FLAG_BUFFERED</code>, bit 1 <code>RX_FLAG_ACKED</code></td><td><a href="ulcp-transport.html#buffered-metadata">Buffered-Frame Metadata</a></td></tr>
 </tbody>

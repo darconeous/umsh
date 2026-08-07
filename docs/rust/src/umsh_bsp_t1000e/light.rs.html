@@ -1,0 +1,248 @@
+<!DOCTYPE html><html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1.0"><meta name="generator" content="rustdoc"><meta name="description" content="Source of the Rust file `crates/umsh-bsp-t1000e/src/light.rs`."><title>light.rs - source</title><script>if(window.location.protocol!=="file:")document.head.insertAdjacentHTML("beforeend","SourceSerif4-Regular-6b053e98.ttf.woff2,FiraSans-Italic-81dc35de.woff2,FiraSans-Regular-0fe48ade.woff2,FiraSans-MediumItalic-ccf7e434.woff2,FiraSans-Medium-e1aa3f0a.woff2,SourceCodePro-Regular-8badfe75.ttf.woff2,SourceCodePro-Semibold-aa29a496.ttf.woff2".split(",").map(f=>`<link rel="preload" as="font" type="font/woff2"href="../../static.files/${f}">`).join(""))</script><link rel="stylesheet" href="../../static.files/normalize-9960930a.css"><link rel="stylesheet" href="../../static.files/rustdoc-80aa586b.css"><meta name="rustdoc-vars" data-root-path="../../" data-static-root-path="../../static.files/" data-current-crate="umsh_bsp_t1000e" data-themes="" data-resource-suffix="" data-rustdoc-version="1.94.0-nightly (fcf67da03 2025-12-18)" data-channel="nightly" data-search-js="search-9e2438ea.js" data-stringdex-js="stringdex-a3946164.js" data-settings-js="settings-c38705f0.js" ><script src="../../static.files/storage-e2aeef58.js"></script><script defer src="../../static.files/src-script-813739b1.js"></script><script defer src="../../src-files.js"></script><script defer src="../../static.files/main-3e30299d.js"></script><noscript><link rel="stylesheet" href="../../static.files/noscript-ffcac47a.css"></noscript><link rel="alternate icon" type="image/png" href="../../static.files/favicon-32x32-eab170b8.png"><link rel="icon" type="image/svg+xml" href="../../static.files/favicon-044be391.svg"></head><body class="rustdoc src"><!--[if lte IE 11]><div class="warning">This old browser is unsupported and will most likely display funky things.</div><![endif]--><nav class="sidebar"><div class="src-sidebar-title"><h2>Files</h2></div></nav><div class="sidebar-resizer" title="Drag to resize sidebar"></div><main><section id="main-content" class="content"><div class="main-heading"><h1><div class="sub-heading">umsh_bsp_t1000e/</div>light.rs</h1><rustdoc-toolbar></rustdoc-toolbar></div><div class="example-wrap digits-3"><pre class="rust"><code><a href=#1 id=1 data-nosnippet>1</a><span class="doccomment">//! Ambient light sensing for the T1000-E.
+<a href=#2 id=2 data-nosnippet>2</a>//!
+<a href=#3 id=3 data-nosnippet>3</a>//! The sensor sits on P0.29 (AIN5) behind two enables: the shared sensor
+<a href=#4 id=4 data-nosnippet>4</a>//! 3.3 V rail (P1.06) and a sensor-enable line (P0.04), both active-high.
+<a href=#5 id=5 data-nosnippet>5</a>//! It is a phototransistor loaded to ground, so the node voltage rises
+<a href=#6 id=6 data-nosnippet>6</a>//! with illuminance from a small dark offset and rails once the load
+<a href=#7 id=7 data-nosnippet>7</a>//! resistor saturates — the transfer function is a straight line between
+<a href=#8 id=8 data-nosnippet>8</a>//! those two ends.
+<a href=#9 id=9 data-nosnippet>9</a>//!
+<a href=#10 id=10 data-nosnippet>10</a>//! The SAADC and the sensor rail are owned by
+<a href=#11 id=11 data-nosnippet>11</a>//! [`run_battery_monitor`](crate::power::run_battery_monitor); this module
+<a href=#12 id=12 data-nosnippet>12</a>//! is the request side of that ownership, plus the pure conversion, which
+<a href=#13 id=13 data-nosnippet>13</a>//! is host-testable and therefore deliberately not gated on the target.
+<a href=#14 id=14 data-nosnippet>14</a>//!
+<a href=#15 id=15 data-nosnippet>15</a>//! The light channel runs at **14-bit** resolution with hardware
+<a href=#16 id=16 data-nosnippet>16</a>//! oversampling, which is why the counts here are four times the
+<a href=#17 id=17 data-nosnippet>17</a>//! 12-bit-scale numbers the vendor driver works in. Full scale is 3.6 V
+<a href=#18 id=18 data-nosnippet>18</a>//! (`Gain1_6` against the 0.6 V internal reference), so one count is
+<a href=#19 id=19 data-nosnippet>19</a>//! `3600 / 16384 ≈ 0.2197` mV.
+<a href=#20 id=20 data-nosnippet>20</a>
+<a href=#21 id=21 data-nosnippet>21</a></span><span class="comment">// ─── Calibration ─────────────────────────────────────────────────────
+<a href=#22 id=22 data-nosnippet>22</a>//
+<a href=#23 id=23 data-nosnippet>23</a>// Bench measurements, 2026-08-06, against a reference lux meter. Readings
+<a href=#24 id=24 data-nosnippet>24</a>// are averaged raw counts at 14-bit (see [`crate::power`] for how they
+<a href=#25 id=25 data-nosnippet>25</a>// are taken):
+<a href=#26 id=26 data-nosnippet>26</a>//
+<a href=#27 id=27 data-nosnippet>27</a>// | Raw counts | Meter      | Note            |
+<a href=#28 id=28 data-nosnippet>28</a>// |------------|------------|-----------------|
+<a href=#29 id=29 data-nosnippet>29</a>// | 0.2        | darkness   | the dark offset |
+<a href=#30 id=30 data-nosnippet>30</a>// | 8965.086   | 185 lux    | the fit below   |
+<a href=#31 id=31 data-nosnippet>31</a>// | 13478.391  | flashlight | the hard rail   |
+<a href=#32 id=32 data-nosnippet>32</a>//
+<a href=#33 id=33 data-nosnippet>33</a>// The response is linear across the usable range — verified against the
+<a href=#34 id=34 data-nosnippet>34</a>// meter after fitting — so one slope through the origin describes it.
+<a href=#35 id=35 data-nosnippet>35</a>//
+<a href=#36 id=36 data-nosnippet>36</a>// The substantive correction to what was inherited from Seeed: **this
+<a href=#37 id=37 data-nosnippet>37</a>// sensor has essentially no dark current.** 0.2 counts is 44 µV. Seeed's
+<a href=#38 id=38 data-nosnippet>38</a>// 80 mV floor — 364 counts at this resolution — is a software noise
+<a href=#39 id=39 data-nosnippet>39</a>// guard, not a property of the part, and subtracting it was discarding
+<a href=#40 id=40 data-nosnippet>40</a>// the entire bottom of the range, which is precisely the region an
+<a href=#41 id=41 data-nosnippet>41</a>// indicator-brightness policy works in.
+<a href=#42 id=42 data-nosnippet>42</a>
+<a href=#43 id=43 data-nosnippet>43</a></span><span class="doccomment">/// Raw count at zero illuminance, subtracted before scaling.
+<a href=#44 id=44 data-nosnippet>44</a>///
+<a href=#45 id=45 data-nosnippet>45</a>/// Measured: full darkness reads 0.2 counts, so there is nothing to
+<a href=#46 id=46 data-nosnippet>46</a>/// subtract. Left at zero rather than rounded to 1 so the bottom of the
+<a href=#47 id=47 data-nosnippet>47</a>/// range is not clipped; a covered sensor reports about 4 mlux, which is
+<a href=#48 id=48 data-nosnippet>48</a>/// an honest noise floor and far below anything meaningful.
+<a href=#49 id=49 data-nosnippet>49</a></span><span class="kw">pub const </span>DARK_OFFSET_RAW: u32 = <span class="number">0</span>;
+<a href=#50 id=50 data-nosnippet>50</a>
+<a href=#51 id=51 data-nosnippet>51</a><span class="doccomment">/// Raw count above which the reading is clamped: 12288, which is 2.7 V
+<a href=#52 id=52 data-nosnippet>52</a>/// and three-quarters of full scale.
+<a href=#53 id=53 data-nosnippet>53</a>///
+<a href=#54 id=54 data-nosnippet>54</a>/// A judgement call rather than a measurement, and deliberately not
+<a href=#55 id=55 data-nosnippet>55</a>/// either of the two numbers it sits between:
+<a href=#56 id=56 data-nosnippet>56</a>///
+<a href=#57 id=57 data-nosnippet>57</a>/// - A bright flashlight drives the node to **13478** counts (2.96 V of a
+<a href=#58 id=58 data-nosnippet>58</a>///   3.3 V rail) and no further. That is the hard rail, where the reading
+<a href=#59 id=59 data-nosnippet>59</a>///   stops responding to light altogether; sitting the clamp right on it
+<a href=#60 id=60 data-nosnippet>60</a>///   leaves no margin for part-to-part or temperature variation in where
+<a href=#61 id=61 data-nosnippet>61</a>///   it lands.
+<a href=#62 id=62 data-nosnippet>62</a>/// - Seeed clamps at **11287** (2.48 V), which is arbitrary and throws
+<a href=#63 id=63 data-nosnippet>63</a>///   away range the part demonstrably has.
+<a href=#64 id=64 data-nosnippet>64</a>///
+<a href=#65 id=65 data-nosnippet>65</a>/// Between them, 2.7 V keeps a margin below the rail while retaining most
+<a href=#66 id=66 data-nosnippet>66</a>/// of the range. Everything above it reports the same clamped maximum,
+<a href=#67 id=67 data-nosnippet>67</a>/// which is the honest answer for a sensor that can no longer tell those
+<a href=#68 id=68 data-nosnippet>68</a>/// levels apart.
+<a href=#69 id=69 data-nosnippet>69</a></span><span class="kw">pub const </span>SATURATION_RAW: u32 = <span class="number">12_288</span>;
+<a href=#70 id=70 data-nosnippet>70</a>
+<a href=#71 id=71 data-nosnippet>71</a><span class="doccomment">/// Millilux per count above [`DARK_OFFSET_RAW`], as the fraction
+<a href=#72 id=72 data-nosnippet>72</a>/// `SLOPE_MLUX_NUM / SLOPE_MLUX_DEN` — **20.636 mlux per count**.
+<a href=#73 id=73 data-nosnippet>73</a>///
+<a href=#74 id=74 data-nosnippet>74</a>/// Fitted through the origin from the 185 lux point:
+<a href=#75 id=75 data-nosnippet>75</a>/// `185000 / 8965.086 = 20.636`.
+<a href=#76 id=76 data-nosnippet>76</a>///
+<a href=#77 id=77 data-nosnippet>77</a>/// A fraction rather than a whole number of millilux because rounding the
+<a href=#78 id=78 data-nosnippet>78</a>/// slope to an integer would discard a percent or two of the answer —
+<a href=#79 id=79 data-nosnippet>79</a>/// more than the sub-count resolution the sampling in [`crate::power`]
+<a href=#80 id=80 data-nosnippet>80</a>/// exists to buy.
+<a href=#81 id=81 data-nosnippet>81</a></span><span class="kw">pub const </span>SLOPE_MLUX_NUM: u32 = <span class="number">20_636</span>;
+<a href=#82 id=82 data-nosnippet>82</a><span class="kw">pub const </span>SLOPE_MLUX_DEN: u32 = <span class="number">1_000</span>;
+<a href=#83 id=83 data-nosnippet>83</a>
+<a href=#84 id=84 data-nosnippet>84</a><span class="doccomment">/// Convert an accumulated run of SAADC counts on AIN5 to millilux.
+<a href=#85 id=85 data-nosnippet>85</a>///
+<a href=#86 id=86 data-nosnippet>86</a>/// Takes the **sum** and the number of conversions in it rather than a
+<a href=#87 id=87 data-nosnippet>87</a>/// pre-computed mean, because the mean of a run of counts is fractional
+<a href=#88 id=88 data-nosnippet>88</a>/// and a mean rounded to whole counts throws that away. Both divisions —
+<a href=#89 id=89 data-nosnippet>89</a>/// by the conversion count and by the slope's denominator — are therefore
+<a href=#90 id=90 data-nosnippet>90</a>/// done last, against the scaled sum.
+<a href=#91 id=91 data-nosnippet>91</a>///
+<a href=#92 id=92 data-nosnippet>92</a>/// Clamped at both ends: below the dark offset the sensor is reporting
+<a href=#93 id=93 data-nosnippet>93</a>/// its own leakage, above saturation it is reporting the load resistor.
+<a href=#94 id=94 data-nosnippet>94</a></span><span class="kw">pub fn </span>millilux_from_sum(sum: u32, conversions: u32) -&gt; u32 {
+<a href=#95 id=95 data-nosnippet>95</a>    <span class="kw">if </span>conversions == <span class="number">0 </span>{
+<a href=#96 id=96 data-nosnippet>96</a>        <span class="kw">return </span><span class="number">0</span>;
+<a href=#97 id=97 data-nosnippet>97</a>    }
+<a href=#98 id=98 data-nosnippet>98</a>    <span class="kw">let </span>conversions = u64::from(conversions);
+<a href=#99 id=99 data-nosnippet>99</a>    <span class="kw">let </span>floor = conversions * u64::from(DARK_OFFSET_RAW);
+<a href=#100 id=100 data-nosnippet>100</a>    <span class="kw">let </span>ceiling = conversions * u64::from(SATURATION_RAW);
+<a href=#101 id=101 data-nosnippet>101</a>    <span class="kw">let </span>sum = u64::from(sum).min(ceiling);
+<a href=#102 id=102 data-nosnippet>102</a>    <span class="kw">if </span>sum &lt;= floor {
+<a href=#103 id=103 data-nosnippet>103</a>        <span class="kw">return </span><span class="number">0</span>;
+<a href=#104 id=104 data-nosnippet>104</a>    }
+<a href=#105 id=105 data-nosnippet>105</a>    <span class="kw">let </span>scaled =
+<a href=#106 id=106 data-nosnippet>106</a>        (sum - floor) * u64::from(SLOPE_MLUX_NUM) / (u64::from(SLOPE_MLUX_DEN) * conversions);
+<a href=#107 id=107 data-nosnippet>107</a>    scaled.min(u64::from(u32::MAX)) <span class="kw">as </span>u32
+<a href=#108 id=108 data-nosnippet>108</a>}
+<a href=#109 id=109 data-nosnippet>109</a>
+<a href=#110 id=110 data-nosnippet>110</a><span class="doccomment">/// The largest value this board can report — the reading at
+<a href=#111 id=111 data-nosnippet>111</a>/// [`SATURATION_RAW`], about 253 lux.
+<a href=#112 id=112 data-nosnippet>112</a>///
+<a href=#113 id=113 data-nosnippet>113</a>/// A ceiling, not a measurement: everything from a bright room to direct
+<a href=#114 id=114 data-nosnippet>114</a>/// sunlight lands on it. The part is a dark-end instrument, and at the
+<a href=#115 id=115 data-nosnippet>115</a>/// dark end it is a good one — one count is 21 mlux, so full moonlight
+<a href=#116 id=116 data-nosnippet>116</a>/// (~300 mlux) sits about 15 counts up with a 4 mlux noise floor beneath
+<a href=#117 id=117 data-nosnippet>117</a>/// it. Anything wanting a daylight figure needs a different sensor.
+<a href=#118 id=118 data-nosnippet>118</a></span><span class="kw">pub const </span>MAX_REPORTABLE_MLUX: u32 =
+<a href=#119 id=119 data-nosnippet>119</a>    (SATURATION_RAW - DARK_OFFSET_RAW) * SLOPE_MLUX_NUM / SLOPE_MLUX_DEN;
+<a href=#120 id=120 data-nosnippet>120</a>
+<a href=#121 id=121 data-nosnippet>121</a><span class="doccomment">/// Convert one SAADC count on AIN5 to millilux — [`millilux_from_sum`]
+<a href=#122 id=122 data-nosnippet>122</a>/// for a single conversion.
+<a href=#123 id=123 data-nosnippet>123</a></span><span class="kw">pub fn </span>raw_to_millilux(raw: u16) -&gt; u32 {
+<a href=#124 id=124 data-nosnippet>124</a>    millilux_from_sum(u32::from(raw), <span class="number">1</span>)
+<a href=#125 id=125 data-nosnippet>125</a>}
+<a href=#126 id=126 data-nosnippet>126</a>
+<a href=#127 id=127 data-nosnippet>127</a><span class="attr">#[cfg(target_os = <span class="string">"none"</span>)]
+<a href=#128 id=128 data-nosnippet>128</a></span><span class="kw">mod </span>sampling {
+<a href=#129 id=129 data-nosnippet>129</a>    <span class="kw">use </span>core::sync::atomic::{AtomicU32, Ordering};
+<a href=#130 id=130 data-nosnippet>130</a>
+<a href=#131 id=131 data-nosnippet>131</a>    <span class="kw">use </span>embassy_sync::blocking_mutex::raw::ThreadModeRawMutex;
+<a href=#132 id=132 data-nosnippet>132</a>    <span class="kw">use </span>embassy_sync::signal::Signal;
+<a href=#133 id=133 data-nosnippet>133</a>
+<a href=#134 id=134 data-nosnippet>134</a>    <span class="doccomment">/// Wakes the battery monitor to take a light measurement now (see
+<a href=#135 id=135 data-nosnippet>135</a>    /// [`sample_illuminance`]).
+<a href=#136 id=136 data-nosnippet>136</a>    </span><span class="kw">pub</span>(<span class="kw">crate</span>) <span class="kw">static </span>LIGHT_SAMPLE_REQUEST: Signal&lt;ThreadModeRawMutex, ()&gt; = Signal::new();
+<a href=#137 id=137 data-nosnippet>137</a>    <span class="kw">pub</span>(<span class="kw">crate</span>) <span class="kw">static </span>LIGHT_SAMPLE_REPLY: Signal&lt;ThreadModeRawMutex, u32&gt; = Signal::new();
+<a href=#138 id=138 data-nosnippet>138</a>
+<a href=#139 id=139 data-nosnippet>139</a>    <span class="doccomment">/// The most recent measurement, however it was triggered, in
+<a href=#140 id=140 data-nosnippet>140</a>    /// millilux. `u32::MAX` until one exists — that cannot be a reading,
+<a href=#141 id=141 data-nosnippet>141</a>    /// because the conversion tops out at
+<a href=#142 id=142 data-nosnippet>142</a>    /// [`MAX_REPORTABLE_MLUX`](super::MAX_REPORTABLE_MLUX).
+<a href=#143 id=143 data-nosnippet>143</a>    </span><span class="kw">static </span>AMBIENT_MILLILUX: AtomicU32 = AtomicU32::new(u32::MAX);
+<a href=#144 id=144 data-nosnippet>144</a>
+<a href=#145 id=145 data-nosnippet>145</a>    <span class="doccomment">/// The most recent illuminance measurement in millilux, whoever asked
+<a href=#146 id=146 data-nosnippet>146</a>    /// for it; `None` until the first one completes.
+<a href=#147 id=147 data-nosnippet>147</a>    ///
+<a href=#148 id=148 data-nosnippet>148</a>    /// This is the consumer side of [`request_sample`], but every
+<a href=#149 id=149 data-nosnippet>149</a>    /// measurement lands here — an on-demand [`sample_illuminance`] for a
+<a href=#150 id=150 data-nosnippet>150</a>    /// protocol read refreshes it too.
+<a href=#151 id=151 data-nosnippet>151</a>    </span><span class="kw">pub fn </span>ambient_millilux() -&gt; <span class="prelude-ty">Option</span>&lt;u32&gt; {
+<a href=#152 id=152 data-nosnippet>152</a>        <span class="kw">match </span>AMBIENT_MILLILUX.load(Ordering::Acquire) {
+<a href=#153 id=153 data-nosnippet>153</a>            u32::MAX =&gt; <span class="prelude-val">None</span>,
+<a href=#154 id=154 data-nosnippet>154</a>            millilux =&gt; <span class="prelude-val">Some</span>(millilux),
+<a href=#155 id=155 data-nosnippet>155</a>        }
+<a href=#156 id=156 data-nosnippet>156</a>    }
+<a href=#157 id=157 data-nosnippet>157</a>
+<a href=#158 id=158 data-nosnippet>158</a>    <span class="doccomment">/// Record a completed measurement. Called by the sampler in
+<a href=#159 id=159 data-nosnippet>159</a>    /// [`crate::power`] for every measurement it takes.
+<a href=#160 id=160 data-nosnippet>160</a>    </span><span class="kw">pub</span>(<span class="kw">crate</span>) <span class="kw">fn </span>publish_ambient(millilux: u32) {
+<a href=#161 id=161 data-nosnippet>161</a>        AMBIENT_MILLILUX.store(millilux, Ordering::Release);
+<a href=#162 id=162 data-nosnippet>162</a>    }
+<a href=#163 id=163 data-nosnippet>163</a>
+<a href=#164 id=164 data-nosnippet>164</a>    <span class="doccomment">/// Ask for a measurement without waiting for it: the result appears
+<a href=#165 id=165 data-nosnippet>165</a>    /// in [`ambient_millilux`] once taken. For callers that must not
+<a href=#166 id=166 data-nosnippet>166</a>    /// block on the monitor — the LED task requests from inside the
+<a href=#167 id=167 data-nosnippet>167</a>    /// select loop that also answers the sampler's blanking handshake.
+<a href=#168 id=168 data-nosnippet>168</a>    ///
+<a href=#169 id=169 data-nosnippet>169</a>    /// The request latches, so duplicates coalesce, and the reply signal
+<a href=#170 id=170 data-nosnippet>170</a>    /// is left alone: [`sample_illuminance`] resets it before waiting, so
+<a href=#171 id=171 data-nosnippet>171</a>    /// an unconsumed reply from this path cannot satisfy a later
+<a href=#172 id=172 data-nosnippet>172</a>    /// on-demand read.
+<a href=#173 id=173 data-nosnippet>173</a>    </span><span class="kw">pub fn </span>request_sample() {
+<a href=#174 id=174 data-nosnippet>174</a>        LIGHT_SAMPLE_REQUEST.signal(());
+<a href=#175 id=175 data-nosnippet>175</a>    }
+<a href=#176 id=176 data-nosnippet>176</a>
+<a href=#177 id=177 data-nosnippet>177</a>    <span class="doccomment">/// Ask [`run_battery_monitor`](crate::power::run_battery_monitor) —
+<a href=#178 id=178 data-nosnippet>178</a>    /// the sole SAADC and sensor-rail owner — for a fresh illuminance
+<a href=#179 id=179 data-nosnippet>179</a>    /// measurement in millilux and wait for it.
+<a href=#180 id=180 data-nosnippet>180</a>    ///
+<a href=#181 id=181 data-nosnippet>181</a>    /// Single-consumer, like the monitor itself. Never completes once the
+<a href=#182 id=182 data-nosnippet>182</a>    /// monitor has exited for critical-battery shutdown, so callers must
+<a href=#183 id=183 data-nosnippet>183</a>    /// apply their own timeout.
+<a href=#184 id=184 data-nosnippet>184</a>    </span><span class="kw">pub async fn </span>sample_illuminance() -&gt; u32 {
+<a href=#185 id=185 data-nosnippet>185</a>        LIGHT_SAMPLE_REPLY.reset();
+<a href=#186 id=186 data-nosnippet>186</a>        LIGHT_SAMPLE_REQUEST.signal(());
+<a href=#187 id=187 data-nosnippet>187</a>        LIGHT_SAMPLE_REPLY.wait().<span class="kw">await
+<a href=#188 id=188 data-nosnippet>188</a>    </span>}
+<a href=#189 id=189 data-nosnippet>189</a>}
+<a href=#190 id=190 data-nosnippet>190</a>
+<a href=#191 id=191 data-nosnippet>191</a><span class="attr">#[cfg(target_os = <span class="string">"none"</span>)]
+<a href=#192 id=192 data-nosnippet>192</a></span><span class="kw">pub</span>(<span class="kw">crate</span>) <span class="kw">use </span>sampling::{LIGHT_SAMPLE_REPLY, LIGHT_SAMPLE_REQUEST, publish_ambient};
+<a href=#193 id=193 data-nosnippet>193</a><span class="attr">#[cfg(target_os = <span class="string">"none"</span>)]
+<a href=#194 id=194 data-nosnippet>194</a></span><span class="kw">pub use </span>sampling::{ambient_millilux, request_sample, sample_illuminance};
+<a href=#195 id=195 data-nosnippet>195</a>
+<a href=#196 id=196 data-nosnippet>196</a><span class="attr">#[cfg(test)]
+<a href=#197 id=197 data-nosnippet>197</a></span><span class="kw">mod </span>tests {
+<a href=#198 id=198 data-nosnippet>198</a>    <span class="kw">use </span>super::<span class="kw-2">*</span>;
+<a href=#199 id=199 data-nosnippet>199</a>
+<a href=#200 id=200 data-nosnippet>200</a>    <span class="doccomment">/// Millilux for a whole number of counts above dark, whatever the
+<a href=#201 id=201 data-nosnippet>201</a>    /// constants currently are.
+<a href=#202 id=202 data-nosnippet>202</a>    </span><span class="kw">fn </span>at_counts(counts: u32) -&gt; u32 {
+<a href=#203 id=203 data-nosnippet>203</a>        counts * SLOPE_MLUX_NUM / SLOPE_MLUX_DEN
+<a href=#204 id=204 data-nosnippet>204</a>    }
+<a href=#205 id=205 data-nosnippet>205</a>
+<a href=#206 id=206 data-nosnippet>206</a>    <span class="attr">#[test]
+<a href=#207 id=207 data-nosnippet>207</a>    </span><span class="kw">fn </span>saturates_at_the_ceiling() {
+<a href=#208 id=208 data-nosnippet>208</a>        <span class="kw">let </span>ceiling = raw_to_millilux(SATURATION_RAW <span class="kw">as </span>u16);
+<a href=#209 id=209 data-nosnippet>209</a>        <span class="macro">assert_eq!</span>(raw_to_millilux(SATURATION_RAW <span class="kw">as </span>u16 + <span class="number">1</span>), ceiling);
+<a href=#210 id=210 data-nosnippet>210</a>        <span class="macro">assert_eq!</span>(raw_to_millilux(u16::MAX), ceiling);
+<a href=#211 id=211 data-nosnippet>211</a>        <span class="macro">assert_eq!</span>(ceiling, MAX_REPORTABLE_MLUX);
+<a href=#212 id=212 data-nosnippet>212</a>        <span class="comment">// The clamp survives averaging: a run entirely past saturation
+<a href=#213 id=213 data-nosnippet>213</a>        // reports the ceiling, not an extrapolation.
+<a href=#214 id=214 data-nosnippet>214</a>        </span><span class="macro">assert_eq!</span>(millilux_from_sum(u32::MAX, <span class="number">23</span>), ceiling);
+<a href=#215 id=215 data-nosnippet>215</a>    }
+<a href=#216 id=216 data-nosnippet>216</a>
+<a href=#217 id=217 data-nosnippet>217</a>    <span class="doccomment">/// Whatever the constants are set to, the conversion must never
+<a href=#218 id=218 data-nosnippet>218</a>    /// overflow or wrap — the sum of a full run at full scale is the
+<a href=#219 id=219 data-nosnippet>219</a>    /// worst case the sampler can hand it.
+<a href=#220 id=220 data-nosnippet>220</a>    </span><span class="attr">#[test]
+<a href=#221 id=221 data-nosnippet>221</a>    </span><span class="kw">fn </span>a_full_scale_run_does_not_overflow() {
+<a href=#222 id=222 data-nosnippet>222</a>        <span class="kw">let </span>full_run = <span class="number">23 </span>* <span class="number">16_383</span>;
+<a href=#223 id=223 data-nosnippet>223</a>        <span class="kw">let </span>millilux = millilux_from_sum(full_run, <span class="number">23</span>);
+<a href=#224 id=224 data-nosnippet>224</a>        <span class="macro">assert_eq!</span>(millilux, MAX_REPORTABLE_MLUX);
+<a href=#225 id=225 data-nosnippet>225</a>        <span class="macro">assert!</span>(millilux &lt; u32::MAX);
+<a href=#226 id=226 data-nosnippet>226</a>    }
+<a href=#227 id=227 data-nosnippet>227</a>
+<a href=#228 id=228 data-nosnippet>228</a>    <span class="doccomment">/// The whole point of summing rather than pre-averaging: a run whose
+<a href=#229 id=229 data-nosnippet>229</a>    /// mean falls between two counts must land between the two millilux
+<a href=#230 id=230 data-nosnippet>230</a>    /// values, not on one of them.
+<a href=#231 id=231 data-nosnippet>231</a>    </span><span class="attr">#[test]
+<a href=#232 id=232 data-nosnippet>232</a>    </span><span class="kw">fn </span>the_average_keeps_resolution_below_one_count() {
+<a href=#233 id=233 data-nosnippet>233</a>        <span class="kw">let </span>base = DARK_OFFSET_RAW + <span class="number">100</span>;
+<a href=#234 id=234 data-nosnippet>234</a>        <span class="comment">// Twenty conversions at `base`, three at `base + 1` — a mean of
+<a href=#235 id=235 data-nosnippet>235</a>        // 100.13 counts above dark, which whole counts cannot express.
+<a href=#236 id=236 data-nosnippet>236</a>        </span><span class="kw">let </span>sum = <span class="number">20 </span>* base + <span class="number">3 </span>* (base + <span class="number">1</span>);
+<a href=#237 id=237 data-nosnippet>237</a>        <span class="kw">let </span>averaged = millilux_from_sum(sum, <span class="number">23</span>);
+<a href=#238 id=238 data-nosnippet>238</a>        <span class="macro">assert!</span>(averaged &gt; at_counts(<span class="number">100</span>));
+<a href=#239 id=239 data-nosnippet>239</a>        <span class="macro">assert!</span>(averaged &lt; at_counts(<span class="number">101</span>));
+<a href=#240 id=240 data-nosnippet>240</a>    }
+<a href=#241 id=241 data-nosnippet>241</a>
+<a href=#242 id=242 data-nosnippet>242</a>    <span class="doccomment">/// A conversion count of zero is a caller bug, not a panic.
+<a href=#243 id=243 data-nosnippet>243</a>    </span><span class="attr">#[test]
+<a href=#244 id=244 data-nosnippet>244</a>    </span><span class="kw">fn </span>an_empty_run_reads_zero() {
+<a href=#245 id=245 data-nosnippet>245</a>        <span class="macro">assert_eq!</span>(millilux_from_sum(<span class="number">10_000</span>, <span class="number">0</span>), <span class="number">0</span>);
+<a href=#246 id=246 data-nosnippet>246</a>    }
+<a href=#247 id=247 data-nosnippet>247</a>}
+</code></pre></div></section></main></body></html>

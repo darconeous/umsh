@@ -35,10 +35,10 @@
             const path_to_root = "";
             const default_light_theme = "light";
             const default_dark_theme = "ayu";
-            window.path_to_searchindex_js = "searchindex-5216ea72.js";
+            window.path_to_searchindex_js = "searchindex-c10eed74.js";
         </script>
         <!-- Start loading toc.js asap -->
-        <script src="toc-ca16b95c.js"></script>
+        <script src="toc-438957a9.js"></script>
     </head>
     <body>
     <div id="mdbook-help-container">
@@ -216,6 +216,12 @@ moment it is installed or generated (see <a href="ulcp-device.html#prop-dev-priv
 changed only by explicit provisioning or <code>CMD_CLEAR</code> — neither
 <code>CMD_RESTORE</code> nor a reboot can revert the device identity to an earlier
 key.</p>
+<p><a href="ulcp-device.html#prop-time"><code>PROP_TIME</code></a> is excluded for a third reason:
+a stored epoch is wrong by however long the device was off, by an amount
+nothing can bound, so restoring one would be restoring a confidently
+incorrect clock. A device recovers the time from a real source or
+reports that it does not know it. Its time <em>zone</em> is ordinary
+configuration and is saved.</p>
 </li>
 <li>
 <p>At boot, if a snapshot exists, the device <strong>MUST</strong> restore it and resume

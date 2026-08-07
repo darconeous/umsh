@@ -35,10 +35,10 @@
             const path_to_root = "";
             const default_light_theme = "light";
             const default_dark_theme = "ayu";
-            window.path_to_searchindex_js = "searchindex-5216ea72.js";
+            window.path_to_searchindex_js = "searchindex-c10eed74.js";
         </script>
         <!-- Start loading toc.js asap -->
-        <script src="toc-ca16b95c.js"></script>
+        <script src="toc-438957a9.js"></script>
     </head>
     <body>
     <div id="mdbook-help-container">
@@ -232,8 +232,8 @@
 <tr><td style="text-align: right">0</td><td>Node Name</td><td>UTF-8 string</td></tr>
 <tr><td style="text-align: right">1</td><td>Node Location</td><td>1-7 bytes, see <a href="#variable-precision-location-format">Variable-Precision Location Format</a></td></tr>
 <tr><td style="text-align: right">2</td><td>Altitude in Meters</td><td>signed integer, meters above mean sea level</td></tr>
-<tr><td style="text-align: right">3</td><td>Unix Timestamp</td><td>unsigned integer, seconds since the Unix epoch</td></tr>
-<tr><td style="text-align: right">4</td><td>Supported Regions</td><td>one or more concatenated 2-byte region codes</td></tr>
+<tr><td style="text-align: right">3</td><td>Unix Timestamp</td><td>unsigned integer, seconds since the Unix epoch, UTC</td></tr>
+<tr><td style="text-align: right">4</td><td>Supported Flood Regions</td><td>one or more concatenated 2-byte region codes</td></tr>
 <tr><td style="text-align: right">5</td><td>Nonce</td><td>4 bytes, echoed from a soliciting Identity Request</td></tr>
 </tbody>
 </table>
@@ -253,85 +253,86 @@
 <h3 id="variable-precision-location-format"><a class="header" href="#variable-precision-location-format">Variable-Precision Location Format</a></h3>
 <p>The node location is encoded as a string of one or more bytes, where each byte narrows the position to a 16×16 sub-grid of the preceding byte’s cell. Additional bytes increase precision; trailing bytes may be omitted to give a coarser — and therefore more privacy-preserving — location.</p>
 <h4 id="grid-subdivision"><a class="header" href="#grid-subdivision">Grid Subdivision</a></h4>
-<p>Each byte splits its parent cell into a 16×16 grid of children. Within each byte, the high nibble indexes along longitude and the low nibble indexes along latitude:</p>
+<p>Each byte splits its parent cell into a 16×16 grid of children. Within each byte, the high nibble indexes along latitude and the low nibble indexes along longitude:</p>
 <pre><code class="language-text">  7   6   5   4   3   2   1   0
 +---------------+---------------+
-|   LON NIBBLE  |   LAT NIBBLE  |
+|   LAT NIBBLE  |   LON NIBBLE  |
 +---------------+---------------+
      4 bits          4 bits
 </code></pre>
-<p>The first byte subdivides the entire globe (longitude in 16 slices of 22.5°, latitude in 16 slices of 11.25°). Each subsequent byte subdivides the cell selected by the byte before it, using the same high-nibble-longitude, low-nibble-latitude convention.</p>
+<p>The first byte subdivides the entire globe (latitude in 16 slices of 11.25°, longitude in 16 slices of 22.5°). Each subsequent byte subdivides the cell selected by the byte before it, using the same high-nibble-latitude, low-nibble-longitude convention.</p>
+<p>Latitude leads here for the same reason it leads everywhere else in UMSH: a coordinate pair is written, spoken, and passed as <code>(latitude, longitude)</code>, and an encoding that reversed the pair would be the one place the convention did not hold.</p>
 <h4 id="encoding-a-location"><a class="header" href="#encoding-a-location">Encoding a Location</a></h4>
 <p>Given latitude <code>LAT</code> in degrees (-90..+90) and longitude <code>LON</code> in degrees (-180..+180), an N-byte code can be derived either in a single step or byte by byte. The direct form is normative; where floating-point rounding makes the iterative form disagree at the final nibble, the direct form’s result is the correct code.</p>
 <h5 id="direct-form"><a class="header" href="#direct-form">Direct form</a></h5>
 <p>Compute two 4N-bit indices over the full desired precision:</p>
 <ul>
-<li><code>lon_index = floor((LON + 180) × 16^N / 360)</code></li>
 <li><code>lat_index = floor((LAT +  90) × 16^N / 180)</code></li>
+<li><code>lon_index = floor((LON + 180) × 16^N / 360)</code></li>
 </ul>
 <p>Then read nibbles from most significant to least significant:</p>
 <ul>
-<li>byte <em>k</em> high nibble = <code>(lon_index &gt;&gt; (4 × (N − 1 − k))) &amp; 0xF</code></li>
-<li>byte <em>k</em> low  nibble = <code>(lat_index &gt;&gt; (4 × (N − 1 − k))) &amp; 0xF</code></li>
+<li>byte <em>k</em> high nibble = <code>(lat_index &gt;&gt; (4 × (N − 1 − k))) &amp; 0xF</code></li>
+<li>byte <em>k</em> low  nibble = <code>(lon_index &gt;&gt; (4 × (N − 1 − k))) &amp; 0xF</code></li>
 </ul>
 <p>This form makes the hierarchy explicit: truncating an N-byte code to <em>k</em> bytes yields exactly the <em>k</em>-byte code for the same position.</p>
 <p>Edge cases: <code>LON = +180°</code> is equivalent to <code>LON = −180°</code> and wraps <code>lon_index</code> to 0. <code>LAT = +90°</code> is a single degenerate point; clamp <code>lat_index</code> to <code>16^N − 1</code>.</p>
 <h5 id="iterative-form"><a class="header" href="#iterative-form">Iterative form</a></h5>
-<p>Emitting one byte at a time, with <code>lon_step = 22.5° / 16^k</code> and <code>lat_step = 11.25° / 16^k</code>:</p>
+<p>Emitting one byte at a time, with <code>lat_step = 11.25° / 16^k</code> and <code>lon_step = 22.5° / 16^k</code>:</p>
 <ul>
-<li>byte <em>k</em> high nibble = <code>floor(((LON + 180) mod (16 × lon_step)) / lon_step)</code></li>
-<li>byte <em>k</em> low  nibble = <code>floor(((LAT +  90) mod (16 × lat_step)) / lat_step)</code></li>
+<li>byte <em>k</em> high nibble = <code>floor(((LAT +  90) mod (16 × lat_step)) / lat_step)</code></li>
+<li>byte <em>k</em> low  nibble = <code>floor(((LON + 180) mod (16 × lon_step)) / lon_step)</code></li>
 </ul>
-<p>For byte 0 (<code>k = 0</code>), <code>lon_step = 22.5°</code> and <code>lat_step = 11.25°</code>, so the modulus is a no-op for valid inputs and the formulas reduce to:</p>
+<p>For byte 0 (<code>k = 0</code>), <code>lat_step = 11.25°</code> and <code>lon_step = 22.5°</code>, so the modulus is a no-op for valid inputs and the formulas reduce to:</p>
 <ul>
-<li><code>high_nibble = floor((LON + 180) / 22.5)</code></li>
-<li><code>low_nibble  = floor((LAT +  90) / 11.25)</code></li>
+<li><code>high_nibble = floor((LAT +  90) / 11.25)</code></li>
+<li><code>low_nibble  = floor((LON + 180) / 22.5)</code></li>
 </ul>
 <p>The same edge cases apply as in the direct form: <code>LON = +180°</code> wraps to nibble 0 naturally via the modulus, but <code>LAT = +90°</code> must be clamped to nibble <code>0xF</code> at every position — the modulus would otherwise wrap it to nibble 0.</p>
 <h5 id="worked-example"><a class="header" href="#worked-example">Worked Example</a></h5>
 <p>Encode <code>(LAT, LON) = (37.331°, −121.883°)</code> (San Jose, CA) at 3-byte precision.</p>
 <p>Direct form:</p>
 <ul>
-<li><code>lon_index = floor((−121.883 + 180) × 4096 / 360) = floor(661.24) = 661 = 0x295</code></li>
 <li><code>lat_index = floor((  37.331 +  90) × 4096 / 180) = floor(2897.49) = 2897 = 0xB51</code></li>
+<li><code>lon_index = floor((−121.883 + 180) × 4096 / 360) = floor(661.24) = 661 = 0x295</code></li>
 </ul>
 <p>Reading nibbles most-significant first:</p>
 <div class="table-wrapper">
 <table>
 <thead>
-<tr><th style="text-align: right">Byte</th><th style="text-align: center">High (lon)</th><th style="text-align: center">Low (lat)</th><th style="text-align: center">Value</th></tr>
+<tr><th style="text-align: right">Byte</th><th style="text-align: center">High (lat)</th><th style="text-align: center">Low (lon)</th><th style="text-align: center">Value</th></tr>
 </thead>
 <tbody>
-<tr><td style="text-align: right">0</td><td style="text-align: center"><code>0x2</code></td><td style="text-align: center"><code>0xB</code></td><td style="text-align: center"><code>0x2B</code></td></tr>
-<tr><td style="text-align: right">1</td><td style="text-align: center"><code>0x9</code></td><td style="text-align: center"><code>0x5</code></td><td style="text-align: center"><code>0x95</code></td></tr>
-<tr><td style="text-align: right">2</td><td style="text-align: center"><code>0x5</code></td><td style="text-align: center"><code>0x1</code></td><td style="text-align: center"><code>0x51</code></td></tr>
+<tr><td style="text-align: right">0</td><td style="text-align: center"><code>0xB</code></td><td style="text-align: center"><code>0x2</code></td><td style="text-align: center"><code>0xB2</code></td></tr>
+<tr><td style="text-align: right">1</td><td style="text-align: center"><code>0x5</code></td><td style="text-align: center"><code>0x9</code></td><td style="text-align: center"><code>0x59</code></td></tr>
+<tr><td style="text-align: right">2</td><td style="text-align: center"><code>0x1</code></td><td style="text-align: center"><code>0x5</code></td><td style="text-align: center"><code>0x15</code></td></tr>
 </tbody>
 </table>
 </div>
-<p>Final code: <code>2B 95 51</code>.</p>
+<p>Final code: <code>B2 59 15</code>.</p>
 <h4 id="decoding-a-location"><a class="header" href="#decoding-a-location">Decoding a Location</a></h4>
 <p>An N-byte code denotes the entire cell it selects, not a point. When a single coordinate is needed (e.g. to plot on a map), decoders use the center of the cell, with an uncertainty of ± half a cell in each axis. Using any other point (such as the cell’s south-west corner) would place decoded positions up to half a cell apart between implementations.</p>
 <h4 id="precision-scaling"><a class="header" href="#precision-scaling">Precision Scaling</a></h4>
-<p>Each additional byte divides both the longitude and latitude spans by 16. The span shrinks geometrically, so just a few bytes yield very fine precision:</p>
+<p>Each additional byte divides both the latitude and longitude spans by 16. The span shrinks geometrically, so just a few bytes yield very fine precision:</p>
 <div class="table-wrapper">
 <table>
 <thead>
-<tr><th style="text-align: right">Bytes</th><th>Longitude cell</th><th>Latitude cell</th><th>Equator cell size (approx.)</th></tr>
+<tr><th style="text-align: right">Bytes</th><th>Latitude cell</th><th>Longitude cell</th><th>Equator cell size (approx.)</th></tr>
 </thead>
 <tbody>
-<tr><td style="text-align: right">1</td><td>22.5°</td><td>11.25°</td><td>2,500 × 1,250 km</td></tr>
-<tr><td style="text-align: right">2</td><td>1.40625°</td><td>0.703125°</td><td>156 × 78 km</td></tr>
-<tr><td style="text-align: right">3</td><td>0.0879°</td><td>0.0439°</td><td>9.8 × 4.9 km</td></tr>
-<tr><td style="text-align: right">4</td><td>0.00549°</td><td>0.00275°</td><td>610 × 305 m</td></tr>
-<tr><td style="text-align: right">5</td><td>0.000343°</td><td>0.000172°</td><td>38 × 19 m</td></tr>
-<tr><td style="text-align: right">6</td><td>2.15 × 10⁻⁵°</td><td>1.07 × 10⁻⁵°</td><td>2.4 × 1.2 m</td></tr>
-<tr><td style="text-align: right">7</td><td>1.34 × 10⁻⁶°</td><td>6.71 × 10⁻⁷°</td><td>15 × 7.5 cm</td></tr>
+<tr><td style="text-align: right">1</td><td>11.25°</td><td>22.5°</td><td>1,250 × 2,500 km</td></tr>
+<tr><td style="text-align: right">2</td><td>0.703125°</td><td>1.40625°</td><td>78 × 156 km</td></tr>
+<tr><td style="text-align: right">3</td><td>0.0439°</td><td>0.0879°</td><td>4.9 × 9.8 km</td></tr>
+<tr><td style="text-align: right">4</td><td>0.00275°</td><td>0.00549°</td><td>305 × 610 m</td></tr>
+<tr><td style="text-align: right">5</td><td>0.000172°</td><td>0.000343°</td><td>19 × 38 m</td></tr>
+<tr><td style="text-align: right">6</td><td>1.07 × 10⁻⁵°</td><td>2.15 × 10⁻⁵°</td><td>1.2 × 2.4 m</td></tr>
+<tr><td style="text-align: right">7</td><td>6.71 × 10⁻⁷°</td><td>1.34 × 10⁻⁶°</td><td>7.5 × 15 cm</td></tr>
 </tbody>
 </table>
 </div>
 <p>Longitude cells narrow with latitude, so cells are physically smaller in east-west extent away from the equator.</p>
 <blockquote>
-<p><strong>Comparison with float32:</strong> Two single-precision floats (8 bytes) give non-uniform resolution: ~1.7 m longitude and ~85 cm latitude worst-case near ±180°/±90°, improving to ~1 cm near 0°. At 7 bytes, this encoding achieves ~15 × 7.5 cm uniformly across the globe — better than the float32 worst case while using one fewer byte. At 8 bytes — beyond the 7-byte wire limit, considered here only for an apples-to-apples comparison against the 8 bytes two floats occupy — the cell shrinks to ~9 × 5 mm, better than float32 everywhere.</p>
+<p><strong>Comparison with float32:</strong> Two single-precision floats (8 bytes) give non-uniform resolution: ~85 cm latitude and ~1.7 m longitude worst-case near ±90°/±180°, improving to ~1 cm near 0°. At 7 bytes, this encoding achieves ~7.5 × 15 cm uniformly across the globe — better than the float32 worst case while using one fewer byte. At 8 bytes — beyond the 7-byte wire limit, considered here only for an apples-to-apples comparison against the 8 bytes two floats occupy — the cell shrinks to ~5 × 9 mm, better than float32 everywhere.</p>
 </blockquote>
 <h4 id="properties"><a class="header" href="#properties">Properties</a></h4>
 <ul>

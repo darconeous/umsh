@@ -1,0 +1,1 @@
+window.SIDEBAR_ITEMS = {"constant":["MAX_EPOCH","MIN_PLAUSIBLE_EPOCH"],"fn":["civil_from_days","days_from_civil","days_in_month","is_leap_year"],"struct":["DateTime"]};
