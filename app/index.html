@@ -1,0 +1,179 @@
+<!DOCTYPE html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>The app — UMSH</title>
+    <meta name="description" content="UMSH for iPhone — how it works, what it does, and how to get into the beta." />
+    <meta name="theme-color" content="#FA5000" />
+
+    <link rel="stylesheet" href="https://umsh.dev/site.css" />
+    <link rel="icon" href="https://umsh.dev/favicon.ico" sizes="any" />
+    <link rel="icon" type="image/png" href="https://umsh.dev/favicon-32.png" sizes="32x32" />
+    <link rel="apple-touch-icon" href="https://umsh.dev/apple-touch-icon.png" />
+
+    <meta property="og:site_name" content="UMSH" />
+    <meta property="og:type" content="website" />
+    <meta property="og:title" content="The app — UMSH" />
+    <meta property="og:description" content="UMSH for iPhone — how it works, what it does, and how to get into the beta." />
+    <meta property="og:image" content="https://umsh.dev/og-card.png" />
+    <meta property="og:url" content="https://umsh.dev/app/" />
+    <meta name="twitter:card" content="summary_large_image" />
+    
+  </head>
+
+  <body>
+    <a class="skip-link" href="#main">Skip to content</a>
+
+    <header class="site-header">
+      <div class="container">
+        <a class="site-header__logo" href="https://umsh.dev/">
+          <img src="https://umsh.dev/images/logo/umsh-logo-white.svg" alt="UMSH" width="1209" height="283" />
+        </a>
+
+        <button class="nav-burger" type="button" aria-expanded="false" aria-controls="site-nav" aria-label="Menu">
+          <svg class="nav-burger__open" viewBox="0 0 24 24" aria-hidden="true"><path d="M3 6h18M3 12h18M3 18h18"/></svg>
+          <svg class="nav-burger__close" viewBox="0 0 24 24" aria-hidden="true"><path d="M5 5l14 14M19 5L5 19"/></svg>
+        </button>
+
+        <nav class="site-nav" id="site-nav" aria-label="Main">
+            <a href="/docs/protocol/">Protocol</a>
+            <a href="/hardware/">Hardware</a>
+            <a href="/app/" aria-current="page">App</a>
+            <a href="/faq/">FAQ</a>
+            <a href="/flasher/">Flasher</a>
+
+          <span class="site-nav__actions">
+            <a class="pill" href="https://github.com/sponsors/darconeous">Donate</a>
+            <a class="pill" href="https://github.com/darconeous/umsh">
+              <svg viewBox="0 0 16 16" aria-hidden="true"><path d="M8 0C3.58 0 0 3.58 0 8c0 3.54 2.29 6.53 5.47 7.59.4.07.55-.17.55-.38 0-.19-.01-.82-.01-1.49-2.01.37-2.53-.49-2.69-.94-.09-.23-.48-.94-.82-1.13-.28-.15-.68-.52-.01-.53.63-.01 1.08.58 1.23.82.72 1.21 1.87.87 2.33.66.07-.52.28-.87.51-1.07-1.78-.2-3.64-.89-3.64-3.95 0-.87.31-1.59.82-2.15-.08-.2-.36-1.02.08-2.12 0 0 .67-.21 2.2.82.64-.18 1.32-.27 2-.27s1.36.09 2 .27c1.53-1.04 2.2-.82 2.2-.82.44 1.1.16 1.92.08 2.12.51.56.82 1.27.82 2.15 0 3.07-1.87 3.75-3.65 3.95.29.25.54.73.54 1.48 0 1.07-.01 1.93-.01 2.2 0 .21.15.46.55.38A8.01 8.01 0 0 0 16 8c0-4.42-3.58-8-8-8Z"/></svg>
+              GitHub
+            </a>
+          </span>
+        </nav>
+      </div>
+    </header>
+
+    <main id="main">
+      
+  
+  <div class="page-head page-head--center">
+    <div class="container">
+      <h1>The app</h1>
+      <p>UMSH for iPhone — how it works, what it does, and how to get into the beta.</p>
+    </div>
+  </div>
+
+  <div class="section">
+    <div class="container">
+      <div class="prose prose--center">
+        <p>The UMSH app is where you actually read and write messages. It pairs with a
+radio over Bluetooth and hands off everything that touches the air to that
+radio, which is what lets your phone stay in your pocket while the radio does
+the waiting and listening that a mesh requires.</p>
+<div class="shots">
+  <figure>
+    <img src="/images/app/thread.png" alt="A group conversation in the UMSH app, with reactions on two messages and a delivery receipt." loading="lazy" />
+    <figcaption>Conversations, with reactions and delivery status</figcaption>
+  </figure>
+  <figure>
+    <img src="/images/app/peers.png" alt="The peers list in the UMSH app, showing four saved nodes with their address hints." loading="lazy" />
+    <figcaption>Contacts, each one a public key</figcaption>
+  </figure>
+</div>
+<h2 id="what-it-does">What it does</h2>
+<p><strong>Conversations.</strong> One-to-one messages with people you have exchanged
+identities with, and group conversations on shared channels. Messages are
+authenticated end to end, so a message that claims to be from a contact
+really is. Reactions are supported, and delivery status tells you whether a
+message actually made it across the mesh rather than just leaving your phone.</p>
+<p><strong>Contacts.</strong> Every contact is a public key. You add someone by scanning a QR
+code or opening a <code>umsh:</code> link they sent you, and from that moment on your
+messages to them are encrypted to that key alone. There is no directory and no
+account, so there is nothing to look anyone up in — which is the point.</p>
+<p><strong>Your radio.</strong> The app configures the radio it is paired with: its name, its
+role, its channels, and how often it beacons. Battery, signal, and position
+are visible when the hardware provides them, and a map shows the nodes you
+have heard from.</p>
+<p><strong>Location, if you want it.</strong> A radio with a GNSS receiver can share its
+position on a channel, and the app can share the phone’s own location instead.
+Both are off unless you turn them on, and neither is ever attached to an
+identity you hand out.</p>
+<h2 id="requirements">Requirements</h2>
+<p>You need an iPhone running iOS 18 or later, and a radio to pair with. The app
+does not work on its own — it is a companion to hardware, not a replacement
+for it. See <a href="/hardware/">supported hardware</a> for what to buy.</p>
+<p>The app never needs an internet connection to do its job. Messages go over
+radio, not over the network.</p>
+<h2 id="getting-the-beta">Getting the beta</h2>
+<div class="notice">
+<p><strong>The public beta has not opened yet.</strong> The app is in internal
+testing on TestFlight while the protocol it depends on is still moving. When
+a public TestFlight link exists, it will be posted here and announced on the
+project's GitHub page.</p>
+<p>If you would like to be part of it, the most useful thing you can do right
+now is <a href="https://github.com/darconeous/umsh">follow the project on
+GitHub</a> — that is where the announcement will go, and where feedback is
+most welcome.</p>
+</div>
+<h2 id="android">Android</h2>
+<p>An Android app is planned. Work has not started on it.</p>
+<p>The groundwork is in place: the protocol logic lives in a Rust core that the
+iOS app already talks to through a generated interface, and the same core is
+meant to serve an Android app when someone builds one. That is a real head
+start, but it is not an app, and it would be dishonest to suggest a date.</p>
+<h2 id="privacy">Privacy</h2>
+<p>The app collects nothing and sends nothing anywhere. Your identity key is
+generated on your device and stays there, held in the system keychain and
+marked so that it is never included in a backup or synced to another device.
+Losing the phone means losing that identity — which is the tradeoff that comes
+with nobody else ever holding it.</p>
+
+      </div>
+    </div>
+  </div>
+
+    </main>
+
+    <footer class="site-footer">
+      <div class="container">
+        <div class="site-footer__brand">
+          <img src="https://umsh.dev/images/logo/umsh-logo-orange.svg" alt="UMSH" width="1209" height="283" />
+          <p>An experimental LoRa mesh protocol with strong cryptography, clean layer separation, and strict bandwidth discipline.</p>
+        </div>
+
+        <div>
+          <h2>Project</h2>
+          <ul>
+            <li><a href="/docs/protocol/">Protocol specification</a></li>
+            <li><a href="/docs/rust/">Rust API docs</a></li>
+            <li><a href="https://github.com/darconeous/umsh">Source on GitHub</a></li>
+            <li><a href="https://github.com/sponsors/darconeous">Donate</a></li>
+          </ul>
+        </div>
+
+        <div>
+          <h2>Get started</h2>
+          <ul>
+            <li><a href="https://umsh.dev/hardware/">Supported hardware</a></li>
+            <li><a href="https://umsh.dev/flasher/">Flash a device</a></li>
+            <li><a href="https://umsh.dev/app/">iOS app</a></li>
+            <li><a href="https://umsh.dev/faq/">FAQ</a></li>
+          </ul>
+        </div>
+      </div>
+
+      <div class="container">
+        <div class="site-footer__legal">
+          <span>
+            <a href="https://umsh.dev/privacy/">Privacy</a> ·
+            <a href="https://umsh.dev/terms/">Terms</a>
+          </span>
+          <span>A <a href="https://voria.com/">Voria Labs</a> project.</span>
+        </div>
+      </div>
+    </footer>
+
+    <script src="https://umsh.dev/js/nav.js" defer></script>
+  </body>
+</html>

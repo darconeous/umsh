@@ -1,0 +1,231 @@
+<!DOCTYPE html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>Questions — UMSH</title>
+    <meta name="description" content="What UMSH is, what it is not, and what you should expect from it right now." />
+    <meta name="theme-color" content="#FA5000" />
+
+    <link rel="stylesheet" href="https://umsh.dev/site.css" />
+    <link rel="icon" href="https://umsh.dev/favicon.ico" sizes="any" />
+    <link rel="icon" type="image/png" href="https://umsh.dev/favicon-32.png" sizes="32x32" />
+    <link rel="apple-touch-icon" href="https://umsh.dev/apple-touch-icon.png" />
+
+    <meta property="og:site_name" content="UMSH" />
+    <meta property="og:type" content="website" />
+    <meta property="og:title" content="Questions — UMSH" />
+    <meta property="og:description" content="What UMSH is, what it is not, and what you should expect from it right now." />
+    <meta property="og:image" content="https://umsh.dev/og-card.png" />
+    <meta property="og:url" content="https://umsh.dev/faq/" />
+    <meta name="twitter:card" content="summary_large_image" />
+    
+  </head>
+
+  <body>
+    <a class="skip-link" href="#main">Skip to content</a>
+
+    <header class="site-header">
+      <div class="container">
+        <a class="site-header__logo" href="https://umsh.dev/">
+          <img src="https://umsh.dev/images/logo/umsh-logo-white.svg" alt="UMSH" width="1209" height="283" />
+        </a>
+
+        <button class="nav-burger" type="button" aria-expanded="false" aria-controls="site-nav" aria-label="Menu">
+          <svg class="nav-burger__open" viewBox="0 0 24 24" aria-hidden="true"><path d="M3 6h18M3 12h18M3 18h18"/></svg>
+          <svg class="nav-burger__close" viewBox="0 0 24 24" aria-hidden="true"><path d="M5 5l14 14M19 5L5 19"/></svg>
+        </button>
+
+        <nav class="site-nav" id="site-nav" aria-label="Main">
+            <a href="/docs/protocol/">Protocol</a>
+            <a href="/hardware/">Hardware</a>
+            <a href="/app/">App</a>
+            <a href="/faq/" aria-current="page">FAQ</a>
+            <a href="/flasher/">Flasher</a>
+
+          <span class="site-nav__actions">
+            <a class="pill" href="https://github.com/sponsors/darconeous">Donate</a>
+            <a class="pill" href="https://github.com/darconeous/umsh">
+              <svg viewBox="0 0 16 16" aria-hidden="true"><path d="M8 0C3.58 0 0 3.58 0 8c0 3.54 2.29 6.53 5.47 7.59.4.07.55-.17.55-.38 0-.19-.01-.82-.01-1.49-2.01.37-2.53-.49-2.69-.94-.09-.23-.48-.94-.82-1.13-.28-.15-.68-.52-.01-.53.63-.01 1.08.58 1.23.82.72 1.21 1.87.87 2.33.66.07-.52.28-.87.51-1.07-1.78-.2-3.64-.89-3.64-3.95 0-.87.31-1.59.82-2.15-.08-.2-.36-1.02.08-2.12 0 0 .67-.21 2.2.82.64-.18 1.32-.27 2-.27s1.36.09 2 .27c1.53-1.04 2.2-.82 2.2-.82.44 1.1.16 1.92.08 2.12.51.56.82 1.27.82 2.15 0 3.07-1.87 3.75-3.65 3.95.29.25.54.73.54 1.48 0 1.07-.01 1.93-.01 2.2 0 .21.15.46.55.38A8.01 8.01 0 0 0 16 8c0-4.42-3.58-8-8-8Z"/></svg>
+              GitHub
+            </a>
+          </span>
+        </nav>
+      </div>
+    </header>
+
+    <main id="main">
+      
+  
+  <div class="page-head page-head--center">
+    <div class="container">
+      <h1>Questions</h1>
+      <p>What UMSH is, what it is not, and what you should expect from it right now.</p>
+    </div>
+  </div>
+
+  <div class="section">
+    <div class="container">
+      <div class="prose prose--center">
+        <div class="faq-item">
+<h3 id="what-is-umsh">What is UMSH?</h3>
+<p>A mesh networking protocol for long-range, low-power radios — the kind of
+hardware that can send a short text message several kilometres on a coin cell’s
+worth of energy. It is designed for group text chat and for reporting position
+and sensor readings across an area with no cell coverage and no infrastructure
+of any kind.</p>
+<p>It is also a specification, a Rust implementation, firmware for half a dozen
+boards, an iPhone app, and a Wireshark dissector. All of it is open source.</p>
+</div>
+<div class="faq-item">
+<h3 id="why-another-mesh-protocol">Why another mesh protocol?</h3>
+<p>It started as a question about MeshCore: what would this look like if the
+cryptography were done properly and the layers were kept separate? Several of
+the answers turned out to require changes that would break compatibility, and
+at that point it was a different protocol.</p>
+<p>The honest framing is that few of the ideas here are new — cryptographic
+addressing, source routing, and regions all come from MeshCore. What UMSH
+contributes is putting them together with stronger cryptography, composable
+routing, and a link layer that never looks inside a payload.</p>
+</div>
+<div class="faq-item">
+<h3 id="is-it-ready-to-use">Is it ready to use?</h3>
+<p>It is a technology preview. It works — nodes talk to each other, messages
+arrive, the app is usable — but the protocol is still moving and will keep
+moving for months. Expect changes that break compatibility, and expect to
+reflash your radios when they happen.</p>
+<p>If you want a mesh that works reliably today with a large community behind it,
+use <a rel="external" href="https://meshtastic.org">Meshtastic</a>. That is a genuine recommendation,
+not a formality. Come back to UMSH when you want to see where a stricter
+design goes.</p>
+</div>
+<div class="faq-item">
+<h3 id="can-umsh-talk-to-meshtastic-or-meshcore">Can UMSH talk to Meshtastic or MeshCore?</h3>
+<p>No, and it never will. The packet formats, the cryptography, and the identity
+models are all different at the lowest level. A radio runs one of these
+protocols at a time.</p>
+<p>Radios are not locked to anything, though. The boards UMSH supports are the
+same boards those projects support, and you can flash back and forth as often
+as you like.</p>
+</div>
+<div class="faq-item">
+<h3 id="what-hardware-do-i-need">What hardware do I need?</h3>
+<p>At least one radio, and realistically two, since a mesh with one node in it is
+just a radio. The <a href="/hardware/">hardware page</a> lists everything supported.</p>
+<p>If you are buying your first board and want the path most likely to work, get
+a SenseCAP T1000-E. It is the board most of the development happened against,
+and it is sealed, pocketable, and hard to damage.</p>
+</div>
+<div class="faq-item">
+<h3 id="how-far-does-it-actually-reach">How far does it actually reach?</h3>
+<p>Between two radios with a clear line of sight, several kilometres, and much
+more from a hilltop. Between two people standing in a city with buildings in
+the way, sometimes only a few hundred metres.</p>
+<p>Be sceptical of any specific number, including the ones on the boxes these
+radios come in. Range depends on antennas, terrain, height, and how much
+patience you have for slower settings. What a mesh adds is that nodes relay
+for each other, so coverage is about where the nodes are rather than how far
+any one of them shouts.</p>
+</div>
+<div class="faq-item">
+<h3 id="does-it-need-the-internet-or-a-phone-signal">Does it need the internet or a phone signal?</h3>
+<p>No. Radios talk directly to each other, and the app talks to your radio over
+Bluetooth. A group of UMSH nodes works with every phone in aeroplane mode and
+no network for a hundred kilometres.</p>
+<p>Bridging two distant meshes over the internet is possible, and the
+specification is deliberately grudging about it: a bridge cannot be relied on
+in an emergency, and it can waste airtime on chatter from somewhere far away.</p>
+</div>
+<div class="faq-item">
+<h3 id="can-i-use-it-on-amateur-radio-bands">Can I use it on amateur radio bands?</h3>
+<p>Yes, and the protocol was designed with that in mind. Traffic can be
+authenticated without being encrypted, which is what regulations that forbid
+obscuring the meaning of a transmission require. Operator and station
+callsigns have their own compact encoding, and repeaters update the station
+callsign as they pass a packet along.</p>
+<p>You are responsible for operating within your own licence and your country’s
+rules.</p>
+</div>
+<div class="faq-item">
+<h3 id="is-there-an-android-app">Is there an Android app?</h3>
+<p>Planned, not started. The <a href="/app/">app page</a> has the detail. The protocol core
+is shared and portable, which is a real head start, but there is no app and no
+date.</p>
+</div>
+<div class="faq-item">
+<h3 id="how-much-of-this-was-written-by-an-ai">How much of this was written by an AI?</h3>
+<p>A great deal of it, and that is stated plainly rather than hidden. The
+specification, the implementation, and this website were all written with
+heavy help from large language models, under close human direction and review.</p>
+<p>The project’s <a rel="external" href="https://github.com/darconeous/umsh/blob/main/docs/AI.md">note about it</a>
+is worth reading if that matters to you — and it is reasonable for it to
+matter. Judge the result on whether the cryptography is sound and the packets
+decode, which is why the specification, the test vectors, and the dissector
+are all public.</p>
+</div>
+<div class="faq-item">
+<h3 id="how-do-i-help">How do I help?</h3>
+<p>Use it and say what broke. Bug reports from someone with real hardware in
+hand are the most valuable thing this project can receive right now.</p>
+<p>Beyond that: port a board, read the specification and pick holes in it, or
+write the Android app. The comparison chapters in particular ask to be
+corrected if they are unfair to anyone.</p>
+<p>If you would rather support the work financially, there is a
+<a rel="external" href="https://github.com/sponsors/darconeous">sponsors page</a>.</p>
+</div>
+<div class="faq-item">
+<h3 id="what-is-the-licence">What is the licence?</h3>
+<p>The code is dual licensed under Apache 2.0 and MIT, at your option. The
+specification is published so that anyone can implement it, including in a
+different language, on different hardware, or inside another project
+entirely.</p>
+</div>
+
+      </div>
+    </div>
+  </div>
+
+    </main>
+
+    <footer class="site-footer">
+      <div class="container">
+        <div class="site-footer__brand">
+          <img src="https://umsh.dev/images/logo/umsh-logo-orange.svg" alt="UMSH" width="1209" height="283" />
+          <p>An experimental LoRa mesh protocol with strong cryptography, clean layer separation, and strict bandwidth discipline.</p>
+        </div>
+
+        <div>
+          <h2>Project</h2>
+          <ul>
+            <li><a href="/docs/protocol/">Protocol specification</a></li>
+            <li><a href="/docs/rust/">Rust API docs</a></li>
+            <li><a href="https://github.com/darconeous/umsh">Source on GitHub</a></li>
+            <li><a href="https://github.com/sponsors/darconeous">Donate</a></li>
+          </ul>
+        </div>
+
+        <div>
+          <h2>Get started</h2>
+          <ul>
+            <li><a href="https://umsh.dev/hardware/">Supported hardware</a></li>
+            <li><a href="https://umsh.dev/flasher/">Flash a device</a></li>
+            <li><a href="https://umsh.dev/app/">iOS app</a></li>
+            <li><a href="https://umsh.dev/faq/">FAQ</a></li>
+          </ul>
+        </div>
+      </div>
+
+      <div class="container">
+        <div class="site-footer__legal">
+          <span>
+            <a href="https://umsh.dev/privacy/">Privacy</a> ·
+            <a href="https://umsh.dev/terms/">Terms</a>
+          </span>
+          <span>A <a href="https://voria.com/">Voria Labs</a> project.</span>
+        </div>
+      </div>
+    </footer>
+
+    <script src="https://umsh.dev/js/nav.js" defer></script>
+  </body>
+</html>

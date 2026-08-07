@@ -1,0 +1,325 @@
+<!DOCTYPE html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>Flashing — UMSH</title>
+    <meta name="description" content="How to get UMSH firmware onto a radio." />
+    <meta name="theme-color" content="#FA5000" />
+
+    <link rel="stylesheet" href="https://umsh.dev/site.css" />
+    <link rel="icon" href="https://umsh.dev/favicon.ico" sizes="any" />
+    <link rel="icon" type="image/png" href="https://umsh.dev/favicon-32.png" sizes="32x32" />
+    <link rel="apple-touch-icon" href="https://umsh.dev/apple-touch-icon.png" />
+
+    <meta property="og:site_name" content="UMSH" />
+    <meta property="og:type" content="website" />
+    <meta property="og:title" content="Flashing — UMSH" />
+    <meta property="og:description" content="How to get UMSH firmware onto a radio." />
+    <meta property="og:image" content="https://umsh.dev/og-card.png" />
+    <meta property="og:url" content="https://umsh.dev/flasher/" />
+    <meta name="twitter:card" content="summary_large_image" />
+    
+  </head>
+
+  <body>
+    <a class="skip-link" href="#main">Skip to content</a>
+
+    <header class="site-header">
+      <div class="container">
+        <a class="site-header__logo" href="https://umsh.dev/">
+          <img src="https://umsh.dev/images/logo/umsh-logo-white.svg" alt="UMSH" width="1209" height="283" />
+        </a>
+
+        <button class="nav-burger" type="button" aria-expanded="false" aria-controls="site-nav" aria-label="Menu">
+          <svg class="nav-burger__open" viewBox="0 0 24 24" aria-hidden="true"><path d="M3 6h18M3 12h18M3 18h18"/></svg>
+          <svg class="nav-burger__close" viewBox="0 0 24 24" aria-hidden="true"><path d="M5 5l14 14M19 5L5 19"/></svg>
+        </button>
+
+        <nav class="site-nav" id="site-nav" aria-label="Main">
+            <a href="/docs/protocol/">Protocol</a>
+            <a href="/hardware/">Hardware</a>
+            <a href="/app/">App</a>
+            <a href="/faq/">FAQ</a>
+            <a href="/flasher/" aria-current="page">Flasher</a>
+
+          <span class="site-nav__actions">
+            <a class="pill" href="https://github.com/sponsors/darconeous">Donate</a>
+            <a class="pill" href="https://github.com/darconeous/umsh">
+              <svg viewBox="0 0 16 16" aria-hidden="true"><path d="M8 0C3.58 0 0 3.58 0 8c0 3.54 2.29 6.53 5.47 7.59.4.07.55-.17.55-.38 0-.19-.01-.82-.01-1.49-2.01.37-2.53-.49-2.69-.94-.09-.23-.48-.94-.82-1.13-.28-.15-.68-.52-.01-.53.63-.01 1.08.58 1.23.82.72 1.21 1.87.87 2.33.66.07-.52.28-.87.51-1.07-1.78-.2-3.64-.89-3.64-3.95 0-.87.31-1.59.82-2.15-.08-.2-.36-1.02.08-2.12 0 0 .67-.21 2.2.82.64-.18 1.32-.27 2-.27s1.36.09 2 .27c1.53-1.04 2.2-.82 2.2-.82.44 1.1.16 1.92.08 2.12.51.56.82 1.27.82 2.15 0 3.07-1.87 3.75-3.65 3.95.29.25.54.73.54 1.48 0 1.07-.01 1.93-.01 2.2 0 .21.15.46.55.38A8.01 8.01 0 0 0 16 8c0-4.42-3.58-8-8-8Z"/></svg>
+              GitHub
+            </a>
+          </span>
+        </nav>
+      </div>
+    </header>
+
+    <main id="main">
+      
+  
+
+
+  <div class="page-head page-head--center">
+    <div class="container">
+      <h1>Flashing</h1>
+      <p>How to get UMSH firmware onto a radio.</p>
+    </div>
+  </div>
+
+  <div class="section">
+    <div class="container">
+      <div class="prose prose--center"><div class="notice">
+<p><strong>A browser-based flasher is on the way.</strong> The plan is the
+usual thing: plug the radio into a USB port, pick it from a list, click a
+button, and let the page do the rest — no toolchain, no downloads, no command
+line. It will need Chrome, Edge, or Opera, since those are the browsers that
+can talk to serial devices.</p>
+<p>It is not built yet, and it is waiting on a firmware release process so
+that there is something for it to install. Until then, flashing means
+building from source, which is not difficult.</p>
+</div>
+<h2 id="building-and-flashing-from-source">Building and flashing from source</h2>
+<p>You will need a Rust toolchain, and for the nRF52840 boards, <code>arm-none-eabi-objcopy</code>
+from the GNU Arm Embedded toolchain. Clone the repository, put your board into
+its bootloader as described below, and run the one command for it. The
+firmware only links in release mode, which the make targets already handle.</p>
+<pre><code data-lang="bash">git clone https://github.com/darconeous/umsh.git
+</code></pre>
+<p>Espressif boards need one extra step, because the Xtensa processors need
+their own Rust compiler:</p>
+<pre><code data-lang="bash">cargo install espup espflash &amp;&amp; espup install
+</code></pre>
+<p>The instructions below cover getting each board into its bootloader, which is
+the part that differs. If a flash appears to succeed but the board comes back
+running the same firmware it had before, read the notes for your board — on
+some of them that failure is completely silent.</p>
+</div>
+    </div>
+  </div>
+
+  <section class="section section--surface">
+    <div class="container">
+      <div class="section__head section__head--center">
+        <h2>Per-board instructions</h2>
+        <p>
+          Every board runs the same firmware built for its own hardware, and
+          the same command builds and flashes it. What differs is how you get
+          the board into its bootloader.
+        </p>
+      </div>
+
+      
+        <article class="card board-steps" id="t1000e">
+          <span class="card__eyebrow">Seeed Studio</span>
+          <h3>SenseCAP T1000-E</h3>
+
+          <p><strong>Getting into the bootloader.</strong> Hold the button while plugging in the magnetic cable, or run a 1200-baud touch on the serial port.</p>
+
+          <p><strong>Building and flashing.</strong></p>
+          <pre><code>make flash-t1000e</code></pre>
+
+          
+            <ul class="board__specs" style="border-top: none;">
+              <li><span>Bootloader drive</span><span>T1000-E</span></li>
+              <li><span>UF2 family</span><span>0x28860057</span></li>
+              <li><span>Application start</span><span>0x27000</span></li>
+              <li><span>SoftDevice</span><span>S140 7.3.0</span></li>
+            </ul>
+          
+
+          
+            <div class="notice">
+              <p><strong>Worth knowing about this board</strong></p>
+              <ul>
+                
+                <li>The button bootloader exposes a serial DFU endpoint only — there is no UF2 drive on that path. Use <code>make flash-t1000e-serial</code> for it.</li><li>The board is factory-sealed with no debug header, so there is no recovery from a damaged bootloader. Do not replace it.</li>
+              </ul>
+            </div>
+          
+        </article>
+      
+        <article class="card board-steps" id="techo">
+          <span class="card__eyebrow">LilyGO</span>
+          <h3>T-Echo</h3>
+
+          <p><strong>Getting into the bootloader.</strong> Double-tap the reset button, or run a 1200-baud touch on the serial port.</p>
+
+          <p><strong>Building and flashing.</strong></p>
+          <pre><code>make flash-techo</code></pre>
+
+          
+            <ul class="board__specs" style="border-top: none;">
+              <li><span>Bootloader drive</span><span>TECHOBOOT</span></li>
+              <li><span>UF2 family</span><span>0xADA52840</span></li>
+              <li><span>Application start</span><span>0x26000</span></li>
+              <li><span>SoftDevice</span><span>S140 6.1.1</span></li>
+            </ul>
+          
+
+          
+            <div class="notice">
+              <p><strong>Worth knowing about this board</strong></p>
+              <ul>
+                
+                <li>This is the only board whose application starts at 0x26000 — it ships an older SoftDevice than the rest. An image built for another board will not boot here.</li>
+              </ul>
+            </div>
+          
+        </article>
+      
+        <article class="card board-steps" id="wio-tracker-l1">
+          <span class="card__eyebrow">Seeed Studio</span>
+          <h3>Wio Tracker L1</h3>
+
+          <p><strong>Getting into the bootloader.</strong> Double-tap the reset button, or run a 1200-baud touch on the serial port.</p>
+
+          <p><strong>Building and flashing.</strong></p>
+          <pre><code>make flash-wio-tracker-l1</code></pre>
+
+          
+            <ul class="board__specs" style="border-top: none;">
+              <li><span>Bootloader drive</span><span>TRACKER L1</span></li>
+              <li><span>UF2 family</span><span>0x28861667</span></li>
+              <li><span>Application start</span><span>0x27000</span></li>
+              <li><span>SoftDevice</span><span>S140 7.3.0</span></li>
+            </ul>
+          
+
+          
+            <div class="notice">
+              <p><strong>Worth knowing about this board</strong></p>
+              <ul>
+                
+                <li>The GNSS receiver keeps time for this board, so a full power-switch cut costs it the clock as well as the fix.</li>
+              </ul>
+            </div>
+          
+        </article>
+      
+        <article class="card board-steps" id="sensecap-solar">
+          <span class="card__eyebrow">Seeed Studio</span>
+          <h3>SenseCAP Solar Node P1</h3>
+
+          <p><strong>Getting into the bootloader.</strong> Double-tap the reset button. On a board still running the factory firmware this is the only way in — that firmware ignores the 1200-baud touch.</p>
+
+          <p><strong>Building and flashing.</strong></p>
+          <pre><code>make flash-sensecap-solar</code></pre>
+
+          
+            <ul class="board__specs" style="border-top: none;">
+              <li><span>Bootloader drive</span><span>SENSECAP</span></li>
+              <li><span>UF2 family</span><span>0x28860044</span></li>
+              <li><span>Application start</span><span>0x27000</span></li>
+              <li><span>SoftDevice</span><span>S140 7.3.0</span></li>
+            </ul>
+          
+
+          
+            <div class="notice">
+              <p><strong>Worth knowing about this board</strong></p>
+              <ul>
+                
+                <li>Once UMSH firmware is on the board, the 1200-baud touch works normally.</li><li>From the powered-off state, any press of the PWR button enters the bootloader, however brief. USR is the button that turns the node on.</li>
+              </ul>
+            </div>
+          
+        </article>
+      
+        <article class="card board-steps" id="heltec-v3">
+          <span class="card__eyebrow">Heltec</span>
+          <h3>WiFi LoRa 32 V3</h3>
+
+          <p><strong>Getting into the bootloader.</strong> None needed — the board enters its ROM bootloader on its own when the flashing tool asserts the USB serial control lines.</p>
+
+          <p><strong>Building and flashing.</strong></p>
+          <pre><code>make flash-heltec-v3</code></pre>
+
+          
+
+          
+            <div class="notice">
+              <p><strong>Worth knowing about this board</strong></p>
+              <ul>
+                
+                <li>Flashing rewrites the partition table, which carries the 64 KB partition UMSH stores its data in. A board coming from a different layout loses whatever was past the old application partition.</li><li>Building this board needs Espressif's Xtensa Rust toolchain, installed with <code>espup</code>.</li>
+              </ul>
+            </div>
+          
+        </article>
+      
+        <article class="card board-steps" id="xiao-nrf52">
+          <span class="card__eyebrow">Seeed Studio</span>
+          <h3>XIAO nRF52840 + Wio-SX1262 Kit</h3>
+
+          <p><strong>Getting into the bootloader.</strong> Double-tap the reset button on the module.</p>
+
+          <p><strong>Building and flashing.</strong></p>
+          <pre><code>make flash-xiao-nrf52</code></pre>
+
+          
+            <ul class="board__specs" style="border-top: none;">
+              <li><span>Bootloader drive</span><span>XIAO-SENSE</span></li>
+              <li><span>UF2 family</span><span>0xADA52840</span></li>
+              <li><span>Application start</span><span>0x27000</span></li>
+              <li><span>SoftDevice</span><span>S140 7.3.0</span></li>
+            </ul>
+          
+
+          
+            <div class="notice">
+              <p><strong>Worth knowing about this board</strong></p>
+              <ul>
+                
+                <li>A UF2 file carrying the wrong family identifier is copied without any error and then silently discarded — the drive stays mounted and the board keeps running its old firmware, which looks exactly like a successful flash. If an update seems not to have taken, check the family identifier first.</li><li>Retail kits mount as XIAO-SENSE; a re-flashed bootloader may present XIAO-BOOT instead.</li>
+              </ul>
+            </div>
+          
+        </article>
+      
+    </div>
+  </section>
+
+    </main>
+
+    <footer class="site-footer">
+      <div class="container">
+        <div class="site-footer__brand">
+          <img src="https://umsh.dev/images/logo/umsh-logo-orange.svg" alt="UMSH" width="1209" height="283" />
+          <p>An experimental LoRa mesh protocol with strong cryptography, clean layer separation, and strict bandwidth discipline.</p>
+        </div>
+
+        <div>
+          <h2>Project</h2>
+          <ul>
+            <li><a href="/docs/protocol/">Protocol specification</a></li>
+            <li><a href="/docs/rust/">Rust API docs</a></li>
+            <li><a href="https://github.com/darconeous/umsh">Source on GitHub</a></li>
+            <li><a href="https://github.com/sponsors/darconeous">Donate</a></li>
+          </ul>
+        </div>
+
+        <div>
+          <h2>Get started</h2>
+          <ul>
+            <li><a href="https://umsh.dev/hardware/">Supported hardware</a></li>
+            <li><a href="https://umsh.dev/flasher/">Flash a device</a></li>
+            <li><a href="https://umsh.dev/app/">iOS app</a></li>
+            <li><a href="https://umsh.dev/faq/">FAQ</a></li>
+          </ul>
+        </div>
+      </div>
+
+      <div class="container">
+        <div class="site-footer__legal">
+          <span>
+            <a href="https://umsh.dev/privacy/">Privacy</a> ·
+            <a href="https://umsh.dev/terms/">Terms</a>
+          </span>
+          <span>A <a href="https://voria.com/">Voria Labs</a> project.</span>
+        </div>
+      </div>
+    </footer>
+
+    <script src="https://umsh.dev/js/nav.js" defer></script>
+  </body>
+</html>

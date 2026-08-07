@@ -1,0 +1,175 @@
+<!DOCTYPE html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>Terms — UMSH</title>
+    <meta name="description" content="The terms this website, the software, and the specification are offered under." />
+    <meta name="theme-color" content="#FA5000" />
+
+    <link rel="stylesheet" href="https://umsh.dev/site.css" />
+    <link rel="icon" href="https://umsh.dev/favicon.ico" sizes="any" />
+    <link rel="icon" type="image/png" href="https://umsh.dev/favicon-32.png" sizes="32x32" />
+    <link rel="apple-touch-icon" href="https://umsh.dev/apple-touch-icon.png" />
+
+    <meta property="og:site_name" content="UMSH" />
+    <meta property="og:type" content="website" />
+    <meta property="og:title" content="Terms — UMSH" />
+    <meta property="og:description" content="The terms this website, the software, and the specification are offered under." />
+    <meta property="og:image" content="https://umsh.dev/og-card.png" />
+    <meta property="og:url" content="https://umsh.dev/terms/" />
+    <meta name="twitter:card" content="summary_large_image" />
+    
+  </head>
+
+  <body>
+    <a class="skip-link" href="#main">Skip to content</a>
+
+    <header class="site-header">
+      <div class="container">
+        <a class="site-header__logo" href="https://umsh.dev/">
+          <img src="https://umsh.dev/images/logo/umsh-logo-white.svg" alt="UMSH" width="1209" height="283" />
+        </a>
+
+        <button class="nav-burger" type="button" aria-expanded="false" aria-controls="site-nav" aria-label="Menu">
+          <svg class="nav-burger__open" viewBox="0 0 24 24" aria-hidden="true"><path d="M3 6h18M3 12h18M3 18h18"/></svg>
+          <svg class="nav-burger__close" viewBox="0 0 24 24" aria-hidden="true"><path d="M5 5l14 14M19 5L5 19"/></svg>
+        </button>
+
+        <nav class="site-nav" id="site-nav" aria-label="Main">
+            <a href="/docs/protocol/">Protocol</a>
+            <a href="/hardware/">Hardware</a>
+            <a href="/app/">App</a>
+            <a href="/faq/">FAQ</a>
+            <a href="/flasher/">Flasher</a>
+
+          <span class="site-nav__actions">
+            <a class="pill" href="https://github.com/sponsors/darconeous">Donate</a>
+            <a class="pill" href="https://github.com/darconeous/umsh">
+              <svg viewBox="0 0 16 16" aria-hidden="true"><path d="M8 0C3.58 0 0 3.58 0 8c0 3.54 2.29 6.53 5.47 7.59.4.07.55-.17.55-.38 0-.19-.01-.82-.01-1.49-2.01.37-2.53-.49-2.69-.94-.09-.23-.48-.94-.82-1.13-.28-.15-.68-.52-.01-.53.63-.01 1.08.58 1.23.82.72 1.21 1.87.87 2.33.66.07-.52.28-.87.51-1.07-1.78-.2-3.64-.89-3.64-3.95 0-.87.31-1.59.82-2.15-.08-.2-.36-1.02.08-2.12 0 0 .67-.21 2.2.82.64-.18 1.32-.27 2-.27s1.36.09 2 .27c1.53-1.04 2.2-.82 2.2-.82.44 1.1.16 1.92.08 2.12.51.56.82 1.27.82 2.15 0 3.07-1.87 3.75-3.65 3.95.29.25.54.73.54 1.48 0 1.07-.01 1.93-.01 2.2 0 .21.15.46.55.38A8.01 8.01 0 0 0 16 8c0-4.42-3.58-8-8-8Z"/></svg>
+              GitHub
+            </a>
+          </span>
+        </nav>
+      </div>
+    </header>
+
+    <main id="main">
+      
+  
+  <div class="page-head page-head--center">
+    <div class="container">
+      <h1>Terms</h1>
+      <p>The terms this website, the software, and the specification are offered under.</p>
+    </div>
+  </div>
+
+  <div class="section">
+    <div class="container">
+      <div class="prose prose--center">
+        <p><em>Last updated 7 August 2026.</em></p>
+<h2 id="the-software">The software</h2>
+<p>UMSH is free and open source software, dual licensed under the
+<a rel="external" href="https://github.com/darconeous/umsh/blob/main/LICENSE-APACHE">Apache License 2.0</a>
+and the <a rel="external" href="https://github.com/darconeous/umsh/blob/main/LICENSE-MIT">MIT License</a>,
+at your option.</p>
+<p>It is provided <strong>as is, without warranty of any kind</strong>, express or implied,
+including but not limited to the warranties of merchantability, fitness for a
+particular purpose, and non-infringement. Nobody involved in this project is
+liable for any claim, damage, or other liability arising from the software or
+its use. The licences say this at greater length and in more careful language;
+they are what governs.</p>
+<h2 id="this-is-experimental-software">This is experimental software</h2>
+<p>UMSH is a technology preview. The protocol is unfinished and changes without
+regard for compatibility. Firmware may fail, messages may not arrive, and an
+update may leave a radio needing to be reflashed before it works again.</p>
+<p><strong>Do not rely on UMSH where a failure to communicate would be dangerous.</strong> It
+is not suitable for emergency communication, for medical or safety-critical
+use, or as anyone’s only way of calling for help. Carry something you trust
+instead, and treat this as the interesting experiment it is.</p>
+<h2 id="radio-regulations-are-your-responsibility">Radio regulations are your responsibility</h2>
+<p>UMSH runs on radios that transmit, and transmitting is regulated everywhere.
+Which frequencies you may use, at what power, with what duty cycle, and
+whether you need a licence at all depend on where you are and what you are
+doing.</p>
+<p>You are responsible for operating within the rules that apply to you. Nothing
+on this site is legal advice, and the fact that a setting exists in the
+firmware does not mean it is permitted where you live. If you operate under an
+amateur licence, the usual conditions of that licence apply — including,
+generally, that you may not obscure the meaning of your transmissions, which
+is why the protocol offers a mode that authenticates without encrypting.</p>
+<h2 id="hardware">Hardware</h2>
+<p>The boards this site describes are made and sold by other companies. Links to
+them are provided because they are useful, not as an endorsement, and no
+affiliation or partnership is implied. Your purchase is with the vendor, on
+their terms, with their warranty.</p>
+<p>Flashing custom firmware may void a warranty. It can also, on some hardware,
+leave a device needing recovery steps that are inconvenient or impossible —
+the flashing instructions call out the boards where that risk is real. Do it
+knowing that.</p>
+<h2 id="trademarks">Trademarks</h2>
+<p>Product and company names on this site belong to their respective owners and
+are used to identify the hardware and software being discussed. Meshtastic,
+MeshCore, and Reticulum are the projects UMSH is compared against; those
+comparisons are our own reading of public documentation and source code, are
+not endorsed by those projects, and may contain mistakes. If you find one,
+<a rel="external" href="https://github.com/darconeous/umsh/issues">please report it</a> — the
+comparisons are meant to be accurate, not flattering.</p>
+<h2 id="this-website">This website</h2>
+<p>The content of this site is published so it can be read, quoted, and argued
+with. The site is provided as is, with no warranty that it is accurate,
+complete, or currently true — the project moves quickly, and pages will
+sometimes lag behind it.</p>
+<h2 id="changes">Changes</h2>
+<p>These terms may change. The date at the top will change with them, and the
+history is public in the project’s git repository. Continuing to use the
+software after a change means the new terms apply.</p>
+
+      </div>
+    </div>
+  </div>
+
+    </main>
+
+    <footer class="site-footer">
+      <div class="container">
+        <div class="site-footer__brand">
+          <img src="https://umsh.dev/images/logo/umsh-logo-orange.svg" alt="UMSH" width="1209" height="283" />
+          <p>An experimental LoRa mesh protocol with strong cryptography, clean layer separation, and strict bandwidth discipline.</p>
+        </div>
+
+        <div>
+          <h2>Project</h2>
+          <ul>
+            <li><a href="/docs/protocol/">Protocol specification</a></li>
+            <li><a href="/docs/rust/">Rust API docs</a></li>
+            <li><a href="https://github.com/darconeous/umsh">Source on GitHub</a></li>
+            <li><a href="https://github.com/sponsors/darconeous">Donate</a></li>
+          </ul>
+        </div>
+
+        <div>
+          <h2>Get started</h2>
+          <ul>
+            <li><a href="https://umsh.dev/hardware/">Supported hardware</a></li>
+            <li><a href="https://umsh.dev/flasher/">Flash a device</a></li>
+            <li><a href="https://umsh.dev/app/">iOS app</a></li>
+            <li><a href="https://umsh.dev/faq/">FAQ</a></li>
+          </ul>
+        </div>
+      </div>
+
+      <div class="container">
+        <div class="site-footer__legal">
+          <span>
+            <a href="https://umsh.dev/privacy/">Privacy</a> ·
+            <a href="https://umsh.dev/terms/">Terms</a>
+          </span>
+          <span>A <a href="https://voria.com/">Voria Labs</a> project.</span>
+        </div>
+      </div>
+    </footer>
+
+    <script src="https://umsh.dev/js/nav.js" defer></script>
+  </body>
+</html>

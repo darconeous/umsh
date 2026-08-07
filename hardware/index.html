@@ -1,0 +1,504 @@
+<!DOCTYPE html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>Hardware — UMSH</title>
+    <meta name="description" content="The boards that run UMSH today, the ones being worked on, and what each is good for." />
+    <meta name="theme-color" content="#FA5000" />
+
+    <link rel="stylesheet" href="https://umsh.dev/site.css" />
+    <link rel="icon" href="https://umsh.dev/favicon.ico" sizes="any" />
+    <link rel="icon" type="image/png" href="https://umsh.dev/favicon-32.png" sizes="32x32" />
+    <link rel="apple-touch-icon" href="https://umsh.dev/apple-touch-icon.png" />
+
+    <meta property="og:site_name" content="UMSH" />
+    <meta property="og:type" content="website" />
+    <meta property="og:title" content="Hardware — UMSH" />
+    <meta property="og:description" content="The boards that run UMSH today, the ones being worked on, and what each is good for." />
+    <meta property="og:image" content="https://umsh.dev/og-card.png" />
+    <meta property="og:url" content="https://umsh.dev/hardware/" />
+    <meta name="twitter:card" content="summary_large_image" />
+    
+  </head>
+
+  <body>
+    <a class="skip-link" href="#main">Skip to content</a>
+
+    <header class="site-header">
+      <div class="container">
+        <a class="site-header__logo" href="https://umsh.dev/">
+          <img src="https://umsh.dev/images/logo/umsh-logo-white.svg" alt="UMSH" width="1209" height="283" />
+        </a>
+
+        <button class="nav-burger" type="button" aria-expanded="false" aria-controls="site-nav" aria-label="Menu">
+          <svg class="nav-burger__open" viewBox="0 0 24 24" aria-hidden="true"><path d="M3 6h18M3 12h18M3 18h18"/></svg>
+          <svg class="nav-burger__close" viewBox="0 0 24 24" aria-hidden="true"><path d="M5 5l14 14M19 5L5 19"/></svg>
+        </button>
+
+        <nav class="site-nav" id="site-nav" aria-label="Main">
+            <a href="/docs/protocol/">Protocol</a>
+            <a href="/hardware/" aria-current="page">Hardware</a>
+            <a href="/app/">App</a>
+            <a href="/faq/">FAQ</a>
+            <a href="/flasher/">Flasher</a>
+
+          <span class="site-nav__actions">
+            <a class="pill" href="https://github.com/sponsors/darconeous">Donate</a>
+            <a class="pill" href="https://github.com/darconeous/umsh">
+              <svg viewBox="0 0 16 16" aria-hidden="true"><path d="M8 0C3.58 0 0 3.58 0 8c0 3.54 2.29 6.53 5.47 7.59.4.07.55-.17.55-.38 0-.19-.01-.82-.01-1.49-2.01.37-2.53-.49-2.69-.94-.09-.23-.48-.94-.82-1.13-.28-.15-.68-.52-.01-.53.63-.01 1.08.58 1.23.82.72 1.21 1.87.87 2.33.66.07-.52.28-.87.51-1.07-1.78-.2-3.64-.89-3.64-3.95 0-.87.31-1.59.82-2.15-.08-.2-.36-1.02.08-2.12 0 0 .67-.21 2.2.82.64-.18 1.32-.27 2-.27s1.36.09 2 .27c1.53-1.04 2.2-.82 2.2-.82.44 1.1.16 1.92.08 2.12.51.56.82 1.27.82 2.15 0 3.07-1.87 3.75-3.65 3.95.29.25.54.73.54 1.48 0 1.07-.01 1.93-.01 2.2 0 .21.15.46.55.38A8.01 8.01 0 0 0 16 8c0-4.42-3.58-8-8-8Z"/></svg>
+              GitHub
+            </a>
+          </span>
+        </nav>
+      </div>
+    </header>
+
+    <main id="main">
+      
+  
+
+  <div class="page-head page-head--center">
+    <div class="container">
+      <h1>Hardware</h1>
+      <p>The boards that run UMSH today, the ones being worked on, and what each is good for.</p>
+    </div>
+  </div>
+
+  <div class="section">
+    <div class="container">
+      <div class="prose prose--center"><p>Every supported board runs the same firmware image, built for its own
+hardware. There is no separate repeater build and no separate companion
+build — whether a node repeats traffic, reports its position, or simply
+carries your messages is configuration you apply afterwards, over Bluetooth
+or a USB cable. A tracker in your pocket today can be a repeater on a hilltop
+tomorrow without reflashing.</p>
+<p>The categories below are about what a board is <em>good for</em>, not about what
+software it can run.</p>
+</div>
+    </div>
+  </div>
+
+  
+    <section class="section section--surface" id="companion">
+      <div class="container">
+        <div class="section__head section__head--center">
+          <h2>Companion radios and trackers</h2>
+          <p>Radios that pair with the phone app over Bluetooth. This is where most people start.</p>
+        </div>
+
+        
+          <div class="boards">
+            
+              
+              <article class="board" id="t1000e">
+                <div class="board__media">
+                  
+                    <img src="https://umsh.dev/images/boards/t1000e.jpg"
+                         alt="Seeed Studio SenseCAP T1000-E" loading="lazy" />
+                  
+                </div>
+
+                <div class="board__body">
+                  
+                    <span class="status status--proven">Validated on hardware</span>
+                  
+
+                  <h3>SenseCAP T1000-E</h3>
+                  <p class="board__vendor">Seeed Studio</p>
+                  <p class="board__blurb">A sealed, pocket-sized card tracker with a magnetic charging cable. No screen and one button, so it pairs with the phone app rather than standing alone. The most thoroughly exercised board in the project.</p>
+
+                  <ul class="board__specs">
+                    <li><span>Processor</span><span>nRF52840</span></li>
+                    <li><span>Radio</span><span>Semtech LR1110</span></li>
+                    <li><span>Display</span><span>None</span></li>
+                    <li><span>Location</span><span>Airoha AG3335</span></li>
+                    <li><span>Power</span><span>Internal Li-ion</span></li>
+                  </ul>
+
+                  <p class="board__blurb">The reference board for UMSH development, and the one with the most hours on it.</p>
+
+                  <div class="board__actions">
+                    
+                    <a class="btn btn--primary" href="/flasher/?board=t1000e#t1000e">Flash this board</a>
+                    <a class="btn btn--ghost" href="https://www.seeedstudio.com/SenseCAP-Card-Tracker-T1000-E-for-Meshtastic-p-5913.html">Where to buy</a>
+                  </div>
+                </div>
+              </article>
+              
+            
+              
+              <article class="board" id="techo">
+                <div class="board__media">
+                  
+                    <img src="https://umsh.dev/images/boards/techo.jpg"
+                         alt="LilyGO T-Echo" loading="lazy" />
+                  
+                </div>
+
+                <div class="board__body">
+                  
+                    <span class="status status--proven">Validated on hardware</span>
+                  
+
+                  <h3>T-Echo</h3>
+                  <p class="board__vendor">LilyGO</p>
+                  <p class="board__blurb">A handheld tracker with a 1.54-inch e-paper display, so it can show messages and status on its own while still working as a phone companion. Low power draw between updates, and readable in direct sun.</p>
+
+                  <ul class="board__specs">
+                    <li><span>Processor</span><span>nRF52840</span></li>
+                    <li><span>Radio</span><span>Semtech SX1262</span></li>
+                    <li><span>Display</span><span>1.54&quot; e-paper, 200×200</span></li>
+                    <li><span>Location</span><span>Quectel L76K</span></li>
+                    <li><span>Power</span><span>850 mAh (2400 mAh on the Plus)</span></li>
+                  </ul>
+
+                  <p class="board__blurb">Bringup complete and validated on hardware, including the e-paper display and GNSS.</p>
+
+                  <div class="board__actions">
+                    
+                    <a class="btn btn--primary" href="/flasher/?board=techo#techo">Flash this board</a>
+                    <a class="btn btn--ghost" href="https://lilygo.cc/products/t-echo">Where to buy</a>
+                  </div>
+                </div>
+              </article>
+              
+            
+              
+              <article class="board" id="wio-tracker-l1">
+                <div class="board__media">
+                  
+                    <img src="https://umsh.dev/images/boards/wio-tracker-l1.jpg"
+                         alt="Seeed Studio Wio Tracker L1" loading="lazy" />
+                  
+                </div>
+
+                <div class="board__body">
+                  
+                    <span class="status status--proven">Validated on hardware</span>
+                  
+
+                  <h3>Wio Tracker L1</h3>
+                  <p class="board__vendor">Seeed Studio</p>
+                  <p class="board__blurb">A tracker with a small OLED display, a navigation button, and a mechanical power switch — the switch cuts the battery, so it survives a long spell in a drawer. The Pro ships assembled in a case, as pictured; the plain L1 is a bare board. The e-ink variant is not supported.</p>
+
+                  <ul class="board__specs">
+                    <li><span>Processor</span><span>nRF52840</span></li>
+                    <li><span>Radio</span><span>Semtech SX1262</span></li>
+                    <li><span>Display</span><span>0.96&quot; OLED, 128×64</span></li>
+                    <li><span>Location</span><span>Quectel L76K</span></li>
+                    <li><span>Power</span><span>Li-ion with hardware power switch</span></li>
+                  </ul>
+
+                  <p class="board__blurb">Validated on hardware, including the display, GNSS, and over-the-air radio work.</p>
+
+                  <div class="board__actions">
+                    
+                    <a class="btn btn--primary" href="/flasher/?board=wio-tracker-l1#wio-tracker-l1">Flash this board</a>
+                    <a class="btn btn--ghost" href="https://www.seeedstudio.com/Wio-Tracker-L1-p-6453.html">Where to buy</a>
+                  </div>
+                </div>
+              </article>
+              
+            
+              
+            
+              
+            
+              
+            
+          </div>
+        
+
+        
+
+        <div class="grid grid--2">
+          
+            
+          
+            
+          
+        </div>
+      </div>
+    </section>
+  
+    <section class="section" id="repeater">
+      <div class="container">
+        <div class="section__head section__head--center">
+          <h2>Repeaters</h2>
+          <p>Nodes meant to be installed somewhere and left running, to extend how far a mesh reaches.</p>
+        </div>
+
+        
+          <div class="boards">
+            
+              
+            
+              
+            
+              
+            
+              
+              <article class="board" id="sensecap-solar">
+                <div class="board__media">
+                  
+                    <img src="https://umsh.dev/images/boards/sensecap-solar.jpg"
+                         alt="Seeed Studio SenseCAP Solar Node P1" loading="lazy" />
+                  
+                </div>
+
+                <div class="board__body">
+                  
+                    <span class="status status--proven">Validated on hardware</span>
+                  
+
+                  <h3>SenseCAP Solar Node P1</h3>
+                  <p class="board__vendor">Seeed Studio</p>
+                  <p class="board__blurb">An outdoor, solar-powered node built to be mounted somewhere and left alone. A 5 W panel and four 18650 cells carry it through bad weather, which is what you want from the node that fills in a gap in coverage.</p>
+
+                  <ul class="board__specs">
+                    <li><span>Processor</span><span>nRF52840</span></li>
+                    <li><span>Radio</span><span>Semtech SX1262</span></li>
+                    <li><span>Display</span><span>None</span></li>
+                    <li><span>Location</span><span>Quectel L76K (enabled by default)</span></li>
+                    <li><span>Power</span><span>4 × 18650 with 5 W solar panel</span></li>
+                  </ul>
+
+                  <p class="board__blurb">Radio, Bluetooth, GNSS, and the power path have all been validated on hardware.</p>
+
+                  <div class="board__actions">
+                    
+                    <a class="btn btn--primary" href="/flasher/?board=sensecap-solar#sensecap-solar">Flash this board</a>
+                    <a class="btn btn--ghost" href="https://www.seeedstudio.com/SenseCAP-Solar-Node-P1-Pro-for-Meshtastic-LoRa-p-6412.html">Where to buy</a>
+                  </div>
+                </div>
+              </article>
+              
+            
+              
+            
+              
+            
+          </div>
+        
+
+        
+
+        <div class="grid grid--2">
+          
+            
+          
+            
+          
+        </div>
+      </div>
+    </section>
+  
+    <section class="section section--surface" id="messager">
+      <div class="container">
+        <div class="section__head section__head--center">
+          <h2>Self-contained messagers</h2>
+          <p>Handhelds with a keyboard and a screen, which work without a phone at all.</p>
+        </div>
+
+        
+          <div class="notice"><p>No board in this class runs UMSH yet. The hardware below is documented and under consideration.</p></div>
+        
+
+        
+          <h3 class="subhead">Under consideration</h3>
+        
+
+        <div class="grid grid--2">
+          
+            
+              <article class="card">
+                <span class="card__eyebrow">LilyGO</span>
+                <h3>T-LoRa Pager</h3>
+                <p>A keyboard-and-screen handheld — the first board that could run UMSH as a standalone messaging device with no phone involved. The hardware is fully documented in the repository and the user interface work for this class of device has been sketched out; the port itself has not started.</p>
+              </article>
+            
+          
+            
+              <article class="card">
+                <span class="card__eyebrow">LilyGO</span>
+                <h3>T-Deck</h3>
+                <p>Another keyboard handheld in the same class. Under consideration, but it needs an audited hardware reference before any implementation work can begin.</p>
+              </article>
+            
+          
+        </div>
+      </div>
+    </section>
+  
+    <section class="section" id="devkit">
+      <div class="container">
+        <div class="section__head section__head--center">
+          <h2>Development boards</h2>
+          <p>Open boards for building something of your own, or for working on UMSH itself.</p>
+        </div>
+
+        
+          <div class="boards">
+            
+              
+            
+              
+            
+              
+            
+              
+            
+              
+              <article class="board" id="heltec-v3">
+                <div class="board__media">
+                  
+                    <img src="https://umsh.dev/images/boards/heltec-v3.png"
+                         alt="Heltec WiFi LoRa 32 V3" loading="lazy" />
+                  
+                </div>
+
+                <div class="board__body">
+                  
+                    <span class="status status--proven">Validated on hardware</span>
+                  
+
+                  <h3>WiFi LoRa 32 V3</h3>
+                  <p class="board__vendor">Heltec</p>
+                  <p class="board__blurb">An inexpensive, widely available development board with an OLED and exposed pins. It flashes over its USB serial bootloader, which cannot be bricked, so it is a forgiving board to experiment on.</p>
+
+                  <ul class="board__specs">
+                    <li><span>Processor</span><span>Espressif ESP32-S3</span></li>
+                    <li><span>Radio</span><span>Semtech SX1262</span></li>
+                    <li><span>Display</span><span>0.96&quot; OLED, 128×64</span></li>
+                    <li><span>Location</span><span>None</span></li>
+                    <li><span>Power</span><span>LiPo connector with onboard charger</span></li>
+                  </ul>
+
+                  <p class="board__blurb">Validated on hardware, including Bluetooth pairing and over-the-air radio work.</p>
+
+                  <div class="board__actions">
+                    
+                    <a class="btn btn--primary" href="/flasher/?board=heltec-v3#heltec-v3">Flash this board</a>
+                    <a class="btn btn--ghost" href="https://heltec.org/project/wifi-lora-32-v3/">Where to buy</a>
+                  </div>
+                </div>
+              </article>
+              
+            
+              
+              <article class="board" id="xiao-nrf52">
+                <div class="board__media">
+                  
+                    <img src="https://umsh.dev/images/boards/xiao-nrf52.jpg"
+                         alt="Seeed Studio XIAO nRF52840 + Wio-SX1262 Kit" loading="lazy" />
+                  
+                </div>
+
+                <div class="board__body">
+                  
+                    <span class="status status--proven">Validated on hardware</span>
+                  
+
+                  <h3>XIAO nRF52840 + Wio-SX1262 Kit</h3>
+                  <p class="board__vendor">Seeed Studio</p>
+                  <p class="board__blurb">A thumbnail-sized module on a radio carrier board. No buttons are populated, so it is a starting point for a build of your own rather than a finished device — and an inexpensive way to put a node on the air.</p>
+
+                  <ul class="board__specs">
+                    <li><span>Processor</span><span>nRF52840</span></li>
+                    <li><span>Radio</span><span>Semtech SX1262</span></li>
+                    <li><span>Display</span><span>None</span></li>
+                    <li><span>Location</span><span>Not wired up (the module is a separate purchase)</span></li>
+                    <li><span>Power</span><span>LiPo via JST connector</span></li>
+                  </ul>
+
+                  <p class="board__blurb">Validated on hardware and working well.</p>
+
+                  <div class="board__actions">
+                    
+                    <a class="btn btn--primary" href="/flasher/?board=xiao-nrf52#xiao-nrf52">Flash this board</a>
+                    <a class="btn btn--ghost" href="https://www.seeedstudio.com/XIAO-nRF52840-Wio-SX1262-Kit-for-Meshtastic-p-6400.html">Where to buy</a>
+                  </div>
+                </div>
+              </article>
+              
+            
+          </div>
+        
+
+        
+
+        <div class="grid grid--2">
+          
+            
+          
+            
+          
+        </div>
+      </div>
+    </section>
+  
+
+  <section class="section">
+    <div class="container">
+      <div class="section__head section__head--center">
+        <h2>Adding a board</h2>
+        <p>
+          Board support is a small crate describing the pins, plus a firmware
+          manifest that selects it — the radio, storage, and protocol work is
+          already shared. If you have hardware you would like to see supported,
+          the porting checklist and the existing board packages are the place
+          to start.
+        </p>
+      </div>
+      <div class="hero__actions">
+        <a class="btn btn--primary" href="https://github.com/darconeous/umsh">Browse the source</a>
+        <a class="btn btn--ghost" href="/docs/protocol/">Read the specification</a>
+      </div>
+    </div>
+  </section>
+
+    </main>
+
+    <footer class="site-footer">
+      <div class="container">
+        <div class="site-footer__brand">
+          <img src="https://umsh.dev/images/logo/umsh-logo-orange.svg" alt="UMSH" width="1209" height="283" />
+          <p>An experimental LoRa mesh protocol with strong cryptography, clean layer separation, and strict bandwidth discipline.</p>
+        </div>
+
+        <div>
+          <h2>Project</h2>
+          <ul>
+            <li><a href="/docs/protocol/">Protocol specification</a></li>
+            <li><a href="/docs/rust/">Rust API docs</a></li>
+            <li><a href="https://github.com/darconeous/umsh">Source on GitHub</a></li>
+            <li><a href="https://github.com/sponsors/darconeous">Donate</a></li>
+          </ul>
+        </div>
+
+        <div>
+          <h2>Get started</h2>
+          <ul>
+            <li><a href="https://umsh.dev/hardware/">Supported hardware</a></li>
+            <li><a href="https://umsh.dev/flasher/">Flash a device</a></li>
+            <li><a href="https://umsh.dev/app/">iOS app</a></li>
+            <li><a href="https://umsh.dev/faq/">FAQ</a></li>
+          </ul>
+        </div>
+      </div>
+
+      <div class="container">
+        <div class="site-footer__legal">
+          <span>
+            <a href="https://umsh.dev/privacy/">Privacy</a> ·
+            <a href="https://umsh.dev/terms/">Terms</a>
+          </span>
+          <span>A <a href="https://voria.com/">Voria Labs</a> project.</span>
+        </div>
+      </div>
+    </footer>
+
+    <script src="https://umsh.dev/js/nav.js" defer></script>
+  </body>
+</html>
