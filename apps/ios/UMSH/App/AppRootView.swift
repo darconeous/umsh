@@ -75,14 +75,25 @@ struct AppRootView: View {
     private let applicationStoreError: (any Error)?
     private let radioConnection: any RadioConnection
     private let notificationService = ChatNotificationService()
+    /// Whether this root is running against fabricated content in the staging
+    /// store, in which case bootstrap reseeds it. Always false outside debug
+    /// builds, where nothing can set it.
+    private let isStaging: Bool
 
-    init(radioConnection: any RadioConnection = CoreBluetoothRadioConnection()) {
+    init(
+        radioConnection: any RadioConnection = CoreBluetoothRadioConnection(),
+        openStore: () throws -> SQLiteApplicationStore = {
+            try SQLiteApplicationStore.applicationStore()
+        },
+        isStaging: Bool = false
+    ) {
         let meshEngine = RustMeshEngine()
         self.meshEngine = meshEngine
         identityVault = KeychainIdentityVault(meshEngine: meshEngine)
         self.radioConnection = radioConnection
+        self.isStaging = isStaging
         do {
-            applicationStore = try SQLiteApplicationStore.applicationStore()
+            applicationStore = try openStore()
             applicationStoreError = nil
         } catch {
             applicationStore = nil
@@ -2148,6 +2159,37 @@ struct AppRootView: View {
     }
 
     #if DEBUG
+    /// Rewrite the staged mesh, when this root is the staging one.
+    ///
+    /// Runs on every bootstrap rather than only on a first launch, because the
+    /// staged timeline is written relative to now: reseeding is what keeps the
+    /// newest message reading "4 minutes ago" in a screenshot taken next month.
+    /// Every write is keyed, so repeating it replaces rather than accumulates.
+    private func seedStagedContentIfNeeded() async {
+        guard isStaging, let applicationStore, let localIdentity else { return }
+        do {
+            try await StagingSeeder(
+                store: applicationStore,
+                meshEngine: meshEngine,
+                channelKeyVault: channelKeyVault,
+                ownerIdentityID: localIdentity.id,
+                ownerAddress: localIdentity.publicIdentity.canonicalAddress
+            ).seed()
+            // The staged crew channel needs no registration here: bootstrap's
+            // own reload picks up the row this just wrote, and the
+            // `replayChannelMembership` that follows derives its address and
+            // registers the key like any other joined channel.
+        } catch {
+            Self.logger.error(
+                "Could not seed staged content: \(String(describing: error), privacy: .public)"
+            )
+        }
+    }
+    #else
+    private func seedStagedContentIfNeeded() async {}
+    #endif
+
+    #if DEBUG
     /// Fill a conversation with generated messages, so a transcript can be
     /// exercised at a size no test account reaches by hand.
     @Sendable
@@ -2621,6 +2663,7 @@ struct AppRootView: View {
                 ownerIdentityID: localIdentity.id
             )
             await ensureBuiltinChannels()
+            await seedStagedContentIfNeeded()
             await synchronizeRadioPeer(from: radioSnapshot)
             await reloadApplicationState()
             // The mesh session starts with an empty channel table, so

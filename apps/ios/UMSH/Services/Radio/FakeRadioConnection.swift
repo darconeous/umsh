@@ -83,7 +83,7 @@ actor FakeRadioConnection: RadioConnection {
     }
 
     func connect() async throws {
-        publish(.previewReady)
+        publish(snapshot)
     }
 
     func discoverRadios() -> AsyncStream<[DiscoveredRadio]> {
@@ -108,7 +108,7 @@ actor FakeRadioConnection: RadioConnection {
     }
 
     func selectRadio(_ id: UUID) async throws {
-        publish(.previewReady)
+        publish(snapshot)
     }
 
     func stopDiscovery() async {}
@@ -120,11 +120,11 @@ actor FakeRadioConnection: RadioConnection {
     func autoConnect() async {}
 
     func reconnect() async {
-        publish(.previewReady)
+        publish(snapshot)
     }
 
     func claimForCurrentIdentity() async throws {
-        publish(.previewReady)
+        publish(snapshot)
     }
 
     func refresh() async throws -> RadioSnapshot {

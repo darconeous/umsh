@@ -300,6 +300,41 @@ struct StoredMessageReception: Hashable, Sendable {
     let sourceAuthenticated: Bool
 }
 
+#if DEBUG
+/// One message a staged transcript is to contain, stated outright.
+///
+/// Everything a real message derives from the wire is dictated here instead,
+/// because the point of a staged transcript is that it reads a particular way:
+/// who said what, when, and what it looked like arriving.
+struct StagedMessage {
+    let handle: UInt32
+    let body: String
+    let outbound: Bool
+    let createdAt: Date
+    /// Who sent it, for a channel message. Nil in a direct conversation,
+    /// where the conversation address already answers it.
+    var senderAddress: String? = nil
+    var senderHint: Data? = nil
+    /// The name the sender put in the message itself, as a group message
+    /// carries it.
+    var senderHandle: String? = nil
+    /// `acknowledged`, `sent`, `failed`, or nil. Outbound messages only.
+    var deliveryState: String? = nil
+    var reception: StoredMessageReception? = nil
+    var reactions: [StagedReaction] = []
+}
+
+/// One reaction about a ``StagedMessage``. Its handle is allocated by the
+/// writer, since nothing outside refers to a reaction by name.
+struct StagedReaction {
+    let body: String
+    let outbound: Bool
+    let createdAt: Date
+    var senderAddress: String? = nil
+    var senderHint: Data? = nil
+}
+#endif
+
 /// Maps the engine's presence enum to its stored integer code.
 private func presenceCode(_ presence: MobileChatPresence) -> Int32 {
     switch presence {
@@ -325,6 +360,17 @@ actor SQLiteApplicationStore {
     nonisolated(unsafe) private let database: OpaquePointer
 
     static func applicationStore(fileManager: FileManager = .default) throws -> SQLiteApplicationStore {
+        try SQLiteApplicationStore(
+            path: storeURL(named: "Application", fileManager: fileManager).path
+        )
+    }
+
+    /// Where a named store file lives. One statement of the directory, so the
+    /// staging store below cannot drift away from the real one's location.
+    static func storeURL(
+        named name: String,
+        fileManager: FileManager = .default
+    ) throws -> URL {
         guard let applicationSupport = fileManager.urls(
             for: .applicationSupportDirectory,
             in: .userDomainMask
@@ -333,10 +379,35 @@ actor SQLiteApplicationStore {
         }
         let directory = applicationSupport.appendingPathComponent("UMSH", isDirectory: true)
         try fileManager.createDirectory(at: directory, withIntermediateDirectories: true)
-        return try SQLiteApplicationStore(
-            path: directory.appendingPathComponent("Application.sqlite").path
+        return directory.appendingPathComponent("\(name).sqlite")
+    }
+
+    #if DEBUG
+    /// The store staging mode fills, kept in its own file.
+    ///
+    /// A separate database is the whole safety argument for staging: seeding
+    /// writes fabricated peers and transcripts, and pointing that at
+    /// `Application.sqlite` would mix invented history into a real account with
+    /// no way to tell the two apart afterwards. Switching staging off is then
+    /// just a matter of opening the other file, and discarding a staged set is
+    /// deleting this one.
+    static func stagingStore(fileManager: FileManager = .default) throws -> SQLiteApplicationStore {
+        try SQLiteApplicationStore(
+            path: storeURL(named: "Staging", fileManager: fileManager).path
         )
     }
+
+    /// Delete the staging database and the journal files WAL mode leaves
+    /// beside it. Nothing here can touch the real store: the name is fixed.
+    static func deleteStagingStore(fileManager: FileManager = .default) throws {
+        let base = try storeURL(named: "Staging", fileManager: fileManager)
+        for path in [base.path, base.path + "-wal", base.path + "-shm"] {
+            if fileManager.fileExists(atPath: path) {
+                try fileManager.removeItem(atPath: path)
+            }
+        }
+    }
+    #endif
 
     init(path: String) throws {
         var connection: OpaquePointer?
@@ -1829,6 +1900,128 @@ actor SQLiteApplicationStore {
     }
 
     #if DEBUG
+    /// Write one staged transcript exactly as described, reactions included.
+    ///
+    /// Separate from ``seedGeneratedMessages`` because the two answer different
+    /// questions: that one wants volume and does not care what it says, this
+    /// one wants a specific conversation to read plausibly in a screenshot, so
+    /// every body, sender and instant is dictated by the caller. Like that one
+    /// it writes straight to the table, since `applyChatMutations` stamps
+    /// `created_at_ms` from the clock and a staged transcript needs its own
+    /// timeline.
+    ///
+    /// Reaction handles are allocated above ``stagedReactionHandleBase`` so they
+    /// cannot collide with the message handles the caller chose.
+    func seedStagedTranscript(
+        ownerIdentityID: String,
+        conversationAddress: String,
+        sessionID: String,
+        messages: [StagedMessage]
+    ) throws {
+        try transaction {
+            let statement = try prepare(
+                """
+                INSERT OR REPLACE INTO chat_message (
+                    owner_identity_id, session_id, handle, conversation_address,
+                    sender_address, sender_hint, sender_handle,
+                    direction, body, deleted, created_at_ms, presence, delivery_state,
+                    rx_rssi_dbm, rx_snr_cb, rx_hop_count, rx_source_authenticated,
+                    is_reaction, reaction_target_session_id, reaction_target_handle
+                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, 0, ?, 0, ?, ?, ?, ?, ?, ?, ?, ?)
+                """
+            )
+            defer { sqlite3_finalize(statement) }
+
+            var reactionHandle = Self.stagedReactionHandleBase
+            for message in messages {
+                try writeStagedRow(
+                    statement,
+                    ownerIdentityID: ownerIdentityID,
+                    conversationAddress: conversationAddress,
+                    sessionID: sessionID,
+                    handle: message.handle,
+                    body: message.body,
+                    outbound: message.outbound,
+                    createdAt: message.createdAt,
+                    senderAddress: message.senderAddress,
+                    senderHint: message.senderHint,
+                    senderHandle: message.senderHandle,
+                    deliveryState: message.deliveryState,
+                    reception: message.reception,
+                    reactionTarget: nil
+                )
+                for reaction in message.reactions {
+                    try writeStagedRow(
+                        statement,
+                        ownerIdentityID: ownerIdentityID,
+                        conversationAddress: conversationAddress,
+                        sessionID: sessionID,
+                        handle: reactionHandle,
+                        body: reaction.body,
+                        outbound: reaction.outbound,
+                        createdAt: reaction.createdAt,
+                        senderAddress: reaction.senderAddress,
+                        senderHint: reaction.senderHint,
+                        senderHandle: nil,
+                        deliveryState: reaction.outbound ? "acknowledged" : nil,
+                        reception: nil,
+                        reactionTarget: message.handle
+                    )
+                    reactionHandle += 1
+                }
+            }
+        }
+    }
+
+    /// Handles at or above this belong to staged reaction rows. Far above any
+    /// handle a staged transcript assigns its messages, so the two ranges
+    /// cannot meet however long a staged conversation grows.
+    private static let stagedReactionHandleBase: UInt32 = 1_000_000
+
+    private func writeStagedRow(
+        _ statement: OpaquePointer,
+        ownerIdentityID: String,
+        conversationAddress: String,
+        sessionID: String,
+        handle: UInt32,
+        body: String,
+        outbound: Bool,
+        createdAt: Date,
+        senderAddress: String?,
+        senderHint: Data?,
+        senderHandle: String?,
+        deliveryState: String?,
+        reception: StoredMessageReception?,
+        reactionTarget: UInt32?
+    ) throws {
+        sqlite3_reset(statement)
+        try bind(ownerIdentityID, to: statement, at: 1)
+        try bind(sessionID, to: statement, at: 2)
+        try check(sqlite3_bind_int64(statement, 3, Int64(handle)))
+        try bind(conversationAddress, to: statement, at: 4)
+        try bindOptional(senderAddress, to: statement, at: 5)
+        try bindOptional(senderHint, to: statement, at: 6)
+        try bindOptional(senderHandle, to: statement, at: 7)
+        try check(sqlite3_bind_int(statement, 8, outbound ? 1 : 0))
+        try bind(body, to: statement, at: 9)
+        try check(
+            sqlite3_bind_int64(statement, 10, Int64(createdAt.timeIntervalSince1970 * 1_000))
+        )
+        try bindOptional(deliveryState, to: statement, at: 11)
+        try bindOptionalInt(reception?.rssiDbm.map(Int64.init), to: statement, at: 12)
+        try bindOptionalInt(reception?.snrCentibels.map(Int64.init), to: statement, at: 13)
+        try bindOptionalInt(reception?.hopCount.map(Int64.init), to: statement, at: 14)
+        try bindOptionalInt(
+            reception.map { Int64($0.sourceAuthenticated ? 1 : 0) },
+            to: statement,
+            at: 15
+        )
+        try check(sqlite3_bind_int(statement, 16, reactionTarget == nil ? 0 : 1))
+        try bindOptional(reactionTarget == nil ? nil : sessionID, to: statement, at: 17)
+        try bindOptionalInt(reactionTarget.map(Int64.init), to: statement, at: 18)
+        try stepDone(statement)
+    }
+
     /// Fill a conversation with generated messages, for exercising a transcript
     /// at a size no test account reaches by hand.
     ///

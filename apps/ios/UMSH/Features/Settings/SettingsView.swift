@@ -53,6 +53,13 @@ struct SettingsView: View {
 
     @State private var showsDeviceSetup = false
     @State private var isSeeding = false
+    #if DEBUG
+    /// Read straight from storage, as the announcement schedules above are:
+    /// `UMSHApp` reads the same key to decide which store and radio to build,
+    /// so a closure round trip would only add a way for the two to disagree.
+    @AppStorage("staging.enabled") private var stagingEnabled = false
+    @State private var stagingResetFailed = false
+    #endif
 
     private func seedConversation(_ count: Int) async {
         guard let seedMessages, let first = conversations.wrappedValue.first else { return }
@@ -158,6 +165,26 @@ struct SettingsView: View {
             }
 
             #if DEBUG
+            Section {
+                Toggle("Staging mode", isOn: $stagingEnabled)
+                Button("Reset staged data", role: .destructive) {
+                    // Turning it off first hands the app back to the real
+                    // store, so the file being deleted is one nothing is
+                    // about to write to again.
+                    stagingEnabled = false
+                    stagingResetFailed = (try? SQLiteApplicationStore.deleteStagingStore()) == nil
+                }
+                if stagingResetFailed {
+                    Text("The staged database could not be removed.")
+                        .font(.caption)
+                        .foregroundStyle(.red)
+                }
+            } header: {
+                Text("Staging")
+            } footer: {
+                Text("Replaces this phone's data with a fabricated trail-crew mesh — peers, conversations, reactions and map nodes — and reports a companion radio that is attached, charged and holding a fix. For marketing screenshots. Staged content lives in its own database and never touches your real one. Debug builds only.")
+            }
+
             Section {
                 Button("Seed 2000 Messages") {
                     isSeeding = true
