@@ -41,17 +41,19 @@ Repeated unrecognized options remain ignorable.
 
 If absent or empty, the message type defaults to 0 (basic text).
 
-The presence of the `Regarding` option changes the semantics a bit: A **reply** is a type 0 message with a `Regarding` option specifying which message is being replied to. An **emote** is a type 1 message with a `Regarding` option specifying which message is being reacted to; the body is a single Unicode emoji or a short text token such as `+1`, `-1`, `!`, or `?`. Implementations may differentiate emotes from plain status text by the presence of the Regarding option.
+The presence of the `Regarding` option changes the semantics a bit: A **reply** is a type 0 message with a `Regarding` option specifying which message is being replied to. A **reaction** is a type 1 message with a `Regarding` option specifying which message is being reacted to; the body is a single Unicode emoji or a short text token such as `+1`, `-1`, `!`, or `?`. Implementations may differentiate reactions from plain status text by the presence of the Regarding option.
 
-Emote bodies SHOULD be short text tokens rather than emoji: `<3`, `+1`, `-1`, `ha`, `!`, and `?` cover the common reactions in one or two bytes. Receivers SHOULD accept the equivalent spellings — `♥` for `<3`, `haha` or `lol` for `ha`, `!!` for `!`, letter case being insignificant — as well as the emoji themselves, and SHOULD render an emote as a single glyph, taking the first one when a body carries more.
+Reaction bodies SHOULD be short text tokens rather than emoji: `<3`, `+1`, `-1`, `ha`, `!`, and `?` cover the common reactions in one or two bytes. Receivers SHOULD accept the equivalent spellings — `♥` for `<3`, `haha` or `lol` for `ha`, `!!` for `!`, letter case being insignificant — as well as the emoji themselves, and SHOULD render a reaction as a single glyph, taking the first one when a body carries more.
 
-A sender has at most one emote in force per message. Sending another supersedes the previous one, and an emote with a zero-length body withdraws it; a receiver displays the most recently received emote from each sender. (Unlike an edit, whose zero-length body means deletion, an emote is never retracted by editing it — the emote's own identity is of no interest to anyone but its sender.)
+A sender has at most one reaction in force per message. Sending another supersedes the previous one, and a reaction with a zero-length body withdraws it; a receiver displays the most recently received reaction from each sender (unless it was withdrawn).
 
-Emotes reference the original message's ID even when the message has since been edited, as [Editing](#editing) requires of every reference. A receiver MAY additionally tolerate an emote that names an edit's own ID by resolving it to the message that edit replaced.
+Reactions reference the original message's ID even when the message has since been edited, as [Editing](#editing) requires of every reference. A receiver MAY additionally tolerate a reaction that names an edit's own ID by resolving it to the message that edit replaced.
 
-A message resend request is itself not a message but a request to re-send a message that was inferred to exist but was not received. Such a request SHALL contain exactly one Message Type option with value 2 and exactly one Message Sequence option identifying the missing frame. A request with duplicate Message Type or Message Sequence options is invalid. It MAY also contain the Channel Group Resend flag described below and SHOULD NOT contain any other options. After validating the required options and the Channel Group Resend flag, receivers MUST ignore every other option and the entire body. Senders SHOULD use an empty body. The request MUST be received via unicast (for one-on-one messages) or blind-unicast (for channel messages), and SHALL be dropped if received via broadcast or multicast.
+A message resend request is itself not a message but a request to re-send a message that was inferred to exist but was not received. Such a request SHALL contain exactly one Message Type option with value 2 and exactly one Message Sequence option identifying the missing frame. A request with duplicate Message Type or Message Sequence options is invalid and MUST be ignored. It MAY also contain the Channel Group Resend flag described below and SHOULD NOT contain any other options. After validating the required options and the Channel Group Resend flag, receivers MUST ignore every other option and the entire body. Senders SHOULD use an empty body. The request MUST be received via unicast (for one-on-one messages) or blind-unicast (for channel messages), and SHALL be dropped if received via broadcast or multicast.
 
 A resend request identifies exactly one missing frame, and a successful response retransmits exactly one frame. The 1-byte Message Sequence form requests a message by ID without specifying a fragment; the sender responds with the unfragmented message or, if it was fragmented, with fragment zero. The fragment count carried in fragment zero lets the requester ask for any remaining fragments individually. The 3-byte form requests one specific fragment.
+
+Responses to a message resend request are optional and MAY be ignored.
 
 Not all messages are available to be resent; for example, a requested message may have been deleted or evicted. In that case, the original sender SHOULD respond with Message Unavailable. A sender producing Message Unavailable SHOULD include only a Message Type option with value 3 and one Message Sequence option exactly matching the requested message or fragment. Its body SHOULD be empty.
 
@@ -75,7 +77,7 @@ A UTF-8 string containing the name or pseudonym of the sender. If not supplied, 
 
 ### Message Sequence
 
-Associates a packet with a monotonically increasing message identifier maintained independently for each sender within each conversation, and optionally carries fragmentation state. The option is encouraged on all messages but is not required. Messages without this option cannot be directly referenced in replies or emotes.
+Associates a packet with a monotonically increasing message identifier maintained independently for each sender within each conversation, and optionally carries fragmentation state. The option is encouraged on all messages but is not required. Messages without this option cannot be directly referenced in replies or reactions.
 
 The option value is either 1 byte or 3 bytes:
 
@@ -131,7 +133,7 @@ Reset announcement is lazy and scoped to the affected conversation: the sender i
 
 ### Regarding
 
-References a previously sent message for the purposes of replies and emotes.
+References a previously sent message for the purposes of replies and reactions.
 
 The option length depends on the conversation, not on how the MAC packet is addressed:
 
