@@ -168,11 +168,19 @@ struct SettingsView: View {
             Section {
                 Toggle("Staging mode", isOn: $stagingEnabled)
                 Button("Reset staged data", role: .destructive) {
-                    // Turning it off first hands the app back to the real
-                    // store, so the file being deleted is one nothing is
-                    // about to write to again.
+                    // Leaving staging hands the app back to the real store, so
+                    // the emptied database is one nothing is about to write to
+                    // again — and the next time it is switched on, bootstrap
+                    // seeds the staged mesh afresh against that day's clock.
                     stagingEnabled = false
-                    stagingResetFailed = (try? SQLiteApplicationStore.deleteStagingStore()) == nil
+                    Task {
+                        do {
+                            try await SQLiteApplicationStore.eraseStagingStore()
+                            stagingResetFailed = false
+                        } catch {
+                            stagingResetFailed = true
+                        }
+                    }
                 }
                 if stagingResetFailed {
                     Text("The staged database could not be removed.")

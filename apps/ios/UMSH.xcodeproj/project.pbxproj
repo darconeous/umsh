@@ -50,6 +50,7 @@
 		100000000000000000000017 /* UMSH/Assets.xcassets in Resources */ = {isa = PBXBuildFile; fileRef = 200000000000000000000017 /* UMSH/Assets.xcassets */; };
 		100000000000000000000018 /* UMSH/Models/DiscoveredRadio.swift in Sources */ = {isa = PBXBuildFile; fileRef = 200000000000000000000018 /* UMSH/Models/DiscoveredRadio.swift */; };
 		100000000000000000000019 /* UMSH/Features/Settings/RadioPickerView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 200000000000000000000019 /* UMSH/Features/Settings/RadioPickerView.swift */; };
+		EEFE5B90F638EA2D362FF934 /* UMSH/Features/Onboarding/OnboardingView.swift in Sources */ = {isa = PBXBuildFile; fileRef = B10E22718CCD045E72AFB04D /* UMSH/Features/Onboarding/OnboardingView.swift */; };
 		100000000000000000000030 /* UMSH/Services/Identity/ChannelKeyVault.swift in Sources */ = {isa = PBXBuildFile; fileRef = 200000000000000000000030 /* UMSH/Services/Identity/ChannelKeyVault.swift */; };
 		100000000000000000000031 /* UMSH/Models/ChannelModels.swift in Sources */ = {isa = PBXBuildFile; fileRef = 200000000000000000000031 /* UMSH/Models/ChannelModels.swift */; };
 		100000000000000000000032 /* UMSH/Features/Channels/ChannelsView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 200000000000000000000032 /* UMSH/Features/Channels/ChannelsView.swift */; };
@@ -121,6 +122,7 @@
 		200000000000000000000017 /* UMSH/Assets.xcassets */ = {isa = PBXFileReference; lastKnownFileType = folder.assetcatalog; path = UMSH/Assets.xcassets; sourceTree = "<group>"; };
 		200000000000000000000018 /* UMSH/Models/DiscoveredRadio.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = UMSH/Models/DiscoveredRadio.swift; sourceTree = "<group>"; };
 		200000000000000000000019 /* UMSH/Features/Settings/RadioPickerView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = UMSH/Features/Settings/RadioPickerView.swift; sourceTree = "<group>"; };
+		B10E22718CCD045E72AFB04D /* UMSH/Features/Onboarding/OnboardingView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = UMSH/Features/Onboarding/OnboardingView.swift; sourceTree = "<group>"; };
 		200000000000000000000030 /* UMSH/Services/Identity/ChannelKeyVault.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = UMSH/Services/Identity/ChannelKeyVault.swift; sourceTree = "<group>"; };
 		200000000000000000000031 /* UMSH/Models/ChannelModels.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = UMSH/Models/ChannelModels.swift; sourceTree = "<group>"; };
 		200000000000000000000032 /* UMSH/Features/Channels/ChannelsView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = UMSH/Features/Channels/ChannelsView.swift; sourceTree = "<group>"; };
@@ -225,6 +227,7 @@
 				200000000000000000000031 /* UMSH/Models/ChannelModels.swift */,
 				200000000000000000000018 /* UMSH/Models/DiscoveredRadio.swift */,
 				200000000000000000000019 /* UMSH/Features/Settings/RadioPickerView.swift */,
+				B10E22718CCD045E72AFB04D /* UMSH/Features/Onboarding/OnboardingView.swift */,
 				20000000000000000000001D /* UMSH/Features/DeviceSetup/DeviceSetupFlowView.swift */,
 				20000000000000000000001E /* UMSH/Features/DeviceSetup/DeviceScanView.swift */,
 				20000000000000000000001F /* UMSH/Features/DeviceSetup/DeviceSettingsView.swift */,
@@ -380,6 +383,7 @@
 				100000000000000000000031 /* UMSH/Models/ChannelModels.swift in Sources */,
 				100000000000000000000018 /* UMSH/Models/DiscoveredRadio.swift in Sources */,
 				100000000000000000000019 /* UMSH/Features/Settings/RadioPickerView.swift in Sources */,
+				EEFE5B90F638EA2D362FF934 /* UMSH/Features/Onboarding/OnboardingView.swift in Sources */,
 				10000000000000000000001D /* UMSH/Features/DeviceSetup/DeviceSetupFlowView.swift in Sources */,
 				10000000000000000000001E /* UMSH/Features/DeviceSetup/DeviceScanView.swift in Sources */,
 				10000000000000000000001F /* UMSH/Features/DeviceSetup/DeviceSettingsView.swift in Sources */,

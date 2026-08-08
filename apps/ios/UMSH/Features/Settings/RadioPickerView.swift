@@ -10,6 +10,34 @@ struct RadioPickerView: View {
     let stopDiscovery: () async -> Void
 
     @Environment(\.dismiss) private var dismiss
+
+    var body: some View {
+        RadioScanList(
+            discoverRadios: discoverRadios,
+            selectRadio: selectRadio,
+            stopDiscovery: stopDiscovery,
+            onConnected: { dismiss() }
+        )
+        .navigationTitle("Choose a Radio")
+        .toolbar {
+            ToolbarItem(placement: .cancellationAction) {
+                Button("Cancel") { dismiss() }
+            }
+        }
+    }
+}
+
+/// The scanning list itself, without the chrome that decides what selecting a
+/// radio means. Onboarding shows the same list as the picker sheet and follows
+/// a selection with its own step, so the search, the rows and the "nothing yet"
+/// state are stated once and each screen supplies its own title and way out.
+struct RadioScanList: View {
+    let discoverRadios: () async -> AsyncStream<[DiscoveredRadio]>
+    let selectRadio: (UUID) async throws -> Void
+    let stopDiscovery: () async -> Void
+    /// Called once a radio has been selected and discovery has been stopped.
+    let onConnected: () -> Void
+
     @State private var radios: [DiscoveredRadio] = []
     @State private var selecting: UUID?
     @State private var problem: String?
@@ -50,12 +78,6 @@ struct RadioPickerView: View {
                 }
             }
         }
-        .navigationTitle("Choose a Radio")
-        .toolbar {
-            ToolbarItem(placement: .cancellationAction) {
-                Button("Cancel") { dismiss() }
-            }
-        }
         .task {
             for await list in await discoverRadios() {
                 // The list arrives wholesale-replaced, so the animation has
@@ -79,7 +101,7 @@ struct RadioPickerView: View {
         do {
             try await selectRadio(radio.id)
             await stopDiscovery()
-            dismiss()
+            onConnected()
         } catch {
             selecting = nil
             problem = "Could not connect to that radio. It may have moved out of range."

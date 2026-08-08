@@ -36,6 +36,14 @@ struct AppRootView: View {
     @State private var incomingPeerImport: IncomingPeerImport?
     @State private var incomingChannelImport: IncomingChannelImport?
     @State private var advertisedName = ""
+    /// Whether the first-run flow is on screen. Driven by ``settleOnboarding``
+    /// once the identity is known rather than computed from it: the flow itself
+    /// writes the name it asks for, and a condition that read that name back
+    /// would pull the screen out from under the user mid-answer.
+    @State private var showsOnboarding = false
+    /// Whether the user has been introduced to this phone's identity. Set when
+    /// the flow finishes, however it finishes.
+    @AppStorage("onboarding.completed") private var onboardingCompleted = false
     /// Whether this phone answers nearby nodes' identity requests. The
     /// preference outlives the mesh session, which starts discoverable, so
     /// it is reapplied on every session install.
@@ -432,6 +440,22 @@ struct AppRootView: View {
                 )
             }
         }
+        .fullScreenCover(isPresented: $showsOnboarding) {
+            if let localIdentity {
+                OnboardingView(
+                    identity: localIdentity,
+                    advertisedName: advertisedName,
+                    saveAdvertisedName: saveAdvertisedName,
+                    discoverRadios: discoverRadios,
+                    selectRadio: selectRadio,
+                    stopDiscovery: stopRadioDiscovery,
+                    finish: {
+                        onboardingCompleted = true
+                        showsOnboarding = false
+                    }
+                )
+            }
+        }
         .task {
             await loadIdentity()
         }
@@ -628,6 +652,16 @@ struct AppRootView: View {
         defer { isLoadingIdentity = false }
         do {
             localIdentity = try await identityVault.loadIdentity()
+            // A phone with no identity has nothing to ask about: every peer,
+            // channel and message this app stores is keyed by one, and until it
+            // exists the whole UI is a set of controls that quietly do nothing.
+            // The vault reports a genuinely absent item as nil and a Keychain it
+            // could not read as a throw, so this only ever fills a vacancy — a
+            // locked phone leaves with an error instead and retries later.
+            let minted = localIdentity == nil
+            if minted {
+                localIdentity = try await identityVault.createIdentity()
+            }
             try await radioConnection.useHostIdentity(localIdentity?.publicIdentity)
             try await installMeshSession()
             await prepareApplicationState()
@@ -638,10 +672,29 @@ struct AppRootView: View {
                 await radioConnection.autoConnect()
             }
             identityError = nil
+            settleOnboarding(mintedIdentity: minted)
         } catch let error as IdentityVaultError {
             identityError = error
         } catch {
             identityError = .keychainFailure
+        }
+    }
+
+    /// Decide whether this launch owes the user an introduction.
+    ///
+    /// A freshly minted identity always does. An identity that was already
+    /// there usually does not — but "already there" includes a flow that was
+    /// killed halfway through, so the tiebreak is whether the phone carries a
+    /// name: one that does has been through setup, by this flow or by hand, and
+    /// has nothing left to be shown.
+    @MainActor
+    private func settleOnboarding(mintedIdentity: Bool) {
+        guard !isStaging else { return }
+        guard !onboardingCompleted, localIdentity != nil else { return }
+        if mintedIdentity || advertisedName.isEmpty {
+            showsOnboarding = true
+        } else {
+            onboardingCompleted = true
         }
     }
 

@@ -397,15 +397,50 @@ actor SQLiteApplicationStore {
         )
     }
 
-    /// Delete the staging database and the journal files WAL mode leaves
-    /// beside it. Nothing here can touch the real store: the name is fixed.
-    static func deleteStagingStore(fileManager: FileManager = .default) throws {
-        let base = try storeURL(named: "Staging", fileManager: fileManager)
-        for path in [base.path, base.path + "-wal", base.path + "-shm"] {
-            if fileManager.fileExists(atPath: path) {
-                try fileManager.removeItem(atPath: path)
+    /// Throw away the staged set, by emptying the staging database rather than
+    /// deleting it. Nothing here can touch the real store: the name is fixed.
+    ///
+    /// Content and not the file, because nothing can know how many connections
+    /// a running app holds on that file: the app opens one per root and closes
+    /// them when ARC gets to it, so unlinking races them by construction, and
+    /// SQLite treats a file unlinked under an open connection as a corrupted
+    /// database rather than a missing one. Rows are the level SQLite is happy
+    /// to have several connections agree about.
+    static func eraseStagingStore(fileManager: FileManager = .default) async throws {
+        try await stagingStore(fileManager: fileManager).eraseAllContent()
+    }
+
+    /// Delete every row in every table, leaving the schema and its stamped
+    /// version in place so the next open has nothing to migrate.
+    func eraseAllContent() throws {
+        let tables = try tableNames()
+        try transaction {
+            // Which order the tables empty in is not something this has to
+            // know: deferring the checks to the commit means the only state
+            // foreign keys are tested against is the final one, where every
+            // table is empty and nothing can dangle.
+            try Self.execute(database, sql: "PRAGMA defer_foreign_keys = ON")
+            for table in tables {
+                try Self.execute(database, sql: "DELETE FROM \"\(table)\"")
             }
         }
+    }
+
+    /// The database's own tables, read from the schema rather than listed here
+    /// so a migration that adds one cannot leave a reset quietly incomplete.
+    private func tableNames() throws -> [String] {
+        let statement = try prepare(
+            """
+            SELECT name FROM sqlite_master
+            WHERE type = 'table' AND name NOT LIKE 'sqlite_%'
+            """
+        )
+        defer { sqlite3_finalize(statement) }
+        var names: [String] = []
+        while sqlite3_step(statement) == SQLITE_ROW {
+            names.append(Self.stringColumn(statement, at: 0))
+        }
+        return names
     }
     #endif
 
