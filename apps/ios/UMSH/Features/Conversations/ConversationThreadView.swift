@@ -191,6 +191,7 @@ struct ConversationThreadView: View {
                                 case let .message(message, presentation):
                                     ChatMessageBubble(
                                         message: message,
+                                        security: conversation.security,
                                         presentation: presentation,
                                         isMostRecentOutbound: message.id == lastOutboundID,
                                         // Only a group message needs to say
@@ -355,6 +356,7 @@ struct ConversationThreadView: View {
             MessageComposer(
                 draft: $draft,
                 placeholder: "Message \(conversation.title)",
+                security: conversation.security,
                 blocked: composerBlock,
                 canSend: canSendNow,
                 send: { await send() }

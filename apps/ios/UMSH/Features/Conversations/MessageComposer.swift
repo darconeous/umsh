@@ -21,6 +21,10 @@ struct MessageComposer: View {
     @Binding var draft: String
     /// Names who is being written to, in the empty field.
     let placeholder: String
+    /// How well the conversation being written to is protected. The send
+    /// button carries the same colour the message will land in, so the answer
+    /// is in front of the writer before they send rather than after.
+    let security: ConversationSecurity
     let blocked: ComposerBlock?
     /// Whether a send this instant would go somewhere. False in the transient
     /// link states — a reconnect, an attach in progress — where the field
@@ -94,7 +98,7 @@ struct MessageComposer: View {
                         // something to send — it just has to wait a moment.
                         .foregroundStyle(
                             .white,
-                            canSend ? Color.accentColor : Color(uiColor: .systemGray3)
+                            canSend ? security.tint : Color(uiColor: .systemGray3)
                         )
                 }
                 // The glyph is the button. Left to the default style it picks

@@ -27,6 +27,9 @@ struct ReactionBadgeView: View {
     /// The direction of the message being reacted to. Chips sit over its
     /// outer top corner, so everything mirrors with it.
     let isOutbound: Bool
+    /// The conversation's protection, which colours our own chips the same as
+    /// the bubbles we send here.
+    let security: ConversationSecurity
 
     /// Identical reactions share a chip and carry a count — except one of ours
     /// that failed to send, which stays on its own so its faded state never
@@ -72,6 +75,7 @@ struct ReactionBadgeView: View {
                     glyph: chip.glyph,
                     count: chip.count,
                     style: chip.style,
+                    security: security,
                     // The dots trail off the message's outer side, away from
                     // the text they belong to.
                     mirrored: !isOutbound,
@@ -108,6 +112,7 @@ private struct ThoughtChip: View {
     let glyph: String
     let count: Int
     let style: ChipStyle
+    let security: ConversationSecurity
     /// Dots on the trailing side rather than the leading one.
     let mirrored: Bool
     /// Whether this chip carries the cluster's thought-dot trail — true only
@@ -116,7 +121,7 @@ private struct ThoughtChip: View {
 
     private var fill: Color {
         switch style {
-        case .mine, .failed: Color.accentColor
+        case .mine, .failed: security.tint
         case .theirs: Color(uiColor: .systemGray5)
         }
     }
@@ -187,7 +192,8 @@ private struct ThoughtChip: View {
                     sessionID: "1", handle: 1, wireID: 1, epoch: 0, isFailed: false
                 )
             ],
-            isOutbound: true
+            isOutbound: true,
+            security: .encrypted
         )
         ReactionBadgeView(
             reactions: [
@@ -200,7 +206,8 @@ private struct ThoughtChip: View {
                     sessionID: "1", handle: 3, wireID: 3, epoch: 0, isFailed: true
                 ),
             ],
-            isOutbound: false
+            isOutbound: false,
+            security: .open
         )
     }
     .padding()

@@ -185,6 +185,9 @@ struct ChatMessageBubble: View, @MainActor Equatable {
     static let oppositeMargin: CGFloat = 64
 
     let message: ChatMessageSummary
+    /// How well the conversation this bubble belongs to is protected, which is
+    /// what an outbound bubble is coloured by.
+    let security: ConversationSecurity
     /// Where this message sits in its run, which decides the tail, the sender
     /// header, the avatar, and the space above it.
     var presentation = MessagePresentation()
@@ -218,6 +221,7 @@ struct ChatMessageBubble: View, @MainActor Equatable {
     /// becomes independently conditional, it must join this comparison.
     static func == (lhs: Self, rhs: Self) -> Bool {
         lhs.message == rhs.message
+            && lhs.security == rhs.security
             && lhs.presentation == rhs.presentation
             && lhs.isMostRecentOutbound == rhs.isMostRecentOutbound
             && lhs.senderLabel == rhs.senderLabel
@@ -354,7 +358,8 @@ struct ChatMessageBubble: View, @MainActor Equatable {
             if !message.reactions.isEmpty {
                 ReactionBadgeView(
                     reactions: message.reactions,
-                    isOutbound: message.isOutbound
+                    isOutbound: message.isOutbound,
+                    security: security
                 )
                 .padding(.top, ReactionBadgeView.topInset)
                 .padding(
@@ -423,7 +428,7 @@ struct ChatMessageBubble: View, @MainActor Equatable {
             // clear of the text on whichever side it hangs off.
             .padding(message.isOutbound ? .trailing : .leading, BubbleShape.tailWidth)
             .background(
-                message.isOutbound ? Color.accentColor : Color(uiColor: .systemGray5),
+                message.isOutbound ? security.tint : Color(uiColor: .systemGray5),
                 in: shape
             )
     }
@@ -458,7 +463,7 @@ struct ChatMessageBubble: View, @MainActor Equatable {
 /// Messages; touch users select through the menu or a double tap.
 private struct SelectableMessageText: UIViewRepresentable {
     let text: String
-    /// Set explicitly because an outbound bubble is filled with the accent
+    /// Set explicitly because an outbound bubble is filled with a solid
     /// colour: the body text and any link the detector finds both have to stay
     /// legible against it, and a link left to its own devices would not be.
     let textColor: UIColor
