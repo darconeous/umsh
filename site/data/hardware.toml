@@ -62,9 +62,8 @@ family_id = "0x28860057"
 app_base = "0x27000"
 softdevice = "S140 7.3.0"
 volume = "T1000-E"
-dfu_entry = "Hold the button while plugging in the magnetic cable, or run a 1200-baud touch on the serial port."
+dfu_entry = "Hold the user button and cycle USB power twice, or run a 1200-baud touch on the serial port. Those are the only two ways in."
 quirks = [
-  "The button bootloader exposes a serial DFU endpoint only — there is no UF2 drive on that path. Use <code>make flash-t1000e-serial</code> for it.",
   "The board is factory-sealed with no debug header, so there is no recovery from a damaged bootloader. Do not replace it.",
 ]
 

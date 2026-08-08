@@ -52,8 +52,9 @@ Examples
   scripts/flash.py --board wio-tracker-l1 --copy-default \\
       target/thumbv7em-none-eabihf/release/firmware-hello-wio-tracker-l1
 
-  # Flash via serial DFU (useful on T1000-E where the user-button bootloader
-  # path only exposes /dev/tty.usbmodem* and not the UF2 mass-storage drive):
+  # Flash via serial DFU, for a board already sitting in serial DFU mode
+  # rather than in the UF2 bootloader. On T1000-E the button path (hold the
+  # user button, cycle USB power twice) lands in UF2, not here:
   scripts/flash.py --board t1000e --serial-dfu /dev/tty.usbmodem1101 \\
       target/thumbv7em-none-eabihf/release/firmware-t1000e-console
 """
@@ -315,8 +316,8 @@ def main(argv: list[str]) -> int:
         metavar="PORT",
         help="instead of producing a UF2, flash the ELF over serial DFU at "
         "PORT (e.g. /dev/tty.usbmodem1101). Uses arm-none-eabi-objcopy + "
-        "adafruit-nrfutil; both must be installed. Useful when the "
-        "bootloader exposes only serial DFU (e.g. T1000-E button-held entry).",
+        "adafruit-nrfutil; both must be installed. For a board already in "
+        "serial DFU mode; it cannot talk to a UF2 bootloader.",
     )
     parser.add_argument(
         "--objcopy",
@@ -368,7 +369,7 @@ def main(argv: list[str]) -> int:
         if not os.path.exists(dest):
             print(f"flash.py: bootloader volume not mounted: {dest}", file=sys.stderr)
             print(f"flash.py: put the device in DFU mode (1200-baud reset, "
-                  f"double-tap reset, or hold boot button while plugging in) "
+                  f"double-tap reset, or the board's button gesture) "
                   f"and rerun.", file=sys.stderr)
             return 1
         if os.path.isdir(dest):

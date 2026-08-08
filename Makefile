@@ -26,8 +26,9 @@
 # `flash-*` targets convert the ELF to UF2 with the board-specific
 # base address and family ID (see scripts/flash.py BOARDS dict) and
 # copy it to the default bootloader mount path. The device must be in
-# DFU mode first (1200-baud touch, double-tap reset, or hold the boot
-# button while plugging in).
+# DFU mode first (1200-baud touch, double-tap reset, or the board's own
+# button gesture — the T1000-E wants the user button held while USB
+# power is cycled twice, not held through a single plug-in).
 #
 # `flash-<board>` flashes the **shipping image** for that board: a
 # repeater and a companion radio are the same image holding different
@@ -118,10 +119,10 @@ flash-t1000e: build-t1000e
 	scripts/flash.py --board t1000e --copy-default \
 		$(TARGET_DIR)/firmware-t1000e
 
-# The button bootloader (hold the button while plugging in) exposes only a
-# serial DFU endpoint, with no UF2 drive to copy to. A 1200-baud touch
-# against a running image mounts the drive as usual, so prefer the target
-# above and reach for this one when the board is already stuck in DFU.
+# For a board already sitting in serial DFU. The board has exactly two ways
+# into DFU — hold the user button while cycling USB power twice, or trigger it
+# from software — and the button path lands in the UF2 bootloader, which this
+# target cannot talk to. Use `flash-t1000e` there.
 flash-t1000e-serial: build-t1000e
 	scripts/flash.py --board t1000e --serial-dfu $(DFU_SERIAL_PORT) \
 		$(TARGET_DIR)/firmware-t1000e

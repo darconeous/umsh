@@ -480,6 +480,16 @@ causing a WDT reset every 8 s. Symptom: LED solid on (heartbeat ran once)
 + ~8 s reboot loop. Fix: nested-loop pattern (outer `wait_connection`,
 inner `read_packet` until Ok(0)/Err, then back to outer).
 
+**Superseded — do not copy the paragraph below.** There is no
+button-held-while-plugging-in entry on this board. DFU has exactly two entry
+paths: hold the user button while cycling USB power twice, or enter from
+software. The button path lands in the UF2 bootloader — the USB product name
+flips to `T1000_E` and `/Volumes/T1000-E` mounts — so flash it by copy
+(`make flash-t1000e`); serial DFU cannot talk to a UF2 bootloader and fails
+with "No data received on serial port". Confirmed on hardware 2026-07-21. The
+text below is kept as a record of what bringup believed at the time, and has
+been restated as fact in several other files since — hence this marker.
+
 **Flashing on T1000-E without UF2 mass-storage:** the user-button-held bootloader
 entry path only exposes serial DFU (`/dev/tty.usbmodem*`). UF2 mass-storage
 mode requires the hardware "connect USB twice while holding button" path. For
