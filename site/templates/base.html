@@ -1,0 +1,102 @@
+<!DOCTYPE html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>{% block title %}{{ config.title }}{% endblock title %}</title>
+    <meta name="description" content="{% block description %}{{ config.description }}{% endblock description %}" />
+    <meta name="theme-color" content="#FA5000" />
+
+    <link rel="stylesheet" href="{{ get_url(path='site.css', trailing_slash=false) }}" />
+    <link rel="icon" href="{{ get_url(path='favicon.ico', trailing_slash=false) }}" sizes="any" />
+    <link rel="icon" type="image/png" href="{{ get_url(path='favicon-32.png', trailing_slash=false) }}" sizes="32x32" />
+    <link rel="apple-touch-icon" href="{{ get_url(path='apple-touch-icon.png', trailing_slash=false) }}" />
+
+    <meta property="og:site_name" content="UMSH" />
+    <meta property="og:type" content="website" />
+    <meta property="og:title" content="{% block og_title %}{{ config.title }}{% endblock og_title %}" />
+    <meta property="og:description" content="{% block og_description %}{{ config.description }}{% endblock og_description %}" />
+    <meta property="og:image" content="{{ get_url(path='og-card.png', trailing_slash=false) }}" />
+    <meta property="og:url" content="{{ current_url | default(value=config.base_url) }}" />
+    <meta name="twitter:card" content="summary_large_image" />
+    {% block head_extra %}{% endblock head_extra %}
+  </head>
+
+  <body>
+    <a class="skip-link" href="#main">Skip to content</a>
+
+    <header class="site-header">
+      <div class="container">
+        <a class="site-header__logo" href="{{ get_url(path='@/_index.md') }}">
+          <img src="{{ get_url(path='images/logo/umsh-logo-white.svg', trailing_slash=false) }}" alt="UMSH" width="1209" height="283" />
+        </a>
+
+        <button class="nav-burger" type="button" aria-expanded="false" aria-controls="site-nav" aria-label="Menu">
+          <svg class="nav-burger__open" viewBox="0 0 24 24" aria-hidden="true"><path d="M3 6h18M3 12h18M3 18h18"/></svg>
+          <svg class="nav-burger__close" viewBox="0 0 24 24" aria-hidden="true"><path d="M5 5l14 14M19 5L5 19"/></svg>
+        </button>
+
+        <nav class="site-nav" id="site-nav" aria-label="Main">
+          {%- set here = current_path | default(value="/") -%}
+          {%- for item in config.extra.nav %}
+            <a href="{{ item.url }}"
+              {%- if item.match and here == item.match %} aria-current="page"{% endif %}>{{ item.name }}</a>
+          {%- endfor %}
+
+          <span class="site-nav__actions">
+            <a class="pill" href="{{ config.extra.sponsors_url }}">Donate</a>
+            <a class="pill" href="{{ config.extra.github_url }}">
+              <svg viewBox="0 0 16 16" aria-hidden="true"><path d="M8 0C3.58 0 0 3.58 0 8c0 3.54 2.29 6.53 5.47 7.59.4.07.55-.17.55-.38 0-.19-.01-.82-.01-1.49-2.01.37-2.53-.49-2.69-.94-.09-.23-.48-.94-.82-1.13-.28-.15-.68-.52-.01-.53.63-.01 1.08.58 1.23.82.72 1.21 1.87.87 2.33.66.07-.52.28-.87.51-1.07-1.78-.2-3.64-.89-3.64-3.95 0-.87.31-1.59.82-2.15-.08-.2-.36-1.02.08-2.12 0 0 .67-.21 2.2.82.64-.18 1.32-.27 2-.27s1.36.09 2 .27c1.53-1.04 2.2-.82 2.2-.82.44 1.1.16 1.92.08 2.12.51.56.82 1.27.82 2.15 0 3.07-1.87 3.75-3.65 3.95.29.25.54.73.54 1.48 0 1.07-.01 1.93-.01 2.2 0 .21.15.46.55.38A8.01 8.01 0 0 0 16 8c0-4.42-3.58-8-8-8Z"/></svg>
+              GitHub
+            </a>
+          </span>
+        </nav>
+      </div>
+    </header>
+
+    <main id="main">
+      {% block content %}{% endblock content %}
+    </main>
+
+    <footer class="site-footer">
+      <div class="container">
+        <div class="site-footer__brand">
+          <img src="{{ get_url(path='images/logo/umsh-logo-orange.svg', trailing_slash=false) }}" alt="UMSH" width="1209" height="283" />
+          <p>An experimental LoRa mesh protocol with strong cryptography, clean layer separation, and strict bandwidth discipline.</p>
+        </div>
+
+        <div>
+          <h2>Project</h2>
+          <ul>
+            <li><a href="{{ config.extra.protocol_url }}">Protocol specification</a></li>
+            <li><a href="{{ config.extra.rustdoc_url }}">Rust API docs</a></li>
+            <li><a href="{{ config.extra.github_url }}">Source on GitHub</a></li>
+            <li><a href="{{ config.extra.sponsors_url }}">Donate</a></li>
+          </ul>
+        </div>
+
+        <div>
+          <h2>Get started</h2>
+          <ul>
+            <li><a href="{{ get_url(path='@/hardware.md') }}">Supported hardware</a></li>
+            <li><a href="{{ get_url(path='@/flasher.md') }}">Flash a device</a></li>
+            <li><a href="{{ get_url(path='@/app.md') }}">iOS app</a></li>
+            <li><a href="{{ get_url(path='@/faq.md') }}">FAQ</a></li>
+          </ul>
+        </div>
+      </div>
+
+      <div class="container">
+        <div class="site-footer__legal">
+          <span>
+            <a href="{{ get_url(path='@/privacy.md') }}">Privacy</a> ·
+            <a href="{{ get_url(path='@/terms.md') }}">Terms</a>
+          </span>
+          <span>A <a href="{{ config.extra.voria_url }}">Voria Labs</a> project.</span>
+        </div>
+      </div>
+    </footer>
+
+    <script src="{{ get_url(path='js/nav.js', trailing_slash=false) }}" defer></script>
+  </body>
+</html>

@@ -1,0 +1,109 @@
+{% extends "base.html" %}
+
+{% block title %}{{ page.title }} — UMSH{% endblock title %}
+{% block description %}{{ page.description }}{% endblock description %}
+{% block og_title %}{{ page.title }} — UMSH{% endblock og_title %}
+{% block og_description %}{{ page.description }}{% endblock og_description %}
+
+{% block content %}
+  {% set data = load_data(path="data/hardware.toml") %}
+
+  <div class="page-head page-head--center">
+    <div class="container">
+      <h1>{{ page.title }}</h1>
+      <p>{{ page.description }}</p>
+    </div>
+  </div>
+
+  <div class="section">
+    <div class="container">
+      <div class="prose prose--center">{{ page.content | safe }}</div>
+    </div>
+  </div>
+
+  {% for category in data.categories %}
+    <section class="section{% if loop.index is odd %} section--surface{% endif %}" id="{{ category.id }}">
+      <div class="container">
+        <div class="section__head section__head--center">
+          <h2>{{ category.name }}</h2>
+          <p>{{ category.intro }}</p>
+        </div>
+
+        <div class="boards">
+          {% for board in data.boards %}
+              {% if board.category == category.id %}
+              <article class="board" id="{{ board.id }}">
+                <div class="board__media{% if not board.photo %} board__media--empty{% endif %}">
+                  {% if board.photo %}
+                    <img src="{{ get_url(path='images/boards/' ~ board.photo, trailing_slash=false) }}"
+                         alt="{{ board.vendor }} {{ board.name }}" loading="lazy" />
+                  {% else %}
+                    <span>Photo coming soon</span>
+                  {% endif %}
+                </div>
+
+                <div class="board__body">
+                  {% if board.status == "proven" %}
+                    <span class="status status--proven">Validated on hardware</span>
+                  {% elif board.status == "partial" %}
+                    <span class="status status--supported">Partly validated</span>
+                  {% elif board.status == "untested" %}
+                    <span class="status status--untested">Not yet run on hardware</span>
+                  {% else %}
+                    <span class="status status--planned">Planned</span>
+                  {% endif %}
+
+                  <h3>{{ board.name }}</h3>
+                  <p class="board__vendor">{{ board.vendor }}</p>
+                  <p class="board__blurb">{{ board.blurb | trim }}</p>
+
+                  <ul class="board__specs">
+                    <li><span>Processor</span><span>{{ board.mcu }}</span></li>
+                    <li><span>Radio</span><span>{{ board.radio }}</span></li>
+                    <li><span>Display</span><span>{{ board.display }}</span></li>
+                    <li><span>GNSS/GPS</span><span>{{ board.gnss }}</span></li>
+                    <li><span>Power</span><span>{{ board.battery }}</span></li>
+                  </ul>
+
+                  <p class="board__blurb">{{ board.status_note }}</p>
+
+                  <div class="board__actions">
+                    {% if board.flash %}
+                      {# The query string is what the web flasher will read; the
+                         fragment is what makes this land in the right place on
+                         today's instructions page. #}
+                      <a class="btn btn--primary" href="/flasher/?board={{ board.id }}#{{ board.id }}">Flash this board</a>
+                    {% else %}
+                      {# No flash table means no firmware exists for the board. #}
+                      <button class="btn btn--primary" type="button" disabled>Flash this board</button>
+                    {% endif %}
+                    <a class="btn btn--ghost" href="{{ board.vendor_url }}">Where to buy</a>
+                  </div>
+                </div>
+              </article>
+              {% endif %}
+            {% endfor %}
+        </div>
+      </div>
+    </section>
+  {% endfor %}
+
+  <section class="section">
+    <div class="container">
+      <div class="section__head section__head--center">
+        <h2>Adding a board</h2>
+        <p>
+          Board support is a small crate describing the pins, plus a firmware
+          manifest that selects it — the radio, storage, and protocol work is
+          already shared. If you have hardware you would like to see supported,
+          the porting checklist and the existing board packages are the place
+          to start.
+        </p>
+      </div>
+      <div class="hero__actions">
+        <a class="btn btn--primary" href="{{ config.extra.github_url }}">Browse the source</a>
+        <a class="btn btn--ghost" href="{{ config.extra.protocol_url }}">Read the specification</a>
+      </div>
+    </div>
+  </section>
+{% endblock content %}

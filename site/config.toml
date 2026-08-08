@@ -1,0 +1,54 @@
+# UMSH website — https://umsh.dev
+#
+# The published site is assembled by `make gh-pages`, which copies this
+# site's output to the root of the gh-pages branch and layers the mdBook
+# protocol spec at /docs/protocol/ and rustdoc at /docs/rust/ on top. Zola
+# does not know about those trees; `zola serve` will 404 on them. Use
+# `make site-preview` to browse the whole thing together.
+
+base_url = "https://umsh.dev"
+title = "UMSH"
+description = "An experimental LoRa mesh protocol built on strong cryptography, clean layer separation, and strict bandwidth discipline."
+
+compile_sass = true
+build_search_index = false
+generate_feeds = false
+taxonomies = []
+
+# Trailing slashes keep the published URLs stable across the eventual move
+# from the stub flasher page to the real one.
+[markdown]
+smart_punctuation = true
+# Code blocks are styled by site.scss rather than syntax-highlighted; there is
+# very little code on this site and none of it benefits from coloring.
+
+[link_checker]
+# GitHub rate-limits unauthenticated HEAD requests from CI-ish clients, and
+# vendor product pages block them outright.
+skip_prefixes = [
+    "https://github.com/",
+    "https://www.seeedstudio.com/",
+    "https://heltec.org/",
+]
+
+[extra]
+# Top-level navigation. `match` is the path that marks the item as the current
+# page; omit it for links that leave the Zola-managed site.
+nav = [
+    { name = "Protocol", url = "/docs/protocol/" },
+    { name = "Hardware", url = "/hardware/", match = "/hardware/" },
+    { name = "App", url = "/app/", match = "/app/" },
+    { name = "FAQ", url = "/faq/", match = "/faq/" },
+    { name = "Flasher", url = "/flasher/", match = "/flasher/" },
+]
+
+github_url = "https://github.com/darconeous/umsh"
+sponsors_url = "https://github.com/sponsors/darconeous"
+protocol_url = "/docs/protocol/"
+rustdoc_url = "/docs/rust/"
+voria_url = "https://voria.com/"
+
+# The iOS app is in internal TestFlight only. Leave this empty until a
+# public TestFlight link exists — templates render a disabled "coming soon"
+# call to action while it is empty, and a live button once it is set.
+ios_beta_url = ""

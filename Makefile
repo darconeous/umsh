@@ -1,4 +1,5 @@
 .PHONY: docs rust-docs rust-docs-nightly docs-serve gh-pages web-debugger \
+	site site-serve site-check site-preview \
 	build-techo-console flash-techo-console \
 	build-wio-tracker-l1-console flash-wio-tracker-l1-console \
 	build-wio-tracker-l1 flash-wio-tracker-l1 \
@@ -334,22 +335,80 @@ rust-docs-nightly:
 docs-serve:
 	mdbook serve docs/protocol/
 
-gh-pages: docs rust-docs-nightly
+# ─── Website (umsh.dev) ──────────────────────────────────────────────────────
+#
+# Sources live in site/. Zola 0.23 or newer is required — it moved to Tera v2,
+# and the templates use its syntax.
+
+ZOLA ?= zola
+GH_PAGES_WT := /tmp/umsh-gh-pages
+
+site:
+	@command -v $(ZOLA) >/dev/null 2>&1 || \
+		{ echo "zola not found. Install it with: brew install zola"; exit 1; }
+	$(ZOLA) --root site build
+
+# Fast loop for templates and styles. Note that /docs/* 404s here — those
+# trees are layered in only when the whole site is assembled.
+site-serve:
+	$(ZOLA) --root site serve
+
+site-check:
+	$(ZOLA) --root site check
+
+# The published tree as it will actually look, including the books. Serve it
+# with: python3 -m http.server 8000 -d target/site-preview
+site-preview: site docs rust-docs-nightly
+	rm -rf target/site-preview
+	mkdir -p target/site-preview/docs/protocol target/site-preview/docs/rust
+	cp -R site/public/. target/site-preview/
+	cp -R docs/protocol/book/. target/site-preview/docs/protocol/
+	cp -R target/doc/. target/site-preview/docs/rust/
+	cp docs/rust-index.html target/site-preview/docs/rust/index.html
+	@echo "Preview assembled. Serve it with:"
+	@echo "    python3 -m http.server 8000 -d target/site-preview"
+
+# Who owns what in the published tree:
+#
+#   /              the Zola site — wiped and replaced on every run
+#   /docs/protocol the mdBook spec — wiped and replaced on every run
+#   /docs/rust     rustdoc — wiped and replaced on every run
+#   /firmware      release artifacts, written by the firmware release flow
+#   /tools         reserved for the ULCP web debugger
+#
+# Anything landing at the published root outside Zola's control has to be
+# added to the preserve list below, or the next deploy deletes it.
+gh-pages: site docs rust-docs-nightly
 	@if ! git show-ref --quiet refs/heads/gh-pages; then \
 		echo "Creating gh-pages branch..."; \
-		git worktree add /tmp/umsh-gh-pages --orphan -b gh-pages; \
+		git worktree add $(GH_PAGES_WT) --orphan -b gh-pages; \
 	else \
 		echo "Updating gh-pages branch..."; \
-		git worktree add /tmp/umsh-gh-pages gh-pages 2>/dev/null || true; \
+		git fetch origin gh-pages || echo "warning: could not reach origin, using the local branch"; \
+		git worktree add $(GH_PAGES_WT) gh-pages 2>/dev/null || true; \
 	fi
-	rm -rf /tmp/umsh-gh-pages/docs/protocol /tmp/umsh-gh-pages/docs/rust
-	mkdir -p /tmp/umsh-gh-pages/docs/protocol
-	mkdir -p /tmp/umsh-gh-pages/docs/rust
-	cp -r docs/protocol/book/* /tmp/umsh-gh-pages/docs/protocol/
-	cp -r target/doc/. /tmp/umsh-gh-pages/docs/rust/
-	cp docs/rust-index.html /tmp/umsh-gh-pages/docs/rust/index.html
-	cd /tmp/umsh-gh-pages && \
+	@# Fast-forward onto origin first. This is a no-op when the local branch
+	@# is ahead and fails loudly if the two have diverged, rather than
+	@# quietly discarding whatever was published from somewhere else.
+	@if git show-ref --quiet refs/remotes/origin/gh-pages; then \
+		git -C $(GH_PAGES_WT) merge --ff-only origin/gh-pages || \
+			{ echo "gh-pages has diverged from origin. Reconcile it by hand."; exit 1; }; \
+	fi
+	find $(GH_PAGES_WT) -mindepth 1 -maxdepth 1 \
+		! -name .git ! -name docs ! -name firmware ! -name tools \
+		-exec rm -rf {} +
+	rm -rf $(GH_PAGES_WT)/docs/protocol $(GH_PAGES_WT)/docs/rust
+	cp -R site/public/. $(GH_PAGES_WT)/
+	mkdir -p $(GH_PAGES_WT)/docs/protocol $(GH_PAGES_WT)/docs/rust
+	cp -R docs/protocol/book/. $(GH_PAGES_WT)/docs/protocol/
+	cp -R target/doc/. $(GH_PAGES_WT)/docs/rust/
+	cp docs/rust-index.html $(GH_PAGES_WT)/docs/rust/index.html
+	touch $(GH_PAGES_WT)/.nojekyll
+	@# Pushing a tree with no CNAME makes GitHub drop the custom domain.
+	@test -s $(GH_PAGES_WT)/CNAME || \
+		{ echo "CNAME missing from the built site — refusing to publish."; exit 1; }
+	cd $(GH_PAGES_WT) && \
 		git add -A && \
 		git diff --cached --quiet || git commit -m "Update GitHub Pages"
-	git worktree remove /tmp/umsh-gh-pages
+	git worktree remove $(GH_PAGES_WT)
 	@echo "gh-pages branch updated. Push with: git push origin gh-pages"

@@ -46,7 +46,7 @@ Meshtastic encodes application payloads using Protocol Buffers (protobuf), which
 
 | Aspect | UMSH | Meshtastic (channel) | Meshtastic (PKC DM) |
 |---|---|---|---|
-| Encryption | AES-128-CTR (SIV-style) | AES-256-CTR | AES-CCM |
+| Encryption | AES-128-CTR (SIV-style) | AES-128-CTR or AES-256-CTR, selected by PSK length; the default channel key is 16 bytes | AES-CCM |
 | Authentication | AES-CMAC (4/8/12/16-byte MIC) | **None** | CCM auth tag |
 | Key exchange | X25519 ECDH | Pre-shared key | Curve25519 ECDH |
 | Key derivation | HKDF-SHA256 with domain separation | PSK used directly | SHA-256 of ECDH shared secret |
@@ -61,13 +61,15 @@ The most significant cryptographic difference is that Meshtastic's channel-encry
 - An attacker who knows the channel key can modify ciphertext in transit (CTR mode bit-flipping), and the recipient has no way to detect the tampering.
 - Any node with the channel key can forge packets claiming to be from any other node, since there is no per-node authentication and the sender's node number in the cleartext header is not cryptographically bound to anything.
 
-UMSH authenticates every secured packet with an AES-CMAC MIC (4–16 bytes, see [MIC Size Selection Guidance](security.md#mic-size-selection-guidance)). Even with a 4-byte MIC, UMSH provides 2^-32 forgery resistance — qualitatively different from Meshtastic's complete absence of authentication on channel traffic.
+UMSH authenticates every secured packet with an AES-CMAC MIC (4–16 bytes, see [MIC Size Selection Guidance](security.md#mic-size-selection-guidance)). Even with a 4-byte MIC, UMSH provides 2^-32 forgery resistance — qualitatively different from Meshtastic's complete absence of authentication on channel traffic. A UMSH channel packet cannot be modified in transit or injected by a non-member without detection.
+
+The second bullet above, however, describes a property UMSH multicast shares, and it is not a difference between the two protocols. A shared symmetric key proves channel membership but cannot distinguish one member from another, so a UMSH channel member can likewise claim another member's source address; see [Multicast Sender Authentication](limitations.md#multicast-sender-authentication). What UMSH provides on channel traffic is integrity and membership authentication against outsiders, not per-sender attribution within the channel. Attribution to a specific sender requires unicast, where pairwise keys bind the source.
 
 ### PKC Direct Messages
 
 Meshtastic v2.5+ added Curve25519 ECDH with AES-CCM for direct messages, providing both confidentiality and authentication. This is a substantial improvement over channel-only encryption, but applies only to direct messages — all broadcast traffic (position, telemetry, channel text) remains unauthenticated.
 
-UMSH authenticates all traffic uniformly — unicast, multicast, and broadcast — using the same CMAC-based construction. There is no distinction between "authenticated" and "unauthenticated" packet classes.
+UMSH applies the same CMAC-based construction to unicast and multicast alike, so there is no secured traffic class left unauthenticated and no separate authenticated mode to opt into. [Broadcast packets](packet-types.md#broadcast-packet) carry no security information at all and make no claim of authenticity.
 
 ### Key Derivation
 
@@ -206,7 +208,7 @@ In a LoRa mesh, broadcast and multicast traffic (position reports, telemetry, ch
 | Meshtastic | 8 bits (1-byte DJB2 hash) | ~1 in 256 |
 | UMSH | 16 bits (2-byte derived hint) | ~1 in 65536 |
 
-Meshtastic's 1-byte channel hash produces ~256× more false positives than UMSH's 2-byte channel identifier. Each false positive requires an AES-256-CTR decryption attempt (cheap relative to ECDH, but still unnecessary CPU work and a delay before the MCU can return to sleep). In a busy mesh with many active channels, this adds up.
+Meshtastic's 1-byte channel hash produces ~256× more false positives than UMSH's 2-byte channel identifier. Each false positive requires an AES-CTR decryption attempt (cheap relative to ECDH, but still unnecessary CPU work and a delay before the MCU can return to sleep). In a busy mesh with many active channels, this adds up.
 
 ### Unicast Filtering
 

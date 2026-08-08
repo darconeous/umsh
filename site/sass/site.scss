@@ -1,0 +1,1127 @@
+// UMSH website styles.
+//
+// Brand palette is exactly two colors (docs/logo/GUIDELINES.md):
+// International Orange #FA5000 and white. Everything else here is neutral
+// scaffolding chosen to stay out of the orange's way.
+
+$orange: #fa5000;
+$orange-deep: #d84400; // hover/pressed states, and orange text on white
+$white: #ffffff;
+
+$container: 1120px;
+$narrow: 46rem; // prose measure
+
+:root {
+  color-scheme: light dark;
+
+  --orange: #{$orange};
+  --orange-deep: #{$orange-deep};
+
+  --bg: #ffffff;
+  --surface: #f6f7f9;
+  --surface-2: #eef0f4;
+  --ink: #15171c;
+  --ink-muted: #575e6b;
+  --border: #e0e3e9;
+  --link: #c43c00; // brand hue, darkened for text contrast on white
+  --shadow: 0 1px 2px rgba(21, 23, 28, 0.06), 0 8px 24px rgba(21, 23, 28, 0.06);
+}
+
+@media (prefers-color-scheme: dark) {
+  :root {
+    --bg: #14161b;
+    --surface: #1b1e25;
+    --surface-2: #232730;
+    --ink: #e9ebef;
+    --ink-muted: #a2aab8;
+    --border: #2c313b;
+    --link: #ff8a52;
+    --shadow: 0 1px 2px rgba(0, 0, 0, 0.4), 0 8px 24px rgba(0, 0, 0, 0.3);
+  }
+}
+
+*,
+*::before,
+*::after {
+  box-sizing: border-box;
+}
+
+html {
+  -webkit-text-size-adjust: 100%;
+}
+
+body {
+  margin: 0;
+  background: var(--bg);
+  color: var(--ink);
+  font-family: system-ui, -apple-system, "Segoe UI", Roboto, "Helvetica Neue",
+    Arial, sans-serif;
+  font-size: 17px;
+  line-height: 1.65;
+  -webkit-font-smoothing: antialiased;
+}
+
+img {
+  max-width: 100%;
+  height: auto;
+}
+
+a {
+  color: var(--link);
+  text-underline-offset: 0.15em;
+}
+
+a:hover {
+  text-decoration-thickness: 2px;
+}
+
+h1,
+h2,
+h3,
+h4 {
+  line-height: 1.2;
+  letter-spacing: -0.015em;
+  margin: 0 0 0.5em;
+  font-weight: 700;
+}
+
+h1 {
+  font-size: clamp(2rem, 1.4rem + 2.4vw, 2.9rem);
+}
+h2 {
+  font-size: clamp(1.5rem, 1.2rem + 1.3vw, 2.05rem);
+}
+h3 {
+  font-size: 1.2rem;
+}
+
+code,
+pre,
+kbd {
+  font-family: ui-monospace, SFMono-Regular, "SF Mono", Menlo, Consolas,
+    monospace;
+  font-size: 0.9em;
+}
+
+code {
+  background: var(--surface-2);
+  padding: 0.15em 0.4em;
+  border-radius: 4px;
+}
+
+pre {
+  background: var(--surface-2);
+  padding: 1rem 1.1rem;
+  border-radius: 10px;
+  overflow-x: auto;
+
+  code {
+    background: none;
+    padding: 0;
+  }
+}
+
+.container {
+  width: 100%;
+  max-width: $container;
+  margin-inline: auto;
+  padding-inline: 1.25rem;
+}
+
+.skip-link {
+  position: absolute;
+  left: -9999px;
+
+  &:focus {
+    left: 1rem;
+    top: 1rem;
+    z-index: 100;
+    background: var(--bg);
+    color: var(--ink);
+    padding: 0.6rem 1rem;
+    border-radius: 8px;
+    box-shadow: var(--shadow);
+  }
+}
+
+// ─── Header ─────────────────────────────────────────────────────────────
+
+.site-header {
+  background: var(--orange);
+  color: $white;
+  position: sticky;
+  top: 0;
+  z-index: 50;
+
+  .container {
+    display: flex;
+    align-items: center;
+    gap: 1rem 1.5rem;
+    flex-wrap: wrap;
+    min-height: 62px;
+    padding-block: 0.6rem;
+  }
+
+  a {
+    color: $white;
+    text-decoration: none;
+  }
+}
+
+.site-header__logo {
+  display: flex;
+  align-items: center;
+  margin-right: auto;
+  flex: 0 0 auto;
+
+  img {
+    display: block;
+    height: 26px;
+    width: auto;
+  }
+}
+
+.site-nav {
+  display: flex;
+  align-items: center;
+  gap: 0.5rem 1.25rem;
+  flex-wrap: wrap;
+  justify-content: flex-end;
+
+  // Scoped to the plain links: the pills draw their own full border, and a
+  // blanket `a` rule here would paint their bottom edge transparent.
+  > a {
+    font-weight: 600;
+    font-size: 0.98rem;
+    padding: 0.25rem 0;
+    border-bottom: 2px solid transparent;
+    white-space: nowrap;
+  }
+
+  > a:hover {
+    border-bottom-color: rgba(255, 255, 255, 0.75);
+  }
+
+  > a[aria-current="page"] {
+    border-bottom-color: $white;
+  }
+}
+
+.site-nav__actions {
+  display: flex;
+  align-items: center;
+  gap: 0.6rem;
+  margin-left: 0.35rem;
+  flex: 0 0 auto;
+}
+
+.pill {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.4rem;
+  border: 2px solid rgba(255, 255, 255, 0.85);
+  border-radius: 999px;
+  padding: 0.32rem 1rem;
+  font-weight: 700;
+  font-size: 0.92rem;
+  line-height: 1.4;
+  white-space: nowrap;
+  flex: 0 0 auto;
+
+  &:hover {
+    background: $white;
+    color: var(--orange) !important;
+    border-color: $white;
+  }
+
+  svg {
+    width: 1.05em;
+    height: 1.05em;
+    fill: currentColor;
+  }
+}
+
+// ─── Narrow screens: navigation behind a button ─────────────────────────
+
+.nav-burger {
+  display: none;
+  align-items: center;
+  justify-content: center;
+  background: none;
+  border: none;
+  color: $white;
+  padding: 0.4rem;
+  margin-right: -0.4rem; // keep the glyph optically aligned to the edge
+  cursor: pointer;
+
+  svg {
+    display: block;
+    width: 26px;
+    height: 26px;
+    stroke: currentColor;
+    stroke-width: 2;
+    stroke-linecap: round;
+    fill: none;
+  }
+
+  .nav-burger__close {
+    display: none;
+  }
+
+  &[aria-expanded="true"] {
+    .nav-burger__open {
+      display: none;
+    }
+
+    .nav-burger__close {
+      display: block;
+    }
+  }
+}
+
+@media (max-width: 860px) {
+  .site-header .container {
+    position: relative;
+    min-height: 0;
+    padding-block: 0.7rem;
+  }
+
+  .site-header__logo img {
+    height: 23px;
+  }
+
+  // Only collapse when the toggle is actually wired up; without scripting
+  // the links stay on screen, wrapped onto a second row.
+  .has-nav-toggle .nav-burger {
+    display: inline-flex;
+  }
+
+  .has-nav-toggle .site-nav {
+    display: none;
+    position: absolute;
+    top: calc(100% + 0.7rem);
+    left: 0;
+    right: 0;
+    z-index: 60;
+    flex-direction: column;
+    align-items: stretch;
+    gap: 0;
+    background: var(--orange);
+    border-radius: 12px;
+    padding: 0.35rem 0.5rem 0.75rem;
+    box-shadow: 0 12px 32px rgba(21, 23, 28, 0.25);
+
+    &.is-open {
+      display: flex;
+    }
+
+    > a {
+      padding: 0.7rem 0.65rem;
+      border-bottom: 1px solid rgba(255, 255, 255, 0.25);
+
+      &:hover,
+      &[aria-current="page"] {
+        border-bottom-color: rgba(255, 255, 255, 0.25);
+        text-decoration: underline;
+      }
+    }
+  }
+
+  .has-nav-toggle .site-nav__actions {
+    margin: 0.75rem 0 0;
+    padding-inline: 0.65rem;
+    gap: 0.5rem;
+
+    .pill {
+      flex: 1 1 0;
+      justify-content: center;
+    }
+  }
+
+  // Without scripting the header grows a second row, which should not eat a
+  // permanent slice of a small screen.
+  html:not(.has-nav-toggle) .site-header {
+    position: static;
+  }
+}
+
+// ─── Buttons ────────────────────────────────────────────────────────────
+
+.btn {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 0.5rem;
+  font-weight: 700;
+  font-size: 1rem;
+  padding: 0.7rem 1.4rem;
+  border-radius: 10px;
+  border: 2px solid transparent;
+  text-decoration: none;
+  cursor: pointer;
+  transition: background-color 0.15s ease, color 0.15s ease,
+    border-color 0.15s ease;
+}
+
+.btn--primary {
+  background: var(--orange);
+  border-color: var(--orange);
+  color: $white;
+
+  &:hover:not(:disabled) {
+    background: var(--orange-deep);
+    border-color: var(--orange-deep);
+    color: $white;
+  }
+}
+
+.btn--ghost {
+  border-color: var(--border);
+  color: var(--ink);
+  background: var(--bg);
+
+  &:hover:not(:disabled) {
+    border-color: var(--orange);
+    color: var(--orange);
+  }
+}
+
+// After the modifiers so it wins without leaning on specificity. `:disabled`
+// covers <button>, which is what an action with nothing behind it should be;
+// the aria form is for the cases where markup forces an anchor.
+.btn:disabled,
+.btn[aria-disabled="true"] {
+  background: var(--surface-2);
+  border-color: var(--border);
+  color: var(--ink-muted);
+  cursor: not-allowed;
+  pointer-events: none;
+}
+
+// ─── Hero ───────────────────────────────────────────────────────────────
+
+.hero {
+  padding-block: clamp(2.5rem, 1rem + 5vw, 4.25rem);
+  border-bottom: 1px solid var(--border);
+  overflow: hidden;
+}
+
+.hero__grid {
+  display: grid;
+  grid-template-columns: minmax(0, 1.05fr) minmax(0, 0.95fr);
+  gap: clamp(1.5rem, 4vw, 3.5rem);
+  align-items: center;
+}
+
+.hero__eyebrow {
+  display: block;
+  font-size: 0.8rem;
+  font-weight: 700;
+  letter-spacing: 0.09em;
+  text-transform: uppercase;
+  color: var(--orange);
+  margin-bottom: 0.9rem;
+}
+
+.hero__tagline {
+  // The lower bound keeps the unbreakable first half inside a 320px screen.
+  font-size: clamp(1.7rem, 1.2rem + 2.6vw, 3rem);
+  font-weight: 700;
+  line-height: 1.1;
+  letter-spacing: -0.025em;
+  margin: 0 0 0.85rem;
+}
+
+.nowrap {
+  white-space: nowrap;
+}
+
+.hero__lede {
+  font-size: clamp(1.05rem, 1rem + 0.35vw, 1.22rem);
+  margin: 0 0 1.6rem;
+  max-width: 34rem;
+  color: var(--ink-muted);
+}
+
+.hero__actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.75rem;
+}
+
+.hero__note {
+  margin-top: 1rem;
+  font-size: 0.92rem;
+  color: var(--ink-muted);
+}
+
+.hero__shots {
+  display: flex;
+  align-items: stretch; // both cards end up the same height
+  justify-content: center;
+  gap: clamp(0.75rem, 2vw, 1.75rem);
+}
+
+.hero__shot {
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: 18px;
+  padding: 0.85rem;
+  text-align: center;
+  flex: 1 1 0;
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+
+  // One shot is a landscape board photo and the other a portrait phone
+  // screenshot, so they are centred in equal-height cards rather than
+  // stretched to a common shape.
+  img,
+  .hero__placeholder {
+    display: block;
+    width: 100%;
+    height: auto;
+    max-height: 400px;
+    object-fit: contain;
+    border-radius: 10px;
+    margin-block: auto;
+  }
+
+  // Both shots are on white, so they get a white tile in either theme
+  // rather than a white rectangle floating on a dark card.
+  img {
+    background: #ffffff;
+    padding: 0.4rem;
+  }
+
+  .hero__placeholder {
+    min-height: 240px;
+  }
+
+  figcaption {
+    margin-top: 0.75rem;
+    font-size: 0.82rem;
+    color: var(--ink-muted);
+  }
+}
+
+.hero__placeholder {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  background: var(--surface-2);
+  color: var(--ink-muted);
+  font-size: 0.85rem;
+}
+
+@media (max-width: 860px) {
+  .hero__grid {
+    grid-template-columns: 1fr;
+  }
+
+  .hero__shots {
+    max-width: 30rem;
+    margin-inline: auto;
+  }
+}
+
+// ─── Sections ───────────────────────────────────────────────────────────
+
+.section {
+  padding-block: clamp(2.25rem, 1rem + 4vw, 3.75rem);
+}
+
+// Anchored sections and cards would otherwise land underneath the sticky
+// header when linked to directly.
+[id] {
+  scroll-margin-top: 5rem;
+}
+
+.section--surface {
+  background: var(--surface);
+  border-block: 1px solid var(--border);
+}
+
+// The page heading already provides the breathing room above the first
+// paragraph.
+.page-head + .section {
+  padding-top: clamp(1.5rem, 1rem + 1.5vw, 2.25rem);
+}
+
+.section__head {
+  max-width: $narrow;
+  margin-bottom: 2rem;
+
+  p {
+    color: var(--ink-muted);
+    margin: 0;
+  }
+}
+
+.section__head--center {
+  margin-inline: auto;
+  text-align: center;
+}
+
+// ─── Status banner ──────────────────────────────────────────────────────
+
+.status-band {
+  background: var(--surface);
+  border-block: 1px solid var(--border);
+  padding-block: 1.75rem;
+
+  .container {
+    display: grid;
+    grid-template-columns: auto minmax(0, 1fr);
+    gap: 1.25rem;
+    align-items: start;
+  }
+
+  p {
+    margin: 0 0 0.6rem;
+  }
+
+  p:last-child {
+    margin-bottom: 0;
+  }
+}
+
+.badge {
+  display: inline-block;
+  background: var(--orange);
+  color: $white;
+  font-weight: 700;
+  font-size: 0.78rem;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+  padding: 0.3rem 0.7rem;
+  border-radius: 999px;
+  white-space: nowrap;
+}
+
+@media (max-width: 640px) {
+  .status-band .container {
+    grid-template-columns: 1fr;
+  }
+}
+
+// ─── Card grids ─────────────────────────────────────────────────────────
+
+.grid {
+  display: grid;
+  gap: 1.25rem;
+}
+
+.grid--3 {
+  grid-template-columns: repeat(auto-fit, minmax(17rem, 1fr));
+}
+
+// Two columns whatever the width allows, so an even number of cards never
+// leaves an orphan on the last row. `auto-fit` cannot do this: it fits as many
+// tracks as the container has room for.
+.grid--2up {
+  grid-template-columns: repeat(2, 1fr);
+}
+
+@media (max-width: 44rem) {
+  .grid--2up {
+    grid-template-columns: 1fr;
+  }
+}
+
+.card {
+  background: var(--bg);
+  border: 1px solid var(--border);
+  border-radius: 14px;
+  padding: 1.35rem 1.4rem;
+
+  h3 {
+    margin-top: 0;
+  }
+
+  p:last-child {
+    margin-bottom: 0;
+  }
+}
+
+.card--flat {
+  background: var(--surface);
+  border-color: transparent;
+}
+
+// Set off from the body so a roadmap note reads as a roadmap note, never as
+// something the reader can go and use today.
+.card__planned {
+  font-size: 0.92rem;
+  color: var(--ink-muted);
+}
+
+.card__eyebrow {
+  display: block;
+  font-size: 0.76rem;
+  font-weight: 700;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+  color: var(--orange);
+  margin-bottom: 0.4rem;
+}
+
+// ─── Steps ──────────────────────────────────────────────────────────────
+
+.steps {
+  counter-reset: step;
+  list-style: none;
+  padding: 0;
+  margin: 0;
+  display: grid;
+  gap: 1.25rem;
+  grid-template-columns: repeat(auto-fit, minmax(17rem, 1fr));
+}
+
+.steps > li {
+  counter-increment: step;
+  background: var(--bg);
+  border: 1px solid var(--border);
+  border-radius: 14px;
+  padding: 1.35rem 1.4rem;
+
+  &::before {
+    content: counter(step);
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    width: 2rem;
+    height: 2rem;
+    border-radius: 999px;
+    background: var(--orange);
+    color: $white;
+    font-weight: 700;
+    margin-bottom: 0.8rem;
+  }
+
+  h3 {
+    margin-bottom: 0.35rem;
+  }
+
+  p:last-child {
+    margin-bottom: 0;
+  }
+}
+
+// ─── Board cards ────────────────────────────────────────────────────────
+
+// Board cards are one fixed width everywhere, and a short row centres.
+//
+// The track has a real maximum rather than `1fr`, so a category holding one
+// board no longer stretches that board across the whole row. `auto-fit`
+// collapses the leftover empty tracks, which is what lets `justify-content`
+// centre a row of one or two. 21.5rem is exactly a third of the container once
+// the two gaps are taken out, so a full row still spans the same width it did.
+.boards {
+  display: grid;
+  gap: 1.5rem;
+  grid-template-columns: repeat(auto-fit, minmax(17rem, 21.5rem));
+  justify-content: center;
+}
+
+.board {
+  display: flex;
+  flex-direction: column;
+  background: var(--bg);
+  border: 1px solid var(--border);
+  border-radius: 14px;
+  overflow: hidden;
+}
+
+.board__media {
+  // Deliberately light in both themes: the vendor photos are shot on white,
+  // so a dark well would just frame a white rectangle.
+  background: #f4f5f7;
+  // A fixed height rather than an aspect ratio: the vendor photos are a mix
+  // of 4:3 and square, and only a fixed box keeps the card bodies aligned
+  // across a row.
+  height: 200px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 0.9rem;
+  overflow: hidden;
+
+  img {
+    max-width: 100%;
+    max-height: 100%;
+    width: auto;
+    object-fit: contain;
+    mix-blend-mode: multiply;
+  }
+}
+
+
+// With no photo there is nothing shot on white to frame, so this well follows
+// the theme instead of staying light. Otherwise a board awaiting a photo shows
+// a glaring white panel in dark mode.
+.board__media--empty {
+  background: var(--surface-2);
+  color: var(--ink-muted);
+  font-size: 0.85rem;
+  text-align: center;
+}
+
+.board__body {
+  padding: 1.15rem 1.25rem 1.35rem;
+  display: flex;
+  flex-direction: column;
+  flex: 1;
+
+  h3 {
+    margin-bottom: 0.2rem;
+    font-size: 1.15rem;
+  }
+}
+
+.board__vendor {
+  color: var(--ink-muted);
+  font-size: 0.86rem;
+  margin: 0 0 0.75rem;
+}
+
+.board__blurb {
+  margin: 0 0 1rem;
+}
+
+.board__specs {
+  margin: 0 0 1.15rem;
+  padding: 0;
+  list-style: none;
+  font-size: 0.9rem;
+  border-top: 1px solid var(--border);
+
+  li {
+    display: flex;
+    justify-content: space-between;
+    gap: 1rem;
+    padding: 0.35rem 0;
+    border-bottom: 1px solid var(--border);
+  }
+
+  span:first-child {
+    color: var(--ink-muted);
+  }
+
+  span:last-child {
+    text-align: right;
+    font-weight: 600;
+  }
+}
+
+.board__actions {
+  margin-top: auto;
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.6rem;
+
+  .btn {
+    font-size: 0.92rem;
+    padding: 0.5rem 1.05rem;
+  }
+}
+
+.status {
+  display: inline-block;
+  font-size: 0.74rem;
+  font-weight: 700;
+  letter-spacing: 0.05em;
+  text-transform: uppercase;
+  padding: 0.22rem 0.6rem;
+  border-radius: 999px;
+  border: 1px solid currentColor;
+  margin-bottom: 0.7rem;
+}
+
+.status--proven {
+  color: #1a7f45;
+}
+.status--supported {
+  color: #a35a00;
+}
+.status--untested {
+  color: #8a3a3a;
+}
+.status--planned {
+  color: var(--ink-muted);
+}
+
+@media (prefers-color-scheme: dark) {
+  .status--proven {
+    color: #4ec27f;
+  }
+  .status--supported {
+    color: #e0a44a;
+  }
+  .status--untested {
+    color: #e07a7a;
+  }
+}
+
+// ─── Tables ─────────────────────────────────────────────────────────────
+
+.table-wrap {
+  overflow-x: auto;
+  border: 1px solid var(--border);
+  border-radius: 12px;
+}
+
+table {
+  border-collapse: collapse;
+  width: 100%;
+  font-size: 0.95rem;
+  min-width: 34rem;
+}
+
+th,
+td {
+  text-align: left;
+  padding: 0.7rem 0.95rem;
+  border-bottom: 1px solid var(--border);
+  vertical-align: top;
+}
+
+thead th {
+  background: var(--surface);
+  font-size: 0.82rem;
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+  color: var(--ink-muted);
+  white-space: nowrap;
+}
+
+tbody tr:last-child td {
+  border-bottom: none;
+}
+
+td:first-child,
+th:first-child {
+  font-weight: 600;
+}
+
+.compare {
+  margin-bottom: 1rem;
+
+  th:nth-child(2) {
+    color: var(--orange);
+  }
+}
+
+// The "read the full comparison" link under each table. No muted colour here:
+// the only child is a link, which carries its own.
+.compare__more {
+  font-size: 0.92rem;
+  margin: 0;
+}
+
+// Only a heading that follows a previous table needs the separating space.
+.compare__heading {
+  margin-top: 0;
+}
+
+.compare__more + .compare__heading {
+  margin-top: 2.5rem;
+}
+
+// ─── Prose pages ────────────────────────────────────────────────────────
+
+.prose {
+  max-width: $narrow;
+
+  h2 {
+    margin-top: 2.25rem;
+  }
+
+  h3 {
+    margin-top: 1.75rem;
+  }
+
+  ul,
+  ol {
+    padding-left: 1.25rem;
+  }
+
+  li + li {
+    margin-top: 0.35rem;
+  }
+
+  blockquote {
+    margin: 1.5rem 0;
+    padding: 0.25rem 0 0.25rem 1.1rem;
+    border-left: 3px solid var(--orange);
+    color: var(--ink-muted);
+  }
+
+  table {
+    min-width: 0;
+  }
+}
+
+.page-head {
+  border-bottom: 1px solid var(--border);
+  padding-block: clamp(1.75rem, 1rem + 3vw, 3rem) 1.75rem;
+
+  p {
+    color: var(--ink-muted);
+    max-width: $narrow;
+    font-size: 1.08rem;
+    margin: 0;
+  }
+}
+
+// Centred pages put the title and its standfirst on the page's axis, to
+// match the centred section headings further down. Body copy underneath
+// stays left-aligned inside a centred block — only the headings are
+// centred text.
+.page-head--center {
+  text-align: center;
+
+  h1,
+  p {
+    max-width: $narrow;
+    margin-inline: auto;
+  }
+}
+
+.prose--center {
+  margin-inline: auto;
+}
+
+// The per-board flashing steps are a stack of prose cards, so they keep a
+// readable measure rather than running the full width of the container.
+.board-steps {
+  max-width: $narrow;
+  margin: 0 auto 1.25rem;
+}
+
+.notice {
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-left: 4px solid var(--orange);
+  border-radius: 10px;
+  padding: 1rem 1.2rem;
+  margin: 1.5rem 0;
+
+  p:first-child {
+    margin-top: 0;
+  }
+
+  p:last-child {
+    margin-bottom: 0;
+  }
+}
+
+// Phone screenshots inside prose.
+.shots {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 1.5rem;
+  margin: 2rem 0;
+
+  figure {
+    flex: 1 1 12rem;
+    margin: 0;
+    text-align: center;
+  }
+
+  img {
+    display: block;
+    width: 100%;
+    max-width: 15rem;
+    margin-inline: auto;
+    background: #ffffff;
+    border: 1px solid var(--border);
+    border-radius: 18px;
+  }
+
+  figcaption {
+    margin-top: 0.7rem;
+    font-size: 0.86rem;
+    color: var(--ink-muted);
+  }
+}
+
+.faq-item {
+  border-bottom: 1px solid var(--border);
+  padding-block: 1.4rem;
+
+  &:last-child {
+    border-bottom: none;
+  }
+
+  h3 {
+    margin-top: 0;
+  }
+
+  p:last-child,
+  ul:last-child {
+    margin-bottom: 0;
+  }
+}
+
+// ─── Footer ─────────────────────────────────────────────────────────────
+
+.site-footer {
+  background: var(--surface);
+  border-top: 1px solid var(--border);
+  padding-block: 2.5rem;
+  margin-top: 3rem;
+  font-size: 0.93rem;
+  color: var(--ink-muted);
+
+  .container {
+    display: grid;
+    grid-template-columns: minmax(0, 1.2fr) repeat(auto-fit, minmax(9rem, 1fr));
+    gap: 2rem;
+  }
+
+  h2 {
+    font-size: 0.78rem;
+    letter-spacing: 0.08em;
+    text-transform: uppercase;
+    color: var(--ink);
+    margin-bottom: 0.75rem;
+  }
+
+  ul {
+    list-style: none;
+    margin: 0;
+    padding: 0;
+  }
+
+  li + li {
+    margin-top: 0.4rem;
+  }
+
+  a {
+    color: inherit;
+    text-decoration: none;
+
+    &:hover {
+      color: var(--link);
+      text-decoration: underline;
+    }
+  }
+}
+
+.site-footer__brand img {
+  height: 24px;
+  width: auto;
+  margin-bottom: 0.8rem;
+}
+
+.site-footer__legal {
+  border-top: 1px solid var(--border);
+  margin-top: 2rem;
+  padding-top: 1.25rem;
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.5rem 1.25rem;
+  align-items: center;
+  justify-content: space-between;
+}

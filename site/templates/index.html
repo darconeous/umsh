@@ -1,0 +1,280 @@
+{% extends "base.html" %}
+
+{% block title %}UMSH — an experimental LoRa mesh protocol{% endblock title %}
+
+{% block content %}
+{% set x = section.extra %}
+
+<section class="hero">
+    <div class="container hero__grid">
+        <div>
+            <span class="hero__eyebrow">Open mesh networking over LoRa</span>
+            <h1 class="hero__tagline">{{ x.tagline | safe }}</h1>
+            <p class="hero__lede">{{ x.lede | trim }}</p>
+
+            <div class="hero__actions">
+                {% if config.extra.ios_beta_url %}
+                <a class="btn btn--primary" href="{{ config.extra.ios_beta_url }}">Join the iOS beta</a>
+                {% else %}
+                <a class="btn btn--primary" href="{{ get_url(path='@/app.md') }}">Get the iOS beta</a>
+                {% endif %}
+                <a class="btn btn--ghost" href="{{ config.extra.protocol_url }}">Read the specification</a>
+            </div>
+
+            <p class="hero__note">Open source, and open to anyone who wants to build on it.</p>
+        </div>
+
+        <div class="hero__shots">
+            <figure class="hero__shot">
+                {% if x.hero_device_image %}
+                <img src="{{ get_url(path='images/boards/' ~ x.hero_device_image, trailing_slash=false) }}"
+                    alt="{{ x.hero_device_caption }}" />
+                {% else %}
+                <div class="hero__placeholder">Device photo</div>
+                {% endif %}
+                <figcaption>{{ x.hero_device_caption }}</figcaption>
+            </figure>
+
+            <figure class="hero__shot">
+                {% if x.hero_app_image %}
+                <img src="{{ get_url(path='images/app/' ~ x.hero_app_image, trailing_slash=false) }}"
+                    alt="{{ x.hero_app_caption }}" />
+                {% else %}
+                <div class="hero__placeholder">App screenshot</div>
+                {% endif %}
+                <figcaption>{{ x.hero_app_caption }}</figcaption>
+            </figure>
+        </div>
+    </div>
+</section>
+
+<div class="status-band">
+    <div class="container">
+        <span class="badge">Technology preview</span>
+        <div>
+            <p>
+                UMSH works today, and it is not finished. The protocol will keep
+                changing for the next several months while it settles, and the apps
+                are still being built out around it. Expect breaking changes, and
+                expect to reflash your radios when they land.
+            </p>
+            <p>
+                You can take part right now: flash a supported board, and
+                <a href="{{ get_url(path='@/app.md') }}">join the iOS beta</a>. An
+                Android app is planned but has not been started. Much of this
+                project was written with heavy help from large language models,
+                which is <a href="{{ config.extra.github_url }}/blob/main/docs/AI.md">documented openly</a>
+                rather than quietly.
+            </p>
+        </div>
+    </div>
+</div>
+
+<section class="section">
+    <div class="container">
+        <div class="section__head section__head--center">
+            <h2>What makes it different</h2>
+            <p>
+                Few of the ideas here are new. The contribution is putting them
+                together cleanly: stronger cryptography, composable routing, and
+                layers that stay in their lane.
+            </p>
+        </div>
+
+        <div class="grid grid--3">
+            {% for pillar in x.pillars %}
+            <article class="card">
+                <h3>{{ pillar.title }}</h3>
+                <p>{{ pillar.body | trim }}</p>
+                {% if pillar.planned %}<p class="card__planned">{{ pillar.planned | trim }}</p>{% endif %}
+                <p><a href="{{ pillar.link }}">{{ pillar.link_text }} →</a></p>
+            </article>
+            {% endfor %}
+        </div>
+
+    </div>
+</section>
+
+<section class="section section--surface">
+    <div class="container">
+        <div class="section__head section__head--center">
+            <h2>Understanding UMSH</h2>
+            <p>
+                How the thing works underneath, for anyone who wants to look. None
+                of it is required reading to use a radio.
+            </p>
+        </div>
+
+        <div class="grid grid--2up">
+            {% for item in x.understand %}
+            <article class="card card--flat">
+                <h3>{{ item.title }}</h3>
+                <p>{{ item.body | trim }}</p>
+            </article>
+            {% endfor %}
+        </div>
+
+        <p style="margin-top: 1.75rem; text-align: center;">
+            <a href="{{ config.extra.protocol_url }}">Read the full specification →</a>
+        </p>
+    </div>
+</section>
+
+<section class="section">
+    <div class="container">
+        <div class="section__head section__head--center">
+            <h2>How it compares</h2>
+            <p>
+                UMSH owes a great deal to the projects it is measured against here,
+                MeshCore especially. These tables are condensed from the
+                specification's own comparison chapters, which aim to be accurate
+                rather than flattering — if something here is unfair or wrong,
+                please say so.
+            </p>
+        </div>
+
+        <h3 class="compare__heading">Against MeshCore</h3>
+        <div class="table-wrap compare">
+            <table>
+                <thead>
+                    <tr>
+                        <th scope="col">Aspect</th>
+                        <th scope="col">UMSH</th>
+                        <th scope="col">MeshCore</th>
+                    </tr>
+                </thead>
+                <tbody>
+                    <tr>
+                        <td>Address on the wire</td>
+                        <td>3-byte hint, or the full public key when the receiver may not know it</td>
+                        <td>1-byte hash, with a dedicated packet type for first contact</td>
+                    </tr>
+                    <tr>
+                        <td>Encryption</td>
+                        <td>AES-128-CTR in a SIV construction</td>
+                        <td>AES-128-ECB</td>
+                    </tr>
+                    <tr>
+                        <td>Authentication</td>
+                        <td>AES-CMAC, 4 to 16 bytes</td>
+                        <td>HMAC-SHA256 truncated to 2 bytes</td>
+                    </tr>
+                    <tr>
+                        <td>Key derivation</td>
+                        <td>HKDF-SHA256, with separate encryption and authentication keys</td>
+                        <td>The ECDH secret used directly for both</td>
+                    </tr>
+                    <tr>
+                        <td>Replay protection</td>
+                        <td>Monotonic frame counters, no clock involved</td>
+                        <td>A 128-entry duplicate cache, with timestamps above</td>
+                    </tr>
+                    <tr>
+                        <td>Routing</td>
+                        <td>Independent options that combine freely</td>
+                        <td>A path field and route-mode bits</td>
+                    </tr>
+                    <tr>
+                        <td>Layering</td>
+                        <td>The link layer never inspects payloads</td>
+                        <td>Link, network, and application concerns combined</td>
+                    </tr>
+                </tbody>
+            </table>
+        </div>
+        <p class="compare__more">
+            <a href="{{ config.extra.protocol_url }}meshcore-comparison.html">Read the full comparison →</a>
+        </p>
+
+        <h3 class="compare__heading">Against Meshtastic</h3>
+        <div class="table-wrap compare">
+            <table>
+                <thead>
+                    <tr>
+                        <th scope="col">Aspect</th>
+                        <th scope="col">UMSH</th>
+                        <th scope="col">Meshtastic</th>
+                    </tr>
+                </thead>
+                <tbody>
+                    <tr>
+                        <td>Identity</td>
+                        <td>An Ed25519 public key, which is also the address</td>
+                        <td>A 32-bit node number derived from the Bluetooth address</td>
+                    </tr>
+                    <tr>
+                        <td>Spoofing</td>
+                        <td>The address is a cryptographic credential</td>
+                        <td>Node numbers are not bound to any key</td>
+                    </tr>
+                    <tr>
+                        <td>Authentication</td>
+                        <td>Private messages bound to the sender's key; channel traffic carries an integrity tag</td>
+                        <td>None on channel traffic; direct messages only, since v2.5</td>
+                    </tr>
+                    <tr>
+                        <td>Header privacy</td>
+                        <td>Compact hints, and the sender is concealed entirely in encrypted multicast</td>
+                        <td>A 16-byte cleartext header on every packet</td>
+                    </tr>
+                    <tr>
+                        <td>Typical overhead</td>
+                        <td>16 to 28 bytes, authentication included</td>
+                        <td>About 22 bytes for channel traffic, about 42 for direct messages</td>
+                    </tr>
+                    <tr>
+                        <td>Forward secrecy</td>
+                        <td>Available, at no per-packet cost</td>
+                        <td>Not available</td>
+                    </tr>
+                    <tr>
+                        <td>Maturity</td>
+                        <td>Experimental, one app, six boards</td>
+                        <td>Mature, huge community, dozens of devices, a rich application layer</td>
+                    </tr>
+                </tbody>
+            </table>
+        </div>
+        <p class="compare__more">
+            <a href="{{ config.extra.protocol_url }}meshtastic-comparison.html">Read the full comparison →</a>
+        </p>
+    </div>
+</section>
+
+<section class="section section--surface">
+    <div class="container">
+        <div class="section__head section__head--center">
+            <h2>Getting started</h2>
+            <p>You need one radio to listen, and two to have a conversation.</p>
+        </div>
+
+        <ol class="steps">
+            <li>
+                <h3>Get a radio</h3>
+                <p>
+                    Six boards are supported, from a sealed pocket tracker to a
+                    solar-powered node you can bolt to a roof. The T1000-E is the one
+                    most of this was developed against.
+                </p>
+                <p><a href="{{ get_url(path='@/hardware.md') }}">Supported hardware →</a></p>
+            </li>
+            <li>
+                <h3>Flash it</h3>
+                <p>
+                    One command builds and installs the firmware for your board. A
+                    browser-based flasher that needs no toolchain at all is on the way.
+                </p>
+                <p><a href="{{ get_url(path='@/flasher.md') }}">Flashing instructions →</a></p>
+            </li>
+            <li>
+                <h3>Pair your phone</h3>
+                <p>
+                    The iPhone app connects to your radio over Bluetooth and gives you
+                    conversations, contacts, and a map. It is in beta.
+                </p>
+                <p><a href="{{ get_url(path='@/app.md') }}">About the app →</a></p>
+            </li>
+        </ol>
+    </div>
+</section>
+{% endblock content %}

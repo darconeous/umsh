@@ -1,0 +1,71 @@
+{% extends "base.html" %}
+
+{% block title %}{{ page.title }} — UMSH{% endblock title %}
+{% block description %}{{ page.description }}{% endblock description %}
+{% block og_title %}{{ page.title }} — UMSH{% endblock og_title %}
+{% block og_description %}{{ page.description }}{% endblock og_description %}
+
+{% block content %}
+  {% set data = load_data(path="data/hardware.toml") %}
+
+
+  <div class="page-head page-head--center">
+    <div class="container">
+      <h1>{{ page.title }}</h1>
+      <p>{{ page.description }}</p>
+    </div>
+  </div>
+
+  <div class="section">
+    <div class="container">
+      <div class="prose prose--center">{{ page.content | safe }}</div>
+    </div>
+  </div>
+
+  <section class="section section--surface">
+    <div class="container">
+      <div class="section__head section__head--center">
+        <h2>Per-board instructions</h2>
+        <p>
+          Every board runs the same firmware built for its own hardware, and
+          the same command builds and flashes it. What differs is how you get
+          the board into its bootloader.
+        </p>
+      </div>
+
+      {# Boards with no flash table have no firmware to flash yet. #}
+      {% for board in data.boards %}
+        {% if board.flash %}
+        <article class="card board-steps" id="{{ board.id }}">
+          <span class="card__eyebrow">{{ board.vendor }}</span>
+          <h3>{{ board.name }}</h3>
+
+          <p><strong>Getting into the bootloader.</strong> {{ board.flash.dfu_entry }}</p>
+
+          <p><strong>Building and flashing.</strong></p>
+          <pre><code>make {{ board.flash.make_target }}</code></pre>
+
+          {% if board.flash.family_id %}
+            <ul class="board__specs" style="border-top: none;">
+              <li><span>Bootloader drive</span><span>{{ board.flash.volume }}</span></li>
+              <li><span>UF2 family</span><span>{{ board.flash.family_id }}</span></li>
+              <li><span>Application start</span><span>{{ board.flash.app_base }}</span></li>
+              <li><span>SoftDevice</span><span>{{ board.flash.softdevice }}</span></li>
+            </ul>
+          {% endif %}
+
+          {% if board.flash.quirks %}
+            <div class="notice">
+              <p><strong>Worth knowing about this board</strong></p>
+              <ul>
+                {# The data file is trusted content and uses inline <code>. #}
+                {% for quirk in board.flash.quirks %}<li>{{ quirk | safe }}</li>{% endfor %}
+              </ul>
+            </div>
+          {% endif %}
+        </article>
+        {% endif %}
+      {% endfor %}
+    </div>
+  </section>
+{% endblock content %}

@@ -1,0 +1,274 @@
+# Supported hardware.
+#
+# This file drives both the hardware page and the flashing instructions, and
+# it is the data the web flasher will read once it exists. Board `id` values
+# match the presets in `scripts/flash.py` and the `make` target suffixes, so
+# keep the three in step. Flash constants (family id, app base, volume) are
+# mirrored from that script's BOARDS dict — it stays authoritative; if they
+# ever disagree, the script is right.
+#
+# `status` is one of:
+#   proven    — brought up and exercised on real hardware
+#   partial   — bringup verified on hardware, shipping image not yet run
+#   untested  — code complete, never run on the board
+#   planned   — documented, not implemented
+
+# Categories render in this order on the hardware page. Self-contained
+# messagers come last: every board in that class is still `planned`.
+[[categories]]
+id = "companion"
+name = "Companion radios and trackers"
+intro = "Radios that pair with the phone app over Bluetooth. This is where most people start."
+
+[[categories]]
+id = "repeater"
+name = "Repeaters"
+intro = "Nodes meant to be installed somewhere and left running, to extend how far a mesh reaches."
+
+[[categories]]
+id = "devkit"
+name = "Development boards"
+intro = "Open boards for building something of your own, or for working on UMSH itself."
+
+[[categories]]
+id = "messager"
+name = "Self-contained messagers"
+intro = "Handhelds with a keyboard and a screen, which work without a phone at all. No board in this class runs UMSH yet."
+
+[[boards]]
+id = "t1000e"
+name = "SenseCAP T1000-E"
+vendor = "Seeed Studio"
+category = "companion"
+status = "proven"
+status_note = "The reference board for UMSH development, and the one with the most hours on it."
+blurb = """
+A sealed, pocket-sized card tracker with a magnetic charging cable. No screen \
+and one button, so it pairs with the phone app rather than standing alone. \
+The most thoroughly exercised board in the project."""
+mcu = "nRF52840"
+radio = "Semtech LR1110"
+gnss = "Airoha AG3335"
+display = "None"
+battery = "Internal Li-ion"
+extras = "Buzzer, accelerometer, light sensor"
+vendor_url = "https://www.seeedstudio.com/SenseCAP-Card-Tracker-T1000-E-for-Meshtastic-p-5913.html"
+photo = "t1000e.jpg"
+
+[boards.flash]
+make_target = "flash-t1000e"
+methods = ["uf2", "serial-dfu"]
+family_id = "0x28860057"
+app_base = "0x27000"
+softdevice = "S140 7.3.0"
+volume = "T1000-E"
+dfu_entry = "Hold the button while plugging in the magnetic cable, or run a 1200-baud touch on the serial port."
+quirks = [
+  "The button bootloader exposes a serial DFU endpoint only — there is no UF2 drive on that path. Use <code>make flash-t1000e-serial</code> for it.",
+  "The board is factory-sealed with no debug header, so there is no recovery from a damaged bootloader. Do not replace it.",
+]
+
+[[boards]]
+id = "techo"
+name = "T-Echo"
+vendor = "LilyGO"
+category = "companion"
+status = "proven"
+status_note = "Bringup complete and validated on hardware, including the e-paper display and GNSS."
+blurb = """
+A handheld tracker with a 1.54-inch e-paper display, so it can show messages \
+and status on its own while still working as a phone companion. Low power \
+draw between updates, and readable in direct sun."""
+mcu = "nRF52840"
+radio = "Semtech SX1262"
+gnss = "Quectel L76K"
+display = "1.54\" e-paper, 200×200"
+battery = "850 mAh (2400 mAh on the Plus)"
+extras = "Touch button, RGB LED, real-time clock"
+vendor_url = "https://lilygo.cc/products/t-echo"
+photo = "techo.jpg"
+
+[boards.flash]
+make_target = "flash-techo"
+methods = ["uf2", "serial-dfu"]
+family_id = "0xADA52840"
+app_base = "0x26000"
+softdevice = "S140 6.1.1"
+volume = "TECHOBOOT"
+dfu_entry = "Double-tap the reset button, or run a 1200-baud touch on the serial port."
+quirks = [
+  "This is the only board whose application starts at 0x26000 — it ships an older SoftDevice than the rest. An image built for another board will not boot here.",
+]
+
+[[boards]]
+id = "wio-tracker-l1"
+name = "Wio Tracker L1"
+vendor = "Seeed Studio"
+category = "companion"
+status = "proven"
+status_note = "Validated on hardware, including the display, GNSS, and over-the-air radio work."
+blurb = """
+A tracker with a small OLED display, a navigation button, and a mechanical \
+power switch — the switch cuts the battery, so it survives a long spell in a \
+drawer. The Pro ships assembled in a case, as pictured; the plain L1 is a \
+bare board. The e-ink variant is not supported."""
+mcu = "nRF52840"
+radio = "Semtech SX1262"
+gnss = "Quectel L76K"
+display = "0.96\" OLED, 128×64"
+battery = "Li-ion with hardware power switch"
+extras = "Buzzer, navigation button"
+vendor_url = "https://www.seeedstudio.com/Wio-Tracker-L1-p-6453.html"
+photo = "wio-tracker-l1.jpg"
+
+[boards.flash]
+make_target = "flash-wio-tracker-l1"
+methods = ["uf2", "serial-dfu"]
+family_id = "0x28861667"
+app_base = "0x27000"
+softdevice = "S140 7.3.0"
+volume = "TRACKER L1"
+dfu_entry = "Double-tap the reset button, or run a 1200-baud touch on the serial port."
+quirks = [
+  "The GNSS receiver keeps time for this board, so a full power-switch cut costs it the clock as well as the fix.",
+]
+
+[[boards]]
+id = "sensecap-solar"
+name = "SenseCAP Solar Node P1"
+vendor = "Seeed Studio"
+category = "repeater"
+status = "proven"
+status_note = "Radio, Bluetooth, GNSS, and the power path have all been validated on hardware."
+blurb = """
+An outdoor, solar-powered node built to be mounted somewhere and left alone. \
+A 5 W panel and four 18650 cells carry it through bad weather, which is what \
+you want from the node that fills in a gap in coverage."""
+mcu = "nRF52840"
+radio = "Semtech SX1262"
+gnss = "Quectel L76K (enabled by default)"
+display = "None"
+battery = "4 × 18650 with 5 W solar panel"
+extras = "IP-rated enclosure, two buttons, two LEDs"
+vendor_url = "https://www.seeedstudio.com/SenseCAP-Solar-Node-P1-Pro-for-Meshtastic-LoRa-p-6412.html"
+photo = "sensecap-solar.jpg"
+
+[boards.flash]
+make_target = "flash-sensecap-solar"
+methods = ["uf2", "serial-dfu"]
+family_id = "0x28860044"
+app_base = "0x27000"
+softdevice = "S140 7.3.0"
+volume = "SENSECAP"
+dfu_entry = "Double-tap the reset button. On a board still running the factory firmware this is the only way in — that firmware ignores the 1200-baud touch."
+quirks = [
+  "Once UMSH firmware is on the board, the 1200-baud touch works normally.",
+  "From the powered-off state, any press of the PWR button enters the bootloader, however brief. USR is the button that turns the node on.",
+]
+
+[[boards]]
+id = "heltec-v3"
+name = "WiFi LoRa 32 V3"
+vendor = "Heltec"
+category = "devkit"
+status = "proven"
+status_note = "Validated on hardware, including Bluetooth pairing and over-the-air radio work."
+blurb = """
+An inexpensive, widely available development board with an OLED and exposed \
+pins. It flashes over its USB serial bootloader, which cannot be bricked, so \
+it is a forgiving board to experiment on."""
+mcu = "Espressif ESP32-S3"
+radio = "Semtech SX1262"
+gnss = "None"
+display = "0.96\" OLED, 128×64"
+battery = "LiPo connector with onboard charger"
+extras = "USB-C, exposed GPIO headers"
+vendor_url = "https://heltec.org/project/wifi-lora-32-v3/"
+photo = "heltec-v3.png"
+
+[boards.flash]
+make_target = "flash-heltec-v3"
+methods = ["esp-serial"]
+chip = "ESP32-S3"
+dfu_entry = "None needed — the board enters its ROM bootloader on its own when the flashing tool asserts the USB serial control lines."
+quirks = [
+  "Flashing rewrites the partition table, which carries the 64 KB partition UMSH stores its data in. A board coming from a different layout loses whatever was past the old application partition.",
+  "Building this board needs Espressif's Xtensa Rust toolchain, installed with <code>espup</code>.",
+]
+
+[[boards]]
+id = "xiao-nrf52"
+name = "XIAO nRF52840 + Wio-SX1262 Kit"
+vendor = "Seeed Studio"
+category = "devkit"
+status = "proven"
+status_note = "Validated on hardware and working well."
+blurb = """
+A thumbnail-sized module on a radio carrier board. No buttons are populated, \
+so it is a starting point for a build of your own rather than a finished \
+device — and an inexpensive way to put a node on the air."""
+mcu = "nRF52840"
+radio = "Semtech SX1262"
+gnss = "None"
+display = "None"
+battery = "LiPo via JST connector"
+extras = "No buttons populated, RGB LED"
+vendor_url = "https://www.seeedstudio.com/XIAO-nRF52840-Wio-SX1262-Kit-for-Meshtastic-p-6400.html"
+photo = "xiao-nrf52.jpg"
+
+[boards.flash]
+make_target = "flash-xiao-nrf52"
+methods = ["uf2", "serial-dfu"]
+family_id = "0xADA52840"
+app_base = "0x27000"
+softdevice = "S140 7.3.0"
+volume = "XIAO-SENSE"
+dfu_entry = "Double-tap the reset button on the module."
+quirks = [
+  "A UF2 file carrying the wrong family identifier is copied without any error and then silently discarded — the drive stays mounted and the board keeps running its old firmware, which looks exactly like a successful flash. If an update seems not to have taken, check the family identifier first.",
+  "Retail kits mount as XIAO-SENSE; a re-flashed bootloader may present XIAO-BOOT instead.",
+]
+
+# ─── Planned: documented, but no firmware yet ───────────────────────────
+#
+# These carry no [boards.flash] table, which is what keeps them off the
+# flashing page and disables their flash button.
+
+[[boards]]
+id = "tlora-pager"
+name = "T-LoRa Pager"
+vendor = "LilyGO"
+category = "messager"
+status = "planned"
+status_note = "The hardware is documented in the repository and the interface work for this class of device is sketched out. The port itself has not started."
+blurb = """
+A keyboard-and-screen handheld — the first board that could run UMSH as a \
+standalone messaging device, with no phone involved at all. A wide landscape \
+display above a backlit thumb keyboard, and a rotary encoder for scrolling."""
+mcu = "Espressif ESP32-S3"
+radio = "Semtech SX1262 (other radio modules are offered)"
+gnss = "Yes"
+display = "ST7796 TFT, 480×222"
+battery = "1500 mAh Li-ion with fuel gauge"
+extras = "Backlit QWERTY keyboard, rotary encoder, haptics, SD card"
+vendor_url = "https://lilygo.cc/products/t-lora-pager"
+
+[[boards]]
+id = "tdeck"
+name = "T-Deck"
+vendor = "LilyGO"
+category = "messager"
+status = "planned"
+status_note = "Under evaluation. No audited hardware reference exists in the repository yet, so the figures above come from the vendor and have not been checked against a board."
+blurb = """
+Another keyboard handheld in the same class, with a trackball beside the \
+keyboard instead of an encoder. Widely available and well established, which \
+makes it an obvious second target once the first one works."""
+mcu = "Espressif ESP32-S3"
+radio = "Semtech SX1262"
+gnss = "None on the base board; the Plus adds a module"
+display = "2.8\" IPS, 320×240"
+battery = "LiPo via JST connector"
+extras = "QWERTY keyboard, trackball, speaker"
+vendor_url = "https://lilygo.cc/products/t-deck"
+
