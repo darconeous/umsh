@@ -5024,6 +5024,109 @@ public func FfiConverterTypeNodeHintRecord_lower(_ value: NodeHintRecord) -> Rus
 
 
 /**
+ * The claims a node makes about itself, as an identity bundle carries them.
+ *
+ * The decoded counterpart is [`NodeIdentityRecord`]; this is the same
+ * statement on the way in, without the derived labels and the signature
+ * state, which are results of encoding rather than inputs to it.
+ */
+public struct NodeIdentityProfileRecord: Equatable, Hashable {
+    public var roleCode: UInt8
+    public var capabilityBits: UInt8
+    public var name: String?
+    /**
+     * Centre of the disclosed cell. Reduced to `location_precision` during
+     * encoding, so nothing finer than the stated cell reaches the bundle.
+     * Latitude and longitude are only carried when both are present
+     * alongside a precision.
+     */
+    public var latitude: Double?
+    public var longitude: Double?
+    /**
+     * Grid-code precision in bytes (1-7); larger is finer.
+     */
+    public var locationPrecision: UInt8?
+    public var altitudeM: Int32?
+    public var timestamp: UInt32?
+
+    // Default memberwise initializers are never public by default, so we
+    // declare one manually.
+    public init(roleCode: UInt8, capabilityBits: UInt8, name: String?,
+        /**
+         * Centre of the disclosed cell. Reduced to `location_precision` during
+         * encoding, so nothing finer than the stated cell reaches the bundle.
+         * Latitude and longitude are only carried when both are present
+         * alongside a precision.
+         */latitude: Double?, longitude: Double?,
+        /**
+         * Grid-code precision in bytes (1-7); larger is finer.
+         */locationPrecision: UInt8?, altitudeM: Int32?, timestamp: UInt32?) {
+        self.roleCode = roleCode
+        self.capabilityBits = capabilityBits
+        self.name = name
+        self.latitude = latitude
+        self.longitude = longitude
+        self.locationPrecision = locationPrecision
+        self.altitudeM = altitudeM
+        self.timestamp = timestamp
+    }
+
+
+
+
+}
+
+#if compiler(>=6)
+extension NodeIdentityProfileRecord: Sendable {}
+#endif
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public struct FfiConverterTypeNodeIdentityProfileRecord: FfiConverterRustBuffer {
+    public static func read(from buf: inout (data: Data, offset: Data.Index)) throws -> NodeIdentityProfileRecord {
+        return
+            try NodeIdentityProfileRecord(
+                roleCode: FfiConverterUInt8.read(from: &buf),
+                capabilityBits: FfiConverterUInt8.read(from: &buf),
+                name: FfiConverterOptionString.read(from: &buf),
+                latitude: FfiConverterOptionDouble.read(from: &buf),
+                longitude: FfiConverterOptionDouble.read(from: &buf),
+                locationPrecision: FfiConverterOptionUInt8.read(from: &buf),
+                altitudeM: FfiConverterOptionInt32.read(from: &buf),
+                timestamp: FfiConverterOptionUInt32.read(from: &buf)
+        )
+    }
+
+    public static func write(_ value: NodeIdentityProfileRecord, into buf: inout [UInt8]) {
+        FfiConverterUInt8.write(value.roleCode, into: &buf)
+        FfiConverterUInt8.write(value.capabilityBits, into: &buf)
+        FfiConverterOptionString.write(value.name, into: &buf)
+        FfiConverterOptionDouble.write(value.latitude, into: &buf)
+        FfiConverterOptionDouble.write(value.longitude, into: &buf)
+        FfiConverterOptionUInt8.write(value.locationPrecision, into: &buf)
+        FfiConverterOptionInt32.write(value.altitudeM, into: &buf)
+        FfiConverterOptionUInt32.write(value.timestamp, into: &buf)
+    }
+}
+
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public func FfiConverterTypeNodeIdentityProfileRecord_lift(_ buf: RustBuffer) throws -> NodeIdentityProfileRecord {
+    return try FfiConverterTypeNodeIdentityProfileRecord.lift(buf)
+}
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public func FfiConverterTypeNodeIdentityProfileRecord_lower(_ value: NodeIdentityProfileRecord) -> RustBuffer {
+    return FfiConverterTypeNodeIdentityProfileRecord.lower(value)
+}
+
+
+/**
  * Decoded advertised node identity (node-identity.md), UI-safe fields only.
  */
 public struct NodeIdentityRecord: Equatable, Hashable {
@@ -10339,6 +10442,35 @@ public func renderRouterHint(bytes: Data)throws  -> RouterHintRecord  {
 })
 }
 /**
+ * Build and sign a node-identity bundle from a supplied secret key.
+ *
+ * The encoding inverse of [`decode_node_identity`], for composing bundles
+ * that describe a node other than the caller: fixtures, and the iOS app's
+ * staging mode, which needs nodes that report a location. The live
+ * advertisement path keeps a position out of the durable bundle it signs on
+ * purpose — a frozen position goes stale and then travels wherever the QR is
+ * pasted — so a located bundle cannot be obtained from it.
+ *
+ * This grants nothing a holder of the secret key does not already have:
+ * signing a statement about a key is what holding that key means. The name is
+ * truncated to the same 24 octets the advertisement path applies, so a bundle
+ * built here describes a node that could have sent it.
+ */
+public func signNodeIdentityBundle(secretKey: Data, profile: NodeIdentityProfileRecord)async throws  -> Data  {
+    return
+        try  await uniffiRustCallAsync(
+            rustFutureFunc: {
+                uniffi_umsh_mobile_core_fn_func_sign_node_identity_bundle(FfiConverterData.lower(secretKey),FfiConverterTypeNodeIdentityProfileRecord_lower(profile)
+                )
+            },
+            pollFunc: ffi_umsh_mobile_core_rust_future_poll_rust_buffer,
+            completeFunc: ffi_umsh_mobile_core_rust_future_complete_rust_buffer,
+            freeFunc: ffi_umsh_mobile_core_rust_future_free_rust_buffer,
+            liftFunc: FfiConverterData.lift,
+            errorHandler: FfiConverterTypeMobileError_lift
+        )
+}
+/**
  * Validate and reduce a `PROP_ALERT` value.
  */
 public func inspectUlcpAlert(value: Data)throws  -> UlcpAlertState  {
@@ -10615,6 +10747,9 @@ private let initializationResult: InitializationResult = {
         return InitializationResult.apiChecksumMismatch
     }
     if (uniffi_umsh_mobile_core_checksum_func_render_router_hint() != 41050) {
+        return InitializationResult.apiChecksumMismatch
+    }
+    if (uniffi_umsh_mobile_core_checksum_func_sign_node_identity_bundle() != 18582) {
         return InitializationResult.apiChecksumMismatch
     }
     if (uniffi_umsh_mobile_core_checksum_func_inspect_ulcp_alert() != 25982) {

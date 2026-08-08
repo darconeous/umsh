@@ -606,6 +606,116 @@ fn node_identity_record(
     })
 }
 
+/// The claims a node makes about itself, as an identity bundle carries them.
+///
+/// The decoded counterpart is [`NodeIdentityRecord`]; this is the same
+/// statement on the way in, without the derived labels and the signature
+/// state, which are results of encoding rather than inputs to it.
+#[derive(Clone, Debug, PartialEq, uniffi::Record)]
+pub struct NodeIdentityProfileRecord {
+    pub role_code: u8,
+    pub capability_bits: u8,
+    pub name: Option<String>,
+    /// Centre of the disclosed cell. Reduced to `location_precision` during
+    /// encoding, so nothing finer than the stated cell reaches the bundle.
+    /// Latitude and longitude are only carried when both are present
+    /// alongside a precision.
+    pub latitude: Option<f64>,
+    pub longitude: Option<f64>,
+    /// Grid-code precision in bytes (1-7); larger is finer.
+    pub location_precision: Option<u8>,
+    pub altitude_m: Option<i32>,
+    pub timestamp: Option<u32>,
+}
+
+/// Build and sign a node-identity bundle from a supplied secret key.
+///
+/// The encoding inverse of [`decode_node_identity`], for composing bundles
+/// that describe a node other than the caller: fixtures, and the iOS app's
+/// staging mode, which needs nodes that report a location. The live
+/// advertisement path keeps a position out of the durable bundle it signs on
+/// purpose — a frozen position goes stale and then travels wherever the QR is
+/// pasted — so a located bundle cannot be obtained from it.
+///
+/// This grants nothing a holder of the secret key does not already have:
+/// signing a statement about a key is what holding that key means. The name is
+/// truncated to the same 24 octets the advertisement path applies, so a bundle
+/// built here describes a node that could have sent it.
+#[uniffi::export]
+pub async fn sign_node_identity_bundle(
+    mut secret_key: Vec<u8>,
+    profile: NodeIdentityProfileRecord,
+) -> Result<Vec<u8>, MobileError> {
+    let mut bytes: [u8; 32] = match secret_key.as_slice().try_into() {
+        Ok(bytes) => bytes,
+        Err(_) => {
+            secret_key.zeroize();
+            return Err(MobileError::InvalidSecretKeyLength);
+        }
+    };
+    secret_key.zeroize();
+    let signer = SoftwareIdentity::from_secret_bytes(&bytes);
+    bytes.zeroize();
+
+    let name = profile
+        .name
+        .map(|name| {
+            let mut end = name.len().min(24);
+            while !name.is_char_boundary(end) {
+                end -= 1;
+            }
+            name[..end].to_owned()
+        })
+        .filter(|name| !name.is_empty());
+
+    let location = match (
+        profile.latitude,
+        profile.longitude,
+        profile.location_precision,
+    ) {
+        (Some(latitude), Some(longitude), Some(precision)) => {
+            if !(1..=umsh_node::location::MAX_PRECISION).contains(&precision)
+                || !latitude.is_finite()
+                || latitude.abs() > 90.0
+                || !longitude.is_finite()
+                || longitude.abs() > 180.0
+            {
+                return Err(MobileError::InvalidIdentityData);
+            }
+            Some(umsh_node::location::NodeLocation::from_e7(
+                (latitude * 1e7).round() as i32,
+                (longitude * 1e7).round() as i32,
+                precision,
+            ))
+        }
+        _ => None,
+    };
+
+    let payload = umsh_node::NodeIdentityPayload {
+        role: umsh_node::NodeRole::from_byte(profile.role_code),
+        capabilities: umsh_node::NodeCapabilities::from_bits_truncate(profile.capability_bits),
+        name,
+        location,
+        altitude_m: profile.altitude_m,
+        timestamp: profile.timestamp,
+        supported_regions: None,
+        nonce: None,
+        signature: None,
+    };
+
+    let mut buf = [0u8; 192];
+    let len = payload
+        .encode_for_signing(&mut buf)
+        .map_err(|_| MobileError::InvalidIdentityData)?;
+    let signature = signer
+        .sign(&buf[..len])
+        .await
+        .map_err(|_| MobileError::InvalidIdentityData)?;
+    let mut bundle = buf[..len].to_vec();
+    bundle.extend_from_slice(&signature);
+    Ok(bundle)
+}
+
 /// Inspect a pasted peer identity in any user-facing interchange form.
 ///
 /// Accepted input is a node URI, the canonical fixed-width Base58 public
@@ -804,6 +914,100 @@ fn public_identity_record(key: &PublicKey) -> PublicIdentityRecord {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// A signed bundle decodes back to the claims it was built from, with a
+    /// signature that verifies against the signing key's own address — the
+    /// property every consumer of a stored advertisement relies on.
+    #[tokio::test]
+    async fn signed_identity_bundle_round_trips_through_decoding() {
+        let secret = [0x42u8; 32];
+        let address = MobileIdentity::unlock(secret.to_vec())
+            .unwrap()
+            .public_identity()
+            .canonical_address;
+
+        let bundle = sign_node_identity_bundle(
+            secret.to_vec(),
+            NodeIdentityProfileRecord {
+                role_code: umsh_node::NodeRole::Repeater.as_byte(),
+                capability_bits: (umsh_node::NodeCapabilities::REPEATER
+                    | umsh_node::NodeCapabilities::TEXT_MESSAGES)
+                    .bits(),
+                name: Some("Ridge Repeater".to_owned()),
+                latitude: Some(37.7749),
+                longitude: Some(-122.4194),
+                location_precision: Some(5),
+                altitude_m: Some(1_204),
+                timestamp: Some(1_760_000_000),
+            },
+        )
+        .await
+        .unwrap();
+
+        let decoded = decode_node_identity(address, bundle).unwrap();
+        assert_eq!(decoded.signature, IdentitySignatureState::Valid);
+        assert_eq!(decoded.role_label, "Repeater");
+        assert_eq!(decoded.name.as_deref(), Some("Ridge Repeater"));
+        assert_eq!(decoded.altitude_m, Some(1_204));
+        assert_eq!(decoded.timestamp, Some(1_760_000_000));
+        assert_eq!(decoded.location_precision, Some(5));
+        // The cell the coordinates were reduced to is ~38 m across, so the
+        // decoded centre lands near the input rather than exactly on it.
+        assert!((decoded.latitude.unwrap() - 37.7749).abs() < 0.001);
+        assert!((decoded.longitude.unwrap() + 122.4194).abs() < 0.001);
+    }
+
+    /// A bundle signed by one key must not read as authentic for another.
+    #[tokio::test]
+    async fn signed_identity_bundle_does_not_verify_for_another_key() {
+        let bundle = sign_node_identity_bundle(
+            [0x42u8; 32].to_vec(),
+            NodeIdentityProfileRecord {
+                role_code: umsh_node::NodeRole::Tracker.as_byte(),
+                capability_bits: umsh_node::NodeCapabilities::MOBILE.bits(),
+                name: Some("Tracker".to_owned()),
+                latitude: None,
+                longitude: None,
+                location_precision: None,
+                altitude_m: None,
+                timestamp: None,
+            },
+        )
+        .await
+        .unwrap();
+
+        let impostor = MobileIdentity::unlock([0x43u8; 32].to_vec())
+            .unwrap()
+            .public_identity()
+            .canonical_address;
+        assert_eq!(
+            decode_node_identity(impostor, bundle).unwrap().signature,
+            IdentitySignatureState::Invalid
+        );
+    }
+
+    /// A precision outside the grid's range is refused rather than clamped:
+    /// a bundle claiming a cell size the protocol has no code for would
+    /// misstate how precise the position is.
+    #[tokio::test]
+    async fn signed_identity_bundle_rejects_out_of_range_location() {
+        let profile = NodeIdentityProfileRecord {
+            role_code: umsh_node::NodeRole::Tracker.as_byte(),
+            capability_bits: umsh_node::NodeCapabilities::MOBILE.bits(),
+            name: None,
+            latitude: Some(37.0),
+            longitude: Some(-122.0),
+            location_precision: Some(9),
+            altitude_m: None,
+            timestamp: None,
+        };
+        assert_eq!(
+            sign_node_identity_bundle([0x42u8; 32].to_vec(), profile)
+                .await
+                .unwrap_err(),
+            MobileError::InvalidIdentityData
+        );
+    }
 
     #[test]
     fn reference_node_hints_match_protocol_vectors() {
