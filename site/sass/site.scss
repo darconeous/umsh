@@ -432,7 +432,13 @@ pre {
   margin: 0 0 0.85rem;
 }
 
-.nowrap {
+// Each half of the tagline is an atomic box, so the space between them is the
+// only legal break. `white-space: nowrap` alone is not enough: Safari breaks
+// inside such a span here, stranding "right." on a line of its own. An
+// inline-block is placed on a line as a unit, and the nowrap keeps its
+// shrink-to-fit width at max-content so nothing wraps inside it either.
+.tagline__part {
+  display: inline-block;
   white-space: nowrap;
 }
 

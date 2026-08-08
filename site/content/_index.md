@@ -6,7 +6,7 @@ template = "index.html"
 [extra]
 # Both halves are unbreakable, so the only place the tagline can wrap is
 # between them: either one line, or "done right." on a line of its own.
-tagline = '<span class="nowrap">Off-grid text chat</span> <span class="nowrap">done right.</span>'
+tagline = '<span class="tagline__part">Off-grid text chat</span> <span class="tagline__part">done right.</span>'
 lede = """
 Long-range radio instead of cell towers. Group chats that cover a region, with \
 replies, reactions, and edits. And encryption that was the starting point of \
