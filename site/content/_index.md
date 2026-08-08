@@ -12,12 +12,10 @@ Long-range radio instead of cell towers. Group chats that cover a region, with \
 replies, reactions, and edits. And encryption that was the starting point of \
 the design, not an afterthought."""
 
-# Hero imagery. Leave a filename empty to render a labelled placeholder
-# instead of a broken image.
-hero_device_image = "t1000e.jpg"
-hero_device_caption = "SenseCAP T1000-E companion radio"
-hero_app_image = "peers.png"
-hero_app_caption = "The UMSH app for iPhone"
+# Hero imagery: one transparent composite, no frame and no caption. Leave the
+# filename empty to render a labelled placeholder instead of a broken image.
+hero_image = "hero.png"
+hero_alt = "A SenseCAP T1000-E radio beside an iPhone showing a UMSH group conversation"
 
 # The pillars are the evidence for "done right" in the tagline: differences a
 # reader can judge for themselves, with a user-facing consequence. Anything

@@ -25,25 +25,12 @@
         </div>
 
         <div class="hero__shots">
-            <figure class="hero__shot">
-                {% if x.hero_device_image %}
-                <img src="{{ get_url(path='images/boards/' ~ x.hero_device_image, trailing_slash=false) }}"
-                    alt="{{ x.hero_device_caption }}" />
-                {% else %}
-                <div class="hero__placeholder">Device photo</div>
-                {% endif %}
-                <figcaption>{{ x.hero_device_caption }}</figcaption>
-            </figure>
-
-            <figure class="hero__shot">
-                {% if x.hero_app_image %}
-                <img src="{{ get_url(path='images/app/' ~ x.hero_app_image, trailing_slash=false) }}"
-                    alt="{{ x.hero_app_caption }}" />
-                {% else %}
-                <div class="hero__placeholder">App screenshot</div>
-                {% endif %}
-                <figcaption>{{ x.hero_app_caption }}</figcaption>
-            </figure>
+            {% if x.hero_image %}
+            <img class="hero__image" src="{{ get_url(path='images/' ~ x.hero_image, trailing_slash=false) }}"
+                alt="{{ x.hero_alt }}" />
+            {% else %}
+            <div class="hero__placeholder">Hero image</div>
+            {% endif %}
         </div>
     </div>
 </section>

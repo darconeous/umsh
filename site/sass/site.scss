@@ -463,58 +463,26 @@ pre {
 
 .hero__shots {
   display: flex;
-  align-items: stretch; // both cards end up the same height
   justify-content: center;
-  gap: clamp(0.75rem, 2vw, 1.75rem);
 }
 
-.hero__shot {
-  background: var(--surface);
-  border: 1px solid var(--border);
-  border-radius: 18px;
-  padding: 0.85rem;
-  text-align: center;
-  flex: 1 1 0;
-  min-width: 0;
-  display: flex;
-  flex-direction: column;
-
-  // One shot is a landscape board photo and the other a portrait phone
-  // screenshot, so they are centred in equal-height cards rather than
-  // stretched to a common shape.
-  img,
-  .hero__placeholder {
-    display: block;
-    width: 100%;
-    height: auto;
-    max-height: 400px;
-    object-fit: contain;
-    border-radius: 10px;
-    margin-block: auto;
-  }
-
-  // Both shots are on white, so they get a white tile in either theme
-  // rather than a white rectangle floating on a dark card.
-  img {
-    background: #ffffff;
-    padding: 0.4rem;
-  }
-
-  .hero__placeholder {
-    min-height: 240px;
-  }
-
-  figcaption {
-    margin-top: 0.75rem;
-    font-size: 0.82rem;
-    color: var(--ink-muted);
-  }
+// The composite is a transparent PNG, so it sits on the page with no tile,
+// frame, or caption around it — nothing to theme, and nothing to align.
+.hero__image {
+  display: block;
+  width: 100%;
+  height: auto;
+  max-height: 32rem;
+  object-fit: contain;
 }
 
 .hero__placeholder {
   display: flex;
   align-items: center;
   justify-content: center;
+  width: 100%;
+  min-height: 240px;
+  border-radius: 18px;
   background: var(--surface-2);
   color: var(--ink-muted);
   font-size: 0.85rem;
@@ -525,9 +493,17 @@ pre {
     grid-template-columns: 1fr;
   }
 
+  // Lead with the picture once the hero is a single column. The heading stays
+  // first in the DOM, so reading order is unchanged; only the grid placement
+  // moves.
   .hero__shots {
+    order: -1;
     max-width: 30rem;
     margin-inline: auto;
+  }
+
+  .hero__image {
+    max-height: 20rem;
   }
 }
 

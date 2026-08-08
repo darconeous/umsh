@@ -17,6 +17,14 @@ and feature callouts, which would be misleading on this site.
 | `xiao-nrf52.jpg` | Seeed Studio | [XIAO nRF52840 + Wio-SX1262 Kit](https://www.seeedstudio.com/XIAO-nRF52840-Wio-SX1262-Kit-for-Meshtastic-p-6400.html) |
 | `heltec-v3.png` | Heltec | [WiFi LoRa 32 V3](https://heltec.org/project/wifi-lora-32-v3/) |
 
+## Hero composite
+
+The landing page hero, `../hero.png`, is not a board card but carries a vendor
+photograph all the same: it combines Seeed Studio's
+[SenseCAP Card Tracker T1000-E](https://www.seeedstudio.com/SenseCAP-Card-Tracker-T1000-E-for-Meshtastic-p-5913.html)
+product photograph with a screenshot of the UMSH app. The photograph remains
+the property of Seeed Studio and the terms above apply to it.
+
 If a vendor would prefer their image not be used here, please
 [open an issue](https://github.com/darconeous/umsh/issues) and it will be
 removed.
