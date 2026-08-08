@@ -35,7 +35,7 @@
             const path_to_root = "";
             const default_light_theme = "light";
             const default_dark_theme = "ayu";
-            window.path_to_searchindex_js = "searchindex-c10eed74.js";
+            window.path_to_searchindex_js = "searchindex-86366624.js";
         </script>
         <!-- Start loading toc.js asap -->
         <script src="toc-438957a9.js"></script>
@@ -228,7 +228,7 @@ errors, or other mistakes, please <a href="https://github.com/darconeous/umsh/is
 <tr><th>Aspect</th><th>UMSH</th><th>Meshtastic (channel)</th><th>Meshtastic (PKC DM)</th></tr>
 </thead>
 <tbody>
-<tr><td>Encryption</td><td>AES-128-CTR (SIV-style)</td><td>AES-256-CTR</td><td>AES-CCM</td></tr>
+<tr><td>Encryption</td><td>AES-128-CTR (SIV-style)</td><td>AES-128-CTR or AES-256-CTR, selected by PSK length; the default channel key is 16 bytes</td><td>AES-CCM</td></tr>
 <tr><td>Authentication</td><td>AES-CMAC (4/8/12/16-byte MIC)</td><td><strong>None</strong></td><td>CCM auth tag</td></tr>
 <tr><td>Key exchange</td><td>X25519 ECDH</td><td>Pre-shared key</td><td>Curve25519 ECDH</td></tr>
 <tr><td>Key derivation</td><td>HKDF-SHA256 with domain separation</td><td>PSK used directly</td><td>SHA-256 of ECDH shared secret</td></tr>
@@ -244,10 +244,11 @@ errors, or other mistakes, please <a href="https://github.com/darconeous/umsh/is
 <li>An attacker who knows the channel key can modify ciphertext in transit (CTR mode bit-flipping), and the recipient has no way to detect the tampering.</li>
 <li>Any node with the channel key can forge packets claiming to be from any other node, since there is no per-node authentication and the sender’s node number in the cleartext header is not cryptographically bound to anything.</li>
 </ul>
-<p>UMSH authenticates every secured packet with an AES-CMAC MIC (4–16 bytes, see <a href="security.html#mic-size-selection-guidance">MIC Size Selection Guidance</a>). Even with a 4-byte MIC, UMSH provides 2^-32 forgery resistance — qualitatively different from Meshtastic’s complete absence of authentication on channel traffic.</p>
+<p>UMSH authenticates every secured packet with an AES-CMAC MIC (4–16 bytes, see <a href="security.html#mic-size-selection-guidance">MIC Size Selection Guidance</a>). Even with a 4-byte MIC, UMSH provides 2^-32 forgery resistance — qualitatively different from Meshtastic’s complete absence of authentication on channel traffic. A UMSH channel packet cannot be modified in transit or injected by a non-member without detection.</p>
+<p>The second bullet above, however, describes a property UMSH multicast shares, and it is not a difference between the two protocols. A shared symmetric key proves channel membership but cannot distinguish one member from another, so a UMSH channel member can likewise claim another member’s source address; see <a href="limitations.html#multicast-sender-authentication">Multicast Sender Authentication</a>. What UMSH provides on channel traffic is integrity and membership authentication against outsiders, not per-sender attribution within the channel. Attribution to a specific sender requires unicast, where pairwise keys bind the source.</p>
 <h3 id="pkc-direct-messages"><a class="header" href="#pkc-direct-messages">PKC Direct Messages</a></h3>
 <p>Meshtastic v2.5+ added Curve25519 ECDH with AES-CCM for direct messages, providing both confidentiality and authentication. This is a substantial improvement over channel-only encryption, but applies only to direct messages — all broadcast traffic (position, telemetry, channel text) remains unauthenticated.</p>
-<p>UMSH authenticates all traffic uniformly — unicast, multicast, and broadcast — using the same CMAC-based construction. There is no distinction between “authenticated” and “unauthenticated” packet classes.</p>
+<p>UMSH applies the same CMAC-based construction to unicast and multicast alike, so there is no secured traffic class left unauthenticated and no separate authenticated mode to opt into. <a href="packet-types.html#broadcast-packet">Broadcast packets</a> carry no security information at all and make no claim of authenticity.</p>
 <h3 id="key-derivation"><a class="header" href="#key-derivation">Key Derivation</a></h3>
 <p>Meshtastic uses the channel PSK directly as the AES key for channel encryption, with no key derivation step. For PKC, the ECDH shared secret is hashed with SHA-256 to produce the AES key.</p>
 <p>UMSH uses HKDF-SHA256 with domain-separated labels to derive independent encryption and authentication keys from each shared secret. This prevents cross-purpose key reuse and is the standard practice recommended by cryptographic literature.</p>
@@ -402,7 +403,7 @@ errors, or other mistakes, please <a href="https://github.com/darconeous/umsh/is
 </tbody>
 </table>
 </div>
-<p>Meshtastic’s 1-byte channel hash produces ~256× more false positives than UMSH’s 2-byte channel identifier. Each false positive requires an AES-256-CTR decryption attempt (cheap relative to ECDH, but still unnecessary CPU work and a delay before the MCU can return to sleep). In a busy mesh with many active channels, this adds up.</p>
+<p>Meshtastic’s 1-byte channel hash produces ~256× more false positives than UMSH’s 2-byte channel identifier. Each false positive requires an AES-CTR decryption attempt (cheap relative to ECDH, but still unnecessary CPU work and a delay before the MCU can return to sleep). In a busy mesh with many active channels, this adds up.</p>
 <h3 id="unicast-filtering"><a class="header" href="#unicast-filtering">Unicast Filtering</a></h3>
 <p>For unicast packets, Meshtastic’s 4-byte cleartext node number provides near-zero false-positive filtering with no cryptographic work — the destination can be checked by simple integer comparison before any decryption is attempted. UMSH’s 3-byte destination hint has a ~1-in-16,777,216 false-positive rate; when a collision occurs, verification requires decrypting the payload with AES-CTR and computing CMAC over the result — pairwise keys are cached after first contact so no ECDH is needed for known senders, but the decrypt-then-MAC work still applies.</p>
 <p>This is a genuine power tradeoff: Meshtastic achieves cheaper unicast filtering by including the full destination identifier in the cleartext header, while UMSH accepts a small false-positive rate in exchange for transmitting fewer bytes and not fully exposing node identity to passive observers.</p>

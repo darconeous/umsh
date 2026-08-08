@@ -83,9 +83,13 @@ the waiting and listening that a mesh requires.</p>
 </div>
 <h2 id="what-it-does">What it does</h2>
 <p><strong>Conversations.</strong> One-to-one messages with people you have exchanged
-identities with, and group conversations on shared channels. Messages are
-authenticated end to end, so a message that claims to be from a contact
-really is. Reactions are supported, and delivery status tells you whether a
+identities with, and group conversations on shared channels. A one-to-one
+message is encrypted and authenticated against that person’s own key, so a
+message claiming to be from a contact really is from them. A channel message is
+encrypted with the channel key, which means outsiders cannot read it or tamper
+with it, though for now one member could claim to be another; per-sender
+authentication for group chats is planned, and will be something you enable per
+channel. Reactions are supported, and delivery status tells you whether a
 message actually made it across the mesh rather than just leaving your phone.</p>
 <p><strong>Contacts.</strong> Every contact is a public key. You add someone by scanning a QR
 code or opening a <code>umsh:</code> link they sent you, and from that moment on your
