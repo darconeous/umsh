@@ -7,7 +7,7 @@ xcuserdata/
 /docs/ux/book
 /site/public
 /.umsh
-/.claude
 *.identity
 build
 __pycache__/
+.claude/settings.json

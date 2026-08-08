@@ -1,0 +1,11 @@
+{
+  "version": "0.0.1",
+  "configurations": [
+    {
+      "name": "site",
+      "runtimeExecutable": "zola",
+      "runtimeArgs": ["--root", "site", "serve", "--port", "1111"],
+      "port": 1111
+    }
+  ]
+}
