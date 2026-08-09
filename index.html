@@ -1,6 +1,7 @@
 <!DOCTYPE html>
 <html lang="en">
-  <head>
+
+<head>
     <meta charset="utf-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1" />
     <title>UMSH — an experimental LoRa mesh protocol</title>
@@ -15,47 +16,56 @@
     <meta property="og:site_name" content="UMSH" />
     <meta property="og:type" content="website" />
     <meta property="og:title" content="UMSH" />
-    <meta property="og:description" content="An experimental LoRa mesh protocol built on strong cryptography, clean layer separation, and strict bandwidth discipline." />
+    <meta property="og:description"
+        content="An experimental LoRa mesh protocol built on strong cryptography, clean layer separation, and strict bandwidth discipline." />
     <meta property="og:image" content="https://umsh.dev/og-card.png" />
     <meta property="og:url" content="https://umsh.dev/" />
     <meta name="twitter:card" content="summary_large_image" />
     
-  </head>
+</head>
 
-  <body>
+<body>
     <a class="skip-link" href="#main">Skip to content</a>
 
     <header class="site-header">
-      <div class="container">
-        <a class="site-header__logo" href="https://umsh.dev/">
-          <img src="https://umsh.dev/images/logo/umsh-logo-white.svg" alt="UMSH" width="1209" height="283" />
-        </a>
-
-        <button class="nav-burger" type="button" aria-expanded="false" aria-controls="site-nav" aria-label="Menu">
-          <svg class="nav-burger__open" viewBox="0 0 24 24" aria-hidden="true"><path d="M3 6h18M3 12h18M3 18h18"/></svg>
-          <svg class="nav-burger__close" viewBox="0 0 24 24" aria-hidden="true"><path d="M5 5l14 14M19 5L5 19"/></svg>
-        </button>
-
-        <nav class="site-nav" id="site-nav" aria-label="Main">
-            <a href="/docs/protocol/">Protocol</a>
-            <a href="/hardware/">Hardware</a>
-            <a href="/app/">App</a>
-            <a href="/faq/">FAQ</a>
-            <a href="/flasher/">Flasher</a>
-
-          <span class="site-nav__actions">
-            <a class="pill" href="https://github.com/sponsors/darconeous">Donate</a>
-            <a class="pill" href="https://github.com/darconeous/umsh">
-              <svg viewBox="0 0 16 16" aria-hidden="true"><path d="M8 0C3.58 0 0 3.58 0 8c0 3.54 2.29 6.53 5.47 7.59.4.07.55-.17.55-.38 0-.19-.01-.82-.01-1.49-2.01.37-2.53-.49-2.69-.94-.09-.23-.48-.94-.82-1.13-.28-.15-.68-.52-.01-.53.63-.01 1.08.58 1.23.82.72 1.21 1.87.87 2.33.66.07-.52.28-.87.51-1.07-1.78-.2-3.64-.89-3.64-3.95 0-.87.31-1.59.82-2.15-.08-.2-.36-1.02.08-2.12 0 0 .67-.21 2.2.82.64-.18 1.32-.27 2-.27s1.36.09 2 .27c1.53-1.04 2.2-.82 2.2-.82.44 1.1.16 1.92.08 2.12.51.56.82 1.27.82 2.15 0 3.07-1.87 3.75-3.65 3.95.29.25.54.73.54 1.48 0 1.07-.01 1.93-.01 2.2 0 .21.15.46.55.38A8.01 8.01 0 0 0 16 8c0-4.42-3.58-8-8-8Z"/></svg>
-              GitHub
+        <div class="container">
+            <a class="site-header__logo" href="https://umsh.dev/">
+                <img src="https://umsh.dev/images/logo/umsh-logo-white.svg" alt="UMSH"
+                    width="1209" height="283" />
             </a>
-          </span>
-        </nav>
-      </div>
+
+            <button class="nav-burger" type="button" aria-expanded="false" aria-controls="site-nav" aria-label="Menu">
+                <svg class="nav-burger__open" viewBox="0 0 24 24" aria-hidden="true">
+                    <path d="M3 6h18M3 12h18M3 18h18" />
+                </svg>
+                <svg class="nav-burger__close" viewBox="0 0 24 24" aria-hidden="true">
+                    <path d="M5 5l14 14M19 5L5 19" />
+                </svg>
+            </button>
+
+            <nav class="site-nav" id="site-nav" aria-label="Main">
+                <a href="/docs/protocol/">Protocol</a>
+                <a href="/hardware/">Hardware</a>
+                <a href="/app/">App</a>
+                <a href="/faq/">FAQ</a>
+                <a href="/flasher/">Flasher</a>
+
+                <span class="site-nav__actions">
+                    <a class="pill" href="https://github.com/sponsors/darconeous">Donate</a>
+                    <a class="pill" href="https://github.com/darconeous/umsh">
+                        <svg viewBox="0 0 16 16" aria-hidden="true">
+                            <path
+                                d="M8 0C3.58 0 0 3.58 0 8c0 3.54 2.29 6.53 5.47 7.59.4.07.55-.17.55-.38 0-.19-.01-.82-.01-1.49-2.01.37-2.53-.49-2.69-.94-.09-.23-.48-.94-.82-1.13-.28-.15-.68-.52-.01-.53.63-.01 1.08.58 1.23.82.72 1.21 1.87.87 2.33.66.07-.52.28-.87.51-1.07-1.78-.2-3.64-.89-3.64-3.95 0-.87.31-1.59.82-2.15-.08-.2-.36-1.02.08-2.12 0 0 .67-.21 2.2.82.64-.18 1.32-.27 2-.27s1.36.09 2 .27c1.53-1.04 2.2-.82 2.2-.82.44 1.1.16 1.92.08 2.12.51.56.82 1.27.82 2.15 0 3.07-1.87 3.75-3.65 3.95.29.25.54.73.54 1.48 0 1.07-.01 1.93-.01 2.2 0 .21.15.46.55.38A8.01 8.01 0 0 0 16 8c0-4.42-3.58-8-8-8Z" />
+                        </svg>
+                        GitHub
+                    </a>
+                </span>
+            </nav>
+        </div>
     </header>
 
     <main id="main">
-      
+        
 
 
 <section class="hero">
@@ -63,11 +73,11 @@
         <div>
             <span class="hero__eyebrow">Open mesh networking over LoRa</span>
             <h1 class="hero__tagline"><span class="tagline__part">Off-grid text chat</span> <span class="tagline__part">done right.</span></h1>
-            <p class="hero__lede">Long-range radio instead of cell towers. Group chats that cover a region, with replies, reactions, and edits. And encryption that was the starting point of the design, not an afterthought.</p>
+            <p class="hero__lede">UMSH is a new mesh networking protocol enabling long-range text messaging without relying on cellular connectivity or internet access—designed from the ground up for strong security and ease of use.</p>
 
             <div class="hero__actions">
                 
-                <a class="btn btn--primary" href="https://umsh.dev/app/">Get the iOS beta</a>
+                <a class="btn btn--primary" href="https://testflight.apple.com/join/4xsdZ8pg">Join the iOS beta</a>
                 
                 <a class="btn btn--ghost" href="/docs/protocol/">Read the specification</a>
             </div>
@@ -78,85 +88,78 @@
         <div class="hero__shots">
             
             <img class="hero__image" src="https://umsh.dev/images/hero.png"
-                alt="A SenseCAP T1000-E radio beside an iPhone showing a UMSH group conversation" />
+                alt="A SenseCAP T1000-E radio next to an iPhone showing a UMSH group conversation" />
             
         </div>
     </div>
 </section>
 
+
 <div class="status-band">
     <div class="container">
         <span class="badge">Technology preview</span>
-        <div>
-            <p>
-                UMSH works today, and it is not finished. The protocol will keep
-                changing for the next several months while it settles, and the apps
-                are still being built out around it. Expect breaking changes, and
-                expect to reflash your radios when they land.
-            </p>
-            <p>
-                You can take part right now: flash a supported board, and
-                <a href="https://umsh.dev/app/">join the iOS beta</a>. An
-                Android app is planned but has not been started. Much of this
-                project was written with heavy help from large language models,
-                which is <a href="https://github.com/darconeous/umsh/blob/main/docs/AI.md">documented openly</a>
-                rather than quietly.
-            </p>
-        </div>
+        
+        <div><p>While UMSH works today, it is not finalized. The protocol will continue to evolve
+over the next several months. Expect breaking changes, and expect to reflash your
+radios when they land.</p>
+<p>You can take part right now: flash a supported board, and <a href="/app/">join the iOS beta</a>.</p>
+<p>Much of this project was written with the help of LLMs (large language models).
+You can learn more about this project’s LLM use <a rel="external" href="https://github.com/darconeous/umsh/blob/main/docs/AI.md">here</a>.</p>
+</div>
     </div>
 </div>
 
+
 <section class="section">
     <div class="container">
+        
         <div class="section__head section__head--center">
             <h2>What makes it different</h2>
-            <p>
-                Few of the ideas here are new. The contribution is putting them
-                together cleanly: stronger cryptography, composable routing, and
-                layers that stay in their lane.
-            </p>
+            
         </div>
+        
 
         <div class="grid grid--3">
             
             <article class="card">
-                <h3>Encryption came first</h3>
-                <p>Your messages are encrypted—a channel conversation as much as a private one—using a construction that stays safe even when a node reboots and loses track of its counters. A private message is authenticated against your contact&#39;s own key as well, so it cannot be forged or quietly altered on the way.</p>
+                <h3>Strong Cryptography</h3>
+                <p>Cryptography is hard, and few LoRa-based text chat systems get it right. UMSH takes a conservative approach to message privacy using well-studied mechanisms that are straightforward to implement and don’t fail catastrophically, like <a rel="external" href="https://datatracker.ietf.org/doc/html/rfc5297">AES-SIV</a>.</p>
                 
                 <p><a href="/docs/protocol/security.html">Security model →</a></p>
             </article>
             
             <article class="card">
-                <h3>A chat that behaves like a chat</h3>
-                <p>Replies, reactions, edits, and deletes—the things you stop noticing until they are missing. Messages run to 1,600 bytes, so you can say what you mean instead of compressing it into a telegram.</p>
+                <h3>Modern Text Chat</h3>
+                <p>UMSH supports modern text chat features like long messages, replies, reactions, edits, and deletes—the things you stop noticing until they are missing.</p>
                 
                 <p><a href="/docs/protocol/app-text-messages.html">Text messages →</a></p>
             </article>
             
             <article class="card">
-                <h3>Forward secrecy that costs nothing</h3>
-                <p>Two nodes can agree on a pair of ephemeral addresses and simply talk to those instead. At the link layer the result is indistinguishable from any other conversation, so it needs no special handling by repeaters, no changes to application protocols, and adds no per-packet overhead at all.</p>
+                <h3>Forward Secrecy</h3>
+                <p>Perfect Forward Secrecy (PFS) sessions allow you to communicate with a peer in a way that cannot be later decrypted even if the private key of one of the devices is later compromised. These sessions not only provide forward secrecy but also obfuscate the identity of the participants involved, helping to further improve privacy.</p>
                 
-                <p><a href="/docs/protocol/security.html">PFS sessions →</a></p>
+                <p><a href="/docs/protocol/security.html#perfect-forward-secrecy-sessions">PFS sessions →</a></p>
             </article>
             
             <article class="card">
-                <h3>Private channels are like VPNs</h3>
-                <p>A private channel is more than encrypted group chat: the shared key protects everything inside it, not just the group thread. To anyone without it the traffic is unreadable, unalterable, and does not disclose which member is speaking. Sharing a key is a QR code away.</p>
-                <p class="card__planned">Planned: one-to-one messages carried under the channel key, so they look like ordinary group traffic—plus key rotation and member removal.</p>
+                <h3>Beyond Private Group Chat</h3>
+                <p>In UMSH, private channels enable more than just encrypted group chat—they can protect unicast chats as well while also obfuscating the sender and destination, kind of like a VPN.
+UMSH calls this <em>blind unicast</em>. To anyone without the channel key the traffic is unreadable and unalterable. You can easily invite others to a private channel by sharing a QR code in person or with a simple UMSH text message.</p>
+                <p class="card__disclaimer">Blind unicast support is implemented in the stack and will be exposed in the iOS app soon.</p>
                 <p><a href="/docs/protocol/multicast-channels.html">Channels →</a></p>
             </article>
             
             <article class="card">
-                <h3>Sent means carried, not just transmitted</h3>
-                <p>After transmitting, your radio listens for the mesh to pick the message up, and tries again if it does not hear that happen. Along a known path each hop confirms the next one the same way, so a message that stalls partway through gets another chance instead of vanishing without trace.</p>
+                <h3>Resilient Repeating</h3>
+                <p>UMSH has two forwarding modes: Flooding and Source Routing. Flooding is used for path discovery and group chats, whereas source routing is used for normal one-on-one text chats. Unlike some other source-routed protocols, UMSH repeaters will retry transmitting if they don’t notice the next hop repeating the message. This dramatically improves the reliability of long-distance sessions. UMSH also allows composing both source routing and flooding, providing a degree of path-self-healing for mobile nodes.</p>
                 
-                <p><a href="/docs/protocol/repeater-operation.html">Forwarding confirmation →</a></p>
+                <p><a href="/docs/protocol/repeater-operation.html#forwarding-confirmation">Forwarding confirmation →</a></p>
             </article>
             
             <article class="card">
-                <h3>Nothing depends on the time</h3>
-                <p>Replay protection counts frames rather than reading a clock, so nothing about the security of a message rests on knowing the time. A radio that has sat in a drawer for a year, or has never seen a GPS fix, can start talking securely the moment you switch it on—and there is no clock skew for an attacker to work with.</p>
+                <h3>Replay Protection</h3>
+                <p>Other LoRa-based mesh protocols have struggled with replay protection, using timestamps that require accurate clocks or caching the signatures of previously-seen packets. UMSH uses frame counters and fast counter synchronization to prevent replay attacks. Additionally, no core UMSH functionality depends on the node knowing what time it is, removing another common source of annoyance.</p>
                 
                 <p><a href="/docs/protocol/security.html">Replay protection →</a></p>
             </article>
@@ -168,198 +171,281 @@
 
 <section class="section section--surface">
     <div class="container">
+        
         <div class="section__head section__head--center">
             <h2>Understanding UMSH</h2>
-            <p>
-                How the thing works underneath, for anyone who wants to look. None
-                of it is required reading to use a radio.
-            </p>
+            
         </div>
+        
 
         <div class="grid grid--2up">
             
             <article class="card card--flat">
-                <h3>Your key is your address</h3>
-                <p>A node is identified by its Ed25519 public key, and that key is the address other nodes send to—no node numbers to collide, no registration, no authority handing out identifiers. On air, most packets carry a three-byte hint instead of the full key, which keeps frames small. A hint is still a stable pseudonym that a patient listener could follow; only an encrypted channel conceals the sender outright.</p>
+                <h3>Public Key Addressing</h3>
+                <p>A node is identified by its Ed25519 public key, which is also the address other nodes use to identify you. The only nodes that can communicate with you one-on-one are those you have shared your public key with, and who have shared their public key with you. Sharing your public key is easy: you can share your key in a URL, using a QR-Code, or send it privately to someone in a group chat.</p>
+                <p><a href="/docs/protocol/addressing.html">Addressing →</a></p>
             </article>
             
             <article class="card card--flat">
                 <h3>Strict layers, tight frames</h3>
-                <p>The link layer moves opaque payloads and never inspects them, so it can carry UMSH&#39;s own chat protocols, CoAP, or something you invent. Typical authenticated overhead runs 16 to 28 bytes, and every packet fits in a single LoRa frame.</p>
+                <p>The link layer moves opaque payloads and never inspects them, so it can carry UMSH’s own chat protocols, CoAP, or something you invent. Typical authenticated overhead runs 16 to 28 bytes, and every packet fits in a single LoRa frame.</p>
+                <p><a href="/docs/protocol/introduction.html#design-principles">Design principles →</a></p>
             </article>
             
             <article class="card card--flat">
                 <h3>Designed for amateur radio</h3>
-                <p>Amateur rules bar encryption that obscures the meaning of a message, and UMSH keeps the two separable: a message can carry authentication without carrying encryption, so a licensed operator does not have to give up integrity to stay legal. Operator and station callsigns ride along as compact options, and a repeater rewrites the station callsign as it forwards.</p>
+                <p>Amateur rules bar encryption that obscures the meaning of a message, and UMSH keeps the two separable: a message can carry authentication without carrying encryption, so a licensed operator can still benefit from strong authentication. Operator and station callsigns ride along as compact options, and a repeater rewrites the station callsign as it forwards, making it easy to identify who is responsible for a transmission when used in this way.</p>
+                <p><a href="/docs/protocol/amateur-radio.html">Amateur radio →</a></p>
             </article>
             
             <article class="card card--flat">
                 <h3>Built to be debugged</h3>
-                <p>A Wireshark dissector, a capture tool, and published test vectors ship with the protocol. Being able to read a packet trace is treated as a requirement, not a nicety—a protocol nobody can troubleshoot does not survive contact with a real deployment.</p>
+                <p>A Wireshark dissector, a capture tool, and published test vectors ship with the protocol.</p>
+                <p><a href="https://github.com/darconeous/umsh/blob/main/dissectors/README.md#umsh-wireshark-dissector">Wireshark support →</a></p>
             </article>
             
         </div>
 
+        
         <p style="margin-top: 1.75rem; text-align: center;">
             <a href="/docs/protocol/">Read the full specification →</a>
         </p>
+        
     </div>
 </section>
 
 <section class="section">
     <div class="container">
+        
         <div class="section__head section__head--center">
             <h2>How it compares</h2>
-            <p>
-                UMSH owes a great deal to the projects it is measured against here,
-                MeshCore especially. These tables are condensed from the
-                specification's own comparison chapters, which aim to be accurate
-                rather than flattering—if something here is unfair or wrong,
-                please say so.
-            </p>
+            <p>UMSH was largely inspired by <a rel="external" href="https://meshcore.io/">MeshCore</a>, so it is natural to draw some comparisons to it. What follows are quick summaries of our much more detailed comparison documents, linked below. If you find anything inaccurate or out-of-date, please <a rel="external" href="https://github.com/darconeous/umsh/issues/new">file an issue</a> so we can correct it!</p>
         </div>
+        
 
-        <h3 class="compare__heading">Against MeshCore</h3>
+        
+        <h3 class="compare__heading">MeshCore Comparison</h3>
         <div class="table-wrap compare">
             <table>
                 <thead>
                     <tr>
+                        
                         <th scope="col">Aspect</th>
+                        
                         <th scope="col">UMSH</th>
+                        
                         <th scope="col">MeshCore</th>
+                        
                     </tr>
                 </thead>
                 <tbody>
+                    
                     <tr>
+                        
                         <td>Address on the wire</td>
+                        
                         <td>3-byte hint, or the full public key when the receiver may not know it</td>
+                        
                         <td>1-byte hash, with a dedicated packet type for first contact</td>
+                        
                     </tr>
+                    
                     <tr>
+                        
                         <td>Encryption</td>
+                        
                         <td>AES-128-CTR in a SIV construction</td>
+                        
                         <td>AES-128-ECB</td>
+                        
                     </tr>
+                    
                     <tr>
+                        
                         <td>Authentication</td>
+                        
                         <td>AES-CMAC, 4 to 16 bytes</td>
+                        
                         <td>HMAC-SHA256 truncated to 2 bytes</td>
+                        
                     </tr>
+                    
                     <tr>
+                        
                         <td>Key derivation</td>
+                        
                         <td>HKDF-SHA256, with separate encryption and authentication keys</td>
+                        
                         <td>The ECDH secret used directly for both</td>
+                        
                     </tr>
+                    
                     <tr>
+                        
                         <td>Replay protection</td>
+                        
                         <td>Monotonic frame counters, no clock involved</td>
+                        
                         <td>A 128-entry duplicate cache, with timestamps above</td>
+                        
                     </tr>
+                    
                     <tr>
+                        
                         <td>Routing</td>
+                        
                         <td>Independent options that combine freely</td>
+                        
                         <td>A path field and route-mode bits</td>
+                        
                     </tr>
+                    
                     <tr>
+                        
                         <td>Layering</td>
+                        
                         <td>The link layer never inspects payloads</td>
+                        
                         <td>Link, network, and application concerns combined</td>
+                        
                     </tr>
+                    
                 </tbody>
             </table>
         </div>
+        
         <p class="compare__more">
             <a href="/docs/protocol/meshcore-comparison.html">Read the full comparison →</a>
         </p>
-
-        <h3 class="compare__heading">Against Meshtastic</h3>
+        
+        
+        <h3 class="compare__heading">AMeshtastic Comparison</h3>
         <div class="table-wrap compare">
             <table>
                 <thead>
                     <tr>
+                        
                         <th scope="col">Aspect</th>
+                        
                         <th scope="col">UMSH</th>
+                        
                         <th scope="col">Meshtastic</th>
+                        
                     </tr>
                 </thead>
                 <tbody>
+                    
                     <tr>
+                        
                         <td>Identity</td>
+                        
                         <td>An Ed25519 public key, which is also the address</td>
+                        
                         <td>A 32-bit node number derived from the Bluetooth address</td>
+                        
                     </tr>
+                    
                     <tr>
+                        
                         <td>Spoofing</td>
+                        
                         <td>The address is a cryptographic credential</td>
+                        
                         <td>Node numbers are not bound to any key</td>
+                        
                     </tr>
+                    
                     <tr>
+                        
                         <td>Authentication</td>
-                        <td>Private messages bound to the sender's key; channel traffic carries an integrity tag</td>
+                        
+                        <td>Private messages bound to the sender’s key; channel traffic carries an integrity tag</td>
+                        
                         <td>None on channel traffic; direct messages only, since v2.5</td>
+                        
                     </tr>
+                    
                     <tr>
+                        
                         <td>Header privacy</td>
-                        <td>Compact hints, and the sender is concealed entirely in encrypted multicast</td>
-                        <td>A 16-byte cleartext header on every packet</td>
+                        
+                        <td>Compact hints; Channel-based source/destination concealment</td>
+                        
+                        <td>16-byte cleartext header on every packet</td>
+                        
                     </tr>
+                    
                     <tr>
+                        
                         <td>Typical overhead</td>
+                        
                         <td>16 to 28 bytes, authentication included</td>
+                        
                         <td>About 22 bytes for channel traffic, about 42 for direct messages</td>
+                        
                     </tr>
+                    
                     <tr>
+                        
                         <td>Forward secrecy</td>
-                        <td>Available, at no per-packet cost</td>
+                        
+                        <td>Available</td>
+                        
                         <td>Not available</td>
+                        
                     </tr>
+                    
                     <tr>
+                        
                         <td>Maturity</td>
+                        
                         <td>Experimental, one app, six boards</td>
+                        
                         <td>Mature, huge community, dozens of devices, a rich application layer</td>
+                        
                     </tr>
+                    
                 </tbody>
             </table>
         </div>
+        
         <p class="compare__more">
             <a href="/docs/protocol/meshtastic-comparison.html">Read the full comparison →</a>
         </p>
+        
+        
     </div>
 </section>
 
 <section class="section section--surface">
     <div class="container">
+        
         <div class="section__head section__head--center">
             <h2>Getting started</h2>
-            <p>You need one radio to listen, and two to have a conversation.</p>
+            
         </div>
+        
 
         <ol class="steps">
+            
             <li>
                 <h3>Get a radio</h3>
-                <p>
-                    Six boards are supported, from a sealed pocket tracker to a
-                    solar-powered node you can bolt to a roof. The T1000-E is the one
-                    most of this was developed against.
-                </p>
+                <p>Six boards are supported, from a sealed pocket tracker to a solar-powered node you can bolt to a roof. The T1000-E is the one most of this was developed against.</p>
                 <p><a href="https://umsh.dev/hardware/">Supported hardware →</a></p>
             </li>
+            
             <li>
                 <h3>Flash it</h3>
-                <p>
-                    One command builds and installs the firmware for your board. A
-                    browser-based flasher that needs no toolchain at all is on the way.
-                </p>
+                <p>One command builds and installs the firmware for your board. A browser-based flasher that needs no toolchain at all is on the way.</p>
                 <p><a href="https://umsh.dev/flasher/">Flashing instructions →</a></p>
             </li>
+            
             <li>
                 <h3>Pair your phone</h3>
-                <p>
-                    The iPhone app connects to your radio over Bluetooth and gives you
-                    conversations, contacts, and a map. It is in beta.
-                </p>
+                <p>The iPhone app connects to your radio over Bluetooth and gives you conversations, contacts, and a map. It is in beta.</p>
                 <p><a href="https://umsh.dev/app/">About the app →</a></p>
             </li>
+            
         </ol>
     </div>
 </section>
@@ -367,44 +453,47 @@
     </main>
 
     <footer class="site-footer">
-      <div class="container">
-        <div class="site-footer__brand">
-          <img src="https://umsh.dev/images/logo/umsh-logo-orange.svg" alt="UMSH" width="1209" height="283" />
-          <p>An experimental LoRa mesh protocol with strong cryptography, clean layer separation, and strict bandwidth discipline.</p>
+        <div class="container">
+            <div class="site-footer__brand">
+                <img src="https://umsh.dev/images/logo/umsh-logo-orange.svg" alt="UMSH"
+                    width="1209" height="283" />
+                <p>An experimental LoRa mesh protocol with strong cryptography, clean layer separation, and strict
+                    bandwidth discipline.</p>
+            </div>
+
+            <div>
+                <h2>Project</h2>
+                <ul>
+                    <li><a href="/docs/protocol/">Protocol specification</a></li>
+                    <li><a href="/docs/rust/">Rust API docs</a></li>
+                    <li><a href="https://github.com/darconeous/umsh">Source on GitHub</a></li>
+                    <li><a href="https://github.com/sponsors/darconeous">Donate</a></li>
+                </ul>
+            </div>
+
+            <div>
+                <h2>Get started</h2>
+                <ul>
+                    <li><a href="https://umsh.dev/hardware/">Supported hardware</a></li>
+                    <li><a href="https://umsh.dev/flasher/">Flash a device</a></li>
+                    <li><a href="https://umsh.dev/app/">iOS app</a></li>
+                    <li><a href="https://umsh.dev/faq/">FAQ</a></li>
+                </ul>
+            </div>
         </div>
 
-        <div>
-          <h2>Project</h2>
-          <ul>
-            <li><a href="/docs/protocol/">Protocol specification</a></li>
-            <li><a href="/docs/rust/">Rust API docs</a></li>
-            <li><a href="https://github.com/darconeous/umsh">Source on GitHub</a></li>
-            <li><a href="https://github.com/sponsors/darconeous">Donate</a></li>
-          </ul>
+        <div class="container">
+            <div class="site-footer__legal">
+                <span>
+                    <a href="https://umsh.dev/privacy/">Privacy</a> ·
+                    <a href="https://umsh.dev/terms/">Terms</a>
+                </span>
+                <span>A <a href="https://voria.com/">Voria Labs</a> project</span>
+            </div>
         </div>
-
-        <div>
-          <h2>Get started</h2>
-          <ul>
-            <li><a href="https://umsh.dev/hardware/">Supported hardware</a></li>
-            <li><a href="https://umsh.dev/flasher/">Flash a device</a></li>
-            <li><a href="https://umsh.dev/app/">iOS app</a></li>
-            <li><a href="https://umsh.dev/faq/">FAQ</a></li>
-          </ul>
-        </div>
-      </div>
-
-      <div class="container">
-        <div class="site-footer__legal">
-          <span>
-            <a href="https://umsh.dev/privacy/">Privacy</a> ·
-            <a href="https://umsh.dev/terms/">Terms</a>
-          </span>
-          <span>A <a href="https://voria.com/">Voria Labs</a> project.</span>
-        </div>
-      </div>
     </footer>
 
     <script src="https://umsh.dev/js/nav.js" defer></script>
-  </body>
+</body>
+
 </html>
