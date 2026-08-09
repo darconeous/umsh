@@ -1,6 +1,6 @@
 +++
 title = "The app"
-description = "UMSH for iPhone — how it works, what it does, and how to get into the beta."
+description = "UMSH for iPhone—how it works, what it does, and how to get into the beta."
 weight = 3
 +++
 
@@ -35,7 +35,7 @@ message actually made it across the mesh rather than just leaving your phone.
 **Contacts.** Every contact is a public key. You add someone by scanning a QR
 code or opening a `umsh:` link they sent you, and from that moment on your
 messages to them are encrypted to that key alone. There is no directory and no
-account, so there is nothing to look anyone up in — which is the point.
+account, so there is nothing to look anyone up in—which is the point.
 
 **Your radio.** The app configures the radio it is paired with: its name, its
 role, its channels, and how often it beacons. Battery, signal, and position
@@ -50,7 +50,7 @@ identity you hand out.
 ## Requirements
 
 You need an iPhone running iOS 18 or later, and a radio to pair with. The app
-does not work on its own — it is a companion to hardware, not a replacement
+does not work on its own—it is a companion to hardware, not a replacement
 for it. See [supported hardware](/hardware/) for what to buy.
 
 The app never needs an internet connection to do its job. Messages go over
@@ -65,7 +65,7 @@ a public TestFlight link exists, it will be posted here and announced on the
 project's GitHub page.</p>
 <p>If you would like to be part of it, the most useful thing you can do right
 now is <a href="https://github.com/darconeous/umsh">follow the project on
-GitHub</a> — that is where the announcement will go, and where feedback is
+GitHub</a>—that is where the announcement will go, and where feedback is
 most welcome.</p>
 </div>
 
@@ -83,5 +83,5 @@ start, but it is not an app, and it would be dishonest to suggest a date.
 The app collects nothing and sends nothing anywhere. Your identity key is
 generated on your device and stays there, held in the system keychain and
 marked so that it is never included in a backup or synced to another device.
-Losing the phone means losing that identity — which is the tradeoff that comes
+Losing the phone means losing that identity—which is the tradeoff that comes
 with nobody else ever holding it.

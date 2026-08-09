@@ -8,7 +8,7 @@ weight = 4
 <div class="notice">
 <p><strong>A browser-based flasher is on the way.</strong> The plan is the
 usual thing: plug the radio into a USB port, pick it from a list, click a
-button, and let the page do the rest — no toolchain, no downloads, no command
+button, and let the page do the rest—no toolchain, no downloads, no command
 line. It will need Chrome, Edge, or Opera, since those are the browsers that
 can talk to serial devices.</p>
 <p>It is not built yet, and it is waiting on a firmware release process so
@@ -18,7 +18,7 @@ building from source, which is not difficult.</p>
 
 ## Building and flashing from source
 
-You will need a Rust toolchain, and nothing else — Rust cross-compiles for the
+You will need a Rust toolchain, and nothing else—Rust cross-compiles for the
 nRF52840 on its own, with no separate embedded toolchain to install. Clone the
 repository, put your board into its bootloader as described below, and run the
 one command for it. The firmware only links in release mode, which the make
@@ -37,5 +37,5 @@ cargo install espup espflash && espup install
 
 The instructions below cover getting each board into its bootloader, which is
 the part that differs. If a flash appears to succeed but the board comes back
-running the same firmware it had before, read the notes for your board — on
+running the same firmware it had before, read the notes for your board—on
 some of them that failure is completely silent.

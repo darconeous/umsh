@@ -7,7 +7,7 @@ weight = 1
 
 Every supported board runs the same firmware image, built for its own
 hardware. There is no separate repeater build and no separate companion
-build — whether a node repeats traffic, reports its position, or simply
+build—whether a node repeats traffic, reports its position, or simply
 carries your messages is configuration you apply afterwards, over Bluetooth
 or a USB cable. A tracker in your pocket today can be a repeater on a hilltop
 tomorrow without reflashing.

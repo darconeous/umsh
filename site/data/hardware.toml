@@ -4,7 +4,7 @@
 # it is the data the web flasher will read once it exists. Board `id` values
 # match the presets in `scripts/flash.py` and the `make` target suffixes, so
 # keep the three in step. Flash constants (family id, app base, volume) are
-# mirrored from that script's BOARDS dict — it stays authoritative; if they
+# mirrored from that script's BOARDS dict—it stays authoritative; if they
 # ever disagree, the script is right.
 #
 # `status` is one of:
@@ -107,7 +107,7 @@ status = "proven"
 status_note = "Validated on hardware, including the display, GNSS, and over-the-air radio work."
 blurb = """
 A tracker with a small OLED display, a navigation button, and a mechanical \
-power switch — the switch cuts the battery, so it survives a long spell in a \
+power switch—the switch cuts the battery, so it survives a long spell in a \
 drawer. The Pro ships assembled in a case, as pictured; the plain L1 is a \
 bare board. The e-ink variant is not supported."""
 mcu = "nRF52840"
@@ -186,7 +186,7 @@ photo = "heltec-v3.png"
 make_target = "flash-heltec-v3"
 methods = ["esp-serial"]
 chip = "ESP32-S3"
-dfu_entry = "None needed — the board enters its ROM bootloader on its own when the flashing tool asserts the USB serial control lines."
+dfu_entry = "None needed—the board enters its ROM bootloader on its own when the flashing tool asserts the USB serial control lines."
 quirks = [
   "Building this board needs Espressif's Xtensa Rust toolchain, installed with <code>espup</code>.",
 ]
@@ -201,7 +201,7 @@ status_note = "Validated on hardware and working well."
 blurb = """
 A small nRF52 module on a radio carrier board. No buttons are populated, \
 so it is a starting point for a build of your own rather than a finished \
-device — and an inexpensive way to put a node on the air."""
+device—and an inexpensive way to put a node on the air."""
 mcu = "nRF52840"
 radio = "Semtech SX1262"
 gnss = "None"
@@ -235,7 +235,7 @@ category = "messager"
 status = "planned"
 status_note = "The hardware is documented in the repository and the interface work for this class of device is sketched out. The port itself has not started."
 blurb = """
-A keyboard-and-screen handheld — the first board that could run UMSH as a \
+A keyboard-and-screen handheld—the first board that could run UMSH as a \
 standalone messaging device, with no phone involved at all. A wide landscape \
 display above a backlit thumb keyboard, and a rotary encoder for scrolling."""
 mcu = "Espressif ESP32-S3"

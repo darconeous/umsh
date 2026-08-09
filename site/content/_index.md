@@ -1,6 +1,6 @@
 +++
 title = "UMSH"
-description = "Off-grid group text chat over long-range radio, with encryption and authentication designed in from the start."
+description = "Off-grid text chat over long-range radio, with encryption and authentication designed in from the start."
 template = "index.html"
 
 [extra]
@@ -13,7 +13,7 @@ replies, reactions, and edits. And encryption that was the starting point of \
 the design, not an afterthought."""
 
 # Hero imagery: one transparent composite, no frame and no caption. Leave the
-# filename empty to render a labelled placeholder instead of a broken image.
+# filename empty to render a labeled placeholder instead of a broken image.
 hero_image = "hero.png"
 hero_alt = "A SenseCAP T1000-E radio beside an iPhone showing a UMSH group conversation"
 
@@ -23,8 +23,8 @@ hero_alt = "A SenseCAP T1000-E radio beside an iPhone showing a UMSH group conve
 [[extra.pillars]]
 title = "Encryption came first"
 body = """
-Your messages are encrypted — a channel conversation as much as a private one \
-— using a construction that stays safe even when a node reboots and loses \
+Your messages are encrypted—a channel conversation as much as a private \
+one—using a construction that stays safe even when a node reboots and loses \
 track of its counters. A private message is authenticated against your \
 contact's own key as well, so it cannot be forged or quietly altered on the \
 way."""
@@ -34,7 +34,7 @@ link_text = "Security model"
 [[extra.pillars]]
 title = "A chat that behaves like a chat"
 body = """
-Replies, reactions, edits, and deletes — the things you stop noticing until \
+Replies, reactions, edits, and deletes—the things you stop noticing until \
 they are missing. Messages run to 1,600 bytes, so you can say what you mean \
 instead of compressing it into a telegram."""
 link = "/docs/protocol/app-text-messages.html"
@@ -59,7 +59,7 @@ traffic is unreadable, unalterable, and does not disclose which member is \
 speaking. Sharing a key is a QR code away."""
 planned = """
 Planned: one-to-one messages carried under the channel key, so they look like \
-ordinary group traffic — plus key rotation and member removal."""
+ordinary group traffic—plus key rotation and member removal."""
 link = "/docs/protocol/multicast-channels.html"
 link_text = "Channels"
 
@@ -79,17 +79,17 @@ body = """
 Replay protection counts frames rather than reading a clock, so nothing about \
 the security of a message rests on knowing the time. A radio that has sat in a \
 drawer for a year, or has never seen a GPS fix, can start talking securely the \
-moment you switch it on — and there is no clock skew for an attacker to work \
+moment you switch it on—and there is no clock skew for an attacker to work \
 with."""
 link = "/docs/protocol/security.html"
 link_text = "Replay protection"
 
-# How it works underneath — the second, quieter section.
+# How it works underneath—the second, quieter section.
 [[extra.understand]]
 title = "Your key is your address"
 body = """
 A node is identified by its Ed25519 public key, and that key is the address \
-other nodes send to — no node numbers to collide, no registration, no authority \
+other nodes send to—no node numbers to collide, no registration, no authority \
 handing out identifiers. On air, most packets carry a three-byte hint instead of \
 the full key, which keeps frames small. A hint is still a stable pseudonym that \
 a patient listener could follow; only an encrypted channel conceals the sender \
@@ -116,6 +116,6 @@ title = "Built to be debugged"
 body = """
 A Wireshark dissector, a capture tool, and published test vectors ship with \
 the protocol. Being able to read a packet trace is treated as a requirement, \
-not a nicety — a protocol nobody can troubleshoot does not survive contact \
+not a nicety—a protocol nobody can troubleshoot does not survive contact \
 with a real deployment."""
 +++

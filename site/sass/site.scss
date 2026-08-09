@@ -692,12 +692,12 @@ pre {
 
 // ─── Board cards ────────────────────────────────────────────────────────
 
-// Board cards are one fixed width everywhere, and a short row centres.
+// Board cards are one fixed width everywhere, and a short row centers.
 //
 // The track has a real maximum rather than `1fr`, so a category holding one
 // board no longer stretches that board across the whole row. `auto-fit`
 // collapses the leftover empty tracks, which is what lets `justify-content`
-// centre a row of one or two. 21.5rem is exactly a third of the container once
+// center a row of one or two. 21.5rem is exactly a third of the container once
 // the two gaps are taken out, so a full row still spans the same width it did.
 .boards {
   display: grid;
@@ -894,7 +894,7 @@ th:first-child {
   }
 }
 
-// The "read the full comparison" link under each table. No muted colour here:
+// The "read the full comparison" link under each table. No muted color here:
 // the only child is a link, which carries its own.
 .compare__more {
   font-size: 0.92rem;
@@ -1056,9 +1056,18 @@ th:first-child {
   font-size: 0.93rem;
   color: var(--ink-muted);
 
-  .container {
+  // Only the first container is the three-column band; the legal strip
+  // below it is its own flex row and must not inherit these tracks.
+  //
+  // `repeat(auto-fit, ...)` cannot be used alongside the brand column.
+  // auto-fit picks its repetition count from the *minimum* contribution of
+  // the other tracks, and a flexible track's minimum is zero, so it fits two
+  // 9rem link columns first and leaves the brand whatever remains — 1px at a
+  // 393pt iPhone, with the blurb overflowing across the links. An explicit
+  // track count with a real minimum cannot collapse that way.
+  > .container:first-child {
     display: grid;
-    grid-template-columns: minmax(0, 1.2fr) repeat(auto-fit, minmax(9rem, 1fr));
+    grid-template-columns: minmax(12rem, 1.2fr) repeat(2, minmax(9rem, 1fr));
     gap: 2rem;
   }
 
@@ -1106,4 +1115,18 @@ th:first-child {
   gap: 0.5rem 1.25rem;
   align-items: center;
   justify-content: space-between;
+}
+
+// Below three columns' worth of room, the blurb takes a row of its own and the
+// two link lists sit side by side. `minmax(0, 1fr)` rather than a rem minimum,
+// so the pair still fits a 320pt phone.
+@media (max-width: 640px) {
+  .site-footer > .container:first-child {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+    gap: 1.75rem 2rem;
+  }
+
+  .site-footer__brand {
+    grid-column: 1 / -1;
+  }
 }

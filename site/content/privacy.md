@@ -16,14 +16,14 @@ submit anything to. Nothing you do here is recorded by us, because there is
 nothing here to do the recording.
 
 The site is a set of static files hosted by GitHub Pages. GitHub serves them
-and, like any web server, sees the requests that reach it — your IP address,
+and, like any web server, sees the requests that reach it—your IP address,
 the page you asked for, and your browser's user agent. That is between you and
 GitHub, and it is covered by
 [GitHub's privacy statement](https://docs.github.com/en/site-policy/privacy-policies/github-general-privacy-statement).
 We do not have access to those logs and do not receive any report derived from
 them.
 
-Pages that link outward — to Seeed Studio, to Heltec, to GitHub Sponsors —
+Pages that link outward—to Seeed Studio, to Heltec, to GitHub Sponsors —
 take you to sites with their own practices, which are their own business and
 not covered here.
 
@@ -36,7 +36,7 @@ serial interface. Your browser will ask your permission before it can see any
 device at all, and that permission covers only the one device you pick.
 
 Nothing about your device is uploaded anywhere. There is no server side to
-this — the page has nowhere to send anything even if it wanted to.
+this—the page has nowhere to send anything even if it wanted to.
 
 ## The iPhone app
 
@@ -47,7 +47,7 @@ for and nothing to sign in to.
 Your identity is an encryption key generated on your phone. It is stored in
 the iOS keychain, marked as belonging to that device alone, which means it is
 excluded from backups and never syncs to iCloud or to another device. Nobody
-else — including us — ever holds a copy. If you lose the phone, that identity
+else—including us—ever holds a copy. If you lose the phone, that identity
 is gone, and a new one takes its place.
 
 Messages travel over radio, directly between devices, encrypted to the

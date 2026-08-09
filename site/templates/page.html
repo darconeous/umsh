@@ -1,12 +1,14 @@
 {% extends "base.html" %}
 
 {% block title %}{{ page.title }} — UMSH{% endblock title %}
-{% block description %}{{ page.description | default(value=config.description) }}{% endblock description %}
+{# `default` does not fire here: Zola gives a page with no front-matter
+   description a null, not an undefined, so it has to be tested explicitly. #}
+{% block description %}{% if page.description %}{{ page.description }}{% else %}{{ config.description }}{% endif %}{% endblock description %}
 {% block og_title %}{{ page.title }} — UMSH{% endblock og_title %}
-{% block og_description %}{{ page.description | default(value=config.description) }}{% endblock og_description %}
+{% block og_description %}{% if page.description %}{{ page.description }}{% else %}{{ config.description }}{% endif %}{% endblock og_description %}
 
 {% block content %}
-  {# Text-only pages centre the whole column, so the heading and the body
+  {# Text-only pages center the whole column, so the heading and the body
      sit on the same measure. Pages with full-width content below their
      heading (hardware, flashing) keep theirs left-aligned instead. #}
   <div class="page-head page-head--center">
