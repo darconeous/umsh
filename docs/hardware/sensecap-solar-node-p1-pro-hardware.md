@@ -751,7 +751,7 @@ Read from `INFO_UF2.TXT` and by parsing the bootloader's own
 - **UF2 family ID:** **`0x28860044`** — read directly from the
   family-ID field of `CURRENT.UF2`. This is **not** `VID<<16 | PID`
   (`0x28860059`); a UF2 packed with the wrong family ID is silently
-  ignored by the bootloader. `scripts/flash.py`'s `sensecap-solar`
+  ignored by the bootloader. `scripts/firmware_image.py`'s `sensecap-solar`
   preset uses `0x28860044`.
 - **Bootloader mass-storage volume name:** **`SENSECAP`** (macOS mounts
   `/Volumes/SENSECAP`). The Meshtastic metadata's `XIAO-BOOT` product

@@ -978,7 +978,7 @@ So:
   flash appears to succeed but the board comes back running the old image,
   check the family before anything else.
 
-`scripts/flash.py`'s existing `sensecap-solar` preset (base `0x27000`, family
+`scripts/firmware_image.py`'s existing `sensecap-solar` preset (base `0x27000`, family
 `0x28860044`) **was tested against this kit and failed silently** — probe 1
 above. The `xiao-nrf52` preset added on 2026-08-03 carries the working values:
 

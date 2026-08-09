@@ -361,7 +361,7 @@ If the chip is new, you also need a chip-BSP. Otherwise just a board-BSP.
    copying a sibling's.
 7. **Register it** in root `members` but not `default-members`.
 8. **Add Makefile targets** (`build-<board>`, `flash-<board>`) and a
-   `scripts/flash.py` entry for the UF2 family ID and base address.
+   `scripts/firmware_image.py` entry for the UF2 family ID and base address.
 9. **Add it to the CI matrix** — both the shipping image and the console
    harness.
 

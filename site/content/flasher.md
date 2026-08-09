@@ -18,10 +18,11 @@ building from source, which is not difficult.</p>
 
 ## Building and flashing from source
 
-You will need a Rust toolchain, and for the nRF52840 boards, `arm-none-eabi-objcopy`
-from the GNU Arm Embedded toolchain. Clone the repository, put your board into
-its bootloader as described below, and run the one command for it. The
-firmware only links in release mode, which the make targets already handle.
+You will need a Rust toolchain, and nothing else — Rust cross-compiles for the
+nRF52840 on its own, with no separate embedded toolchain to install. Clone the
+repository, put your board into its bootloader as described below, and run the
+one command for it. The firmware only links in release mode, which the make
+targets already handle.
 
 ```bash
 git clone https://github.com/darconeous/umsh.git

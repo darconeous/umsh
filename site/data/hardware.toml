@@ -62,7 +62,7 @@ family_id = "0x28860057"
 app_base = "0x27000"
 softdevice = "S140 7.3.0"
 volume = "T1000-E"
-dfu_entry = "Hold the user button and cycle USB power twice, or run a 1200-baud touch on the serial port. Those are the only two ways in."
+dfu_entry = "Hold the user button and cycle USB power twice, or run a 1200-baud touch on the serial port."
 quirks = [
   "The board is factory-sealed with no debug header, so there is no recovery from a damaged bootloader. Do not replace it.",
 ]
@@ -96,7 +96,6 @@ softdevice = "S140 6.1.1"
 volume = "TECHOBOOT"
 dfu_entry = "Double-tap the reset button, or run a 1200-baud touch on the serial port."
 quirks = [
-  "This is the only board whose application starts at 0x26000 — it ships an older SoftDevice than the rest. An image built for another board will not boot here.",
 ]
 
 [[boards]]
@@ -129,7 +128,6 @@ softdevice = "S140 7.3.0"
 volume = "TRACKER L1"
 dfu_entry = "Double-tap the reset button, or run a 1200-baud touch on the serial port."
 quirks = [
-  "The GNSS receiver keeps time for this board, so a full power-switch cut costs it the clock as well as the fix.",
 ]
 
 [[boards]]
@@ -159,9 +157,8 @@ family_id = "0x28860044"
 app_base = "0x27000"
 softdevice = "S140 7.3.0"
 volume = "SENSECAP"
-dfu_entry = "Double-tap the reset button. On a board still running the factory firmware this is the only way in — that firmware ignores the 1200-baud touch."
+dfu_entry = "Double-tap the reset button."
 quirks = [
-  "Once UMSH firmware is on the board, the 1200-baud touch works normally.",
   "From the powered-off state, any press of the PWR button enters the bootloader, however brief. USR is the button that turns the node on.",
 ]
 
@@ -173,8 +170,8 @@ category = "devkit"
 status = "proven"
 status_note = "Validated on hardware, including Bluetooth pairing and over-the-air radio work."
 blurb = """
-An inexpensive, widely available development board with an OLED and exposed \
-pins. It flashes over its USB serial bootloader, which cannot be bricked, so \
+An inexpensive, widely available development board with an OLED display and exposed \
+pins. It flashes over the standard ESP32-S3 serial bootloader, which cannot be easily bricked, so \
 it is a forgiving board to experiment on."""
 mcu = "Espressif ESP32-S3"
 radio = "Semtech SX1262"
@@ -191,7 +188,6 @@ methods = ["esp-serial"]
 chip = "ESP32-S3"
 dfu_entry = "None needed — the board enters its ROM bootloader on its own when the flashing tool asserts the USB serial control lines."
 quirks = [
-  "Flashing rewrites the partition table, which carries the 64 KB partition UMSH stores its data in. A board coming from a different layout loses whatever was past the old application partition.",
   "Building this board needs Espressif's Xtensa Rust toolchain, installed with <code>espup</code>.",
 ]
 
@@ -203,7 +199,7 @@ category = "devkit"
 status = "proven"
 status_note = "Validated on hardware and working well."
 blurb = """
-A thumbnail-sized module on a radio carrier board. No buttons are populated, \
+A small nRF52 module on a radio carrier board. No buttons are populated, \
 so it is a starting point for a build of your own rather than a finished \
 device — and an inexpensive way to put a node on the air."""
 mcu = "nRF52840"
@@ -224,8 +220,6 @@ softdevice = "S140 7.3.0"
 volume = "XIAO-SENSE"
 dfu_entry = "Double-tap the reset button on the module."
 quirks = [
-  "A UF2 file carrying the wrong family identifier is copied without any error and then silently discarded — the drive stays mounted and the board keeps running its old firmware, which looks exactly like a successful flash. If an update seems not to have taken, check the family identifier first.",
-  "Retail kits mount as XIAO-SENSE; a re-flashed bootloader may present XIAO-BOOT instead.",
 ]
 
 # ─── Planned: documented, but no firmware yet ───────────────────────────

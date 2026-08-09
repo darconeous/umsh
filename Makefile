@@ -23,12 +23,17 @@
 # picked up. Running cargo with `--manifest-path` from the workspace
 # root silently skips those flags and produces a broken ELF.
 #
-# `flash-*` targets convert the ELF to UF2 with the board-specific
-# base address and family ID (see scripts/flash.py BOARDS dict) and
-# copy it to the default bootloader mount path. The device must be in
-# DFU mode first (1200-baud touch, double-tap reset, or the board's own
-# button gesture — the T1000-E wants the user button held while USB
-# power is cycled twice, not held through a single plug-in).
+# `build-*` targets emit the `.uf2` alongside the ELF, packed with the
+# board's base address and family ID (see the BOARDS dict in
+# scripts/firmware_image.py). Building is what produces a flashable
+# artifact — the same one a release attaches and the web flasher will
+# serve — so `flash-*` only copies it to the bootloader volume. That
+# needs no toolchain beyond Rust and Python.
+#
+# The device must be in DFU mode before `flash-*` (1200-baud touch,
+# double-tap reset, or the board's own button gesture — the T1000-E
+# wants the user button held while USB power is cycled twice, not held
+# through a single plug-in).
 #
 # `flash-<board>` flashes the **shipping image** for that board: a
 # repeater and a companion radio are the same image holding different
@@ -41,62 +46,81 @@ TARGET_DIR := target/thumbv7em-none-eabihf/release
 
 build-techo-console:
 	cd firmware/techo-console && cargo build --release
+	scripts/mkimage.py --board techo $(TARGET_DIR)/firmware-techo-console
 
 flash-techo-console: build-techo-console
 	scripts/flash.py --board techo --copy-default \
-		$(TARGET_DIR)/firmware-techo-console
+		$(TARGET_DIR)/firmware-techo-console.uf2
 
 build-techo:
 	cd firmware/techo && cargo build --release
+	scripts/mkimage.py --board techo $(TARGET_DIR)/firmware-techo
 
 flash-techo: build-techo
 	scripts/flash.py --board techo --copy-default \
-		$(TARGET_DIR)/firmware-techo
+		$(TARGET_DIR)/firmware-techo.uf2
 
 build-wio-tracker-l1-console:
 	cd firmware/wio-tracker-l1-console && cargo build --release
+	scripts/mkimage.py --board wio-tracker-l1 $(TARGET_DIR)/firmware-wio-tracker-l1-console
 
 flash-wio-tracker-l1-console: build-wio-tracker-l1-console
 	scripts/flash.py --board wio-tracker-l1 --copy-default \
-		$(TARGET_DIR)/firmware-wio-tracker-l1-console
+		$(TARGET_DIR)/firmware-wio-tracker-l1-console.uf2
 
 build-wio-tracker-l1:
 	cd firmware/wio-tracker-l1 && cargo build --release
+	scripts/mkimage.py --board wio-tracker-l1 $(TARGET_DIR)/firmware-wio-tracker-l1
 
 flash-wio-tracker-l1: build-wio-tracker-l1
 	scripts/flash.py --board wio-tracker-l1 --copy-default \
-		$(TARGET_DIR)/firmware-wio-tracker-l1
+		$(TARGET_DIR)/firmware-wio-tracker-l1.uf2
 
 build-t1000e-console:
 	cd firmware/t1000e-console && cargo build --release
+	scripts/mkimage.py --board t1000e --hex $(TARGET_DIR)/firmware-t1000e-console
 
 flash-t1000e-console: build-t1000e-console
 	scripts/flash.py --board t1000e --copy-default \
-		$(TARGET_DIR)/firmware-t1000e-console
+		$(TARGET_DIR)/firmware-t1000e-console.uf2
 
+# Serial DFU goes straight to adafruit-nrfutil — there is nothing for us
+# to add. pip installs it outside PATH on macOS, so override NRFUTIL with
+# a full path if the bare name does not resolve. `--dev-type` is
+# arbitrary but must be non-zero: the bootloader ignores it, the tool
+# rejects packages without it.
 DFU_SERIAL_PORT ?= /dev/tty.usbmodem1101
+NRFUTIL ?= adafruit-nrfutil
+
+define dfu-serial
+	$(NRFUTIL) dfu genpkg --dev-type 0x0052 \
+		--application $(1).hex $(1).zip
+	$(NRFUTIL) --verbose dfu serial -pkg $(1).zip \
+		-p $(DFU_SERIAL_PORT) -b 115200
+endef
 
 flash-t1000e-console-serial: build-t1000e-console
-	scripts/flash.py --board t1000e --serial-dfu $(DFU_SERIAL_PORT) \
-		$(TARGET_DIR)/firmware-t1000e-console
+	$(call dfu-serial,$(TARGET_DIR)/firmware-t1000e-console)
 
 # SenseCAP Solar Node P1-Pro. Same UF2/DFU posture as the Wio Tracker
 # (Seeed XIAO nRF52840 bootloader, UF2 mass-storage drive). The board
-# preset in scripts/flash.py is EXPECTED pending Phase 0 confirmation of
+# preset in scripts/firmware_image.py is EXPECTED pending Phase 0 confirmation of
 # the family ID and volume name.
 build-sensecap-solar-console:
 	cd firmware/sensecap-solar-console && cargo build --release
+	scripts/mkimage.py --board sensecap-solar $(TARGET_DIR)/firmware-sensecap-solar-console
 
 flash-sensecap-solar-console: build-sensecap-solar-console
 	scripts/flash.py --board sensecap-solar --copy-default \
-		$(TARGET_DIR)/firmware-sensecap-solar-console
+		$(TARGET_DIR)/firmware-sensecap-solar-console.uf2
 
 build-sensecap-solar:
 	cd firmware/sensecap-solar && cargo build --release
+	scripts/mkimage.py --board sensecap-solar $(TARGET_DIR)/firmware-sensecap-solar
 
 flash-sensecap-solar: build-sensecap-solar
 	scripts/flash.py --board sensecap-solar --copy-default \
-		$(TARGET_DIR)/firmware-sensecap-solar
+		$(TARGET_DIR)/firmware-sensecap-solar.uf2
 
 # Seeed XIAO nRF52840 + Wio-SX1262 Kit. Retail units mount their DFU
 # volume as XIAO-SENSE (Seeed ships the *Sense* bootloader config on plain
@@ -107,25 +131,26 @@ flash-sensecap-solar: build-sensecap-solar
 # copied with no error and silently not written.
 build-xiao-nrf52:
 	cd firmware/xiao-nrf52 && cargo build --release
+	scripts/mkimage.py --board xiao-nrf52 $(TARGET_DIR)/firmware-xiao-nrf52
 
 flash-xiao-nrf52: build-xiao-nrf52
 	scripts/flash.py --board xiao-nrf52 --copy-default \
-		$(TARGET_DIR)/firmware-xiao-nrf52
+		$(TARGET_DIR)/firmware-xiao-nrf52.uf2
 
 build-t1000e:
 	cd firmware/t1000e && cargo build --release
+	scripts/mkimage.py --board t1000e --hex $(TARGET_DIR)/firmware-t1000e
 
 flash-t1000e: build-t1000e
 	scripts/flash.py --board t1000e --copy-default \
-		$(TARGET_DIR)/firmware-t1000e
+		$(TARGET_DIR)/firmware-t1000e.uf2
 
 # For a board already sitting in serial DFU. The board has exactly two ways
 # into DFU — hold the user button while cycling USB power twice, or trigger it
 # from software — and the button path lands in the UF2 bootloader, which this
 # target cannot talk to. Use `flash-t1000e` there.
 flash-t1000e-serial: build-t1000e
-	scripts/flash.py --board t1000e --serial-dfu $(DFU_SERIAL_PORT) \
-		$(TARGET_DIR)/firmware-t1000e
+	$(call dfu-serial,$(TARGET_DIR)/firmware-t1000e)
 
 # ─── ESP32 firmware (firmware-esp32/ sibling workspace) ──────────────────────
 #

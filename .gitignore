@@ -10,4 +10,6 @@ xcuserdata/
 *.identity
 build
 __pycache__/
-.claude/settings.json
+/.claude/settings.json
+/.vscode/settings.json
+/*.code-workspace

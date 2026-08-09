@@ -29,7 +29,7 @@ costs of migration before considering implementing it.
   - `umsh-bridge` — the internet bridge daemon (`docs/protocol/src/internet-bridging.md`); lib+bin split so the integration tests can stand a whole bridge up in one process. TOML config + `tracing`, its own dependency table
   - `ulcp-web-debugger`, `uniffi-bindgen`
 - `docs/` — protocol spec (`protocol/`), per-board hardware docs, firmware/feature plans, UX.
-- `dissectors/umsh/` — Wireshark Lua dissector. `diag/`, `contrib/systemd/`, `scripts/flash.py`.
+- `dissectors/umsh/` — Wireshark Lua dissector. `diag/`, `contrib/systemd/`, `scripts/` (`mkuf2.py` builds the UF2, `flash.py` only flashes one, board table in `firmware_image.py`).
 
 ## Build / test
 
