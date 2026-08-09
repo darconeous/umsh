@@ -1,6 +1,15 @@
 {% extends "base.html" %}
 
-{% block title %}UMSH — an experimental LoRa mesh protocol{% endblock title %}
+{# Markup only. Every string on this page comes out of `content/_index.md`;
+   prose fields run through `markdown`, with `inline=true` where the template
+   supplies the surrounding block element.
+
+   Optional copy is guarded rather than assumed: deleting a field from the
+   front matter drops the element it fills, and deleting a whole `_head`
+   table drops that section's heading block entirely. Only the arrays
+   themselves — pillars, understand, comparisons, steps — are required. #}
+
+{% block title %}{{ section.extra.page_title }}{% endblock title %}
 
 {% block content %}
 {% set x = section.extra %}
@@ -8,26 +17,26 @@
 <section class="hero">
     <div class="container hero__grid">
         <div>
-            <span class="hero__eyebrow">Open mesh networking over LoRa</span>
+            {% if x.hero_eyebrow %}<span class="hero__eyebrow">{{ x.hero_eyebrow }}</span>{% endif %}
             <h1 class="hero__tagline">{{ x.tagline | safe }}</h1>
-            <p class="hero__lede">{{ x.lede | trim }}</p>
+            {% if x.lede %}<p class="hero__lede">{{ x.lede | trim | markdown(inline=true) | safe }}</p>{% endif %}
 
             <div class="hero__actions">
                 {% if config.extra.ios_beta_url %}
-                <a class="btn btn--primary" href="{{ config.extra.ios_beta_url }}">Join the iOS beta</a>
+                <a class="btn btn--primary" href="{{ config.extra.ios_beta_url }}">{{ x.hero_cta_beta }}</a>
                 {% else %}
-                <a class="btn btn--primary" href="{{ get_url(path='@/app.md') }}">Get the iOS beta</a>
+                <a class="btn btn--primary" href="{{ get_url(path='@/app.md') }}">{{ x.hero_cta_beta_pending }}</a>
                 {% endif %}
-                <a class="btn btn--ghost" href="{{ config.extra.protocol_url }}">Read the specification</a>
+                <a class="btn btn--ghost" href="{{ config.extra.protocol_url }}">{{ x.hero_cta_spec }}</a>
             </div>
 
-            <p class="hero__note">Open source, and open to anyone who wants to build on it.</p>
+            {% if x.hero_note %}<p class="hero__note">{{ x.hero_note | markdown(inline=true) | safe }}</p>{% endif %}
         </div>
 
         <div class="hero__shots">
             {% if x.hero_image %}
             <img class="hero__image" src="{{ get_url(path='images/' ~ x.hero_image, trailing_slash=false) }}"
-                alt="{{ x.hero_alt }}" />
+                alt="{{ x.hero_alt | default(value='') }}" />
             {% else %}
             <div class="hero__placeholder">Hero image</div>
             {% endif %}
@@ -35,46 +44,32 @@
     </div>
 </section>
 
+{% if x.status %}
 <div class="status-band">
     <div class="container">
-        <span class="badge">Technology preview</span>
-        <div>
-            <p>
-                UMSH works today, and it is not finished. The protocol will keep
-                changing for the next several months while it settles, and the apps
-                are still being built out around it. Expect breaking changes, and
-                expect to reflash your radios when they land.
-            </p>
-            <p>
-                You can take part right now: flash a supported board, and
-                <a href="{{ get_url(path='@/app.md') }}">join the iOS beta</a>. An
-                Android app is planned but has not been started. Much of this
-                project was written with heavy help from large language models,
-                which is <a href="{{ config.extra.github_url }}/blob/main/docs/AI.md">documented openly</a>
-                rather than quietly.
-            </p>
-        </div>
+        {% if x.status.badge %}<span class="badge">{{ x.status.badge }}</span>{% endif %}
+        {# Block-level Markdown here: the band is written as two paragraphs. #}
+        {% if x.status.body %}<div>{{ x.status.body | trim | markdown | safe }}</div>{% endif %}
     </div>
 </div>
+{% endif %}
 
 <section class="section">
     <div class="container">
+        {% if x.pillars_head %}
         <div class="section__head section__head--center">
-            <h2>What makes it different</h2>
-            <p>
-                Few of the ideas here are new. The contribution is putting them
-                together cleanly: stronger cryptography, composable routing, and
-                layers that stay in their lane.
-            </p>
+            {% if x.pillars_head.title %}<h2>{{ x.pillars_head.title }}</h2>{% endif %}
+            {% if x.pillars_head.intro %}<p>{{ x.pillars_head.intro | trim | markdown(inline=true) | safe }}</p>{% endif %}
         </div>
+        {% endif %}
 
         <div class="grid grid--3">
             {% for pillar in x.pillars %}
             <article class="card">
                 <h3>{{ pillar.title }}</h3>
-                <p>{{ pillar.body | trim }}</p>
-                {% if pillar.planned %}<p class="card__planned">{{ pillar.planned | trim }}</p>{% endif %}
-                <p><a href="{{ pillar.link }}">{{ pillar.link_text }} →</a></p>
+                <p>{{ pillar.body | trim | markdown(inline=true) | safe }}</p>
+                {% if pillar.disclaimer %}<p class="card__disclaimer">{{ pillar.disclaimer | trim | markdown(inline=true) | safe }}</p>{% endif %}
+                {% if pillar.link %}<p><a href="{{ pillar.link }}">{{ pillar.link_text }} →</a></p>{% endif %}
             </article>
             {% endfor %}
         </div>
@@ -84,183 +79,88 @@
 
 <section class="section section--surface">
     <div class="container">
+        {% if x.understand_head %}
         <div class="section__head section__head--center">
-            <h2>Understanding UMSH</h2>
-            <p>
-                How the thing works underneath, for anyone who wants to look. None
-                of it is required reading to use a radio.
-            </p>
+            {% if x.understand_head.title %}<h2>{{ x.understand_head.title }}</h2>{% endif %}
+            {% if x.understand_head.intro %}<p>{{ x.understand_head.intro | trim | markdown(inline=true) | safe }}</p>{% endif %}
         </div>
+        {% endif %}
 
         <div class="grid grid--2up">
             {% for item in x.understand %}
             <article class="card card--flat">
                 <h3>{{ item.title }}</h3>
-                <p>{{ item.body | trim }}</p>
+                <p>{{ item.body | trim | markdown(inline=true) | safe }}</p>
+                {% if item.link %}<p><a href="{{ item.link }}">{{ item.link_text }} →</a></p>{% endif %}
             </article>
             {% endfor %}
         </div>
 
+        {% if x.understand_head and x.understand_head.link_text %}
         <p style="margin-top: 1.75rem; text-align: center;">
-            <a href="{{ config.extra.protocol_url }}">Read the full specification →</a>
+            <a href="{{ config.extra.protocol_url }}">{{ x.understand_head.link_text }} →</a>
         </p>
+        {% endif %}
     </div>
 </section>
 
 <section class="section">
     <div class="container">
+        {% if x.compare_head %}
         <div class="section__head section__head--center">
-            <h2>How it compares</h2>
-            <p>
-                UMSH owes a great deal to the projects it is measured against here,
-                MeshCore especially. These tables are condensed from the
-                specification's own comparison chapters, which aim to be accurate
-                rather than flattering—if something here is unfair or wrong,
-                please say so.
-            </p>
+            {% if x.compare_head.title %}<h2>{{ x.compare_head.title }}</h2>{% endif %}
+            {% if x.compare_head.intro %}<p>{{ x.compare_head.intro | trim | markdown(inline=true) | safe }}</p>{% endif %}
         </div>
+        {% endif %}
 
-        <h3 class="compare__heading">Against MeshCore</h3>
+        {% for comparison in x.comparisons %}
+        {% if comparison.heading %}<h3 class="compare__heading">{{ comparison.heading }}</h3>{% endif %}
         <div class="table-wrap compare">
             <table>
                 <thead>
                     <tr>
-                        <th scope="col">Aspect</th>
-                        <th scope="col">UMSH</th>
-                        <th scope="col">MeshCore</th>
+                        {% for column in comparison.columns %}
+                        <th scope="col">{{ column }}</th>
+                        {% endfor %}
                     </tr>
                 </thead>
                 <tbody>
+                    {% for row in comparison.rows %}
                     <tr>
-                        <td>Address on the wire</td>
-                        <td>3-byte hint, or the full public key when the receiver may not know it</td>
-                        <td>1-byte hash, with a dedicated packet type for first contact</td>
+                        {% for cell in row %}
+                        <td>{{ cell | markdown(inline=true) | safe }}</td>
+                        {% endfor %}
                     </tr>
-                    <tr>
-                        <td>Encryption</td>
-                        <td>AES-128-CTR in a SIV construction</td>
-                        <td>AES-128-ECB</td>
-                    </tr>
-                    <tr>
-                        <td>Authentication</td>
-                        <td>AES-CMAC, 4 to 16 bytes</td>
-                        <td>HMAC-SHA256 truncated to 2 bytes</td>
-                    </tr>
-                    <tr>
-                        <td>Key derivation</td>
-                        <td>HKDF-SHA256, with separate encryption and authentication keys</td>
-                        <td>The ECDH secret used directly for both</td>
-                    </tr>
-                    <tr>
-                        <td>Replay protection</td>
-                        <td>Monotonic frame counters, no clock involved</td>
-                        <td>A 128-entry duplicate cache, with timestamps above</td>
-                    </tr>
-                    <tr>
-                        <td>Routing</td>
-                        <td>Independent options that combine freely</td>
-                        <td>A path field and route-mode bits</td>
-                    </tr>
-                    <tr>
-                        <td>Layering</td>
-                        <td>The link layer never inspects payloads</td>
-                        <td>Link, network, and application concerns combined</td>
-                    </tr>
+                    {% endfor %}
                 </tbody>
             </table>
         </div>
+        {% if comparison.link %}
         <p class="compare__more">
-            <a href="{{ config.extra.protocol_url }}meshcore-comparison.html">Read the full comparison →</a>
+            <a href="{{ config.extra.protocol_url }}{{ comparison.link }}">{{ comparison.link_text }} →</a>
         </p>
-
-        <h3 class="compare__heading">Against Meshtastic</h3>
-        <div class="table-wrap compare">
-            <table>
-                <thead>
-                    <tr>
-                        <th scope="col">Aspect</th>
-                        <th scope="col">UMSH</th>
-                        <th scope="col">Meshtastic</th>
-                    </tr>
-                </thead>
-                <tbody>
-                    <tr>
-                        <td>Identity</td>
-                        <td>An Ed25519 public key, which is also the address</td>
-                        <td>A 32-bit node number derived from the Bluetooth address</td>
-                    </tr>
-                    <tr>
-                        <td>Spoofing</td>
-                        <td>The address is a cryptographic credential</td>
-                        <td>Node numbers are not bound to any key</td>
-                    </tr>
-                    <tr>
-                        <td>Authentication</td>
-                        <td>Private messages bound to the sender's key; channel traffic carries an integrity tag</td>
-                        <td>None on channel traffic; direct messages only, since v2.5</td>
-                    </tr>
-                    <tr>
-                        <td>Header privacy</td>
-                        <td>Compact hints, and the sender is concealed entirely in encrypted multicast</td>
-                        <td>A 16-byte cleartext header on every packet</td>
-                    </tr>
-                    <tr>
-                        <td>Typical overhead</td>
-                        <td>16 to 28 bytes, authentication included</td>
-                        <td>About 22 bytes for channel traffic, about 42 for direct messages</td>
-                    </tr>
-                    <tr>
-                        <td>Forward secrecy</td>
-                        <td>Available, at no per-packet cost</td>
-                        <td>Not available</td>
-                    </tr>
-                    <tr>
-                        <td>Maturity</td>
-                        <td>Experimental, one app, six boards</td>
-                        <td>Mature, huge community, dozens of devices, a rich application layer</td>
-                    </tr>
-                </tbody>
-            </table>
-        </div>
-        <p class="compare__more">
-            <a href="{{ config.extra.protocol_url }}meshtastic-comparison.html">Read the full comparison →</a>
-        </p>
+        {% endif %}
+        {% endfor %}
     </div>
 </section>
 
 <section class="section section--surface">
     <div class="container">
+        {% if x.steps_head %}
         <div class="section__head section__head--center">
-            <h2>Getting started</h2>
-            <p>You need one radio to listen, and two to have a conversation.</p>
+            {% if x.steps_head.title %}<h2>{{ x.steps_head.title }}</h2>{% endif %}
+            {% if x.steps_head.intro %}<p>{{ x.steps_head.intro | trim | markdown(inline=true) | safe }}</p>{% endif %}
         </div>
+        {% endif %}
 
         <ol class="steps">
+            {% for step in x.steps %}
             <li>
-                <h3>Get a radio</h3>
-                <p>
-                    Six boards are supported, from a sealed pocket tracker to a
-                    solar-powered node you can bolt to a roof. The T1000-E is the one
-                    most of this was developed against.
-                </p>
-                <p><a href="{{ get_url(path='@/hardware.md') }}">Supported hardware →</a></p>
+                <h3>{{ step.title }}</h3>
+                <p>{{ step.body | trim | markdown(inline=true) | safe }}</p>
+                {% if step.link %}<p><a href="{{ get_url(path=step.link) }}">{{ step.link_text }} →</a></p>{% endif %}
             </li>
-            <li>
-                <h3>Flash it</h3>
-                <p>
-                    One command builds and installs the firmware for your board. A
-                    browser-based flasher that needs no toolchain at all is on the way.
-                </p>
-                <p><a href="{{ get_url(path='@/flasher.md') }}">Flashing instructions →</a></p>
-            </li>
-            <li>
-                <h3>Pair your phone</h3>
-                <p>
-                    The iPhone app connects to your radio over Bluetooth and gives you
-                    conversations, contacts, and a map. It is in beta.
-                </p>
-                <p><a href="{{ get_url(path='@/app.md') }}">About the app →</a></p>
-            </li>
+            {% endfor %}
         </ol>
     </div>
 </section>

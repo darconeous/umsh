@@ -59,14 +59,13 @@ radio, not over the network.
 ## Getting the beta
 
 <div class="notice">
-<p><strong>The public beta has not opened yet.</strong> The app is in internal
-testing on TestFlight while the protocol it depends on is still moving. When
-a public TestFlight link exists, it will be posted here and announced on the
-project's GitHub page.</p>
-<p>If you would like to be part of it, the most useful thing you can do right
-now is <a href="https://github.com/darconeous/umsh">follow the project on
-GitHub</a>—that is where the announcement will go, and where feedback is
-most welcome.</p>
+<p><strong>The public beta is open.</strong>
+<a href="https://testflight.apple.com/join/4xsdZ8pg">Join it on TestFlight</a>.
+The protocol it depends on is still moving, so expect breaking changes and
+expect to reflash your radio when they land.</p>
+<p>Feedback is most welcome, and the
+<a href="https://github.com/darconeous/umsh">project's GitHub page</a> is the
+place for it.</p>
 </div>
 
 ## Android

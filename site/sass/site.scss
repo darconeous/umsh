@@ -631,9 +631,9 @@ pre {
   border-color: transparent;
 }
 
-// Set off from the body so a roadmap note reads as a roadmap note, never as
-// something the reader can go and use today.
-.card__planned {
+// Set off from the body so a caveat reads as a caveat, never as part of the
+// claim above it.
+.card__disclaimer {
   font-size: 0.92rem;
   color: var(--ink-muted);
 }

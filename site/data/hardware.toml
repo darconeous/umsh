@@ -64,7 +64,7 @@ softdevice = "S140 7.3.0"
 volume = "T1000-E"
 dfu_entry = "Hold the user button and cycle USB power twice, or run a 1200-baud touch on the serial port."
 quirks = [
-  "The board is factory-sealed with no debug header, so there is no recovery from a damaged bootloader. Do not replace it.",
+  "The board is factory-sealed with no debug header, so there is no recovery from a damaged bootloader.",
 ]
 
 [[boards]]
@@ -77,7 +77,8 @@ status_note = "Bringup complete and validated on hardware, including the e-paper
 blurb = """
 A handheld tracker with a 1.54-inch e-paper display, so it can show messages \
 and status on its own while still working as a phone companion. Low power \
-draw between updates, and readable in direct sun."""
+draw between updates, and readable in direct sun. A built-in backlight makes \
+it readable at night."""
 mcu = "nRF52840"
 radio = "Semtech SX1262"
 gnss = "Quectel L76K"
@@ -109,7 +110,7 @@ blurb = """
 A tracker with a small OLED display, a navigation button, and a mechanical \
 power switch—the switch cuts the battery, so it survives a long spell in a \
 drawer. The Pro ships assembled in a case, as pictured; the plain L1 is a \
-bare board. The e-ink variant is not supported."""
+bare board. The e-ink variant is not yet supported."""
 mcu = "nRF52840"
 radio = "Semtech SX1262"
 gnss = "Quectel L76K"
@@ -139,8 +140,7 @@ status = "proven"
 status_note = "Radio, Bluetooth, GNSS, and the power path have all been validated on hardware."
 blurb = """
 An outdoor, solar-powered node built to be mounted somewhere and left alone. \
-A 5 W panel and four 18650 cells carry it through bad weather, which is what \
-you want from the node that fills in a gap in coverage."""
+A 5 W panel and four 18650 cells carry it through bad weather and freezing temperatures."""
 mcu = "nRF52840"
 radio = "Semtech SX1262"
 gnss = "Quectel L76K (enabled by default)"
@@ -171,8 +171,7 @@ status = "proven"
 status_note = "Validated on hardware, including Bluetooth pairing and over-the-air radio work."
 blurb = """
 An inexpensive, widely available development board with an OLED display and exposed \
-pins. It flashes over the standard ESP32-S3 serial bootloader, which cannot be easily bricked, so \
-it is a forgiving board to experiment on."""
+pins."""
 mcu = "Espressif ESP32-S3"
 radio = "Semtech SX1262"
 gnss = "None"
@@ -233,7 +232,7 @@ name = "T-LoRa Pager"
 vendor = "LilyGO"
 category = "messager"
 status = "planned"
-status_note = "The hardware is documented in the repository and the interface work for this class of device is sketched out. The port itself has not started."
+status_note = "Planned for future implementation."
 blurb = """
 A keyboard-and-screen handheld—the first board that could run UMSH as a \
 standalone messaging device, with no phone involved at all. A wide landscape \
@@ -252,11 +251,10 @@ name = "T-Deck"
 vendor = "LilyGO"
 category = "messager"
 status = "planned"
-status_note = "Under evaluation. No audited hardware reference exists in the repository yet, so the figures above come from the vendor and have not been checked against a board."
+status_note = "Planned for future implementation."
 blurb = """
 Another keyboard handheld in the same class, with a trackball beside the \
-keyboard instead of an encoder. Widely available and well established, which \
-makes it an obvious second target once the first one works."""
+keyboard instead of an encoder."""
 mcu = "Espressif ESP32-S3"
 radio = "Semtech SX1262"
 gnss = "None on the base board; the Plus adds a module"

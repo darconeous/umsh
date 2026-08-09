@@ -45,12 +45,13 @@ so they do not depend on any of that.
 
 Most copy is Markdown in `content/`. Two pages are different:
 
-- **The landing page** keeps its copy in the front matter of
-  `content/_index.md`—the tagline, the six feature pillars, and the three
-  smaller cards are arrays there, so adding or reordering a pillar is a
-  content edit rather than a template edit. The comparison tables live in
-  `templates/index.html`, since they are structure as much as text; keep them
-  in step with the comparison chapters of the specification.
+- **The landing page** keeps every word in the front matter of
+  `content/_index.md`; `templates/index.html` is markup only. Prose fields
+  are rendered as Markdown, so links and emphasis work in them, and the
+  pillars, the smaller cards, the comparison tables, and the getting-started
+  steps are all arrays—adding or reordering one is a content edit. Keep the
+  comparison tables in step with the comparison chapters of the
+  specification.
 - **Hardware and flashing** are both generated from `data/hardware.toml`.
 
 ## Adding or changing a board

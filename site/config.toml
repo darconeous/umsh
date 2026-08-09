@@ -48,7 +48,6 @@ protocol_url = "/docs/protocol/"
 rustdoc_url = "/docs/rust/"
 voria_url = "https://voria.com/"
 
-# The iOS app is in internal TestFlight only. Leave this empty until a
-# public TestFlight link exists — templates render a disabled "coming soon"
-# call to action while it is empty, and a live button once it is set.
-ios_beta_url = ""
+# The public TestFlight link. Empty it again to put the templates back to the
+# "coming soon" call to action; set, they link the join button straight here.
+ios_beta_url = "https://testflight.apple.com/join/4xsdZ8pg"
