@@ -916,10 +916,15 @@ impl ParsedOptions {
             return Ok(parsed);
         }
         let options = &buf[range.clone()];
-        for entry in OptionDecoder::new(options) {
+        let mut decoder = OptionDecoder::new(options);
+        // Driven by hand rather than `for`: the value's offset comes from
+        // the decoder's own position, which a `for` loop would move.
+        #[allow(clippy::while_let_on_iterator)]
+        while let Some(entry) = decoder.next() {
             let (number, value) = entry?;
-            let relative_start = unsafe { value.as_ptr().offset_from(options.as_ptr()) } as usize;
-            let value_start = range.start + relative_start;
+            // `position` sits just past the value once `next` has yielded
+            // it, so backing off its length is the value's start.
+            let value_start = range.start + decoder.position() - value.len();
             let value_range = value_start..value_start + value.len();
             match OptionNumber::from(number) {
                 OptionNumber::RegionCode if value.len() == 2 => {

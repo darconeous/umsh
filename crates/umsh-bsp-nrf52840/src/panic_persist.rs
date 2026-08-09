@@ -35,6 +35,42 @@
 /// mutability, so a raw pointer obtained via `UnsafeCell::get()` is not a
 /// reference to a mutable static. The `unsafe impl Sync` is sound on a
 /// single-core target where no thread can race on the cell.
+///
+/// # Soundness
+///
+/// [`as_bytes_mut`](Self::as_bytes_mut) forms a `&mut [u8]` over memory
+/// the compiler believes is uninitialized, which is formally UB: uninit
+/// is not a valid `u8`. A retained region always holds real bits after a
+/// reset, but the abstract machine cannot express that — it has no
+/// notion of the previous boot, so bytes written then read as never
+/// written. Making this formally sound needs a `freeze` operation stable
+/// Rust does not expose, so no construction available here is sound;
+/// the choice is only about which shape to prefer.
+///
+/// The reads that touch never-written bytes are the record validators —
+/// [`PanicSlot::read`]'s magic compare, and the equivalent checks in the
+/// firmware's breadcrumb and capture regions — on a cold boot. They are
+/// already written to treat the region as arbitrary: magic, length bound
+/// and Fletcher-16 all have to pass before any byte is believed.
+///
+/// The failure mode that would matter is LLVM folding a load from the
+/// `undef`-initialized static. It does not: the static is both loaded
+/// and stored across several functions and its address escapes through
+/// `UnsafeCell::get()`, so there is nothing to fold against. This has
+/// been the shape of retained-panic crates for years without incident.
+///
+/// Two things not to do:
+///
+/// - **Do not give the cell a concrete initializer** (`UnsafeCell::new([0;
+///   N])`) to silence the uninit question. `.uninit` is a `NOLOAD`
+///   section, so the initializer never reaches RAM — but the compiler
+///   now believes the region is zero at startup and may constant-fold
+///   the magic comparison to `false`, silently killing the feature.
+/// - **Do not swap the return type for `&mut [MaybeUninit<u8>]`** as a
+///   fix. It removes the UB at acquisition and on the write path, but
+///   every validator read then needs `assume_init` on the same
+///   never-written bytes. The UB relocates to the read path — the one
+///   that runs at boot on every device — and buys nothing.
 pub struct SyncNoinit<T>(pub core::cell::UnsafeCell<core::mem::MaybeUninit<T>>);
 
 // Safety: nRF52840 is a single-core device; concurrent access is impossible.
@@ -48,7 +84,26 @@ impl<T> SyncNoinit<T> {
     /// Return a `&'static mut [u8]` slice over the inner value.
     ///
     /// # Safety
-    /// The caller must ensure no other live reference to this cell exists.
+    /// The caller must ensure no other live reference to this cell
+    /// exists. Nothing here enforces that: the returned lifetime is
+    /// unrelated to `&self`, so every call mints another independent
+    /// `&'static mut` over the same bytes, and two live at once alias.
+    ///
+    /// The discipline the firmwares rely on, in case a new caller needs
+    /// to fit into it:
+    ///
+    /// - Boot-time readers run at the top of `main`, before the
+    ///   interrupts whose handlers touch a region are unmasked.
+    /// - Thread-mode callers keep the borrow inside one function body
+    ///   and never hold it across an `.await`, so the single-threaded
+    ///   executor cannot interleave two.
+    /// - Handlers that run from an interrupt touch only a region no
+    ///   thread-mode code borrows after boot.
+    ///
+    /// The panic and `HardFault` handlers are the deliberate exception:
+    /// either can be entered while a boot-time borrow is still live, and
+    /// will alias it. Both end in a reset without returning, so the
+    /// aliased borrow is never used again.
     pub unsafe fn as_bytes_mut(&self) -> &'static mut [u8] {
         let ptr: *mut u8 = self.0.get().cast::<u8>();
         // SAFETY: caller ensures no other live reference; ptr is non-null and aligned.
