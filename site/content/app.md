@@ -18,6 +18,10 @@ the waiting and listening that a mesh requires.
     <img src="/images/app/peers.png" alt="The peers list in the UMSH app, showing four saved nodes with their address hints." loading="lazy" />
     <figcaption>Contacts, each one a public key</figcaption>
   </figure>
+  <figure>
+    <img src="/images/app/map.png" alt="The map view in the UMSH app, showing several nodes and their locations." loading="lazy" />
+    <figcaption>Current node locations</figcaption>
+  </figure>
 </div>
 
 ## What it does
@@ -47,6 +51,10 @@ position on a channel, and the app can share the phone's own location instead.
 Both are off unless you turn them on, and neither is ever attached to an
 identity you hand out.
 
+Your identity lives on your phone, in the app. If you switch over to a different
+companion radio, you don't need to backup your identity from the old radio
+and install it on the new radio in order to not start over from scratch.
+
 ## Requirements
 
 You need an iPhone running iOS 18 or later, and a radio to pair with. The app
@@ -74,13 +82,4 @@ An Android app is planned. Work has not started on it.
 
 The groundwork is in place: the protocol logic lives in a Rust core that the
 iOS app already talks to through a generated interface, and the same core is
-meant to serve an Android app when someone builds one. That is a real head
-start, but it is not an app, and it would be dishonest to suggest a date.
-
-## Privacy
-
-The app collects nothing and sends nothing anywhere. Your identity key is
-generated on your device and stays there, held in the system keychain and
-marked so that it is never included in a backup or synced to another device.
-Losing the phone means losing that identity—which is the tradeoff that comes
-with nobody else ever holding it.
+meant to serve an Android app when someone builds one.
