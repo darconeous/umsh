@@ -79,10 +79,11 @@ that there is something for it to install. Until then, flashing means
 building from source, which is not difficult.</p>
 </div>
 <h2 id="building-and-flashing-from-source">Building and flashing from source</h2>
-<p>You will need a Rust toolchain, and for the nRF52840 boards, <code>arm-none-eabi-objcopy</code>
-from the GNU Arm Embedded toolchain. Clone the repository, put your board into
-its bootloader as described below, and run the one command for it. The
-firmware only links in release mode, which the make targets already handle.</p>
+<p>You will need a Rust toolchain, and nothing else — Rust cross-compiles for the
+nRF52840 on its own, with no separate embedded toolchain to install. Clone the
+repository, put your board into its bootloader as described below, and run the
+one command for it. The firmware only links in release mode, which the make
+targets already handle.</p>
 <pre><code data-lang="bash">git clone https://github.com/darconeous/umsh.git
 </code></pre>
 <p>Espressif boards need one extra step, because the Xtensa processors need
@@ -115,7 +116,7 @@ some of them that failure is completely silent.</p>
           <span class="card__eyebrow">Seeed Studio</span>
           <h3>SenseCAP T1000-E</h3>
 
-          <p><strong>Getting into the bootloader.</strong> Hold the button while plugging in the magnetic cable, or run a 1200-baud touch on the serial port.</p>
+          <p><strong>Getting into the bootloader.</strong> Hold the user button and cycle USB power twice, or run a 1200-baud touch on the serial port.</p>
 
           <p><strong>Building and flashing.</strong></p>
           <pre><code>make flash-t1000e</code></pre>
@@ -134,7 +135,7 @@ some of them that failure is completely silent.</p>
               <p><strong>Worth knowing about this board</strong></p>
               <ul>
                 
-                <li>The button bootloader exposes a serial DFU endpoint only — there is no UF2 drive on that path. Use <code>make flash-t1000e-serial</code> for it.</li><li>The board is factory-sealed with no debug header, so there is no recovery from a damaged bootloader. Do not replace it.</li>
+                <li>The board is factory-sealed with no debug header, so there is no recovery from a damaged bootloader. Do not replace it.</li>
               </ul>
             </div>
           
@@ -161,14 +162,6 @@ some of them that failure is completely silent.</p>
           
 
           
-            <div class="notice">
-              <p><strong>Worth knowing about this board</strong></p>
-              <ul>
-                
-                <li>This is the only board whose application starts at 0x26000 — it ships an older SoftDevice than the rest. An image built for another board will not boot here.</li>
-              </ul>
-            </div>
-          
         </article>
         
       
@@ -192,14 +185,6 @@ some of them that failure is completely silent.</p>
           
 
           
-            <div class="notice">
-              <p><strong>Worth knowing about this board</strong></p>
-              <ul>
-                
-                <li>The GNSS receiver keeps time for this board, so a full power-switch cut costs it the clock as well as the fix.</li>
-              </ul>
-            </div>
-          
         </article>
         
       
@@ -208,7 +193,7 @@ some of them that failure is completely silent.</p>
           <span class="card__eyebrow">Seeed Studio</span>
           <h3>SenseCAP Solar Node P1</h3>
 
-          <p><strong>Getting into the bootloader.</strong> Double-tap the reset button. On a board still running the factory firmware this is the only way in — that firmware ignores the 1200-baud touch.</p>
+          <p><strong>Getting into the bootloader.</strong> Double-tap the reset button.</p>
 
           <p><strong>Building and flashing.</strong></p>
           <pre><code>make flash-sensecap-solar</code></pre>
@@ -227,7 +212,7 @@ some of them that failure is completely silent.</p>
               <p><strong>Worth knowing about this board</strong></p>
               <ul>
                 
-                <li>Once UMSH firmware is on the board, the 1200-baud touch works normally.</li><li>From the powered-off state, any press of the PWR button enters the bootloader, however brief. USR is the button that turns the node on.</li>
+                <li>From the powered-off state, any press of the PWR button enters the bootloader, however brief. USR is the button that turns the node on.</li>
               </ul>
             </div>
           
@@ -251,7 +236,7 @@ some of them that failure is completely silent.</p>
               <p><strong>Worth knowing about this board</strong></p>
               <ul>
                 
-                <li>Flashing rewrites the partition table, which carries the 64 KB partition UMSH stores its data in. A board coming from a different layout loses whatever was past the old application partition.</li><li>Building this board needs Espressif's Xtensa Rust toolchain, installed with <code>espup</code>.</li>
+                <li>Building this board needs Espressif's Xtensa Rust toolchain, installed with <code>espup</code>.</li>
               </ul>
             </div>
           
@@ -277,14 +262,6 @@ some of them that failure is completely silent.</p>
             </ul>
           
 
-          
-            <div class="notice">
-              <p><strong>Worth knowing about this board</strong></p>
-              <ul>
-                
-                <li>A UF2 file carrying the wrong family identifier is copied without any error and then silently discarded — the drive stays mounted and the board keeps running its old firmware, which looks exactly like a successful flash. If an update seems not to have taken, check the family identifier first.</li><li>Retail kits mount as XIAO-SENSE; a re-flashed bootloader may present XIAO-BOOT instead.</li>
-              </ul>
-            </div>
           
         </article>
         
