@@ -177,6 +177,11 @@ pub const MAX_IDENT_PRECISION: u8 = gnss::MAX_LOCATION_LEN as u8;
 pub struct SessionConfig {
     /// `PROP_DEV_VERSION` string (without NUL terminator).
     pub dev_version: &'static str,
+    /// `PROP_DEV_MODEL` string (without NUL terminator), naming the
+    /// hardware this firmware runs on. `None` on a device with no fixed
+    /// model — a simulator, or a board brought up before it has a name —
+    /// and the property is then absent rather than empty.
+    pub dev_model: Option<&'static str>,
     /// Factory/post-reset value of `PROP_DEV_NAME`.
     pub default_device_name: &'static str,
     /// `PROP_PHY_MTU`; must not exceed [`MAX_MTU`].
@@ -3762,6 +3767,7 @@ impl<A: AesProvider, S: Sha256Provider, const TX: usize> Session<A, S, TX> {
             prop::LAST_STATUS
             | prop::PROTOCOL_VERSION
             | prop::DEV_VERSION
+            | prop::DEV_MODEL
             | prop::INTERFACE_TYPE
             | prop::CAPS
             | prop::PHY_RSSI
@@ -4045,6 +4051,9 @@ impl<A: AesProvider, S: Sha256Provider, const TX: usize> Session<A, S, TX> {
     /// write-only (`PROP_BLE_PAIRING_PIN`) and deferred-read
     /// (`PROP_PHY_RSSI`) properties that `encode_prop` cannot produce.
     fn known_prop(&self, key: u32) -> bool {
+        if key == prop::DEV_MODEL {
+            return self.config.dev_model.is_some();
+        }
         if key == prop::BATTERY {
             return self.config.battery.is_some();
         }
@@ -4125,13 +4134,10 @@ impl<A: AesProvider, S: Sha256Provider, const TX: usize> Session<A, S, TX> {
                 out[1] = ids::PROTOCOL_MINOR_VERSION;
                 2
             }
-            prop::DEV_VERSION => {
-                let bytes = self.config.dev_version.as_bytes();
-                let len = bytes.len().min(out.len() - 1);
-                out[..len].copy_from_slice(&bytes[..len]);
-                out[len] = 0; // NUL terminator per spec
-                len + 1
-            }
+            prop::DEV_VERSION => put_str(out, self.config.dev_version),
+            // Absent rather than empty on a device with no fixed model;
+            // `known_prop` refuses the get before reaching this.
+            prop::DEV_MODEL => put_str(out, self.config.dev_model.unwrap_or_default()),
             prop::INTERFACE_TYPE => pui::encode(ids::INTERFACE_TYPE, out).unwrap_or(0),
             prop::CAPS => {
                 let mut len = 0;
@@ -4441,6 +4447,18 @@ fn put(out: &mut [u8], bytes: &[u8]) -> usize {
     bytes.len()
 }
 
+/// Write a STRING property value: the bytes plus the NUL terminator the
+/// spec requires. A value too long for the buffer is truncated rather
+/// than refused — these are constant identification strings, and a
+/// shortened one is more useful to a host than an error.
+fn put_str(out: &mut [u8], value: &str) -> usize {
+    let bytes = value.as_bytes();
+    let len = bytes.len().min(out.len() - 1);
+    out[..len].copy_from_slice(&bytes[..len]);
+    out[len] = 0;
+    len + 1
+}
+
 fn parse_bool(value: &[u8]) -> Result<bool, Status> {
     match value {
         [0] => Ok(false),
@@ -4614,6 +4632,7 @@ mod tests {
     fn test_config() -> SessionConfig {
         SessionConfig {
             dev_version: "test-dev/0.1",
+            dev_model: Some("Test Board"),
             default_device_name: "Test UMSH Device",
             mtu: 255,
             sync_word: 0x1424,
@@ -4751,6 +4770,7 @@ mod tests {
         let mut session = test_session();
         assert_eq!(get(&mut session, prop::PROTOCOL_VERSION), [6, 0]);
         assert_eq!(get(&mut session, prop::DEV_VERSION), b"test-dev/0.1\0");
+        assert_eq!(get(&mut session, prop::DEV_MODEL), b"Test Board\0");
         assert_eq!(get(&mut session, prop::DEV_NAME), b"Test UMSH Device");
         assert_eq!(get(&mut session, prop::PHY_MTU), 255u16.to_le_bytes());
         assert_eq!(

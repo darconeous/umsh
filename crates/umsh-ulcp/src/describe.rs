@@ -19,6 +19,7 @@ pub const fn property_name(key: u32) -> Option<&'static str> {
         prop::LAST_STATUS => "PROP_LAST_STATUS",
         prop::PROTOCOL_VERSION => "PROP_PROTOCOL_VERSION",
         prop::DEV_VERSION => "PROP_DEV_VERSION",
+        prop::DEV_MODEL => "PROP_DEV_MODEL",
         prop::INTERFACE_TYPE => "PROP_INTERFACE_TYPE",
         prop::CAPS => "PROP_CAPS",
         prop::PHY_ENABLED => "PROP_PHY_ENABLED",

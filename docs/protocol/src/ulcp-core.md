@@ -554,6 +554,9 @@ similarly to the "User-Agent" string from HTTP. The following format is
 
 `STACK-NAME/STACK-VERSION[BUILD-INFO][; OTHER-INFO][; BUILD-DATE]`
 
+The hardware the firmware is running on belongs in
+[`PROP_DEV_MODEL`](#prop-dev-model), not here.
+
 ### PROP 3: `PROP_INTERFACE_TYPE` {#prop-interface-type}
 
 * Type: Single-Value, Constant
@@ -566,6 +569,34 @@ similarly to the "User-Agent" string from HTTP. The following format is
 
 This unsigned packed integer identifies the network protocol implemented by
 this device. It must return the value 8.
+
+### PROP 4: `PROP_DEV_MODEL` {#prop-dev-model}
+
+* Type: Single-Value, Constant
+* Asynchronous Updates: No
+* Required: **OPTIONAL**
+* Scope: Device
+* Value Type: STRING
+* Post-Reset Value: Implementation-Specific
+
+Contains a zero-terminated ASCII string naming the hardware model the device
+is, such as `Seeed SenseCAP T1000-E`. Where
+[`PROP_DEV_VERSION`](#prop-dev-version) describes the firmware a device runs,
+this describes the thing it runs on, and the two change independently: the
+same firmware release covers several models, and a model outlives every
+release built for it.
+
+Firmware built for one specific board **SHOULD** implement this. A device
+whose hardware has no fixed identity — a simulator, or an implementation that
+runs on whatever it is compiled for — **SHOULD** omit the property rather than
+return an empty or invented string. A host **MUST** treat a refused get as
+"this device does not name its hardware" and continue.
+
+The value **SHOULD** name the product as its vendor does, so that a host can
+match it against an external hardware description. It is intended for display
+and for lookup, and is deliberately not an identifier: a host that needs to
+make decisions based on what a device *can do* has
+[`PROP_CAPS`](#prop-caps) for that.
 
 ### PROP 5: `PROP_CAPS` {#prop-caps}
 

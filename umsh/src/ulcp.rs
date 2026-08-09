@@ -979,6 +979,7 @@ pub struct UlcpDevice<L> {
     max_frame_size: usize,
     t_frame_ms: u32,
     dev_version: String,
+    dev_model: Option<String>,
     /// Hardware reset cause retained by the device before our protocol reset.
     boot_status: Status,
     tids: TidAllocator,
@@ -1021,6 +1022,7 @@ where
             max_frame_size: 0,
             t_frame_ms: 0,
             dev_version: String::new(),
+            dev_model: None,
             boot_status: Status::RESET_UNKNOWN,
             tids: TidAllocator::new(),
             trace: None,
@@ -1126,6 +1128,10 @@ where
         radio.dev_version = String::from_utf8_lossy(&dev_version)
             .trim_end_matches('\0')
             .to_owned();
+        // `PROP_DEV_MODEL` is OPTIONAL, so a refusal is an answer — it
+        // means "this device does not name its hardware" — and must not
+        // fail the attach the way a missing DEV_VERSION would.
+        radio.dev_model = radio.get_prop_string_opt(prop::DEV_MODEL).await;
 
         let mtu = radio.get_prop(prop::PHY_MTU).await?;
         let [mtu_lo, mtu_hi, ..] = mtu[..] else {
@@ -1177,6 +1183,13 @@ where
     /// The device's firmware version string (`PROP_DEV_VERSION`).
     pub fn dev_version(&self) -> &str {
         &self.dev_version
+    }
+
+    /// The device's hardware model (`PROP_DEV_MODEL`), or `None` on a
+    /// device that does not implement the optional property — a
+    /// simulator, or firmware predating it.
+    pub fn dev_model(&self) -> Option<&str> {
+        self.dev_model.as_deref()
     }
 
     /// Fetch the device's human-readable `PROP_DEV_NAME`.
@@ -1582,6 +1595,7 @@ where
         self.dev_version = String::from_utf8_lossy(&dev_version)
             .trim_end_matches('\0')
             .to_owned();
+        self.dev_model = self.get_prop_string_opt(prop::DEV_MODEL).await;
 
         let mtu = self.get_prop(prop::PHY_MTU).await?;
         let [mtu_lo, mtu_hi, ..] = mtu[..] else {
@@ -1626,6 +1640,22 @@ where
         self.send(&buf[..len]).await?;
         self.finish_prop_transaction(tid, key, PropResponsePolicy::Value)
             .await
+    }
+
+    /// Fetch an OPTIONAL string property, treating a refusal as absence.
+    ///
+    /// A device that does not implement the property answers with an
+    /// error status rather than a value, which is a legitimate answer and
+    /// not a transport failure — so this collapses both to `None`. Only
+    /// for properties the spec marks OPTIONAL; a REQUIRED one that
+    /// refuses is a real fault and should stay an `Err`.
+    async fn get_prop_string_opt(&mut self, key: u32) -> Option<String> {
+        let value = self.get_prop(key).await.ok()?;
+        Some(
+            String::from_utf8_lossy(&value)
+                .trim_end_matches('\0')
+                .to_owned(),
+        )
     }
 
     /// Set a property via `CMD_PROP_SET`, returning the authoritative
@@ -2823,6 +2853,7 @@ mod tests {
                                 vec![ids::PROTOCOL_MAJOR_VERSION, ids::PROTOCOL_MINOR_VERSION]
                             }
                             prop::DEV_VERSION => b"fake-dev/0.1\0".to_vec(),
+                            prop::DEV_MODEL => b"Fake Board\0".to_vec(),
                             prop::PHY_MTU => 255u16.to_le_bytes().to_vec(),
                             _ => props.get(&key).cloned().unwrap_or_default(),
                         };
@@ -3121,6 +3152,7 @@ mod tests {
         let radio = attached_radio().await;
         assert_eq!(radio.max_frame_size(), 255);
         assert_eq!(radio.dev_version(), "fake-dev/0.1");
+        assert_eq!(radio.dev_model(), Some("Fake Board"));
         assert_eq!(radio.boot_status(), Status::RESET_POWER_ON);
         assert!(radio.t_frame_ms() > 0);
     }

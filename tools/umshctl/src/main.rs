@@ -230,10 +230,17 @@ impl App {
 
 fn announce_attached(session: &Session) {
     eprintln!(
-        "attached: {} ({}) device={} boot_status={:?} mode={}",
+        "attached: {} ({}) device={}{} boot_status={:?} mode={}",
         session.label,
         session.target.transport(),
         session.device.dev_version(),
+        // `PROP_DEV_MODEL` is optional; say nothing rather than "unknown"
+        // when the device does not name its hardware.
+        session
+            .device
+            .dev_model()
+            .map(|model| format!(" on {model}"))
+            .unwrap_or_default(),
         session.device.boot_status(),
         if session.is_administrative() {
             "administrative"

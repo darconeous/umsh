@@ -390,23 +390,32 @@ mod firmware {
         frame_out: heapless09::Vec<u8, BLE_VALUE_MAX>,
     }
 
-    /// `PROP_DEV_VERSION`: the board's firmware name and `git describe
-    /// --always` (from the build script), nothing else. Boot
-    /// diagnostics stay on the debug console.
+    /// `PROP_DEV_VERSION`: the stack name and the release version from the
+    /// build script, in the `STACK-NAME/STACK-VERSION` form the spec
+    /// recommends. It names the firmware and nothing else — which board it
+    /// is running on is `PROP_DEV_MODEL`'s job, and boot diagnostics stay
+    /// on the debug console.
+    const DEV_VERSION: &str = concat!("umsh/", env!("GIT_DESCRIBE"));
+
+    /// `PROP_DEV_MODEL`: the hardware this image was built for. These
+    /// strings are the `description` fields of the board presets in
+    /// `scripts/firmware_image.py`, so a device can be matched against a
+    /// release manifest entry and against `site/data/hardware.toml`.
     #[cfg(feature = "board-techo")]
-    const DEV_VERSION: &str = concat!("umsh-techo ", env!("GIT_DESCRIBE"));
+    const DEV_MODEL: &str = "LilyGO T-Echo";
     #[cfg(feature = "t1000e")]
-    const DEV_VERSION: &str = concat!("umsh-t1000e ", env!("GIT_DESCRIBE"));
+    const DEV_MODEL: &str = "Seeed SenseCAP T1000-E";
     #[cfg(feature = "board-sensecap-solar")]
-    const DEV_VERSION: &str = concat!("umsh-sensecap-solar ", env!("GIT_DESCRIBE"));
+    const DEV_MODEL: &str = "SenseCAP Solar Node P1 / P1-Pro";
     #[cfg(feature = "board-wio-tracker-l1")]
-    const DEV_VERSION: &str = concat!("umsh-wio-tracker-l1 ", env!("GIT_DESCRIBE"));
+    const DEV_MODEL: &str = "Seeed Wio Tracker L1 / L1 Pro";
     #[cfg(feature = "board-xiao-nrf52")]
-    const DEV_VERSION: &str = concat!("umsh-xiao-nrf52 ", env!("GIT_DESCRIBE"));
+    const DEV_MODEL: &str = "Seeed XIAO nRF52840 + Wio-SX1262 Kit";
 
     fn session_config() -> SessionConfig {
         SessionConfig {
             dev_version: DEV_VERSION,
+            dev_model: Some(DEV_MODEL),
             default_device_name: default_device_name(),
             mtu: MAX_PAYLOAD as u16,
             // Fixed at build time: LoRa::new(.., false, ..) below sets the

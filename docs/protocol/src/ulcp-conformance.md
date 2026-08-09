@@ -62,6 +62,10 @@ Id  | Mnemonic                | Required
 42  | `PROP_PHY_MTU`          | Always
 113 | `STR_PHY_RAW`           | Always
 
+`PROP_DEV_MODEL` (4) is the one property that is neither always required nor
+capability-gated: firmware built for a specific board **SHOULD** implement it,
+and anything else omits it. A host discovers it by asking.
+
 Every other property is gated by a capability. A device that does not
 advertise the capability does not implement the property, and rejects it
 with `STATUS_PROP_NOT_FOUND` or `STATUS_UNIMPLEMENTED`.

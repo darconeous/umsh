@@ -287,6 +287,9 @@ impl SimulatedDevice {
 fn session_config() -> SessionConfig {
     SessionConfig {
         dev_version: "umsh-web-sim/0.1",
+        // The simulator is not a board, and saying so exercises the
+        // absent-model path a host has to tolerate.
+        dev_model: None,
         default_device_name: "Browser simulated device",
         mtu: 255,
         sync_word: 0x1424,

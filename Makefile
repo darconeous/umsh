@@ -12,6 +12,10 @@
 	build-techo flash-techo \
 	build-heltec-v3-console flash-heltec-v3-console \
 	build-heltec-v3 flash-heltec-v3 \
+	dfu-zip-techo dfu-zip-t1000e dfu-zip-sensecap-solar \
+	dfu-zip-wio-tracker-l1 dfu-zip-xiao-nrf52 \
+	merged-bin-heltec-v3 \
+	release-artifacts release-stage release-publish release-mirror \
 	ios-mobile-core ios-archive ios-upload \
 	install-umshctl install-umsh-bridge install-dissector install-extcap \
 	install-colorfilters
@@ -44,6 +48,30 @@
 
 TARGET_DIR := target/thumbv7em-none-eabihf/release
 
+# Release staging. `VERSION` names the release being cut and lands in every
+# artifact filename; `release-artifacts` refuses to run with the default, so
+# the convert-only targets below stay usable for bench work without anyone
+# having to invent a version number.
+VERSION ?= dev
+FW_DIR := target/firmware-release/$(VERSION)
+RELEASE_TAG = fw-$(VERSION)
+
+# The version the firmware reports as PROP_DEV_VERSION. Empty for ordinary
+# builds, which makes each build.rs fall back to `git describe`;
+# release-artifacts sets it to the tag.
+#
+# It has to travel through the environment because that is what cargo can
+# watch: build.rs declares `rerun-if-env-changed=UMSH_FW_VERSION`, so
+# changing it forces the rebuild. Creating a tag, by contrast, touches
+# neither HEAD nor any ref build.rs depends on — without this, tagging and
+# then packaging would quietly ship the pre-tag binary.
+UMSH_FW_VERSION ?=
+export UMSH_FW_VERSION
+
+# The five boards that ship a UF2 and a DFU package. heltec-v3 is handled
+# on its own — it has no UF2 bootloader and a different artifact entirely.
+RELEASE_BOARDS_NRF52 = techo t1000e sensecap-solar wio-tracker-l1 xiao-nrf52
+
 build-techo-console:
 	cd firmware/techo-console && cargo build --release
 	scripts/mkimage.py --board techo $(TARGET_DIR)/firmware-techo-console
@@ -54,7 +82,7 @@ flash-techo-console: build-techo-console
 
 build-techo:
 	cd firmware/techo && cargo build --release
-	scripts/mkimage.py --board techo $(TARGET_DIR)/firmware-techo
+	scripts/mkimage.py --board techo --hex $(TARGET_DIR)/firmware-techo
 
 flash-techo: build-techo
 	scripts/flash.py --board techo --copy-default \
@@ -70,7 +98,7 @@ flash-wio-tracker-l1-console: build-wio-tracker-l1-console
 
 build-wio-tracker-l1:
 	cd firmware/wio-tracker-l1 && cargo build --release
-	scripts/mkimage.py --board wio-tracker-l1 $(TARGET_DIR)/firmware-wio-tracker-l1
+	scripts/mkimage.py --board wio-tracker-l1 --hex $(TARGET_DIR)/firmware-wio-tracker-l1
 
 flash-wio-tracker-l1: build-wio-tracker-l1
 	scripts/flash.py --board wio-tracker-l1 --copy-default \
@@ -92,15 +120,39 @@ flash-t1000e-console: build-t1000e-console
 DFU_SERIAL_PORT ?= /dev/tty.usbmodem1101
 NRFUTIL ?= adafruit-nrfutil
 
+# SoftDevice firmware IDs, passed as `--sd-req` so a package refuses to
+# install on a board running a different SoftDevice. adafruit-nrfutil
+# defaults to 0xFFFE ("any"), which is fine for a zip you built yourself
+# thirty seconds ago and wrong for one published on the internet: the app
+# base address differs with the SoftDevice (0x26000 under 6.1.1, 0x27000
+# under 7.3.0), so the wrong image lands at the wrong offset. This is what
+# stops that.
+#
+# Named by SoftDevice rather than by board because that is what the value
+# actually identifies — which board uses which is a property of the board's
+# `base` in scripts/firmware_image.py, and of `softdevice` in
+# site/data/hardware.toml.
+SD_REQ_S140_6_1_1 := 0x00B6
+SD_REQ_S140_7_3_0 := 0x0123
+
+# Package only: $(1) is the ELF path without extension (mkimage.py wrote
+# $(1).hex next to it), $(2) the SoftDevice requirement, $(3) the output
+# zip. Separate from dfu-serial so a release can produce the package
+# without a board attached.
+define dfu-genpkg
+	@mkdir -p $(dir $(3))
+	$(NRFUTIL) dfu genpkg --dev-type 0x0052 --sd-req $(2) \
+		--application $(1).hex $(3)
+endef
+
 define dfu-serial
-	$(NRFUTIL) dfu genpkg --dev-type 0x0052 \
-		--application $(1).hex $(1).zip
+	$(call dfu-genpkg,$(1),$(2),$(1).zip)
 	$(NRFUTIL) --verbose dfu serial -pkg $(1).zip \
 		-p $(DFU_SERIAL_PORT) -b 115200
 endef
 
 flash-t1000e-console-serial: build-t1000e-console
-	$(call dfu-serial,$(TARGET_DIR)/firmware-t1000e-console)
+	$(call dfu-serial,$(TARGET_DIR)/firmware-t1000e-console,$(SD_REQ_S140_7_3_0))
 
 # SenseCAP Solar Node P1-Pro. Same UF2/DFU posture as the Wio Tracker
 # (Seeed XIAO nRF52840 bootloader, UF2 mass-storage drive). The board
@@ -116,7 +168,7 @@ flash-sensecap-solar-console: build-sensecap-solar-console
 
 build-sensecap-solar:
 	cd firmware/sensecap-solar && cargo build --release
-	scripts/mkimage.py --board sensecap-solar $(TARGET_DIR)/firmware-sensecap-solar
+	scripts/mkimage.py --board sensecap-solar --hex $(TARGET_DIR)/firmware-sensecap-solar
 
 flash-sensecap-solar: build-sensecap-solar
 	scripts/flash.py --board sensecap-solar --copy-default \
@@ -131,7 +183,7 @@ flash-sensecap-solar: build-sensecap-solar
 # copied with no error and silently not written.
 build-xiao-nrf52:
 	cd firmware/xiao-nrf52 && cargo build --release
-	scripts/mkimage.py --board xiao-nrf52 $(TARGET_DIR)/firmware-xiao-nrf52
+	scripts/mkimage.py --board xiao-nrf52 --hex $(TARGET_DIR)/firmware-xiao-nrf52
 
 flash-xiao-nrf52: build-xiao-nrf52
 	scripts/flash.py --board xiao-nrf52 --copy-default \
@@ -150,7 +202,33 @@ flash-t1000e: build-t1000e
 # from software — and the button path lands in the UF2 bootloader, which this
 # target cannot talk to. Use `flash-t1000e` there.
 flash-t1000e-serial: build-t1000e
-	$(call dfu-serial,$(TARGET_DIR)/firmware-t1000e)
+	$(call dfu-serial,$(TARGET_DIR)/firmware-t1000e,$(SD_REQ_S140_7_3_0))
+
+# ─── Release artifact conversion ─────────────────────────────────────────────
+#
+# Convert-only counterparts to the flash-* targets, writing into $(FW_DIR)
+# under the release filenames. `release-artifacts` drives all of them; they
+# are also the way to get a DFU package or a merged ESP32 image onto the
+# bench without flashing anything.
+#
+# There is deliberately no `uf2-<board>` here: `build-<board>` already
+# writes the UF2, and the release copies that exact file rather than
+# converting a second time.
+
+dfu-zip-techo: build-techo
+	$(call dfu-genpkg,$(TARGET_DIR)/firmware-techo,$(SD_REQ_S140_6_1_1),$(FW_DIR)/umsh-techo-$(VERSION)-dfu.zip)
+
+dfu-zip-t1000e: build-t1000e
+	$(call dfu-genpkg,$(TARGET_DIR)/firmware-t1000e,$(SD_REQ_S140_7_3_0),$(FW_DIR)/umsh-t1000e-$(VERSION)-dfu.zip)
+
+dfu-zip-sensecap-solar: build-sensecap-solar
+	$(call dfu-genpkg,$(TARGET_DIR)/firmware-sensecap-solar,$(SD_REQ_S140_7_3_0),$(FW_DIR)/umsh-sensecap-solar-$(VERSION)-dfu.zip)
+
+dfu-zip-wio-tracker-l1: build-wio-tracker-l1
+	$(call dfu-genpkg,$(TARGET_DIR)/firmware-wio-tracker-l1,$(SD_REQ_S140_7_3_0),$(FW_DIR)/umsh-wio-tracker-l1-$(VERSION)-dfu.zip)
+
+dfu-zip-xiao-nrf52: build-xiao-nrf52
+	$(call dfu-genpkg,$(TARGET_DIR)/firmware-xiao-nrf52,$(SD_REQ_S140_7_3_0),$(FW_DIR)/umsh-xiao-nrf52-$(VERSION)-dfu.zip)
 
 # ─── ESP32 firmware (firmware-esp32/ sibling workspace) ──────────────────────
 #
@@ -175,19 +253,142 @@ ESPFLASH_PORT_ARG = $(if $(ESPFLASH_PORT),--port $(ESPFLASH_PORT),)
 # loses whatever lived past the old factory partition.
 ESPFLASH_PARTITIONS = --partition-table firmware-esp32/partitions-umsh.csv
 
+# espup writes this on install; it puts the Xtensa GCC binaries on PATH and
+# points LIBCLANG_PATH at the Xtensa clang, without which the build fails in
+# a way that looks nothing like its cause. Sourcing it here rather than
+# expecting it in the caller's shell is what lets `release-artifacts` build
+# all six boards in one invocation. Guarded, so a machine that installed the
+# toolchain some other way is unaffected. (Unrelated to the "don't set
+# LIBCLANG_PATH" rule in CLAUDE.md, which is about the nRF52 workspace's
+# bindgen; the Xtensa toolchain genuinely needs it.)
+ESP_EXPORT ?= $(HOME)/export-esp.sh
+ESP_ENV = if [ -f $(ESP_EXPORT) ]; then . $(ESP_EXPORT); fi;
+
 build-heltec-v3-console:
-	cd firmware-esp32/firmware/heltec-v3-console && cargo build --release
+	$(ESP_ENV) cd firmware-esp32/firmware/heltec-v3-console && cargo build --release
 
 flash-heltec-v3-console: build-heltec-v3-console
 	espflash flash --monitor $(ESPFLASH_PORT_ARG) $(ESPFLASH_PARTITIONS) \
 		$(ESP32S3_TARGET_DIR)/firmware-heltec-v3-console
 
 build-heltec-v3:
-	cd firmware-esp32/firmware/heltec-v3 && cargo build --release
+	$(ESP_ENV) cd firmware-esp32/firmware/heltec-v3 && cargo build --release
 
 flash-heltec-v3: build-heltec-v3
 	espflash flash --monitor $(ESPFLASH_PORT_ARG) $(ESPFLASH_PARTITIONS) \
 		$(ESP32S3_TARGET_DIR)/firmware-heltec-v3
+
+# The single-file image the web flasher writes at offset 0: second-stage
+# bootloader, partition table, and application merged together.
+#
+# `--skip-padding` is not an optimization. Without it espflash pads the
+# image out to the full flash size with 0xFF, and writing that at 0x0 runs
+# straight over the `umsh` data partition at 0x300000 — every device would
+# lose its identity and saved state on update. With it the image stops after
+# the application and 0x300000 is never touched.
+merged-bin-heltec-v3: build-heltec-v3
+	@mkdir -p $(FW_DIR)
+	espflash save-image --chip esp32s3 --merge --skip-padding -s 4mb \
+		$(ESPFLASH_PARTITIONS) \
+		$(ESP32S3_TARGET_DIR)/firmware-heltec-v3 \
+		$(FW_DIR)/umsh-heltec-v3-$(VERSION).bin
+
+# ─── Firmware releases ───────────────────────────────────────────────────────
+#
+# The whole flow, in order:
+#
+#     git tag -a fw-2026.08.01 -m "UMSH firmware 2026.08.01"
+#     make release-artifacts VERSION=2026.08.01
+#     ... bench-verify the staged artifacts ...
+#     git push origin main --follow-tags
+#     make release-publish VERSION=2026.08.01
+#     make release-mirror  VERSION=2026.08.01   && git push origin gh-pages
+#
+# Releases are cut locally rather than in CI: this machine has the Xtensa
+# toolchain the merged ESP32 image needs, and it builds xiao-nrf52, which
+# CI does not. See docs/firmware-releases.md.
+
+release-artifacts:
+	@test "$(VERSION)" != "dev" || { \
+		echo "name the release: make release-artifacts VERSION=2026.08.01"; \
+		exit 1; }
+	@git diff --quiet && git diff --cached --quiet || { \
+		echo "working tree is dirty; commit or stash before cutting a release"; \
+		exit 1; }
+	@git rev-parse -q --verify "$(RELEASE_TAG)^{tag}" >/dev/null || { \
+		echo "no annotated tag $(RELEASE_TAG). Create it first:"; \
+		echo "    git tag -a $(RELEASE_TAG) -m \"UMSH firmware $(VERSION)\""; \
+		exit 1; }
+	@test "$$(git rev-parse HEAD)" = "$$(git rev-parse "$(RELEASE_TAG)^{commit}")" || { \
+		echo "HEAD is not at $(RELEASE_TAG); check out the tagged commit"; \
+		exit 1; }
+	rm -rf $(FW_DIR)
+	@mkdir -p $(FW_DIR)
+	$(MAKE) release-stage VERSION=$(VERSION) UMSH_FW_VERSION=$(RELEASE_TAG)
+	scripts/release.py --version $(VERSION)
+	@echo
+	@echo "Staged in $(FW_DIR). Verify on hardware before publishing."
+
+# The build half, split out so the guards above run once and the version
+# reaches every board's build.rs through the environment. Each dfu-zip-*
+# depends on its build-*, which is also what writes the UF2 the copy below
+# picks up — the release never re-converts an image, it ships the one the
+# build produced.
+release-stage: $(addprefix dfu-zip-,$(RELEASE_BOARDS_NRF52)) merged-bin-heltec-v3
+	@for board in $(RELEASE_BOARDS_NRF52); do \
+		cp $(TARGET_DIR)/firmware-$$board.uf2 \
+			$(FW_DIR)/umsh-$$board-$(VERSION).uf2 || exit 1; \
+	done
+	@echo "release-stage: collected $(words $(RELEASE_BOARDS_NRF52)) UF2 images"
+
+# Attach the staged artifacts to a GitHub Release: the archival home for
+# every file, and the download URL the manifest points at. Drafted rather
+# than published outright, so the asset list can be looked at before anyone
+# else can see it — promote it from the web UI, or with
+# `gh release edit $(RELEASE_TAG) --draft=false`.
+release-publish:
+	@test -f $(FW_DIR)/manifest.json || { \
+		echo "nothing staged for $(VERSION); run: make release-artifacts VERSION=$(VERSION)"; \
+		exit 1; }
+	gh release create $(RELEASE_TAG) --draft \
+		--title "UMSH firmware $(VERSION)" \
+		--notes "Technology preview. See docs/firmware-releases.md for what is in here and how to flash it." \
+		$(FW_DIR)/umsh-*-$(VERSION).uf2 \
+		$(FW_DIR)/umsh-*-$(VERSION)-dfu.zip \
+		$(FW_DIR)/umsh-heltec-v3-$(VERSION).bin \
+		$(FW_DIR)/manifest.json \
+		$(FW_DIR)/SHA256SUMS
+	@echo
+	@echo "Drafted. Review the assets, then: gh release edit $(RELEASE_TAG) --draft=false"
+
+# Copy what the web flasher fetches into the published tree, same-origin.
+#
+# GitHub's release assets send no CORS headers, so a page on umsh.dev cannot
+# fetch() them — hence this mirror. Only what is actually fetched goes here:
+# the DFU packages and the merged ESP32 image. UF2 files are left on the
+# Release, because a browser cannot write a mass-storage volume anyway and
+# the download-and-drag flow works fine from a plain GitHub link.
+MIRROR_KEEP ?= 3
+
+release-mirror:
+	@test "$(VERSION)" != "dev" || { \
+		echo "name the release: make release-mirror VERSION=2026.08.01"; exit 1; }
+	@test -f $(FW_DIR)/manifest.json || { \
+		echo "nothing staged for $(VERSION); run: make release-artifacts VERSION=$(VERSION)"; \
+		exit 1; }
+	$(gh-pages-open)
+	@# Version directories are immutable: every URL under one is meant to be
+	@# cacheable forever, which only holds if the bytes never change.
+	@test ! -d $(GH_PAGES_WT)/firmware/$(VERSION) || { \
+		echo "/firmware/$(VERSION) is already published — bump the version"; \
+		git worktree remove $(GH_PAGES_WT); exit 1; }
+	mkdir -p $(GH_PAGES_WT)/firmware/$(VERSION)
+	cp $(FW_DIR)/umsh-*-$(VERSION)-dfu.zip \
+		$(FW_DIR)/umsh-heltec-v3-$(VERSION).bin \
+		$(FW_DIR)/manifest.json \
+		$(GH_PAGES_WT)/firmware/$(VERSION)/
+	scripts/release.py --index-mirror $(GH_PAGES_WT)/firmware --keep $(MIRROR_KEEP)
+	$(call gh-pages-commit,firmware: mirror $(RELEASE_TAG))
 
 
 # ─── iOS app (apps/ios) ──────────────────────────────────────────────────────
@@ -399,12 +600,16 @@ site-preview: site docs rust-docs-nightly
 #   /              the Zola site — wiped and replaced on every run
 #   /docs/protocol the mdBook spec — wiped and replaced on every run
 #   /docs/rust     rustdoc — wiped and replaced on every run
-#   /firmware      release artifacts, written by the firmware release flow
+#   /firmware      release artifacts, written by `release-mirror`
 #   /tools         reserved for the ULCP web debugger
 #
 # Anything landing at the published root outside Zola's control has to be
-# added to the preserve list below, or the next deploy deletes it.
-gh-pages: site docs rust-docs-nightly
+# added to the preserve list in `gh-pages`, or the next deploy deletes it.
+
+# Check out the published branch and sync it with origin. Shared by
+# `gh-pages` and `release-mirror`, which write disjoint parts of the same
+# tree and must not each grow their own copy of this.
+define gh-pages-open
 	@if ! git show-ref --quiet refs/heads/gh-pages; then \
 		echo "Creating gh-pages branch..."; \
 		git worktree add $(GH_PAGES_WT) --orphan -b gh-pages; \
@@ -420,6 +625,23 @@ gh-pages: site docs rust-docs-nightly
 		git -C $(GH_PAGES_WT) merge --ff-only origin/gh-pages || \
 			{ echo "gh-pages has diverged from origin. Reconcile it by hand."; exit 1; }; \
 	fi
+endef
+
+# Commit the worktree and close it. $(1) is the commit message. Neither
+# caller pushes: what reaches the internet stays a deliberate act.
+define gh-pages-commit
+	@# Pushing a tree with no CNAME makes GitHub drop the custom domain.
+	@test -s $(GH_PAGES_WT)/CNAME || \
+		{ echo "CNAME missing from the published tree — refusing to publish."; exit 1; }
+	cd $(GH_PAGES_WT) && \
+		git add -A && \
+		git diff --cached --quiet || git commit -m "$(1)"
+	git worktree remove $(GH_PAGES_WT)
+	@echo "gh-pages branch updated. Push with: git push origin gh-pages"
+endef
+
+gh-pages: site docs rust-docs-nightly
+	$(gh-pages-open)
 	find $(GH_PAGES_WT) -mindepth 1 -maxdepth 1 \
 		! -name .git ! -name docs ! -name firmware ! -name tools \
 		-exec rm -rf {} +
@@ -430,11 +652,4 @@ gh-pages: site docs rust-docs-nightly
 	cp -R target/doc/. $(GH_PAGES_WT)/docs/rust/
 	cp docs/rust-index.html $(GH_PAGES_WT)/docs/rust/index.html
 	touch $(GH_PAGES_WT)/.nojekyll
-	@# Pushing a tree with no CNAME makes GitHub drop the custom domain.
-	@test -s $(GH_PAGES_WT)/CNAME || \
-		{ echo "CNAME missing from the built site — refusing to publish."; exit 1; }
-	cd $(GH_PAGES_WT) && \
-		git add -A && \
-		git diff --cached --quiet || git commit -m "Update GitHub Pages"
-	git worktree remove $(GH_PAGES_WT)
-	@echo "gh-pages branch updated. Push with: git push origin gh-pages"
+	$(call gh-pages-commit,Update GitHub Pages)

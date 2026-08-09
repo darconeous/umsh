@@ -47,6 +47,14 @@ entry, UF2 families, and flash-layout gotchas: see the `flashing` skill.
 
 Docs: `make docs` (mdBook), `make rust-docs`, `make docs-serve`, `make web-debugger` (wasm).
 
+## Releasing firmware
+
+Tagged `fw-YYYY.MM.NN` (annotated), cut locally: `make release-artifacts VERSION=…`,
+then `release-publish` and `release-mirror`. GitHub Releases are the archive;
+`umsh.dev/firmware/` mirrors what the web flasher can actually `fetch()`, because
+GitHub's release assets send no CORS headers. Runbook, artifact table, manifest
+schema, and the hardware checklist: `docs/firmware-releases.md`.
+
 ## Quirks & conventions
 
 - **Serial ports**: never use shell redirection (`<`/`>`/`exec`) against `/dev/cu.usbmodem*` — use kermit/screen or ask the user. Before diagnosing "dead" hardware, check `ps` for orphaned background serial watchers holding the port.

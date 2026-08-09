@@ -20,6 +20,10 @@ pub mod prop {
     pub const DEV_VERSION: u32 = 2;
     /// Interface type discriminator (`PROP_INTERFACE_TYPE`).
     pub const INTERFACE_TYPE: u32 = 3;
+    /// Hardware model name (`PROP_DEV_MODEL`) — what the board *is*, where
+    /// `DEV_VERSION` is what it *runs*. Optional and ungated: a device
+    /// that cannot name its own hardware refuses the get.
+    pub const DEV_MODEL: u32 = 4;
     /// Supported capability list (`PROP_CAPS`).
     pub const CAPS: u32 = 5;
     /// PHY enabled flag (`PROP_PHY_ENABLED`).

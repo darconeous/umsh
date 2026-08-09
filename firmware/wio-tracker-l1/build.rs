@@ -23,10 +23,22 @@ fn main() {
     println!("cargo:rerun-if-changed=memory.x");
     println!("cargo:rerun-if-changed=build.rs");
 
-    // `PROP_DEV_VERSION` reports this: a bare short hash today, and the
-    // nearest-tag form automatically once release tags exist. Falls back
-    // to "unknown" if git is unavailable or the build is outside a repo.
-    let describe = git_output(&["describe", "--always"]).unwrap_or_else(|| "unknown".to_string());
+    // `PROP_DEV_VERSION` reports this. `UMSH_FW_VERSION` wins when set:
+    // the release build passes the tag explicitly, because creating a tag
+    // touches neither HEAD nor the branch ref, so the `git describe` below
+    // would happily hand back a cached pre-tag build. Otherwise ask Git,
+    // matching only firmware tags so a future crate or app tag can never
+    // claim the firmware version. Falls back to "unknown" outside a repo.
+    println!("cargo:rerun-if-env-changed=UMSH_FW_VERSION");
+    let describe = std::env::var("UMSH_FW_VERSION")
+        .ok()
+        .filter(|version| !version.is_empty())
+        .or_else(|| {
+            git_output(&[
+                "describe", "--tags", "--match", "fw-*", "--always", "--dirty",
+            ])
+        })
+        .unwrap_or_else(|| "unknown".to_string());
     println!("cargo:rustc-env=GIT_DESCRIBE={describe}");
     // `.git/HEAD` contains a stable `ref: ...` line on a normal branch; the
     // referenced file changes on commit, not HEAD itself. Ask Git for both

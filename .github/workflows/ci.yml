@@ -120,6 +120,10 @@ jobs:
             make_target: build-wio-tracker-l1
           - board: wio-tracker-l1-console
             make_target: build-wio-tracker-l1-console
+          # No console harness for this board — new boards ship the device
+          # image only.
+          - board: xiao-nrf52
+            make_target: build-xiao-nrf52
     steps:
       - uses: actions/checkout@v4
 

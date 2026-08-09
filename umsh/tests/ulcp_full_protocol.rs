@@ -44,6 +44,7 @@ fn engine() -> CryptoEngine<SoftwareAes, SoftwareSha256> {
 fn session_config() -> SessionConfig {
     SessionConfig {
         dev_version: "sim-dev/0.1",
+        dev_model: Some("Simulated Board"),
         default_device_name: "Simulated Device",
         mtu: 255,
         sync_word: 0x1424,

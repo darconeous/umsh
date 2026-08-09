@@ -132,9 +132,15 @@ const BLE_VALUE_MAX: usize = 252;
 
 const DEFAULT_DEVICE_NAME: &str = "UMSH Heltec V3";
 
-/// `PROP_DEV_VERSION`: the board's firmware name and `git describe
-/// --always` (from the build script), nothing else.
-const DEV_VERSION: &str = concat!("umsh-heltec-v3 ", env!("GIT_DESCRIBE"));
+/// `PROP_DEV_VERSION`: the stack name and the release version from the
+/// build script, in the `STACK-NAME/STACK-VERSION` form the spec
+/// recommends. Which board it runs on is `PROP_DEV_MODEL`'s job.
+const DEV_VERSION: &str = concat!("umsh/", env!("GIT_DESCRIBE"));
+
+/// `PROP_DEV_MODEL`: the hardware this image was built for, matching the
+/// board id `heltec-v3` used by the release manifest and
+/// `site/data/hardware.toml`.
+const DEV_MODEL: &str = "Heltec WiFi LoRa 32 V3";
 
 /// The board default name plus a stable per-die suffix — the low 16
 /// bits of the factory eFuse MAC, the same die-unique value the BLE
@@ -195,6 +201,7 @@ struct UlcpService {
 fn session_config() -> SessionConfig {
     SessionConfig {
         dev_version: DEV_VERSION,
+        dev_model: Some(DEV_MODEL),
         default_device_name: default_device_name(),
         mtu: MAX_PAYLOAD as u16,
         // Fixed at build time: LoRa::new(.., false, ..) below sets the

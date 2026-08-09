@@ -199,6 +199,20 @@ const PROPERTY_SPECS: &[PropertySpec] = &[
         None,
         None,
     ),
+    // Optional and ungated, so it is fetched by the post-attach refresh
+    // rather than the handshake — a device that refuses it simply shows
+    // nothing, instead of stalling the attach announcement on a value
+    // that may never arrive.
+    spec(
+        prop::DEV_MODEL,
+        "Protocol",
+        "Hardware model this firmware runs on",
+        true,
+        false,
+        "none",
+        None,
+        None,
+    ),
     spec(
         prop::INTERFACE_TYPE,
         "Protocol",
@@ -1380,7 +1394,7 @@ fn decode_property(key: u32, value: &[u8]) -> Option<DecodedValue> {
         prop::PROTOCOL_VERSION if value.len() == 2 => {
             ("version", format!("{}.{}", value[0], value[1]))
         }
-        prop::DEV_VERSION => {
+        prop::DEV_VERSION | prop::DEV_MODEL => {
             let value = value.strip_suffix(&[0]).unwrap_or(value);
             ("string", String::from_utf8(value.to_vec()).ok()?)
         }
