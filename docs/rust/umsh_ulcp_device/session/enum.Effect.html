@@ -38,7 +38,7 @@
     ProvisionIdentity {
         tid: <a class="primitive" href="https://doc.rust-lang.org/nightly/std/primitive.u8.html">u8</a>,
     },
-    ApplyAlert(AlertState),
+    ApplyAlert(<a class="enum" href="../../umsh_ulcp/alert/enum.AlertState.html" title="enum umsh_ulcp::alert::AlertState">AlertState</a>),
     FactoryReset,
 </details>}</code></pre><details class="toggle top-doc" open><summary class="hideme"><span>Expand description</span></summary><div class="docblock"><p>A radio side effect for the caller to execute.</p>
 </div></details><h2 id="variants" class="variants section-header">Variants<a href="#variants" class="anchor">§</a></h2><div class="variants"><section id="variant.ApplyRadio" class="variant"><a href="#variant.ApplyRadio" class="anchor">§</a><h3 class="code-header">ApplyRadio(<a class="struct" href="struct.RadioSettings.html" title="struct umsh_ulcp_device::session::RadioSettings">RadioSettings</a>)</h3></section><div class="docblock"><p>The radio configuration changed; (re)apply it.</p>
@@ -103,7 +103,7 @@ secret from a cryptographically secure RNG when the request is
 with <a href="struct.Session.html#method.respond_identity" title="method umsh_ulcp_device::session::Session::respond_identity"><code>Session::respond_identity</code></a>. Success must not be
 reported before the identity is durably stored (spec
 §PROP_DEV_PRIVATE_KEY).</p>
-</div><div class="sub-variant" id="variant.ProvisionIdentity.fields"><h4>Fields</h4><div class="sub-variant-field"><span id="variant.ProvisionIdentity.field.tid" class="section-header"><a href="#variant.ProvisionIdentity.field.tid" class="anchor field">§</a><code>tid: <a class="primitive" href="https://doc.rust-lang.org/nightly/std/primitive.u8.html">u8</a></code></span></div></div><section id="variant.ApplyAlert" class="variant"><a href="#variant.ApplyAlert" class="anchor">§</a><h3 class="code-header">ApplyAlert(AlertState)</h3></section><div class="docblock"><p>The locate alert changed; start or stop the board’s physical
+</div><div class="sub-variant" id="variant.ProvisionIdentity.fields"><h4>Fields</h4><div class="sub-variant-field"><span id="variant.ProvisionIdentity.field.tid" class="section-header"><a href="#variant.ProvisionIdentity.field.tid" class="anchor field">§</a><code>tid: <a class="primitive" href="https://doc.rust-lang.org/nightly/std/primitive.u8.html">u8</a></code></span></div></div><section id="variant.ApplyAlert" class="variant"><a href="#variant.ApplyAlert" class="anchor">§</a><h3 class="code-header">ApplyAlert(<a class="enum" href="../../umsh_ulcp/alert/enum.AlertState.html" title="enum umsh_ulcp::alert::AlertState">AlertState</a>)</h3></section><div class="docblock"><p>The locate alert changed; start or stop the board’s physical
 indication. Carries the authoritative new state, so a board can
 treat it as idempotent — it is emitted for a host write, a local
 cancellation, and the deadline alike.</p>

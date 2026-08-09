@@ -71,7 +71,7 @@
       <div class="prose prose--center"><div class="notice">
 <p><strong>A browser-based flasher is on the way.</strong> The plan is the
 usual thing: plug the radio into a USB port, pick it from a list, click a
-button, and let the page do the rest — no toolchain, no downloads, no command
+button, and let the page do the rest—no toolchain, no downloads, no command
 line. It will need Chrome, Edge, or Opera, since those are the browsers that
 can talk to serial devices.</p>
 <p>It is not built yet, and it is waiting on a firmware release process so
@@ -79,7 +79,7 @@ that there is something for it to install. Until then, flashing means
 building from source, which is not difficult.</p>
 </div>
 <h2 id="building-and-flashing-from-source">Building and flashing from source</h2>
-<p>You will need a Rust toolchain, and nothing else — Rust cross-compiles for the
+<p>You will need a Rust toolchain, and nothing else—Rust cross-compiles for the
 nRF52840 on its own, with no separate embedded toolchain to install. Clone the
 repository, put your board into its bootloader as described below, and run the
 one command for it. The firmware only links in release mode, which the make
@@ -92,7 +92,7 @@ their own Rust compiler:</p>
 </code></pre>
 <p>The instructions below cover getting each board into its bootloader, which is
 the part that differs. If a flash appears to succeed but the board comes back
-running the same firmware it had before, read the notes for your board — on
+running the same firmware it had before, read the notes for your board—on
 some of them that failure is completely silent.</p>
 </div>
     </div>
@@ -224,7 +224,7 @@ some of them that failure is completely silent.</p>
           <span class="card__eyebrow">Heltec</span>
           <h3>WiFi LoRa 32 V3</h3>
 
-          <p><strong>Getting into the bootloader.</strong> None needed — the board enters its ROM bootloader on its own when the flashing tool asserts the USB serial control lines.</p>
+          <p><strong>Getting into the bootloader.</strong> None needed—the board enters its ROM bootloader on its own when the flashing tool asserts the USB serial control lines.</p>
 
           <p><strong>Building and flashing.</strong></p>
           <pre><code>make flash-heltec-v3</code></pre>
