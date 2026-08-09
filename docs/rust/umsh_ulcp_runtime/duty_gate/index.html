@@ -2,11 +2,11 @@
 <p><code>PROP_PHY_DUTY_LIMIT</code> bounds the <em>combined</em> airtime of every radio
 client (device-node plan increment 4). The session already prices
 and records its own transmissions against the shared
-<a href="../../umsh_ulcp_device/duty/struct.DutyLedger.html" title="struct umsh_ulcp_device::duty::DutyLedger"><code>DutyLedger</code></a>; this wrapper is the node-side counterpart: it sits
+[<code>DutyLedger</code>]; this wrapper is the node-side counterpart: it sits
 between the node’s MAC and its virtual mux bundle, admits each
 transmit against the combined budget, and records the airtime once
 the transmit completes.</p>
-<p>A refused transmit is reported as <a href="../../umsh_hal/enum.TxError.html#variant.CadTimeout" title="variant umsh_hal::TxError::CadTimeout"><code>TxError::CadTimeout</code></a> — the one
+<p>A refused transmit is reported as [<code>TxError::CadTimeout</code>] — the one
 transmit error the MAC treats as “channel unavailable right now”:
 it backs off with jitter, retries a bounded number of times, and
 then drops the frame. Any other error would surface as a fatal
@@ -15,4 +15,4 @@ consequence of duty limiting. A budget exhausted this hour rarely
 recovers within the MAC’s short backoff horizon, so a refused frame
 is effectively shed — exactly the spec’s posture (transmits never
 wait for duty-cycle allowance).</p>
-</div></details><h2 id="structs" class="section-header">Structs<a href="#structs" class="anchor">§</a></h2><dl class="item-table"><dt><a class="struct" href="struct.DutyGatedRadio.html" title="struct umsh_ulcp_runtime::duty_gate::DutyGatedRadio">Duty<wbr>Gated<wbr>Radio</a></dt><dd>A <a href="../../umsh_hal/trait.Radio.html" title="trait umsh_hal::Radio"><code>Radio</code></a> decorator enforcing the shared duty budget.</dd></dl></section></div></main></body></html>
+</div></details><h2 id="structs" class="section-header">Structs<a href="#structs" class="anchor">§</a></h2><dl class="item-table"><dt><a class="struct" href="struct.DutyGatedRadio.html" title="struct umsh_ulcp_runtime::duty_gate::DutyGatedRadio">Duty<wbr>Gated<wbr>Radio</a></dt><dd>A [<code>Radio</code>] decorator enforcing the shared duty budget.</dd></dl></section></div></main></body></html>

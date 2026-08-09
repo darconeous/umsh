@@ -19,7 +19,7 @@ future across wake events without blocking writes to <code>out</code>.</p>
     CS: <a class="trait" href="../trait.ChannelStore.html" title="trait umsh_cli::ChannelStore">ChannelStore</a>,
     PC: <a class="trait" href="../trait.PowerControl.html" title="trait umsh_cli::PowerControl">PowerControl</a>,</div></h3></section></summary><div class="impl-items"><details class="toggle method-toggle" open><summary><section id="method.new" class="method"><a class="src rightside" href="../../src/umsh_cli/session.rs.html#175-216">Source</a><h4 class="code-header">pub fn <a href="#method.new" class="fn">new</a>(
     node: LocalNode&lt;M&gt;,
-    local_key: <a class="struct" href="../../umsh_core/packet/struct.PublicKey.html" title="struct umsh_core::packet::PublicKey">PublicKey</a>,
+    local_key: PublicKey,
     out: OUT,
     logger: LOG,
     peer_store: PS,
@@ -34,11 +34,11 @@ to persist changes. Pass <a href="../struct.NoPeerStore.html" title="struct umsh
 <a href="../struct.NoChannelStore.html" title="struct umsh_cli::NoChannelStore"><code>umsh_hal::NoChannelStore</code></a> when persistence is not needed.</p>
 <p><code>power</code> is invoked by <code>/poweroff</code>; pass <a href="../struct.NoPowerControl.html" title="struct umsh_cli::NoPowerControl"><code>umsh_hal::NoPowerControl</code></a>
 on targets without a power-off path.</p>
-</div></details><details class="toggle method-toggle" open><summary><section id="method.resolve_peer" class="method"><a class="src rightside" href="../../src/umsh_cli/session.rs.html#220-227">Source</a><h4 class="code-header">pub fn <a href="#method.resolve_peer" class="fn">resolve_peer</a>(&amp;self, token: &amp;<a class="primitive" href="https://doc.rust-lang.org/nightly/std/primitive.str.html">str</a>) -&gt; <a class="enum" href="https://doc.rust-lang.org/nightly/core/option/enum.Option.html" title="enum core::option::Option">Option</a>&lt;<a class="struct" href="../../umsh_core/packet/struct.PublicKey.html" title="struct umsh_core::packet::PublicKey">PublicKey</a>&gt;</h4></section></summary><div class="docblock"><p>Resolve a <code>&lt;peer-ref&gt;</code> token to a <code>PublicKey</code>. Alias table first,
+</div></details><details class="toggle method-toggle" open><summary><section id="method.resolve_peer" class="method"><a class="src rightside" href="../../src/umsh_cli/session.rs.html#220-227">Source</a><h4 class="code-header">pub fn <a href="#method.resolve_peer" class="fn">resolve_peer</a>(&amp;self, token: &amp;<a class="primitive" href="https://doc.rust-lang.org/nightly/std/primitive.str.html">str</a>) -&gt; <a class="enum" href="https://doc.rust-lang.org/nightly/core/option/enum.Option.html" title="enum core::option::Option">Option</a>&lt;PublicKey&gt;</h4></section></summary><div class="docblock"><p>Resolve a <code>&lt;peer-ref&gt;</code> token to a <code>PublicKey</code>. Alias table first,
 then encoded forms (hex / base58 / base64).</p>
 </div></details><details class="toggle method-toggle" open><summary><section id="method.register_peer" class="method"><a class="src rightside" href="../../src/umsh_cli/session.rs.html#236-270">Source</a><h4 class="code-header">pub async fn <a href="#method.register_peer" class="fn">register_peer</a>(
     &amp;mut self,
-    key: <a class="struct" href="../../umsh_core/packet/struct.PublicKey.html" title="struct umsh_core::packet::PublicKey">PublicKey</a>,
+    key: PublicKey,
     alias: <a class="enum" href="https://doc.rust-lang.org/nightly/core/option/enum.Option.html" title="enum core::option::Option">Option</a>&lt;&amp;<a class="primitive" href="https://doc.rust-lang.org/nightly/std/primitive.str.html">str</a>&gt;,
 ) -&gt; <a class="primitive" href="https://doc.rust-lang.org/nightly/std/primitive.bool.html">bool</a></h4></section></summary><div class="docblock"><p>Pre-register a peer at startup (e.g. from <code>--peer</code> CLI args).
 Returns <code>false</code> if either the peer or alias table is full, or if the
