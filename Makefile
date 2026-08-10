@@ -226,10 +226,14 @@ flash-t1000e: build-t1000e
 	scripts/flash.py --board t1000e --copy-default \
 		$(TARGET_DIR)/firmware-t1000e.uf2
 
-# For a board already sitting in serial DFU. The board has exactly two ways
-# into DFU — hold the user button while cycling USB power twice, or trigger it
-# from software — and the button path lands in the UF2 bootloader, which this
-# target cannot talk to. Use `flash-t1000e` there.
+# For a board already sitting in DFU. The board has exactly two ways in — hold
+# the user button while cycling USB power twice, or trigger it from software —
+# and either one lands in the Adafruit bootloader, which presents the T1000-E
+# volume *and* a CDC serial port. `flash-t1000e` uses the former, this the
+# latter; both work whichever way the board got there. The bootloader's port is
+# not the one the application enumerates, so pass it explicitly:
+#
+#     make flash-t1000e-serial DFU_SERIAL_PORT=/dev/cu.usbmodem<N>
 flash-t1000e-serial: build-t1000e
 	$(call dfu-serial,$(TARGET_DIR)/firmware-t1000e,$(SD_REQ_S140_7_3_0))
 

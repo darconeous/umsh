@@ -240,22 +240,24 @@ values on reset:
 
 | GPREGRET | Mode |
 |---|---|
-| `0x57` | UF2 mass-storage (drag-and-drop `.uf2` file) |
-| `0x4e` | Serial / CDC DFU |
+| `0x57` | UF2 mass-storage *and* CDC DFU — both interfaces present |
+| `0x4e` | Serial / CDC DFU only, no drive |
 | `0xA8` | BLE OTA |
 
 The BSP exposes two entry points rather than one, since the two common DFU
 modes serve different audiences:
 
-- `bsp::enter_dfu_serial() -> !` — sets `0x4e`, enters serial/CDC DFU mode.
+- `bsp::enter_dfu_serial() -> !` — sets `0x4e`, enters serial-only CDC DFU mode.
   Device stays enumerated as a USB CDC serial device and speaks the Nordic
-  serial DFU protocol (SLIP-encoded HCI). Required by the web flasher
-  (`flasher.meshcore.co.uk` via WebSerial) and `adafruit-nrfutil --touch 1200`.
-  WebSerial cannot talk to a mass-storage device, so this mode is mandatory for
-  browser-based flashing.
-- `bsp::enter_dfu_uf2() -> !` — sets `0x57`, enters UF2 mass-storage mode.
-  Device appears as a USB drive; drag a `.uf2` file onto it. Convenient for
-  manual flashing but unusable from WebSerial.
+  serial DFU protocol (SLIP-encoded HCI). No drive mounts in this mode.
+- `bsp::enter_dfu_uf2() -> !` — sets `0x57`, which offers UF2 mass storage *and*
+  CDC DFU. The device appears as a USB drive to drag a `.uf2` onto, and its
+  serial-DFU port is equally available to `adafruit-nrfutil` or a WebSerial
+  flasher. (Shipped firmware answers the 1200-baud touch with this value.)
+
+A browser can only take the serial-DFU path — WebSerial cannot write a
+mass-storage volume — but that path is open in both modes, so neither mode is a
+barrier to browser-based flashing.
 
 Note: **the Adafruit nRF52 bootloader does not implement 1200-baud detection
 itself** — that logic must live in the firmware. If our firmware doesn't handle
@@ -265,7 +267,7 @@ Trigger paths:
 
 | Path | GPREGRET | Notes |
 |---|---|---|
-| **1200-baud touchless reset** | `0x4e` | Host opens USB CDC at 1200 baud then drops DTR; USB-CDC task detects `SET_LINE_CODING` change and calls `bsp::enter_dfu_serial()` — this is how `flasher.meshcore.co.uk` (WebSerial) and `adafruit-nrfutil --touch 1200` trigger DFU |
+| **1200-baud touchless reset** | `0x57` | Host opens USB CDC at 1200 baud then drops DTR; USB-CDC task detects the `SET_LINE_CODING` change and enters DFU — this is how a WebSerial flasher and `adafruit-nrfutil --touch 1200` trigger DFU. Planned as `0x4e` here; shipped firmware (`cdc_rescue.rs`) uses `enter_dfu_uf2()`/`0x57`, which leaves both the drive and the serial-DFU port available |
 | CLI command `dfu` | `0x57` | Sends `EnterDfu` intent → `power_task` calls `bsp::enter_dfu_uf2()`; convenient for manual drag-and-drop |
 | CLI command `dfu serial` | `0x4e` | As above but calls `bsp::enter_dfu_serial()` |
 | Serial rescue escape | `0x4e` | USB-CDC RX hook (below the CLI parser) watches for e.g. `\x03\x03\x03dfu\r` and calls `bsp::enter_dfu_serial()` directly |
@@ -483,12 +485,14 @@ inner `read_packet` until Ok(0)/Err, then back to outer).
 **Superseded — do not copy the paragraph below.** There is no
 button-held-while-plugging-in entry on this board. DFU has exactly two entry
 paths: hold the user button while cycling USB power twice, or enter from
-software. The button path lands in the UF2 bootloader — the USB product name
-flips to `T1000_E` and `/Volumes/T1000-E` mounts — so flash it by copy
-(`make flash-t1000e`); serial DFU cannot talk to a UF2 bootloader and fails
-with "No data received on serial port". Confirmed on hardware 2026-07-21. The
-text below is kept as a record of what bringup believed at the time, and has
-been restated as fact in several other files since — hence this marker.
+software. Both land in the same Adafruit bootloader, which presents the
+`/Volumes/T1000-E` volume *and* a CDC serial-DFU port — so flashing by copy
+(`make flash-t1000e`) and flashing over serial (`make flash-t1000e-serial`,
+with `DFU_SERIAL_PORT` pointed at the bootloader's port, which is not the
+application's) both work regardless of how the board got there. The paragraph
+below claims the button path exposes serial DFU *only*; that is as wrong as the
+opposite claim, which has also circulated. The text is kept as a record of what
+bringup believed at the time — hence this marker.
 
 **Flashing on T1000-E without UF2 mass-storage:** the user-button-held bootloader
 entry path only exposes serial DFU (`/dev/tty.usbmodem*`). UF2 mass-storage
