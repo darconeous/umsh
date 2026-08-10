@@ -1496,9 +1496,12 @@ fn counter_persist_threshold_schedules_next_block() {
         mac.identity(local_id).unwrap().frame_counter(),
         initial_counter.wrapping_add(100)
     );
+    // The renewal extends the reservation past the boundary the first send
+    // already committed: one block beyond it, not the committed boundary
+    // re-derived.
     assert_eq!(
         mac.identity(local_id).unwrap().pending_persist_target(),
-        Some((initial_counter.wrapping_add(100 + 128)) & !127)
+        Some((initial_counter.wrapping_add(100 + 28 + 128)) & !127)
     );
 }
 
@@ -1648,6 +1651,67 @@ fn secure_send_blocks_when_counter_window_exhausted() {
         ),
         Err(SendError::CounterPersistenceLag)
     );
+}
+
+/// An identity that starts high in its persist block keeps sending.
+///
+/// The reservation is renewed from a position within the block, so an
+/// identity whose counter starts past that position must still renew it.
+/// Missing that renewal is unrecoverable rather than merely late: the gate
+/// closes when the live counter reaches the committed boundary, and a
+/// blocked send neither advances the counter nor schedules the write that
+/// would move the boundary, so nothing left in the system can reopen it.
+#[test]
+fn secure_send_survives_the_boundary_when_the_counter_starts_late_in_its_block() {
+    use crate::coordinator::COUNTER_PERSIST_BLOCK_SIZE;
+
+    // Every block position a random initial counter could land on, not just
+    // the handful past the renewal offset that exposed the bug.
+    for start in 0..COUNTER_PERSIST_BLOCK_SIZE {
+        let mut mac = make_mac();
+        let local_id = mac.add_identity(DummyIdentity::new([0x10; 32])).unwrap();
+        // A fresh identity: nothing persisted yet, random nonzero counter at
+        // an arbitrary position inside its persist block.
+        mac.identity_mut(local_id)
+            .unwrap()
+            .load_persisted_counter(1024);
+        mac.identity_mut(local_id)
+            .unwrap()
+            .set_frame_counter(1024 + start);
+        let peer_key = test_pubkey(0xAB);
+        let peer_id = mac.add_peer(peer_key).unwrap();
+        mac.install_pairwise_keys(
+            local_id,
+            peer_id,
+            PairwiseKeys {
+                k_enc: [1; 16],
+                k_mic: [2; 16],
+            },
+        )
+        .unwrap();
+
+        // The event loop flushes pending boundaries after every wake; a send
+        // and a flush in turn is the cadence a running node actually has.
+        for send in 0..(3 * COUNTER_PERSIST_BLOCK_SIZE) {
+            mac.queue_unicast(
+                local_id,
+                &peer_key,
+                b"hello",
+                &SendOptions::default().no_flood(),
+            )
+            .unwrap_or_else(|error| {
+                panic!(
+                    "start {start}: send {send} refused with {error:?} at counter {}, \
+                     persisted {}, pending {:?}",
+                    mac.identity(local_id).unwrap().frame_counter(),
+                    mac.identity(local_id).unwrap().persisted_counter(),
+                    mac.identity(local_id).unwrap().pending_persist_target(),
+                )
+            });
+            block_on(mac.service_counter_persistence()).unwrap();
+            while mac.tx_queue_mut().pop_next().is_some() {}
+        }
+    }
 }
 
 #[test]

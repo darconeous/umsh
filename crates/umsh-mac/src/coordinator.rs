@@ -42,7 +42,7 @@ pub enum WakeReason {
     TimerExpired,
 }
 
-const COUNTER_PERSIST_BLOCK_SIZE: u32 = 128;
+pub(crate) const COUNTER_PERSIST_BLOCK_SIZE: u32 = 128;
 const COUNTER_PERSIST_BLOCK_MASK: u32 = COUNTER_PERSIST_BLOCK_SIZE - 1;
 const COUNTER_PERSIST_SCHEDULE_OFFSET: u32 = 100;
 const MAC_COMMAND_ECHO_REQUEST_ID: u8 = 4;
@@ -301,12 +301,32 @@ impl<I: NodeIdentity, const PEERS: usize, const ACKS: usize, const FRAME: usize>
         }
 
         let should_schedule = !self.save_scheduled_since_boot
-            || (self.frame_counter & COUNTER_PERSIST_BLOCK_MASK) == COUNTER_PERSIST_SCHEDULE_OFFSET;
+            || (self.frame_counter & COUNTER_PERSIST_BLOCK_MASK) >= COUNTER_PERSIST_SCHEDULE_OFFSET;
         if !should_schedule {
             return;
         }
 
-        let target = next_counter_persist_target(self.frame_counter);
+        // Reserve with `BLOCK - OFFSET` counters of lead beyond the live
+        // counter, so the boundary lands one block out for a counter early in
+        // its block and two blocks out for one already inside the renewal
+        // zone. Deriving the target from the bare counter here once made the
+        // offset-triggered renewal a no-op — it re-derived the boundary that
+        // was already persisted — so an identity that reached that boundary
+        // had nothing scheduled, and since a refused send advances nothing,
+        // it stayed refusing secure sends until reboot.
+        let target = next_counter_persist_target(
+            self.frame_counter
+                .wrapping_add(COUNTER_PERSIST_BLOCK_SIZE - COUNTER_PERSIST_SCHEDULE_OFFSET),
+        );
+        // A late-block trigger after its renewal already committed re-derives
+        // a boundary at or behind `persisted_counter`; writing that back
+        // would regress the reservation.
+        if self.persisted_counter.wrapping_sub(target) <= 2 * COUNTER_PERSIST_BLOCK_SIZE {
+            return;
+        }
+        if self.pending_persist_target == Some(target) {
+            return;
+        }
         self.pending_persist_target = Some(
             self.pending_persist_target
                 .map(|existing| existing.max(target))
@@ -328,8 +348,12 @@ impl<I: NodeIdentity, const PEERS: usize, const ACKS: usize, const FRAME: usize>
             return false;
         }
 
+        // Two blocks, not one: a renewal committed from late in the current
+        // block puts the boundary up to `2 * COUNTER_PERSIST_BLOCK_SIZE`
+        // ahead of the live counter, and any counter below the committed
+        // boundary is safe to use regardless of distance.
         let ahead = self.persisted_counter.wrapping_sub(self.frame_counter);
-        if ahead > 0 && ahead <= COUNTER_PERSIST_BLOCK_SIZE {
+        if ahead > 0 && ahead <= 2 * COUNTER_PERSIST_BLOCK_SIZE {
             return false;
         }
 
