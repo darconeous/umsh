@@ -1,0 +1,166 @@
+<!DOCTYPE html>
+<html lang="en">
+
+<head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>I made a thing... — UMSH</title>
+    <meta name="description" content="A secure, off-grid LoRa mesh text protocol, a Rust reference implementation, six supported boards, and an iOS app—the story of an all-consuming side quest." />
+    <meta name="theme-color" content="#FA5000" />
+
+    <link rel="stylesheet" href="https://umsh.dev/site.css" />
+    <link rel="icon" href="https://umsh.dev/favicon.ico" sizes="any" />
+    <link rel="icon" type="image/png" href="https://umsh.dev/favicon-32.png" sizes="32x32" />
+    <link rel="apple-touch-icon" href="https://umsh.dev/apple-touch-icon.png" />
+
+    <meta property="og:site_name" content="UMSH" />
+    <meta property="og:type" content="article" />
+    <meta property="og:title" content="I made a thing... — UMSH" />
+    <meta property="og:description"
+        content="A secure, off-grid LoRa mesh text protocol, a Rust reference implementation, six supported boards, and an iOS app—the story of an all-consuming side quest." />
+    <meta property="og:image" content="https://umsh.dev/og-card.png" />
+    <meta property="og:url" content="https://umsh.dev/blog/i-made-a-thing/" />
+    <meta name="twitter:card" content="summary_large_image" />
+    
+  <link rel="alternate" type="application/atom+xml" title="UMSH blog"
+        href="https://umsh.dev/blog/atom.xml" />
+
+</head>
+
+<body>
+    <a class="skip-link" href="#main">Skip to content</a>
+
+    <header class="site-header">
+        <div class="container">
+            <a class="site-header__logo" href="https://umsh.dev/">
+                <img src="https://umsh.dev/images/logo/umsh-logo-white.svg" alt="UMSH"
+                    width="1209" height="283" />
+            </a>
+
+            <button class="nav-burger" type="button" aria-expanded="false" aria-controls="site-nav" aria-label="Menu">
+                <svg class="nav-burger__open" viewBox="0 0 24 24" aria-hidden="true">
+                    <path d="M3 6h18M3 12h18M3 18h18" />
+                </svg>
+                <svg class="nav-burger__close" viewBox="0 0 24 24" aria-hidden="true">
+                    <path d="M5 5l14 14M19 5L5 19" />
+                </svg>
+            </button>
+
+            <nav class="site-nav" id="site-nav" aria-label="Main">
+                <a href="/docs/protocol/">Protocol</a>
+                <a href="/hardware/">Hardware</a>
+                <a href="/app/">App</a>
+                <a href="/faq/">FAQ</a>
+                <a href="/flasher/">Flasher</a>
+                <a href="/blog/" aria-current="page" >Blog</a>
+
+                <span class="site-nav__actions">
+                    <a class="pill" href="https://github.com/sponsors/darconeous">Donate</a>
+                    <a class="pill" href="https://github.com/darconeous/umsh">
+                        <svg viewBox="0 0 16 16" aria-hidden="true">
+                            <path
+                                d="M8 0C3.58 0 0 3.58 0 8c0 3.54 2.29 6.53 5.47 7.59.4.07.55-.17.55-.38 0-.19-.01-.82-.01-1.49-2.01.37-2.53-.49-2.69-.94-.09-.23-.48-.94-.82-1.13-.28-.15-.68-.52-.01-.53.63-.01 1.08.58 1.23.82.72 1.21 1.87.87 2.33.66.07-.52.28-.87.51-1.07-1.78-.2-3.64-.89-3.64-3.95 0-.87.31-1.59.82-2.15-.08-.2-.36-1.02.08-2.12 0 0 .67-.21 2.2.82.64-.18 1.32-.27 2-.27s1.36.09 2 .27c1.53-1.04 2.2-.82 2.2-.82.44 1.1.16 1.92.08 2.12.51.56.82 1.27.82 2.15 0 3.07-1.87 3.75-3.65 3.95.29.25.54.73.54 1.48 0 1.07-.01 1.93-.01 2.2 0 .21.15.46.55.38A8.01 8.01 0 0 0 16 8c0-4.42-3.58-8-8-8Z" />
+                        </svg>
+                        GitHub
+                    </a>
+                </span>
+            </nav>
+        </div>
+    </header>
+
+    <main id="main">
+        
+  <div class="page-head page-head--center">
+    <div class="container">
+      <h1>I made a thing...</h1>
+      <p>A secure, off-grid LoRa mesh text protocol, a Rust reference implementation, six supported boards, and an iOS app—the story of an all-consuming side quest.</p>
+      
+      
+        <p class="post-meta">
+          <time datetime="2026-08-10">August 10, 2026</time>
+        </p>
+      
+    </div>
+  </div>
+
+  <div class="section">
+    <div class="container">
+      <div class="prose prose--center">
+        <p>So… I made a thing. And I’m not sure what to do about it.</p>
+<p>I think it’s cool, and I’d like to share it with you, but it’s different than the <a rel="external" href="https://lumanoi.com">interactive light sculptures</a> I’ve been making.</p>
+<p>First, I made my own <a href="/docs/protocol/">secure, off-grid LoRa-based mesh text chat protocol</a>. And then I made a <a rel="external" href="https://github.com/darconeous/umsh">reference implementation for it in Rust</a>. And then I ported that reference implementation to <a href="/hardware/">half a dozen different LoRa hardware platforms</a>. And then I <a href="/app/">wrote an iOS app</a> to control those hardware platforms and send/receive text messages.</p>
+<p>I call it <a href="/">UMSH</a>.</p>
+<p>Don’t worry, I’m not stopping with the interactive light sculptures—this is a side quest. A bit all-consuming as of late, but still a side quest.</p>
+<p>If you are curious how in the world I got to this point, well… read on.</p>
+<p>Before I was making <a rel="external" href="https://lumanoi.com">interactive light sculptures</a>, I was working at Google on what I described as low-power wireless mesh networking, <a rel="external" href="https://threadgroup.org">Thread</a> specifically. I had been doing it for over 10 years. I was tired of it, and needed to do something different that scratched my other creative itches. So I started <a rel="external" href="https://voria.com">Voria Labs</a> and started making interactive light sculptures.</p>
+<p>But I guess there is still a part of me that really likes doing the low-power wireless mesh networking thing. Several months ago I started looking into LoRa-based mesh text chat protocols, like <a rel="external" href="https://meshtastic.org">Meshtastic</a> and <a rel="external" href="https://meshcore.io">MeshCore</a>. These systems allow you to have long-range text communication with groups or individuals that doesn’t rely on cellular infrastructure.</p>
+<p>MeshCore, specifically, was interesting to me since the addresses were public keys and it was all source-routed. I started to use it myself, and it was decent enough. Then I went to go look under the hood to see how it was implemented… Well, let’s just say that it was clear that MeshCore took a code-first approach to protocol design.</p>
+<p>With a code-first approach, you write the code and get it working, and the source code ends up defining the protocol. This can be OK in certain contexts, but it is often a huge liability. In the case of MeshCore, that liability was a brittle, hard-to-extend protocol with <a rel="external" href="https://github.com/meshcore-dev/MeshCore/issues/259">textbook-naive cryptography</a>. A proper fix would practically require compatibility-breaking changes to the protocol.</p>
+<p>Which got me to thinking: Knowing what I now know, what would a protocol-first design for something like MeshCore look like? What would a “MeshCore 2.0” be if it was made with a professional-quality protocol-first design with proper cryptography and a flexible packet format?</p>
+<p>And that was the start of me falling down the rabbit hole of protocol design again. I love designing protocols. I think I am fairly decent at it. So, on a lark, I started designing what I thought might be a good starting point for a “MeshCore 2.0”.</p>
+<p>Now, to be clear, I’m not affiliated with MeshCore in any way. It would be wildly presumptuous of me to actually call whatever-it-was that I was writing “MeshCore 2.0”. But I also can’t really work on something without a name, so I just came up with a random one: <em>UMSH</em>.</p>
+<p>I strung together some of my ideas into a semi-coherent document and I brought it up on the MeshCore discord, half expecting to be burned at the stake. Instead, many people seemed fascinated and interested. I kept refining and improving, and eventually what I had was <a href="/docs/protocol/">comprehensive protocol documentation</a>.</p>
+<p>Even with that, however, there seemed to be little motivation for any serious discussion about a future “MeshCore 2.0”, especially an effort kicked off by an outsider who just came in and said that everything should be done differently. I get it.</p>
+<p>At that point, I had a protocol but no implementation. Some time passed. Eventually I decided I should just go for it and see how far me (and Claude) could get with turning the protocol into a working reference implementation. With a full protocol specification in hand, the code would have something to be measured against, instead of becoming the definition itself.</p>
+<p>Working with Claude to write code feels a bit like working with an enthusiastic junior software engineer with a short attention span and a habit of micro-dosing LSD. It’s certainly interesting, and I got way more done than I would have otherwise, but I also had to be eagle-eyed about the decisions it was making. It’s certainly not as easy as pointing the LLM at the protocol and saying “implement this”—keeping it on the rails required my full attention and it was a bit exhausting. But it’s hard to argue with the results.</p>
+<p>I worked like a madman, thinking “ok, after this feature I’ll stop”, but I kept finding more pain points and more features to implement. After several weeks of work, I now have a quite large chunk of the protocol completely implemented in Rust, as well as a reasonably functional iOS app to go with it. And six supported LoRa hardware platforms. And Wireshark support. And a command-line radio management tool. And a website, with a web-flashing tool.</p>
+<p>And now, I must stop this breakneck development for at least a month or two. Maker Faire is coming up, and I just got a really big Lumanoi commission for a project in San Jose that I am extremely excited about.</p>
+<p>So now that this is out there, what is next? I plan to continue to fix bugs and add features based on feedback, and I’m hoping that what I’ve written will resonate with a lot of people. Who knows? Maybe it will take off. Let’s find out.</p>
+<p>Check out the <a href="/docs/protocol/">protocol</a>, join the <a href="/app/">iOS app beta</a>, flash some <a href="/hardware/">hardware</a>, and <a rel="external" href="https://github.com/darconeous/umsh/discussions">let me know what you think</a>.</p>
+
+      </div>
+
+      <p class="post-back">
+        <a href="https://umsh.dev/blog/">All posts</a>
+      </p>
+    </div>
+  </div>
+
+    </main>
+
+    <footer class="site-footer">
+        <div class="container">
+            <div class="site-footer__brand">
+                <img src="https://umsh.dev/images/logo/umsh-logo-orange.svg" alt="UMSH"
+                    width="1209" height="283" />
+                <p>An experimental LoRa mesh protocol with strong cryptography, clean layer separation, and strict
+                    bandwidth discipline.</p>
+            </div>
+
+            <div>
+                <h2>Project</h2>
+                <ul>
+                    <li><a href="/docs/protocol/">Protocol specification</a></li>
+                    <li><a href="/docs/rust/">Rust API docs</a></li>
+                    <li><a href="https://github.com/darconeous/umsh">Source on GitHub</a></li>
+                    <li><a href="https://umsh.dev/blog/">Blog</a></li>
+                    <li><a href="https://github.com/sponsors/darconeous">Donate</a></li>
+                </ul>
+            </div>
+
+            <div>
+                <h2>Get started</h2>
+                <ul>
+                    <li><a href="https://umsh.dev/hardware/">Supported hardware</a></li>
+                    <li><a href="https://umsh.dev/flasher/">Flash a device</a></li>
+                    <li><a href="https://umsh.dev/app/">iOS app</a></li>
+                    <li><a href="https://umsh.dev/faq/">FAQ</a></li>
+                </ul>
+            </div>
+        </div>
+
+        <div class="container">
+            <div class="site-footer__legal">
+                <span>
+                    <a href="https://umsh.dev/privacy/">Privacy</a> ·
+                    <a href="https://umsh.dev/terms/">Terms</a>
+                </span>
+                <span>A <a href="https://voria.com/">Voria Labs</a> project</span>
+            </div>
+        </div>
+    </footer>
+
+    <script src="https://umsh.dev/js/nav.js" defer></script>
+</body>
+
+</html>

@@ -1,0 +1,46 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<feed xmlns="http://www.w3.org/2005/Atom" xml:lang="en">
+    <title>UMSH - Blog</title>
+    <subtitle>An experimental LoRa mesh protocol built on strong cryptography, clean layer separation, and strict bandwidth discipline.</subtitle>
+    <link rel="self" type="application/atom+xml" href="https://umsh.dev/blog/atom.xml"/>
+    <link rel="alternate" type="text/html" href="https://umsh.dev/blog/"/>
+    <generator uri="https://www.getzola.org/">Zola</generator>
+    <updated>2026-08-10T00:00:00+00:00</updated>
+    <id>https://umsh.dev/blog/atom.xml</id>
+    <entry xml:lang="en">
+        <title>I made a thing...</title>
+        <published>2026-08-10T00:00:00+00:00</published>
+        <updated>2026-08-10T00:00:00+00:00</updated>
+        
+        <author>
+          <name>Robert Quattlebaum</name>
+        </author>
+        
+        <link rel="alternate" type="text/html" href="https://umsh.dev/blog/i-made-a-thing/"/>
+        <id>https://umsh.dev/blog/i-made-a-thing/</id>
+        
+        <content type="html" xml:base="https://umsh.dev/blog/i-made-a-thing/">&lt;p&gt;So… I made a thing. And I’m not sure what to do about it.&lt;/p&gt;
+&lt;p&gt;I think it’s cool, and I’d like to share it with you, but it’s different than the &lt;a rel=&quot;external&quot; href=&quot;https://lumanoi.com&quot;&gt;interactive light sculptures&lt;/a&gt; I’ve been making.&lt;/p&gt;
+&lt;p&gt;First, I made my own &lt;a href=&quot;/docs/protocol/&quot;&gt;secure, off-grid LoRa-based mesh text chat protocol&lt;/a&gt;. And then I made a &lt;a rel=&quot;external&quot; href=&quot;https://github.com/darconeous/umsh&quot;&gt;reference implementation for it in Rust&lt;/a&gt;. And then I ported that reference implementation to &lt;a href=&quot;/hardware/&quot;&gt;half a dozen different LoRa hardware platforms&lt;/a&gt;. And then I &lt;a href=&quot;/app/&quot;&gt;wrote an iOS app&lt;/a&gt; to control those hardware platforms and send/receive text messages.&lt;/p&gt;
+&lt;p&gt;I call it &lt;a href=&quot;/&quot;&gt;UMSH&lt;/a&gt;.&lt;/p&gt;
+&lt;p&gt;Don’t worry, I’m not stopping with the interactive light sculptures—this is a side quest. A bit all-consuming as of late, but still a side quest.&lt;/p&gt;
+&lt;p&gt;If you are curious how in the world I got to this point, well… read on.&lt;/p&gt;
+&lt;p&gt;Before I was making &lt;a rel=&quot;external&quot; href=&quot;https://lumanoi.com&quot;&gt;interactive light sculptures&lt;/a&gt;, I was working at Google on what I described as low-power wireless mesh networking, &lt;a rel=&quot;external&quot; href=&quot;https://threadgroup.org&quot;&gt;Thread&lt;/a&gt; specifically. I had been doing it for over 10 years. I was tired of it, and needed to do something different that scratched my other creative itches. So I started &lt;a rel=&quot;external&quot; href=&quot;https://voria.com&quot;&gt;Voria Labs&lt;/a&gt; and started making interactive light sculptures.&lt;/p&gt;
+&lt;p&gt;But I guess there is still a part of me that really likes doing the low-power wireless mesh networking thing. Several months ago I started looking into LoRa-based mesh text chat protocols, like &lt;a rel=&quot;external&quot; href=&quot;https://meshtastic.org&quot;&gt;Meshtastic&lt;/a&gt; and &lt;a rel=&quot;external&quot; href=&quot;https://meshcore.io&quot;&gt;MeshCore&lt;/a&gt;. These systems allow you to have long-range text communication with groups or individuals that doesn’t rely on cellular infrastructure.&lt;/p&gt;
+&lt;p&gt;MeshCore, specifically, was interesting to me since the addresses were public keys and it was all source-routed. I started to use it myself, and it was decent enough. Then I went to go look under the hood to see how it was implemented… Well, let’s just say that it was clear that MeshCore took a code-first approach to protocol design.&lt;/p&gt;
+&lt;p&gt;With a code-first approach, you write the code and get it working, and the source code ends up defining the protocol. This can be OK in certain contexts, but it is often a huge liability. In the case of MeshCore, that liability was a brittle, hard-to-extend protocol with &lt;a rel=&quot;external&quot; href=&quot;https://github.com/meshcore-dev/MeshCore/issues/259&quot;&gt;textbook-naive cryptography&lt;/a&gt;. A proper fix would practically require compatibility-breaking changes to the protocol.&lt;/p&gt;
+&lt;p&gt;Which got me to thinking: Knowing what I now know, what would a protocol-first design for something like MeshCore look like? What would a “MeshCore 2.0” be if it was made with a professional-quality protocol-first design with proper cryptography and a flexible packet format?&lt;/p&gt;
+&lt;p&gt;And that was the start of me falling down the rabbit hole of protocol design again. I love designing protocols. I think I am fairly decent at it. So, on a lark, I started designing what I thought might be a good starting point for a “MeshCore 2.0”.&lt;/p&gt;
+&lt;p&gt;Now, to be clear, I’m not affiliated with MeshCore in any way. It would be wildly presumptuous of me to actually call whatever-it-was that I was writing “MeshCore 2.0”. But I also can’t really work on something without a name, so I just came up with a random one: &lt;em&gt;UMSH&lt;/em&gt;.&lt;/p&gt;
+&lt;p&gt;I strung together some of my ideas into a semi-coherent document and I brought it up on the MeshCore discord, half expecting to be burned at the stake. Instead, many people seemed fascinated and interested. I kept refining and improving, and eventually what I had was &lt;a href=&quot;/docs/protocol/&quot;&gt;comprehensive protocol documentation&lt;/a&gt;.&lt;/p&gt;
+&lt;p&gt;Even with that, however, there seemed to be little motivation for any serious discussion about a future “MeshCore 2.0”, especially an effort kicked off by an outsider who just came in and said that everything should be done differently. I get it.&lt;/p&gt;
+&lt;p&gt;At that point, I had a protocol but no implementation. Some time passed. Eventually I decided I should just go for it and see how far me (and Claude) could get with turning the protocol into a working reference implementation. With a full protocol specification in hand, the code would have something to be measured against, instead of becoming the definition itself.&lt;/p&gt;
+&lt;p&gt;Working with Claude to write code feels a bit like working with an enthusiastic junior software engineer with a short attention span and a habit of micro-dosing LSD. It’s certainly interesting, and I got way more done than I would have otherwise, but I also had to be eagle-eyed about the decisions it was making. It’s certainly not as easy as pointing the LLM at the protocol and saying “implement this”—keeping it on the rails required my full attention and it was a bit exhausting. But it’s hard to argue with the results.&lt;/p&gt;
+&lt;p&gt;I worked like a madman, thinking “ok, after this feature I’ll stop”, but I kept finding more pain points and more features to implement. After several weeks of work, I now have a quite large chunk of the protocol completely implemented in Rust, as well as a reasonably functional iOS app to go with it. And six supported LoRa hardware platforms. And Wireshark support. And a command-line radio management tool. And a website, with a web-flashing tool.&lt;/p&gt;
+&lt;p&gt;And now, I must stop this breakneck development for at least a month or two. Maker Faire is coming up, and I just got a really big Lumanoi commission for a project in San Jose that I am extremely excited about.&lt;/p&gt;
+&lt;p&gt;So now that this is out there, what is next? I plan to continue to fix bugs and add features based on feedback, and I’m hoping that what I’ve written will resonate with a lot of people. Who knows? Maybe it will take off. Let’s find out.&lt;/p&gt;
+&lt;p&gt;Check out the &lt;a href=&quot;/docs/protocol/&quot;&gt;protocol&lt;/a&gt;, join the &lt;a href=&quot;/app/&quot;&gt;iOS app beta&lt;/a&gt;, flash some &lt;a href=&quot;/hardware/&quot;&gt;hardware&lt;/a&gt;, and &lt;a rel=&quot;external&quot; href=&quot;https://github.com/darconeous/umsh/discussions&quot;&gt;let me know what you think&lt;/a&gt;.&lt;/p&gt;
+</content>
+        
+    </entry>
+</feed>
