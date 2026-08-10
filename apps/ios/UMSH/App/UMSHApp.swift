@@ -12,11 +12,27 @@ private final class LiveRadioConnectionOwner: ObservableObject {
     lazy var connection = CoreBluetoothRadioConnection()
 }
 
+#if DEBUG
+/// Owns the staged radio and the fabricated mesh around it for the lifetime
+/// of the SwiftUI app, for the same reason as the live owner above: the
+/// staged connection accumulates state (an installed mesh session, peer
+/// sessions in the air), and rebuilding it on a body re-evaluation would
+/// silently hand the views a radio that has forgotten all of it.
+private final class StagingRadioConnectionOwner: ObservableObject {
+    lazy var connection = FakeRadioConnection(
+        snapshot: StagingScenario.radioSnapshot,
+        air: StagingMeshAir()
+    )
+}
+#endif
+
 @main
 struct UMSHApp: App {
     @StateObject private var liveRadioConnection = LiveRadioConnectionOwner()
 
     #if DEBUG
+    @StateObject private var stagingRadioConnection = StagingRadioConnectionOwner()
+
     /// Whether to run against the fabricated mesh in the staging store, for
     /// taking marketing screenshots in the simulator. See ``StagingScenario``.
     @AppStorage("staging.enabled") private var stagingEnabled = false
@@ -31,9 +47,7 @@ struct UMSHApp: App {
             // without building a new one.
             if stagingEnabled {
                 AppRootView(
-                    radioConnection: FakeRadioConnection(
-                        snapshot: StagingScenario.radioSnapshot
-                    ),
+                    radioConnection: stagingRadioConnection.connection,
                     openStore: { try SQLiteApplicationStore.stagingStore() },
                     isStaging: true
                 )

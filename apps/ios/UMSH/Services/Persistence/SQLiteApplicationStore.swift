@@ -2123,7 +2123,9 @@ actor SQLiteApplicationStore {
                     at: 6
                 )
                 try check(sqlite3_bind_int64(statement, 7, createdAt))
-                try bindOptional(outbound ? "delivered" : nil, to: statement, at: 8)
+                // "acknowledged" is the app's word for delivered; an unknown
+                // state would caption every seeded bubble "Sending…".
+                try bindOptional(outbound ? "acknowledged" : nil, to: statement, at: 8)
                 try stepDone(statement)
             }
         }

@@ -1,6 +1,21 @@
 import Foundation
 import UMSHMobileCore
 
+/// The ether around a fake radio: takes whatever the phone's mesh session
+/// transmits and delivers whatever the rest of the fabricated mesh says back.
+///
+/// A `FakeRadioConnection` with no air is a radio in an empty room — sends
+/// complete without ever being heard, which is all a preview needs. Staging
+/// hangs a whole mesh of real Rust sessions on this seam.
+protocol FakeRadioAir: Sendable {
+    /// Install the handler that carries mesh traffic back to the phone.
+    func attach(onAir: @escaping @Sendable ([MobileMeshRxRecord]) -> Void) async
+    /// Tell the mesh who the phone is, so peers can address it by name.
+    func registerPhone(address: String) async
+    /// One of the phone's frames hits the air.
+    func transmit(_ data: Data) async
+}
+
 actor FakeRadioConnection: RadioConnection {
     private var snapshot: RadioSnapshot
     private var continuations: [UUID: AsyncStream<RadioSnapshot>.Continuation] = [:]
@@ -11,9 +26,23 @@ actor FakeRadioConnection: RadioConnection {
     private var routeCleared = false
     /// Stands in for the phone MAC's channel table.
     private var registeredChannelKeys: Set<Data> = []
+    /// What surrounds this radio. Without one, transmitted frames vanish.
+    private let air: (any FakeRadioAir)?
+    /// The same Rust session a real radio would drive. When the app installs
+    /// one, the chat surface below stops pretending and delegates to it.
+    private var meshSession: MobileMeshSession?
+    private var wakeListener: FakeMeshSessionWakeListener?
+    /// Frames on their way to the air, drained in order by one task so
+    /// concurrent pumps cannot interleave a batch.
+    private var airOutbox: [Data] = []
+    private var airDrainer: Task<Void, Never>?
+    private var lastYieldedChatBatchID: UInt64?
+    private var lastChatBatchYield: ContinuousClock.Instant?
+    private var chatRedelivery: Task<Void, Never>?
 
-    init(snapshot: RadioSnapshot = .previewReady) {
+    init(snapshot: RadioSnapshot = .previewReady, air: (any FakeRadioAir)? = nil) {
         self.snapshot = snapshot
+        self.air = air
     }
 
     func snapshots() -> AsyncStream<RadioSnapshot> {
@@ -113,9 +142,34 @@ actor FakeRadioConnection: RadioConnection {
 
     func stopDiscovery() async {}
 
-    func useHostIdentity(_ identity: MeshPublicIdentity?) async throws {}
+    func useHostIdentity(_ identity: MeshPublicIdentity?) async throws {
+        if let identity {
+            await air?.registerPhone(address: identity.canonicalAddress)
+        }
+    }
 
-    func useMeshSession(_ session: MobileMeshSession?) async {}
+    func useMeshSession(_ session: MobileMeshSession?) async {
+        meshSession = session
+        guard let session else {
+            wakeListener = nil
+            return
+        }
+        let listener = FakeMeshSessionWakeListener(connection: self)
+        wakeListener = listener
+        session.setWakeListener(listener: listener)
+        // Channel keys can arrive before the session does; replay them so the
+        // session's channel table matches what the app believes it registered.
+        if !registeredChannelKeys.isEmpty {
+            try? await session.registerChannels(keys: Array(registeredChannelKeys))
+        }
+        if let air {
+            await air.attach { [weak self] records in
+                guard let self else { return }
+                Task { await self.receiveAirFrames(records) }
+            }
+        }
+        pump()
+    }
 
     func autoConnect() async {}
 
@@ -206,10 +260,14 @@ actor FakeRadioConnection: RadioConnection {
 
     func registerChannels(_ channelKeys: [Data]) async throws {
         registeredChannelKeys.formUnion(channelKeys)
+        guard let meshSession, !channelKeys.isEmpty else { return }
+        try await meshSession.registerChannels(keys: channelKeys)
     }
 
     func removeChannels(_ channelKeys: [Data]) async throws {
         registeredChannelKeys.subtract(channelKeys)
+        guard let meshSession, !channelKeys.isEmpty else { return }
+        try await meshSession.removeChannels(keys: channelKeys)
     }
 
     func reconcileHostChannels(_ channelKeys: [Data]) async throws {
@@ -290,22 +348,47 @@ actor FakeRadioConnection: RadioConnection {
     func prepareChat(
         peerAddresses: [String],
         checkpoints: [MobileChatCheckpointRecord]
-    ) async throws {}
+    ) async throws {
+        guard let meshSession else { return }
+        try await meshSession.registerPeers(peerAddresses: peerAddresses)
+        try await meshSession.restoreChat(checkpoints: checkpoints)
+    }
 
-    func registerChatPeers(_ peerAddresses: [String]) async throws {}
+    func registerChatPeers(_ peerAddresses: [String]) async throws {
+        guard let meshSession else { return }
+        try await meshSession.registerPeers(peerAddresses: peerAddresses)
+    }
 
-    func removeChatPeers(_ peerAddresses: [String]) async throws {}
+    func removeChatPeers(_ peerAddresses: [String]) async throws {
+        guard let meshSession else { return }
+        try await meshSession.removePeers(peerAddresses: peerAddresses)
+    }
 
-    func requestIdentityByHint(conversationAddress: String, hint: Data) async throws {}
+    func requestIdentityByHint(conversationAddress: String, hint: Data) async throws {
+        guard let meshSession else { return }
+        try await meshSession.requestIdentityByHint(
+            conversationAddress: conversationAddress,
+            hint: hint
+        )
+        pump()
+    }
 
-    func setChatDisplayName(_ name: String) async throws {}
+    func setChatDisplayName(_ name: String) async throws {
+        guard let meshSession else { return }
+        try await meshSession.setChatDisplayName(name: name)
+    }
 
     func composeText(
         conversationAddress: String,
         clientToken: UInt32,
         body: String
     ) async throws -> MobileChatComposeBatchRecord {
-        throw RadioConnectionError.incompatibleProtocol
+        guard let meshSession else { throw RadioConnectionError.incompatibleProtocol }
+        return try await meshSession.composeText(
+            conversationAddress: conversationAddress,
+            clientToken: clientToken,
+            body: body
+        )
     }
 
     func composeEdit(
@@ -314,7 +397,13 @@ actor FakeRadioConnection: RadioConnection {
         original: MobileChatOriginalRef,
         body: String
     ) async throws -> MobileChatComposeBatchRecord {
-        throw RadioConnectionError.incompatibleProtocol
+        guard let meshSession else { throw RadioConnectionError.incompatibleProtocol }
+        return try await meshSession.composeEdit(
+            conversationAddress: conversationAddress,
+            clientToken: clientToken,
+            original: original,
+            body: body
+        )
     }
 
     func composeDelete(
@@ -322,7 +411,12 @@ actor FakeRadioConnection: RadioConnection {
         clientToken: UInt32,
         original: MobileChatOriginalRef
     ) async throws -> MobileChatComposeBatchRecord {
-        throw RadioConnectionError.incompatibleProtocol
+        guard let meshSession else { throw RadioConnectionError.incompatibleProtocol }
+        return try await meshSession.composeDelete(
+            conversationAddress: conversationAddress,
+            clientToken: clientToken,
+            original: original
+        )
     }
 
     func composeReaction(
@@ -331,23 +425,48 @@ actor FakeRadioConnection: RadioConnection {
         target: MobileChatRegardingRef,
         body: String
     ) async throws -> MobileChatComposeBatchRecord {
-        throw RadioConnectionError.incompatibleProtocol
+        guard let meshSession else { throw RadioConnectionError.incompatibleProtocol }
+        return try await meshSession.composeReaction(
+            conversationAddress: conversationAddress,
+            clientToken: clientToken,
+            target: target,
+            body: body
+        )
     }
 
-    func commitChatBatch(_ batchID: UInt64) async throws {}
+    func commitChatBatch(_ batchID: UInt64) async throws {
+        guard let meshSession else { return }
+        try await meshSession.commitChatBatch(batchId: batchID)
+        pump()
+    }
 
     func rejectChatBatch(
         _ batchID: UInt64,
         checkpoints: [MobileChatCheckpointRecord]
-    ) async throws {}
+    ) async throws {
+        guard let meshSession else { return }
+        try await meshSession.rejectChatBatch(batchId: batchID, checkpoints: checkpoints)
+    }
 
     func applyChatArchiveResult(
         requestID: UInt32,
         kind: MobileChatArchiveResultKind,
         payload: Data
-    ) async throws {}
+    ) async throws {
+        guard let meshSession else { return }
+        try meshSession.applyChatArchiveResult(
+            requestId: requestID,
+            kind: kind,
+            payload: payload
+        )
+        pump()
+    }
 
-    func acknowledgeChatBatch(_ batchID: UInt64) async throws {}
+    func acknowledgeChatBatch(_ batchID: UInt64) async throws {
+        guard let meshSession else { return }
+        try meshSession.acknowledgeChatBatch(batchId: batchID)
+        pump()
+    }
 
     func disconnect() async {
         publish(.disconnected)
@@ -392,6 +511,88 @@ actor FakeRadioConnection: RadioConnection {
         publish(updated)
     }
 
+    // MARK: - Mesh session pump
+
+    /// Drain the Rust session the way a real radio link would: transmitted
+    /// frames complete instantly (a fake radio's airtime is free), traffic
+    /// goes to the air, and chat batches surface to the app.
+    func pump() {
+        guard let meshSession else { return }
+        let update = meshSession.pollUpdate()
+        if !update.outboundFrames.isEmpty {
+            for frame in update.outboundFrames {
+                try? meshSession.completeOutboundFrame(frameId: frame.id, transmitted: true)
+            }
+            queueForAir(update.outboundFrames.map(\.data))
+        }
+        yieldChatUpdate(from: update)
+    }
+
+    private func queueForAir(_ frames: [Data]) {
+        guard air != nil, !frames.isEmpty else { return }
+        airOutbox.append(contentsOf: frames)
+        guard airDrainer == nil else { return }
+        airDrainer = Task { await drainAir() }
+    }
+
+    private func drainAir() async {
+        while !airOutbox.isEmpty {
+            let frame = airOutbox.removeFirst()
+            await air?.transmit(frame)
+        }
+        airDrainer = nil
+    }
+
+    /// Frames the surrounding mesh sends back to this radio.
+    private func receiveAirFrames(_ records: [MobileMeshRxRecord]) {
+        guard let meshSession else { return }
+        for record in records {
+            try? meshSession.receive(frame: record)
+            let frame = RadioReceivedFrame(
+                data: record.data,
+                rssiDBm: record.rssiDbm.map(Int.init),
+                linkQuality: record.lqi,
+                signalToNoiseCentibels: record.snrCb.map(Int.init),
+                wasBuffered: false,
+                wasAcknowledgedByRadio: false,
+                ageSeconds: 0
+            )
+            for continuation in frameContinuations.values {
+                continuation.yield(frame)
+            }
+        }
+        pump()
+    }
+
+    /// Same delivery discipline as the real connection: a batch is yielded
+    /// once, then re-yielded every couple of seconds until the app
+    /// acknowledges it — an unacknowledged batch stalls every batch behind it.
+    private func yieldChatUpdate(from update: MobileMeshSessionUpdateRecord) {
+        guard let batchID = update.chatBatchId else { return }
+        let now = ContinuousClock.now
+        let retryDue = lastChatBatchYield.map { now - $0 > .seconds(2) } ?? true
+        guard batchID != lastYieldedChatBatchID || retryDue else { return }
+        lastYieldedChatBatchID = batchID
+        lastChatBatchYield = now
+        let chatUpdate = RadioChatUpdate(
+            batchID: batchID,
+            mutations: update.chatMutations,
+            deliveries: update.chatDeliveries,
+            archiveLookups: update.chatArchiveLookups,
+            senderResolutions: update.chatSenderResolutions,
+            diagnostics: update.chatDiagnostics
+        )
+        for continuation in chatContinuations.values {
+            continuation.yield(chatUpdate)
+        }
+        chatRedelivery?.cancel()
+        chatRedelivery = Task { [weak self] in
+            try? await Task.sleep(for: .seconds(2.5))
+            guard !Task.isCancelled else { return }
+            await self?.pump()
+        }
+    }
+
     func publish(_ newSnapshot: RadioSnapshot) {
         snapshot = newSnapshot
         for continuation in continuations.values {
@@ -415,5 +616,21 @@ actor FakeRadioConnection: RadioConnection {
 
     private func removeChatContinuation(_ id: UUID) {
         chatContinuations[id] = nil
+    }
+}
+
+/// Bridges the Rust session's pending-update announcement back into the
+/// actor. Runs on the Rust worker thread; holds the connection weakly so a
+/// retired session cannot keep it alive.
+private final class FakeMeshSessionWakeListener: MobileMeshWakeListener, @unchecked Sendable {
+    private weak var connection: FakeRadioConnection?
+
+    init(connection: FakeRadioConnection) {
+        self.connection = connection
+    }
+
+    func onUpdatePending() {
+        guard let connection else { return }
+        Task { await connection.pump() }
     }
 }
