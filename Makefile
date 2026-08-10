@@ -1,5 +1,5 @@
 .PHONY: docs rust-docs rust-docs-nightly docs-serve gh-pages web-debugger \
-	site site-serve site-check site-preview \
+	site site-serve site-check site-test site-preview \
 	build-techo-console flash-techo-console \
 	build-wio-tracker-l1-console flash-wio-tracker-l1-console \
 	build-wio-tracker-l1 flash-wio-tracker-l1 \
@@ -628,15 +628,44 @@ site-serve:
 site-check:
 	$(ZOLA) --root site check
 
+# The flasher's serial-DFU framing, checked against golden frames generated
+# from an independent transcription of the protocol. No board required.
+site-test:
+	node --test "site/tests/flasher/*.test.mjs"
+
 # The published tree as it will actually look, including the books. Serve it
 # with: python3 -m http.server 8000 -d target/site-preview
-site-preview: site docs rust-docs-nightly
+#
+# Built against a localhost base URL rather than umsh.dev, so the preview loads
+# its own stylesheet and scripts instead of the deployed ones. The flasher
+# depends on this: its Content-Security-Policy is `script-src 'self'`, so a
+# module served from another origin would simply be blocked. Override the port
+# with SITE_PREVIEW_URL if 8000 is taken.
+SITE_PREVIEW_URL ?= http://localhost:8000
+
+site-preview: docs rust-docs-nightly
+	@command -v $(ZOLA) >/dev/null 2>&1 || \
+		{ echo "zola not found. Install it with: brew install zola"; exit 1; }
+	$(ZOLA) --root site build --base-url $(SITE_PREVIEW_URL)
 	rm -rf target/site-preview
 	mkdir -p target/site-preview/docs/protocol target/site-preview/docs/rust
 	cp -R site/public/. target/site-preview/
 	cp -R docs/protocol/book/. target/site-preview/docs/protocol/
 	cp -R target/doc/. target/site-preview/docs/rust/
 	cp docs/rust-index.html target/site-preview/docs/rust/index.html
+	@# Layer in whatever release has been staged locally, in the same shape
+	@# `release-mirror` publishes, so the flasher's "latest release" mode has
+	@# something same-origin to fetch.
+	@for dir in target/firmware-release/*/; do \
+		test -f "$$dir/manifest.json" || continue; \
+		version=$$(basename "$$dir"); \
+		mkdir -p target/site-preview/firmware/$$version; \
+		cp "$$dir"/manifest.json target/site-preview/firmware/$$version/; \
+		cp "$$dir"/umsh-*-dfu.zip "$$dir"/umsh-*.bin \
+			target/site-preview/firmware/$$version/ 2>/dev/null || true; \
+	done
+	@test ! -d target/site-preview/firmware || \
+		scripts/release.py --index-mirror target/site-preview/firmware --keep $(MIRROR_KEEP)
 	@echo "Preview assembled. Serve it with:"
 	@echo "    python3 -m http.server 8000 -d target/site-preview"
 

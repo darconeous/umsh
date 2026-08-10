@@ -5,8 +5,23 @@
 {% block og_title %}{{ page.title }} — UMSH{% endblock og_title %}
 {% block og_description %}{{ page.description }}{% endblock og_description %}
 
+{# The flasher talks to USB devices, so it gets its own policy rather than one
+   the whole site carries. Everything it needs is same-origin: the release
+   manifest and the firmware it fetches are mirrored into /firmware/ by
+   `make release-mirror`, and its libraries are committed under
+   static/flasher/vendor/. #}
+{% block head_extra %}
+  <meta http-equiv="Content-Security-Policy"
+    content="default-src 'self'; script-src 'self'; connect-src 'self'; img-src 'self' data:; style-src 'self'; object-src 'none'; base-uri 'none'; form-action 'none'" />
+  <script type="module" src="{{ get_url(path='flasher/main.js', trailing_slash=false) }}"></script>
+{% endblock head_extra %}
+
 {% block content %}
   {% set data = load_data(path="data/hardware.toml") %}
+
+  {# The flasher reads its board facts from here, so the page and the wizard
+     cannot disagree. Keep hardware.toml free of the literal text `</script`. #}
+  <script type="application/json" id="flasher-data">{{ data.boards | json_encode() | safe }}</script>
 
 
   <div class="page-head page-head--center">
@@ -16,56 +31,71 @@
     </div>
   </div>
 
-  <div class="section">
+  <section class="section" id="web-flasher">
+    <div class="container">
+      <article class="card flasher" id="flasher">
+        <noscript>
+          <div class="notice">
+            <p>The flasher needs JavaScript. Without it, firmware can still be
+            built and flashed from source as described below.</p>
+          </div>
+        </noscript>
+
+        <div class="notice notice--warn" id="flasher-unsupported" hidden>
+          <p><strong>This browser can&rsquo;t flash your radio.</strong>
+          Flashing from the page needs Chrome, Edge, or Opera on a desktop,
+          because those are the browsers that can talk to USB serial devices.
+          You can still pick your board below and download its firmware to
+          flash by hand.</p>
+        </div>
+
+        <ol class="flasher__steps">
+          <li class="flasher__step">
+            <h3><span class="flasher__num">1</span> Choose your board</h3>
+            <select id="flasher-board" aria-label="Board">
+              <option value="">Choose a board…</option>
+              {% for board in data.boards %}
+                {% if board.flash %}
+                  <option value="{{ board.id }}">{{ board.vendor }} {{ board.name }}</option>
+                {% endif %}
+              {% endfor %}
+            </select>
+          </li>
+
+          <li class="flasher__step" id="flasher-step-firmware" hidden>
+            <h3><span class="flasher__num">2</span> Choose the firmware</h3>
+            <label class="flasher__choice">
+              <input type="radio" name="flasher-source" value="latest" checked />
+              <span>Latest release <em id="flasher-release-meta"></em></span>
+            </label>
+            <label class="flasher__choice">
+              <input type="radio" name="flasher-source" value="custom" />
+              <span>A file from my computer</span>
+            </label>
+            <input type="file" id="flasher-file" hidden />
+            <p class="flasher__hint" id="flasher-file-hint" hidden></p>
+          </li>
+
+          <li class="flasher__step" id="flasher-step-flash" hidden>
+            <h3><span class="flasher__num">3</span> Flash it</h3>
+            <div id="flasher-warnings"></div>
+            <div class="flasher__actions" id="flasher-actions"></div>
+            <p class="flasher__hint" id="flasher-entry"></p>
+            <progress id="flasher-progress" max="100" value="0" hidden></progress>
+            <p class="flasher__status" id="flasher-status" role="status" aria-live="polite"></p>
+            <details class="flasher__log">
+              <summary>Details</summary>
+              <pre id="flasher-log"></pre>
+            </details>
+          </li>
+        </ol>
+      </article>
+    </div>
+  </section>
+
+  <div class="section section--surface">
     <div class="container">
       <div class="prose prose--center">{{ page.content | safe }}</div>
     </div>
   </div>
-
-  <section class="section section--surface">
-    <div class="container">
-      <div class="section__head section__head--center">
-        <h2>Per-board instructions</h2>
-        <p>
-          Every board runs the same firmware built for its own hardware, and
-          the same command builds and flashes it. What differs is how you get
-          the board into its bootloader.
-        </p>
-      </div>
-
-      {# Boards with no flash table have no firmware to flash yet. #}
-      {% for board in data.boards %}
-        {% if board.flash %}
-        <article class="card board-steps" id="{{ board.id }}">
-          <span class="card__eyebrow">{{ board.vendor }}</span>
-          <h3>{{ board.name }}</h3>
-
-          <p><strong>Getting into the bootloader.</strong> {{ board.flash.dfu_entry }}</p>
-
-          <p><strong>Building and flashing.</strong></p>
-          <pre><code>make {{ board.flash.make_target }}</code></pre>
-
-          {% if board.flash.family_id %}
-            <ul class="board__specs" style="border-top: none;">
-              <li><span>Bootloader drive</span><span>{{ board.flash.volume }}</span></li>
-              <li><span>UF2 family</span><span>{{ board.flash.family_id }}</span></li>
-              <li><span>Application start</span><span>{{ board.flash.app_base }}</span></li>
-              <li><span>SoftDevice</span><span>{{ board.flash.softdevice }}</span></li>
-            </ul>
-          {% endif %}
-
-          {% if board.flash.quirks %}
-            <div class="notice">
-              <p><strong>Worth knowing about this board</strong></p>
-              <ul>
-                {# The data file is trusted content and uses inline <code>. #}
-                {% for quirk in board.flash.quirks %}<li>{{ quirk | safe }}</li>{% endfor %}
-              </ul>
-            </div>
-          {% endif %}
-        </article>
-        {% endif %}
-      {% endfor %}
-    </div>
-  </section>
 {% endblock content %}

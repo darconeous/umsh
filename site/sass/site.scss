@@ -974,13 +974,6 @@ th:first-child {
   margin-inline: auto;
 }
 
-// The per-board flashing steps are a stack of prose cards, so they keep a
-// readable measure rather than running the full width of the container.
-.board-steps {
-  max-width: $narrow;
-  margin: 0 auto 1.25rem;
-}
-
 .notice {
   background: var(--surface);
   border: 1px solid var(--border);
@@ -1129,4 +1122,170 @@ th:first-child {
   .site-footer__brand {
     grid-column: 1 / -1;
   }
+}
+
+// ── Web flasher ──────────────────────────────────────────────────────────────
+//
+// The wizard reuses `.card`, `.btn`, and `.notice`; what is here is the step
+// list, the form controls, and the progress/log pair.
+
+.flasher {
+  max-width: 46rem;
+  margin: 0 auto;
+}
+
+.flasher__steps {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+}
+
+.flasher__step {
+  padding: 1.25rem 0;
+  border-top: 1px solid var(--border);
+
+  &:first-child {
+    border-top: none;
+    padding-top: 0;
+  }
+
+  h3 {
+    display: flex;
+    align-items: center;
+    gap: 0.6rem;
+    margin: 0 0 0.85rem;
+    font-size: 1.05rem;
+  }
+}
+
+.flasher__num {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 1.6rem;
+  height: 1.6rem;
+  border-radius: 50%;
+  background: var(--orange);
+  color: #fff;
+  font-size: 0.85rem;
+  font-weight: 700;
+  flex: none;
+}
+
+.flasher select,
+.flasher input[type="file"] {
+  width: 100%;
+  max-width: 30rem;
+  padding: 0.55rem 0.7rem;
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  background: var(--surface);
+  color: var(--ink);
+  font: inherit;
+  font-size: 0.95rem;
+}
+
+.flasher__choice {
+  display: flex;
+  align-items: baseline;
+  gap: 0.55rem;
+  padding: 0.3rem 0;
+  cursor: pointer;
+
+  em {
+    color: var(--ink-muted);
+    font-style: normal;
+    font-size: 0.9rem;
+  }
+
+  input:disabled + span {
+    color: var(--ink-muted);
+  }
+}
+
+.flasher__hint {
+  color: var(--ink-muted);
+  font-size: 0.9rem;
+  margin: 0.7rem 0 0;
+}
+
+.flasher__actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.6rem;
+  margin-bottom: 0.5rem;
+}
+
+.flasher__status {
+  margin: 0.9rem 0 0;
+  font-size: 0.95rem;
+
+  &[data-kind="error"] {
+    color: #b3261e;
+  }
+
+  &[data-kind="ok"] {
+    color: var(--orange-deep);
+    font-weight: 600;
+  }
+
+  &:empty {
+    margin: 0;
+  }
+}
+
+.flasher progress {
+  width: 100%;
+  height: 0.5rem;
+  margin-top: 1rem;
+  accent-color: var(--orange);
+}
+
+.flasher__log {
+  margin-top: 1rem;
+  font-size: 0.85rem;
+
+  summary {
+    cursor: pointer;
+    color: var(--ink-muted);
+  }
+
+  pre {
+    max-height: 14rem;
+    overflow: auto;
+    margin: 0.6rem 0 0;
+    padding: 0.7rem 0.9rem;
+    background: var(--surface-2);
+    border-radius: 8px;
+    font-size: 0.8rem;
+    line-height: 1.5;
+    white-space: pre-wrap;
+
+    &:empty {
+      display: none;
+    }
+  }
+}
+
+// Compact callouts stacked inside a step, rather than spaced like prose.
+.notice--compact {
+  margin: 0 0 1rem;
+  padding: 0.8rem 1rem;
+  font-size: 0.92rem;
+
+  ul {
+    margin: 0;
+    padding-left: 1.1rem;
+  }
+
+  li + li {
+    margin-top: 0.45rem;
+  }
+}
+
+.notice--warn {
+  margin: 0 0 1rem;
+  padding: 0.8rem 1rem;
+  font-size: 0.92rem;
+  border-left-color: #b3261e;
 }

@@ -6,6 +6,12 @@
       "runtimeExecutable": "zola",
       "runtimeArgs": ["--root", "site", "serve", "--port", "1111"],
       "port": 1111
+    },
+    {
+      "name": "site-preview",
+      "runtimeExecutable": "python3",
+      "runtimeArgs": ["-m", "http.server", "8000", "-d", "target/site-preview"],
+      "port": 8000
     }
   ]
 }

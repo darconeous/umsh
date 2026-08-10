@@ -69,10 +69,9 @@
 
                   <div class="board__actions">
                     {% if board.flash %}
-                      {# The query string is what the web flasher will read; the
-                         fragment is what makes this land in the right place on
-                         today's instructions page. #}
-                      <a class="btn btn--primary" href="/flasher/?board={{ board.id }}#{{ board.id }}">Flash this board</a>
+                      {# The flasher sits at the top of its page and preselects
+                         the board named by the query string. #}
+                      <a class="btn btn--primary" href="/flasher/?board={{ board.id }}">Flash this board</a>
                     {% else %}
                       {# No flash table means no firmware exists for the board. #}
                       <button class="btn btn--primary" type="button" disabled>Flash this board</button>
