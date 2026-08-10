@@ -4,8 +4,8 @@
 <head>
     <meta charset="utf-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1" />
-    <title>Flashing — UMSH</title>
-    <meta name="description" content="How to get UMSH firmware onto a radio." />
+    <title>Flasher — UMSH</title>
+    <meta name="description" content="Plug in a radio and flash the latest UMSH firmware from your browser." />
     <meta name="theme-color" content="#FA5000" />
 
     <link rel="stylesheet" href="https://umsh.dev/site.css" />
@@ -15,13 +15,17 @@
 
     <meta property="og:site_name" content="UMSH" />
     <meta property="og:type" content="website" />
-    <meta property="og:title" content="Flashing — UMSH" />
+    <meta property="og:title" content="Flasher — UMSH" />
     <meta property="og:description"
-        content="How to get UMSH firmware onto a radio." />
+        content="Plug in a radio and flash the latest UMSH firmware from your browser." />
     <meta property="og:image" content="https://umsh.dev/og-card.png" />
     <meta property="og:url" content="https://umsh.dev/flasher/" />
     <meta name="twitter:card" content="summary_large_image" />
     
+  <meta http-equiv="Content-Security-Policy"
+    content="default-src 'self'; script-src 'self'; connect-src 'self'; img-src 'self' data:; style-src 'self'; object-src 'none'; base-uri 'none'; form-action 'none'" />
+  <script type="module" src="https://umsh.dev/flasher/main.js"></script>
+
 </head>
 
 <body>
@@ -68,220 +72,122 @@
         
   
 
+  
+  <script type="application/json" id="flasher-data">[{"display":"None","category":"companion","flash":{"dfu_entry":"Hold the user button and cycle USB power twice, or run a 1200-baud touch on the serial port.","methods":["uf2","serial-dfu"],"volume":"T1000-E","quirks":["The board is factory-sealed with no debug header, so there is no recovery from a damaged bootloader."],"make_target":"flash-t1000e","softdevice":"S140 7.3.0","app_base":"0x27000","family_id":"0x28860057"},"vendor":"Seeed Studio","blurb":"A sealed, pocket-sized card tracker with a magnetic charging cable. No screen and one button, so it pairs with the phone app rather than standing alone. The most thoroughly exercised board in the project.","status":"proven","vendor_url":"https://www.seeedstudio.com/SenseCAP-Card-Tracker-T1000-E-for-Meshtastic-p-5913.html","battery":"Internal Li-ion","extras":"Buzzer, accelerometer, light sensor","photo":"t1000e.jpg","mcu":"nRF52840","id":"t1000e","name":"SenseCAP T1000-E","gnss":"Airoha AG3335","status_note":"The reference board for UMSH development, and the one with the most hours on it.","radio":"Semtech LR1110"},{"name":"T-Echo","flash":{"make_target":"flash-techo","methods":["uf2","serial-dfu"],"family_id":"0xADA52840","volume":"TECHOBOOT","softdevice":"S140 6.1.1","dfu_entry":"Double-tap the reset button, or run a 1200-baud touch on the serial port.","app_base":"0x26000","quirks":[]},"status_note":"Bringup complete and validated on hardware, including the e-paper display and GNSS.","vendor_url":"https://lilygo.cc/products/t-echo","status":"proven","vendor":"LilyGO","display":"1.54\" e-paper, 200×200","id":"techo","battery":"850 mAh (2400 mAh on the Plus)","photo":"techo.jpg","blurb":"A handheld tracker with a 1.54-inch e-paper display, so it can show messages and status on its own while still working as a phone companion. Low power draw between updates, and readable in direct sun. A built-in backlight makes it readable at night.","extras":"Touch button, RGB LED, real-time clock","mcu":"nRF52840","category":"companion","gnss":"Quectel L76K","radio":"Semtech SX1262"},{"vendor_url":"https://www.seeedstudio.com/Wio-Tracker-L1-p-6453.html","extras":"Buzzer, navigation button","status_note":"Validated on hardware, including the display, GNSS, and over-the-air radio work.","blurb":"A tracker with a small OLED display, a navigation button, and a mechanical power switch—the switch cuts the battery, so it survives a long spell in a drawer. The Pro ships assembled in a case, as pictured; the plain L1 is a bare board. The e-ink variant is not yet supported.","radio":"Semtech SX1262","flash":{"softdevice":"S140 7.3.0","quirks":[],"app_base":"0x27000","volume":"TRACKER L1","make_target":"flash-wio-tracker-l1","methods":["uf2","serial-dfu"],"dfu_entry":"Double-tap the reset button, or run a 1200-baud touch on the serial port.","family_id":"0x28861667"},"battery":"Li-ion with hardware power switch","category":"companion","name":"Wio Tracker L1","display":"0.96\" OLED, 128×64","id":"wio-tracker-l1","status":"proven","vendor":"Seeed Studio","photo":"wio-tracker-l1.jpg","gnss":"Quectel L76K","mcu":"nRF52840"},{"flash":{"app_base":"0x27000","softdevice":"S140 7.3.0","volume":"SENSECAP","methods":["uf2","serial-dfu"],"make_target":"flash-sensecap-solar","quirks":["From the powered-off state, any press of the PWR button enters the bootloader, however brief. USR is the button that turns the node on."],"family_id":"0x28860044","dfu_entry":"Double-tap the reset button."},"blurb":"An outdoor, solar-powered node built to be mounted somewhere and left alone. A 5 W panel and four 18650 cells carry it through bad weather and freezing temperatures.","status":"proven","vendor":"Seeed Studio","status_note":"Radio, Bluetooth, GNSS, and the power path have all been validated on hardware.","photo":"sensecap-solar.jpg","mcu":"nRF52840","extras":"IP-rated enclosure, two buttons, two LEDs","name":"SenseCAP Solar Node P1","vendor_url":"https://www.seeedstudio.com/SenseCAP-Solar-Node-P1-Pro-for-Meshtastic-LoRa-p-6412.html","radio":"Semtech SX1262","gnss":"Quectel L76K (enabled by default)","battery":"4 × 18650 with 5 W solar panel","category":"repeater","id":"sensecap-solar","display":"None"},{"id":"heltec-v3","mcu":"Espressif ESP32-S3","vendor_url":"https://heltec.org/project/wifi-lora-32-v3/","blurb":"An inexpensive, widely available development board with an OLED display and exposed pins.","name":"WiFi LoRa 32 V3","status_note":"Validated on hardware, including Bluetooth pairing and over-the-air radio work.","status":"proven","photo":"heltec-v3.png","radio":"Semtech SX1262","gnss":"None","category":"devkit","display":"0.96\" OLED, 128×64","flash":{"quirks":["Building this board needs Espressif's Xtensa Rust toolchain, installed with <code>espup</code>."],"methods":["esp-serial"],"chip":"ESP32-S3","dfu_entry":"None needed—the board enters its ROM bootloader on its own when the flashing tool asserts the USB serial control lines.","make_target":"flash-heltec-v3"},"vendor":"Heltec","battery":"LiPo connector with onboard charger","extras":"USB-C, exposed GPIO headers"},{"id":"xiao-nrf52","mcu":"nRF52840","vendor":"Seeed Studio","status_note":"Validated on hardware and working well.","battery":"LiPo via JST connector","category":"devkit","status":"proven","radio":"Semtech SX1262","extras":"No buttons populated, RGB LED","flash":{"family_id":"0xADA52840","volume":"XIAO-SENSE","app_base":"0x27000","methods":["uf2","serial-dfu"],"make_target":"flash-xiao-nrf52","quirks":[],"dfu_entry":"Double-tap the reset button on the module.","softdevice":"S140 7.3.0"},"name":"XIAO nRF52840 + Wio-SX1262 Kit","display":"None","photo":"xiao-nrf52.jpg","blurb":"A small nRF52 module on a radio carrier board. No buttons are populated, so it is a starting point for a build of your own rather than a finished device—and an inexpensive way to put a node on the air.","gnss":"None","vendor_url":"https://www.seeedstudio.com/XIAO-nRF52840-Wio-SX1262-Kit-for-Meshtastic-p-6400.html"},{"radio":"Semtech SX1262 (other radio modules are offered)","status":"planned","category":"messager","display":"ST7796 TFT, 480×222","id":"tlora-pager","extras":"Backlit QWERTY keyboard, rotary encoder, haptics, SD card","gnss":"Yes","blurb":"A keyboard-and-screen handheld—the first board that could run UMSH as a standalone messaging device, with no phone involved at all. A wide landscape display above a backlit thumb keyboard, and a rotary encoder for scrolling.","status_note":"Planned for future implementation.","battery":"1500 mAh Li-ion with fuel gauge","vendor_url":"https://lilygo.cc/products/t-lora-pager","vendor":"LilyGO","name":"T-LoRa Pager","mcu":"Espressif ESP32-S3"},{"category":"messager","display":"2.8\" IPS, 320×240","battery":"LiPo via JST connector","vendor_url":"https://lilygo.cc/products/t-deck","id":"tdeck","status":"planned","radio":"Semtech SX1262","status_note":"Planned for future implementation.","extras":"QWERTY keyboard, trackball, speaker","mcu":"Espressif ESP32-S3","vendor":"LilyGO","gnss":"None on the base board; the Plus adds a module","name":"T-Deck","blurb":"Another keyboard handheld in the same class, with a trackball beside the keyboard instead of an encoder."}]</script>
+
 
   <div class="page-head page-head--center">
     <div class="container">
-      <h1>Flashing</h1>
-      <p>How to get UMSH firmware onto a radio.</p>
+      <h1>Flasher</h1>
+      <p>Plug in a radio and flash the latest UMSH firmware from your browser.</p>
     </div>
   </div>
 
-  <div class="section">
+  <section class="section" id="web-flasher">
     <div class="container">
-      <div class="prose prose--center"><div class="notice">
-<p><strong>A browser-based flasher is on the way.</strong> The plan is the
-usual thing: plug the radio into a USB port, pick it from a list, click a
-button, and let the page do the rest—no toolchain, no downloads, no command
-line. It will need Chrome, Edge, or Opera, since those are the browsers that
-can talk to serial devices.</p>
-<p>It is not built yet, and it is waiting on a firmware release process so
-that there is something for it to install. Until then, flashing means
-building from source, which is not difficult.</p>
-</div>
-<h2 id="building-and-flashing-from-source">Building and flashing from source</h2>
-<p>You will need a Rust toolchain, and nothing else—Rust cross-compiles for the
-nRF52840 on its own, with no separate embedded toolchain to install. Clone the
-repository, put your board into its bootloader as described below, and run the
-one command for it. The firmware only links in release mode, which the make
-targets already handle.</p>
-<pre><code data-lang="bash">git clone https://github.com/darconeous/umsh.git
-</code></pre>
-<p>Espressif boards need one extra step, because the Xtensa processors need
-their own Rust compiler:</p>
-<pre><code data-lang="bash">cargo install espup espflash &amp;&amp; espup install
-</code></pre>
-<p>The instructions below cover getting each board into its bootloader, which is
-the part that differs. If a flash appears to succeed but the board comes back
-running the same firmware it had before, read the notes for your board—on
-some of them that failure is completely silent.</p>
-</div>
-    </div>
-  </div>
+      <article class="card flasher" id="flasher">
+        <noscript>
+          <div class="notice">
+            <p>The flasher needs JavaScript. Without it, firmware can still be
+            built and flashed from source as described below.</p>
+          </div>
+        </noscript>
 
-  <section class="section section--surface">
-    <div class="container">
-      <div class="section__head section__head--center">
-        <h2>Per-board instructions</h2>
-        <p>
-          Every board runs the same firmware built for its own hardware, and
-          the same command builds and flashes it. What differs is how you get
-          the board into its bootloader.
-        </p>
-      </div>
+        <div class="notice notice--warn" id="flasher-unsupported" hidden>
+          <p><strong>This browser can&rsquo;t flash your radio.</strong>
+          Flashing from the page needs Chrome, Edge, or Opera on a desktop,
+          because those are the browsers that can talk to USB serial devices.
+          You can still pick your board below and download its firmware to
+          flash by hand.</p>
+        </div>
 
-      
-      
-        
-        <article class="card board-steps" id="t1000e">
-          <span class="card__eyebrow">Seeed Studio</span>
-          <h3>SenseCAP T1000-E</h3>
-
-          <p><strong>Getting into the bootloader.</strong> Hold the user button and cycle USB power twice, or run a 1200-baud touch on the serial port.</p>
-
-          <p><strong>Building and flashing.</strong></p>
-          <pre><code>make flash-t1000e</code></pre>
-
-          
-            <ul class="board__specs" style="border-top: none;">
-              <li><span>Bootloader drive</span><span>T1000-E</span></li>
-              <li><span>UF2 family</span><span>0x28860057</span></li>
-              <li><span>Application start</span><span>0x27000</span></li>
-              <li><span>SoftDevice</span><span>S140 7.3.0</span></li>
-            </ul>
-          
-
-          
-            <div class="notice">
-              <p><strong>Worth knowing about this board</strong></p>
-              <ul>
+        <ol class="flasher__steps">
+          <li class="flasher__step">
+            <h3><span class="flasher__num">1</span> Choose your board</h3>
+            <select id="flasher-board" aria-label="Board">
+              <option value="">Choose a board…</option>
+              
                 
-                <li>The board is factory-sealed with no debug header, so there is no recovery from a damaged bootloader.</li>
-              </ul>
-            </div>
-          
-        </article>
-        
-      
-        
-        <article class="card board-steps" id="techo">
-          <span class="card__eyebrow">LilyGO</span>
-          <h3>T-Echo</h3>
-
-          <p><strong>Getting into the bootloader.</strong> Double-tap the reset button, or run a 1200-baud touch on the serial port.</p>
-
-          <p><strong>Building and flashing.</strong></p>
-          <pre><code>make flash-techo</code></pre>
-
-          
-            <ul class="board__specs" style="border-top: none;">
-              <li><span>Bootloader drive</span><span>TECHOBOOT</span></li>
-              <li><span>UF2 family</span><span>0xADA52840</span></li>
-              <li><span>Application start</span><span>0x26000</span></li>
-              <li><span>SoftDevice</span><span>S140 6.1.1</span></li>
-            </ul>
-          
-
-          
-        </article>
-        
-      
-        
-        <article class="card board-steps" id="wio-tracker-l1">
-          <span class="card__eyebrow">Seeed Studio</span>
-          <h3>Wio Tracker L1</h3>
-
-          <p><strong>Getting into the bootloader.</strong> Double-tap the reset button, or run a 1200-baud touch on the serial port.</p>
-
-          <p><strong>Building and flashing.</strong></p>
-          <pre><code>make flash-wio-tracker-l1</code></pre>
-
-          
-            <ul class="board__specs" style="border-top: none;">
-              <li><span>Bootloader drive</span><span>TRACKER L1</span></li>
-              <li><span>UF2 family</span><span>0x28861667</span></li>
-              <li><span>Application start</span><span>0x27000</span></li>
-              <li><span>SoftDevice</span><span>S140 7.3.0</span></li>
-            </ul>
-          
-
-          
-        </article>
-        
-      
-        
-        <article class="card board-steps" id="sensecap-solar">
-          <span class="card__eyebrow">Seeed Studio</span>
-          <h3>SenseCAP Solar Node P1</h3>
-
-          <p><strong>Getting into the bootloader.</strong> Double-tap the reset button.</p>
-
-          <p><strong>Building and flashing.</strong></p>
-          <pre><code>make flash-sensecap-solar</code></pre>
-
-          
-            <ul class="board__specs" style="border-top: none;">
-              <li><span>Bootloader drive</span><span>SENSECAP</span></li>
-              <li><span>UF2 family</span><span>0x28860044</span></li>
-              <li><span>Application start</span><span>0x27000</span></li>
-              <li><span>SoftDevice</span><span>S140 7.3.0</span></li>
-            </ul>
-          
-
-          
-            <div class="notice">
-              <p><strong>Worth knowing about this board</strong></p>
-              <ul>
+                  <option value="t1000e">Seeed Studio SenseCAP T1000-E</option>
                 
-                <li>From the powered-off state, any press of the PWR button enters the bootloader, however brief. USR is the button that turns the node on.</li>
-              </ul>
-            </div>
-          
-        </article>
-        
-      
-        
-        <article class="card board-steps" id="heltec-v3">
-          <span class="card__eyebrow">Heltec</span>
-          <h3>WiFi LoRa 32 V3</h3>
-
-          <p><strong>Getting into the bootloader.</strong> None needed—the board enters its ROM bootloader on its own when the flashing tool asserts the USB serial control lines.</p>
-
-          <p><strong>Building and flashing.</strong></p>
-          <pre><code>make flash-heltec-v3</code></pre>
-
-          
-
-          
-            <div class="notice">
-              <p><strong>Worth knowing about this board</strong></p>
-              <ul>
+              
                 
-                <li>Building this board needs Espressif's Xtensa Rust toolchain, installed with <code>espup</code>.</li>
-              </ul>
-            </div>
-          
-        </article>
-        
-      
-        
-        <article class="card board-steps" id="xiao-nrf52">
-          <span class="card__eyebrow">Seeed Studio</span>
-          <h3>XIAO nRF52840 + Wio-SX1262 Kit</h3>
+                  <option value="techo">LilyGO T-Echo</option>
+                
+              
+                
+                  <option value="wio-tracker-l1">Seeed Studio Wio Tracker L1</option>
+                
+              
+                
+                  <option value="sensecap-solar">Seeed Studio SenseCAP Solar Node P1</option>
+                
+              
+                
+                  <option value="heltec-v3">Heltec WiFi LoRa 32 V3</option>
+                
+              
+                
+                  <option value="xiao-nrf52">Seeed Studio XIAO nRF52840 + Wio-SX1262 Kit</option>
+                
+              
+                
+              
+                
+              
+            </select>
+          </li>
 
-          <p><strong>Getting into the bootloader.</strong> Double-tap the reset button on the module.</p>
+          <li class="flasher__step" id="flasher-step-firmware" hidden>
+            <h3><span class="flasher__num">2</span> Choose the firmware</h3>
+            <label class="flasher__choice">
+              <input type="radio" name="flasher-source" value="latest" checked />
+              <span>Latest release <em id="flasher-release-meta"></em></span>
+            </label>
+            <label class="flasher__choice">
+              <input type="radio" name="flasher-source" value="custom" />
+              <span>A file from my computer</span>
+            </label>
+            <input type="file" id="flasher-file" hidden />
+            <p class="flasher__hint" id="flasher-file-hint" hidden></p>
+          </li>
 
-          <p><strong>Building and flashing.</strong></p>
-          <pre><code>make flash-xiao-nrf52</code></pre>
-
-          
-            <ul class="board__specs" style="border-top: none;">
-              <li><span>Bootloader drive</span><span>XIAO-SENSE</span></li>
-              <li><span>UF2 family</span><span>0xADA52840</span></li>
-              <li><span>Application start</span><span>0x27000</span></li>
-              <li><span>SoftDevice</span><span>S140 7.3.0</span></li>
-            </ul>
-          
-
-          
-        </article>
-        
-      
-        
-      
-        
-      
+          <li class="flasher__step" id="flasher-step-flash" hidden>
+            <h3><span class="flasher__num">3</span> Flash it</h3>
+            <div id="flasher-warnings"></div>
+            <div class="flasher__actions" id="flasher-actions"></div>
+            <p class="flasher__hint" id="flasher-entry"></p>
+            <progress id="flasher-progress" max="100" value="0" hidden></progress>
+            <p class="flasher__status" id="flasher-status" role="status" aria-live="polite"></p>
+            <details class="flasher__log">
+              <summary>Details</summary>
+              <pre id="flasher-log"></pre>
+            </details>
+          </li>
+        </ol>
+      </article>
     </div>
   </section>
+
+  <div class="section section--surface">
+    <div class="container">
+      <div class="prose prose--center"><h2 id="building-from-source">Building from source</h2>
+<p>The flasher installs published releases. To build the firmware yourself you
+need a Rust toolchain and nothing else—Rust cross-compiles for the nRF52840
+on its own:</p>
+<pre><code data-lang="bash">git clone https://github.com/darconeous/umsh.git
+</code></pre>
+<p>Espressif boards need one extra step, because the Xtensa processors use their
+own Rust compiler:</p>
+<pre><code data-lang="bash">cargo install espup espflash &amp;&amp; espup install
+</code></pre>
+<p>Put the board into its bootloader, then run its <code>make flash-&lt;board&gt;</code> target.
+Per-board details—entry gestures, UF2 family IDs, and the quirks worth knowing
+before flashing by hand—live with the code, in the repository’s <code>docs/hardware/</code>
+tree.</p>
+</div>
+    </div>
+  </div>
 
     </main>
 
