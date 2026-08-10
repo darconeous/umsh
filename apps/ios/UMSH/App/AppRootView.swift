@@ -89,7 +89,7 @@ struct AppRootView: View {
     private let isStaging: Bool
 
     init(
-        radioConnection: any RadioConnection = CoreBluetoothRadioConnection(),
+        radioConnection: any RadioConnection,
         openStore: () throws -> SQLiteApplicationStore = {
             try SQLiteApplicationStore.applicationStore()
         },

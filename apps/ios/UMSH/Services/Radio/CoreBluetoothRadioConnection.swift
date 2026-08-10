@@ -1302,7 +1302,6 @@ final class CoreBluetoothRadioConnection: NSObject, RadioConnection, @unchecked 
         autoConnectRequested = false
         autoConnectAttempt = UUID()
         automaticConnectionInProgress = false
-        central?.stopScan()
         // Durably clear auto-reconnect intent and revoke every standing/live
         // connection for the ULCP service — including a request for the
         // bound radio resurrected by state restoration, or one with no live
@@ -1311,6 +1310,22 @@ final class CoreBluetoothRadioConnection: NSObject, RadioConnection, @unchecked 
         // Reconnect can re-arm.
         shouldAutoConnect = false
         let live = peripheral
+        let managerIsPoweredOn = central?.state == .poweredOn
+
+        // State restoration can hand us a peripheral before the central's
+        // mandatory initial state callback. CoreBluetooth rejects every scan
+        // and connection command until that callback reports poweredOn. Make
+        // Disconnect responsive now, but retain the restored peripherals so
+        // `reconcileStandingConnectionOnPoweredOn` can revoke the daemon's
+        // standing connect as soon as commands are legal.
+        guard managerIsPoweredOn else {
+            restorationPendingResume = false
+            clearPeripheral()
+            publishDisconnected(problem: nil)
+            return
+        }
+
+        central?.stopScan()
         cancelAllServiceConnections(except: live?.state == .connected ? live?.identifier : nil)
         restoredPeripherals.removeAll()
         guard let peripheral = live else {

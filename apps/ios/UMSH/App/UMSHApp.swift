@@ -1,7 +1,21 @@
 import SwiftUI
 
+/// Owns the live CoreBluetooth adapter for the lifetime of the SwiftUI app.
+///
+/// `AppRootView` is a value: SwiftUI may recreate it whenever its inputs or
+/// environment change. Constructing a state-restoring `CBCentralManager` from
+/// that view's initializer therefore creates competing managers and can leave
+/// the UI subscribed to a different adapter than its action closures use.
+/// `StateObject` evaluates this owner once for the app identity, while `lazy`
+/// avoids touching Bluetooth at all when the debug staging UI is selected.
+private final class LiveRadioConnectionOwner: ObservableObject {
+    lazy var connection = CoreBluetoothRadioConnection()
+}
+
 @main
 struct UMSHApp: App {
+    @StateObject private var liveRadioConnection = LiveRadioConnectionOwner()
+
     #if DEBUG
     /// Whether to run against the fabricated mesh in the staging store, for
     /// taking marketing screenshots in the simulator. See ``StagingScenario``.
@@ -25,10 +39,11 @@ struct UMSHApp: App {
                 )
                 .id("staging")
             } else {
-                AppRootView().id("live")
+                AppRootView(radioConnection: liveRadioConnection.connection)
+                    .id("live")
             }
             #else
-            AppRootView()
+            AppRootView(radioConnection: liveRadioConnection.connection)
             #endif
         }
     }
