@@ -9,7 +9,7 @@
 	build-sensecap-solar flash-sensecap-solar \
 	build-xiao-nrf52 flash-xiao-nrf52 \
 	build-t1000e flash-t1000e-serial \
-	build-techo flash-techo \
+	build-techo flash-techo flash-techo-serial \
 	build-heltec-v3-console flash-heltec-v3-console \
 	build-heltec-v3 flash-heltec-v3 \
 	dfu-zip-techo dfu-zip-t1000e dfu-zip-sensecap-solar \
@@ -203,6 +203,18 @@ flash-t1000e: build-t1000e
 # target cannot talk to. Use `flash-t1000e` there.
 flash-t1000e-serial: build-t1000e
 	$(call dfu-serial,$(TARGET_DIR)/firmware-t1000e,$(SD_REQ_S140_7_3_0))
+
+# The T-Echo's counterpart. Double-tapping reset puts it in the Adafruit
+# bootloader, which presents the TECHOBOOT volume *and* a CDC serial port —
+# `flash-techo` uses the former, this the latter. The port is not the one
+# the application enumerates, so pass it explicitly:
+#
+#     make flash-techo-serial DFU_SERIAL_PORT=/dev/cu.usbmodem<N>
+#
+# This is also what exercises the S140 6.1.1 SoftDevice requirement, which
+# no other target does.
+flash-techo-serial: build-techo
+	$(call dfu-serial,$(TARGET_DIR)/firmware-techo,$(SD_REQ_S140_6_1_1))
 
 # ─── Release artifact conversion ─────────────────────────────────────────────
 #

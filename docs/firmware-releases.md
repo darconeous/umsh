@@ -97,10 +97,14 @@ it, and the release ships that exact file.
 DFU packages are built with `--sd-req`, so a package refuses to install on a
 board running a different SoftDevice:
 
-| SoftDevice | Boards | `--sd-req` |
-|---|---|---|
-| S140 6.1.1 | `techo` (app base `0x26000`) | `0x00B6` |
-| S140 7.3.0 | everything else (app base `0x27000`) | `0x0123` |
+| SoftDevice | Boards | `--sd-req` | Confirmed |
+|---|---|---|---|
+| S140 6.1.1 | `techo` (app base `0x26000`) | `0x00B6` | `flash-techo-serial`, 2026-08-09 |
+| S140 7.3.0 | everything else (app base `0x27000`) | `0x0123` | `flash-t1000e-serial`, 2026-08-09 |
+
+Both were confirmed by installing a strict package on the real board. The
+other three nRF52840 boards inherit `0x0123` from having the same SoftDevice,
+and have not been individually checked.
 
 adafruit-nrfutil's default is `0xFFFE`, "any SoftDevice", which is fine for a
 zip you built thirty seconds ago and wrong for one published on the internet:
@@ -187,7 +191,7 @@ Before promoting a draft release:
 - [ ] `shasum -a 256 -c SHA256SUMS` in the staging directory
 - [ ] `cmp` each staged UF2 against `target/thumbv7em-none-eabihf/release/firmware-<board>.uf2` — the release renames, it must not re-convert
 - [ ] Flash one nRF52 board from the staged UF2; confirm `PROP_DEV_VERSION` reads `umsh/fw-<version>` and `PROP_DEV_MODEL` names the board. This also proves `UMSH_FW_VERSION` reached the compiler.
-- [ ] Install a DFU package over serial DFU on a T1000-E (S140 7.3.0) and a T-Echo (S140 6.1.1). A wrong FWID is a clean init-packet rejection, not a damaged board. If either is refused, drop `--sd-req` back to the `0xFFFE` default and note it here.
-- [ ] Confirm the negative: a T-Echo package must be **refused** by a T1000-E.
+- [ ] Install a DFU package over serial DFU on a T1000-E (S140 7.3.0) and a T-Echo (S140 6.1.1). A wrong FWID is a clean init-packet rejection, not a damaged board. If either is refused, drop `--sd-req` back to the `0xFFFE` default and note it here. *(Both passed 2026-08-09; only re-check if the SoftDevice table above changes.)*
+- [ ] Confirm the negative: a T-Echo package must be **refused** by a T1000-E. Still unchecked — it proves the guard guards, rather than that a correct package installs. If it were ever to *succeed*, the wrong-base image is recoverable with a normal UF2 flash, since the bootloader is untouched.
 - [ ] Write the merged ESP32 image at offset zero with a plain flasher — `espflash write-bin 0x0 <bin>`, and again with `esptool.py --chip esp32s3 write_flash 0x0 <bin>`, since that is the path esptool-js mirrors. Set and save a device name first, and confirm it **survives** the reflash: that is what proves `--skip-padding` kept the image clear of `0x300000`.
 - [ ] After `release-mirror` and a push, fetch `https://umsh.dev/firmware/manifest.json` from a browser console on another origin, and spot-check one mirrored file's SHA-256 against it.
