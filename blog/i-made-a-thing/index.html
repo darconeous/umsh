@@ -18,7 +18,8 @@
     <meta property="og:title" content="I made a thing... — UMSH" />
     <meta property="og:description"
         content="A secure, off-grid LoRa mesh text protocol, a Rust reference implementation, six supported boards, and an iOS app—the story of an all-consuming side quest." />
-    <meta property="og:image" content="https://umsh.dev/og-card.png" />
+    <meta property="og:image"
+        content="https://umsh.dev/images/blog/i-made-a-thing.png" />
     <meta property="og:url" content="https://umsh.dev/blog/i-made-a-thing/" />
     <meta name="twitter:card" content="summary_large_image" />
     
@@ -86,7 +87,8 @@
   <div class="section">
     <div class="container">
       <div class="prose prose--center">
-        <p>So… I made a thing. And I’m not sure what to do about it.</p>
+        <p><img src="/images/blog/i-made-a-thing.png" alt="A SenseCAP T1000-E next to an iPhone 17 running the UMSH app" /></p>
+<p>So… I made a thing. And I’m not sure what to do about it.</p>
 <p>I think it’s cool, and I’d like to share it with you, but it’s different than the <a rel="external" href="https://lumanoi.com">interactive light sculptures</a> I’ve been making.</p>
 <p>First, I made my own <a href="/docs/protocol/">secure, off-grid LoRa-based mesh text chat protocol</a>. And then I made a <a rel="external" href="https://github.com/darconeous/umsh">reference implementation for it in Rust</a>. And then I ported that reference implementation to <a href="/hardware/">half a dozen different LoRa hardware platforms</a>. And then I <a href="/app/">wrote an iOS app</a> to control those hardware platforms and send/receive text messages.</p>
 <p>I call it <a href="/">UMSH</a>.</p>
@@ -105,7 +107,7 @@
 <p>Working with Claude to write code feels a bit like working with an enthusiastic junior software engineer with a short attention span and a habit of micro-dosing LSD. It’s certainly interesting, and I got way more done than I would have otherwise, but I also had to be eagle-eyed about the decisions it was making. It’s certainly not as easy as pointing the LLM at the protocol and saying “implement this”—keeping it on the rails required my full attention and it was a bit exhausting. But it’s hard to argue with the results.</p>
 <p>I worked like a madman, thinking “ok, after this feature I’ll stop”, but I kept finding more pain points and more features to implement. After several weeks of work, I now have a quite large chunk of the protocol completely implemented in Rust, as well as a reasonably functional iOS app to go with it. And six supported LoRa hardware platforms. And Wireshark support. And a command-line radio management tool. And a website, with a web-flashing tool.</p>
 <p>And now, I must stop this breakneck development for at least a month or two. Maker Faire is coming up, and I just got a really big Lumanoi commission for a project in San Jose that I am extremely excited about.</p>
-<p>So now that this is out there, what is next? I plan to continue to fix bugs and add features based on feedback, and I’m hoping that what I’ve written will resonate with a lot of people. Who knows? Maybe it will take off. Let’s find out.</p>
+<p>So now that this is out there, what is next? I’m calling this a <em>technology preview</em> at this stage, so no one mistakes it for something to depend on just yet. I plan to continue to fix bugs and add features based on feedback, and I’m hoping that what I’ve written will resonate with a lot of people. Who knows? Maybe it will take off. Let’s find out.</p>
 <p>Check out the <a href="/docs/protocol/">protocol</a>, join the <a href="/app/">iOS app beta</a>, flash some <a href="/hardware/">hardware</a>, and <a rel="external" href="https://github.com/darconeous/umsh/discussions">let me know what you think</a>.</p>
 
       </div>
