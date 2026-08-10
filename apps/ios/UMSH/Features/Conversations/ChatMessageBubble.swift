@@ -235,6 +235,11 @@ struct ChatMessageBubble: View, @MainActor Equatable {
         message.deliveryState?.lowercased() == "failed"
     }
 
+    /// Room kept clear beside a failed bubble for the failure badge: the
+    /// glyph plus the gap that separates them. Scaled with the badge's own
+    /// text style so the reserve tracks the glyph across Dynamic Type sizes.
+    @ScaledMetric(relativeTo: .body) private var failureBadgeReserve: CGFloat = 26
+
     var body: some View {
         if message.isDeleted {
             // A tombstone, not a message: no bubble, no menu, no captions.
@@ -288,6 +293,19 @@ struct ChatMessageBubble: View, @MainActor Equatable {
                         } message: {
                             Text(message.originalBody ?? "")
                         }
+                        // The row's frame changes size when its first
+                        // reaction arrives or its last one leaves — the
+                        // reserved chip strips appear and disappear with
+                        // them. The context-menu interaction UIKit hangs on
+                        // this view caches the lift geometry it was born
+                        // with, and reopening the menu after such a resize
+                        // lifts a stale-sized snapshot: the bubble clipped
+                        // to a rectangle, the chip drawn into it. Changing
+                        // identity on exactly that toggle rebuilds the view
+                        // and its interaction at the new size. A reaction
+                        // merely replacing another keeps the size, the
+                        // identity, and the open menu.
+                        .id(message.reactions.isEmpty)
                     if let caption {
                         Text(caption)
                             .font(.caption2)
@@ -340,12 +358,22 @@ struct ChatMessageBubble: View, @MainActor Equatable {
         // bubble's outer edge, and the thought-dot trail falls wholly outside
         // it — all without anything ever poking past the group's own bounds,
         // where the neighbouring rows (and the lift snapshot) would clip it.
-        ZStack(alignment: message.isOutbound ? .topLeading : .topTrailing) {
-            HStack(spacing: 6) {
-                bubble
+        //
+        // Nothing beside the bubble is ever a layout sibling. The failure
+        // badge and the reaction chips both hang in *reserved* padding and
+        // draw as overlays: a sibling feeds SwiftUI's width negotiation with
+        // the UITextView-backed bubble, and on short messages that
+        // negotiation does not converge — the placement pass re-proposes the
+        // row its ideal width minus the sibling again, and the bubble
+        // collapses to a character-wide column. A constant inset subtracts
+        // the same amount from every proposal, so there is nothing to
+        // disagree about.
+        bubble
+            .padding(.trailing, isFailed ? failureBadgeReserve : 0)
+            .overlay(alignment: .trailing) {
                 if isFailed {
                     Image(systemName: "exclamationmark.circle.fill")
-                        .font(.title3)
+                        .font(.body)
                         .foregroundStyle(.red)
                         .accessibilityLabel("Message not delivered")
                 }
@@ -355,19 +383,20 @@ struct ChatMessageBubble: View, @MainActor Equatable {
                 message.isOutbound ? .leading : .trailing,
                 message.reactions.isEmpty ? 0 : ReactionBadgeView.outset
             )
-            if !message.reactions.isEmpty {
-                ReactionBadgeView(
-                    reactions: message.reactions,
-                    isOutbound: message.isOutbound,
-                    security: security
-                )
-                .padding(.top, ReactionBadgeView.topInset)
-                .padding(
-                    message.isOutbound ? .leading : .trailing,
-                    ReactionBadgeView.cornerInset
-                )
+            .overlay(alignment: message.isOutbound ? .topLeading : .topTrailing) {
+                if !message.reactions.isEmpty {
+                    ReactionBadgeView(
+                        reactions: message.reactions,
+                        isOutbound: message.isOutbound,
+                        security: security
+                    )
+                    .padding(.top, ReactionBadgeView.topInset)
+                    .padding(
+                        message.isOutbound ? .leading : .trailing,
+                        ReactionBadgeView.cornerInset
+                    )
+                }
             }
-        }
     }
 
     @ViewBuilder
