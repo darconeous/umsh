@@ -35,7 +35,7 @@
             const path_to_root = "";
             const default_light_theme = "light";
             const default_dark_theme = "ayu";
-            window.path_to_searchindex_js = "searchindex-df8b5f8c.js";
+            window.path_to_searchindex_js = "searchindex-f485a9e5.js";
         </script>
         <!-- Start loading toc.js asap -->
         <script src="toc-438957a9.js"></script>
@@ -175,7 +175,7 @@
                 <div id="mdbook-content" class="content">
                     <main>
                         <h1 id="comparison-with-meshcore"><a class="header" href="#comparison-with-meshcore">Comparison with MeshCore</a></h1>
-<p>This section compares UMSH with <a href="https://github.com/meshcore-dev/MeshCore">MeshCore</a>, a LoRa mesh protocol with similar goals. The comparison is based on MeshCore firmware v1.12.0 and its primary source code and documentation.</p>
+<p>This section compares UMSH with <a href="https://github.com/meshcore-dev/MeshCore">MeshCore</a>, a LoRa mesh protocol with similar goals. The comparison is based on MeshCore firmware v1.17.0 and its primary source code and documentation.</p>
 <blockquote class="blockquote-tag blockquote-tag-note">
 <p class="blockquote-tag-title"><svg viewbox="0 0 16 16" width="18" height="18"><path d="M0 8a8 8 0 1 1 16 0A8 8 0 0 1 0 8Zm8-6.5a6.5 6.5 0 1 0 0 13 6.5 6.5 0 0 0 0-13ZM6.5 7.75A.75.75 0 0 1 7.25 7h1a.75.75 0 0 1 .75.75v2.75h.25a.75.75 0 0 1 0 1.5h-2a.75.75 0 0 1 0-1.5h.25v-2h-.25a.75.75 0 0 1-.75-.75ZM8 6a1 1 0 1 1 0-2 1 1 0 0 1 0 2Z"></path></svg>Note</p>
 <p>This comparison aims to be as fair and accurate as possible, not
@@ -197,7 +197,7 @@ errors, or other mistakes, please <a href="https://github.com/darconeous/umsh/is
 </tbody>
 </table>
 </div>
-<p>UMSH uses 3-byte hints for node addresses and 2-byte hints for router and trace-route addresses, giving 1-in-16,777,216 collision resistance on node identifiers. An explicit <code>S</code> flag includes the full 32-byte source key when needed (first contact, ephemeral keys). MeshCore uses 1-byte hashes for all regular addressing, with a dedicated <code>ANON_REQ</code> packet type that carries the full 32-byte sender public key for first-contact or anonymous exchanges. The tradeoff is that MeshCore saves bytes per address field in the common case, but requires a special packet type for any situation where the full key must be transmitted.</p>
+<p>UMSH uses 3-byte hints for node addresses and 2-byte hints for router and trace-route addresses, giving 1-in-16,777,216 collision resistance on node identifiers. An explicit <code>S</code> flag includes the full 32-byte source key when needed (first contact, ephemeral keys). MeshCore uses 1-byte source and destination hashes in regular encrypted unicast payloads, while routing paths support configurable 1-, 2-, or 3-byte node hashes. A dedicated <code>ANON_REQ</code> packet type carries the full 32-byte sender public key for first-contact or anonymous exchanges. The tradeoff is that MeshCore saves bytes per address field in the common case, but requires a special packet type for any situation where the full key must be transmitted.</p>
 <h2 id="packet-structure"><a class="header" href="#packet-structure">Packet Structure</a></h2>
 <div class="table-wrapper">
 <table>
@@ -206,8 +206,8 @@ errors, or other mistakes, please <a href="https://github.com/darconeous/umsh/is
 </thead>
 <tbody>
 <tr><td>Header</td><td>1-byte FCF with version, type, flags</td><td>1-byte header with version, type, route mode</td></tr>
-<tr><td>Packet types</td><td>8 (via 3-bit field in FCF)</td><td>16 payload types (via 4-bit field)</td></tr>
-<tr><td>Routing info</td><td>CoAP-style options (source route, trace route, region, RSSI/SNR thresholds)</td><td>Path field (up to 64 bytes), transport codes</td></tr>
+<tr><td>Packet types</td><td>8 (via 3-bit field in FCF)</td><td>16 payload-type code points (13 assigned; via 4-bit field)</td></tr>
+<tr><td>Routing info</td><td>CoAP-style options (source route, trace route, region, RSSI/SNR thresholds)</td><td>Path field (up to 64 bytes; 1–3-byte hashes), transport codes</td></tr>
 <tr><td>Flood hop count</td><td>Split 4-bit FHOPS field (max 15)</td><td>Implicit via path length</td></tr>
 <tr><td>Region support</td><td>Optional region code option</td><td>Transport codes (2 × 16-bit)</td></tr>
 </tbody>
@@ -226,7 +226,7 @@ errors, or other mistakes, please <a href="https://github.com/darconeous/umsh/is
 <tr><td>Key derivation</td><td>HKDF-SHA256 with domain-separated keys (K_enc, K_mic)</td><td>Raw ECDH shared secret used directly</td></tr>
 <tr><td>Key separation</td><td>Separate 16-byte encryption and 16-byte MIC keys</td><td>Same shared secret for both AES key (first 16 bytes) and HMAC key (full 32 bytes)</td></tr>
 <tr><td>Nonce misuse resistance</td><td>Yes (SIV construction)</td><td>N/A (ECB mode is deterministic)</td></tr>
-<tr><td>Replay protection</td><td>4-byte monotonic frame counter (timestamp-free)</td><td>Hash-based duplicate cache (128 entries); timestamps at application layer</td></tr>
+<tr><td>Replay protection</td><td>4-byte monotonic frame counter (timestamp-free)</td><td>Hash-based duplicate cache (160 entries); timestamps at application layer</td></tr>
 </tbody>
 </table>
 </div>
@@ -274,14 +274,14 @@ errors, or other mistakes, please <a href="https://github.com/darconeous/umsh/is
 <tr><th>Aspect</th><th>UMSH</th><th>MeshCore</th></tr>
 </thead>
 <tbody>
-<tr><td>Multicast source concealment</td><td>Yes (source encrypted inside ciphertext when encryption enabled)</td><td>No</td></tr>
+<tr><td>Multicast source concealment</td><td>Yes (source encrypted inside ciphertext when encryption enabled)</td><td>Yes (no cleartext source; claimed sender name is encrypted)</td></tr>
 <tr><td>Blind unicast</td><td>Yes (source encrypted with channel key, payload with pairwise key)</td><td>No</td></tr>
 <tr><td>Anonymous requests</td><td>Ephemeral Ed25519 key with S=1 flag</td><td>Dedicated ANON_REQ packet type</td></tr>
-<tr><td>Metadata concealment</td><td>Channel-key-based, hides sender and/or destination from non-members</td><td>Not supported</td></tr>
+<tr><td>Metadata concealment</td><td>Channel-key-based, hides sender and/or destination from non-members</td><td>Group sender and content concealed; no blind-unicast equivalent</td></tr>
 </tbody>
 </table>
 </div>
-<p>UMSH provides protocol-level privacy features that conceal sender and destination information from observers who do not possess the relevant channel key. Encrypted multicast conceals the source address, and blind unicast conceals both sender and destination. MeshCore does not define equivalent privacy modes.</p>
+<p>Both protocols conceal the claimed sender of encrypted group traffic from observers who do not possess the channel key. UMSH encrypts the source address inside the multicast ciphertext. MeshCore group packets have no cleartext source field and place the self-asserted sender name inside the ciphertext. MeshCore does not cryptographically authenticate that group sender name and does not define an equivalent of UMSH blind unicast, which conceals both unicast endpoints from non-members.</p>
 <p>Both protocols support anonymous first-contact requests, but through different mechanisms. UMSH uses an ephemeral keypair as the source address with the <code>S</code> flag set — no dedicated packet type is needed. MeshCore defines a specific <code>ANON_REQ</code> payload type that carries the full 32-byte sender public key.</p>
 <h2 id="multicast"><a class="header" href="#multicast">Multicast</a></h2>
 <div class="table-wrapper">
@@ -294,11 +294,11 @@ errors, or other mistakes, please <a href="https://github.com/darconeous/umsh/is
 <tr><td>Channel identifier</td><td>2-byte derived hint</td><td>1-byte hash of SHA-256 of key</td></tr>
 <tr><td>Group message auth</td><td>Channel-key-based CMAC</td><td>Channel-key-based HMAC (2-byte MAC)</td></tr>
 <tr><td>Sender authentication</td><td>Not cryptographically verified (symmetric key limitation)</td><td>Not cryptographically verified (same limitation)</td></tr>
-<tr><td>Source privacy</td><td>Source encrypted when encryption enabled</td><td>No</td></tr>
+<tr><td>Source privacy</td><td>Source encrypted when encryption enabled</td><td>No cleartext source; claimed sender name encrypted</td></tr>
 </tbody>
 </table>
 </div>
-<p>Both protocols share the fundamental limitation that symmetric-key multicast cannot authenticate individual senders — any channel member can forge a packet with any claimed source address.</p>
+<p>Both protocols share the fundamental limitation that symmetric-key multicast cannot authenticate individual senders — any channel member can forge a packet with any claimed UMSH source address or MeshCore sender name.</p>
 <h2 id="application-layer"><a class="header" href="#application-layer">Application Layer</a></h2>
 <div class="table-wrapper">
 <table>
@@ -326,21 +326,21 @@ errors, or other mistakes, please <a href="https://github.com/darconeous/umsh/is
 <tr><td>Payload interpretation</td><td>Opaque at MAC layer — application protocols defined separately</td><td>Protocol defines payload types with application semantics (text messages, advertisements, login, etc.)</td></tr>
 <tr><td>Fragmentation</td><td>Delegated to higher-layer protocols in the payload</td><td>Multipart packet type defined at protocol level</td></tr>
 <tr><td>Node identity / advertisements</td><td>Application-layer payload (see <a href="node-identity.html">Node Identity</a>)</td><td>Protocol-level advertisement packet with mandatory fields</td></tr>
-<tr><td>Time dependency</td><td>Timestamp-free — monotonic frame counters for replay protection (see <a href="security.html#frame-counter">Frame Counter</a>)</td><td>Hash-based duplicate cache at MAC layer; relies on UNIX timestamps for advertisement freshness and login sequencing</td></tr>
+<tr><td>Time dependency</td><td>Timestamp-free — monotonic frame counters for replay protection (see <a href="security.html#frame-counter">Frame Counter</a>)</td><td>Hash-based duplicate cache at MAC layer; uses non-regressing UNIX timestamp values for advertisement freshness and login sequencing</td></tr>
 </tbody>
 </table>
 </div>
 <p>UMSH maintains a clean boundary between the MAC layer and higher-layer protocols. The MAC layer defines framing, addressing, encryption, authentication, and forwarding, and treats payload content as opaque. UMSH also defines its own application-layer protocols (text messaging, chat rooms, node identity, node management), but these are architecturally separate from the MAC layer and carried in the payload alongside any other higher-layer protocol.</p>
 <p>MeshCore takes a more vertically integrated approach: the protocol directly defines payload types for text messages, node advertisements, login sequences, and multipart transfers without a clear separation between MAC and application concerns.</p>
 <h2 id="timestamps-and-time-dependency"><a class="header" href="#timestamps-and-time-dependency">Timestamps and Time Dependency</a></h2>
-<p>MeshCore relies on UNIX timestamps in several protocol-critical roles:</p>
+<p>MeshCore uses UNIX timestamp values in several protocol-critical roles:</p>
 <ul>
-<li><strong>Replay protection</strong>: MeshCore uses a fixed-size circular buffer of packet hashes (128 entries) for short-term duplicate detection. Once the buffer wraps, previously seen packets can no longer be detected as duplicates. Application-layer timestamps provide additional protection for some message types, but there is no MAC-layer replay protection counter.</li>
-<li><strong>Advertisement freshness</strong>: Node advertisements carry a timestamp used to determine which advertisement is most recent.</li>
-<li><strong>Login sequencing</strong>: The login handshake incorporates timestamps.</li>
+<li><strong>Replay protection</strong>: MeshCore uses a fixed-size circular buffer of packet hashes (160 entries) for short-term duplicate detection. Once the buffer wraps, previously seen packets can no longer be detected as duplicates. Application-layer timestamps provide additional protection for some message types, but there is no MAC-layer replay protection counter.</li>
+<li><strong>Advertisement freshness</strong>: Node advertisements carry a timestamp. For an already-known contact, the receiver accepts an advertisement only if its timestamp is greater than the last accepted value from that contact.</li>
+<li><strong>Login sequencing</strong>: Login handling compares the sender’s timestamp with the last accepted value from that sender.</li>
 </ul>
 <p>UMSH is entirely timestamp-free at the MAC layer. Replay protection is based on monotonic 4-byte frame counters (see <a href="security.html#frame-counter">Frame Counter</a>), which require no clock synchronization and no access to absolute time. Higher-layer payloads (such as the node identity payload in <a href="node-identity.html">Node Identity</a>) may optionally carry timestamps for application-level purposes, but the MAC layer neither requires nor interprets them.</p>
-<p>UMSH’s monotonic frame counter provides cryptographic replay protection that does not depend on clock accuracy and does not degrade as traffic volume increases. MeshCore’s hash-based duplicate cache provides short-term deduplication but has a fixed capacity — in a busy mesh, the 128-entry buffer can wrap quickly, allowing replayed packets to be accepted after the original entry is evicted. MeshCore’s reliance on timestamps for advertisement freshness and login sequencing additionally requires nodes to maintain reasonably accurate clocks.</p>
+<p>UMSH’s monotonic frame counter provides cryptographic replay protection that does not depend on a clock and does not degrade as traffic volume increases. MeshCore’s hash-based duplicate cache provides short-term deduplication but has a fixed capacity — in a busy mesh, the 160-entry buffer can wrap quickly, allowing replayed packets to be accepted after the original entry is evicted. MeshCore’s advertisement and login checks require a sender’s timestamp values not to regress relative to previously accepted state. Clock reset or rollback can therefore cause valid traffic to be rejected, but these checks do not require nodes’ clocks to be accurate or synchronized with one another.</p>
 <h2 id="packet-overhead-comparison"><a class="header" href="#packet-overhead-comparison">Packet Overhead Comparison</a></h2>
 <p>Minimum overhead for a typical encrypted unicast message (no options, no flood hop count):</p>
 <div class="table-wrapper">
@@ -380,7 +380,7 @@ errors, or other mistakes, please <a href="https://github.com/darconeous/umsh/is
 </table>
 </div>
 <p>UMSH’s 3-byte node hints reduce spurious cryptographic wake-ups by a factor of ~65,536 compared to MeshCore, at a combined address overhead of 6 bytes per unicast packet versus MeshCore’s 2 bytes. In a busy mesh where a node receives hundreds of packets per hour intended for others, fewer wasted verifications means less CPU time, fewer memory accesses, and a faster return to sleep.</p>
-<p>The same logic applies to multicast channel identifiers. MeshCore uses a 1-byte hash of the channel key, giving a 1-in-256 chance that any packet addressed to an unknown channel matches a channel you are not a member of. UMSH’s 2-byte channel identifier reduces this to 1-in-65536.</p>
+<p>The same logic applies to multicast channel identifiers. MeshCore uses a 1-byte hash of the channel key, giving a 1-in-256 chance that a packet sent to a different channel collides with one of the receiver’s configured channel identifiers and triggers an unnecessary verification attempt. UMSH’s 2-byte channel identifier reduces this to 1-in-65536.</p>
 <h3 id="repeater-power"><a class="header" href="#repeater-power">Repeater Power</a></h3>
 <p>Both protocols use flood routing, so nodes configured as repeaters must receive and retransmit packets intended for other nodes. Transmit is the most power-intensive radio operation, so minimizing unnecessary retransmissions matters. In practice, repeating is enabled only on dedicated infrastructure nodes; end-user devices are typically configured as non-repeating nodes and incur no forwarding transmit cost.</p>
 <p>For dedicated repeater nodes, UMSH does not require decrypting or verifying the payload MIC before forwarding — the MAC layer treats payloads opaquely, and forwarding decisions are based solely on the flood hop count and duplicate suppression cache. UMSH’s channel access mechanisms (CAD with random backoff, SNR-based contention windows) reduce collisions, and forwarding confirmation with retries provides reliable hop-by-hop delivery. The signal-quality filtering options (minimum RSSI and SNR) allow senders to prevent retransmission over weak links, avoiding wasted transmit power on paths unlikely to deliver the packet successfully.</p>
@@ -389,10 +389,10 @@ errors, or other mistakes, please <a href="https://github.com/darconeous/umsh/is
 <p>The protocol differences described above translate into concrete user-visible behaviors:</p>
 <ul>
 <li>
-<p><strong>Multi-hop delivery is more reliable.</strong> UMSH defines hop-by-hop forwarding confirmation with retries, so each repeater along the path confirms receipt before the previous hop moves on. Versions of this are present for both source-routed paths and flooded packets in UMSH. MeshCore’s forwarding is fire-and-forget in both flood and direct modes — if a transmission is lost at any hop, there is no recovery mechanism at the forwarding layer. This makes multi-hop forwarding much less reliable over long distances.</p>
+<p><strong>Multi-hop delivery is more reliable.</strong> UMSH defines hop-by-hop forwarding confirmation with retries, so each repeater along the path confirms receipt before the previous hop moves on. Versions of this are present for both source-routed paths and flooded packets in UMSH. MeshCore’s forwarding is fire-and-forget in both flood and direct modes — if a transmission is lost at any hop, there is no recovery mechanism at the forwarding layer, leaving application-level retries as the only recovery mechanism on MeshCore.</p>
 </li>
 <li>
-<p><strong>Nodes do not need accurate clocks.</strong> MeshCore uses UNIX timestamps for advertisement freshness and login sequencing, so nodes with drifted or reset clocks may reject valid advertisements or fail login handshakes. UMSH is timestamp-free at the MAC layer — no clock synchronization is required for any protocol operation.</p>
+<p><strong>Replay protection does not depend on clocks.</strong> MeshCore uses non-regressing UNIX timestamp values for advertisement freshness and login sequencing, so a clock reset or rollback can cause valid advertisements or login attempts to be rejected until the timestamp advances beyond the previously accepted value. The clocks do not need to be accurate or synchronized. UMSH is timestamp-free at the MAC layer — its replay protection instead uses monotonic frame counters.</p>
 </li>
 <li>
 <p><strong>Fewer false wake-ups on busy networks.</strong> MeshCore’s 1-byte address hints mean that roughly 1 in 256 packets addressed to other nodes will appear to match yours, triggering unnecessary cryptographic verification before the packet can be discarded. UMSH’s 3-byte hints reduce this to roughly 1 in 16 million, which matters for battery-powered nodes that need to return to sleep quickly.</p>
@@ -407,7 +407,7 @@ errors, or other mistakes, please <a href="https://github.com/darconeous/umsh/is
 <p><strong>Easier to extend without breaking existing deployments.</strong> UMSH’s composable options and opaque payload model let developers add new routing behaviors, packet options, or application protocols without changing the MAC layer — existing nodes simply ignore options and payload types they do not recognize. MeshCore’s vertically integrated design, where application-layer semantics are defined at the protocol level, means that new features are more likely to require coordinated firmware updates across the network.</p>
 </li>
 <li>
-<p><strong>Stronger security from a coherent cryptographic design.</strong> MeshCore’s cryptographic choices — AES-128-ECB encryption, 2-byte MACs, a 128-entry duplicate cache for replay protection, and no key separation — individually and collectively weaken the security guarantees the protocol can offer. Identical messages produce identical ciphertext, MAC forgery is feasible to brute-force, replayed packets are accepted once the duplicate cache wraps, and the same key material is reused across cryptographic operations. UMSH addresses all of these with AES-CTR encryption using a synthetic IV, configurable MIC sizes up to 16 bytes, monotonic frame counters for replay protection, HKDF-derived domain-separated keys, and optional perfect forward secrecy sessions that protect past traffic if a long-term key is later compromised. Something like this cannot be easily bolted onto MeshCore’s current design.</p>
+<p><strong>Stronger security from a coherent cryptographic design.</strong> MeshCore’s cryptographic choices — AES-128-ECB encryption, 2-byte MACs, a 160-entry duplicate cache for replay protection, and no key separation — individually and collectively weaken the security guarantees the protocol can offer. Identical messages produce identical ciphertext, MAC forgery is feasible to brute-force, replayed packets are accepted once the duplicate cache wraps, and the same key material is reused across cryptographic operations. UMSH addresses all of these with AES-CTR encryption using a synthetic IV, configurable MIC sizes up to 16 bytes, monotonic frame counters for replay protection, HKDF-derived domain-separated keys, and optional perfect forward secrecy sessions that protect past traffic if a long-term key is later compromised. Something like this cannot be easily bolted onto MeshCore’s current design.</p>
 </li>
 </ul>
 <h2 id="summary-of-design-differences"><a class="header" href="#summary-of-design-differences">Summary of Design Differences</a></h2>
