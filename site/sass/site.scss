@@ -956,10 +956,10 @@ th:first-child {
   }
 }
 
-// Centred pages put the title and its standfirst on the page's axis, to
-// match the centred section headings further down. Body copy underneath
-// stays left-aligned inside a centred block — only the headings are
-// centred text.
+// Centered pages put the title and its standfirst on the page's axis, to
+// match the centered section headings further down. Body copy underneath
+// stays left-aligned inside a centered block — only the headings are
+// centered text.
 .page-head--center {
   text-align: center;
 
@@ -1037,6 +1037,69 @@ th:first-child {
   ul:last-child {
     margin-bottom: 0;
   }
+}
+
+// ─── Blog ───────────────────────────────────────────────────────────────
+
+.post-list {
+  max-width: $narrow;
+  margin-inline: auto;
+  padding: 0;
+  list-style: none;
+}
+
+.post-list__item {
+  border-bottom: 1px solid var(--border);
+  padding-block: 1.6rem;
+
+  &:first-child {
+    padding-top: 0;
+  }
+
+  h2 {
+    font-size: 1.5rem;
+    margin: 0;
+  }
+
+  // The title carries the link, so it keeps the body color and picks the
+  // brand hue up on hover. A whole heading in link orange reads as a button.
+  h2 a {
+    color: inherit;
+    text-decoration: none;
+  }
+
+  h2 a:hover {
+    color: var(--link);
+    text-decoration: underline;
+  }
+}
+
+.post-list__summary {
+  margin: 0.5rem 0 0;
+  color: var(--ink-muted);
+}
+
+// Datelines stay quiet on purpose. Posts here land when the work lands rather
+// than on a schedule, so the list should read by subject, not by how long ago
+// the last one went up.
+.post-meta {
+  margin: 0.3rem 0 0;
+  font-size: 0.86rem;
+  color: var(--ink-muted);
+}
+
+// `.page-head p` sizes the standfirst, and would otherwise size the dateline
+// with it.
+.page-head .post-meta {
+  margin-top: 0.9rem;
+  font-size: 0.86rem;
+}
+
+.post-list__feed,
+.post-back {
+  max-width: $narrow;
+  margin: 2rem auto 0;
+  font-size: 0.92rem;
 }
 
 // ─── Footer ─────────────────────────────────────────────────────────────

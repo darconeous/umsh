@@ -9,6 +9,8 @@
 base_url = "https://umsh.dev"
 title = "UMSH"
 description = "An experimental LoRa mesh protocol built on strong cryptography, clean layer separation, and strict bandwidth discipline."
+# Feed entries carry this as the author; without it Zola writes "Unknown".
+author = "Robert Quattlebaum"
 
 compile_sass = true
 build_search_index = false
@@ -40,6 +42,7 @@ nav = [
     { name = "App", url = "/app/", match = "/app/" },
     { name = "FAQ", url = "/faq/", match = "/faq/" },
     { name = "Flasher", url = "/flasher/", match = "/flasher/" },
+    { name = "Blog", url = "/blog/", match = "/blog/" },
 ]
 
 github_url = "https://github.com/darconeous/umsh"

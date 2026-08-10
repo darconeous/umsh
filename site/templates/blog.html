@@ -1,0 +1,48 @@
+{% extends "base.html" %}
+
+{% block title %}{{ section.title }} — UMSH{% endblock title %}
+{% block description %}{{ section.description }}{% endblock description %}
+{% block og_title %}{{ section.title }} — UMSH{% endblock og_title %}
+{% block og_description %}{{ section.description }}{% endblock og_description %}
+
+{% block head_extra %}
+  <link rel="alternate" type="application/atom+xml" title="UMSH blog"
+        href="{{ get_url(path='blog/atom.xml', trailing_slash=false) }}" />
+{% endblock head_extra %}
+
+{% block content %}
+  <div class="page-head page-head--center">
+    <div class="container">
+      <h1>{{ section.title }}</h1>
+      {% if section.description %}<p>{{ section.description }}</p>{% endif %}
+    </div>
+  </div>
+
+  <div class="section">
+    <div class="container">
+      {% if section.pages %}
+        <ul class="post-list">
+          {% for post in section.pages %}
+            <li class="post-list__item">
+              <h2><a href="{{ post.permalink }}">{{ post.title }}</a></h2>
+              {% if post.date %}
+                <p class="post-meta">
+                  <time datetime="{{ post.date }}">{{ post.date | date(format="%B %-d, %Y") }}</time>
+                </p>
+              {% endif %}
+              {% if post.description %}<p class="post-list__summary">{{ post.description }}</p>{% endif %}
+            </li>
+          {% endfor %}
+        </ul>
+      {% else %}
+        <div class="prose prose--center">
+          <p>Nothing posted yet.</p>
+        </div>
+      {% endif %}
+
+      <p class="post-list__feed">
+        <a href="{{ get_url(path='blog/atom.xml', trailing_slash=false) }}">Subscribe by feed</a>
+      </p>
+    </div>
+  </div>
+{% endblock content %}

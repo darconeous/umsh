@@ -1,0 +1,42 @@
+{% extends "base.html" %}
+
+{# `default` does not fire on a null description; see the note in page.html. #}
+{% block title %}{{ page.title }} — UMSH{% endblock title %}
+{% block description %}{% if page.description %}{{ page.description }}{% else %}{{ config.description }}{% endif %}{% endblock description %}
+{% block og_title %}{{ page.title }} — UMSH{% endblock og_title %}
+{% block og_description %}{% if page.description %}{{ page.description }}{% else %}{{ config.description }}{% endif %}{% endblock og_description %}
+{% block og_type %}article{% endblock og_type %}
+
+{% block head_extra %}
+  <link rel="alternate" type="application/atom+xml" title="UMSH blog"
+        href="{{ get_url(path='blog/atom.xml', trailing_slash=false) }}" />
+{% endblock head_extra %}
+
+{% block content %}
+  <div class="page-head page-head--center">
+    <div class="container">
+      <h1>{{ page.title }}</h1>
+      {% if page.description %}<p>{{ page.description }}</p>{% endif %}
+      {# The dateline sits under the standfirst rather than above the title:
+         posts land when something lands, and an old date at the top of the
+         page is not the first thing a reader should weigh a post by. #}
+      {% if page.date %}
+        <p class="post-meta">
+          <time datetime="{{ page.date }}">{{ page.date | date(format="%B %-d, %Y") }}</time>
+        </p>
+      {% endif %}
+    </div>
+  </div>
+
+  <div class="section">
+    <div class="container">
+      <div class="prose prose--center">
+        {{ page.content | safe }}
+      </div>
+
+      <p class="post-back">
+        <a href="{{ get_url(path='@/blog/_index.md') }}">All posts</a>
+      </p>
+    </div>
+  </div>
+{% endblock content %}

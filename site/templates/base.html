@@ -14,7 +14,7 @@
     <link rel="apple-touch-icon" href="{{ get_url(path='apple-touch-icon.png', trailing_slash=false) }}" />
 
     <meta property="og:site_name" content="UMSH" />
-    <meta property="og:type" content="website" />
+    <meta property="og:type" content="{% block og_type %}website{% endblock og_type %}" />
     <meta property="og:title" content="{% block og_title %}{{ config.title }}{% endblock og_title %}" />
     <meta property="og:description"
         content="{% block og_description %}{{ config.description }}{% endblock og_description %}" />
@@ -45,8 +45,11 @@
 
             <nav class="site-nav" id="site-nav" aria-label="Main">
                 {%- set here = current_path | default(value="/") -%}
+                {# Prefix match, not equality: a section's posts have to mark
+                   their section current too, or a post reads as belonging to
+                   no part of the site. #}
                 {%- for item in config.extra.nav %}
-                <a href="{{ item.url }}" {%- if item.match and here==item.match %} aria-current="page" {% endif %}>{{
+                <a href="{{ item.url }}" {%- if item.match and here is starting_with(pat=item.match) %} aria-current="page" {% endif %}>{{
                     item.name }}</a>
                 {%- endfor %}
 
@@ -83,6 +86,7 @@
                     <li><a href="{{ config.extra.protocol_url }}">Protocol specification</a></li>
                     <li><a href="{{ config.extra.rustdoc_url }}">Rust API docs</a></li>
                     <li><a href="{{ config.extra.github_url }}">Source on GitHub</a></li>
+                    <li><a href="{{ get_url(path='@/blog/_index.md') }}">Blog</a></li>
                     <li><a href="{{ config.extra.sponsors_url }}">Donate</a></li>
                 </ul>
             </div>

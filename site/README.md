@@ -54,6 +54,30 @@ Most copy is Markdown in `content/`. Two pages are different:
   specification.
 - **Hardware and flashing** are both generated from `data/hardware.toml`.
 
+## Writing a post
+
+Posts are Markdown files in `content/blog/`, one per post:
+
+```toml
++++
+title = "What landed"
+description = "One sentence. It runs under the title on the index, in the feed, and on social cards."
+date = 2026-08-10
++++
+```
+
+The filename is the URL—`content/blog/what-landed.md` publishes at
+`/blog/what-landed/`—so rename before publishing, not after. Posts list newest
+first. `draft = true` keeps one out of the build entirely.
+
+`/blog/atom.xml` is the only feed the site publishes, which is why
+`generate_feeds` is off in `config.toml` and on in `content/blog/_index.md`;
+turning it on globally would put the FAQ and the terms page in the feed.
+
+There is no pagination. If the list ever grows enough to want it, `paginate_by`
+on the section switches it on, and `templates/blog.html` then has to loop over
+`paginator.pages` instead of `section.pages`.
+
 ## Adding or changing a board
 
 Edit `data/hardware.toml`. A board's `id` matches the preset in
