@@ -63,12 +63,34 @@ Posts are Markdown files in `content/blog/`, one per post:
 title = "What landed"
 description = "One sentence. It runs under the title on the index, in the feed, and on social cards."
 date = 2026-08-10
+
+[extra]
+image = "images/blog/what-landed.png"
 +++
 ```
 
 The filename is the URL—`content/blog/what-landed.md` publishes at
 `/blog/what-landed/`—so rename before publishing, not after. Posts list newest
 first. `draft = true` keeps one out of the build entirely.
+
+`extra.image` is the post's social card, and it is the only front matter field
+that is optional: a post without one falls back to the site-wide `og-card.png`.
+The path is relative to `static/` and takes no leading slash, because the
+template hands it to `get_url`—scrapers need an absolute URL. Make it
+**1200×630**, matching `og-card.png`. `twitter:card` is `summary_large_image`
+sitewide, so platforms crop to 1.91:1 and a taller image loses its top and
+bottom. This is a separate export from any image in the post body; an image
+placed in the body has no effect on the card.
+
+Body images go in `static/images/blog/` and are referenced from the site root
+(`![Alt](/images/blog/what-landed.png)`). The prose column is 736px wide, so
+export at about 1500px for 2× displays; `img { max-width: 100% }` handles the
+rest and no wrapper markup is needed.
+
+Social platforms cache cards aggressively. Once a URL has been scraped,
+changing the image will not refresh it without a manual purge in that
+platform's own debugger, and the file has to be live on umsh.dev before the
+first scrape—deploy before sharing the link.
 
 `/blog/atom.xml` is the only feed the site publishes, which is why
 `generate_feeds` is off in `config.toml` and on in `content/blog/_index.md`;

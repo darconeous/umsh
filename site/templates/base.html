@@ -18,7 +18,8 @@
     <meta property="og:title" content="{% block og_title %}{{ config.title }}{% endblock og_title %}" />
     <meta property="og:description"
         content="{% block og_description %}{{ config.description }}{% endblock og_description %}" />
-    <meta property="og:image" content="{{ get_url(path='og-card.png', trailing_slash=false) }}" />
+    <meta property="og:image"
+        content="{% block og_image %}{{ get_url(path='og-card.png', trailing_slash=false) }}{% endblock og_image %}" />
     <meta property="og:url" content="{{ current_url | default(value=config.base_url) }}" />
     <meta name="twitter:card" content="summary_large_image" />
     {% block head_extra %}{% endblock head_extra %}

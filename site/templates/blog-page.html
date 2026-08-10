@@ -6,6 +6,10 @@
 {% block og_title %}{{ page.title }} — UMSH{% endblock og_title %}
 {% block og_description %}{% if page.description %}{{ page.description }}{% else %}{{ config.description }}{% endif %}{% endblock og_description %}
 {% block og_type %}article{% endblock og_type %}
+{# A post sets `extra.image` to a path under static/ to give itself its own
+   social card; without one it falls back to the site card. Scrapers need an
+   absolute URL, which is what get_url builds from base_url. #}
+{% block og_image %}{{ get_url(path=page.extra.image | default(value="og-card.png"), trailing_slash=false) }}{% endblock og_image %}
 
 {% block head_extra %}
   <link rel="alternate" type="application/atom+xml" title="UMSH blog"

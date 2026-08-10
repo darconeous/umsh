@@ -2,7 +2,14 @@
 title = "I made a thing..."
 description = "A secure, off-grid LoRa mesh text protocol, a Rust reference implementation, six supported boards, and an iOS app—the story of an all-consuming side quest."
 date = 2026-08-10
+
+[extra]
+# The social card for this post. Path is relative to static/, no leading
+# slash. 1200x630; without it the post falls back to the site card.
+image = "images/blog/i-made-a-thing.png"
 +++
+
+![A SenseCAP T1000-E next to an iPhone 17 running the UMSH app](/images/blog/i-made-a-thing.png)
 
 So... I made a thing. And I'm not sure what to do about it.
 
@@ -42,6 +49,6 @@ I worked like a madman, thinking "ok, after this feature I'll stop", but I kept 
 
 And now, I must stop this breakneck development for at least a month or two. Maker Faire is coming up, and I just got a really big Lumanoi commission for a project in San Jose that I am extremely excited about.
 
-So now that this is out there, what is next? I plan to continue to fix bugs and add features based on feedback, and I'm hoping that what I've written will resonate with a lot of people. Who knows? Maybe it will take off. Let's find out.
+So now that this is out there, what is next? I'm calling this a *technology preview* at this stage, so no one mistakes it for something to depend on just yet. I plan to continue to fix bugs and add features based on feedback, and I'm hoping that what I've written will resonate with a lot of people. Who knows? Maybe it will take off. Let's find out.
 
 Check out the [protocol](/docs/protocol/), join the [iOS app beta](/app/), flash some [hardware](/hardware/), and [let me know what you think](https://github.com/darconeous/umsh/discussions).
