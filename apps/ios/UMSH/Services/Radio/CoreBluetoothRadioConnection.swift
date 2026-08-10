@@ -130,6 +130,9 @@ final class CoreBluetoothRadioConnection: NSObject, RadioConnection, @unchecked 
     private var pingWaiters: [UInt64: CheckedContinuation<RadioPingResult, any Error>] = [:]
     private var meshPumpGeneration = UUID()
     private var meshPumpScheduled = false
+    /// The last logged reason the mesh pump declined to run, so a wake storm
+    /// against a parked link logs one line per state instead of one per wake.
+    private var lastReportedPumpDeferral: String?
     private var pendingRawFrames: [PendingRawFrame] = []
     private var rawTransmitsInFlight: [UInt8: PendingRawFrame] = [:]
     private var lastYieldedChatBatchID: UInt64?
@@ -729,6 +732,12 @@ final class CoreBluetoothRadioConnection: NSObject, RadioConnection, @unchecked 
     func useMeshSession(_ session: MobileMeshSession?) async {
         await withCheckedContinuation { result in
             bluetoothQueue.async { [self] in
+                Self.logger.notice(
+                    """
+                    mesh session \(session == nil ? "cleared" : self.meshSession == nil ? "installed" : "replaced", privacy: .public); \
+                    replaying \(self.framesAwaitingMeshSession.count, privacy: .public) held frame(s)
+                    """
+                )
                 meshSession?.clearWakeListener()
                 meshSession = session
                 meshPumpGeneration = UUID()
@@ -776,13 +785,26 @@ final class CoreBluetoothRadioConnection: NSObject, RadioConnection, @unchecked 
 
     private func claimForCurrentIdentityOnQueue() throws {
         guard let peripheral, peripheral.state == .connected, let selectedHostKey else {
+            Self.logger.error(
+                """
+                claim: precondition failed — peripheral=\(self.peripheral != nil, privacy: .public) \
+                connected=\(self.peripheral?.state == .connected, privacy: .public) \
+                hostKey=\(self.selectedHostKey != nil, privacy: .public)
+                """
+            )
             throw RadioConnectionError.identityUnavailable
         }
         guard snapshot.hostState == .unclaimed || snapshot.hostState == .belongsToAnotherIdentity
         else {
+            Self.logger.error(
+                "claim: refused from host state \(String(describing: self.snapshot.hostState), privacy: .public)"
+            )
             throw RadioConnectionError.takeoverNotAllowed
         }
 
+        Self.logger.notice(
+            "claim: writing host key from state \(String(describing: self.snapshot.hostState), privacy: .public)"
+        )
         do {
             try applySessionUpdate(
                 ulcpSession.claim(hostKey: selectedHostKey),
@@ -1538,8 +1560,7 @@ final class CoreBluetoothRadioConnection: NSObject, RadioConnection, @unchecked 
         pendingWrites.removeAll()
         writeInProgress = false
         currentWriteRawTransactionID = nil
-        pendingRawFrames.removeAll()
-        rawTransmitsInFlight.removeAll()
+        abandonOutstandingMeshFrames()
         syncAttempt = UUID()
         _ = ulcpSession.reset()
         snapshot.linkState = .failed
@@ -1761,10 +1782,18 @@ final class CoreBluetoothRadioConnection: NSObject, RadioConnection, @unchecked 
             return
         }
 
+        Self.logger.notice(
+            "begin synchronization: hostKey=\(self.selectedHostKey != nil, privacy: .public)"
+        )
         reassembler.reset()
         pendingWrites.removeAll(keepingCapacity: true)
         writeInProgress = false
         currentWriteRawTransactionID = nil
+        // The session started below cannot answer for transactions submitted
+        // to the one it replaces. Frames carried across the boundary would
+        // wait on completions that can never arrive — or collide with the new
+        // session's transaction IDs, which reads as a protocol violation.
+        abandonOutstandingMeshFrames()
         do {
             try applySessionUpdate(
                 ulcpSession.begin(selectedHostKey: selectedHostKey),
@@ -1818,6 +1847,8 @@ final class CoreBluetoothRadioConnection: NSObject, RadioConnection, @unchecked 
         from peripheral: CBPeripheral
     ) throws {
         syncAttempt = UUID()
+        let previousLinkState = snapshot.linkState
+        let previousHostState = snapshot.hostState
         snapshot.linkState = switch update.snapshot.phase {
         case .idle: .attaching
         case .synchronizing: .synchronizing
@@ -1833,6 +1864,29 @@ final class CoreBluetoothRadioConnection: NSObject, RadioConnection, @unchecked 
         case .unclaimed: .unclaimed
         case .ours: .matchesCurrentIdentity
         case .otherHost: .belongsToAnotherIdentity
+        }
+        // Session updates arrive per ULCP frame, many per second on a busy
+        // link; log the state machine only when it actually moves.
+        if snapshot.linkState != previousLinkState || snapshot.hostState != previousHostState {
+            Self.logger.notice(
+                """
+                ulcp: link \(String(describing: previousLinkState), privacy: .public)→\
+                \(String(describing: self.snapshot.linkState), privacy: .public) \
+                host \(String(describing: previousHostState), privacy: .public)→\
+                \(String(describing: self.snapshot.hostState), privacy: .public) \
+                generation=\(update.snapshot.generation, privacy: .public) \
+                waiting=\(update.waitingForResponses, privacy: .public)
+                """
+            )
+        }
+        if snapshot.linkState == .attached, previousLinkState != .attached {
+            // The Rust session's wake is an edge, not a level: a frame queued
+            // while the link was down announced itself exactly once, into a
+            // pump that declined to run. Reopening the gate must re-arm the
+            // drain, or that frame waits in the outbound queue forever with
+            // the MAC coordinator borrow — and every mesh command — parked
+            // behind it.
+            scheduleMeshPump()
         }
         // The device's own answer is the only authoritative name; record it
         // so every disconnected screen can use it instead of Bluetooth's
@@ -1993,10 +2047,24 @@ final class CoreBluetoothRadioConnection: NSObject, RadioConnection, @unchecked 
             guard var submission = rawTransmitsInFlight.removeValue(
                 forKey: result.transactionId
             ) else {
+                Self.logger.fault(
+                    """
+                    raw transmit result for unknown transaction \
+                    \(result.transactionId, privacy: .public) \
+                    (\(result.statusName, privacy: .public)); \
+                    inFlight=\(self.rawTransmitsInFlight.keys.sorted(), privacy: .public)
+                    """
+                )
                 throw RadioConnectionError.incompatibleProtocol
             }
             switch result.disposition {
             case .sent:
+                Self.logger.info(
+                    """
+                    raw transmit sent: transaction \(result.transactionId, privacy: .public) \
+                    mesh frame \(submission.meshFrameID, privacy: .public)
+                    """
+                )
                 completeMeshFrame(submission.meshFrameID, transmitted: true)
                 rawTransmitDelay = 0
             case .retry:
@@ -2149,10 +2217,21 @@ final class CoreBluetoothRadioConnection: NSObject, RadioConnection, @unchecked 
         // own ordered queue and must never tear down a healthy BLE session.
         guard update.waitingForResponses, !update.rawTransmitPending else { return }
         let attempt = syncAttempt
+        let phaseAtSchedule = snapshot.linkState
         bluetoothQueue.asyncAfter(deadline: .now() + 8) { [weak self] in
             guard let self, let peripheral = self.peripheral, self.syncAttempt == attempt else {
                 return
             }
+            Self.logger.fault(
+                """
+                ulcp: no response for 8s — parked at \
+                \(String(describing: phaseAtSchedule), privacy: .public), now \
+                \(String(describing: self.snapshot.linkState), privacy: .public) \
+                host \(String(describing: self.snapshot.hostState), privacy: .public) \
+                pendingWrites=\(self.pendingWrites.count, privacy: .public) \
+                writeInProgress=\(self.writeInProgress, privacy: .public)
+                """
+            )
             self.reportOperationFailure(
                 "The companion radio did not finish synchronizing",
                 name: displayName(for: peripheral)
@@ -2204,7 +2283,23 @@ final class CoreBluetoothRadioConnection: NSObject, RadioConnection, @unchecked 
               let peripheral,
               peripheral.state == .connected,
               snapshot.linkState == .attached
-        else { return }
+        else {
+            // A declined pump strands the Rust worker's outbound frames until
+            // the link recovers; without this line that wait is invisible.
+            let reason = "session=\(meshSession != nil)"
+                + " peripheral=\(peripheral != nil)"
+                + " connected=\(peripheral?.state == .connected)"
+                + " link=\(String(describing: snapshot.linkState))"
+            if reason != lastReportedPumpDeferral {
+                lastReportedPumpDeferral = reason
+                Self.logger.notice("mesh pump deferred: \(reason, privacy: .public)")
+            }
+            return
+        }
+        if lastReportedPumpDeferral != nil {
+            lastReportedPumpDeferral = nil
+            Self.logger.notice("mesh pump resumed")
+        }
         do {
             let update = meshSession.pollUpdate()
             pendingRawFrames.append(contentsOf: update.outboundFrames.map {
@@ -2310,8 +2405,22 @@ final class CoreBluetoothRadioConnection: NSObject, RadioConnection, @unchecked 
             guard let transactionID = update.rawTransmitStartedTransactionId,
                   rawTransmitsInFlight[transactionID] == nil
             else {
+                Self.logger.fault(
+                    """
+                    raw transmit could not start: transaction \
+                    \(update.rawTransmitStartedTransactionId.map(String.init) ?? "none", privacy: .public) \
+                    inFlight=\(self.rawTransmitsInFlight.keys.sorted(), privacy: .public)
+                    """
+                )
                 throw RadioConnectionError.incompatibleProtocol
             }
+            Self.logger.info(
+                """
+                raw transmit started: transaction \(transactionID, privacy: .public) \
+                mesh frame \(submission.meshFrameID, privacy: .public) \
+                \(submission.data.count, privacy: .public) bytes nocca=\(submission.nocca, privacy: .public)
+                """
+            )
             pendingRawFrames.removeFirst()
             rawTransmitsInFlight[transactionID] = submission
             do {
@@ -2360,6 +2469,37 @@ final class CoreBluetoothRadioConnection: NSObject, RadioConnection, @unchecked 
             // healthy BLE attachment.
             Self.logger.error(
                 "Could not complete mesh frame \(frameID, privacy: .public): \(error.localizedDescription, privacy: .public)"
+            )
+        }
+    }
+
+    /// Abandon every mesh frame currently in this adapter's hands — queued in
+    /// `pendingRawFrames` or submitted to the device in `rawTransmitsInFlight`
+    /// — and fail their Rust delivery tickets.
+    ///
+    /// `BridgeRadio::transmit` awaits each ticket while the MAC coordinator
+    /// borrow is held, so a frame dropped without failing its ticket wedges
+    /// the entire mesh session: every later send, ping, and identity
+    /// discovery queues behind that borrow forever, surviving reconnects.
+    /// Any path that walks away from the frames it was carrying —
+    /// disconnect, fatal teardown, or a fresh synchronization whose device
+    /// session cannot answer for the old one's transactions — must come
+    /// through here.
+    private func abandonOutstandingMeshFrames() {
+        guard !pendingRawFrames.isEmpty || !rawTransmitsInFlight.isEmpty else { return }
+        Self.logger.notice(
+            """
+            abandoning mesh frames: queued=\(self.pendingRawFrames.count, privacy: .public) \
+            inFlight=\(self.rawTransmitsInFlight.count, privacy: .public)
+            """
+        )
+        pendingRawFrames.removeAll()
+        rawTransmitsInFlight.removeAll()
+        do {
+            try meshSession?.failOutboundTransmissions()
+        } catch {
+            Self.logger.error(
+                "Could not fail abandoned outbound mesh frames: \(error.localizedDescription, privacy: .public)"
             )
         }
     }
@@ -2452,8 +2592,7 @@ final class CoreBluetoothRadioConnection: NSObject, RadioConnection, @unchecked 
         pendingWrites.removeAll()
         writeInProgress = false
         currentWriteRawTransactionID = nil
-        pendingRawFrames.removeAll()
-        rawTransmitsInFlight.removeAll()
+        abandonOutstandingMeshFrames()
         autoEnableAttemptedGeneration = nil
         autoClaimAttemptedGeneration = nil
         syncAttempt = UUID()
@@ -2683,20 +2822,11 @@ extension CoreBluetoothRadioConnection: CBPeripheralDelegate {
         frameIn = nil
         frameOut = nil
         pendingWrites.removeAll()
-        pendingRawFrames.removeAll()
         writeInProgress = false
         currentWriteRawTransactionID = nil
-        // Anything already handed to the radio for transmission is lost with
-        // the old handles; leaving it outstanding would strand the mesh
-        // session waiting for completions that cannot arrive.
-        if !rawTransmitsInFlight.isEmpty {
-            rawTransmitsInFlight.removeAll()
-            do {
-                try meshSession?.failOutboundTransmissions()
-            } catch {
-                Self.logger.error("Could not fail outbound transmissions across a service change")
-            }
-        }
+        // Anything queued or already handed to the radio for transmission is
+        // lost with the old handles.
+        abandonOutstandingMeshFrames()
         // `beginSynchronization` restarts the ULCP session once the new
         // characteristics are in hand.
         publish(
