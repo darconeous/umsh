@@ -17,6 +17,18 @@ final class CoreBluetoothRadioConnection: NSObject, RadioConnection, @unchecked 
     // before starting its ACK clock. A larger ULCP window is unsafe until the
     // device itself owns the inter-frame receive/ACK window.
     private static let maximumRawTransmitsInFlight = 1
+    /// Budget for one frame's physical transmission, from handing it to the
+    /// device to the device saying what became of it.
+    ///
+    /// Generous beside the worst legitimate case — a maximum-size frame at
+    /// the slowest spreading factor, after the device's channel-activity
+    /// backoff — because expiring early fails a send that would have
+    /// succeeded. It exists because the Rust MAC awaits this completion
+    /// while holding the coordinator borrow: a device that accepts a frame
+    /// and then never reports it parks every later send, ping, and identity
+    /// request behind it for as long as the link stays up. The deadline
+    /// bounds that to one frame, loudly.
+    private static let rawTransmitTimeoutSeconds: TimeInterval = 30
 
     private struct PendingRawFrame {
         var data: Data
@@ -25,6 +37,10 @@ final class CoreBluetoothRadioConnection: NSObject, RadioConnection, @unchecked 
         /// check. Set by the Rust MAC for immediate acks.
         var nocca: Bool
         var busyRetries = 0
+        /// Identifies this submission to its timeout, so a watchdog armed for
+        /// an earlier use of the same transaction ID cannot expire a later
+        /// one. Assigned when the frame goes in flight.
+        var watchdogToken: UInt64 = 0
     }
 
     private struct PendingGattWrite {
@@ -135,6 +151,12 @@ final class CoreBluetoothRadioConnection: NSObject, RadioConnection, @unchecked 
     private var lastReportedPumpDeferral: String?
     private var pendingRawFrames: [PendingRawFrame] = []
     private var rawTransmitsInFlight: [UInt8: PendingRawFrame] = [:]
+    private var nextRawTransmitWatchdogToken: UInt64 = 0
+    /// Transactions the watchdog gave up on. A device that answers after the
+    /// deadline is answering about a frame already failed, which is worth a
+    /// line in the log but must not read as a protocol violation — that would
+    /// tear down a link whose only fault was being slow.
+    private var abandonedRawTransactions: Set<UInt8> = []
     private var lastYieldedChatBatchID: UInt64?
     private var lastChatBatchYield = DispatchTime.distantFuture
     private var autoEnableAttemptedGeneration: UInt64?
@@ -2044,9 +2066,55 @@ final class CoreBluetoothRadioConnection: NSObject, RadioConnection, @unchecked 
 
         var rawTransmitDelay: TimeInterval?
         if let result = update.rawTransmitResult {
-            guard var submission = rawTransmitsInFlight.removeValue(
-                forKey: result.transactionId
-            ) else {
+            if var submission = rawTransmitsInFlight.removeValue(forKey: result.transactionId) {
+                switch result.disposition {
+                case .sent:
+                    Self.logger.info(
+                        """
+                        raw transmit sent: transaction \(result.transactionId, privacy: .public) \
+                        mesh frame \(submission.meshFrameID, privacy: .public)
+                        """
+                    )
+                    completeMeshFrame(submission.meshFrameID, transmitted: true)
+                    rawTransmitDelay = 0
+                case .retry:
+                    submission.busyRetries += 1
+                    if submission.busyRetries <= Self.maximumRawTransmitBusyRetries {
+                        Self.logger.notice(
+                            "Raw transmit temporarily busy; retry \(submission.busyRetries, privacy: .public)"
+                        )
+                        pendingRawFrames.insert(submission, at: 0)
+                        rawTransmitDelay = 0.1
+                    } else {
+                        completeMeshFrame(submission.meshFrameID, transmitted: false)
+                        let message = "Radio remained busy; send was not transmitted"
+                        Self.logger.error(
+                            "Raw transmit rejected: \(result.statusName, privacy: .public) (\(result.statusCode, privacy: .public))"
+                        )
+                        snapshot.problemDescription = message
+                        rawTransmitDelay = 0
+                    }
+                case .rejected:
+                    completeMeshFrame(submission.meshFrameID, transmitted: false)
+                    Self.logger.error(
+                        "Raw transmit rejected: \(result.statusName, privacy: .public) (\(result.statusCode, privacy: .public))"
+                    )
+                    snapshot.problemDescription = "Radio rejected the transmission: \(result.statusName)"
+                    rawTransmitDelay = 0
+                }
+            } else if abandonedRawTransactions.remove(result.transactionId) != nil {
+                // The watchdog already failed this frame's ticket. The device
+                // is late, not wrong: keep the link, and keep draining the
+                // queue that was waiting behind it.
+                Self.logger.error(
+                    """
+                    raw transmit answered after its deadline: transaction \
+                    \(result.transactionId, privacy: .public) \
+                    (\(result.statusName, privacy: .public))
+                    """
+                )
+                rawTransmitDelay = 0
+            } else {
                 Self.logger.fault(
                     """
                     raw transmit result for unknown transaction \
@@ -2056,41 +2124,6 @@ final class CoreBluetoothRadioConnection: NSObject, RadioConnection, @unchecked 
                     """
                 )
                 throw RadioConnectionError.incompatibleProtocol
-            }
-            switch result.disposition {
-            case .sent:
-                Self.logger.info(
-                    """
-                    raw transmit sent: transaction \(result.transactionId, privacy: .public) \
-                    mesh frame \(submission.meshFrameID, privacy: .public)
-                    """
-                )
-                completeMeshFrame(submission.meshFrameID, transmitted: true)
-                rawTransmitDelay = 0
-            case .retry:
-                submission.busyRetries += 1
-                if submission.busyRetries <= Self.maximumRawTransmitBusyRetries {
-                    Self.logger.notice(
-                        "Raw transmit temporarily busy; retry \(submission.busyRetries, privacy: .public)"
-                    )
-                    pendingRawFrames.insert(submission, at: 0)
-                    rawTransmitDelay = 0.1
-                } else {
-                    completeMeshFrame(submission.meshFrameID, transmitted: false)
-                    let message = "Radio remained busy; send was not transmitted"
-                    Self.logger.error(
-                        "Raw transmit rejected: \(result.statusName, privacy: .public) (\(result.statusCode, privacy: .public))"
-                    )
-                    snapshot.problemDescription = message
-                    rawTransmitDelay = 0
-                }
-            case .rejected:
-                completeMeshFrame(submission.meshFrameID, transmitted: false)
-                Self.logger.error(
-                    "Raw transmit rejected: \(result.statusName, privacy: .public) (\(result.statusCode, privacy: .public))"
-                )
-                snapshot.problemDescription = "Radio rejected the transmission: \(result.statusName)"
-                rawTransmitDelay = 0
             }
         }
 
@@ -2235,6 +2268,33 @@ final class CoreBluetoothRadioConnection: NSObject, RadioConnection, @unchecked 
             self.reportOperationFailure(
                 "The companion radio did not finish synchronizing",
                 name: displayName(for: peripheral)
+            )
+            self.finishStrandedOperations()
+        }
+    }
+
+    /// Release callers waiting on a control exchange the device stopped
+    /// answering.
+    ///
+    /// These waiters are otherwise resolved only by an update that says the
+    /// device is no longer working on anything, or by a teardown — so on a
+    /// link that stays up while the device goes quiet, nothing resolves them
+    /// and the caller's `await` never returns. `operationTimedOut` is the
+    /// honest answer: unlike a rejection, it does not claim to know whether
+    /// the device acted on the request.
+    private func finishStrandedOperations() {
+        if refreshInProgress || !refreshWaiters.isEmpty {
+            Self.logger.error("refresh stranded by a silent radio; failing it")
+            finishRefresh(throwing: RadioConnectionError.operationTimedOut)
+        }
+        if configurationWaiter != nil {
+            Self.logger.error("configuration stranded by a silent radio; failing it")
+            finishConfiguration(throwing: RadioConnectionError.operationTimedOut)
+        }
+        if devicePeerWaiter != nil {
+            Self.logger.error("device-identity mutation stranded by a silent radio; failing it")
+            finishDevicePeerOperation(
+                throwing: DevicePeerError.failed("The radio did not answer")
             )
         }
     }
@@ -2421,14 +2481,66 @@ final class CoreBluetoothRadioConnection: NSObject, RadioConnection, @unchecked 
                 \(submission.data.count, privacy: .public) bytes nocca=\(submission.nocca, privacy: .public)
                 """
             )
+            nextRawTransmitWatchdogToken += 1
+            let watchdogToken = nextRawTransmitWatchdogToken
+            var inFlight = submission
+            inFlight.watchdogToken = watchdogToken
             pendingRawFrames.removeFirst()
-            rawTransmitsInFlight[transactionID] = submission
+            // This transaction ID now belongs to a live submission, whatever
+            // an earlier use of it was abandoned for.
+            abandonedRawTransactions.remove(transactionID)
+            rawTransmitsInFlight[transactionID] = inFlight
             do {
                 try applySessionUpdate(update, from: peripheral)
             } catch {
                 rawTransmitsInFlight.removeValue(forKey: transactionID)
                 pendingRawFrames.insert(submission, at: 0)
                 throw error
+            }
+            scheduleRawTransmitWatchdog(
+                transactionID: transactionID,
+                watchdogToken: watchdogToken
+            )
+        }
+    }
+
+    /// Give up on a frame the device accepted and then never reported.
+    ///
+    /// The link is left alone: it is still up, and the device may well handle
+    /// the next frame normally. Only this frame's delivery ticket is failed,
+    /// which is what releases the Rust MAC's coordinator borrow and lets the
+    /// rest of the mesh session proceed. Logged as a fault because a device
+    /// reaching this deadline is a real device-side defect, not a normal
+    /// outcome to be absorbed quietly.
+    private func scheduleRawTransmitWatchdog(transactionID: UInt8, watchdogToken: UInt64) {
+        bluetoothQueue.asyncAfter(deadline: .now() + Self.rawTransmitTimeoutSeconds) { [weak self] in
+            guard let self,
+                  let submission = self.rawTransmitsInFlight[transactionID],
+                  submission.watchdogToken == watchdogToken
+            else { return }
+            Self.logger.fault(
+                """
+                raw transmit timed out after \(Self.rawTransmitTimeoutSeconds, privacy: .public)s: \
+                transaction \(transactionID, privacy: .public) \
+                mesh frame \(submission.meshFrameID, privacy: .public) \
+                \(submission.data.count, privacy: .public) bytes; failing its ticket so the \
+                mesh session can continue
+                """
+            )
+            self.rawTransmitsInFlight.removeValue(forKey: transactionID)
+            self.abandonedRawTransactions.insert(transactionID)
+            self.completeMeshFrame(submission.meshFrameID, transmitted: false)
+            self.reportOperationFailure(
+                "The radio did not report what happened to a transmission"
+            )
+            guard let peripheral = self.peripheral, peripheral.state == .connected else { return }
+            do {
+                try self.startRawTransmits(on: peripheral)
+            } catch {
+                self.dropPendingRawFrame(
+                    reason: "The ULCP session rejected an outbound frame before transmission",
+                    name: self.displayName(for: peripheral)
+                )
             }
         }
     }
@@ -2486,6 +2598,10 @@ final class CoreBluetoothRadioConnection: NSObject, RadioConnection, @unchecked 
     /// session cannot answer for the old one's transactions — must come
     /// through here.
     private func abandonOutstandingMeshFrames() {
+        // A restarted session issues transaction IDs from the start of the
+        // space again, so entries kept here would swallow a genuine protocol
+        // violation on the new session.
+        abandonedRawTransactions.removeAll()
         guard !pendingRawFrames.isEmpty || !rawTransmitsInFlight.isEmpty else { return }
         Self.logger.notice(
             """
