@@ -49,7 +49,7 @@ Docs: `make docs` (mdBook), `make rust-docs`, `make docs-serve`, `make web-debug
 
 ## Releasing firmware
 
-Tagged `fw-YYYY.MM.NN` (annotated), cut locally: `make release-artifacts VERSION=…`,
+Tagged `fw-YYYY.MM.NN` (annotated), cut locally: tag HEAD, then `make release-artifacts`,
 then `release-publish` and `release-mirror`. GitHub Releases are the archive;
 `umsh.dev/firmware/` mirrors what the web flasher can actually `fetch()`, because
 GitHub's release assets send no CORS headers. Runbook, artifact table, manifest

@@ -48,13 +48,42 @@
 
 TARGET_DIR := target/thumbv7em-none-eabihf/release
 
-# Release staging. `VERSION` names the release being cut and lands in every
-# artifact filename; `release-artifacts` refuses to run with the default, so
-# the convert-only targets below stay usable for bench work without anyone
-# having to invent a version number.
-VERSION ?= dev
-FW_DIR := target/firmware-release/$(VERSION)
-RELEASE_TAG = fw-$(VERSION)
+# Release staging. `VERSION` is the release *tag* — `fw-2026.08.01`, never the
+# bare number — and it defaults to the tag on HEAD, so cutting a release takes
+# no argument at all:
+#
+#     git tag -a fw-2026.08.01 -m "UMSH firmware 2026.08.01"
+#     make release-artifacts
+#
+# Deriving it rather than asking for it is the point: the tag already is the
+# version, and the guards below already insist HEAD sits on it, so restating
+# it by hand adds nothing except a way to disagree with yourself.
+#
+# `ifndef` rather than `?=` so the git call runs once at parse time instead of
+# on every expansion; a VERSION= on the command line is already set by then
+# and wins. Off a tag it falls back to `dev`, which keeps the convert-only
+# targets usable on the bench and is rejected by every release target.
+ifndef VERSION
+VERSION := $(shell git describe --tags --exact-match --match 'fw-*' 2>/dev/null || echo dev)
+endif
+RELEASE_TAG = $(VERSION)
+
+# The bare version, which is what lands in filenames, the manifest, and the
+# mirror paths. `fw-` exists to namespace git refs so `git describe
+# --match 'fw-*'` cannot pick up a future crate or app tag; nothing outside
+# the ref namespace needs it, and `umsh-t1000e-fw-2026.08.01.uf2` reads badly.
+FW_VERSION = $(patsubst fw-%,%,$(VERSION))
+FW_DIR = target/firmware-release/$(FW_VERSION)
+
+# Release targets take the tag form and nothing else. A bare `2026.08.01`
+# would otherwise look plausible and then miss the tag by one prefix.
+define require-release-tag
+	@case "$(VERSION)" in fw-*) ;; *) \
+		echo "VERSION must be a release tag, e.g. VERSION=fw-2026.08.01 (got \"$(VERSION)\")"; \
+		echo "or tag HEAD and drop the argument entirely:"; \
+		echo "    git tag -a fw-2026.08.01 -m \"UMSH firmware 2026.08.01\""; \
+		exit 1 ;; esac
+endef
 
 # The version the firmware reports as PROP_DEV_VERSION. Empty for ordinary
 # builds, which makes each build.rs fall back to `git describe`;
@@ -228,19 +257,19 @@ flash-techo-serial: build-techo
 # converting a second time.
 
 dfu-zip-techo: build-techo
-	$(call dfu-genpkg,$(TARGET_DIR)/firmware-techo,$(SD_REQ_S140_6_1_1),$(FW_DIR)/umsh-techo-$(VERSION)-dfu.zip)
+	$(call dfu-genpkg,$(TARGET_DIR)/firmware-techo,$(SD_REQ_S140_6_1_1),$(FW_DIR)/umsh-techo-$(FW_VERSION)-dfu.zip)
 
 dfu-zip-t1000e: build-t1000e
-	$(call dfu-genpkg,$(TARGET_DIR)/firmware-t1000e,$(SD_REQ_S140_7_3_0),$(FW_DIR)/umsh-t1000e-$(VERSION)-dfu.zip)
+	$(call dfu-genpkg,$(TARGET_DIR)/firmware-t1000e,$(SD_REQ_S140_7_3_0),$(FW_DIR)/umsh-t1000e-$(FW_VERSION)-dfu.zip)
 
 dfu-zip-sensecap-solar: build-sensecap-solar
-	$(call dfu-genpkg,$(TARGET_DIR)/firmware-sensecap-solar,$(SD_REQ_S140_7_3_0),$(FW_DIR)/umsh-sensecap-solar-$(VERSION)-dfu.zip)
+	$(call dfu-genpkg,$(TARGET_DIR)/firmware-sensecap-solar,$(SD_REQ_S140_7_3_0),$(FW_DIR)/umsh-sensecap-solar-$(FW_VERSION)-dfu.zip)
 
 dfu-zip-wio-tracker-l1: build-wio-tracker-l1
-	$(call dfu-genpkg,$(TARGET_DIR)/firmware-wio-tracker-l1,$(SD_REQ_S140_7_3_0),$(FW_DIR)/umsh-wio-tracker-l1-$(VERSION)-dfu.zip)
+	$(call dfu-genpkg,$(TARGET_DIR)/firmware-wio-tracker-l1,$(SD_REQ_S140_7_3_0),$(FW_DIR)/umsh-wio-tracker-l1-$(FW_VERSION)-dfu.zip)
 
 dfu-zip-xiao-nrf52: build-xiao-nrf52
-	$(call dfu-genpkg,$(TARGET_DIR)/firmware-xiao-nrf52,$(SD_REQ_S140_7_3_0),$(FW_DIR)/umsh-xiao-nrf52-$(VERSION)-dfu.zip)
+	$(call dfu-genpkg,$(TARGET_DIR)/firmware-xiao-nrf52,$(SD_REQ_S140_7_3_0),$(FW_DIR)/umsh-xiao-nrf52-$(FW_VERSION)-dfu.zip)
 
 # ─── ESP32 firmware (firmware-esp32/ sibling workspace) ──────────────────────
 #
@@ -303,33 +332,34 @@ merged-bin-heltec-v3: build-heltec-v3
 	espflash save-image --chip esp32s3 --merge --skip-padding -s 4mb \
 		$(ESPFLASH_PARTITIONS) \
 		$(ESP32S3_TARGET_DIR)/firmware-heltec-v3 \
-		$(FW_DIR)/umsh-heltec-v3-$(VERSION).bin
+		$(FW_DIR)/umsh-heltec-v3-$(FW_VERSION).bin
 
 # ─── Firmware releases ───────────────────────────────────────────────────────
 #
 # The whole flow, in order:
 #
 #     git tag -a fw-2026.08.01 -m "UMSH firmware 2026.08.01"
-#     make release-artifacts VERSION=2026.08.01
+#     make release-artifacts
 #     ... bench-verify the staged artifacts ...
 #     git push origin main --follow-tags
-#     make release-publish VERSION=2026.08.01
-#     make release-mirror  VERSION=2026.08.01   && git push origin gh-pages
+#     make release-publish
+#     make release-mirror   && git push origin gh-pages
+#
+# No target takes a version argument once HEAD is tagged. Pass
+# VERSION=fw-2026.08.01 to work on a release other than the one HEAD is on.
 #
 # Releases are cut locally rather than in CI: this machine has the Xtensa
 # toolchain the merged ESP32 image needs, and it builds xiao-nrf52, which
 # CI does not. See docs/firmware-releases.md.
 
 release-artifacts:
-	@test "$(VERSION)" != "dev" || { \
-		echo "name the release: make release-artifacts VERSION=2026.08.01"; \
-		exit 1; }
+	$(require-release-tag)
 	@git diff --quiet && git diff --cached --quiet || { \
 		echo "working tree is dirty; commit or stash before cutting a release"; \
 		exit 1; }
 	@git rev-parse -q --verify "$(RELEASE_TAG)^{tag}" >/dev/null || { \
 		echo "no annotated tag $(RELEASE_TAG). Create it first:"; \
-		echo "    git tag -a $(RELEASE_TAG) -m \"UMSH firmware $(VERSION)\""; \
+		echo "    git tag -a $(RELEASE_TAG) -m \"UMSH firmware $(FW_VERSION)\""; \
 		exit 1; }
 	@test "$$(git rev-parse HEAD)" = "$$(git rev-parse "$(RELEASE_TAG)^{commit}")" || { \
 		echo "HEAD is not at $(RELEASE_TAG); check out the tagged commit"; \
@@ -337,7 +367,7 @@ release-artifacts:
 	rm -rf $(FW_DIR)
 	@mkdir -p $(FW_DIR)
 	$(MAKE) release-stage VERSION=$(VERSION) UMSH_FW_VERSION=$(RELEASE_TAG)
-	scripts/release.py --version $(VERSION)
+	scripts/release.py --version $(FW_VERSION)
 	@echo
 	@echo "Staged in $(FW_DIR). Verify on hardware before publishing."
 
@@ -349,7 +379,7 @@ release-artifacts:
 release-stage: $(addprefix dfu-zip-,$(RELEASE_BOARDS_NRF52)) merged-bin-heltec-v3
 	@for board in $(RELEASE_BOARDS_NRF52); do \
 		cp $(TARGET_DIR)/firmware-$$board.uf2 \
-			$(FW_DIR)/umsh-$$board-$(VERSION).uf2 || exit 1; \
+			$(FW_DIR)/umsh-$$board-$(FW_VERSION).uf2 || exit 1; \
 	done
 	@echo "release-stage: collected $(words $(RELEASE_BOARDS_NRF52)) UF2 images"
 
@@ -363,11 +393,11 @@ release-publish:
 		echo "nothing staged for $(VERSION); run: make release-artifacts VERSION=$(VERSION)"; \
 		exit 1; }
 	gh release create $(RELEASE_TAG) --draft \
-		--title "UMSH firmware $(VERSION)" \
+		--title "UMSH firmware $(FW_VERSION)" \
 		--notes "Technology preview. See docs/firmware-releases.md for what is in here and how to flash it." \
-		$(FW_DIR)/umsh-*-$(VERSION).uf2 \
-		$(FW_DIR)/umsh-*-$(VERSION)-dfu.zip \
-		$(FW_DIR)/umsh-heltec-v3-$(VERSION).bin \
+		$(FW_DIR)/umsh-*-$(FW_VERSION).uf2 \
+		$(FW_DIR)/umsh-*-$(FW_VERSION)-dfu.zip \
+		$(FW_DIR)/umsh-heltec-v3-$(FW_VERSION).bin \
 		$(FW_DIR)/manifest.json \
 		$(FW_DIR)/SHA256SUMS
 	@echo
@@ -383,22 +413,21 @@ release-publish:
 MIRROR_KEEP ?= 3
 
 release-mirror:
-	@test "$(VERSION)" != "dev" || { \
-		echo "name the release: make release-mirror VERSION=2026.08.01"; exit 1; }
+	$(require-release-tag)
 	@test -f $(FW_DIR)/manifest.json || { \
 		echo "nothing staged for $(VERSION); run: make release-artifacts VERSION=$(VERSION)"; \
 		exit 1; }
 	$(gh-pages-open)
 	@# Version directories are immutable: every URL under one is meant to be
 	@# cacheable forever, which only holds if the bytes never change.
-	@test ! -d $(GH_PAGES_WT)/firmware/$(VERSION) || { \
-		echo "/firmware/$(VERSION) is already published — bump the version"; \
+	@test ! -d $(GH_PAGES_WT)/firmware/$(FW_VERSION) || { \
+		echo "/firmware/$(FW_VERSION) is already published — bump the version"; \
 		git worktree remove $(GH_PAGES_WT); exit 1; }
-	mkdir -p $(GH_PAGES_WT)/firmware/$(VERSION)
-	cp $(FW_DIR)/umsh-*-$(VERSION)-dfu.zip \
-		$(FW_DIR)/umsh-heltec-v3-$(VERSION).bin \
+	mkdir -p $(GH_PAGES_WT)/firmware/$(FW_VERSION)
+	cp $(FW_DIR)/umsh-*-$(FW_VERSION)-dfu.zip \
+		$(FW_DIR)/umsh-heltec-v3-$(FW_VERSION).bin \
 		$(FW_DIR)/manifest.json \
-		$(GH_PAGES_WT)/firmware/$(VERSION)/
+		$(GH_PAGES_WT)/firmware/$(FW_VERSION)/
 	scripts/release.py --index-mirror $(GH_PAGES_WT)/firmware --keep $(MIRROR_KEEP)
 	$(call gh-pages-commit,firmware: mirror $(RELEASE_TAG))
 

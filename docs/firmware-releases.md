@@ -50,19 +50,26 @@ and fall back to `git describe` as before.
 
 ```bash
 git tag -a fw-2026.08.01 -m "UMSH firmware 2026.08.01"
-make release-artifacts VERSION=2026.08.01
+make release-artifacts
 #   ... verify on hardware, see below ...
 git push origin main --follow-tags
-make release-publish VERSION=2026.08.01
-make release-mirror  VERSION=2026.08.01
+make release-publish
+make release-mirror
 git push origin gh-pages
 ```
+
+No step takes a version argument. `VERSION` defaults to the tag on `HEAD`, so
+the tag you just created is the one that gets built — it cannot disagree with
+itself. To work on a release other than the one `HEAD` is on, pass the **tag**:
+`make release-artifacts VERSION=fw-2026.08.01`. The bare `2026.08.01` is
+rejected rather than quietly missing the tag by one prefix.
 
 `release-artifacts` refuses to run unless the working tree is clean, the
 annotated tag exists, and `HEAD` is exactly at it — `git describe` has no way
 to warn you about any of those on its own. It builds all six shipping images,
 converts them, and writes `manifest.json` and `SHA256SUMS` into
-`target/firmware-release/<version>/`.
+`target/firmware-release/<version>/`, where `<version>` is the tag without its
+`fw-` prefix.
 
 `release-publish` drafts the GitHub Release. Review the asset list, then
 `gh release edit fw-2026.08.01 --draft=false`.
