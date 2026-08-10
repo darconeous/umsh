@@ -36,7 +36,7 @@
             const path_to_root = "";
             const default_light_theme = "light";
             const default_dark_theme = "ayu";
-            window.path_to_searchindex_js = "searchindex-149edbbb.js";
+            window.path_to_searchindex_js = "searchindex-df8b5f8c.js";
         </script>
         <!-- Start loading toc.js asap -->
         <script src="toc-438957a9.js"></script>
@@ -3837,6 +3837,8 @@ running on the device.</p>
 similarly to the “User-Agent” string from HTTP. The following format is
 <strong>RECOMMENDED</strong>:</p>
 <p><code>STACK-NAME/STACK-VERSION[BUILD-INFO][; OTHER-INFO][; BUILD-DATE]</code></p>
+<p>The hardware the firmware is running on belongs in
+<a href="#prop-dev-model"><code>PROP_DEV_MODEL</code></a>, not here.</p>
 <h3 id="prop-interface-type"><a class="header" href="#prop-interface-type">PROP 3: <code>PROP_INTERFACE_TYPE</code></a></h3>
 <ul>
 <li>Type: Single-Value, Constant</li>
@@ -3849,6 +3851,31 @@ similarly to the “User-Agent” string from HTTP. The following format is
 </ul>
 <p>This unsigned packed integer identifies the network protocol implemented by
 this device. It must return the value 8.</p>
+<h3 id="prop-dev-model"><a class="header" href="#prop-dev-model">PROP 4: <code>PROP_DEV_MODEL</code></a></h3>
+<ul>
+<li>Type: Single-Value, Constant</li>
+<li>Asynchronous Updates: No</li>
+<li>Required: <strong>OPTIONAL</strong></li>
+<li>Scope: Device</li>
+<li>Value Type: STRING</li>
+<li>Post-Reset Value: Implementation-Specific</li>
+</ul>
+<p>Contains a zero-terminated ASCII string naming the hardware model the device
+is, such as <code>Seeed SenseCAP T1000-E</code>. Where
+<a href="#prop-dev-version"><code>PROP_DEV_VERSION</code></a> describes the firmware a device runs,
+this describes the thing it runs on, and the two change independently: the
+same firmware release covers several models, and a model outlives every
+release built for it.</p>
+<p>Firmware built for one specific board <strong>SHOULD</strong> implement this. A device
+whose hardware has no fixed identity — a simulator, or an implementation that
+runs on whatever it is compiled for — <strong>SHOULD</strong> omit the property rather than
+return an empty or invented string. A host <strong>MUST</strong> treat a refused get as
+“this device does not name its hardware” and continue.</p>
+<p>The value <strong>SHOULD</strong> name the product as its vendor does, so that a host can
+match it against an external hardware description. It is intended for display
+and for lookup, and is deliberately not an identifier: a host that needs to
+make decisions based on what a device <em>can do</em> has
+<a href="#prop-caps"><code>PROP_CAPS</code></a> for that.</p>
 <h3 id="prop-caps"><a class="header" href="#prop-caps">PROP 5: <code>PROP_CAPS</code></a></h3>
 <ul>
 <li>Type: Multiple-Value, Constant</li>
@@ -6527,6 +6554,9 @@ when the capability is not advertised; <code>CMD_CLEAR</code> and
 </tbody>
 </table>
 </div>
+<p><code>PROP_DEV_MODEL</code> (4) is the one property that is neither always required nor
+capability-gated: firmware built for a specific board <strong>SHOULD</strong> implement it,
+and anything else omits it. A host discovers it by asking.</p>
 <p>Every other property is gated by a capability. A device that does not
 advertise the capability does not implement the property, and rejects it
 with <code>STATUS_PROP_NOT_FOUND</code> or <code>STATUS_UNIMPLEMENTED</code>.</p>
@@ -6653,6 +6683,7 @@ it can do.</p>
 <tr><td>1</td><td><a href="#prop-protocol-version"><code>PROP_PROTOCOL_VERSION</code></a></td><td>Get</td><td>—</td></tr>
 <tr><td>2</td><td><a href="#prop-dev-version"><code>PROP_DEV_VERSION</code></a></td><td>Get</td><td>—</td></tr>
 <tr><td>3</td><td><a href="#prop-interface-type"><code>PROP_INTERFACE_TYPE</code></a></td><td>Get</td><td>—</td></tr>
+<tr><td>4</td><td><a href="#prop-dev-model"><code>PROP_DEV_MODEL</code></a></td><td>Get</td><td>—</td></tr>
 <tr><td>5</td><td><a href="#prop-caps"><code>PROP_CAPS</code></a></td><td>Get</td><td>—</td></tr>
 <tr><td>32</td><td><a href="#prop-phy-enabled"><code>PROP_PHY_ENABLED</code></a></td><td>Get, Set</td><td>—</td></tr>
 <tr><td>35</td><td><a href="#prop-phy-freq"><code>PROP_PHY_FREQ</code></a></td><td>Get, Set</td><td>—</td></tr>
