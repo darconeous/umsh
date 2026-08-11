@@ -716,6 +716,7 @@ dependencies = [
  "fiat-crypto",
  "rustc_version 0.4.1",
  "subtle",
+ "zeroize",
 ]
 
 [[package]]
@@ -961,6 +962,7 @@ dependencies = [
  "rand_core 0.6.4",
  "sha2",
  "subtle",
+ "zeroize",
 ]
 
 [[package]]
@@ -4121,6 +4123,7 @@ dependencies = [
  "umsh-hal",
  "umsh-mac",
  "umsh-text",
+ "zeroize",
 ]
 
 [[package]]

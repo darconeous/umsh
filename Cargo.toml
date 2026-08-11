@@ -123,7 +123,7 @@ aes = { version = "0.8", default-features = false }
 bitflags = { version = "2", default-features = false }
 embedded-hal-async = { version = "1", default-features = false }
 curve25519-dalek = { version = "4", default-features = false }
-ed25519-dalek = { version = "2.1", default-features = false, features = ["rand_core"] }
+ed25519-dalek = { version = "2.1", default-features = false, features = ["rand_core", "zeroize"] }
 hamaddr = { version = "0.1.0", default-features = false }
 heapless = { version = "0.8", default-features = false }
 # Pre-release version specifier is required so cargo will accept the patched

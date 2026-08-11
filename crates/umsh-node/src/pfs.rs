@@ -9,6 +9,8 @@ use umsh_core::PublicKey;
 use umsh_crypto::{NodeIdentity, software::SoftwareIdentity};
 #[cfg(feature = "software-crypto")]
 use umsh_mac::{LocalIdentityId, SendOptions, SendReceipt};
+#[cfg(feature = "software-crypto")]
+use zeroize::Zeroize;
 
 #[cfg(feature = "software-crypto")]
 use crate::{MacCommand, mac::MacBackend, mac_command, node::NodeError};
@@ -129,6 +131,7 @@ impl PfsSessionManager {
         let mut secret = [0u8; 32];
         mac.fill_random(&mut secret).await;
         let local_ephemeral = SoftwareIdentity::from_secret_bytes(&secret);
+        secret.zeroize();
         let now_ms = mac.now_ms().await;
         let receipt = send_pfs_command(
             mac,
@@ -168,6 +171,7 @@ impl PfsSessionManager {
         let mut secret = [0u8; 32];
         mac.fill_random(&mut secret).await;
         let local_ephemeral = SoftwareIdentity::from_secret_bytes(&secret);
+        secret.zeroize();
         let active = activate_identity(
             mac,
             parent,
