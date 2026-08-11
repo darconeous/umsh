@@ -12,7 +12,7 @@ The following terms are used throughout this specification. Definitions are give
 : A symmetric block cipher standardized by NIST. UMSH uses AES-128 in CTR mode for payload encryption and AES-CMAC for message authentication.
 
 **AES-SIV (Synthetic Initialization Vector)**
-: A misuse-resistant authenticated encryption scheme (RFC 5297) in which the initialization vector is derived from an authentication tag computed over the plaintext. If the same plaintext is accidentally encrypted twice with the same key, the output reveals only that duplication — keys and other traffic remain uncompromised. UMSH uses a construction inspired by AES-SIV: AES-CMAC is used to compute the MIC, which then seeds AES-128-CTR for encryption.
+: A misuse-resistant authenticated encryption scheme defined by RFC 5297. It uses S2V to compute a synthetic IV from distinct associated-data components and the plaintext, then encrypts with AES-CTR. UMSH uses a custom construction inspired by this design: a direct AES-CMAC over canonical AAD concatenated with plaintext contributes to the AES-CTR IV. It is not RFC 5297 AES-SIV; see the [construction warning](security.md#relationship-to-rfc-5297-aes-siv).
 
 **ARNCE/HAM-64**
 : A compact character encoding scheme for amateur radio callsigns, encoding up to 12 characters into 2, 4, 6, or 8 bytes. Used in UMSH's Operator Callsign and Station Callsign packet options.

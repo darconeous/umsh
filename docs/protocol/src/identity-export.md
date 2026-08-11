@@ -44,7 +44,7 @@ All multi-byte integers are big-endian, as elsewhere in UMSH.
 | 12 | 4 | Argon2id time cost *t* | passes |
 | 16 | 1 | Argon2id parallelism *p* | lanes |
 | 17 | 16 | KDF salt | random per export |
-| 33 | 1 | Cipher identifier | `0x01` = UMSH SIV construction |
+| 33 | 1 | Cipher identifier | `0x01` = custom UMSH SIV-inspired construction |
 | 34 | 16 | MIC | full AES-CMAC tag |
 | 50 | — | Ciphertext | encrypted payload |
 
@@ -93,7 +93,9 @@ full 16-byte MIC and the envelope header as associated data:
 
 1. Compute the full 16-byte AES-CMAC over the envelope header followed by
    the payload plaintext, using `K_mic`.
-2. Use the MIC directly as the 16-byte CTR IV, as in standard AES-SIV.
+2. Use the MIC directly as the 16-byte CTR IV. This resembles AES-SIV but does
+   not use RFC 5297 S2V; see the packet construction's
+   [RFC 5297 warning](security.md#relationship-to-rfc-5297-aes-siv).
 3. Encrypt the payload using **AES-128-CTR** with `K_enc` and that IV.
 
 To import, derive the keys, decrypt the ciphertext, recompute the CMAC over
