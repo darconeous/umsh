@@ -35,7 +35,7 @@
             const path_to_root = "";
             const default_light_theme = "light";
             const default_dark_theme = "ayu";
-            window.path_to_searchindex_js = "searchindex-6b02da15.js";
+            window.path_to_searchindex_js = "searchindex-e2a05c24.js";
         </script>
         <!-- Start loading toc.js asap -->
         <script src="toc-438957a9.js"></script>
@@ -220,7 +220,7 @@ URI-preview machinery. The recommended file extension is <code>.umshid</code>.</
 <tr><td>12</td><td>4</td><td>Argon2id time cost <em>t</em></td><td>passes</td></tr>
 <tr><td>16</td><td>1</td><td>Argon2id parallelism <em>p</em></td><td>lanes</td></tr>
 <tr><td>17</td><td>16</td><td>KDF salt</td><td>random per export</td></tr>
-<tr><td>33</td><td>1</td><td>Cipher identifier</td><td><code>0x01</code> = UMSH SIV construction</td></tr>
+<tr><td>33</td><td>1</td><td>Cipher identifier</td><td><code>0x01</code> = custom UMSH SIV-inspired construction</td></tr>
 <tr><td>34</td><td>16</td><td>MIC</td><td>full AES-CMAC tag</td></tr>
 <tr><td>50</td><td>—</td><td>Ciphertext</td><td>encrypted payload</td></tr>
 </tbody>
@@ -262,7 +262,9 @@ full 16-byte MIC and the envelope header as associated data:</p>
 <ol>
 <li>Compute the full 16-byte AES-CMAC over the envelope header followed by
 the payload plaintext, using <code>K_mic</code>.</li>
-<li>Use the MIC directly as the 16-byte CTR IV, as in standard AES-SIV.</li>
+<li>Use the MIC directly as the 16-byte CTR IV. This resembles AES-SIV but does
+not use RFC 5297 S2V; see the packet construction’s
+<a href="security.html#relationship-to-rfc-5297-aes-siv">RFC 5297 warning</a>.</li>
 <li>Encrypt the payload using <strong>AES-128-CTR</strong> with <code>K_enc</code> and that IV.</li>
 </ol>
 <p>To import, derive the keys, decrypt the ciphertext, recompute the CMAC over

@@ -35,7 +35,7 @@
             const path_to_root = "";
             const default_light_theme = "light";
             const default_dark_theme = "ayu";
-            window.path_to_searchindex_js = "searchindex-6b02da15.js";
+            window.path_to_searchindex_js = "searchindex-e2a05c24.js";
         </script>
         <!-- Start loading toc.js asap -->
         <script src="toc-438957a9.js"></script>
@@ -348,7 +348,7 @@ K_mic_blind = K_mic_pairwise XOR K_mic_channel
 <li>the optional 2-byte salt</li>
 </ul>
 <p>These values are not used to derive the pairwise keys. Instead, they are used as packet-specific inputs to encryption, authentication, and replay protection.</p>
-<p>For encrypted packets using AES-SIV:</p>
+<p>For encrypted packets using the custom AES-SIV-inspired construction:</p>
 <ul>
 <li><code>K_enc</code> and <code>K_mic</code> are the stable pairwise keys</li>
 <li><code>SECINFO</code> and other immutable header fields are supplied as associated data</li>
@@ -359,7 +359,7 @@ K_mic_blind = K_mic_pairwise XOR K_mic_channel
 <li><code>K_mic</code> is the stable pairwise MIC key</li>
 <li>the MIC is computed over the protected packet contents and relevant static fields</li>
 </ul>
-<p>The frame counter must increase monotonically for a given traffic direction. Receivers should use it for replay detection even though AES-SIV is resistant to nonce misuse.</p>
+<p>The frame counter must increase monotonically for a given traffic direction. Receivers must not rely on the construction’s intended resistance to nonce misuse as a substitute for replay detection.</p>
 <h3 id="multicast-packet-keys"><a class="header" href="#multicast-packet-keys">Multicast Packet Keys</a></h3>
 <p>For multicast, the configured channel key is the base secret. The encryption and authentication keys are derived once and are stable for a given channel.</p>
 <pre><code class="language-text">ikm  = channel_key
@@ -372,7 +372,7 @@ K_mic = okm[16..31]
 </code></pre>
 <p>These keys are stable for the channel and may be cached by the implementation. They do not change from packet to packet. Per-packet variability is provided by the frame counter and optional salt in SECINFO, which serve as inputs to encryption and replay detection (see <a href="#per-packet-security-inputs">Per-Packet Security Inputs</a>).</p>
 <h3 id="encrypted-packets"><a class="header" href="#encrypted-packets">Encrypted Packets</a></h3>
-<p>When encryption is enabled, UMSH uses a construction inspired by <strong>AES-SIV</strong> (RFC 5297), with the MIC and encryption steps separated to allow future support for different MIC lengths.</p>
+<p>When encryption is enabled, UMSH uses a <strong>custom construction inspired by AES-SIV</strong>. It is not RFC 5297 AES-SIV; in particular, it does not use that specification’s S2V operation.</p>
 <p>The processing is:</p>
 <ol>
 <li>Compute the full 16-byte AES-CMAC over the AAD and plaintext using <code>K_mic</code>.</li>
@@ -380,13 +380,38 @@ K_mic = okm[16..31]
 <li>Construct the CTR IV from the MIC (see <a href="#ctr-iv-construction">CTR IV Construction</a>).</li>
 <li>Encrypt the plaintext using <strong>AES-128-CTR</strong> with <code>K_enc</code> and the constructed IV.</li>
 </ol>
-<p>The MIC is transmitted separately from the ciphertext (not prepended as in standard AES-SIV), allowing the MIC length to be controlled independently via the SCF MIC size field.</p>
-<p>A key design goal is robustness against nonce reuse. Because the CTR IV is derived from the MIC (as in SIV-style constructions), accidental reuse of nonces or counters is not cryptographically catastrophic in the way it would be for CTR or GCM.</p>
+<p>The MIC is transmitted separately from the ciphertext, allowing its length to be controlled independently via the SCF MIC size field.</p>
+<p>A design goal is to reduce the damage caused by nonce reuse. Deriving the CTR IV from the MIC avoids directly reusing a caller-supplied CTR nonce, but the guarantees of RFC 5297 do not automatically apply to this custom construction. See <a href="#relationship-to-rfc-5297-aes-siv">Relationship to RFC 5297 AES-SIV</a>.</p>
+<h4 id="relationship-to-rfc-5297-aes-siv"><a class="header" href="#relationship-to-rfc-5297-aes-siv">Relationship to RFC 5297 AES-SIV</a></h4>
+<blockquote class="blockquote-tag blockquote-tag-caution">
+<p class="blockquote-tag-title"><svg viewbox="0 0 16 16" width="18" height="18"><path d="M4.47.22A.749.749 0 0 1 5 0h6c.199 0 .389.079.53.22l4.25 4.25c.141.14.22.331.22.53v6a.749.749 0 0 1-.22.53l-4.25 4.25A.749.749 0 0 1 11 16H5a.749.749 0 0 1-.53-.22L.22 11.53A.749.749 0 0 1 0 11V5c0-.199.079-.389.22-.53Zm.84 1.28L1.5 5.31v5.38l3.81 3.81h5.38l3.81-3.81V5.31L10.69 1.5ZM8 4a.75.75 0 0 1 .75.75v3.5a.75.75 0 0 1-1.5 0v-3.5A.75.75 0 0 1 8 4Zm0 8a1 1 0 1 1 0-2 1 1 0 0 1 0 2Z"></path></svg>Caution</p>
+<p>The original intention of this specification was to closely follow RFC 5297 (AES-SIV)
+while only adding MIC truncation and the associated CTR IV Construction. However,
+it seems that original goal was somehow lost in translation and what was actually documented
+and implemented was <em>close to</em> but <em>not quite</em> AES-SIV. While the result is not cryptographically
+catastrophic, it is very embarassing and will be remediated.</p>
+<p>The resulting construction was <strong>inspired by AES-SIV, not an implementation of RFC 5297 AES-SIV</strong>.
+RFC 5297 computes the synthetic IV with S2V, which treats each associated-data string and
+the plaintext as a distinct vector component. UMSH instead computes one
+<code>CMAC(K_mic, canonical_AAD || plaintext)</code>. Because there is no explicit boundary between
+the complete canonical AAD and the plaintext in that CMAC input, its security depends on
+the canonical serialization being unambiguous across every valid packet layout. The RFC’s
+S2V security argument does not apply directly, and an alternative decomposition satisfying
+<code>AAD_1 || plaintext_1 = AAD_2 || plaintext_2</code> would produce the same full CMAC and synthetic
+IV for two distinct authenticated tuples. No such practical collision is presently known,
+but the required injectivity has not been established.</p>
+<p>UMSH also permits truncated MICs and reconstructs the CTR IV from the transmitted MIC prefix
+plus SECINFO, whereas RFC 5297 transmits the full 16-byte S2V result and clears two bits before
+using it as the CTR counter. Those choices make UMSH a separate, custom construction whose
+nonce-misuse properties require independent analysis. Replacing it with a standard,
+well-analyzed construction is planned in
+<a href="https://github.com/darconeous/umsh/issues/4">GitHub issue #4</a>.</p>
+</blockquote>
 <h3 id="ctr-iv-construction"><a class="header" href="#ctr-iv-construction">CTR IV Construction</a></h3>
 <p>The 16-byte CTR IV is constructed by appending the SECINFO field to the MIC, then zero-padding or truncating the result to exactly 16 bytes:</p>
 <pre><code class="language-text">IV = truncate_or_pad_to_16( MIC || SECINFO )
 </code></pre>
-<p>For the 16-byte MIC, SECINFO is entirely truncated away and the IV equals the MIC — identical to standard AES-SIV. For shorter MICs, the IV incorporates the frame counter and optional salt from SECINFO, providing additional per-packet IV variability that compensates for the increased probability of truncated-MIC collisions.</p>
+<p>For the 16-byte MIC, SECINFO is entirely truncated away and the IV equals the MIC. This resembles AES-SIV’s use of a synthetic IV, but it is not identical to RFC 5297 because the MIC is a direct CMAC rather than an S2V result and UMSH does not apply RFC 5297’s counter-bit masking. For shorter MICs, the IV incorporates the frame counter and optional salt from SECINFO, providing additional per-packet IV variability.</p>
 <div class="table-wrapper">
 <table>
 <thead>

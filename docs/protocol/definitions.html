@@ -35,7 +35,7 @@
             const path_to_root = "";
             const default_light_theme = "light";
             const default_dark_theme = "ayu";
-            window.path_to_searchindex_js = "searchindex-6b02da15.js";
+            window.path_to_searchindex_js = "searchindex-e2a05c24.js";
         </script>
         <!-- Start loading toc.js asap -->
         <script src="toc-438957a9.js"></script>
@@ -184,7 +184,7 @@
 <dt id="aes-advanced-encryption-standard"><a class="header" href="#aes-advanced-encryption-standard"><strong>AES (Advanced Encryption Standard)</strong></a></dt>
 <dd>A symmetric block cipher standardized by NIST. UMSH uses AES-128 in CTR mode for payload encryption and AES-CMAC for message authentication.</dd>
 <dt id="aes-siv-synthetic-initialization-vector"><a class="header" href="#aes-siv-synthetic-initialization-vector"><strong>AES-SIV (Synthetic Initialization Vector)</strong></a></dt>
-<dd>A misuse-resistant authenticated encryption scheme (RFC 5297) in which the initialization vector is derived from an authentication tag computed over the plaintext. If the same plaintext is accidentally encrypted twice with the same key, the output reveals only that duplication — keys and other traffic remain uncompromised. UMSH uses a construction inspired by AES-SIV: AES-CMAC is used to compute the MIC, which then seeds AES-128-CTR for encryption.</dd>
+<dd>A misuse-resistant authenticated encryption scheme defined by RFC 5297. It uses S2V to compute a synthetic IV from distinct associated-data components and the plaintext, then encrypts with AES-CTR. UMSH uses a custom construction inspired by this design: a direct AES-CMAC over canonical AAD concatenated with plaintext contributes to the AES-CTR IV. It is not RFC 5297 AES-SIV; see the <a href="security.html#relationship-to-rfc-5297-aes-siv">construction warning</a>.</dd>
 <dt id="arnceham-64"><a class="header" href="#arnceham-64"><strong>ARNCE/HAM-64</strong></a></dt>
 <dd>A compact character encoding scheme for amateur radio callsigns, encoding up to 12 characters into 2, 4, 6, or 8 bytes. Used in UMSH’s Operator Callsign and Station Callsign packet options.</dd>
 <dt id="beacon"><a class="header" href="#beacon"><strong>Beacon</strong></a></dt>
