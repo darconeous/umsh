@@ -36,7 +36,7 @@
             const path_to_root = "";
             const default_light_theme = "light";
             const default_dark_theme = "ayu";
-            window.path_to_searchindex_js = "searchindex-f485a9e5.js";
+            window.path_to_searchindex_js = "searchindex-6b02da15.js";
         </script>
         <!-- Start loading toc.js asap -->
         <script src="toc-438957a9.js"></script>
@@ -10661,14 +10661,14 @@ errors, or other mistakes, please <a href="https://github.com/darconeous/umsh/is
 <p>UMSH prioritizes cryptographic robustness, composable routing, privacy features, and strict layer separation, accepting higher overhead in exchange for stronger security guarantees and a more extensible protocol structure. By restricting itself to the MAC layer and using monotonic frame counters instead of timestamps, UMSH avoids coupling to specific application assumptions or clock synchronization requirements. The <code>S</code> flag allows the overhead to scale based on whether the receiver already knows the sender’s public key, bridging the gap for established communication pairs while still supporting zero-prior-state first contact.</p>
 <div style="break-before: page; page-break-before: always;"></div>
 <h1 id="comparison-with-meshtastic"><a class="header" href="#comparison-with-meshtastic">Comparison with Meshtastic</a></h1>
-<p>This section compares UMSH with <a href="https://meshtastic.org/">Meshtastic</a>, a popular open-source LoRa mesh project. The comparison is based on Meshtastic firmware v2.5+ and its <a href="https://meshtastic.org/docs/">documentation</a> and <a href="https://buf.build/meshtastic/protobufs">protobuf definitions</a>.</p>
+<p>This section compares UMSH with <a href="https://meshtastic.org/">Meshtastic</a>, a popular open-source LoRa mesh project. The comparison is based on the exact Meshtastic firmware tag <a href="https://github.com/meshtastic/firmware/releases/tag/v2.7.26.54e0d8d"><code>v2.7.26.54e0d8d</code></a> and its pinned <a href="https://github.com/meshtastic/protobufs/tree/6b1ded439633cd03d4af85b44231b91d1d106278">protobuf definitions</a>.</p>
 <blockquote class="blockquote-tag blockquote-tag-note">
 <p class="blockquote-tag-title"><svg viewbox="0 0 16 16" width="18" height="18"><path d="M0 8a8 8 0 1 1 16 0A8 8 0 0 1 0 8Zm8-6.5a6.5 6.5 0 1 0 0 13 6.5 6.5 0 0 0 0-13ZM6.5 7.75A.75.75 0 0 1 7.25 7h1a.75.75 0 0 1 .75.75v2.75h.25a.75.75 0 0 1 0 1.5h-2a.75.75 0 0 1 0-1.5h.25v-2h-.25a.75.75 0 0 1-.75-.75ZM8 6a1 1 0 1 1 0-2 1 1 0 0 1 0 2Z"></path></svg>Note</p>
 <p>This comparison aims to be as fair and accurate as possible, not
 promotional material. If you spot any unfair comparisons, factual
 errors, or other mistakes, please <a href="https://github.com/darconeous/umsh/issues/new">file an issue</a>!</p>
 </blockquote>
-<p>Meshtastic and UMSH occupy different positions in the design space. Meshtastic is a mature, widely deployed application-focused system optimized for ease of use and broad hardware support. UMSH prioritizes cryptographic rigor, compact encoding, and clean layer separation. The comparison below highlights the technical differences without implying that one set of tradeoffs is universally better than the other.</p>
+<p>Meshtastic and UMSH occupy different positions in the design space. Meshtastic is a mature, widely deployed application-focused system optimized for ease of use and broad hardware support. UMSH prioritizes authenticated communication, compact encoding, and explicit separation between its MAC and application protocols. The comparison below describes technical differences without implying that one set of tradeoffs is universally better than the other.</p>
 <h2 id="identity-and-addressing-1"><a class="header" href="#identity-and-addressing-1">Identity and Addressing</a></h2>
 <div class="table-wrapper">
 <table>
@@ -10676,17 +10676,17 @@ errors, or other mistakes, please <a href="https://github.com/darconeous/umsh/is
 <tr><th>Aspect</th><th>UMSH</th><th>Meshtastic</th></tr>
 </thead>
 <tbody>
-<tr><td>Identity basis</td><td>32-byte Ed25519 public key</td><td>32-bit node number derived from Bluetooth MAC address</td></tr>
-<tr><td>Cryptographic identity</td><td>Public key is the address</td><td>Optional Curve25519 keypair (PKC, v2.5+), not used for addressing</td></tr>
-<tr><td>Source address in packets</td><td>compact 3-byte hint (S=0) or 32-byte key (S=1)</td><td>4-byte node number (cleartext)</td></tr>
-<tr><td>Destination address</td><td>3-byte hint</td><td>4-byte node number (cleartext)</td></tr>
-<tr><td>Channel identifier</td><td>2-byte derived hint</td><td>1-byte DJB2 hash of channel name</td></tr>
-<tr><td>Address spoofing resistance</td><td>Cryptographic — pairwise keys are derived from public keys</td><td>None — node numbers are hardware-derived and trivially spoofable</td></tr>
+<tr><td>Identity basis</td><td>32-byte Ed25519 public key</td><td>32-bit node number, normally initialized from the low 32 bits of a platform hardware identifier or MAC-like address; may be randomly reassigned after a detected collision</td></tr>
+<tr><td>Cryptographic identity</td><td>Public key is the address</td><td>Curve25519 keypair generated and used for PKC where supported; not used for addressing</td></tr>
+<tr><td>Source address in packets</td><td>Compact 3-byte hint (S=0) or 32-byte key (S=1)</td><td>4-byte node number (cleartext)</td></tr>
+<tr><td>Destination address</td><td>3-byte hint</td><td>4-byte node number or broadcast value (cleartext)</td></tr>
+<tr><td>Channel identifier</td><td>2-byte derived hint</td><td>1-byte XOR of channel-name bytes and effective key bytes</td></tr>
+<tr><td>Address spoofing resistance</td><td>Cryptographic for pairwise unicast because keys are derived from public-key addresses</td><td>None for channel traffic; PKC authenticates against a stored or verified public key, but the node number is not cryptographically bound to that key</td></tr>
 </tbody>
 </table>
 </div>
-<p>UMSH identifies nodes by their Ed25519 public keys, which serve as both the address and the cryptographic credential. A node’s identity is inseparable from its ability to authenticate and decrypt. Meshtastic identifies nodes by a 32-bit number derived from the device’s Bluetooth MAC address. This number is not cryptographically bound to any key — any device can claim any node number.</p>
-<p>Meshtastic added optional Curve25519 keypairs in v2.5 for direct message encryption, but these are not used for addressing. The node number remains the primary identifier, and channel-encrypted traffic has no per-node authentication regardless of whether PKC keys are configured.</p>
+<p>UMSH identifies nodes by their Ed25519 public keys, which serve as both the address and the cryptographic credential. Possession of the corresponding private key is required to authenticate and decrypt pairwise traffic. Meshtastic’s normal initial node number comes from a platform hardware identifier, but this is not universally a Bluetooth MAC and collision handling can assign a random replacement. The node number itself is not cryptographically bound to a key.</p>
+<p>On supported, non-amateur builds, Meshtastic normally generates a Curve25519 keypair and uses PKC automatically for eligible unicast traffic when the peer key is known. A learned public key is associated with a node number and later mismatches are rejected; users can also verify keys explicitly. This provides conditional sender authentication for PKC traffic, but it remains a stored or verified association rather than an address derived from the key. Channel-encrypted traffic has no per-node authentication regardless of whether PKC keys are configured.</p>
 <h2 id="packet-structure-2"><a class="header" href="#packet-structure-2">Packet Structure</a></h2>
 <div class="table-wrapper">
 <table>
@@ -10696,30 +10696,31 @@ errors, or other mistakes, please <a href="https://github.com/darconeous/umsh/is
 <tbody>
 <tr><td>Header</td><td>1-byte FCF with version, type, flags</td><td>16-byte fixed header (always cleartext)</td></tr>
 <tr><td>Payload encoding</td><td>Raw bytes with 1-byte payload type prefix</td><td>Protobuf-encoded <code>Data</code> message</td></tr>
-<tr><td>Packet types</td><td>8 (via 3-bit field in FCF)</td><td>Implicit in protobuf <code>portnum</code> field (~30+ application types)</td></tr>
+<tr><td>Packet types</td><td>8 (via 3-bit field in FCF)</td><td>Implicit in protobuf <code>portnum</code> field (30+ registered values)</td></tr>
 <tr><td>Routing info</td><td>CoAP-style composable options</td><td>Fixed fields: hop limit (3-bit), next hop (1 byte), relay node (1 byte)</td></tr>
-<tr><td>Flood hop count</td><td>Split 4-bit FHOPS field (max 15)</td><td>Mandatory 3-bit field (max 7 hops)</td></tr>
-<tr><td>Max LoRa payload</td><td>~255 bytes</td><td>255 bytes (233 bytes application payload after header and encoding overhead)</td></tr>
-<tr><td>Typical unicast overhead</td><td>14–28 bytes (depending on MIC size and source hint vs full key)</td><td>16 bytes header + 28 bytes crypto = 44 bytes minimum</td></tr>
+<tr><td>Flood hop count</td><td>Split 4-bit FHOPS field (max 15)</td><td>Mandatory 3-bit field (encoded maximum 7)</td></tr>
+<tr><td>Max LoRa payload</td><td>Approximately 255 bytes</td><td>255-byte frame; the <code>Data.payload</code> schema permits 233 bytes, but usable application capacity depends on the encoded <code>Data</code> fields and security mode</td></tr>
+<tr><td>Common unicast overhead relative to application body</td><td>17 bytes with compact source and 4-byte MIC, or 29 bytes with 16-byte MIC; excludes salt, FHOPS, and options</td><td>Approximately 22–23 bytes for channel encryption or 34–35 bytes for PKC, depending on protobuf length encoding</td></tr>
 </tbody>
 </table>
 </div>
-<p>UMSH uses a compact 1-byte Frame Control Field with optional expansion — fields are present only when needed for the packet type. Meshtastic uses a fixed 16-byte header on every packet, with source and destination node numbers, packet ID, flags, channel hash, and routing fields always present.</p>
-<p>Meshtastic’s header is always transmitted in cleartext, exposing sender and recipient node numbers, packet IDs, and channel hashes to any passive observer. UMSH’s addressing fields are compact hints that do not directly reveal node identity, and in blind unicast or encrypted multicast modes, the source address is encrypted.</p>
-<p>Meshtastic encodes application payloads using Protocol Buffers (protobuf), which adds encoding overhead but provides a flexible, self-describing serialization format. UMSH uses raw byte payloads with a 1-byte type prefix, minimizing encoding overhead at the cost of less built-in structure.</p>
+<p>Before counting UMSH’s 1-byte payload-type prefix, FHOPS, or packet options, the fixed fields of a compact-source secured unicast occupy 16–30 bytes depending on MIC length and salt presence. A full 32-byte source raises that range to 45–59 bytes. The common-case row above adds the payload-type prefix and selects no salt with either a 4-byte or 16-byte MIC.</p>
+<p>UMSH uses a compact 1-byte Frame Control Field with optional expansion: fields are present only when needed for the packet type. Meshtastic uses a fixed 16-byte header on every packet, with source and destination node numbers, packet ID, flags, channel hash, and routing fields always present.</p>
+<p>Meshtastic’s header is always transmitted in cleartext, exposing sender node number, destination field, packet ID, and channel hash to any passive observer. For unicast, the destination field identifies the recipient; for broadcast, it contains the broadcast value rather than an individual recipient. UMSH’s addressing fields are compact hints that do not directly reveal a complete node identity, and blind unicast and encrypted multicast conceal their address fields as defined below.</p>
+<p>Meshtastic encodes application payloads in the schema-based, extensible protobuf <code>Data</code> envelope. UMSH uses raw byte payloads with a 1-byte type prefix, minimizing encoding overhead while leaving structure to the selected application protocol.</p>
 <h2 id="cryptography-1"><a class="header" href="#cryptography-1">Cryptography</a></h2>
 <div class="table-wrapper">
 <table>
 <thead>
-<tr><th>Aspect</th><th>UMSH</th><th>Meshtastic (channel)</th><th>Meshtastic (PKC DM)</th></tr>
+<tr><th>Aspect</th><th>UMSH</th><th>Meshtastic (channel)</th><th>Meshtastic (eligible unicast PKC)</th></tr>
 </thead>
 <tbody>
-<tr><td>Encryption</td><td>AES-128-CTR (SIV-style)</td><td>AES-128-CTR or AES-256-CTR, selected by PSK length; the default channel key is 16 bytes</td><td>AES-CCM</td></tr>
-<tr><td>Authentication</td><td>AES-CMAC (4/8/12/16-byte MIC)</td><td><strong>None</strong></td><td>CCM auth tag</td></tr>
+<tr><td>Encryption</td><td>AES-128-CTR (SIV-style)</td><td>AES-128-CTR or AES-256-CTR, selected by effective PSK length; the default effective key is 16 bytes</td><td>AES-CCM</td></tr>
+<tr><td>Authentication</td><td>AES-CMAC (4/8/12/16-byte MIC)</td><td><strong>None</strong></td><td>8-byte CCM authentication tag</td></tr>
 <tr><td>Key exchange</td><td>X25519 ECDH</td><td>Pre-shared key</td><td>Curve25519 ECDH</td></tr>
-<tr><td>Key derivation</td><td>HKDF-SHA256 with domain separation</td><td>PSK used directly</td><td>SHA-256 of ECDH shared secret</td></tr>
-<tr><td>Nonce construction</td><td>Frame counter + optional salt in SECINFO</td><td>Packet ID + sender node number</td><td>8-byte random nonce</td></tr>
-<tr><td>Replay protection</td><td>4-byte monotonic frame counter</td><td>32-bit random packet ID (duplicate cache)</td><td>Not defined</td></tr>
+<tr><td>Key derivation</td><td>HKDF-SHA256 with domain separation</td><td>Effective PSK used directly</td><td>SHA-256 of ECDH shared secret</td></tr>
+<tr><td>Nonce construction</td><td>Frame counter + optional salt in SECINFO</td><td>Packet ID + sender node number</td><td>Packet ID + 4-byte random contribution + sender node number</td></tr>
+<tr><td>Duplicate/replay handling</td><td>4-byte monotonic frame counter with replay window</td><td>Partially randomized 32-bit packet ID and finite duplicate cache</td><td>Same packet-ID duplicate cache as channel traffic</td></tr>
 <tr><td>Forward secrecy</td><td><a href="#perfect-forward-secrecy-sessions">Optional PFS sessions</a></td><td>No</td><td>No</td></tr>
 </tbody>
 </table>
@@ -10727,17 +10728,17 @@ errors, or other mistakes, please <a href="https://github.com/darconeous/umsh/is
 <h3 id="channel-encryption"><a class="header" href="#channel-encryption">Channel Encryption</a></h3>
 <p>The most significant cryptographic difference is that Meshtastic’s channel-encrypted packets have <strong>no authentication</strong>. AES-CTR provides confidentiality but no integrity protection. This means:</p>
 <ul>
-<li>An attacker who knows the channel key can modify ciphertext in transit (CTR mode bit-flipping), and the recipient has no way to detect the tampering.</li>
-<li>Any node with the channel key can forge packets claiming to be from any other node, since there is no per-node authentication and the sender’s node number in the cleartext header is not cryptographically bound to anything.</li>
+<li>Ciphertext can be modified in transit without a cryptographic integrity check. When an attacker knows or can predict the corresponding plaintext, CTR bit flipping can be targeted without knowing the key.</li>
+<li>Any node with the channel key can forge packets claiming to be from another node, since channel mode has no per-node authentication and the sender’s node number in the cleartext header is not cryptographically bound to the ciphertext.</li>
 </ul>
-<p>UMSH authenticates every secured packet with an AES-CMAC MIC (4–16 bytes, see <a href="#mic-size-selection-guidance">MIC Size Selection Guidance</a>). Even with a 4-byte MIC, UMSH provides 2^-32 forgery resistance — qualitatively different from Meshtastic’s complete absence of authentication on channel traffic. A UMSH channel packet cannot be modified in transit or injected by a non-member without detection.</p>
+<p>UMSH authenticates every secured packet with an AES-CMAC MIC (4–16 bytes; see <a href="#mic-size-selection-guidance">MIC Size Selection Guidance</a>). Even with a 4-byte MIC, UMSH provides 2^-32 forgery resistance, which is qualitatively different from the absence of an integrity check on Meshtastic channel traffic. A UMSH channel packet cannot be modified in transit or injected by a non-member without detection.</p>
 <p>The second bullet above, however, describes a property UMSH multicast shares, and it is not a difference between the two protocols. A shared symmetric key proves channel membership but cannot distinguish one member from another, so a UMSH channel member can likewise claim another member’s source address; see <a href="#multicast-sender-authentication">Multicast Sender Authentication</a>. What UMSH provides on channel traffic is integrity and membership authentication against outsiders, not per-sender attribution within the channel. Attribution to a specific sender requires unicast, where pairwise keys bind the source.</p>
-<h3 id="pkc-direct-messages"><a class="header" href="#pkc-direct-messages">PKC Direct Messages</a></h3>
-<p>Meshtastic v2.5+ added Curve25519 ECDH with AES-CCM for direct messages, providing both confidentiality and authentication. This is a substantial improvement over channel-only encryption, but applies only to direct messages — all broadcast traffic (position, telemetry, channel text) remains unauthenticated.</p>
-<p>UMSH applies the same CMAC-based construction to unicast and multicast alike, so there is no secured traffic class left unauthenticated and no separate authenticated mode to opt into. <a href="#broadcast-packet">Broadcast packets</a> carry no security information at all and make no claim of authenticity.</p>
+<h3 id="pkc-for-eligible-unicast-traffic"><a class="header" href="#pkc-for-eligible-unicast-traffic">PKC for Eligible Unicast Traffic</a></h3>
+<p>Meshtastic uses Curve25519 ECDH with AES-CCM for eligible unicast traffic, providing confidentiality and authentication against the public key associated with the claimed sender node number. It is not limited to text direct messages. The firmware considers PKC automatically for locally originated, non-broadcast application traffic when keys are available, except for position, node info, routing, traceroute, amateur operation, and certain serial/GPIO cases. Broadcast traffic such as position, telemetry, and channel text remains in channel mode and therefore unauthenticated.</p>
+<p>UMSH applies the same CMAC-based construction to secured unicast and multicast, so there is no secured traffic class left unauthenticated and no separate authenticated mode to opt into. <a href="#broadcast-packet">Broadcast packets</a> carry no security information and make no claim of authenticity.</p>
 <h3 id="key-derivation-1"><a class="header" href="#key-derivation-1">Key Derivation</a></h3>
-<p>Meshtastic uses the channel PSK directly as the AES key for channel encryption, with no key derivation step. For PKC, the ECDH shared secret is hashed with SHA-256 to produce the AES key.</p>
-<p>UMSH uses HKDF-SHA256 with domain-separated labels to derive independent encryption and authentication keys from each shared secret. This prevents cross-purpose key reuse and is the standard practice recommended by cryptographic literature.</p>
+<p>Meshtastic uses the effective channel PSK directly as the AES key for channel encryption. A configured one-byte PSK is not a one-byte AES key: it is a public shorthand alias expanded by the firmware into an effective 16-byte key. For PKC, the ECDH shared secret is hashed with SHA-256 to produce the AES key.</p>
+<p>UMSH uses HKDF-SHA256 with domain-separated labels to derive independent encryption and authentication keys from each shared secret. This prevents cross-purpose key reuse and follows standard cryptographic practice.</p>
 <h2 id="routing-1"><a class="header" href="#routing-1">Routing</a></h2>
 <div class="table-wrapper">
 <table>
@@ -10747,23 +10748,23 @@ errors, or other mistakes, please <a href="https://github.com/darconeous/umsh/is
 <tbody>
 <tr><td>Flood routing</td><td>Yes, bounded by flood hop count</td><td>Yes (managed flood with SNR-based priority)</td></tr>
 <tr><td>Source routing</td><td>Yes, via source-route option</td><td>No</td></tr>
-<tr><td>Hybrid routing</td><td>Source route + flood hop count in same packet</td><td>No</td></tr>
+<tr><td>Source route followed by flood tail</td><td>Yes, both can be carried in the same packet</td><td>No; learned next-hop delivery can fall back to flooding, but there is no source-route field</td></tr>
 <tr><td>Next-hop routing</td><td>N/A</td><td>Yes (learned from ACK paths, v2.6+)</td></tr>
-<tr><td>Max hops</td><td>15 flood + “many” source-routed</td><td>7 (3-bit hop limit)</td></tr>
-<tr><td>Duplicate detection</td><td>MIC cache</td><td>Packet ID cache (32-bit random IDs)</td></tr>
-<tr><td>Forwarding confirmation</td><td>Yes (hop-by-hop retries with backoff when source routing)</td><td>Implicit ACK for broadcasts (sender listens for neighbor rebroadcast, up to 3 retries); not hop-by-hop</td></tr>
-<tr><td>Channel access</td><td>CAD with random backoff; SNR-based contention windows</td><td>SNR-based contention windows</td></tr>
-<tr><td>Signal-quality filtering</td><td>Min RSSI and min SNR options</td><td>SNR-based rebroadcast priority (implicit)</td></tr>
+<tr><td>Hop budget</td><td>15 flood hops plus source-routed hops</td><td>3-bit encoded budget (max 7); selected favorite-router infrastructure hops may preserve the budget</td></tr>
+<tr><td>Duplicate detection</td><td>MIC cache</td><td>Finite cache keyed by sender and partially randomized 32-bit packet ID</td></tr>
+<tr><td>Forwarding confirmation</td><td>Hop-by-hop retries with backoff for source-routed hops; retries at a flood origin</td><td>Reliable (<code>want_ack</code>) origin: initial transmission plus at most two retransmissions; directed intermediate: initial transmission plus at most one retransmission; intermediate flood relays do not retry</td></tr>
+<tr><td>Channel access</td><td>CAD with random backoff; SNR-based contention windows</td><td>CAD with random backoff; channel-utilization-based local contention and SNR-based flood contention</td></tr>
+<tr><td>Signal-quality controls</td><td>Min RSSI and min SNR eligibility options</td><td>Lower-SNR/farther flood candidates tend to transmit earlier; infrastructure roles also affect priority</td></tr>
 <tr><td>Region-scoped flooding</td><td>Region code option</td><td>Not defined</td></tr>
-<tr><td>Traceroute</td><td>Trace-route option on any packet</td><td>Dedicated TRACEROUTE_APP port</td></tr>
+<tr><td>Traceroute</td><td>Trace-route option on any packet</td><td>Dedicated <code>TRACEROUTE_APP</code> port</td></tr>
 </tbody>
 </table>
 </div>
-<p>Both protocols use flood-based routing as their primary delivery mechanism. Meshtastic’s managed flood uses SNR-based contention windows to prioritize better-positioned relays, which is an effective heuristic for reducing redundant rebroadcasts. UMSH provides explicit signal-quality thresholds (minimum RSSI and SNR options) that allow the sender to control relay eligibility per packet.</p>
-<p>Meshtastic’s 3-bit hop limit caps multi-hop delivery at 7 hops. UMSH’s 4-bit flood hop count allows up to 15 flood hops, and source routing allows packets to traverse specific paths without flooding (with no hop limit).</p>
-<p>Meshtastic v2.6+ added next-hop routing for direct messages: after a successful ACK exchange, the firmware learns which relay carried the response and uses it as a designated next hop for subsequent packets. UMSH achieves similar directed delivery through source-route options learned via trace routes — the recipient caches the accumulated trace directly as a source route for all subsequent communication with the sender, because the trace is already built most-recent hop first (see <a href="#route-learning">Route Learning</a>).</p>
-<p>Both protocols define channel access mechanisms. Meshtastic uses SNR-based contention windows to prioritize better-positioned relays. UMSH uses CAD (Channel Activity Detection) with random backoff and SNR-based contention windows for collision avoidance.</p>
-<p>Both protocols provide forwarding confirmation, but with different scope. Meshtastic’s sender listens for any neighbor to rebroadcast a flooded packet; if no rebroadcast is overheard, the sender retransmits up to 3 times (with the final retry falling back to flooding if next-hop routing was in use). This provides 0-hop reliability — the originator can confirm that at least one neighbor forwarded the packet — but intermediate relays do not confirm onward delivery. UMSH defines hop-by-hop forwarding confirmation: each forwarding node (whether source-route hop or flood originator) listens for retransmission by the next hop and retries with backoff if none is heard, providing reliability across the full forwarding chain.</p>
+<p>Both protocols use flood-based routing as their primary discovery and fallback mechanism. Meshtastic’s managed flood gives lower-SNR receptions smaller contention windows, treating apparent distance from the sender as a heuristic for useful forwarding progress. <code>ROUTER</code> nodes receive a separate early-transmission advantage. Most roles cancel a queued rebroadcast after overhearing a duplicate, while infrastructure roles such as <code>ROUTER</code> may intentionally transmit anyway. UMSH instead provides explicit signal-quality thresholds that allow the sender to control flood-relay eligibility per packet.</p>
+<p>Meshtastic’s 3-bit field encodes a maximum hop budget of 7, but this is not an unconditional cap on the physical number of relays. After the first hop, selected transitions between configured <code>ROUTER</code>, <code>ROUTER_LATE</code>, or <code>CLIENT_BASE</code> infrastructure nodes can preserve the budget when the previous relay is a favorite. UMSH’s 4-bit flood hop count permits up to 15 flood hops, while source-routed hops consume packet space rather than flood budget.</p>
+<p>Meshtastic v2.6+ added next-hop routing for unicast: after a successful ACK exchange, the firmware learns which relay carried the response and uses that relay as the designated next hop for subsequent packets. UMSH achieves directed delivery through source-route options learned via trace routes. The recipient can cache the accumulated trace directly as a source route for subsequent communication with the sender because the trace is already built most-recent hop first; see <a href="#route-learning">Route Learning</a>.</p>
+<p>Both protocols perform channel activity detection and randomized contention. Meshtastic sizes normal local-send contention from recent channel utilization and uses received SNR for flood-rebroadcast contention. UMSH uses CAD with random backoff and SNR-based contention windows as defined by its channel-access rules.</p>
+<p>Both protocols provide forwarding confirmation, but the scopes differ. For a Meshtastic <code>want_ack</code> transmission, the origin makes at most three total attempts: the initial transmission and two retransmissions. When a learned next hop is in use, the final origin attempt falls back to flooding. A directed intermediate relay also listens for its designated next hop and may retransmit once; intermediate flood relays do not retry because no single next hop is designated. UMSH applies passive forwarding confirmation and retry to each source-routed hop and to a flood origin, while intermediate flood relays likewise do not retry.</p>
 <h2 id="privacy-1"><a class="header" href="#privacy-1">Privacy</a></h2>
 <div class="table-wrapper">
 <table>
@@ -10771,16 +10772,16 @@ errors, or other mistakes, please <a href="https://github.com/darconeous/umsh/is
 <tr><th>Aspect</th><th>UMSH</th><th>Meshtastic</th></tr>
 </thead>
 <tbody>
-<tr><td>Header confidentiality</td><td>Addressing fields are compact hints; blind modes encrypt source/destination</td><td>Header always cleartext — sender, recipient, packet ID, channel hash exposed</td></tr>
+<tr><td>Header confidentiality</td><td>Addressing fields are compact hints; blind modes encrypt source/destination</td><td>Header always cleartext: sender, destination field, packet ID, and channel hash exposed</td></tr>
 <tr><td>Source concealment</td><td>Encrypted multicast, blind unicast</td><td>Not supported</td></tr>
 <tr><td>Destination concealment</td><td>Blind unicast</td><td>Not supported</td></tr>
-<tr><td>Node ID linkability</td><td>Public key (can use ephemeral keys)</td><td>Hardware MAC-derived (persistent identifier)</td></tr>
+<tr><td>Node ID linkability</td><td>Public key; ephemeral keys are supported</td><td>Normally persistent hardware-derived node number, with possible random collision reassignment</td></tr>
 <tr><td>Anonymous first contact</td><td>Ephemeral Ed25519 key with S=1 flag</td><td>Not supported</td></tr>
 </tbody>
 </table>
 </div>
-<p>Meshtastic’s 16-byte cleartext header exposes the full sender and recipient node numbers on every packet. A passive observer with a LoRa receiver can identify who is communicating with whom, build traffic graphs, and track individual devices over time — even without the channel key. Node numbers are derived from hardware MAC addresses, making them persistent identifiers tied to physical devices.</p>
-<p>UMSH’s compact hints reveal far less information to passive observers, and blind unicast and encrypted multicast modes encrypt the source and/or destination entirely. Nodes can also use ephemeral keypairs for anonymous communication.</p>
+<p>Meshtastic’s 16-byte cleartext header exposes the complete sender node number and destination field on every packet. A unicast packet therefore exposes both node numbers; a broadcast exposes the sender and the broadcast destination value. A passive observer can still correlate sender node numbers, build traffic graphs, and track a normally persistent identifier over time without the channel key.</p>
+<p>UMSH’s compact hints reveal less information directly, and blind unicast and encrypted multicast modes conceal their defined source and/or destination fields. Nodes can also use ephemeral keypairs for anonymous communication.</p>
 <h2 id="multicast-and-group-communication"><a class="header" href="#multicast-and-group-communication">Multicast and Group Communication</a></h2>
 <div class="table-wrapper">
 <table>
@@ -10788,8 +10789,8 @@ errors, or other mistakes, please <a href="https://github.com/darconeous/umsh/is
 <tr><th>Aspect</th><th>UMSH</th><th>Meshtastic</th></tr>
 </thead>
 <tbody>
-<tr><td>Channel key size</td><td>32 bytes</td><td>1, 16, or 32 bytes (PSK)</td></tr>
-<tr><td>Channel identifier</td><td>2-byte derived hint</td><td>1-byte DJB2 hash of channel name</td></tr>
+<tr><td>Channel key size</td><td>32 bytes</td><td>Configured as 0, 1-byte public alias, 16, or 32 bytes; effective AES key is 0, 16, or 32 bytes</td></tr>
+<tr><td>Channel identifier</td><td>2-byte derived hint</td><td>1-byte XOR of channel-name bytes and effective key bytes</td></tr>
 <tr><td>Channels per node</td><td>Unlimited (implementation-defined)</td><td>Up to 8</td></tr>
 <tr><td>Multi-hop multicast</td><td>Yes (flood with flood hop count)</td><td>Yes (managed flood with hop limit)</td></tr>
 <tr><td>Group message auth</td><td>Channel-key-based CMAC</td><td>None (AES-CTR only)</td></tr>
@@ -10798,7 +10799,7 @@ errors, or other mistakes, please <a href="https://github.com/darconeous/umsh/is
 </tbody>
 </table>
 </div>
-<p>Both protocols support multiple channels with independent keys. Meshtastic limits nodes to 8 simultaneous channels. Meshtastic’s 1-byte channel hash has a high collision probability (1 in 256), requiring trial decryption when collisions occur. UMSH’s 2-byte channel identifier reduces this to 1 in 65536.</p>
+<p>Both protocols support multiple channels with independent keys. Meshtastic limits a node to 8 configured channels. Under an independent uniform-candidate model, a specific unrelated channel has a 1-in-256 chance of matching Meshtastic’s 1-byte hint and a 1-in-65536 chance of matching UMSH’s 2-byte identifier. With <code>m</code> independent configured candidates, the probability of at least one match is <code>1-(255/256)^m</code> for Meshtastic and <code>1-(65535/65536)^m</code> for UMSH. Meshtastic’s XOR construction is not a cryptographic hash, so these are modeling assumptions rather than exact operational rates. A matching Meshtastic hint causes the receiver to try the corresponding channel key and validate the resulting protobuf.</p>
 <h2 id="application-layer-1"><a class="header" href="#application-layer-1">Application Layer</a></h2>
 <div class="table-wrapper">
 <table>
@@ -10806,23 +10807,25 @@ errors, or other mistakes, please <a href="https://github.com/darconeous/umsh/is
 <tr><th>Aspect</th><th>UMSH</th><th>Meshtastic</th></tr>
 </thead>
 <tbody>
-<tr><td>Payload typing</td><td>1-byte payload type prefix</td><td>Protobuf <code>portnum</code> field (~30+ types)</td></tr>
-<tr><td>Payload encoding</td><td>Raw bytes</td><td>Protocol Buffers</td></tr>
+<tr><td>Payload typing</td><td>1-byte payload type prefix</td><td>Protobuf <code>portnum</code> field (30+ registered values)</td></tr>
+<tr><td>Payload encoding</td><td>Raw bytes</td><td>Protocol Buffers or port-specific binary/text formats</td></tr>
 <tr><td>Structured data</td><td>CoAP-over-UMSH (block-wise transfer)</td><td>Protobuf with defined message schemas</td></tr>
-<tr><td>Text messaging</td><td>UMSH text message payload</td><td>TEXT_MESSAGE_APP (portnum 1)</td></tr>
-<tr><td>Position/telemetry</td><td>Not defined (delegated to higher-layer protocols)</td><td>Built-in POSITION_APP, TELEMETRY_APP</td></tr>
-<tr><td>Node identity</td><td>Identity payload with role, capabilities, name</td><td>NODEINFO_APP with User protobuf</td></tr>
-<tr><td>Remote administration</td><td>Node management MAC commands</td><td>ADMIN_APP (portnum 6)</td></tr>
-<tr><td>Audio</td><td>Not defined</td><td>AUDIO_APP (codec2, 2.4 GHz only)</td></tr>
-<tr><td>Store and forward</td><td>Not defined</td><td>STORE_FORWARD_APP</td></tr>
-<tr><td>Amateur radio</td><td>Operator/station callsign options, explicit unencrypted mode</td><td><code>is_licensed</code> flag (lifts power limits, callsign via long name, manual PSK removal)</td></tr>
-<tr><td>Implementation</td><td>Protocol spec (language-agnostic)</td><td>C++ firmware + protobuf definitions</td></tr>
+<tr><td>Text messaging</td><td>UMSH text message payload</td><td><code>TEXT_MESSAGE_APP</code> (portnum 1)</td></tr>
+<tr><td>Position/telemetry</td><td>Not defined (delegated to higher-layer protocols)</td><td>Built-in <code>POSITION_APP</code>, <code>TELEMETRY_APP</code></td></tr>
+<tr><td>Node identity</td><td>Identity payload with role, capabilities, name</td><td><code>NODEINFO_APP</code> with <code>User</code> protobuf</td></tr>
+<tr><td>Remote administration</td><td>Node management MAC commands</td><td><code>ADMIN_APP</code> (portnum 6)</td></tr>
+<tr><td>Audio</td><td>Not defined</td><td><code>AUDIO_APP</code> (codec2, 2.4 GHz only)</td></tr>
+<tr><td>Store and forward</td><td>Not defined</td><td><code>STORE_FORWARD_APP</code>; Store-and-Forward++ schema for native Linux nodes</td></tr>
+<tr><td>Other registered integrations</td><td>Higher-layer protocols can be assigned payload types</td><td>TAK/ATAK (including V2), Reticulum, LoRaWAN bridge, Cayenne, and remote-shell wire schema, among others</td></tr>
+<tr><td>Amateur radio</td><td>Operator/station callsign options, explicit unencrypted mode</td><td><code>is_licensed</code> state plus dedicated ham-mode command; callsign in long name, automatic PSK/admin removal, and licensed relay restrictions</td></tr>
+<tr><td>Implementation</td><td>Protocol spec (language-agnostic)</td><td>C++ firmware + protobuf definitions and companion applications</td></tr>
 </tbody>
 </table>
 </div>
-<p>Meshtastic defines a rich application layer with built-in support for position sharing, telemetry, waypoints, audio, store-and-forward, and TAK integration. These are tightly integrated into the firmware and protobuf schema.</p>
-<p>UMSH defines a smaller set of application protocols (text messaging, chat rooms, node identity, node management) and delegates richer application functionality to higher-layer protocols carried in the payload, such as CoAP. This approach is less feature-complete out of the box but allows UMSH to carry arbitrary higher-layer content without protocol changes.</p>
-<p>Both protocols address amateur radio operation, but at different levels. Meshtastic provides an <a href="https://meshtastic.org/docs/configuration/radio/user/"><code>is_licensed</code> configuration flag</a> that lifts firmware power limits and expects the operator to manually set their callsign as the node’s long name and clear the channel PSK to disable encryption. The callsign is carried in the existing user info field rather than a dedicated protocol field. UMSH defines amateur radio support at the protocol level: dedicated packet options carry operator and station callsigns as structured fields, and the Frame Control Field explicitly indicates whether a packet is encrypted. Both protocols require the operator to configure the device appropriately, but UMSH’s approach makes compliance structurally visible in the packets themselves — a monitoring station can verify callsign presence and unencrypted transmission by inspecting the packet, without needing to know the device’s configuration state.</p>
+<p>Meshtastic defines a rich application ecosystem with built-in firmware support, companion-side integrations, and registered wire schemas for position sharing, telemetry, waypoints, audio, store-and-forward, TAK, Reticulum, remote shell, and other uses. Registration of a <code>PortNum</code> and schema does not imply that every firmware build contains a native handler for that application.</p>
+<p>UMSH defines a smaller set of application protocols (text messaging, chat rooms, node identity, node management) and delegates richer application functionality to higher-layer protocols carried in the payload, such as CoAP. This is less feature-complete out of the box but allows UMSH to carry arbitrary higher-layer content without changing the MAC protocol.</p>
+<p>Both protocols address amateur radio operation, but at different levels. Meshtastic’s dedicated ham-mode command sets the callsign as the node’s long name, sets the short name and radio overrides, raises the NodeInfo cadence required for identification, changes rebroadcasting to local-only, and automatically removes channel PSKs and admin access. Setting the raw <code>is_licensed</code> owner flag also clears encryption automatically, but the operator must separately ensure the callsign fields are populated. Licensed nodes refuse to relay packets to or from nodes known to be unlicensed. The callsign is carried in the existing user-info field rather than a dedicated per-packet protocol field.</p>
+<p>UMSH defines dedicated packet options for operator and station callsigns, and its security-control field explicitly indicates whether encryption is enabled. In licensed-only mode, monitoring software can verify the presence of the required callsign option and the absence of encryption directly from the packet. Both protocols still require the operator to select and configure the lawful operating mode.</p>
 <h2 id="layer-separation-1"><a class="header" href="#layer-separation-1">Layer Separation</a></h2>
 <div class="table-wrapper">
 <table>
@@ -10830,14 +10833,15 @@ errors, or other mistakes, please <a href="https://github.com/darconeous/umsh/is
 <tr><th>Aspect</th><th>UMSH</th><th>Meshtastic</th></tr>
 </thead>
 <tbody>
-<tr><td>Protocol scope</td><td>MAC layer with separate application protocols</td><td>Monolithic — radio, routing, and application layers interleaved</td></tr>
-<tr><td>Payload interpretation</td><td>Opaque at MAC layer</td><td>Protobuf <code>Data</code> message decoded at every layer</td></tr>
-<tr><td>Fragmentation</td><td>Delegated to higher-layer protocols</td><td>Not defined (single-frame limit)</td></tr>
-<tr><td>Application coupling</td><td>Application protocols are architecturally separate</td><td>~30+ application types defined in core protobuf schema</td></tr>
+<tr><td>Protocol organization</td><td>MAC layer with separately specified application protocols</td><td>Shared firmware and protobuf registry spanning radio integration, routing control, and applications</td></tr>
+<tr><td>Forwarding-time payload interpretation</td><td>Opaque at the MAC layer</td><td>Clear raw header is sufficient for forwarding; encrypted <code>Data</code> may remain opaque to a relay</td></tr>
+<tr><td>Fragmentation</td><td>Delegated to higher-layer protocols</td><td>No generic mesh-layer fragmentation; individual applications or transports may define their own</td></tr>
+<tr><td>Application registration</td><td>Application protocols are architecturally separate</td><td>30+ application identifiers registered in the core <code>PortNum</code> schema</td></tr>
 </tbody>
 </table>
 </div>
-<p>UMSH maintains a clean boundary between the MAC layer and application protocols. The MAC layer treats payloads opaquely and can carry any higher-layer protocol. Meshtastic’s protobuf-defined <code>Data</code> message structure spans from radio-level fields to application payloads in a single schema, with no clean separation between layers.</p>
+<p>UMSH specifies an explicit boundary between its MAC layer and application protocols: the MAC treats payloads opaquely and can carry any assigned higher-layer protocol. Meshtastic likewise has a concrete wire boundary between its 16-byte raw forwarding header and the encrypted protobuf <code>Data</code> envelope, so a relay can forward traffic it cannot decrypt. Its <code>Data</code> schema also contains port, payload, response-correlation, and some routing-related fields, and its application identifiers live in the shared core protobuf registry. The result is greater integration between routing, firmware modules, and application dispatch than in UMSH, but not an absence of all layer boundaries.</p>
+<p>Neither protocol defines generic fragmentation at the mesh/MAC layer. UMSH explicitly delegates it to higher-layer protocols such as CoAP block-wise transfer. Meshtastic applications and companion transports can define their own mechanisms; for example, the Reticulum tunnel port is specified to carry fragmented RNS packets.</p>
 <h2 id="timestamps-and-time-dependency-1"><a class="header" href="#timestamps-and-time-dependency-1">Timestamps and Time Dependency</a></h2>
 <div class="table-wrapper">
 <table>
@@ -10845,73 +10849,75 @@ errors, or other mistakes, please <a href="https://github.com/darconeous/umsh/is
 <tr><th>Aspect</th><th>UMSH</th><th>Meshtastic</th></tr>
 </thead>
 <tbody>
-<tr><td>Replay protection</td><td>4-byte monotonic frame counter</td><td>32-bit random packet ID (duplicate cache)</td></tr>
-<tr><td>Timestamps in packets</td><td>None at MAC layer</td><td><code>rx_time</code> metadata (not used for protocol decisions)</td></tr>
+<tr><td>Replay/duplicate handling</td><td>4-byte monotonic frame counter with replay window</td><td>Partially randomized 32-bit packet ID and finite duplicate cache</td></tr>
+<tr><td>Timestamps in packets</td><td>None at MAC layer</td><td><code>rx_time</code> metadata (not transmitted in the LoRa header and not used for routing decisions)</td></tr>
 <tr><td>Clock synchronization required</td><td>No</td><td>No</td></tr>
 </tbody>
 </table>
 </div>
-<p>Neither protocol requires clock synchronization for core operation. Meshtastic includes reception timestamps as metadata but does not use them for routing or replay protection. Both protocols detect duplicates without relying on wall-clock time — UMSH via monotonic frame counters, Meshtastic via random packet ID caching.</p>
+<p>Neither protocol requires clock synchronization for core operation. Meshtastic records reception timestamps as local metadata but does not use them for routing or duplicate suppression. UMSH provides replay protection with monotonic frame counters and a receive window. Meshtastic suppresses recent duplicates by caching the sender and partially randomized packet ID; because that cache is finite, this should not be described as durable cryptographic replay protection.</p>
 <h2 id="packet-overhead-comparison-1"><a class="header" href="#packet-overhead-comparison-1">Packet Overhead Comparison</a></h2>
-<p>Minimum overhead for a typical encrypted unicast message:</p>
+<p>The following compares overhead relative to the application body for a common secured unicast message. The UMSH columns use a compact source, no salt, no FHOPS, and no packet options. The Meshtastic columns assume a common one-byte <code>portnum</code> value and the locally originated <code>Data.bitfield</code>; the protobuf envelope is 6 bytes while the application body is shorter than 128 bytes and normally 7 bytes once its length requires a two-byte varint.</p>
 <div class="table-wrapper">
 <table>
 <thead>
-<tr><th>Field</th><th>UMSH (S=0, 16B MIC)</th><th>UMSH (S=0, 4B MIC)</th><th>Meshtastic (channel)</th><th>Meshtastic (PKC DM)</th></tr>
+<tr><th>Field</th><th style="text-align: right">UMSH (S=0, 16B MIC)</th><th style="text-align: right">UMSH (S=0, 4B MIC)</th><th style="text-align: right">Meshtastic (channel)</th><th style="text-align: right">Meshtastic (PKC)</th></tr>
 </thead>
 <tbody>
-<tr><td>Header/FCF</td><td>1</td><td>1</td><td>16</td><td>16</td></tr>
-<tr><td>Destination</td><td>3</td><td>3</td><td>(in header)</td><td>(in header)</td></tr>
-<tr><td>Source</td><td>3</td><td>3</td><td>(in header)</td><td>(in header)</td></tr>
-<tr><td>SECINFO</td><td>5</td><td>5</td><td>—</td><td>—</td></tr>
-<tr><td>MIC / auth tag</td><td>16</td><td>4</td><td>—</td><td>~12</td></tr>
-<tr><td>Nonce / IV</td><td>—</td><td>—</td><td>(derived, not transmitted)</td><td>(8 in payload)</td></tr>
-<tr><td>Protobuf overhead</td><td>—</td><td>—</td><td>~6</td><td>~6</td></tr>
-<tr><td><strong>Total overhead</strong></td><td><strong>28</strong></td><td><strong>16</strong></td><td><strong>~22</strong></td><td><strong>~42</strong></td></tr>
+<tr><td>Header/FCF</td><td style="text-align: right">1</td><td style="text-align: right">1</td><td style="text-align: right">16</td><td style="text-align: right">16</td></tr>
+<tr><td>Destination</td><td style="text-align: right">3</td><td style="text-align: right">3</td><td style="text-align: right">(in header)</td><td style="text-align: right">(in header)</td></tr>
+<tr><td>Source</td><td style="text-align: right">3</td><td style="text-align: right">3</td><td style="text-align: right">(in header)</td><td style="text-align: right">(in header)</td></tr>
+<tr><td>SECINFO</td><td style="text-align: right">5</td><td style="text-align: right">5</td><td style="text-align: right">—</td><td style="text-align: right">—</td></tr>
+<tr><td>Payload-type prefix</td><td style="text-align: right">1</td><td style="text-align: right">1</td><td style="text-align: right">—</td><td style="text-align: right">—</td></tr>
+<tr><td>MIC</td><td style="text-align: right">16</td><td style="text-align: right">4</td><td style="text-align: right">—</td><td style="text-align: right">—</td></tr>
+<tr><td>Protobuf <code>Data</code> envelope</td><td style="text-align: right">—</td><td style="text-align: right">—</td><td style="text-align: right">6–7</td><td style="text-align: right">6–7</td></tr>
+<tr><td>PKC tag + random nonce contribution</td><td style="text-align: right">—</td><td style="text-align: right">—</td><td style="text-align: right">—</td><td style="text-align: right">12</td></tr>
+<tr><td><strong>Total overhead</strong></td><td style="text-align: right"><strong>29</strong></td><td style="text-align: right"><strong>17</strong></td><td style="text-align: right"><strong>22–23</strong></td><td style="text-align: right"><strong>34–35</strong></td></tr>
 </tbody>
 </table>
 </div>
-<p>Meshtastic’s nonce is derived from header fields (packet ID + sender node number) rather than transmitted, saving bytes compared to protocols that transmit the IV. However, the fixed 16-byte cleartext header and protobuf encoding overhead partially offset this advantage.</p>
-<p>UMSH with a 16-byte MIC has slightly more overhead than Meshtastic channel encryption (28 vs ~22 bytes), but UMSH’s overhead includes full authentication that Meshtastic’s channel mode lacks entirely. With a 4-byte MIC, UMSH achieves 16 bytes of overhead — lower than Meshtastic’s ~22 bytes — while still providing authentication that Meshtastic channel traffic does not have.</p>
-<p>Meshtastic PKC direct messages add approximately 20 bytes of overhead beyond channel encryption (ECDH-derived key, CCM nonce, and authentication tag), bringing total overhead to roughly 42 bytes for authenticated direct messages.</p>
+<p>Meshtastic channel mode derives its AES-CTR nonce from the cleartext packet ID and sender node number and transmits no separate channel nonce. PKC uses those header fields plus a transmitted 4-byte random contribution and carries an 8-byte CCM tag, adding exactly 12 bytes beyond an otherwise equivalent channel <code>Data</code> envelope.</p>
+<p>UMSH with a 16-byte MIC has 29 bytes of application-body-to-wire overhead under the stated conditions, compared with approximately 22–23 bytes for Meshtastic channel mode. UMSH’s total includes authentication that Meshtastic channel mode lacks. With a 4-byte MIC, UMSH uses 17 bytes under the same conditions while still providing a truncated authentication tag.</p>
+<p>The Meshtastic <code>Data.payload</code> field is sized for as many as 233 bytes, but that schema capacity is not a universal application-body limit. For a common locally originated text packet, the encoded port, payload length, and required bitfield make about 232 bytes fit in channel mode; the additional 12 PKC bytes reduce the analogous PKC capacity to about 220 bytes. Other <code>Data</code> fields or larger <code>portnum</code> encodings reduce it further.</p>
 <h2 id="power-consumption-1"><a class="header" href="#power-consumption-1">Power Consumption</a></h2>
-<p>Power consumption on a battery-constrained LoRa node is driven by two factors: how long the radio is active (airtime), and how much CPU work is required after each received packet.</p>
+<p>Power consumption on a battery-constrained LoRa node is influenced by radio airtime, receive duty cycle, retransmission behavior, and CPU work after a packet is received. The protocol and firmware establish which operations occur, but their practical energy magnitude requires measurement on representative hardware.</p>
 <h3 id="channel-filtering-and-false-positives"><a class="header" href="#channel-filtering-and-false-positives">Channel Filtering and False Positives</a></h3>
-<p>In a LoRa mesh, broadcast and multicast traffic (position reports, telemetry, channel messages) outnumber unicast packets. For this traffic, the only pre-crypto filter available is the channel identifier. When a packet’s channel identifier matches a channel the node does not belong to, the node must attempt decryption to confirm the mismatch — a false positive.</p>
+<p>For channel traffic, a compact channel identifier is a pre-crypto filter. If an unrelated incoming channel produces the same identifier as one configured locally, the receiver must try the local candidate key to determine whether the packet is valid.</p>
 <div class="table-wrapper">
 <table>
 <thead>
-<tr><th>Protocol</th><th>Channel identifier width</th><th>False-positive rate per broadcast packet</th></tr>
+<tr><th>Protocol</th><th style="text-align: right">Channel identifier width</th><th style="text-align: right">Uniform per-candidate match probability</th></tr>
 </thead>
 <tbody>
-<tr><td>Meshtastic</td><td>8 bits (1-byte DJB2 hash)</td><td>~1 in 256</td></tr>
-<tr><td>UMSH</td><td>16 bits (2-byte derived hint)</td><td>~1 in 65536</td></tr>
+<tr><td>Meshtastic</td><td style="text-align: right">8 bits (XOR of channel name and effective key)</td><td style="text-align: right">1 in 256</td></tr>
+<tr><td>UMSH</td><td style="text-align: right">16 bits (derived hint)</td><td style="text-align: right">1 in 65536</td></tr>
 </tbody>
 </table>
 </div>
-<p>Meshtastic’s 1-byte channel hash produces ~256× more false positives than UMSH’s 2-byte channel identifier. Each false positive requires an AES-CTR decryption attempt (cheap relative to ECDH, but still unnecessary CPU work and a delay before the MCU can return to sleep). In a busy mesh with many active channels, this adds up.</p>
+<p>Under independent uniform assumptions, the per-candidate probability differs by a factor of 256. With <code>m</code> configured candidates, the probability of at least one match is <code>1-(255/256)^m</code> for Meshtastic and <code>1-(65535/65536)^m</code> for UMSH. Meshtastic’s XOR construction is not a uniform cryptographic hash in every real configuration, so these figures are a model rather than measured traffic rates.</p>
+<p>The Meshtastic receive loop confirms the mechanism: every configured channel whose hint matches triggers an AES-CTR decryption and protobuf parse attempt until one succeeds or the candidates are exhausted. This is additional CPU work, but no measurement cited here establishes a meaningful battery-life impact, and the AES cost may be small compared with LoRa receive airtime.</p>
 <h3 id="unicast-filtering"><a class="header" href="#unicast-filtering">Unicast Filtering</a></h3>
-<p>For unicast packets, Meshtastic’s 4-byte cleartext node number provides near-zero false-positive filtering with no cryptographic work — the destination can be checked by simple integer comparison before any decryption is attempted. UMSH’s 3-byte destination hint has a ~1-in-16,777,216 false-positive rate; when a collision occurs, verification requires decrypting the payload with AES-CTR and computing CMAC over the result — pairwise keys are cached after first contact so no ECDH is needed for known senders, but the decrypt-then-MAC work still applies.</p>
-<p>This is a genuine power tradeoff: Meshtastic achieves cheaper unicast filtering by including the full destination identifier in the cleartext header, while UMSH accepts a small false-positive rate in exchange for transmitting fewer bytes and not fully exposing node identity to passive observers.</p>
+<p>For unicast packets, Meshtastic’s 4-byte cleartext node number provides an exact destination comparison before payload decryption. UMSH’s 3-byte destination hint has a modeled 1-in-16,777,216 per-identity false-positive probability. A collision requires cryptographic processing to determine whether the packet is actually addressed to the receiver; pairwise keys can be cached after first contact, so known-sender handling does not require a fresh ECDH operation.</p>
+<p>This is a protocol tradeoff: Meshtastic spends one additional cleartext destination byte and exposes the complete unicast node number, while UMSH uses a shorter, less identifying prefilter with a small collision probability. The practical power significance of that difference depends on traffic and hardware and is not asserted here.</p>
 <h3 id="packet-length-and-airtime"><a class="header" href="#packet-length-and-airtime">Packet Length and Airtime</a></h3>
-<p>Meshtastic’s fixed 16-byte header is transmitted on every packet regardless of content. UMSH’s header includes only the fields needed for the packet type. On a LoRa network, longer packets mean longer airtime, which means nearby nodes must keep their radios active longer to receive each packet — a cost that compounds across all nodes in range, not just the sender.</p>
-<h3 id="repeater-power-1"><a class="header" href="#repeater-power-1">Repeater Power</a></h3>
-<p>Both protocols use flood routing as their primary delivery mechanism, so nodes configured as repeaters must receive and retransmit packets. Transmit is the most power-intensive radio operation on a LoRa node. In practice, repeating is enabled only on dedicated infrastructure nodes; end-user devices are typically configured as non-repeating and incur no forwarding transmit cost.</p>
-<p>Meshtastic’s managed flood uses SNR-based contention windows: after receiving a packet, each potential relay waits a random delay inversely proportional to its received SNR before retransmitting. If it hears a better-positioned node retransmit first, it suppresses its own retransmission. This heuristic reduces the number of redundant rebroadcasts compared to simple flooding and saves transmit power across the network.</p>
-<p>UMSH’s signal-quality filtering options (minimum RSSI and minimum SNR) allow the original sender to set explicit thresholds: a repeater that received the packet below the threshold must not retransmit it. This gives the sender direct control over which links are used for forwarding, avoiding transmit power wasted on paths unlikely to deliver the packet. Meshtastic’s SNR-based approach is automatic but implicit; UMSH’s approach is explicit but requires the sender to configure appropriate thresholds.</p>
-<p>UMSH repeaters do not need to decrypt or verify the payload before forwarding — the MAC layer treats payloads opaquely. Meshtastic repeaters also forward without decryption for channel traffic.</p>
+<p>Meshtastic’s fixed 16-byte header is transmitted on every packet. UMSH includes only fields required by the packet type. Longer LoRa packets consume more airtime and receiver-on time, but the total comparison depends on UMSH’s selected MIC, optional fields, and source form as well as on Meshtastic’s security mode and protobuf envelope.</p>
+<h3 id="forwarding-power"><a class="header" href="#forwarding-power">Forwarding Power</a></h3>
+<p>Both protocols use flooding, so forwarding nodes may receive and retransmit packets. Transmit is normally among the most power-intensive radio operations. Meshtastic defaults to the <code>CLIENT</code> role with rebroadcast mode <code>ALL</code>, so ordinary client nodes participate in managed rebroadcasting. A node that should not forward must use <code>CLIENT_MUTE</code>, rebroadcast mode <code>NONE</code>, or another appropriately restrictive configuration. The old <code>REPEATER</code> role is deprecated; current infrastructure configurations include roles such as <code>ROUTER</code>, <code>ROUTER_LATE</code>, and <code>CLIENT_BASE</code>.</p>
+<p>Meshtastic’s managed flood gives lower-SNR receptions shorter expected delays, allowing nodes that appear farther from the sender to relay earlier. Most client-like roles cancel a queued transmission after overhearing a duplicate. <code>ROUTER</code> nodes receive separate early priority and intentionally do not cancel every duplicate. These policies reduce or redirect redundant transmissions compared with an unsuppressed flood, but the effect depends on topology and role configuration.</p>
+<p>UMSH’s minimum-RSSI and minimum-SNR options allow the original sender to set explicit flood-forwarding thresholds. A repeater below the threshold does not retransmit the packet. Meshtastic’s approach chooses contention priority automatically; UMSH’s approach makes relay eligibility explicit but requires the sender to choose suitable thresholds.</p>
+<p>UMSH repeaters do not need to decrypt or verify the application payload before forwarding because the MAC layer treats it opaquely. Meshtastic forwarding likewise uses the clear raw header and can relay both channel and PKC ciphertext without decrypting the protobuf <code>Data</code> body.</p>
 <h2 id="summary-of-design-differences-1"><a class="header" href="#summary-of-design-differences-1">Summary of Design Differences</a></h2>
-<p>Meshtastic is a full-featured, batteries-included mesh communication system with a large and active user community. It provides a rich application layer (position sharing, telemetry, store-and-forward, TAK integration), broad hardware support, and an easy on-ramp for non-technical users. Its channel-based encryption model is simple to configure and deploy.</p>
-<p>UMSH prioritizes cryptographic robustness, compact encoding, and architectural cleanliness. It authenticates all traffic, provides privacy modes for metadata concealment, and maintains strict layer separation that allows it to carry arbitrary higher-layer protocols.</p>
+<p>Meshtastic is a full-featured mesh communication system with a large and active user community. It provides a rich application ecosystem, broad hardware support, and an easy on-ramp for non-technical users. Its channel-based encryption model is simple to configure and deploy, while eligible unicast traffic can use PKC when peer keys are available.</p>
+<p>UMSH prioritizes authenticated secured traffic, compact encoding, metadata-concealment modes, and explicit MAC/application boundaries. Secured unicast and multicast packets carry authentication; unsecured broadcast packets intentionally make no authenticity claim.</p>
 <p>Key tradeoffs:</p>
 <ul>
-<li><strong>Authentication</strong>: UMSH authenticates every packet. Meshtastic’s channel traffic has no authentication — only PKC direct messages (v2.5+) are authenticated.</li>
-<li><strong>Privacy</strong>: UMSH provides compact addressing hints and opt-in blind modes. Meshtastic exposes full sender and recipient identifiers in cleartext headers on every packet.</li>
-<li><strong>Identity model</strong>: UMSH uses cryptographic public keys as addresses. Meshtastic uses hardware-derived node numbers that are not cryptographically bound to any key.</li>
-<li><strong>Overhead</strong>: Comparable in the common case (~14–26 bytes for UMSH vs ~22 bytes for Meshtastic channel), but UMSH’s overhead includes authentication.</li>
-<li><strong>Application richness</strong>: Meshtastic provides a far richer built-in application layer. UMSH delegates richer functionality to higher-layer protocols.</li>
-<li><strong>Layer separation</strong>: UMSH cleanly separates MAC and application concerns. Meshtastic is a monolithic system where protocol and application are interleaved.</li>
-<li><strong>Implementation</strong>: Meshtastic is a mature C++ firmware with broad device support. UMSH is not tied to any implementation language or runtime, and its compact design can target bare-metal microcontrollers.</li>
+<li><strong>Authentication</strong>: UMSH authenticates every secured unicast and multicast packet. Meshtastic channel traffic has no integrity check; eligible PKC unicast traffic is authenticated against the stored or verified peer key.</li>
+<li><strong>Privacy</strong>: UMSH provides compact addressing hints and opt-in blind modes. Meshtastic exposes the complete sender and destination fields in every cleartext header; unicast therefore exposes both endpoint node numbers, while broadcast uses the broadcast destination value.</li>
+<li><strong>Identity model</strong>: UMSH uses cryptographic public keys as addresses. Meshtastic uses a normally hardware-derived node number that is not cryptographically bound to its PKC key.</li>
+<li><strong>Overhead</strong>: Under the conditions in the overhead table, UMSH uses 17 bytes with a 4-byte MIC or 29 with a 16-byte MIC; Meshtastic uses approximately 22–23 bytes for channel mode or 34–35 for PKC. UMSH’s totals include authentication, while Meshtastic channel mode does not.</li>
+<li><strong>Application richness</strong>: Meshtastic provides a much richer built-in and companion application ecosystem. UMSH delegates richer functionality to higher-layer protocols.</li>
+<li><strong>Protocol organization</strong>: UMSH specifies MAC and application protocols separately. Meshtastic has a distinct raw forwarding header and encrypted application envelope, while application registration, routing control, and firmware modules share a common protobuf and firmware ecosystem.</li>
+<li><strong>Implementation</strong>: Meshtastic is a mature C++ firmware with broad device support. UMSH is not tied to an implementation language or runtime, and its compact wire design can target bare-metal microcontrollers.</li>
 <li><strong>Ease of deployment</strong>: Meshtastic is designed for immediate use with consumer hardware. UMSH requires implementation effort and explicit key configuration.</li>
 </ul>
 <div style="break-before: page; page-break-before: always;"></div>
