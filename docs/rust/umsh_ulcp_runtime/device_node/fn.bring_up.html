@@ -4,7 +4,7 @@
     node_seed: [<a class="primitive" href="https://doc.rust-lang.org/nightly/std/primitive.u8.html">u8</a>; <a class="primitive" href="https://doc.rust-lang.org/nightly/std/primitive.array.html">32</a>],
     t_frame_ms: <a class="primitive" href="https://doc.rust-lang.org/nightly/std/primitive.u32.html">u32</a>,
     counters: CS,
-    duty: &amp;'static <a class="struct" href="../../umsh_ulcp_device/duty/struct.DutyLedger.html" title="struct umsh_ulcp_device::duty::DutyLedger">DutyLedger</a>,
+    duty: &amp;'static DutyLedger,
     hooks: <a class="struct" href="struct.NodeHooks.html" title="struct umsh_ulcp_runtime::device_node::NodeHooks">NodeHooks</a>,
 ) -&gt; <a class="struct" href="struct.DeviceNodeParts.html" title="struct umsh_ulcp_runtime::device_node::DeviceNodeParts">DeviceNodeParts</a>&lt;CS&gt;</code></pre><details class="toggle top-doc" open><summary class="hideme"><span>Expand description</span></summary><div class="docblock"><p>Construct the MAC around the device identity and wire up the node.
 Call at most once. The identity is never absent — boot generates and
