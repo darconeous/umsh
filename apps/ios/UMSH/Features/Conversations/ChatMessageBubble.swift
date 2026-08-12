@@ -402,30 +402,7 @@ struct ChatMessageBubble: View, @MainActor Equatable {
     @ViewBuilder
     private var menuItems: some View {
         if let onReact {
-            // A palette picker renders as a row of glyphs with the
-            // chosen one marked, and — unlike a row of toggles —
-            // closes the menu when one is picked, which is what makes
-            // reacting feel like one gesture rather than two.
-            Picker(
-                selection: Binding(
-                    get: { message.myReaction?.glyph ?? "" },
-                    // Picking either way is the same request: choose
-                    // this glyph, or drop it if it was already ours.
-                    set: { onReact($0) }
-                )
-            ) {
-                ForEach(ReactionEmoji.palette, id: \.glyph) { entry in
-                    Text(entry.glyph)
-                        .accessibilityLabel(ReactionEmoji.name(for: entry.glyph))
-                        .tag(entry.glyph)
-                }
-            } label: {
-                // A menu renders a picker's label as a section
-                // heading, and the glyphs need no caption; only an
-                // empty label leaves them to speak for themselves.
-                EmptyView()
-            }
-            .pickerStyle(.palette)
+            reactionPicker(onReact)
         }
         Button("Copy", systemImage: "doc.on.doc") {
             UIPasteboard.general.string = message.body
@@ -443,6 +420,58 @@ struct ChatMessageBubble: View, @MainActor Equatable {
         }
         if let onDelete {
             Button("Delete", systemImage: "trash", role: .destructive, action: onDelete)
+        }
+    }
+
+    /// The reaction picker, in whichever form the platform's menus draw well.
+    ///
+    /// Either way it is a picker rather than a row of buttons: picking closes
+    /// the menu, which is what makes reacting feel like one gesture rather
+    /// than two, and the current choice is marked without anything here
+    /// tracking it. Only the style and the labels differ.
+    ///
+    /// On a Mac the app's UIKit menus are bridged to real AppKit menus, whose
+    /// items carry a title, an image and a state — not a label view. A
+    /// palette option's `Text` has no image to cross with it, so every slot
+    /// arrives empty and only the selection state survives: blank rows
+    /// wearing checkmarks. An inline picker is built from exactly what the
+    /// bridge does carry, and a vertical list of named commands is what a Mac
+    /// menu looks like anyway.
+    @ViewBuilder
+    private func reactionPicker(_ onReact: @escaping (String) -> Void) -> some View {
+        // Picking either way is the same request: choose this glyph, or drop
+        // it if it was already ours.
+        let selection = Binding(
+            get: { message.myReaction?.glyph ?? "" },
+            set: { onReact($0) }
+        )
+        if ProcessInfo.processInfo.isiOSAppOnMac {
+            Picker(selection: selection) {
+                ForEach(ReactionEmoji.palette, id: \.glyph) { entry in
+                    // The glyph rides in the title, which crosses the bridge
+                    // whole, and the name beside it is what makes a menu row
+                    // readable at a glance.
+                    Text("\(entry.glyph)  \(ReactionEmoji.name(for: entry.glyph).capitalized)")
+                        .tag(entry.glyph)
+                }
+            } label: {
+                EmptyView()
+            }
+            .pickerStyle(.inline)
+        } else {
+            Picker(selection: selection) {
+                ForEach(ReactionEmoji.palette, id: \.glyph) { entry in
+                    Text(entry.glyph)
+                        .accessibilityLabel(ReactionEmoji.name(for: entry.glyph))
+                        .tag(entry.glyph)
+                }
+            } label: {
+                // A menu renders a picker's label as a section heading, and
+                // the glyphs need no caption; only an empty label leaves them
+                // to speak for themselves.
+                EmptyView()
+            }
+            .pickerStyle(.palette)
         }
     }
 
