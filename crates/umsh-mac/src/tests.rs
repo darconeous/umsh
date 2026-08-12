@@ -436,6 +436,44 @@ fn receive_one_auto_replies_to_echo_request() {
     );
 }
 
+/// A ping measures a link, and the signal entries are what make that
+/// measurement per-hop. A response that mirrors only the route reports where
+/// the frame went without reporting what any of it cost.
+#[test]
+fn echo_response_mirrors_a_trace_signal_request() {
+    let mut mac = make_mac();
+    let local_id = mac.add_identity(DummyIdentity::new([0x10; 32])).unwrap();
+    let remote = DummyIdentity::new([0xAB; 32]);
+    let peer_id = mac.add_peer(*remote.public_key()).unwrap();
+    let keys = PairwiseKeys {
+        k_enc: [1; 32],
+        k_mic: [2; 32],
+    };
+    mac.install_pairwise_keys(local_id, peer_id, keys.clone())
+        .unwrap();
+    let dst_hint = mac
+        .identity(local_id)
+        .unwrap()
+        .identity()
+        .public_key()
+        .hint();
+    let request = encode_echo_command_payload(4, &[9, 8, 7, 6]);
+    mac.radio_mut()
+        .queue_received_traced_echo_request(&remote, &keys, &dst_hint, &request);
+
+    assert!(block_on(mac.receive_one(|_, _| {})).unwrap());
+
+    let response = mac.tx_queue_mut().pop_next().expect("echo response queued");
+    let header = PacketHeader::parse(response.frame.as_slice()).unwrap();
+    let options =
+        ParsedOptions::extract(response.frame.as_slice(), header.options_range.clone()).unwrap();
+    assert!(options.trace_route.is_some());
+    assert!(
+        options.trace_signal.is_some(),
+        "echo response must preserve a trace-signal request"
+    );
+}
+
 #[test]
 fn peer_registry_looks_up_by_hint_and_updates_route() {
     let mut registry = PeerRegistry::<4>::new();
@@ -1890,7 +1928,8 @@ fn queue_mac_ack_for_peer_uses_cached_source_route_when_present() {
         ),
     );
 
-    mac.queue_mac_ack_for_peer(peer_id, [0xA5; 8]).unwrap();
+    mac.queue_mac_ack_for_peer(peer_id, [0xA5; 8], false)
+        .unwrap();
 
     let queued = mac.tx_queue_mut().pop_next().unwrap();
     let header = PacketHeader::parse(queued.frame.as_slice()).unwrap();
@@ -1916,7 +1955,8 @@ fn queue_mac_ack_for_peer_uses_cached_flood_route_regions_when_present() {
         },
     );
 
-    mac.queue_mac_ack_for_peer(peer_id, [0xA5; 8]).unwrap();
+    mac.queue_mac_ack_for_peer(peer_id, [0xA5; 8], false)
+        .unwrap();
 
     let queued = mac.tx_queue_mut().pop_next().unwrap();
     let header = PacketHeader::parse(queued.frame.as_slice()).unwrap();
@@ -3574,6 +3614,237 @@ fn empty_trace_route_learns_a_direct_peer_and_originates_no_source_route_option(
     }
 }
 
+/// Whether an already-built frame carries a trace-route option.
+fn frame_has_trace_route(frame: &[u8]) -> bool {
+    let header = PacketHeader::parse(frame).unwrap();
+    ParsedOptions::extract(frame, header.options_range.clone())
+        .unwrap()
+        .trace_route
+        .is_some()
+}
+
+/// A peer nothing is known about is reached by flooding, and the flood is
+/// what discovers the path — so the frame records it whether or not the
+/// application asked.
+#[test]
+fn unicast_to_an_unrouted_peer_carries_a_trace_route_unasked() {
+    let mut mac = make_mac();
+    let local_id = mac.add_identity(DummyIdentity::new([0x10; 32])).unwrap();
+    let peer_key = test_pubkey(0xAB);
+    let peer_id = mac.add_peer(peer_key).unwrap();
+    mac.install_pairwise_keys(
+        local_id,
+        peer_id,
+        PairwiseKeys {
+            k_enc: [1; 32],
+            k_mic: [2; 32],
+        },
+    )
+    .unwrap();
+
+    let _ =
+        block_on(mac.send_unicast(local_id, &peer_key, b"hi", &SendOptions::default())).unwrap();
+
+    let queued = mac.tx_queue_mut().pop_next().expect("queued unicast");
+    assert!(frame_has_trace_route(queued.frame.as_slice()));
+}
+
+/// A flood distance says roughly how far away the peer is, not which
+/// repeaters to go through. The trace stays on until a precise route replaces
+/// the estimate.
+#[test]
+fn unicast_to_a_flood_distance_peer_still_carries_a_trace_route() {
+    let mut mac = make_mac();
+    let local_id = mac.add_identity(DummyIdentity::new([0x10; 32])).unwrap();
+    let peer_key = test_pubkey(0xAB);
+    let peer_id = mac.add_peer(peer_key).unwrap();
+    mac.install_pairwise_keys(
+        local_id,
+        peer_id,
+        PairwiseKeys {
+            k_enc: [1; 32],
+            k_mic: [2; 32],
+        },
+    )
+    .unwrap();
+    mac.peer_registry_mut().update_route(
+        peer_id,
+        CachedRoute::Flood {
+            hops: 2,
+            regions: heapless::Vec::new(),
+        },
+    );
+
+    let _ =
+        block_on(mac.send_unicast(local_id, &peer_key, b"hi", &SendOptions::default())).unwrap();
+
+    let queued = mac.tx_queue_mut().pop_next().expect("queued unicast");
+    assert!(frame_has_trace_route(queued.frame.as_slice()));
+}
+
+/// A frame that follows a source route already knows its path, and paying to
+/// record it again is the proactive-refresh behavior the spec leaves
+/// unspecified.
+#[test]
+fn unicast_over_a_cached_source_route_carries_no_trace_route() {
+    let mut mac = make_mac();
+    let local_id = mac.add_identity(DummyIdentity::new([0x10; 32])).unwrap();
+    let peer_key = test_pubkey(0xAB);
+    let peer_id = mac.add_peer(peer_key).unwrap();
+    mac.install_pairwise_keys(
+        local_id,
+        peer_id,
+        PairwiseKeys {
+            k_enc: [1; 32],
+            k_mic: [2; 32],
+        },
+    )
+    .unwrap();
+    mac.peer_registry_mut().update_route(
+        peer_id,
+        CachedRoute::Source(heapless::Vec::from_slice(&[RouterHint([0x01, 0x02])]).unwrap()),
+    );
+
+    let _ =
+        block_on(mac.send_unicast(local_id, &peer_key, b"hi", &SendOptions::default())).unwrap();
+
+    let queued = mac.tx_queue_mut().pop_next().expect("queued unicast");
+    assert!(!frame_has_trace_route(queued.frame.as_slice()));
+
+    // Still available on request: the automatic trace is a floor, not a cap.
+    let _ = block_on(mac.send_unicast(
+        local_id,
+        &peer_key,
+        b"hi",
+        &SendOptions::default().with_trace_route(),
+    ))
+    .unwrap();
+    let queued = mac.tx_queue_mut().pop_next().expect("queued unicast");
+    assert!(frame_has_trace_route(queued.frame.as_slice()));
+}
+
+/// No repeater carries the frame, so there is nothing for a trace to record.
+#[test]
+fn unicast_to_a_directly_heard_peer_carries_no_trace_route() {
+    let mut mac = make_mac();
+    let local_id = mac.add_identity(DummyIdentity::new([0x10; 32])).unwrap();
+    let peer_key = test_pubkey(0xAB);
+    let peer_id = mac.add_peer(peer_key).unwrap();
+    mac.install_pairwise_keys(
+        local_id,
+        peer_id,
+        PairwiseKeys {
+            k_enc: [1; 32],
+            k_mic: [2; 32],
+        },
+    )
+    .unwrap();
+    mac.peer_registry_mut()
+        .update_route(peer_id, CachedRoute::Direct);
+
+    let _ =
+        block_on(mac.send_unicast(local_id, &peer_key, b"hi", &SendOptions::default())).unwrap();
+
+    let queued = mac.tx_queue_mut().pop_next().expect("queued unicast");
+    assert!(!frame_has_trace_route(queued.frame.as_slice()));
+}
+
+/// The sender's trace taught us a path back; the mirrored trace on the ack is
+/// the only thing that closes the other direction.
+#[test]
+fn mac_ack_mirrors_the_trace_route_of_the_frame_it_acknowledges() {
+    for (sender_traced, expected) in [(true, true), (false, false)] {
+        let mut mac = make_mac();
+        let local_id = mac.add_identity(DummyIdentity::new([0x10; 32])).unwrap();
+        let remote = DummyIdentity::new([0xAB; 32]);
+        let peer_key = *remote.public_key();
+        let peer_id = mac.add_peer(peer_key).unwrap();
+        let keys = PairwiseKeys {
+            k_enc: [1; 32],
+            k_mic: [2; 32],
+        };
+        mac.install_pairwise_keys(local_id, peer_id, keys.clone())
+            .unwrap();
+        let dst_hint = mac
+            .identity(local_id)
+            .unwrap()
+            .identity()
+            .public_key()
+            .hint();
+        let trace = [RouterHint([0x01, 0x02])];
+
+        mac.radio_mut().queue_received_unicast_with_route(
+            &remote,
+            &keys,
+            &dst_hint,
+            b"hello",
+            true,
+            7,
+            None,
+            sender_traced.then_some(trace.as_slice()),
+            None,
+        );
+        assert!(block_on(mac.receive_one(|_, _| {})).unwrap());
+
+        let queued = mac.tx_queue_mut().pop_next().expect("queued mac ack");
+        let header = PacketHeader::parse(queued.frame.as_slice()).unwrap();
+        assert_eq!(header.fcf.packet_type(), PacketType::MacAck);
+        assert_eq!(
+            frame_has_trace_route(queued.frame.as_slice()),
+            expected,
+            "sender_traced={sender_traced}",
+        );
+    }
+}
+
+/// An ack-only exchange produces exactly one packet back from the peer. If
+/// its trace is discarded, a sender that never receives application traffic
+/// from that peer never learns a route to it.
+#[test]
+fn trace_route_on_a_mac_ack_teaches_the_sender_the_way_back() {
+    let mut mac = make_mac();
+    let local_id = mac.add_identity(DummyIdentity::new([0x10; 32])).unwrap();
+    let peer_key = test_pubkey(0xAB);
+    let peer_id = mac.add_peer(peer_key).unwrap();
+    mac.install_pairwise_keys(
+        local_id,
+        peer_id,
+        PairwiseKeys {
+            k_enc: [1; 32],
+            k_mic: [2; 32],
+        },
+    )
+    .unwrap();
+
+    let receipt = mac
+        .queue_unicast(
+            local_id,
+            &peer_key,
+            b"hello",
+            &SendOptions::default().with_ack_requested(true).no_flood(),
+        )
+        .unwrap()
+        .unwrap();
+    let ack_trailer = mac
+        .identity(local_id)
+        .unwrap()
+        .pending_ack(&receipt)
+        .unwrap()
+        .ack_trailer;
+    let trace = [RouterHint([0x01, 0x02]), RouterHint([0x03, 0x04])];
+    mac.radio_mut()
+        .queue_received_mac_ack_with_trace(ack_trailer, &trace);
+
+    assert!(block_on(mac.receive_one(|_, _| {})).unwrap());
+
+    assert_eq!(
+        mac.peer_registry().get(peer_id).unwrap().route,
+        Some(CachedRoute::Source(
+            heapless::Vec::from_slice(&trace).unwrap()
+        ))
+    );
+}
+
 #[test]
 fn explicitly_empty_source_route_is_not_put_on_the_wire() {
     let mut mac = make_mac();
@@ -4464,6 +4735,66 @@ fn repeater_prepends_its_signal_reading_alongside_the_router_hint() {
         // -93 dBm carried as its magnitude, -4.5 dB as -45 centibels.
         &[93u8, (-45i8) as u8],
         "the reading is prepended as negative RSSI then signed centibel SNR"
+    );
+}
+
+/// The same pairing on the path a ping actually takes. A unicast is forwarded
+/// through the same rewrite as a beacon, and this pins that: an echo request
+/// carries both options, so a repeater that grows only the route reports a
+/// path whose per-hop cost is unreadable.
+#[test]
+fn repeater_prepends_its_signal_reading_when_forwarding_a_unicast() {
+    let mut mac = make_mac();
+    mac.repeater_config_mut().enabled = true;
+    mac.radio_mut().rx_rssi = -101;
+    mac.radio_mut().rx_snr = Snr::from_centibels(35);
+    let repeater_id = mac.add_identity(DummyIdentity::new([0x10; 32])).unwrap();
+    let repeater_hint = mac
+        .identity(repeater_id)
+        .unwrap()
+        .identity()
+        .public_key()
+        .router_hint();
+
+    // Addressed to somebody else, so this node forwards rather than consumes.
+    let remote = DummyIdentity::new([0xAB; 32]);
+    let keys = PairwiseKeys {
+        k_enc: [1; 32],
+        k_mic: [2; 32],
+    };
+    let dst = umsh_core::NodeHint([0x77, 0x66, 0x55]);
+    let mut buf = [0u8; 256];
+    let mut packet = PacketBuilder::new(&mut buf)
+        .unicast(dst)
+        .source_full(remote.public_key())
+        .frame_counter(7)
+        .encrypted()
+        .flood_hops(3)
+        .trace_route()
+        .trace_signal()
+        .payload(b"ping")
+        .build()
+        .unwrap();
+    CryptoEngine::new(DummyAes, DummySha)
+        .seal_packet(&mut packet, &keys)
+        .unwrap();
+    mac.radio_mut().queue_received_frame(packet.as_bytes());
+
+    assert!(block_on(mac.receive_one(|_, _| {})).unwrap());
+    let forwarded = mac.tx_queue_mut().pop_next().expect("forwarded unicast");
+
+    let frame = forwarded.frame.as_slice();
+    let header = PacketHeader::parse(frame).unwrap();
+    let options = ParsedOptions::extract(frame, header.options_range.clone()).unwrap();
+
+    assert_eq!(
+        &frame[options.trace_route.clone().unwrap()],
+        &repeater_hint.0
+    );
+    assert_eq!(
+        &frame[options.trace_signal.clone().unwrap()],
+        &[101u8, 35u8],
+        "one hint means one signal entry, prepended in the same pass"
     );
 }
 
@@ -8836,6 +9167,54 @@ impl DummyRadio {
         let mut buf = [0u8; 256];
         let frame = PacketBuilder::new(&mut buf)
             .mac_ack(ack_trailer)
+            .build()
+            .unwrap();
+        let mut stored = heapless::Vec::new();
+        for byte in frame {
+            stored.push(*byte).unwrap();
+        }
+        self.received.push_back(stored).unwrap();
+    }
+
+    /// An echo request that arrives asking for both trace options, the way a
+    /// ping does.
+    fn queue_received_traced_echo_request(
+        &mut self,
+        source: &DummyIdentity,
+        keys: &PairwiseKeys,
+        dst: &umsh_core::NodeHint,
+        payload: &[u8],
+    ) {
+        let mut buf = [0u8; 256];
+        let mut packet = PacketBuilder::new(&mut buf)
+            .unicast(*dst)
+            .source_full(source.public_key())
+            .frame_counter(7)
+            .encrypted()
+            .trace_route()
+            .trace_signal()
+            .payload(payload)
+            .build()
+            .unwrap();
+        CryptoEngine::new(DummyAes, DummySha)
+            .seal_packet(&mut packet, keys)
+            .unwrap();
+        self.queue_received_frame(packet.as_bytes());
+    }
+
+    /// A MAC ack as it arrives after crossing `trace` repeaters, each having
+    /// prepended its hint on the way.
+    fn queue_received_mac_ack_with_trace(&mut self, ack_trailer: [u8; 8], trace: &[RouterHint]) {
+        let mut encoded = [0u8; 30];
+        let mut used = 0usize;
+        for hop in trace {
+            encoded[used..used + 2].copy_from_slice(&hop.0);
+            used += 2;
+        }
+        let mut buf = [0u8; 256];
+        let frame = PacketBuilder::new(&mut buf)
+            .mac_ack(ack_trailer)
+            .option(OptionNumber::TraceRoute, &encoded[..used])
             .build()
             .unwrap();
         let mut stored = heapless::Vec::new();

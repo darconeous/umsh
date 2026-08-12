@@ -2101,9 +2101,15 @@ async fn run_worker(
                                 Ok(connection) => connection
                                     .ping(
                                         6,
+                                        // Trace route for the path, trace
+                                        // signal for what each hop of it
+                                        // cost. A ping that reports only a
+                                        // round-trip time says a link is bad
+                                        // without saying where.
                                         &SendOptions::default()
                                             .with_flood_hops(5)
                                             .with_trace_route()
+                                            .with_trace_signal()
                                             .with_mic_size(umsh_node::PING_MIC_SIZE),
                                         timeout_ms,
                                     )

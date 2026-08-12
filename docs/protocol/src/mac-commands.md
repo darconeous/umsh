@@ -125,6 +125,8 @@ Carries a response to a prior Echo Request, including any echo data from the req
 |---|---:|---|
 | Echo data | 0+ bytes | Copied verbatim from the Echo Request |
 
+The response SHOULD carry the same [trace route](packet-options.md#trace-route-option-2) and [trace signal](packet-options.md#trace-signal-option-10) options the request carried. An echo measures a path, and a response traced differently from the request measures a different one; pairing the two options is what makes the measurement per-hop rather than end to end.
+
 ## PFS Session Request (6)
 
 Initiates a PFS session. The sender generates a fresh ephemeral node address and transmits it along with a requested session duration. See [Perfect Forward Secrecy Sessions](security.md#perfect-forward-secrecy-sessions) for the session establishment mechanism, key derivation, and wire-level privacy properties.

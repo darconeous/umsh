@@ -1585,13 +1585,25 @@ impl<
     }
 
     /// Enqueues a MAC ACK frame, using any cached route to `peer_id` when available.
+    ///
+    /// `trace_route` mirrors the acknowledged frame: a sender that attached a
+    /// trace route was discovering a path, and the trace it collected only
+    /// taught *us* the way back. The matching trace on this ack is what closes
+    /// the other direction, and is the only thing an ack-only exchange gives
+    /// the sender to learn a route from.
     pub fn queue_mac_ack_for_peer(
         &mut self,
         peer_id: PeerId,
         ack_trailer: [u8; 8],
+        trace_route: bool,
     ) -> Result<(), SendError> {
         let mut buf = [0u8; FRAME];
         let mut builder = PacketBuilder::new(&mut buf).mac_ack(ack_trailer);
+        // Ahead of the route options below: the builder rejects options
+        // encoded out of ascending number order.
+        if trace_route {
+            builder = builder.trace_route();
+        }
         if let Some(peer) = self.peer_registry.get(peer_id) {
             match peer.route.as_ref() {
                 Some(CachedRoute::Source(route)) if !route.is_empty() => {
@@ -1680,7 +1692,9 @@ impl<
         if let Some(hops) = effective_flood_hops {
             builder = builder.flood_hops(hops);
         }
-        if options.trace_route {
+        if options.trace_route
+            || self.needs_route_discovery(peer_id, effective_source_route.as_ref())
+        {
             builder = builder.trace_route();
         }
         if let Some(route) = effective_source_route.as_ref() {
@@ -1816,7 +1830,9 @@ impl<
         if let Some(hops) = effective_flood_hops {
             builder = builder.flood_hops(hops);
         }
-        if options.trace_route {
+        if options.trace_route
+            || self.needs_route_discovery(peer_id, effective_source_route.as_ref())
+        {
             builder = builder.trace_route();
         }
         if let Some(route) = effective_source_route.as_ref() {
@@ -2535,6 +2551,15 @@ impl<
         if let Some(target_peer) = self.peer_for_ack_trailer(&ack_trailer)
             && let Some((identity_id, receipt)) = self.complete_ack(&target_peer, &ack_trailer)
         {
+            // An ack is a packet the peer sent us, and route learning applies
+            // to it like any other. It is also the only packet an ack-only
+            // exchange produces, so without this a sender that never receives
+            // application traffic back from a peer never learns a route to it
+            // — the trace the peer mirrored onto the ack would arrive and be
+            // discarded.
+            if let Some((peer_id, _)) = self.peer_registry.lookup_by_key(&target_peer) {
+                self.learn_route_for_peer(peer_id, &buf[..frame_len], header);
+            }
             on_event(
                 identity_id,
                 crate::MacEventRef::AckReceived {
@@ -2593,7 +2618,9 @@ impl<
                         body_range.clone(),
                         &keys,
                     );
-                    self.queue_mac_ack_for_peer(peer_id, ack_trailer).ok();
+                    let trace_route = Self::frame_requests_trace_route(&buf[..frame_len], header);
+                    self.queue_mac_ack_for_peer(peer_id, ack_trailer, trace_route)
+                        .ok();
                     handled = true;
                     break;
                 }
@@ -2659,7 +2686,9 @@ impl<
                         body_range.clone(),
                         &keys,
                     );
-                    self.queue_mac_ack_for_peer(peer_id, ack_trailer).ok();
+                    let trace_route = Self::frame_requests_trace_route(&buf[..frame_len], header);
+                    self.queue_mac_ack_for_peer(peer_id, ack_trailer, trace_route)
+                        .ok();
                 }
 
                 if let Some(data) = Self::echo_request_data(payload) {
@@ -2882,7 +2911,10 @@ impl<
                                 body_range.clone(),
                                 &blind_keys,
                             );
-                            self.queue_mac_ack_for_peer(peer_id, ack_trailer).ok();
+                            let trace_route =
+                                Self::frame_requests_trace_route(&buf[..frame_len], header);
+                            self.queue_mac_ack_for_peer(peer_id, ack_trailer, trace_route)
+                                .ok();
                             handled = true;
                             break;
                         }
@@ -2935,7 +2967,10 @@ impl<
                                 body_range.clone(),
                                 &blind_keys,
                             );
-                            self.queue_mac_ack_for_peer(peer_id, ack_trailer).ok();
+                            let trace_route =
+                                Self::frame_requests_trace_route(&buf[..frame_len], header);
+                            self.queue_mac_ack_for_peer(peer_id, ack_trailer, trace_route)
+                                .ok();
                         }
 
                         if let Some(data) = Self::echo_request_data(payload) {
@@ -3567,6 +3602,38 @@ impl<
         }
     }
 
+    /// Whether this send should carry a trace route the caller did not ask
+    /// for, because nothing yet describes the path to the peer.
+    ///
+    /// A frame that follows a source route already knows its path, and a peer
+    /// heard directly has no repeaters for a trace to record; neither learns
+    /// anything from paying for the option. Everything else floods toward a
+    /// destination whose distance we can at best estimate, and that is exactly
+    /// the frame whose path is worth writing down: it costs one byte on the
+    /// way out and buys the destination a precise route back. The destination
+    /// mirrors the option onto its ack, which closes the return direction, so
+    /// a single exchange leaves both ends holding a route and this condition
+    /// stops firing. Discovery is paid for once per path rather than per
+    /// packet — the always-on variant is [proactive route refresh], which the
+    /// spec deliberately leaves unspecified.
+    ///
+    /// [proactive route refresh]: https://darconeous.github.io/umsh/docs/protocol/beacons.html#potential-improvement-proactive-route-refresh
+    fn needs_route_discovery(
+        &self,
+        peer_id: PeerId,
+        source_route: Option<&Vec<RouterHint, MAX_SOURCE_ROUTE_HOPS>>,
+    ) -> bool {
+        if source_route.is_some_and(|route| !route.is_empty()) {
+            return false;
+        }
+        !matches!(
+            self.peer_registry
+                .get(peer_id)
+                .and_then(|peer| peer.route.as_ref()),
+            Some(CachedRoute::Direct)
+        )
+    }
+
     /// Flood budget for a unicast send, narrowed by whatever is already known
     /// about how to reach the peer.
     ///
@@ -4047,13 +4114,32 @@ impl<
         Some(data)
     }
 
+    /// Whether a frame carries a trace-route option, and so is discovering a
+    /// path whose reply has to trace its own way back.
+    fn frame_requests_trace_route(frame: &[u8], header: &PacketHeader) -> bool {
+        ParsedOptions::extract(frame, header.options_range.clone())
+            .map(|parsed| parsed.trace_route.is_some())
+            .unwrap_or(false)
+    }
+
+    /// Mirror the requester's trace options onto the echo response.
+    ///
+    /// Both are mirrored rather than just the route: a ping measures a link,
+    /// and the signal entries are what make that measurement per-hop instead
+    /// of end-to-end. Mirroring also keeps the reply the same shape as the
+    /// request, which is the point of a ping — a response routed or sized
+    /// differently from the traffic it stands in for measures a path that
+    /// traffic will not take.
     fn echo_response_options(frame: &[u8], header: &PacketHeader) -> SendOptions {
         let mut options = SendOptions::default();
-        let requests_trace = ParsedOptions::extract(frame, header.options_range.clone())
-            .map(|parsed| parsed.trace_route.is_some())
-            .unwrap_or(false);
-        if requests_trace {
+        let Ok(parsed) = ParsedOptions::extract(frame, header.options_range.clone()) else {
+            return options;
+        };
+        if parsed.trace_route.is_some() {
             options = options.with_trace_route();
+        }
+        if parsed.trace_signal.is_some() {
+            options = options.with_trace_signal();
         }
         options
     }

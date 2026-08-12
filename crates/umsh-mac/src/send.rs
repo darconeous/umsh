@@ -61,6 +61,11 @@ pub struct SendReceipt(pub u32);
 ///   established path does not re-flood the whole mesh. Clear the peer's cached route
 ///   ([`MacHandle::clear_peer_route`](crate::MacHandle::clear_peer_route)) to get the full
 ///   budget back.
+/// - **`trace_route`** — like `flood_hops`, bounded by what the MAC already knows about the
+///   peer rather than taken literally. A unicast with no route to follow adds one whether or
+///   not it was asked for, so the destination's reply has a path to come back along; a send
+///   that follows a source route, or that goes to a peer heard directly, adds none unless
+///   the caller asks.
 /// - **`full_source`** — include the full 32-byte public key instead of the 3-byte hint,
 ///   allowing the receiver to authenticate without a prior key exchange. Useful for first
 ///   contact or identity announcements; costs 29 extra bytes per frame.
@@ -146,6 +151,11 @@ impl SendOptions {
     }
 
     /// Request that a trace-route option be added.
+    ///
+    /// This is a floor, not a switch: a unicast or blind unicast that has no
+    /// route to follow carries a trace route whether or not the caller asked
+    /// for one, so the destination can learn a path back. Leaving it unset
+    /// means "no trace beyond what routing needs", not "never".
     pub fn with_trace_route(mut self) -> Self {
         self.trace_route = true;
         self

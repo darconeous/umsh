@@ -48,7 +48,7 @@ This distinction allows forwarding-related metadata (source routes, trace routes
 | 7 | Station Callsign | Critical, Dynamic | ARNCE/HAM-64 |
 | 8 | Ack MIC | Non-Critical, Static | 4 bytes|
 | 9 | Minimum SNR | Critical, Static | 0–1 bytes |
-| 10 | Trace Signal | Non-Critical, Dynamic | 0–1 bytes |
+| 10 | Trace Signal | Non-Critical, Dynamic | 0+ bytes |
 | 11 | Region Code | Critical, Dynamic | 2 bytes |
 
 ### Trace Route (option 2)
