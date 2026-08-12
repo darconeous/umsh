@@ -976,7 +976,7 @@ mod tests {
         let packet = test_unicast_packet(requester, &[]);
 
         let plan = node
-            .evaluate_identity_request(&packet, requester, &options)
+            .evaluate_identity_request(&packet, requester, &options, 0)
             .expect("responder should produce a reply plan");
         block_on_ready(node.send_identity_response(plan));
 
@@ -1017,7 +1017,7 @@ mod tests {
         let packet = test_broadcast_packet(requester, None, None);
 
         let plan = node
-            .evaluate_identity_request(&packet, requester, &options)
+            .evaluate_identity_request(&packet, requester, &options, 0)
             .expect("selected broadcast solicitation produces a plan");
         block_on_ready(node.send_identity_response(plan));
 
@@ -1058,7 +1058,7 @@ mod tests {
         let repeated = test_broadcast_packet(requester, Some(0x21), None);
 
         let plan = node
-            .evaluate_identity_request(&repeated, requester, &options)
+            .evaluate_identity_request(&repeated, requester, &options, 0)
             .expect("a hint-filtered solicitation may be flood routed");
         block_on_ready(node.send_identity_response(plan));
 
@@ -1068,6 +1068,97 @@ mod tests {
             unicasts[0].options.flood_hops.is_some(),
             "the reply may be flooded back to a requester that named us"
         );
+    }
+
+    /// One solicitation gets one reply, however many copies of it arrive.
+    ///
+    /// A request is unauthenticated and carries no frame counter, so nothing
+    /// below the node layer can recognize a repeat of one; a repeater that
+    /// carried a copy it should have left alone used to buy the requester an
+    /// extra reply from every node in earshot.
+    #[cfg(all(feature = "software-crypto", feature = "unsafe-advanced"))]
+    #[test]
+    fn responder_answers_one_solicitation_once() {
+        let mac = FakeMac::new(vec![[0x12; 32], [0x13; 32], [0x14; 32]]);
+        let node = responder_node(&mac);
+        let our_key = PublicKey([0x11; 32]);
+        let requester = PublicKey([0x41; 32]);
+        node.enable_identity_responder_default(test_profile(our_key));
+
+        let options = crate::mac_command::IdentityRequestBuilder::new()
+            .nonce(0x0000_BEEF)
+            .unwrap()
+            .filter_role(crate::NodeRole::Repeater)
+            .unwrap()
+            .build();
+        let packet = test_broadcast_packet(requester, None, None);
+
+        let plan = node
+            .evaluate_identity_request(&packet, requester, &options, 1_000)
+            .expect("the first copy is answered");
+        block_on_ready(node.send_identity_response(plan));
+
+        // A second copy arriving while the first reply is still held in the
+        // transmit queue, and a third once it has aired.
+        assert!(
+            node.evaluate_identity_request(&packet, requester, &options, 3_000)
+                .is_none(),
+            "a copy arriving mid-hold must not queue a second reply"
+        );
+        assert!(
+            node.evaluate_identity_request(&packet, requester, &options, 45_000)
+                .is_none(),
+            "nor one arriving after the first reply aired"
+        );
+        assert_eq!(mac.take_unicasts().len(), 1, "exactly one reply");
+
+        // A fresh nonce is the requester asking again, and is answered.
+        let asked_again = crate::mac_command::IdentityRequestBuilder::new()
+            .nonce(0x0000_F00D)
+            .unwrap()
+            .filter_role(crate::NodeRole::Repeater)
+            .unwrap()
+            .build();
+        let plan = node
+            .evaluate_identity_request(&packet, requester, &asked_again, 46_000)
+            .expect("a new solicitation is a new question");
+        block_on_ready(node.send_identity_response(plan));
+        assert_eq!(mac.take_unicasts().len(), 1);
+
+        // So is the same nonce once the suppression window has passed.
+        let plan = node
+            .evaluate_identity_request(&packet, requester, &options, 200_000)
+            .expect("suppression is a window, not a permanent refusal");
+        block_on_ready(node.send_identity_response(plan));
+        assert_eq!(mac.take_unicasts().len(), 1);
+    }
+
+    /// Suppression names a solicitation, not a peer: two requesters asking at
+    /// once both get an answer.
+    #[cfg(all(feature = "software-crypto", feature = "unsafe-advanced"))]
+    #[test]
+    fn responder_answers_every_requester_that_asks() {
+        let mac = FakeMac::new(vec![[0x12; 32], [0x13; 32]]);
+        let node = responder_node(&mac);
+        let our_key = PublicKey([0x11; 32]);
+        node.enable_identity_responder_default(test_profile(our_key));
+
+        let options = crate::mac_command::IdentityRequestBuilder::new()
+            .nonce(0x0000_BEEF)
+            .unwrap()
+            .filter_role(crate::NodeRole::Repeater)
+            .unwrap()
+            .build();
+
+        // Same nonce, different askers — a nonce is only unique to its sender.
+        for requester in [PublicKey([0x41; 32]), PublicKey([0x42; 32])] {
+            let packet = test_broadcast_packet(requester, None, None);
+            let plan = node
+                .evaluate_identity_request(&packet, requester, &options, 1_000)
+                .expect("each requester is owed an answer");
+            block_on_ready(node.send_identity_response(plan));
+        }
+        assert_eq!(mac.take_unicasts().len(), 2);
     }
 
     #[cfg(all(feature = "software-crypto", feature = "unsafe-advanced"))]
@@ -1087,7 +1178,7 @@ mod tests {
         // FILTER_NODE_HINT narrows this one to a single answering node.
         let repeated = test_broadcast_packet(requester, Some(0x21), None);
         assert!(
-            node.evaluate_identity_request(&repeated, requester, &options)
+            node.evaluate_identity_request(&repeated, requester, &options, 0)
                 .is_none()
         );
 
@@ -1095,7 +1186,7 @@ mod tests {
         // the filters say, so check it with a hint filter too.
         let routed = test_broadcast_packet(requester, None, Some(&[0xAB, 0xCD]));
         assert!(
-            node.evaluate_identity_request(&routed, requester, &options)
+            node.evaluate_identity_request(&routed, requester, &options, 0)
                 .is_none()
         );
         let hint_options = crate::mac_command::IdentityRequestBuilder::new()
@@ -1103,14 +1194,14 @@ mod tests {
             .unwrap()
             .build();
         assert!(
-            node.evaluate_identity_request(&routed, requester, &hint_options)
+            node.evaluate_identity_request(&routed, requester, &hint_options, 0)
                 .is_none()
         );
 
         // A zeroed FHOPS byte and a present-but-empty Route option are fine.
         let clean = test_broadcast_packet(requester, Some(0x00), Some(&[]));
         assert!(
-            node.evaluate_identity_request(&clean, requester, &options)
+            node.evaluate_identity_request(&clean, requester, &options, 0)
                 .is_some()
         );
     }
@@ -1132,7 +1223,7 @@ mod tests {
         let packet = test_unicast_packet(PublicKey([0x41; 32]), &[]);
 
         assert!(
-            node.evaluate_identity_request(&packet, PublicKey([0x41; 32]), &options)
+            node.evaluate_identity_request(&packet, PublicKey([0x41; 32]), &options, 0)
                 .is_none()
         );
     }
@@ -1152,7 +1243,7 @@ mod tests {
         let packet = test_unicast_packet(PublicKey([0x41; 32]), &[]);
 
         assert!(
-            node.evaluate_identity_request(&packet, PublicKey([0x41; 32]), &options)
+            node.evaluate_identity_request(&packet, PublicKey([0x41; 32]), &options, 0)
                 .is_none()
         );
     }
@@ -1172,7 +1263,7 @@ mod tests {
         let options = crate::mac_command::IdentityRequestBuilder::new().build();
         let packet = test_unicast_packet(PublicKey([0x41; 32]), &[]);
         assert!(
-            node.evaluate_identity_request(&packet, PublicKey([0x41; 32]), &options)
+            node.evaluate_identity_request(&packet, PublicKey([0x41; 32]), &options, 0)
                 .is_none(),
             "a silenced responder answers nothing"
         );
@@ -1191,7 +1282,7 @@ mod tests {
         let options = crate::mac_command::IdentityRequestBuilder::new().build();
         let packet = test_unicast_packet(PublicKey([0x41; 32]), &[]);
         assert!(
-            node.evaluate_identity_request(&packet, PublicKey([0x41; 32]), &options)
+            node.evaluate_identity_request(&packet, PublicKey([0x41; 32]), &options, 0)
                 .is_none()
         );
     }

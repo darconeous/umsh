@@ -18,12 +18,55 @@ use alloc::boxed::Box;
 use alloc::string::String;
 use alloc::vec::Vec;
 
+use heapless::Deque;
 use umsh_core::{ChannelId, NodeHint, PayloadType, PublicKey};
 use umsh_mac::{PacketFamily, Snr};
 
 use crate::identity::{NodeCapabilities, NodeIdentityPayload, NodeRole};
 use crate::location::NodeLocation;
 use crate::mac_command::IdentityRequestFilters;
+
+/// The narrowest and widest random hold applied to a reply to a
+/// broadcast/multicast solicitation, per the Identity Request
+/// flood-management rules. Every node the solicitation selected is answering
+/// the same frame, so the hold spreads the replies across the window instead
+/// of piling them onto one another.
+pub(crate) const RESPONSE_MIN_DELAY_MS: u16 = 500;
+pub(crate) const RESPONSE_MAX_DELAY_MS: u16 = 30_000;
+
+/// How long one answered solicitation suppresses further replies to it.
+///
+/// A solicitation reaches a node once per path it travels, and the copies do
+/// not arrive together: a repeater carrying the second copy holds it for its
+/// own contention delay first. The window must also outlive the reply's own
+/// random hold, since a duplicate landing while the first reply still sits in
+/// the transmit queue is the case that queues a second one — so it is derived
+/// from that hold rather than chosen independently.
+const SOLICITATION_SUPPRESSION_MS: u64 = RESPONSE_MAX_DELAY_MS as u64 * 2;
+
+/// How many recently answered solicitations are remembered at once.
+///
+/// One entry per distinct solicitation, so this is how many separate
+/// questions a node can be holding answers to at once. Overflow evicts the
+/// oldest, which can then be answered twice — the pre-existing behavior
+/// rather than a new failure.
+const ANSWERED_CAPACITY: usize = 8;
+
+/// One solicitation this node has already answered.
+struct AnsweredSolicitation {
+    /// The requester, by hint rather than full key: enough to tell two
+    /// askers apart, and a collision costs one suppressed reply rather than
+    /// anything worse.
+    requester: NodeHint,
+    /// The request's `NONCE`, when it carried one. This is what makes the
+    /// entry name a *solicitation* and not merely a peer — a requester that
+    /// wants another answer inside the window asks with a fresh nonce, which
+    /// is what the nonce is for. A request that carries none cannot be told
+    /// apart from a repeat of itself, so within the window it is treated as
+    /// one.
+    nonce: Option<u32>,
+    answered_at_ms: u64,
+}
 
 /// This node's own identity, used to answer Identity Requests.
 ///
@@ -180,15 +223,29 @@ pub fn default_respond_policy(ctx: &IdentityRequestContext<'_>) -> RespondDecisi
 /// Lets a node keep a live profile while declining to be discovered. The
 /// profile is what unsolicited advertisements are built from, so silencing
 /// the responder this way — rather than by uninstalling it — is what keeps
-/// the two behaviours independent.
+/// the two behaviors independent.
 pub fn never_respond_policy(_ctx: &IdentityRequestContext<'_>) -> RespondDecision {
     RespondDecision::Ignore
 }
 
-/// Installed responder state: the profile plus the active policy.
+/// Installed responder state: the profile, the active policy, and the record
+/// of what has already been answered.
 pub(crate) struct IdentityResponder {
     pub(crate) profile: NodeIdentityProfile,
     pub(crate) policy: Box<RespondPolicy>,
+    /// Insertion-ordered, so the oldest entry is always at the front and
+    /// expiry prunes from that end without a scan.
+    answered: Deque<AnsweredSolicitation, ANSWERED_CAPACITY>,
+}
+
+impl IdentityResponder {
+    pub(crate) fn new(profile: NodeIdentityProfile, policy: Box<RespondPolicy>) -> Self {
+        Self {
+            profile,
+            policy,
+            answered: Deque::new(),
+        }
+    }
 }
 
 /// A resolved plan to answer one Identity Request, produced synchronously while
@@ -215,12 +272,14 @@ impl IdentityResponder {
     /// Evaluate an incoming request against the profile and policy.
     ///
     /// Returns `Some(plan)` when the node should answer: the request's filters
-    /// select this node **and** the policy returns `Respond`. Returns `None`
-    /// otherwise (not selected, policy said `Ignore`, or the reply could not be
-    /// encoded).
+    /// select this node, the solicitation has not already been answered,
+    /// **and** the policy returns `Respond`. Returns `None` otherwise (not
+    /// selected, already answered, policy said `Ignore`, or the reply could
+    /// not be encoded).
     pub(crate) fn evaluate(
         &mut self,
         ctx: &IdentityRequestContext<'_>,
+        now_ms: u64,
     ) -> Option<IdentityResponsePlan> {
         // Filter gate: does this request target a node like us?
         let our_hint = self.profile.hint();
@@ -232,6 +291,17 @@ impl IdentityResponder {
             return None;
         }
 
+        // Freshness gate: one reply per solicitation, however many copies of
+        // it arrive. A plain broadcast request carries no frame counter, so
+        // nothing below the node layer can recognize a second copy of one;
+        // the echoed nonce is the only thing that names the question.
+        let nonce = ctx.filters.nonce().ok().flatten();
+        let requester = ctx.from_key.hint();
+        self.expire_answered(now_ms);
+        if self.already_answered(&requester, nonce) {
+            return None;
+        }
+
         // Policy gate: do we want to answer this particular sender?
         let full_source = match (self.policy)(ctx) {
             RespondDecision::Ignore => return None,
@@ -239,7 +309,6 @@ impl IdentityResponder {
         };
 
         // Build the framed reply, echoing the request nonce into option 5.
-        let nonce = ctx.filters.nonce().ok().flatten();
         let payload = self.profile.to_payload(nonce);
         let mut buf = [0u8; 192];
         buf[0] = PayloadType::NodeIdentity as u8;
@@ -248,6 +317,10 @@ impl IdentityResponder {
             ctx.family,
             crate::PacketFamily::Broadcast | crate::PacketFamily::Multicast
         );
+        // Recorded only now that there is a reply to send: a request the
+        // policy declined or the encoder could not frame was never answered,
+        // and must not suppress a later attempt that would succeed.
+        self.record_answered(requester, nonce, now_ms);
         Some(IdentityResponsePlan {
             to: ctx.from_key,
             full_source,
@@ -255,6 +328,38 @@ impl IdentityResponder {
             no_flood: solicitation && !ctx.filters.hint_filtered(),
             framed: Vec::from(&buf[..len]),
         })
+    }
+
+    fn already_answered(&self, requester: &NodeHint, nonce: Option<u32>) -> bool {
+        self.answered
+            .iter()
+            .any(|entry| entry.requester == *requester && entry.nonce == nonce)
+    }
+
+    /// Drop every entry older than the suppression window.
+    ///
+    /// A clock that has gone backwards leaves an entry looking younger than
+    /// it is, never older, so suppression can only be held slightly too long
+    /// — never released early, which is the direction that would let the
+    /// duplicate replies back.
+    fn expire_answered(&mut self, now_ms: u64) {
+        while let Some(entry) = self.answered.front() {
+            if now_ms.saturating_sub(entry.answered_at_ms) < SOLICITATION_SUPPRESSION_MS {
+                return;
+            }
+            let _ = self.answered.pop_front();
+        }
+    }
+
+    fn record_answered(&mut self, requester: NodeHint, nonce: Option<u32>, now_ms: u64) {
+        if self.answered.is_full() {
+            let _ = self.answered.pop_front();
+        }
+        let _ = self.answered.push_back(AnsweredSolicitation {
+            requester,
+            nonce,
+            answered_at_ms: now_ms,
+        });
     }
 }
 

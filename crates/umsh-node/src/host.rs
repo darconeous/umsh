@@ -374,7 +374,12 @@ fn dispatch_payload_callbacks<M: MacBackend>(
             // reply plan now, while the reception context is live; the async
             // pump sends it after this synchronous dispatch returns.
             if let mac_command::MacCommand::IdentityRequest { options } = command {
-                if let Some(plan) = node.evaluate_identity_request(packet, from, options) {
+                if let Some(plan) = node.evaluate_identity_request(
+                    packet,
+                    from,
+                    options,
+                    packet.received_at_ms().unwrap_or(now_ms),
+                ) {
                     pending_identity.borrow_mut().push((node.clone(), plan));
                 }
             }

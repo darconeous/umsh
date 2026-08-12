@@ -566,10 +566,8 @@ impl<M: MacBackend> LocalNode<M> {
     where
         P: FnMut(&IdentityRequestContext<'_>) -> RespondDecision + 'static,
     {
-        self.state.borrow_mut().identity_responder = Some(IdentityResponder {
-            profile,
-            policy: Box::new(policy),
-        });
+        self.state.borrow_mut().identity_responder =
+            Some(IdentityResponder::new(profile, Box::new(policy)));
     }
 
     /// Enable the Identity Request responder with the
@@ -617,11 +615,12 @@ impl<M: MacBackend> LocalNode<M> {
         packet: &ReceivedPacketRef<'_>,
         from: PublicKey,
         options: &[u8],
+        now_ms: u64,
     ) -> Option<IdentityResponsePlan> {
         // Flood management for solicitations that can reach many nodes: a
         // broadcast (or multicast) Identity Request must not carry a routing
         // constraint (a Route option is fine only when empty) — a steered
-        // request is still on its way to the neighbourhood it meant to ask.
+        // request is still on its way to the neighborhood it meant to ask.
         //
         // A request that no FILTER_NODE_HINT narrows may additionally be
         // answered by every node it reaches, so it must also arrive
@@ -655,7 +654,7 @@ impl<M: MacBackend> LocalNode<M> {
             .borrow_mut()
             .identity_responder
             .as_mut()?
-            .evaluate(&ctx)
+            .evaluate(&ctx, now_ms)
     }
 
     /// Send a resolved Identity Request reply as an authenticated unicast.
@@ -664,11 +663,6 @@ impl<M: MacBackend> LocalNode<M> {
     /// crypto state the MAC already resolved for the requester — permanent or
     /// transient — and never promotes/pins the peer. Failures are dropped: the
     /// requester can always ask again.
-    /// The widest random hold applied to a reply to a broadcast/multicast
-    /// solicitation, per the Identity Request flood-management rules.
-    const IDENTITY_RESPONSE_MAX_DELAY_MS: u16 = 30_000;
-    const IDENTITY_RESPONSE_MIN_DELAY_MS: u16 = 500;
-
     pub(crate) async fn send_identity_response(&self, plan: IdentityResponsePlan) {
         let mut options = SendOptions::default();
         if plan.full_source {
@@ -688,8 +682,10 @@ impl<M: MacBackend> LocalNode<M> {
             let mut jitter = [0u8; 2];
             self.mac.fill_random(&mut jitter).await;
             let delay = u16::from_be_bytes(jitter)
-                % (Self::IDENTITY_RESPONSE_MAX_DELAY_MS - Self::IDENTITY_RESPONSE_MIN_DELAY_MS + 1)
-                + Self::IDENTITY_RESPONSE_MIN_DELAY_MS;
+                % (crate::identity_responder::RESPONSE_MAX_DELAY_MS
+                    - crate::identity_responder::RESPONSE_MIN_DELAY_MS
+                    + 1)
+                + crate::identity_responder::RESPONSE_MIN_DELAY_MS;
             options = options.with_tx_delay_ms(delay);
         }
         // A broadcast solicitation's source is not auto-registered on

@@ -47,11 +47,19 @@ In order to manage the potential flood of responses, the following rules MUST be
   0.5 to 30 seconds, so that the selected nodes do not all answer at once. A
   delayed response that then fails channel-activity assessment follows the
   responder's normal bounded CCA backoff-and-retry before being dropped.
+- One solicitation is answered at most once. A request reaches a node once per
+  path it travels, and a plain broadcast carries no frame counter for a lower
+  layer to recognize the repeat by; the [NONCE](#identity-request-options) is
+  what names the solicitation. A responder suppresses a request matching one it
+  has already answered — same sender, same NONCE — for at least as long as it
+  may hold the reply. A request carrying no NONCE cannot be distinguished from a
+  repeat of itself; a requester that wants a further answer inside that window
+  asks with a fresh NONCE.
 
 A [FILTER_NODE_HINT](#identity-request-options) filter names a single node, so a
 request carrying one solicits a single reply however far it travels. A request
 without one selects by role or capability, and every node it reaches may answer;
-such a request is therefore confined to the requester's own neighbourhood:
+such a request is therefore confined to the requester's own neighborhood:
 
 - The FHOPS byte must either be absent or set to 0x00. A request that is flood
   routed — FHOPS present with either nibble nonzero — MUST NOT be answered.
