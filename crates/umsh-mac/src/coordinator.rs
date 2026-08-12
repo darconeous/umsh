@@ -1591,17 +1591,37 @@ impl<
     /// taught *us* the way back. The matching trace on this ack is what closes
     /// the other direction, and is the only thing an ack-only exchange gives
     /// the sender to learn a route from.
+    ///
+    /// It is honored only when the route attached below gives this ack some
+    /// way to be repeated. An ack going back to a peer we hear directly
+    /// carries neither a flood budget nor a source route, so no repeater may
+    /// touch it and the trace would arrive as empty as it left. The sender
+    /// reads the direct link off the ack's own shape instead — see
+    /// [`Coordinator::learn_route_for_peer`].
     pub fn queue_mac_ack_for_peer(
         &mut self,
         peer_id: PeerId,
         ack_trailer: [u8; 8],
         trace_route: bool,
     ) -> Result<(), SendError> {
+        // Settled before the frame is built, because a trace route has to be
+        // encoded ahead of the route options that decide whether to keep it.
+        let repeatable = match self
+            .peer_registry
+            .get(peer_id)
+            .and_then(|peer| peer.route.as_ref())
+        {
+            // Matching the arms below: a route that constrains no hop is not
+            // attached, so it leaves nothing to carry the ack either.
+            Some(CachedRoute::Source(route)) => !route.is_empty(),
+            Some(CachedRoute::Flood { .. }) => true,
+            _ => false,
+        };
         let mut buf = [0u8; FRAME];
         let mut builder = PacketBuilder::new(&mut buf).mac_ack(ack_trailer);
         // Ahead of the route options below: the builder rejects options
         // encoded out of ascending number order.
-        if trace_route {
+        if trace_route && repeatable {
             builder = builder.trace_route();
         }
         if let Some(peer) = self.peer_registry.get(peer_id) {
@@ -1693,7 +1713,11 @@ impl<
             builder = builder.flood_hops(hops);
         }
         if options.trace_route
-            || self.needs_route_discovery(peer_id, effective_source_route.as_ref())
+            || self.needs_route_discovery(
+                peer_id,
+                effective_source_route.as_ref(),
+                effective_flood_hops,
+            )
         {
             builder = builder.trace_route();
         }
@@ -1831,7 +1855,11 @@ impl<
             builder = builder.flood_hops(hops);
         }
         if options.trace_route
-            || self.needs_route_discovery(peer_id, effective_source_route.as_ref())
+            || self.needs_route_discovery(
+                peer_id,
+                effective_source_route.as_ref(),
+                effective_flood_hops,
+            )
         {
             builder = builder.trace_route();
         }
@@ -3605,25 +3633,36 @@ impl<
     /// Whether this send should carry a trace route the caller did not ask
     /// for, because nothing yet describes the path to the peer.
     ///
-    /// A frame that follows a source route already knows its path, and a peer
-    /// heard directly has no repeaters for a trace to record; neither learns
-    /// anything from paying for the option. Everything else floods toward a
-    /// destination whose distance we can at best estimate, and that is exactly
-    /// the frame whose path is worth writing down: it costs one byte on the
-    /// way out and buys the destination a precise route back. The destination
-    /// mirrors the option onto its ack, which closes the return direction, so
-    /// a single exchange leaves both ends holding a route and this condition
-    /// stops firing. Discovery is paid for once per path rather than per
-    /// packet — the always-on variant is [proactive route refresh], which the
-    /// spec deliberately leaves unspecified.
+    /// A trace route asks the repeaters that carry a frame to record
+    /// themselves, so it is only worth its byte on a frame some repeater can
+    /// carry. A frame with no flood budget and no source route is not one:
+    /// nothing may forward it, the trace is guaranteed to arrive empty, and
+    /// the destination learns the link is direct from the frame's own shape
+    /// anyway — see [`Coordinator::learn_route_for_peer`].
+    ///
+    /// Past that, a frame that follows a source route already knows its path,
+    /// and a peer heard directly has no repeaters for a trace to record.
+    /// Everything else floods toward a destination whose distance we can at
+    /// best estimate, and that is exactly the frame whose path is worth
+    /// writing down: it costs one byte on the way out and buys the
+    /// destination a precise route back. The destination mirrors the option
+    /// onto its ack, which closes the return direction, so a single exchange
+    /// leaves both ends holding a route and this condition stops firing.
+    /// Discovery is paid for once per path rather than per packet — the
+    /// always-on variant is [proactive route refresh], which the spec
+    /// deliberately leaves unspecified.
     ///
     /// [proactive route refresh]: https://darconeous.github.io/umsh/docs/protocol/beacons.html#potential-improvement-proactive-route-refresh
     fn needs_route_discovery(
         &self,
         peer_id: PeerId,
         source_route: Option<&Vec<RouterHint, MAX_SOURCE_ROUTE_HOPS>>,
+        flood_hops: Option<u8>,
     ) -> bool {
         if source_route.is_some_and(|route| !route.is_empty()) {
+            return false;
+        }
+        if flood_hops.unwrap_or(0) == 0 {
             return false;
         }
         !matches!(
@@ -4398,16 +4437,26 @@ impl<
             return;
         }
 
-        if let Some(flood_hops) = header.flood_hops {
-            let regions = Self::region_codes_from_options(frame, header.options_range.clone());
-            self.peer_registry.update_route(
-                peer_id,
-                crate::CachedRoute::Flood {
-                    hops: flood_hops.accumulated(),
-                    regions,
-                },
-            );
-        }
+        let Some(flood_hops) = header.flood_hops else {
+            // No flood budget and no source route: nothing on this frame gave
+            // any repeater permission to carry it, so the only way it reached
+            // us is off the sender's own transmitter. That is the same
+            // evidence an empty trace route carries, read off the frame's
+            // shape instead of out of an option — which is why a frame like
+            // this is not worth spending a trace route on.
+            self.peer_registry
+                .update_route(peer_id, crate::CachedRoute::Direct);
+            return;
+        };
+
+        let regions = Self::region_codes_from_options(frame, header.options_range.clone());
+        self.peer_registry.update_route(
+            peer_id,
+            crate::CachedRoute::Flood {
+                hops: flood_hops.accumulated(),
+                regions,
+            },
+        );
     }
 
     fn region_codes_from_options(

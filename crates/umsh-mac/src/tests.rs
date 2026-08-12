@@ -3723,6 +3723,122 @@ fn unicast_over_a_cached_source_route_carries_no_trace_route() {
     assert!(frame_has_trace_route(queued.frame.as_slice()));
 }
 
+/// A trace route asks repeaters to record themselves. With no flood budget
+/// and no source route nothing may forward the frame at all, so the option
+/// would arrive as empty as it left — a byte spent on a question no one is in
+/// a position to answer.
+#[test]
+fn unrepeatable_unicast_carries_no_trace_route_even_to_an_unrouted_peer() {
+    let mut mac = make_mac();
+    let local_id = mac.add_identity(DummyIdentity::new([0x10; 32])).unwrap();
+    let peer_key = test_pubkey(0xAB);
+    let peer_id = mac.add_peer(peer_key).unwrap();
+    mac.install_pairwise_keys(
+        local_id,
+        peer_id,
+        PairwiseKeys {
+            k_enc: [1; 32],
+            k_mic: [2; 32],
+        },
+    )
+    .unwrap();
+
+    let _ = block_on(mac.send_unicast(
+        local_id,
+        &peer_key,
+        b"hi",
+        &SendOptions::default().no_flood(),
+    ))
+    .unwrap();
+
+    let queued = mac.tx_queue_mut().pop_next().expect("queued unicast");
+    assert!(!frame_has_trace_route(queued.frame.as_slice()));
+}
+
+/// The same rule on the reply side, and the case that actually reaches the
+/// air: once the destination knows the sender is a direct neighbour its ack
+/// carries no flood budget and no source route, so mirroring a trace onto it
+/// puts an unanswerable option on every acknowledgement.
+#[test]
+fn mac_ack_to_a_directly_heard_peer_mirrors_no_trace_route() {
+    let mut mac = make_mac();
+    let local_id = mac.add_identity(DummyIdentity::new([0x10; 32])).unwrap();
+    let remote = DummyIdentity::new([0xAB; 32]);
+    let peer_key = *remote.public_key();
+    let peer_id = mac.add_peer(peer_key).unwrap();
+    let keys = PairwiseKeys {
+        k_enc: [1; 32],
+        k_mic: [2; 32],
+    };
+    mac.install_pairwise_keys(local_id, peer_id, keys.clone())
+        .unwrap();
+    let dst_hint = mac
+        .identity(local_id)
+        .unwrap()
+        .identity()
+        .public_key()
+        .hint();
+
+    // Traced and flooded, but it arrived with an empty trace: a direct
+    // neighbour, which is what the ack then has to route around.
+    mac.radio_mut().queue_received_unicast_with_route(
+        &remote,
+        &keys,
+        &dst_hint,
+        b"hello",
+        true,
+        7,
+        Some((3, 0)),
+        Some(&[]),
+        None,
+    );
+    assert!(block_on(mac.receive_one(|_, _| {})).unwrap());
+
+    assert_eq!(
+        mac.peer_registry().get(peer_id).unwrap().route,
+        Some(CachedRoute::Direct)
+    );
+    let queued = mac.tx_queue_mut().pop_next().expect("queued mac ack");
+    let header = PacketHeader::parse(queued.frame.as_slice()).unwrap();
+    assert_eq!(header.fcf.packet_type(), PacketType::MacAck);
+    assert!(!frame_has_trace_route(queued.frame.as_slice()));
+}
+
+/// The evidence an empty trace route used to carry, read off the frame's own
+/// shape. Nothing gave a repeater permission to carry this, so the only way
+/// it arrived is directly — which is what lets the trace come off the wire.
+#[test]
+fn a_frame_nothing_could_have_repeated_proves_a_direct_link() {
+    let mut mac = make_mac();
+    let local_id = mac.add_identity(DummyIdentity::new([0x10; 32])).unwrap();
+    let remote = DummyIdentity::new([0xAB; 32]);
+    let peer_key = *remote.public_key();
+    let peer_id = mac.add_peer(peer_key).unwrap();
+    let keys = PairwiseKeys {
+        k_enc: [1; 32],
+        k_mic: [2; 32],
+    };
+    mac.install_pairwise_keys(local_id, peer_id, keys.clone())
+        .unwrap();
+    let dst_hint = mac
+        .identity(local_id)
+        .unwrap()
+        .identity()
+        .public_key()
+        .hint();
+
+    // No flood hops, no source route, and no trace route either.
+    mac.radio_mut().queue_received_unicast_with_route(
+        &remote, &keys, &dst_hint, b"hello", false, 7, None, None, None,
+    );
+    assert!(block_on(mac.receive_one(|_, _| {})).unwrap());
+
+    assert_eq!(
+        mac.peer_registry().get(peer_id).unwrap().route,
+        Some(CachedRoute::Direct)
+    );
+}
+
 /// No repeater carries the frame, so there is nothing for a trace to record.
 #[test]
 fn unicast_to_a_directly_heard_peer_carries_no_trace_route() {

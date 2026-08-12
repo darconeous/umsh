@@ -79,6 +79,8 @@ UMSH does not define a dedicated path-discovery packet type. Instead, path disco
 
 A sender decides whether to originate the option from what it already knows about the destination. One that holds no path — no source route, and no evidence the destination is a direct neighbor — SHOULD include a trace route: the packet is going to flood regardless, and the trace is what turns that flood into a path. A sender following a source route SHOULD NOT, since that path is already known and re-recording it on every packet is the [proactive refresh](#potential-improvement-proactive-route-refresh) this specification does not define.
 
+A packet carrying neither flood hops nor a source route SHOULD NOT carry a trace route at all, whatever the sender knows. No repeater may forward such a packet, so the option can only arrive as empty as it left, and its arrival already proves what an empty trace would have said.
+
 Because router hints are only two bytes, different repeaters may share the same hint, which may result in redundant (but harmless) forwarding along a source route.
 
 ## Route Learning
@@ -88,7 +90,9 @@ When a node successfully processes an incoming packet, it SHOULD update its rout
 - **Trace route**: if the packet contains a trace-route option, the node caches that trace route as a source route for future packets back to the sender. Because the trace route is accumulated most-recent first, it already describes the return path from the receiver back toward the original sender. This is the primary mechanism for learning precise multi-hop paths.
 - **Flood hop count**: if the packet contains a flood hop count, the node caches the sender's `FHOPS_ACC` value together with any region-code options that arrived on the packet. When no source route is available, these cached flood parameters can be reused for flood responses — scoping the flood to approximately the right radius and regional domain rather than flooding the entire network.
 
-A MAC ack is such a packet. It names no source, but its [ack trailer](security.md#ack-tag-construction) correlates it to an outstanding request and so to the peer that sent it, and the trace route or flood hop count it carries updates that peer's routing state like any other packet's would.
+- **Neither**: a packet that arrives carrying no flood hop count and no source route was one that no repeater had permission to forward, so it reached the receiver off the sender's own transmitter. The node SHOULD cache the sender as a direct neighbor. This is the same conclusion an empty trace route supports, drawn from the packet's structure rather than from an option, which is what lets an unforwardable packet leave the trace route off.
+
+A MAC ack is such a packet. It names no source, but its [ack trailer](security.md#ack-tag-construction) correlates it to an outstanding request and so to the peer that sent it, and whatever routing evidence it carries updates that peer's routing state like any other packet's would.
 
 A packet that arrives carrying a source-route option — including one whose hints are all consumed — spends flood hops only after the route runs out, so its `FHOPS_ACC` counts the tail of the path rather than its length. Such a packet SHOULD NOT be used to derive a flood-distance estimate.
 
