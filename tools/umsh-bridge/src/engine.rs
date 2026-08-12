@@ -83,6 +83,9 @@ pub enum Verdict {
     Policy(&'static str),
     /// Step 6: the source route names someone else next.
     NotOurHop,
+    /// Step 7: the frame carries no flood hop count, so it was never
+    /// floodable to begin with.
+    NotFloodable,
     /// Step 7: the flood budget is spent.
     HopsExhausted,
     /// Step 8: too weak to relay.
@@ -254,8 +257,15 @@ impl Engine {
         };
 
         if !routed {
-            // Step 7: flood hop accounting.
-            if header.flood_hops.is_some_and(|hops| hops.remaining() == 0) {
+            // Step 7: flood hop accounting. An absent FHOPS field is not an
+            // unlimited budget — it is the sender declining to be flooded at
+            // all, and nothing downstream can restore the field or bound the
+            // frame once it is carried. A frame with no field and no source
+            // route therefore stops here.
+            let Some(hops) = header.flood_hops else {
+                return Verdict::NotFloodable;
+            };
+            if hops.remaining() == 0 {
                 return Verdict::HopsExhausted;
             }
 
@@ -699,6 +709,17 @@ mod tests {
         builder.payload(b"hello").build().unwrap().to_vec()
     }
 
+    /// A broadcast with no `FHOPS` field at all — what a sender emits when
+    /// the frame must not be flooded onward.
+    fn unfloodable_broadcast(source: NodeHint, options: &[(OptionNumber, Vec<u8>)]) -> Vec<u8> {
+        let mut buf = [0u8; 255];
+        let mut builder = PacketBuilder::new(&mut buf).broadcast().source_hint(source);
+        for (number, value) in options {
+            builder = builder.option(*number, value);
+        }
+        builder.payload(b"hello").build().unwrap().to_vec()
+    }
+
     /// Drain what each interface was asked to transmit.
     fn sent(interfaces: &Interfaces) -> Vec<(String, Vec<u8>)> {
         let mut out = Vec::new();
@@ -776,6 +797,40 @@ mod tests {
             engine.evaluate(&heard(0, frame), Instant::now()),
             Verdict::HopsExhausted
         );
+    }
+
+    /// A frame with no `FHOPS` field at all asked to travel one hop and no
+    /// further. Reading the absence as an unbounded budget is what let a
+    /// bridge carry unfloodable frames — including the Identity Requests
+    /// whose replies then arrived once per copy heard.
+    #[tokio::test(start_paused = true)]
+    async fn a_frame_with_no_flood_budget_is_never_carried() {
+        let (mut engine, interfaces, _) = engine("");
+        let frame = unfloodable_broadcast(NodeHint([1, 2, 3]), &[]);
+        assert_eq!(
+            engine.evaluate(&heard(0, frame), Instant::now()),
+            Verdict::NotFloodable
+        );
+        assert!(sent(&interfaces).is_empty());
+    }
+
+    /// The absence of a budget is a *flood* rule. A frame the sender routed
+    /// explicitly through this bridge still gets carried, because a
+    /// source-routed hop spends nothing from `FHOPS` and never needed the
+    /// field in the first place.
+    #[tokio::test(start_paused = true)]
+    async fn a_source_routed_hop_needs_no_flood_budget() {
+        let (mut engine, interfaces, identity) = engine("");
+        let hint = identity.router_hint();
+        let frame = unfloodable_broadcast(
+            NodeHint([1, 2, 3]),
+            &[(OptionNumber::SourceRoute, hint.0.to_vec())],
+        );
+        assert!(matches!(
+            engine.evaluate(&heard(0, frame), Instant::now()),
+            Verdict::Forwarded(_)
+        ));
+        assert!(!sent(&interfaces).is_empty());
     }
 
     #[tokio::test(start_paused = true)]
