@@ -29,3 +29,9 @@ sha2 = { workspace = true, optional = true }
 x25519-dalek = { workspace = true, optional = true }
 zeroize.workspace = true
 umsh-core = { path = "../umsh-core", default-features = false }
+
+[dev-dependencies]
+# Host-test cross-check that the construction is byte-for-byte RFC 5297
+# AEAD_AES_SIV_CMAC_512. Not usable as the runtime implementation: it
+# requires alloc and has no truncated-tag support.
+aes-siv = "0.7"

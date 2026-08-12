@@ -808,7 +808,7 @@ impl NodeIdentity for DummyIdentity {
 ///
 /// This type is intentionally insecure.
 pub struct DummyCipher {
-    key: [u8; 16],
+    key: [u8; 32],
 }
 
 impl AesCipher for DummyCipher {
@@ -832,7 +832,7 @@ pub struct DummyAes;
 impl AesProvider for DummyAes {
     type Cipher = DummyCipher;
 
-    fn new_cipher(&self, key: &[u8; 16]) -> Self::Cipher {
+    fn new_cipher(&self, key: &[u8; 32]) -> Self::Cipher {
         DummyCipher { key: *key }
     }
 }

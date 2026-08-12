@@ -77,8 +77,8 @@ fn duplicate_cache_repeat_does_not_extend_the_window() {
 fn route_retry_changes_authenticated_duplicate_key_without_changing_mic() {
     let source = DummyIdentity::new([0x11; 32]);
     let keys = PairwiseKeys {
-        k_enc: [1; 16],
-        k_mic: [2; 16],
+        k_enc: [1; 32],
+        k_mic: [2; 32],
     };
     let dst = NodeHint([0xAA, 0xBB, 0xCC]);
 
@@ -156,8 +156,8 @@ fn mac_ack_duplicate_key_ignores_dynamic_forwarding_fields() {
 fn forward_duplicate_key_exists_for_every_routable_packet_class() {
     let source = DummyIdentity::new([0x11; 32]);
     let pairwise = PairwiseKeys {
-        k_enc: [1; 16],
-        k_mic: [2; 16],
+        k_enc: [1; 32],
+        k_mic: [2; 32],
     };
     let channel_key = ChannelKey([0x5A; 32]);
     let crypto = CryptoEngine::new(DummyAes, DummySha);
@@ -238,8 +238,8 @@ fn forward_duplicate_key_exists_for_every_routable_packet_class() {
 fn confirmation_identity_matches_forwarding_identity_for_every_routable_packet_class() {
     let source = DummyIdentity::new([0x11; 32]);
     let pairwise = PairwiseKeys {
-        k_enc: [1; 16],
-        k_mic: [2; 16],
+        k_enc: [1; 32],
+        k_mic: [2; 32],
     };
     let channel_key = ChannelKey([0x5A; 32]);
     let crypto = CryptoEngine::new(DummyAes, DummySha);
@@ -394,8 +394,8 @@ fn receive_one_auto_replies_to_echo_request() {
     let remote = DummyIdentity::new([0xAB; 32]);
     let peer_id = mac.add_peer(*remote.public_key()).unwrap();
     let keys = PairwiseKeys {
-        k_enc: [1; 16],
-        k_mic: [2; 16],
+        k_enc: [1; 32],
+        k_mic: [2; 32],
     };
     mac.install_pairwise_keys(local_id, peer_id, keys.clone())
         .unwrap();
@@ -463,13 +463,13 @@ fn channel_table_updates_existing_channel() {
     let key_a = ChannelKey([0x11; 32]);
     let key_b = ChannelKey([0x22; 32]);
     let derived_a = umsh_crypto::DerivedChannelKeys {
-        k_enc: [1; 16],
-        k_mic: [2; 16],
+        k_enc: [1; 32],
+        k_mic: [2; 32],
         channel_id: ChannelId([0xAA, 0xBB]),
     };
     let derived_b = umsh_crypto::DerivedChannelKeys {
-        k_enc: [3; 16],
-        k_mic: [4; 16],
+        k_enc: [3; 32],
+        k_mic: [4; 32],
         channel_id: ChannelId([0xAA, 0xBB]),
     };
 
@@ -634,8 +634,8 @@ fn remove_peer_rekeys_swap_moved_peer_state() {
         local_id,
         first_id,
         PairwiseKeys {
-            k_enc: [1; 16],
-            k_mic: [2; 16],
+            k_enc: [1; 32],
+            k_mic: [2; 32],
         },
     )
     .unwrap();
@@ -643,8 +643,8 @@ fn remove_peer_rekeys_swap_moved_peer_state() {
         local_id,
         second_id,
         PairwiseKeys {
-            k_enc: [3; 16],
-            k_mic: [4; 16],
+            k_enc: [3; 32],
+            k_mic: [4; 32],
         },
     )
     .unwrap();
@@ -662,7 +662,7 @@ fn remove_peer_rekeys_swap_moved_peer_state() {
         .peer_crypto()
         .get(&moved_id)
         .expect("moved peer keeps its crypto state under its new id");
-    assert_eq!(state.pairwise_keys.k_enc, [3; 16]);
+    assert_eq!(state.pairwise_keys.k_enc, [3; 32]);
     // Nothing may linger under the vacated identifier's old key material.
     assert!(
         mac.identity(local_id)
@@ -709,8 +709,8 @@ fn remove_last_peer_needs_no_rekey() {
         local_id,
         second_id,
         PairwiseKeys {
-            k_enc: [3; 16],
-            k_mic: [4; 16],
+            k_enc: [3; 32],
+            k_mic: [4; 32],
         },
     )
     .unwrap();
@@ -823,8 +823,8 @@ fn queue_unicast_enqueues_frame_and_pending_ack() {
         local_id,
         peer_id,
         PairwiseKeys {
-            k_enc: [1; 16],
-            k_mic: [2; 16],
+            k_enc: [1; 32],
+            k_mic: [2; 32],
         },
     )
     .unwrap();
@@ -866,8 +866,8 @@ fn mac_handle_clones_share_send_queue_state() {
                 local_id,
                 peer_id,
                 PairwiseKeys {
-                    k_enc: [1; 16],
-                    k_mic: [2; 16],
+                    k_enc: [1; 32],
+                    k_mic: [2; 32],
                 },
             )
             .await
@@ -934,8 +934,8 @@ fn queue_blind_unicast_requires_known_channel() {
         local_id,
         peer_id,
         PairwiseKeys {
-            k_enc: [1; 16],
-            k_mic: [2; 16],
+            k_enc: [1; 32],
+            k_mic: [2; 32],
         },
     )
     .unwrap();
@@ -999,8 +999,8 @@ fn licensed_only_mode_rejects_encrypted_unicast() {
         local_id,
         peer_id,
         PairwiseKeys {
-            k_enc: [1; 16],
-            k_mic: [2; 16],
+            k_enc: [1; 32],
+            k_mic: [2; 32],
         },
     )
     .unwrap();
@@ -1032,8 +1032,8 @@ fn licensed_only_mode_rejects_encrypted_blind_unicast() {
         local_id,
         peer_id,
         PairwiseKeys {
-            k_enc: [1; 16],
-            k_mic: [2; 16],
+            k_enc: [1; 32],
+            k_mic: [2; 32],
         },
     )
     .unwrap();
@@ -1067,8 +1067,8 @@ fn licensed_only_mode_allows_unencrypted_blind_unicast_with_operator_callsign() 
         local_id,
         peer_id,
         PairwiseKeys {
-            k_enc: [1; 16],
-            k_mic: [2; 16],
+            k_enc: [1; 32],
+            k_mic: [2; 32],
         },
     )
     .unwrap();
@@ -1098,8 +1098,8 @@ fn hybrid_mode_allows_encrypted_unicast_without_operator_callsign() {
         local_id,
         peer_id,
         PairwiseKeys {
-            k_enc: [1; 16],
-            k_mic: [2; 16],
+            k_enc: [1; 32],
+            k_mic: [2; 32],
         },
     )
     .unwrap();
@@ -1129,8 +1129,8 @@ fn unlicensed_mode_allows_blind_unicast_without_operator_callsign() {
         local_id,
         peer_id,
         PairwiseKeys {
-            k_enc: [1; 16],
-            k_mic: [2; 16],
+            k_enc: [1; 32],
+            k_mic: [2; 32],
         },
     )
     .unwrap();
@@ -1242,8 +1242,8 @@ fn receive_one_drops_multicast_with_incompatible_payload_type() {
     let channel_id = mac.crypto().derive_channel_id(&channel_key);
     mac.add_channel(channel_key).unwrap();
     let derived = PairwiseKeys {
-        k_enc: [1; 16],
-        k_mic: [2; 16],
+        k_enc: [1; 32],
+        k_mic: [2; 32],
     };
 
     mac.radio_mut()
@@ -1355,8 +1355,8 @@ fn queue_blind_unicast_enqueues_frame_and_pending_ack() {
         local_id,
         peer_id,
         PairwiseKeys {
-            k_enc: [1; 16],
-            k_mic: [2; 16],
+            k_enc: [1; 32],
+            k_mic: [2; 32],
         },
     )
     .unwrap();
@@ -1428,8 +1428,8 @@ fn first_secure_send_schedules_counter_persist() {
         local_id,
         peer_id,
         PairwiseKeys {
-            k_enc: [1; 16],
-            k_mic: [2; 16],
+            k_enc: [1; 32],
+            k_mic: [2; 32],
         },
     )
     .unwrap();
@@ -1465,8 +1465,8 @@ fn counter_persist_threshold_schedules_next_block() {
         local_id,
         peer_id,
         PairwiseKeys {
-            k_enc: [1; 16],
-            k_mic: [2; 16],
+            k_enc: [1; 32],
+            k_mic: [2; 32],
         },
     )
     .unwrap();
@@ -1515,8 +1515,8 @@ fn service_counter_persistence_writes_and_clears_pending_targets() {
         local_id,
         peer_id,
         PairwiseKeys {
-            k_enc: [1; 16],
-            k_mic: [2; 16],
+            k_enc: [1; 32],
+            k_mic: [2; 32],
         },
     )
     .unwrap();
@@ -1555,8 +1555,8 @@ fn secure_send_continues_after_future_boundary_is_persisted() {
         local_id,
         peer_id,
         PairwiseKeys {
-            k_enc: [1; 16],
-            k_mic: [2; 16],
+            k_enc: [1; 32],
+            k_mic: [2; 32],
         },
     )
     .unwrap();
@@ -1636,8 +1636,8 @@ fn secure_send_blocks_when_counter_window_exhausted() {
         local_id,
         peer_id,
         PairwiseKeys {
-            k_enc: [1; 16],
-            k_mic: [2; 16],
+            k_enc: [1; 32],
+            k_mic: [2; 32],
         },
     )
     .unwrap();
@@ -1684,8 +1684,8 @@ fn secure_send_survives_the_boundary_when_the_counter_starts_late_in_its_block()
             local_id,
             peer_id,
             PairwiseKeys {
-                k_enc: [1; 16],
-                k_mic: [2; 16],
+                k_enc: [1; 32],
+                k_mic: [2; 32],
             },
         )
         .unwrap();
@@ -1959,8 +1959,8 @@ fn receive_one_emits_ack_received_for_matching_mac_ack() {
         local_id,
         peer_id,
         PairwiseKeys {
-            k_enc: [1; 16],
-            k_mic: [2; 16],
+            k_enc: [1; 32],
+            k_mic: [2; 32],
         },
     )
     .unwrap();
@@ -2010,8 +2010,8 @@ fn receive_one_ignores_unmatched_mac_ack() {
         local_id,
         peer_id,
         PairwiseKeys {
-            k_enc: [1; 16],
-            k_mic: [2; 16],
+            k_enc: [1; 32],
+            k_mic: [2; 32],
         },
     )
     .unwrap();
@@ -2057,8 +2057,8 @@ fn receive_one_emits_ack_received_for_matching_blind_unicast_ack() {
         local_id,
         peer_id,
         PairwiseKeys {
-            k_enc: [1; 16],
-            k_mic: [2; 16],
+            k_enc: [1; 32],
+            k_mic: [2; 32],
         },
     )
     .unwrap();
@@ -2108,8 +2108,8 @@ fn receive_one_delivers_unicast_and_queues_immediate_ack() {
     let peer_key = *remote.public_key();
     let peer_id = mac.add_peer(peer_key).unwrap();
     let keys = PairwiseKeys {
-        k_enc: [1; 16],
-        k_mic: [2; 16],
+        k_enc: [1; 32],
+        k_mic: [2; 32],
     };
     mac.install_pairwise_keys(local_id, peer_id, keys.clone())
         .unwrap();
@@ -2195,8 +2195,8 @@ fn receive_one_delivers_unicast_without_ack_when_not_requested() {
     let peer_key = *remote.public_key();
     let peer_id = mac.add_peer(peer_key).unwrap();
     let keys = PairwiseKeys {
-        k_enc: [1; 16],
-        k_mic: [2; 16],
+        k_enc: [1; 32],
+        k_mic: [2; 32],
     };
     mac.install_pairwise_keys(local_id, peer_id, keys.clone())
         .unwrap();
@@ -2231,8 +2231,8 @@ fn receive_one_drops_replayed_unicast_after_first_delivery() {
     let peer_key = *remote.public_key();
     let peer_id = mac.add_peer(peer_key).unwrap();
     let keys = PairwiseKeys {
-        k_enc: [1; 16],
-        k_mic: [2; 16],
+        k_enc: [1; 32],
+        k_mic: [2; 32],
     };
     mac.install_pairwise_keys(local_id, peer_id, keys.clone())
         .unwrap();
@@ -2279,8 +2279,8 @@ fn receive_one_reacks_duplicate_unicast_within_eight_counter_window() {
     let peer_key = *remote.public_key();
     let peer_id = mac.add_peer(peer_key).unwrap();
     let keys = PairwiseKeys {
-        k_enc: [1; 16],
-        k_mic: [2; 16],
+        k_enc: [1; 32],
+        k_mic: [2; 32],
     };
     mac.install_pairwise_keys(local_id, peer_id, keys.clone())
         .unwrap();
@@ -2372,8 +2372,8 @@ fn receive_one_resynchronizes_peer_counter_after_out_of_window_restart() {
     let peer_key = *remote.public_key();
     let peer_id = mac.add_peer(peer_key).unwrap();
     let keys = PairwiseKeys {
-        k_enc: [1; 16],
-        k_mic: [2; 16],
+        k_enc: [1; 32],
+        k_mic: [2; 32],
     };
     mac.install_pairwise_keys(local_id, peer_id, keys.clone())
         .unwrap();
@@ -2462,8 +2462,8 @@ fn receive_one_unicast_with_ambiguous_hint_tries_candidate_peers() {
     let _peer_a = mac.add_peer(candidate_a).unwrap();
     let peer_b = mac.add_peer(candidate_b).unwrap();
     let keys = PairwiseKeys {
-        k_enc: [1; 16],
-        k_mic: [2; 16],
+        k_enc: [1; 32],
+        k_mic: [2; 32],
     };
     mac.install_pairwise_keys(local_id, peer_b, keys.clone())
         .unwrap();
@@ -2693,8 +2693,8 @@ fn receive_one_delivers_blind_unicast_and_queues_immediate_ack() {
     let peer_key = *remote.public_key();
     let peer_id = mac.add_peer(peer_key).unwrap();
     let pairwise = PairwiseKeys {
-        k_enc: [1; 16],
-        k_mic: [2; 16],
+        k_enc: [1; 32],
+        k_mic: [2; 32],
     };
     let channel_key = ChannelKey([0x5A; 32]);
     let channel_id = mac.crypto().derive_channel_id(&channel_key);
@@ -2906,8 +2906,8 @@ fn receive_one_delivers_unencrypted_blind_unicast() {
     let peer_key = *remote.public_key();
     let peer_id = mac.add_peer(peer_key).unwrap();
     let pairwise = PairwiseKeys {
-        k_enc: [1; 16],
-        k_mic: [2; 16],
+        k_enc: [1; 32],
+        k_mic: [2; 32],
     };
     let channel_key = ChannelKey([0x5A; 32]);
     let channel_id = mac.crypto().derive_channel_id(&channel_key);
@@ -2961,8 +2961,8 @@ fn receive_one_delivers_source_routed_unicast_without_immediate_ack() {
     let peer_key = *remote.public_key();
     let peer_id = mac.add_peer(peer_key).unwrap();
     let keys = PairwiseKeys {
-        k_enc: [1; 16],
-        k_mic: [2; 16],
+        k_enc: [1; 32],
+        k_mic: [2; 32],
     };
     mac.install_pairwise_keys(local_id, peer_id, keys.clone())
         .unwrap();
@@ -3012,8 +3012,8 @@ fn receive_one_delivers_source_routed_blind_unicast_without_immediate_ack() {
     let peer_key = *remote.public_key();
     let peer_id = mac.add_peer(peer_key).unwrap();
     let pairwise = PairwiseKeys {
-        k_enc: [1; 16],
-        k_mic: [2; 16],
+        k_enc: [1; 32],
+        k_mic: [2; 32],
     };
     mac.install_pairwise_keys(local_id, peer_id, pairwise.clone())
         .unwrap();
@@ -3076,8 +3076,8 @@ fn receive_one_drops_replayed_blind_unicast_after_first_delivery() {
     let peer_key = *remote.public_key();
     let peer_id = mac.add_peer(peer_key).unwrap();
     let pairwise = PairwiseKeys {
-        k_enc: [1; 16],
-        k_mic: [2; 16],
+        k_enc: [1; 32],
+        k_mic: [2; 32],
     };
     let channel_key = ChannelKey([0x5A; 32]);
     let channel_keys = mac.crypto().derive_channel_keys(&channel_key);
@@ -3138,8 +3138,8 @@ fn receive_one_reacks_duplicate_blind_unicast_without_redelivery() {
     let peer_key = *remote.public_key();
     let peer_id = mac.add_peer(peer_key).unwrap();
     let pairwise = PairwiseKeys {
-        k_enc: [1; 16],
-        k_mic: [2; 16],
+        k_enc: [1; 32],
+        k_mic: [2; 32],
     };
     let channel_key = ChannelKey([0x5A; 32]);
     let channel_keys = mac.crypto().derive_channel_keys(&channel_key);
@@ -3203,8 +3203,8 @@ fn receive_one_blind_unicast_with_ambiguous_hint_tries_candidate_peers() {
     let _peer_a = mac.add_peer(candidate_a).unwrap();
     let peer_b = mac.add_peer(candidate_b).unwrap();
     let pairwise = PairwiseKeys {
-        k_enc: [1; 16],
-        k_mic: [2; 16],
+        k_enc: [1; 32],
+        k_mic: [2; 32],
     };
     let channel_key = ChannelKey([0x5A; 32]);
     let channel_keys = mac.crypto().derive_channel_keys(&channel_key);
@@ -3267,8 +3267,8 @@ fn receive_one_repeater_forwards_blind_unicast_using_original_encrypted_frame() 
 
     let remote = DummyIdentity::new([0xAB; 32]);
     let pairwise = PairwiseKeys {
-        k_enc: [1; 16],
-        k_mic: [2; 16],
+        k_enc: [1; 32],
+        k_mic: [2; 32],
     };
     let channel_key = ChannelKey([0x5A; 32]);
     let channel_id = mac.crypto().derive_channel_id(&channel_key);
@@ -3480,8 +3480,8 @@ fn receive_one_learns_trace_route_as_return_source_route_for_unicast_sender() {
     let peer_key = *remote.public_key();
     let peer_id = mac.add_peer(peer_key).unwrap();
     let keys = PairwiseKeys {
-        k_enc: [1; 16],
-        k_mic: [2; 16],
+        k_enc: [1; 32],
+        k_mic: [2; 32],
     };
     mac.install_pairwise_keys(local_id, peer_id, keys.clone())
         .unwrap();
@@ -3525,8 +3525,8 @@ fn empty_trace_route_learns_a_direct_peer_and_originates_no_source_route_option(
     let peer_key = *remote.public_key();
     let peer_id = mac.add_peer(peer_key).unwrap();
     let keys = PairwiseKeys {
-        k_enc: [1; 16],
-        k_mic: [2; 16],
+        k_enc: [1; 32],
+        k_mic: [2; 32],
     };
     mac.install_pairwise_keys(local_id, peer_id, keys.clone())
         .unwrap();
@@ -3582,8 +3582,8 @@ fn explicitly_empty_source_route_is_not_put_on_the_wire() {
     let peer_key = *remote.public_key();
     let peer_id = mac.add_peer(peer_key).unwrap();
     let keys = PairwiseKeys {
-        k_enc: [1; 16],
-        k_mic: [2; 16],
+        k_enc: [1; 32],
+        k_mic: [2; 32],
     };
     mac.install_pairwise_keys(local_id, peer_id, keys.clone())
         .unwrap();
@@ -3608,8 +3608,8 @@ fn send_unicast_uses_cached_source_route_when_present() {
     let peer_key = *remote.public_key();
     let peer_id = mac.add_peer(peer_key).unwrap();
     let keys = PairwiseKeys {
-        k_enc: [1; 16],
-        k_mic: [2; 16],
+        k_enc: [1; 32],
+        k_mic: [2; 32],
     };
     mac.install_pairwise_keys(local_id, peer_id, keys.clone())
         .unwrap();
@@ -3668,8 +3668,8 @@ fn mac_with_keyed_peer() -> (TestMac, LocalIdentityId, PublicKey, PeerId) {
         local_id,
         peer_id,
         PairwiseKeys {
-            k_enc: [1; 16],
-            k_mic: [2; 16],
+            k_enc: [1; 32],
+            k_mic: [2; 32],
         },
     )
     .unwrap();
@@ -3894,8 +3894,8 @@ fn receive_one_confirms_forwarded_send_when_same_frame_is_overheard() {
         local_id,
         peer_id,
         PairwiseKeys {
-            k_enc: [1; 16],
-            k_mic: [2; 16],
+            k_enc: [1; 32],
+            k_mic: [2; 32],
         },
     )
     .unwrap();
@@ -3947,8 +3947,8 @@ fn receive_one_repeater_forwards_source_routed_unicast_and_rewrites_options() {
 
     let remote = DummyIdentity::new([0xAB; 32]);
     let keys = PairwiseKeys {
-        k_enc: [1; 16],
-        k_mic: [2; 16],
+        k_enc: [1; 32],
+        k_mic: [2; 32],
     };
     let dst = umsh_core::NodeHint([0x77, 0x66, 0x55]);
     let trace = [RouterHint([0x33, 0x44])];
@@ -4021,8 +4021,8 @@ fn receive_one_repeater_forwards_source_routed_unicast_without_trace_route() {
     let peer_key = *remote.public_key();
     let peer_id = destination.add_peer(peer_key).unwrap();
     let keys = PairwiseKeys {
-        k_enc: [1; 16],
-        k_mic: [2; 16],
+        k_enc: [1; 32],
+        k_mic: [2; 32],
     };
     destination
         .install_pairwise_keys(destination_id, peer_id, keys.clone())
@@ -4122,8 +4122,8 @@ fn receive_one_repeater_ignores_signal_thresholds_for_source_routed_hops() {
 
     let remote = DummyIdentity::new([0xAB; 32]);
     let keys = PairwiseKeys {
-        k_enc: [1; 16],
-        k_mic: [2; 16],
+        k_enc: [1; 32],
+        k_mic: [2; 32],
     };
     let dst = umsh_core::NodeHint([0x77, 0x66, 0x55]);
     let source_route = [repeater_hint, RouterHint([0x21, 0x22])];
@@ -4170,8 +4170,8 @@ fn receive_one_repeater_ignores_signal_thresholds_on_the_final_source_routed_hop
 
     let remote = DummyIdentity::new([0xAB; 32]);
     let keys = PairwiseKeys {
-        k_enc: [1; 16],
-        k_mic: [2; 16],
+        k_enc: [1; 32],
+        k_mic: [2; 32],
     };
     let dst = umsh_core::NodeHint([0x77, 0x66, 0x55]);
     let source_route = [repeater_hint];
@@ -4211,8 +4211,8 @@ fn receive_one_repeater_applies_signal_thresholds_when_hybrid_route_enters_flood
 
     let remote = DummyIdentity::new([0xAB; 32]);
     let keys = PairwiseKeys {
-        k_enc: [1; 16],
-        k_mic: [2; 16],
+        k_enc: [1; 32],
+        k_mic: [2; 32],
     };
     let dst = umsh_core::NodeHint([0x77, 0x66, 0x55]);
     // An empty-but-present source route: the provenance an upstream repeater
@@ -4285,8 +4285,8 @@ fn receive_one_repeater_flood_forwards_with_delay_and_decrements_hops() {
     let channel_key = ChannelKey([0x5A; 32]);
     let channel_id = mac.crypto().derive_channel_id(&channel_key);
     let keys = PairwiseKeys {
-        k_enc: [1; 16],
-        k_mic: [2; 16],
+        k_enc: [1; 32],
+        k_mic: [2; 32],
     };
     mac.add_channel(channel_key).unwrap();
 
@@ -4327,8 +4327,8 @@ fn receive_one_repeater_adds_ack_guard_to_flood_forward_of_ack_requested_packet(
 
         let remote = DummyIdentity::new([0xAB; 32]);
         let pairwise = PairwiseKeys {
-            k_enc: [1; 16],
-            k_mic: [2; 16],
+            k_enc: [1; 32],
+            k_mic: [2; 32],
         };
         let channel_key = ChannelKey([0x5A; 32]);
         let channel_id = mac.crypto().derive_channel_id(&channel_key);
@@ -4630,8 +4630,8 @@ fn repeater_does_not_forward_a_unicast_addressed_to_itself() {
 
     let remote = DummyIdentity::new([0xAB; 32]);
     let keys = PairwiseKeys {
-        k_enc: [1; 16],
-        k_mic: [2; 16],
+        k_enc: [1; 32],
+        k_mic: [2; 32],
     };
     // No pairwise keys installed, so the MAC cannot open it.
     let frame = build_received_unicast_frame(
@@ -4666,8 +4666,8 @@ fn receive_one_repeater_inserts_region_on_untagged_flood_forward() {
 
     let remote = DummyIdentity::new([0xAB; 32]);
     let keys = PairwiseKeys {
-        k_enc: [1; 16],
-        k_mic: [2; 16],
+        k_enc: [1; 32],
+        k_mic: [2; 32],
     };
     let frame = build_received_unicast_frame(
         &remote,
@@ -4709,8 +4709,8 @@ fn forwarded_region_for_untagged_flood(
 
     let remote = DummyIdentity::new([0xAB; 32]);
     let keys = PairwiseKeys {
-        k_enc: [1; 16],
-        k_mic: [2; 16],
+        k_enc: [1; 32],
+        k_mic: [2; 32],
     };
     let frame = build_received_unicast_frame(
         &remote,
@@ -4763,8 +4763,8 @@ fn receive_one_repeater_without_configured_regions_forwards_tagged_floods() {
 
     let remote = DummyIdentity::new([0xAB; 32]);
     let keys = PairwiseKeys {
-        k_enc: [1; 16],
-        k_mic: [2; 16],
+        k_enc: [1; 32],
+        k_mic: [2; 32],
     };
     let mut buf = [0u8; 256];
     let mut packet = PacketBuilder::new(&mut buf)
@@ -4814,8 +4814,8 @@ fn receive_one_repeater_preserves_existing_region_without_inserting_another() {
 
     let remote = DummyIdentity::new([0xAB; 32]);
     let keys = PairwiseKeys {
-        k_enc: [1; 16],
-        k_mic: [2; 16],
+        k_enc: [1; 32],
+        k_mic: [2; 32],
     };
     let mut buf = [0u8; 256];
     let mut packet = PacketBuilder::new(&mut buf)
@@ -4864,8 +4864,8 @@ fn receive_one_repeater_accepts_any_matching_region_from_multiple_region_options
 
     let remote = DummyIdentity::new([0xAB; 32]);
     let keys = PairwiseKeys {
-        k_enc: [1; 16],
-        k_mic: [2; 16],
+        k_enc: [1; 32],
+        k_mic: [2; 32],
     };
     let mut buf = [0u8; 256];
     let mut packet = PacketBuilder::new(&mut buf)
@@ -4914,8 +4914,8 @@ fn receive_one_defers_pending_forward_when_duplicate_is_overheard() {
 
     let remote = DummyIdentity::new([0xAB; 32]);
     let keys = PairwiseKeys {
-        k_enc: [1; 16],
-        k_mic: [2; 16],
+        k_enc: [1; 32],
+        k_mic: [2; 32],
     };
     let frame = build_received_unicast_frame(
         &remote,
@@ -4956,8 +4956,8 @@ fn receive_one_drops_pending_forward_after_max_duplicate_deferrals() {
 
     let remote = DummyIdentity::new([0xAB; 32]);
     let keys = PairwiseKeys {
-        k_enc: [1; 16],
-        k_mic: [2; 16],
+        k_enc: [1; 32],
+        k_mic: [2; 32],
     };
     let frame = build_received_unicast_frame(
         &remote,
@@ -4997,8 +4997,8 @@ fn poll_cycle_holds_application_tx_while_forward_listen_is_active() {
         local_id,
         peer_id,
         PairwiseKeys {
-            k_enc: [1; 16],
-            k_mic: [2; 16],
+            k_enc: [1; 32],
+            k_mic: [2; 32],
         },
     )
     .unwrap();
@@ -5106,8 +5106,8 @@ fn counters_record_a_forwarded_frame() {
 
     let remote = DummyIdentity::new([0xAB; 32]);
     let pairwise = PairwiseKeys {
-        k_enc: [1; 16],
-        k_mic: [2; 16],
+        k_enc: [1; 32],
+        k_mic: [2; 32],
     };
     let channel_key = ChannelKey([0x5A; 32]);
     let channel_id = mac.crypto().derive_channel_id(&channel_key);
@@ -6035,8 +6035,8 @@ fn modeled_dense_repeater_neighborhood_prefers_one_of_the_best_candidates() {
     }
 
     let pairwise = PairwiseKeys {
-        k_enc: [0x21; 16],
-        k_mic: [0x42; 16],
+        k_enc: [0x21; 32],
+        k_mic: [0x42; 32],
     };
     {
         let mut alice_mac = macs[0].borrow_mut();
@@ -6561,8 +6561,8 @@ fn poll_cycle_drains_tx_receives_unicast_and_sends_immediate_ack() {
     let peer_key = *remote.public_key();
     let peer_id = mac.add_peer(peer_key).unwrap();
     let keys = PairwiseKeys {
-        k_enc: [1; 16],
-        k_mic: [2; 16],
+        k_enc: [1; 32],
+        k_mic: [2; 32],
     };
     mac.install_pairwise_keys(local_id, peer_id, keys.clone())
         .unwrap();
@@ -6610,8 +6610,8 @@ fn poll_cycle_emits_ack_timeout_after_receive_phase() {
         local_id,
         peer_id,
         PairwiseKeys {
-            k_enc: [1; 16],
-            k_mic: [2; 16],
+            k_enc: [1; 32],
+            k_mic: [2; 32],
         },
     )
     .unwrap();
@@ -6661,8 +6661,8 @@ fn confirmed_forwarded_send_no_longer_retries_on_confirmation_timeout() {
         local_id,
         peer_id,
         PairwiseKeys {
-            k_enc: [1; 16],
-            k_mic: [2; 16],
+            k_enc: [1; 32],
+            k_mic: [2; 32],
         },
     )
     .unwrap();
@@ -6712,8 +6712,8 @@ fn forwarded_send_can_confirm_then_complete_on_later_mac_ack() {
         local_id,
         peer_id,
         PairwiseKeys {
-            k_enc: [1; 16],
-            k_mic: [2; 16],
+            k_enc: [1; 32],
+            k_mic: [2; 32],
         },
     )
     .unwrap();
@@ -6787,8 +6787,8 @@ fn poll_cycle_prefers_mac_ack_over_same_cycle_timeout() {
         local_id,
         peer_id,
         PairwiseKeys {
-            k_enc: [1; 16],
-            k_mic: [2; 16],
+            k_enc: [1; 32],
+            k_mic: [2; 32],
         },
     )
     .unwrap();
@@ -6848,8 +6848,8 @@ fn send_receipts_wrap_from_u32_max_back_to_zero() {
         local_id,
         peer_id,
         PairwiseKeys {
-            k_enc: [1; 16],
-            k_mic: [2; 16],
+            k_enc: [1; 32],
+            k_mic: [2; 32],
         },
     )
     .unwrap();
@@ -6902,8 +6902,8 @@ fn service_pending_ack_timeouts_emits_timeout_and_removes_entry() {
         local_id,
         peer_id,
         PairwiseKeys {
-            k_enc: [1; 16],
-            k_mic: [2; 16],
+            k_enc: [1; 32],
+            k_mic: [2; 32],
         },
     )
     .unwrap();
@@ -6953,8 +6953,8 @@ fn service_pending_ack_timeouts_requeues_forwarded_retry() {
         local_id,
         peer_id,
         PairwiseKeys {
-            k_enc: [1; 16],
-            k_mic: [2; 16],
+            k_enc: [1; 32],
+            k_mic: [2; 32],
         },
     )
     .unwrap();
@@ -7006,8 +7006,8 @@ fn service_pending_ack_timeouts_reroutes_failed_source_route_once() {
         local_id,
         peer_id,
         PairwiseKeys {
-            k_enc: [1; 16],
-            k_mic: [2; 16],
+            k_enc: [1; 32],
+            k_mic: [2; 32],
         },
     )
     .unwrap();
@@ -7095,8 +7095,8 @@ fn route_retry_survives_a_timeout_sweep_before_it_airs() {
         local_id,
         peer_id,
         PairwiseKeys {
-            k_enc: [1; 16],
-            k_mic: [2; 16],
+            k_enc: [1; 32],
+            k_mic: [2; 32],
         },
     )
     .unwrap();
@@ -7167,8 +7167,8 @@ fn route_retry_preserves_the_authenticated_header() {
         local_id,
         peer_id,
         PairwiseKeys {
-            k_enc: [1; 16],
-            k_mic: [2; 16],
+            k_enc: [1; 32],
+            k_mic: [2; 32],
         },
     )
     .unwrap();
@@ -7433,8 +7433,8 @@ fn queued_retry_does_not_rearm_forward_confirmation_before_retransmit() {
         local_id,
         peer_id,
         PairwiseKeys {
-            k_enc: [1; 16],
-            k_mic: [2; 16],
+            k_enc: [1; 32],
+            k_mic: [2; 32],
         },
     )
     .unwrap();
@@ -7484,8 +7484,8 @@ fn complete_ack_matches_receipt_and_clears_pending_entry() {
         local_id,
         peer_id,
         PairwiseKeys {
-            k_enc: [1; 16],
-            k_mic: [2; 16],
+            k_enc: [1; 32],
+            k_mic: [2; 32],
         },
     )
     .unwrap();
@@ -7523,8 +7523,8 @@ fn complete_ack_matches_receipt_and_clears_pending_entry() {
 fn build_passing_unar(route_retry: bool) -> heapless::Vec<u8, 256> {
     let remote = DummyIdentity::new([0xAB; 32]);
     let keys = PairwiseKeys {
-        k_enc: [3; 16],
-        k_mic: [4; 16],
+        k_enc: [3; 32],
+        k_mic: [4; 32],
     };
     let mut buf = [0u8; 256];
     let builder = PacketBuilder::new(&mut buf)
@@ -7705,8 +7705,8 @@ fn ack_mic_option_cancels_matching_queued_forward() {
     let prefix = mic_prefix(unar.as_slice());
     let replier = DummyIdentity::new([0xCD; 32]);
     let reply_keys = PairwiseKeys {
-        k_enc: [5; 16],
-        k_mic: [6; 16],
+        k_enc: [5; 32],
+        k_mic: [6; 32],
     };
     let mut buf = [0u8; 256];
     let mut reply = PacketBuilder::new(&mut buf)
@@ -7740,8 +7740,8 @@ fn make_sender_mac() -> (TestMac, LocalIdentityId, PublicKey) {
         local_id,
         peer_id,
         PairwiseKeys {
-            k_enc: [1; 16],
-            k_mic: [2; 16],
+            k_enc: [1; 32],
+            k_mic: [2; 32],
         },
     )
     .unwrap();
@@ -8553,8 +8553,8 @@ fn install_endpoint_pairwise_keys(scenario: &mut ModeledScenario) {
 
 fn install_pairwise_keys_between(scenario: &mut ModeledScenario, alice: usize, bob: usize) {
     let pairwise = PairwiseKeys {
-        k_enc: [0x21; 16],
-        k_mic: [0x42; 16],
+        k_enc: [0x21; 32],
+        k_mic: [0x42; 32],
     };
 
     {
@@ -8781,7 +8781,7 @@ impl AesCipher for DummyCipher {
 struct DummyAes;
 impl AesProvider for DummyAes {
     type Cipher = DummyCipher;
-    fn new_cipher(&self, _key: &[u8; 16]) -> Self::Cipher {
+    fn new_cipher(&self, _key: &[u8; 32]) -> Self::Cipher {
         DummyCipher
     }
 }

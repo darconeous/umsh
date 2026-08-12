@@ -64,8 +64,8 @@ fn desired_provisioning() -> HostProvisioning {
         channel_keys: vec![CHANNEL_KEY],
         peer_keys: vec![PeerKeyEntry {
             public_key: PEER_PUB,
-            k_enc: [0xE0; 16],
-            k_mic: [0x50; 16],
+            k_enc: [0xE0; 32],
+            k_mic: [0x50; 32],
         }],
         auto_ack: true,
     }
@@ -324,8 +324,8 @@ async fn phase_d(port: &str) -> Result<(), Box<dyn std::error::Error>> {
 
 fn pairwise() -> PairwiseKeys {
     PairwiseKeys {
-        k_enc: [0xE0; 16],
-        k_mic: [0x50; 16],
+        k_enc: [0xE0; 32],
+        k_mic: [0x50; 32],
     }
 }
 
@@ -521,8 +521,8 @@ async fn rf_peer(
         base,
         true,
         &PairwiseKeys {
-            k_enc: [0x11; 16],
-            k_mic: [0x22; 16],
+            k_enc: [0x11; 32],
+            k_mic: [0x22; 32],
         },
         [0x99, 0x99, 0x99],
     );

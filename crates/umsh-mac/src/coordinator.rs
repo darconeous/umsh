@@ -9,9 +9,7 @@ use umsh_core::{
     PacketHeader, PacketType, ParseError, ParsedOptions, PayloadType, PublicKey, RouterHint,
     SourceAddrRef, UnsealedPacket, feed_aad, options::OptionEncoder,
 };
-use umsh_crypto::{
-    CmacState, CryptoEngine, CryptoError, DerivedChannelKeys, NodeIdentity, PairwiseKeys,
-};
+use umsh_crypto::{CryptoEngine, CryptoError, DerivedChannelKeys, NodeIdentity, PairwiseKeys};
 use umsh_hal::{Clock, CounterStore, Radio, RxInfo, Snr, TxError, TxOptions};
 
 use crate::{
@@ -3497,10 +3495,11 @@ impl<
         options: &SendOptions,
     ) -> Result<SendReceipt, SendError> {
         let header = PacketHeader::parse(packet.as_bytes())?;
-        let mut cmac: CmacState<_> = self.crypto.cmac_state(&keys.k_mic);
-        feed_aad(&header, packet.as_bytes(), |chunk| cmac.update(chunk));
-        cmac.update(packet.body());
-        let full_mac = cmac.finalize();
+        let full_mac = self.crypto.s2v_tag(
+            &keys.k_mic,
+            |cmac| feed_aad(&header, packet.as_bytes(), |chunk| cmac.update(chunk)),
+            packet.body(),
+        );
         let ack_trailer = self.crypto.compute_ack_trailer(&full_mac, &keys.k_enc);
         // Judged from the frame, not the requested options: whether the wait
         // for the ack includes a forwarding-confirmation phase depends on
@@ -3724,10 +3723,11 @@ impl<
         body_range: core::ops::Range<usize>,
         keys: &PairwiseKeys,
     ) -> [u8; 8] {
-        let mut cmac: CmacState<_> = self.crypto.cmac_state(&keys.k_mic);
-        feed_aad(header, buf, |chunk| cmac.update(chunk));
-        cmac.update(&buf[body_range]);
-        let full_mac = cmac.finalize();
+        let full_mac = self.crypto.s2v_tag(
+            &keys.k_mic,
+            |cmac| feed_aad(header, buf, |chunk| cmac.update(chunk)),
+            &buf[body_range],
+        );
         self.crypto.compute_ack_trailer(&full_mac, &keys.k_enc)
     }
 

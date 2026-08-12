@@ -344,7 +344,7 @@ else
   local emg = keystore.get_channel_by_id(from_hex("26C7"))
   check("emergency channel ID 26C7 resolves",  emg and emg.builtin, "emergency")
   check("built-in channels carry transport keys",
-        pub and pub.derived_keys and #pub.derived_keys.k_enc, 16)
+        pub and pub.derived_keys and #pub.derived_keys.k_enc, 32)
   check("built-in channel count", #keystore.get_all_channels(), 2)
 
   -- A hand-configured well-known channel keeps its own label rather than
@@ -479,10 +479,10 @@ else
   check("derive_channel_id(5A*32) = B08D",
         chan_id, from_hex("B08D"))
 
-  -- Channel keys derivation
+  -- Channel keys derivation (64-byte HKDF output, S2V key first)
   local dk = crypto.derive_channel_keys(chan_key_bytes)
-  check("derive_channel_keys: got k_enc", dk and #dk.k_enc == 16, true)
-  check("derive_channel_keys: got k_mic", dk and #dk.k_mic == 16, true)
+  check("derive_channel_keys: got k_enc", dk and #dk.k_enc == 32, true)
+  check("derive_channel_keys: got k_mic", dk and #dk.k_mic == 32, true)
   check("derive_channel_keys: channel_id", dk and dk.channel_id, from_hex("B08D"))
 
   -- Keystore channel entry should now have channel_id after rebuild+refresh
@@ -493,16 +493,24 @@ else
   check("keystore channel has derived_keys",
         ch and ch.derived_keys ~= nil, true)
 
-  -- CTR IV construction
+  -- CTR IV construction (RFC 5297 §2.6: top bit of bytes 9 and 13 cleared)
+  local mic_ff = string.rep("\xFF", 16)
+  local iv_ff = crypto.build_ctr_iv(mic_ff, "")
+  check("build_ctr_iv masks byte 9",  iv_ff:byte(9),  0x7F)
+  check("build_ctr_iv masks byte 13", iv_ff:byte(13), 0x7F)
+  check("build_ctr_iv leaves other bytes", iv_ff:sub(1, 8), string.rep("\xFF", 8))
+
   local mic_16 = from_hex(("EA32F49109E8D4E60116 73C15B3184F0"):gsub("%s",""))
   local secinfo = from_hex(("E000000 02A"):gsub("%s",""))
   local iv = crypto.build_ctr_iv(mic_16, secinfo)
-  -- 16-byte MIC → IV = MIC (SECINFO truncated away)
-  check("build_ctr_iv(16B mic) = mic", iv, mic_16)
+  -- 16-byte MIC → IV = masked MIC (SECINFO truncated away; this MIC's
+  -- bytes 9 and 13 already have clear top bits, so the mask is identity)
+  check("build_ctr_iv(16B mic) = masked mic", iv, mic_16)
 
   local mic_4 = from_hex("EA32F491")
   local iv4 = crypto.build_ctr_iv(mic_4, secinfo)
-  -- 4-byte MIC + 5-byte SECINFO = 9 bytes → pad to 16
+  -- 4-byte MIC + 5-byte SECINFO = 9 bytes → pad to 16 (secinfo byte at
+  -- position 9 is 0x2A, top bit already clear)
   check("build_ctr_iv(4B mic) len=16", #iv4, 16)
   check("build_ctr_iv(4B mic) prefix", iv4:sub(1,4), mic_4)
   check("build_ctr_iv(4B mic) secinfo", iv4:sub(5,9), secinfo)
@@ -512,19 +520,19 @@ else
   local SHARED_SECRET = from_hex(
     "5ADD834FC109FAD52F041C5AF84A7966526D364D1895AFFCD794E044F3A9DB14")
   local pw = crypto.derive_pairwise_keys(SHARED_SECRET)
-  check("pairwise keys: k_enc len=16", pw and #pw.k_enc, 16)
-  check("pairwise keys: k_mic len=16", pw and #pw.k_mic, 16)
+  check("pairwise keys: k_enc len=32", pw and #pw.k_enc, 32)
+  check("pairwise keys: k_mic len=32", pw and #pw.k_mic, 32)
 
   -- ── Example 3: encrypted unicast verify+decrypt ──
-  -- Packet: D0 6C28FD ED54A5 E0 0000002A 4FA084B292 EA32F49109E8D4E601 1673C15B3184F0
+  -- Packet: D0 6C28FD ED54A5 E0 0000002A FF AE71DC3872 618E9638FE4D9AE834331DE8E0DD063E
   -- FCF=D0, DST=6C28FD, SRC=ED54A5, SCF=E0 (enc, 16B MIC, no salt), FC=42
   -- Plaintext should be "Hello" = 48 65 6C 6C 6F
   local fcf_byte  = from_hex("D0")
   local dst_bytes = from_hex("6C28FD")
   local src_bytes = from_hex("ED54A5")
   local secinfo_e3 = from_hex(("E000000 02A"):gsub("%s",""))
-  local body_e3   = from_hex("4FA084B292")
-  local mic_e3    = from_hex(("EA32F49109E8D4E60116 73C15B3184F0"):gsub("%s",""))
+  local body_e3   = from_hex("AE71DC3872")
+  local mic_e3    = from_hex("618E9638FE4D9AE834331DE8E0DD063E")
 
   local aad_e3 = crypto.build_aad(fcf_byte, {}, dst_bytes, src_bytes, secinfo_e3)
   check("Example3 AAD len=12", #aad_e3, 12)  -- 1+3+3+5=12
@@ -545,13 +553,13 @@ else
 
   -- ── Example 6: authenticated multicast (E=0) verify ──
   -- FCF=E0, CHANNEL=B08D, SCF=60 (E=0, 16B MIC), FC=3, SRC=ED54A5
-  -- Payload=03 48656C6C6F, MIC=7C9A9C4BC0DDB496656A9DF15F5B9CC4
+  -- Payload=03 48656C6C6F, MIC=9A4BFCDE3942FEB225B8D3D4BCE79FDB
   local fcf_e6    = from_hex("E0")
   local chan_e6   = from_hex("B08D")
   local src_e6    = from_hex("ED54A5")
   local secinfo_e6 = from_hex(("60 00000003"):gsub("%s",""))
   local body_e6   = from_hex("0348656C6C6F")
-  local mic_e6    = from_hex("7C9A9C4BC0DDB496656A9DF15F5B9CC4")
+  local mic_e6    = from_hex("9A4BFCDE3942FEB225B8D3D4BCE79FDB")
 
   local pkt_e6 = {
     fcf_byte         = fcf_e6,
@@ -569,11 +577,11 @@ else
 
   -- ── Example 5: encrypted multicast (E=1) ──
   -- FCF=E0, CHANNEL=B08D, SCF=E0, FC=5
-  -- body=9BB6F25EC7DA95D2 (encrypted SRC+payload), MIC=3035 87B001F217987A081CF56EDC8536
+  -- body=7C16CCCF27324878 (encrypted SRC+payload), MIC=ACBF20014205B104175EA68F66477883
   local fcf_e5    = from_hex("E0")
   local secinfo_e5 = from_hex("E000000005")
-  local body_e5   = from_hex("9BB6F25EC7DA95D2")
-  local mic_e5    = from_hex("303587B001F217987A081CF56EDC8536")
+  local body_e5   = from_hex("7C16CCCF27324878")
+  local mic_e5    = from_hex("ACBF20014205B104175EA68F66477883")
 
   local pkt_e5 = {
     fcf_byte         = fcf_e5,
@@ -594,24 +602,26 @@ else
   check("Example5 decrypted payload=Hello",
         plain_e5 and plain_e5:sub(4), "Hello")
 
-  -- ── NIST SP 800-38A AES-128-CTR test vectors (Section F.5.1) ──
+  -- ── NIST SP 800-38A AES-256-CTR test vectors (Section F.5.5/F.5.6) ──
   -- Non-zero IV — this is what broke under GcryptCipher:setctr().
-  local nist_key = from_hex("2b7e151628aed2a6abf7158809cf4f3c")
+  local nist_key = from_hex(
+    "603deb1015ca71be2b73aef0857d7781"
+ .. "1f352c073b6108d72d9810a30914dff4")
   local nist_iv  = from_hex("f0f1f2f3f4f5f6f7f8f9fafbfcfdfeff")
 
   -- Verify AES-ECB primitive first: ECB(key, iv_block) = first keystream block
   local ecb_out = crypto.aes_ecb(nist_key, nist_iv)
   check("NIST AES-ECB(key, ctr0)",
-        ecb_out, from_hex("ec8cdf7398607cb0f2d21675ea9ea1e4"))
+        ecb_out, from_hex("0bdf7df1591716335e9a8b15c860c502"))
 
   -- Single-block CTR encrypt (plaintext → ciphertext)
   local nist_pt1 = from_hex("6bc1bee22e409f96e93d7e117393172a")
   local nist_ct1 = crypto.aes_ctr(nist_key, nist_iv, nist_pt1)
   check("NIST AES-CTR block 1 encrypt",
-        nist_ct1, from_hex("874d6191b620e3261bef6864990db6ce"))
+        nist_ct1, from_hex("601ec313775789a5b7a7f504bbf3d228"))
 
   -- Single-block CTR decrypt (ciphertext → plaintext)
-  local nist_dec1 = crypto.aes_ctr(nist_key, nist_iv, from_hex("874d6191b620e3261bef6864990db6ce"))
+  local nist_dec1 = crypto.aes_ctr(nist_key, nist_iv, from_hex("601ec313775789a5b7a7f504bbf3d228"))
   check("NIST AES-CTR block 1 decrypt",
         nist_dec1, nist_pt1)
 
@@ -622,30 +632,43 @@ else
  .. "30c81c46a35ce411e5fbc1191a0a52ef"
  .. "f69f2445df4f9b17ad2b417be66c3710")
   local nist_ct_all = from_hex(
-    "874d6191b620e3261bef6864990db6ce"
- .. "9806f66b7970fdff8617187bb9fffdff"
- .. "5ae4df3edbd5d35e5b4f09020db03eab"
- .. "1e031dda2fbe03d1792170a0f3009cee")
+    "601ec313775789a5b7a7f504bbf3d228"
+ .. "f443e3ca4d62b59aca84e990cacaf5c5"
+ .. "2b0930daa23de94ce87017ba2d84988d"
+ .. "dfc9c58db67aada613c2dd08457941a6")
   local ctr_enc = crypto.aes_ctr(nist_key, nist_iv, nist_pt_all)
   check("NIST AES-CTR 4-block encrypt", ctr_enc, nist_ct_all)
   local ctr_dec = crypto.aes_ctr(nist_key, nist_iv, nist_ct_all)
   check("NIST AES-CTR 4-block decrypt", ctr_dec, nist_pt_all)
 
-  -- ── RFC 4493 AES-CMAC test vectors ──
-  local cmac_key = from_hex("2b7e151628aed2a6abf7158809cf4f3c")
-  -- Example 1: empty message
+  -- ── NIST SP 800-38B AES-256 CMAC example vectors ──
+  local cmac_key = nist_key
+  -- Mlen = 0: empty message
   local cmac_empty = crypto.aes_cmac(cmac_key, {""})
-  check("RFC4493 AES-CMAC Example 1 (empty)",
-        cmac_empty, from_hex("bb1d6929e95937287fa37d129b756746"))
-  -- Example 3: 64-byte message
+  check("NIST CMAC-AES256 example 1 (empty)",
+        cmac_empty, from_hex("028962f61b7bf89efc6b551f4667d983"))
+  -- Mlen = 512: 64-byte message
   local cmac_m64 = from_hex(
     "6bc1bee22e409f96e93d7e117393172a"
  .. "ae2d8a571e03ac9c9eb76fac45af8e51"
  .. "30c81c46a35ce411e5fbc1191a0a52ef"
  .. "f69f2445df4f9b17ad2b417be66c3710")
   local cmac_64 = crypto.aes_cmac(cmac_key, {cmac_m64})
-  check("RFC4493 AES-CMAC Example 3 (64B)",
-        cmac_64, from_hex("51f0bebf7e3b9d92fc49741779363cfe"))
+  check("NIST CMAC-AES256 example 4 (64B)",
+        cmac_64, from_hex("e1992190549f6ed5696a2c056c315410"))
+
+  -- ── S2V (RFC 5297 §2.4) structural checks ──
+  -- With the AES-256 backend the RFC's own AES-128 appendix vectors
+  -- cannot run here; the Example 3/5/6 decrypts above pin s2v against
+  -- golden packet bytes that the Rust side cross-checks byte-for-byte
+  -- against the RustCrypto aes-siv crate (AEAD_AES_SIV_CMAC_512).
+  local s2v_empty = crypto.s2v(cmac_key, {}, "")
+  check("s2v: empty-string component yields a 16-byte tag", #s2v_empty, 16)
+  local s2v_ad = crypto.s2v(cmac_key, {"header"}, "payload longer than a block....")
+  check("s2v: tag is 16 bytes", #s2v_ad, 16)
+  check("s2v: AD changes the tag",
+        s2v_ad ~= crypto.s2v(cmac_key, {"tampered"}, "payload longer than a block...."),
+        true)
 
   -- ── Ed25519 → X25519 conversion and ECDH (intermediate test vectors) ──
   local NODE_A_SEED = from_hex(

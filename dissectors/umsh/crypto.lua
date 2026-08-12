@@ -50,13 +50,13 @@ end
 if gcrypt then
   -- ── Backend A: luagcrypt (full native crypto) ──
   aes_ecb_fn = function(key, block)
-    local c = gcrypt.cipher.open(gcrypt.CIPHER_AES128,
+    local c = gcrypt.cipher.open(gcrypt.CIPHER_AES256,
                                   gcrypt.CIPHER_MODE_ECB, 0)
     c:setkey(key)
     return c:encrypt(block)
   end
   aes_ctr_fn = function(key, iv, data)
-    local c = gcrypt.cipher.open(gcrypt.CIPHER_AES128,
+    local c = gcrypt.cipher.open(gcrypt.CIPHER_AES256,
                                   gcrypt.CIPHER_MODE_CTR, 0)
     c:setkey(key); c:setctr(iv)
     return c:decrypt(data)
@@ -70,7 +70,7 @@ elseif GcryptCipher then
   end
 
   aes_ecb_fn = function(key, block)
-    local c = GcryptCipher.open(GCRY_CIPHER_AES, GCRY_CIPHER_MODE_ECB, 0)
+    local c = GcryptCipher.open(GCRY_CIPHER_AES256, GCRY_CIPHER_MODE_ECB, 0)
     c:setkey(str_to_ba(key))
     local ba = str_to_ba(block)
     c:encrypt(ba)
@@ -190,7 +190,7 @@ function M.aes_cmac(key, data_chunks)
 end
 
 -- ---------------------------------------------------------------------------
--- AES-128-CTR / AES-128-ECB — thin wrappers around backend
+-- AES-256-CTR / AES-256-ECB — thin wrappers around backend
 -- ---------------------------------------------------------------------------
 
 function M.aes_ctr(key, iv, data)
@@ -204,17 +204,49 @@ function M.aes_ecb(key, block_16)
 end
 
 -- ---------------------------------------------------------------------------
+-- S2V (RFC 5297 §2.4, built on aes_cmac + cmac_dbl)
+-- ad_components: ordered list of associated-data byte strings (S1..Sn-1)
+-- plaintext:     the final vector component Sn
+-- ---------------------------------------------------------------------------
+
+function M.s2v(key, ad_components, plaintext)
+  if not _has_aes then return nil, "no crypto" end
+  local d = M.aes_cmac(key, {string.rep("\0", 16)})
+  for _, component in ipairs(ad_components) do
+    d = xor_bytes(cmac_dbl(d), M.aes_cmac(key, {component}))
+  end
+  local t
+  if #plaintext >= 16 then
+    -- xorend: XOR D into the final 16 bytes of the plaintext
+    t = plaintext:sub(1, #plaintext - 16)
+        .. xor_bytes(plaintext:sub(#plaintext - 15), d)
+  else
+    local padded = plaintext .. "\x80" .. string.rep("\0", 16 - #plaintext - 1)
+    t = xor_bytes(cmac_dbl(d), padded)
+  end
+  return M.aes_cmac(key, {t})
+end
+
+-- ---------------------------------------------------------------------------
 -- CTR IV construction
--- IV = truncate_or_pad_to_16(MIC || SECINFO)
+-- IV = truncate_or_pad_to_16(MIC || SECINFO), then clear the top bit of
+-- bytes 9 and 13 (1-indexed) per RFC 5297 §2.6. With a 16-byte MIC the
+-- result is exactly the RFC's initial counter Q.
 -- ---------------------------------------------------------------------------
 
 function M.build_ctr_iv(mic_bytes, secinfo_bytes)
   local combined = mic_bytes .. secinfo_bytes
+  local iv
   if #combined >= 16 then
-    return combined:sub(1, 16)
+    iv = combined:sub(1, 16)
   else
-    return combined .. string.rep("\0", 16 - #combined)
+    iv = combined .. string.rep("\0", 16 - #combined)
   end
+  return iv:sub(1, 8)
+      .. string.char(iv:byte(9) & 0x7F)
+      .. iv:sub(10, 12)
+      .. string.char(iv:byte(13) & 0x7F)
+      .. iv:sub(14, 16)
 end
 
 -- ---------------------------------------------------------------------------
@@ -255,23 +287,26 @@ function M.derive_channel_id(channel_key)
   return okm
 end
 
+-- The 64-byte HKDF output is the RFC 5297 AES-SIV key: the S2V key
+-- (k_mic) is the leftmost half, the CTR key (k_enc) the rightmost.
+
 function M.derive_channel_keys(channel_key)
   local channel_id, err = M.derive_channel_id(channel_key)
   if not channel_id then return nil, err end
-  local info = "UMSH-MCAST-V1" .. channel_id
-  local okm, err2 = M.hkdf(channel_key, "UMSH-MCAST-SALT", info, 32)
+  local info = "UMSH-MCAST-V2" .. channel_id
+  local okm, err2 = M.hkdf(channel_key, "UMSH-MCAST-SALT", info, 64)
   if not okm then return nil, err2 end
   return {
-    k_enc      = okm:sub(1,  16),
-    k_mic      = okm:sub(17, 32),
+    k_mic      = okm:sub(1,  32),
+    k_enc      = okm:sub(33, 64),
     channel_id = channel_id,
   }
 end
 
 function M.derive_pairwise_keys(shared_secret)
-  local okm, err = M.hkdf(shared_secret, "UMSH-PAIRWISE-SALT", "UMSH-UNICAST-V1", 32)
+  local okm, err = M.hkdf(shared_secret, "UMSH-PAIRWISE-SALT", "UMSH-UNICAST-V2", 64)
   if not okm then return nil, err end
-  return {k_enc = okm:sub(1, 16), k_mic = okm:sub(17, 32)}
+  return {k_mic = okm:sub(1, 32), k_enc = okm:sub(33, 64)}
 end
 
 function M.derive_blind_keys(pairwise_keys, channel_keys)
@@ -305,7 +340,7 @@ function M.verify_and_decrypt(keys, pkt)
                                 pkt.dst_or_chan, pkt.src_bytes_or_nil,
                                 pkt.secinfo_raw)
 
-  -- SIV-style: MAC covers the plaintext, not the ciphertext.
+  -- AES-SIV: the tag covers the plaintext, not the ciphertext.
   -- When encrypted, decrypt first, then verify MIC on the plaintext.
   local body = pkt.body_bytes
   if pkt.is_encrypted then
@@ -315,27 +350,27 @@ function M.verify_and_decrypt(keys, pkt)
     body = plain
   end
 
-  local full_cmac = M.aes_cmac(keys.k_mic, {aad, body})
-  if not full_cmac then return nil, "cmac failed" end
+  local full_tag = M.s2v(keys.k_mic, {aad}, body)
+  if not full_tag then return nil, "s2v failed" end
 
-  if full_cmac:sub(1, mic_len) ~= pkt.mic_bytes then
+  if full_tag:sub(1, mic_len) ~= pkt.mic_bytes then
     return nil, "mic_mismatch"
   end
 
-  return body, "ok", full_cmac
+  return body, "ok", full_tag
 end
 
 -- ---------------------------------------------------------------------------
--- Compute the 4-byte keyed ACK tag from a full 16-byte CMAC and k_enc.
---   ack_tag = truncate_4( AES-ECB(k_enc, full_cmac) )
+-- Compute the 4-byte keyed ACK tag from a full 16-byte S2V tag and k_enc.
+--   ack_tag = truncate_4( AES-ECB(k_enc, full_tag) )
 -- This is the authenticating half of the MAC ack trailer. The other half,
 -- ack_mic = first_4( on-wire MIC ), is public and needs no key (the caller
 -- reads it straight off the wire), so it is not computed here.
 -- ---------------------------------------------------------------------------
 
-function M.compute_ack_tag(full_cmac, k_enc)
+function M.compute_ack_tag(full_tag, k_enc)
   if not _has_aes then return nil end
-  local encrypted = aes_ecb_fn(k_enc, full_cmac)
+  local encrypted = aes_ecb_fn(k_enc, full_tag)
   return encrypted:sub(1, 4)
 end
 
@@ -372,7 +407,8 @@ end
 
 -- ---------------------------------------------------------------------------
 -- Phase A: Blind-unicast address block decrypt
--- Decrypts ENC_DST_SRC using channel k_enc with MIC as the IV.
+-- Decrypts ENC_DST_SRC using channel k_enc with the masked IV built from
+-- the MIC and SECINFO.
 -- Returns dst_hint (3 bytes), src (3 or 32 bytes), or nil + status.
 -- ---------------------------------------------------------------------------
 

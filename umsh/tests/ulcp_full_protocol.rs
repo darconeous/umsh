@@ -337,8 +337,8 @@ fn host_config() -> UlcpDeviceConfig {
 
 fn test_pairwise() -> PairwiseKeys {
     PairwiseKeys {
-        k_enc: [0xE0; 16],
-        k_mic: [0x50; 16],
+        k_enc: [0xE0; 32],
+        k_mic: [0x50; 32],
     }
 }
 

@@ -20,8 +20,8 @@
 //! let engine = CryptoEngine::new(SoftwareAes, SoftwareSha256);
 //! let keys = engine.derive_pairwise_keys(&shared);
 //!
-//! assert_ne!(keys.k_enc, [0u8; 16]);
-//! assert_ne!(keys.k_mic, [0u8; 16]);
+//! assert_ne!(keys.k_enc, [0u8; 32]);
+//! assert_ne!(keys.k_mic, [0u8; 32]);
 //! ```
 
 use core::ops::Range;
@@ -42,13 +42,23 @@ pub trait AesCipher {
     fn decrypt_block(&self, block: &mut [u8; 16]);
 }
 
+impl<C: AesCipher + ?Sized> AesCipher for &C {
+    fn encrypt_block(&self, block: &mut [u8; 16]) {
+        (**self).encrypt_block(block);
+    }
+
+    fn decrypt_block(&self, block: &mut [u8; 16]) {
+        (**self).decrypt_block(block);
+    }
+}
+
 /// Factory for keyed AES cipher instances.
 pub trait AesProvider {
     /// Concrete cipher type returned by [`new_cipher`](Self::new_cipher).
     type Cipher: AesCipher;
 
-    /// Create a new AES-128 cipher using `key`.
-    fn new_cipher(&self, key: &[u8; 16]) -> Self::Cipher;
+    /// Create a new AES-256 cipher using `key`.
+    fn new_cipher(&self, key: &[u8; 32]) -> Self::Cipher;
 }
 
 /// SHA-256 and HMAC-SHA-256 provider.
@@ -112,15 +122,15 @@ pub enum ChannelNameError {
 /// Derived pairwise transport keys.
 #[derive(Clone, Zeroize, ZeroizeOnDrop)]
 pub struct PairwiseKeys {
-    pub k_enc: [u8; 16],
-    pub k_mic: [u8; 16],
+    pub k_enc: [u8; 32],
+    pub k_mic: [u8; 32],
 }
 
 /// Derived multicast or channel transport keys.
 #[derive(Clone)]
 pub struct DerivedChannelKeys {
-    pub k_enc: [u8; 16],
-    pub k_mic: [u8; 16],
+    pub k_enc: [u8; 32],
+    pub k_mic: [u8; 32],
     pub channel_id: ChannelId,
 }
 
@@ -206,6 +216,64 @@ impl<C: AesCipher> CmacState<C> {
     }
 }
 
+/// Incremental RFC 5297 §2.4 S2V state.
+///
+/// Associated-data components are absorbed one at a time with
+/// [`push_component`](Self::push_component); the final vector component (the
+/// plaintext) is supplied to [`finalize`](Self::finalize), which returns the
+/// synthetic IV `V`. The state borrows a single keyed cipher, so one key
+/// schedule serves every CMAC in the computation.
+pub struct S2vState<'a, C: AesCipher> {
+    cipher: &'a C,
+    d: [u8; 16],
+}
+
+impl<'a, C: AesCipher> S2vState<'a, C> {
+    /// Initialize the running value: `D = CMAC(K, <zero>)`.
+    pub fn new(cipher: &'a C) -> Self {
+        let mut cmac = CmacState::new(cipher);
+        cmac.update(&[0u8; 16]);
+        Self {
+            cipher,
+            d: cmac.finalize(),
+        }
+    }
+
+    /// Absorb one associated-data component `S_i`, streamed through `feed`:
+    /// `D = dbl(D) xor CMAC(K, S_i)`.
+    pub fn push_component(&mut self, feed: impl FnOnce(&mut CmacState<&'a C>)) {
+        let mut cmac = CmacState::new(self.cipher);
+        feed(&mut cmac);
+        let mac = cmac.finalize();
+        self.d = dbl(&self.d);
+        xor_in_place(&mut self.d, &mac);
+    }
+
+    /// Finish with the final component `S_n` and return `V`.
+    ///
+    /// Per RFC 5297: `V = CMAC(K, S_n xorend D)` when `S_n` fills a block,
+    /// otherwise `V = CMAC(K, dbl(D) xor pad(S_n))`.
+    pub fn finalize(self, last: &[u8]) -> [u8; 16] {
+        let mut cmac = CmacState::new(self.cipher);
+        if last.len() >= 16 {
+            let split = last.len() - 16;
+            cmac.update(&last[..split]);
+            let mut tail = [0u8; 16];
+            tail.copy_from_slice(&last[split..]);
+            xor_in_place(&mut tail, &self.d);
+            cmac.update(&tail);
+        } else {
+            let mut block = dbl(&self.d);
+            for (dst, byte) in block.iter_mut().zip(last) {
+                *dst ^= *byte;
+            }
+            block[last.len()] ^= 0x80;
+            cmac.update(&block);
+        }
+        cmac.finalize()
+    }
+}
+
 /// UMSH protocol crypto engine.
 pub struct CryptoEngine<A: AesProvider, S: Sha256Provider> {
     aes: A,
@@ -219,20 +287,24 @@ impl<A: AesProvider, S: Sha256Provider> CryptoEngine<A, S> {
     }
 
     /// Derive stable pairwise encryption and MIC keys from a shared secret.
+    ///
+    /// The 64-byte HKDF output is the RFC 5297 AES-SIV key `K = K1 || K2`:
+    /// `k_mic` is the leftmost half (the S2V key `K1`) and `k_enc` is the
+    /// rightmost half (the CTR key `K2`).
     pub fn derive_pairwise_keys(&self, shared_secret: &SharedSecret) -> PairwiseKeys {
-        let mut okm = [0u8; 32];
+        let mut okm = [0u8; 64];
         self.hkdf(
             &shared_secret.0,
             b"UMSH-PAIRWISE-SALT",
-            b"UMSH-UNICAST-V1",
+            b"UMSH-UNICAST-V2",
             &mut okm,
         );
         let mut keys = PairwiseKeys {
-            k_enc: [0u8; 16],
-            k_mic: [0u8; 16],
+            k_enc: [0u8; 32],
+            k_mic: [0u8; 32],
         };
-        keys.k_enc.copy_from_slice(&okm[..16]);
-        keys.k_mic.copy_from_slice(&okm[16..32]);
+        keys.k_mic.copy_from_slice(&okm[..32]);
+        keys.k_enc.copy_from_slice(&okm[32..64]);
         okm.zeroize();
         keys
     }
@@ -269,20 +341,24 @@ impl<A: AesProvider, S: Sha256Provider> CryptoEngine<A, S> {
     }
 
     /// Derive multicast transport keys and the channel identifier.
+    ///
+    /// As with [`derive_pairwise_keys`](Self::derive_pairwise_keys), the
+    /// 64-byte HKDF output is the RFC 5297 AES-SIV key: S2V key first, CTR
+    /// key second.
     pub fn derive_channel_keys(&self, channel_key: &ChannelKey) -> DerivedChannelKeys {
         let channel_id = self.derive_channel_id(channel_key);
         let mut info = [0u8; 15];
-        info[..13].copy_from_slice(b"UMSH-MCAST-V1");
+        info[..13].copy_from_slice(b"UMSH-MCAST-V2");
         info[13..15].copy_from_slice(&channel_id.0);
-        let mut okm = [0u8; 32];
+        let mut okm = [0u8; 64];
         self.hkdf(&channel_key.0, b"UMSH-MCAST-SALT", &info, &mut okm);
         let mut derived = DerivedChannelKeys {
-            k_enc: [0u8; 16],
-            k_mic: [0u8; 16],
+            k_enc: [0u8; 32],
+            k_mic: [0u8; 32],
             channel_id,
         };
-        derived.k_enc.copy_from_slice(&okm[..16]);
-        derived.k_mic.copy_from_slice(&okm[16..32]);
+        derived.k_mic.copy_from_slice(&okm[..32]);
+        derived.k_enc.copy_from_slice(&okm[32..64]);
         okm.zeroize();
         derived
     }
@@ -294,8 +370,8 @@ impl<A: AesProvider, S: Sha256Provider> CryptoEngine<A, S> {
         channel: &DerivedChannelKeys,
     ) -> PairwiseKeys {
         let mut keys = PairwiseKeys {
-            k_enc: [0u8; 16],
-            k_mic: [0u8; 16],
+            k_enc: [0u8; 32],
+            k_mic: [0u8; 32],
         };
         for (dst, (left, right)) in keys
             .k_enc
@@ -351,10 +427,11 @@ impl<A: AesProvider, S: Sha256Provider> CryptoEngine<A, S> {
         let sec_info = header.sec_info.ok_or(CryptoError::InvalidPacket)?;
         let full_mac = {
             let bytes = packet.as_bytes();
-            let mut cmac = self.cmac_state(&keys.k_mic);
-            feed_aad(&header, bytes, |chunk| cmac.update(chunk));
-            cmac.update(packet.body());
-            cmac.finalize()
+            self.s2v_tag(
+                &keys.k_mic,
+                |cmac| feed_aad(&header, bytes, |chunk| cmac.update(chunk)),
+                packet.body(),
+            )
         };
 
         let mic_len = sec_info
@@ -394,10 +471,11 @@ impl<A: AesProvider, S: Sha256Provider> CryptoEngine<A, S> {
             .ok_or(CryptoError::InvalidPacket)?;
         let full_mac = {
             let bytes = packet.as_bytes();
-            let mut cmac = self.cmac_state(&blind_keys.k_mic);
-            feed_aad(&header, bytes, |chunk| cmac.update(chunk));
-            cmac.update(packet.body());
-            cmac.finalize()
+            self.s2v_tag(
+                &blind_keys.k_mic,
+                |cmac| feed_aad(&header, bytes, |chunk| cmac.update(chunk)),
+                packet.body(),
+            )
         };
 
         let mic_len = sec_info
@@ -437,12 +515,11 @@ impl<A: AesProvider, S: Sha256Provider> CryptoEngine<A, S> {
             self.aes_ctr(&keys.k_enc, &iv, &mut buf[header.body_range.clone()]);
         }
 
-        let full_mac = {
-            let mut cmac = self.cmac_state(&keys.k_mic);
-            feed_aad(header, buf, |chunk| cmac.update(chunk));
-            cmac.update(&buf[header.body_range.clone()]);
-            cmac.finalize()
-        };
+        let full_mac = self.s2v_tag(
+            &keys.k_mic,
+            |cmac| feed_aad(header, buf, |chunk| cmac.update(chunk)),
+            &buf[header.body_range.clone()],
+        );
         if !constant_time_eq(&mic[..mic_len], &full_mac[..mic_len]) {
             return Err(CryptoError::AuthenticationFailed);
         }
@@ -507,38 +584,54 @@ impl<A: AesProvider, S: Sha256Provider> CryptoEngine<A, S> {
         }
     }
 
+    /// Compute the packet tag `V = S2V(k_mic, S1, S2)` per RFC 5297 §2.4,
+    /// with the canonical AAD (streamed through `aad`) as the single
+    /// associated-data component `S1` and `plaintext` as the final
+    /// component `S2`.
+    pub fn s2v_tag(
+        &self,
+        k_mic: &[u8; 32],
+        aad: impl FnOnce(&mut CmacState<&A::Cipher>),
+        plaintext: &[u8],
+    ) -> [u8; 16] {
+        let cipher = self.aes.new_cipher(k_mic);
+        let mut s2v = S2vState::new(&cipher);
+        s2v.push_component(aad);
+        s2v.finalize(plaintext)
+    }
+
     /// Compute the 8-byte MAC ack trailer (`ack_mic || ack_tag`) from a full
-    /// CMAC and `k_enc`.
+    /// S2V tag and `k_enc`.
     ///
     /// The trailer splits into two 4-byte halves:
     ///
-    /// - **`ack_mic`** = the first 4 bytes of `full_cmac`. Because the on-wire
-    ///   MIC is a prefix-truncation of the full CMAC, this equals the first
+    /// - **`ack_mic`** = the first 4 bytes of `full_tag`. Because the on-wire
+    ///   MIC is a prefix-truncation of the full tag, this equals the first
     ///   4 bytes of the acknowledged packet's on-wire MIC — a *public*
     ///   correlation handle any node that received the original packet
     ///   (including forwarding repeaters) can compute.
-    /// - **`ack_tag`** = `truncate_4( AES-128-ECB(k_enc, full_cmac) )`. A keyed
+    /// - **`ack_tag`** = `truncate_4( AES-256-ECB(k_enc, full_tag) )`. A keyed
     ///   value only the original sender and final destination can produce; it
     ///   authenticates the standalone ack.
     ///
     /// See the spec's *Ack Tag Construction* section.
-    pub fn compute_ack_trailer(&self, full_cmac: &[u8; 16], k_enc: &[u8; 16]) -> [u8; 8] {
+    pub fn compute_ack_trailer(&self, full_tag: &[u8; 16], k_enc: &[u8; 32]) -> [u8; 8] {
         let cipher = self.aes.new_cipher(k_enc);
-        let mut block = *full_cmac;
+        let mut block = *full_tag;
         cipher.encrypt_block(&mut block);
         let mut trailer = [0u8; 8];
-        trailer[..4].copy_from_slice(&full_cmac[..4]); // ack_mic (public)
+        trailer[..4].copy_from_slice(&full_tag[..4]); // ack_mic (public)
         trailer[4..].copy_from_slice(&block[..4]); // ack_tag (keyed)
         trailer
     }
 
     /// Create a reusable incremental CMAC state.
-    pub fn cmac_state(&self, key: &[u8; 16]) -> CmacState<A::Cipher> {
+    pub fn cmac_state(&self, key: &[u8; 32]) -> CmacState<A::Cipher> {
         CmacState::new(self.aes.new_cipher(key))
     }
 
     /// Convenience wrapper for AES-CMAC over concatenated slices.
-    pub fn aes_cmac(&self, key: &[u8; 16], data: &[&[u8]]) -> [u8; 16] {
+    pub fn aes_cmac(&self, key: &[u8; 32], data: &[&[u8]]) -> [u8; 16] {
         let mut state = self.cmac_state(key);
         for chunk in data {
             state.update(chunk);
@@ -547,25 +640,18 @@ impl<A: AesProvider, S: Sha256Provider> CryptoEngine<A, S> {
     }
 
     /// Apply AES-CTR using `iv` as the initial counter block.
-    pub fn aes_ctr(&self, key: &[u8; 16], iv: &[u8; 16], data: &mut [u8]) {
-        let cipher = self.aes.new_cipher(key);
-        let mut counter = *iv;
-        for chunk in data.chunks_mut(16) {
-            let mut stream = counter;
-            cipher.encrypt_block(&mut stream);
-            for (dst, src) in chunk.iter_mut().zip(stream.iter()) {
-                *dst ^= *src;
-            }
-            increment_counter(&mut counter);
-        }
+    pub fn aes_ctr(&self, key: &[u8; 32], iv: &[u8; 16], data: &mut [u8]) {
+        aes_ctr_with_cipher(&self.aes.new_cipher(key), iv, data);
     }
 
     /// Construct the CTR IV from MIC bytes and SECINFO bytes.
     ///
-    /// With a 16-byte MIC the IV is the MIC alone; shorter MICs are
-    /// padded from the SECINFO bytes, so the IV construction of a
-    /// received packet must locate SECINFO exactly (see
-    /// [`sec_info_bytes_range`]).
+    /// With a 16-byte MIC the IV is the masked MIC alone — exactly the
+    /// initial counter `Q` from RFC 5297 §2.6; shorter MICs are padded
+    /// from the SECINFO bytes, so the IV construction of a received
+    /// packet must locate SECINFO exactly (see [`sec_info_bytes_range`]).
+    /// The RFC's bit-clearing of the top bit of bytes 8 and 12 is applied
+    /// unconditionally, whatever bytes occupy those positions.
     pub fn build_ctr_iv(&self, mic: &[u8], sec_info_bytes: &[u8]) -> [u8; 16] {
         let mut iv = [0u8; 16];
         let mut written = 0usize;
@@ -573,6 +659,8 @@ impl<A: AesProvider, S: Sha256Provider> CryptoEngine<A, S> {
             iv[written] = *byte;
             written += 1;
         }
+        iv[8] &= 0x7F;
+        iv[12] &= 0x7F;
         iv
     }
 
@@ -594,6 +682,18 @@ impl<A: AesProvider, S: Sha256Provider> CryptoEngine<A, S> {
             written += take;
             counter = counter.wrapping_add(1);
         }
+    }
+}
+
+fn aes_ctr_with_cipher<C: AesCipher>(cipher: &C, iv: &[u8; 16], data: &mut [u8]) {
+    let mut counter = *iv;
+    for chunk in data.chunks_mut(16) {
+        let mut stream = counter;
+        cipher.encrypt_block(&mut stream);
+        for (dst, src) in chunk.iter_mut().zip(stream.iter()) {
+            *dst ^= *src;
+        }
+        increment_counter(&mut counter);
     }
 }
 
@@ -663,7 +763,7 @@ pub mod software {
 
     pub struct SoftwareAes;
 
-    pub struct SoftwareAesCipher(aes::Aes128);
+    pub struct SoftwareAesCipher(aes::Aes256);
 
     impl AesCipher for SoftwareAesCipher {
         fn encrypt_block(&self, block: &mut [u8; 16]) {
@@ -678,8 +778,8 @@ pub mod software {
     impl AesProvider for SoftwareAes {
         type Cipher = SoftwareAesCipher;
 
-        fn new_cipher(&self, key: &[u8; 16]) -> Self::Cipher {
-            SoftwareAesCipher(aes::Aes128::new(GenericArray::from_slice(key)))
+        fn new_cipher(&self, key: &[u8; 32]) -> Self::Cipher {
+            SoftwareAesCipher(aes::Aes256::new(GenericArray::from_slice(key)))
         }
     }
 
@@ -831,77 +931,101 @@ mod tests {
     fn pairwise_hkdf_is_stable() {
         let engine = SoftwareCryptoEngine::new(SoftwareAes, SoftwareSha256);
         let keys = engine.derive_pairwise_keys(&SharedSecret([7u8; 32]));
-        assert_ne!(keys.k_enc, [0u8; 16]);
-        assert_ne!(keys.k_mic, [0u8; 16]);
+        assert_ne!(keys.k_enc, [0u8; 32]);
+        assert_ne!(keys.k_mic, [0u8; 32]);
     }
+
+    /// The pairwise HKDF output is the RFC 5297 AES-SIV key: S2V key (K1)
+    /// first, CTR key (K2) second.
+    #[cfg(feature = "software-crypto")]
+    #[test]
+    fn pairwise_okm_is_the_rfc5297_key() {
+        let engine = SoftwareCryptoEngine::new(SoftwareAes, SoftwareSha256);
+        let shared = SharedSecret([9u8; 32]);
+        let keys = engine.derive_pairwise_keys(&shared);
+        let mut okm = [0u8; 64];
+        engine.hkdf(
+            &shared.0,
+            b"UMSH-PAIRWISE-SALT",
+            b"UMSH-UNICAST-V2",
+            &mut okm,
+        );
+        assert_eq!(keys.k_mic, okm[..32]);
+        assert_eq!(keys.k_enc, okm[32..]);
+    }
+
+    /// NIST SP 800-38B CMAC-AES256 example key.
+    #[cfg(feature = "software-crypto")]
+    const NIST_AES256_KEY: &str =
+        "603deb1015ca71be2b73aef0857d77811f352c073b6108d72d9810a30914dff4";
 
     #[cfg(feature = "software-crypto")]
     #[test]
-    fn aes_cmac_matches_rfc4493_example_2() {
+    fn aes_cmac_matches_nist_aes256_example_2() {
         let engine = SoftwareCryptoEngine::new(SoftwareAes, SoftwareSha256);
-        let key = hex_16("2b7e151628aed2a6abf7158809cf4f3c");
+        let key = hex_32(NIST_AES256_KEY);
         let msg = hex_vec("6bc1bee22e409f96e93d7e117393172a");
-        let expected = hex_16("070a16b46b4d4144f79bdd9dd04a287c");
+        let expected = hex_16("28a7023f452e8f82bd4bf28d8c37c35c");
         assert_eq!(engine.aes_cmac(&key, &[&msg]), expected);
     }
 
     #[cfg(feature = "software-crypto")]
     #[test]
-    fn aes_cmac_matches_rfc4493_example_1_empty() {
+    fn aes_cmac_matches_nist_aes256_example_1_empty() {
         let engine = SoftwareCryptoEngine::new(SoftwareAes, SoftwareSha256);
-        let key = hex_16("2b7e151628aed2a6abf7158809cf4f3c");
-        let expected = hex_16("bb1d6929e95937287fa37d129b756746");
+        let key = hex_32(NIST_AES256_KEY);
+        let expected = hex_16("028962f61b7bf89efc6b551f4667d983");
         assert_eq!(engine.aes_cmac(&key, &[&[]]), expected);
     }
 
     #[cfg(feature = "software-crypto")]
     #[test]
-    fn aes_cmac_matches_rfc4493_example_3_64b() {
+    fn aes_cmac_matches_nist_aes256_example_4_64b() {
         let engine = SoftwareCryptoEngine::new(SoftwareAes, SoftwareSha256);
-        let key = hex_16("2b7e151628aed2a6abf7158809cf4f3c");
+        let key = hex_32(NIST_AES256_KEY);
         let msg = hex_vec(
             "6bc1bee22e409f96e93d7e117393172a\
              ae2d8a571e03ac9c9eb76fac45af8e51\
              30c81c46a35ce411e5fbc1191a0a52ef\
              f69f2445df4f9b17ad2b417be66c3710",
         );
-        let expected = hex_16("51f0bebf7e3b9d92fc49741779363cfe");
+        let expected = hex_16("e1992190549f6ed5696a2c056c315410");
         assert_eq!(engine.aes_cmac(&key, &[&msg]), expected);
     }
 
     #[cfg(feature = "software-crypto")]
     #[test]
-    fn aes_cmac_matches_rfc4493_example_4_40b() {
+    fn aes_cmac_matches_nist_aes256_example_3_40b() {
         let engine = SoftwareCryptoEngine::new(SoftwareAes, SoftwareSha256);
-        let key = hex_16("2b7e151628aed2a6abf7158809cf4f3c");
+        let key = hex_32(NIST_AES256_KEY);
         let msg = hex_vec(
             "6bc1bee22e409f96e93d7e117393172a\
              ae2d8a571e03ac9c9eb76fac45af8e51\
              30c81c46a35ce411",
         );
-        let expected = hex_16("dfa66747de9ae63030ca32611497c827");
+        let expected = hex_16("aaf3d8f1de5640c232f5b169b9c911e6");
         assert_eq!(engine.aes_cmac(&key, &[&msg]), expected);
     }
 
-    /// NIST SP 800-38A Section F.5.1 — AES-128 CTR mode, single block.
+    /// NIST SP 800-38A Section F.5.5 — AES-256 CTR mode, single block.
     #[cfg(feature = "software-crypto")]
     #[test]
     fn aes_ctr_matches_nist_sp800_38a_block_1() {
         let engine = SoftwareCryptoEngine::new(SoftwareAes, SoftwareSha256);
-        let key = hex_16("2b7e151628aed2a6abf7158809cf4f3c");
+        let key = hex_32(NIST_AES256_KEY);
         let iv = hex_16("f0f1f2f3f4f5f6f7f8f9fafbfcfdfeff");
         let mut data = hex_vec("6bc1bee22e409f96e93d7e117393172a");
         engine.aes_ctr(&key, &iv, &mut data);
-        assert_eq!(data, hex_vec("874d6191b620e3261bef6864990db6ce"));
+        assert_eq!(data, hex_vec("601ec313775789a5b7a7f504bbf3d228"));
     }
 
-    /// NIST SP 800-38A Section F.5.1 — AES-128 CTR mode, 4 blocks.
+    /// NIST SP 800-38A Section F.5.5 — AES-256 CTR mode, 4 blocks.
     /// Verifies counter increment across multiple blocks.
     #[cfg(feature = "software-crypto")]
     #[test]
     fn aes_ctr_matches_nist_sp800_38a_4_blocks() {
         let engine = SoftwareCryptoEngine::new(SoftwareAes, SoftwareSha256);
-        let key = hex_16("2b7e151628aed2a6abf7158809cf4f3c");
+        let key = hex_32(NIST_AES256_KEY);
         let iv = hex_16("f0f1f2f3f4f5f6f7f8f9fafbfcfdfeff");
         let mut data = hex_vec(
             "6bc1bee22e409f96e93d7e117393172a\
@@ -910,27 +1034,27 @@ mod tests {
              f69f2445df4f9b17ad2b417be66c3710",
         );
         let expected = hex_vec(
-            "874d6191b620e3261bef6864990db6ce\
-             9806f66b7970fdff8617187bb9fffdff\
-             5ae4df3edbd5d35e5b4f09020db03eab\
-             1e031dda2fbe03d1792170a0f3009cee",
+            "601ec313775789a5b7a7f504bbf3d228\
+             f443e3ca4d62b59aca84e990cacaf5c5\
+             2b0930daa23de94ce87017ba2d84988d\
+             dfc9c58db67aada613c2dd08457941a6",
         );
         engine.aes_ctr(&key, &iv, &mut data);
         assert_eq!(data, expected);
     }
 
-    /// NIST SP 800-38A — CTR decrypt (symmetric operation).
+    /// NIST SP 800-38A Section F.5.6 — CTR decrypt (symmetric operation).
     #[cfg(feature = "software-crypto")]
     #[test]
     fn aes_ctr_decrypt_matches_nist_sp800_38a() {
         let engine = SoftwareCryptoEngine::new(SoftwareAes, SoftwareSha256);
-        let key = hex_16("2b7e151628aed2a6abf7158809cf4f3c");
+        let key = hex_32(NIST_AES256_KEY);
         let iv = hex_16("f0f1f2f3f4f5f6f7f8f9fafbfcfdfeff");
         let mut data = hex_vec(
-            "874d6191b620e3261bef6864990db6ce\
-             9806f66b7970fdff8617187bb9fffdff\
-             5ae4df3edbd5d35e5b4f09020db03eab\
-             1e031dda2fbe03d1792170a0f3009cee",
+            "601ec313775789a5b7a7f504bbf3d228\
+             f443e3ca4d62b59aca84e990cacaf5c5\
+             2b0930daa23de94ce87017ba2d84988d\
+             dfc9c58db67aada613c2dd08457941a6",
         );
         let expected = hex_vec(
             "6bc1bee22e409f96e93d7e117393172a\
@@ -947,16 +1071,138 @@ mod tests {
     #[test]
     fn aes_ctr_partial_block() {
         let engine = SoftwareCryptoEngine::new(SoftwareAes, SoftwareSha256);
-        let key = hex_16("2b7e151628aed2a6abf7158809cf4f3c");
+        let key = hex_32(NIST_AES256_KEY);
         let iv = hex_16("f0f1f2f3f4f5f6f7f8f9fafbfcfdfeff");
         // Encrypt 5 bytes (less than one block)
         let mut data = hex_vec("6bc1bee22e");
         engine.aes_ctr(&key, &iv, &mut data);
         // Should match first 5 bytes of full block 1 ciphertext
-        assert_eq!(data, hex_vec("874d6191b6"));
+        assert_eq!(data, hex_vec("601ec31377"));
         // Decrypt back
         engine.aes_ctr(&key, &iv, &mut data);
         assert_eq!(data, hex_vec("6bc1bee22e"));
+    }
+
+    /// AES-128 cipher for the RFC 5297 appendix vectors, which use
+    /// AES-SIV-CMAC-256 (two 128-bit subkeys). The S2V and CTR cores are
+    /// block-level and key-size-free, so the RFC's own vectors remain
+    /// runnable even though the protocol uses AES-256.
+    #[cfg(feature = "software-crypto")]
+    struct Aes128TestCipher(aes::Aes128);
+
+    #[cfg(feature = "software-crypto")]
+    impl Aes128TestCipher {
+        fn new(key: &[u8; 16]) -> Self {
+            use aes::cipher::KeyInit;
+            Self(aes::Aes128::new(
+                aes::cipher::generic_array::GenericArray::from_slice(key),
+            ))
+        }
+    }
+
+    #[cfg(feature = "software-crypto")]
+    impl AesCipher for Aes128TestCipher {
+        fn encrypt_block(&self, block: &mut [u8; 16]) {
+            use aes::cipher::BlockEncrypt;
+            self.0
+                .encrypt_block(aes::cipher::generic_array::GenericArray::from_mut_slice(
+                    block,
+                ));
+        }
+
+        fn decrypt_block(&self, block: &mut [u8; 16]) {
+            use aes::cipher::BlockDecrypt;
+            self.0
+                .decrypt_block(aes::cipher::generic_array::GenericArray::from_mut_slice(
+                    block,
+                ));
+        }
+    }
+
+    /// RFC 5297 Appendix A.1 — deterministic authenticated encryption.
+    /// Exercises the single-AD path and S2V's dbl-and-pad branch (the
+    /// 14-byte plaintext is shorter than a block).
+    #[cfg(feature = "software-crypto")]
+    #[test]
+    fn rfc5297_a1_deterministic_aes_siv() {
+        let k1 = hex_16("fffefdfcfbfaf9f8f7f6f5f4f3f2f1f0");
+        let k2 = hex_16("f0f1f2f3f4f5f6f7f8f9fafbfcfdfeff");
+        let ad = hex_vec("101112131415161718191a1b1c1d1e1f2021222324252627");
+        let plaintext = hex_vec("112233445566778899aabbccddee");
+
+        let s2v_cipher = Aes128TestCipher::new(&k1);
+        let mut s2v = S2vState::new(&s2v_cipher);
+        s2v.push_component(|cmac| cmac.update(&ad));
+        let v = s2v.finalize(&plaintext);
+        assert_eq!(v, hex_16("85632d07c6e8f37f950acd320a2ecc93"));
+
+        let mut q = v;
+        q[8] &= 0x7F;
+        q[12] &= 0x7F;
+        let ctr_cipher = Aes128TestCipher::new(&k2);
+        let mut data = plaintext.clone();
+        aes_ctr_with_cipher(&ctr_cipher, &q, &mut data);
+        assert_eq!(data, hex_vec("40c02b9690c4dc04daef7f6afe5c"));
+    }
+
+    /// RFC 5297 Appendix A.2 — nonce-based authenticated encryption.
+    /// Exercises multiple S2V components and the xorend branch (the
+    /// 47-byte plaintext spans multiple blocks).
+    #[cfg(feature = "software-crypto")]
+    #[test]
+    fn rfc5297_a2_nonce_based_aes_siv() {
+        let k1 = hex_16("7f7e7d7c7b7a79787776757473727170");
+        let k2 = hex_16("404142434445464748494a4b4c4d4e4f");
+        let ad1 = hex_vec(
+            "00112233445566778899aabbccddeeff\
+             deaddadadeaddadaffeeddccbbaa9988\
+             7766554433221100",
+        );
+        let ad2 = hex_vec("102030405060708090a0");
+        let nonce = hex_vec("09f911029d74e35bd84156c5635688c0");
+        let plaintext = hex_vec(
+            "7468697320697320736f6d6520706c61\
+             696e7465787420746f20656e63727970\
+             74207573696e67205349562d414553",
+        );
+
+        let s2v_cipher = Aes128TestCipher::new(&k1);
+        let mut s2v = S2vState::new(&s2v_cipher);
+        s2v.push_component(|cmac| cmac.update(&ad1));
+        s2v.push_component(|cmac| cmac.update(&ad2));
+        s2v.push_component(|cmac| cmac.update(&nonce));
+        let v = s2v.finalize(&plaintext);
+        assert_eq!(v, hex_16("7bdb6e3b432667eb06f4d14bff2fbd0f"));
+
+        let mut q = v;
+        q[8] &= 0x7F;
+        q[12] &= 0x7F;
+        let ctr_cipher = Aes128TestCipher::new(&k2);
+        let mut data = plaintext.clone();
+        aes_ctr_with_cipher(&ctr_cipher, &q, &mut data);
+        assert_eq!(
+            data,
+            hex_vec(
+                "cb900f2fddbe404326601965c889bf17\
+                 dba77ceb094fa663b7a3f748ba8af829\
+                 ea64ad544a272e9c485b62a3fd5c0d"
+            )
+        );
+    }
+
+    /// The RFC 5297 bit-clearing applies at every MIC length, whatever
+    /// bytes occupy positions 8 and 12.
+    #[cfg(feature = "software-crypto")]
+    #[test]
+    fn build_ctr_iv_masks_rfc5297_bits() {
+        let engine = SoftwareCryptoEngine::new(SoftwareAes, SoftwareSha256);
+        let mic = [0xFFu8; 16];
+        let sec_info = [0xFFu8; 7];
+        for mic_len in [4usize, 8, 12, 16] {
+            let iv = engine.build_ctr_iv(&mic[..mic_len], &sec_info);
+            assert_eq!(iv[8] & 0x80, 0, "mic_len {mic_len}");
+            assert_eq!(iv[12] & 0x80, 0, "mic_len {mic_len}");
+        }
     }
 
     #[cfg(feature = "software-crypto")]
@@ -1026,6 +1272,103 @@ mod tests {
         let mut wire = packet.as_bytes().to_vec();
         let range = engine.open_packet(&mut wire, &header, &keys).unwrap();
         assert_eq!(&wire[range], b"hello");
+    }
+
+    /// A sealed Mic16 packet is byte-for-byte RFC 5297 AEAD_AES_SIV_CMAC_512:
+    /// the RustCrypto `aes-siv` crate, keyed with `k_mic || k_enc` and given
+    /// the canonical AAD as its single header component, must reproduce the
+    /// on-wire MIC and ciphertext exactly.
+    #[cfg(feature = "software-crypto")]
+    #[test]
+    fn mic16_packet_matches_rfc5297_aes_siv_crate() {
+        use aes_siv::{KeyInit, siv::Aes256Siv};
+
+        let engine = SoftwareCryptoEngine::new(SoftwareAes, SoftwareSha256);
+        let keys = engine.derive_pairwise_keys(&SharedSecret([9u8; 32]));
+        let src = PublicKey([0xA1; 32]);
+        let dst = NodeHint([0xC3, 0xD4, 0x25]);
+        for payload in [&b"hello, RFC 5297 - a plaintext spanning blocks"[..], b""] {
+            let mut buf = [0u8; 128];
+            let mut packet = PacketBuilder::new(&mut buf)
+                .unicast(dst)
+                .source_full(&src)
+                .frame_counter(7)
+                .encrypted()
+                .mic_size(MicSize::Mic16)
+                .payload(payload)
+                .build()
+                .unwrap();
+            engine.seal_packet(&mut packet, &keys).unwrap();
+
+            let wire = packet.as_bytes().to_vec();
+            let header = PacketHeader::parse(&wire).unwrap();
+            let mut aad = std::vec::Vec::new();
+            feed_aad(&header, &wire, |chunk| aad.extend_from_slice(chunk));
+
+            let mut siv_key = [0u8; 64];
+            siv_key[..32].copy_from_slice(&keys.k_mic);
+            siv_key[32..].copy_from_slice(&keys.k_enc);
+            let mut siv = Aes256Siv::new((&siv_key).into());
+            let sealed = siv.encrypt([&aad], payload).unwrap();
+
+            // RFC 5297 output is V || C; UMSH carries C in the body and V at
+            // the end of the packet.
+            assert_eq!(sealed[..16], wire[header.mic_range.clone()]);
+            assert_eq!(sealed[16..], wire[header.body_range.clone()]);
+        }
+    }
+
+    /// For truncated MICs only the IV construction differs: the full S2V tag
+    /// still matches the `aes-siv` crate's tag for the same inputs.
+    #[cfg(feature = "software-crypto")]
+    #[test]
+    fn short_mic_tag_matches_rfc5297_s2v() {
+        use aes_siv::{KeyInit, siv::Aes256Siv};
+
+        let engine = SoftwareCryptoEngine::new(SoftwareAes, SoftwareSha256);
+        let keys = engine.derive_pairwise_keys(&SharedSecret([11u8; 32]));
+        let payload = b"short-tag payload";
+        let src = PublicKey([0xB2; 32]);
+        let dst = NodeHint([0x10, 0x20, 0x30]);
+        let mut buf = [0u8; 128];
+        let mut packet = PacketBuilder::new(&mut buf)
+            .unicast(dst)
+            .source_full(&src)
+            .frame_counter(3)
+            .encrypted()
+            .mic_size(MicSize::Mic4)
+            .payload(payload)
+            .build()
+            .unwrap();
+
+        let full_tag = {
+            let header = packet.header().unwrap();
+            let bytes = packet.as_bytes();
+            engine.s2v_tag(
+                &keys.k_mic,
+                |cmac| feed_aad(&header, bytes, |chunk| cmac.update(chunk)),
+                packet.body(),
+            )
+        };
+        let mut aad = std::vec::Vec::new();
+        {
+            let header = packet.header().unwrap();
+            feed_aad(&header, packet.as_bytes(), |chunk| {
+                aad.extend_from_slice(chunk)
+            });
+        }
+        engine.seal_packet(&mut packet, &keys).unwrap();
+
+        let mut siv_key = [0u8; 64];
+        siv_key[..32].copy_from_slice(&keys.k_mic);
+        siv_key[32..].copy_from_slice(&keys.k_enc);
+        let mut siv = Aes256Siv::new((&siv_key).into());
+        let sealed = siv.encrypt([&aad], payload).unwrap();
+        assert_eq!(sealed[..16], full_tag);
+
+        // The on-wire MIC is the prefix truncation of that tag.
+        let header = PacketHeader::parse(packet.as_bytes()).unwrap();
+        assert_eq!(packet.as_bytes()[header.mic_range.clone()], full_tag[..4]);
     }
 
     /// Regression: with a MIC shorter than 16 bytes the CTR IV includes
@@ -1103,32 +1446,32 @@ mod tests {
     #[test]
     fn compute_ack_trailer_is_deterministic() {
         let engine = SoftwareCryptoEngine::new(SoftwareAes, SoftwareSha256);
-        let key = hex_16("2b7e151628aed2a6abf7158809cf4f3c");
-        let cmac = hex_16("070a16b46b4d4144f79bdd9dd04a287c"); // RFC 4493 example 2
-        let t1 = engine.compute_ack_trailer(&cmac, &key);
-        let t2 = engine.compute_ack_trailer(&cmac, &key);
+        let key = hex_32(NIST_AES256_KEY);
+        let tag = hex_16("28a7023f452e8f82bd4bf28d8c37c35c");
+        let t1 = engine.compute_ack_trailer(&tag, &key);
+        let t2 = engine.compute_ack_trailer(&tag, &key);
         assert_eq!(t1, t2);
         assert_eq!(t1.len(), 8);
-        // ack_mic half is the first 4 bytes of the full CMAC (public).
-        assert_eq!(t1[..4], cmac[..4]);
-        // ack_tag half is the first 4 bytes of AES-ECB(key, cmac) (keyed).
+        // ack_mic half is the first 4 bytes of the full tag (public).
+        assert_eq!(t1[..4], tag[..4]);
+        // ack_tag half is the first 4 bytes of AES-ECB(key, tag) (keyed).
         let cipher = SoftwareAes.new_cipher(&key);
-        let mut block = cmac;
+        let mut block = tag;
         cipher.encrypt_block(&mut block);
         assert_eq!(t1[4..], block[..4]);
     }
 
-    /// Verify that compute_ack_trailer with different CMACs produces different
+    /// Verify that compute_ack_trailer with different tags produces different
     /// trailers in both the mic and tag halves.
     #[cfg(feature = "software-crypto")]
     #[test]
-    fn compute_ack_trailer_differs_for_different_cmacs() {
+    fn compute_ack_trailer_differs_for_different_tags() {
         let engine = SoftwareCryptoEngine::new(SoftwareAes, SoftwareSha256);
-        let key = hex_16("2b7e151628aed2a6abf7158809cf4f3c");
-        let cmac_a = hex_16("070a16b46b4d4144f79bdd9dd04a287c");
-        let cmac_b = hex_16("51f0bebf7e3b9d92fc49741779363cfe");
-        let t_a = engine.compute_ack_trailer(&cmac_a, &key);
-        let t_b = engine.compute_ack_trailer(&cmac_b, &key);
+        let key = hex_32(NIST_AES256_KEY);
+        let tag_a = hex_16("28a7023f452e8f82bd4bf28d8c37c35c");
+        let tag_b = hex_16("aaf3d8f1de5640c232f5b169b9c911e6");
+        let t_a = engine.compute_ack_trailer(&tag_a, &key);
+        let t_b = engine.compute_ack_trailer(&tag_b, &key);
         assert_ne!(t_a, t_b);
         assert_ne!(t_a, [0u8; 8]);
         assert_ne!(t_b, [0u8; 8]);
@@ -1454,7 +1797,7 @@ mod tests {
     #[cfg(feature = "software-crypto")]
     #[test]
     fn aes_decrypt_block_inverts_encrypt_block() {
-        let key = hex_16("2b7e151628aed2a6abf7158809cf4f3c");
+        let key = hex_32(NIST_AES256_KEY);
         let cipher = SoftwareAes.new_cipher(&key);
         let original = hex_16("6bc1bee22e409f96e93d7e117393172a");
         let mut block = original;

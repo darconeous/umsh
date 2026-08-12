@@ -60,7 +60,7 @@ impl FromStr for KeyArg {
 }
 
 /// `PUB,KENC,KMIC` (or whitespace-separated): a peer public key and the
-/// two 16-byte pairwise secrets, hex.
+/// two 32-byte pairwise secrets, hex.
 #[derive(Clone, Copy, PartialEq, Eq)]
 pub struct PeerArg(pub PeerKeyEntry);
 
@@ -80,8 +80,8 @@ impl FromStr for PeerArg {
         };
         Ok(Self(PeerKeyEntry {
             public_key: parse_key32(public_key)?,
-            k_enc: parse_hex::<16>(k_enc)?,
-            k_mic: parse_hex::<16>(k_mic)?,
+            k_enc: parse_hex::<32>(k_enc)?,
+            k_mic: parse_hex::<32>(k_mic)?,
         }))
     }
 }
@@ -363,12 +363,12 @@ mod tests {
 
     #[test]
     fn peer_entries_carry_both_pairwise_secrets() {
-        let peer: PeerArg = format!("{KEY_HEX},{},{}", "e0".repeat(16), "50".repeat(16))
+        let peer: PeerArg = format!("{KEY_HEX},{},{}", "e0".repeat(32), "50".repeat(32))
             .parse()
             .unwrap();
         assert_eq!(peer.0.public_key, [0xC4; 32]);
-        assert_eq!(peer.0.k_enc, [0xE0; 16]);
-        assert_eq!(peer.0.k_mic, [0x50; 16]);
+        assert_eq!(peer.0.k_enc, [0xE0; 32]);
+        assert_eq!(peer.0.k_mic, [0x50; 32]);
         // Secrets are never rendered, not even by a debug format.
         assert!(!format!("{peer:?}").contains("e0e0"));
     }

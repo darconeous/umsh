@@ -25,7 +25,7 @@ pub struct ProvisionArgs {
     #[arg(long, value_name = "KEY", action = clap::ArgAction::Append)]
     pub channel_key: Vec<KeyArg>,
 
-    /// Peer public key plus its two 16-byte hex pairwise secrets.
+    /// Peer public key plus its two 32-byte hex pairwise secrets.
     /// Repeatable.
     #[arg(long, value_name = "PUB,KENC,KMIC", action = clap::ArgAction::Append)]
     pub peer: Vec<PeerArg>,
@@ -244,8 +244,8 @@ mod tests {
              channel-key = {KEY_HEX}   # primary channel\n\
              peer = {KEY_HEX} {} {}\n\
              filter = pkt-type 1\n",
-            "e0".repeat(16),
-            "50".repeat(16),
+            "e0".repeat(32),
+            "50".repeat(32),
         );
         parse_file(&text, &mut settings).unwrap();
         let desired = settings.finish().unwrap();

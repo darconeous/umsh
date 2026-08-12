@@ -53,20 +53,20 @@ pub enum ItemError {
 #[derive(Clone, Copy, PartialEq, Eq)]
 pub struct PeerKeyEntry {
     pub public_key: [u8; PUBLIC_KEY_LEN],
-    pub k_enc: [u8; 16],
-    pub k_mic: [u8; 16],
+    pub k_enc: [u8; 32],
+    pub k_mic: [u8; 32],
 }
 
 impl PeerKeyEntry {
-    pub const WIRE_LEN: usize = 64;
+    pub const WIRE_LEN: usize = 96;
 
     pub fn encode(&self, out: &mut [u8]) -> Result<usize, ItemError> {
         if out.len() < Self::WIRE_LEN {
             return Err(ItemError::BufferTooSmall);
         }
         out[..32].copy_from_slice(&self.public_key);
-        out[32..48].copy_from_slice(&self.k_enc);
-        out[48..64].copy_from_slice(&self.k_mic);
+        out[32..64].copy_from_slice(&self.k_enc);
+        out[64..96].copy_from_slice(&self.k_mic);
         Ok(Self::WIRE_LEN)
     }
 
@@ -77,12 +77,12 @@ impl PeerKeyEntry {
         }
         let mut entry = Self {
             public_key: [0; PUBLIC_KEY_LEN],
-            k_enc: [0; 16],
-            k_mic: [0; 16],
+            k_enc: [0; 32],
+            k_mic: [0; 32],
         };
         entry.public_key.copy_from_slice(&input[..32]);
-        entry.k_enc.copy_from_slice(&input[32..48]);
-        entry.k_mic.copy_from_slice(&input[48..64]);
+        entry.k_enc.copy_from_slice(&input[32..64]);
+        entry.k_mic.copy_from_slice(&input[64..96]);
         Ok(entry)
     }
 
@@ -264,8 +264,8 @@ mod tests {
     fn peer_key_entry_round_trip_and_digest_is_secret_free() {
         let entry = PeerKeyEntry {
             public_key: [0x11; 32],
-            k_enc: [0x22; 16],
-            k_mic: [0x33; 16],
+            k_enc: [0x22; 32],
+            k_mic: [0x33; 32],
         };
         let mut buf = [0u8; PeerKeyEntry::WIRE_LEN];
         assert_eq!(entry.encode(&mut buf).unwrap(), PeerKeyEntry::WIRE_LEN);
@@ -283,8 +283,8 @@ mod tests {
 
     #[test]
     fn peer_key_entry_rejects_wrong_lengths() {
-        assert_eq!(PeerKeyEntry::decode(&[0; 63]), Err(ItemError::BadLength));
-        assert_eq!(PeerKeyEntry::decode(&[0; 65]), Err(ItemError::BadLength));
+        assert_eq!(PeerKeyEntry::decode(&[0; 95]), Err(ItemError::BadLength));
+        assert_eq!(PeerKeyEntry::decode(&[0; 97]), Err(ItemError::BadLength));
         assert_eq!(PeerKeyEntry::decode(&[]), Err(ItemError::BadLength));
     }
 

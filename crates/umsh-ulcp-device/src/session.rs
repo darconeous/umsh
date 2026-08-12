@@ -2589,13 +2589,14 @@ impl<A: AesProvider, S: Sha256Provider, const TX: usize> Session<A, S, TX> {
         let mic = &data[header.mic_range.clone()];
 
         // The ack tag covers the plaintext body: recompute the full
-        // CMAC over the decrypted scratch copy (spec §Ack Tag
+        // S2V tag over the decrypted scratch copy (spec §Ack Tag
         // Construction).
         let plan = wants_ack.then(|| {
-            let mut cmac = self.engine.cmac_state(&keys.k_mic);
-            umsh_core::feed_aad(&header, scratch, |chunk| cmac.update(chunk));
-            cmac.update(&scratch[body_range.clone()]);
-            let full_mac = cmac.finalize();
+            let full_mac = self.engine.s2v_tag(
+                &keys.k_mic,
+                |cmac| umsh_core::feed_aad(&header, scratch, |chunk| cmac.update(chunk)),
+                &scratch[body_range.clone()],
+            );
             AckPlan {
                 trailer: self.engine.compute_ack_trailer(&full_mac, &keys.k_enc),
                 // Flooded traffic gets a flood-return ack seeded from
@@ -4715,7 +4716,7 @@ mod tests {
     }
 
     fn set(session: &mut TestSession, key: u32, value: &[u8]) -> (Vec<Vec<u8>>, Option<Effect>) {
-        let mut buf = [0u8; 640];
+        let mut buf = [0u8; 1024];
         let len = frame::prop_set(&mut buf, 2, key, value).unwrap();
         dispatch(session, &buf[..len], 0)
     }
@@ -6826,7 +6827,7 @@ mod tests {
         key: u32,
         item: &[u8],
     ) -> (Vec<Vec<u8>>, Option<Effect>) {
-        let mut buf = [0u8; 96];
+        let mut buf = [0u8; 128];
         let len = frame::prop_insert(&mut buf, 5, key, item).unwrap();
         dispatch(session, &buf[..len], 0)
     }
@@ -6836,7 +6837,7 @@ mod tests {
         key: u32,
         item: &[u8],
     ) -> (Vec<Vec<u8>>, Option<Effect>) {
-        let mut buf = [0u8; 96];
+        let mut buf = [0u8; 128];
         let len = frame::prop_remove(&mut buf, 6, key, item).unwrap();
         dispatch(session, &buf[..len], 0)
     }
@@ -7542,11 +7543,11 @@ mod tests {
         digest.try_into().expect("channel digest is 2 bytes")
     }
 
-    fn peer_entry(seed: u8) -> [u8; 64] {
-        let mut item = [0u8; 64];
+    fn peer_entry(seed: u8) -> [u8; 96] {
+        let mut item = [0u8; 96];
         item[..32].fill(seed);
-        item[32..48].fill(0xE0 | (seed & 0x0F));
-        item[48..].fill(0x50 | (seed & 0x0F));
+        item[32..64].fill(0xE0 | (seed & 0x0F));
+        item[64..].fill(0x50 | (seed & 0x0F));
         item
     }
 
@@ -7600,8 +7601,8 @@ mod tests {
         assert_eq!(digest, entry[..32]);
         // No emitted frame may carry the pairwise key material.
         for frame in &emitted {
-            assert!(!frame.windows(16).any(|window| window == &entry[32..48]));
-            assert!(!frame.windows(16).any(|window| window == &entry[48..]));
+            assert!(!frame.windows(32).any(|window| window == &entry[32..64]));
+            assert!(!frame.windows(32).any(|window| window == &entry[64..]));
         }
 
         // GET reports public keys only.
@@ -7626,7 +7627,7 @@ mod tests {
         expect_status(&emitted[0], 6, Status::ITEM_NOT_FOUND);
 
         // Malformed entries are invalid.
-        let (emitted, _) = insert_item(&mut session, prop::HOST_PEER_KEYS, &entry[..63]);
+        let (emitted, _) = insert_item(&mut session, prop::HOST_PEER_KEYS, &entry[..95]);
         expect_status(&emitted[0], 5, Status::INVALID_ARGUMENT);
     }
 
@@ -7750,16 +7751,16 @@ mod tests {
 
     fn test_pairwise() -> PairwiseKeys {
         PairwiseKeys {
-            k_enc: [0x5E; 16],
-            k_mic: [0x5F; 16],
+            k_enc: [0x5E; 32],
+            k_mic: [0x5F; 32],
         }
     }
 
-    fn peer_item(public_key: &[u8; 32], keys: &PairwiseKeys) -> [u8; 64] {
-        let mut item = [0u8; 64];
+    fn peer_item(public_key: &[u8; 32], keys: &PairwiseKeys) -> [u8; 96] {
+        let mut item = [0u8; 96];
         item[..32].copy_from_slice(public_key);
-        item[32..48].copy_from_slice(&keys.k_enc);
-        item[48..].copy_from_slice(&keys.k_mic);
+        item[32..64].copy_from_slice(&keys.k_enc);
+        item[64..].copy_from_slice(&keys.k_mic);
         item
     }
 
@@ -7834,10 +7835,12 @@ mod tests {
     fn expected_ack_trailer(frame: &[u8], keys: &PairwiseKeys) -> [u8; 8] {
         let engine = test_engine();
         let header = PacketHeader::parse(frame).unwrap();
-        let mut cmac = engine.cmac_state(&keys.k_mic);
-        umsh_core::feed_aad(&header, frame, |chunk| cmac.update(chunk));
-        cmac.update(&frame[header.body_range.clone()]);
-        engine.compute_ack_trailer(&cmac.finalize(), &keys.k_enc)
+        let full_mac = engine.s2v_tag(
+            &keys.k_mic,
+            |cmac| umsh_core::feed_aad(&header, frame, |chunk| cmac.update(chunk)),
+            &frame[header.body_range.clone()],
+        );
+        engine.compute_ack_trailer(&full_mac, &keys.k_enc)
     }
 
     /// Assert the staged transmit is a MAC ack (which carries no
@@ -7918,8 +7921,8 @@ mod tests {
         // but filtering accepted it (host destination hint), so it is
         // queued for the host — unacknowledged.
         let wrong_keys = PairwiseKeys {
-            k_enc: [1; 16],
-            k_mic: [2; 16],
+            k_enc: [1; 32],
+            k_mic: [2; 32],
         };
         assert!(rx_effect(&mut session, &sealed_unar(5, &wrong_keys, false), 0).is_none());
 
@@ -8070,8 +8073,8 @@ mod tests {
         // Replace the peer's key material (secure link required).
         session.attach(true);
         let new_keys = PairwiseKeys {
-            k_enc: [0x77; 16],
-            k_mic: [0x78; 16],
+            k_enc: [0x77; 32],
+            k_mic: [0x78; 32],
         };
         insert_item(
             &mut session,

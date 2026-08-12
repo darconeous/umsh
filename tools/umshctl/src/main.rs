@@ -406,7 +406,7 @@ mod tests {
     #[test]
     fn provision_flags_build_the_desired_state() {
         const KEY: &str = "c4c4c4c4c4c4c4c4c4c4c4c4c4c4c4c4c4c4c4c4c4c4c4c4c4c4c4c4c4c4c4c4";
-        let peer = format!("{KEY},{},{}", "e0".repeat(16), "50".repeat(16));
+        let peer = format!("{KEY},{},{}", "e0".repeat(32), "50".repeat(32));
         let args = parse(&[
             "provision",
             "--host-key",

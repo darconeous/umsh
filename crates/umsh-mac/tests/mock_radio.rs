@@ -71,8 +71,8 @@ fn poll_cycle_delivers_unicast_and_sends_ack_via_public_api() {
     let remote = DummyIdentity::new([0xAB; 32]);
     let peer_id = mac.add_peer(*remote.public_key()).unwrap();
     let keys = PairwiseKeys {
-        k_enc: [1; 16],
-        k_mic: [2; 16],
+        k_enc: [1; 32],
+        k_mic: [2; 32],
     };
     mac.install_pairwise_keys_advanced(local_id, peer_id, keys.clone())
         .unwrap();
@@ -182,7 +182,7 @@ impl NodeIdentity for DummyIdentity {
 }
 
 struct DummyCipher {
-    key: [u8; 16],
+    key: [u8; 32],
 }
 
 impl AesCipher for DummyCipher {
@@ -202,7 +202,7 @@ struct DummyAes;
 impl AesProvider for DummyAes {
     type Cipher = DummyCipher;
 
-    fn new_cipher(&self, key: &[u8; 16]) -> Self::Cipher {
+    fn new_cipher(&self, key: &[u8; 32]) -> Self::Cipher {
         DummyCipher { key: *key }
     }
 }
