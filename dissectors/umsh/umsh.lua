@@ -53,15 +53,22 @@ f.fcf_reserved = ProtoField.bool  ("umsh.fcf.r",       "Reserved (R)",        8,
 f.fcf_fhops    = ProtoField.bool  ("umsh.fcf.h",       "Flood Hops (H)",      8, nil, 0x01)
 
 -- FHOPS (1 byte, optional)
-f.fhops        = ProtoField.uint8 ("umsh.fhops",       "Flood Hop Count",     base.HEX)
+--
+-- A string rather than the raw byte: the two nibbles are what the field
+-- means, and "0x50" in a column says nothing a reader can act on. The
+-- nibbles stay available as numbers below.
+f.fhops        = ProtoField.string("umsh.fhops",       "Flood Hop Count")
 f.fhops_rem    = ProtoField.uint8 ("umsh.fhops.rem",   "Remaining",           base.DEC, nil, 0xF0)
 f.fhops_acc    = ProtoField.uint8 ("umsh.fhops.acc",   "Accumulated",         base.DEC, nil, 0x0F)
 
 -- Options (variable)
 f.options          = ProtoField.bytes  ("umsh.options",           "Options")
 f.opt_region_code  = ProtoField.bytes  ("umsh.opt.region_code",   "Region Code")
-f.opt_traceroute   = ProtoField.bytes  ("umsh.opt.trace_route",   "Trace Route")
-f.opt_srcroute     = ProtoField.bytes  ("umsh.opt.source_route",  "Source Route")
+-- Route options carry their rendered path, not their bytes: the byte range
+-- an option item covers starts at the delta-length header, so the hex form
+-- is off by a byte from the hints a reader is looking for.
+f.opt_traceroute   = ProtoField.string ("umsh.opt.trace_route",   "Trace Route")
+f.opt_srcroute     = ProtoField.string ("umsh.opt.source_route",  "Source Route")
 f.opt_route_hop    = ProtoField.string ("umsh.opt.route_hop",     "Router Hint")
 f.opt_op_callsign  = ProtoField.string ("umsh.opt.op_callsign",   "Operator Callsign")
 f.opt_sta_callsign = ProtoField.string ("umsh.opt.sta_callsign",  "Station Callsign")
@@ -299,6 +306,26 @@ local function addr_short(s)
   return hint_short(s)
 end
 
+-- A route option's hops as canonical router hints, in the order they sit on
+-- the wire, joined by an arrow pointing the way the packet travels. This is
+-- what a route field is worth in a column: the raw bytes there include the
+-- option header and read as noise.
+--
+-- The two route options are written in opposite directions. A repeater
+-- prepends itself to a trace route, so hint 0 is the hop nearest the
+-- receiver and the packet moved right to left. A source route names the
+-- next repeater first, so it moves left to right.
+local function route_path(val, arrow)
+  local hops = #val // 2
+  if hops == 0 then return "(empty)" end
+  local out = {}
+  for i = 1, hops do
+    local hop = val:sub(i * 2 - 1, i * 2)
+    out[i] = base58.router_hint(hop) or bytes_to_hex(hop)
+  end
+  return table.concat(out, arrow)
+end
+
 -- ──────────────────────────────────────────────────────────────────────────
 -- Protocol violations
 --
@@ -516,23 +543,25 @@ local function parse_options(buf, start_off, bound, tree, static_opts_out, pinfo
       elseif num == options.OPT_TRACE_ROUTE or num == options.OPT_SOURCE_ROUTE then
         local is_trace = (num == options.OPT_TRACE_ROUTE)
         local label    = is_trace and "Trace Route" or "Source Route"
+        -- The value is a run of 2-byte router hints, one per hop.
+        local hops  = val_len // 2
+        local extra = val_len % 2
+        local path  = route_path(val, is_trace and " ← " or " → ")
         local item = opts_tree:add(is_trace and f.opt_traceroute or f.opt_srcroute,
-                                   buf(opt_off, consumed))
-        if val_len == 0 then
-          item:set_text(label .. ": (empty)")
-        else
-          -- The value is a run of 2-byte router hints, one per hop.
-          local hops = val_len // 2
-          local extra = val_len % 2
-          item:set_text(string.format("%s: %d hop%s%s", label, hops,
-                                      hops == 1 and "" or "s",
-                                      extra == 1 and " + 1 trailing byte" or ""))
-          for i = 1, hops do
-            local hop = val:sub(i * 2 - 1, i * 2)
-            item:add(f.opt_route_hop, buf(val_off + (i - 1) * 2, 2),
-                     base58.router_hint(hop) or ""):set_text(
-              string.format("Hop %d: %s", i, base58.router_hint_full(hop)))
-          end
+                                   buf(opt_off, consumed), path)
+        local note = ""
+        if hops > 0 then
+          note = string.format(" (%d hop%s%s)", hops, hops == 1 and "" or "s",
+                               extra == 1 and ", 1 trailing byte" or "")
+        elseif extra == 1 then
+          note = " (1 trailing byte)"
+        end
+        item:set_text(label .. ": " .. path .. note)
+        for i = 1, hops do
+          local hop = val:sub(i * 2 - 1, i * 2)
+          item:add(f.opt_route_hop, buf(val_off + (i - 1) * 2, 2),
+                   base58.router_hint(hop) or ""):set_text(
+            string.format("Hop %d: %s", i, base58.router_hint_full(hop)))
         end
 
       elseif num == options.OPT_OP_CALLSIGN then
@@ -1343,10 +1372,17 @@ function umsh.dissector(buf, pinfo, tree)
   -- FHOPS byte
   if has_fhops then
     if off >= buf_len then root:add_proto_expert_info(ef.truncated); return off end
-    local fh_tree = root:add(f.fhops, buf(off, 1))
+    local fh_val = buf(off, 1):uint()
+    local fh_rem = (fh_val >> 4) & 0x0F
+    local fh_acc = fh_val & 0x0F
+    -- The sum is the flood limit the sender set, except where a bridge has
+    -- taken hops off the remaining nibble on its own—so a shrinking total
+    -- across a capture is itself the interesting reading.
+    local fh_tree = root:add(f.fhops, buf(off, 1),
+                             string.format("%d of %d", fh_acc, fh_rem + fh_acc))
     fh_tree:add(f.fhops_rem, buf(off, 1))
     fh_tree:add(f.fhops_acc, buf(off, 1))
-    _ctx.fhops = buf(off, 1):uint()
+    _ctx.fhops = fh_val
     off = off + 1
   end
 
