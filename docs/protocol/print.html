@@ -36,7 +36,7 @@
             const path_to_root = "";
             const default_light_theme = "light";
             const default_dark_theme = "ayu";
-            window.path_to_searchindex_js = "searchindex-deaee21e.js";
+            window.path_to_searchindex_js = "searchindex-ac42c73d.js";
         </script>
         <!-- Start loading toc.js asap -->
         <script src="toc-438957a9.js"></script>
@@ -1098,8 +1098,8 @@ info = "UMSH-UNICAST-V2"
 okm  = HKDF-SHA256(ikm, salt, info, 64)
 </code></pre>
 <p>The output keying material is split as follows:</p>
-<pre><code class="language-text">K_mic = okm[0..31]
-K_enc = okm[32..63]
+<pre><code class="language-text">K_mic = okm[0..32]
+K_enc = okm[32..64]
 </code></pre>
 <p>Where:</p>
 <ul>
@@ -1150,8 +1150,8 @@ salt = "UMSH-MCAST-SALT"
 info = "UMSH-MCAST-V2" || channel_id
 okm  = HKDF-SHA256(ikm, salt, info, 64)
 
-K_mic = okm[0..31]
-K_enc = okm[32..63]
+K_mic = okm[0..32]
+K_enc = okm[32..64]
 </code></pre>
 <p>As with the pairwise keys, <code>okm</code> is exactly the RFC 5297 AES-SIV key for the channel: S2V key first, CTR key second.</p>
 <p>These keys are stable for the channel and may be cached by the implementation. They do not change from packet to packet. Per-packet variability is provided by the frame counter and optional salt in SECINFO, which serve as inputs to encryption and replay detection (see <a href="#per-packet-security-inputs">Per-Packet Security Inputs</a>).</p>
@@ -1165,7 +1165,7 @@ K_enc = okm[32..63]
 <li>Encrypt the plaintext using <strong>AES-256-CTR</strong> with <code>K_enc</code> and the constructed IV. The counter is the full 16-byte IV, incremented as a 128-bit big-endian integer (RFC 5297 §2.5).</li>
 </ol>
 <p>The MIC is transmitted at the end of the packet rather than prepended as in RFC 5297, allowing its length to be controlled independently via the SCF MIC size field.</p>
-<p>With a 16-byte MIC, the result is byte-for-byte <strong>AEAD_AES_SIV_CMAC_512</strong> (RFC 5297 §6.2): the key is <code>K = K_mic || K_enc</code>, the canonical AAD is the single associated-data component, and the CTR IV construction reduces to the RFC’s initial counter <code>Q</code>. Shorter MIC lengths use the same computation and differ only in how the CTR IV is filled.</p>
+<p>With a 16-byte MIC, the result is byte-for-byte <strong>AEAD_AES_SIV_CMAC_512</strong> (RFC 5297 §6.3): the key is <code>K = K_mic || K_enc</code>, the canonical AAD is the single associated-data component, and the CTR IV construction reduces to the RFC’s initial counter <code>Q</code>. Shorter MIC lengths use the same computation and differ only in how the CTR IV is filled.</p>
 <p>As in RFC 5297, the synthetic IV binds the ciphertext to the key, associated data, and plaintext, so there is no caller-supplied nonce to misuse: repeating all three inputs yields an identical packet and reveals only the repetition itself. Truncated MICs weaken this bound in proportion to the truncation, since the CTR IV is reconstructed from the truncated MIC and SECINFO rather than the full <code>V</code>.</p>
 <h3 id="ctr-iv-construction"><a class="header" href="#ctr-iv-construction">CTR IV Construction</a></h3>
 <p>The 16-byte CTR IV is constructed by appending the SECINFO field to the MIC, zero-padding or truncating the result to exactly 16 bytes, and then clearing the top bit of bytes 8 and 12 as RFC 5297 §2.6 does when forming the initial counter:</p>
@@ -9511,9 +9511,9 @@ no capability; a device that defines no mutable multi-value properties simply
 has nothing to apply them to.</p>
 <div style="break-before: page; page-break-before: always;"></div>
 <h1 id="identity-export-format"><a class="header" href="#identity-export-format">Identity Export Format</a></h1>
-<blockquote>
-<p>![NOTE]
-This section is an early work in progress and this format may change significantly.</p>
+<blockquote class="blockquote-tag blockquote-tag-note">
+<p class="blockquote-tag-title"><svg viewbox="0 0 16 16" width="18" height="18"><path d="M0 8a8 8 0 1 1 16 0A8 8 0 0 1 0 8Zm8-6.5a6.5 6.5 0 1 0 0 13 6.5 6.5 0 0 0 0-13ZM6.5 7.75A.75.75 0 0 1 7.25 7h1a.75.75 0 0 1 .75.75v2.75h.25a.75.75 0 0 1 0 1.5h-2a.75.75 0 0 1 0-1.5h.25v-2h-.25a.75.75 0 0 1-.75-.75ZM8 6a1 1 0 1 1 0-2 1 1 0 0 1 0 2Z"></path></svg>Note</p>
+<p>This section is an early work in progress and this format may change significantly.</p>
 </blockquote>
 <p>This appendix defines a portable, passphrase-protected artifact for backing
 up and restoring a node identity, together with the secret material and local
@@ -9582,8 +9582,8 @@ salt = "UMSH-IDEXPORT-SALT"
 info = "UMSH-IDEXPORT-V2"
 okm  = HKDF-SHA256(ikm, salt, info, 64)
 
-K_mic = okm[0..31]
-K_enc = okm[32..63]
+K_mic = okm[0..32]
+K_enc = okm[32..64]
 </code></pre>
 <p>Exporters <strong>MUST</strong> use at least <em>m</em> = 19456 KiB, <em>t</em> = 2, <em>p</em> = 1, and
 <strong>SHOULD</strong> use <em>m</em> = 65536 KiB, <em>t</em> = 3, <em>p</em> = 1 where device memory allows.
@@ -10223,7 +10223,7 @@ the metadata of every frame on every segment it bridges.</p>
 <li>Explicitly zeroed in memory upon session termination (not just freed — freed memory may not be overwritten promptly)</li>
 <li>Not retained in core dumps or crash reports</li>
 </ul>
-<p>Failure to erase ephemeral keys eliminates the forward secrecy property entirely. See <a href="#key-erasure">Key Erasure</a>.</p>
+<p>Failure to erase ephemeral keys eliminates the forward secrecy property entirely. See <a href="#session-lifetime">Session Lifetime</a>.</p>
 <h3 id="constant-time-mic-verification"><a class="header" href="#constant-time-mic-verification">Constant-Time MIC Verification</a></h3>
 <p>MIC comparison must use constant-time comparison (e.g., a fixed-iteration XOR-and-OR loop) rather than <code>memcmp</code> or similar short-circuiting functions. A timing side channel in MIC verification allows an attacker to incrementally guess MIC bytes by measuring response time.</p>
 <h3 id="public-key-validation"><a class="header" href="#public-key-validation">Public Key Validation</a></h3>
@@ -10260,7 +10260,7 @@ the metadata of every frame on every segment it bridges.</p>
 <p>UMSH uses AES-SIV (RFC 5297) rather than AES-GCM. AES-GCM is catastrophically vulnerable to nonce reuse: a single repeated nonce leaks the authentication key and allows forgery of arbitrary messages. On a mesh network where counter management is distributed across many independent nodes and persistence across reboots is not guaranteed, nonce reuse is a realistic failure mode. AES-SIV degrades gracefully — nonce reuse reveals only whether two packets are identical, without compromising keys or enabling forgery. Deterministic SIV-style alternatives built on other primitives, such as ChaCha20-Poly1305-SIV, were considered, but none is as mature or as widely analyzed as RFC 5297. See the <a href="#why-use-aes-siv-instead-of-aes-gcm">FAQ</a>.</p>
 <h3 id="aes-256-over-aes-128"><a class="header" href="#aes-256-over-aes-128">AES-256 over AES-128</a></h3>
 <p>UMSH’s asymmetric layer — Ed25519 identities and X25519 key agreement — provides roughly 128-bit classical security, so AES-128 would be a matched choice against classical adversaries, and a cheaper one on low-power hardware. UMSH uses AES-256 anyway, because the symmetric layer is the one part of the protocol that can meaningfully survive a quantum adversary.</p>
-<p>No post-quantum key exchange or signature scheme fits within a LoRa frame budget, so the asymmetric layer cannot be hardened against Shor’s algorithm. Recovering a private key that way, however, requires the complete public key. Most UMSH traffic exposes only a 3-byte hint, and blind unicast conceals even a full first-contact source key inside the channel-encrypted address block. A deployment that avoids exposing full public keys and leans on shared channel keys therefore retains meaningful — though reduced — security against a quantum adversary: physical compromise of any channel member defeats it, but a purely over-the-air attacker is left facing the symmetric layer alone. That fallback is only as strong as the symmetric primitives, and Grover’s algorithm halves a symmetric key’s effective strength: AES-128 would be reduced to roughly 64-bit post-quantum strength, while AES-256 remains far out of reach. Choosing AES-256 preserves the symmetric fallback at the cost of extra cycles and code size on constrained devices.</p>
+<p>No standardized post-quantum key exchange or signature scheme fits within a LoRa frame budget, so the asymmetric layer cannot be hardened against Shor’s algorithm. Recovering a private key that way, however, requires the complete public key. Most UMSH traffic exposes only a 3-byte hint, and blind unicast conceals even a full first-contact source key inside the channel-encrypted address block. A deployment that avoids exposing full public keys and leans on shared channel keys therefore retains meaningful — though reduced — security against a quantum adversary: physical compromise of any channel member defeats it, but a purely over-the-air attacker is left facing the symmetric layer alone. That fallback is only as strong as the symmetric primitives, and Grover’s algorithm halves a symmetric key’s effective strength: AES-128 would be reduced to roughly 64-bit post-quantum strength, while AES-256 remains far out of reach. Choosing AES-256 preserves the symmetric fallback at the cost of extra cycles and code size on constrained devices.</p>
 <h3 id="stable-keys-over-ratcheting"><a class="header" href="#stable-keys-over-ratcheting">Stable Keys over Ratcheting</a></h3>
 <p>UMSH uses stable pairwise keys rather than a ratcheting protocol. Ratcheting provides forward secrecy per-message but requires synchronized state between sender and receiver. On a lossy, high-latency mesh where packets are routinely dropped, duplicated, or delivered out of order, ratchet state can desynchronize — potentially requiring expensive resynchronization exchanges over a slow radio link. UMSH’s stable keys combined with per-packet counter and salt inputs provide per-packet IV uniqueness without requiring synchronized state. Optional <a href="#perfect-forward-secrecy-sessions">PFS sessions</a> provide forward secrecy when needed, without imposing ratcheting’s fragility on all traffic. See the <a href="#why-does-umsh-use-stable-pairwise-keys-instead-of-a-ratcheting-scheme-like-the-signal-protocol">FAQ</a>.</p>
 <h3 id="single-keypair-for-signing-and-key-agreement"><a class="header" href="#single-keypair-for-signing-and-key-agreement">Single Keypair for Signing and Key Agreement</a></h3>

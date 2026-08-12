@@ -35,7 +35,7 @@
             const path_to_root = "";
             const default_light_theme = "light";
             const default_dark_theme = "ayu";
-            window.path_to_searchindex_js = "searchindex-deaee21e.js";
+            window.path_to_searchindex_js = "searchindex-ac42c73d.js";
         </script>
         <!-- Start loading toc.js asap -->
         <script src="toc-438957a9.js"></script>
@@ -316,8 +316,8 @@ info = "UMSH-UNICAST-V2"
 okm  = HKDF-SHA256(ikm, salt, info, 64)
 </code></pre>
 <p>The output keying material is split as follows:</p>
-<pre><code class="language-text">K_mic = okm[0..31]
-K_enc = okm[32..63]
+<pre><code class="language-text">K_mic = okm[0..32]
+K_enc = okm[32..64]
 </code></pre>
 <p>Where:</p>
 <ul>
@@ -368,8 +368,8 @@ salt = "UMSH-MCAST-SALT"
 info = "UMSH-MCAST-V2" || channel_id
 okm  = HKDF-SHA256(ikm, salt, info, 64)
 
-K_mic = okm[0..31]
-K_enc = okm[32..63]
+K_mic = okm[0..32]
+K_enc = okm[32..64]
 </code></pre>
 <p>As with the pairwise keys, <code>okm</code> is exactly the RFC 5297 AES-SIV key for the channel: S2V key first, CTR key second.</p>
 <p>These keys are stable for the channel and may be cached by the implementation. They do not change from packet to packet. Per-packet variability is provided by the frame counter and optional salt in SECINFO, which serve as inputs to encryption and replay detection (see <a href="#per-packet-security-inputs">Per-Packet Security Inputs</a>).</p>
@@ -383,7 +383,7 @@ K_enc = okm[32..63]
 <li>Encrypt the plaintext using <strong>AES-256-CTR</strong> with <code>K_enc</code> and the constructed IV. The counter is the full 16-byte IV, incremented as a 128-bit big-endian integer (RFC 5297 §2.5).</li>
 </ol>
 <p>The MIC is transmitted at the end of the packet rather than prepended as in RFC 5297, allowing its length to be controlled independently via the SCF MIC size field.</p>
-<p>With a 16-byte MIC, the result is byte-for-byte <strong>AEAD_AES_SIV_CMAC_512</strong> (RFC 5297 §6.2): the key is <code>K = K_mic || K_enc</code>, the canonical AAD is the single associated-data component, and the CTR IV construction reduces to the RFC’s initial counter <code>Q</code>. Shorter MIC lengths use the same computation and differ only in how the CTR IV is filled.</p>
+<p>With a 16-byte MIC, the result is byte-for-byte <strong>AEAD_AES_SIV_CMAC_512</strong> (RFC 5297 §6.3): the key is <code>K = K_mic || K_enc</code>, the canonical AAD is the single associated-data component, and the CTR IV construction reduces to the RFC’s initial counter <code>Q</code>. Shorter MIC lengths use the same computation and differ only in how the CTR IV is filled.</p>
 <p>As in RFC 5297, the synthetic IV binds the ciphertext to the key, associated data, and plaintext, so there is no caller-supplied nonce to misuse: repeating all three inputs yields an identical packet and reveals only the repetition itself. Truncated MICs weaken this bound in proportion to the truncation, since the CTR IV is reconstructed from the truncated MIC and SECINFO rather than the full <code>V</code>.</p>
 <h3 id="ctr-iv-construction"><a class="header" href="#ctr-iv-construction">CTR IV Construction</a></h3>
 <p>The 16-byte CTR IV is constructed by appending the SECINFO field to the MIC, zero-padding or truncating the result to exactly 16 bytes, and then clearing the top bit of bytes 8 and 12 as RFC 5297 §2.6 does when forming the initial counter:</p>

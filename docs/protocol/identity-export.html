@@ -35,7 +35,7 @@
             const path_to_root = "";
             const default_light_theme = "light";
             const default_dark_theme = "ayu";
-            window.path_to_searchindex_js = "searchindex-deaee21e.js";
+            window.path_to_searchindex_js = "searchindex-ac42c73d.js";
         </script>
         <!-- Start loading toc.js asap -->
         <script src="toc-438957a9.js"></script>
@@ -175,9 +175,9 @@
                 <div id="mdbook-content" class="content">
                     <main>
                         <h1 id="identity-export-format"><a class="header" href="#identity-export-format">Identity Export Format</a></h1>
-<blockquote>
-<p>![NOTE]
-This section is an early work in progress and this format may change significantly.</p>
+<blockquote class="blockquote-tag blockquote-tag-note">
+<p class="blockquote-tag-title"><svg viewbox="0 0 16 16" width="18" height="18"><path d="M0 8a8 8 0 1 1 16 0A8 8 0 0 1 0 8Zm8-6.5a6.5 6.5 0 1 0 0 13 6.5 6.5 0 0 0 0-13ZM6.5 7.75A.75.75 0 0 1 7.25 7h1a.75.75 0 0 1 .75.75v2.75h.25a.75.75 0 0 1 0 1.5h-2a.75.75 0 0 1 0-1.5h.25v-2h-.25a.75.75 0 0 1-.75-.75ZM8 6a1 1 0 1 1 0-2 1 1 0 0 1 0 2Z"></path></svg>Note</p>
+<p>This section is an early work in progress and this format may change significantly.</p>
 </blockquote>
 <p>This appendix defines a portable, passphrase-protected artifact for backing
 up and restoring a node identity, together with the secret material and local
@@ -246,8 +246,8 @@ salt = "UMSH-IDEXPORT-SALT"
 info = "UMSH-IDEXPORT-V2"
 okm  = HKDF-SHA256(ikm, salt, info, 64)
 
-K_mic = okm[0..31]
-K_enc = okm[32..63]
+K_mic = okm[0..32]
+K_enc = okm[32..64]
 </code></pre>
 <p>Exporters <strong>MUST</strong> use at least <em>m</em> = 19456 KiB, <em>t</em> = 2, <em>p</em> = 1, and
 <strong>SHOULD</strong> use <em>m</em> = 65536 KiB, <em>t</em> = 3, <em>p</em> = 1 where device memory allows.

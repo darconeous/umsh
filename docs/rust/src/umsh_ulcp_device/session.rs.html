@@ -7601,8 +7601,8 @@
 <a href=#7601 id=7601 data-nosnippet>7601</a>        <span class="macro">assert_eq!</span>(digest, entry[..<span class="number">32</span>]);
 <a href=#7602 id=7602 data-nosnippet>7602</a>        <span class="comment">// No emitted frame may carry the pairwise key material.
 <a href=#7603 id=7603 data-nosnippet>7603</a>        </span><span class="kw">for </span>frame <span class="kw">in </span><span class="kw-2">&amp;</span>emitted {
-<a href=#7604 id=7604 data-nosnippet>7604</a>            <span class="macro">assert!</span>(!frame.windows(<span class="number">16</span>).any(|window| window == <span class="kw-2">&amp;</span>entry[<span class="number">32</span>..<span class="number">48</span>]));
-<a href=#7605 id=7605 data-nosnippet>7605</a>            <span class="macro">assert!</span>(!frame.windows(<span class="number">16</span>).any(|window| window == <span class="kw-2">&amp;</span>entry[<span class="number">48</span>..]));
+<a href=#7604 id=7604 data-nosnippet>7604</a>            <span class="macro">assert!</span>(!frame.windows(<span class="number">32</span>).any(|window| window == <span class="kw-2">&amp;</span>entry[<span class="number">32</span>..<span class="number">64</span>]));
+<a href=#7605 id=7605 data-nosnippet>7605</a>            <span class="macro">assert!</span>(!frame.windows(<span class="number">32</span>).any(|window| window == <span class="kw-2">&amp;</span>entry[<span class="number">64</span>..]));
 <a href=#7606 id=7606 data-nosnippet>7606</a>        }
 <a href=#7607 id=7607 data-nosnippet>7607</a>
 <a href=#7608 id=7608 data-nosnippet>7608</a>        <span class="comment">// GET reports public keys only.
@@ -7627,7 +7627,7 @@
 <a href=#7627 id=7627 data-nosnippet>7627</a>        expect_status(<span class="kw-2">&amp;</span>emitted[<span class="number">0</span>], <span class="number">6</span>, Status::ITEM_NOT_FOUND);
 <a href=#7628 id=7628 data-nosnippet>7628</a>
 <a href=#7629 id=7629 data-nosnippet>7629</a>        <span class="comment">// Malformed entries are invalid.
-<a href=#7630 id=7630 data-nosnippet>7630</a>        </span><span class="kw">let </span>(emitted, <span class="kw">_</span>) = insert_item(<span class="kw-2">&amp;mut </span>session, prop::HOST_PEER_KEYS, <span class="kw-2">&amp;</span>entry[..<span class="number">63</span>]);
+<a href=#7630 id=7630 data-nosnippet>7630</a>        </span><span class="kw">let </span>(emitted, <span class="kw">_</span>) = insert_item(<span class="kw-2">&amp;mut </span>session, prop::HOST_PEER_KEYS, <span class="kw-2">&amp;</span>entry[..<span class="number">95</span>]);
 <a href=#7631 id=7631 data-nosnippet>7631</a>        expect_status(<span class="kw-2">&amp;</span>emitted[<span class="number">0</span>], <span class="number">5</span>, Status::INVALID_ARGUMENT);
 <a href=#7632 id=7632 data-nosnippet>7632</a>    }
 <a href=#7633 id=7633 data-nosnippet>7633</a>
