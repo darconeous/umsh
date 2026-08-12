@@ -87,13 +87,25 @@ jobs:
         run: mdbook build docs/protocol/
 
       # run_tests.lua needs Lua 5.3+ and stubs the Wireshark API, so no
-      # Wireshark install is required. Crypto-level checks self-skip when
-      # luagcrypt is absent (27 assertions still run).
+      # Wireshark install is required. The crypto section self-skips when
+      # luagcrypt is absent — which is how the hard-coded golden vectors once
+      # went stale unnoticed — so build luagcrypt (pinned) against the distro
+      # libgcrypt and fail the step if anything still reports SKIP.
       - name: Wireshark dissector unit tests
         run: |
           sudo apt-get update
-          sudo apt-get install -y lua5.4
-          lua5.4 dissectors/tests/run_tests.lua
+          sudo apt-get install -y lua5.4 liblua5.4-dev libgcrypt20-dev
+          git clone https://github.com/Lekensteyn/luagcrypt /tmp/luagcrypt
+          git -C /tmp/luagcrypt checkout 5763e94b751e6ff0dcf20e328c299d49eb8fcbce
+          make -C /tmp/luagcrypt LUA_VER=5.4 LUA_DIR=/usr
+          set -o pipefail
+          LUA_CPATH="/tmp/luagcrypt/?.so;;" lua5.4 dissectors/tests/run_tests.lua \
+            | tee /tmp/dissector-tests.log
+          grep -q "luagcrypt AVAILABLE" /tmp/dissector-tests.log
+          if grep -q "SKIP" /tmp/dissector-tests.log; then
+            echo "::error::dissector test assertions were skipped"
+            exit 1
+          fi
 
   firmware-nrf52840:
     name: firmware (nRF52840) / ${{ matrix.board }}

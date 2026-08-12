@@ -303,7 +303,9 @@ lua dissectors/tests/run_tests.lua
 
 If `luagcrypt` is installed, the tests also cover HKDF, AES-CMAC, AES-CTR,
 key derivation, and full encrypt/decrypt round-trips against the protocol
-test vectors. Without `luagcrypt`, crypto tests are skipped.
+test vectors. Without `luagcrypt`, crypto tests are skipped locally; CI
+builds `luagcrypt` and fails if any assertion reports SKIP, so the crypto
+vectors are always exercised there.
 
 ## Supported Packet Types
 

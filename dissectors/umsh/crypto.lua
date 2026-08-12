@@ -49,19 +49,34 @@ end
 
 if gcrypt then
   -- ── Backend A: luagcrypt (full native crypto) ──
-  aes_ecb_fn = function(key, block)
-    local c = gcrypt.cipher.open(gcrypt.CIPHER_AES256,
-                                  gcrypt.CIPHER_MODE_ECB, 0)
-    c:setkey(key)
-    return c:encrypt(block)
+  -- Standalone Lua must initialize libgcrypt once; inside Wireshark it is
+  -- already initialized and init() throws, so swallow that with pcall.
+  pcall(gcrypt.init)
+  -- Probe the backend for real before advertising it: a luagcrypt that
+  -- loads but cannot open a cipher degrades to "not available" (crypto
+  -- checks self-skip) instead of blowing up mid-dissection.
+  local probe_ok, probe_err = pcall(function()
+    local c = gcrypt.Cipher(gcrypt.CIPHER_AES256, gcrypt.CIPHER_MODE_ECB)
+    c:setkey(string.rep("\0", 32))
+    c:encrypt(string.rep("\0", 16))
+  end)
+  if probe_ok then
+    aes_ecb_fn = function(key, block)
+      local c = gcrypt.Cipher(gcrypt.CIPHER_AES256, gcrypt.CIPHER_MODE_ECB)
+      c:setkey(key)
+      return c:encrypt(block)
+    end
+    aes_ctr_fn = function(key, iv, data)
+      local c = gcrypt.Cipher(gcrypt.CIPHER_AES256, gcrypt.CIPHER_MODE_CTR)
+      c:setkey(key); c:setctr(iv)
+      return c:decrypt(data)
+    end
+  else
+    gcrypt_err = "luagcrypt AES probe failed: " .. tostring(probe_err)
   end
-  aes_ctr_fn = function(key, iv, data)
-    local c = gcrypt.cipher.open(gcrypt.CIPHER_AES256,
-                                  gcrypt.CIPHER_MODE_CTR, 0)
-    c:setkey(key); c:setctr(iv)
-    return c:decrypt(data)
-  end
-elseif GcryptCipher then
+end
+
+if not aes_ecb_fn and GcryptCipher then
   -- ── Backend B: Wireshark 4.6+ native GcryptCipher ──
   -- ByteArray conversion helpers
   local function str_to_ba(s)
