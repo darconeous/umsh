@@ -12,6 +12,7 @@
 	build-techo flash-techo flash-techo-serial \
 	build-heltec-v3-console flash-heltec-v3-console \
 	build-heltec-v3 flash-heltec-v3 \
+	esp-toolchain-check espflash-check \
 	dfu-zip-techo dfu-zip-t1000e dfu-zip-sensecap-solar \
 	dfu-zip-wio-tracker-l1 dfu-zip-xiao-nrf52 \
 	merged-bin-heltec-v3 \
@@ -309,17 +310,71 @@ ESPFLASH_PARTITIONS = --partition-table firmware-esp32/partitions-umsh.csv
 ESP_EXPORT ?= $(HOME)/export-esp.sh
 ESP_ENV = if [ -f $(ESP_EXPORT) ]; then . $(ESP_EXPORT); fi;
 
-build-heltec-v3-console:
+# Neither the Xtensa toolchain nor espflash comes with a normal Rust install,
+# and neither announces itself when missing: cargo dies inside rustup with
+# "toolchain 'esp' is not installed" and no mention of espup, and a missing
+# espflash surfaces as make reporting "No such file or directory" about a
+# recipe line. Both are one-time per-machine setup, so the ESP32 targets ask
+# first and print what to run. Each check is also a target in its own right —
+# `make esp-toolchain-check` answers "is this machine set up?" without
+# building anything.
+ESP_SETUP_URL = firmware-esp32/README.md
+# esp-radio needs the fork at least this new; older forks fail in the
+# dependency graph rather than at the toolchain.
+ESP_MIN_RUSTC = 1.95
+
+esp-toolchain-check:
+	@rustup run esp rustc --version >/dev/null 2>&1 || { \
+		printf '%s\n' \
+			'' \
+			'The `esp` rustup toolchain is not installed.' \
+			'' \
+			'Espressif boards build with the Xtensa Rust fork, which rustup does' \
+			'not carry. Install it once per machine:' \
+			'' \
+			'    cargo install espup espflash' \
+			'    espup install' \
+			'' \
+			"See $(ESP_SETUP_URL)." \
+			'' >&2; \
+		exit 1; }
+	@have=$$(rustup run esp rustc --version | cut -d' ' -f2 | cut -d- -f1); \
+	if [ "$$(printf '%s\n%s\n' "$(ESP_MIN_RUSTC)" "$$have" | sort -V | head -1)" != "$(ESP_MIN_RUSTC)" ]; then \
+		printf '%s\n' \
+			'' \
+			"Warning: the esp toolchain is rustc $$have; esp-radio wants >= $(ESP_MIN_RUSTC)." \
+			'If the build fails resolving esp-* crates, refresh it with:' \
+			'' \
+			'    espup update' \
+			'' >&2; \
+	fi
+
+espflash-check:
+	@command -v espflash >/dev/null 2>&1 || { \
+		printf '%s\n' \
+			'' \
+			'espflash is not on PATH.' \
+			'' \
+			'Espressif boards are flashed through the ROM serial bootloader by' \
+			'espflash, which installs from crates.io:' \
+			'' \
+			'    cargo install espflash' \
+			'' \
+			"See $(ESP_SETUP_URL)." \
+			'' >&2; \
+		exit 1; }
+
+build-heltec-v3-console: esp-toolchain-check
 	$(ESP_ENV) cd firmware-esp32/firmware/heltec-v3-console && cargo build --release
 
-flash-heltec-v3-console: build-heltec-v3-console
+flash-heltec-v3-console: espflash-check build-heltec-v3-console
 	espflash flash --monitor $(ESPFLASH_PORT_ARG) $(ESPFLASH_PARTITIONS) \
 		$(ESP32S3_TARGET_DIR)/firmware-heltec-v3-console
 
-build-heltec-v3:
+build-heltec-v3: esp-toolchain-check
 	$(ESP_ENV) cd firmware-esp32/firmware/heltec-v3 && cargo build --release
 
-flash-heltec-v3: build-heltec-v3
+flash-heltec-v3: espflash-check build-heltec-v3
 	espflash flash --monitor $(ESPFLASH_PORT_ARG) $(ESPFLASH_PARTITIONS) \
 		$(ESP32S3_TARGET_DIR)/firmware-heltec-v3
 
@@ -331,7 +386,7 @@ flash-heltec-v3: build-heltec-v3
 # straight over the `umsh` data partition at 0x300000 — every device would
 # lose its identity and saved state on update. With it the image stops after
 # the application and 0x300000 is never touched.
-merged-bin-heltec-v3: build-heltec-v3
+merged-bin-heltec-v3: espflash-check build-heltec-v3
 	@mkdir -p $(FW_DIR)
 	espflash save-image --chip esp32s3 --merge --skip-padding -s 4mb \
 		$(ESPFLASH_PARTITIONS) \

@@ -131,6 +131,12 @@ The Wireshark integration has its own targets, covered below.
 | Seeed XIAO nRF52840 + Wio-SX1262 | nRF52840 | `make flash-xiao-nrf52` |
 | Heltec WiFi LoRa 32 V3 | ESP32-S3 | `make flash-heltec-v3` |
 
+The Heltec is the odd one out: Espressif's Xtensa chips need a Rust fork rustup does not
+carry, installed once per machine with `cargo install espup espflash && espup install`
+([firmware-esp32/README.md](firmware-esp32/README.md)). Its `make` targets check for that
+first and say what to run, so a machine without it fails before the build rather than
+inside it.
+
 There is **one shipping image per board**: a repeater and a phone companion are the same
 firmware holding different configuration, applied afterwards over BLE or USB. Flash through
 the Makefile rather than invoking cargo and the image converters by hand — nRF52840 firmware
