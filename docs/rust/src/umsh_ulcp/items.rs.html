@@ -53,20 +53,20 @@
 <a href=#53 id=53 data-nosnippet>53</a></span><span class="attr">#[derive(Clone, Copy, PartialEq, Eq)]
 <a href=#54 id=54 data-nosnippet>54</a></span><span class="kw">pub struct </span>PeerKeyEntry {
 <a href=#55 id=55 data-nosnippet>55</a>    <span class="kw">pub </span>public_key: [u8; PUBLIC_KEY_LEN],
-<a href=#56 id=56 data-nosnippet>56</a>    <span class="kw">pub </span>k_enc: [u8; <span class="number">16</span>],
-<a href=#57 id=57 data-nosnippet>57</a>    <span class="kw">pub </span>k_mic: [u8; <span class="number">16</span>],
+<a href=#56 id=56 data-nosnippet>56</a>    <span class="kw">pub </span>k_enc: [u8; <span class="number">32</span>],
+<a href=#57 id=57 data-nosnippet>57</a>    <span class="kw">pub </span>k_mic: [u8; <span class="number">32</span>],
 <a href=#58 id=58 data-nosnippet>58</a>}
 <a href=#59 id=59 data-nosnippet>59</a>
 <a href=#60 id=60 data-nosnippet>60</a><span class="kw">impl </span>PeerKeyEntry {
-<a href=#61 id=61 data-nosnippet>61</a>    <span class="kw">pub const </span>WIRE_LEN: usize = <span class="number">64</span>;
+<a href=#61 id=61 data-nosnippet>61</a>    <span class="kw">pub const </span>WIRE_LEN: usize = <span class="number">96</span>;
 <a href=#62 id=62 data-nosnippet>62</a>
 <a href=#63 id=63 data-nosnippet>63</a>    <span class="kw">pub fn </span>encode(<span class="kw-2">&amp;</span><span class="self">self</span>, out: <span class="kw-2">&amp;mut </span>[u8]) -&gt; <span class="prelude-ty">Result</span>&lt;usize, ItemError&gt; {
 <a href=#64 id=64 data-nosnippet>64</a>        <span class="kw">if </span>out.len() &lt; <span class="self">Self</span>::WIRE_LEN {
 <a href=#65 id=65 data-nosnippet>65</a>            <span class="kw">return </span><span class="prelude-val">Err</span>(ItemError::BufferTooSmall);
 <a href=#66 id=66 data-nosnippet>66</a>        }
 <a href=#67 id=67 data-nosnippet>67</a>        out[..<span class="number">32</span>].copy_from_slice(<span class="kw-2">&amp;</span><span class="self">self</span>.public_key);
-<a href=#68 id=68 data-nosnippet>68</a>        out[<span class="number">32</span>..<span class="number">48</span>].copy_from_slice(<span class="kw-2">&amp;</span><span class="self">self</span>.k_enc);
-<a href=#69 id=69 data-nosnippet>69</a>        out[<span class="number">48</span>..<span class="number">64</span>].copy_from_slice(<span class="kw-2">&amp;</span><span class="self">self</span>.k_mic);
+<a href=#68 id=68 data-nosnippet>68</a>        out[<span class="number">32</span>..<span class="number">64</span>].copy_from_slice(<span class="kw-2">&amp;</span><span class="self">self</span>.k_enc);
+<a href=#69 id=69 data-nosnippet>69</a>        out[<span class="number">64</span>..<span class="number">96</span>].copy_from_slice(<span class="kw-2">&amp;</span><span class="self">self</span>.k_mic);
 <a href=#70 id=70 data-nosnippet>70</a>        <span class="prelude-val">Ok</span>(<span class="self">Self</span>::WIRE_LEN)
 <a href=#71 id=71 data-nosnippet>71</a>    }
 <a href=#72 id=72 data-nosnippet>72</a>
@@ -77,12 +77,12 @@
 <a href=#77 id=77 data-nosnippet>77</a>        }
 <a href=#78 id=78 data-nosnippet>78</a>        <span class="kw">let </span><span class="kw-2">mut </span>entry = <span class="self">Self </span>{
 <a href=#79 id=79 data-nosnippet>79</a>            public_key: [<span class="number">0</span>; PUBLIC_KEY_LEN],
-<a href=#80 id=80 data-nosnippet>80</a>            k_enc: [<span class="number">0</span>; <span class="number">16</span>],
-<a href=#81 id=81 data-nosnippet>81</a>            k_mic: [<span class="number">0</span>; <span class="number">16</span>],
+<a href=#80 id=80 data-nosnippet>80</a>            k_enc: [<span class="number">0</span>; <span class="number">32</span>],
+<a href=#81 id=81 data-nosnippet>81</a>            k_mic: [<span class="number">0</span>; <span class="number">32</span>],
 <a href=#82 id=82 data-nosnippet>82</a>        };
 <a href=#83 id=83 data-nosnippet>83</a>        entry.public_key.copy_from_slice(<span class="kw-2">&amp;</span>input[..<span class="number">32</span>]);
-<a href=#84 id=84 data-nosnippet>84</a>        entry.k_enc.copy_from_slice(<span class="kw-2">&amp;</span>input[<span class="number">32</span>..<span class="number">48</span>]);
-<a href=#85 id=85 data-nosnippet>85</a>        entry.k_mic.copy_from_slice(<span class="kw-2">&amp;</span>input[<span class="number">48</span>..<span class="number">64</span>]);
+<a href=#84 id=84 data-nosnippet>84</a>        entry.k_enc.copy_from_slice(<span class="kw-2">&amp;</span>input[<span class="number">32</span>..<span class="number">64</span>]);
+<a href=#85 id=85 data-nosnippet>85</a>        entry.k_mic.copy_from_slice(<span class="kw-2">&amp;</span>input[<span class="number">64</span>..<span class="number">96</span>]);
 <a href=#86 id=86 data-nosnippet>86</a>        <span class="prelude-val">Ok</span>(entry)
 <a href=#87 id=87 data-nosnippet>87</a>    }
 <a href=#88 id=88 data-nosnippet>88</a>
@@ -264,8 +264,8 @@
 <a href=#264 id=264 data-nosnippet>264</a>    </span><span class="kw">fn </span>peer_key_entry_round_trip_and_digest_is_secret_free() {
 <a href=#265 id=265 data-nosnippet>265</a>        <span class="kw">let </span>entry = PeerKeyEntry {
 <a href=#266 id=266 data-nosnippet>266</a>            public_key: [<span class="number">0x11</span>; <span class="number">32</span>],
-<a href=#267 id=267 data-nosnippet>267</a>            k_enc: [<span class="number">0x22</span>; <span class="number">16</span>],
-<a href=#268 id=268 data-nosnippet>268</a>            k_mic: [<span class="number">0x33</span>; <span class="number">16</span>],
+<a href=#267 id=267 data-nosnippet>267</a>            k_enc: [<span class="number">0x22</span>; <span class="number">32</span>],
+<a href=#268 id=268 data-nosnippet>268</a>            k_mic: [<span class="number">0x33</span>; <span class="number">32</span>],
 <a href=#269 id=269 data-nosnippet>269</a>        };
 <a href=#270 id=270 data-nosnippet>270</a>        <span class="kw">let </span><span class="kw-2">mut </span>buf = [<span class="number">0u8</span>; PeerKeyEntry::WIRE_LEN];
 <a href=#271 id=271 data-nosnippet>271</a>        <span class="macro">assert_eq!</span>(entry.encode(<span class="kw-2">&amp;mut </span>buf).unwrap(), PeerKeyEntry::WIRE_LEN);

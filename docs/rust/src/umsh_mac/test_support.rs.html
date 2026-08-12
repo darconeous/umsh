@@ -808,7 +808,7 @@
 <a href=#808 id=808 data-nosnippet>808</a>///
 <a href=#809 id=809 data-nosnippet>809</a>/// This type is intentionally insecure.
 <a href=#810 id=810 data-nosnippet>810</a></span><span class="kw">pub struct </span>DummyCipher {
-<a href=#811 id=811 data-nosnippet>811</a>    key: [u8; <span class="number">16</span>],
+<a href=#811 id=811 data-nosnippet>811</a>    key: [u8; <span class="number">32</span>],
 <a href=#812 id=812 data-nosnippet>812</a>}
 <a href=#813 id=813 data-nosnippet>813</a>
 <a href=#814 id=814 data-nosnippet>814</a><span class="kw">impl </span>AesCipher <span class="kw">for </span>DummyCipher {
@@ -832,7 +832,7 @@
 <a href=#832 id=832 data-nosnippet>832</a><span class="kw">impl </span>AesProvider <span class="kw">for </span>DummyAes {
 <a href=#833 id=833 data-nosnippet>833</a>    <span class="kw">type </span>Cipher = DummyCipher;
 <a href=#834 id=834 data-nosnippet>834</a>
-<a href=#835 id=835 data-nosnippet>835</a>    <span class="kw">fn </span>new_cipher(<span class="kw-2">&amp;</span><span class="self">self</span>, key: <span class="kw-2">&amp;</span>[u8; <span class="number">16</span>]) -&gt; <span class="self">Self</span>::Cipher {
+<a href=#835 id=835 data-nosnippet>835</a>    <span class="kw">fn </span>new_cipher(<span class="kw-2">&amp;</span><span class="self">self</span>, key: <span class="kw-2">&amp;</span>[u8; <span class="number">32</span>]) -&gt; <span class="self">Self</span>::Cipher {
 <a href=#836 id=836 data-nosnippet>836</a>        DummyCipher { key: <span class="kw-2">*</span>key }
 <a href=#837 id=837 data-nosnippet>837</a>    }
 <a href=#838 id=838 data-nosnippet>838</a>}

@@ -35,7 +35,7 @@
             const path_to_root = "";
             const default_light_theme = "light";
             const default_dark_theme = "ayu";
-            window.path_to_searchindex_js = "searchindex-585651d2.js";
+            window.path_to_searchindex_js = "searchindex-deaee21e.js";
         </script>
         <!-- Start loading toc.js asap -->
         <script src="toc-438957a9.js"></script>
@@ -182,9 +182,9 @@
 <dt id="address-hint"><a class="header" href="#address-hint"><strong>Address Hint</strong></a></dt>
 <dd>A short prefix of a node’s public key used as a cheap prefilter before full cryptographic processing. Source and destination hints are 3 bytes; router and trace-route hints are 2 bytes. See <a href="addressing.html">Addressing</a>.</dd>
 <dt id="aes-advanced-encryption-standard"><a class="header" href="#aes-advanced-encryption-standard"><strong>AES (Advanced Encryption Standard)</strong></a></dt>
-<dd>A symmetric block cipher standardized by NIST. UMSH uses AES-128 in CTR mode for payload encryption and AES-CMAC for message authentication.</dd>
+<dd>A symmetric block cipher standardized by NIST. UMSH uses AES-256: AES-CMAC-based S2V for message authentication and AES-CTR for payload encryption.</dd>
 <dt id="aes-siv-synthetic-initialization-vector"><a class="header" href="#aes-siv-synthetic-initialization-vector"><strong>AES-SIV (Synthetic Initialization Vector)</strong></a></dt>
-<dd>A misuse-resistant authenticated encryption scheme defined by RFC 5297. It uses S2V to compute a synthetic IV from distinct associated-data components and the plaintext, then encrypts with AES-CTR. UMSH uses a custom construction inspired by this design: a direct AES-CMAC over canonical AAD concatenated with plaintext contributes to the AES-CTR IV. It is not RFC 5297 AES-SIV; see the <a href="security.html#relationship-to-rfc-5297-aes-siv">construction warning</a>.</dd>
+<dd>A misuse-resistant authenticated encryption scheme defined by RFC 5297. It uses S2V to compute a synthetic IV from the associated data and the plaintext, then encrypts with AES-CTR. UMSH secures packets with AES-SIV using AES-256, extended with MIC truncation and a SECINFO-padded CTR IV; with a full 16-byte MIC the construction is byte-for-byte AEAD_AES_SIV_CMAC_512. See <a href="security.html#encrypted-packets">Encrypted Packets</a>.</dd>
 <dt id="arnceham-64"><a class="header" href="#arnceham-64"><strong>ARNCE/HAM-64</strong></a></dt>
 <dd>A compact character encoding scheme for amateur radio callsigns, encoding up to 12 characters into 2, 4, 6, or 8 bytes. Used in UMSH’s Operator Callsign and Station Callsign packet options.</dd>
 <dt id="beacon"><a class="header" href="#beacon"><strong>Beacon</strong></a></dt>
@@ -202,7 +202,7 @@
 <dt id="coap-constrained-application-protocol"><a class="header" href="#coap-constrained-application-protocol"><strong>CoAP (Constrained Application Protocol)</strong></a></dt>
 <dd>A lightweight request/response protocol designed for constrained networks (RFC 7252). UMSH borrows CoAP’s delta-length option encoding for packet options and application-layer payloads.</dd>
 <dt id="confidentiality"><a class="header" href="#confidentiality"><strong>Confidentiality</strong></a></dt>
-<dd>The property that payload content is accessible only to intended recipients. UMSH provides confidentiality via AES-128 encryption keyed with material derived from ECDH (unicast) or the channel key (multicast).</dd>
+<dd>The property that payload content is accessible only to intended recipients. UMSH provides confidentiality via AES-256 encryption keyed with material derived from ECDH (unicast) or the channel key (multicast).</dd>
 <dt id="duplicate-suppression"><a class="header" href="#duplicate-suppression"><strong>Duplicate Suppression</strong></a></dt>
 <dd>A mechanism by which repeaters track recently forwarded packets and decline to forward the same packet a second time. Each packet is identified by its MIC (for authenticated packets) or a locally computed hash (for unauthenticated packets). This prevents flood-routed packets from circulating indefinitely. See <a href="repeater-operation.html#duplicate-suppression">Repeater Operation</a>.</dd>
 <dt id="ecdh-elliptic-curve-diffie-hellman"><a class="header" href="#ecdh-elliptic-curve-diffie-hellman"><strong>ECDH (Elliptic Curve Diffie-Hellman)</strong></a></dt>
@@ -218,7 +218,7 @@
 <dt id="frame"><a class="header" href="#frame"><strong>Frame</strong></a></dt>
 <dd>The unit of transmission at the LoRa PHY layer. A UMSH packet must fit within a single frame. The terms <em>frame</em> and <em>packet</em> are used interchangeably in this specification; <em>frame</em> emphasizes the physical transmission unit, <em>packet</em> emphasizes the logical protocol unit.</dd>
 <dt id="frame-counter"><a class="header" href="#frame-counter"><strong>Frame Counter</strong></a></dt>
-<dd>A monotonically increasing 4-byte value included in every authenticated packet. The receiver tracks recently seen counter values and rejects packets with counters it has already processed, providing replay protection without requiring synchronized clocks. The counter must be persisted across reboots to prevent reuse. See <a href="security.html#frame-counters">Security &amp; Cryptography</a>.</dd>
+<dd>A monotonically increasing 4-byte value included in every authenticated packet. The receiver tracks recently seen counter values and rejects packets with counters it has already processed, providing replay protection without requiring synchronized clocks. The counter must be persisted across reboots to prevent reuse. See <a href="security.html#frame-counter">Security &amp; Cryptography</a>.</dd>
 <dt id="hop"><a class="header" href="#hop"><strong>Hop</strong></a></dt>
 <dd>One leg of a packet’s path through the network — the transmission from one node to an adjacent node within radio range. A packet that travels through two repeaters before reaching its destination has traversed three hops.
 The protocol differentiates between source-routed hops and flood-routed hops.</dd>
@@ -239,7 +239,7 @@ The protocol differentiates between source-routed hops and flood-routed hops.</d
 <dt id="mesh"><a class="header" href="#mesh"><strong>Mesh</strong></a></dt>
 <dd>A network topology where nodes can relay packets on behalf of other nodes, enabling communication beyond direct radio range. UMSH is designed for LoRa mesh networks where repeaters and bridges are used to extend coverage.</dd>
 <dt id="mic-message-integrity-code"><a class="header" href="#mic-message-integrity-code"><strong>MIC (Message Integrity Code)</strong></a></dt>
-<dd>UMSH’s authentication tag, computed using AES-CMAC over the packet’s static fields and payload. Size is configurable from 4 to 16 bytes. The term MIC is used instead of the more common “MAC” (Message Authentication Code) to avoid confusion with Medium Access Control. See <a href="security.html">Security &amp; Cryptography</a>.</dd>
+<dd>UMSH’s authentication tag, the truncated S2V output (RFC 5297) computed over the packet’s static fields and payload. Size is configurable from 4 to 16 bytes. The term MIC is used instead of the more common “MAC” (Message Authentication Code) to avoid confusion with Medium Access Control. See <a href="security.html">Security &amp; Cryptography</a>.</dd>
 <dt id="multicast"><a class="header" href="#multicast"><strong>Multicast</strong></a></dt>
 <dd>A packet intended for all members of a channel, identified by a 2-byte channel identifier derived from the channel key. See <a href="packet-types.html">Frame Types</a>.</dd>
 <dt id="node"><a class="header" href="#node"><strong>Node</strong></a></dt>

@@ -35,7 +35,7 @@
             const path_to_root = "";
             const default_light_theme = "light";
             const default_dark_theme = "ayu";
-            window.path_to_searchindex_js = "searchindex-585651d2.js";
+            window.path_to_searchindex_js = "searchindex-deaee21e.js";
         </script>
         <!-- Start loading toc.js asap -->
         <script src="toc-438957a9.js"></script>
@@ -251,7 +251,7 @@ place that it appeared in encrypted multicast:</p>
 +-----+-------+---------+---------+---------+-------------+-------------+------+
   1 B  0/1 B     2 B     5/7 B    variable      6/35 B         var.     4-16 B
 </code></pre>
-<p>The <code>MIC</code> is computed over the payload using the <a href="security.html#blind-unicast-payload-keys">blind unicast payload keys</a>, which combine the pairwise shared secret with the channel key. <code>ENC_DST_SRC</code> is encrypted using the channel’s derived encryption key <code>K_enc_channel</code> (see <a href="security.html#multicast-packet-keys">Multicast Packet Keys</a>) and the <code>MIC</code> as IV (see <a href="security.html#blind-unicast-source-encryption">Security &amp; Cryptography</a>). Because <code>ENC_DST_SRC</code> decryption depends on the <code>MIC</code>, any tampering with the source address will produce an incorrect public key, causing pairwise key derivation to fail and payload authentication to reject.</p>
+<p>The <code>MIC</code> is computed over the payload using the <a href="security.html#blind-unicast-payload-keys">blind unicast payload keys</a>, which combine the pairwise shared secret with the channel key. <code>ENC_DST_SRC</code> is encrypted using the channel’s derived encryption key <code>K_enc_channel</code> (see <a href="security.html#multicast-packet-keys">Multicast Packet Keys</a>) and an IV derived from the <code>MIC</code> (see <a href="security.html#blind-unicast-address-encryption">Security &amp; Cryptography</a>). Because <code>ENC_DST_SRC</code> decryption depends on the <code>MIC</code>, any tampering with the source address will produce an incorrect public key, causing pairwise key derivation to fail and payload authentication to reject.</p>
 <h3 id="unencrypted-blind-unicast-e--0"><a class="header" href="#unencrypted-blind-unicast-e--0">Unencrypted Blind Unicast (E = 0)</a></h3>
 <p>When encryption is disabled, blind unicast still uses the channel identifier and
 the blind-unicast packet type, but the destination hint, source address, and

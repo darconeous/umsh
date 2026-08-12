@@ -36,7 +36,7 @@
             const path_to_root = "";
             const default_light_theme = "light";
             const default_dark_theme = "ayu";
-            window.path_to_searchindex_js = "searchindex-585651d2.js";
+            window.path_to_searchindex_js = "searchindex-deaee21e.js";
         </script>
         <!-- Start loading toc.js asap -->
         <script src="toc-438957a9.js"></script>
@@ -272,9 +272,9 @@ is carried at the application layer and is not required by the MAC layer.</p>
 <dt id="address-hint"><a class="header" href="#address-hint"><strong>Address Hint</strong></a></dt>
 <dd>A short prefix of a node’s public key used as a cheap prefilter before full cryptographic processing. Source and destination hints are 3 bytes; router and trace-route hints are 2 bytes. See <a href="#addressing">Addressing</a>.</dd>
 <dt id="aes-advanced-encryption-standard"><a class="header" href="#aes-advanced-encryption-standard"><strong>AES (Advanced Encryption Standard)</strong></a></dt>
-<dd>A symmetric block cipher standardized by NIST. UMSH uses AES-128 in CTR mode for payload encryption and AES-CMAC for message authentication.</dd>
+<dd>A symmetric block cipher standardized by NIST. UMSH uses AES-256: AES-CMAC-based S2V for message authentication and AES-CTR for payload encryption.</dd>
 <dt id="aes-siv-synthetic-initialization-vector"><a class="header" href="#aes-siv-synthetic-initialization-vector"><strong>AES-SIV (Synthetic Initialization Vector)</strong></a></dt>
-<dd>A misuse-resistant authenticated encryption scheme defined by RFC 5297. It uses S2V to compute a synthetic IV from distinct associated-data components and the plaintext, then encrypts with AES-CTR. UMSH uses a custom construction inspired by this design: a direct AES-CMAC over canonical AAD concatenated with plaintext contributes to the AES-CTR IV. It is not RFC 5297 AES-SIV; see the <a href="#relationship-to-rfc-5297-aes-siv">construction warning</a>.</dd>
+<dd>A misuse-resistant authenticated encryption scheme defined by RFC 5297. It uses S2V to compute a synthetic IV from the associated data and the plaintext, then encrypts with AES-CTR. UMSH secures packets with AES-SIV using AES-256, extended with MIC truncation and a SECINFO-padded CTR IV; with a full 16-byte MIC the construction is byte-for-byte AEAD_AES_SIV_CMAC_512. See <a href="#encrypted-packets">Encrypted Packets</a>.</dd>
 <dt id="arnceham-64"><a class="header" href="#arnceham-64"><strong>ARNCE/HAM-64</strong></a></dt>
 <dd>A compact character encoding scheme for amateur radio callsigns, encoding up to 12 characters into 2, 4, 6, or 8 bytes. Used in UMSH’s Operator Callsign and Station Callsign packet options.</dd>
 <dt id="beacon"><a class="header" href="#beacon"><strong>Beacon</strong></a></dt>
@@ -292,7 +292,7 @@ is carried at the application layer and is not required by the MAC layer.</p>
 <dt id="coap-constrained-application-protocol"><a class="header" href="#coap-constrained-application-protocol"><strong>CoAP (Constrained Application Protocol)</strong></a></dt>
 <dd>A lightweight request/response protocol designed for constrained networks (RFC 7252). UMSH borrows CoAP’s delta-length option encoding for packet options and application-layer payloads.</dd>
 <dt id="confidentiality"><a class="header" href="#confidentiality"><strong>Confidentiality</strong></a></dt>
-<dd>The property that payload content is accessible only to intended recipients. UMSH provides confidentiality via AES-128 encryption keyed with material derived from ECDH (unicast) or the channel key (multicast).</dd>
+<dd>The property that payload content is accessible only to intended recipients. UMSH provides confidentiality via AES-256 encryption keyed with material derived from ECDH (unicast) or the channel key (multicast).</dd>
 <dt id="duplicate-suppression"><a class="header" href="#duplicate-suppression"><strong>Duplicate Suppression</strong></a></dt>
 <dd>A mechanism by which repeaters track recently forwarded packets and decline to forward the same packet a second time. Each packet is identified by its MIC (for authenticated packets) or a locally computed hash (for unauthenticated packets). This prevents flood-routed packets from circulating indefinitely. See <a href="#duplicate-suppression-1">Repeater Operation</a>.</dd>
 <dt id="ecdh-elliptic-curve-diffie-hellman"><a class="header" href="#ecdh-elliptic-curve-diffie-hellman"><strong>ECDH (Elliptic Curve Diffie-Hellman)</strong></a></dt>
@@ -308,7 +308,7 @@ is carried at the application layer and is not required by the MAC layer.</p>
 <dt id="frame"><a class="header" href="#frame"><strong>Frame</strong></a></dt>
 <dd>The unit of transmission at the LoRa PHY layer. A UMSH packet must fit within a single frame. The terms <em>frame</em> and <em>packet</em> are used interchangeably in this specification; <em>frame</em> emphasizes the physical transmission unit, <em>packet</em> emphasizes the logical protocol unit.</dd>
 <dt id="frame-counter"><a class="header" href="#frame-counter"><strong>Frame Counter</strong></a></dt>
-<dd>A monotonically increasing 4-byte value included in every authenticated packet. The receiver tracks recently seen counter values and rejects packets with counters it has already processed, providing replay protection without requiring synchronized clocks. The counter must be persisted across reboots to prevent reuse. See <a href="#frame-counters">Security &amp; Cryptography</a>.</dd>
+<dd>A monotonically increasing 4-byte value included in every authenticated packet. The receiver tracks recently seen counter values and rejects packets with counters it has already processed, providing replay protection without requiring synchronized clocks. The counter must be persisted across reboots to prevent reuse. See <a href="#frame-counter-1">Security &amp; Cryptography</a>.</dd>
 <dt id="hop"><a class="header" href="#hop"><strong>Hop</strong></a></dt>
 <dd>One leg of a packet’s path through the network — the transmission from one node to an adjacent node within radio range. A packet that travels through two repeaters before reaching its destination has traversed three hops.
 The protocol differentiates between source-routed hops and flood-routed hops.</dd>
@@ -329,7 +329,7 @@ The protocol differentiates between source-routed hops and flood-routed hops.</d
 <dt id="mesh"><a class="header" href="#mesh"><strong>Mesh</strong></a></dt>
 <dd>A network topology where nodes can relay packets on behalf of other nodes, enabling communication beyond direct radio range. UMSH is designed for LoRa mesh networks where repeaters and bridges are used to extend coverage.</dd>
 <dt id="mic-message-integrity-code"><a class="header" href="#mic-message-integrity-code"><strong>MIC (Message Integrity Code)</strong></a></dt>
-<dd>UMSH’s authentication tag, computed using AES-CMAC over the packet’s static fields and payload. Size is configurable from 4 to 16 bytes. The term MIC is used instead of the more common “MAC” (Message Authentication Code) to avoid confusion with Medium Access Control. See <a href="#security--cryptography">Security &amp; Cryptography</a>.</dd>
+<dd>UMSH’s authentication tag, the truncated S2V output (RFC 5297) computed over the packet’s static fields and payload. Size is configurable from 4 to 16 bytes. The term MIC is used instead of the more common “MAC” (Message Authentication Code) to avoid confusion with Medium Access Control. See <a href="#security--cryptography">Security &amp; Cryptography</a>.</dd>
 <dt id="multicast"><a class="header" href="#multicast"><strong>Multicast</strong></a></dt>
 <dd>A packet intended for all members of a channel, identified by a 2-byte channel identifier derived from the channel key. See <a href="#frame-types">Frame Types</a>.</dd>
 <dt id="node"><a class="header" href="#node"><strong>Node</strong></a></dt>
@@ -651,7 +651,7 @@ place that it appeared in encrypted multicast:</p>
 +-----+-------+---------+---------+---------+-------------+-------------+------+
   1 B  0/1 B     2 B     5/7 B    variable      6/35 B         var.     4-16 B
 </code></pre>
-<p>The <code>MIC</code> is computed over the payload using the <a href="#blind-unicast-payload-keys">blind unicast payload keys</a>, which combine the pairwise shared secret with the channel key. <code>ENC_DST_SRC</code> is encrypted using the channel’s derived encryption key <code>K_enc_channel</code> (see <a href="#multicast-packet-keys">Multicast Packet Keys</a>) and the <code>MIC</code> as IV (see <a href="#blind-unicast-source-encryption">Security &amp; Cryptography</a>). Because <code>ENC_DST_SRC</code> decryption depends on the <code>MIC</code>, any tampering with the source address will produce an incorrect public key, causing pairwise key derivation to fail and payload authentication to reject.</p>
+<p>The <code>MIC</code> is computed over the payload using the <a href="#blind-unicast-payload-keys">blind unicast payload keys</a>, which combine the pairwise shared secret with the channel key. <code>ENC_DST_SRC</code> is encrypted using the channel’s derived encryption key <code>K_enc_channel</code> (see <a href="#multicast-packet-keys">Multicast Packet Keys</a>) and an IV derived from the <code>MIC</code> (see <a href="#blind-unicast-address-encryption">Security &amp; Cryptography</a>). Because <code>ENC_DST_SRC</code> decryption depends on the <code>MIC</code>, any tampering with the source address will produce an incorrect public key, causing pairwise key derivation to fail and payload authentication to reject.</p>
 <h3 id="unencrypted-blind-unicast-e--0"><a class="header" href="#unencrypted-blind-unicast-e--0">Unencrypted Blind Unicast (E = 0)</a></h3>
 <p>When encryption is disabled, blind unicast still uses the channel identifier and
 the blind-unicast packet type, but the destination hint, source address, and
@@ -957,7 +957,7 @@ These collisions are rarely of practical concern. If a region code in one part o
 <p>So the list is ordered most-recent repeater first.</p>
 <div style="break-before: page; page-break-before: always;"></div>
 <h1 id="security--cryptography"><a class="header" href="#security--cryptography">Security &amp; Cryptography</a></h1>
-<p>UMSH authenticates and optionally encrypts packets using a construction inspired by AES-SIV (RFC 5297). Unicast packets are secured with pairwise keys derived from X25519 ECDH between sender and recipient Ed25519 keys. Multicast packets are secured with keys derived from the shared channel key. In both cases, a monotonic frame counter provides replay protection without requiring synchronized clocks.</p>
+<p>UMSH authenticates and optionally encrypts packets using AES-SIV (RFC 5297) with AES-256. Unicast packets are secured with pairwise keys derived from X25519 ECDH between sender and recipient Ed25519 keys. Multicast packets are secured with keys derived from the shared channel key. In both cases, a monotonic frame counter provides replay protection without requiring synchronized clocks.</p>
 <p>Each secured packet carries a Security Information (SECINFO) field containing a Security Control Field, a frame counter, and an optional salt. The sections below describe these fields, the key derivation process, and the cryptographic operations applied to each packet.</p>
 <h2 id="security-information-secinfo"><a class="header" href="#security-information-secinfo">Security Information (SECINFO)</a></h2>
 <h3 id="secinfo-encoding"><a class="header" href="#secinfo-encoding">SECINFO Encoding</a></h3>
@@ -995,7 +995,7 @@ These collisions are rarely of practical concern. If a region code in one part o
 </tbody>
 </table>
 </div>
-<p>The MIC is produced by computing the full 16-byte AES-CMAC and truncating to the specified length. Truncation of CMAC outputs is permitted by NIST SP 800-38B.</p>
+<p>The MIC is produced by computing the full 16-byte synthetic IV <code>V</code> with S2V (RFC 5297 §2.4) and truncating to the specified length. The S2V output is an AES-CMAC, and truncation of CMAC outputs is permitted by NIST SP 800-38B.</p>
 <h4 id="mic-size-selection-guidance"><a class="header" href="#mic-size-selection-guidance">MIC Size Selection Guidance</a></h4>
 <p>Shorter MICs save bytes on the wire but reduce forgery resistance and increase the probability of duplicate-suppression collisions in repeater caches (see <a href="#duplicate-suppression-1">Duplicate Suppression</a>). The following guidelines help choose an appropriate MIC size:</p>
 <ul>
@@ -1094,18 +1094,19 @@ number of writes.</p>
 <p>The pairwise key material is then derived as:</p>
 <pre><code class="language-text">ikm  = ss
 salt = "UMSH-PAIRWISE-SALT"
-info = "UMSH-UNICAST-V1"
-okm  = HKDF-SHA256(ikm, salt, info, 32)
+info = "UMSH-UNICAST-V2"
+okm  = HKDF-SHA256(ikm, salt, info, 64)
 </code></pre>
 <p>The output keying material is split as follows:</p>
-<pre><code class="language-text">K_enc = okm[0..15]
-K_mic = okm[16..31]
+<pre><code class="language-text">K_mic = okm[0..31]
+K_enc = okm[32..63]
 </code></pre>
 <p>Where:</p>
 <ul>
-<li><code>K_enc</code> is the 16-byte encryption key</li>
-<li><code>K_mic</code> is the 16-byte message authentication key</li>
+<li><code>K_mic</code> is the 32-byte message authentication key (the S2V key)</li>
+<li><code>K_enc</code> is the 32-byte encryption key (the CTR key)</li>
 </ul>
+<p>This layout makes <code>okm</code> exactly the AES-SIV key <code>K</code> from RFC 5297: <code>K_mic</code> is the leftmost half <code>K1</code> (S2V) and <code>K_enc</code> is the rightmost half <code>K2</code> (CTR), so <code>okm</code> can be handed directly to an AEAD_AES_SIV_CMAC_512 implementation.</p>
 <p>These keys are stable for the sender/recipient pair and may be cached by the implementation. They do not change from packet to packet.</p>
 <p>Because the key derivation depends only on the ECDH shared secret and fixed UMSH-specific HKDF parameters, it does not need to be recomputed for each transmitted packet.</p>
 <h3 id="blind-unicast-payload-keys"><a class="header" href="#blind-unicast-payload-keys">Blind Unicast Payload Keys</a></h3>
@@ -1121,7 +1122,7 @@ K_mic_blind = K_mic_pairwise XOR K_mic_channel
 </ul>
 <p>Both sets of input keys are independent HKDF outputs — pseudorandom and uncorrelated. XOR of two independent uniform random values is uniform random: an attacker who knows only one side sees the combined key as informationally equivalent to a one-time pad over the unknown side.</p>
 <p>These combined keys are stable for a given (sender, recipient, channel) triple and may be cached. If the same two nodes use blind unicast over different channels, they get different payload keys — compromise of one channel key does not expose blind unicast traffic on another channel between the same pair.</p>
-<p>Both the pairwise and channel keys can be cached independently by the implementation. Computing the blind unicast keys requires only a 16-byte XOR per key, with no additional HKDF calls.</p>
+<p>Both the pairwise and channel keys can be cached independently by the implementation. Computing the blind unicast keys requires only a 32-byte XOR per key, with no additional HKDF calls.</p>
 <h3 id="per-packet-security-inputs"><a class="header" href="#per-packet-security-inputs">Per-Packet Security Inputs</a></h3>
 <p>Although <code>K_enc</code> and <code>K_mic</code> are stable for a given node pair, each packet still carries per-packet security inputs in <code>SECINFO</code>.</p>
 <p>These inputs are:</p>
@@ -1130,7 +1131,7 @@ K_mic_blind = K_mic_pairwise XOR K_mic_channel
 <li>the optional 2-byte salt</li>
 </ul>
 <p>These values are not used to derive the pairwise keys. Instead, they are used as packet-specific inputs to encryption, authentication, and replay protection.</p>
-<p>For encrypted packets using the custom AES-SIV-inspired construction:</p>
+<p>For encrypted packets:</p>
 <ul>
 <li><code>K_enc</code> and <code>K_mic</code> are the stable pairwise keys</li>
 <li><code>SECINFO</code> and other immutable header fields are supplied as associated data</li>
@@ -1141,66 +1142,46 @@ K_mic_blind = K_mic_pairwise XOR K_mic_channel
 <li><code>K_mic</code> is the stable pairwise MIC key</li>
 <li>the MIC is computed over the protected packet contents and relevant static fields</li>
 </ul>
-<p>The frame counter must increase monotonically for a given traffic direction. Receivers must not rely on the construction’s intended resistance to nonce misuse as a substitute for replay detection.</p>
+<p>The frame counter must increase monotonically for a given traffic direction. Receivers must not rely on the construction’s resistance to nonce misuse as a substitute for replay detection.</p>
 <h3 id="multicast-packet-keys"><a class="header" href="#multicast-packet-keys">Multicast Packet Keys</a></h3>
 <p>For multicast, the configured channel key is the base secret. The encryption and authentication keys are derived once and are stable for a given channel.</p>
 <pre><code class="language-text">ikm  = channel_key
 salt = "UMSH-MCAST-SALT"
-info = "UMSH-MCAST-V1" || channel_id
-okm  = HKDF-SHA256(ikm, salt, info, 32)
+info = "UMSH-MCAST-V2" || channel_id
+okm  = HKDF-SHA256(ikm, salt, info, 64)
 
-K_enc = okm[0..15]
-K_mic = okm[16..31]
+K_mic = okm[0..31]
+K_enc = okm[32..63]
 </code></pre>
+<p>As with the pairwise keys, <code>okm</code> is exactly the RFC 5297 AES-SIV key for the channel: S2V key first, CTR key second.</p>
 <p>These keys are stable for the channel and may be cached by the implementation. They do not change from packet to packet. Per-packet variability is provided by the frame counter and optional salt in SECINFO, which serve as inputs to encryption and replay detection (see <a href="#per-packet-security-inputs">Per-Packet Security Inputs</a>).</p>
 <h3 id="encrypted-packets"><a class="header" href="#encrypted-packets">Encrypted Packets</a></h3>
-<p>When encryption is enabled, UMSH uses a <strong>custom construction inspired by AES-SIV</strong>. It is not RFC 5297 AES-SIV; in particular, it does not use that specification’s S2V operation.</p>
+<p>When encryption is enabled, UMSH uses <strong>AES-SIV (RFC 5297) with AES-256</strong>.</p>
 <p>The processing is:</p>
 <ol>
-<li>Compute the full 16-byte AES-CMAC over the AAD and plaintext using <code>K_mic</code>.</li>
-<li>Truncate the CMAC to the MIC length specified by the SCF.</li>
+<li>Compute the full 16-byte synthetic IV <code>V = S2V(K_mic, S1, S2)</code> per RFC 5297 §2.4, where <code>S1</code> is the canonical associated data (see <a href="#associated-data">Associated Data</a>) and <code>S2</code> is the plaintext.</li>
+<li>Truncate <code>V</code> to the MIC length specified by the SCF; this is the on-wire MIC.</li>
 <li>Construct the CTR IV from the MIC (see <a href="#ctr-iv-construction">CTR IV Construction</a>).</li>
-<li>Encrypt the plaintext using <strong>AES-128-CTR</strong> with <code>K_enc</code> and the constructed IV.</li>
+<li>Encrypt the plaintext using <strong>AES-256-CTR</strong> with <code>K_enc</code> and the constructed IV. The counter is the full 16-byte IV, incremented as a 128-bit big-endian integer (RFC 5297 §2.5).</li>
 </ol>
-<p>The MIC is transmitted separately from the ciphertext, allowing its length to be controlled independently via the SCF MIC size field.</p>
-<p>A design goal is to reduce the damage caused by nonce reuse. Deriving the CTR IV from the MIC avoids directly reusing a caller-supplied CTR nonce, but the guarantees of RFC 5297 do not automatically apply to this custom construction. See <a href="#relationship-to-rfc-5297-aes-siv">Relationship to RFC 5297 AES-SIV</a>.</p>
-<h4 id="relationship-to-rfc-5297-aes-siv"><a class="header" href="#relationship-to-rfc-5297-aes-siv">Relationship to RFC 5297 AES-SIV</a></h4>
-<blockquote class="blockquote-tag blockquote-tag-caution">
-<p class="blockquote-tag-title"><svg viewbox="0 0 16 16" width="18" height="18"><path d="M4.47.22A.749.749 0 0 1 5 0h6c.199 0 .389.079.53.22l4.25 4.25c.141.14.22.331.22.53v6a.749.749 0 0 1-.22.53l-4.25 4.25A.749.749 0 0 1 11 16H5a.749.749 0 0 1-.53-.22L.22 11.53A.749.749 0 0 1 0 11V5c0-.199.079-.389.22-.53Zm.84 1.28L1.5 5.31v5.38l3.81 3.81h5.38l3.81-3.81V5.31L10.69 1.5ZM8 4a.75.75 0 0 1 .75.75v3.5a.75.75 0 0 1-1.5 0v-3.5A.75.75 0 0 1 8 4Zm0 8a1 1 0 1 1 0-2 1 1 0 0 1 0 2Z"></path></svg>Caution</p>
-<p>The original intention of this specification was to closely follow RFC 5297 (AES-SIV)
-while only adding MIC truncation and the associated CTR IV Construction. However,
-it seems that original goal was somehow lost in translation and what was actually documented
-and implemented was <em>close to</em> but <em>not quite</em> AES-SIV. While the result is not cryptographically
-catastrophic, it is very embarrassing and will be remediated.</p>
-<p>The resulting construction was <strong>inspired by AES-SIV, not an implementation of RFC 5297 AES-SIV</strong>.
-RFC 5297 computes the synthetic IV with S2V, which treats each associated-data string and
-the plaintext as a distinct vector component. UMSH instead computes one
-<code>CMAC(K_mic, canonical_AAD || plaintext)</code>. Because there is no explicit boundary between
-the complete canonical AAD and the plaintext in that CMAC input, its security depends on
-the canonical serialization being unambiguous across every valid packet layout. The RFC’s
-S2V security argument does not apply directly, and an alternative decomposition satisfying
-<code>AAD_1 || plaintext_1 = AAD_2 || plaintext_2</code> would produce the same full CMAC and synthetic
-IV for two distinct authenticated tuples. No such practical collision is presently known,
-but the required injectivity has not been established.</p>
-<p>UMSH also permits truncated MICs and reconstructs the CTR IV from the transmitted MIC prefix
-plus SECINFO, whereas RFC 5297 transmits the full 16-byte S2V result and clears two bits before
-using it as the CTR counter. Those choices make UMSH a separate, custom construction whose
-nonce-misuse properties require independent analysis. Replacing it with a standard,
-well-analyzed construction is planned in
-<a href="https://github.com/darconeous/umsh/issues/4">GitHub issue #4</a>.</p>
-</blockquote>
+<p>The MIC is transmitted at the end of the packet rather than prepended as in RFC 5297, allowing its length to be controlled independently via the SCF MIC size field.</p>
+<p>With a 16-byte MIC, the result is byte-for-byte <strong>AEAD_AES_SIV_CMAC_512</strong> (RFC 5297 §6.2): the key is <code>K = K_mic || K_enc</code>, the canonical AAD is the single associated-data component, and the CTR IV construction reduces to the RFC’s initial counter <code>Q</code>. Shorter MIC lengths use the same computation and differ only in how the CTR IV is filled.</p>
+<p>As in RFC 5297, the synthetic IV binds the ciphertext to the key, associated data, and plaintext, so there is no caller-supplied nonce to misuse: repeating all three inputs yields an identical packet and reveals only the repetition itself. Truncated MICs weaken this bound in proportion to the truncation, since the CTR IV is reconstructed from the truncated MIC and SECINFO rather than the full <code>V</code>.</p>
 <h3 id="ctr-iv-construction"><a class="header" href="#ctr-iv-construction">CTR IV Construction</a></h3>
-<p>The 16-byte CTR IV is constructed by appending the SECINFO field to the MIC, then zero-padding or truncating the result to exactly 16 bytes:</p>
-<pre><code class="language-text">IV = truncate_or_pad_to_16( MIC || SECINFO )
+<p>The 16-byte CTR IV is constructed by appending the SECINFO field to the MIC, zero-padding or truncating the result to exactly 16 bytes, and then clearing the top bit of bytes 8 and 12 as RFC 5297 §2.6 does when forming the initial counter:</p>
+<pre><code class="language-text">IV     = truncate_or_pad_to_16( MIC || SECINFO )
+IV[8]  = IV[8]  &amp; 0x7F
+IV[12] = IV[12] &amp; 0x7F
 </code></pre>
-<p>For the 16-byte MIC, SECINFO is entirely truncated away and the IV equals the MIC. This resembles AES-SIV’s use of a synthetic IV, but it is not identical to RFC 5297 because the MIC is a direct CMAC rather than an S2V result and UMSH does not apply RFC 5297’s counter-bit masking. For shorter MICs, the IV incorporates the frame counter and optional salt from SECINFO, providing additional per-packet IV variability.</p>
+<p>The bit-clearing step is applied unconditionally, whatever bytes — MIC, SECINFO, or zero padding — occupy positions 8 and 12.</p>
+<p>For the 16-byte MIC, SECINFO is entirely truncated away and the IV is the masked synthetic IV — exactly the initial counter <code>Q</code> from RFC 5297 §2.6. For shorter MICs, the IV incorporates the frame counter and optional salt from SECINFO, providing additional per-packet IV variability.</p>
 <div class="table-wrapper">
 <table>
 <thead>
 <tr><th style="text-align: right">MIC Length</th><th>SECINFO (5 B)</th><th>SECINFO (7 B)</th><th>SECINFO bytes in IV</th></tr>
 </thead>
 <tbody>
-<tr><td style="text-align: right">16 B</td><td>truncate to 16</td><td>truncate to 16</td><td>0 (IV = MIC)</td></tr>
+<tr><td style="text-align: right">16 B</td><td>truncate to 16</td><td>truncate to 16</td><td>0 (IV = masked MIC)</td></tr>
 <tr><td style="text-align: right">12 B</td><td>truncate to 16</td><td>truncate to 16</td><td>4</td></tr>
 <tr><td style="text-align: right">8 B</td><td>zero-pad to 16</td><td>zero-pad to 16</td><td>5 or 7</td></tr>
 <tr><td style="text-align: right">4 B</td><td>zero-pad to 16</td><td>zero-pad to 16</td><td>5 or 7</td></tr>
@@ -1208,9 +1189,9 @@ well-analyzed construction is planned in
 </table>
 </div>
 <h3 id="unencrypted-packets"><a class="header" href="#unencrypted-packets">Unencrypted Packets</a></h3>
-<p>When encryption is disabled, the MIC is calculated using <strong>CMAC</strong> with <code>K_mic</code>.</p>
+<p>When encryption is disabled, the MIC is computed exactly as for encrypted packets — the truncated <code>S2V(K_mic, S1 = AAD, S2 = payload)</code> — and the encryption step is simply omitted.</p>
 <h3 id="associated-data"><a class="header" href="#associated-data">Associated Data</a></h3>
-<p>The associated data (AAD) binds the immutable header fields to the MIC so that any modification is detected.</p>
+<p>The associated data (AAD) binds the immutable header fields to the MIC so that any modification is detected. The canonical AAD enters S2V as the single associated-data component <code>S1</code>; the plaintext (or, for unencrypted packets, the payload) is the final component <code>S2</code>.</p>
 <p>The AAD is constructed by concatenating the following fields in order:</p>
 <ol>
 <li><strong>FCF</strong> (1 byte, with the flood-hops-present (<code>H</code>) bit cleared)</li>
@@ -1238,16 +1219,16 @@ well-analyzed construction is planned in
 <p>It is public — any node that received the original packet, including forwarding repeaters, can compute it. Its purpose is correlation: it lets the original sender match the ack to the outstanding request it belongs to, and lets a repeater that forwarded the original packet recognize the ack as its acknowledgement (enabling passive-ack optimizations). It is not an authenticator.</p>
 <p>The <strong>ack tag</strong> is a keyed value that only the original sender and the final destination can produce. It is computed as follows:</p>
 <ol>
-<li>Compute the full 16-byte AES-CMAC over the AAD and plaintext using <code>K_mic</code> (this is the same computation used to produce the packet MIC, before any truncation).</li>
-<li>Encrypt the 16-byte CMAC with a single AES-128-ECB block encryption using the pairwise <code>K_enc</code>.</li>
+<li>Take the full 16-byte S2V output <code>V</code> (the same value used to produce the packet MIC, before any truncation).</li>
+<li>Encrypt <code>V</code> with a single AES-256-ECB block encryption using the pairwise <code>K_enc</code>.</li>
 <li>Truncate the result to 4 bytes.</li>
 </ol>
-<pre><code class="language-text">ack_tag = truncate_to_4( AES-128-ECB( key=K_enc, block=full_16B_CMAC ) )
+<pre><code class="language-text">ack_tag = truncate_to_4( AES-256-ECB( key=K_enc, block=V ) )
 </code></pre>
 <p>Where:</p>
 <ul>
 <li><code>K_enc</code> is the encryption key used for the packet — the pairwise key for unicast (see <a href="#hkdf-inputs-for-unicast">HKDF Inputs for Unicast</a>), or the combined blind unicast key for blind unicast (see <a href="#blind-unicast-payload-keys">Blind Unicast Payload Keys</a>)</li>
-<li><code>full_16B_CMAC</code> is the full 16-byte AES-CMAC computed during packet processing, before truncation to the on-wire MIC length</li>
+<li><code>V</code> is the full 16-byte S2V output computed during packet processing, before truncation to the on-wire MIC length</li>
 </ul>
 <p>The standalone <a href="#mac-ack-packet">MAC Ack</a> carries both fields (<code>ack_mic</code> followed by <code>ack_tag</code>, 8 bytes total). The <a href="#ack-mic-option-8">Ack MIC option</a> carries only <code>ack_mic</code>, because the packet carrying the option is itself authenticated to the original sender and therefore needs no separate keyed tag.</p>
 <p>The <code>ack_mic</code> is a prefix of the original packet’s on-wire MIC, so it was already visible to anyone who received that packet. The keyed <code>ack_tag</code>, by contrast, never appears in the original packet: producing it requires knowledge of <code>K_enc</code>, so a passive observer who intercepts the original packet cannot forge a valid standalone ack even though <code>ack_mic</code> is public. With a 4-byte keyed tag, a blind forgery succeeds with probability <code>2^-32</code> per attempt; over a bandwidth-limited LoRa channel, online guessing at that scale is infeasible. A successful forgery would cause the sender to treat an undelivered packet as delivered and suppress retransmission — a reliability denial-of-service, not a confidentiality or integrity break. A weaker variant needs no forged tag at all: repeaters <a href="#ack-cancellation">cancel queued forwards</a> on the public <code>ack_mic</code> alone, so an observer who saw the original packet can suppress its pending forwards at repeaters within earshot. The exposure is the same reliability class, costs the attacker a transmission per suppression, and is bounded by the sender’s <a href="#route-retry-option-6">Route Retry</a> recovery.</p>
@@ -1255,7 +1236,7 @@ well-analyzed construction is planned in
 <p>AES-ECB on a single 16-byte block is the raw AES block cipher — a pseudorandom permutation — and does not have the pattern-leakage weakness associated with multi-block ECB encryption.</p>
 <h3 id="blind-unicast-address-encryption"><a class="header" href="#blind-unicast-address-encryption">Blind Unicast Address Encryption</a></h3>
 <p>Blind unicast packets encrypt both the destination hint and source address together, separately from the payload. The address block is encrypted with the <strong>channel key alone</strong>, so that any channel member can recover both the intended recipient and the sender’s identity. The payload is then encrypted with the <strong>combined blind unicast keys</strong> (see <a href="#blind-unicast-payload-keys">Blind Unicast Payload Keys</a>), which require both the channel key and the pairwise shared secret.</p>
-<p>The address block is encrypted using AES-128-CTR with the channel’s derived encryption key <code>K_enc_channel</code> (see <a href="#multicast-packet-keys">Multicast Packet Keys</a>), using the CTR IV constructed from the packet MIC and SECINFO (see <a href="#ctr-iv-construction">CTR IV Construction</a>).</p>
+<p>The address block is encrypted using AES-256-CTR with the channel’s derived encryption key <code>K_enc_channel</code> (see <a href="#multicast-packet-keys">Multicast Packet Keys</a>), using the CTR IV constructed from the packet MIC and SECINFO (see <a href="#ctr-iv-construction">CTR IV Construction</a>).</p>
 <p>Let:</p>
 <ul>
 <li><code>K_enc_channel</code> = channel encryption key derived from the channel key via HKDF</li>
@@ -1264,7 +1245,7 @@ well-analyzed construction is planned in
 <li><code>SRC</code> = source address: 3-byte source hint when <code>S=0</code>, or 32-byte source public key when <code>S=1</code></li>
 </ul>
 <p>Then:</p>
-<pre><code class="language-text">ENC_DST_SRC = AES-128-CTR( key=K_enc_channel, iv=IV, plaintext=DST || SRC )
+<pre><code class="language-text">ENC_DST_SRC = AES-256-CTR( key=K_enc_channel, iv=IV, plaintext=DST || SRC )
 </code></pre>
 <p>This allows a receiver possessing the channel key to recover both the destination (to confirm the packet is addressed to them) and the source address (to derive the pairwise keys needed to authenticate and decrypt the payload).</p>
 <h2 id="perfect-forward-secrecy-sessions"><a class="header" href="#perfect-forward-secrecy-sessions">Perfect Forward Secrecy Sessions</a></h2>
@@ -1419,7 +1400,7 @@ of packets which transit the bridge.</p>
 <p><strong>Replay and Ack Processing</strong></p>
 <ul>
 <li>Apply the <a href="#replay-detection">replay-detection rules</a>.</li>
-<li>If the packet is accepted as new and requests an ACK, the receiving node (i.e., the final destination) computes the <a href="#ack-tag-construction">ack MIC and ack tag</a> — the first 4 bytes of the original packet’s MIC and a 4-byte keyed value from the full 16-byte CMAC and pairwise <code>K_enc</code> — prepares a MAC Ack packet, and adds it to the outbound queue. Repeaters do not generate acks — see <a href="#mac-ack-packet">MAC Ack Packet</a>.</li>
+<li>If the packet is accepted as new and requests an ACK, the receiving node (i.e., the final destination) computes the <a href="#ack-tag-construction">ack MIC and ack tag</a> — the first 4 bytes of the original packet’s MIC and a 4-byte keyed value from the full 16-byte S2V output and pairwise <code>K_enc</code> — prepares a MAC Ack packet, and adds it to the outbound queue. Repeaters do not generate acks — see <a href="#mac-ack-packet">MAC Ack Packet</a>.</li>
 <li>If the authenticated packet is a previously received packet within the bounded <a href="#duplicate-acknowledgement-window">duplicate-acknowledgement window</a>, the receiver MAY prepare and queue its ACK again. This does not make the packet new or advance its replay state. Unless duplicate suppression is delegated to a host MAC, stop after queueing the ACK and do not process the application payload again.</li>
 <li>Otherwise, if replay detection rejects the packet, drop it without acknowledging it.</li>
 </ul>
@@ -1436,7 +1417,7 @@ of packets which transit the bridge.</p>
 <p>A <strong>channel</strong> is a named communication context defined by a shared symmetric key. Possession of the channel key grants membership and enables two distinct roles in UMSH:</p>
 <ul>
 <li><strong>Multicast</strong> — any node that possesses the channel key can send and receive packets addressed to the channel, enabling group communication.</li>
-<li><strong>Blind unicast</strong> — the channel key conceals both sender and destination addresses on the wire, while the payload itself is protected end-to-end using <a href="#blind-unicast-payload-keys">combined keys</a> that require both the channel key and the pairwise shared secret. The channel serves as a metadata-concealment layer; the payload is readable only by the intended recipient, not by all channel members. See <a href="#blind-unicast-packet">Blind Unicast Packet</a> and <a href="#blind-unicast-source-encryption">Blind Unicast Source Encryption</a> for details.</li>
+<li><strong>Blind unicast</strong> — the channel key conceals both sender and destination addresses on the wire, while the payload itself is protected end-to-end using <a href="#blind-unicast-payload-keys">combined keys</a> that require both the channel key and the pairwise shared secret. The channel serves as a metadata-concealment layer; the payload is readable only by the intended recipient, not by all channel members. See <a href="#blind-unicast-packet">Blind Unicast Packet</a> and <a href="#blind-unicast-address-encryption">Blind Unicast Address Encryption</a> for details.</li>
 </ul>
 <p>In both cases, the channel key is the membership credential — possessing it is both necessary and sufficient to participate.</p>
 <h2 id="channel-keys"><a class="header" href="#channel-keys">Channel Keys</a></h2>
@@ -6221,7 +6202,7 @@ channels; see <a href="#provisioning-security">Provisioning Security</a>.</p>
 <li>Has Item Length Prefix: No</li>
 <li>Asynchronous Updates: No</li>
 <li>Required: <code>CAP_HOST_KEYS</code></li>
-<li>Item Form: Structure, 64 octets</li>
+<li>Item Form: Structure, 96 octets</li>
 <li>Digest Form: 32 octets (the peer’s public key)</li>
 <li>Remove Selector: the 32-octet peer public key</li>
 <li>Post-Reset Value: Empty</li>
@@ -6231,7 +6212,7 @@ peers of the host identity. The item form is:</p>
 <pre><code>+---------------------+-----------+-----------+
 | PEER_PUBLIC_KEY     |   K_ENC   |   K_MIC   |
 +---------------------+-----------+-----------+
-        32 B              16 B        16 B
+        32 B              32 B        32 B
 </code></pre>
 <p>Figure: Peer key entry item form</p>
 <p>Where <code>PEER_PUBLIC_KEY</code> is the peer’s Ed25519 public key and <code>K_ENC</code> and
@@ -7058,8 +7039,8 @@ metadata the radio receives, and can deny service to the legitimate
 host. On serial transports this interface is implicitly protected by
 physical possession of the device. The BLE binding <strong>MUST</strong> provide at
 least an equivalent barrier, and its cryptographic strength <strong>MUST
-NOT</strong> fall below that of UMSH itself (approximately 128-bit; see
-<a href="#security--cryptography">Security &amp; Cryptography</a>).</p>
+NOT</strong> fall below that of UMSH’s identity layer (approximately 128-bit,
+bounded by Curve25519; see <a href="#security--cryptography">Security &amp; Cryptography</a>).</p>
 <h3 id="pairing-requirements"><a class="header" href="#pairing-requirements">Pairing Requirements</a></h3>
 <ul>
 <li>Pairing <strong>MUST</strong> use LE Secure Connections (LESC). Legacy pairing
@@ -9109,7 +9090,7 @@ channels; see (#provisioning-security).</p>
 <li>Has Item Length Prefix: No</li>
 <li>Asynchronous Updates: No</li>
 <li>Required: <code>CAP_HOST_KEYS</code></li>
-<li>Item Form: Structure, 64 octets</li>
+<li>Item Form: Structure, 96 octets</li>
 <li>Digest Form: 32 octets (the peer’s public key)</li>
 <li>Remove Selector: the 32-octet peer public key</li>
 <li>Post-Reset Value: Empty</li>
@@ -9119,7 +9100,7 @@ peers of the host identity. The item form is:</p>
 <pre><code>+---------------------+-----------+-----------+
 | PEER_PUBLIC_KEY     |   K_ENC   |   K_MIC   |
 +---------------------+-----------+-----------+
-        32 B              16 B        16 B
+        32 B              32 B        32 B
 </code></pre>
 <p>Figure: Peer key entry item form</p>
 <p>Where <code>PEER_PUBLIC_KEY</code> is the peer’s Ed25519 public key and <code>K_ENC</code> and
@@ -9575,8 +9556,8 @@ URI-preview machinery. The recommended file extension is <code>.umshid</code>.</
 <tr><td>12</td><td>4</td><td>Argon2id time cost <em>t</em></td><td>passes</td></tr>
 <tr><td>16</td><td>1</td><td>Argon2id parallelism <em>p</em></td><td>lanes</td></tr>
 <tr><td>17</td><td>16</td><td>KDF salt</td><td>random per export</td></tr>
-<tr><td>33</td><td>1</td><td>Cipher identifier</td><td><code>0x01</code> = custom UMSH SIV-inspired construction</td></tr>
-<tr><td>34</td><td>16</td><td>MIC</td><td>full AES-CMAC tag</td></tr>
+<tr><td>33</td><td>1</td><td>Cipher identifier</td><td><code>0x01</code> = AES-SIV (RFC 5297) with AES-256</td></tr>
+<tr><td>34</td><td>16</td><td>MIC</td><td>full 16-byte S2V output <code>V</code></td></tr>
 <tr><td>50</td><td>—</td><td>Ciphertext</td><td>encrypted payload</td></tr>
 </tbody>
 </table>
@@ -9598,11 +9579,11 @@ cross-platform artifact must decrypt identically everywhere.</p>
 
 ikm  = prk
 salt = "UMSH-IDEXPORT-SALT"
-info = "UMSH-IDEXPORT-V1"
-okm  = HKDF-SHA256(ikm, salt, info, 32)
+info = "UMSH-IDEXPORT-V2"
+okm  = HKDF-SHA256(ikm, salt, info, 64)
 
-K_enc = okm[0..15]
-K_mic = okm[16..31]
+K_mic = okm[0..31]
+K_enc = okm[32..63]
 </code></pre>
 <p>Exporters <strong>MUST</strong> use at least <em>m</em> = 19456 KiB, <em>t</em> = 2, <em>p</em> = 1, and
 <strong>SHOULD</strong> use <em>m</em> = 65536 KiB, <em>t</em> = 3, <em>p</em> = 1 where device memory allows.
@@ -9611,18 +9592,21 @@ refuse artifacts whose parameters exceed a local resource ceiling (for
 example <em>m</em> &gt; 1048576 KiB, <em>t</em> &gt; 32, or <em>p</em> &gt; 4) to avoid resource-exhaustion
 attacks through crafted headers.</p>
 <h2 id="encryption-and-authentication"><a class="header" href="#encryption-and-authentication">Encryption and Authentication</a></h2>
-<p>The payload is protected with the same SIV-style construction used for
-packets (see <a href="#encrypted-packets">Encrypted Packets</a>), with the
-full 16-byte MIC and the envelope header as associated data:</p>
+<p>The payload is protected with the same construction used for packets (see
+<a href="#encrypted-packets">Encrypted Packets</a>), with the full 16-byte
+MIC and the envelope header as associated data:</p>
 <ol>
-<li>Compute the full 16-byte AES-CMAC over the envelope header followed by
-the payload plaintext, using <code>K_mic</code>.</li>
-<li>Use the MIC directly as the 16-byte CTR IV. This resembles AES-SIV but does
-not use RFC 5297 S2V; see the packet construction’s
-<a href="#relationship-to-rfc-5297-aes-siv">RFC 5297 warning</a>.</li>
-<li>Encrypt the payload using <strong>AES-128-CTR</strong> with <code>K_enc</code> and that IV.</li>
+<li>Compute the full 16-byte synthetic IV <code>V = S2V(K_mic, S1, S2)</code> per
+RFC 5297 §2.4, where <code>S1</code> is the envelope header and <code>S2</code> is the payload
+plaintext. <code>V</code> is stored as the MIC.</li>
+<li>Form the CTR IV by clearing the top bit of bytes 8 and 12 of <code>V</code>
+(RFC 5297 §2.6).</li>
+<li>Encrypt the payload using <strong>AES-256-CTR</strong> with <code>K_enc</code> and that IV.</li>
 </ol>
-<p>To import, derive the keys, decrypt the ciphertext, recompute the CMAC over
+<p>Because the MIC is always full-length here, this is exactly
+AEAD_AES_SIV_CMAC_512 (RFC 5297) with key <code>K = K_mic || K_enc</code> and the
+envelope header as the single associated-data component.</p>
+<p>To import, derive the keys, decrypt the ciphertext, recompute <code>V</code> over
 the header and recovered plaintext, and compare it to the stored MIC in
 constant time. On mismatch the importer <strong>MUST</strong> report a single generic
 failure: a wrong passphrase and a corrupted or forged artifact are
@@ -10210,10 +10194,10 @@ the metadata of every frame on every segment it bridges.</p>
 </ul>
 <p>UMSH does <strong>not</strong> assume a trusted infrastructure, a reliable transport, or a synchronized clock.</p>
 <h2 id="what-umsh-protects-against"><a class="header" href="#what-umsh-protects-against">What UMSH Protects Against</a></h2>
-<p><strong>Eavesdropping.</strong> When encryption is enabled, payload content is protected by AES-128-CTR keyed with material derived from ECDH (unicast) or the channel key (multicast). An observer without the relevant key cannot recover plaintext.</p>
-<p><strong>Forgery.</strong> All authenticated packets carry a MIC computed with AES-CMAC. An attacker who does not possess the encryption and authentication keys cannot produce a valid MIC. The <a href="#security-control-field">MIC size</a> determines the forgery resistance — from 2^-32 (4-byte MIC) to 2^-128 (16-byte MIC).</p>
-<p><strong>Replay attacks.</strong> Monotonically increasing <a href="#frame-counters">frame counters</a> allow receivers to detect and reject replayed packets. The <a href="#replay-detection">backward window and MIC cache</a> provide tolerance for out-of-order delivery without weakening replay protection.</p>
-<p><strong>Nonce misuse.</strong> The <a href="#encrypted-packets">AES-SIV-inspired construction</a> derives the CTR IV from the MIC, so accidental nonce reuse (e.g., due to a buggy counter implementation) does not produce the catastrophic plaintext leakage that would occur with AES-GCM or raw AES-CTR. In the worst case, an attacker can detect when two packets carry identical plaintext — the keys and other traffic remain uncompromised.</p>
+<p><strong>Eavesdropping.</strong> When encryption is enabled, payload content is protected by AES-256-CTR keyed with material derived from ECDH (unicast) or the channel key (multicast). An observer without the relevant key cannot recover plaintext.</p>
+<p><strong>Forgery.</strong> All authenticated packets carry a MIC computed with S2V (AES-CMAC). An attacker who does not possess the encryption and authentication keys cannot produce a valid MIC. The <a href="#security-control-field">MIC size</a> determines the forgery resistance — from 2^-32 (4-byte MIC) to 2^-128 (16-byte MIC).</p>
+<p><strong>Replay attacks.</strong> Monotonically increasing <a href="#frame-counter-1">frame counters</a> allow receivers to detect and reject replayed packets. The <a href="#replay-detection">backward window and MIC cache</a> provide tolerance for out-of-order delivery without weakening replay protection.</p>
+<p><strong>Nonce misuse.</strong> The <a href="#encrypted-packets">AES-SIV construction</a> derives the CTR IV from the key, associated data, and plaintext, so accidental nonce reuse (e.g., due to a buggy counter implementation) does not produce the catastrophic plaintext leakage that would occur with AES-GCM or raw AES-CTR. In the worst case, an attacker can detect when two packets carry identical associated data and plaintext — the keys and other traffic remain uncompromised.</p>
 <p><strong>Long-term key compromise (with PFS).</strong> If a <a href="#perfect-forward-secrecy-sessions">PFS session</a> was active and the ephemeral keys were properly erased, traffic from that session cannot be retroactively decrypted even if the long-term private keys are later compromised.</p>
 <h2 id="what-umsh-does-not-protect-against"><a class="header" href="#what-umsh-does-not-protect-against">What UMSH Does Not Protect Against</a></h2>
 <p><strong>Traffic analysis.</strong> A passive observer can see packet timing, frequency, size, hint values, frame counters, and flood hop counts — all in the clear. This reveals communication patterns (who is active, how often, rough network topology) even when payloads are encrypted. Hint values are stable for a given identity, enabling long-term tracking of a node’s activity.</p>
@@ -10229,7 +10213,7 @@ the metadata of every frame on every segment it bridges.</p>
 <h2 id="implementation-requirements"><a class="header" href="#implementation-requirements">Implementation Requirements</a></h2>
 <p>The following requirements are critical for security. Failure to implement any of them correctly can compromise the properties described above.</p>
 <h3 id="frame-counter-monotonicity"><a class="header" href="#frame-counter-monotonicity">Frame Counter Monotonicity</a></h3>
-<p>The frame counter must strictly increase for each packet sent in a given traffic direction. Reusing a counter value with the same key undermines replay protection and, in the worst case, can leak information about plaintext differences (though the AES-SIV construction limits the damage). See <a href="#frame-counters">Frame Counters</a>.</p>
+<p>The frame counter must strictly increase for each packet sent in a given traffic direction. Reusing a counter value with the same key undermines replay protection and, in the worst case, can leak information about plaintext differences (though the AES-SIV construction limits the damage). See <a href="#frame-counter-1">Frame Counters</a>.</p>
 <h3 id="frame-counter-persistence"><a class="header" href="#frame-counter-persistence">Frame Counter Persistence</a></h3>
 <p>A node must not reuse frame counter values across reboots. Implementations must either persist the counter to non-volatile storage or advance it by a large margin on startup. If writing to non-volatile storage, care must be taken to avoid wearing out the storage medium. See <a href="#counter-persistence">Counter Persistence</a> and <a href="#counter-resynchronization">Counter Resynchronization</a>.</p>
 <h3 id="ephemeral-key-erasure"><a class="header" href="#ephemeral-key-erasure">Ephemeral Key Erasure</a></h3>
@@ -10273,9 +10257,12 @@ the metadata of every frame on every segment it bridges.</p>
 <p>Because hints are derived deterministically from public keys, they remain stable for the lifetime of a node identity. An observer who associates a hint with a physical location or person can track that identity across sessions, power cycles, and network changes. The only countermeasure is generating a new identity (a new Ed25519 keypair), which requires all peers to re-learn the new public key.</p>
 <h2 id="cryptographic-design-rationale"><a class="header" href="#cryptographic-design-rationale">Cryptographic Design Rationale</a></h2>
 <h3 id="aes-siv-over-aes-gcm"><a class="header" href="#aes-siv-over-aes-gcm">AES-SIV over AES-GCM</a></h3>
-<p>UMSH uses an AES-SIV-inspired construction rather than AES-GCM. AES-GCM is catastrophically vulnerable to nonce reuse: a single repeated nonce leaks the authentication key and allows forgery of arbitrary messages. On a mesh network where counter management is distributed across many independent nodes and persistence across reboots is not guaranteed, nonce reuse is a realistic failure mode. The AES-SIV construction degrades gracefully — nonce reuse reveals only whether two plaintexts are identical, without compromising keys or enabling forgery. See the <a href="#why-aes-siv-instead-of-aes-gcm">FAQ</a>.</p>
+<p>UMSH uses AES-SIV (RFC 5297) rather than AES-GCM. AES-GCM is catastrophically vulnerable to nonce reuse: a single repeated nonce leaks the authentication key and allows forgery of arbitrary messages. On a mesh network where counter management is distributed across many independent nodes and persistence across reboots is not guaranteed, nonce reuse is a realistic failure mode. AES-SIV degrades gracefully — nonce reuse reveals only whether two packets are identical, without compromising keys or enabling forgery. Deterministic SIV-style alternatives built on other primitives, such as ChaCha20-Poly1305-SIV, were considered, but none is as mature or as widely analyzed as RFC 5297. See the <a href="#why-use-aes-siv-instead-of-aes-gcm">FAQ</a>.</p>
+<h3 id="aes-256-over-aes-128"><a class="header" href="#aes-256-over-aes-128">AES-256 over AES-128</a></h3>
+<p>UMSH’s asymmetric layer — Ed25519 identities and X25519 key agreement — provides roughly 128-bit classical security, so AES-128 would be a matched choice against classical adversaries, and a cheaper one on low-power hardware. UMSH uses AES-256 anyway, because the symmetric layer is the one part of the protocol that can meaningfully survive a quantum adversary.</p>
+<p>No post-quantum key exchange or signature scheme fits within a LoRa frame budget, so the asymmetric layer cannot be hardened against Shor’s algorithm. Recovering a private key that way, however, requires the complete public key. Most UMSH traffic exposes only a 3-byte hint, and blind unicast conceals even a full first-contact source key inside the channel-encrypted address block. A deployment that avoids exposing full public keys and leans on shared channel keys therefore retains meaningful — though reduced — security against a quantum adversary: physical compromise of any channel member defeats it, but a purely over-the-air attacker is left facing the symmetric layer alone. That fallback is only as strong as the symmetric primitives, and Grover’s algorithm halves a symmetric key’s effective strength: AES-128 would be reduced to roughly 64-bit post-quantum strength, while AES-256 remains far out of reach. Choosing AES-256 preserves the symmetric fallback at the cost of extra cycles and code size on constrained devices.</p>
 <h3 id="stable-keys-over-ratcheting"><a class="header" href="#stable-keys-over-ratcheting">Stable Keys over Ratcheting</a></h3>
-<p>UMSH uses stable pairwise keys rather than a ratcheting protocol. Ratcheting provides forward secrecy per-message but requires synchronized state between sender and receiver. On a lossy, high-latency mesh where packets are routinely dropped, duplicated, or delivered out of order, ratchet state can desynchronize — potentially requiring expensive resynchronization exchanges over a slow radio link. UMSH’s stable keys combined with per-packet counter and salt inputs provide per-packet IV uniqueness without requiring synchronized state. Optional <a href="#perfect-forward-secrecy-sessions">PFS sessions</a> provide forward secrecy when needed, without imposing ratcheting’s fragility on all traffic. See the <a href="#why-doesnt-umsh-use-a-ratcheting-protocol-for-forward-secrecy">FAQ</a>.</p>
+<p>UMSH uses stable pairwise keys rather than a ratcheting protocol. Ratcheting provides forward secrecy per-message but requires synchronized state between sender and receiver. On a lossy, high-latency mesh where packets are routinely dropped, duplicated, or delivered out of order, ratchet state can desynchronize — potentially requiring expensive resynchronization exchanges over a slow radio link. UMSH’s stable keys combined with per-packet counter and salt inputs provide per-packet IV uniqueness without requiring synchronized state. Optional <a href="#perfect-forward-secrecy-sessions">PFS sessions</a> provide forward secrecy when needed, without imposing ratcheting’s fragility on all traffic. See the <a href="#why-does-umsh-use-stable-pairwise-keys-instead-of-a-ratcheting-scheme-like-the-signal-protocol">FAQ</a>.</p>
 <h3 id="single-keypair-for-signing-and-key-agreement"><a class="header" href="#single-keypair-for-signing-and-key-agreement">Single Keypair for Signing and Key Agreement</a></h3>
 <p>UMSH uses a single Ed25519 keypair per node for both identity (signing) and key agreement (via X25519 conversion). Standard guidance recommends separate keys, but the alternative would require distributing an additional 32-byte X25519 public key per identity and cryptographically binding it to the Ed25519 key. On a ~255-byte LoRa frame, this overhead is significant. The Ed25519/X25519 conversion is a well-understood, deterministic mapping over birationally equivalent curves, used by Signal’s X3DH and libsodium. See <a href="#ed25519-to-x25519-conversion">Ed25519 to X25519 Conversion</a>.</p>
 <h2 id="channel-specific-considerations"><a class="header" href="#channel-specific-considerations">Channel-Specific Considerations</a></h2>
@@ -10398,7 +10385,7 @@ as amateur-radio traffic.</p>
 <div style="break-before: page; page-break-before: always;"></div>
 <h1 id="faq"><a class="header" href="#faq">FAQ</a></h1>
 <h3 id="can-an-attacker-spoof-a-mac-ack-to-make-the-sender-believe-a-packet-was-delivered"><a class="header" href="#can-an-attacker-spoof-a-mac-ack-to-make-the-sender-believe-a-packet-was-delivered">Can an attacker spoof a MAC Ack to make the sender believe a packet was delivered?</a></h3>
-<p>Not without the pairwise key. A MAC Ack carries two fields: a public <a href="#ack-tag-construction">ack MIC</a> (the first 4 bytes of the original packet’s on-wire MIC, used only for correlation) and a keyed 4-byte <a href="#ack-tag-construction">ack tag</a> derived by encrypting the full 16-byte CMAC with <code>K_enc</code>. Only the <code>ack tag</code> authenticates the ack, and computing it requires the encryption key (pairwise for unicast, or the <a href="#blind-unicast-payload-keys">combined blind unicast key</a> for blind unicast). A passive observer who intercepts the original packet can read the on-wire MIC and thus reproduce the public <code>ack MIC</code>, but cannot derive the keyed <code>ack tag</code> without <code>K_enc</code>. Blind forgery of the 4-byte tag succeeds with probability <code>2^-32</code> per attempt, which is infeasible to brute-force online over a bandwidth-limited LoRa channel; and even a successful forgery only causes a false delivery confirmation (a reliability denial-of-service), never a confidentiality or integrity break.</p>
+<p>Not without the pairwise key. A MAC Ack carries two fields: a public <a href="#ack-tag-construction">ack MIC</a> (the first 4 bytes of the original packet’s on-wire MIC, used only for correlation) and a keyed 4-byte <a href="#ack-tag-construction">ack tag</a> derived by encrypting the full 16-byte S2V output with <code>K_enc</code>. Only the <code>ack tag</code> authenticates the ack, and computing it requires the encryption key (pairwise for unicast, or the <a href="#blind-unicast-payload-keys">combined blind unicast key</a> for blind unicast). A passive observer who intercepts the original packet can read the on-wire MIC and thus reproduce the public <code>ack MIC</code>, but cannot derive the keyed <code>ack tag</code> without <code>K_enc</code>. Blind forgery of the 4-byte tag succeeds with probability <code>2^-32</code> per attempt, which is infeasible to brute-force online over a bandwidth-limited LoRa channel; and even a successful forgery only causes a false delivery confirmation (a reliability denial-of-service), never a confidentiality or integrity break.</p>
 <h3 id="doesnt-blind-unicast-have-a-circular-dependency-between-the-mic-and-address-decryption"><a class="header" href="#doesnt-blind-unicast-have-a-circular-dependency-between-the-mic-and-address-decryption">Doesn’t blind unicast have a circular dependency between the MIC and address decryption?</a></h3>
 <p>No. The <code>MIC</code> field is located at the end of the packet and can be read directly from the wire. It is computed using the <a href="#blind-unicast-payload-keys">blind unicast payload keys</a>, which combine the pairwise shared secret with the channel key. The receiver reads the MIC, uses it (together with the channel’s <code>K_enc_channel</code>) as the IV to decrypt <code>ENC_DST_SRC</code>, and then derives the pairwise keys from the recovered source address. The pairwise keys are XORed with the channel keys to produce the blind unicast payload keys, which are used to authenticate and decrypt <code>ENC_PAYLOAD</code>. If either address has been tampered with, the derived pairwise keys will be wrong and payload authentication will fail. There is no circular dependency — only a specific processing order (see <a href="#blind-unicast-packet">Blind Unicast</a>).</p>
 <h3 id="can-source-routed-packets-loop-if-router-hints-collide"><a class="header" href="#can-source-routed-packets-loop-if-router-hints-collide">Can source-routed packets loop if router hints collide?</a></h3>
@@ -10429,17 +10416,17 @@ as amateur-radio traffic.</p>
 <li>The sender is using an ephemeral keypair (anonymous request pattern).</li>
 </ul>
 <p>Leave <code>S</code> clear when the receiver is known to have the sender’s full public key cached — for example, after a prior advertisement, identity exchange, or any earlier <code>S=1</code> packet. Using the compact hint saves 29 bytes per packet in unicast (3-byte hint vs 32-byte key), which is significant on LoRa.</p>
-<p>Receivers that see an unknown source hint on an authenticated packet should treat it as an authentication failure (the cached key lookup fails, so decryption or CMAC verification will fail). The sender can retransmit with <code>S=1</code> to provide the full key.</p>
+<p>Receivers that see an unknown source hint on an authenticated packet should treat it as an authentication failure (the cached key lookup fails, so decryption or MIC verification will fail). The sender can retransmit with <code>S=1</code> to provide the full key.</p>
 <h3 id="how-does-a-mac-ack-get-routed-back-to-the-original-sender"><a class="header" href="#how-does-a-mac-ack-get-routed-back-to-the-original-sender">How does a MAC Ack get routed back to the original sender?</a></h3>
 <p>MAC acks are end-to-end: the <strong>final destination</strong> generates the ack, not any intermediate repeater. The ack is routed back to the original sender using whatever routing state the destination has learned — typically a source route derived from the inbound packet’s trace route, or a flood scoped by the inbound packet’s <code>FHOPS_ACC</code> together with any learned region-code options. This is the same <a href="#route-learning">route learning</a> mechanism used for all communication, not an ack-specific feature.</p>
 <p>Repeaters do not generate acks themselves. Instead, a repeater can confirm successful forwarding by overhearing the next hop’s retransmission of the same packet (see <a href="#forwarding-confirmation">Forwarding Confirmation</a>).</p>
 <h3 id="why-does-umsh-use-stable-pairwise-keys-instead-of-a-ratcheting-scheme-like-the-signal-protocol"><a class="header" href="#why-does-umsh-use-stable-pairwise-keys-instead-of-a-ratcheting-scheme-like-the-signal-protocol">Why does UMSH use stable pairwise keys instead of a ratcheting scheme like the Signal Protocol?</a></h3>
-<p>LoRa mesh networks have high latency, low bandwidth, and unreliable delivery — properties that are hostile to ratcheting protocols. Ratcheting requires reliable in-order message delivery to keep both sides synchronized; a single lost message can desynchronize the ratchet and require an expensive recovery handshake. In a mesh where packets may be lost, duplicated, or arrive out of order, this would lead to frequent resynchronization storms. Stable pairwise keys derived from a single ECDH are simple, stateless, and robust to packet loss. The frame counter and optional salt still provide per-packet uniqueness, while the custom AES-SIV-inspired construction is intended to provide an additional safety margin against nonce misuse. It is not RFC 5297 AES-SIV; see the <a href="#relationship-to-rfc-5297-aes-siv">construction warning</a>.</p>
+<p>LoRa mesh networks have high latency, low bandwidth, and unreliable delivery — properties that are hostile to ratcheting protocols. Ratcheting requires reliable in-order message delivery to keep both sides synchronized; a single lost message can desynchronize the ratchet and require an expensive recovery handshake. In a mesh where packets may be lost, duplicated, or arrive out of order, this would lead to frequent resynchronization storms. Stable pairwise keys derived from a single ECDH are simple, stateless, and robust to packet loss. The frame counter and optional salt still provide per-packet uniqueness, while the AES-SIV construction provides an additional safety margin against nonce misuse.</p>
 <p>When forward secrecy is needed, UMSH provides <a href="#perfect-forward-secrecy-sessions">PFS sessions</a> — a two-message handshake where both nodes exchange ephemeral node addresses and communicate using session-specific keys for an agreed duration. PFS sessions add no per-packet overhead once established, and the private keys for the ephemeral addresses are erased when the session ends. This provides perfect forward secrecy without the fragility of continuous ratcheting.</p>
 <h3 id="what-happens-if-a-2-byte-channel-identifier-collides-across-different-channel-keys"><a class="header" href="#what-happens-if-a-2-byte-channel-identifier-collides-across-different-channel-keys">What happens if a 2-byte channel identifier collides across different channel keys?</a></h3>
 <p>The 2-byte channel identifier is a hint, not a unique identifier. If two different channel keys happen to produce the same 2-byte channel ID, a receiver configured with both keys will attempt to process the packet with each candidate key. Only the correct key will produce a valid MIC, so the wrong candidate will be rejected during authentication. The cost is wasted computation, not incorrect behavior. With 2 bytes the collision probability is 1 in 65536, which is higher than a 4-byte hint but still negligible for deployments with a small number of configured channels.</p>
-<h3 id="why-use-an-aes-siv-inspired-construction-instead-of-aes-gcm"><a class="header" href="#why-use-an-aes-siv-inspired-construction-instead-of-aes-gcm">Why use an AES-SIV-inspired construction instead of AES-GCM?</a></h3>
-<p>AES-GCM is catastrophically vulnerable to nonce reuse — repeating a nonce with the same key completely breaks both confidentiality and authenticity. In a mesh network, nonce management is difficult: nodes may reboot and lose counter state, clocks may not be synchronized, and packets may be retransmitted. UMSH therefore derives its CTR IV from a plaintext-authenticating MIC instead of accepting an independent caller-supplied nonce. This custom design is inspired by AES-SIV and is intended to degrade more gracefully under counter reuse, but it does not implement RFC 5297 S2V and does not inherit that construction’s proven nonce-misuse guarantees. The limitations and planned replacement are described in the <a href="#relationship-to-rfc-5297-aes-siv">construction warning</a>.</p>
+<h3 id="why-use-aes-siv-instead-of-aes-gcm"><a class="header" href="#why-use-aes-siv-instead-of-aes-gcm">Why use AES-SIV instead of AES-GCM?</a></h3>
+<p>AES-GCM is catastrophically vulnerable to nonce reuse — repeating a nonce with the same key completely breaks both confidentiality and authenticity. In a mesh network, nonce management is difficult: nodes may reboot and lose counter state, clocks may not be synchronized, and packets may be retransmitted. AES-SIV (RFC 5297) computes its CTR IV from the key, associated data, and plaintext, so there is no independent caller-supplied nonce to misuse: repeating all inputs produces an identical packet and reveals only the repetition itself. That is exactly the failure mode UMSH wants under counter loss — graceful, not catastrophic. See <a href="#encrypted-packets">Encrypted Packets</a>.</p>
 <h3 id="how-does-deliver-to-a-region-then-flood-work"><a class="header" href="#how-does-deliver-to-a-region-then-flood-work">How does “deliver to a region, then flood” work?</a></h3>
 <p>A sender can include both a source-route option and a flood hop count in the same packet. The source-route directs the packet through specific repeaters, and as each repeater forwards, it removes its own hint. Once all source-route hints are consumed, the packet transitions to flood-based forwarding bounded by <code>FHOPS_REM</code>. This allows targeted delivery to a specific area of the mesh followed by a local flood — useful when searching for a node in a known geographic region without flooding the entire network. See <a href="#routing-implications">Routing Implications</a>.</p>
 <h3 id="can-umsh-support-anonymous-requests-similar-to-meshcores-anon_req-mechanism"><a class="header" href="#can-umsh-support-anonymous-requests-similar-to-meshcores-anon_req-mechanism">Can UMSH support anonymous requests, similar to MeshCore’s ANON_REQ mechanism?</a></h3>
@@ -10494,10 +10481,10 @@ errors, or other mistakes, please <a href="https://github.com/darconeous/umsh/is
 <tr><th>Aspect</th><th>UMSH</th><th>MeshCore</th></tr>
 </thead>
 <tbody>
-<tr><td>Encryption algorithm</td><td>AES-128-CTR (SIV-style: MIC used as CTR IV)</td><td>AES-128-ECB</td></tr>
-<tr><td>Authentication</td><td>AES-CMAC (4/8/12/16-byte MIC)</td><td>HMAC-SHA256 (truncated to 2-byte MAC)</td></tr>
+<tr><td>Encryption algorithm</td><td>AES-256-CTR (AES-SIV, RFC 5297)</td><td>AES-128-ECB</td></tr>
+<tr><td>Authentication</td><td>S2V (AES-CMAC), 4/8/12/16-byte MIC</td><td>HMAC-SHA256 (truncated to 2-byte MAC)</td></tr>
 <tr><td>Key derivation</td><td>HKDF-SHA256 with domain-separated keys (K_enc, K_mic)</td><td>Raw ECDH shared secret used directly</td></tr>
-<tr><td>Key separation</td><td>Separate 16-byte encryption and 16-byte MIC keys</td><td>Same shared secret for both AES key (first 16 bytes) and HMAC key (full 32 bytes)</td></tr>
+<tr><td>Key separation</td><td>Separate 32-byte encryption and 32-byte MIC keys</td><td>Same shared secret for both AES key (first 16 bytes) and HMAC key (full 32 bytes)</td></tr>
 <tr><td>Nonce misuse resistance</td><td>Yes (SIV construction)</td><td>N/A (ECB mode is deterministic)</td></tr>
 <tr><td>Replay protection</td><td>4-byte monotonic frame counter (timestamp-free)</td><td>Hash-based duplicate cache (160 entries); timestamps at application layer</td></tr>
 </tbody>
@@ -10506,7 +10493,7 @@ errors, or other mistakes, please <a href="https://github.com/darconeous/umsh/is
 <p>The cryptographic gap is substantial:</p>
 <ul>
 <li>
-<p><strong>AES-128-ECB</strong> is a textbook-insecure mode: it uses no IV or nonce, and identical plaintext blocks produce identical ciphertext blocks, leaking structural information about the payload. AES-128-CTR with a synthetic IV (as used by UMSH) does not have this weakness.</p>
+<p><strong>AES-128-ECB</strong> is a textbook-insecure mode: it uses no IV or nonce, and identical plaintext blocks produce identical ciphertext blocks, leaking structural information about the payload. AES-CTR with a synthetic IV (as used by UMSH) does not have this weakness.</p>
 </li>
 <li>
 <p><strong>2-byte MAC truncation</strong> in MeshCore means an attacker has a 1-in-65536 chance of forging a valid MAC per attempt, which is marginal for a protocol where an attacker can observe and replay packets at will. UMSH’s 16-byte MIC provides a forgery probability of 2^-128.</p>
@@ -10565,7 +10552,7 @@ errors, or other mistakes, please <a href="https://github.com/darconeous/umsh/is
 <tbody>
 <tr><td>Channel key size</td><td>32 bytes</td><td>Variable (shared secret)</td></tr>
 <tr><td>Channel identifier</td><td>2-byte derived hint</td><td>1-byte hash of SHA-256 of key</td></tr>
-<tr><td>Group message auth</td><td>Channel-key-based CMAC</td><td>Channel-key-based HMAC (2-byte MAC)</td></tr>
+<tr><td>Group message auth</td><td>Channel-key-based S2V MIC</td><td>Channel-key-based HMAC (2-byte MAC)</td></tr>
 <tr><td>Sender authentication</td><td>Not cryptographically verified (symmetric key limitation)</td><td>Not cryptographically verified (same limitation)</td></tr>
 <tr><td>Source privacy</td><td>Source encrypted when encryption enabled</td><td>No cleartext source; claimed sender name encrypted</td></tr>
 </tbody>
@@ -10639,7 +10626,7 @@ errors, or other mistakes, please <a href="https://github.com/darconeous/umsh/is
 <p>UMSH with <code>S=0</code> and a 16-byte MIC provides the strongest security configuration at 28 bytes of overhead. With shorter MICs, UMSH can trade integrity margin for payload capacity — a 4-byte MIC still provides a 1-in-2^32 forgery resistance (compared to MeshCore’s 1-in-2^16 with its 2-byte MAC) while matching MeshCore’s effective overhead.</p>
 <h2 id="power-consumption"><a class="header" href="#power-consumption">Power Consumption</a></h2>
 <p>Address hint width has a direct effect on power consumption in battery-constrained LoRa nodes.</p>
-<p>When a node receives a packet, it checks the destination hint against its own address before committing to cryptographic verification. If the hint matches, the node must attempt full packet verification to confirm whether the packet is genuinely addressed to it. Pairwise keys are cached after first contact, so no ECDH is needed for known senders — but verification still requires decrypting the payload with AES-CTR (using the transmitted MIC as the CTR IV) and then computing CMAC over the decrypted plaintext to confirm the MIC matches. Only a collision from a completely unknown sender transmitting with a full 32-byte source key (S=1) would additionally require ECDH and HKDF derivation. If the hint does not match, the packet can be discarded immediately with minimal CPU cost.</p>
+<p>When a node receives a packet, it checks the destination hint against its own address before committing to cryptographic verification. If the hint matches, the node must attempt full packet verification to confirm whether the packet is genuinely addressed to it. Pairwise keys are cached after first contact, so no ECDH is needed for known senders — but verification still requires decrypting the payload with AES-CTR (using a CTR IV derived from the transmitted MIC) and then computing S2V over the decrypted plaintext to confirm the MIC matches. Only a collision from a completely unknown sender transmitting with a full 32-byte source key (S=1) would additionally require ECDH and HKDF derivation. If the hint does not match, the packet can be discarded immediately with minimal CPU cost.</p>
 <p>The problem is collisions. In a network of many nodes, some fraction of packets addressed to <em>other</em> nodes will collide with your own hint and trigger unnecessary cryptographic work. The collision rate depends on the hint width:</p>
 <div class="table-wrapper">
 <table>
@@ -10742,8 +10729,8 @@ errors, or other mistakes, please <a href="https://github.com/darconeous/umsh/is
 <tr><th>Aspect</th><th>UMSH</th><th>Meshtastic (channel)</th><th>Meshtastic (eligible unicast PKC)</th></tr>
 </thead>
 <tbody>
-<tr><td>Encryption</td><td>AES-128-CTR (SIV-style)</td><td>AES-128-CTR or AES-256-CTR, selected by effective PSK length; the default effective key is 16 bytes</td><td>AES-CCM</td></tr>
-<tr><td>Authentication</td><td>AES-CMAC (4/8/12/16-byte MIC)</td><td><strong>None</strong></td><td>8-byte CCM authentication tag</td></tr>
+<tr><td>Encryption</td><td>AES-256-CTR (AES-SIV, RFC 5297)</td><td>AES-128-CTR or AES-256-CTR, selected by effective PSK length; the default effective key is 16 bytes</td><td>AES-CCM</td></tr>
+<tr><td>Authentication</td><td>S2V (AES-CMAC), 4/8/12/16-byte MIC</td><td><strong>None</strong></td><td>8-byte CCM authentication tag</td></tr>
 <tr><td>Key exchange</td><td>X25519 ECDH</td><td>Pre-shared key</td><td>Curve25519 ECDH</td></tr>
 <tr><td>Key derivation</td><td>HKDF-SHA256 with domain separation</td><td>Effective PSK used directly</td><td>SHA-256 of ECDH shared secret</td></tr>
 <tr><td>Nonce construction</td><td>Frame counter + optional salt in SECINFO</td><td>Packet ID + sender node number</td><td>Packet ID + 4-byte random contribution + sender node number</td></tr>
@@ -10758,11 +10745,11 @@ errors, or other mistakes, please <a href="https://github.com/darconeous/umsh/is
 <li>Ciphertext can be modified in transit without a cryptographic integrity check. When an attacker knows or can predict the corresponding plaintext, CTR bit flipping can be targeted without knowing the key.</li>
 <li>Any node with the channel key can forge packets claiming to be from another node, since channel mode has no per-node authentication and the sender’s node number in the cleartext header is not cryptographically bound to the ciphertext.</li>
 </ul>
-<p>UMSH authenticates every secured packet with an AES-CMAC MIC (4–16 bytes; see <a href="#mic-size-selection-guidance">MIC Size Selection Guidance</a>). Even with a 4-byte MIC, UMSH provides 2^-32 forgery resistance, which is qualitatively different from the absence of an integrity check on Meshtastic channel traffic. A UMSH channel packet cannot be modified in transit or injected by a non-member without detection.</p>
+<p>UMSH authenticates every secured packet with an S2V MIC (4–16 bytes; see <a href="#mic-size-selection-guidance">MIC Size Selection Guidance</a>). Even with a 4-byte MIC, UMSH provides 2^-32 forgery resistance, which is qualitatively different from the absence of an integrity check on Meshtastic channel traffic. A UMSH channel packet cannot be modified in transit or injected by a non-member without detection.</p>
 <p>The second bullet above, however, describes a property UMSH multicast shares, and it is not a difference between the two protocols. A shared symmetric key proves channel membership but cannot distinguish one member from another, so a UMSH channel member can likewise claim another member’s source address; see <a href="#multicast-sender-authentication">Multicast Sender Authentication</a>. What UMSH provides on channel traffic is integrity and membership authentication against outsiders, not per-sender attribution within the channel. Attribution to a specific sender requires unicast, where pairwise keys bind the source.</p>
 <h3 id="pkc-for-eligible-unicast-traffic"><a class="header" href="#pkc-for-eligible-unicast-traffic">PKC for Eligible Unicast Traffic</a></h3>
 <p>Meshtastic uses Curve25519 ECDH with AES-CCM for eligible unicast traffic, providing confidentiality and authentication against the public key associated with the claimed sender node number. It is not limited to text direct messages. The firmware considers PKC automatically for locally originated, non-broadcast application traffic when keys are available, except for position, node info, routing, traceroute, amateur operation, and certain serial/GPIO cases. Broadcast traffic such as position, telemetry, and channel text remains in channel mode and therefore unauthenticated.</p>
-<p>UMSH applies the same CMAC-based construction to secured unicast and multicast, so there is no secured traffic class left unauthenticated and no separate authenticated mode to opt into. <a href="#broadcast-packet">Broadcast packets</a> carry no security information and make no claim of authenticity.</p>
+<p>UMSH applies the same S2V-based construction to secured unicast and multicast, so there is no secured traffic class left unauthenticated and no separate authenticated mode to opt into. <a href="#broadcast-packet">Broadcast packets</a> carry no security information and make no claim of authenticity.</p>
 <h3 id="key-derivation-1"><a class="header" href="#key-derivation-1">Key Derivation</a></h3>
 <p>Meshtastic uses the effective channel PSK directly as the AES key for channel encryption. A configured one-byte PSK is not a one-byte AES key: it is a public shorthand alias expanded by the firmware into an effective 16-byte key. For PKC, the ECDH shared secret is hashed with SHA-256 to produce the AES key.</p>
 <p>UMSH uses HKDF-SHA256 with domain-separated labels to derive independent encryption and authentication keys from each shared secret. This prevents cross-purpose key reuse and follows standard cryptographic practice.</p>
@@ -10820,7 +10807,7 @@ errors, or other mistakes, please <a href="https://github.com/darconeous/umsh/is
 <tr><td>Channel identifier</td><td>2-byte derived hint</td><td>1-byte XOR of channel-name bytes and effective key bytes</td></tr>
 <tr><td>Channels per node</td><td>Unlimited (implementation-defined)</td><td>Up to 8</td></tr>
 <tr><td>Multi-hop multicast</td><td>Yes (flood with flood hop count)</td><td>Yes (managed flood with hop limit)</td></tr>
-<tr><td>Group message auth</td><td>Channel-key-based CMAC</td><td>None (AES-CTR only)</td></tr>
+<tr><td>Group message auth</td><td>Channel-key-based S2V MIC</td><td>None (AES-CTR only)</td></tr>
 <tr><td>Source privacy</td><td>Source encrypted when encryption enabled</td><td>No (source in cleartext header)</td></tr>
 <tr><td>Named channels</td><td>Yes (key derived from name)</td><td>Yes (name + PSK configured together)</td></tr>
 </tbody>
@@ -11024,11 +11011,11 @@ errors, or other mistakes, please <a href="https://github.com/darconeous/umsh/is
 <tr><th>Aspect</th><th>UMSH</th><th>Reticulum</th></tr>
 </thead>
 <tbody>
-<tr><td>Encryption</td><td>AES-128-CTR (SIV-style: MIC used as CTR IV)</td><td>AES-256-CBC with PKCS7 padding (<a href="https://github.com/markqvist/Reticulum/blob/1.1.4/RNS/Cryptography/Token.py#L91"><code>Token.py:91</code></a>); AES-128 support removed in v1.0.0</td></tr>
-<tr><td>Authentication</td><td>AES-CMAC (16-byte MIC)</td><td>HMAC-SHA256 (32-byte tag, <a href="https://github.com/markqvist/Reticulum/blob/1.1.4/RNS/Cryptography/Token.py#L50"><code>Token.py:50</code></a>, <code>TOKEN_OVERHEAD = 48</code>)</td></tr>
+<tr><td>Encryption</td><td>AES-256-CTR (AES-SIV, RFC 5297)</td><td>AES-256-CBC with PKCS7 padding (<a href="https://github.com/markqvist/Reticulum/blob/1.1.4/RNS/Cryptography/Token.py#L91"><code>Token.py:91</code></a>); AES-128 support removed in v1.0.0</td></tr>
+<tr><td>Authentication</td><td>S2V (AES-CMAC), 4/8/12/16-byte MIC</td><td>HMAC-SHA256 (32-byte tag, <a href="https://github.com/markqvist/Reticulum/blob/1.1.4/RNS/Cryptography/Token.py#L50"><code>Token.py:50</code></a>, <code>TOKEN_OVERHEAD = 48</code>)</td></tr>
 <tr><td>Key exchange</td><td>X25519 ECDH</td><td>X25519 ECDH (<a href="https://github.com/markqvist/Reticulum/blob/1.1.4/RNS/Identity.py#L581"><code>Identity.py:581</code></a>)</td></tr>
 <tr><td>Key derivation</td><td>HKDF-SHA256, domain-separated (K_enc, K_mic)</td><td>HKDF-SHA256, 64-byte output split into HMAC key + AES key (<a href="https://github.com/markqvist/Reticulum/blob/1.1.4/RNS/Identity.py#L86"><code>Identity.py:86</code></a>, <code>DERIVED_KEY_LENGTH = 512//8</code>)</td></tr>
-<tr><td>Nonce handling</td><td>SIV construction (MIC as CTR IV)</td><td>Random 16-byte IV per packet (<a href="https://github.com/markqvist/Reticulum/blob/1.1.4/RNS/Cryptography/Token.py#L89"><code>Token.py:89</code></a>, <code>os.urandom(16)</code>)</td></tr>
+<tr><td>Nonce handling</td><td>SIV construction (CTR IV derived from the MIC)</td><td>Random 16-byte IV per packet (<a href="https://github.com/markqvist/Reticulum/blob/1.1.4/RNS/Cryptography/Token.py#L89"><code>Token.py:89</code></a>, <code>os.urandom(16)</code>)</td></tr>
 <tr><td>Replay protection</td><td>4-byte monotonic frame counter</td><td>Duplicate packet hash detection (<a href="https://github.com/markqvist/Reticulum/blob/1.1.4/RNS/Transport.py#L59"><code>Transport.py:59</code></a>, <code>packet_hashlist</code>)</td></tr>
 <tr><td>Per-packet overhead (crypto)</td><td>5–7 bytes (SECINFO) + 16 bytes (MIC) = 21–23 bytes</td><td>16 bytes (IV) + 32 bytes (HMAC) = 48 bytes minimum (LINK); +32 bytes ephemeral pubkey for SINGLE</td></tr>
 <tr><td>Forward secrecy</td><td>Optional PFS sessions via MAC commands (per-session ephemeral keys)</td><td>Per-packet ephemeral key for SINGLE (<a href="https://github.com/markqvist/Reticulum/blob/1.1.4/RNS/Identity.py#L574"><code>Identity.py:574</code></a>); optional ratchets for LINK (default min 30 min rotation, <a href="https://github.com/markqvist/Reticulum/blob/1.1.4/RNS/Destination.py#L90"><code>Destination.py:90</code></a>, up to 512 ratchet keys stored per destination, 30-day expiry)</td></tr>
@@ -11037,9 +11024,9 @@ errors, or other mistakes, please <a href="https://github.com/darconeous/umsh/is
 </table>
 </div>
 <h3 id="encryption-mode"><a class="header" href="#encryption-mode">Encryption Mode</a></h3>
-<p>UMSH uses an AES-SIV-inspired construction where the MIC doubles as the CTR IV, providing nonce-misuse resistance. Reticulum uses AES-256-CBC with a random 16-byte IV. Both are sound constructions — the primary difference in practice is overhead: CBC requires transmitting a 16-byte IV and adds 1–16 bytes of PKCS7 padding, while UMSH’s SIV construction derives the IV from the MIC (which is already transmitted) and uses CTR mode which requires no padding.</p>
+<p>UMSH uses AES-SIV (RFC 5297), in which the synthetic IV serves as both the MIC and the source of the CTR IV, providing nonce-misuse resistance. Reticulum uses AES-256-CBC with a random 16-byte IV. Both are sound constructions — the primary difference in practice is overhead: CBC requires transmitting a 16-byte IV and adds 1–16 bytes of PKCS7 padding, while UMSH’s SIV construction derives the IV from the MIC (which is already transmitted) and uses CTR mode which requires no padding.</p>
 <h3 id="authentication-and-integrity"><a class="header" href="#authentication-and-integrity">Authentication and Integrity</a></h3>
-<p>UMSH’s AES-CMAC MIC is configurable at 4, 8, 12, or 16 bytes (see <a href="#mic-size-selection-guidance">MIC Size Selection Guidance</a>), providing 32-bit to 128-bit integrity protection. Reticulum’s 32-byte HMAC-SHA256 tag provides 256-bit integrity. Both are sound choices; UMSH’s configurable size allows deployments to trade integrity margin for payload capacity within the constrained LoRa frame budget.</p>
+<p>UMSH’s S2V MIC is configurable at 4, 8, 12, or 16 bytes (see <a href="#mic-size-selection-guidance">MIC Size Selection Guidance</a>), providing 32-bit to 128-bit integrity protection. Reticulum’s 32-byte HMAC-SHA256 tag provides 256-bit integrity. Both are sound choices; UMSH’s configurable size allows deployments to trade integrity margin for payload capacity within the constrained LoRa frame budget.</p>
 <h3 id="key-management"><a class="header" href="#key-management">Key Management</a></h3>
 <p>For unicast, UMSH derives stable pairwise keys from the ECDH shared secret via HKDF with domain-separated labels. These keys are reused across packets, with per-packet variability provided by the frame counter and optional salt in SECINFO. This is efficient: no per-packet key exchange overhead. For forward secrecy, UMSH defines <a href="#perfect-forward-secrecy-sessions">PFS sessions</a> in which both nodes exchange ephemeral node addresses via a two-message handshake and communicate using session-specific keys for an agreed duration. Compromise of long-term keys does not expose traffic encrypted under PFS session keys. PFS sessions add no per-packet overhead once established.</p>
 <p>Reticulum uses two approaches. For SINGLE (one-off) destinations, each packet includes a fresh ephemeral X25519 public key (32 bytes), providing per-packet forward secrecy at substantial overhead cost — 32 extra bytes on every packet (<a href="https://github.com/markqvist/Reticulum/blob/1.1.4/RNS/Identity.py#L574"><code>Identity.py:574</code></a>, <code>ephemeral_key = X25519PrivateKey.generate()</code>). For LINK (session) destinations, a single ECDH exchange establishes symmetric keys that persist for the link’s lifetime — similar to UMSH’s stable pairwise keys (<a href="https://github.com/markqvist/Reticulum/blob/1.1.4/RNS/Link.py#L340"><code>Link.py:340</code></a>, <code>self.shared_key = self.prv.exchange(self.peer_pub)</code>). Reticulum also offers a ratchet mechanism that rotates keys at a configurable minimum interval (default 30 minutes, adjustable per-destination via <code>Destination.set_ratchet_interval()</code> (<a href="https://github.com/markqvist/Reticulum/blob/1.1.4/RNS/Destination.py#L514"><code>Destination.py:514</code></a>)), providing periodic forward secrecy within a link (<a href="https://github.com/markqvist/Reticulum/blob/1.1.4/RNS/Destination.py#L90"><code>Destination.py:90</code></a>, <code>RATCHET_INTERVAL = 30*60</code>). Up to 512 ratchet keys are stored per destination, each expiring after 30 days. Ratchet key presence is signalled via a context flag in announce packets, allowing senders to use the most recent ratchet key in place of the static identity key, providing forward secrecy for single-packet communication without the full 32-byte ephemeral pubkey overhead.</p>
@@ -11131,7 +11118,7 @@ errors, or other mistakes, please <a href="https://github.com/darconeous/umsh/is
 <tr><td>Channel key size</td><td>32 bytes</td><td>32 bytes (AES-256)</td></tr>
 <tr><td>Channel identifier</td><td>2-byte derived hint</td><td>16-byte destination hash</td></tr>
 <tr><td>Multi-hop multicast</td><td>Yes (flood with flood hop count)</td><td>No (single-hop broadcast only)</td></tr>
-<tr><td>Group message auth</td><td>Channel-key-based CMAC (16-byte MIC)</td><td>Channel-key-based HMAC-SHA256 (32-byte tag)</td></tr>
+<tr><td>Group message auth</td><td>Channel-key-based S2V (16-byte MIC)</td><td>Channel-key-based HMAC-SHA256 (32-byte tag)</td></tr>
 <tr><td>Source privacy</td><td>Source encrypted when encryption enabled</td><td>No source address to conceal</td></tr>
 <tr><td>Named channels</td><td>Yes (key derived from name)</td><td>Not defined</td></tr>
 </tbody>
@@ -11220,7 +11207,7 @@ errors, or other mistakes, please <a href="https://github.com/darconeous/umsh/is
 <p>Reticulum’s protocol machinery — path tables for Transport Node operation, 500-byte packet buffers, announce propagation state, and link establishment sessions — requires more RAM and processing than UMSH’s simpler model, raising the minimum hardware floor regardless of implementation language. A higher hardware floor generally means a higher baseline power draw, since more capable hardware tends to consume more power even when idle.</p>
 <p>UMSH also requires per-node state — own keypair, configured channel keys, per-peer cached keys and frame counters, a duplicate cache, and optionally cached source routes — but the single-frame design avoids the need for large packet buffers, and the simpler protocol machinery fits on lower-power microcontrollers.</p>
 <h3 id="false-positive-filtering"><a class="header" href="#false-positive-filtering">False-Positive Filtering</a></h3>
-<p>Reticulum’s 16-byte (128-bit) destination addresses have an essentially zero collision probability — a node receiving a packet addressed to someone else will never mistake it for its own. There is no wasted cryptographic work from address false positives. UMSH’s 3-byte destination hints have a ~1-in-16,777,216 false-positive rate; when a collision occurs, the node must attempt full packet verification before discarding it. Pairwise keys are cached after first contact, so no ECDH is needed for known senders — but verification still requires decrypting the payload with AES-CTR (using the transmitted MIC as the CTR IV) and then computing CMAC over the decrypted plaintext to confirm the MIC matches. ECDH and HKDF would additionally be required for a false positive from an unknown sender transmitting with a full 32-byte source key (S=1), which is rare in normal operation. In practice, on a LoRa network with modest traffic, spurious collisions are rare enough that this cost is negligible.</p>
+<p>Reticulum’s 16-byte (128-bit) destination addresses have an essentially zero collision probability — a node receiving a packet addressed to someone else will never mistake it for its own. There is no wasted cryptographic work from address false positives. UMSH’s 3-byte destination hints have a ~1-in-16,777,216 false-positive rate; when a collision occurs, the node must attempt full packet verification before discarding it. Pairwise keys are cached after first contact, so no ECDH is needed for known senders — but verification still requires decrypting the payload with AES-CTR (using a CTR IV derived from the transmitted MIC) and then computing S2V over the decrypted plaintext to confirm the MIC matches. ECDH and HKDF would additionally be required for a false positive from an unknown sender transmitting with a full 32-byte source key (S=1), which is rare in normal operation. In practice, on a LoRa network with modest traffic, spurious collisions are rare enough that this cost is negligible.</p>
 <h3 id="packet-length-and-airtime-1"><a class="header" href="#packet-length-and-airtime-1">Packet Length and Airtime</a></h3>
 <p>Reticulum’s total per-packet overhead is roughly 91 bytes (LINK) or 108 bytes (SINGLE), combining header and cryptographic fields. UMSH’s total overhead is 14–28 bytes for a typical authenticated unicast. Shorter packets mean less airtime per message, which translates directly to less receive power for every node in range — a cost the sender imposes on the whole network.</p>
 <h3 id="fragmentation"><a class="header" href="#fragmentation">Fragmentation</a></h3>
@@ -11328,14 +11315,14 @@ errors, or other mistakes, please <a href="https://github.com/darconeous/umsh/is
 <tr><td>SRC</td><td>Node A hint</td><td><code>ED 54 A5</code></td></tr>
 <tr><td>SCF</td><td>E=1, MIC=3 (16-byte), S=0</td><td><code>E0</code></td></tr>
 <tr><td>Frame Counter</td><td>42</td><td><code>00 00 00 2A</code></td></tr>
-<tr><td>Payload</td><td>Encrypted <code>48 65 6C 6C 6F</code> (<code>"Hello"</code>)</td><td><code>71 35 36 4B C1</code></td></tr>
-<tr><td>MIC</td><td>16 bytes</td><td><code>97 6D DC 92 2E BA 11 B7 2E 6B B1 7B 36 49 C5 4A</code></td></tr>
+<tr><td>Payload</td><td>Encrypted <code>48 65 6C 6C 6F</code> (<code>"Hello"</code>)</td><td><code>AE 71 DC 38 72</code></td></tr>
+<tr><td>MIC</td><td>16 bytes</td><td><code>61 8E 96 38 FE 4D 9A E8 34 33 1D E8 E0 DD 06 3E</code></td></tr>
 </tbody>
 </table>
 </div>
-<pre><code class="language-text">D0 6C 28 FD ED 54 A5 E0 00 00 00 2A FF 71 35 36
-4B C1 97 6D DC 92 2E BA 11 B7 2E 6B B1 7B 36 49
-C5 4A
+<pre><code class="language-text">D0 6C 28 FD ED 54 A5 E0 00 00 00 2A FF AE 71 DC
+38 72 61 8E 96 38 FE 4D 9A E8 34 33 1D E8 E0 DD
+06 3E
 </code></pre>
 <p>Total: 34 bytes.</p>
 <h2 id="example-4-encrypted-unicast-with-ack-requested-s1"><a class="header" href="#example-4-encrypted-unicast-with-ack-requested-s1">Example 4: Encrypted Unicast with Ack Requested (S=1)</a></h2>
@@ -11351,15 +11338,15 @@ C5 4A
 <tr><td>SRC</td><td>Node A full key</td><td><code>ED 54 A5 9F B1 AC 3A 51 23 93 51 36 29 41 B8 68 E8 5A 60 E3 D7 B2 48 5D 82 88 21 DC 7A 69 C2 79</code></td></tr>
 <tr><td>SCF</td><td>E=1, MIC=3 (16-byte), S=0</td><td><code>E0</code></td></tr>
 <tr><td>Frame Counter</td><td>1</td><td><code>00 00 00 01</code></td></tr>
-<tr><td>Payload</td><td>Encrypted <code>68 65 79</code> (<code>"hey"</code>)</td><td><code>9C 77 59</code></td></tr>
-<tr><td>MIC</td><td>16 bytes</td><td><code>E9 9F 4C 5F 9D 3E 4F 4E D3 CC B2 1E F5 C0 01 97</code></td></tr>
+<tr><td>Payload</td><td>Encrypted <code>68 65 79</code> (<code>"hey"</code>)</td><td><code>F8 82 EE</code></td></tr>
+<tr><td>MIC</td><td>16 bytes</td><td><code>AA 17 13 06 26 1C E7 FF F2 FF 01 7F 90 10 A7 D9</code></td></tr>
 </tbody>
 </table>
 </div>
 <pre><code class="language-text">DC 6C 28 FD ED 54 A5 9F B1 AC 3A 51 23 93 51 36
 29 41 B8 68 E8 5A 60 E3 D7 B2 48 5D 82 88 21 DC
-7A 69 C2 79 E0 00 00 00 01 FF 9C 77 59 E9 9F 4C
-5F 9D 3E 4F 4E D3 CC B2 1E F5 C0 01 97
+7A 69 C2 79 E0 00 00 00 01 FF F8 82 EE AA 17 13
+06 26 1C E7 FF F2 FF 01 7F 90 10 A7 D9
 </code></pre>
 <p>Total: 61 bytes.</p>
 <h2 id="example-5-encrypted-multicast-e1"><a class="header" href="#example-5-encrypted-multicast-e1">Example 5: Encrypted Multicast (E=1)</a></h2>
@@ -11375,13 +11362,13 @@ C5 4A
 <tr><td>SCF</td><td>E=1, MIC=3 (16-byte), S=0</td><td><code>E0</code></td></tr>
 <tr><td>Frame Counter</td><td>5</td><td><code>00 00 00 05</code></td></tr>
 <tr><td>Encrypted data</td><td>ENCRYPT(`SRC</td><td></td></tr>
-<tr><td>MIC</td><td>16 bytes</td><td><code>30 E3 26 92 83 DB 9A 69 AB 12 64 1E B3 22 42 D6</code></td></tr>
+<tr><td>MIC</td><td>16 bytes</td><td><code>AC BF 20 01 42 05 B1 04 17 5E A6 8F 66 47 78 83</code></td></tr>
 </tbody>
 </table>
 </div>
-<pre><code class="language-text">E0 B0 8D E0 00 00 00 05 FF 39 E5 95 FE 97 AF A8
-90 30 E3 26 92 83 DB 9A 69 AB 12 64 1E B3 22 42
-D6
+<pre><code class="language-text">E0 B0 8D E0 00 00 00 05 FF 7C 16 CC CF 27 32 48
+78 AC BF 20 01 42 05 B1 04 17 5E A6 8F 66 47 78
+83
 </code></pre>
 <p>Total: 33 bytes.</p>
 <h2 id="example-6-authenticated-multicast-e0"><a class="header" href="#example-6-authenticated-multicast-e0">Example 6: Authenticated Multicast (E=0)</a></h2>
@@ -11398,13 +11385,13 @@ D6
 <tr><td>Frame Counter</td><td>3</td><td><code>00 00 00 03</code></td></tr>
 <tr><td>SRC</td><td>Node A hint</td><td><code>ED 54 A5</code></td></tr>
 <tr><td>Payload</td><td>`03</td><td></td></tr>
-<tr><td>MIC</td><td>16 bytes</td><td><code>53 A5 E2 91 F5 40 0A B9 87 FE C7 14 9D F8 97 24</code></td></tr>
+<tr><td>MIC</td><td>16 bytes</td><td><code>9A 4B FC DE 39 42 FE B2 25 B8 D3 D4 BC E7 9F DB</code></td></tr>
 </tbody>
 </table>
 </div>
 <pre><code class="language-text">E0 B0 8D 60 00 00 00 03 FF ED 54 A5 03 48 65 6C
-6C 6F 53 A5 E2 91 F5 40 0A B9 87 FE C7 14 9D F8
-97 24
+6C 6F 9A 4B FC DE 39 42 FE B2 25 B8 D3 D4 BC E7
+9F DB
 </code></pre>
 <p>Total: 34 bytes.</p>
 <h2 id="example-7-encrypted-unicast-with-options-and-flood-hops"><a class="header" href="#example-7-encrypted-unicast-with-options-and-flood-hops">Example 7: Encrypted Unicast with Options and Flood Hops</a></h2>
@@ -11435,14 +11422,14 @@ D6
 <tr><td>SCF</td><td>E=1, MIC=3 (16-byte), S=0</td><td><code>E0</code></td></tr>
 <tr><td>Frame Counter</td><td>10</td><td><code>00 00 00 0A</code></td></tr>
 <tr><td>Options</td><td>Trace route + region code + end marker</td><td><code>20 92 78 53 FF</code></td></tr>
-<tr><td>Payload</td><td>Encrypted <code>68 65 79</code> (<code>"hey"</code>)</td><td><code>F4 CF 71</code></td></tr>
-<tr><td>MIC</td><td>16 bytes</td><td><code>C4 91 19 48 E1 C8 F1 32 05 6A 16 B1 06 34 74 D5</code></td></tr>
+<tr><td>Payload</td><td>Encrypted <code>68 65 79</code> (<code>"hey"</code>)</td><td><code>81 2D 2F</code></td></tr>
+<tr><td>MIC</td><td>16 bytes</td><td><code>BA 19 2E EA B5 7D 71 E3 52 BD 7D DF 33 1B 07 27</code></td></tr>
 </tbody>
 </table>
 </div>
 <pre><code class="language-text">D1 40 6C 28 FD ED 54 A5 E0 00 00 00 0A 20 92 78
-53 FF F4 CF 71 C4 91 19 48 E1 C8 F1 32 05 6A 16
-B1 06 34 74 D5
+53 FF 81 2D 2F BA 19 2E EA B5 7D 71 E3 52 BD 7D
+DF 33 1B 07 27
 </code></pre>
 <p>Total: 37 bytes.</p>
 <h2 id="example-8-blind-unicast-s0"><a class="header" href="#example-8-blind-unicast-s0">Example 8: Blind Unicast (S=0)</a></h2>
@@ -11458,14 +11445,14 @@ B1 06 34 74 D5
 <tr><td>SCF</td><td>E=1, MIC=3 (16-byte), S=0</td><td><code>E0</code></td></tr>
 <tr><td>Frame Counter</td><td>7</td><td><code>00 00 00 07</code></td></tr>
 <tr><td>ENC_DST_SRC</td><td>ENCRYPT(`DST</td><td></td></tr>
-<tr><td>ENC_PAYLOAD</td><td>ENCRYPT(<code>"Hello"</code>)</td><td><code>4E 55 F2 08 51</code></td></tr>
-<tr><td>MIC</td><td>16 bytes</td><td><code>F6 21 C9 8C 78 F7 90 92 34 0D E7 12 AA 07 AE 77</code></td></tr>
+<tr><td>ENC_PAYLOAD</td><td>ENCRYPT(<code>"Hello"</code>)</td><td><code>88 94 03 C3 07</code></td></tr>
+<tr><td>MIC</td><td>16 bytes</td><td><code>C7 46 F3 5E 82 28 3E 3C 14 B0 5D 97 56 7B 4E 86</code></td></tr>
 </tbody>
 </table>
 </div>
-<pre><code class="language-text">F0 B0 8D E0 00 00 00 07 FF A4 FB D3 6A A0 87 4E
-55 F2 08 51 F6 21 C9 8C 78 F7 90 92 34 0D E7 12
-AA 07 AE 77
+<pre><code class="language-text">F0 B0 8D E0 00 00 00 07 FF D5 EC 8B 3D 69 96 88
+94 03 C3 07 C7 46 F3 5E 82 28 3E 3C 14 B0 5D 97
+56 7B 4E 86
 </code></pre>
 <p>Total: 36 bytes.</p>
 

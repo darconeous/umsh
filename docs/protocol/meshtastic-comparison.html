@@ -35,7 +35,7 @@
             const path_to_root = "";
             const default_light_theme = "light";
             const default_dark_theme = "ayu";
-            window.path_to_searchindex_js = "searchindex-585651d2.js";
+            window.path_to_searchindex_js = "searchindex-deaee21e.js";
         </script>
         <!-- Start loading toc.js asap -->
         <script src="toc-438957a9.js"></script>
@@ -229,8 +229,8 @@ errors, or other mistakes, please <a href="https://github.com/darconeous/umsh/is
 <tr><th>Aspect</th><th>UMSH</th><th>Meshtastic (channel)</th><th>Meshtastic (eligible unicast PKC)</th></tr>
 </thead>
 <tbody>
-<tr><td>Encryption</td><td>AES-128-CTR (SIV-style)</td><td>AES-128-CTR or AES-256-CTR, selected by effective PSK length; the default effective key is 16 bytes</td><td>AES-CCM</td></tr>
-<tr><td>Authentication</td><td>AES-CMAC (4/8/12/16-byte MIC)</td><td><strong>None</strong></td><td>8-byte CCM authentication tag</td></tr>
+<tr><td>Encryption</td><td>AES-256-CTR (AES-SIV, RFC 5297)</td><td>AES-128-CTR or AES-256-CTR, selected by effective PSK length; the default effective key is 16 bytes</td><td>AES-CCM</td></tr>
+<tr><td>Authentication</td><td>S2V (AES-CMAC), 4/8/12/16-byte MIC</td><td><strong>None</strong></td><td>8-byte CCM authentication tag</td></tr>
 <tr><td>Key exchange</td><td>X25519 ECDH</td><td>Pre-shared key</td><td>Curve25519 ECDH</td></tr>
 <tr><td>Key derivation</td><td>HKDF-SHA256 with domain separation</td><td>Effective PSK used directly</td><td>SHA-256 of ECDH shared secret</td></tr>
 <tr><td>Nonce construction</td><td>Frame counter + optional salt in SECINFO</td><td>Packet ID + sender node number</td><td>Packet ID + 4-byte random contribution + sender node number</td></tr>
@@ -245,11 +245,11 @@ errors, or other mistakes, please <a href="https://github.com/darconeous/umsh/is
 <li>Ciphertext can be modified in transit without a cryptographic integrity check. When an attacker knows or can predict the corresponding plaintext, CTR bit flipping can be targeted without knowing the key.</li>
 <li>Any node with the channel key can forge packets claiming to be from another node, since channel mode has no per-node authentication and the sender’s node number in the cleartext header is not cryptographically bound to the ciphertext.</li>
 </ul>
-<p>UMSH authenticates every secured packet with an AES-CMAC MIC (4–16 bytes; see <a href="security.html#mic-size-selection-guidance">MIC Size Selection Guidance</a>). Even with a 4-byte MIC, UMSH provides 2^-32 forgery resistance, which is qualitatively different from the absence of an integrity check on Meshtastic channel traffic. A UMSH channel packet cannot be modified in transit or injected by a non-member without detection.</p>
+<p>UMSH authenticates every secured packet with an S2V MIC (4–16 bytes; see <a href="security.html#mic-size-selection-guidance">MIC Size Selection Guidance</a>). Even with a 4-byte MIC, UMSH provides 2^-32 forgery resistance, which is qualitatively different from the absence of an integrity check on Meshtastic channel traffic. A UMSH channel packet cannot be modified in transit or injected by a non-member without detection.</p>
 <p>The second bullet above, however, describes a property UMSH multicast shares, and it is not a difference between the two protocols. A shared symmetric key proves channel membership but cannot distinguish one member from another, so a UMSH channel member can likewise claim another member’s source address; see <a href="limitations.html#multicast-sender-authentication">Multicast Sender Authentication</a>. What UMSH provides on channel traffic is integrity and membership authentication against outsiders, not per-sender attribution within the channel. Attribution to a specific sender requires unicast, where pairwise keys bind the source.</p>
 <h3 id="pkc-for-eligible-unicast-traffic"><a class="header" href="#pkc-for-eligible-unicast-traffic">PKC for Eligible Unicast Traffic</a></h3>
 <p>Meshtastic uses Curve25519 ECDH with AES-CCM for eligible unicast traffic, providing confidentiality and authentication against the public key associated with the claimed sender node number. It is not limited to text direct messages. The firmware considers PKC automatically for locally originated, non-broadcast application traffic when keys are available, except for position, node info, routing, traceroute, amateur operation, and certain serial/GPIO cases. Broadcast traffic such as position, telemetry, and channel text remains in channel mode and therefore unauthenticated.</p>
-<p>UMSH applies the same CMAC-based construction to secured unicast and multicast, so there is no secured traffic class left unauthenticated and no separate authenticated mode to opt into. <a href="packet-types.html#broadcast-packet">Broadcast packets</a> carry no security information and make no claim of authenticity.</p>
+<p>UMSH applies the same S2V-based construction to secured unicast and multicast, so there is no secured traffic class left unauthenticated and no separate authenticated mode to opt into. <a href="packet-types.html#broadcast-packet">Broadcast packets</a> carry no security information and make no claim of authenticity.</p>
 <h3 id="key-derivation"><a class="header" href="#key-derivation">Key Derivation</a></h3>
 <p>Meshtastic uses the effective channel PSK directly as the AES key for channel encryption. A configured one-byte PSK is not a one-byte AES key: it is a public shorthand alias expanded by the firmware into an effective 16-byte key. For PKC, the ECDH shared secret is hashed with SHA-256 to produce the AES key.</p>
 <p>UMSH uses HKDF-SHA256 with domain-separated labels to derive independent encryption and authentication keys from each shared secret. This prevents cross-purpose key reuse and follows standard cryptographic practice.</p>
@@ -307,7 +307,7 @@ errors, or other mistakes, please <a href="https://github.com/darconeous/umsh/is
 <tr><td>Channel identifier</td><td>2-byte derived hint</td><td>1-byte XOR of channel-name bytes and effective key bytes</td></tr>
 <tr><td>Channels per node</td><td>Unlimited (implementation-defined)</td><td>Up to 8</td></tr>
 <tr><td>Multi-hop multicast</td><td>Yes (flood with flood hop count)</td><td>Yes (managed flood with hop limit)</td></tr>
-<tr><td>Group message auth</td><td>Channel-key-based CMAC</td><td>None (AES-CTR only)</td></tr>
+<tr><td>Group message auth</td><td>Channel-key-based S2V MIC</td><td>None (AES-CTR only)</td></tr>
 <tr><td>Source privacy</td><td>Source encrypted when encryption enabled</td><td>No (source in cleartext header)</td></tr>
 <tr><td>Named channels</td><td>Yes (key derived from name)</td><td>Yes (name + PSK configured together)</td></tr>
 </tbody>

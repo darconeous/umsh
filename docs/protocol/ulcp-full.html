@@ -35,7 +35,7 @@
             const path_to_root = "";
             const default_light_theme = "light";
             const default_dark_theme = "ayu";
-            window.path_to_searchindex_js = "searchindex-585651d2.js";
+            window.path_to_searchindex_js = "searchindex-deaee21e.js";
         </script>
         <!-- Start loading toc.js asap -->
         <script src="toc-438957a9.js"></script>
@@ -1304,7 +1304,7 @@ channels; see (#provisioning-security).</p>
 <li>Has Item Length Prefix: No</li>
 <li>Asynchronous Updates: No</li>
 <li>Required: <code>CAP_HOST_KEYS</code></li>
-<li>Item Form: Structure, 64 octets</li>
+<li>Item Form: Structure, 96 octets</li>
 <li>Digest Form: 32 octets (the peer’s public key)</li>
 <li>Remove Selector: the 32-octet peer public key</li>
 <li>Post-Reset Value: Empty</li>
@@ -1314,7 +1314,7 @@ peers of the host identity. The item form is:</p>
 <pre><code>+---------------------+-----------+-----------+
 | PEER_PUBLIC_KEY     |   K_ENC   |   K_MIC   |
 +---------------------+-----------+-----------+
-        32 B              16 B        16 B
+        32 B              32 B        32 B
 </code></pre>
 <p>Figure: Peer key entry item form</p>
 <p>Where <code>PEER_PUBLIC_KEY</code> is the peer’s Ed25519 public key and <code>K_ENC</code> and

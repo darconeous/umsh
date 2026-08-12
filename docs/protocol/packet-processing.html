@@ -35,7 +35,7 @@
             const path_to_root = "";
             const default_light_theme = "light";
             const default_dark_theme = "ayu";
-            window.path_to_searchindex_js = "searchindex-585651d2.js";
+            window.path_to_searchindex_js = "searchindex-deaee21e.js";
         </script>
         <!-- Start loading toc.js asap -->
         <script src="toc-438957a9.js"></script>
@@ -237,7 +237,7 @@
 <p><strong>Replay and Ack Processing</strong></p>
 <ul>
 <li>Apply the <a href="security.html#replay-detection">replay-detection rules</a>.</li>
-<li>If the packet is accepted as new and requests an ACK, the receiving node (i.e., the final destination) computes the <a href="security.html#ack-tag-construction">ack MIC and ack tag</a> — the first 4 bytes of the original packet’s MIC and a 4-byte keyed value from the full 16-byte CMAC and pairwise <code>K_enc</code> — prepares a MAC Ack packet, and adds it to the outbound queue. Repeaters do not generate acks — see <a href="packet-types.html#mac-ack-packet">MAC Ack Packet</a>.</li>
+<li>If the packet is accepted as new and requests an ACK, the receiving node (i.e., the final destination) computes the <a href="security.html#ack-tag-construction">ack MIC and ack tag</a> — the first 4 bytes of the original packet’s MIC and a 4-byte keyed value from the full 16-byte S2V output and pairwise <code>K_enc</code> — prepares a MAC Ack packet, and adds it to the outbound queue. Repeaters do not generate acks — see <a href="packet-types.html#mac-ack-packet">MAC Ack Packet</a>.</li>
 <li>If the authenticated packet is a previously received packet within the bounded <a href="security.html#duplicate-acknowledgement-window">duplicate-acknowledgement window</a>, the receiver MAY prepare and queue its ACK again. This does not make the packet new or advance its replay state. Unless duplicate suppression is delegated to a host MAC, stop after queueing the ACK and do not process the application payload again.</li>
 <li>Otherwise, if replay detection rejects the packet, drop it without acknowledging it.</li>
 </ul>

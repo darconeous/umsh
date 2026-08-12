@@ -256,7 +256,7 @@ UMSH calls this <em>blind unicast</em>. To anyone without the channel key the tr
                         
                         <td>Encryption</td>
                         
-                        <td>AES-128-CTR in a SIV construction</td>
+                        <td>AES-256-CTR in a SIV construction (RFC 5297)</td>
                         
                         <td>AES-128-ECB</td>
                         
@@ -266,7 +266,7 @@ UMSH calls this <em>blind unicast</em>. To anyone without the channel key the tr
                         
                         <td>Authentication</td>
                         
-                        <td>AES-CMAC, 4 to 16 bytes</td>
+                        <td>S2V (AES-CMAC), 4 to 16 bytes</td>
                         
                         <td>HMAC-SHA256 truncated to 2 bytes</td>
                         

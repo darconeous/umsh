@@ -35,7 +35,7 @@
             const path_to_root = "";
             const default_light_theme = "light";
             const default_dark_theme = "ayu";
-            window.path_to_searchindex_js = "searchindex-585651d2.js";
+            window.path_to_searchindex_js = "searchindex-deaee21e.js";
         </script>
         <!-- Start loading toc.js asap -->
         <script src="toc-438957a9.js"></script>
@@ -376,8 +376,8 @@ metadata the radio receives, and can deny service to the legitimate
 host. On serial transports this interface is implicitly protected by
 physical possession of the device. The BLE binding <strong>MUST</strong> provide at
 least an equivalent barrier, and its cryptographic strength <strong>MUST
-NOT</strong> fall below that of UMSH itself (approximately 128-bit; see
-<a href="security.html">Security &amp; Cryptography</a>).</p>
+NOT</strong> fall below that of UMSH’s identity layer (approximately 128-bit,
+bounded by Curve25519; see <a href="security.html">Security &amp; Cryptography</a>).</p>
 <h3 id="pairing-requirements"><a class="header" href="#pairing-requirements">Pairing Requirements</a></h3>
 <ul>
 <li>Pairing <strong>MUST</strong> use LE Secure Connections (LESC). Legacy pairing

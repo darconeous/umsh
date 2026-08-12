@@ -35,7 +35,7 @@
             const path_to_root = "";
             const default_light_theme = "light";
             const default_dark_theme = "ayu";
-            window.path_to_searchindex_js = "searchindex-585651d2.js";
+            window.path_to_searchindex_js = "searchindex-deaee21e.js";
         </script>
         <!-- Start loading toc.js asap -->
         <script src="toc-438957a9.js"></script>
@@ -220,8 +220,8 @@ URI-preview machinery. The recommended file extension is <code>.umshid</code>.</
 <tr><td>12</td><td>4</td><td>Argon2id time cost <em>t</em></td><td>passes</td></tr>
 <tr><td>16</td><td>1</td><td>Argon2id parallelism <em>p</em></td><td>lanes</td></tr>
 <tr><td>17</td><td>16</td><td>KDF salt</td><td>random per export</td></tr>
-<tr><td>33</td><td>1</td><td>Cipher identifier</td><td><code>0x01</code> = custom UMSH SIV-inspired construction</td></tr>
-<tr><td>34</td><td>16</td><td>MIC</td><td>full AES-CMAC tag</td></tr>
+<tr><td>33</td><td>1</td><td>Cipher identifier</td><td><code>0x01</code> = AES-SIV (RFC 5297) with AES-256</td></tr>
+<tr><td>34</td><td>16</td><td>MIC</td><td>full 16-byte S2V output <code>V</code></td></tr>
 <tr><td>50</td><td>—</td><td>Ciphertext</td><td>encrypted payload</td></tr>
 </tbody>
 </table>
@@ -243,11 +243,11 @@ cross-platform artifact must decrypt identically everywhere.</p>
 
 ikm  = prk
 salt = "UMSH-IDEXPORT-SALT"
-info = "UMSH-IDEXPORT-V1"
-okm  = HKDF-SHA256(ikm, salt, info, 32)
+info = "UMSH-IDEXPORT-V2"
+okm  = HKDF-SHA256(ikm, salt, info, 64)
 
-K_enc = okm[0..15]
-K_mic = okm[16..31]
+K_mic = okm[0..31]
+K_enc = okm[32..63]
 </code></pre>
 <p>Exporters <strong>MUST</strong> use at least <em>m</em> = 19456 KiB, <em>t</em> = 2, <em>p</em> = 1, and
 <strong>SHOULD</strong> use <em>m</em> = 65536 KiB, <em>t</em> = 3, <em>p</em> = 1 where device memory allows.
@@ -256,18 +256,21 @@ refuse artifacts whose parameters exceed a local resource ceiling (for
 example <em>m</em> &gt; 1048576 KiB, <em>t</em> &gt; 32, or <em>p</em> &gt; 4) to avoid resource-exhaustion
 attacks through crafted headers.</p>
 <h2 id="encryption-and-authentication"><a class="header" href="#encryption-and-authentication">Encryption and Authentication</a></h2>
-<p>The payload is protected with the same SIV-style construction used for
-packets (see <a href="security.html#encrypted-packets">Encrypted Packets</a>), with the
-full 16-byte MIC and the envelope header as associated data:</p>
+<p>The payload is protected with the same construction used for packets (see
+<a href="security.html#encrypted-packets">Encrypted Packets</a>), with the full 16-byte
+MIC and the envelope header as associated data:</p>
 <ol>
-<li>Compute the full 16-byte AES-CMAC over the envelope header followed by
-the payload plaintext, using <code>K_mic</code>.</li>
-<li>Use the MIC directly as the 16-byte CTR IV. This resembles AES-SIV but does
-not use RFC 5297 S2V; see the packet construction’s
-<a href="security.html#relationship-to-rfc-5297-aes-siv">RFC 5297 warning</a>.</li>
-<li>Encrypt the payload using <strong>AES-128-CTR</strong> with <code>K_enc</code> and that IV.</li>
+<li>Compute the full 16-byte synthetic IV <code>V = S2V(K_mic, S1, S2)</code> per
+RFC 5297 §2.4, where <code>S1</code> is the envelope header and <code>S2</code> is the payload
+plaintext. <code>V</code> is stored as the MIC.</li>
+<li>Form the CTR IV by clearing the top bit of bytes 8 and 12 of <code>V</code>
+(RFC 5297 §2.6).</li>
+<li>Encrypt the payload using <strong>AES-256-CTR</strong> with <code>K_enc</code> and that IV.</li>
 </ol>
-<p>To import, derive the keys, decrypt the ciphertext, recompute the CMAC over
+<p>Because the MIC is always full-length here, this is exactly
+AEAD_AES_SIV_CMAC_512 (RFC 5297) with key <code>K = K_mic || K_enc</code> and the
+envelope header as the single associated-data component.</p>
+<p>To import, derive the keys, decrypt the ciphertext, recompute <code>V</code> over
 the header and recovered plaintext, and compare it to the stored MIC in
 constant time. On mismatch the importer <strong>MUST</strong> report a single generic
 failure: a wrong passphrase and a corrupted or forged artifact are

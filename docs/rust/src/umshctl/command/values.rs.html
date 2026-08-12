@@ -60,7 +60,7 @@
 <a href=#60 id=60 data-nosnippet>60</a>}
 <a href=#61 id=61 data-nosnippet>61</a>
 <a href=#62 id=62 data-nosnippet>62</a><span class="doccomment">/// `PUB,KENC,KMIC` (or whitespace-separated): a peer public key and the
-<a href=#63 id=63 data-nosnippet>63</a>/// two 16-byte pairwise secrets, hex.
+<a href=#63 id=63 data-nosnippet>63</a>/// two 32-byte pairwise secrets, hex.
 <a href=#64 id=64 data-nosnippet>64</a></span><span class="attr">#[derive(Clone, Copy, PartialEq, Eq)]
 <a href=#65 id=65 data-nosnippet>65</a></span><span class="kw">pub struct </span>PeerArg(<span class="kw">pub </span>PeerKeyEntry);
 <a href=#66 id=66 data-nosnippet>66</a>
@@ -80,8 +80,8 @@
 <a href=#80 id=80 data-nosnippet>80</a>        };
 <a href=#81 id=81 data-nosnippet>81</a>        <span class="prelude-val">Ok</span>(<span class="self">Self</span>(PeerKeyEntry {
 <a href=#82 id=82 data-nosnippet>82</a>            public_key: parse_key32(public_key)<span class="question-mark">?</span>,
-<a href=#83 id=83 data-nosnippet>83</a>            k_enc: parse_hex::&lt;<span class="number">16</span>&gt;(k_enc)<span class="question-mark">?</span>,
-<a href=#84 id=84 data-nosnippet>84</a>            k_mic: parse_hex::&lt;<span class="number">16</span>&gt;(k_mic)<span class="question-mark">?</span>,
+<a href=#83 id=83 data-nosnippet>83</a>            k_enc: parse_hex::&lt;<span class="number">32</span>&gt;(k_enc)<span class="question-mark">?</span>,
+<a href=#84 id=84 data-nosnippet>84</a>            k_mic: parse_hex::&lt;<span class="number">32</span>&gt;(k_mic)<span class="question-mark">?</span>,
 <a href=#85 id=85 data-nosnippet>85</a>        }))
 <a href=#86 id=86 data-nosnippet>86</a>    }
 <a href=#87 id=87 data-nosnippet>87</a>}
@@ -363,12 +363,12 @@
 <a href=#363 id=363 data-nosnippet>363</a>
 <a href=#364 id=364 data-nosnippet>364</a>    <span class="attr">#[test]
 <a href=#365 id=365 data-nosnippet>365</a>    </span><span class="kw">fn </span>peer_entries_carry_both_pairwise_secrets() {
-<a href=#366 id=366 data-nosnippet>366</a>        <span class="kw">let </span>peer: PeerArg = <span class="macro">format!</span>(<span class="string">"{KEY_HEX},{},{}"</span>, <span class="string">"e0"</span>.repeat(<span class="number">16</span>), <span class="string">"50"</span>.repeat(<span class="number">16</span>))
+<a href=#366 id=366 data-nosnippet>366</a>        <span class="kw">let </span>peer: PeerArg = <span class="macro">format!</span>(<span class="string">"{KEY_HEX},{},{}"</span>, <span class="string">"e0"</span>.repeat(<span class="number">32</span>), <span class="string">"50"</span>.repeat(<span class="number">32</span>))
 <a href=#367 id=367 data-nosnippet>367</a>            .parse()
 <a href=#368 id=368 data-nosnippet>368</a>            .unwrap();
 <a href=#369 id=369 data-nosnippet>369</a>        <span class="macro">assert_eq!</span>(peer.<span class="number">0</span>.public_key, [<span class="number">0xC4</span>; <span class="number">32</span>]);
-<a href=#370 id=370 data-nosnippet>370</a>        <span class="macro">assert_eq!</span>(peer.<span class="number">0</span>.k_enc, [<span class="number">0xE0</span>; <span class="number">16</span>]);
-<a href=#371 id=371 data-nosnippet>371</a>        <span class="macro">assert_eq!</span>(peer.<span class="number">0</span>.k_mic, [<span class="number">0x50</span>; <span class="number">16</span>]);
+<a href=#370 id=370 data-nosnippet>370</a>        <span class="macro">assert_eq!</span>(peer.<span class="number">0</span>.k_enc, [<span class="number">0xE0</span>; <span class="number">32</span>]);
+<a href=#371 id=371 data-nosnippet>371</a>        <span class="macro">assert_eq!</span>(peer.<span class="number">0</span>.k_mic, [<span class="number">0x50</span>; <span class="number">32</span>]);
 <a href=#372 id=372 data-nosnippet>372</a>        <span class="comment">// Secrets are never rendered, not even by a debug format.
 <a href=#373 id=373 data-nosnippet>373</a>        </span><span class="macro">assert!</span>(!<span class="macro">format!</span>(<span class="string">"{peer:?}"</span>).contains(<span class="string">"e0e0"</span>));
 <a href=#374 id=374 data-nosnippet>374</a>    }

@@ -35,7 +35,7 @@
             const path_to_root = "";
             const default_light_theme = "light";
             const default_dark_theme = "ayu";
-            window.path_to_searchindex_js = "searchindex-585651d2.js";
+            window.path_to_searchindex_js = "searchindex-deaee21e.js";
         </script>
         <!-- Start loading toc.js asap -->
         <script src="toc-438957a9.js"></script>
@@ -258,14 +258,14 @@
 <tr><td>SRC</td><td>Node A hint</td><td><code>ED 54 A5</code></td></tr>
 <tr><td>SCF</td><td>E=1, MIC=3 (16-byte), S=0</td><td><code>E0</code></td></tr>
 <tr><td>Frame Counter</td><td>42</td><td><code>00 00 00 2A</code></td></tr>
-<tr><td>Payload</td><td>Encrypted <code>48 65 6C 6C 6F</code> (<code>"Hello"</code>)</td><td><code>71 35 36 4B C1</code></td></tr>
-<tr><td>MIC</td><td>16 bytes</td><td><code>97 6D DC 92 2E BA 11 B7 2E 6B B1 7B 36 49 C5 4A</code></td></tr>
+<tr><td>Payload</td><td>Encrypted <code>48 65 6C 6C 6F</code> (<code>"Hello"</code>)</td><td><code>AE 71 DC 38 72</code></td></tr>
+<tr><td>MIC</td><td>16 bytes</td><td><code>61 8E 96 38 FE 4D 9A E8 34 33 1D E8 E0 DD 06 3E</code></td></tr>
 </tbody>
 </table>
 </div>
-<pre><code class="language-text">D0 6C 28 FD ED 54 A5 E0 00 00 00 2A FF 71 35 36
-4B C1 97 6D DC 92 2E BA 11 B7 2E 6B B1 7B 36 49
-C5 4A
+<pre><code class="language-text">D0 6C 28 FD ED 54 A5 E0 00 00 00 2A FF AE 71 DC
+38 72 61 8E 96 38 FE 4D 9A E8 34 33 1D E8 E0 DD
+06 3E
 </code></pre>
 <p>Total: 34 bytes.</p>
 <h2 id="example-4-encrypted-unicast-with-ack-requested-s1"><a class="header" href="#example-4-encrypted-unicast-with-ack-requested-s1">Example 4: Encrypted Unicast with Ack Requested (S=1)</a></h2>
@@ -281,15 +281,15 @@ C5 4A
 <tr><td>SRC</td><td>Node A full key</td><td><code>ED 54 A5 9F B1 AC 3A 51 23 93 51 36 29 41 B8 68 E8 5A 60 E3 D7 B2 48 5D 82 88 21 DC 7A 69 C2 79</code></td></tr>
 <tr><td>SCF</td><td>E=1, MIC=3 (16-byte), S=0</td><td><code>E0</code></td></tr>
 <tr><td>Frame Counter</td><td>1</td><td><code>00 00 00 01</code></td></tr>
-<tr><td>Payload</td><td>Encrypted <code>68 65 79</code> (<code>"hey"</code>)</td><td><code>9C 77 59</code></td></tr>
-<tr><td>MIC</td><td>16 bytes</td><td><code>E9 9F 4C 5F 9D 3E 4F 4E D3 CC B2 1E F5 C0 01 97</code></td></tr>
+<tr><td>Payload</td><td>Encrypted <code>68 65 79</code> (<code>"hey"</code>)</td><td><code>F8 82 EE</code></td></tr>
+<tr><td>MIC</td><td>16 bytes</td><td><code>AA 17 13 06 26 1C E7 FF F2 FF 01 7F 90 10 A7 D9</code></td></tr>
 </tbody>
 </table>
 </div>
 <pre><code class="language-text">DC 6C 28 FD ED 54 A5 9F B1 AC 3A 51 23 93 51 36
 29 41 B8 68 E8 5A 60 E3 D7 B2 48 5D 82 88 21 DC
-7A 69 C2 79 E0 00 00 00 01 FF 9C 77 59 E9 9F 4C
-5F 9D 3E 4F 4E D3 CC B2 1E F5 C0 01 97
+7A 69 C2 79 E0 00 00 00 01 FF F8 82 EE AA 17 13
+06 26 1C E7 FF F2 FF 01 7F 90 10 A7 D9
 </code></pre>
 <p>Total: 61 bytes.</p>
 <h2 id="example-5-encrypted-multicast-e1"><a class="header" href="#example-5-encrypted-multicast-e1">Example 5: Encrypted Multicast (E=1)</a></h2>
@@ -305,13 +305,13 @@ C5 4A
 <tr><td>SCF</td><td>E=1, MIC=3 (16-byte), S=0</td><td><code>E0</code></td></tr>
 <tr><td>Frame Counter</td><td>5</td><td><code>00 00 00 05</code></td></tr>
 <tr><td>Encrypted data</td><td>ENCRYPT(`SRC</td><td></td></tr>
-<tr><td>MIC</td><td>16 bytes</td><td><code>30 E3 26 92 83 DB 9A 69 AB 12 64 1E B3 22 42 D6</code></td></tr>
+<tr><td>MIC</td><td>16 bytes</td><td><code>AC BF 20 01 42 05 B1 04 17 5E A6 8F 66 47 78 83</code></td></tr>
 </tbody>
 </table>
 </div>
-<pre><code class="language-text">E0 B0 8D E0 00 00 00 05 FF 39 E5 95 FE 97 AF A8
-90 30 E3 26 92 83 DB 9A 69 AB 12 64 1E B3 22 42
-D6
+<pre><code class="language-text">E0 B0 8D E0 00 00 00 05 FF 7C 16 CC CF 27 32 48
+78 AC BF 20 01 42 05 B1 04 17 5E A6 8F 66 47 78
+83
 </code></pre>
 <p>Total: 33 bytes.</p>
 <h2 id="example-6-authenticated-multicast-e0"><a class="header" href="#example-6-authenticated-multicast-e0">Example 6: Authenticated Multicast (E=0)</a></h2>
@@ -328,13 +328,13 @@ D6
 <tr><td>Frame Counter</td><td>3</td><td><code>00 00 00 03</code></td></tr>
 <tr><td>SRC</td><td>Node A hint</td><td><code>ED 54 A5</code></td></tr>
 <tr><td>Payload</td><td>`03</td><td></td></tr>
-<tr><td>MIC</td><td>16 bytes</td><td><code>53 A5 E2 91 F5 40 0A B9 87 FE C7 14 9D F8 97 24</code></td></tr>
+<tr><td>MIC</td><td>16 bytes</td><td><code>9A 4B FC DE 39 42 FE B2 25 B8 D3 D4 BC E7 9F DB</code></td></tr>
 </tbody>
 </table>
 </div>
 <pre><code class="language-text">E0 B0 8D 60 00 00 00 03 FF ED 54 A5 03 48 65 6C
-6C 6F 53 A5 E2 91 F5 40 0A B9 87 FE C7 14 9D F8
-97 24
+6C 6F 9A 4B FC DE 39 42 FE B2 25 B8 D3 D4 BC E7
+9F DB
 </code></pre>
 <p>Total: 34 bytes.</p>
 <h2 id="example-7-encrypted-unicast-with-options-and-flood-hops"><a class="header" href="#example-7-encrypted-unicast-with-options-and-flood-hops">Example 7: Encrypted Unicast with Options and Flood Hops</a></h2>
@@ -365,14 +365,14 @@ D6
 <tr><td>SCF</td><td>E=1, MIC=3 (16-byte), S=0</td><td><code>E0</code></td></tr>
 <tr><td>Frame Counter</td><td>10</td><td><code>00 00 00 0A</code></td></tr>
 <tr><td>Options</td><td>Trace route + region code + end marker</td><td><code>20 92 78 53 FF</code></td></tr>
-<tr><td>Payload</td><td>Encrypted <code>68 65 79</code> (<code>"hey"</code>)</td><td><code>F4 CF 71</code></td></tr>
-<tr><td>MIC</td><td>16 bytes</td><td><code>C4 91 19 48 E1 C8 F1 32 05 6A 16 B1 06 34 74 D5</code></td></tr>
+<tr><td>Payload</td><td>Encrypted <code>68 65 79</code> (<code>"hey"</code>)</td><td><code>81 2D 2F</code></td></tr>
+<tr><td>MIC</td><td>16 bytes</td><td><code>BA 19 2E EA B5 7D 71 E3 52 BD 7D DF 33 1B 07 27</code></td></tr>
 </tbody>
 </table>
 </div>
 <pre><code class="language-text">D1 40 6C 28 FD ED 54 A5 E0 00 00 00 0A 20 92 78
-53 FF F4 CF 71 C4 91 19 48 E1 C8 F1 32 05 6A 16
-B1 06 34 74 D5
+53 FF 81 2D 2F BA 19 2E EA B5 7D 71 E3 52 BD 7D
+DF 33 1B 07 27
 </code></pre>
 <p>Total: 37 bytes.</p>
 <h2 id="example-8-blind-unicast-s0"><a class="header" href="#example-8-blind-unicast-s0">Example 8: Blind Unicast (S=0)</a></h2>
@@ -388,14 +388,14 @@ B1 06 34 74 D5
 <tr><td>SCF</td><td>E=1, MIC=3 (16-byte), S=0</td><td><code>E0</code></td></tr>
 <tr><td>Frame Counter</td><td>7</td><td><code>00 00 00 07</code></td></tr>
 <tr><td>ENC_DST_SRC</td><td>ENCRYPT(`DST</td><td></td></tr>
-<tr><td>ENC_PAYLOAD</td><td>ENCRYPT(<code>"Hello"</code>)</td><td><code>4E 55 F2 08 51</code></td></tr>
-<tr><td>MIC</td><td>16 bytes</td><td><code>F6 21 C9 8C 78 F7 90 92 34 0D E7 12 AA 07 AE 77</code></td></tr>
+<tr><td>ENC_PAYLOAD</td><td>ENCRYPT(<code>"Hello"</code>)</td><td><code>88 94 03 C3 07</code></td></tr>
+<tr><td>MIC</td><td>16 bytes</td><td><code>C7 46 F3 5E 82 28 3E 3C 14 B0 5D 97 56 7B 4E 86</code></td></tr>
 </tbody>
 </table>
 </div>
-<pre><code class="language-text">F0 B0 8D E0 00 00 00 07 FF A4 FB D3 6A A0 87 4E
-55 F2 08 51 F6 21 C9 8C 78 F7 90 92 34 0D E7 12
-AA 07 AE 77
+<pre><code class="language-text">F0 B0 8D E0 00 00 00 07 FF D5 EC 8B 3D 69 96 88
+94 03 C3 07 C7 46 F3 5E 82 28 3E 3C 14 B0 5D 97
+56 7B 4E 86
 </code></pre>
 <p>Total: 36 bytes.</p>
 

@@ -35,7 +35,7 @@
             const path_to_root = "";
             const default_light_theme = "light";
             const default_dark_theme = "ayu";
-            window.path_to_searchindex_js = "searchindex-585651d2.js";
+            window.path_to_searchindex_js = "searchindex-deaee21e.js";
         </script>
         <!-- Start loading toc.js asap -->
         <script src="toc-438957a9.js"></script>
@@ -221,10 +221,10 @@ errors, or other mistakes, please <a href="https://github.com/darconeous/umsh/is
 <tr><th>Aspect</th><th>UMSH</th><th>MeshCore</th></tr>
 </thead>
 <tbody>
-<tr><td>Encryption algorithm</td><td>AES-128-CTR (SIV-style: MIC used as CTR IV)</td><td>AES-128-ECB</td></tr>
-<tr><td>Authentication</td><td>AES-CMAC (4/8/12/16-byte MIC)</td><td>HMAC-SHA256 (truncated to 2-byte MAC)</td></tr>
+<tr><td>Encryption algorithm</td><td>AES-256-CTR (AES-SIV, RFC 5297)</td><td>AES-128-ECB</td></tr>
+<tr><td>Authentication</td><td>S2V (AES-CMAC), 4/8/12/16-byte MIC</td><td>HMAC-SHA256 (truncated to 2-byte MAC)</td></tr>
 <tr><td>Key derivation</td><td>HKDF-SHA256 with domain-separated keys (K_enc, K_mic)</td><td>Raw ECDH shared secret used directly</td></tr>
-<tr><td>Key separation</td><td>Separate 16-byte encryption and 16-byte MIC keys</td><td>Same shared secret for both AES key (first 16 bytes) and HMAC key (full 32 bytes)</td></tr>
+<tr><td>Key separation</td><td>Separate 32-byte encryption and 32-byte MIC keys</td><td>Same shared secret for both AES key (first 16 bytes) and HMAC key (full 32 bytes)</td></tr>
 <tr><td>Nonce misuse resistance</td><td>Yes (SIV construction)</td><td>N/A (ECB mode is deterministic)</td></tr>
 <tr><td>Replay protection</td><td>4-byte monotonic frame counter (timestamp-free)</td><td>Hash-based duplicate cache (160 entries); timestamps at application layer</td></tr>
 </tbody>
@@ -233,7 +233,7 @@ errors, or other mistakes, please <a href="https://github.com/darconeous/umsh/is
 <p>The cryptographic gap is substantial:</p>
 <ul>
 <li>
-<p><strong>AES-128-ECB</strong> is a textbook-insecure mode: it uses no IV or nonce, and identical plaintext blocks produce identical ciphertext blocks, leaking structural information about the payload. AES-128-CTR with a synthetic IV (as used by UMSH) does not have this weakness.</p>
+<p><strong>AES-128-ECB</strong> is a textbook-insecure mode: it uses no IV or nonce, and identical plaintext blocks produce identical ciphertext blocks, leaking structural information about the payload. AES-CTR with a synthetic IV (as used by UMSH) does not have this weakness.</p>
 </li>
 <li>
 <p><strong>2-byte MAC truncation</strong> in MeshCore means an attacker has a 1-in-65536 chance of forging a valid MAC per attempt, which is marginal for a protocol where an attacker can observe and replay packets at will. UMSH’s 16-byte MIC provides a forgery probability of 2^-128.</p>
@@ -292,7 +292,7 @@ errors, or other mistakes, please <a href="https://github.com/darconeous/umsh/is
 <tbody>
 <tr><td>Channel key size</td><td>32 bytes</td><td>Variable (shared secret)</td></tr>
 <tr><td>Channel identifier</td><td>2-byte derived hint</td><td>1-byte hash of SHA-256 of key</td></tr>
-<tr><td>Group message auth</td><td>Channel-key-based CMAC</td><td>Channel-key-based HMAC (2-byte MAC)</td></tr>
+<tr><td>Group message auth</td><td>Channel-key-based S2V MIC</td><td>Channel-key-based HMAC (2-byte MAC)</td></tr>
 <tr><td>Sender authentication</td><td>Not cryptographically verified (symmetric key limitation)</td><td>Not cryptographically verified (same limitation)</td></tr>
 <tr><td>Source privacy</td><td>Source encrypted when encryption enabled</td><td>No cleartext source; claimed sender name encrypted</td></tr>
 </tbody>
@@ -366,7 +366,7 @@ errors, or other mistakes, please <a href="https://github.com/darconeous/umsh/is
 <p>UMSH with <code>S=0</code> and a 16-byte MIC provides the strongest security configuration at 28 bytes of overhead. With shorter MICs, UMSH can trade integrity margin for payload capacity — a 4-byte MIC still provides a 1-in-2^32 forgery resistance (compared to MeshCore’s 1-in-2^16 with its 2-byte MAC) while matching MeshCore’s effective overhead.</p>
 <h2 id="power-consumption"><a class="header" href="#power-consumption">Power Consumption</a></h2>
 <p>Address hint width has a direct effect on power consumption in battery-constrained LoRa nodes.</p>
-<p>When a node receives a packet, it checks the destination hint against its own address before committing to cryptographic verification. If the hint matches, the node must attempt full packet verification to confirm whether the packet is genuinely addressed to it. Pairwise keys are cached after first contact, so no ECDH is needed for known senders — but verification still requires decrypting the payload with AES-CTR (using the transmitted MIC as the CTR IV) and then computing CMAC over the decrypted plaintext to confirm the MIC matches. Only a collision from a completely unknown sender transmitting with a full 32-byte source key (S=1) would additionally require ECDH and HKDF derivation. If the hint does not match, the packet can be discarded immediately with minimal CPU cost.</p>
+<p>When a node receives a packet, it checks the destination hint against its own address before committing to cryptographic verification. If the hint matches, the node must attempt full packet verification to confirm whether the packet is genuinely addressed to it. Pairwise keys are cached after first contact, so no ECDH is needed for known senders — but verification still requires decrypting the payload with AES-CTR (using a CTR IV derived from the transmitted MIC) and then computing S2V over the decrypted plaintext to confirm the MIC matches. Only a collision from a completely unknown sender transmitting with a full 32-byte source key (S=1) would additionally require ECDH and HKDF derivation. If the hint does not match, the packet can be discarded immediately with minimal CPU cost.</p>
 <p>The problem is collisions. In a network of many nodes, some fraction of packets addressed to <em>other</em> nodes will collide with your own hint and trigger unnecessary cryptographic work. The collision rate depends on the hint width:</p>
 <div class="table-wrapper">
 <table>
