@@ -122,7 +122,7 @@ Like other channel-addressed packets, blind unicast honors the `E` flag in `SECI
   1 B  0/1 B     2 B     5/7 B    variable      6/35 B         var.     4-16 B
 ```
 
-The `MIC` is computed over the payload using the [blind unicast payload keys](security.md#blind-unicast-payload-keys), which combine the pairwise shared secret with the channel key. `ENC_DST_SRC` is encrypted using the channel's derived encryption key `K_enc_channel` (see [Multicast Packet Keys](security.md#multicast-packet-keys)) and the `MIC` as IV (see [Security & Cryptography](security.md#blind-unicast-source-encryption)). Because `ENC_DST_SRC` decryption depends on the `MIC`, any tampering with the source address will produce an incorrect public key, causing pairwise key derivation to fail and payload authentication to reject.
+The `MIC` is computed over the payload using the [blind unicast payload keys](security.md#blind-unicast-payload-keys), which combine the pairwise shared secret with the channel key. `ENC_DST_SRC` is encrypted using the channel's derived encryption key `K_enc_channel` (see [Multicast Packet Keys](security.md#multicast-packet-keys)) and an IV derived from the `MIC` (see [Security & Cryptography](security.md#blind-unicast-address-encryption)). Because `ENC_DST_SRC` decryption depends on the `MIC`, any tampering with the source address will produce an incorrect public key, causing pairwise key derivation to fail and payload authentication to reject.
 
 ### Unencrypted Blind Unicast (E = 0)
 

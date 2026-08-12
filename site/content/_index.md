@@ -191,8 +191,8 @@ heading = "MeshCore Comparison"
 columns = ["Aspect", "UMSH", "MeshCore"]
 rows = [
   ["Address on the wire", "3-byte hint, or the full public key when the receiver may not know it", "1-byte hash, with a dedicated packet type for first contact"],
-  ["Encryption", "AES-128-CTR in a SIV construction", "AES-128-ECB"],
-  ["Authentication", "AES-CMAC, 4 to 16 bytes", "HMAC-SHA256 truncated to 2 bytes"],
+  ["Encryption", "AES-256-CTR in a SIV construction (RFC 5297)", "AES-128-ECB"],
+  ["Authentication", "S2V (AES-CMAC), 4 to 16 bytes", "HMAC-SHA256 truncated to 2 bytes"],
   ["Key derivation", "HKDF-SHA256, with separate encryption and authentication keys", "The ECDH secret used directly for both"],
   ["Replay protection", "Monotonic frame counters, no clock involved", "A 128-entry duplicate cache, with timestamps above"],
   ["Routing", "Independent options that combine freely", "A path field and route-mode bits"],

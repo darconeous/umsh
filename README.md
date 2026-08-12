@@ -32,7 +32,7 @@ appears only when needed (first contact, ephemeral identities).
 
 ### Cryptography suited to mesh constraints
 
-UMSH uses an AES-SIV-inspired construction where the authentication tag serves as the
+UMSH uses AES-SIV (RFC 5297) with AES-256, in which the authentication tag serves as the
 encryption nonce. If a frame counter is accidentally reused (e.g., after a reboot with no
 persistent storage), the only consequence is detectable plaintext repetition — confidentiality
 and authenticity are otherwise preserved. Replay protection uses a monotonic counter rather

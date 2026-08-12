@@ -9,10 +9,10 @@ The following terms are used throughout this specification. Definitions are give
 : A short prefix of a node's public key used as a cheap prefilter before full cryptographic processing. Source and destination hints are 3 bytes; router and trace-route hints are 2 bytes. See [Addressing](addressing.md).
 
 **AES (Advanced Encryption Standard)**
-: A symmetric block cipher standardized by NIST. UMSH uses AES-128 in CTR mode for payload encryption and AES-CMAC for message authentication.
+: A symmetric block cipher standardized by NIST. UMSH uses AES-256: AES-CMAC-based S2V for message authentication and AES-CTR for payload encryption.
 
 **AES-SIV (Synthetic Initialization Vector)**
-: A misuse-resistant authenticated encryption scheme defined by RFC 5297. It uses S2V to compute a synthetic IV from distinct associated-data components and the plaintext, then encrypts with AES-CTR. UMSH uses a custom construction inspired by this design: a direct AES-CMAC over canonical AAD concatenated with plaintext contributes to the AES-CTR IV. It is not RFC 5297 AES-SIV; see the [construction warning](security.md#relationship-to-rfc-5297-aes-siv).
+: A misuse-resistant authenticated encryption scheme defined by RFC 5297. It uses S2V to compute a synthetic IV from the associated data and the plaintext, then encrypts with AES-CTR. UMSH secures packets with AES-SIV using AES-256, extended with MIC truncation and a SECINFO-padded CTR IV; with a full 16-byte MIC the construction is byte-for-byte AEAD_AES_SIV_CMAC_512. See [Encrypted Packets](security.md#encrypted-packets).
 
 **ARNCE/HAM-64**
 : A compact character encoding scheme for amateur radio callsigns, encoding up to 12 characters into 2, 4, 6, or 8 bytes. Used in UMSH's Operator Callsign and Station Callsign packet options.
@@ -39,7 +39,7 @@ The following terms are used throughout this specification. Definitions are give
 : A lightweight request/response protocol designed for constrained networks (RFC 7252). UMSH borrows CoAP's delta-length option encoding for packet options and application-layer payloads.
 
 **Confidentiality**
-: The property that payload content is accessible only to intended recipients. UMSH provides confidentiality via AES-128 encryption keyed with material derived from ECDH (unicast) or the channel key (multicast).
+: The property that payload content is accessible only to intended recipients. UMSH provides confidentiality via AES-256 encryption keyed with material derived from ECDH (unicast) or the channel key (multicast).
 
 **Duplicate Suppression**
 : A mechanism by which repeaters track recently forwarded packets and decline to forward the same packet a second time. Each packet is identified by its MIC (for authenticated packets) or a locally computed hash (for unauthenticated packets). This prevents flood-routed packets from circulating indefinitely. See [Repeater Operation](repeater-operation.md#duplicate-suppression).
@@ -63,7 +63,7 @@ The following terms are used throughout this specification. Definitions are give
 : The unit of transmission at the LoRa PHY layer. A UMSH packet must fit within a single frame. The terms *frame* and *packet* are used interchangeably in this specification; *frame* emphasizes the physical transmission unit, *packet* emphasizes the logical protocol unit.
 
 **Frame Counter**
-: A monotonically increasing 4-byte value included in every authenticated packet. The receiver tracks recently seen counter values and rejects packets with counters it has already processed, providing replay protection without requiring synchronized clocks. The counter must be persisted across reboots to prevent reuse. See [Security & Cryptography](security.md#frame-counters).
+: A monotonically increasing 4-byte value included in every authenticated packet. The receiver tracks recently seen counter values and rejects packets with counters it has already processed, providing replay protection without requiring synchronized clocks. The counter must be persisted across reboots to prevent reuse. See [Security & Cryptography](security.md#frame-counter).
 
 **Hop**
 : One leg of a packet's path through the network — the transmission from one node to an adjacent node within radio range. A packet that travels through two repeaters before reaching its destination has traversed three hops.
@@ -94,7 +94,7 @@ The protocol differentiates between source-routed hops and flood-routed hops.
 : A network topology where nodes can relay packets on behalf of other nodes, enabling communication beyond direct radio range. UMSH is designed for LoRa mesh networks where repeaters and bridges are used to extend coverage.
 
 **MIC (Message Integrity Code)**
-: UMSH's authentication tag, computed using AES-CMAC over the packet's static fields and payload. Size is configurable from 4 to 16 bytes. The term MIC is used instead of the more common "MAC" (Message Authentication Code) to avoid confusion with Medium Access Control. See [Security & Cryptography](security.md).
+: UMSH's authentication tag, the truncated S2V output (RFC 5297) computed over the packet's static fields and payload. Size is configurable from 4 to 16 bytes. The term MIC is used instead of the more common "MAC" (Message Authentication Code) to avoid confusion with Medium Access Control. See [Security & Cryptography](security.md).
 
 **Multicast**
 : A packet intended for all members of a channel, identified by a 2-byte channel identifier derived from the channel key. See [Frame Types](packet-types.md).

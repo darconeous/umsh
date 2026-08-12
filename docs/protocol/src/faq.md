@@ -2,7 +2,7 @@
 
 ### Can an attacker spoof a MAC Ack to make the sender believe a packet was delivered?
 
-Not without the pairwise key. A MAC Ack carries two fields: a public [ack MIC](security.md#ack-tag-construction) (the first 4 bytes of the original packet's on-wire MIC, used only for correlation) and a keyed 4-byte [ack tag](security.md#ack-tag-construction) derived by encrypting the full 16-byte CMAC with `K_enc`. Only the `ack tag` authenticates the ack, and computing it requires the encryption key (pairwise for unicast, or the [combined blind unicast key](security.md#blind-unicast-payload-keys) for blind unicast). A passive observer who intercepts the original packet can read the on-wire MIC and thus reproduce the public `ack MIC`, but cannot derive the keyed `ack tag` without `K_enc`. Blind forgery of the 4-byte tag succeeds with probability `2^-32` per attempt, which is infeasible to brute-force online over a bandwidth-limited LoRa channel; and even a successful forgery only causes a false delivery confirmation (a reliability denial-of-service), never a confidentiality or integrity break.
+Not without the pairwise key. A MAC Ack carries two fields: a public [ack MIC](security.md#ack-tag-construction) (the first 4 bytes of the original packet's on-wire MIC, used only for correlation) and a keyed 4-byte [ack tag](security.md#ack-tag-construction) derived by encrypting the full 16-byte S2V output with `K_enc`. Only the `ack tag` authenticates the ack, and computing it requires the encryption key (pairwise for unicast, or the [combined blind unicast key](security.md#blind-unicast-payload-keys) for blind unicast). A passive observer who intercepts the original packet can read the on-wire MIC and thus reproduce the public `ack MIC`, but cannot derive the keyed `ack tag` without `K_enc`. Blind forgery of the 4-byte tag succeeds with probability `2^-32` per attempt, which is infeasible to brute-force online over a bandwidth-limited LoRa channel; and even a successful forgery only causes a false delivery confirmation (a reliability denial-of-service), never a confidentiality or integrity break.
 
 ### Doesn't blind unicast have a circular dependency between the MIC and address decryption?
 
@@ -49,7 +49,7 @@ The `S` flag controls whether the full 32-byte source public key or a compact so
 
 Leave `S` clear when the receiver is known to have the sender's full public key cached — for example, after a prior advertisement, identity exchange, or any earlier `S=1` packet. Using the compact hint saves 29 bytes per packet in unicast (3-byte hint vs 32-byte key), which is significant on LoRa.
 
-Receivers that see an unknown source hint on an authenticated packet should treat it as an authentication failure (the cached key lookup fails, so decryption or CMAC verification will fail). The sender can retransmit with `S=1` to provide the full key.
+Receivers that see an unknown source hint on an authenticated packet should treat it as an authentication failure (the cached key lookup fails, so decryption or MIC verification will fail). The sender can retransmit with `S=1` to provide the full key.
 
 ### How does a MAC Ack get routed back to the original sender?
 
@@ -59,7 +59,7 @@ Repeaters do not generate acks themselves. Instead, a repeater can confirm succe
 
 ### Why does UMSH use stable pairwise keys instead of a ratcheting scheme like the Signal Protocol?
 
-LoRa mesh networks have high latency, low bandwidth, and unreliable delivery — properties that are hostile to ratcheting protocols. Ratcheting requires reliable in-order message delivery to keep both sides synchronized; a single lost message can desynchronize the ratchet and require an expensive recovery handshake. In a mesh where packets may be lost, duplicated, or arrive out of order, this would lead to frequent resynchronization storms. Stable pairwise keys derived from a single ECDH are simple, stateless, and robust to packet loss. The frame counter and optional salt still provide per-packet uniqueness, while the custom AES-SIV-inspired construction is intended to provide an additional safety margin against nonce misuse. It is not RFC 5297 AES-SIV; see the [construction warning](security.md#relationship-to-rfc-5297-aes-siv).
+LoRa mesh networks have high latency, low bandwidth, and unreliable delivery — properties that are hostile to ratcheting protocols. Ratcheting requires reliable in-order message delivery to keep both sides synchronized; a single lost message can desynchronize the ratchet and require an expensive recovery handshake. In a mesh where packets may be lost, duplicated, or arrive out of order, this would lead to frequent resynchronization storms. Stable pairwise keys derived from a single ECDH are simple, stateless, and robust to packet loss. The frame counter and optional salt still provide per-packet uniqueness, while the AES-SIV construction provides an additional safety margin against nonce misuse.
 
 When forward secrecy is needed, UMSH provides [PFS sessions](security.md#perfect-forward-secrecy-sessions) — a two-message handshake where both nodes exchange ephemeral node addresses and communicate using session-specific keys for an agreed duration. PFS sessions add no per-packet overhead once established, and the private keys for the ephemeral addresses are erased when the session ends. This provides perfect forward secrecy without the fragility of continuous ratcheting.
 
@@ -67,9 +67,9 @@ When forward secrecy is needed, UMSH provides [PFS sessions](security.md#perfect
 
 The 2-byte channel identifier is a hint, not a unique identifier. If two different channel keys happen to produce the same 2-byte channel ID, a receiver configured with both keys will attempt to process the packet with each candidate key. Only the correct key will produce a valid MIC, so the wrong candidate will be rejected during authentication. The cost is wasted computation, not incorrect behavior. With 2 bytes the collision probability is 1 in 65536, which is higher than a 4-byte hint but still negligible for deployments with a small number of configured channels.
 
-### Why use an AES-SIV-inspired construction instead of AES-GCM?
+### Why use AES-SIV instead of AES-GCM?
 
-AES-GCM is catastrophically vulnerable to nonce reuse — repeating a nonce with the same key completely breaks both confidentiality and authenticity. In a mesh network, nonce management is difficult: nodes may reboot and lose counter state, clocks may not be synchronized, and packets may be retransmitted. UMSH therefore derives its CTR IV from a plaintext-authenticating MIC instead of accepting an independent caller-supplied nonce. This custom design is inspired by AES-SIV and is intended to degrade more gracefully under counter reuse, but it does not implement RFC 5297 S2V and does not inherit that construction's proven nonce-misuse guarantees. The limitations and planned replacement are described in the [construction warning](security.md#relationship-to-rfc-5297-aes-siv).
+AES-GCM is catastrophically vulnerable to nonce reuse — repeating a nonce with the same key completely breaks both confidentiality and authenticity. In a mesh network, nonce management is difficult: nodes may reboot and lose counter state, clocks may not be synchronized, and packets may be retransmitted. AES-SIV (RFC 5297) computes its CTR IV from the key, associated data, and plaintext, so there is no independent caller-supplied nonce to misuse: repeating all inputs produces an identical packet and reveals only the repetition itself. That is exactly the failure mode UMSH wants under counter loss — graceful, not catastrophic. See [Encrypted Packets](security.md#encrypted-packets).
 
 ### How does "deliver to a region, then flood" work?
 

@@ -36,16 +36,16 @@ UMSH separates routing metadata into composable options, allowing packets to car
 
 | Aspect | UMSH | MeshCore |
 |---|---|---|
-| Encryption algorithm | AES-128-CTR (SIV-style: MIC used as CTR IV) | AES-128-ECB |
-| Authentication | AES-CMAC (4/8/12/16-byte MIC) | HMAC-SHA256 (truncated to 2-byte MAC) |
+| Encryption algorithm | AES-256-CTR (AES-SIV, RFC 5297) | AES-128-ECB |
+| Authentication | S2V (AES-CMAC), 4/8/12/16-byte MIC | HMAC-SHA256 (truncated to 2-byte MAC) |
 | Key derivation | HKDF-SHA256 with domain-separated keys (K_enc, K_mic) | Raw ECDH shared secret used directly |
-| Key separation | Separate 16-byte encryption and 16-byte MIC keys | Same shared secret for both AES key (first 16 bytes) and HMAC key (full 32 bytes) |
+| Key separation | Separate 32-byte encryption and 32-byte MIC keys | Same shared secret for both AES key (first 16 bytes) and HMAC key (full 32 bytes) |
 | Nonce misuse resistance | Yes (SIV construction) | N/A (ECB mode is deterministic) |
 | Replay protection | 4-byte monotonic frame counter (timestamp-free) | Hash-based duplicate cache (160 entries); timestamps at application layer |
 
 The cryptographic gap is substantial:
 
-- **AES-128-ECB** is a textbook-insecure mode: it uses no IV or nonce, and identical plaintext blocks produce identical ciphertext blocks, leaking structural information about the payload. AES-128-CTR with a synthetic IV (as used by UMSH) does not have this weakness.
+- **AES-128-ECB** is a textbook-insecure mode: it uses no IV or nonce, and identical plaintext blocks produce identical ciphertext blocks, leaking structural information about the payload. AES-CTR with a synthetic IV (as used by UMSH) does not have this weakness.
 
 - **2-byte MAC truncation** in MeshCore means an attacker has a 1-in-65536 chance of forging a valid MAC per attempt, which is marginal for a protocol where an attacker can observe and replay packets at will. UMSH's 16-byte MIC provides a forgery probability of 2^-128.
 
@@ -92,7 +92,7 @@ Both protocols support anonymous first-contact requests, but through different m
 |---|---|---|
 | Channel key size | 32 bytes | Variable (shared secret) |
 | Channel identifier | 2-byte derived hint | 1-byte hash of SHA-256 of key |
-| Group message auth | Channel-key-based CMAC | Channel-key-based HMAC (2-byte MAC) |
+| Group message auth | Channel-key-based S2V MIC | Channel-key-based HMAC (2-byte MAC) |
 | Sender authentication | Not cryptographically verified (symmetric key limitation) | Not cryptographically verified (same limitation) |
 | Source privacy | Source encrypted when encryption enabled | No cleartext source; claimed sender name encrypted |
 
@@ -163,7 +163,7 @@ UMSH with `S=0` and a 16-byte MIC provides the strongest security configuration 
 
 Address hint width has a direct effect on power consumption in battery-constrained LoRa nodes.
 
-When a node receives a packet, it checks the destination hint against its own address before committing to cryptographic verification. If the hint matches, the node must attempt full packet verification to confirm whether the packet is genuinely addressed to it. Pairwise keys are cached after first contact, so no ECDH is needed for known senders — but verification still requires decrypting the payload with AES-CTR (using the transmitted MIC as the CTR IV) and then computing CMAC over the decrypted plaintext to confirm the MIC matches. Only a collision from a completely unknown sender transmitting with a full 32-byte source key (S=1) would additionally require ECDH and HKDF derivation. If the hint does not match, the packet can be discarded immediately with minimal CPU cost.
+When a node receives a packet, it checks the destination hint against its own address before committing to cryptographic verification. If the hint matches, the node must attempt full packet verification to confirm whether the packet is genuinely addressed to it. Pairwise keys are cached after first contact, so no ECDH is needed for known senders — but verification still requires decrypting the payload with AES-CTR (using a CTR IV derived from the transmitted MIC) and then computing S2V over the decrypted plaintext to confirm the MIC matches. Only a collision from a completely unknown sender transmitting with a full 32-byte source key (S=1) would additionally require ECDH and HKDF derivation. If the hint does not match, the packet can be discarded immediately with minimal CPU cost.
 
 The problem is collisions. In a network of many nodes, some fraction of packets addressed to *other* nodes will collide with your own hint and trigger unnecessary cryptographic work. The collision rate depends on the hint width:
 

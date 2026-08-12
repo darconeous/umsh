@@ -230,8 +230,8 @@ metadata the radio receives, and can deny service to the legitimate
 host. On serial transports this interface is implicitly protected by
 physical possession of the device. The BLE binding **MUST** provide at
 least an equivalent barrier, and its cryptographic strength **MUST
-NOT** fall below that of UMSH itself (approximately 128-bit; see
-[Security & Cryptography](security.md)).
+NOT** fall below that of UMSH's identity layer (approximately 128-bit,
+bounded by Curve25519; see [Security & Cryptography](security.md)).
 
 ### Pairing Requirements
 

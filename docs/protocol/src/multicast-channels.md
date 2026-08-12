@@ -3,7 +3,7 @@
 A **channel** is a named communication context defined by a shared symmetric key. Possession of the channel key grants membership and enables two distinct roles in UMSH:
 
 - **Multicast** — any node that possesses the channel key can send and receive packets addressed to the channel, enabling group communication.
-- **Blind unicast** — the channel key conceals both sender and destination addresses on the wire, while the payload itself is protected end-to-end using [combined keys](security.md#blind-unicast-payload-keys) that require both the channel key and the pairwise shared secret. The channel serves as a metadata-concealment layer; the payload is readable only by the intended recipient, not by all channel members. See [Blind Unicast Packet](packet-types.md#blind-unicast-packet) and [Blind Unicast Source Encryption](security.md#blind-unicast-source-encryption) for details.
+- **Blind unicast** — the channel key conceals both sender and destination addresses on the wire, while the payload itself is protected end-to-end using [combined keys](security.md#blind-unicast-payload-keys) that require both the channel key and the pairwise shared secret. The channel serves as a metadata-concealment layer; the payload is readable only by the intended recipient, not by all channel members. See [Blind Unicast Packet](packet-types.md#blind-unicast-packet) and [Blind Unicast Address Encryption](security.md#blind-unicast-address-encryption) for details.
 
 In both cases, the channel key is the membership credential — possessing it is both necessary and sufficient to participate.
 

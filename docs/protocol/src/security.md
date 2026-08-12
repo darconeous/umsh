@@ -1,6 +1,6 @@
 # Security & Cryptography
 
-UMSH authenticates and optionally encrypts packets using a construction inspired by AES-SIV (RFC 5297). Unicast packets are secured with pairwise keys derived from X25519 ECDH between sender and recipient Ed25519 keys. Multicast packets are secured with keys derived from the shared channel key. In both cases, a monotonic frame counter provides replay protection without requiring synchronized clocks.
+UMSH authenticates and optionally encrypts packets using AES-SIV (RFC 5297) with AES-256. Unicast packets are secured with pairwise keys derived from X25519 ECDH between sender and recipient Ed25519 keys. Multicast packets are secured with keys derived from the shared channel key. In both cases, a monotonic frame counter provides replay protection without requiring synchronized clocks.
 
 Each secured packet carries a Security Information (SECINFO) field containing a Security Control Field, a frame counter, and an optional salt. The sections below describe these fields, the key derivation process, and the cryptographic operations applied to each packet.
 
@@ -43,7 +43,7 @@ MIC size encodings:
 | 2     | 12 bytes   |
 | 3     | 16 bytes   |
 
-The MIC is produced by computing the full 16-byte AES-CMAC and truncating to the specified length. Truncation of CMAC outputs is permitted by NIST SP 800-38B.
+The MIC is produced by computing the full 16-byte synthetic IV `V` with S2V (RFC 5297 §2.4) and truncating to the specified length. The S2V output is an AES-CMAC, and truncation of CMAC outputs is permitted by NIST SP 800-38B.
 
 #### MIC Size Selection Guidance
 
@@ -180,21 +180,23 @@ The pairwise key material is then derived as:
 ```text
 ikm  = ss
 salt = "UMSH-PAIRWISE-SALT"
-info = "UMSH-UNICAST-V1"
-okm  = HKDF-SHA256(ikm, salt, info, 32)
+info = "UMSH-UNICAST-V2"
+okm  = HKDF-SHA256(ikm, salt, info, 64)
 ```
 
 The output keying material is split as follows:
 
 ```text
-K_enc = okm[0..15]
-K_mic = okm[16..31]
+K_mic = okm[0..32]
+K_enc = okm[32..64]
 ```
 
 Where:
 
-- `K_enc` is the 16-byte encryption key
-- `K_mic` is the 16-byte message authentication key
+- `K_mic` is the 32-byte message authentication key (the S2V key)
+- `K_enc` is the 32-byte encryption key (the CTR key)
+
+This layout makes `okm` exactly the AES-SIV key `K` from RFC 5297: `K_mic` is the leftmost half `K1` (S2V) and `K_enc` is the rightmost half `K2` (CTR), so `okm` can be handed directly to an AEAD_AES_SIV_CMAC_512 implementation.
 
 These keys are stable for the sender/recipient pair and may be cached by the implementation. They do not change from packet to packet.
 
@@ -220,7 +222,7 @@ Both sets of input keys are independent HKDF outputs — pseudorandom and uncorr
 
 These combined keys are stable for a given (sender, recipient, channel) triple and may be cached. If the same two nodes use blind unicast over different channels, they get different payload keys — compromise of one channel key does not expose blind unicast traffic on another channel between the same pair.
 
-Both the pairwise and channel keys can be cached independently by the implementation. Computing the blind unicast keys requires only a 16-byte XOR per key, with no additional HKDF calls.
+Both the pairwise and channel keys can be cached independently by the implementation. Computing the blind unicast keys requires only a 32-byte XOR per key, with no additional HKDF calls.
 
 ### Per-Packet Security Inputs
 
@@ -233,7 +235,7 @@ These inputs are:
 
 These values are not used to derive the pairwise keys. Instead, they are used as packet-specific inputs to encryption, authentication, and replay protection.
 
-For encrypted packets using the custom AES-SIV-inspired construction:
+For encrypted packets:
 
 - `K_enc` and `K_mic` are the stable pairwise keys
 - `SECINFO` and other immutable header fields are supplied as associated data
@@ -244,7 +246,7 @@ For authenticated but unencrypted packets:
 - `K_mic` is the stable pairwise MIC key
 - the MIC is computed over the protected packet contents and relevant static fields
 
-The frame counter must increase monotonically for a given traffic direction. Receivers must not rely on the construction's intended resistance to nonce misuse as a substitute for replay detection.
+The frame counter must increase monotonically for a given traffic direction. Receivers must not rely on the construction's resistance to nonce misuse as a substitute for replay detection.
 
 ### Multicast Packet Keys
 
@@ -253,81 +255,62 @@ For multicast, the configured channel key is the base secret. The encryption and
 ```text
 ikm  = channel_key
 salt = "UMSH-MCAST-SALT"
-info = "UMSH-MCAST-V1" || channel_id
-okm  = HKDF-SHA256(ikm, salt, info, 32)
+info = "UMSH-MCAST-V2" || channel_id
+okm  = HKDF-SHA256(ikm, salt, info, 64)
 
-K_enc = okm[0..15]
-K_mic = okm[16..31]
+K_mic = okm[0..32]
+K_enc = okm[32..64]
 ```
+
+As with the pairwise keys, `okm` is exactly the RFC 5297 AES-SIV key for the channel: S2V key first, CTR key second.
 
 These keys are stable for the channel and may be cached by the implementation. They do not change from packet to packet. Per-packet variability is provided by the frame counter and optional salt in SECINFO, which serve as inputs to encryption and replay detection (see [Per-Packet Security Inputs](#per-packet-security-inputs)).
 
 ### Encrypted Packets
 
-When encryption is enabled, UMSH uses a **custom construction inspired by AES-SIV**. It is not RFC 5297 AES-SIV; in particular, it does not use that specification's S2V operation.
+When encryption is enabled, UMSH uses **AES-SIV (RFC 5297) with AES-256**.
 
 The processing is:
 
-1. Compute the full 16-byte AES-CMAC over the AAD and plaintext using `K_mic`.
-2. Truncate the CMAC to the MIC length specified by the SCF.
+1. Compute the full 16-byte synthetic IV `V = S2V(K_mic, S1, S2)` per RFC 5297 §2.4, where `S1` is the canonical associated data (see [Associated Data](#associated-data)) and `S2` is the plaintext.
+2. Truncate `V` to the MIC length specified by the SCF; this is the on-wire MIC.
 3. Construct the CTR IV from the MIC (see [CTR IV Construction](#ctr-iv-construction)).
-4. Encrypt the plaintext using **AES-128-CTR** with `K_enc` and the constructed IV.
+4. Encrypt the plaintext using **AES-256-CTR** with `K_enc` and the constructed IV. The counter is the full 16-byte IV, incremented as a 128-bit big-endian integer (RFC 5297 §2.5).
 
-The MIC is transmitted separately from the ciphertext, allowing its length to be controlled independently via the SCF MIC size field.
+The MIC is transmitted at the end of the packet rather than prepended as in RFC 5297, allowing its length to be controlled independently via the SCF MIC size field.
 
-A design goal is to reduce the damage caused by nonce reuse. Deriving the CTR IV from the MIC avoids directly reusing a caller-supplied CTR nonce, but the guarantees of RFC 5297 do not automatically apply to this custom construction. See [Relationship to RFC 5297 AES-SIV](#relationship-to-rfc-5297-aes-siv).
+With a 16-byte MIC, the result is byte-for-byte **AEAD_AES_SIV_CMAC_512** (RFC 5297 §6.3): the key is `K = K_mic || K_enc`, the canonical AAD is the single associated-data component, and the CTR IV construction reduces to the RFC's initial counter `Q`. Shorter MIC lengths use the same computation and differ only in how the CTR IV is filled.
 
-#### Relationship to RFC 5297 AES-SIV
-
-> [!CAUTION]
-> The original intention of this specification was to closely follow RFC 5297 (AES-SIV)
-> while only adding MIC truncation and the associated CTR IV Construction. However,
-> it seems that original goal was somehow lost in translation and what was actually documented
-> and implemented was *close to* but *not quite* AES-SIV. While the result is not cryptographically
-> catastrophic, it is very embarrassing and will be remediated.
-> 
-> The resulting construction was **inspired by AES-SIV, not an implementation of RFC 5297 AES-SIV**.
-> RFC 5297 computes the synthetic IV with S2V, which treats each associated-data string and
-> the plaintext as a distinct vector component. UMSH instead computes one
-> `CMAC(K_mic, canonical_AAD || plaintext)`. Because there is no explicit boundary between
-> the complete canonical AAD and the plaintext in that CMAC input, its security depends on
-> the canonical serialization being unambiguous across every valid packet layout. The RFC's
-> S2V security argument does not apply directly, and an alternative decomposition satisfying
-> `AAD_1 || plaintext_1 = AAD_2 || plaintext_2` would produce the same full CMAC and synthetic
-> IV for two distinct authenticated tuples. No such practical collision is presently known,
-> but the required injectivity has not been established.
->
-> UMSH also permits truncated MICs and reconstructs the CTR IV from the transmitted MIC prefix
-> plus SECINFO, whereas RFC 5297 transmits the full 16-byte S2V result and clears two bits before
-> using it as the CTR counter. Those choices make UMSH a separate, custom construction whose
-> nonce-misuse properties require independent analysis. Replacing it with a standard,
-> well-analyzed construction is planned in
-> [GitHub issue #4](https://github.com/darconeous/umsh/issues/4).
+As in RFC 5297, the synthetic IV binds the ciphertext to the key, associated data, and plaintext, so there is no caller-supplied nonce to misuse: repeating all three inputs yields an identical packet and reveals only the repetition itself. Truncated MICs weaken this bound in proportion to the truncation, since the CTR IV is reconstructed from the truncated MIC and SECINFO rather than the full `V`.
 
 ### CTR IV Construction
 
-The 16-byte CTR IV is constructed by appending the SECINFO field to the MIC, then zero-padding or truncating the result to exactly 16 bytes:
+The 16-byte CTR IV is constructed by appending the SECINFO field to the MIC, zero-padding or truncating the result to exactly 16 bytes, and then clearing the top bit of bytes 8 and 12 as RFC 5297 §2.6 does when forming the initial counter:
 
 ```text
-IV = truncate_or_pad_to_16( MIC || SECINFO )
+IV     = truncate_or_pad_to_16( MIC || SECINFO )
+IV[8]  = IV[8]  & 0x7F
+IV[12] = IV[12] & 0x7F
 ```
 
-For the 16-byte MIC, SECINFO is entirely truncated away and the IV equals the MIC. This resembles AES-SIV's use of a synthetic IV, but it is not identical to RFC 5297 because the MIC is a direct CMAC rather than an S2V result and UMSH does not apply RFC 5297's counter-bit masking. For shorter MICs, the IV incorporates the frame counter and optional salt from SECINFO, providing additional per-packet IV variability.
+The bit-clearing step is applied unconditionally, whatever bytes — MIC, SECINFO, or zero padding — occupy positions 8 and 12.
+
+For the 16-byte MIC, SECINFO is entirely truncated away and the IV is the masked synthetic IV — exactly the initial counter `Q` from RFC 5297 §2.6. For shorter MICs, the IV incorporates the frame counter and optional salt from SECINFO, providing additional per-packet IV variability.
 
 | MIC Length | SECINFO (5 B) | SECINFO (7 B) | SECINFO bytes in IV |
 |---:|---|---|---|
-| 16 B | truncate to 16 | truncate to 16 | 0 (IV = MIC) |
+| 16 B | truncate to 16 | truncate to 16 | 0 (IV = masked MIC) |
 | 12 B | truncate to 16 | truncate to 16 | 4 |
 | 8 B | zero-pad to 16 | zero-pad to 16 | 5 or 7 |
 | 4 B | zero-pad to 16 | zero-pad to 16 | 5 or 7 |
 
 ### Unencrypted Packets
 
-When encryption is disabled, the MIC is calculated using **CMAC** with `K_mic`.
+When encryption is disabled, the MIC is computed exactly as for encrypted packets — the truncated `S2V(K_mic, S1 = AAD, S2 = payload)` — and the encryption step is simply omitted.
 
 ### Associated Data
 
-The associated data (AAD) binds the immutable header fields to the MIC so that any modification is detected.
+The associated data (AAD) binds the immutable header fields to the MIC so that any modification is detected. The canonical AAD enters S2V as the single associated-data component `S1`; the plaintext (or, for unencrypted packets, the payload) is the final component `S2`.
 
 The AAD is constructed by concatenating the following fields in order:
 
@@ -370,18 +353,18 @@ It is public — any node that received the original packet, including forwardin
 
 The **ack tag** is a keyed value that only the original sender and the final destination can produce. It is computed as follows:
 
-1. Compute the full 16-byte AES-CMAC over the AAD and plaintext using `K_mic` (this is the same computation used to produce the packet MIC, before any truncation).
-2. Encrypt the 16-byte CMAC with a single AES-128-ECB block encryption using the pairwise `K_enc`.
+1. Take the full 16-byte S2V output `V` (the same value used to produce the packet MIC, before any truncation).
+2. Encrypt `V` with a single AES-256-ECB block encryption using the pairwise `K_enc`.
 3. Truncate the result to 4 bytes.
 
 ```text
-ack_tag = truncate_to_4( AES-128-ECB( key=K_enc, block=full_16B_CMAC ) )
+ack_tag = truncate_to_4( AES-256-ECB( key=K_enc, block=V ) )
 ```
 
 Where:
 
 - `K_enc` is the encryption key used for the packet — the pairwise key for unicast (see [HKDF Inputs for Unicast](#hkdf-inputs-for-unicast)), or the combined blind unicast key for blind unicast (see [Blind Unicast Payload Keys](#blind-unicast-payload-keys))
-- `full_16B_CMAC` is the full 16-byte AES-CMAC computed during packet processing, before truncation to the on-wire MIC length
+- `V` is the full 16-byte S2V output computed during packet processing, before truncation to the on-wire MIC length
 
 The standalone [MAC Ack](packet-types.md#mac-ack-packet) carries both fields (`ack_mic` followed by `ack_tag`, 8 bytes total). The [Ack MIC option](packet-options.md#ack-mic-option-8) carries only `ack_mic`, because the packet carrying the option is itself authenticated to the original sender and therefore needs no separate keyed tag.
 
@@ -395,7 +378,7 @@ AES-ECB on a single 16-byte block is the raw AES block cipher — a pseudorandom
 
 Blind unicast packets encrypt both the destination hint and source address together, separately from the payload. The address block is encrypted with the **channel key alone**, so that any channel member can recover both the intended recipient and the sender's identity. The payload is then encrypted with the **combined blind unicast keys** (see [Blind Unicast Payload Keys](#blind-unicast-payload-keys)), which require both the channel key and the pairwise shared secret.
 
-The address block is encrypted using AES-128-CTR with the channel's derived encryption key `K_enc_channel` (see [Multicast Packet Keys](#multicast-packet-keys)), using the CTR IV constructed from the packet MIC and SECINFO (see [CTR IV Construction](#ctr-iv-construction)).
+The address block is encrypted using AES-256-CTR with the channel's derived encryption key `K_enc_channel` (see [Multicast Packet Keys](#multicast-packet-keys)), using the CTR IV constructed from the packet MIC and SECINFO (see [CTR IV Construction](#ctr-iv-construction)).
 
 Let:
 
@@ -407,7 +390,7 @@ Let:
 Then:
 
 ```text
-ENC_DST_SRC = AES-128-CTR( key=K_enc_channel, iv=IV, plaintext=DST || SRC )
+ENC_DST_SRC = AES-256-CTR( key=K_enc_channel, iv=IV, plaintext=DST || SRC )
 ```
 
 This allows a receiver possessing the channel key to recover both the destination (to confirm the packet is addressed to them) and the source address (to derive the pairwise keys needed to authenticate and decrypt the payload).

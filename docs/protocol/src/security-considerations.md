@@ -14,13 +14,13 @@ UMSH does **not** assume a trusted infrastructure, a reliable transport, or a sy
 
 ## What UMSH Protects Against
 
-**Eavesdropping.** When encryption is enabled, payload content is protected by AES-128-CTR keyed with material derived from ECDH (unicast) or the channel key (multicast). An observer without the relevant key cannot recover plaintext.
+**Eavesdropping.** When encryption is enabled, payload content is protected by AES-256-CTR keyed with material derived from ECDH (unicast) or the channel key (multicast). An observer without the relevant key cannot recover plaintext.
 
-**Forgery.** All authenticated packets carry a MIC computed with AES-CMAC. An attacker who does not possess the encryption and authentication keys cannot produce a valid MIC. The [MIC size](security.md#security-control-field) determines the forgery resistance — from 2^-32 (4-byte MIC) to 2^-128 (16-byte MIC).
+**Forgery.** All authenticated packets carry a MIC computed with S2V (AES-CMAC). An attacker who does not possess the encryption and authentication keys cannot produce a valid MIC. The [MIC size](security.md#security-control-field) determines the forgery resistance — from 2^-32 (4-byte MIC) to 2^-128 (16-byte MIC).
 
-**Replay attacks.** Monotonically increasing [frame counters](security.md#frame-counters) allow receivers to detect and reject replayed packets. The [backward window and MIC cache](security.md#replay-detection) provide tolerance for out-of-order delivery without weakening replay protection.
+**Replay attacks.** Monotonically increasing [frame counters](security.md#frame-counter) allow receivers to detect and reject replayed packets. The [backward window and MIC cache](security.md#replay-detection) provide tolerance for out-of-order delivery without weakening replay protection.
 
-**Nonce misuse.** The [AES-SIV-inspired construction](security.md#encrypted-packets) derives the CTR IV from the MIC, so accidental nonce reuse (e.g., due to a buggy counter implementation) does not produce the catastrophic plaintext leakage that would occur with AES-GCM or raw AES-CTR. In the worst case, an attacker can detect when two packets carry identical plaintext — the keys and other traffic remain uncompromised.
+**Nonce misuse.** The [AES-SIV construction](security.md#encrypted-packets) derives the CTR IV from the key, associated data, and plaintext, so accidental nonce reuse (e.g., due to a buggy counter implementation) does not produce the catastrophic plaintext leakage that would occur with AES-GCM or raw AES-CTR. In the worst case, an attacker can detect when two packets carry identical associated data and plaintext — the keys and other traffic remain uncompromised.
 
 **Long-term key compromise (with PFS).** If a [PFS session](security.md#perfect-forward-secrecy-sessions) was active and the ephemeral keys were properly erased, traffic from that session cannot be retroactively decrypted even if the long-term private keys are later compromised.
 
@@ -52,7 +52,7 @@ The following requirements are critical for security. Failure to implement any o
 
 ### Frame Counter Monotonicity
 
-The frame counter must strictly increase for each packet sent in a given traffic direction. Reusing a counter value with the same key undermines replay protection and, in the worst case, can leak information about plaintext differences (though the AES-SIV construction limits the damage). See [Frame Counters](security.md#frame-counters).
+The frame counter must strictly increase for each packet sent in a given traffic direction. Reusing a counter value with the same key undermines replay protection and, in the worst case, can leak information about plaintext differences (though the AES-SIV construction limits the damage). See [Frame Counters](security.md#frame-counter).
 
 ### Frame Counter Persistence
 
@@ -66,7 +66,7 @@ PFS sessions derive their security from the guarantee that ephemeral private key
 - Explicitly zeroed in memory upon session termination (not just freed — freed memory may not be overwritten promptly)
 - Not retained in core dumps or crash reports
 
-Failure to erase ephemeral keys eliminates the forward secrecy property entirely. See [Key Erasure](security.md#key-erasure).
+Failure to erase ephemeral keys eliminates the forward secrecy property entirely. See [Session Lifetime](security.md#session-lifetime).
 
 ### Constant-Time MIC Verification
 
@@ -110,11 +110,17 @@ Because hints are derived deterministically from public keys, they remain stable
 
 ### AES-SIV over AES-GCM
 
-UMSH uses an AES-SIV-inspired construction rather than AES-GCM. AES-GCM is catastrophically vulnerable to nonce reuse: a single repeated nonce leaks the authentication key and allows forgery of arbitrary messages. On a mesh network where counter management is distributed across many independent nodes and persistence across reboots is not guaranteed, nonce reuse is a realistic failure mode. The AES-SIV construction degrades gracefully — nonce reuse reveals only whether two plaintexts are identical, without compromising keys or enabling forgery. See the [FAQ](faq.md#why-aes-siv-instead-of-aes-gcm).
+UMSH uses AES-SIV (RFC 5297) rather than AES-GCM. AES-GCM is catastrophically vulnerable to nonce reuse: a single repeated nonce leaks the authentication key and allows forgery of arbitrary messages. On a mesh network where counter management is distributed across many independent nodes and persistence across reboots is not guaranteed, nonce reuse is a realistic failure mode. AES-SIV degrades gracefully — nonce reuse reveals only whether two packets are identical, without compromising keys or enabling forgery. Deterministic SIV-style alternatives built on other primitives, such as ChaCha20-Poly1305-SIV, were considered, but none is as mature or as widely analyzed as RFC 5297. See the [FAQ](faq.md#why-use-aes-siv-instead-of-aes-gcm).
+
+### AES-256 over AES-128
+
+UMSH's asymmetric layer — Ed25519 identities and X25519 key agreement — provides roughly 128-bit classical security, so AES-128 would be a matched choice against classical adversaries, and a cheaper one on low-power hardware. UMSH uses AES-256 anyway, because the symmetric layer is the one part of the protocol that can meaningfully survive a quantum adversary.
+
+No standardized post-quantum key exchange or signature scheme fits within a LoRa frame budget, so the asymmetric layer cannot be hardened against Shor's algorithm. Recovering a private key that way, however, requires the complete public key. Most UMSH traffic exposes only a 3-byte hint, and blind unicast conceals even a full first-contact source key inside the channel-encrypted address block. A deployment that avoids exposing full public keys and leans on shared channel keys therefore retains meaningful — though reduced — security against a quantum adversary: physical compromise of any channel member defeats it, but a purely over-the-air attacker is left facing the symmetric layer alone. That fallback is only as strong as the symmetric primitives, and Grover's algorithm halves a symmetric key's effective strength: AES-128 would be reduced to roughly 64-bit post-quantum strength, while AES-256 remains far out of reach. Choosing AES-256 preserves the symmetric fallback at the cost of extra cycles and code size on constrained devices.
 
 ### Stable Keys over Ratcheting
 
-UMSH uses stable pairwise keys rather than a ratcheting protocol. Ratcheting provides forward secrecy per-message but requires synchronized state between sender and receiver. On a lossy, high-latency mesh where packets are routinely dropped, duplicated, or delivered out of order, ratchet state can desynchronize — potentially requiring expensive resynchronization exchanges over a slow radio link. UMSH's stable keys combined with per-packet counter and salt inputs provide per-packet IV uniqueness without requiring synchronized state. Optional [PFS sessions](security.md#perfect-forward-secrecy-sessions) provide forward secrecy when needed, without imposing ratcheting's fragility on all traffic. See the [FAQ](faq.md#why-doesnt-umsh-use-a-ratcheting-protocol-for-forward-secrecy).
+UMSH uses stable pairwise keys rather than a ratcheting protocol. Ratcheting provides forward secrecy per-message but requires synchronized state between sender and receiver. On a lossy, high-latency mesh where packets are routinely dropped, duplicated, or delivered out of order, ratchet state can desynchronize — potentially requiring expensive resynchronization exchanges over a slow radio link. UMSH's stable keys combined with per-packet counter and salt inputs provide per-packet IV uniqueness without requiring synchronized state. Optional [PFS sessions](security.md#perfect-forward-secrecy-sessions) provide forward secrecy when needed, without imposing ratcheting's fragility on all traffic. See the [FAQ](faq.md#why-does-umsh-use-stable-pairwise-keys-instead-of-a-ratcheting-scheme-like-the-signal-protocol).
 
 ### Single Keypair for Signing and Key Agreement
 

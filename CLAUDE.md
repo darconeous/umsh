@@ -4,7 +4,7 @@ Experimental, LoRa-oriented mesh protocol with strong cryptography, strict layer
 separation, and tight bandwidth discipline. Inspired by MeshCore but redesigned:
 endpoints are identified by Ed25519 public keys, multicast uses shared symmetric
 channel keys, and the MAC layer is timestamp-free (monotonic frame counters for
-replay protection) with AES-SIV-style nonce-misuse-resistant encryption. The repo
+replay protection) with AES-SIV (RFC 5297) nonce-misuse-resistant encryption. The repo
 holds the protocol **spec**, a Rust **reference implementation**, embedded
 **firmware** for several LoRa boards, an **iOS app**, and a **Wireshark dissector**.
 

@@ -67,11 +67,11 @@ UMSH uses composable CoAP-style options for routing metadata (source routes, tra
 
 | Aspect | UMSH | Reticulum |
 |---|---|---|
-| Encryption | AES-128-CTR (SIV-style: MIC used as CTR IV) | AES-256-CBC with PKCS7 padding ([`Token.py:91`](https://github.com/markqvist/Reticulum/blob/1.1.4/RNS/Cryptography/Token.py#L91)); AES-128 support removed in v1.0.0 |
-| Authentication | AES-CMAC (16-byte MIC) | HMAC-SHA256 (32-byte tag, [`Token.py:50`](https://github.com/markqvist/Reticulum/blob/1.1.4/RNS/Cryptography/Token.py#L50), `TOKEN_OVERHEAD = 48`) |
+| Encryption | AES-256-CTR (AES-SIV, RFC 5297) | AES-256-CBC with PKCS7 padding ([`Token.py:91`](https://github.com/markqvist/Reticulum/blob/1.1.4/RNS/Cryptography/Token.py#L91)); AES-128 support removed in v1.0.0 |
+| Authentication | S2V (AES-CMAC), 4/8/12/16-byte MIC | HMAC-SHA256 (32-byte tag, [`Token.py:50`](https://github.com/markqvist/Reticulum/blob/1.1.4/RNS/Cryptography/Token.py#L50), `TOKEN_OVERHEAD = 48`) |
 | Key exchange | X25519 ECDH | X25519 ECDH ([`Identity.py:581`](https://github.com/markqvist/Reticulum/blob/1.1.4/RNS/Identity.py#L581)) |
 | Key derivation | HKDF-SHA256, domain-separated (K\_enc, K\_mic) | HKDF-SHA256, 64-byte output split into HMAC key + AES key ([`Identity.py:86`](https://github.com/markqvist/Reticulum/blob/1.1.4/RNS/Identity.py#L86), `DERIVED_KEY_LENGTH = 512//8`) |
-| Nonce handling | SIV construction (MIC as CTR IV) | Random 16-byte IV per packet ([`Token.py:89`](https://github.com/markqvist/Reticulum/blob/1.1.4/RNS/Cryptography/Token.py#L89), `os.urandom(16)`) |
+| Nonce handling | SIV construction (CTR IV derived from the MIC) | Random 16-byte IV per packet ([`Token.py:89`](https://github.com/markqvist/Reticulum/blob/1.1.4/RNS/Cryptography/Token.py#L89), `os.urandom(16)`) |
 | Replay protection | 4-byte monotonic frame counter | Duplicate packet hash detection ([`Transport.py:59`](https://github.com/markqvist/Reticulum/blob/1.1.4/RNS/Transport.py#L59), `packet_hashlist`) |
 | Per-packet overhead (crypto) | 5–7 bytes (SECINFO) + 16 bytes (MIC) = 21–23 bytes | 16 bytes (IV) + 32 bytes (HMAC) = 48 bytes minimum (LINK); +32 bytes ephemeral pubkey for SINGLE |
 | Forward secrecy | Optional PFS sessions via MAC commands (per-session ephemeral keys) | Per-packet ephemeral key for SINGLE ([`Identity.py:574`](https://github.com/markqvist/Reticulum/blob/1.1.4/RNS/Identity.py#L574)); optional ratchets for LINK (default min 30 min rotation, [`Destination.py:90`](https://github.com/markqvist/Reticulum/blob/1.1.4/RNS/Destination.py#L90), up to 512 ratchet keys stored per destination, 30-day expiry) |
@@ -79,11 +79,11 @@ UMSH uses composable CoAP-style options for routing metadata (source routes, tra
 
 ### Encryption Mode
 
-UMSH uses an AES-SIV-inspired construction where the MIC doubles as the CTR IV, providing nonce-misuse resistance. Reticulum uses AES-256-CBC with a random 16-byte IV. Both are sound constructions — the primary difference in practice is overhead: CBC requires transmitting a 16-byte IV and adds 1–16 bytes of PKCS7 padding, while UMSH's SIV construction derives the IV from the MIC (which is already transmitted) and uses CTR mode which requires no padding.
+UMSH uses AES-SIV (RFC 5297), in which the synthetic IV serves as both the MIC and the source of the CTR IV, providing nonce-misuse resistance. Reticulum uses AES-256-CBC with a random 16-byte IV. Both are sound constructions — the primary difference in practice is overhead: CBC requires transmitting a 16-byte IV and adds 1–16 bytes of PKCS7 padding, while UMSH's SIV construction derives the IV from the MIC (which is already transmitted) and uses CTR mode which requires no padding.
 
 ### Authentication and Integrity
 
-UMSH's AES-CMAC MIC is configurable at 4, 8, 12, or 16 bytes (see [MIC Size Selection Guidance](security.md#mic-size-selection-guidance)), providing 32-bit to 128-bit integrity protection. Reticulum's 32-byte HMAC-SHA256 tag provides 256-bit integrity. Both are sound choices; UMSH's configurable size allows deployments to trade integrity margin for payload capacity within the constrained LoRa frame budget.
+UMSH's S2V MIC is configurable at 4, 8, 12, or 16 bytes (see [MIC Size Selection Guidance](security.md#mic-size-selection-guidance)), providing 32-bit to 128-bit integrity protection. Reticulum's 32-byte HMAC-SHA256 tag provides 256-bit integrity. Both are sound choices; UMSH's configurable size allows deployments to trade integrity margin for payload capacity within the constrained LoRa frame budget.
 
 ### Key Management
 
@@ -184,7 +184,7 @@ Reticulum v1.1.0 also introduced a distributed blackhole list: specific identiti
 | Channel key size | 32 bytes | 32 bytes (AES-256) |
 | Channel identifier | 2-byte derived hint | 16-byte destination hash |
 | Multi-hop multicast | Yes (flood with flood hop count) | No (single-hop broadcast only) |
-| Group message auth | Channel-key-based CMAC (16-byte MIC) | Channel-key-based HMAC-SHA256 (32-byte tag) |
+| Group message auth | Channel-key-based S2V (16-byte MIC) | Channel-key-based HMAC-SHA256 (32-byte tag) |
 | Source privacy | Source encrypted when encryption enabled | No source address to conceal |
 | Named channels | Yes (key derived from name) | Not defined |
 
@@ -267,7 +267,7 @@ UMSH also requires per-node state — own keypair, configured channel keys, per-
 
 ### False-Positive Filtering
 
-Reticulum's 16-byte (128-bit) destination addresses have an essentially zero collision probability — a node receiving a packet addressed to someone else will never mistake it for its own. There is no wasted cryptographic work from address false positives. UMSH's 3-byte destination hints have a ~1-in-16,777,216 false-positive rate; when a collision occurs, the node must attempt full packet verification before discarding it. Pairwise keys are cached after first contact, so no ECDH is needed for known senders — but verification still requires decrypting the payload with AES-CTR (using the transmitted MIC as the CTR IV) and then computing CMAC over the decrypted plaintext to confirm the MIC matches. ECDH and HKDF would additionally be required for a false positive from an unknown sender transmitting with a full 32-byte source key (S=1), which is rare in normal operation. In practice, on a LoRa network with modest traffic, spurious collisions are rare enough that this cost is negligible.
+Reticulum's 16-byte (128-bit) destination addresses have an essentially zero collision probability — a node receiving a packet addressed to someone else will never mistake it for its own. There is no wasted cryptographic work from address false positives. UMSH's 3-byte destination hints have a ~1-in-16,777,216 false-positive rate; when a collision occurs, the node must attempt full packet verification before discarding it. Pairwise keys are cached after first contact, so no ECDH is needed for known senders — but verification still requires decrypting the payload with AES-CTR (using a CTR IV derived from the transmitted MIC) and then computing S2V over the decrypted plaintext to confirm the MIC matches. ECDH and HKDF would additionally be required for a false positive from an unknown sender transmitting with a full 32-byte source key (S=1), which is rare in normal operation. In practice, on a LoRa network with modest traffic, spurious collisions are rare enough that this cost is negligible.
 
 ### Packet Length and Airtime
 

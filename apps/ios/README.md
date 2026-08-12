@@ -56,8 +56,8 @@ build for external Beta App Review.
 
 `ITSAppUsesNonExemptEncryption` is declared `false` in `Info.plist`, which stops
 App Store Connect asking the encryption questions on every upload. UMSH
-implements its own AES-128/AES-CMAC/HKDF/Ed25519 rather than calling CryptoKit,
-but these are all published standard algorithms (FIPS 197, RFC 4493, RFC 5869,
+implements its own AES-SIV/HKDF/Ed25519 rather than calling CryptoKit,
+but these are all published standard algorithms (FIPS 197, RFC 5297, RFC 5869,
 RFC 8032) — not proprietary ones. Apple requires no US documentation for that
 case, so the key stays `false` regardless of which territories are enabled.
 

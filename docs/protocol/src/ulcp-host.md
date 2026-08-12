@@ -211,7 +211,7 @@ channels; see [Provisioning Security](ulcp-core.md#provisioning-security).
 * Has Item Length Prefix: No
 * Asynchronous Updates: No
 * Required: `CAP_HOST_KEYS`
-* Item Form: Structure, 64 octets
+* Item Form: Structure, 96 octets
 * Digest Form: 32 octets (the peer's public key)
 * Remove Selector: the 32-octet peer public key
 * Post-Reset Value: Empty
@@ -223,7 +223,7 @@ peers of the host identity. The item form is:
 +---------------------+-----------+-----------+
 | PEER_PUBLIC_KEY     |   K_ENC   |   K_MIC   |
 +---------------------+-----------+-----------+
-        32 B              16 B        16 B
+        32 B              32 B        32 B
 ~~~
 Figure: Peer key entry item form
 

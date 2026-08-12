@@ -48,8 +48,8 @@ Meshtastic encodes application payloads in the schema-based, extensible protobuf
 
 | Aspect | UMSH | Meshtastic (channel) | Meshtastic (eligible unicast PKC) |
 |---|---|---|---|
-| Encryption | AES-128-CTR (SIV-style) | AES-128-CTR or AES-256-CTR, selected by effective PSK length; the default effective key is 16 bytes | AES-CCM |
-| Authentication | AES-CMAC (4/8/12/16-byte MIC) | **None** | 8-byte CCM authentication tag |
+| Encryption | AES-256-CTR (AES-SIV, RFC 5297) | AES-128-CTR or AES-256-CTR, selected by effective PSK length; the default effective key is 16 bytes | AES-CCM |
+| Authentication | S2V (AES-CMAC), 4/8/12/16-byte MIC | **None** | 8-byte CCM authentication tag |
 | Key exchange | X25519 ECDH | Pre-shared key | Curve25519 ECDH |
 | Key derivation | HKDF-SHA256 with domain separation | Effective PSK used directly | SHA-256 of ECDH shared secret |
 | Nonce construction | Frame counter + optional salt in SECINFO | Packet ID + sender node number | Packet ID + 4-byte random contribution + sender node number |
@@ -63,7 +63,7 @@ The most significant cryptographic difference is that Meshtastic's channel-encry
 - Ciphertext can be modified in transit without a cryptographic integrity check. When an attacker knows or can predict the corresponding plaintext, CTR bit flipping can be targeted without knowing the key.
 - Any node with the channel key can forge packets claiming to be from another node, since channel mode has no per-node authentication and the sender's node number in the cleartext header is not cryptographically bound to the ciphertext.
 
-UMSH authenticates every secured packet with an AES-CMAC MIC (4–16 bytes; see [MIC Size Selection Guidance](security.md#mic-size-selection-guidance)). Even with a 4-byte MIC, UMSH provides 2^-32 forgery resistance, which is qualitatively different from the absence of an integrity check on Meshtastic channel traffic. A UMSH channel packet cannot be modified in transit or injected by a non-member without detection.
+UMSH authenticates every secured packet with an S2V MIC (4–16 bytes; see [MIC Size Selection Guidance](security.md#mic-size-selection-guidance)). Even with a 4-byte MIC, UMSH provides 2^-32 forgery resistance, which is qualitatively different from the absence of an integrity check on Meshtastic channel traffic. A UMSH channel packet cannot be modified in transit or injected by a non-member without detection.
 
 The second bullet above, however, describes a property UMSH multicast shares, and it is not a difference between the two protocols. A shared symmetric key proves channel membership but cannot distinguish one member from another, so a UMSH channel member can likewise claim another member's source address; see [Multicast Sender Authentication](limitations.md#multicast-sender-authentication). What UMSH provides on channel traffic is integrity and membership authentication against outsiders, not per-sender attribution within the channel. Attribution to a specific sender requires unicast, where pairwise keys bind the source.
 
@@ -71,7 +71,7 @@ The second bullet above, however, describes a property UMSH multicast shares, an
 
 Meshtastic uses Curve25519 ECDH with AES-CCM for eligible unicast traffic, providing confidentiality and authentication against the public key associated with the claimed sender node number. It is not limited to text direct messages. The firmware considers PKC automatically for locally originated, non-broadcast application traffic when keys are available, except for position, node info, routing, traceroute, amateur operation, and certain serial/GPIO cases. Broadcast traffic such as position, telemetry, and channel text remains in channel mode and therefore unauthenticated.
 
-UMSH applies the same CMAC-based construction to secured unicast and multicast, so there is no secured traffic class left unauthenticated and no separate authenticated mode to opt into. [Broadcast packets](packet-types.md#broadcast-packet) carry no security information and make no claim of authenticity.
+UMSH applies the same S2V-based construction to secured unicast and multicast, so there is no secured traffic class left unauthenticated and no separate authenticated mode to opt into. [Broadcast packets](packet-types.md#broadcast-packet) carry no security information and make no claim of authenticity.
 
 ### Key Derivation
 
@@ -127,7 +127,7 @@ UMSH's compact hints reveal less information directly, and blind unicast and enc
 | Channel identifier | 2-byte derived hint | 1-byte XOR of channel-name bytes and effective key bytes |
 | Channels per node | Unlimited (implementation-defined) | Up to 8 |
 | Multi-hop multicast | Yes (flood with flood hop count) | Yes (managed flood with hop limit) |
-| Group message auth | Channel-key-based CMAC | None (AES-CTR only) |
+| Group message auth | Channel-key-based S2V MIC | None (AES-CTR only) |
 | Source privacy | Source encrypted when encryption enabled | No (source in cleartext header) |
 | Named channels | Yes (key derived from name) | Yes (name + PSK configured together) |
 

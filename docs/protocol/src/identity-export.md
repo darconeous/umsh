@@ -1,6 +1,6 @@
 # Identity Export Format
 
-> ![NOTE]
+> [!NOTE]
 > This section is an early work in progress and this format may change significantly.
 
 This appendix defines a portable, passphrase-protected artifact for backing
@@ -44,8 +44,8 @@ All multi-byte integers are big-endian, as elsewhere in UMSH.
 | 12 | 4 | Argon2id time cost *t* | passes |
 | 16 | 1 | Argon2id parallelism *p* | lanes |
 | 17 | 16 | KDF salt | random per export |
-| 33 | 1 | Cipher identifier | `0x01` = custom UMSH SIV-inspired construction |
-| 34 | 16 | MIC | full AES-CMAC tag |
+| 33 | 1 | Cipher identifier | `0x01` = AES-SIV (RFC 5297) with AES-256 |
+| 34 | 16 | MIC | full 16-byte S2V output `V` |
 | 50 | — | Ciphertext | encrypted payload |
 
 Bytes 0–33 (everything before the MIC) form the **envelope header**. The
@@ -71,11 +71,11 @@ prk  = Argon2id(passphrase, kdf_salt, m, t, p, taglen = 32)
 
 ikm  = prk
 salt = "UMSH-IDEXPORT-SALT"
-info = "UMSH-IDEXPORT-V1"
-okm  = HKDF-SHA256(ikm, salt, info, 32)
+info = "UMSH-IDEXPORT-V2"
+okm  = HKDF-SHA256(ikm, salt, info, 64)
 
-K_enc = okm[0..15]
-K_mic = okm[16..31]
+K_mic = okm[0..32]
+K_enc = okm[32..64]
 ```
 
 Exporters **MUST** use at least *m* = 19456 KiB, *t* = 2, *p* = 1, and
@@ -87,18 +87,22 @@ attacks through crafted headers.
 
 ## Encryption and Authentication
 
-The payload is protected with the same SIV-style construction used for
-packets (see [Encrypted Packets](security.md#encrypted-packets)), with the
-full 16-byte MIC and the envelope header as associated data:
+The payload is protected with the same construction used for packets (see
+[Encrypted Packets](security.md#encrypted-packets)), with the full 16-byte
+MIC and the envelope header as associated data:
 
-1. Compute the full 16-byte AES-CMAC over the envelope header followed by
-   the payload plaintext, using `K_mic`.
-2. Use the MIC directly as the 16-byte CTR IV. This resembles AES-SIV but does
-   not use RFC 5297 S2V; see the packet construction's
-   [RFC 5297 warning](security.md#relationship-to-rfc-5297-aes-siv).
-3. Encrypt the payload using **AES-128-CTR** with `K_enc` and that IV.
+1. Compute the full 16-byte synthetic IV `V = S2V(K_mic, S1, S2)` per
+   RFC 5297 §2.4, where `S1` is the envelope header and `S2` is the payload
+   plaintext. `V` is stored as the MIC.
+2. Form the CTR IV by clearing the top bit of bytes 8 and 12 of `V`
+   (RFC 5297 §2.6).
+3. Encrypt the payload using **AES-256-CTR** with `K_enc` and that IV.
 
-To import, derive the keys, decrypt the ciphertext, recompute the CMAC over
+Because the MIC is always full-length here, this is exactly
+AEAD_AES_SIV_CMAC_512 (RFC 5297) with key `K = K_mic || K_enc` and the
+envelope header as the single associated-data component.
+
+To import, derive the keys, decrypt the ciphertext, recompute `V` over
 the header and recovered plaintext, and compare it to the stored MIC in
 constant time. On mismatch the importer **MUST** report a single generic
 failure: a wrong passphrase and a corrupted or forged artifact are
