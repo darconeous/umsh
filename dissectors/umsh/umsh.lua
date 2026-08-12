@@ -63,7 +63,7 @@ f.fhops_acc    = ProtoField.uint8 ("umsh.fhops.acc",   "Accumulated",         ba
 
 -- Options (variable)
 f.options          = ProtoField.bytes  ("umsh.options",           "Options")
-f.opt_region_code  = ProtoField.bytes  ("umsh.opt.region_code",   "Region Code")
+f.opt_region_code  = ProtoField.string ("umsh.opt.region_code",   "Region Code")
 -- Route options carry their rendered path, not their bytes: the byte range
 -- an option item covers starts at the delta-length header, so the hex form
 -- is off by a byte from the hints a reader is looking for.
@@ -317,13 +317,31 @@ end
 -- next repeater first, so it moves left to right.
 local function route_path(val, arrow)
   local hops = #val // 2
-  if hops == 0 then return "(empty)" end
+  -- An empty route is a normal state, not a finding: a trace that no
+  -- repeater has touched yet, or a source route the last named repeater
+  -- emptied. A dash says so without competing with the rows that carry hops.
+  if hops == 0 then return "—" end
   local out = {}
   for i = 1, hops do
     local hop = val:sub(i * 2 - 1, i * 2)
     out[i] = base58.router_hint(hop) or bytes_to_hex(hop)
   end
   return table.concat(out, arrow)
+end
+
+-- A region code is two bytes of ARNCE/HAM-16. Anything that decodes to three
+-- letters is an IATA code and is shown as one; everything else is derived
+-- from a hash of a region name and has no reading beyond its value, so it is
+-- shown as hex. The two spaces cannot collide: the spec transforms any hash
+-- prefix that would have decoded to three letters out of the letter range,
+-- which is what makes the three-letter test sufficient on its own.
+local function region_label(val)
+  if #val == 0 then return "(no value)" end
+  if #val == 2 then
+    local iata = options.decode_arnce(val)
+    if iata:match("^%u%u%u$") then return iata end
+  end
+  return "0x" .. bytes_to_hex(val)
 end
 
 -- ──────────────────────────────────────────────────────────────────────────
@@ -536,9 +554,9 @@ local function parse_options(buf, start_off, bound, tree, static_opts_out, pinfo
       seen[num] = (seen[num] or 0) + 1
 
       if num == options.OPT_REGION_CODE then
-        local cs   = options.decode_arnce(val)
+        local cs   = region_label(val)
         local tvbr = (val_len > 0) and buf(val_off, val_len) or buf(opt_off, consumed)
-        opts_tree:add(f.opt_region_code, tvbr):set_text("Region Code: " .. cs)
+        opts_tree:add(f.opt_region_code, tvbr, cs):set_text("Region Code: " .. cs)
 
       elseif num == options.OPT_TRACE_ROUTE or num == options.OPT_SOURCE_ROUTE then
         local is_trace = (num == options.OPT_TRACE_ROUTE)
