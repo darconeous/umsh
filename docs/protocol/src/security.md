@@ -284,7 +284,7 @@ A design goal is to reduce the damage caused by nonce reuse. Deriving the CTR IV
 > while only adding MIC truncation and the associated CTR IV Construction. However,
 > it seems that original goal was somehow lost in translation and what was actually documented
 > and implemented was *close to* but *not quite* AES-SIV. While the result is not cryptographically
-> catastrophic, it is very embarassing and will be remediated.
+> catastrophic, it is very embarrassing and will be remediated.
 > 
 > The resulting construction was **inspired by AES-SIV, not an implementation of RFC 5297 AES-SIV**.
 > RFC 5297 computes the synthetic IV with S2V, which treats each associated-data string and

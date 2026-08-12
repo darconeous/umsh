@@ -19,9 +19,9 @@ hero_eyebrow = "Open mesh networking over LoRa"
 
 # Both halves are unbreakable, so the only place the tagline can wrap is
 # between them: either one line, or "done right." on a line of its own.
-tagline = '<span class="tagline__part">Off-grid text chat</span> <span class="tagline__part">done right.</span>'
+tagline = '<span class="tagline__part">Off-grid text chat</span>'
 lede = """
-UMSH is a new mesh networking protocol enabling long-range text messaging \
+UMSH is an experimental mesh networking protocol for long-range text messaging \
 without relying on cellular connectivity or internet access—designed from the ground up \
 for strong security and ease of use."""
 
