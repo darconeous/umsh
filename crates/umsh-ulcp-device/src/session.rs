@@ -2679,9 +2679,19 @@ impl<A: AesProvider, S: Sha256Provider, const TX: usize> Session<A, S, TX> {
             ReplayVerdict::Replay => {
                 // Same logical packet (Route Retry forms included: same
                 // MIC and counter): coalesce, and re-ack only within
-                // the idempotent duplicate-acknowledgement window.
+                // the idempotent duplicate-acknowledgement window — and
+                // at most once per holdoff, so flood copies of one
+                // transmission share a single ack. Four frame-times
+                // stands in for the MAC's forwarding-confirmation
+                // window: frame, contention, guard, frame.
+                let holdoff_ms = 4 * u64::from(lora_airtime_ms(
+                    self.device.settings.sf,
+                    self.device.settings.bw_hz,
+                    self.device.settings.cr_denom,
+                    data.len(),
+                ));
                 let ack = window
-                    .is_acknowledgeable_duplicate(counter, mic, now_ms)
+                    .note_acknowledgeable_duplicate(counter, mic, now_ms, holdoff_ms)
                     .then_some(())
                     .and(plan);
                 SecureRx::Duplicate { ack, identity }
@@ -8170,8 +8180,9 @@ mod tests {
             Some(expected_ack_trailer(&first, &keys)),
         );
 
-        // Exact retransmission: coalesced (no new entry) and re-acked.
-        let effect = rx_effect(&mut session, &first, 10);
+        // Exact retransmission, past the re-ack holdoff: coalesced (no
+        // new entry) and re-acked.
+        let effect = rx_effect(&mut session, &first, 10_000);
         expect_ack_transmit(
             &mut session,
             effect,
@@ -8180,15 +8191,15 @@ mod tests {
 
         // Advance the baseline well past the re-ack window.
         for counter in 6..=14 {
-            let effect = rx_effect(&mut session, &sealed_unar(counter, &keys, false), 20);
+            let effect = rx_effect(&mut session, &sealed_unar(counter, &keys, false), 20_000);
             expect_ack_transmit(&mut session, effect, None);
         }
         // counter 5 is now 9 behind: MUST NOT be acknowledged.
-        assert!(rx_effect(&mut session, &first, 30).is_none());
+        assert!(rx_effect(&mut session, &first, 30_000).is_none());
 
         // The re-ack did not advance the baseline: the next counter is
         // still accepted normally.
-        let effect = rx_effect(&mut session, &sealed_unar(15, &keys, false), 40);
+        let effect = rx_effect(&mut session, &sealed_unar(15, &keys, false), 40_000);
         expect_ack_transmit(&mut session, effect, None);
 
         session.attach(true);
@@ -8746,10 +8757,11 @@ mod tests {
         assert_eq!(queue_count(&mut session), 1);
 
         // The replay baseline survived too: replaying the pre-restore
-        // frame is still an identified duplicate (coalesced, re-acked),
-        // not a first-contact acceptance.
+        // frame (past the re-ack holdoff) is still an identified
+        // duplicate (coalesced, re-acked), not a first-contact
+        // acceptance.
         session.detach();
-        let effect = rx_effect(&mut session, &first, 10);
+        let effect = rx_effect(&mut session, &first, 10_000);
         expect_ack_transmit(&mut session, effect, None);
         session.attach(true);
         assert_eq!(queue_count(&mut session), 1);
@@ -8842,7 +8854,7 @@ mod tests {
         assert_eq!(get(&mut session, prop::HOST_PEER_KEYS).len(), 64);
 
         session.detach();
-        let effect = rx_effect(&mut session, &frame, 10);
+        let effect = rx_effect(&mut session, &frame, 10_000);
         expect_ack_transmit(&mut session, effect, None);
         session.attach(true);
         assert_eq!(
@@ -8886,15 +8898,16 @@ mod tests {
             panic!("autonomous ack is silent")
         });
 
-        // The sender retransmits; the duplicate re-ack completes, which
-        // marks the original (still queued, still unacked) entry.
-        let effect = rx_effect(&mut session, &frame, 10);
+        // The sender retransmits past the re-ack holdoff; the duplicate
+        // re-ack completes, which marks the original (still queued,
+        // still unacked) entry.
+        let effect = rx_effect(&mut session, &frame, 10_000);
         assert_eq!(
             effect,
             Some(Effect::StartTransmit),
             "re-ack after failed TX"
         );
-        session.on_tx_result(TxOutcome::Sent, 10, &mut |_: &[u8]| {
+        session.on_tx_result(TxOutcome::Sent, 10_000, &mut |_: &[u8]| {
             panic!("autonomous ack is silent")
         });
 
@@ -9000,10 +9013,10 @@ mod tests {
 
         // A duplicate re-ack routes from the retransmission itself: the
         // same logical packet (counter 25, the current baseline)
-        // arriving with a different accumulated count gets a return
-        // flood sized for the path it actually took.
+        // arriving past the holdoff with a different accumulated count
+        // gets a return flood sized for the path it actually took.
         let retransmission = sealed_flooded_unar(25, &keys, 7);
-        let effect = rx_effect(&mut session, &retransmission, 5);
+        let effect = rx_effect(&mut session, &retransmission, 10_000);
         assert_eq!(effect, Some(Effect::StartTransmit));
         let header = PacketHeader::parse(session.tx_data()).unwrap();
         assert_eq!(

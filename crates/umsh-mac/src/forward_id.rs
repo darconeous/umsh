@@ -30,9 +30,15 @@ use crate::cache::DupCacheKey;
 /// parse.
 pub fn forwarding_dup_key_parsed(header: &PacketHeader, frame: &[u8]) -> Option<DupCacheKey> {
     if !header.packet_type().is_secure() {
-        return Some(DupCacheKey::Hash32(normalized_routable_hash32(
-            header, frame,
-        )));
+        let hash = normalized_routable_hash32(header, frame);
+        // Acks carry the same hash under their own variant so the cache
+        // can age them out fast enough for deliberate re-acknowledgements
+        // (spec §Duplicate Acknowledgement Window) to be carried onward.
+        return Some(if header.packet_type() == PacketType::MacAck {
+            DupCacheKey::AckHash32(hash)
+        } else {
+            DupCacheKey::Hash32(hash)
+        });
     }
     let options = ParsedOptions::extract(frame, header.options_range.clone()).ok()?;
     let mic = frame.get(header.mic_range.clone())?;

@@ -43,6 +43,19 @@ pub struct ReplayWindow {
     pub backward_bitmap: u8,
     /// Accepted MICs retained for duplicate late-arrival checks.
     pub recent_mics: Deque<RecentMic, RECENT_MIC_CAPACITY>,
+    /// Counter of the last duplicate re-acknowledged, paired with
+    /// [`last_dup_ack_ms`](Self::last_dup_ack_ms).
+    ///
+    /// One pair for the whole window, not a stamp per retained MIC:
+    /// duplicate re-acks pace one packet's copies, and windows are
+    /// replicated widely enough (per channel, per tracked sender) that
+    /// per-entry state is real RAM on the embedded targets — spent, for
+    /// channel traffic, on packets that are never acknowledged at all.
+    pub last_dup_ack_counter: u32,
+    /// When the duplicate carrying
+    /// [`last_dup_ack_counter`](Self::last_dup_ack_counter) was last
+    /// re-acknowledged, in milliseconds.
+    pub last_dup_ack_ms: u64,
 }
 
 /// Result of checking a packet against a replay window.
@@ -72,6 +85,8 @@ impl ReplayWindow {
             last_accepted_time_ms: 0,
             backward_bitmap: 0,
             recent_mics: Deque::new(),
+            last_dup_ack_counter: 0,
+            last_dup_ack_ms: 0,
         }
     }
 
@@ -109,18 +124,59 @@ impl ReplayWindow {
     }
 
     /// Return whether this is an exact, recently accepted packet eligible for
-    /// an idempotent duplicate acknowledgement.
+    /// an idempotent duplicate acknowledgement, and record the
+    /// acknowledgement when it is.
     ///
     /// This deliberately requires both the bounded counter distance and a
     /// matching retained MIC. Merely reusing an occupied counter does not prove
     /// that the receiver previously accepted this logical packet.
-    pub fn is_acknowledgeable_duplicate(&self, counter: u32, mic: &[u8], now_ms: u64) -> bool {
+    ///
+    /// A duplicate is re-acknowledged at most once per `holdoff_ms`. The
+    /// duplicate-acknowledgement window exists so a sender whose ack was
+    /// lost can recover by retransmitting — but most duplicates are not
+    /// retransmissions, they are flood copies of a single transmission
+    /// arriving over different paths, and each already-sent ack covers
+    /// all of them. A sender cannot retransmit before its confirmation
+    /// window lapses, so a duplicate arriving inside that window proves
+    /// nothing was lost yet and earns no fresh ack. Callers pass their
+    /// forwarding-confirmation window (or the closest equivalent their
+    /// radio timing offers) as `holdoff_ms`.
+    ///
+    /// Two clocks pace this. Copies of the *accepted* transmission are
+    /// caught by the entry's acceptance time — the acceptance already
+    /// queued their ack. Copies of a *retransmission* are caught by the
+    /// re-ack stamp the first copy leaves behind. A `true` return
+    /// stamps: the caller is expected to queue the acknowledgement it
+    /// just asked about.
+    pub fn note_acknowledgeable_duplicate(
+        &mut self,
+        counter: u32,
+        mic: &[u8],
+        now_ms: u64,
+        holdoff_ms: u64,
+    ) -> bool {
         if self.last_accepted_time_ms == 0 && self.recent_mics.is_empty() {
             return false;
         }
 
         let ack_distance = self.last_accepted.wrapping_sub(counter);
-        ack_distance <= REPLAY_BACKTRACK_SLOTS && self.has_matching_recent_mic(counter, mic, now_ms)
+        if ack_distance > REPLAY_BACKTRACK_SLOTS {
+            return false;
+        }
+        let Some(entry) = self.find_recent_mic(counter, mic, now_ms) else {
+            return false;
+        };
+        if now_ms.saturating_sub(entry.accepted_ms) < holdoff_ms {
+            return false;
+        }
+        if self.last_dup_ack_counter == counter
+            && now_ms.saturating_sub(self.last_dup_ack_ms) < holdoff_ms
+        {
+            return false;
+        }
+        self.last_dup_ack_counter = counter;
+        self.last_dup_ack_ms = now_ms;
+        true
     }
 
     /// Record an accepted `counter` and `mic` at `now_ms`.
@@ -172,6 +228,8 @@ impl ReplayWindow {
         self.last_accepted_time_ms = now_ms;
         self.backward_bitmap = 0;
         self.recent_mics.clear();
+        self.last_dup_ack_counter = 0;
+        self.last_dup_ack_ms = 0;
     }
 
     fn has_matching_recent_mic(&self, counter: u32, mic: &[u8], now_ms: u64) -> bool {
@@ -180,6 +238,17 @@ impl ReplayWindow {
         };
 
         self.recent_mics.iter().any(|entry| {
+            entry.counter == counter
+                && now_ms.saturating_sub(entry.accepted_ms) <= REPLAY_STALE_MS
+                && entry.mic_len == mic_len
+                && entry.mic[..mic_len as usize] == normalized_mic[..mic_len as usize]
+        })
+    }
+
+    fn find_recent_mic(&self, counter: u32, mic: &[u8], now_ms: u64) -> Option<&RecentMic> {
+        let (normalized_mic, mic_len) = normalize_mic(mic)?;
+
+        self.recent_mics.iter().find(|entry| {
             entry.counter == counter
                 && now_ms.saturating_sub(entry.accepted_ms) <= REPLAY_STALE_MS
                 && entry.mic_len == mic_len

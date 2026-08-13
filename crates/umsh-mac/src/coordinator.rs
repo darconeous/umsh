@@ -1604,8 +1604,15 @@ impl<
     /// touch it and the trace would arrive as empty as it left. The sender
     /// reads the direct link off the ack's own shape instead — see
     /// [`Coordinator::learn_route_for_peer`].
+    ///
+    /// An ack that does ride through repeaters is tracked like any other
+    /// repeat-confirmed send: silence where the repeat should be means the
+    /// first hop never got it, and the retry ladder retransmits. The ladder
+    /// ends in a silent abandon — the sender's own data retries are the
+    /// backstop; this just spares them in the common case.
     pub fn queue_mac_ack_for_peer(
         &mut self,
+        from: LocalIdentityId,
         peer_id: PeerId,
         ack_trailer: [u8; 8],
         trace_route: bool,
@@ -1651,10 +1658,59 @@ impl<
         if frame.len() > self.radio.max_frame_size() {
             return Err(SendError::Build(BuildError::BufferTooSmall));
         }
-        self.tx_queue
-            .enqueue(TxPriority::ImmediateAck, frame, None, None)
-            .map_err(|_| SendError::QueueFull)?;
+        let tracked_receipt = if repeatable {
+            self.prepare_repeat_confirmed_ack(from, peer_id, frame)
+        } else {
+            None
+        };
+        if self
+            .tx_queue
+            .enqueue(
+                TxPriority::ImmediateAck,
+                frame,
+                tracked_receipt,
+                tracked_receipt.map(|_| from),
+            )
+            .is_err()
+        {
+            if let Some(receipt) = tracked_receipt {
+                let _ = self
+                    .identity_mut(from)
+                    .and_then(|slot| slot.remove_pending_ack(&receipt));
+            }
+            return Err(SendError::QueueFull);
+        }
         Ok(())
+    }
+
+    /// Track a routed MAC ack so silence — no repeat overheard — retries it.
+    ///
+    /// Returns `None`, leaving the ack fire-and-forget, whenever tracking
+    /// cannot help or cannot be afforded: an unknown peer, a full pending
+    /// table (an ack is not worth displacing a send anyone is waiting on),
+    /// or an identical ack already in flight — re-arming a second ladder
+    /// for the same trailer would just double the retransmissions.
+    fn prepare_repeat_confirmed_ack(
+        &mut self,
+        from: LocalIdentityId,
+        peer_id: PeerId,
+        frame: &[u8],
+    ) -> Option<SendReceipt> {
+        let peer = self.peer_registry.get(peer_id)?.public_key;
+        let confirm_key = Self::confirmation_key(frame);
+        let resend = ResendRecord::try_new(frame, None).ok()?;
+        let slot = self.identity_mut(from)?;
+        if confirm_key.is_some()
+            && slot.pending_acks().any(|(_, pending)| {
+                Self::confirmation_key(pending.resend.frame.as_slice()) == confirm_key
+            })
+        {
+            return None;
+        }
+        let receipt = slot.next_receipt();
+        slot.try_insert_pending_ack(receipt, PendingAck::repeat_only(peer, resend))
+            .ok()?;
+        Some(receipt)
     }
 
     /// Enqueues an immediate direct MAC ACK frame.
@@ -2636,7 +2692,7 @@ impl<
                 }
                 if header.ack_requested()
                     && self.should_emit_destination_ack(&buf[..frame_len], header)
-                    && self.is_acknowledgeable_unicast_duplicate(
+                    && self.note_acknowledgeable_unicast_duplicate(
                         local_id,
                         peer_id,
                         header,
@@ -2650,7 +2706,7 @@ impl<
                         &keys,
                     );
                     let trace_route = Self::frame_requests_trace_route(&buf[..frame_len], header);
-                    self.queue_mac_ack_for_peer(peer_id, ack_trailer, trace_route)
+                    self.queue_mac_ack_for_peer(local_id, peer_id, ack_trailer, trace_route)
                         .ok();
                     handled = true;
                     break;
@@ -2718,7 +2774,7 @@ impl<
                         &keys,
                     );
                     let trace_route = Self::frame_requests_trace_route(&buf[..frame_len], header);
-                    self.queue_mac_ack_for_peer(peer_id, ack_trailer, trace_route)
+                    self.queue_mac_ack_for_peer(local_id, peer_id, ack_trailer, trace_route)
                         .ok();
                 }
 
@@ -2919,7 +2975,7 @@ impl<
                         }
                         if header.ack_requested()
                             && self.should_emit_destination_ack(&buf[..frame_len], header)
-                            && self.is_acknowledgeable_unicast_duplicate(
+                            && self.note_acknowledgeable_unicast_duplicate(
                                 local_id,
                                 peer_id,
                                 header,
@@ -2934,8 +2990,13 @@ impl<
                             );
                             let trace_route =
                                 Self::frame_requests_trace_route(&buf[..frame_len], header);
-                            self.queue_mac_ack_for_peer(peer_id, ack_trailer, trace_route)
-                                .ok();
+                            self.queue_mac_ack_for_peer(
+                                local_id,
+                                peer_id,
+                                ack_trailer,
+                                trace_route,
+                            )
+                            .ok();
                             handled = true;
                             break;
                         }
@@ -2990,8 +3051,13 @@ impl<
                             );
                             let trace_route =
                                 Self::frame_requests_trace_route(&buf[..frame_len], header);
-                            self.queue_mac_ack_for_peer(peer_id, ack_trailer, trace_route)
-                                .ok();
+                            self.queue_mac_ack_for_peer(
+                                local_id,
+                                peer_id,
+                                ack_trailer,
+                                trace_route,
+                            )
+                            .ok();
                         }
 
                         if let Some(data) = Self::echo_request_data(payload) {
@@ -3884,8 +3950,14 @@ impl<
             .map(|state| state.replay_window.check(counter, mic, now_ms))
     }
 
-    fn is_acknowledgeable_unicast_duplicate(
-        &self,
+    /// Whether this duplicate has earned a fresh acknowledgement, recording
+    /// the acknowledgement when it has.
+    ///
+    /// The holdoff is one forwarding-confirmation window: flood copies of a
+    /// single transmission arrive within it, while a sender that lost its
+    /// ack cannot have retransmitted before it lapsed.
+    fn note_acknowledgeable_unicast_duplicate(
+        &mut self,
         local_id: LocalIdentityId,
         peer_id: PeerId,
         header: &PacketHeader,
@@ -3895,12 +3967,13 @@ impl<
             return false;
         };
         let now_ms = self.clock.now_ms();
-        self.identity(local_id)
-            .and_then(|slot| slot.peer_crypto().get(&peer_id))
+        let holdoff_ms = self.forward_confirm_timeout_ms();
+        self.identity_mut(local_id)
+            .and_then(|slot| slot.peer_crypto_mut().get_mut(&peer_id))
             .is_some_and(|state| {
                 state
                     .replay_window
-                    .is_acknowledgeable_duplicate(counter, mic, now_ms)
+                    .note_acknowledgeable_duplicate(counter, mic, now_ms, holdoff_ms)
             })
     }
 

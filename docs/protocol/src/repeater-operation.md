@@ -60,6 +60,8 @@ Cache entries MUST also age out. Capacity alone does not bound how long a key is
 
 An entry SHOULD be discarded once it is older than a **cache lifetime** measured from when the key was first inserted. One hour is a reasonable default: long enough that every retransmission of a single packet still collapses to one forward, short enough that a node re-announcing itself is heard again well within the time anyone would wait for it.
 
+MAC-ack entries are the exception: their lifetime SHOULD be on the order of tens of seconds — the scale of a sender's retry ladder — not an hour. An identical re-acknowledgement is the one duplicate a correct node emits deliberately (see the [duplicate acknowledgement window](security.md#duplicate-acknowledgement-window)), and it recovers a lost ack only if repeaters carry it; under a lifetime longer than the sender's recovery horizon, the first forward of an ack absorbs every later one and the recovery path dies at the first hop. A short lifetime still collapses the copies of any single exchange, which play out within a few confirmation windows.
+
 A repeat of a key already held MUST NOT extend that entry's lifetime. Refreshing the timestamp on each sighting would let a node repeating itself inside the window hold its own suppression open indefinitely, which is the behavior expiry exists to prevent.
 
 ### Cache Sizing
@@ -131,6 +133,7 @@ This applies to:
 - **Source-routed packets**: Each forwarding hop listens for the next hop — the node matching the next source-route hint — to retransmit.
 - **Flood originators**: The originating node listens for any node to retransmit.
 - **Flood repeaters**: Intermediate flood-forwarding nodes MUST NOT retry. Multiple nodes may forward the same flood packet, and a repeater has no designated next hop to listen for; retrying would increase congestion without improving reliability.
+- **Routed MAC acks**: An ack that carries a source route or flood budget is a routed send like any other; the destination that produced it listens for the first hop to carry it onward and retries on silence. Retrying the ack first is what spares the sender a full data retransmission when only the ack's first hop failed.
 
 Confirmation, and the retry ladder below, apply whether or not the packet requests an ACK. An ack-requested sender goes on to await the ACK once forwarding is confirmed; a sender that requested no ACK is finished the moment it hears the packet carried onward, and if the retry budget runs out without that, the send simply ends — there is no failure signal to wait for. A point-to-point packet with no flood budget and no source route travels straight to its destination, confirms nothing, and MUST be transmitted exactly once.
 

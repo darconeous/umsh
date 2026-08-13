@@ -108,6 +108,16 @@ companion radio and host MAC, it may instead pass the authenticated duplicate to
 the host, which is then responsible for suppressing duplicate application
 delivery.
 
+Eligibility is not obligation: re-acknowledgement SHOULD be paced. Flood
+routing delivers one transmission as several copies, and a copy of a
+transmission whose acknowledgement was already sent proves nothing was lost. A
+receiver SHOULD NOT acknowledge the same packet more than once per
+[forwarding-confirmation
+window](repeater-operation.md#forwarding-confirmation), measured from its most
+recent acknowledgement of that packet: copies arriving inside the window share
+the acknowledgement already sent, while a sender that lost its acknowledgement
+cannot retransmit before its own confirmation window has lapsed.
+
 #### Counter Persistence
 
 How a node persists and recovers its frame counter across reboots is implementation-specific. Possible strategies include writing the counter to non-volatile storage periodically or advancing the counter by a large margin on startup to avoid replaying previously used values.

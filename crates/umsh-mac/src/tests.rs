@@ -76,6 +76,21 @@ fn duplicate_cache_repeat_does_not_extend_the_window() {
     assert!(!cache.contains(&DupCacheKey::Hash32(1), DUP_CACHE_TTL_MS));
 }
 
+/// Ack keys age out on their own short clock, so a destination's
+/// deliberate re-acknowledgement can be forwarded again; a general key
+/// holding the same hash value is a different key on the long clock.
+#[test]
+fn duplicate_cache_ages_ack_keys_out_fast() {
+    let mut cache = DuplicateCache::<4>::new();
+    cache.insert(DupCacheKey::AckHash32(7), 1_000);
+    cache.insert(DupCacheKey::Hash32(7), 1_000);
+
+    let ack_expiry = 1_000 + crate::cache::ACK_DUP_CACHE_TTL_MS;
+    assert!(cache.contains(&DupCacheKey::AckHash32(7), ack_expiry - 1));
+    assert!(!cache.contains(&DupCacheKey::AckHash32(7), ack_expiry));
+    assert!(cache.contains(&DupCacheKey::Hash32(7), ack_expiry));
+}
+
 #[test]
 fn route_retry_changes_authenticated_duplicate_key_without_changing_mic() {
     let source = DummyIdentity::new([0x11; 32]);
@@ -371,11 +386,11 @@ fn duplicate_ack_window_requires_exact_recent_mic_within_eight_counters() {
         window.accept(counter, &[counter as u8; 8], counter as u64);
     }
 
-    assert!(window.is_acknowledgeable_duplicate(10, &original_mic, 19));
-    assert!(!window.is_acknowledgeable_duplicate(10, &[0x5A; 8], 19));
+    assert!(window.note_acknowledgeable_duplicate(10, &original_mic, 19, 0));
+    assert!(!window.note_acknowledgeable_duplicate(10, &[0x5A; 8], 19, 0));
 
     window.accept(19, &[19; 8], 20);
-    assert!(!window.is_acknowledgeable_duplicate(10, &original_mic, 21));
+    assert!(!window.note_acknowledgeable_duplicate(10, &original_mic, 21, 0));
 }
 
 #[test]
@@ -387,7 +402,31 @@ fn duplicate_ack_window_uses_modular_counter_distance() {
     // recent MIC for the packet immediately before the wrap.
     window.last_accepted = 1;
 
-    assert!(window.is_acknowledgeable_duplicate(u32::MAX, &mic, 2));
+    assert!(window.note_acknowledgeable_duplicate(u32::MAX, &mic, 2, 0));
+}
+
+/// One ack per transmission, not one per copy: flood duplicates inside
+/// the holdoff — of the accepted transmission or of a retransmission —
+/// are covered by the ack that transmission already earned.
+#[test]
+fn duplicate_ack_window_holdoff_paces_flood_copies() {
+    let mut window = ReplayWindow::new();
+    let mic = [0xA5; 8];
+    window.accept(10, &mic, 1_000);
+
+    // Flood copies of the accepted transmission: the acceptance already
+    // queued their ack.
+    assert!(!window.note_acknowledgeable_duplicate(10, &mic, 1_800, 2_000));
+    assert!(!window.note_acknowledgeable_duplicate(10, &mic, 2_500, 2_000));
+
+    // A retransmission after the holdoff earns one re-ack...
+    assert!(window.note_acknowledgeable_duplicate(10, &mic, 6_000, 2_000));
+    // ...that also covers the retransmission's own flood copies.
+    assert!(!window.note_acknowledgeable_duplicate(10, &mic, 6_700, 2_000));
+    assert!(!window.note_acknowledgeable_duplicate(10, &mic, 7_900, 2_000));
+
+    // A still later retransmission is re-acked again.
+    assert!(window.note_acknowledgeable_duplicate(10, &mic, 9_000, 2_000));
 }
 
 #[test]
@@ -1921,6 +1960,7 @@ fn queue_mac_ack_builds_immediate_ack_frame() {
 #[test]
 fn queue_mac_ack_for_peer_uses_cached_source_route_when_present() {
     let mut mac = make_mac();
+    let local_id = mac.add_identity(DummyIdentity::new([0x10; 32])).unwrap();
     let peer_key = test_pubkey(0xAB);
     let peer_id = mac.add_peer(peer_key).unwrap();
     mac.peer_registry_mut().update_route(
@@ -1931,7 +1971,7 @@ fn queue_mac_ack_for_peer_uses_cached_source_route_when_present() {
         ),
     );
 
-    mac.queue_mac_ack_for_peer(peer_id, [0xA5; 8], false)
+    mac.queue_mac_ack_for_peer(local_id, peer_id, [0xA5; 8], false)
         .unwrap();
 
     let queued = mac.tx_queue_mut().pop_next().unwrap();
@@ -1948,6 +1988,7 @@ fn queue_mac_ack_for_peer_uses_cached_source_route_when_present() {
 #[test]
 fn queue_mac_ack_for_peer_uses_cached_flood_route_regions_when_present() {
     let mut mac = make_mac();
+    let local_id = mac.add_identity(DummyIdentity::new([0x10; 32])).unwrap();
     let peer_key = test_pubkey(0xAB);
     let peer_id = mac.add_peer(peer_key).unwrap();
     mac.peer_registry_mut().update_route(
@@ -1958,7 +1999,7 @@ fn queue_mac_ack_for_peer_uses_cached_flood_route_regions_when_present() {
         },
     );
 
-    mac.queue_mac_ack_for_peer(peer_id, [0xA5; 8], false)
+    mac.queue_mac_ack_for_peer(local_id, peer_id, [0xA5; 8], false)
         .unwrap();
 
     let queued = mac.tx_queue_mut().pop_next().unwrap();
@@ -1974,6 +2015,98 @@ fn queue_mac_ack_for_peer_uses_cached_flood_route_regions_when_present() {
         regions.push([value[0], value[1]]);
     }
     assert_eq!(regions.as_slice(), &[[0x31, 0xD9], [0x78, 0x53]]);
+}
+
+/// A routed ack is a repeat-confirmed send: silence where the repeat
+/// should be retries it, and the repeat — whenever it arrives — finishes
+/// the entry and withdraws any retry still queued.
+#[test]
+fn routed_mac_ack_retries_until_its_repeat_is_heard() {
+    let mut mac = make_mac();
+    let local_id = mac.add_identity(DummyIdentity::new([0x10; 32])).unwrap();
+    let peer_key = test_pubkey(0xAB);
+    let peer_id = mac.add_peer(peer_key).unwrap();
+    mac.peer_registry_mut().update_route(
+        peer_id,
+        CachedRoute::Source(heapless::Vec::from_slice(&[RouterHint([0x01, 0x02])]).unwrap()),
+    );
+
+    mac.queue_mac_ack_for_peer(local_id, peer_id, [0xA5; 8], false)
+        .unwrap();
+
+    // The real transmit path arms the confirmation wait.
+    block_on(mac.poll_cycle(|_, _| {})).unwrap();
+    assert_eq!(mac.radio().transmitted.len(), 1);
+    let (receipt, pending) = mac
+        .identity(local_id)
+        .unwrap()
+        .pending_acks()
+        .next()
+        .expect("routed ack is tracked");
+    let receipt = *receipt;
+    assert!(!pending.expects_ack());
+    assert!(matches!(pending.state, AckState::AwaitingForward { .. }));
+    let ack_frame: std::vec::Vec<u8> = pending.resend.frame.to_vec();
+
+    // Nothing repeats it: past the confirmation window (but short of the
+    // ladder's terminal deadline) the identical frame is retransmitted.
+    mac.clock().advance_ms(500);
+    mac.service_pending_ack_timeouts(|_, _| {}).unwrap();
+    let retry = mac.tx_queue_mut().pop_next().unwrap();
+    assert_eq!(retry.priority, TxPriority::Retry);
+    assert_eq!(retry.receipt, Some(receipt));
+    assert_eq!(retry.frame.as_slice(), ack_frame.as_slice());
+
+    // Requeue the retry, then overhear the repeater carrying the ack
+    // onward (route consumed): the entry completes and the queued retry
+    // is withdrawn.
+    mac.tx_queue_mut()
+        .enqueue(
+            TxPriority::Retry,
+            retry.frame.as_slice(),
+            Some(receipt),
+            Some(local_id),
+        )
+        .unwrap();
+    let mut buf = [0u8; 64];
+    let forwarded = PacketBuilder::new(&mut buf)
+        .mac_ack([0xA5; 8])
+        .build()
+        .unwrap();
+    mac.radio_mut().queue_received_frame(forwarded);
+    let _ = block_on(mac.receive_one(|_, _| {})).unwrap();
+
+    assert!(
+        mac.identity(local_id)
+            .unwrap()
+            .pending_acks()
+            .next()
+            .is_none(),
+        "the overheard repeat finishes the repeat-only ack"
+    );
+    assert!(
+        mac.tx_queue_mut().pop_next().is_none(),
+        "the queued retry is withdrawn with it"
+    );
+}
+
+/// The ack an untracked path would drop: with no identity to track it,
+/// a routed ack still goes out fire-and-forget.
+#[test]
+fn routed_mac_ack_without_identity_goes_untracked() {
+    let mut mac = make_mac();
+    let peer_key = test_pubkey(0xAB);
+    let peer_id = mac.add_peer(peer_key).unwrap();
+    mac.peer_registry_mut().update_route(
+        peer_id,
+        CachedRoute::Source(heapless::Vec::from_slice(&[RouterHint([0x01, 0x02])]).unwrap()),
+    );
+
+    mac.queue_mac_ack_for_peer(LocalIdentityId(0), peer_id, [0xA5; 8], false)
+        .unwrap();
+
+    let queued = mac.tx_queue_mut().pop_next().unwrap();
+    assert_eq!(queued.receipt, None);
 }
 
 #[test]
@@ -2365,6 +2498,9 @@ fn receive_one_reacks_duplicate_unicast_within_eight_counter_window() {
         assert!(block_on(mac.receive_one(|_, _| {})).unwrap());
     }
 
+    // Past the re-ack holdoff, so the duplicate reads as a sender
+    // retransmission rather than a flood copy of the first delivery.
+    mac.clock().advance_ms(10_000);
     mac.radio_mut().queue_received_unicast_with_counter(
         &remote,
         &keys,
@@ -3224,6 +3360,9 @@ fn receive_one_reacks_duplicate_blind_unicast_without_redelivery() {
     );
     let original_ack = mac.tx_queue_mut().pop_next().unwrap().frame;
 
+    // Past the re-ack holdoff, so the duplicate reads as a sender
+    // retransmission rather than a flood copy of the first delivery.
+    mac.clock().advance_ms(10_000);
     assert!(
         block_on(mac.receive_one(|_, event| {
             if is_received_type(&event, PacketType::BlindUnicast) {
@@ -4902,6 +5041,48 @@ fn repeater_forwards_a_repeated_beacon_again_once_the_duplicate_entry_ages_out()
     assert!(
         mac.tx_queue_mut().pop_next().is_some(),
         "the node is heard again once its entry has aged out"
+    );
+}
+
+/// A destination re-acks on purpose when the sender retransmits, and the
+/// re-ack is byte-identical. The ack's dup entry ages out on the short
+/// ack clock so that deliberate duplicate is carried, not absorbed.
+#[test]
+fn repeater_forwards_an_identical_reack_once_the_ack_entry_ages_out() {
+    let mut mac = make_mac();
+    mac.repeater_config_mut().enabled = true;
+    let _repeater_id = mac.add_identity(DummyIdentity::new([0x10; 32])).unwrap();
+
+    let mut buf = [0u8; 64];
+    let ack = PacketBuilder::new(&mut buf)
+        .mac_ack([0xA5; 8])
+        .flood_hops(2)
+        .build()
+        .unwrap();
+    let ack: heapless::Vec<u8, 64> = ack.iter().copied().collect();
+
+    mac.radio_mut().queue_received_frame(ack.as_slice());
+    assert!(block_on(mac.receive_one(|_, _| {})).unwrap());
+    assert!(
+        mac.tx_queue_mut().pop_next().is_some(),
+        "the first sighting of the ack is forwarded"
+    );
+
+    // The same ack inside the window: flood copies of one transmission.
+    mac.radio_mut().queue_received_frame(ack.as_slice());
+    let _ = block_on(mac.receive_one(|_, _| {})).unwrap();
+    assert!(
+        mac.tx_queue_mut().pop_next().is_none(),
+        "a copy inside the suppression window is not forwarded again"
+    );
+
+    mac.clock().advance_ms(crate::cache::ACK_DUP_CACHE_TTL_MS);
+
+    mac.radio_mut().queue_received_frame(ack.as_slice());
+    assert!(block_on(mac.receive_one(|_, _| {})).unwrap());
+    assert!(
+        mac.tx_queue_mut().pop_next().is_some(),
+        "a re-ack after the ack window is carried onward"
     );
 }
 
