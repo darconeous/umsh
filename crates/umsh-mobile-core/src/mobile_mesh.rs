@@ -29,7 +29,9 @@ use umsh_crypto::{
     CryptoEngine, NodeIdentity,
     software::{SoftwareAes, SoftwareIdentity, SoftwareSha256},
 };
-use umsh_hal::{Clock, CounterStore, KeyValueStore, Radio, RxInfo, Snr, TxError, TxOptions};
+use umsh_hal::{
+    Clock, CounterStore, KeyValueStore, Radio, RxInfo, RxOrigin, Snr, TxError, TxOptions,
+};
 use umsh_mac::{Mac, MacHandle, OperatingPolicy, RepeaterConfig, SendOptions};
 use umsh_node::{
     Host, LocalNode, MacBackend, NodeCapabilities, NodeIdentityPayload, NodeIdentityProfile,
@@ -724,6 +726,7 @@ impl Radio for BridgeRadio {
                     rssi: frame.record.rssi_dbm.unwrap_or(0),
                     snr: Snr::from_centibels(frame.record.snr_cb.unwrap_or(0)),
                     lqi: frame.record.lqi.and_then(core::num::NonZeroU8::new),
+                    origin: RxOrigin::Air,
                 }))
             }
             Poll::Ready(None) => Poll::Ready(Err(BridgeRadioError::Closed)),

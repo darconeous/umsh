@@ -52,7 +52,7 @@ use lora_phy::{
     mod_traits::{IrqState, RadioKind},
 };
 pub use umsh_hal::{CadPolicy, TxError};
-use umsh_hal::{RxInfo, Snr, TxOptions};
+use umsh_hal::{RxInfo, RxOrigin, Snr, TxOptions};
 
 /// Maximum SX1262 LoRa payload: 255 bytes.
 pub const MAX_PAYLOAD: usize = 255;
@@ -311,6 +311,7 @@ where
                                     rssi: status.rssi,
                                     snr: Snr::from_decibels(status.snr as i8),
                                     lqi: None,
+                                    origin: RxOrigin::Air,
                                 };
                                 if ch.rx.try_send(RxFrame { data, info }).is_ok() {
                                     ch.rx_waker.wake();
@@ -610,6 +611,7 @@ where
                                         rssi: status.rssi,
                                         snr: Snr::from_decibels(status.snr as i8),
                                         lqi: None,
+                                        origin: RxOrigin::Air,
                                     };
                                     if ch.rx.try_send(RxFrame { data, info }).is_ok() {
                                         ch.rx_waker.wake();

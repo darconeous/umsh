@@ -20,7 +20,9 @@ use umsh_core::PublicKey;
 use umsh_crypto::{
     AesCipher, AesProvider, CryptoEngine, NodeIdentity, Sha256Provider, SharedSecret,
 };
-use umsh_hal::{Clock, CounterStore, KeyValueStore, Radio, RxInfo, Snr, TxError, TxOptions};
+use umsh_hal::{
+    Clock, CounterStore, KeyValueStore, Radio, RxInfo, RxOrigin, Snr, TxError, TxOptions,
+};
 
 use crate::{
     DEFAULT_ACKS, DEFAULT_CHANNELS, DEFAULT_DUP, DEFAULT_FRAME, DEFAULT_IDENTITIES, DEFAULT_PEERS,
@@ -283,6 +285,7 @@ impl SimulatedNetwork {
                 rssi: 0,
                 snr: Snr::from_decibels(0),
                 lqi: None,
+                origin: RxOrigin::Air,
             };
         };
         let len = frame.data.len().min(buf.len());
@@ -292,6 +295,7 @@ impl SimulatedNetwork {
             rssi: frame.rssi,
             snr: frame.snr,
             lqi: None,
+            origin: RxOrigin::Air,
         }
     }
 }
@@ -639,6 +643,7 @@ impl ModeledNetwork {
                 rssi: 0,
                 snr: Snr::from_decibels(0),
                 lqi: None,
+                origin: RxOrigin::Air,
             };
         };
         let len = frame.data.len().min(buf.len());
@@ -648,6 +653,7 @@ impl ModeledNetwork {
             rssi: frame.rssi,
             snr: frame.snr,
             lqi: None,
+            origin: RxOrigin::Air,
         }
     }
 }

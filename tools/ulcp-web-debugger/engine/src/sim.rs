@@ -11,8 +11,8 @@ use umsh_ulcp::battery::{BatteryChargeState, BatteryStatus};
 use umsh_ulcp::gnss::{FixKind, GnssSnapshot};
 use umsh_ulcp::{Status, hdlc};
 use umsh_ulcp_device::{
-    AlertConfig, BatteryFields, DutyLedger, Effect, GnssConfig, IdentitySource, RadioSettings,
-    SNAPSHOT_MAX, Session, SessionConfig, TimeConfig, TxOutcome,
+    AlertConfig, BatteryFields, DutyLedger, Effect, GnssConfig, IdentitySource, RadioRxInfo,
+    RadioSettings, SNAPSHOT_MAX, Session, SessionConfig, TimeConfig, TxOutcome,
 };
 
 const WIRE_CAPACITY: usize = umsh_ulcp::gatt::MAX_FRAME;
@@ -107,11 +107,12 @@ impl SimulatedDevice {
     pub fn inject_radio_rx(&mut self, bytes: &[u8], now_ms: u64) {
         self.now_ms = now_ms;
         let mut emitted = Vec::new();
-        let effect = self
-            .session
-            .on_radio_rx(bytes, -82, 35, None, now_ms, &mut |frame| {
-                emitted.push(frame.to_vec())
-            });
+        let effect = self.session.on_radio_rx(
+            bytes,
+            &RadioRxInfo::measured(-82, 35, None),
+            now_ms,
+            &mut |frame| emitted.push(frame.to_vec()),
+        );
         self.execute(effect, &mut emitted);
         self.queue_emitted(emitted);
     }
@@ -152,6 +153,9 @@ impl SimulatedDevice {
             None
             | Some(Effect::ApplyRadio(_))
             | Some(Effect::DeviceNameChanged)
+            // The simulated board has no node of its own, so there is
+            // nothing for a backhaul to connect the host to.
+            | Some(Effect::ApplyBackhaul { .. })
             | Some(Effect::ApplyAlert(_)) => {}
             Some(Effect::StartTransmit) => {
                 self.air.push(self.session.tx_data().to_vec());

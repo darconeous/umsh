@@ -13,12 +13,15 @@ use std::collections::BTreeMap;
 use umsh_core::{
     ChannelId, ChannelKey, FloodHops, NodeHint, OptionNumber, PacketBuilder, PacketHeader,
     PacketType, ParsedOptions, PayloadType, PublicKey, RouterHint, feed_aad, iter_options,
+    options::TraceSignalEntry,
 };
 use umsh_crypto::{
     AesCipher, AesProvider, CryptoEngine, DerivedChannelKeys, NodeIdentity, PairwiseKeys,
     Sha256Provider, SharedSecret,
 };
-use umsh_hal::{Clock, CounterStore, KeyValueStore, Radio, RxInfo, Snr, TxError, TxOptions};
+use umsh_hal::{
+    Clock, CounterStore, KeyValueStore, Radio, RxInfo, RxOrigin, Snr, TxError, TxOptions,
+};
 
 /// Helper that produces a 32-byte `PublicKey` test peers can pass to
 /// `add_peer` without tripping the Ed25519 curve validator.
@@ -4768,6 +4771,96 @@ fn receive_one_repeater_adds_ack_guard_to_flood_forward_of_ack_requested_packet(
     }
 }
 
+/// A device that shares its antenna with an attached host's stack sees
+/// that stack's transmissions. Repeating one would put a frame back on
+/// the air that this very antenna already sent, and the source address
+/// is the host's, so the locally-originated check cannot catch it.
+#[test]
+fn repeater_does_not_repeat_what_its_own_antenna_transmitted() {
+    let mut mac = make_mac();
+    mac.repeater_config_mut().enabled = true;
+    let _repeater_id = mac.add_identity(DummyIdentity::new([0x10; 32])).unwrap();
+
+    let source = DummyIdentity::new([0xAB; 32]);
+    let mut buf = [0u8; 256];
+    let beacon = PacketBuilder::new(&mut buf)
+        .broadcast()
+        .source_full(source.public_key())
+        .flood_hops(3)
+        .build()
+        .unwrap();
+    let beacon: heapless::Vec<u8, 256> = beacon.iter().copied().collect();
+
+    mac.radio_mut().rx_origin = RxOrigin::LocalTx;
+    mac.radio_mut().queue_received_frame(beacon.as_slice());
+    let _ = block_on(mac.receive_one(|_, _| {})).unwrap();
+    assert!(
+        mac.tx_queue_mut().pop_next().is_none(),
+        "a frame this antenna already sent was repeated"
+    );
+
+    // A neighbor's repeat of that same frame arrives moments later. The
+    // frame has been on the air from here once already, which is what
+    // the seeded duplicate entry remembers.
+    mac.radio_mut().rx_origin = RxOrigin::Air;
+    mac.radio_mut().queue_received_frame(beacon.as_slice());
+    let _ = block_on(mac.receive_one(|_, _| {})).unwrap();
+    assert!(
+        mac.tx_queue_mut().pop_next().is_none(),
+        "a repeat of an already-aired frame was forwarded"
+    );
+}
+
+/// A frame handed over a backhaul link is a frame nobody else heard, so
+/// it is the repeater's alone to carry — and it arrived with nothing
+/// measured, which the signal gates and the trace must both respect.
+#[test]
+fn repeater_forwards_a_backhauled_frame_without_inventing_measurements() {
+    let mut mac = make_mac();
+    {
+        let repeater = mac.repeater_config_mut();
+        repeater.enabled = true;
+        // Thresholds no wired frame could satisfy if they were applied.
+        repeater.min_rssi = Some(-50);
+        repeater.min_snr = Some(5);
+    }
+    let _repeater_id = mac.add_identity(DummyIdentity::new([0x10; 32])).unwrap();
+
+    let source = DummyIdentity::new([0xAB; 32]);
+    let mut buf = [0u8; 256];
+    let beacon = PacketBuilder::new(&mut buf)
+        .broadcast()
+        .source_full(source.public_key())
+        .flood_hops(3)
+        .trace_signal()
+        .build()
+        .unwrap();
+    let beacon: heapless::Vec<u8, 256> = beacon.iter().copied().collect();
+
+    mac.radio_mut().rx_origin = RxOrigin::Backhaul;
+    mac.radio_mut().queue_received_frame(beacon.as_slice());
+    let _ = block_on(mac.receive_one(|_, _| {})).unwrap();
+
+    let forwarded = mac
+        .tx_queue_mut()
+        .pop_next()
+        .expect("a backhauled frame is the repeater's to carry");
+    // Nobody else heard it, so there is no contention to stagger.
+    assert_eq!(forwarded.not_before_ms, mac.clock().now_ms());
+
+    let header = PacketHeader::parse(forwarded.frame.as_slice()).unwrap();
+    let options =
+        ParsedOptions::extract(forwarded.frame.as_slice(), header.options_range.clone()).unwrap();
+    let signal = options
+        .trace_signal
+        .expect("the hop still owes the trace an entry");
+    assert_eq!(
+        &forwarded.frame[signal][..2],
+        &TraceSignalEntry::UNMEASURED.as_bytes(),
+        "a wired hop must not publish a reading it never took"
+    );
+}
+
 /// A beacon carries no body and no MIC, so every repetition from a node
 /// hashes to the same duplicate key. Without an expiry the first one a
 /// repeater forwards would be the last one it ever forwards.
@@ -9265,6 +9358,8 @@ struct DummyRadio {
     /// exactly as they did before this was settable.
     rx_rssi: i16,
     rx_snr: Snr,
+    /// Where every received frame is reported as having come from.
+    rx_origin: RxOrigin,
 }
 
 impl DummyRadio {
@@ -9705,6 +9800,7 @@ impl Radio for DummyRadio {
             rssi: self.rx_rssi,
             snr: self.rx_snr,
             lqi: None,
+            origin: self.rx_origin,
         }))
     }
     fn max_frame_size(&self) -> usize {

@@ -10,7 +10,9 @@ use umsh_core::{PacketBuilder, PublicKey};
 use umsh_crypto::{
     AesCipher, AesProvider, CryptoEngine, NodeIdentity, PairwiseKeys, Sha256Provider, SharedSecret,
 };
-use umsh_hal::{Clock, CounterStore, KeyValueStore, Radio, RxInfo, Snr, TxError, TxOptions};
+use umsh_hal::{
+    Clock, CounterStore, KeyValueStore, Radio, RxInfo, RxOrigin, Snr, TxError, TxOptions,
+};
 use umsh_mac::{
     Mac, MacEventRef, MacHandle, OperatingPolicy, Platform, RepeaterConfig, SendOptions,
 };
@@ -293,6 +295,7 @@ impl Radio for DummyRadio {
                 rssi: -40,
                 snr: Snr::from_decibels(10),
                 lqi: None,
+                origin: RxOrigin::Air,
             }))
         } else {
             Poll::Pending

@@ -29,7 +29,7 @@ use umsh_ulcp::ids::cap;
 use umsh_ulcp::items::{Filter, PeerKeyEntry};
 use umsh_ulcp::meta::{BufferedRxMeta, RX_FLAG_ACKED, RX_FLAG_BUFFERED};
 use umsh_ulcp_device::{
-    Effect, IdentitySource, RadioSettings, SNAPSHOT_MAX, SessionConfig, TxOutcome,
+    Effect, IdentitySource, RadioRxInfo, RadioSettings, SNAPSHOT_MAX, SessionConfig, TxOutcome,
 };
 
 type Session = umsh_ulcp_device::Session<SoftwareAes, SoftwareSha256>;
@@ -145,6 +145,9 @@ impl SimDevice {
             None
             | Some(Effect::ApplyRadio(_))
             | Some(Effect::DeviceNameChanged)
+            // The simulator has no node of its own to hand frames to, so
+            // there is nothing for a backhaul to connect the host to.
+            | Some(Effect::ApplyBackhaul { .. })
             | Some(Effect::ApplyAlert(_)) => {}
             // The simulator has no platform to wipe and reboot; a
             // factory reset is exercised against real firmware.
@@ -312,11 +315,12 @@ fn inject_radio_rx(sim: &Arc<Mutex<SimDevice>>, frame: &[u8]) {
     let mut sim = sim.lock().unwrap();
     let now_ms = sim.now_ms;
     let mut emitted = Vec::new();
-    let effect = sim
-        .session
-        .on_radio_rx(frame, -80, 40, None, now_ms, &mut |bytes: &[u8]| {
-            emitted.push(bytes.to_vec())
-        });
+    let effect = sim.session.on_radio_rx(
+        frame,
+        &RadioRxInfo::measured(-80, 40, None),
+        now_ms,
+        &mut |bytes: &[u8]| emitted.push(bytes.to_vec()),
+    );
     sim.execute(effect, &mut emitted);
     sim.finish(emitted);
 }

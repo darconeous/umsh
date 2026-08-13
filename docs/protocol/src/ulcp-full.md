@@ -94,9 +94,10 @@ power cycle.
 ### Session State
 
 State that exists only while a host is attached: transaction (TID)
-correlation, transport reassembly buffers, and session-scoped properties —
-currently only `PROP_MAC_PROMISCUOUS`. Session state is reset to defaults
-on every attach. Resetting it never affects radio operation.
+correlation, transport reassembly buffers, and the session-scoped
+properties `PROP_MAC_PROMISCUOUS` and `PROP_MAC_BACKHAUL`. Session state
+is reset to defaults on every attach. Resetting it never affects radio
+operation.
 
 ### Device Domain
 
@@ -759,6 +760,7 @@ Id  | Mnemonic                      | Commands                 | Description
 ----|-------------------------------|--------------------------|-------------
 48  | `PROP_MAC_PROMISCUOUS`        | Get, Set                 | Deliver all frames (session-scoped)
 49  | `PROP_SAVED`                  | Get                      | Saved-snapshot state
+50  | `PROP_MAC_BACKHAUL`           | Get, Set                 | Point-to-point link to the device's node (session-scoped)
 64  | `PROP_DEV_KEY`                | Get                      | Device identity public key
 65  | `PROP_DEV_PRIVATE_KEY`        | Set                      | Device identity private key (write-only)
 66  | `PROP_DEV_CHANNEL_KEYS`       | Get, Set, Insert, Remove | Device identity channel keys
@@ -792,8 +794,7 @@ diagnostic mode: frames that are delivered *only* because of promiscuous
 mode are never queued while the host is detached, and never acknowledged on
 the host's behalf.
 
-This is the only session-scoped property: it reverts to false on every
-attach.
+Session-scoped: it reverts to false on every attach.
 
 ### PROP 49: `PROP_SAVED` {#prop-saved}
 
@@ -823,6 +824,42 @@ re-reads storage.
 
 A host that treats any non-zero value as "saved" behaves correctly, and
 loses only the warning.
+
+### PROP 50: `PROP_MAC_BACKHAUL` {#prop-mac-backhaul}
+
+* Type: Single-Value, Read-Write, Session-Scoped
+* Asynchronous Updates: No
+* Required: `CAP_MAC_BACKHAUL`
+* Value Type: BOOL
+* Post-Attach Value: 0 (false)
+
+When false, the host and the device's own node are two listeners on one
+shared medium. Both transmit through the same radio and both hear what it
+receives, so a frame from one reaches the other only by way of some third
+node that repeats it.
+
+When true, the host is instead a point-to-point neighbor of the device's
+node:
+
+* A frame the host sends on `STR_PHY_RAW` is delivered to the node as
+  though the node had heard it, and is never transmitted directly. It
+  spends no airtime and is not subject to the duty-cycle limit.
+* Frames the node transmits are delivered to the host with
+  `RX_FLAG_SELF_TX` set, subject to the usual receive filtering.
+* Frames the radio receives are not delivered to the host at all. The
+  node is the only thing listening to the medium.
+
+Traffic between the host and the mesh therefore crosses the device's
+[repeater](repeater-operation.md): hop accounting, duplicate suppression,
+and forwarding policy are the node's, applied to the host's traffic as to
+anyone else's. A device whose repeater is disabled still delivers the
+host's frames to its own identities, but carries nothing onward.
+
+`PROP_MAC_PROMISCUOUS` composes with this: it removes receive filtering
+from what the host is delivered, which in this mode is the node's
+transmissions.
+
+Session-scoped: it reverts to false on every attach.
 
 ### PROP 64: `PROP_DEV_KEY` {#prop-dev-key}
 
@@ -1463,26 +1500,29 @@ device cannot authenticate (no provisioned keys), no protocol-defined
 duplicate detection applies and each received frame occupies its own
 entry.
 
-### Buffered-Frame Metadata {#buffered-metadata}
+### Extended Recv Metadata {#buffered-metadata}
 
 The `Recv` metadata of `STR_PHY_RAW`
-(see [Metadata for Recv](ulcp-minimal.md#str-radio-raw)) is
-extended with two trailing fields:
+(see [Metadata for Recv](ulcp-minimal.md#str-radio-raw)) may carry two
+further trailing fields:
 
-* `RX_FLAGS` (`u8`): Buffered-frame flags
+* `RX_FLAGS` (`u8`): Delivery flags
   * `RX_FLAG_BUFFERED` Bit 0: The frame was held in the inbound queue and
     is being delivered by `CMD_QUEUE_DRAIN`.
   * `RX_FLAG_ACKED` Bit 1: The device already transmitted a MAC ack for this
     frame on the host's behalf. The host **MUST NOT** send another ack for
     it.
+  * `RX_FLAG_SELF_TX` Bit 2: The device transmitted this frame itself and
+    is delivering a copy of it. `RX_RSSI` and `RX_SNR` **MUST** carry their
+    unsupported sentinels: a transmitter measures nothing.
   * All other bits: *RESERVED*, transmitted as zero
 * `RX_AGE` (`u32`, little-endian): Seconds elapsed between reception of the
   frame and its delivery to the host. Zero for live delivery.
 
 As with the existing metadata fields, the metadata may be truncated at any
-field boundary; absent fields are treated as zero. Live deliveries MAY
-therefore continue to omit these fields entirely, which keeps the encoding
-byte-compatible with the minimal protocol.
+field boundary; absent fields are treated as zero. A live delivery with
+nothing to flag MAY therefore omit these fields entirely, which keeps the
+encoding byte-compatible with the minimal protocol.
 
 ## Acknowledgement Delegation {#ack-delegation}
 

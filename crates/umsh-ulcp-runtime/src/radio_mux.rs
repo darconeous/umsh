@@ -9,7 +9,11 @@
 //! - **TX**: requests are granted one at a time (round-robin under
 //!   contention) and forwarded to the real TX queue; the real `tx_done`
 //!   result is routed to the granting client's own `tx_done`, so each
-//!   client sees exactly the completions for its own requests.
+//!   client sees exactly the completions for its own requests. Once the
+//!   frame is on the air every *other* client receives a copy of it,
+//!   marked [`RxOrigin::LocalTx`]. A radio cannot hear itself, but the
+//!   clients share one antenna, and a client that never learns what the
+//!   antenna beside it emitted cannot talk to it at all.
 //! - **RX**: every received frame is fanned out to every client. Dual
 //!   delivery is what the ULCP spec requires — frames addressed
 //!   to the device identity are processed by the device itself *and*
@@ -21,28 +25,90 @@
 //! the *next* TX waits for the previous completion. The runner-side
 //! controls (`DeviceControl`: settings, RSSI sampling) are single-owner
 //! device-domain state and bypass the mux entirely.
+//!
+//! # Backhaul mode
+//!
+//! [`MuxMode::set_backhaul`] moves the session client off the shared
+//! medium and onto a point-to-point link with the rest of the clients:
+//!
+//! - Receptions off the air go to the medium clients only.
+//! - A session transmit never reaches the radio. It is handed to the
+//!   medium clients as [`RxOrigin::Backhaul`], which the MAC treats as a
+//!   frame heard from a neighbor and may therefore repeat.
+//! - Medium transmits are unchanged, so the session still sees everything
+//!   the device puts on the air.
+//!
+//! The device's own repeater then carries traffic in both directions
+//! between the attached host and the mesh, which is what a bridge needs:
+//! its forwarding rules, duplicate suppression, and hop accounting all
+//! apply to the tunneled traffic instead of being reimplemented above it.
 
 use core::future::poll_fn;
+use core::sync::atomic::{AtomicBool, Ordering};
 use core::task::Poll;
 
 use embassy_futures::select::{Either3, select3};
 use embassy_sync::blocking_mutex::raw::RawMutex;
-use umsh_radio_loraphy::{Channels, RxFrame, TxRequest};
+use umsh_hal::{RxInfo, RxOrigin, Snr, TxError};
+use umsh_radio_loraphy::{Channels, MAX_PAYLOAD, RxFrame, TxRequest};
+
+/// Index in `clients` of the ULCP session's virtual bundle.
+///
+/// Backhaul mode is defined in terms of "the session" and "the medium",
+/// so the mux has to know which client is which. Every board wires the
+/// session first.
+const SESSION: usize = 0;
+
+/// How the mux is routing, written by whoever handles
+/// [`Effect::ApplyBackhaul`](umsh_ulcp_device::Effect) and read by the
+/// mux as each frame is routed.
+pub struct MuxMode(AtomicBool);
+
+impl MuxMode {
+    pub const fn new() -> Self {
+        Self(AtomicBool::new(false))
+    }
+
+    /// Put the session client on a point-to-point link with the medium
+    /// clients, or return it to the shared medium.
+    pub fn set_backhaul(&self, enabled: bool) {
+        self.0.store(enabled, Ordering::Relaxed);
+    }
+
+    /// Whether backhaul mode is in effect.
+    pub fn backhaul(&self) -> bool {
+        self.0.load(Ordering::Relaxed)
+    }
+}
+
+impl Default for MuxMode {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
+/// The mode cell every board's mux and session driver share.
+pub static MUX_MODE: MuxMode = MuxMode::new();
 
 /// Run the multiplexer over the real radio `Channels` bundle.
 ///
 /// `real` must be the bundle served by the radio runner, and the mux must
 /// be that bundle's only client. Each entry in `clients` is one virtual
 /// bundle, owned (RX-drained and TX-fed) by exactly one radio client.
+/// `clients[0]` must be the ULCP session; the rest are on the medium.
 pub async fn radio_mux<M, const RX: usize, const TX: usize>(
     real: &'static Channels<M, RX, TX>,
     clients: &'static [&'static Channels<M, RX, TX>],
+    mode: &'static MuxMode,
 ) -> !
 where
     M: RawMutex,
 {
-    // Index into `clients` of the transmit currently at the radio, if any.
-    let mut in_flight: Option<usize> = None;
+    // The transmit currently at the radio, if any. The frame bytes are
+    // kept because `tx_done` reports only a result, and the copy owed to
+    // the other clients can only be sent once the radio confirms the
+    // frame actually went out.
+    let mut in_flight: Option<InFlight> = None;
     // Where the next contended TX scan starts, so one busy client cannot
     // starve the others.
     let mut arbitration_start: usize = 0;
@@ -67,19 +133,24 @@ where
 
         match select3(real.rx.receive(), tx_done, next_tx).await {
             Either3::First(frame) => {
-                for client in clients {
-                    let copy = RxFrame {
-                        data: frame.data.clone(),
-                        info: frame.info,
-                    };
-                    if client.rx.try_send(copy).is_ok() {
-                        client.rx_waker.wake();
-                    }
-                }
+                // In backhaul mode the session is not on the medium, so
+                // it hears nothing off the air.
+                let skip = mode.backhaul().then_some(SESSION);
+                deliver(clients, skip, &frame.data, frame.info);
             }
             Either3::Second(result) => {
-                if let Some(owner) = in_flight.take() {
-                    clients[owner].tx_done.signal(result);
+                let Some(sent) = in_flight.take() else {
+                    continue;
+                };
+                let aired = result.is_ok();
+                clients[sent.owner].tx_done.signal(result);
+                if aired {
+                    deliver(
+                        clients,
+                        Some(sent.owner),
+                        &sent.data,
+                        unmeasured(sent.data.len(), RxOrigin::LocalTx),
+                    );
                 }
             }
             Either3::Third((who, request)) => {
@@ -89,12 +160,83 @@ where
                 // result. `try_take` leaves a registered waiter intact,
                 // unlike `reset`, which would silently drop its waker.
                 let _ = clients[who].tx_done.try_take();
-                real.tx.send(request).await;
-                in_flight = Some(who);
                 arbitration_start = (who + 1) % clients.len();
+
+                if who == SESSION && mode.backhaul() {
+                    // The session's link is point to point: the frame
+                    // goes to the medium clients and nowhere else.
+                    let delivered = deliver(
+                        clients,
+                        Some(SESSION),
+                        &request.data,
+                        unmeasured(request.data.len(), RxOrigin::Backhaul),
+                    );
+                    // A full receive queue means the far side is behind,
+                    // and this frame is gone. Reporting it as a busy
+                    // channel is both true of the link and the one
+                    // outcome the sender already knows how to retry.
+                    clients[SESSION].tx_done.signal(if delivered {
+                        Ok(())
+                    } else {
+                        Err(TxError::CadTimeout)
+                    });
+                    continue;
+                }
+
+                let data = request.data.clone();
+                real.tx.send(request).await;
+                in_flight = Some(InFlight { owner: who, data });
             }
         }
     }
+}
+
+/// A transmit handed to the radio, held until its completion is known.
+struct InFlight {
+    owner: usize,
+    data: heapless::Vec<u8, MAX_PAYLOAD>,
+}
+
+/// Metadata for a frame that reached a client without being received:
+/// there is nothing to report but the length and where it came from.
+fn unmeasured(len: usize, origin: RxOrigin) -> RxInfo {
+    RxInfo {
+        len,
+        rssi: 0,
+        snr: Snr::from_centibels(0),
+        lqi: None,
+        origin,
+    }
+}
+
+/// Copy `data` into every client's receive queue except `skip`, returning
+/// whether every intended recipient accepted it. A client whose queue is
+/// full loses the frame rather than stalling the others.
+fn deliver<M, const RX: usize, const TX: usize>(
+    clients: &[&Channels<M, RX, TX>],
+    skip: Option<usize>,
+    data: &heapless::Vec<u8, MAX_PAYLOAD>,
+    info: RxInfo,
+) -> bool
+where
+    M: RawMutex,
+{
+    let mut delivered = true;
+    for (index, client) in clients.iter().enumerate() {
+        if Some(index) == skip {
+            continue;
+        }
+        let copy = RxFrame {
+            data: data.clone(),
+            info,
+        };
+        if client.rx.try_send(copy).is_ok() {
+            client.rx_waker.wake();
+        } else {
+            delivered = false;
+        }
+    }
+    delivered
 }
 
 /// Wait for a TX request from any client, scanning from `start` so
@@ -133,7 +275,7 @@ mod tests {
     use embassy_sync::blocking_mutex::raw::NoopRawMutex;
     use lora_phy::mod_params::RadioError;
     use std::sync::Arc;
-    use umsh_hal::{CadPolicy, RxInfo, Snr, TxError};
+    use umsh_hal::CadPolicy;
 
     type TestCh = Channels<NoopRawMutex, 4, 2>;
 
@@ -153,18 +295,38 @@ mod tests {
     }
 
     /// Drive the mux and a test scenario concurrently until the scenario
-    /// completes.
+    /// completes. Each run gets its own mode cell, so tests sharing a
+    /// process cannot see each other's routing.
     fn run<F: Future>(
         real: &'static TestCh,
         clients: &'static [&'static TestCh],
         scenario: F,
     ) -> F::Output {
+        run_with_mode(real, clients, mode(), scenario)
+    }
+
+    fn run_with_mode<F: Future>(
+        real: &'static TestCh,
+        clients: &'static [&'static TestCh],
+        mode: &'static MuxMode,
+        scenario: F,
+    ) -> F::Output {
         block_on(async {
-            match select(radio_mux(real, clients), scenario).await {
+            match select(radio_mux(real, clients, mode), scenario).await {
                 Either::First(_) => unreachable!("mux never returns"),
                 Either::Second(output) => output,
             }
         })
+    }
+
+    fn mode() -> &'static MuxMode {
+        Box::leak(Box::new(MuxMode::new()))
+    }
+
+    fn backhaul_mode() -> &'static MuxMode {
+        let mode = mode();
+        mode.set_backhaul(true);
+        mode
     }
 
     fn rx_frame(tag: u8) -> RxFrame {
@@ -177,6 +339,7 @@ mod tests {
                 rssi: -40,
                 snr: Snr::from_decibels(5),
                 lqi: None,
+                origin: RxOrigin::Air,
             },
         }
     }
@@ -323,6 +486,116 @@ mod tests {
 
             real.tx_done.signal(Ok(()));
             assert!(a.tx_done.wait().await.is_ok());
+        });
+    }
+
+    #[test]
+    fn a_transmit_reaches_every_other_client() {
+        let real = channels();
+        let a = channels();
+        let b = channels();
+        let clients: &'static [&'static TestCh] = Box::leak(Box::new([a, b]));
+
+        run(real, clients, async {
+            a.tx.send(tx_request(0xA1)).await;
+            assert_eq!(real.tx.receive().await.data.as_slice(), &[0xA1]);
+            real.tx_done.signal(Ok(()));
+            assert!(a.tx_done.wait().await.is_ok());
+
+            let copy = b.rx.receive().await;
+            assert_eq!(copy.data.as_slice(), &[0xA1]);
+            assert_eq!(copy.info.origin, RxOrigin::LocalTx);
+            assert!(!copy.info.origin.is_measured());
+            assert!(
+                a.rx.try_receive().is_err(),
+                "a transmitter must not hear itself"
+            );
+        });
+    }
+
+    #[test]
+    fn an_abandoned_transmit_reaches_nobody() {
+        let real = channels();
+        let a = channels();
+        let b = channels();
+        let clients: &'static [&'static TestCh] = Box::leak(Box::new([a, b]));
+
+        run(real, clients, async {
+            a.tx.send(tx_request(0xA1)).await;
+            assert_eq!(real.tx.receive().await.data.as_slice(), &[0xA1]);
+            // CAD found the channel busy, so the frame never went out.
+            real.tx_done.signal(Err(TxError::CadTimeout));
+            assert!(a.tx_done.wait().await.is_err());
+
+            assert!(
+                b.rx.try_receive().is_err(),
+                "a frame that never aired was copied anyway"
+            );
+        });
+    }
+
+    #[test]
+    fn backhaul_keeps_the_session_off_the_air() {
+        let real = channels();
+        let session = channels();
+        let node = channels();
+        let clients: &'static [&'static TestCh] = Box::leak(Box::new([session, node]));
+
+        run_with_mode(real, clients, backhaul_mode(), async {
+            // The session's frame goes to the node, not to the radio.
+            session.tx.send(tx_request(0x51)).await;
+            let handed = node.rx.receive().await;
+            assert_eq!(handed.data.as_slice(), &[0x51]);
+            assert_eq!(handed.info.origin, RxOrigin::Backhaul);
+            assert!(
+                real.tx.try_receive().is_err(),
+                "backhaul frame reached the radio"
+            );
+            assert!(
+                session.tx_done.wait().await.is_ok(),
+                "a delivered frame must complete"
+            );
+
+            // Receptions belong to the medium, which the session left.
+            real.rx.send(rx_frame(0x22)).await;
+            assert_eq!(node.rx.receive().await.data.as_slice(), &[0x22]);
+            assert!(
+                session.rx.try_receive().is_err(),
+                "session heard the air in backhaul mode"
+            );
+
+            // What the node transmits still reaches the session, which is
+            // how the host sees anything at all from here.
+            node.tx.send(tx_request(0x77)).await;
+            assert_eq!(real.tx.receive().await.data.as_slice(), &[0x77]);
+            real.tx_done.signal(Ok(()));
+            assert!(node.tx_done.wait().await.is_ok());
+            let copy = session.rx.receive().await;
+            assert_eq!(copy.data.as_slice(), &[0x77]);
+            assert_eq!(copy.info.origin, RxOrigin::LocalTx);
+        });
+    }
+
+    #[test]
+    fn a_backlogged_backhaul_reports_a_busy_channel() {
+        let real = channels();
+        let session = channels();
+        let node = channels();
+        let clients: &'static [&'static TestCh] = Box::leak(Box::new([session, node]));
+
+        run_with_mode(real, clients, backhaul_mode(), async {
+            // Nobody drains the node, so its queue fills at depth 4.
+            for tag in 0..4u8 {
+                session.tx.send(tx_request(tag)).await;
+                assert!(session.tx_done.wait().await.is_ok());
+            }
+            session.tx.send(tx_request(0xFF)).await;
+            // The frame is gone rather than queued, and saying so lets
+            // the sender retry instead of counting it as delivered.
+            assert!(matches!(
+                session.tx_done.wait().await,
+                Err(TxError::CadTimeout)
+            ));
         });
     }
 

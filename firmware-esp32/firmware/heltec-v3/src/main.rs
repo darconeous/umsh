@@ -1477,7 +1477,7 @@ async fn radio_task(lora: board_radio::Radio) {
 /// completion routing plus RX fan-out to every client.
 #[embassy_executor::task]
 async fn radio_mux_task() {
-    radio_mux::radio_mux(&RADIO_CH, &MUX_CLIENTS).await
+    radio_mux::radio_mux(&RADIO_CH, &MUX_CLIENTS, &radio_mux::MUX_MODE).await
 }
 
 // ─── Wired transport (UART0) ─────────────────────────────────────────────

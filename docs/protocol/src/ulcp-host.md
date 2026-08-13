@@ -59,6 +59,7 @@ Code | Name                | Requires                             | Grants
 33   | `CAP_HOST_RX_QUEUE` | `CAP_HOST_FILTER`                    | The inbound queue, its properties, `CMD_QUEUE_DRAIN`, and the buffered-frame metadata
 34   | `CAP_HOST_KEYS`     | `CAP_HOST_FILTER`                    | `PROP_HOST_CHANNEL_KEYS` and `PROP_HOST_PEER_KEYS`
 35   | `CAP_HOST_AUTO_ACK` | `CAP_HOST_KEYS`, `CAP_HOST_RX_QUEUE` | `PROP_HOST_AUTO_ACK` and acknowledgement delegation
+48   | `CAP_MAC_BACKHAUL`  | `CAP_REPEATER`                       | `PROP_MAC_BACKHAUL` and the point-to-point link to the device's node
 
 A device advertising none of these is a transparent radio: it delivers
 every frame it receives and holds nothing on anyone's behalf.
@@ -113,14 +114,15 @@ accordingly to the status code for the error.
 
 ## Properties
 
-The host domain occupies property identifiers 96–111.
-`PROP_MAC_PROMISCUOUS` is the exception: it is a live diagnostic mode
-rather than provisioning, and is the protocol's only session-scoped
-property.
+The host domain occupies property identifiers 96–111. Two properties sit
+outside that range: `PROP_MAC_PROMISCUOUS` and `PROP_MAC_BACKHAUL` govern
+how the attached session sees the radio rather than how the device is
+provisioned, and are the protocol's session-scoped properties.
 
 Id  | Mnemonic                      | Commands                 | Description
 ----|-------------------------------|--------------------------|-------------
 48  | `PROP_MAC_PROMISCUOUS`        | Get, Set                 | Deliver all frames (session-scoped)
+50  | `PROP_MAC_BACKHAUL`           | Get, Set                 | Point-to-point link to the device's node (session-scoped)
 96  | `PROP_HOST_KEY`               | Get, Set                 | Tethered host identity public key
 97  | `PROP_HOST_CHANNEL_KEYS`      | Get, Set, Insert, Remove | Host channel keys
 98  | `PROP_HOST_PEER_KEYS`         | Get, Set, Insert, Remove | Host pairwise peer keys
@@ -144,8 +146,44 @@ diagnostic mode: frames that are delivered *only* because of promiscuous
 mode are never queued while the host is detached, and never acknowledged on
 the host's behalf.
 
-This is the only session-scoped property: it reverts to false on every
-attach.
+Session-scoped: it reverts to false on every attach.
+
+### PROP 50: `PROP_MAC_BACKHAUL` {#prop-mac-backhaul}
+
+* Type: Single-Value, Read-Write, Session-Scoped
+* Asynchronous Updates: No
+* Required: `CAP_MAC_BACKHAUL`
+* Value Type: BOOL
+* Post-Attach Value: 0 (false)
+
+When false, the host and the device's own node are two listeners on one
+shared medium. Both transmit through the same radio and both hear what it
+receives, so a frame from one reaches the other only by way of some third
+node that repeats it.
+
+When true, the host is instead a point-to-point neighbor of the device's
+node:
+
+* A frame the host sends on `STR_PHY_RAW` is delivered to the node as
+  though the node had heard it, and is never transmitted directly. It
+  spends no airtime and is not subject to the duty-cycle limit.
+* Frames the node transmits are delivered to the host with
+  `RX_FLAG_SELF_TX` set, subject to the usual receive filtering.
+* Frames the radio receives are not delivered to the host at all. The
+  node is the only thing listening to the medium.
+
+Traffic between the host and the mesh therefore crosses the device's
+[repeater](repeater-operation.md), which is what makes the arrangement
+useful to a bridge: hop accounting, duplicate suppression, and forwarding
+policy are the node's, applied to the host's traffic as to anyone else's.
+A device whose repeater is disabled still delivers the host's frames to
+its own identities, but carries nothing onward.
+
+`PROP_MAC_PROMISCUOUS` composes with this: it removes receive filtering
+from what the host is delivered, which in this mode is the node's
+transmissions.
+
+Session-scoped: it reverts to false on every attach.
 
 ### PROP 96: `PROP_HOST_KEY` {#prop-host-key}
 

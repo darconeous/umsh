@@ -23,7 +23,7 @@ use tokio::time::Instant;
 use umsh_core::{ChannelKey, RegionCode};
 use umsh_crypto::CryptoEngine;
 use umsh_crypto::software::{SoftwareAes, SoftwareSha256};
-use umsh_hal::{CadPolicy, Radio, RxInfo, Snr, TxError, TxOptions};
+use umsh_hal::{CadPolicy, Radio, RxInfo, RxOrigin, Snr, TxError, TxOptions};
 use umsh_ulcp::Status;
 use umsh_ulcp::airtime::lora_airtime_ms;
 use umsh_ulcp::alert::AlertState;
@@ -34,7 +34,7 @@ use umsh_ulcp::hdlc;
 use umsh_ulcp::host::{PropertyNotification, PropertyNotificationKind, TidAllocator};
 use umsh_ulcp::ids::{self, cap, prop, stream};
 use umsh_ulcp::items;
-use umsh_ulcp::meta::{RxMeta, TX_FLAG_NOCCA, TxMeta};
+use umsh_ulcp::meta::{BufferedRxMeta, RX_FLAG_SELF_TX, RxMeta, TX_FLAG_NOCCA, TxMeta};
 use umsh_ulcp::pui;
 
 /// Capacity of the HDLC reassembly buffer (unescaped frame + FCS).
@@ -2422,11 +2422,26 @@ where
         let packet = self.rx_queue.pop_front()?;
         let len = packet.data.len().min(buf.len());
         buf[..len].copy_from_slice(&packet.data[..len]);
+        // `RX_FLAG_SELF_TX` says the *device* transmitted the frame. To
+        // the host that is not a self-transmission at all — the device is
+        // a separate node, and its frames are as real as any peer's. What
+        // carries across is that nothing measured the frame on its way
+        // here, which is exactly what `Backhaul` means on this side of
+        // the link. Calling it `LocalTx` would tell the host's own MAC
+        // that its antenna had already sent the frame, and it would
+        // refuse to forward it.
+        let self_tx = BufferedRxMeta::decode(&packet.raw_meta)
+            .is_ok_and(|meta| meta.flags & RX_FLAG_SELF_TX != 0);
         Some(RxInfo {
             len,
             rssi: packet.meta.rssi_dbm.unwrap_or(0),
             snr: Snr::from_centibels(packet.meta.snr_cb.unwrap_or(0)),
             lqi: packet.meta.lqi,
+            origin: if self_tx {
+                RxOrigin::Backhaul
+            } else {
+                RxOrigin::Air
+            },
         })
     }
 
@@ -2806,7 +2821,7 @@ mod tests {
     use std::collections::HashMap;
     use tokio::io::{AsyncReadExt, DuplexStream};
     use umsh_ulcp::PropPayload;
-    use umsh_ulcp::meta::{BufferedRxMeta, RX_FLAG_BUFFERED};
+    use umsh_ulcp::meta::RX_FLAG_BUFFERED;
 
     /// Payload that makes the fake device report a CCA failure.
     const CCA_FAIL: &[u8] = b"cca-fail";

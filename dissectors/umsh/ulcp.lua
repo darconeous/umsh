@@ -28,6 +28,8 @@ local PROPERTIES = {
   [41] = "PROP_PHY_LORA_CR",
   [42] = "PROP_PHY_MTU",
   [43] = "PROP_PHY_LORA_SW",
+  [48] = "PROP_MAC_PROMISCUOUS",
+  [50] = "PROP_MAC_BACKHAUL",
   [68] = "PROP_DEV_NAME",
   [4820] = "PROP_PHY_DUTY_NOW",
   [4822] = "PROP_PHY_DUTY_LIMIT",
@@ -53,6 +55,11 @@ f.metadata = ProtoField.bytes("umsh.ulcp.metadata", "Metadata")
 f.rx_rssi = ProtoField.int16("umsh.ulcp.rx.rssi", "RX RSSI (dBm)", base.DEC)
 f.rx_lqi = ProtoField.uint8("umsh.ulcp.rx.lqi", "RX LQI", base.DEC)
 f.rx_snr = ProtoField.int16("umsh.ulcp.rx.snr_cb", "RX SNR (centibels)", base.DEC)
+f.rx_flags = ProtoField.uint8("umsh.ulcp.rx.flags", "RX Flags", base.HEX)
+f.rx_flag_buffered = ProtoField.bool("umsh.ulcp.rx.flags.buffered", "Buffered", 8, nil, 0x01)
+f.rx_flag_acked = ProtoField.bool("umsh.ulcp.rx.flags.acked", "Acknowledged", 8, nil, 0x02)
+f.rx_flag_self_tx = ProtoField.bool("umsh.ulcp.rx.flags.self_tx", "Self-transmitted", 8, nil, 0x04)
+f.rx_age = ProtoField.uint32("umsh.ulcp.rx.age_s", "RX Age (seconds)", base.DEC)
 f.tx_power = ProtoField.int8("umsh.ulcp.tx.power", "TX Power (dBm)", base.DEC)
 f.tx_flags = ProtoField.uint8("umsh.ulcp.tx.flags", "TX Flags", base.HEX)
 f.payload = ProtoField.bytes("umsh.ulcp.payload", "Payload")
@@ -162,6 +169,15 @@ local function dissect_frame(buf, pinfo, tree, direction)
             end
             if metadata(2, 2):le_int() ~= -32768 then
               metadata_item:add_le(f.rx_snr, metadata(2, 2))
+            end
+            if metadata:len() >= 5 then
+              local flags_item = metadata_item:add(f.rx_flags, metadata(4, 1))
+              flags_item:add(f.rx_flag_buffered, metadata(4, 1))
+              flags_item:add(f.rx_flag_acked, metadata(4, 1))
+              flags_item:add(f.rx_flag_self_tx, metadata(4, 1))
+            end
+            if metadata:len() >= 9 then
+              metadata_item:add_le(f.rx_age, metadata(5, 4))
             end
           elseif command == 9 and metadata:len() >= 2 then
             metadata_item:add(f.tx_power, metadata(0, 1))

@@ -2,6 +2,8 @@
 
 This chapter describes how a receiving node processes an incoming packet. This procedure applies to all nodes, not just repeaters. Repeater-specific forwarding logic is described separately in [Repeater Operation](repeater-operation.md).
 
+A packet enters this procedure however it reached the node. Most arrive off the air, but a node whose radio is shared with another stack also receives what that stack transmits, and a node reachable over a point-to-point link—a [backhauled host](ulcp-host.md#prop-mac-backhaul), for instance—receives what arrives across it. Such a packet is processed exactly as a received one, with one difference: it carries no signal measurements, so anything defined in terms of how well the packet was heard does not apply to it.
+
 ## Receive Procedure
 
 1. **Well-formedness check**

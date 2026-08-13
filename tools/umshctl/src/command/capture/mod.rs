@@ -421,14 +421,26 @@ async fn dump(
         if args.quiet {
             continue;
         }
-        let mut meta = format!(
-            "\n#{} +{:.3}s  {} B  RSSI {} dBm  SNR {}",
-            stats.sequence,
-            stats.started.elapsed().as_secs_f64(),
-            info.len,
-            info.rssi,
-            info.snr,
-        );
+        // A frame the device transmitted itself was never received, so
+        // there is no signal to report — and the zeroes standing in for
+        // one would read as a measurement.
+        let mut meta = if info.origin.is_measured() {
+            format!(
+                "\n#{} +{:.3}s  {} B  RSSI {} dBm  SNR {}",
+                stats.sequence,
+                stats.started.elapsed().as_secs_f64(),
+                info.len,
+                info.rssi,
+                info.snr,
+            )
+        } else {
+            format!(
+                "\n#{} +{:.3}s  {} B  SELF-TX",
+                stats.sequence,
+                stats.started.elapsed().as_secs_f64(),
+                info.len,
+            )
+        };
         // The attach counter only distinguishes anything once a link has
         // dropped and been re-established, which cannot happen over serial.
         if stats.sessions > 1 {

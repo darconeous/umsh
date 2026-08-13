@@ -157,23 +157,24 @@ The `Recv` metadata is the following fields in order:
     because it is `-3276.8 dB`, a value no real link can report, so it never
     collides with a genuine measurement (unlike `0xFFFF`, which is `-0.1 dB`).
 
-#### Buffered-Frame Metadata {#buffered-metadata}
+#### Extended Recv Metadata {#buffered-metadata}
 
-On a device that supports [inbound queueing](ulcp-host.md#inbound-queueing)
-(`CAP_HOST_RX_QUEUE`), the `Recv` metadata is extended with two trailing
-fields:
+The `Recv` metadata may carry two further trailing fields:
 
-* `RX_FLAGS` (`u8`): Buffered-frame flags
+* `RX_FLAGS` (`u8`): Delivery flags
   * `RX_FLAG_BUFFERED` Bit 0: The frame was held in the inbound queue and
     is being delivered by `CMD_QUEUE_DRAIN`.
   * `RX_FLAG_ACKED` Bit 1: The device already transmitted a MAC ack for this
     frame on the host's behalf. The host **MUST NOT** send another ack for
     it.
+  * `RX_FLAG_SELF_TX` Bit 2: The device transmitted this frame itself and
+    is delivering a copy of it. `RX_RSSI` and `RX_SNR` **MUST** carry their
+    unsupported sentinels: a transmitter measures nothing.
   * All other bits: *RESERVED*, transmitted as zero
 * `RX_AGE` (`u32`, little-endian): Seconds elapsed between reception of the
   frame and its delivery to the host. Zero for live delivery.
 
 As with the existing metadata fields, the metadata may be truncated at any
-field boundary; absent fields are treated as zero. Live deliveries MAY
-therefore continue to omit these fields entirely, which keeps the encoding
-byte-compatible with a device that does not queue at all.
+field boundary; absent fields are treated as zero. A live delivery with
+nothing to flag MAY therefore omit these fields entirely, which keeps the
+encoding byte-compatible with a device that does not queue at all.

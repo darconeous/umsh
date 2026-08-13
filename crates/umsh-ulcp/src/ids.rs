@@ -44,11 +44,14 @@ pub mod prop {
     pub const PHY_MTU: u32 = 42;
     /// LoRa sync word, SX126x-style 16-bit (`PROP_PHY_LORA_SW`).
     pub const PHY_LORA_SW: u32 = 43;
-    /// Deliver all received frames, bypassing host receive filtering;
-    /// the only session-scoped property (`PROP_MAC_PROMISCUOUS`).
+    /// Deliver all received frames, bypassing host receive filtering
+    /// (`PROP_MAC_PROMISCUOUS`). Session-scoped.
     pub const MAC_PROMISCUOUS: u32 = 48;
     /// Whether a saved snapshot exists (`PROP_SAVED`).
     pub const SAVED: u32 = 49;
+    /// Carry the host on a point-to-point link to the device's own node
+    /// instead of the shared medium (`PROP_MAC_BACKHAUL`). Session-scoped.
+    pub const MAC_BACKHAUL: u32 = 50;
     /// Device identity public key (`PROP_DEV_KEY`).
     pub const DEV_KEY: u32 = 64;
     /// Device identity private key, write-only (`PROP_DEV_PRIVATE_KEY`).
@@ -283,6 +286,11 @@ pub mod cap {
     /// `CAP_ILLUMINANCE` — an ambient light sensor is fitted, so
     /// `PROP_ILLUMINANCE` reads a measurement rather than nothing.
     pub const ILLUMINANCE: u32 = 47;
+    /// `CAP_MAC_BACKHAUL` — the device can carry the host on a
+    /// point-to-point link to its own node (`PROP_MAC_BACKHAUL`).
+    /// Requires `CAP_REPEATER`: without a repeater there is nothing on
+    /// the far side of that link to carry the host's traffic onward.
+    pub const MAC_BACKHAUL: u32 = 48;
 }
 
 /// Value used in `PROP_PHY_DUTY_LIMIT` to disable duty-cycle limiting.

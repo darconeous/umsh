@@ -18,7 +18,9 @@ use umsh_ulcp::ids::{
     MIN_AUTO_ANNOUNCE_INTERVAL_S, cap, prop, stream,
 };
 use umsh_ulcp::items::{self, Filter, ItemError, REGION_CODE_LEN};
-use umsh_ulcp::meta::{self, BufferedRxMeta, RX_FLAG_ACKED, RX_FLAG_BUFFERED, RxMeta, TxMeta};
+use umsh_ulcp::meta::{
+    self, BufferedRxMeta, RX_FLAG_ACKED, RX_FLAG_BUFFERED, RX_FLAG_SELF_TX, RxMeta, TxMeta,
+};
 use umsh_ulcp::pui;
 
 use crate::duty::DutyLedger;
@@ -296,6 +298,12 @@ pub enum Effect {
     /// and `key`. Emitted for a get of any positioning property; the
     /// session never caches a reading, so every get samples.
     SampleGnss { tid: u8, key: u32 },
+    /// A `PROP_MAC_BACKHAUL` write. While enabled, the host's frames go
+    /// to the device's own node instead of the air, and the node's
+    /// repeater carries them the rest of the way; the host stops hearing
+    /// the medium directly. Applied by whatever shares the radio, which
+    /// on a device with a node of its own is the multiplexer.
+    ApplyBackhaul { enabled: bool },
     /// The live human-readable device name changed. Transports that expose a
     /// name should refresh it without disrupting the active session.
     DeviceNameChanged,
@@ -673,6 +681,41 @@ impl RxIdentity {
     }
 }
 
+/// What arrived with one frame handed to [`Session::on_radio_rx`].
+///
+/// The signal fields are optional because not every frame the session
+/// sees was received: a frame the device transmitted itself comes back
+/// with nothing measured, and inventing a reading for it would put a
+/// number the radio never produced on the wire to the host.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub struct RadioRxInfo {
+    pub rssi_dbm: Option<i16>,
+    pub snr_cb: Option<i16>,
+    pub lqi: Option<core::num::NonZeroU8>,
+    /// The device transmitted this frame and is delivering its own copy.
+    pub self_tx: bool,
+}
+
+impl RadioRxInfo {
+    /// A reception off the air, with what the radio reported.
+    pub fn measured(rssi_dbm: i16, snr_cb: i16, lqi: Option<core::num::NonZeroU8>) -> Self {
+        Self {
+            rssi_dbm: Some(rssi_dbm),
+            snr_cb: Some(snr_cb),
+            lqi,
+            self_tx: false,
+        }
+    }
+
+    /// A copy of a frame this device just transmitted.
+    pub fn self_transmitted() -> Self {
+        Self {
+            self_tx: true,
+            ..Self::default()
+        }
+    }
+}
+
 /// One inbound-queue entry: the frame, its receive metadata, the time
 /// of reception, whether the device acknowledged it on the host's behalf,
 /// and — for authenticated frames — the logical packet identity used
@@ -681,9 +724,10 @@ impl RxIdentity {
 struct QueueEntry {
     data: [u8; MAX_MTU],
     len: u16,
-    rssi_dbm: i16,
-    snr_cb: i16,
+    rssi_dbm: Option<i16>,
+    snr_cb: Option<i16>,
     lqi: Option<core::num::NonZeroU8>,
+    self_tx: bool,
     rx_time_ms: u64,
     acked: bool,
     /// Monotonic (wrapping) sequence number: a stable handle that a
@@ -697,9 +741,10 @@ impl QueueEntry {
     const EMPTY: Self = Self {
         data: [0; MAX_MTU],
         len: 0,
-        rssi_dbm: 0,
-        snr_cb: 0,
+        rssi_dbm: None,
+        snr_cb: None,
         lqi: None,
+        self_tx: false,
         rx_time_ms: 0,
         acked: false,
         seq: 0,
@@ -756,9 +801,7 @@ impl RxQueue {
     fn push(
         &mut self,
         data: &[u8],
-        rssi_dbm: i16,
-        snr_cb: i16,
-        lqi: Option<core::num::NonZeroU8>,
+        info: &RadioRxInfo,
         rx_time_ms: u64,
         identity: Option<RxIdentity>,
     ) -> u16 {
@@ -774,9 +817,10 @@ impl RxQueue {
         let entry = &mut self.entries[slot];
         entry.data[..data.len()].copy_from_slice(data);
         entry.len = data.len() as u16;
-        entry.rssi_dbm = rssi_dbm;
-        entry.snr_cb = snr_cb;
-        entry.lqi = lqi;
+        entry.rssi_dbm = info.rssi_dbm;
+        entry.snr_cb = info.snr_cb;
+        entry.lqi = info.lqi;
+        entry.self_tx = info.self_tx;
         entry.rx_time_ms = rx_time_ms;
         entry.acked = false;
         entry.seq = seq;
@@ -1837,8 +1881,11 @@ fn channel_key_item(value: &[u8]) -> Result<[u8; items::CHANNEL_KEY_LEN], Snapsh
 /// Classes): transaction correlation and session-scoped properties.
 /// Reset on every attach without touching the radio.
 struct SessionState<const TX: usize> {
-    /// `PROP_MAC_PROMISCUOUS` — the only session-scoped property.
+    /// `PROP_MAC_PROMISCUOUS`.
     promiscuous: bool,
+    /// `PROP_MAC_BACKHAUL` — the host is a point-to-point neighbor of the
+    /// device's own node rather than another listener on the medium.
+    backhaul: bool,
     /// Accepted host transmissions, including the one currently owned by the
     /// physical radio. Keeping this queue in the device lets a host pipeline
     /// fragmented messages without waiting one LoRa round trip per fragment.
@@ -1858,6 +1905,7 @@ impl<const TX: usize> Default for SessionState<TX> {
     fn default() -> Self {
         Self {
             promiscuous: false,
+            backhaul: false,
             pending: Deque::new(),
             drain: None,
             pending_identity: None,
@@ -2376,9 +2424,7 @@ impl<A: AesProvider, S: Sha256Provider, const TX: usize> Session<A, S, TX> {
     pub fn on_radio_rx(
         &mut self,
         data: &[u8],
-        rssi_dbm: i16,
-        snr_cb: i16,
-        lqi: Option<core::num::NonZeroU8>,
+        info: &RadioRxInfo,
         now_ms: u64,
         emit: &mut impl FnMut(&[u8]),
     ) -> Option<Effect> {
@@ -2409,10 +2455,7 @@ impl<A: AesProvider, S: Sha256Provider, const TX: usize> Session<A, S, TX> {
                     // completes (on_tx_result). A refused or failed ack
                     // leaves the frame queued unacked and the sender's
                     // retransmission hits the re-ack window later.
-                    let seq = self
-                        .host
-                        .queue
-                        .push(data, rssi_dbm, snr_cb, lqi, now_ms, identity);
+                    let seq = self.host.queue.push(data, info, now_ms, identity);
                     ack.and_then(|plan| self.stage_ack(plan, Some(seq), now_ms))
                 }
             };
@@ -2420,13 +2463,25 @@ impl<A: AesProvider, S: Sha256Provider, const TX: usize> Session<A, S, TX> {
         if !self.session.promiscuous && !self.host.accepts_live_frame(data) {
             return None;
         }
-        let mut rx_meta = [0u8; RxMeta::WIRE_LEN];
-        let meta_len = RxMeta {
-            rssi_dbm: Some(rssi_dbm),
-            lqi,
-            snr_cb: Some(snr_cb),
+        let rx = RxMeta {
+            rssi_dbm: info.rssi_dbm,
+            lqi: info.lqi,
+            snr_cb: info.snr_cb,
+        };
+        // The flags byte costs five bytes a frame, so a live delivery
+        // only grows to the buffered layout when it has something to say
+        // — which today means the frame is one the device sent itself.
+        let mut rx_meta = [0u8; BufferedRxMeta::WIRE_LEN];
+        let meta_len = if info.self_tx {
+            BufferedRxMeta {
+                rx,
+                flags: RX_FLAG_SELF_TX,
+                age_s: 0,
+            }
+            .encode(&mut rx_meta)
+        } else {
+            rx.encode(&mut rx_meta)
         }
-        .encode(&mut rx_meta)
         .expect("buffer sized with WIRE_LEN");
         if let Ok(len) = frame::str_recv(
             &mut self.scratch,
@@ -3183,11 +3238,13 @@ impl<A: AesProvider, S: Sha256Provider, const TX: usize> Session<A, S, TX> {
         let mut rx_meta = [0u8; BufferedRxMeta::WIRE_LEN];
         let meta_len = BufferedRxMeta {
             rx: RxMeta {
-                rssi_dbm: Some(entry.rssi_dbm),
+                rssi_dbm: entry.rssi_dbm,
                 lqi: entry.lqi,
-                snr_cb: Some(entry.snr_cb),
+                snr_cb: entry.snr_cb,
             },
-            flags: RX_FLAG_BUFFERED | if entry.acked { RX_FLAG_ACKED } else { 0 },
+            flags: RX_FLAG_BUFFERED
+                | if entry.acked { RX_FLAG_ACKED } else { 0 }
+                | if entry.self_tx { RX_FLAG_SELF_TX } else { 0 },
             age_s: u32::try_from(now_ms.saturating_sub(entry.rx_time_ms) / 1000)
                 .unwrap_or(u32::MAX),
         }
@@ -3494,6 +3551,22 @@ impl<A: AesProvider, S: Sha256Provider, const TX: usize> Session<A, S, TX> {
             };
             self.send_prop_is(tid, key, value, emit);
             return Some(Effect::ApplyTime { epoch });
+        }
+        // Which side of the radio multiplexer the host sits on is the
+        // multiplexer's state, not the session's, so the write completes
+        // with its own effect.
+        if key == prop::MAC_BACKHAUL {
+            let enabled = match parse_bool(value) {
+                Ok(enabled) => enabled,
+                Err(status) => {
+                    self.complete(tid, status, emit);
+                    return None;
+                }
+            };
+            // Session-scoped: reverts to false on every attach.
+            self.session.backhaul = enabled;
+            self.send_prop_is(tid, key, &[enabled as u8], emit);
+            return Some(Effect::ApplyBackhaul { enabled });
         }
         if key == prop::DEV_NAME {
             if !valid_device_name(value) {
@@ -3996,12 +4069,21 @@ impl<A: AesProvider, S: Sha256Provider, const TX: usize> Session<A, S, TX> {
             return None;
         }
 
-        let airtime_ms = lora_airtime_ms(
-            self.device.settings.sf,
-            self.device.settings.bw_hz,
-            self.device.settings.cr_denom,
-            payload.data.len(),
-        );
+        // In backhaul mode the frame is handed to the device's own node
+        // rather than transmitted, so it costs no airtime here. What the
+        // node then chooses to repeat is charged to the duty ledger when
+        // the node transmits it, which is where the airtime is actually
+        // spent — charging both would bill one frame twice.
+        let airtime_ms = if self.session.backhaul {
+            0
+        } else {
+            lora_airtime_ms(
+                self.device.settings.sf,
+                self.device.settings.bw_hz,
+                self.device.settings.cr_denom,
+                payload.data.len(),
+            )
+        };
         let projected_airtime_ms = self
             .session
             .pending
@@ -4115,6 +4197,7 @@ impl<A: AesProvider, S: Sha256Provider, const TX: usize> Session<A, S, TX> {
                 | prop::PHY_DUTY_LIMIT
                 | prop::BLE_PAIRING_PIN
                 | prop::MAC_PROMISCUOUS
+                | prop::MAC_BACKHAUL
                 | prop::SAVED
                 | prop::HOST_KEY
                 | prop::HOST_RX_FILTERS
@@ -4156,6 +4239,7 @@ impl<A: AesProvider, S: Sha256Provider, const TX: usize> Session<A, S, TX> {
                     cap::REPEATER,
                     cap::IDENT,
                     cap::ADVERT,
+                    cap::MAC_BACKHAUL,
                 ] {
                     len += pui::encode(capability, &mut out[len..]).unwrap_or(0);
                 }
@@ -4296,6 +4380,10 @@ impl<A: AesProvider, S: Sha256Provider, const TX: usize> Session<A, S, TX> {
             prop::PHY_DUTY_LIMIT => put(out, &self.config.duty.limit().to_le_bytes()),
             prop::MAC_PROMISCUOUS => {
                 out[0] = self.session.promiscuous as u8;
+                1
+            }
+            prop::MAC_BACKHAUL => {
+                out[0] = self.session.backhaul as u8;
                 1
             }
             prop::SAVED => {
@@ -4816,6 +4904,7 @@ mod tests {
                 cap::REPEATER,
                 cap::IDENT,
                 cap::ADVERT,
+                cap::MAC_BACKHAUL,
                 cap::BATTERY,
                 cap::ALERT,
                 cap::TIME,
@@ -5681,6 +5770,88 @@ mod tests {
         // BOOL validation.
         let (emitted, _) = set(&mut session, prop::MAC_PROMISCUOUS, &[2]);
         expect_status(&emitted[0], 2, Status::INVALID_ARGUMENT);
+    }
+
+    #[test]
+    fn attach_resets_backhaul_mode() {
+        let mut session = test_session();
+        let (_, effect) = set(&mut session, prop::MAC_BACKHAUL, &[1]);
+        assert_eq!(effect, Some(Effect::ApplyBackhaul { enabled: true }));
+        assert_eq!(get(&mut session, prop::MAC_BACKHAUL), [1]);
+
+        session.attach(true);
+        assert_eq!(get(&mut session, prop::MAC_BACKHAUL), [0]);
+
+        let (emitted, _) = set(&mut session, prop::MAC_BACKHAUL, &[2]);
+        expect_status(&emitted[0], 2, Status::INVALID_ARGUMENT);
+    }
+
+    /// In backhaul mode the host's frame is handed to the device's own
+    /// node instead of transmitted. The node pays for whatever it then
+    /// decides to put on the air; charging the host too would bill one
+    /// frame's airtime twice.
+    #[test]
+    fn a_backhauled_send_spends_no_airtime() {
+        let mut session = test_session();
+        enable(&mut session);
+        set(&mut session, prop::MAC_BACKHAUL, &[1]);
+
+        let (_, effect) = send_packet(&mut session, 1, &[0xAB; 32], &[], 0);
+        assert_eq!(effect, Some(Effect::StartTransmit));
+        session.on_tx_result(TxOutcome::Sent, 0, &mut |_: &[u8]| {});
+        assert_eq!(get(&mut session, prop::PHY_DUTY_NOW), 0u16.to_le_bytes());
+
+        // The same frame on the air is charged as usual.
+        set(&mut session, prop::MAC_BACKHAUL, &[0]);
+        let (_, effect) = send_packet(&mut session, 2, &[0xAB; 32], &[], 0);
+        assert_eq!(effect, Some(Effect::StartTransmit));
+        session.on_tx_result(TxOutcome::Sent, 0, &mut |_: &[u8]| {});
+        assert_ne!(get(&mut session, prop::PHY_DUTY_NOW), 0u16.to_le_bytes());
+    }
+
+    /// A frame the device transmitted itself arrives with nothing
+    /// measured, and says so rather than reporting the placeholder
+    /// values as a reading.
+    #[test]
+    fn a_self_transmitted_frame_is_delivered_as_unmeasured() {
+        let mut session = test_session();
+        enable(&mut session);
+        set(&mut session, prop::MAC_PROMISCUOUS, &[1]);
+
+        let mut emitted = Vec::new();
+        session.on_radio_rx(
+            &[1, 2, 3],
+            &RadioRxInfo::self_transmitted(),
+            0,
+            &mut |bytes: &[u8]| emitted.push(bytes.to_vec()),
+        );
+        let parsed = Frame::parse(&emitted[0]).unwrap();
+        let payload = StreamPayload::parse(parsed.payload).unwrap();
+        assert_eq!(payload.data, &[1, 2, 3]);
+        let meta = BufferedRxMeta::decode(payload.metadata).unwrap();
+        assert_eq!(meta.flags, RX_FLAG_SELF_TX);
+        assert_eq!(meta.age_s, 0);
+        assert_eq!(meta.rx.rssi_dbm, None);
+        assert_eq!(meta.rx.snr_cb, None);
+    }
+
+    /// The flags byte is worth five bytes a frame only when it carries
+    /// something; an ordinary reception stays on the short layout.
+    #[test]
+    fn an_ordinary_reception_carries_no_flags_byte() {
+        let mut session = test_session();
+        enable(&mut session);
+
+        let mut emitted = Vec::new();
+        session.on_radio_rx(
+            &[1, 2, 3],
+            &RadioRxInfo::measured(-91, -53, None),
+            0,
+            &mut |bytes: &[u8]| emitted.push(bytes.to_vec()),
+        );
+        let parsed = Frame::parse(&emitted[0]).unwrap();
+        let payload = StreamPayload::parse(parsed.payload).unwrap();
+        assert_eq!(payload.metadata.len(), RxMeta::WIRE_LEN);
     }
 
     #[test]
@@ -6612,9 +6783,12 @@ mod tests {
         let mut session = test_session();
         enable(&mut session);
         let mut emitted = Vec::new();
-        session.on_radio_rx(&[1, 2, 3], -91, -53, None, 0, &mut |bytes: &[u8]| {
-            emitted.push(bytes.to_vec())
-        });
+        session.on_radio_rx(
+            &[1, 2, 3],
+            &RadioRxInfo::measured(-91, -53, None),
+            0,
+            &mut |bytes: &[u8]| emitted.push(bytes.to_vec()),
+        );
         let parsed = Frame::parse(&emitted[0]).unwrap();
         assert_eq!(parsed.command(), Some(Cmd::StrRecv));
         assert_eq!(parsed.header.tid(), TID_UNSOLICITED);
@@ -6629,13 +6803,21 @@ mod tests {
     fn radio_rx_suppressed_while_disabled() {
         let mut session = test_session();
         let mut emitted = Vec::new();
-        session.on_radio_rx(&[1, 2, 3], -91, -53, None, 0, &mut |bytes: &[u8]| {
-            emitted.push(bytes.to_vec())
-        });
+        session.on_radio_rx(
+            &[1, 2, 3],
+            &RadioRxInfo::measured(-91, -53, None),
+            0,
+            &mut |bytes: &[u8]| emitted.push(bytes.to_vec()),
+        );
         assert!(emitted.is_empty());
         // Nothing is queued either: the PHY is disabled.
         session.detach();
-        session.on_radio_rx(&[1, 2, 3], -91, -53, None, 0, &mut |_: &[u8]| {});
+        session.on_radio_rx(
+            &[1, 2, 3],
+            &RadioRxInfo::measured(-91, -53, None),
+            0,
+            &mut |_: &[u8]| {},
+        );
         session.attach(true);
         assert_eq!(
             get(&mut session, prop::HOST_RX_QUEUE_COUNT),
@@ -6816,9 +6998,12 @@ mod tests {
 
     fn delivered_at(session: &mut TestSession, frame: &[u8], now_ms: u64) -> bool {
         let mut emitted = Vec::new();
-        session.on_radio_rx(frame, -80, 40, None, now_ms, &mut |bytes: &[u8]| {
-            emitted.push(bytes.to_vec())
-        });
+        session.on_radio_rx(
+            frame,
+            &RadioRxInfo::measured(-80, 40, None),
+            now_ms,
+            &mut |bytes: &[u8]| emitted.push(bytes.to_vec()),
+        );
         !emitted.is_empty()
     }
 
@@ -7825,9 +8010,12 @@ mod tests {
 
     /// Feed a detached frame; detached processing must emit nothing.
     fn rx_effect(session: &mut TestSession, frame: &[u8], now_ms: u64) -> Option<Effect> {
-        session.on_radio_rx(frame, -80, 40, None, now_ms, &mut |_: &[u8]| {
-            panic!("detached receive must not emit")
-        })
+        session.on_radio_rx(
+            frame,
+            &RadioRxInfo::measured(-80, 40, None),
+            now_ms,
+            &mut |_: &[u8]| panic!("detached receive must not emit"),
+        )
     }
 
     /// The expected 8-byte ack trailer (`ack_mic || ack_tag`) for an
@@ -8015,9 +8203,12 @@ mod tests {
         session.attach(true);
         let frame = sealed_unar(5, &test_pairwise(), false);
         let mut emitted = Vec::new();
-        let effect = session.on_radio_rx(&frame, -80, 40, None, 0, &mut |bytes: &[u8]| {
-            emitted.push(bytes.to_vec())
-        });
+        let effect = session.on_radio_rx(
+            &frame,
+            &RadioRxInfo::measured(-80, 40, None),
+            0,
+            &mut |bytes: &[u8]| emitted.push(bytes.to_vec()),
+        );
         // Delivered live, never acknowledged on the host's behalf.
         assert!(effect.is_none());
         assert_eq!(emitted.len(), 1);
@@ -8207,9 +8398,12 @@ mod tests {
         // multicast on the host's saved channel is no longer accepted
         // because nothing was provisioned to accept it.
         let id = test_engine().derive_channel_id(&ChannelKey([0x42; 32])).0;
-        booted.on_radio_rx(&multicast_on(id), -80, 40, None, 0, &mut |_: &[u8]| {
-            panic!("detached boot must not emit")
-        });
+        booted.on_radio_rx(
+            &multicast_on(id),
+            &RadioRxInfo::measured(-80, 40, None),
+            0,
+            &mut |_: &[u8]| panic!("detached boot must not emit"),
+        );
         booted.attach(true);
         assert_eq!(get(&mut booted, prop::SAVED), [ids::saved::CURRENT]);
         assert_eq!(get(&mut booted, prop::HOST_KEY), Vec::<u8>::new());

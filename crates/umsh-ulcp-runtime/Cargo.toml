@@ -22,7 +22,12 @@ repository.workspace = true
 # the radio stack or the journal store.
 default = ["radio", "counters", "driver"]
 # The radio multiplexer, over `umsh-radio-loraphy`'s `Channels`.
-radio = ["dep:umsh-radio-loraphy", "dep:embassy-futures"]
+radio = [
+    "dep:umsh-radio-loraphy",
+    "dep:embassy-futures",
+    "dep:umsh-hal",
+    "dep:heapless",
+]
 # The persisted frame-counter map, the two-page journal handles, and the
 # device node's counter store — over `umsh-journal-store`.
 counters = ["dep:umsh-journal-store", "dep:umsh-hal", "dep:heapless"]

@@ -2680,7 +2680,7 @@ mod firmware {
     /// completion routing plus RX fan-out to every client.
     #[embassy_executor::task]
     async fn radio_mux_task() {
-        super::radio_mux::radio_mux(&RADIO_CH, &MUX_CLIENTS).await
+        super::radio_mux::radio_mux(&RADIO_CH, &MUX_CLIENTS, &super::radio_mux::MUX_MODE).await
     }
 
     /// Owns the USB `Sender`, HDLC-encodes frames, and writes USB packets.

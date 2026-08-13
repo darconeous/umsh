@@ -74,6 +74,30 @@ impl core::fmt::Debug for Snr {
     }
 }
 
+/// Where a received frame came from.
+///
+/// Only [`RxOrigin::Air`] carries real measurements. The other two arrive
+/// through paths with no radio in them, so their `rssi`, `snr`, and `lqi`
+/// carry no information and must be reported as unmeasured wherever a
+/// receiver would otherwise read them as a link quality.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub enum RxOrigin {
+    /// A reception off the air.
+    #[default]
+    Air,
+    /// A copy of a frame this device just transmitted.
+    LocalTx,
+    /// A frame handed over by an attached host across a point-to-point link.
+    Backhaul,
+}
+
+impl RxOrigin {
+    /// Whether the accompanying signal fields are measurements.
+    pub const fn is_measured(self) -> bool {
+        matches!(self, Self::Air)
+    }
+}
+
 /// Metadata returned with a received frame.
 #[derive(Clone, Copy)]
 pub struct RxInfo {
@@ -85,6 +109,8 @@ pub struct RxInfo {
     pub snr: Snr,
     /// Optional link-quality indicator in a radio-specific normalized scale.
     pub lqi: Option<NonZeroU8>,
+    /// The path this frame took to reach the receiver.
+    pub origin: RxOrigin,
 }
 
 /// Channel-activity-detection (CAD) policy applied before a transmit.

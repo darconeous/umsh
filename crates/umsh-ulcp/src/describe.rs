@@ -32,6 +32,7 @@ pub const fn property_name(key: u32) -> Option<&'static str> {
         prop::PHY_MTU => "PROP_PHY_MTU",
         prop::PHY_LORA_SW => "PROP_PHY_LORA_SW",
         prop::MAC_PROMISCUOUS => "PROP_MAC_PROMISCUOUS",
+        prop::MAC_BACKHAUL => "PROP_MAC_BACKHAUL",
         prop::SAVED => "PROP_SAVED",
         prop::DEV_KEY => "PROP_DEV_KEY",
         prop::DEV_PRIVATE_KEY => "PROP_DEV_PRIVATE_KEY",
@@ -100,6 +101,7 @@ pub const fn capability_name(code: u32) -> Option<&'static str> {
         cap::GNSS => "GNSS",
         cap::ADVERT => "ADVERT",
         cap::ILLUMINANCE => "ILLUMINANCE",
+        cap::MAC_BACKHAUL => "MAC_BACKHAUL",
         _ => return None,
     })
 }

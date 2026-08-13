@@ -134,7 +134,9 @@ Because the option sits in the plaintext options block, forwarders read it under
 
 This option works very much like the Trace Route option, except that repeaters append signal quality information instead of router hints.
 
-When this option is present, each repeater that will repeat the packet must first prepend the signal quality metrics for the packet they received to the value of this option. The signal quality metrics are two bytes: the first byte is the **negative** RSSI in dBm (so -90 becomes 90, for example), and the second is the signed SNR in cB (centibells, or 1/10ths of a dB). 
+When this option is present, each repeater that will repeat the packet must first prepend the signal quality metrics for the packet they received to the value of this option. The signal quality metrics are two bytes: the first byte is the **negative** RSSI in dBm (so -90 becomes 90, for example), and the second is the signed SNR in cB (centibells, or 1/10ths of a dB).
+
+A hop that measured neither field—one whose radio reports no signal quality, or one that received the packet over a point-to-point link rather than the air—prepends two zero bytes. An RSSI byte of zero is 0 dBm at the receiver, which no link this protocol runs over produces, so it cannot be read as a measurement. Such a hop still prepends an entry: the one-to-one pairing with the Trace Route option is what makes any entry in the list attributable, and a hop that skipped its own would misattribute every entry before it.
 
 ### Region Code (option 11)
 - Type: 2-byte region identifier

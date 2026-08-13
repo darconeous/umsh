@@ -621,9 +621,10 @@ power cycle.
 ### Session State {#session-state}
 
 State that exists only while a host is attached: transaction (TID)
-correlation, transport reassembly buffers, and session-scoped properties —
-currently only `PROP_MAC_PROMISCUOUS`. Session state is reset to defaults
-on every attach. Resetting it never affects radio operation.
+correlation, transport reassembly buffers, and the session-scoped
+properties `PROP_MAC_PROMISCUOUS` and `PROP_MAC_BACKHAUL`. Session state
+is reset to defaults on every attach. Resetting it never affects radio
+operation.
 
 ### Device Domain {#device-domain}
 
@@ -992,6 +993,7 @@ Code | Name                      | Requires                             | Define
 45   | `CAP_GNSS`                | `CAP_TIME`                           | [Device Domain](ulcp-device.md#capabilities)
 46   | `CAP_ADVERT`              | `CAP_DEV_IDENTITY`                   | [Device Domain](ulcp-device.md#capabilities)
 47   | `CAP_ILLUMINANCE`         | —                                    | [Device Domain](ulcp-device.md#capabilities)
+48   | `CAP_MAC_BACKHAUL`        | `CAP_REPEATER`                       | [Tethered Host Services](ulcp-host.md#capabilities)
 515  | `CAP_PHY_LORA`            | —                                    | [Radio Control](ulcp-radio.md#capabilities)
 
 A device **MUST NOT** advertise a capability without also advertising the

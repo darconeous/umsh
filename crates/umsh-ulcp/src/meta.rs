@@ -22,6 +22,10 @@ pub const RX_FLAG_BUFFERED: u8 = 1 << 0;
 /// `RX_FLAGS` bit: the device already transmitted a MAC ack for this frame
 /// on the host's behalf; the host must not ack it again.
 pub const RX_FLAG_ACKED: u8 = 1 << 1;
+/// `RX_FLAGS` bit: the device transmitted this frame itself and is
+/// delivering a copy. `RX_RSSI` and `RX_SNR` carry their unsupported
+/// sentinels, since a transmitter measures nothing.
+pub const RX_FLAG_SELF_TX: u8 = 1 << 2;
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum MetaError {

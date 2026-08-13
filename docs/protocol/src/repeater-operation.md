@@ -72,6 +72,7 @@ Each cache entry is small (equal to the cache key size — typically 4 to 16 byt
    - If this packet was forwarded recently, do not forward.
 
 2. **Local origin and local destination**
+   - If this repeater's own radio already transmitted this packet, do not forward. A repeater that shares its radio with another stack—an attached host, most commonly—receives a copy of what that stack transmits. Forwarding it would put a packet back on the air that this antenna already sent, and the source address belongs to the other stack, so the check below cannot catch it. The repeater MUST insert the cache key as if it had forwarded the packet: a neighbor's repeat arrives shortly after, and it is the same packet, already carried.
    - If the packet's source address identifies one of this repeater's own identities, do not forward.
    - If the packet's destination address identifies one of this repeater's own identities, do not forward.
 
@@ -107,12 +108,14 @@ Each cache entry is small (equal to the cache key size — typically 4 to 16 byt
 9. **Signal-quality thresholds** *(flood forwarding only!)*
    - If either the packet or repeater imposes a minimum RSSI, the effective threshold is the higher of the two. If the received RSSI is below the effective threshold, do not forward.
    - If either the packet or repeater imposes a minimum SNR, the effective threshold is the higher of the two. If the received SNR is below the effective threshold, do not forward.
+   - These thresholds ask how well the packet was heard. A packet handed to the repeater over a point-to-point link rather than a radio was not heard at all, and carries no measurement to compare; the thresholds do not apply to it.
 
 10. **Trace route processing**
    - If the packet contains a trace-route option, prepend this repeater's hint. If prepending the hint would cause the packet to exceed the maximum frame size, drop the packet.
 
 11. **Retransmit**
    - If this is a flood forward, implement the [flood forwarding contention window](channel-access.md#flood-forwarding-contention-window)
+     - The contention window staggers the repeaters that all heard one transmission. A packet that arrived over a point-to-point link was heard by this repeater alone, so there is no contention to resolve and no window to wait out.
    - Forward the modified packet according to normal [channel access rules](channel-access.md).
 
 A packet that arrives carrying an **empty** source-route option matched no hint at this repeater, so it takes the flood path: steps 7 through 9 apply in full. This is how a hybrid route transitions to flooding — the transition is observed by the repeater *after* the one that emptied the route, not performed by it.

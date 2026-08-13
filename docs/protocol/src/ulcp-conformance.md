@@ -91,7 +91,7 @@ Subsystem | Capabilities
 [Radio Control](ulcp-radio.md) beyond the required properties | `CAP_PHY_LORA`, `CAP_PHY_DUTY_LIMIT`
 [Device Domain](ulcp-device.md) | `CAP_DEV_IDENTITY`, `CAP_DEV_NAME`, `CAP_BATTERY`, `CAP_REPEATER`, `CAP_IDENT`, `CAP_ALERT`, `CAP_TIME`, `CAP_GNSS`, `CAP_ADVERT`, `CAP_ILLUMINANCE`
 [Saved State](ulcp-saved-state.md) | `CAP_SAVE`
-[Tethered Host Services](ulcp-host.md) | `CAP_HOST_FILTER`, `CAP_HOST_KEYS`, `CAP_HOST_RX_QUEUE`, `CAP_HOST_AUTO_ACK`
+[Tethered Host Services](ulcp-host.md) | `CAP_HOST_FILTER`, `CAP_HOST_KEYS`, `CAP_HOST_RX_QUEUE`, `CAP_HOST_AUTO_ACK`, `CAP_MAC_BACKHAUL`
 
 A device advertising none of them is a transparent radio: it configures
 its PHY, transmits what it is given, and delivers everything it hears.

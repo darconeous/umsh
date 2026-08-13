@@ -49,6 +49,7 @@ Id   | Mnemonic                                                                 
 43   | [`PROP_PHY_LORA_SW`](ulcp-radio.md#prop-phy-lora-sw)                       | Get, Set                 | `CAP_PHY_LORA`
 48   | [`PROP_MAC_PROMISCUOUS`](ulcp-host.md#prop-mac-promiscuous)                | Get, Set                 | `CAP_HOST_FILTER`
 49   | [`PROP_SAVED`](ulcp-saved-state.md#prop-saved)                             | Get                      | `CAP_SAVE`
+50   | [`PROP_MAC_BACKHAUL`](ulcp-host.md#prop-mac-backhaul)                      | Get, Set                 | `CAP_MAC_BACKHAUL`
 64   | [`PROP_DEV_KEY`](ulcp-device.md#prop-dev-key)                              | Get                      | `CAP_DEV_IDENTITY`
 65   | [`PROP_DEV_PRIVATE_KEY`](ulcp-device.md#prop-dev-private-key)              | Set                      | `CAP_DEV_IDENTITY`
 66   | [`PROP_DEV_CHANNEL_KEYS`](ulcp-device.md#prop-dev-channel-keys)            | Get, Set, Insert, Remove | `CAP_DEV_IDENTITY`
@@ -119,6 +120,7 @@ Code | Name                      | Defined in
 45   | `CAP_GNSS`                | [Device Domain](ulcp-device.md#capabilities)
 46   | `CAP_ADVERT`              | [Device Domain](ulcp-device.md#capabilities)
 47   | `CAP_ILLUMINANCE`         | [Device Domain](ulcp-device.md#capabilities)
+48   | `CAP_MAC_BACKHAUL`        | [Tethered Host Services](ulcp-host.md#capabilities)
 515  | `CAP_PHY_LORA`            | [Radio Control](ulcp-radio.md#capabilities)
 
 ## Status Codes
@@ -163,4 +165,4 @@ Charge states | 0 discharging, 1 charging, 2 charged | [`PROP_BATTERY`](ulcp-dev
 Alert states | 0 `ALERT_NONE`, 1 `ALERT_LOCATE` | [`PROP_ALERT`](ulcp-device.md#prop-alert)
 Fix quality | 0 none, 1 two-dimensional, 2 three-dimensional | [`PROP_GNSS_FIX`](ulcp-device.md#prop-gnss-fix)
 Transmit flags | bit 0 `TX_FLAG_NOCCA`, bit 1 `TX_FLAG_NODUTY` | [`STR_PHY_RAW`](ulcp-transport.md#str-radio-raw)
-Receive flags | bit 0 `RX_FLAG_BUFFERED`, bit 1 `RX_FLAG_ACKED` | [Buffered-Frame Metadata](ulcp-transport.md#buffered-metadata)
+Receive flags | bit 0 `RX_FLAG_BUFFERED`, bit 1 `RX_FLAG_ACKED`, bit 2 `RX_FLAG_SELF_TX` | [Extended Recv Metadata](ulcp-transport.md#buffered-metadata)

@@ -11,7 +11,7 @@ use umsh_core::{
     options::{OptionEncoder, TraceSignalEntry},
 };
 use umsh_crypto::{CryptoEngine, CryptoError, DerivedChannelKeys, NodeIdentity, PairwiseKeys};
-use umsh_hal::{Clock, CounterStore, Radio, RxInfo, Snr, TxError, TxOptions};
+use umsh_hal::{Clock, CounterStore, Radio, RxInfo, RxOrigin, Snr, TxError, TxOptions};
 
 use crate::{
     AddPeerError, CapacityError, DEFAULT_ACKS, DEFAULT_CHANNEL_HINT_REPLAY, DEFAULT_CHANNEL_REPLAY,
@@ -70,6 +70,7 @@ struct DeferredCounterResyncFrame<const FRAME: usize> {
     rssi: i16,
     snr: Snr,
     lqi: Option<NonZeroU8>,
+    origin: RxOrigin,
     received_at_ms: u64,
 }
 
@@ -525,8 +526,27 @@ struct ForwardPlan {
     signal: TraceSignalEntry,
 }
 
+/// Package a reception's physical-layer observations for delivery.
+///
+/// A frame that reached the MAC without crossing a radio has no such
+/// observations, and reporting the placeholders it carries as readings
+/// would put invented numbers in front of anything that charts them.
+fn rx_metadata(rx: &RxInfo, received_at_ms: u64) -> crate::send::RxMetadata {
+    if rx.origin.is_measured() {
+        crate::send::RxMetadata::new(Some(rx.rssi), Some(rx.snr), rx.lqi, Some(received_at_ms))
+    } else {
+        crate::send::RxMetadata::new(None, None, None, Some(received_at_ms))
+    }
+}
+
 fn trace_signal_entry(rx: &RxInfo) -> TraceSignalEntry {
-    TraceSignalEntry::new(rx.rssi, rx.snr.as_centibels())
+    if rx.origin.is_measured() {
+        TraceSignalEntry::new(rx.rssi, rx.snr.as_centibels())
+    } else {
+        // A hop that measured nothing still owes the trace an entry, or
+        // every reading after it pairs with the wrong hop.
+        TraceSignalEntry::UNMEASURED
+    }
 }
 
 /// Local transmission policy enforced by the [`Mac`] coordinator on all outgoing frames.
@@ -2367,6 +2387,7 @@ impl<
             rssi: rx.rssi,
             snr: rx.snr,
             lqi: rx.lqi,
+            origin: rx.origin,
         };
         let mut current_received_at_ms = received_at_ms;
         let mut handled_any = false;
@@ -2482,6 +2503,7 @@ impl<
                 rssi: deferred.rssi,
                 snr: deferred.snr,
                 lqi: deferred.lqi,
+                origin: deferred.origin,
             };
             current_received_at_ms = deferred.received_at_ms;
         }
@@ -2521,12 +2543,7 @@ impl<
                     Some(from_hint),
                     false,
                     None,
-                    crate::send::RxMetadata::new(
-                        Some(rx.rssi),
-                        Some(rx.snr),
-                        rx.lqi,
-                        Some(received_at_ms),
-                    ),
+                    rx_metadata(rx, received_at_ms),
                 )),
             );
         }
@@ -2729,12 +2746,7 @@ impl<
                         Some(peer_key.hint()),
                         true,
                         None,
-                        crate::send::RxMetadata::new(
-                            Some(rx.rssi),
-                            Some(rx.snr),
-                            rx.lqi,
-                            Some(received_at_ms),
-                        ),
+                        rx_metadata(rx, received_at_ms),
                     )),
                 );
                 handled = true;
@@ -2825,12 +2837,7 @@ impl<
                                             id: channel_id,
                                             key: &channel_key,
                                         }),
-                                        crate::send::RxMetadata::new(
-                                            Some(rx.rssi),
-                                            Some(rx.snr),
-                                            rx.lqi,
-                                            Some(received_at_ms),
-                                        ),
+                                        rx_metadata(rx, received_at_ms),
                                     )),
                                 );
                             }
@@ -3017,12 +3024,7 @@ impl<
                                     id: channel_id,
                                     key: &resolved_channel_key,
                                 }),
-                                crate::send::RxMetadata::new(
-                                    Some(rx.rssi),
-                                    Some(rx.snr),
-                                    rx.lqi,
-                                    Some(received_at_ms),
-                                ),
+                                rx_metadata(rx, received_at_ms),
                             )),
                         );
                         handled = true;
@@ -4001,6 +4003,7 @@ impl<
             rssi: rx.rssi,
             snr: rx.snr,
             lqi: rx.lqi,
+            origin: rx.origin,
             received_at_ms,
         });
     }
@@ -4536,6 +4539,19 @@ impl<
         if !header.packet_type().is_routable() {
             return false;
         }
+        // A frame this radio just put on the air must never be repeated,
+        // whoever composed it. `is_locally_originated` cannot see this:
+        // the source is whichever stack sharing the antenna sent it, and
+        // an attached host's identity is not one of ours. Recording the
+        // duplicate key is the other half — a neighbor's repeat of the
+        // same frame will arrive shortly, and repeating that would put a
+        // frame back on the air that already left this antenna once.
+        if rx.origin == RxOrigin::LocalTx {
+            if let Some(cache_key) = Self::forward_dup_key(header, frame) {
+                self.dup_cache.insert(cache_key, self.clock.now_ms());
+            }
+            return false;
+        }
         if self.is_locally_originated(frame, header) {
             return false;
         }
@@ -4665,15 +4681,20 @@ impl<
                 return None;
             }
             // Signal-quality filtering applies only to flood forwarding,
-            // not to source-routed hops.
-            if let Some(min_rssi) = Self::effective_min_rssi(options, &self.repeater) {
-                if rx.rssi < min_rssi {
-                    return None;
+            // not to source-routed hops — and only to frames that arrived
+            // over a radio. A minimum RSSI asks how far away the sender
+            // was; over a wire the question has no answer, and any value
+            // the comparison reads is one nobody measured.
+            if rx.origin.is_measured() {
+                if let Some(min_rssi) = Self::effective_min_rssi(options, &self.repeater) {
+                    if rx.rssi < min_rssi {
+                        return None;
+                    }
                 }
-            }
-            if let Some(min_snr) = Self::effective_min_snr(options, &self.repeater) {
-                if rx.snr < Snr::from_decibels(min_snr) {
-                    return None;
+                if let Some(min_snr) = Self::effective_min_snr(options, &self.repeater) {
+                    if rx.snr < Snr::from_decibels(min_snr) {
+                        return None;
+                    }
                 }
             }
             let mut saw_region_code = false;
@@ -5165,6 +5186,13 @@ impl<
     }
 
     fn sample_flood_contention_delay_ms(&mut self, rx: &RxInfo, options: &ParsedOptions) -> u64 {
+        // Contention delay staggers the repeaters that all heard one
+        // transmission, weighted so the best-placed one goes first. A
+        // frame handed over a point-to-point link was heard by exactly
+        // one repeater, so there is no race to stagger.
+        if !rx.origin.is_measured() {
+            return 0;
+        }
         let effective_threshold_db =
             Self::effective_min_snr(options, &self.repeater).unwrap_or(i8::MIN);
         let low_db = self

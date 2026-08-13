@@ -29,14 +29,15 @@ use embassy_time::{Instant, Timer};
 
 use umsh_crypto::software::SoftwareIdentity;
 use umsh_crypto::{AesProvider, NodeIdentity as _, Sha256Provider};
+use umsh_hal::RxOrigin;
 use umsh_journal_store::proto;
 use umsh_radio_loraphy::{
     CadPolicy, Channels, DeviceControl, DeviceSettings, MAX_PAYLOAD, RxFrame, TxRequest,
     bandwidth_from_hz, coding_rate_from_denom, spreading_factor_from_u8,
 };
 use umsh_ulcp_device::{
-    Effect, IdentitySource, MAX_CHANNEL_KEYS, MAX_DEV_PEERS, MAX_REPEATER_REGIONS, SNAPSHOT_MAX,
-    SavedStatus, Session, TxOutcome, TxPower,
+    Effect, IdentitySource, MAX_CHANNEL_KEYS, MAX_DEV_PEERS, MAX_REPEATER_REGIONS, RadioRxInfo,
+    SNAPSHOT_MAX, SavedStatus, Session, TxOutcome, TxPower,
 };
 
 use crate::transport_policy::{SessionArbitration, Transport};
@@ -580,6 +581,9 @@ async fn apply_effect<A, S, const TXQ: usize, M, const RX: usize, const TX: usiz
         Some(Effect::ApplyTime { epoch }) => {
             env.apply_time(epoch).await;
         }
+        Some(Effect::ApplyBackhaul { enabled }) => {
+            crate::radio_mux::MUX_MODE.set_backhaul(enabled);
+        }
         // Deferred effects needing `&mut Session` + the emitter are
         // handled inline in the run loop rather than here.
         Some(Effect::SampleRssi { .. })
@@ -1080,11 +1084,17 @@ where
                 // While detached this may stage a delegated MAC
                 // acknowledgement (Effect::StartTransmit).
                 let queued_before = session.queued_frame_count();
+                let rx_info = match info.origin {
+                    RxOrigin::Air => {
+                        RadioRxInfo::measured(info.rssi, info.snr.as_centibels(), info.lqi)
+                    }
+                    // Backhaul frames travel host-to-node, so the session
+                    // never sees one arriving.
+                    RxOrigin::LocalTx | RxOrigin::Backhaul => RadioRxInfo::self_transmitted(),
+                };
                 let effect = session.on_radio_rx(
                     &data,
-                    info.rssi,
-                    info.snr.as_centibels(),
-                    info.lqi,
+                    &rx_info,
                     Instant::now().as_millis(),
                     &mut |frame: &[u8]| emitter.push(frame),
                 );
