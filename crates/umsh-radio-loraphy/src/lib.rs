@@ -322,8 +322,15 @@ where
                             rx_in_progress = true; // gate TX until the frame resolves
                             continue;
                         }
-                        Ok(_) => continue,         // no-op IRQ: stay in RX
-                        Err(_) => continue 'outer, // CRC / header error: full re-prepare
+                        Ok(_) => continue, // no-op IRQ: stay in RX
+                        // A failed payload CRC lands here, and this is the
+                        // only place it can be caught: repeaters cannot check
+                        // a MIC or a signature, so a corrupt frame that gets
+                        // past this point is forwarded, and its damaged bytes
+                        // give it a duplicate-cache identity no node in the
+                        // mesh has seen. The frame is dropped and RX
+                        // re-prepared; the bytes are left unread.
+                        Err(_) => continue 'outer,
                     }
                 }
                 Either::First(Err(_)) => continue 'outer,
