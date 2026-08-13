@@ -173,11 +173,23 @@ impl PcapWriter {
         packet.extend_from_slice(&rf.freq_hz.to_be_bytes());
         packet.push(loratap_bandwidth(rf.bw_hz));
         packet.push(rf.sf);
-        let rssi = loratap_rssi(i32::from(info.rssi));
+        // A frame the device transmitted itself was never received, and
+        // LoRaTap v0 has no way to say so — its signal bytes are always
+        // readings. The rails (-139 dBm, -32 dB) are at least values no
+        // real link here produces, where the collapsed 0 dBm would chart
+        // as the strongest signal in the capture.
+        let (rssi, snr) = if info.origin.is_measured() {
+            (
+                loratap_rssi(i32::from(info.rssi)),
+                loratap_snr(info.snr.as_centibels()),
+            )
+        } else {
+            (0, loratap_snr(i16::MIN))
+        };
         packet.push(rssi); // packet RSSI
         packet.push(rssi); // max RSSI
         packet.push(rssi); // current RSSI
-        packet.push(loratap_snr(info.snr.as_centibels()));
+        packet.push(snr);
         packet.push(rf.sync_word);
         packet.extend_from_slice(frame);
 
@@ -452,6 +464,33 @@ mod tests {
         assert_eq!(packet[13], 38, "9.5 dB in quarter-dB steps");
         assert_eq!(packet[14], 0x2b, "sync word");
         assert_eq!(&packet[15..], &frame);
+    }
+
+    /// A self-transmitted frame carries no reading, and its collapsed
+    /// 0 dBm placeholder must not chart as the strongest signal in the
+    /// capture; the rails are the honest choice v0 leaves open.
+    #[test]
+    fn loratap_records_self_tx_at_the_rails() {
+        let sink = SharedSink::default();
+        let bytes = sink.0.clone();
+        let mut writer = PcapWriter::to_writer(
+            Box::new(sink),
+            CaptureLayers::Radio,
+            PcapEncapsulation::LoRaTap,
+        )
+        .unwrap();
+        let frame = [0xc0, 0xa1];
+        let mut info = sample_info(frame.len(), 0, 0);
+        info.origin = umsh::hal::RxOrigin::Backhaul;
+        writer
+            .write_radio_with_info(&sample_rf(), &info, &frame)
+            .unwrap();
+        drop(writer);
+
+        let bytes = bytes.borrow();
+        let packet = &bytes[40..];
+        assert_eq!(packet[10], 0, "RSSI at the -139 dBm floor");
+        assert_eq!(packet[13] as i8, i8::MIN, "SNR at the -32 dB rail");
     }
 
     /// Wireshark reads this field as an enumeration, so a bandwidth it
