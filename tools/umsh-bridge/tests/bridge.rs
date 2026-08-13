@@ -4,8 +4,15 @@
 //! TLS tunnel over loopback and fronted by the UDP-multicast fake radio
 //! on two different groups — one "segment" each. Injecting a frame on
 //! one segment and watching what appears on the other exercises the
-//! tunnel, the relay, and the forwarding procedure together, which is
-//! the only way to catch the places where those three disagree.
+//! tunnel, the relay, and the hub together, which is the only way to
+//! catch the places where those three disagree.
+//!
+//! The fake radio has no node behind it, and so no repeater: what
+//! crosses here crosses exactly as the bridge carried it. That is the
+//! point of these tests — they pin what the *bridge* does, which is very
+//! nearly nothing. Hop accounting, duplicate suppression, and trace
+//! prepending belong to the repeaters on either side, and are tested
+//! where they live.
 
 use std::net::{Ipv4Addr, SocketAddr};
 use std::path::Path;
@@ -31,7 +38,7 @@ struct Deployment {
 }
 
 /// Issue everything a deployment needs and write both configurations.
-fn deployment(dir: &Path, extra_forwarding: &str) -> Deployment {
+fn deployment(dir: &Path, extra_limits: &str) -> Deployment {
     umsh_bridge::keygen::write_identity(&dir.join("identity.key"), false).unwrap();
     umsh_bridge::keygen::write_identity(&dir.join("cabin.key"), false).unwrap();
 
@@ -54,8 +61,7 @@ fn deployment(dir: &Path, extra_forwarding: &str) -> Deployment {
             "[identity]\nkey_file = \"{d}/identity.key\"\n\
              [server]\nlisten = [\"127.0.0.1:{tunnel_port}\"]\n\
              [server.radio]\ntype = \"udp-multicast\"\ngroup = \"{SEGMENT_A}\"\n\
-             port = {server_port}\n\
-             [server.forwarding]\nflood_contention_ms = 0\n{extra_forwarding}\
+             port = {server_port}\n{extra_limits}\
              [[server.clients]]\nname = \"cabin\"\naddress = \"{cabin_address}\"\n"
         ),
         client: format!(
@@ -152,7 +158,7 @@ fn with_local<F: std::future::Future<Output = ()>>(body: impl FnOnce() -> F) {
 }
 
 #[test]
-fn a_flood_frame_crosses_the_bridge_clamped_traced_and_confirmed() {
+fn a_frame_crosses_the_bridge_exactly_as_it_was_heard() {
     with_local(|| async {
         let dir = tempfile::tempdir().unwrap();
         let deployment = deployment(dir.path(), "");
@@ -185,55 +191,29 @@ fn a_flood_frame_crosses_the_bridge_clamped_traced_and_confirmed() {
             .await
             .unwrap();
 
-        // It comes out on the server's segment, rewritten.
         let arrived = expect_frame(&mut segment_a)
             .await
             .expect("the frame should have crossed the bridge");
+        assert_eq!(
+            arrived, sent,
+            "the bridge carries frames; it does not rewrite them"
+        );
+
+        // Spelled out, because these are the rewrites the bridge used to
+        // make and now leaves to the repeaters on either side.
         let header = PacketHeader::parse(&arrived).unwrap();
         let hops = header.flood_hops.unwrap();
-        assert_eq!(hops.remaining(), 1, "clamped to the exit maximum");
-        assert_eq!(hops.accumulated(), 1, "one hop, through the bridge");
-
+        assert_eq!(hops.remaining(), 3, "no hop was spent at the bridge");
+        assert_eq!(hops.accumulated(), 0);
         let options = ParsedOptions::extract(&arrived, header.options_range.clone()).unwrap();
-        let trace = options.trace_route.clone().expect("the trace survives");
-        let identity =
-            umsh_bridge::identity::BridgeIdentity::load(&dir.path().join("identity.key")).unwrap();
-        assert_eq!(
-            &arrived[trace],
-            &identity.router_hint().0,
-            "the bridge's hint is prepended, which is what makes the reversed trace routable"
+        assert!(
+            arrived[options.trace_route.clone().expect("the trace survives")].is_empty(),
+            "the bridge is nobody's hop, so it writes no trace entry"
         );
-        let signal = options
-            .trace_signal
-            .clone()
-            .expect("the trace signal survives");
-        assert_eq!(
-            &arrived[signal],
-            // What the client's radio is configured to report: -40 dBm
-            // at 10 dB. The reading belongs to the radio that heard the
-            // frame, which for this crossing is the client's, not the
-            // server's.
-            &umsh_core::options::TraceSignalEntry::new(-40, 100).as_bytes(),
-            "the entry pairs with the hint above it"
+        assert!(
+            arrived[options.trace_signal.clone().expect("the signal survives")].is_empty(),
+            "and no signal entry to pair with one"
         );
-        assert_eq!(
-            &arrived[header.body_range.clone()],
-            b"across the bridge",
-            "the body is untouched"
-        );
-
-        // And the previous hop's segment gets the confirmation copy: the
-        // same packet with no flood budget left.
-        let confirmation = expect_frame(&mut segment_b)
-            .await
-            .expect("a confirmation copy should come back");
-        let header = PacketHeader::parse(&confirmation).unwrap();
-        assert_eq!(
-            header.flood_hops.unwrap().remaining(),
-            0,
-            "the copy confirms without recruiting forwarders"
-        );
-        assert_eq!(header.flood_hops.unwrap().accumulated(), 1);
     });
 }
 
@@ -261,16 +241,16 @@ fn the_bridge_does_not_carry_a_frame_back_to_where_it_came_from() {
             .await
             .unwrap();
         expect_frame(&mut segment_a).await.expect("fanned out");
-        // The confirmation copy, and then nothing more: the frame the
-        // bridge put on segment A must not come back through it.
-        expect_frame(&mut segment_b).await.expect("confirmed");
-        expect_no_frame(&mut segment_a).await;
+        // Nothing comes back. Confirming the previous hop is the ingress
+        // repeater's ordinary re-transmission, which happens on the
+        // segment and never reaches the bridge as something to send.
         expect_no_frame(&mut segment_b).await;
+        expect_no_frame(&mut segment_a).await;
     });
 }
 
 #[test]
-fn a_spent_flood_budget_does_not_cross() {
+fn a_spent_flood_budget_is_the_repeaters_business_not_the_bridges() {
     with_local(|| async {
         let dir = tempfile::tempdir().unwrap();
         let deployment = deployment(dir.path(), "");
@@ -293,7 +273,50 @@ fn a_spent_flood_budget_does_not_cross() {
             )
             .await
             .unwrap();
-        expect_no_frame(&mut segment_a).await;
+
+        // It crosses. A real deployment's ingress repeater would never
+        // have transmitted it — a spent budget is refused at the node,
+        // before the bridge is offered anything — but the bridge itself
+        // does not read hop counts, and a fake radio has no repeater to
+        // stop it.
+        let arrived = expect_frame(&mut segment_a).await.expect("crossed");
+        assert_eq!(arrived, spent);
+    });
+}
+
+#[test]
+fn the_exit_clamp_lowers_a_budget_on_the_way_through() {
+    with_local(|| async {
+        let dir = tempfile::tempdir().unwrap();
+        let deployment = deployment(dir.path(), "[server.limits]\nexit_clamp = 1\n");
+        let mut segment_a = UdpMulticastRadio::bind_v4(SEGMENT_A, deployment.server_port)
+            .await
+            .unwrap();
+        let mut segment_b = UdpMulticastRadio::bind_v4(SEGMENT_B, deployment.client_port)
+            .await
+            .unwrap();
+        start(&deployment).await;
+
+        let sent = broadcast(7, 0x66, &[]);
+        segment_b
+            .transmit(
+                &sent,
+                TxOptions {
+                    cad: CadPolicy::Skip,
+                },
+            )
+            .await
+            .unwrap();
+
+        let arrived = expect_frame(&mut segment_a).await.expect("crossed");
+        let hops = PacketHeader::parse(&arrived).unwrap().flood_hops.unwrap();
+        assert_eq!(hops.remaining(), 1, "held closer to home by the operator");
+        assert_eq!(hops.accumulated(), 0, "the clamp spends no hop of its own");
+        assert_eq!(
+            arrived[2..],
+            sent[2..],
+            "the hop byte is the only thing the bridge ever writes"
+        );
     });
 }
 

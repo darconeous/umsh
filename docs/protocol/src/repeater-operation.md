@@ -122,7 +122,7 @@ Each cache entry is small (equal to the cache key size — typically 4 to 16 byt
 
 A packet that arrives carrying an **empty** source-route option matched no hint at this repeater, so it takes the flood path: steps 7 through 9 apply in full. This is how a hybrid route transitions to flooding — the transition is observed by the repeater *after* the one that emptied the route, not performed by it.
 
-Bridges follow the same packet-rewrite rules as repeaters.
+A [bridge](internet-bridging.md) rewrites nothing of its own: a repeater at each end of it forwards the packet by this procedure, so a crossing applies these rules twice.
 
 ## Forwarding Confirmation
 

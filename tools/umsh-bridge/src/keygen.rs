@@ -21,8 +21,6 @@ pub fn write_identity(path: &Path, force: bool) -> Result<()> {
 
     println!("identity key: {}", path.display());
     println!("address:      {}", identity.public_key());
-    println!("node hint:    {}", identity.node_hint());
-    println!("router hint:  {}", identity.router_hint());
     println!();
     println!("The address is public: configure it at the other end of the tunnel.");
     Ok(())

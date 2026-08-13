@@ -1,10 +1,11 @@
 //! The bridge client: a byte-faithful relay between one radio and the
 //! server.
 //!
-//! There is no forwarding logic here, deliberately. A client does not
-//! parse what it carries, does not suppress duplicates, and does not
-//! decide anything about a frame — the whole assembly is one virtual
-//! repeater and the server is where that repeater thinks.
+//! There is no forwarding logic here, deliberately — nor anywhere else
+//! in the bridge. A client does not parse what it carries, does not
+//! suppress duplicates, and does not decide anything about a frame. The
+//! node behind its radio does all of that, to bridged traffic as to
+//! anything else it hears.
 
 use std::sync::Arc;
 use std::time::Duration;

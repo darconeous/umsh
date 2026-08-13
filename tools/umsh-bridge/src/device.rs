@@ -2,12 +2,15 @@
 //! between it and one queue in each direction.
 //!
 //! Both roles use this: a client's whole job is this relay, and the
-//! server runs one for its own radio alongside its forwarding engine.
+//! server runs one for its own radio alongside the hub.
 //!
 //! Attachment follows the spec's [Radio Attachment] rules — a tethered,
-//! non-resetting attach with `PROP_MAC_PROMISCUOUS` set, re-asserted
-//! after every reconnection because the property is session-scoped —
-//! and transmits are confirmed, never `TX_FLAG_NODUTY`.
+//! non-resetting attach with `PROP_MAC_BACKHAUL` set, re-asserted after
+//! every reconnection because the property is session-scoped. Backhaul
+//! mode is what makes the device's own node the far end of a
+//! point-to-point link: what this relay sends is delivered to that node
+//! as though it had heard it, and what the node transmits comes back
+//! here. Transmits are confirmed, never `TX_FLAG_NODUTY`.
 //!
 //! [Radio Attachment]: https://darconeous.github.io/umsh/docs/protocol/internet-bridging.html#radio-attachment
 
@@ -19,14 +22,16 @@ use std::time::Duration;
 use anyhow::{Result, anyhow, bail};
 use umsh::ulcp::{RawRxFrame, UlcpError};
 use umsh_hal::TxError;
-use umsh_mac::MAX_CAD_ATTEMPTS;
+use umsh_ulcp::meta::TxMeta;
 
-// Only the two ULCP transports attach, advertise capabilities, or have
-// a promiscuous flag to set; a build with neither is fake-radio only.
+use umsh_ulcp::ids::cap;
+
+// Only the two ULCP transports attach or have session properties to
+// set; a build with neither is fake-radio only.
 #[cfg(any(feature = "serial-radio", feature = "ble-radio"))]
 use umsh::ulcp::{UlcpDevice, UlcpDeviceConfig};
 #[cfg(any(feature = "serial-radio", feature = "ble-radio"))]
-use umsh_ulcp::ids::{cap, prop};
+use umsh_ulcp::ids::prop;
 
 use crate::config::RadioConfig;
 use crate::tunnel::{Dequeued, TunnelFrame, TunnelQueue};
@@ -37,9 +42,15 @@ use crate::udp_radio::UdpFakeRadio;
 /// radio that is simply gone should not spin the CPU about it.
 const REOPEN_DELAY: Duration = Duration::from_secs(3);
 
-/// Frame time to assume for a radio that reports none — the fake radio,
-/// which has no channel to be busy and so never reaches the backoff.
-const NOMINAL_T_FRAME: Duration = Duration::from_millis(800);
+/// How many times a frame is offered to a device whose node has no room
+/// for it.
+const MAX_HANDOFF_ATTEMPTS: u8 = 5;
+
+/// How long to wait between those attempts. A backhauled send crosses a
+/// wire, so what is being waited out is the node draining its receive
+/// queue — a matter of one frame's processing, not one frame's airtime.
+const HANDOFF_RETRY: Duration = Duration::from_millis(20);
+const HANDOFF_RETRY_JITTER_MS: u64 = 80;
 
 /// The RF parameters carried by a device configuration are applied only
 /// by the resetting attach, which a bridge never performs: radio
@@ -52,6 +63,14 @@ fn attach_config() -> UlcpDeviceConfig {
 }
 
 /// What a `PROP_MAC_PROMISCUOUS` set means for the bridge.
+///
+/// Backhaul mode already decides *which* frames reach this host — the
+/// node's transmissions, and nothing off the air — but they still pass
+/// the device's receive filtering on the way. A device with no host
+/// domain provisioned filters nothing, which is the ordinary case for a
+/// bridge; asking for promiscuous delivery anyway is what keeps a device
+/// that *has* been provisioned from hiding the repeats this bridge
+/// exists to carry. A device that refuses the property is left as it is.
 #[cfg(any(feature = "serial-radio", feature = "ble-radio"))]
 fn promiscuous_outcome(result: Result<Vec<u8>, UlcpError>) -> Result<()> {
     match result {
@@ -59,9 +78,6 @@ fn promiscuous_outcome(result: Result<Vec<u8>, UlcpError>) -> Result<()> {
             tracing::debug!("promiscuous delivery enabled");
             Ok(())
         }
-        // A device that predates the property refuses the set. It still
-        // relays whatever its own filtering admits, which is a degraded
-        // bridge rather than a broken one.
         Err(UlcpError::Status(status)) => {
             tracing::warn!(
                 ?status,
@@ -152,41 +168,71 @@ impl Device {
     /// Everything the spec asks of a bridge's attachment, in one place
     /// so a reconnection cannot forget any of it.
     async fn prepare(&mut self) -> Result<()> {
-        let transmits = self.can_transmit().await?;
-        if !transmits {
-            // Not fatal: a receive-only interface still feeds the rest
-            // of the bridge, and saying so once is more useful than
-            // refusing to start.
+        let capabilities = self.capabilities().await?;
+
+        if !capabilities.contains(&cap::MAC_BACKHAUL) {
+            // Fatal, and deliberately so. Without backhaul this host
+            // would sit on the shared medium, and every frame the bridge
+            // handed it would go on the air unrepeated: no duplicate
+            // suppression, no hop accounting, no forwarding policy. A
+            // bridge is not something to half-do.
+            bail!(
+                "device does not advertise CAP_MAC_BACKHAUL, so it cannot join a bridge; \
+                 update its firmware"
+            );
+        }
+        if !capabilities.contains(&cap::WRITABLE_RAW_STREAM) {
+            // Not fatal: a receive-only interface still carries what its
+            // node transmits to the rest of the bridge, and saying so
+            // once is more useful than refusing to start.
             tracing::warn!(
                 "device does not advertise CAP_WRITABLE_RAW_STREAM; this interface can receive \
                  but not transmit"
             );
         }
-        self.set_promiscuous().await
+
+        self.set_backhaul().await?;
+        self.set_promiscuous().await?;
+        self.report_repeater_state().await;
+        Ok(())
     }
 
-    async fn can_transmit(&mut self) -> Result<bool> {
+    async fn capabilities(&mut self) -> Result<Vec<u32>> {
         match self {
             #[cfg(feature = "serial-radio")]
-            Self::Serial(device) => Ok(device
+            Self::Serial(device) => device
                 .capabilities()
                 .await
-                .map_err(|error| anyhow!("reading device capabilities: {error:?}"))?
-                .contains(&cap::WRITABLE_RAW_STREAM)),
+                .map_err(|error| anyhow!("reading device capabilities: {error:?}")),
             #[cfg(feature = "ble-radio")]
-            Self::Ble(device) => Ok(device
+            Self::Ble(device) => device
                 .capabilities()
                 .await
-                .map_err(|error| anyhow!("reading device capabilities: {error:?}"))?
-                .contains(&cap::WRITABLE_RAW_STREAM)),
-            Self::Udp(_) => Ok(true),
+                .map_err(|error| anyhow!("reading device capabilities: {error:?}")),
+            // The fake radio has no node behind it at all, so it claims
+            // what it needs to stand in for one.
+            Self::Udp(_) => Ok(vec![cap::MAC_BACKHAUL, cap::WRITABLE_RAW_STREAM]),
         }
     }
 
-    /// A bridge sees frames addressed to everyone, so a device with a
-    /// provisioned host domain must be told to stop filtering. The
-    /// property is session-scoped, which is why this runs on every
-    /// attach rather than once at provisioning time.
+    /// Move this host off the shared medium and onto a point-to-point
+    /// link to the device's own node. The property is session-scoped,
+    /// which is why this runs on every attach rather than once at
+    /// provisioning time.
+    async fn set_backhaul(&mut self) -> Result<()> {
+        let result = match self {
+            #[cfg(feature = "serial-radio")]
+            Self::Serial(device) => device.set_prop(prop::MAC_BACKHAUL, &[1]).await,
+            #[cfg(feature = "ble-radio")]
+            Self::Ble(device) => device.set_prop(prop::MAC_BACKHAUL, &[1]).await,
+            // The fake radio has no medium to leave.
+            Self::Udp(_) => return Ok(()),
+        };
+        result
+            .map(|_| ())
+            .map_err(|error| anyhow!("enabling backhaul mode: {error:?}"))
+    }
+
     async fn set_promiscuous(&mut self) -> Result<()> {
         match self {
             #[cfg(feature = "serial-radio")]
@@ -202,13 +248,60 @@ impl Device {
         }
     }
 
+    /// Say whether the node behind this radio forwards, and never change
+    /// it.
+    ///
+    /// Whether a device repeats is persisted, device-domain
+    /// configuration — its owner's decision, not a bridge's, and one
+    /// that outlives the session. A device with its repeater off is a
+    /// leaf: it is reachable from everywhere the bridge reaches and its
+    /// own traffic crosses, but nothing is carried onward from its
+    /// segment. That is a deployment, not a fault, so it is worth one
+    /// line and no alarm.
+    async fn report_repeater_state(&mut self) {
+        let value = match self {
+            #[cfg(feature = "serial-radio")]
+            Self::Serial(device) => device.get_prop(prop::MAC_REPEATER_ENABLED).await,
+            #[cfg(feature = "ble-radio")]
+            Self::Ble(device) => device.get_prop(prop::MAC_REPEATER_ENABLED).await,
+            Self::Udp(_) => {
+                tracing::info!(
+                    "fake radio: no node behind it, so frames cross this interface with no \
+                     duplicate suppression and no hop accounting"
+                );
+                return;
+            }
+        };
+        match value.as_deref() {
+            Ok([0]) => tracing::info!(
+                "device repeater is disabled; this interface is a leaf — its node is reachable \
+                 across the bridge, but carries nothing onward from its own segment"
+            ),
+            Ok(_) => tracing::debug!("device repeater is enabled"),
+            Err(error) => tracing::debug!(?error, "could not read the device's repeater state"),
+        }
+    }
+
     fn poll_receive_raw(&mut self, cx: &mut Context<'_>) -> Poll<Result<RawRxFrame, UlcpError>> {
         with_device!(self, device => device.poll_receive_raw(cx))
     }
 
+    /// Hand one frame to the node behind this radio.
+    ///
+    /// The metadata a frame carries across the tunnel describes how it
+    /// was *received* at the far end, and is what the staleness limit
+    /// reads on the way; a transmit needs metadata of its own. Building
+    /// it here, at the last possible moment, is what lets the tunnel stay
+    /// byte-faithful. The default asks for the device's configured power
+    /// and leaves `TX_FLAG_NODUTY` clear — a bridge does not get to spend
+    /// airtime the device's duty ledger has not granted.
     async fn transmit(&mut self, frame: &TunnelFrame) -> Result<(), TxError<UlcpError>> {
+        let mut meta = [0u8; TxMeta::WIRE_LEN];
+        TxMeta::default()
+            .encode(&mut meta)
+            .expect("a fixed-size buffer holds fixed-size metadata");
         with_device!(self, device => device
-            .transmit_raw_with_meta(&frame.data, &frame.metadata)
+            .transmit_raw_with_meta(&frame.data, &meta)
             .await)
     }
 
@@ -219,30 +312,6 @@ impl Device {
         use umsh_hal::Radio as _;
 
         with_device!(self, device => device.max_frame_size())
-    }
-
-    /// The segment's frame time, which sets the channel-access backoff.
-    ///
-    /// A real device computes it from the channel settings it is
-    /// actually running, so the backoff tracks the spreading factor
-    /// rather than a number someone guessed at deployment time.
-    fn t_frame(&self) -> Duration {
-        #[cfg(any(feature = "serial-radio", feature = "ble-radio"))]
-        use umsh_hal::Radio as _;
-
-        let millis = match self {
-            #[cfg(feature = "serial-radio")]
-            Self::Serial(device) => device.t_frame_ms(),
-            #[cfg(feature = "ble-radio")]
-            Self::Ble(device) => device.t_frame_ms(),
-            // UDP has no airtime and never reports the channel busy, so
-            // this only ever feeds a backoff that is not reached.
-            Self::Udp(_) => 0,
-        };
-        match millis {
-            0 => NOMINAL_T_FRAME,
-            millis => Duration::from_millis(u64::from(millis)),
-        }
     }
 }
 
@@ -260,18 +329,12 @@ async fn open_serial_link(
     Ok(umsh::ulcp::SerialFrameLink::new(stream))
 }
 
-/// The backoff between two channel-access attempts, sampled uniformly
-/// from `[0, T_frame]` exactly as
-/// [Channel Access § Backoff Procedure][spec] specifies.
+/// How long to wait before offering a frame to a full node again.
 ///
-/// Flat rather than growing, and scaled by the segment's own frame time
-/// rather than by a wall-clock constant: what a busy channel means is
-/// that a neighbour's frame is in the air, so the interesting unit of
-/// time is how long that frame lasts.
-///
-/// [spec]: https://darconeous.github.io/umsh/docs/protocol/channel-access.html#backoff-procedure
-fn backoff(t_frame: Duration) -> Duration {
-    Duration::from_millis(rand::random_range(0..=t_frame.as_millis() as u64))
+/// Jittered so that several interfaces relieved by the same node do not
+/// all come back at once.
+fn handoff_retry() -> Duration {
+    HANDOFF_RETRY + Duration::from_millis(rand::random_range(0..=HANDOFF_RETRY_JITTER_MS))
 }
 
 /// One interface's two queues, from the relay's point of view.
@@ -295,10 +358,13 @@ impl DeviceRelay {
     /// Keep a device attached and relaying for as long as the process
     /// runs, re-opening it after a failure.
     ///
-    /// A device outage leaves no backlog to drain — promiscuous-only
-    /// frames are never queued while the host is detached — so a fresh
-    /// attachment starts clean by construction and this loop needs no
-    /// reconciliation of its own.
+    /// A device outage leaves no backlog to drain — backhaul mode ends
+    /// with the session, and a detached device queues nothing on this
+    /// host's behalf — so a fresh attachment starts clean by
+    /// construction and this loop needs no reconciliation of its own. It
+    /// is also what recovers a device whose firmware cannot bridge:
+    /// attachment fails, the loop waits, and an updated device joins on
+    /// its own.
     pub async fn run(&self) -> ! {
         loop {
             match self.session().await {
@@ -324,7 +390,6 @@ impl DeviceRelay {
             "radio attached"
         );
 
-        let t_frame = device.t_frame();
         let generation = self.outbound.generation();
         loop {
             // The device is borrowed only for the duration of this
@@ -363,45 +428,41 @@ impl DeviceRelay {
                         );
                         continue;
                     }
-                    self.transmit(&mut device, &frame, t_frame).await?;
+                    self.transmit(&mut device, &frame).await?;
                 }
             }
         }
     }
 
-    /// Put one frame on the air, following the MAC's channel-access
-    /// [backoff procedure][spec]: up to [`MAX_CAD_ATTEMPTS`] attempts,
-    /// each separated by a wait sampled uniformly from `[0, T_frame]`,
-    /// and a silent drop if the channel never comes free.
+    /// Hand one frame to the device's node, retrying a few times if the
+    /// node has nowhere to put it.
     ///
-    /// The procedure has to run here because ULCP carries no retry
-    /// count: one `CMD_STR_SEND` is one channel-access attempt, answered
-    /// with `STATUS_CCA_FAILURE` the moment the device finds the channel
-    /// busy. A host relaying onto a segment contends with the same
-    /// neighbours the MAC does, so it runs the same procedure rather
-    /// than inventing a second answer.
+    /// A backhauled send never contends for the channel — it crosses a
+    /// wire, spends no airtime, and waits for no one. What it can meet is
+    /// a node whose receive queue is full, which ULCP reports the only
+    /// way it can, as `STATUS_CCA_FAILURE`. The answer is to wait briefly
+    /// and offer it again: the node drains as it works, and the waiting
+    /// is done listening, which is itself what relieves the queue.
     ///
-    /// [spec]: https://darconeous.github.io/umsh/docs/protocol/channel-access.html#backoff-procedure
-    async fn transmit(
-        &self,
-        device: &mut Device,
-        frame: &TunnelFrame,
-        t_frame: Duration,
-    ) -> Result<()> {
-        for attempt in 1..=MAX_CAD_ATTEMPTS {
+    /// Whether the frame then goes on the air is the node's decision. A
+    /// duplicate it has already seen, or one whose flood budget is spent,
+    /// ends there — that is the bridging policy doing its job, not a
+    /// failure of this hand-off.
+    async fn transmit(&self, device: &mut Device, frame: &TunnelFrame) -> Result<()> {
+        for attempt in 1..=MAX_HANDOFF_ATTEMPTS {
             match device.transmit(frame).await {
                 Ok(()) => {
                     tracing::trace!(len = frame.data.len(), attempt, "device tx");
                     return Ok(());
                 }
                 Err(TxError::CadTimeout) => {
-                    if attempt < MAX_CAD_ATTEMPTS {
-                        self.listen_during(device, backoff(t_frame)).await?;
+                    if attempt < MAX_HANDOFF_ATTEMPTS {
+                        self.listen_during(device, handoff_retry()).await?;
                     }
                 }
-                // A spent duty budget is the device doing its job, and
-                // unlike a busy channel it is not worth re-offering:
-                // the budget replenishes over minutes, not milliseconds.
+                // A refusal with a status is the device declining for a
+                // reason of its own — detached, or handed something it
+                // will not send. Re-offering would not change its mind.
                 Err(TxError::Io(UlcpError::Status(status))) => {
                     tracing::debug!(?status, "device refused a transmit");
                     return Ok(());
@@ -410,23 +471,20 @@ impl DeviceRelay {
             }
         }
 
-        // "Drop the packet silently" — silent on the air, which is what
-        // the procedure is about. Saying so at debug is how the operator
-        // finds out the segment is too busy to forward into.
         tracing::debug!(
-            attempts = MAX_CAD_ATTEMPTS,
+            attempts = MAX_HANDOFF_ATTEMPTS,
             len = frame.data.len(),
-            "transmit abandoned: the channel stayed busy"
+            "hand-off abandoned: the node had no room for it"
         );
         Ok(())
     }
 
-    /// Wait out a backoff without going deaf.
+    /// Wait without going deaf.
     ///
-    /// Reception cannot pause while the relay waits for the channel: a
-    /// frame left sitting in the device is a frame the device may have
-    /// to drop, so a busy channel would otherwise cost inbound traffic
-    /// on top of the outbound frame it is already delaying.
+    /// Reception cannot pause while the relay waits: a frame left sitting
+    /// in the device is a frame the device may have to drop, and when the
+    /// wait is for a full node receive queue, draining it is precisely
+    /// what makes room for the frame being retried.
     async fn listen_during(&self, device: &mut Device, wait: Duration) -> Result<()> {
         let sleep = tokio::time::sleep(wait);
         tokio::pin!(sleep);
@@ -465,59 +523,40 @@ enum Event {
 mod tests {
     use super::*;
 
-    /// The spec's US reference point: BW 62.5 kHz, SF7, CR 4/5.
-    const US_T_FRAME: Duration = Duration::from_millis(800);
-
     #[test]
-    fn a_backoff_is_uniform_over_a_whole_frame_time() {
-        // Channel Access § Backoff Procedure: "Wait a random duration
-        // uniformly sampled from [0, T_frame]" — flat, not growing, and
-        // scaled by the segment rather than the wall clock.
+    fn a_hand_off_retry_is_short_and_jittered() {
+        // Short because what is being waited out is a node draining its
+        // receive queue, not a frame finishing in the air; jittered so
+        // that interfaces sharing a node do not synchronize on it.
         let mut seen_low = false;
         let mut seen_high = false;
         for _ in 0..512 {
-            let wait = backoff(US_T_FRAME);
-            assert!(wait <= US_T_FRAME, "{wait:?} exceeds T_frame");
-            seen_low |= wait < US_T_FRAME / 4;
-            seen_high |= wait > US_T_FRAME * 3 / 4;
+            let wait = handoff_retry();
+            assert!(wait >= HANDOFF_RETRY);
+            assert!(wait <= HANDOFF_RETRY + Duration::from_millis(HANDOFF_RETRY_JITTER_MS));
+            seen_low |= wait < HANDOFF_RETRY + Duration::from_millis(HANDOFF_RETRY_JITTER_MS / 4);
+            seen_high |= wait > HANDOFF_RETRY + Duration::from_millis(HANDOFF_RETRY_JITTER_MS / 2);
         }
         assert!(seen_low && seen_high, "the range is not being covered");
     }
 
     #[test]
-    fn the_backoff_tracks_the_segments_frame_time() {
-        // A slow spreading factor waits proportionally longer, which is
-        // the point of expressing the procedure in T_frame: one number
-        // cannot serve a spread this wide.
-        let slow = Duration::from_millis(2_200);
-        for _ in 0..64 {
-            assert!(backoff(slow) <= slow);
-        }
-        assert!(
-            (0..256).any(|_| backoff(slow) > US_T_FRAME),
-            "a 2.2 s frame time should sometimes wait past 800 ms"
-        );
+    fn the_whole_hand_off_is_bounded_well_inside_the_staleness_limit() {
+        // Frames are discarded once they are ten seconds old, so the
+        // retries must not be able to hold one anywhere near that long.
+        let worst = (HANDOFF_RETRY + Duration::from_millis(HANDOFF_RETRY_JITTER_MS))
+            * u32::from(MAX_HANDOFF_ATTEMPTS - 1);
+        assert!(worst < Duration::from_secs(1), "{worst:?}");
     }
 
     #[test]
-    fn the_attempt_bound_is_the_macs_own() {
-        // Shared rather than restated: a bridge contends with the same
-        // neighbours the MAC does, and two answers would be one too many.
-        assert_eq!(MAX_CAD_ATTEMPTS, 5);
-    }
-
-    #[tokio::test(start_paused = true)]
-    async fn the_whole_procedure_is_bounded_by_four_frame_times() {
-        // Four waits between five attempts, each at most T_frame, so a
-        // frame is never held longer than this no matter how busy the
-        // channel is.
-        let mut total = Duration::ZERO;
-        for _ in 0..MAX_CAD_ATTEMPTS - 1 {
-            total += backoff(US_T_FRAME);
-        }
-        assert!(
-            total <= US_T_FRAME * u32::from(MAX_CAD_ATTEMPTS - 1),
-            "{total:?} exceeds four frame times"
-        );
+    fn a_transmit_asks_for_no_favors() {
+        // Default power, and TX_FLAG_NODUTY clear: the device's duty
+        // ledger is the backstop against a bridge that would otherwise
+        // spend a segment's whole airtime budget on somebody else's
+        // traffic.
+        let meta = TxMeta::default();
+        assert_eq!(meta.flags, 0);
+        assert_eq!(meta.power, umsh_ulcp::meta::TX_POWER_DEFAULT);
     }
 }

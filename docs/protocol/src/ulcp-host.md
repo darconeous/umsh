@@ -174,10 +174,11 @@ node:
 
 Traffic between the host and the mesh therefore crosses the device's
 [repeater](repeater-operation.md), which is what makes the arrangement
-useful to a bridge: hop accounting, duplicate suppression, and forwarding
-policy are the node's, applied to the host's traffic as to anyone else's.
-A device whose repeater is disabled still delivers the host's frames to
-its own identities, but carries nothing onward.
+useful to an [internet bridge](internet-bridging.md#radio-attachment):
+hop accounting, duplicate suppression, and forwarding policy are the
+node's, applied to the host's traffic as to anyone else's. A device whose
+repeater is disabled still delivers the host's frames to its own
+identities, but carries nothing onward.
 
 `PROP_MAC_PROMISCUOUS` composes with this: it removes receive filtering
 from what the host is delivered, which in this mode is the node's

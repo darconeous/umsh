@@ -31,22 +31,13 @@ pub fn check(path: &Path) -> Result<()> {
         println!("role:        server");
         println!("address:     {}", identity.public_key());
         println!("  clients pin this address as server_address");
-        println!("router hint: {}", identity.router_hint());
         for address in &server.listen {
             println!("listen:      {address}");
         }
         println!("radio:       {}", server.radio.describe());
-        println!("exit clamp:  {} hop(s)", server.forwarding.exit_clamp);
-        if server.forwarding.regions.is_empty() {
-            println!("regions:     any");
-        } else {
-            let regions: Vec<String> = server
-                .forwarding
-                .regions
-                .iter()
-                .map(|region| region.0.to_string())
-                .collect();
-            println!("regions:     {}", regions.join(", "));
+        match server.limits.exit_clamp {
+            Some(clamp) => println!("exit clamp:  {clamp} hop(s)"),
+            None => println!("exit clamp:  off"),
         }
         for client in &server.clients {
             let fan_out = match &client.allow_to {
@@ -72,12 +63,6 @@ pub fn check(path: &Path) -> Result<()> {
                 println!(
                     "  warning: no rate limit; an authenticated but misbehaving client is the \
                      realistic failure mode"
-                );
-            }
-            if client.suppress_flood_confirmations {
-                println!(
-                    "  flood confirmation copies suppressed (the device runs its own repeater \
-                     role); source-routed confirmations still sent"
                 );
             }
         }

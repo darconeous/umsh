@@ -1,15 +1,14 @@
 # Internet Bridging
 
-> ![NOTE]
+> [!NOTE]
 > This section is an early work in progress and this protocol may change significantly.
 
 This appendix defines a client–server realization of the bridge described
-in [Routing Overview § Bridging](routing-overview.md#bridging): a single
-virtual repeater whose radios sit in different places, connected by an
-authenticated tunnel over a reliable stream transport such as the
-internet. It specifies the tunnel wire protocol, the forwarding rules the
-bridge applies, and how the bridge satisfies the forwarding-confirmation
-expectations of the meshes it joins.
+in [Routing Overview § Bridging](routing-overview.md#bridging): a set of
+radios in different places, joined by an authenticated tunnel over a
+reliable stream transport such as the internet. It specifies the tunnel
+wire protocol, how a participant attaches its radio, and the small number
+of decisions the tunnel itself makes about what it carries.
 
 > [!CAUTION]
 > The cautions in [Routing Overview § Bridging](routing-overview.md#bridging)
@@ -20,29 +19,81 @@ expectations of the meshes it joins.
 ## Model
 
 A bridge consists of one **bridge server** and one or more **bridge
-clients**.
+clients**. Together they form a hidden radio layer: a medium that joins
+segments which are nowhere near each other.
 
-- The server owns the bridge's node identity. Trace routes crossing the
-  bridge carry this identity's router hint, source routes name it, and
-  packets addressed to it are processed by the server whatever interface
-  they arrive on.
-- The server and each client front a ULCP device of their own, attached as
-  a tethered host with promiscuous delivery enabled (see
-  [Radio Attachment](#radio-attachment)).
-- The server's **interfaces** are its own radio plus one interface per
-  connected client. All forwarding decisions are made at the server;
-  clients relay frames between their radio and the tunnel and apply no
-  forwarding logic of their own.
+- Each participant fronts a ULCP device of its own, attached as a
+  tethered host in [backhaul mode](#radio-attachment). The host is
+  therefore not on the shared medium at all — it is a point-to-point
+  neighbor of the device's own node.
+- The server's **interfaces** are its own radio, when it has one, plus
+  one interface per connected client. The server's radio is a
+  participant like any other; nothing distinguishes it but the absence
+  of a tunnel.
+- The server copies each frame it receives to its other interfaces. It
+  makes no forwarding decisions and holds no mesh state.
 
-The whole assembly is **one** virtual repeater. It maintains a single
-[duplicate-suppression cache](repeater-operation.md#duplicate-suppression)
-shared across all interfaces, performs hop accounting once per crossing,
-and records itself in a trace route and trace signal once per crossing —
-regardless of how many interfaces or clients participate.
+The bridge has no identity on the mesh. It appears in no route, answers
+to no address, and originates no traffic. The nodes that carry bridged
+traffic are the ones behind the participants' radios, and each holds its
+own identity.
 
-Radio configuration is local to each participant: a client configures its
-own device, and the tunnel provides no mechanism for managing a remote
-participant's radio.
+### A Crossing Is Two Repeater Hops
+
+Because every participant is a point-to-point neighbor of its device's
+node, the node's [repeater](repeater-operation.md) is the bridge's
+forwarding policy — hop accounting, duplicate suppression, region and
+signal policy, all applied to bridged traffic exactly as to anything
+else the node hears.
+
+A packet crosses in four steps:
+
+1. A node on the ingress segment transmits. The participant's device
+   hears it off the air and its node forwards it by the ordinary
+   [forwarding procedure](repeater-operation.md#forwarding-procedure):
+   duplicate check, flood hop accounting, trace prepend with a real
+   signal measurement, and a transmission on that same segment.
+2. That transmission is delivered to the attached host, which writes it
+   to the tunnel. What crosses is the ingress node's *output*, already
+   rewritten — not the frame as it was first heard.
+3. The server copies it to its other interfaces.
+4. Each receiving participant hands the frame to its own device's node,
+   which receives it as a packet carrying no measurements and forwards
+   it by the same procedure: a second duplicate check, a second hop
+   accounting, a trace signal entry recording that nothing was measured,
+   and no [contention window](channel-access.md#flood-forwarding-contention-window),
+   since nobody else heard it.
+
+Two consequences follow, and deployments should plan for both. A
+crossing spends **two** flood hops rather than one, so a packet sent
+with a budget of three arrives on the far segment with one. And the
+ingress node's transmission in step 1 is an ordinary repeat on the
+segment the packet came from, which is exactly what the previous hop
+listens for: the bridge satisfies
+[forwarding confirmation](repeater-operation.md#forwarding-confirmation)
+without transmitting anything for the purpose.
+
+Everything the node transmits reaches its host, so everything the node
+transmits crosses: its repeats, its beacons, its acknowledgements, and
+its own application traffic. That is the node participating in the mesh
+the bridge has joined it to.
+
+### Tunnel Echoes
+
+A frame transmitted by an egress node in step 4 is delivered to that
+node's own host in the same way, written to the tunnel, and copied
+onward. Each of the other participants' nodes then receives a packet it
+has already forwarded, and its duplicate cache ends it there.
+
+This costs one extra round of tunnel messages per crossing and no
+airtime at all. It is what makes the arrangement safe: the duplicate
+caches at the participants, not any rule in the bridge, are what stop a
+frame circulating. A deployment **MUST NOT** attach a participant whose
+device does not suppress duplicates.
+
+Radio configuration is local to each participant: a client configures
+its own device, and the tunnel provides no mechanism for managing a
+remote participant's radio.
 
 ## Tunnel Transport
 
@@ -57,14 +108,14 @@ trusted roots. Each client **SHOULD** hold a distinct credential: it is
 how the server identifies a client for policy and rate limiting, and it
 allows one client to be revoked without re-keying the rest.
 
-A deployment **MAY** use each participant's Ed25519 node identity as its
-certificate key, each side pinning the peer's public key rather than a
-certificate. The pinned key **MUST** then be held against the TLS 1.3
-`CertificateVerify` signature — proof that the peer possesses the
-identity, independent of anything the certificate claims — rather than
-against the certificate's contents. This gives every tunnel credential a
-UMSH address, so a client's credential can later serve as a
-mesh-addressable identity for management without re-keying.
+A deployment **MAY** use an Ed25519 node identity as its certificate key,
+each side pinning the peer's public key rather than a certificate. The
+pinned key **MUST** then be held against the TLS 1.3 `CertificateVerify`
+signature — proof that the peer possesses the identity, independent of
+anything the certificate claims — rather than against the certificate's
+contents. This gives every tunnel credential a UMSH address, so a
+participant's credential can later serve as a mesh-addressable identity
+for management without re-keying.
 
 The tunnel carries no version of its own. Participants **SHOULD** offer
 the ALPN protocol identifier `umsh-bridge/1`, so that an incompatible
@@ -85,14 +136,21 @@ else; an empty frame is a [keepalive](#keepalive). Because the payload is
 exactly the ULCP stream structure, a participant relays bytes without
 parsing them:
 
-- **Client to server**: a candidate reception — the body of the
-  [`CMD_STR_RECV`](ulcp-transport.md#cmd-str-recv) that delivered the
-  frame, written unmodified. The receive metadata **SHOULD** be present
-  (sentinel-filled where the radio cannot measure), because the server's
-  [signal-quality checks](#forwarding-procedure) depend on it.
-- **Server to client**: a transmit request, passed unmodified as the body
-  of a [`CMD_STR_SEND`](ulcp-transport.md#cmd-str-send) on
+- **Client to server**: something the client's node transmitted — the
+  body of the [`CMD_STR_RECV`](ulcp-transport.md#cmd-str-recv) that
+  delivered it, written unmodified, `RX_FLAG_SELF_TX` and all.
+- **Server to client**: a frame to hand to the client's node, passed as
+  the body of a [`CMD_STR_SEND`](ulcp-transport.md#cmd-str-send) on
   `STR_PHY_RAW`.
+
+The metadata a frame carries across the tunnel describes how it was
+*received*, and a transmit request needs metadata of its own. The
+participant that hands a frame to its device therefore **MUST** replace
+the accompanying metadata with transmit metadata, and **SHOULD** do so
+only at that point, so that the received metadata — including any
+[buffered-frame](ulcp-transport.md#buffered-metadata) age — remains
+available to the staleness rule below for as long as the frame is in
+flight.
 
 A frame that is malformed, or larger than the receiving participant is
 prepared to transmit, is discarded.
@@ -127,256 +185,168 @@ the wire. A participant **SHOULD** discard a frame rather than write it
 once the frame is older than a configured limit — ten seconds is a
 reasonable default — counting any device-side queueing reported through
 [buffered-frame metadata](ulcp-transport.md#buffered-metadata). A frame
-that old has already outlived every
-[forwarding-confirmation retry](repeater-operation.md#forwarding-confirmation)
-that could have wanted it.
+that old describes a mesh that has moved on.
 
 ## Radio Attachment {#radio-attachment}
 
-Each participant attaches to its device as an ordinary tethered host and
-sets [`PROP_MAC_PROMISCUOUS`](ulcp-host.md#prop-mac-promiscuous) to true.
-The property is session-scoped and reverts on every attach, so it must be
-re-asserted after each reconnection to the device. Because
-promiscuous-only frames are never queued while the host is detached, a
-device outage leaves no stale backlog to drain — attachment starts clean
-by construction.
+Each participant attaches to its device as an ordinary tethered host,
+without resetting it, and sets
+[`PROP_MAC_BACKHAUL`](ulcp-host.md#prop-mac-backhaul) to true. This
+requires the device to advertise `CAP_MAC_BACKHAUL`, which in turn
+requires `CAP_REPEATER`.
+
+A device that does not advertise `CAP_MAC_BACKHAUL` **MUST NOT** be
+attached to a bridge on the shared medium instead. A host on the medium
+transmits directly: its frames reach the air without passing any node's
+duplicate suppression, hop accounting, or forwarding policy, which are
+the whole of what makes a crossing safe.
+
+A participant **SHOULD** also set
+[`PROP_MAC_PROMISCUOUS`](ulcp-host.md#prop-mac-promiscuous) to true. In
+backhaul mode this widens what the host is delivered from those of the
+node's transmissions that pass its receive filtering to all of them —
+which for a device with a provisioned host domain is the difference
+between carrying the node's repeats and silently dropping them. A device
+with no host domain provisioned filters nothing, so this is a safeguard
+rather than a requirement.
+
+Both properties are session-scoped and revert on every attach, so both
+must be re-asserted after each reconnection to the device.
+
+A participant **MUST NOT** write
+[`PROP_MAC_REPEATER_ENABLED`](ulcp-host.md). Whether a device repeats is
+persisted, device-domain configuration belonging to whoever provisioned
+it. A participant whose device has its repeater disabled is a **leaf**:
+its node is reachable across the bridge and its own traffic crosses, but
+nothing is carried onward from its segment, and nothing arriving from
+the bridge reaches the air. This is a legitimate deployment, and an
+implementation **SHOULD** report it rather than treat it as a fault.
 
 Transmission requires the device to advertise
 [`CAP_WRITABLE_RAW_STREAM`](ulcp-transport.md#capabilities). Participants
-**SHOULD** use confirmed transmissions (non-zero TID) so that duty-limit
-and channel failures are observed rather than silent, and bridged
-transmissions **MUST NOT** set `TX_FLAG_NODUTY`: the device's duty-cycle
-enforcement is the backstop against a bridge that would otherwise consume
-a segment's airtime budget.
+**SHOULD** use confirmed transmissions (non-zero TID) so that refusals
+are observed rather than silent, and bridged transmissions **MUST NOT**
+set `TX_FLAG_NODUTY`: the device's duty-cycle enforcement is the backstop
+against a bridge that would otherwise consume a segment's airtime budget.
 
-A confirmed transmission reports channel-access failure to the
-participant rather than retrying on its own, and the local control
-protocol carries no retry count to delegate one: one `CMD_STR_SEND` is
-one channel-access attempt. The
-[backoff procedure](channel-access.md#backoff-procedure) is therefore
-the participant's to run, and it runs the same one every other
-transmitter on that segment does. A participant **MUST** continue
-draining its device's receive path while it waits out a backoff; a
-participant that stops listening in order to talk costs its segment
-other stations' traffic as well as its own.
+A backhauled hand-off crosses a wire. It contends for no channel, spends
+no airtime, and is not charged against the duty limit — the airtime is
+spent later, and accounted to the node, if the node decides to transmit.
+What a hand-off can meet is a node whose receive queue is full, which is
+reported as `STATUS_CCA_FAILURE` for want of a better code. A participant
+**SHOULD** wait briefly and offer the frame again, and **MUST** continue
+draining its device's receive path while it waits: draining the node's
+output is what makes room in its input.
 
-The server provisions its host domain as any MAC-owning host would.
-Clients **SHOULD NOT** configure a host key or acknowledgement delegation
-on their devices; the bridge identity's node logic lives entirely at the
-server.
+Whether a handed-off frame reaches the air is the node's decision. A
+duplicate it has already forwarded, or one whose flood budget is spent,
+ends at the node. That is the forwarding policy working, and a
+participant **MUST NOT** treat it as a failed hand-off or retry it.
 
-## Forwarding Procedure {#forwarding-procedure}
+No participant provisions node logic for the bridge: there is no bridge
+identity to provision. A participant's device is configured as whatever
+node its owner intends it to be.
 
-The bridge follows the
-[repeater forwarding procedure](repeater-operation.md#forwarding-procedure),
-adapted to multiple interfaces. For a frame arriving on interface *I*:
+## Relay Procedure {#relay-procedure}
 
-1. **Duplicate suppression** — Check the shared cache using the
-   [repeater cache-key rules](repeater-operation.md#duplicate-suppression).
-   If the key is present, do not forward; see
-   [Re-confirmation](#re-confirmation) for the one transmission a
-   duplicate may still trigger. A [Route Retry](packet-options.md#route-retry-option-6)
-   variant is a distinct cache key and forwards normally.
+For a frame arriving on interface *I*, the server:
 
-2. **Local origin and local destination** — If the source or destination
-   address identifies the bridge's own identity, do not forward. This is
-   also what keeps the bridge's own transmissions, overheard by another of
-   its interfaces, from being re-bridged.
+1. Discards it if it has grown stale (see [Keepalive and
+   Reconnection](#keepalive)).
+2. Charges it against *I*'s [traffic limits](#traffic-limits), and
+   discards it if the limit is spent.
+3. Applies the [exit clamp](#exit-clamp), if one is configured.
+4. Copies it to every interface except *I*, subject to any configured
+   per-interface-pair rules.
 
-3. **Locally handled unicast** — If the frame was a unicast (blind or
-   direct) fully handled by the server's node logic, do not forward.
+There is no step that reads what the frame means. The server **MUST NOT**
+suppress duplicates, account for hops, match source routes, prepend trace
+entries, or apply signal-quality thresholds; those belong to the
+participants' nodes, which apply them to bridged traffic and local
+traffic alike. A frame the server cannot parse is carried unchanged like
+any other.
 
-4. **Unknown critical options** — If the frame carries a critical option
-   the bridge does not understand, do not forward.
+Clients apply nothing at all beyond the framing rules above: a client
+relays bytes between its radio and the tunnel.
 
-5. **Policy** — Apply local bridge policy: per-interface and
-   per-interface-pair forwarding rules, per-client rate limits, and region
-   matching if configured. The bridge **MUST NOT** rewrite existing
-   [region codes](packet-options.md#region-code-option-11) and, unlike an
-   ordinary repeater, **SHOULD NOT** insert one: its interfaces may sit in
-   different regions, and a code added at one segment's exit would
-   misdescribe the packet everywhere else it travels.
+## Traffic Limits {#traffic-limits}
 
-6. **Source-route match** — If the frame carries a non-empty
-   [source-route option](packet-options.md#source-route-option-3):
-   if the next hint does not match the bridge's router hint, do not
-   forward; otherwise remove the hint, preserving the option even when it
-   empties. This is a source-routed hop: skip steps 7 and 8.
+The server **SHOULD** rate-limit per client. An authenticated but
+misbehaving client is the realistic failure mode of a bridge, and the
+duty ledgers of the devices at the far end should be the backstop, not
+the policy.
 
-7. **Flood hop accounting** — If the frame has a
-   [flood hop count](packet-structure.md#flood-hop-count) with
-   `FHOPS_REM > 0`, decrement `FHOPS_REM` and increment `FHOPS_ACC`.
-   Otherwise, do not forward.
+A limit counts everything the client's node transmits, which includes
+that node's repeats of frames the bridge itself handed it. A crossing
+therefore charges a little against every participant, not only the one
+whose segment the traffic came from. Budgets should be set with that in
+mind.
 
-8. **Signal-quality thresholds** — Apply minimum-RSSI and minimum-SNR
-   checks against the measurements of the radio that heard the frame —
-   for a client interface, the receive metadata carried alongside the
-   tunneled frame.
+### Exit Clamp {#exit-clamp}
 
-9. **Exit clamp** — Clamp `FHOPS_REM` to the configured exit maximum.
-   The default is 1, and internet-tunneled deployments **SHOULD NOT**
-   raise it. The clamp applies to source-routed hops as well, bounding
-   the flood budget of a hybrid route that transitions to flooding beyond
-   the bridge.
+A deployment **MAY** configure the server to clamp the remaining flood
+budget of frames passing through it. This is the one thing the server
+does that depends on a frame's contents, and it exists so that an
+operator can pull a bridge's reach in quickly without reconfiguring
+every device behind it.
 
-10. **Trace route and trace signal** — If the frame carries a
-    [trace-route option](packet-options.md#trace-route-option-2), prepend
-    the bridge's router hint. If it carries a
-    [trace-signal option](packet-options.md#trace-signal-option-10),
-    prepend the receive measurements of step 8 — the reading of whichever
-    of the bridge's radios heard the frame, wherever that radio sits.
-    Either prepend applies to a source-routed hop as well, which reaches
-    this step without passing through step 8. If a prepend would exceed
-    the maximum frame size, drop the frame.
+When a clamp of *n* is configured, the server rewrites `FHOPS_REM` to *n*
+for any frame whose `FHOPS_REM` exceeds it. The
+[flood hop count](packet-structure.md#flood-hop-count) is dynamic routing
+metadata excluded from the MIC, so the packet remains authentic — this is
+the same field a repeater decrements. The server **MUST NOT** alter
+`FHOPS_ACC`, which is a record of hops already taken; **MUST NOT** add
+the field to a frame that carries none, since a sender that omitted it
+meant the frame not to be flooded onward; and **MUST NOT** discard a
+frame it cannot parse, which is carried unchanged.
 
-    The bridge crosses once, so it writes one entry in each option, and
-    it **MUST** write to both or neither. A hop that grows the trace
-    route without growing the trace signal destroys the correspondence
-    between hint and reading for every hop recorded before it, not only
-    its own.
-
-    Where the arriving metadata reports no measurement, or does not
-    decode, the bridge writes a placeholder entry rather than omitting
-    one — the correspondence is owed whether or not the reading exists.
-    An RSSI byte of zero serves, being 0 dBm at the receiver and so
-    unreachable as a real reading.
-
-11. **Accept** — Insert the cache key into the shared cache now, before
-    any transmission.
-
-12. **Fan-out** — Transmit the rewritten frame on every interface except
-    *I*, subject to the policy decisions of step 5.
-
-13. **Confirmation copy** — Transmit the confirmation copy on *I*, as
-    specified in [Forwarding Confirmation](#forwarding-confirmation).
-
-Fan-out transmissions introduce the packet to segments that have not yet
-carried it, so the [flood forwarding contention window](channel-access.md#flood-forwarding-contention-window)
-does not apply to them; ordinary channel access does.
-
-## Forwarding Confirmation {#forwarding-confirmation}
-
-A bridge retransmits on the arrival interface so the previous hop can
-[confirm forwarding](repeater-operation.md#forwarding-confirmation), as
-[Routing Overview § Bridging](routing-overview.md#bridging) requires. The
-**confirmation copy** is the rewritten frame exactly as fanned out in
-step 12, except that `FHOPS_REM` is forced to zero (when the field is
-present).
-
-This form is deliberate:
-
-- The previous hop still recognizes it. Confirmation matches on the
-  [cache key](repeater-operation.md#duplicate-suppression), which excludes
-  the flood hop count for every packet type.
-- It recruits no forwarders. A repeater receiving the copy rejects it at
-  flood hop accounting, so the bridge is flood-neutral on the arrival
-  segment: it confirms receipt without extending the local flood.
-- It cannot sterilize the live flood. Repeaters insert cache keys only on
-  acceptance for forwarding; a repeater that hears the zero-`FHOPS_REM`
-  copy before the live flood reaches it caches nothing and forwards the
-  live copy normally. Bridges depend on that insertion timing, which is
-  therefore normative for them.
-- Delivery from the copy is sound. A destination hearing only the
-  confirmation copy processes it normally, and its `FHOPS_ACC` honestly
-  counts the hop through the bridge.
-
-The copy is a full-length frame, so this mechanism confirms cheaply in
-forwarding terms but not in airtime; the airtime optimization remains
-open (see [Bridge Hop Confirmation](limitations.md#bridge-hop-confirmation)).
-
-For flood hops, the confirmation copy is a flood forward on a segment
-actively carrying the packet: it **SHOULD** use the
-[contention window](channel-access.md#flood-forwarding-contention-window),
-defer when another forwarding of the same packet is overheard, and may be
-abandoned under the usual deferral rules — any overheard forwarding
-confirms the previous hop just as well. For source-routed hops the copy
-is the previous hop's only confirmation; it uses ordinary channel access
-and is not abandoned.
-
-### Re-confirmation {#re-confirmation}
-
-If the confirmation copy is lost, the previous hop retries — and the
-retry is a duplicate the cache would otherwise suppress into silence,
-letting the previous hop exhaust its retry budget and wrongly declare the
-route failed. Therefore: when a duplicate of an accepted frame arrives on
-the interface it was originally accepted from, within a bounded window of
-the original acceptance, the bridge **MAY** re-transmit the confirmation
-copy on that interface. It **MUST NOT** re-forward the frame on any other
-interface. The considerations mirror the
-[duplicate-acknowledgement window](security.md#duplicate-acknowledgement-window);
-thirty seconds is a reasonable default. Duplicates arriving on other
-interfaces are ordinary suppressed duplicates and trigger nothing.
-
-This requires the cache entry to record the arrival interface and
-acceptance time alongside the key.
+The clamp is off by default. A crossing already spends two flood hops,
+which bounds a bridged flood without any configuration, and a clamp
+narrows the reach of every deployment behind the bridge at once. A clamp
+of 0 stops bridged floods at the egress segment while leaving traffic
+addressed to the participants' own nodes unaffected.
 
 ## Acknowledgements Across a Bridge
 
-The exit clamp makes flood-returned acknowledgements asymmetric. On the
-forward path the clamp already limits delivery to nodes near the bridge's
-exit, so a destination that received the packet is bridge-adjacent. The
-returning [MAC ack](packet-types.md#mac-ack-packet), flooded with a
-radius taken from `FHOPS_ACC`, is clamped again on its way back — and
-dies there unless the *originator* is within the clamp of the bridge on
-its own segment. Flood routing alone therefore does not round-trip an
-acknowledgement across a bridge, and
+Acknowledgements cross as ordinary traffic. A destination's
+[MAC ack](packet-types.md#mac-ack-packet) is transmitted by its node,
+reaches that node's attached host, crosses the tunnel, and is forwarded
+back toward the originator by the repeaters along the way — two hops for
+the crossing, as for anything else.
+
+The round trip therefore costs four flood hops of the sender's budget:
+two out and two back. A sender whose budget does not cover the round trip
+receives no acknowledgement even though the packet arrived. Where an
+[exit clamp](#exit-clamp) is configured, the returning ack is clamped
+too, and
 [route failure recovery](repeater-operation.md#route-failure-recovery)
-cannot repair this: the restored flood is clamped the same way.
+cannot repair that: the restored flood is clamped the same way.
 
 Source-routed hops spend nothing from `FHOPS`, so explicit routes cross
 bridges at any depth. Ack-requesting traffic that crosses a bridge
 **SHOULD** either carry a
 [trace-route option](packet-options.md#trace-route-option-2) — the
-bridge's hint prepend is what makes the reversed trace routable — or be
-sent along a known source route. A sender with neither should not expect
-an acknowledgement back across a bridge.
-
-## Co-located Repeater Role
-
-A device backing a bridge interface **MAY** additionally run its own
-repeater role, in which case two co-located repeaters exist — the device
-and the bridge — each with its own duplicate cache and hop accounting.
-This composes, with two rules:
-
-- The device's repeater role **MUST NOT** treat the tethered host
-  identity's hints as its own for source-route matching. Routed hops
-  through the bridge identity belong to the bridge.
-- The device's normal flood re-forward on the arrival radio already
-  serves as the previous hop's confirmation, so the bridge **SHOULD**
-  suppress its flood-hop confirmation copies on that interface. It
-  **MUST** still emit confirmation copies for source-routed hops, which
-  the device will not forward.
-
-The division is imperfect: when the device's own policy declines a
-forward, no flood confirmation is emitted by either party. This matches a
-standalone repeater declining the same packet, but deployments that want
-the bridge's confirmation behavior to be exact **SHOULD** leave the
-repeater role disabled on bridge-backing devices.
-
-## Bridge-Originated Traffic
-
-The bridge is a node present on every segment it touches. Its own
-traffic — application packets, beacons, and the MAC acks it generates as
-a destination — is ordinary node behavior applied per interface, not
-subject to the forwarding procedure or the exit clamp, transmitted on
-whichever interfaces its routing state selects. It **MAY** beacon on all
-interfaces. Step 2 of the forwarding procedure keeps this traffic from
-being re-bridged when one of its own transmissions is overheard through
-another interface.
+participants' nodes record themselves in it, which is what makes the
+reversed trace routable — or be sent along a known source route.
 
 ## Operational Guidance
 
-- **Rate limiting.** The server **SHOULD** rate-limit forwarding per
-  client and per interface pair. An authenticated but misbehaving client
-  is the realistic failure mode, and the device duty ledger should be the
-  backstop, not the policy.
+- **Budget for two hops.** Traffic expected to cross a bridge needs a
+  flood budget that covers the crossing at both ends, and twice that if
+  an acknowledgement is expected back.
 - **Co-located clients.** Two clients whose radios share a segment cause
-  every fanned-out frame to be transmitted twice there. The shared cache
-  keeps their mutual receptions from looping, but the duplicate airtime
-  is real; policy (step 5) is the place to group or exclude them.
-- **Region codes.** A bridge whose segments sit in different regions
-  should rely on region matching in step 5 rather than tagging: see the
-  insertion prohibition there.
+  every copied frame to be handed to that segment twice. Their nodes'
+  duplicate caches keep it from being transmitted twice, but the tunnel
+  traffic is real; per-interface-pair rules are the place to exclude one
+  from the other's fan-out.
+- **Region and signal policy.** These are configured on each
+  participant's device, where the decision to transmit is actually made.
+  A bridge whose segments sit in different regions relies on each node's
+  own region matching.
+- **Leaf participants.** A participant whose device does not repeat still
+  reaches the whole bridge and is reachable from it. This is the right
+  configuration for a device that should benefit from a bridge without
+  spending its segment's airtime on other people's traffic.
 
 ## Security Considerations
 
@@ -396,11 +366,14 @@ A compromised client credential is equivalent to granting the attacker an
 RF presence on every segment the bridge touches: it can inject arbitrary
 well-formed frames and replay captured ones. It cannot forge other nodes'
 authenticated traffic. The damage is bounded by the same mechanisms that
-bound a hostile local transmitter — duplicate suppression, the exit
-clamp, per-client rate limits, and duty-cycle enforcement — plus
-revocation of the client's credential.
+bound a hostile local transmitter, and by the same parties: every frame
+it injects is subject to the duplicate suppression, hop accounting,
+region policy, and duty-cycle enforcement of the node that would have to
+transmit it. Per-client rate limits, an exit clamp, and revocation of the
+client's credential bound it further.
 
-The bridge forwards frames it cannot decrypt; promiscuous delivery is
-what a repeater's role requires, not an information grant. Operators
-should still treat the server as privileged infrastructure: it observes
-the metadata of every frame on every segment it bridges.
+A backhauled host is off the medium and is delivered only what its own
+node transmits, so promiscuous delivery grants it nothing beyond the
+repeats it exists to carry. Operators should still treat the server as
+privileged infrastructure: it observes the metadata of every frame every
+participant's node transmits.

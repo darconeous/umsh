@@ -1,31 +1,37 @@
 # umsh-bridge
 
-`umsh-bridge` joins the radios of one virtual UMSH repeater over an authenticated
-internet tunnel, implementing the protocol's
+`umsh-bridge` carries UMSH frames between radios that cannot hear each other,
+over an authenticated internet tunnel, implementing the protocol's
 [Internet Bridging appendix](https://darconeous.github.io/umsh/docs/protocol/internet-bridging.html).
-One process runs as the **server**: it owns the bridge's node identity, holds the
-shared duplicate cache, and makes every forwarding decision. Every other
-participant is a **client**, which relays frames byte for byte between its own
-radio and the server and applies no forwarding logic at all. To the mesh, the
-whole arrangement is a single repeater that happens to hear traffic in several
-places at once.
+One process runs as the **server**, which copies each frame it receives to every
+other participant. Every other participant is a **client**, which relays frames
+byte for byte between its own radio and the server. To the participants, the
+whole arrangement is a hidden radio layer joining segments that are nowhere near
+each other.
+
+Every participant's radio runs in **backhaul mode**, which puts the host on a
+point-to-point link to the device's own node instead of on the shared medium.
+That node's repeater is the bridging policy: a frame crossing the bridge is
+repeated twice, once by the device that heard it — whose transmission is what
+the tunnel carries — and once by each device on the far side. Hop accounting,
+duplicate suppression, and forwarding policy all belong to those repeaters. The
+bridge implements none of it and has no presence on the mesh.
 
 > [!CAUTION]
 > An internet bridge cannot be relied upon in an emergency, and it spends local
 > airtime on traffic that is not local. The specification's cautions apply in
 > full; this tool exists so that a bridge deployed anyway behaves predictably
-> and conservatively — rate-limited, hop-clamped, and duplicate-suppressed by
-> default.
+> and conservatively — rate-limited at the tunnel, and hop-accounted and
+> duplicate-suppressed by the repeaters at either end.
 
 ## How it works
 
-- Every participant holds its own **Ed25519 identity** — the server's doubles
-  as the bridge's node identity on the mesh — and each side is configured with
-  the other's public key, written as the canonical UMSH address. The address is
-  public: it can be exchanged over chat, email, or a QR code without weakening
-  anything. There is no CA and nothing else to distribute — admitting a client
-  is adding its address to the server's configuration, and revoking one is
-  deleting that entry.
+- Every participant holds its own **Ed25519 identity**, and each side is
+  configured with the other's public key, written as the canonical UMSH address.
+  The address is public: it can be exchanged over chat, email, or a QR code
+  without weakening anything. There is no CA and nothing else to distribute —
+  admitting a client is adding its address to the server's configuration, and
+  revoking one is deleting that entry.
 - Participants connect over **TLS 1.3 only** (older versions are not compiled
   in), with ALPN `umsh-bridge/1`. The certificates TLS requires are minted in
   memory from the identity at startup and never stored; the trust decision is
@@ -36,19 +42,26 @@ places at once.
   clients relay them without parsing. Idle tunnels exchange keepalives; a
   tunnel silent past its idle timeout is torn down and reconnected with jittered
   backoff.
-- The server runs the appendix's forwarding procedure over every interface:
-  duplicate suppression against a shared cache, per-client rate limits and
-  egress allowlists, optional region and signal-quality gates, an outbound hop
-  clamp (default: 1 remaining hop), and forwarding-confirmation copies back to
-  the interface a packet arrived on.
+- The server copies each frame to every other interface, subject to per-client
+  rate limits and egress allowlists — decisions about a connection, not about a
+  packet. Its one optional exception is the exit clamp, which lowers a frame's
+  remaining flood budget on the way through; it is off unless configured.
 - Frames are opaque to the bridge. Mesh traffic stays end-to-end encrypted; the
   TLS layer authenticates the participants and keeps the tunnel's contents and
-  timing away from the path between them. The bridge never decrypts, never
-  originates traffic, and drops packets addressed to itself.
+  timing away from the path between them. The bridge never decrypts and never
+  originates traffic.
 
 Each participant fronts at most one radio: a ULCP device on a serial port or
 over BLE, the UDP-multicast fake radio the workspace examples use, or — for a
 server that only joins clients together — no radio at all.
+
+A device needs `CAP_MAC_BACKHAUL` to join a bridge; one that does not advertise
+it is refused, and the interface retries until the firmware is updated. Whether
+that device *repeats* is its own persisted setting, which the bridge reads and
+never writes. A device with its repeater turned off is a **leaf**: reachable
+from everywhere the bridge reaches, and its own traffic crosses, but nothing is
+carried onward from its segment. That is a deployment, not a fault, and it is
+logged as such.
 
 ## Installation
 
@@ -209,17 +222,15 @@ Selected by `type`; each type accepts only its own keys.
 | `udp-multicast` | `group` (default 239.255.42.42), `port` (default 7373), `rssi` (default −40), `snr` (default 10) | The fake radio the workspace examples use. UDP measures no signal quality, so `rssi`/`snr` are synthesized for received frames. |
 | `none` | — | No radio: a server that only joins clients together. Not valid for a client, which would then relay nothing. This is the default when the table is absent. |
 
-### `[server.forwarding]`
+### `[server.limits]`
 
 | Key | Default | Description |
 | --- | --- | --- |
-| `exit_clamp` | 1 | Ceiling applied to `FHOPS_REM` on the way out (0–15). The spec advises against raising it on internet-tunneled deployments. |
-| `regions` | `[]` | Region codes this bridge will carry: an IATA code (`"SJC"`), a raw code (`"0x7853"`), or a region name that is hashed. Empty means no restriction. |
-| `min_rssi` | *(none)* | Drop frames received weaker than this, in dBm. A frame whose metadata carries no reading skips only the gate it cannot evaluate. |
-| `min_snr` | *(none)* | Likewise for SNR, in dB; fractional values are kept to a tenth. |
-| `cache_entries` | 128 | Duplicate-cache capacity. |
-| `confirmation_window_secs` | 30 | How long a forwarded packet's confirmation copy stays available for re-confirmation to a retrying previous hop. |
-| `flood_contention_ms` | 1600 | Window a flood confirmation copy is spread over, roughly two frame durations at the segment's data rate. Zero sends it immediately, which a segment with no other repeaters can afford. |
+| `exit_clamp` | *(off)* | Ceiling applied to `FHOPS_REM` as a frame crosses (0–15). Absent leaves every frame's budget exactly as it arrived, which is the default: a crossing already spends two hops, one at each end's repeater. Set it to hold traffic closer to home — `0` stops a bridged flood at the far side's own segment, while unicast to those segments' own nodes still arrives. A frame carrying no flood budget is never given one. |
+
+Region matching and signal-quality thresholds are not bridge settings. They
+belong to the repeater that actually puts bridged traffic on the air, and are
+configured on each device with `umshctl repeater`.
 
 ### `[server.tunnel]` / `[client.tunnel]`
 
@@ -237,9 +248,8 @@ Selected by `type`; each type accepts only its own keys.
 | --- | --- | --- |
 | `name` | *(required)* | Interface name, used in log lines and in other clients' `allow_to`. `"radio"` is reserved for the server's own radio. |
 | `address` | *(required)* | This client's identity, as the UMSH address its `keygen identity` printed. An identity names exactly one client. |
-| `max_frames_per_minute` | *(unlimited)* | Forwarding budget for frames arriving from this client. `check` warns when absent: an authenticated but misbehaving client is the realistic failure mode. |
-| `allow_to` | *(all)* | Interfaces this client's traffic may be fanned out to (client names and/or `"radio"`). |
-| `suppress_flood_confirmations` | `false` | Set when the device behind this client also runs its own repeater role: its re-forward already confirms the previous hop, so the bridge's flood confirmation copy would be redundant airtime. Source-routed confirmations are still emitted, and a direct retry from the previous hop is still answered. |
+| `max_frames_per_minute` | *(unlimited)* | Budget for frames arriving from this client. `check` warns when absent: an authenticated but misbehaving client is the realistic failure mode. The budget counts everything the client's node transmits — its repeats, its own traffic, its beacons and acks — including the repeats it makes of frames the bridge handed it. |
+| `allow_to` | *(all)* | Interfaces this client's traffic may be fanned out to (client names and/or `"radio"`). The place to stop two clients whose radios share a segment from doubling every frame's airtime. |
 
 ## Command reference
 
@@ -247,21 +257,20 @@ Selected by `type`; each type accepts only its own keys.
 | --- | --- |
 | `umsh-bridge run` | Run the bridge in the foreground until interrupted (SIGINT/SIGTERM). |
 | `umsh-bridge check` | Load and validate a configuration, reading the identity key it names, without opening a socket or touching a radio. Prints the role, addresses, and per-client fan-out; exits nonzero on any problem. |
-| `umsh-bridge keygen identity <path>` | Generate this endpoint's identity, once for its life, and print its address and hints. |
+| `umsh-bridge keygen identity <path>` | Generate this endpoint's identity, once for its life, and print its address. |
 | `umsh-bridge address <path>` | Print an existing identity's address — the one line the other end needs. Safe to share anywhere. |
 
 `run`, `check`, and `address` default to `/etc/umsh-bridge/config.toml` and
 `/etc/umsh-bridge/identity.key`; `run` and `check` take `-c`/`--config` (or the
 `UMSH_BRIDGE_CONFIG` environment variable). `keygen identity` refuses to
 replace an existing key without `--force`, since the identity's address — what
-every peer pins, and for a server what the mesh knows the bridge by — changes
-permanently.
+every peer pins — changes permanently.
 
-Logging goes to stderr: `-v` for debug, `-vv` for trace (per-frame forwarding
-verdicts), `-q` for warnings only, `-qq` for errors only. Verbosity is spent on
-this crate first — third-party noise stays at warn — and `--log-filter` (or
+Logging goes to stderr: `-v` for debug, `-vv` for trace (per-frame verdicts),
+`-q` for warnings only, `-qq` for errors only. Verbosity is spent on this crate
+first — third-party noise stays at warn — and `--log-filter` (or
 `UMSH_BRIDGE_LOG`) takes a full `tracing-subscriber` filter for per-module
-control, e.g. `umsh_bridge::engine=trace,info`.
+control, e.g. `umsh_bridge::hub=trace,info`.
 
 ## Running as a service
 
@@ -337,9 +346,14 @@ The `udp-multicast` radio type stands in for a real radio, so a whole bridge —
 server, client, and two mesh segments — fits on one machine. Point each end at
 a *different* multicast group, run a
 [desktop chat](../../README.md#build-and-run-the-desktop-chat-example) instance
-on each group, and traffic crosses the bridge: the trace route shows the
-bridge's router hint, and a flood that left with three hops arrives clamped to
-one remaining.
+on each group, and traffic crosses the bridge.
+
+The fake radio has no node behind it, so this shows the tunnel and the fan-out
+but not the two repeater hops a real crossing takes: frames arrive with their
+hop counts and traces exactly as they left, and nothing suppresses a duplicate.
+Two bridges sharing a pair of fake segments would loop for the same reason —
+there is no dup cache anywhere to stop it. It is a demonstration of the
+plumbing, not of the mesh behavior.
 
 The repository's integration tests do exactly this in-process; see
 [`tests/bridge.rs`](tests/bridge.rs) for a complete two-segment deployment in
@@ -347,25 +361,27 @@ miniature.
 
 ## Operational notes
 
-- **A busy channel is not configurable.** Putting a frame on the air
-  follows the MAC's
-  [channel-access backoff procedure](https://darconeous.github.io/umsh/docs/protocol/channel-access.html#backoff-procedure):
-  up to five attempts, each separated by a wait sampled uniformly from
-  `[0, T_frame]`, then a silent drop. `T_frame` comes from the radio's
-  own channel settings, so the backoff tracks the spreading factor
-  instead of a number chosen at deployment time. There is no knob for
-  this on purpose — nodes sharing a segment have to share the
-  procedure, and abandonment is logged at debug (`transmit abandoned:
-  the channel stayed busy`). Seeing those often means the segment is too
-  congested to forward into, which is a traffic problem rather than a
-  tuning one.
+- **The bridge never waits for a channel.** A backhauled hand-off crosses a
+  wire: it spends no airtime, contends with nobody, and books nothing against
+  the device's duty budget. What it can meet is a node whose receive queue is
+  full, which ULCP reports the only way it can — as a channel-access failure —
+  and which the relay answers by waiting a few tens of milliseconds and
+  offering the frame again, while still draining reception. Whether the frame
+  then goes on the air is the node's decision: a duplicate it has already seen,
+  or one whose flood budget is spent, ends there. That is the bridging policy
+  working, not a failure.
+
+- **Two hops per crossing.** A frame that leaves its sender with three hops of
+  budget arrives on the far segment with one, because the repeaters at both ends
+  each spend one. Traffic that has to cross a bridge should be sent with that in
+  mind, and `exit_clamp` is the lever for pulling it back in a hurry.
 
 - **Rotation and revocation.** There is nothing to expire: the pinned identity
-  is the whole trust decision. Rotating a client is generating a new identity
-  and updating its address in the server's configuration; revoking one is
-  deleting its `[[server.clients]]` entry and restarting. Rotating the
-  *server's* identity is a bigger deal — it is also the bridge's mesh address —
-  so treat it as generated once for the life of the bridge.
+  is the whole trust decision. Rotating a participant is generating a new
+  identity and updating its address at the other end; revoking a client is
+  deleting its `[[server.clients]]` entry and restarting. The identity is a
+  tunnel credential only — the bridge has no mesh address — so rotating it
+  costs nothing beyond reconfiguring the peers that pin it.
 - **A rejected client looks connected, briefly.** TLS 1.3 completes the
   client's half of the handshake before the server evaluates its identity, so
   a client the server does not pin sees its connection accepted and then
@@ -384,17 +400,20 @@ miniature.
 - **A busy serial port usually isn't a dead radio.** Check for another process
   holding the port (an orphaned monitor session, a forgotten `umshctl` REPL)
   before suspecting hardware.
-- **The device keeps its own role.** The bridge attaches to the ULCP device
-  without displacing its configuration and asks for promiscuous reception; a
-  device that refuses is logged and relayed as-is. A device that also runs its
-  own repeater role on the same segment is what `suppress_flood_confirmations`
-  is for.
+- **The device keeps its own configuration.** The bridge attaches without
+  resetting the device and writes exactly two session-scoped properties,
+  backhaul and promiscuous delivery, both of which lapse when the session ends.
+  Nothing persisted is touched — in particular the repeater setting, which the
+  bridge reads and reports but never changes.
 
 ## Status
 
 The bridge is exercised end-to-end against the UDP-multicast fake radio and an
-in-process integration suite covering fan-out, duplicate suppression,
-confirmation copies, rate limits, allowlists, and reconnection. The serial and
-BLE device paths use the same host-side ULCP driver as `umshctl` but have not
-yet been validated against radio hardware — treat a first hardware deployment
-as a shakedown, and run it at `-vv` for per-frame verdicts.
+in-process integration suite covering fan-out, byte fidelity, the exit clamp,
+rate limits, allowlists, pinning, and reconnection. The fake radio has no node
+behind it, so the two-hop crossing that a real deployment depends on — and the
+duplicate suppression that terminates tunnel echoes — is covered by the device
+and MAC test suites rather than here, and has not yet been validated against
+radio hardware. The serial and BLE device paths use the same host-side ULCP
+driver as `umshctl`. Treat a first hardware deployment as a shakedown, and run
+it at `-vv` for per-frame detail.

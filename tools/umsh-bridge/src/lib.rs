@@ -1,11 +1,14 @@
 //! `umsh-bridge`: one end of a UMSH internet bridge.
 //!
-//! A bridge is a single virtual repeater whose radios sit in different
-//! places, joined by a TLS tunnel. One process is the **server** — it
-//! owns the bridge's node identity, holds the shared duplicate cache,
-//! and makes every forwarding decision — and the others are **clients**,
-//! which relay frames byte for byte between their radio and the tunnel
-//! and apply no forwarding logic at all.
+//! A bridge carries frames between radios that cannot hear each other.
+//! One process is the **server**, which authenticates participants and
+//! copies each frame it receives to all the others; the rest are
+//! **clients**, which relay frames byte for byte between their radio and
+//! the tunnel. Every participant's radio runs in backhaul mode, so the
+//! node behind it is a repeater whose point-to-point neighbor is the
+//! bridge: duplicate suppression, hop accounting, and forwarding policy
+//! are that node's, and the bridge itself has no opinion about what it
+//! carries.
 //!
 //! The protocol is specified in the [Internet Bridging appendix].
 //!
@@ -19,12 +22,11 @@ pub mod cli;
 pub mod client;
 pub mod config;
 pub mod device;
-pub mod engine;
+pub mod hub;
 pub mod identity;
 pub mod iface;
 pub mod keygen;
 pub mod policy;
-pub mod rewrite;
 pub mod server;
 pub mod tls;
 pub mod tunnel;
@@ -50,9 +52,9 @@ pub fn run(args: ToolArgs) -> Result<()> {
 /// Run until interrupted.
 ///
 /// A single-threaded runtime with a `LocalSet`: the work is at LoRa
-/// packet rates, the engine's state is deliberately not shared, and a
-/// BLE or serial device handle need not be `Send` to be spawned
-/// alongside everything else.
+/// packet rates, the hub's state is deliberately not shared, and a BLE
+/// or serial device handle need not be `Send` to be spawned alongside
+/// everything else.
 fn run_bridge(path: &Path) -> Result<()> {
     let config = config::Config::load(path)?;
 

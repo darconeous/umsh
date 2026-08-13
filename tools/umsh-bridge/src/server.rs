@@ -1,10 +1,10 @@
 //! The bridge server: listeners, per-client tunnels, and the one task
-//! that decides everything.
+//! that copies frames between them.
 //!
 //! A client is a configured name with a pinned identity, so the
 //! interface set is fixed for the run and a disconnected client is an
 //! interface that is down rather than one that has gone away. That is
-//! what lets the engine hold a stable interface index and lets a
+//! what lets the hub hold a stable interface index and lets a
 //! reconnecting client resume its own identity rather than acquire a new
 //! one.
 
@@ -19,17 +19,17 @@ use tokio_rustls::TlsAcceptor;
 
 use crate::config::Config;
 use crate::device::DeviceRelay;
-use crate::engine::Engine;
+use crate::hub::Hub;
 use crate::identity::BridgeIdentity;
 use crate::iface::{Ingress, InterfaceId, Interfaces};
 use crate::policy::Policy;
 use crate::tls::{self, Address, Credential};
 use crate::tunnel::{TunnelQueue, TunnelReader, TunnelWriter, pump_writer};
 
-/// Frames waiting for the engine before an interface's reader blocks.
-/// The engine's work per frame is bounded and small, so this only ever
-/// absorbs a burst.
-const ENGINE_BACKLOG: usize = 64;
+/// Frames waiting for the hub before an interface's reader blocks. The
+/// hub's work per frame is bounded and small, so this only ever absorbs
+/// a burst.
+const HUB_BACKLOG: usize = 64;
 
 pub async fn run(identity: BridgeIdentity, config: Config) -> Result<()> {
     let mut server = config.server.expect("validated as a server configuration");
@@ -37,8 +37,8 @@ pub async fn run(identity: BridgeIdentity, config: Config) -> Result<()> {
         Credential::for_identity(&identity).context("minting the server's TLS credential")?;
 
     // A configured client with this server's own address would let the
-    // engine attribute the server's traffic to a client — and it can
-    // only be a mistake, because no client can hold this server's key.
+    // hub attribute the server's traffic to a client — and it can only
+    // be a mistake, because no client can hold this server's key.
     for client in &server.clients {
         if client.address.0 == *identity.public_key() {
             anyhow::bail!(
@@ -53,8 +53,10 @@ pub async fn run(identity: BridgeIdentity, config: Config) -> Result<()> {
 
     tracing::info!(
         address = %identity.public_key(),
-        router_hint = %identity.router_hint(),
-        exit_clamp = server.forwarding.exit_clamp,
+        exit_clamp = server
+            .limits
+            .exit_clamp
+            .map_or_else(|| "off".to_string(), |clamp| clamp.to_string()),
         "bridge server starting"
     );
     for iface in &interfaces.all {
@@ -65,7 +67,7 @@ pub async fn run(identity: BridgeIdentity, config: Config) -> Result<()> {
         );
     }
 
-    let (ingress_tx, ingress_rx) = mpsc::channel(ENGINE_BACKLOG);
+    let (ingress_tx, ingress_rx) = mpsc::channel(HUB_BACKLOG);
 
     if let Some(radio) = interfaces.radio {
         let iface = interfaces.get(radio).clone();
@@ -82,8 +84,8 @@ pub async fn run(identity: BridgeIdentity, config: Config) -> Result<()> {
         spawn_ingress(inbound, radio, ingress_tx.clone());
     }
 
-    let engine = Engine::new(&identity, &server, interfaces.clone(), policy);
-    tokio::task::spawn_local(engine.run(ingress_rx));
+    let hub = Hub::new(interfaces.clone(), policy, server.limits.exit_clamp);
+    tokio::task::spawn_local(hub.run(ingress_rx));
 
     // An identity names exactly one client; the configuration
     // guarantees no two share one.
@@ -225,7 +227,7 @@ async fn serve(stream: TcpStream, acceptor: TlsAcceptor, shared: Arc<Shared>) ->
                     frame,
                 };
                 if shared.ingress.send(ingress).await.is_err() {
-                    break Err(anyhow!("the forwarding engine stopped"));
+                    break Err(anyhow!("the hub stopped"));
                 }
             }
             Err(error) => break Err(anyhow!("{error}")),
@@ -251,7 +253,7 @@ async fn serve(stream: TcpStream, acceptor: TlsAcceptor, shared: Arc<Shared>) ->
     outcome
 }
 
-/// Move an interface's received frames into the engine.
+/// Move an interface's received frames into the hub.
 fn spawn_ingress(inbound: Arc<TunnelQueue>, iface: InterfaceId, ingress: mpsc::Sender<Ingress>) {
     tokio::task::spawn_local(async move {
         loop {

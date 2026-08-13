@@ -4,7 +4,7 @@ version.workspace = true
 edition.workspace = true
 license.workspace = true
 repository.workspace = true
-description = "UMSH internet bridge: joins the radios of one virtual repeater over a TLS tunnel"
+description = "UMSH internet bridge: carries frames between radios that cannot hear each other"
 
 [lib]
 name = "umsh_bridge"
@@ -24,7 +24,6 @@ umsh = { path = "../../umsh", default-features = false, features = ["std", "soft
 umsh-core = { path = "../../crates/umsh-core", features = ["std", "region-codec"] }
 umsh-crypto = { path = "../../crates/umsh-crypto", features = ["std", "software-crypto"] }
 umsh-hal = { path = "../../crates/umsh-hal", features = ["std"] }
-umsh-mac = { path = "../../crates/umsh-mac", features = ["std", "software-crypto"] }
 umsh-ulcp = { path = "../../crates/umsh-ulcp" }
 tokio-serial = { version = "5", optional = true }
 anyhow = "1"

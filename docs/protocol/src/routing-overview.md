@@ -55,19 +55,20 @@ A **bridge** is a node that relays UMSH packets between two different media or R
 
 Bridges are not prohibited per-se, as that is not a protocol-level decision. Instead, this document provides some guidance on how bridges can be deployed while lowering the risk of hurting local mesh performance.
 
-Bridges are largely protocol-transparent: they consume source-route hints and forward packets as repeaters do. Currently, a bridge also retransmits on the inbound medium — even for source-routed packets — to provide forwarding confirmation to the previous hop, though [this may be optimized in the future](limitations.md#bridge-hop-confirmation).
+Bridges are largely protocol-transparent. A bridge carries a packet between the repeaters at either end of it, and those repeaters do the forwarding: each consumes source-route hints, accounts for a hop, and records itself in a trace exactly as it would for a packet it heard off the air. A trace route that crosses a bridge therefore contains both of their router hints, and source-routed packets traverse the bridge transparently.
 
-Bridges participate in source routes and trace routes like any other repeater. A trace route that crosses a bridge will contain the bridge's router hint, and source-routed packets will traverse the bridge transparently.
+Because a repeater at each end forwards the packet, a crossing spends two flood hops rather than one. The repeater on the inbound side transmits on the medium the packet arrived from, which is the ordinary forwarding confirmation the previous hop listens for; a bridge needs no retransmission of its own to provide it.
 
-Flooding works across bridges, but the remaining flood hop count is clamped when a packet exits the bridge — by default, to a maximum of 1. This clamping applies even to hybrid-routed packets that transition from source routing to flooding after crossing the bridge. The effect is to keep individual meshes local and accountable while still enabling multi-segment routing.
+Flooding works across bridges, and the two hops a crossing spends are what keep individual meshes local and accountable while still enabling multi-segment routing. A bridge MAY additionally clamp the remaining flood hop count of packets that transit it, which lets an operator narrow a bridge's reach without reconfiguring the nodes behind it.
 
 > [!CAUTION]
 > Internet bridges have the potential to be destructive to the mesh and are generally discouraged
 > because 1) they cannot be relied upon in an emergency, and 2) they can waste airtime with useless,
-> non-local chatter. Moreso than other types of bridges, internet bridges MUST limit the flood hop count
-> of packets which transit the bridge.
+> non-local chatter. Moreso than other types of bridges, internet bridges MUST limit what transits
+> them: the flood hop count is bounded by the two hops a crossing spends, and deployments SHOULD
+> rate-limit each participant and MAY clamp the hop count further.
 
-A client–server tunnel realization of an internet bridge — including the exact form of the inbound-medium retransmission — is specified in [Internet Bridging](internet-bridging.md).
+A client–server tunnel realization of an internet bridge is specified in [Internet Bridging](internet-bridging.md).
 
 ## Forwarding Confirmation and Recovery
 

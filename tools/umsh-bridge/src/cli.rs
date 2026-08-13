@@ -12,23 +12,28 @@ use clap::{Args, Parser, Subcommand};
 #[command(
     name = "umsh-bridge",
     version,
-    about = "Join the radios of one virtual UMSH repeater over an authenticated tunnel",
+    about = "Carry UMSH frames between radios that cannot hear each other",
     long_about = "\
-Runs one end of a UMSH internet bridge: a server, which owns the bridge's
-node identity and makes every forwarding decision, or a client, which
-relays frames byte for byte between its own radio and the server.
+Runs one end of a UMSH internet bridge: a server, which copies each frame
+it receives to every other participant, or a client, which relays frames
+byte for byte between its own radio and the server.
 
 Which end this is comes from the configuration file, not the command
 line, so one unit file fits either role and `umsh-bridge check` validates
 the exact artifact that will run.
 
+Every participant's radio runs in backhaul mode, which makes the node
+behind it a repeater whose point-to-point neighbor is the bridge. Hop
+accounting, duplicate suppression, and forwarding policy are that node's;
+the bridge has no opinion about what it carries and no presence on the
+mesh.
+
 Every participant holds an Ed25519 identity, issued once by `keygen
-identity`; the server's is also the bridge's node identity on the mesh.
-Each side is configured with the other's public key — the UMSH address
-that `address` prints — and the tunnel authenticates against those pins,
-which makes revoking a client an edit to the server's configuration. The
-TLS certificates the handshake requires are minted in memory from the
-identity at startup; none are stored or exchanged."
+identity`, which is what the tunnel authenticates with. Each side is
+configured with the other's public key — the UMSH address that `address`
+prints — which makes revoking a client an edit to the server's
+configuration. The TLS certificates the handshake requires are minted in
+memory from the identity at startup; none are stored or exchanged."
 )]
 pub struct ToolArgs {
     #[command(subcommand)]
@@ -43,7 +48,7 @@ pub struct ToolArgs {
     pub quiet: u8,
 
     /// Per-target log filter, in `tracing-subscriber` syntax
-    /// (`umsh_bridge::engine=trace,info`). Overrides -v/-q entirely.
+    /// (`umsh_bridge::hub=trace,info`). Overrides -v/-q entirely.
     #[arg(long, value_name = "FILTER", env = "UMSH_BRIDGE_LOG", global = true)]
     pub log_filter: Option<String>,
 }

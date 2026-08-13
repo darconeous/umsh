@@ -7,11 +7,9 @@
 use std::collections::HashSet;
 use std::net::{Ipv4Addr, SocketAddr};
 use std::path::{Path, PathBuf};
-use std::str::FromStr;
 
 use anyhow::{Context, Result, bail};
 use serde::Deserialize;
-use umsh_core::RegionCode;
 
 use crate::tls::Address;
 
@@ -49,7 +47,7 @@ pub struct ServerConfig {
     #[serde(default)]
     pub radio: RadioConfig,
     #[serde(default)]
-    pub forwarding: ForwardingConfig,
+    pub limits: LimitsConfig,
     #[serde(default)]
     pub tunnel: TunnelConfig,
     #[serde(default)]
@@ -71,12 +69,6 @@ pub struct ClientEntry {
     /// Interfaces this client's traffic may be fanned out to. Absent
     /// means all of them.
     pub allow_to: Option<Vec<String>>,
-    /// Set when the device backing this client also runs its own
-    /// repeater role: its flood re-forward already confirms the previous
-    /// hop, so the bridge's own flood confirmation copy is redundant
-    /// airtime. Source-routed confirmations are still emitted.
-    #[serde(default)]
-    pub suppress_flood_confirmations: bool,
 }
 
 #[derive(Debug, Deserialize)]
@@ -99,30 +91,20 @@ pub struct ClientConfig {
     pub tunnel: TunnelConfig,
 }
 
-#[derive(Debug, Deserialize)]
+/// What the bridge does to traffic beyond carrying it.
+///
+/// Region and signal policy are not here: they belong to each
+/// participant's own repeater, which is what puts bridged traffic on the
+/// air, and are configured on the device.
+#[derive(Debug, Default, Deserialize)]
 #[serde(deny_unknown_fields)]
-pub struct ForwardingConfig {
-    /// Ceiling applied to `FHOPS_REM` on the way out. The spec's default
-    /// is 1 and advises against raising it on internet-tunneled
-    /// deployments.
-    #[serde(default = "default_exit_clamp")]
-    pub exit_clamp: u8,
-    /// Region codes this bridge will carry. Empty means no restriction.
-    #[serde(default)]
-    pub regions: Vec<RegionCodeArg>,
-    pub min_rssi: Option<i16>,
-    /// Minimum SNR in dB; fractional values are kept to a tenth.
-    pub min_snr: Option<f64>,
-    #[serde(default = "default_cache_entries")]
-    pub cache_entries: usize,
-    #[serde(default = "default_confirmation_window")]
-    pub confirmation_window_secs: u64,
-    /// Window a flood confirmation copy is spread over, roughly two
-    /// frame durations at the segment's data rate. Zero sends it
-    /// immediately, which is what the integration tests want and what a
-    /// segment with no other repeaters can afford.
-    #[serde(default = "default_flood_contention")]
-    pub flood_contention_ms: u64,
+pub struct LimitsConfig {
+    /// Ceiling applied to `FHOPS_REM` as a frame crosses. Absent leaves
+    /// every frame's budget exactly as it arrived, which is the default:
+    /// a crossing already spends two hops, one at each end's repeater.
+    /// Set it to hold traffic closer to home — 0 stops a bridged flood
+    /// at the far side's own segment.
+    pub exit_clamp: Option<u8>,
 }
 
 #[derive(Debug, Deserialize)]
@@ -305,34 +287,6 @@ impl RadioConfig {
     }
 }
 
-/// A region code in its textual form: an IATA code (`SJC`), a raw code
-/// (`0x7853`), or a region name that is hashed.
-#[derive(Clone, Copy, Debug)]
-pub struct RegionCodeArg(pub RegionCode);
-
-impl<'de> Deserialize<'de> for RegionCodeArg {
-    fn deserialize<D: serde::Deserializer<'de>>(deserializer: D) -> Result<Self, D::Error> {
-        let text = String::deserialize(deserializer)?;
-        RegionCode::from_str(&text)
-            .map(RegionCodeArg)
-            .map_err(|error| serde::de::Error::custom(format!("{error:?}")))
-    }
-}
-
-impl Default for ForwardingConfig {
-    fn default() -> Self {
-        Self {
-            exit_clamp: default_exit_clamp(),
-            regions: Vec::new(),
-            min_rssi: None,
-            min_snr: None,
-            cache_entries: default_cache_entries(),
-            confirmation_window_secs: default_confirmation_window(),
-            flood_contention_ms: default_flood_contention(),
-        }
-    }
-}
-
 impl Default for TunnelConfig {
     fn default() -> Self {
         Self {
@@ -353,18 +307,6 @@ fn default_listen() -> Vec<SocketAddr> {
     ]
 }
 
-fn default_exit_clamp() -> u8 {
-    1
-}
-fn default_cache_entries() -> usize {
-    128
-}
-fn default_confirmation_window() -> u64 {
-    30
-}
-fn default_flood_contention() -> u64 {
-    1_600
-}
 fn default_keepalive() -> u64 {
     10
 }
@@ -442,14 +384,12 @@ impl ServerConfig {
         if self.clients.is_empty() && self.radio.is_none() {
             bail!("[server] has no clients and no radio; there is nothing to bridge");
         }
-        if self.forwarding.exit_clamp > 15 {
+        if let Some(clamp) = self.limits.exit_clamp
+            && clamp > 15
+        {
             bail!(
-                "[server.forwarding] exit_clamp is {}; FHOPS_REM is four bits and holds at most 15",
-                self.forwarding.exit_clamp
+                "[server.limits] exit_clamp is {clamp}; FHOPS_REM is four bits and holds at most 15"
             );
-        }
-        if self.forwarding.cache_entries == 0 {
-            bail!("[server.forwarding] cache_entries must be at least 1");
         }
         if self.tunnel.queue_depth == 0 {
             bail!("[server.tunnel] queue_depth must be at least 1");
@@ -583,7 +523,7 @@ mod tests {
         .unwrap();
         let server = config.server.unwrap();
         assert_eq!(server.listen.len(), 2, "both address families by default");
-        assert_eq!(server.forwarding.exit_clamp, 1);
+        assert_eq!(server.limits.exit_clamp, None, "no clamp unless asked for");
         assert_eq!(server.tunnel.keepalive_secs, 10);
         assert_eq!(server.tunnel.idle_timeout_secs, 30);
         assert!(matches!(
@@ -655,7 +595,7 @@ mod tests {
     fn unknown_keys_are_rejected_rather_than_ignored() {
         let text = server_config("[server.radio]\ntype = \"ble\"\nbored = true\n");
         assert!(parse(&text).is_err(), "unknown key inside a radio table");
-        let text = server_config("[server.forwarding]\nexit_clamps = 2\n");
+        let text = server_config("[server.limits]\nexit_clamps = 2\n");
         assert!(parse(&text).is_err(), "near-miss key name");
         let text = server_config("[server.radio]\ntype = \"telepathy\"\n");
         assert!(parse(&text).is_err(), "unknown radio type");
@@ -762,11 +702,17 @@ mod tests {
     #[test]
     fn exit_clamp_is_bounded_by_the_field_it_writes() {
         let text =
-            server_config("[server.radio]\ntype = \"ble\"\n[server.forwarding]\nexit_clamp = 16\n");
+            server_config("[server.radio]\ntype = \"ble\"\n[server.limits]\nexit_clamp = 16\n");
         assert!(parse(&text).is_err());
         let text =
-            server_config("[server.radio]\ntype = \"ble\"\n[server.forwarding]\nexit_clamp = 15\n");
+            server_config("[server.radio]\ntype = \"ble\"\n[server.limits]\nexit_clamp = 15\n");
         assert!(parse(&text).is_ok());
+        // Zero is a setting, not an omission: it stops bridged floods at
+        // the far side rather than leaving them unclamped.
+        let text =
+            server_config("[server.radio]\ntype = \"ble\"\n[server.limits]\nexit_clamp = 0\n");
+        let config = parse(&text).unwrap();
+        assert_eq!(config.server.unwrap().limits.exit_clamp, Some(0));
     }
 
     #[test]
@@ -796,14 +742,17 @@ mod tests {
     }
 
     #[test]
-    fn regions_accept_every_spelling_the_spec_does() {
-        let text = server_config(
-            "[server.radio]\ntype = \"ble\"\n\
-             [server.forwarding]\nregions = [\"SJC\", \"0x7853\", \"Rogue Valley\"]\n",
-        );
-        let config = parse(&text).unwrap();
-        let regions = &config.server.unwrap().forwarding.regions;
-        assert_eq!(regions.len(), 3);
-        assert_eq!(regions[1].0.as_u16(), 0x7853);
+    fn region_and_signal_policy_belong_to_the_device() {
+        // A repeater's region matching and signal thresholds are device
+        // properties, set with `umshctl repeater`. Accepting them here
+        // would promise filtering the bridge cannot do.
+        for table in [
+            "[server.limits]\nregions = [\"SJC\"]\n",
+            "[server.limits]\nmin_rssi = -110\n",
+            "[server.limits]\nmin_snr = -7.5\n",
+        ] {
+            let text = server_config(&format!("[server.radio]\ntype = \"ble\"\n{table}"));
+            assert!(parse(&text).is_err(), "{table}");
+        }
     }
 }

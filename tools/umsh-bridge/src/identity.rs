@@ -1,26 +1,24 @@
 //! A participant's Ed25519 identity.
 //!
 //! Every endpoint has one, and it is the credential the tunnel
-//! authenticates with (see [`crate::tls`]). The server's doubles as the
-//! bridge's node identity: forwarding needs its router hint — what
-//! source routes match against and trace routes are prepended with — and
-//! a later bridge that originates its own traffic will sign with it. A
-//! client's is only a tunnel credential today, but it is a full identity
-//! so that a client can become individually addressable for management
-//! without re-keying anything.
+//! authenticates with (see [`crate::tls`]) — nothing more. A bridge has
+//! no presence on the mesh: it addresses nothing, signs nothing, and
+//! appears in no route. The nodes it carries traffic for are the ones
+//! behind each participant's radio, and they hold their own identities.
+//! It is a full UMSH identity all the same, so that a participant can
+//! become individually addressable for management without re-keying
+//! anything.
 
 use std::path::Path;
 
 use anyhow::{Context, Result, bail};
-use umsh_core::{NodeHint, PublicKey, RouterHint};
+use umsh_core::PublicKey;
 use umsh_crypto::software::SoftwareIdentity;
 
 pub struct BridgeIdentity {
     inner: SoftwareIdentity,
     seed: [u8; 32],
     public: PublicKey,
-    node_hint: NodeHint,
-    router_hint: RouterHint,
 }
 
 impl BridgeIdentity {
@@ -31,8 +29,6 @@ impl BridgeIdentity {
             inner,
             seed: *seed,
             public,
-            node_hint: public.hint(),
-            router_hint: public.router_hint(),
         }
     }
 
@@ -55,22 +51,13 @@ impl BridgeIdentity {
         &self.public
     }
 
-    pub fn node_hint(&self) -> NodeHint {
-        self.node_hint
-    }
-
-    pub fn router_hint(&self) -> RouterHint {
-        self.router_hint
-    }
-
     /// The raw seed, for wrapping the identity key into the formats the
     /// TLS stack expects.
     pub(crate) fn seed(&self) -> &[u8; 32] {
         &self.seed
     }
 
-    /// The signing identity, for the node logic a forwarding-only bridge
-    /// does not yet have.
+    /// The signing identity. The TLS handshake is what it signs.
     pub fn signer(&self) -> &SoftwareIdentity {
         &self.inner
     }
@@ -126,14 +113,14 @@ mod tests {
     use super::*;
 
     #[test]
-    fn a_seed_round_trips_and_pins_the_hints_to_the_public_key() {
+    fn a_seed_round_trips_through_its_written_form() {
         let seed = [0x42u8; 32];
         assert_eq!(parse_seed(&format_seed(&seed)).unwrap(), seed);
 
-        let identity = BridgeIdentity::from_seed(&seed);
-        let key = identity.public_key().0;
-        assert_eq!(identity.node_hint().0, [key[0], key[1], key[2]]);
-        assert_eq!(identity.router_hint().0, [key[0], key[1]]);
+        // The same seed always names the same address, which is what an
+        // operator pins at the other end of the tunnel.
+        let key = BridgeIdentity::from_seed(&seed).public_key().0;
+        assert_eq!(BridgeIdentity::from_seed(&seed).public_key().0, key);
     }
 
     #[test]

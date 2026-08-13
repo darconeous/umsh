@@ -24,7 +24,7 @@ The following terms are used throughout this specification. Definitions are give
 : A packet type that carries a unicast payload addressed to a specific destination while concealing both the sender and destination identities from observers who do not possess the channel key. The destination hint and source address are encrypted using the channel key; the payload is protected end-to-end using keys derived from both the channel key and the pairwise shared secret. See [Frame Types](packet-types.md#blind-unicast-packet).
 
 **Bridge**
-: A node that relays UMSH packets between two different media or channels — for example, from a local LoRa radio to an internet backhaul and back to a distant LoRa radio. Bridges are protocol-transparent: they consume source-route hints and forward packets as repeaters do, but their onward transmission cannot be observed on the inbound medium.
+: An arrangement that carries UMSH packets between two different media or channels — for example, from a local LoRa radio to an internet backhaul and back to a distant LoRa radio. Bridges are protocol-transparent: a repeater at each end forwards the packet as it would any other, so a crossing consumes source-route hints, spends two flood hops, and records both repeaters in a trace. The inbound repeater's forwarding is observable on the medium the packet arrived from.
 
 **Broadcast**
 : A packet intended for all nodes in range. Broadcast packets carry no destination hint and are not encrypted or authenticated at the MAC layer. See [Frame Types](packet-types.md).

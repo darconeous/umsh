@@ -3914,7 +3914,6 @@ dependencies = [
  "umsh-core",
  "umsh-crypto",
  "umsh-hal",
- "umsh-mac",
  "umsh-ulcp",
 ]
 

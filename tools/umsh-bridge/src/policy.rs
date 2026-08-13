@@ -1,4 +1,4 @@
-//! Step 5 of the forwarding procedure: local bridge policy.
+//! Who may send how much, and where it may go.
 //!
 //! Two things live here, and they exist for the same reason. An
 //! authenticated but misbehaving client is the realistic failure mode of
@@ -7,17 +7,16 @@
 //! whose radios share a segment double every fanned-out frame's airtime,
 //! which the egress allowlist is the place to prevent.
 //!
-//! Region matching is here too, and only ever *matches*. A bridge never
-//! rewrites a region code and never inserts one: its interfaces may sit
-//! in different regions, so a code added at one segment's exit would
-//! misdescribe the packet everywhere else it travels.
+//! Both are decisions about a connection, not about a packet: the bridge
+//! reads neither. What a packet is, whether it has been seen before, and
+//! whether it is worth putting on the air are questions for the repeater
+//! behind each participant's radio.
 
 use std::collections::HashSet;
 use std::time::Duration;
 
 use anyhow::{Result, bail};
 use tokio::time::Instant;
-use umsh_core::{ParsedOptions, RegionCode};
 
 use crate::config::ServerConfig;
 use crate::iface::{InterfaceId, Interfaces};
@@ -25,7 +24,6 @@ use crate::iface::{InterfaceId, Interfaces};
 pub struct Policy {
     /// Indexed by client index, parallel to `ServerConfig::clients`.
     clients: Vec<ClientPolicy>,
-    regions: Vec<RegionCode>,
 }
 
 struct ClientPolicy {
@@ -34,7 +32,6 @@ struct ClientPolicy {
     /// Interfaces this client's traffic may leave through. `None` means
     /// all of them.
     allow_to: Option<HashSet<InterfaceId>>,
-    suppress_flood_confirmations: bool,
 }
 
 impl Policy {
@@ -71,7 +68,6 @@ impl Policy {
                     name: client.name.clone(),
                     limit: client.max_frames_per_minute.map(RateLimit::per_minute),
                     allow_to,
-                    suppress_flood_confirmations: client.suppress_flood_confirmations,
                 })
             })
             .collect::<Result<Vec<_>>>()?;
@@ -84,29 +80,7 @@ impl Policy {
             bail!("every client's allow_to is empty; no frame could ever be forwarded");
         }
 
-        Ok(Self {
-            clients,
-            regions: config
-                .forwarding
-                .regions
-                .iter()
-                .map(|region| region.0)
-                .collect(),
-        })
-    }
-
-    /// Whether this bridge carries traffic tagged with the frame's
-    /// region. An untagged frame is carried: a bridge has no way to know
-    /// which region it came from, and refusing it would break every
-    /// sender that does not tag.
-    pub fn region_admits(&self, options: &ParsedOptions) -> bool {
-        if self.regions.is_empty() {
-            return true;
-        }
-        match options.region_code {
-            None => true,
-            Some(code) => self.regions.contains(&RegionCode::from_bytes(code)),
-        }
+        Ok(Self { clients })
     }
 
     /// Spend one from the arrival interface's forwarding budget.
@@ -154,19 +128,6 @@ impl Policy {
                 Some(allowed) => allowed.contains(&exit),
             },
         }
-    }
-
-    /// Whether the device behind this interface runs its own repeater
-    /// role, whose flood re-forward already confirms the previous hop.
-    pub fn suppresses_flood_confirmations(
-        &self,
-        interfaces: &Interfaces,
-        arrival: InterfaceId,
-    ) -> bool {
-        interfaces
-            .get(arrival)
-            .client
-            .is_some_and(|client| self.clients[client].suppress_flood_confirmations)
     }
 
     /// How the configured egress rules read, for `check` and start-up
@@ -337,44 +298,5 @@ mod tests {
             assert!(policy.admit(&interfaces, radio, Instant::now()));
             assert!(policy.admit(&interfaces, cabin, Instant::now()));
         }
-    }
-
-    #[test]
-    fn region_matching_carries_untagged_traffic_and_filters_the_rest() {
-        let (_, _, policy) = parse(&format!(
-            "[server.radio]\ntype = \"ble\"\n\
-             [server.forwarding]\nregions = [\"SJC\"]\n\
-             [[server.clients]]\nname = \"cabin\"\naddress = \"{}\"\n",
-            address(0xAA)
-        ));
-        let sjc = RegionCode::from_iata("SJC").unwrap();
-        let mut options = ParsedOptions::default();
-        assert!(policy.region_admits(&options), "untagged");
-
-        options.region_code = Some(sjc.to_bytes());
-        assert!(policy.region_admits(&options));
-
-        options.region_code = Some(RegionCode::from_iata("LHR").unwrap().to_bytes());
-        assert!(!policy.region_admits(&options));
-
-        // With no regions configured there is no restriction at all.
-        let (_, _, policy) = two_clients("");
-        assert!(policy.region_admits(&options));
-    }
-
-    #[test]
-    fn suppression_is_a_property_of_the_client_not_the_bridge() {
-        let (_, interfaces, policy) = two_clients("suppress_flood_confirmations = true\n");
-        assert!(
-            policy.suppresses_flood_confirmations(&interfaces, interfaces.by_client(0).unwrap().id)
-        );
-        assert!(
-            !policy
-                .suppresses_flood_confirmations(&interfaces, interfaces.by_client(1).unwrap().id)
-        );
-        assert!(
-            !policy.suppresses_flood_confirmations(&interfaces, interfaces.radio.unwrap()),
-            "the server's own radio has no such setting"
-        );
     }
 }

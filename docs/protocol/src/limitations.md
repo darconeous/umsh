@@ -43,24 +43,6 @@ Source routing is an inherently local operation — only repeaters within radio 
 
 ## Open Issues
 
-### Bridge Hop Confirmation
-
-A **bridge** is a node that relays UMSH packets over a different medium or channel than the one it received them on — for example, an internet backhaul, a wired link, or a different radio band connecting two geographically distant segments. Bridges are transparent to the protocol at the MAC layer: they consume source-route hints and forward packets exactly as repeaters do.
-
-The simplest approach to bridge confirmation is to have the bridge retransmit the packet on the same inbound medium in addition to forwarding it to the other medium. This fully preserves the existing implicit confirmation mechanism with no protocol changes — the previous-hop sender hears the retransmission and confirms delivery exactly as it would with a normal repeater. The cost is doubled on-air time for every bridged packet on the inbound segment. [Internet Bridging § Forwarding Confirmation](internet-bridging.md#forwarding-confirmation) specifies this retransmission with `FHOPS_REM` forced to zero, which confirms without recruiting additional forwarders; the airtime cost stands.
-
-Retransmitting the entire packet solely to signal receipt is wasteful. However, if the bridge does not retransmit, the previous-hop node cannot observe the bridge's onward transmission and will assume delivery failed — triggering retries that are even more wasteful, since the bridge did receive the packet successfully.
-
-To be honest, it isn't entirely clear that this is a problem worth optimizing. Bridges aren't expected to exactly be common. But it is worth thinking about, so here is a possible solution:
-
-#### Possibility: Hop Signal for non-retransmitting bridges
-
-A **Hop Signal** is a local-only BCST (no FHOPS field, so it is never forwarded) emitted by the bridge on its inbound medium immediately after handling a packet. The BCST carries a MIC reference to the original packet for correlation, a signal type (Hop Ack or Hop Nak), and the bridge's own 3-byte SRC hint for identification. It is smaller than a full retransmission and can also convey failure (Hop Nak) rather than just presence.
-
-Because only one packet type slot (value 5) remains reserved, a Hop Signal would be defined as a MAC option on BCST rather than a dedicated packet type, preserving the reserved slot for a future use case with stronger architectural justification.
-
-Hop signals would be informational only. A forged Hop Ack is equivalent to silent dropping — already in the threat model — so senders must still fall back to full MAC ack timeout if no Hop Ack arrives. The format of the Hop Signal option and the complete emission rules have not yet been defined.
-
 ### Intermediate Node Error Feedback
 
 #### Problem
