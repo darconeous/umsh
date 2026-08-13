@@ -845,6 +845,13 @@ where
                 // refuses any access outside an encrypted LESC-bonded
                 // link.
                 session.attach(true);
+                // PROP_MAC_BACKHAUL is session-scoped but its routing
+                // lives in the mux, which the session-state reset above
+                // cannot reach. A displaced session attaches without any
+                // detach in between, so this is the reset that keeps a
+                // predecessor's backhaul mode from leaving the new
+                // session deaf to the air while its property reads 0.
+                crate::radio_mux::MUX_MODE.set_backhaul(false);
             }
             Either4::First(InEvent::Detached(transport)) => {
                 // Only the active transport's detach ends the
@@ -853,6 +860,11 @@ where
                 if arbitration.detach(transport) {
                     env.set_advertising_allowed(true);
                     session.detach();
+                    // The session that enabled backhaul is gone; without
+                    // this, detached operation would keep the mux routing
+                    // for a host that no longer exists and the device
+                    // would stop queueing what it hears off the air.
+                    crate::radio_mux::MUX_MODE.set_backhaul(false);
                 }
             }
             Either4::First(InEvent::CancelAlert) => {
