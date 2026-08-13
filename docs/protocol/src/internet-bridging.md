@@ -37,7 +37,7 @@ clients**.
 The whole assembly is **one** virtual repeater. It maintains a single
 [duplicate-suppression cache](repeater-operation.md#duplicate-suppression)
 shared across all interfaces, performs hop accounting once per crossing,
-and prepends its router hint to a trace route once per crossing —
+and records itself in a trace route and trace signal once per crossing —
 regardless of how many interfaces or clients participate.
 
 Radio configuration is local to each participant: a client configures its
@@ -219,10 +219,27 @@ adapted to multiple interfaces. For a frame arriving on interface *I*:
    the flood budget of a hybrid route that transitions to flooding beyond
    the bridge.
 
-10. **Trace route** — If the frame carries a
+10. **Trace route and trace signal** — If the frame carries a
     [trace-route option](packet-options.md#trace-route-option-2), prepend
-    the bridge's router hint; if that would exceed the maximum frame
-    size, drop the frame.
+    the bridge's router hint. If it carries a
+    [trace-signal option](packet-options.md#trace-signal-option-10),
+    prepend the receive measurements of step 8 — the reading of whichever
+    of the bridge's radios heard the frame, wherever that radio sits.
+    Either prepend applies to a source-routed hop as well, which reaches
+    this step without passing through step 8. If a prepend would exceed
+    the maximum frame size, drop the frame.
+
+    The bridge crosses once, so it writes one entry in each option, and
+    it **MUST** write to both or neither. A hop that grows the trace
+    route without growing the trace signal destroys the correspondence
+    between hint and reading for every hop recorded before it, not only
+    its own.
+
+    Where the arriving metadata reports no measurement, or does not
+    decode, the bridge writes a placeholder entry rather than omitting
+    one — the correspondence is owed whether or not the reading exists.
+    An RSSI byte of zero serves, being 0 dBm at the receiver and so
+    unreachable as a real reading.
 
 11. **Accept** — Insert the cache key into the shared cache now, before
     any transmission.

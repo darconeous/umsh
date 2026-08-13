@@ -14,7 +14,7 @@
 //! - The confirmation copy is a second output: the same frame with
 //!   `FHOPS_REM` forced to zero.
 
-use umsh_core::options::OptionEncoder;
+use umsh_core::options::{OptionEncoder, TraceSignalEntry};
 use umsh_core::{
     Fcf, FloodHops, OptionNumber, PacketHeader, PacketType, ParsedOptions, RouterHint,
 };
@@ -23,6 +23,11 @@ use umsh_core::{
 #[derive(Clone, Copy, Debug)]
 pub struct RewritePlan {
     pub router_hint: RouterHint,
+    /// Step 10: the quality at which the arrival interface's radio heard
+    /// the frame, prepended to a trace signal so its entries pair with
+    /// the trace-route hints. A client's radio is one of the bridge's
+    /// own, so its reading is the bridge's reading.
+    pub signal: TraceSignalEntry,
     /// Step 6: this hop was named by the source route, so its hint comes
     /// off the front — and steps 7 and 8 are skipped.
     pub consume_source_route: bool,
@@ -194,6 +199,18 @@ fn encode_options(
                     .put(number, &trace)
                     .map_err(|_| RewriteError::TooLarge)?;
             }
+            // Step 10, in lockstep with the hint above: entry N of this
+            // option is the quality at which the hop named by hint N
+            // heard the frame, and a hop that grows one list without the
+            // other destroys the correspondence for every reader.
+            OptionNumber::TraceSignal => {
+                let mut trace = Vec::with_capacity(2 + value.len());
+                trace.extend_from_slice(&plan.signal.as_bytes());
+                trace.extend_from_slice(value);
+                encoder
+                    .put(number, &trace)
+                    .map_err(|_| RewriteError::TooLarge)?;
+            }
             // Step 6: remove the hint that named this bridge, preserving
             // the option even when it empties — an empty source route is
             // "the route ran out here", not "there was no route".
@@ -230,10 +247,13 @@ mod tests {
 
     const BRIDGE: RouterHint = RouterHint([0xB1, 0xD6]);
     const OTHER: RouterHint = RouterHint([0x0A, 0x0B]);
+    /// -91 dBm at 4.2 dB, as the bridge's arrival radio heard it.
+    const HEARD: TraceSignalEntry = TraceSignalEntry::new(-91, 42);
 
     fn plan() -> RewritePlan {
         RewritePlan {
             router_hint: BRIDGE,
+            signal: HEARD,
             consume_source_route: false,
             decrement_flood_hops: true,
             exit_clamp: 1,
@@ -355,6 +375,87 @@ mod tests {
         let (_, options) = reparse(&out.forward);
         let trace = options.trace_route.clone().unwrap();
         assert_eq!(&out.forward[trace], &[BRIDGE.0, OTHER.0].concat()[..]);
+    }
+
+    #[test]
+    fn the_bridges_reading_goes_on_the_front_of_a_trace_signal() {
+        let existing = [0x5A, 0x0Fu8];
+        let src = frame(3, 0, &[(OptionNumber::TraceSignal, existing.to_vec())]);
+        let out = run(&src, plan()).unwrap();
+        let (_, options) = reparse(&out.forward);
+        let signal = options.trace_signal.clone().unwrap();
+        assert_eq!(
+            &out.forward[signal],
+            &[HEARD.as_bytes().as_slice(), &existing].concat()[..]
+        );
+    }
+
+    #[test]
+    fn the_two_traces_stay_the_same_length() {
+        // The pairing is the option's whole value: entry N describes the
+        // hop that hint N names, so a crossing that grows one list
+        // without the other is what makes both unreadable.
+        let src = frame(
+            3,
+            0,
+            &[
+                (OptionNumber::TraceRoute, OTHER.0.to_vec()),
+                (OptionNumber::TraceSignal, vec![0x5A, 0x0F]),
+            ],
+        );
+        let out = run(&src, plan()).unwrap();
+        let (_, options) = reparse(&out.forward);
+        let route = options.trace_route.clone().unwrap();
+        let signal = options.trace_signal.clone().unwrap();
+        assert_eq!(route.len(), 4, "our hint was added");
+        assert_eq!(signal.len(), route.len(), "and so was our reading");
+    }
+
+    #[test]
+    fn a_source_routed_crossing_still_records_its_signal() {
+        // Step 6 skips the flood accounting and the signal thresholds,
+        // but not step 10: a source-routed hop appears in the trace like
+        // any other, so it owes the trace signal an entry like any other.
+        let src = frame(
+            2,
+            0,
+            &[
+                (OptionNumber::SourceRoute, BRIDGE.0.to_vec()),
+                (OptionNumber::TraceSignal, vec![]),
+            ],
+        );
+        let out = run(
+            &src,
+            RewritePlan {
+                consume_source_route: true,
+                decrement_flood_hops: false,
+                ..plan()
+            },
+        )
+        .unwrap();
+        let (_, options) = reparse(&out.forward);
+        let signal = options.trace_signal.clone().unwrap();
+        assert_eq!(&out.forward[signal], &HEARD.as_bytes());
+    }
+
+    #[test]
+    fn an_unmeasured_crossing_records_a_placeholder_rather_than_nothing() {
+        let src = frame(3, 0, &[(OptionNumber::TraceSignal, vec![])]);
+        let out = run(
+            &src,
+            RewritePlan {
+                signal: TraceSignalEntry::UNMEASURED,
+                ..plan()
+            },
+        )
+        .unwrap();
+        let (_, options) = reparse(&out.forward);
+        let signal = options.trace_signal.clone().unwrap();
+        assert_eq!(
+            &out.forward[signal],
+            &TraceSignalEntry::UNMEASURED.as_bytes(),
+            "the entry is still there, so the pairing survives"
+        );
     }
 
     #[test]

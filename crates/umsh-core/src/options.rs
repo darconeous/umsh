@@ -92,6 +92,80 @@ impl<'a> OptionEncoder<'a> {
     }
 }
 
+/// One trace-signal entry: negative RSSI in dBm, then SNR in centibels
+/// (packet-options.md § Trace Signal).
+///
+/// Every hop that prepends a router hint to a trace route prepends one of
+/// these to the trace signal, so entry `N` is the quality at which the hop
+/// named by hint `N` heard the packet. That pairing is the option's whole
+/// value, which is why the encoding lives here rather than in whichever
+/// forwarder happens to need it: a repeater and a bridge that disagree
+/// about a byte produce a list nothing downstream can read.
+///
+/// Both fields saturate rather than wrap, so a reading past the end of the
+/// range reports the nearest representable value instead of a
+/// plausible-looking wrong one.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub struct TraceSignalEntry([u8; 2]);
+
+impl TraceSignalEntry {
+    /// What a hop writes when its radio reported no measurement at all.
+    ///
+    /// An RSSI byte of zero is 0 dBm at the receiver, which no link this
+    /// protocol runs over produces, so it cannot be mistaken for a
+    /// reading. Writing it keeps the entry-for-entry pairing with the
+    /// trace route intact, which a hop that measures nothing is still
+    /// obliged to maintain.
+    pub const UNMEASURED: Self = Self([0, 0]);
+
+    /// The entry for a hop that measured both fields.
+    pub const fn new(rssi_dbm: i16, snr_centibels: i16) -> Self {
+        Self([saturate_rssi(rssi_dbm), saturate_snr(snr_centibels)])
+    }
+
+    /// The entry for a hop whose radio may not report either field.
+    ///
+    /// The two measurements are independent, so a radio that reports one
+    /// and not the other still contributes the one it has.
+    pub const fn from_measurements(rssi_dbm: Option<i16>, snr_centibels: Option<i16>) -> Self {
+        Self([
+            match rssi_dbm {
+                Some(rssi) => saturate_rssi(rssi),
+                None => Self::UNMEASURED.0[0],
+            },
+            match snr_centibels {
+                Some(snr) => saturate_snr(snr),
+                None => Self::UNMEASURED.0[1],
+            },
+        ])
+    }
+
+    /// The two bytes, ready to prepend to a trace-signal option value.
+    pub const fn as_bytes(self) -> [u8; 2] {
+        self.0
+    }
+}
+
+const fn saturate_rssi(rssi_dbm: i16) -> u8 {
+    if rssi_dbm >= 0 {
+        0
+    } else if rssi_dbm < -255 {
+        255
+    } else {
+        (-rssi_dbm) as u8
+    }
+}
+
+const fn saturate_snr(snr_centibels: i16) -> u8 {
+    if snr_centibels > 127 {
+        127u8
+    } else if snr_centibels < -128 {
+        0x80
+    } else {
+        (snr_centibels as i8) as u8
+    }
+}
+
 /// Parse a minimal big-endian unsigned integer (leading zero bytes stripped).
 ///
 /// Returns `ParseError::MalformedOption` if `bytes.len() > 4`.
@@ -312,6 +386,38 @@ fn read_extended(data: &[u8], nibble: u8) -> Result<(u16, usize), ParseError> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    // ── TraceSignalEntry ──────────────────────────────────────────────────────
+
+    #[test]
+    fn a_trace_signal_entry_is_negated_rssi_then_signed_centibels() {
+        assert_eq!(TraceSignalEntry::new(-91, 42).as_bytes(), [91, 42]);
+        assert_eq!(TraceSignalEntry::new(-120, -75).as_bytes(), [120, 0xB5]);
+    }
+
+    #[test]
+    fn a_reading_past_the_end_of_the_range_saturates() {
+        // Better the nearest representable value than a wrapped one that
+        // reads as a plausible measurement.
+        assert_eq!(TraceSignalEntry::new(-400, 0).as_bytes()[0], 255);
+        assert_eq!(TraceSignalEntry::new(-90, 500).as_bytes()[1], 127);
+        assert_eq!(TraceSignalEntry::new(-90, -500).as_bytes()[1], 0x80);
+    }
+
+    #[test]
+    fn a_radio_that_reports_one_field_still_contributes_it() {
+        let entry = TraceSignalEntry::from_measurements(Some(-91), None);
+        assert_eq!(entry.as_bytes()[0], 91);
+        assert_eq!(
+            entry.as_bytes()[1],
+            TraceSignalEntry::UNMEASURED.as_bytes()[1]
+        );
+
+        assert_eq!(
+            TraceSignalEntry::from_measurements(None, None),
+            TraceSignalEntry::UNMEASURED
+        );
+    }
 
     // ── parse_be_u32 ──────────────────────────────────────────────────────────
 

@@ -167,7 +167,14 @@ fn a_flood_frame_crosses_the_bridge_clamped_traced_and_confirmed() {
         start(&deployment).await;
 
         // A node on the client's segment floods a traced broadcast.
-        let sent = broadcast(3, 0x11, &[(OptionNumber::TraceRoute, Vec::new())]);
+        let sent = broadcast(
+            3,
+            0x11,
+            &[
+                (OptionNumber::TraceRoute, Vec::new()),
+                (OptionNumber::TraceSignal, Vec::new()),
+            ],
+        );
         segment_b
             .transmit(
                 &sent,
@@ -195,6 +202,19 @@ fn a_flood_frame_crosses_the_bridge_clamped_traced_and_confirmed() {
             &arrived[trace],
             &identity.router_hint().0,
             "the bridge's hint is prepended, which is what makes the reversed trace routable"
+        );
+        let signal = options
+            .trace_signal
+            .clone()
+            .expect("the trace signal survives");
+        assert_eq!(
+            &arrived[signal],
+            // What the client's radio is configured to report: -40 dBm
+            // at 10 dB. The reading belongs to the radio that heard the
+            // frame, which for this crossing is the client's, not the
+            // server's.
+            &umsh_core::options::TraceSignalEntry::new(-40, 100).as_bytes(),
+            "the entry pairs with the hint above it"
         );
         assert_eq!(
             &arrived[header.body_range.clone()],

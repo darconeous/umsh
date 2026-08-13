@@ -3,9 +3,9 @@
 //!
 //! The bridge is one virtual repeater whose radios happen to sit in
 //! different places: it suppresses duplicates once, accounts for a hop
-//! once, and prepends its router hint to a trace route once, no matter
-//! how many interfaces took part. That is why every decision is made
-//! here, in one task, and clients relay bytes without an opinion.
+//! once, and records itself in a trace once, no matter how many
+//! interfaces took part. That is why every decision is made here, in one
+//! task, and clients relay bytes without an opinion.
 //!
 //! [`Engine::evaluate`] walks the [thirteen steps] in order, including
 //! the one that is a no-op for a forwarding-only bridge, so the code and
@@ -18,6 +18,7 @@ use std::time::Duration;
 
 use tokio::sync::mpsc;
 use tokio::time::Instant;
+use umsh_core::options::TraceSignalEntry;
 use umsh_core::{NodeHint, PacketHeader, ParsedOptions, RouterHint, SourceAddrRef};
 use umsh_mac::DupCacheKey;
 use umsh_mac::forward_id::forwarding_dup_key_parsed;
@@ -256,6 +257,14 @@ impl Engine {
             None => false,
         };
 
+        // The measurements of the radio that actually heard the frame.
+        // A client's radio is one of the bridge's own, and the tunnel
+        // carries its reception verbatim, so this is a real reading
+        // whichever interface the frame came in on. Steps 8 and 10 both
+        // read it, and step 10 needs it even on a source-routed hop that
+        // skips step 8.
+        let meta = arrival_rx_meta(&arrival.frame);
+
         if !routed {
             // Step 7: flood hop accounting. An absent FHOPS field is not an
             // unlimited budget — it is the sender declining to be flooded at
@@ -269,9 +278,8 @@ impl Engine {
                 return Verdict::HopsExhausted;
             }
 
-            // Step 8: signal-quality thresholds, against the
-            // measurements of the radio that actually heard the frame.
-            if let Some(reason) = self.too_weak(&arrival.frame) {
+            // Step 8: signal-quality thresholds.
+            if let Some(reason) = self.too_weak(meta) {
                 return Verdict::TooWeak(reason);
             }
         }
@@ -279,6 +287,7 @@ impl Engine {
         // Steps 9 and 10 happen inside the rewrite.
         let plan = RewritePlan {
             router_hint: self.router_hint,
+            signal: TraceSignalEntry::from_measurements(meta.rssi_dbm, meta.snr_cb),
             consume_source_route: routed,
             decrement_flood_hops: !routed,
             exit_clamp: self.exit_clamp,
@@ -402,10 +411,7 @@ impl Engine {
     /// measurement it needs. A sentinel is "this radio cannot tell you",
     /// not "zero", and treating it as a reading would silence a segment
     /// whose hardware simply does not measure.
-    fn too_weak(&self, frame: &TunnelFrame) -> Option<&'static str> {
-        let Ok(meta) = RxMeta::decode(&frame.metadata) else {
-            return None;
-        };
+    fn too_weak(&self, meta: RxMeta) -> Option<&'static str> {
         if let Some(floor) = self.min_rssi {
             match meta.rssi_dbm {
                 Some(rssi) if rssi < floor => return Some("rssi"),
@@ -525,6 +531,25 @@ impl Engine {
         }
         Duration::from_millis(rand::random_range(0..=self.contention.as_millis() as u64))
     }
+}
+
+/// The arrival's receive metadata, with anything unreadable reported as
+/// unmeasured.
+///
+/// Metadata that does not decode is not a measurement of zero. Reading it
+/// as one would both silence a segment at step 8 and write a fabricated
+/// entry into a trace signal at step 10, and the second is worse than the
+/// first: a threshold that never trips is visible in the counters, while
+/// an invented signal reading is indistinguishable from a real one for
+/// every node downstream.
+fn arrival_rx_meta(frame: &TunnelFrame) -> RxMeta {
+    RxMeta::decode(&frame.metadata).unwrap_or_else(|error| {
+        tracing::warn!(
+            ?error,
+            "undecodable receive metadata; treating it as unmeasured"
+        );
+        RxMeta::default()
+    })
 }
 
 /// The transmit metadata the server composes for every frame it sends.
@@ -1045,6 +1070,70 @@ mod tests {
             engine.evaluate(&ingress(0, frame, None, None), Instant::now()),
             Verdict::Forwarded(_)
         ));
+    }
+
+    /// The trace-signal option of the first frame the bridge transmitted.
+    fn forwarded_trace_signal(interfaces: &Interfaces) -> Vec<u8> {
+        let (_, frame) = sent(interfaces).into_iter().next().expect("a forward");
+        let header = PacketHeader::parse(&frame).unwrap();
+        let options = ParsedOptions::extract(&frame, header.options_range.clone()).unwrap();
+        frame[options.trace_signal.clone().expect("a trace signal")].to_vec()
+    }
+
+    #[tokio::test(start_paused = true)]
+    async fn a_crossing_records_the_signal_of_the_radio_that_heard_it() {
+        // Not the server's radio: a client's radio is one of the
+        // bridge's own, and the tunnel carries its reception verbatim.
+        let (mut engine, interfaces, _) = engine("");
+        let summit = interfaces.by_client(1).unwrap().id;
+        let frame = broadcast(
+            3,
+            NodeHint([1, 2, 3]),
+            &[
+                (OptionNumber::TraceRoute, vec![]),
+                (OptionNumber::TraceSignal, vec![]),
+            ],
+        );
+
+        assert!(matches!(
+            engine.evaluate(&ingress(summit, frame, Some(-91), Some(42)), Instant::now()),
+            Verdict::Forwarded(_)
+        ));
+        assert_eq!(
+            forwarded_trace_signal(&interfaces),
+            TraceSignalEntry::new(-91, 42).as_bytes(),
+            "-91 dBm at 4.2 dB, as the summit client heard it"
+        );
+    }
+
+    #[tokio::test(start_paused = true)]
+    async fn undecodable_metadata_records_no_signal_rather_than_a_made_up_one() {
+        let (mut engine, interfaces, _) = engine("");
+        let cabin = interfaces.by_client(0).unwrap().id;
+        let frame = broadcast(
+            3,
+            NodeHint([1, 2, 3]),
+            &[
+                (OptionNumber::TraceRoute, vec![]),
+                (OptionNumber::TraceSignal, vec![]),
+            ],
+        );
+        // Short of `RxMeta::WIRE_LEN`, and not the empty block that
+        // legitimately means "no metadata at all".
+        let arrival = Ingress {
+            iface: cabin,
+            frame: TunnelFrame::new(frame, vec![0x5A, 0x00]),
+        };
+
+        assert!(matches!(
+            engine.evaluate(&arrival, Instant::now()),
+            Verdict::Forwarded(_)
+        ));
+        assert_eq!(
+            forwarded_trace_signal(&interfaces),
+            TraceSignalEntry::UNMEASURED.as_bytes(),
+            "the entry keeps the pairing without claiming a measurement"
+        );
     }
 
     #[tokio::test(start_paused = true)]

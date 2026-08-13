@@ -7,7 +7,8 @@ use rand::{Rng, RngExt as _};
 use umsh_core::{
     BuildError, ChannelId, ChannelKey, FloodHops, NodeHint, OptionNumber, PacketBuilder,
     PacketHeader, PacketType, ParseError, ParsedOptions, PayloadType, PublicKey, RouterHint,
-    SourceAddrRef, UnsealedPacket, feed_aad, options::OptionEncoder,
+    SourceAddrRef, UnsealedPacket, feed_aad,
+    options::{OptionEncoder, TraceSignalEntry},
 };
 use umsh_crypto::{CryptoEngine, CryptoError, DerivedChannelKeys, NodeIdentity, PairwiseKeys};
 use umsh_hal::{Clock, CounterStore, Radio, RxInfo, Snr, TxError, TxOptions};
@@ -524,23 +525,8 @@ struct ForwardPlan {
     signal: TraceSignalEntry,
 }
 
-/// One trace-signal entry: negative RSSI in dBm, then SNR in centibels
-/// (packet-options.md § Trace Signal). Both fields saturate rather than
-/// wrap, so an out-of-range reading reports the nearest representable
-/// value instead of a plausible-looking wrong one.
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
-struct TraceSignalEntry([u8; 2]);
-
-impl TraceSignalEntry {
-    fn from_rx(rx: &RxInfo) -> Self {
-        let rssi = rx.rssi.clamp(-255, 0).unsigned_abs().min(255) as u8;
-        let snr = rx.snr.as_centibels().clamp(-128, 127) as i8;
-        Self([rssi, snr as u8])
-    }
-
-    fn as_bytes(&self) -> [u8; 2] {
-        self.0
-    }
+fn trace_signal_entry(rx: &RxInfo) -> TraceSignalEntry {
+    TraceSignalEntry::new(rx.rssi, rx.snr.as_centibels())
 }
 
 /// Local transmission policy enforced by the [`Mac`] coordinator on all outgoing frames.
@@ -4735,7 +4721,7 @@ impl<
             insert_region_code,
             delay_ms,
             station_action,
-            signal: TraceSignalEntry::from_rx(rx),
+            signal: trace_signal_entry(rx),
         })
     }
 
