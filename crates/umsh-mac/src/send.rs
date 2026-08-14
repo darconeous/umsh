@@ -1112,6 +1112,36 @@ impl<'a> ReceivedPacketRef<'a> {
         RouteHops::new(self.trace_route().unwrap_or(&[]))
     }
 
+    /// Radio links this frame crossed to reach us, counting the final one into
+    /// this node: a frame heard directly from its sender is one hop. `None`
+    /// when the frame was source-routed without a trace route — the hops it
+    /// took are then real but unrecorded, and a count nobody measured is not
+    /// reported.
+    ///
+    /// The two wire counters answer different questions and are not additive.
+    /// A repeater prepends its hint to the trace route however it forwarded,
+    /// so the trace names every hop the frame took; `FHOPS` accumulates on
+    /// flood forwards only, because a source-routed hop spends no flood budget
+    /// (packet-structure.md § Flood Hop Count). The trace is therefore the
+    /// larger of the two whenever it is present, and the maximum is what
+    /// reads correctly from a frame carrying only one of them.
+    ///
+    /// Without a trace, the source-route option is what disambiguates: each
+    /// repeater consumes its own hint but keeps the option, so a routed frame
+    /// arrives carrying it — usually emptied — and its presence is the tell
+    /// that the flood accumulator did not see every hop.
+    pub fn hop_count(&self) -> Option<u8> {
+        let flooded = self.flood_hops().map(FloodHops::accumulated).unwrap_or(0);
+        if self.trace_route().is_some() {
+            let traced = u8::try_from(self.trace_route_hop_count()).unwrap_or(u8::MAX);
+            Some(traced.max(flooded).saturating_add(1))
+        } else if self.source_route().is_some() {
+            None
+        } else {
+            Some(flooded.saturating_add(1))
+        }
+    }
+
     pub fn source_route_hop_count(&self) -> usize {
         self.source_route()
             .map(|route| route.len() / 2)

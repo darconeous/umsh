@@ -4097,8 +4097,11 @@ public struct MobileChatRxMetadataRecord: Equatable, Hashable {
     public var snrCentibels: Int16?
     public var lqi: UInt8?
     /**
-     * Hops the frame accumulated on its way here, matching the hop count
-     * reported for a ping reply.
+     * Radio links the frame crossed to get here, counting the final one into
+     * this device: a frame heard directly from its sender is one hop. The
+     * same count a ping reply reports, and absent for the same reason — a
+     * frame source-routed without a trace route crossed hops nobody
+     * recorded.
      */
     public var hopCount: UInt8?
     /**
@@ -4114,8 +4117,11 @@ public struct MobileChatRxMetadataRecord: Equatable, Hashable {
     // declare one manually.
     public init(rssiDbm: Int16?, snrCentibels: Int16?, lqi: UInt8?,
         /**
-         * Hops the frame accumulated on its way here, matching the hop count
-         * reported for a ping reply.
+         * Radio links the frame crossed to get here, counting the final one into
+         * this device: a frame heard directly from its sender is one hop. The
+         * same count a ping reply reports, and absent for the same reason — a
+         * frame source-routed without a trace route crossed hops nobody
+         * recorded.
          */hopCount: UInt8?,
         /**
          * Intermediate-router hints in trace-route order: each forwarding
@@ -4526,8 +4532,10 @@ public struct MobileMeshPingEventRecord: Equatable, Hashable {
     public var outcome: MobileMeshPingOutcome
     public var roundTripMilliseconds: UInt64?
     /**
-     * Total radio links traversed by the response, when the wire metadata can
-     * determine it. A direct response is one hop.
+     * Radio links the response crossed, counting the final one into this
+     * device: a direct response is one hop. Absent on a reply that was
+     * source-routed without a trace route — it crossed hops nobody recorded,
+     * so no count is claimed.
      */
     public var hopCount: UInt8?
     /**
@@ -4546,8 +4554,10 @@ public struct MobileMeshPingEventRecord: Equatable, Hashable {
     // declare one manually.
     public init(operationId: UInt64, outcome: MobileMeshPingOutcome, roundTripMilliseconds: UInt64?,
         /**
-         * Total radio links traversed by the response, when the wire metadata can
-         * determine it. A direct response is one hop.
+         * Radio links the response crossed, counting the final one into this
+         * device: a direct response is one hop. Absent on a reply that was
+         * source-routed without a trace route — it crossed hops nobody recorded,
+         * so no count is claimed.
          */hopCount: UInt8?,
         /**
          * Authenticated intermediate-router hints, in source-to-destination order.

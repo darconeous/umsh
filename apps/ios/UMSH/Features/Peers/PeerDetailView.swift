@@ -1064,7 +1064,10 @@ private enum PeerPingStatus: Equatable {
 }
 
 private extension PeerPingReply {
+    /// A reply without a count is not one that failed to report — it arrived
+    /// source-routed with no trace, so it crossed hops nobody recorded. Say
+    /// that, rather than a number nobody measured.
     var hopCountText: String {
-        hopCount.map(String.init) ?? "Not reported"
+        hopCount.map { $0 == 1 ? "1 (direct)" : String($0) } ?? "Unknown source route"
     }
 }

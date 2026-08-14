@@ -112,8 +112,10 @@ pub struct MobileMeshPingEventRecord {
     pub operation_id: u64,
     pub outcome: MobileMeshPingOutcome,
     pub round_trip_milliseconds: Option<u64>,
-    /// Total radio links traversed by the response, when the wire metadata can
-    /// determine it. A direct response is one hop.
+    /// Radio links the response crossed, counting the final one into this
+    /// device: a direct response is one hop. Absent on a reply that was
+    /// source-routed without a trace route — it crossed hops nobody recorded,
+    /// so no count is claimed.
     pub hop_count: Option<u8>,
     /// Authenticated intermediate-router hints, in source-to-destination order.
     /// The two endpoints are not included.
@@ -1865,12 +1867,12 @@ async fn run_worker(
         // ever produces. Claim it so nothing else interprets it, and report
         // how far it travelled.
         if packet.from_key() == Some(local_key) {
-            let hops = packet
-                .flood_hops()
-                .map(|hops| hops.accumulated())
-                .unwrap_or(0);
+            let distance = match packet.hop_count() {
+                Some(hops) => format!("after {hops} hop(s)"),
+                None => "over a source route".to_string(),
+            };
             let _ = echo_events.send(MobileChatWorkerEvent::Diagnostic(format!(
-                "own multicast relayed back after {hops} hop(s)"
+                "own multicast relayed back {distance}"
             )));
             return true;
         }
@@ -1941,7 +1943,7 @@ async fn run_worker(
                 rssi_dbm: packet.rssi(),
                 snr_centibels: packet.snr().map(|snr| snr.as_centibels()),
                 lqi: packet.lqi().map(|lqi| lqi.get()),
-                hop_count: packet.flood_hops().map(|hops| hops.accumulated()),
+                hop_count: packet.hop_count(),
                 route_hints: packet
                     .trace_route_hops()
                     .map(|hop| hop.0.to_vec())
@@ -2908,14 +2910,14 @@ async fn request_identity_over_channel<M: MacBackend>(
                 Ok(options) => options,
                 Err(_) => SendOptions::default()
                     .with_full_source()
-                    .with_flood_hops(route.hop_count.unwrap_or(5).max(1)),
+                    .with_flood_hops(flood_budget(route.hop_count)),
             };
         }
         Some(MemberRoute {
             hop_count: Some(hops),
             ..
         }) => {
-            options = options.with_flood_hops((*hops).max(1));
+            options = options.with_flood_hops(flood_budget(Some(*hops)));
         }
         _ => {}
     }
@@ -3050,6 +3052,17 @@ fn remember_member_route(
             route_hints: rx.route_hints.clone(),
         },
     );
+}
+
+/// The flood budget an observed hop count implies. A hop count includes the
+/// final link into this device, which no repeater has to pay for, so the
+/// budget is one less than the distance the frame was heard from — and at
+/// least one, since a budget of zero forwards nowhere.
+fn flood_budget(hop_count: Option<u8>) -> u8 {
+    hop_count
+        .map(|hops| hops.saturating_sub(1))
+        .unwrap_or(5)
+        .max(1)
 }
 
 /// What the last frame from a channel member showed about reaching them.
@@ -4660,9 +4673,9 @@ mod tests {
             .expect("a received frame carries radio metadata");
         assert_eq!(rx.rssi_dbm, Some(-70));
         assert_eq!(rx.snr_centibels, Some(60));
-        // Heard directly off the air: no repeater carried it, so nothing
-        // accumulated.
-        assert_eq!(rx.hop_count, Some(0));
+        // Heard directly off the air: the link from the sender is the one
+        // and only hop.
+        assert_eq!(rx.hop_count, Some(1));
 
         let resolution = resolution.unwrap();
         assert_eq!(resolution.conversation_address, conversation);

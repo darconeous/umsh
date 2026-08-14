@@ -589,7 +589,7 @@ struct StagingSeeder {
             rssiDbm: -78 - (index * 7) % 24,
             snrCentibels: 620 - (index * 90) % 380,
             lqi: nil,
-            hopCount: index % 3 == 0 ? 1 : 0,
+            hopCount: index % 3 == 0 ? 2 : 1,
             routeHints: index % 3 == 0 ? [Data([0x2A, 0xE1])] : [],
             sourceAuthenticated: true
         )

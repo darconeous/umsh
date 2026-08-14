@@ -136,6 +136,11 @@ pub(crate) struct PendingPing {
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct PongMetadata {
     pub round_trip_ms: u64,
+    /// Radio links the response crossed, counting the final one into this
+    /// node: a direct reply is one hop. `None` when the reply was
+    /// source-routed without a trace route, which crosses hops nobody
+    /// recorded. See
+    /// [`ReceivedPacketRef::hop_count`](umsh_mac::ReceivedPacketRef::hop_count).
     pub hop_count: Option<u8>,
     pub route_hints: Vec<RouterHint>,
     pub rssi_dbm: Option<i16>,
@@ -914,19 +919,9 @@ impl<M: MacBackend> LocalNode<M> {
             let ping = state.pending_pings.swap_remove(idx);
             let rtt_ms = now_ms.saturating_sub(ping.sent_at_ms);
             let route_hints = packet.trace_route_hops().collect::<Vec<_>>();
-            let hop_count = packet
-                .flood_hops()
-                .map(|hops| hops.accumulated().saturating_add(1))
-                .or_else(|| {
-                    packet.trace_route().is_some().then(|| {
-                        u8::try_from(route_hints.len())
-                            .unwrap_or(u8::MAX)
-                            .saturating_add(1)
-                    })
-                });
             let metadata = PongMetadata {
                 round_trip_ms: rtt_ms,
-                hop_count,
+                hop_count: packet.hop_count(),
                 route_hints,
                 rssi_dbm: packet.rssi(),
                 snr_centibels: packet.snr().map(|snr| snr.as_centibels()),

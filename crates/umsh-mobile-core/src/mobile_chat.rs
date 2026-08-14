@@ -88,8 +88,11 @@ pub struct MobileChatRxMetadataRecord {
     pub rssi_dbm: Option<i16>,
     pub snr_centibels: Option<i16>,
     pub lqi: Option<u8>,
-    /// Hops the frame accumulated on its way here, matching the hop count
-    /// reported for a ping reply.
+    /// Radio links the frame crossed to get here, counting the final one into
+    /// this device: a frame heard directly from its sender is one hop. The
+    /// same count a ping reply reports, and absent for the same reason — a
+    /// frame source-routed without a trace route crossed hops nobody
+    /// recorded.
     pub hop_count: Option<u8>,
     /// Intermediate-router hints in trace-route order: each forwarding
     /// repeater prepends its own hint, so the list starts nearest us and ends

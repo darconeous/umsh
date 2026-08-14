@@ -501,6 +501,9 @@ struct ChannelConversationActions: Sendable {
 
 struct PeerPingReply: Equatable, Sendable {
     let roundTripMilliseconds: UInt64
+    /// Radio links the reply crossed, counting the final one into this
+    /// phone's radio: a direct reply is one hop. `nil` when the reply came
+    /// source-routed without a trace route — hops it took went unrecorded.
     let hopCount: UInt8?
     /// Intermediate routers in source-to-destination order, already rendered
     /// by the Rust core. The two endpoints are not included.

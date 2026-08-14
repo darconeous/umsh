@@ -275,6 +275,9 @@ struct RadioChatUpdate: Sendable {
 
 struct RadioPingReply: Equatable, Sendable {
     let roundTripMilliseconds: UInt64
+    /// Radio links the reply crossed, counting the final one into this
+    /// phone's radio: a direct reply is one hop. `nil` when the reply came
+    /// source-routed without a trace route — hops it took went unrecorded.
     let hopCount: UInt8?
     let routeHints: [Data]
     let rssiDBm: Int16?

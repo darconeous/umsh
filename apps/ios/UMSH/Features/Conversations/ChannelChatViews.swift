@@ -234,12 +234,11 @@ struct MessageDetailsSheet: View {
             }
             if let reception = message.reception {
                 Section("Reception") {
-                    if let hops = reception.hopCount {
-                        LabeledContent(
-                            "Hops",
-                            value: hops == 0 ? "Direct" : "\(hops)"
-                        )
-                    }
+                    LabeledContent(
+                        "Hop count",
+                        value: reception.hopCount.map { $0 == 1 ? "1 (direct)" : "\($0)" }
+                            ?? "Unknown source route"
+                    )
                     if let rssi = reception.rssiDbm {
                         LabeledContent("Signal", value: "\(rssi) dBm")
                     }
