@@ -1,5 +1,12 @@
 [
   {
+    "version": "2026.08.13",
+    "tag": "fw-2026.08.13",
+    "date": "2026-08-13",
+    "channel": "preview",
+    "manifest": "/firmware/2026.08.13/manifest.json"
+  },
+  {
     "version": "2026.08.11",
     "tag": "fw-2026.08.11",
     "date": "2026-08-11",
