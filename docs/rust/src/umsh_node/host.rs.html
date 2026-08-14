@@ -374,23 +374,28 @@
 <a href=#374 id=374 data-nosnippet>374</a>            // reply plan now, while the reception context is live; the async
 <a href=#375 id=375 data-nosnippet>375</a>            // pump sends it after this synchronous dispatch returns.
 <a href=#376 id=376 data-nosnippet>376</a>            </span><span class="kw">if let </span>mac_command::MacCommand::IdentityRequest { options } = command {
-<a href=#377 id=377 data-nosnippet>377</a>                <span class="kw">if let </span><span class="prelude-val">Some</span>(plan) = node.evaluate_identity_request(packet, from, options) {
-<a href=#378 id=378 data-nosnippet>378</a>                    pending_identity.borrow_mut().push((node.clone(), plan));
-<a href=#379 id=379 data-nosnippet>379</a>                }
-<a href=#380 id=380 data-nosnippet>380</a>            }
-<a href=#381 id=381 data-nosnippet>381</a>            <span class="kw">let </span>owned = OwnedMacCommand::from(command);
-<a href=#382 id=382 data-nosnippet>382</a>            node.dispatch_mac_command(from, <span class="kw-2">&amp;</span>owned);
-<a href=#383 id=383 data-nosnippet>383</a>            <span class="kw">if </span><span class="macro">matches!</span>(
-<a href=#384 id=384 data-nosnippet>384</a>                owned,
-<a href=#385 id=385 data-nosnippet>385</a>                OwnedMacCommand::PfsSessionRequest { .. }
-<a href=#386 id=386 data-nosnippet>386</a>                    | OwnedMacCommand::PfsSessionResponse { .. }
-<a href=#387 id=387 data-nosnippet>387</a>                    | OwnedMacCommand::EndPfsSession
-<a href=#388 id=388 data-nosnippet>388</a>            ) {
-<a href=#389 id=389 data-nosnippet>389</a>                pending_pfs
-<a href=#390 id=390 data-nosnippet>390</a>                    .borrow_mut()
-<a href=#391 id=391 data-nosnippet>391</a>                    .push((node.identity_id(), from, owned));
-<a href=#392 id=392 data-nosnippet>392</a>            }
-<a href=#393 id=393 data-nosnippet>393</a>        }
-<a href=#394 id=394 data-nosnippet>394</a>    }
-<a href=#395 id=395 data-nosnippet>395</a>}
+<a href=#377 id=377 data-nosnippet>377</a>                <span class="kw">if let </span><span class="prelude-val">Some</span>(plan) = node.evaluate_identity_request(
+<a href=#378 id=378 data-nosnippet>378</a>                    packet,
+<a href=#379 id=379 data-nosnippet>379</a>                    from,
+<a href=#380 id=380 data-nosnippet>380</a>                    options,
+<a href=#381 id=381 data-nosnippet>381</a>                    packet.received_at_ms().unwrap_or(now_ms),
+<a href=#382 id=382 data-nosnippet>382</a>                ) {
+<a href=#383 id=383 data-nosnippet>383</a>                    pending_identity.borrow_mut().push((node.clone(), plan));
+<a href=#384 id=384 data-nosnippet>384</a>                }
+<a href=#385 id=385 data-nosnippet>385</a>            }
+<a href=#386 id=386 data-nosnippet>386</a>            <span class="kw">let </span>owned = OwnedMacCommand::from(command);
+<a href=#387 id=387 data-nosnippet>387</a>            node.dispatch_mac_command(from, <span class="kw-2">&amp;</span>owned);
+<a href=#388 id=388 data-nosnippet>388</a>            <span class="kw">if </span><span class="macro">matches!</span>(
+<a href=#389 id=389 data-nosnippet>389</a>                owned,
+<a href=#390 id=390 data-nosnippet>390</a>                OwnedMacCommand::PfsSessionRequest { .. }
+<a href=#391 id=391 data-nosnippet>391</a>                    | OwnedMacCommand::PfsSessionResponse { .. }
+<a href=#392 id=392 data-nosnippet>392</a>                    | OwnedMacCommand::EndPfsSession
+<a href=#393 id=393 data-nosnippet>393</a>            ) {
+<a href=#394 id=394 data-nosnippet>394</a>                pending_pfs
+<a href=#395 id=395 data-nosnippet>395</a>                    .borrow_mut()
+<a href=#396 id=396 data-nosnippet>396</a>                    .push((node.identity_id(), from, owned));
+<a href=#397 id=397 data-nosnippet>397</a>            }
+<a href=#398 id=398 data-nosnippet>398</a>        }
+<a href=#399 id=399 data-nosnippet>399</a>    }
+<a href=#400 id=400 data-nosnippet>400</a>}
 </code></pre></div></section></main></body></html>

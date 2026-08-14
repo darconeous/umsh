@@ -35,7 +35,7 @@
             const path_to_root = "";
             const default_light_theme = "light";
             const default_dark_theme = "ayu";
-            window.path_to_searchindex_js = "searchindex-ac42c73d.js";
+            window.path_to_searchindex_js = "searchindex-ee1590cf.js";
         </script>
         <!-- Start loading toc.js asap -->
         <script src="toc-438957a9.js"></script>
@@ -176,6 +176,7 @@
                     <main>
                         <h1 id="packet-processing"><a class="header" href="#packet-processing">Packet Processing</a></h1>
 <p>This chapter describes how a receiving node processes an incoming packet. This procedure applies to all nodes, not just repeaters. Repeater-specific forwarding logic is described separately in <a href="repeater-operation.html">Repeater Operation</a>.</p>
+<p>A packet enters this procedure however it reached the node. Most arrive off the air, but a node whose radio is shared with another stack also receives what that stack transmits, and a node reachable over a point-to-point link—a <a href="ulcp-host.html#prop-mac-backhaul">backhauled host</a>, for instance—receives what arrives across it. Such a packet is processed exactly as a received one, with one difference: it carries no signal measurements, so anything defined in terms of how well the packet was heard does not apply to it.</p>
 <h2 id="receive-procedure"><a class="header" href="#receive-procedure">Receive Procedure</a></h2>
 <ol>
 <li>

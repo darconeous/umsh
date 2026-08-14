@@ -35,7 +35,7 @@
             const path_to_root = "";
             const default_light_theme = "light";
             const default_dark_theme = "ayu";
-            window.path_to_searchindex_js = "searchindex-ac42c73d.js";
+            window.path_to_searchindex_js = "searchindex-ee1590cf.js";
         </script>
         <!-- Start loading toc.js asap -->
         <script src="toc-438957a9.js"></script>
@@ -227,6 +227,7 @@ untouched.</p>
 <tr><td>33</td><td><code>CAP_HOST_RX_QUEUE</code></td><td><code>CAP_HOST_FILTER</code></td><td>The inbound queue, its properties, <code>CMD_QUEUE_DRAIN</code>, and the buffered-frame metadata</td></tr>
 <tr><td>34</td><td><code>CAP_HOST_KEYS</code></td><td><code>CAP_HOST_FILTER</code></td><td><code>PROP_HOST_CHANNEL_KEYS</code> and <code>PROP_HOST_PEER_KEYS</code></td></tr>
 <tr><td>35</td><td><code>CAP_HOST_AUTO_ACK</code></td><td><code>CAP_HOST_KEYS</code>, <code>CAP_HOST_RX_QUEUE</code></td><td><code>PROP_HOST_AUTO_ACK</code> and acknowledgement delegation</td></tr>
+<tr><td>48</td><td><code>CAP_MAC_BACKHAUL</code></td><td><code>CAP_REPEATER</code></td><td><code>PROP_MAC_BACKHAUL</code> and the point-to-point link to the device’s node</td></tr>
 </tbody>
 </table>
 </div>
@@ -277,10 +278,10 @@ advertised), the command fails with <code>STATUS_UNIMPLEMENTED</code>.</p>
 <p>If an error occurs, the value of the emitted <code>PROP_LAST_STATUS</code> will be set
 accordingly to the status code for the error.</p>
 <h2 id="properties"><a class="header" href="#properties">Properties</a></h2>
-<p>The host domain occupies property identifiers 96–111.
-<code>PROP_MAC_PROMISCUOUS</code> is the exception: it is a live diagnostic mode
-rather than provisioning, and is the protocol’s only session-scoped
-property.</p>
+<p>The host domain occupies property identifiers 96–111. Two properties sit
+outside that range: <code>PROP_MAC_PROMISCUOUS</code> and <code>PROP_MAC_BACKHAUL</code> govern
+how the attached session sees the radio rather than how the device is
+provisioned, and are the protocol’s session-scoped properties.</p>
 <div class="table-wrapper">
 <table>
 <thead>
@@ -288,6 +289,7 @@ property.</p>
 </thead>
 <tbody>
 <tr><td>48</td><td><code>PROP_MAC_PROMISCUOUS</code></td><td>Get, Set</td><td>Deliver all frames (session-scoped)</td></tr>
+<tr><td>50</td><td><code>PROP_MAC_BACKHAUL</code></td><td>Get, Set</td><td>Point-to-point link to the device’s node (session-scoped)</td></tr>
 <tr><td>96</td><td><code>PROP_HOST_KEY</code></td><td>Get, Set</td><td>Tethered host identity public key</td></tr>
 <tr><td>97</td><td><code>PROP_HOST_CHANNEL_KEYS</code></td><td>Get, Set, Insert, Remove</td><td>Host channel keys</td></tr>
 <tr><td>98</td><td><code>PROP_HOST_PEER_KEYS</code></td><td>Get, Set, Insert, Remove</td><td>Host pairwise peer keys</td></tr>
@@ -312,8 +314,41 @@ host over <code>STR_PHY_RAW</code>, bypassing receive filtering. This is a live-
 diagnostic mode: frames that are delivered <em>only</em> because of promiscuous
 mode are never queued while the host is detached, and never acknowledged on
 the host’s behalf.</p>
-<p>This is the only session-scoped property: it reverts to false on every
-attach.</p>
+<p>Session-scoped: it reverts to false on every attach.</p>
+<h3 id="prop-mac-backhaul"><a class="header" href="#prop-mac-backhaul">PROP 50: <code>PROP_MAC_BACKHAUL</code></a></h3>
+<ul>
+<li>Type: Single-Value, Read-Write, Session-Scoped</li>
+<li>Asynchronous Updates: No</li>
+<li>Required: <code>CAP_MAC_BACKHAUL</code></li>
+<li>Value Type: BOOL</li>
+<li>Post-Attach Value: 0 (false)</li>
+</ul>
+<p>When false, the host and the device’s own node are two listeners on one
+shared medium. Both transmit through the same radio and both hear what it
+receives, so a frame from one reaches the other only by way of some third
+node that repeats it.</p>
+<p>When true, the host is instead a point-to-point neighbor of the device’s
+node:</p>
+<ul>
+<li>A frame the host sends on <code>STR_PHY_RAW</code> is delivered to the node as
+though the node had heard it, and is never transmitted directly. It
+spends no airtime and is not subject to the duty-cycle limit.</li>
+<li>Frames the node transmits are delivered to the host with
+<code>RX_FLAG_SELF_TX</code> set, subject to the usual receive filtering.</li>
+<li>Frames the radio receives are not delivered to the host at all. The
+node is the only thing listening to the medium.</li>
+</ul>
+<p>Traffic between the host and the mesh therefore crosses the device’s
+<a href="repeater-operation.html">repeater</a>, which is what makes the arrangement
+useful to an <a href="internet-bridging.html#radio-attachment">internet bridge</a>:
+hop accounting, duplicate suppression, and forwarding policy are the
+node’s, applied to the host’s traffic as to anyone else’s. A device whose
+repeater is disabled still delivers the host’s frames to its own
+identities, but carries nothing onward.</p>
+<p><code>PROP_MAC_PROMISCUOUS</code> composes with this: it removes receive filtering
+from what the host is delivered, which in this mode is the node’s
+transmissions.</p>
+<p>Session-scoped: it reverts to false on every attach.</p>
 <h3 id="prop-host-key"><a class="header" href="#prop-host-key">PROP 96: <code>PROP_HOST_KEY</code></a></h3>
 <ul>
 <li>Type: Single-Value, Read-Write</li>

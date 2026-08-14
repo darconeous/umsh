@@ -35,7 +35,7 @@
             const path_to_root = "";
             const default_light_theme = "light";
             const default_dark_theme = "ayu";
-            window.path_to_searchindex_js = "searchindex-ac42c73d.js";
+            window.path_to_searchindex_js = "searchindex-ee1590cf.js";
         </script>
         <!-- Start loading toc.js asap -->
         <script src="toc-438957a9.js"></script>
@@ -223,11 +223,19 @@ when its filters are broad enough to solicit a large number of replies.</li>
 0.5 to 30 seconds, so that the selected nodes do not all answer at once. A
 delayed response that then fails channel-activity assessment follows the
 responder’s normal bounded CCA backoff-and-retry before being dropped.</li>
+<li>One solicitation is answered at most once. A request reaches a node once per
+path it travels, and a plain broadcast carries no frame counter for a lower
+layer to recognize the repeat by; the <a href="#identity-request-options">NONCE</a> is
+what names the solicitation. A responder suppresses a request matching one it
+has already answered — same sender, same NONCE — for at least as long as it
+may hold the reply. A request carrying no NONCE cannot be distinguished from a
+repeat of itself; a requester that wants a further answer inside that window
+asks with a fresh NONCE.</li>
 </ul>
 <p>A <a href="#identity-request-options">FILTER_NODE_HINT</a> filter names a single node, so a
 request carrying one solicits a single reply however far it travels. A request
 without one selects by role or capability, and every node it reaches may answer;
-such a request is therefore confined to the requester’s own neighbourhood:</p>
+such a request is therefore confined to the requester’s own neighborhood:</p>
 <ul>
 <li>The FHOPS byte must either be absent or set to 0x00. A request that is flood
 routed — FHOPS present with either nibble nonzero — MUST NOT be answered.</li>
@@ -310,6 +318,7 @@ Non-filter options (such as NONCE) do not participate in this matching.</p>
 </tbody>
 </table>
 </div>
+<p>The response SHOULD carry the same <a href="packet-options.html#trace-route-option-2">trace route</a> and <a href="packet-options.html#trace-signal-option-10">trace signal</a> options the request carried. An echo measures a path, and a response traced differently from the request measures a different one; pairing the two options is what makes the measurement per-hop rather than end to end.</p>
 <h2 id="pfs-session-request-6"><a class="header" href="#pfs-session-request-6">PFS Session Request (6)</a></h2>
 <p>Initiates a PFS session. The sender generates a fresh ephemeral node address and transmits it along with a requested session duration. See <a href="security.html#perfect-forward-secrecy-sessions">Perfect Forward Secrecy Sessions</a> for the session establishment mechanism, key derivation, and wire-level privacy properties.</p>
 <div class="table-wrapper">

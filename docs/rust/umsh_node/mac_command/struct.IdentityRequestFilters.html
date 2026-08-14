@@ -19,7 +19,7 @@ answer: it keeps the strict rules in force.</p>
     &amp;self,
     role: <a class="enum" href="../enum.NodeRole.html" title="enum umsh_node::NodeRole">NodeRole</a>,
     capabilities: <a class="struct" href="../struct.NodeCapabilities.html" title="struct umsh_node::NodeCapabilities">NodeCapabilities</a>,
-    hint: &amp;NodeHint,
+    hint: &amp;<a class="struct" href="../../umsh_core/packet/struct.NodeHint.html" title="struct umsh_core::packet::NodeHint">NodeHint</a>,
 ) -&gt; <a class="enum" href="https://doc.rust-lang.org/nightly/core/result/enum.Result.html" title="enum core::result::Result">Result</a>&lt;<a class="primitive" href="https://doc.rust-lang.org/nightly/std/primitive.bool.html">bool</a>, <a class="enum" href="../enum.AppParseError.html" title="enum umsh_node::AppParseError">AppParseError</a>&gt;</h4></section></summary><div class="docblock"><p>Whether a node with the given identity is selected by this request.</p>
 <p>Filters combine as a logical AND across distinct filter types and a
 logical OR among repeated filters of the same type. An unknown

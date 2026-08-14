@@ -35,7 +35,7 @@
             const path_to_root = "";
             const default_light_theme = "light";
             const default_dark_theme = "ayu";
-            window.path_to_searchindex_js = "searchindex-ac42c73d.js";
+            window.path_to_searchindex_js = "searchindex-ee1590cf.js";
         </script>
         <!-- Start loading toc.js asap -->
         <script src="toc-438957a9.js"></script>
@@ -334,18 +334,19 @@ collides with a genuine measurement (unlike <code>0xFFFF</code>, which is <code>
 </ul>
 </li>
 </ul>
-<h4 id="buffered-metadata"><a class="header" href="#buffered-metadata">Buffered-Frame Metadata</a></h4>
-<p>On a device that supports <a href="ulcp-host.html#inbound-queueing">inbound queueing</a>
-(<code>CAP_HOST_RX_QUEUE</code>), the <code>Recv</code> metadata is extended with two trailing
-fields:</p>
+<h4 id="buffered-metadata"><a class="header" href="#buffered-metadata">Extended Recv Metadata</a></h4>
+<p>The <code>Recv</code> metadata may carry two further trailing fields:</p>
 <ul>
-<li><code>RX_FLAGS</code> (<code>u8</code>): Buffered-frame flags
+<li><code>RX_FLAGS</code> (<code>u8</code>): Delivery flags
 <ul>
 <li><code>RX_FLAG_BUFFERED</code> Bit 0: The frame was held in the inbound queue and
 is being delivered by <code>CMD_QUEUE_DRAIN</code>.</li>
 <li><code>RX_FLAG_ACKED</code> Bit 1: The device already transmitted a MAC ack for this
 frame on the host’s behalf. The host <strong>MUST NOT</strong> send another ack for
 it.</li>
+<li><code>RX_FLAG_SELF_TX</code> Bit 2: The device transmitted this frame itself and
+is delivering a copy of it. <code>RX_RSSI</code> and <code>RX_SNR</code> <strong>MUST</strong> carry their
+unsupported sentinels: a transmitter measures nothing.</li>
 <li>All other bits: <em>RESERVED</em>, transmitted as zero</li>
 </ul>
 </li>
@@ -353,9 +354,9 @@ it.</li>
 frame and its delivery to the host. Zero for live delivery.</li>
 </ul>
 <p>As with the existing metadata fields, the metadata may be truncated at any
-field boundary; absent fields are treated as zero. Live deliveries MAY
-therefore continue to omit these fields entirely, which keeps the encoding
-byte-compatible with a device that does not queue at all.</p>
+field boundary; absent fields are treated as zero. A live delivery with
+nothing to flag MAY therefore omit these fields entirely, which keeps the
+encoding byte-compatible with a device that does not queue at all.</p>
 
                     </main>
 

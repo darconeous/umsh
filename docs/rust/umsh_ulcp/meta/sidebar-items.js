@@ -1,1 +1,1 @@
-window.SIDEBAR_ITEMS = {"constant":["RX_FLAG_ACKED","RX_FLAG_BUFFERED","TX_FLAG_NOCCA","TX_FLAG_NODUTY","TX_POWER_DEFAULT","TX_POWER_MAX"],"enum":["MetaError"],"struct":["BufferedRxMeta","RxMeta","TxMeta"]};
+window.SIDEBAR_ITEMS = {"constant":["RX_FLAG_ACKED","RX_FLAG_BUFFERED","RX_FLAG_SELF_TX","TX_FLAG_NOCCA","TX_FLAG_NODUTY","TX_POWER_DEFAULT","TX_POWER_MAX"],"enum":["MetaError"],"struct":["BufferedRxMeta","RxMeta","TxMeta"]};

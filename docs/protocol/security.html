@@ -35,7 +35,7 @@
             const path_to_root = "";
             const default_light_theme = "light";
             const default_dark_theme = "ayu";
-            window.path_to_searchindex_js = "searchindex-ac42c73d.js";
+            window.path_to_searchindex_js = "searchindex-ee1590cf.js";
         </script>
         <!-- Start loading toc.js asap -->
         <script src="toc-438957a9.js"></script>
@@ -265,6 +265,15 @@ may suppress duplicate delivery itself. In a split implementation, such as a
 companion radio and host MAC, it may instead pass the authenticated duplicate to
 the host, which is then responsible for suppressing duplicate application
 delivery.</p>
+<p>Eligibility is not obligation: re-acknowledgement SHOULD be paced. Flood
+routing delivers one transmission as several copies, and a copy of a
+transmission whose acknowledgement was already sent proves nothing was lost. A
+receiver SHOULD NOT acknowledge the same packet more than once per
+<a href="repeater-operation.html#forwarding-confirmation">forwarding-confirmation
+window</a>, measured from its most
+recent acknowledgement of that packet: copies arriving inside the window share
+the acknowledgement already sent, while a sender that lost its acknowledgement
+cannot retransmit before its own confirmation window has lapsed.</p>
 <h4 id="counter-persistence"><a class="header" href="#counter-persistence">Counter Persistence</a></h4>
 <p>How a node persists and recovers its frame counter across reboots is implementation-specific. Possible strategies include writing the counter to non-volatile storage periodically or advancing the counter by a large margin on startup to avoid replaying previously used values.</p>
 <blockquote class="blockquote-tag blockquote-tag-caution">

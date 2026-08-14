@@ -12,170 +12,175 @@
 <a href=#12 id=12 data-nosnippet>12</a>#[command(
 <a href=#13 id=13 data-nosnippet>13</a>    name = <span class="string">"umsh-bridge"</span>,
 <a href=#14 id=14 data-nosnippet>14</a>    version,
-<a href=#15 id=15 data-nosnippet>15</a>    about = <span class="string">"Join the radios of one virtual UMSH repeater over an authenticated tunnel"</span>,
+<a href=#15 id=15 data-nosnippet>15</a>    about = <span class="string">"Carry UMSH frames between radios that cannot hear each other"</span>,
 <a href=#16 id=16 data-nosnippet>16</a>    long_about = <span class="string">"\
-<a href=#17 id=17 data-nosnippet>17</a>Runs one end of a UMSH internet bridge: a server, which owns the bridge's
-<a href=#18 id=18 data-nosnippet>18</a>node identity and makes every forwarding decision, or a client, which
-<a href=#19 id=19 data-nosnippet>19</a>relays frames byte for byte between its own radio and the server.
+<a href=#17 id=17 data-nosnippet>17</a>Runs one end of a UMSH internet bridge: a server, which copies each frame
+<a href=#18 id=18 data-nosnippet>18</a>it receives to every other participant, or a client, which relays frames
+<a href=#19 id=19 data-nosnippet>19</a>byte for byte between its own radio and the server.
 <a href=#20 id=20 data-nosnippet>20</a>
 <a href=#21 id=21 data-nosnippet>21</a>Which end this is comes from the configuration file, not the command
 <a href=#22 id=22 data-nosnippet>22</a>line, so one unit file fits either role and `umsh-bridge check` validates
 <a href=#23 id=23 data-nosnippet>23</a>the exact artifact that will run.
 <a href=#24 id=24 data-nosnippet>24</a>
-<a href=#25 id=25 data-nosnippet>25</a>Every participant holds an Ed25519 identity, issued once by `keygen
-<a href=#26 id=26 data-nosnippet>26</a>identity`; the server's is also the bridge's node identity on the mesh.
-<a href=#27 id=27 data-nosnippet>27</a>Each side is configured with the other's public key — the UMSH address
-<a href=#28 id=28 data-nosnippet>28</a>that `address` prints — and the tunnel authenticates against those pins,
-<a href=#29 id=29 data-nosnippet>29</a>which makes revoking a client an edit to the server's configuration. The
-<a href=#30 id=30 data-nosnippet>30</a>TLS certificates the handshake requires are minted in memory from the
-<a href=#31 id=31 data-nosnippet>31</a>identity at startup; none are stored or exchanged."
-<a href=#32 id=32 data-nosnippet>32</a></span>)]
-<a href=#33 id=33 data-nosnippet>33</a></span><span class="kw">pub struct </span>ToolArgs {
-<a href=#34 id=34 data-nosnippet>34</a>    <span class="attr">#[command(subcommand)]
-<a href=#35 id=35 data-nosnippet>35</a>    </span><span class="kw">pub </span>command: Command,
-<a href=#36 id=36 data-nosnippet>36</a>
-<a href=#37 id=37 data-nosnippet>37</a>    <span class="doccomment">/// Raise the logging level; repeat for more (info, debug, trace).
-<a href=#38 id=38 data-nosnippet>38</a>    </span><span class="attr">#[arg(short = <span class="string">'v'</span>, long, action = clap::ArgAction::Count, global = <span class="bool-val">true</span>)]
-<a href=#39 id=39 data-nosnippet>39</a>    </span><span class="kw">pub </span>verbose: u8,
-<a href=#40 id=40 data-nosnippet>40</a>
-<a href=#41 id=41 data-nosnippet>41</a>    <span class="doccomment">/// Log warnings and errors only; repeat for errors only.
-<a href=#42 id=42 data-nosnippet>42</a>    </span><span class="attr">#[arg(short = <span class="string">'q'</span>, long, action = clap::ArgAction::Count, global = <span class="bool-val">true</span>)]
-<a href=#43 id=43 data-nosnippet>43</a>    </span><span class="kw">pub </span>quiet: u8,
-<a href=#44 id=44 data-nosnippet>44</a>
-<a href=#45 id=45 data-nosnippet>45</a>    <span class="doccomment">/// Per-target log filter, in `tracing-subscriber` syntax
-<a href=#46 id=46 data-nosnippet>46</a>    /// (`umsh_bridge::engine=trace,info`). Overrides -v/-q entirely.
-<a href=#47 id=47 data-nosnippet>47</a>    </span><span class="attr">#[arg(long, value_name = <span class="string">"FILTER"</span>, env = <span class="string">"UMSH_BRIDGE_LOG"</span>, global = <span class="bool-val">true</span>)]
-<a href=#48 id=48 data-nosnippet>48</a>    </span><span class="kw">pub </span>log_filter: <span class="prelude-ty">Option</span>&lt;String&gt;,
-<a href=#49 id=49 data-nosnippet>49</a>}
-<a href=#50 id=50 data-nosnippet>50</a>
-<a href=#51 id=51 data-nosnippet>51</a><span class="kw">impl </span>ToolArgs {
-<a href=#52 id=52 data-nosnippet>52</a>    <span class="doccomment">/// The filter -v/-q ask for, unless an explicit one was given.
-<a href=#53 id=53 data-nosnippet>53</a>    </span><span class="kw">pub fn </span>log_filter(<span class="kw-2">&amp;</span><span class="self">self</span>) -&gt; String {
-<a href=#54 id=54 data-nosnippet>54</a>        <span class="kw">if let </span><span class="prelude-val">Some</span>(filter) = <span class="kw-2">&amp;</span><span class="self">self</span>.log_filter {
-<a href=#55 id=55 data-nosnippet>55</a>            <span class="kw">return </span>filter.clone();
-<a href=#56 id=56 data-nosnippet>56</a>        }
-<a href=#57 id=57 data-nosnippet>57</a>        <span class="comment">// Third-party crates are noisy at debug and above and none of
-<a href=#58 id=58 data-nosnippet>58</a>        // their detail is about this bridge, so verbosity is spent on
-<a href=#59 id=59 data-nosnippet>59</a>        // this crate first and the rest of the world stays at warn.
-<a href=#60 id=60 data-nosnippet>60</a>        </span><span class="kw">let </span>level = <span class="kw">match </span>(<span class="self">self</span>.verbose, <span class="self">self</span>.quiet) {
-<a href=#61 id=61 data-nosnippet>61</a>            (<span class="kw">_</span>, <span class="number">2</span>..) =&gt; <span class="kw">return </span><span class="string">"error"</span>.into(),
-<a href=#62 id=62 data-nosnippet>62</a>            (<span class="kw">_</span>, <span class="number">1</span>) =&gt; <span class="kw">return </span><span class="string">"warn"</span>.into(),
-<a href=#63 id=63 data-nosnippet>63</a>            (<span class="number">0</span>, <span class="kw">_</span>) =&gt; <span class="string">"info"</span>,
-<a href=#64 id=64 data-nosnippet>64</a>            (<span class="number">1</span>, <span class="kw">_</span>) =&gt; <span class="string">"debug"</span>,
-<a href=#65 id=65 data-nosnippet>65</a>            (<span class="number">2</span>.., <span class="kw">_</span>) =&gt; <span class="string">"trace"</span>,
-<a href=#66 id=66 data-nosnippet>66</a>        };
-<a href=#67 id=67 data-nosnippet>67</a>        <span class="macro">format!</span>(<span class="string">"warn,umsh_bridge={level}"</span>)
-<a href=#68 id=68 data-nosnippet>68</a>    }
-<a href=#69 id=69 data-nosnippet>69</a>}
-<a href=#70 id=70 data-nosnippet>70</a>
-<a href=#71 id=71 data-nosnippet>71</a><span class="attr">#[derive(Debug, Subcommand)]
-<a href=#72 id=72 data-nosnippet>72</a></span><span class="kw">pub enum </span>Command {
-<a href=#73 id=73 data-nosnippet>73</a>    <span class="doccomment">/// Run the bridge until interrupted.
-<a href=#74 id=74 data-nosnippet>74</a>    </span>Run(RunArgs),
+<a href=#25 id=25 data-nosnippet>25</a>Every participant's radio runs in backhaul mode, which makes the node
+<a href=#26 id=26 data-nosnippet>26</a>behind it a repeater whose point-to-point neighbor is the bridge. Hop
+<a href=#27 id=27 data-nosnippet>27</a>accounting, duplicate suppression, and forwarding policy are that node's;
+<a href=#28 id=28 data-nosnippet>28</a>the bridge has no opinion about what it carries and no presence on the
+<a href=#29 id=29 data-nosnippet>29</a>mesh.
+<a href=#30 id=30 data-nosnippet>30</a>
+<a href=#31 id=31 data-nosnippet>31</a>Every participant holds an Ed25519 identity, issued once by `keygen
+<a href=#32 id=32 data-nosnippet>32</a>identity`, which is what the tunnel authenticates with. Each side is
+<a href=#33 id=33 data-nosnippet>33</a>configured with the other's public key — the UMSH address that `address`
+<a href=#34 id=34 data-nosnippet>34</a>prints — which makes revoking a client an edit to the server's
+<a href=#35 id=35 data-nosnippet>35</a>configuration. The TLS certificates the handshake requires are minted in
+<a href=#36 id=36 data-nosnippet>36</a>memory from the identity at startup; none are stored or exchanged."
+<a href=#37 id=37 data-nosnippet>37</a></span>)]
+<a href=#38 id=38 data-nosnippet>38</a></span><span class="kw">pub struct </span>ToolArgs {
+<a href=#39 id=39 data-nosnippet>39</a>    <span class="attr">#[command(subcommand)]
+<a href=#40 id=40 data-nosnippet>40</a>    </span><span class="kw">pub </span>command: Command,
+<a href=#41 id=41 data-nosnippet>41</a>
+<a href=#42 id=42 data-nosnippet>42</a>    <span class="doccomment">/// Raise the logging level; repeat for more (info, debug, trace).
+<a href=#43 id=43 data-nosnippet>43</a>    </span><span class="attr">#[arg(short = <span class="string">'v'</span>, long, action = clap::ArgAction::Count, global = <span class="bool-val">true</span>)]
+<a href=#44 id=44 data-nosnippet>44</a>    </span><span class="kw">pub </span>verbose: u8,
+<a href=#45 id=45 data-nosnippet>45</a>
+<a href=#46 id=46 data-nosnippet>46</a>    <span class="doccomment">/// Log warnings and errors only; repeat for errors only.
+<a href=#47 id=47 data-nosnippet>47</a>    </span><span class="attr">#[arg(short = <span class="string">'q'</span>, long, action = clap::ArgAction::Count, global = <span class="bool-val">true</span>)]
+<a href=#48 id=48 data-nosnippet>48</a>    </span><span class="kw">pub </span>quiet: u8,
+<a href=#49 id=49 data-nosnippet>49</a>
+<a href=#50 id=50 data-nosnippet>50</a>    <span class="doccomment">/// Per-target log filter, in `tracing-subscriber` syntax
+<a href=#51 id=51 data-nosnippet>51</a>    /// (`umsh_bridge::hub=trace,info`). Overrides -v/-q entirely.
+<a href=#52 id=52 data-nosnippet>52</a>    </span><span class="attr">#[arg(long, value_name = <span class="string">"FILTER"</span>, env = <span class="string">"UMSH_BRIDGE_LOG"</span>, global = <span class="bool-val">true</span>)]
+<a href=#53 id=53 data-nosnippet>53</a>    </span><span class="kw">pub </span>log_filter: <span class="prelude-ty">Option</span>&lt;String&gt;,
+<a href=#54 id=54 data-nosnippet>54</a>}
+<a href=#55 id=55 data-nosnippet>55</a>
+<a href=#56 id=56 data-nosnippet>56</a><span class="kw">impl </span>ToolArgs {
+<a href=#57 id=57 data-nosnippet>57</a>    <span class="doccomment">/// The filter -v/-q ask for, unless an explicit one was given.
+<a href=#58 id=58 data-nosnippet>58</a>    </span><span class="kw">pub fn </span>log_filter(<span class="kw-2">&amp;</span><span class="self">self</span>) -&gt; String {
+<a href=#59 id=59 data-nosnippet>59</a>        <span class="kw">if let </span><span class="prelude-val">Some</span>(filter) = <span class="kw-2">&amp;</span><span class="self">self</span>.log_filter {
+<a href=#60 id=60 data-nosnippet>60</a>            <span class="kw">return </span>filter.clone();
+<a href=#61 id=61 data-nosnippet>61</a>        }
+<a href=#62 id=62 data-nosnippet>62</a>        <span class="comment">// Third-party crates are noisy at debug and above and none of
+<a href=#63 id=63 data-nosnippet>63</a>        // their detail is about this bridge, so verbosity is spent on
+<a href=#64 id=64 data-nosnippet>64</a>        // this crate first and the rest of the world stays at warn.
+<a href=#65 id=65 data-nosnippet>65</a>        </span><span class="kw">let </span>level = <span class="kw">match </span>(<span class="self">self</span>.verbose, <span class="self">self</span>.quiet) {
+<a href=#66 id=66 data-nosnippet>66</a>            (<span class="kw">_</span>, <span class="number">2</span>..) =&gt; <span class="kw">return </span><span class="string">"error"</span>.into(),
+<a href=#67 id=67 data-nosnippet>67</a>            (<span class="kw">_</span>, <span class="number">1</span>) =&gt; <span class="kw">return </span><span class="string">"warn"</span>.into(),
+<a href=#68 id=68 data-nosnippet>68</a>            (<span class="number">0</span>, <span class="kw">_</span>) =&gt; <span class="string">"info"</span>,
+<a href=#69 id=69 data-nosnippet>69</a>            (<span class="number">1</span>, <span class="kw">_</span>) =&gt; <span class="string">"debug"</span>,
+<a href=#70 id=70 data-nosnippet>70</a>            (<span class="number">2</span>.., <span class="kw">_</span>) =&gt; <span class="string">"trace"</span>,
+<a href=#71 id=71 data-nosnippet>71</a>        };
+<a href=#72 id=72 data-nosnippet>72</a>        <span class="macro">format!</span>(<span class="string">"warn,umsh_bridge={level}"</span>)
+<a href=#73 id=73 data-nosnippet>73</a>    }
+<a href=#74 id=74 data-nosnippet>74</a>}
 <a href=#75 id=75 data-nosnippet>75</a>
-<a href=#76 id=76 data-nosnippet>76</a>    <span class="doccomment">/// Load and validate a configuration, reading the identity key it
-<a href=#77 id=77 data-nosnippet>77</a>    /// names, without opening a socket or touching a radio.
-<a href=#78 id=78 data-nosnippet>78</a>    </span>Check(RunArgs),
-<a href=#79 id=79 data-nosnippet>79</a>
-<a href=#80 id=80 data-nosnippet>80</a>    <span class="doccomment">/// Print the address of an identity key — the public name the
-<a href=#81 id=81 data-nosnippet>81</a>    /// other end of the tunnel pins. Safe to share anywhere.
-<a href=#82 id=82 data-nosnippet>82</a>    </span>Address {
-<a href=#83 id=83 data-nosnippet>83</a>        <span class="doccomment">/// The identity key to read.
-<a href=#84 id=84 data-nosnippet>84</a>        </span><span class="attr">#[arg(default_value = <span class="string">"/etc/umsh-bridge/identity.key"</span>)]
-<a href=#85 id=85 data-nosnippet>85</a>        </span>path: PathBuf,
-<a href=#86 id=86 data-nosnippet>86</a>    },
-<a href=#87 id=87 data-nosnippet>87</a>
-<a href=#88 id=88 data-nosnippet>88</a>    <span class="doccomment">/// Issue the identity a participant needs.
-<a href=#89 id=89 data-nosnippet>89</a>    </span><span class="attr">#[command(subcommand)]
-<a href=#90 id=90 data-nosnippet>90</a>    </span>Keygen(KeygenCommand),
-<a href=#91 id=91 data-nosnippet>91</a>}
+<a href=#76 id=76 data-nosnippet>76</a><span class="attr">#[derive(Debug, Subcommand)]
+<a href=#77 id=77 data-nosnippet>77</a></span><span class="kw">pub enum </span>Command {
+<a href=#78 id=78 data-nosnippet>78</a>    <span class="doccomment">/// Run the bridge until interrupted.
+<a href=#79 id=79 data-nosnippet>79</a>    </span>Run(RunArgs),
+<a href=#80 id=80 data-nosnippet>80</a>
+<a href=#81 id=81 data-nosnippet>81</a>    <span class="doccomment">/// Load and validate a configuration, reading the identity key it
+<a href=#82 id=82 data-nosnippet>82</a>    /// names, without opening a socket or touching a radio.
+<a href=#83 id=83 data-nosnippet>83</a>    </span>Check(RunArgs),
+<a href=#84 id=84 data-nosnippet>84</a>
+<a href=#85 id=85 data-nosnippet>85</a>    <span class="doccomment">/// Print the address of an identity key — the public name the
+<a href=#86 id=86 data-nosnippet>86</a>    /// other end of the tunnel pins. Safe to share anywhere.
+<a href=#87 id=87 data-nosnippet>87</a>    </span>Address {
+<a href=#88 id=88 data-nosnippet>88</a>        <span class="doccomment">/// The identity key to read.
+<a href=#89 id=89 data-nosnippet>89</a>        </span><span class="attr">#[arg(default_value = <span class="string">"/etc/umsh-bridge/identity.key"</span>)]
+<a href=#90 id=90 data-nosnippet>90</a>        </span>path: PathBuf,
+<a href=#91 id=91 data-nosnippet>91</a>    },
 <a href=#92 id=92 data-nosnippet>92</a>
-<a href=#93 id=93 data-nosnippet>93</a><span class="attr">#[derive(Debug, Args)]
-<a href=#94 id=94 data-nosnippet>94</a></span><span class="kw">pub struct </span>RunArgs {
-<a href=#95 id=95 data-nosnippet>95</a>    <span class="doccomment">/// Configuration file.
-<a href=#96 id=96 data-nosnippet>96</a>    </span><span class="attr">#[arg(
-<a href=#97 id=97 data-nosnippet>97</a>        short = <span class="string">'c'</span>,
-<a href=#98 id=98 data-nosnippet>98</a>        long,
-<a href=#99 id=99 data-nosnippet>99</a>        value_name = <span class="string">"PATH"</span>,
-<a href=#100 id=100 data-nosnippet>100</a>        env = <span class="string">"UMSH_BRIDGE_CONFIG"</span>,
-<a href=#101 id=101 data-nosnippet>101</a>        default_value = <span class="string">"/etc/umsh-bridge/config.toml"
-<a href=#102 id=102 data-nosnippet>102</a>    </span>)]
-<a href=#103 id=103 data-nosnippet>103</a>    </span><span class="kw">pub </span>config: PathBuf,
-<a href=#104 id=104 data-nosnippet>104</a>}
-<a href=#105 id=105 data-nosnippet>105</a>
-<a href=#106 id=106 data-nosnippet>106</a><span class="attr">#[derive(Debug, Subcommand)]
-<a href=#107 id=107 data-nosnippet>107</a></span><span class="kw">pub enum </span>KeygenCommand {
-<a href=#108 id=108 data-nosnippet>108</a>    <span class="doccomment">/// Generate this participant's identity, once for its life: its
-<a href=#109 id=109 data-nosnippet>109</a>    /// address is what the other end pins, and for a server it is also
-<a href=#110 id=110 data-nosnippet>110</a>    /// the address the mesh knows the bridge by.
-<a href=#111 id=111 data-nosnippet>111</a>    </span>Identity {
-<a href=#112 id=112 data-nosnippet>112</a>        <span class="doccomment">/// Where to write the 64-hex Ed25519 seed.
-<a href=#113 id=113 data-nosnippet>113</a>        </span><span class="attr">#[arg(default_value = <span class="string">"/etc/umsh-bridge/identity.key"</span>)]
-<a href=#114 id=114 data-nosnippet>114</a>        </span>path: PathBuf,
-<a href=#115 id=115 data-nosnippet>115</a>
-<a href=#116 id=116 data-nosnippet>116</a>        <span class="doccomment">/// Replace an existing key. The identity's address changes, and
-<a href=#117 id=117 data-nosnippet>117</a>        /// every peer pinning it must be updated.
-<a href=#118 id=118 data-nosnippet>118</a>        </span><span class="attr">#[arg(long)]
-<a href=#119 id=119 data-nosnippet>119</a>        </span>force: bool,
-<a href=#120 id=120 data-nosnippet>120</a>    },
-<a href=#121 id=121 data-nosnippet>121</a>}
-<a href=#122 id=122 data-nosnippet>122</a>
-<a href=#123 id=123 data-nosnippet>123</a><span class="attr">#[cfg(test)]
-<a href=#124 id=124 data-nosnippet>124</a></span><span class="kw">mod </span>tests {
-<a href=#125 id=125 data-nosnippet>125</a>    <span class="kw">use </span>super::<span class="kw-2">*</span>;
-<a href=#126 id=126 data-nosnippet>126</a>    <span class="kw">use </span>clap::CommandFactory;
+<a href=#93 id=93 data-nosnippet>93</a>    <span class="doccomment">/// Issue the identity a participant needs.
+<a href=#94 id=94 data-nosnippet>94</a>    </span><span class="attr">#[command(subcommand)]
+<a href=#95 id=95 data-nosnippet>95</a>    </span>Keygen(KeygenCommand),
+<a href=#96 id=96 data-nosnippet>96</a>}
+<a href=#97 id=97 data-nosnippet>97</a>
+<a href=#98 id=98 data-nosnippet>98</a><span class="attr">#[derive(Debug, Args)]
+<a href=#99 id=99 data-nosnippet>99</a></span><span class="kw">pub struct </span>RunArgs {
+<a href=#100 id=100 data-nosnippet>100</a>    <span class="doccomment">/// Configuration file.
+<a href=#101 id=101 data-nosnippet>101</a>    </span><span class="attr">#[arg(
+<a href=#102 id=102 data-nosnippet>102</a>        short = <span class="string">'c'</span>,
+<a href=#103 id=103 data-nosnippet>103</a>        long,
+<a href=#104 id=104 data-nosnippet>104</a>        value_name = <span class="string">"PATH"</span>,
+<a href=#105 id=105 data-nosnippet>105</a>        env = <span class="string">"UMSH_BRIDGE_CONFIG"</span>,
+<a href=#106 id=106 data-nosnippet>106</a>        default_value = <span class="string">"/etc/umsh-bridge/config.toml"
+<a href=#107 id=107 data-nosnippet>107</a>    </span>)]
+<a href=#108 id=108 data-nosnippet>108</a>    </span><span class="kw">pub </span>config: PathBuf,
+<a href=#109 id=109 data-nosnippet>109</a>}
+<a href=#110 id=110 data-nosnippet>110</a>
+<a href=#111 id=111 data-nosnippet>111</a><span class="attr">#[derive(Debug, Subcommand)]
+<a href=#112 id=112 data-nosnippet>112</a></span><span class="kw">pub enum </span>KeygenCommand {
+<a href=#113 id=113 data-nosnippet>113</a>    <span class="doccomment">/// Generate this participant's identity, once for its life: its
+<a href=#114 id=114 data-nosnippet>114</a>    /// address is what the other end pins, and for a server it is also
+<a href=#115 id=115 data-nosnippet>115</a>    /// the address the mesh knows the bridge by.
+<a href=#116 id=116 data-nosnippet>116</a>    </span>Identity {
+<a href=#117 id=117 data-nosnippet>117</a>        <span class="doccomment">/// Where to write the 64-hex Ed25519 seed.
+<a href=#118 id=118 data-nosnippet>118</a>        </span><span class="attr">#[arg(default_value = <span class="string">"/etc/umsh-bridge/identity.key"</span>)]
+<a href=#119 id=119 data-nosnippet>119</a>        </span>path: PathBuf,
+<a href=#120 id=120 data-nosnippet>120</a>
+<a href=#121 id=121 data-nosnippet>121</a>        <span class="doccomment">/// Replace an existing key. The identity's address changes, and
+<a href=#122 id=122 data-nosnippet>122</a>        /// every peer pinning it must be updated.
+<a href=#123 id=123 data-nosnippet>123</a>        </span><span class="attr">#[arg(long)]
+<a href=#124 id=124 data-nosnippet>124</a>        </span>force: bool,
+<a href=#125 id=125 data-nosnippet>125</a>    },
+<a href=#126 id=126 data-nosnippet>126</a>}
 <a href=#127 id=127 data-nosnippet>127</a>
-<a href=#128 id=128 data-nosnippet>128</a>    <span class="attr">#[test]
-<a href=#129 id=129 data-nosnippet>129</a>    </span><span class="kw">fn </span>the_grammar_is_internally_consistent() {
-<a href=#130 id=130 data-nosnippet>130</a>        ToolArgs::command().debug_assert();
-<a href=#131 id=131 data-nosnippet>131</a>    }
+<a href=#128 id=128 data-nosnippet>128</a><span class="attr">#[cfg(test)]
+<a href=#129 id=129 data-nosnippet>129</a></span><span class="kw">mod </span>tests {
+<a href=#130 id=130 data-nosnippet>130</a>    <span class="kw">use </span>super::<span class="kw-2">*</span>;
+<a href=#131 id=131 data-nosnippet>131</a>    <span class="kw">use </span>clap::CommandFactory;
 <a href=#132 id=132 data-nosnippet>132</a>
 <a href=#133 id=133 data-nosnippet>133</a>    <span class="attr">#[test]
-<a href=#134 id=134 data-nosnippet>134</a>    </span><span class="kw">fn </span>verbosity_maps_to_a_filter_that_spares_the_rest_of_the_world() {
-<a href=#135 id=135 data-nosnippet>135</a>        <span class="kw">let </span>filter = |argv: <span class="kw-2">&amp;</span>[<span class="kw-2">&amp;</span>str]| {
-<a href=#136 id=136 data-nosnippet>136</a>            <span class="kw">let </span><span class="kw-2">mut </span>args = <span class="macro">vec!</span>[<span class="string">"umsh-bridge"</span>];
-<a href=#137 id=137 data-nosnippet>137</a>            args.extend_from_slice(argv);
-<a href=#138 id=138 data-nosnippet>138</a>            ToolArgs::try_parse_from(args).unwrap().log_filter()
-<a href=#139 id=139 data-nosnippet>139</a>        };
-<a href=#140 id=140 data-nosnippet>140</a>        <span class="macro">assert_eq!</span>(filter(<span class="kw-2">&amp;</span>[<span class="string">"check"</span>]), <span class="string">"warn,umsh_bridge=info"</span>);
-<a href=#141 id=141 data-nosnippet>141</a>        <span class="macro">assert_eq!</span>(filter(<span class="kw-2">&amp;</span>[<span class="string">"check"</span>, <span class="string">"-v"</span>]), <span class="string">"warn,umsh_bridge=debug"</span>);
-<a href=#142 id=142 data-nosnippet>142</a>        <span class="macro">assert_eq!</span>(filter(<span class="kw-2">&amp;</span>[<span class="string">"check"</span>, <span class="string">"-vv"</span>]), <span class="string">"warn,umsh_bridge=trace"</span>);
-<a href=#143 id=143 data-nosnippet>143</a>        <span class="macro">assert_eq!</span>(filter(<span class="kw-2">&amp;</span>[<span class="string">"check"</span>, <span class="string">"-vvv"</span>]), <span class="string">"warn,umsh_bridge=trace"</span>);
-<a href=#144 id=144 data-nosnippet>144</a>        <span class="macro">assert_eq!</span>(filter(<span class="kw-2">&amp;</span>[<span class="string">"check"</span>, <span class="string">"-q"</span>]), <span class="string">"warn"</span>);
-<a href=#145 id=145 data-nosnippet>145</a>        <span class="macro">assert_eq!</span>(filter(<span class="kw-2">&amp;</span>[<span class="string">"check"</span>, <span class="string">"-qq"</span>]), <span class="string">"error"</span>);
-<a href=#146 id=146 data-nosnippet>146</a>        <span class="comment">// An explicit filter is the whole answer, whatever else was
-<a href=#147 id=147 data-nosnippet>147</a>        // asked for.
-<a href=#148 id=148 data-nosnippet>148</a>        </span><span class="macro">assert_eq!</span>(
-<a href=#149 id=149 data-nosnippet>149</a>            filter(<span class="kw-2">&amp;</span>[<span class="string">"check"</span>, <span class="string">"-vv"</span>, <span class="string">"--log-filter"</span>, <span class="string">"umsh_bridge::tunnel=trace"</span>]),
-<a href=#150 id=150 data-nosnippet>150</a>            <span class="string">"umsh_bridge::tunnel=trace"
-<a href=#151 id=151 data-nosnippet>151</a>        </span>);
-<a href=#152 id=152 data-nosnippet>152</a>    }
-<a href=#153 id=153 data-nosnippet>153</a>
-<a href=#154 id=154 data-nosnippet>154</a>    <span class="attr">#[test]
-<a href=#155 id=155 data-nosnippet>155</a>    </span><span class="kw">fn </span>global_flags_work_before_or_after_the_command() {
-<a href=#156 id=156 data-nosnippet>156</a>        <span class="kw">let </span>before = ToolArgs::try_parse_from([<span class="string">"umsh-bridge"</span>, <span class="string">"-v"</span>, <span class="string">"run"</span>, <span class="string">"-c"</span>, <span class="string">"a.toml"</span>]);
-<a href=#157 id=157 data-nosnippet>157</a>        <span class="kw">let </span>after = ToolArgs::try_parse_from([<span class="string">"umsh-bridge"</span>, <span class="string">"run"</span>, <span class="string">"-c"</span>, <span class="string">"a.toml"</span>, <span class="string">"-v"</span>]);
-<a href=#158 id=158 data-nosnippet>158</a>        <span class="macro">assert_eq!</span>(before.unwrap().verbose, after.unwrap().verbose);
-<a href=#159 id=159 data-nosnippet>159</a>    }
-<a href=#160 id=160 data-nosnippet>160</a>
-<a href=#161 id=161 data-nosnippet>161</a>    <span class="attr">#[test]
-<a href=#162 id=162 data-nosnippet>162</a>    </span><span class="kw">fn </span>identity_paths_default_to_the_deployment_location() {
-<a href=#163 id=163 data-nosnippet>163</a>        <span class="kw">let </span>parsed = ToolArgs::try_parse_from([<span class="string">"umsh-bridge"</span>, <span class="string">"address"</span>]).unwrap();
-<a href=#164 id=164 data-nosnippet>164</a>        <span class="kw">let </span>Command::Address { path } = parsed.command <span class="kw">else </span>{
-<a href=#165 id=165 data-nosnippet>165</a>            <span class="macro">panic!</span>(<span class="string">"parsed as the wrong command"</span>);
-<a href=#166 id=166 data-nosnippet>166</a>        };
-<a href=#167 id=167 data-nosnippet>167</a>        <span class="macro">assert_eq!</span>(path, PathBuf::from(<span class="string">"/etc/umsh-bridge/identity.key"</span>));
-<a href=#168 id=168 data-nosnippet>168</a>
-<a href=#169 id=169 data-nosnippet>169</a>        <span class="macro">assert!</span>(ToolArgs::try_parse_from([<span class="string">"umsh-bridge"</span>, <span class="string">"keygen"</span>, <span class="string">"identity"</span>]).is_ok());
-<a href=#170 id=170 data-nosnippet>170</a>        <span class="macro">assert!</span>(
-<a href=#171 id=171 data-nosnippet>171</a>            ToolArgs::try_parse_from([<span class="string">"umsh-bridge"</span>, <span class="string">"keygen"</span>, <span class="string">"identity"</span>, <span class="string">"a.key"</span>, <span class="string">"--force"</span>])
-<a href=#172 id=172 data-nosnippet>172</a>                .is_ok()
-<a href=#173 id=173 data-nosnippet>173</a>        );
-<a href=#174 id=174 data-nosnippet>174</a>    }
-<a href=#175 id=175 data-nosnippet>175</a>
-<a href=#176 id=176 data-nosnippet>176</a>    <span class="attr">#[test]
-<a href=#177 id=177 data-nosnippet>177</a>    </span><span class="kw">fn </span>a_command_is_required() {
-<a href=#178 id=178 data-nosnippet>178</a>        <span class="macro">assert!</span>(ToolArgs::try_parse_from([<span class="string">"umsh-bridge"</span>]).is_err());
+<a href=#134 id=134 data-nosnippet>134</a>    </span><span class="kw">fn </span>the_grammar_is_internally_consistent() {
+<a href=#135 id=135 data-nosnippet>135</a>        ToolArgs::command().debug_assert();
+<a href=#136 id=136 data-nosnippet>136</a>    }
+<a href=#137 id=137 data-nosnippet>137</a>
+<a href=#138 id=138 data-nosnippet>138</a>    <span class="attr">#[test]
+<a href=#139 id=139 data-nosnippet>139</a>    </span><span class="kw">fn </span>verbosity_maps_to_a_filter_that_spares_the_rest_of_the_world() {
+<a href=#140 id=140 data-nosnippet>140</a>        <span class="kw">let </span>filter = |argv: <span class="kw-2">&amp;</span>[<span class="kw-2">&amp;</span>str]| {
+<a href=#141 id=141 data-nosnippet>141</a>            <span class="kw">let </span><span class="kw-2">mut </span>args = <span class="macro">vec!</span>[<span class="string">"umsh-bridge"</span>];
+<a href=#142 id=142 data-nosnippet>142</a>            args.extend_from_slice(argv);
+<a href=#143 id=143 data-nosnippet>143</a>            ToolArgs::try_parse_from(args).unwrap().log_filter()
+<a href=#144 id=144 data-nosnippet>144</a>        };
+<a href=#145 id=145 data-nosnippet>145</a>        <span class="macro">assert_eq!</span>(filter(<span class="kw-2">&amp;</span>[<span class="string">"check"</span>]), <span class="string">"warn,umsh_bridge=info"</span>);
+<a href=#146 id=146 data-nosnippet>146</a>        <span class="macro">assert_eq!</span>(filter(<span class="kw-2">&amp;</span>[<span class="string">"check"</span>, <span class="string">"-v"</span>]), <span class="string">"warn,umsh_bridge=debug"</span>);
+<a href=#147 id=147 data-nosnippet>147</a>        <span class="macro">assert_eq!</span>(filter(<span class="kw-2">&amp;</span>[<span class="string">"check"</span>, <span class="string">"-vv"</span>]), <span class="string">"warn,umsh_bridge=trace"</span>);
+<a href=#148 id=148 data-nosnippet>148</a>        <span class="macro">assert_eq!</span>(filter(<span class="kw-2">&amp;</span>[<span class="string">"check"</span>, <span class="string">"-vvv"</span>]), <span class="string">"warn,umsh_bridge=trace"</span>);
+<a href=#149 id=149 data-nosnippet>149</a>        <span class="macro">assert_eq!</span>(filter(<span class="kw-2">&amp;</span>[<span class="string">"check"</span>, <span class="string">"-q"</span>]), <span class="string">"warn"</span>);
+<a href=#150 id=150 data-nosnippet>150</a>        <span class="macro">assert_eq!</span>(filter(<span class="kw-2">&amp;</span>[<span class="string">"check"</span>, <span class="string">"-qq"</span>]), <span class="string">"error"</span>);
+<a href=#151 id=151 data-nosnippet>151</a>        <span class="comment">// An explicit filter is the whole answer, whatever else was
+<a href=#152 id=152 data-nosnippet>152</a>        // asked for.
+<a href=#153 id=153 data-nosnippet>153</a>        </span><span class="macro">assert_eq!</span>(
+<a href=#154 id=154 data-nosnippet>154</a>            filter(<span class="kw-2">&amp;</span>[<span class="string">"check"</span>, <span class="string">"-vv"</span>, <span class="string">"--log-filter"</span>, <span class="string">"umsh_bridge::tunnel=trace"</span>]),
+<a href=#155 id=155 data-nosnippet>155</a>            <span class="string">"umsh_bridge::tunnel=trace"
+<a href=#156 id=156 data-nosnippet>156</a>        </span>);
+<a href=#157 id=157 data-nosnippet>157</a>    }
+<a href=#158 id=158 data-nosnippet>158</a>
+<a href=#159 id=159 data-nosnippet>159</a>    <span class="attr">#[test]
+<a href=#160 id=160 data-nosnippet>160</a>    </span><span class="kw">fn </span>global_flags_work_before_or_after_the_command() {
+<a href=#161 id=161 data-nosnippet>161</a>        <span class="kw">let </span>before = ToolArgs::try_parse_from([<span class="string">"umsh-bridge"</span>, <span class="string">"-v"</span>, <span class="string">"run"</span>, <span class="string">"-c"</span>, <span class="string">"a.toml"</span>]);
+<a href=#162 id=162 data-nosnippet>162</a>        <span class="kw">let </span>after = ToolArgs::try_parse_from([<span class="string">"umsh-bridge"</span>, <span class="string">"run"</span>, <span class="string">"-c"</span>, <span class="string">"a.toml"</span>, <span class="string">"-v"</span>]);
+<a href=#163 id=163 data-nosnippet>163</a>        <span class="macro">assert_eq!</span>(before.unwrap().verbose, after.unwrap().verbose);
+<a href=#164 id=164 data-nosnippet>164</a>    }
+<a href=#165 id=165 data-nosnippet>165</a>
+<a href=#166 id=166 data-nosnippet>166</a>    <span class="attr">#[test]
+<a href=#167 id=167 data-nosnippet>167</a>    </span><span class="kw">fn </span>identity_paths_default_to_the_deployment_location() {
+<a href=#168 id=168 data-nosnippet>168</a>        <span class="kw">let </span>parsed = ToolArgs::try_parse_from([<span class="string">"umsh-bridge"</span>, <span class="string">"address"</span>]).unwrap();
+<a href=#169 id=169 data-nosnippet>169</a>        <span class="kw">let </span>Command::Address { path } = parsed.command <span class="kw">else </span>{
+<a href=#170 id=170 data-nosnippet>170</a>            <span class="macro">panic!</span>(<span class="string">"parsed as the wrong command"</span>);
+<a href=#171 id=171 data-nosnippet>171</a>        };
+<a href=#172 id=172 data-nosnippet>172</a>        <span class="macro">assert_eq!</span>(path, PathBuf::from(<span class="string">"/etc/umsh-bridge/identity.key"</span>));
+<a href=#173 id=173 data-nosnippet>173</a>
+<a href=#174 id=174 data-nosnippet>174</a>        <span class="macro">assert!</span>(ToolArgs::try_parse_from([<span class="string">"umsh-bridge"</span>, <span class="string">"keygen"</span>, <span class="string">"identity"</span>]).is_ok());
+<a href=#175 id=175 data-nosnippet>175</a>        <span class="macro">assert!</span>(
+<a href=#176 id=176 data-nosnippet>176</a>            ToolArgs::try_parse_from([<span class="string">"umsh-bridge"</span>, <span class="string">"keygen"</span>, <span class="string">"identity"</span>, <span class="string">"a.key"</span>, <span class="string">"--force"</span>])
+<a href=#177 id=177 data-nosnippet>177</a>                .is_ok()
+<a href=#178 id=178 data-nosnippet>178</a>        );
 <a href=#179 id=179 data-nosnippet>179</a>    }
-<a href=#180 id=180 data-nosnippet>180</a>}
+<a href=#180 id=180 data-nosnippet>180</a>
+<a href=#181 id=181 data-nosnippet>181</a>    <span class="attr">#[test]
+<a href=#182 id=182 data-nosnippet>182</a>    </span><span class="kw">fn </span>a_command_is_required() {
+<a href=#183 id=183 data-nosnippet>183</a>        <span class="macro">assert!</span>(ToolArgs::try_parse_from([<span class="string">"umsh-bridge"</span>]).is_err());
+<a href=#184 id=184 data-nosnippet>184</a>    }
+<a href=#185 id=185 data-nosnippet>185</a>}
 </code></pre></div></section></main></body></html>

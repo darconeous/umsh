@@ -35,7 +35,7 @@
             const path_to_root = "";
             const default_light_theme = "light";
             const default_dark_theme = "ayu";
-            window.path_to_searchindex_js = "searchindex-ac42c73d.js";
+            window.path_to_searchindex_js = "searchindex-ee1590cf.js";
         </script>
         <!-- Start loading toc.js asap -->
         <script src="toc-438957a9.js"></script>
@@ -229,6 +229,7 @@
 <tr><td>43</td><td><a href="ulcp-radio.html#prop-phy-lora-sw"><code>PROP_PHY_LORA_SW</code></a></td><td>Get, Set</td><td><code>CAP_PHY_LORA</code></td></tr>
 <tr><td>48</td><td><a href="ulcp-host.html#prop-mac-promiscuous"><code>PROP_MAC_PROMISCUOUS</code></a></td><td>Get, Set</td><td><code>CAP_HOST_FILTER</code></td></tr>
 <tr><td>49</td><td><a href="ulcp-saved-state.html#prop-saved"><code>PROP_SAVED</code></a></td><td>Get</td><td><code>CAP_SAVE</code></td></tr>
+<tr><td>50</td><td><a href="ulcp-host.html#prop-mac-backhaul"><code>PROP_MAC_BACKHAUL</code></a></td><td>Get, Set</td><td><code>CAP_MAC_BACKHAUL</code></td></tr>
 <tr><td>64</td><td><a href="ulcp-device.html#prop-dev-key"><code>PROP_DEV_KEY</code></a></td><td>Get</td><td><code>CAP_DEV_IDENTITY</code></td></tr>
 <tr><td>65</td><td><a href="ulcp-device.html#prop-dev-private-key"><code>PROP_DEV_PRIVATE_KEY</code></a></td><td>Set</td><td><code>CAP_DEV_IDENTITY</code></td></tr>
 <tr><td>66</td><td><a href="ulcp-device.html#prop-dev-channel-keys"><code>PROP_DEV_CHANNEL_KEYS</code></a></td><td>Get, Set, Insert, Remove</td><td><code>CAP_DEV_IDENTITY</code></td></tr>
@@ -303,6 +304,7 @@ is in <a href="ulcp-core.html#capabilities">Capabilities</a>.</p>
 <tr><td>45</td><td><code>CAP_GNSS</code></td><td><a href="ulcp-device.html#capabilities">Device Domain</a></td></tr>
 <tr><td>46</td><td><code>CAP_ADVERT</code></td><td><a href="ulcp-device.html#capabilities">Device Domain</a></td></tr>
 <tr><td>47</td><td><code>CAP_ILLUMINANCE</code></td><td><a href="ulcp-device.html#capabilities">Device Domain</a></td></tr>
+<tr><td>48</td><td><code>CAP_MAC_BACKHAUL</code></td><td><a href="ulcp-host.html#capabilities">Tethered Host Services</a></td></tr>
 <tr><td>515</td><td><code>CAP_PHY_LORA</code></td><td><a href="ulcp-radio.html#capabilities">Radio Control</a></td></tr>
 </tbody>
 </table>
@@ -359,7 +361,7 @@ reserved for them.</p>
 <tr><td>Alert states</td><td>0 <code>ALERT_NONE</code>, 1 <code>ALERT_LOCATE</code></td><td><a href="ulcp-device.html#prop-alert"><code>PROP_ALERT</code></a></td></tr>
 <tr><td>Fix quality</td><td>0 none, 1 two-dimensional, 2 three-dimensional</td><td><a href="ulcp-device.html#prop-gnss-fix"><code>PROP_GNSS_FIX</code></a></td></tr>
 <tr><td>Transmit flags</td><td>bit 0 <code>TX_FLAG_NOCCA</code>, bit 1 <code>TX_FLAG_NODUTY</code></td><td><a href="ulcp-transport.html#str-radio-raw"><code>STR_PHY_RAW</code></a></td></tr>
-<tr><td>Receive flags</td><td>bit 0 <code>RX_FLAG_BUFFERED</code>, bit 1 <code>RX_FLAG_ACKED</code></td><td><a href="ulcp-transport.html#buffered-metadata">Buffered-Frame Metadata</a></td></tr>
+<tr><td>Receive flags</td><td>bit 0 <code>RX_FLAG_BUFFERED</code>, bit 1 <code>RX_FLAG_ACKED</code>, bit 2 <code>RX_FLAG_SELF_TX</code></td><td><a href="ulcp-transport.html#buffered-metadata">Extended Recv Metadata</a></td></tr>
 </tbody>
 </table>
 </div>

@@ -35,7 +35,7 @@
             const path_to_root = "";
             const default_light_theme = "light";
             const default_dark_theme = "ayu";
-            window.path_to_searchindex_js = "searchindex-ac42c73d.js";
+            window.path_to_searchindex_js = "searchindex-ee1590cf.js";
         </script>
         <!-- Start loading toc.js asap -->
         <script src="toc-438957a9.js"></script>
@@ -688,9 +688,10 @@ classes determine what survives a host attach, a change of host, and a
 power cycle.</p>
 <h3 id="session-state"><a class="header" href="#session-state">Session State</a></h3>
 <p>State that exists only while a host is attached: transaction (TID)
-correlation, transport reassembly buffers, and session-scoped properties —
-currently only <code>PROP_MAC_PROMISCUOUS</code>. Session state is reset to defaults
-on every attach. Resetting it never affects radio operation.</p>
+correlation, transport reassembly buffers, and the session-scoped
+properties <code>PROP_MAC_PROMISCUOUS</code> and <code>PROP_MAC_BACKHAUL</code>. Session state
+is reset to defaults on every attach. Resetting it never affects radio
+operation.</p>
 <h3 id="device-domain"><a class="header" href="#device-domain">Device Domain</a></h3>
 <p>State that belongs to the device itself, independent of which
 host is attached:</p>
@@ -1036,6 +1037,7 @@ grants:</p>
 <tr><td>45</td><td><code>CAP_GNSS</code></td><td><code>CAP_TIME</code></td><td><a href="ulcp-device.html#capabilities">Device Domain</a></td></tr>
 <tr><td>46</td><td><code>CAP_ADVERT</code></td><td><code>CAP_DEV_IDENTITY</code></td><td><a href="ulcp-device.html#capabilities">Device Domain</a></td></tr>
 <tr><td>47</td><td><code>CAP_ILLUMINANCE</code></td><td>—</td><td><a href="ulcp-device.html#capabilities">Device Domain</a></td></tr>
+<tr><td>48</td><td><code>CAP_MAC_BACKHAUL</code></td><td><code>CAP_REPEATER</code></td><td><a href="ulcp-host.html#capabilities">Tethered Host Services</a></td></tr>
 <tr><td>515</td><td><code>CAP_PHY_LORA</code></td><td>—</td><td><a href="ulcp-radio.html#capabilities">Radio Control</a></td></tr>
 </tbody>
 </table>

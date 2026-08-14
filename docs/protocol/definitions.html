@@ -35,7 +35,7 @@
             const path_to_root = "";
             const default_light_theme = "light";
             const default_dark_theme = "ayu";
-            window.path_to_searchindex_js = "searchindex-ac42c73d.js";
+            window.path_to_searchindex_js = "searchindex-ee1590cf.js";
         </script>
         <!-- Start loading toc.js asap -->
         <script src="toc-438957a9.js"></script>
@@ -192,7 +192,7 @@
 <dt id="blind-unicast"><a class="header" href="#blind-unicast"><strong>Blind Unicast</strong></a></dt>
 <dd>A packet type that carries a unicast payload addressed to a specific destination while concealing both the sender and destination identities from observers who do not possess the channel key. The destination hint and source address are encrypted using the channel key; the payload is protected end-to-end using keys derived from both the channel key and the pairwise shared secret. See <a href="packet-types.html#blind-unicast-packet">Frame Types</a>.</dd>
 <dt id="bridge"><a class="header" href="#bridge"><strong>Bridge</strong></a></dt>
-<dd>A node that relays UMSH packets between two different media or channels — for example, from a local LoRa radio to an internet backhaul and back to a distant LoRa radio. Bridges are protocol-transparent: they consume source-route hints and forward packets as repeaters do, but their onward transmission cannot be observed on the inbound medium.</dd>
+<dd>An arrangement that carries UMSH packets between two different media or channels — for example, from a local LoRa radio to an internet backhaul and back to a distant LoRa radio. Bridges are protocol-transparent: a repeater at each end forwards the packet as it would any other, so a crossing consumes source-route hints, spends two flood hops, and records both repeaters in a trace. The inbound repeater’s forwarding is observable on the medium the packet arrived from.</dd>
 <dt id="broadcast"><a class="header" href="#broadcast"><strong>Broadcast</strong></a></dt>
 <dd>A packet intended for all nodes in range. Broadcast packets carry no destination hint and are not encrypted or authenticated at the MAC layer. See <a href="packet-types.html">Frame Types</a>.</dd>
 <dt id="cad-channel-activity-detection"><a class="header" href="#cad-channel-activity-detection"><strong>CAD (Channel Activity Detection)</strong></a></dt>

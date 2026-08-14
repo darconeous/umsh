@@ -35,7 +35,7 @@
             const path_to_root = "";
             const default_light_theme = "light";
             const default_dark_theme = "ayu";
-            window.path_to_searchindex_js = "searchindex-ac42c73d.js";
+            window.path_to_searchindex_js = "searchindex-ee1590cf.js";
         </script>
         <!-- Start loading toc.js asap -->
         <script src="toc-438957a9.js"></script>
@@ -264,9 +264,10 @@ classes determine what survives a host attach, a change of host, and a
 power cycle.</p>
 <h3 id="session-state"><a class="header" href="#session-state">Session State</a></h3>
 <p>State that exists only while a host is attached: transaction (TID)
-correlation, transport reassembly buffers, and session-scoped properties —
-currently only <code>PROP_MAC_PROMISCUOUS</code>. Session state is reset to defaults
-on every attach. Resetting it never affects radio operation.</p>
+correlation, transport reassembly buffers, and the session-scoped
+properties <code>PROP_MAC_PROMISCUOUS</code> and <code>PROP_MAC_BACKHAUL</code>. Session state
+is reset to defaults on every attach. Resetting it never affects radio
+operation.</p>
 <h3 id="device-domain"><a class="header" href="#device-domain">Device Domain</a></h3>
 <p>State that belongs to the device itself, independent of which
 host is attached:</p>
@@ -863,6 +864,7 @@ it provisions in the first place: by writing everything again.</p>
 <tbody>
 <tr><td>48</td><td><code>PROP_MAC_PROMISCUOUS</code></td><td>Get, Set</td><td>Deliver all frames (session-scoped)</td></tr>
 <tr><td>49</td><td><code>PROP_SAVED</code></td><td>Get</td><td>Saved-snapshot state</td></tr>
+<tr><td>50</td><td><code>PROP_MAC_BACKHAUL</code></td><td>Get, Set</td><td>Point-to-point link to the device’s node (session-scoped)</td></tr>
 <tr><td>64</td><td><code>PROP_DEV_KEY</code></td><td>Get</td><td>Device identity public key</td></tr>
 <tr><td>65</td><td><code>PROP_DEV_PRIVATE_KEY</code></td><td>Set</td><td>Device identity private key (write-only)</td></tr>
 <tr><td>66</td><td><code>PROP_DEV_CHANNEL_KEYS</code></td><td>Get, Set, Insert, Remove</td><td>Device identity channel keys</td></tr>
@@ -897,8 +899,7 @@ host over <code>STR_PHY_RAW</code>, bypassing receive filtering. This is a live-
 diagnostic mode: frames that are delivered <em>only</em> because of promiscuous
 mode are never queued while the host is detached, and never acknowledged on
 the host’s behalf.</p>
-<p>This is the only session-scoped property: it reverts to false on every
-attach.</p>
+<p>Session-scoped: it reverts to false on every attach.</p>
 <h3 id="prop-saved"><a class="header" href="#prop-saved">PROP 49: <code>PROP_SAVED</code></a></h3>
 <ul>
 <li>Type: Single-Value, Read-Only</li>
@@ -933,6 +934,38 @@ re-reads storage.</li>
 </ol>
 <p>A host that treats any non-zero value as “saved” behaves correctly, and
 loses only the warning.</p>
+<h3 id="prop-mac-backhaul"><a class="header" href="#prop-mac-backhaul">PROP 50: <code>PROP_MAC_BACKHAUL</code></a></h3>
+<ul>
+<li>Type: Single-Value, Read-Write, Session-Scoped</li>
+<li>Asynchronous Updates: No</li>
+<li>Required: <code>CAP_MAC_BACKHAUL</code></li>
+<li>Value Type: BOOL</li>
+<li>Post-Attach Value: 0 (false)</li>
+</ul>
+<p>When false, the host and the device’s own node are two listeners on one
+shared medium. Both transmit through the same radio and both hear what it
+receives, so a frame from one reaches the other only by way of some third
+node that repeats it.</p>
+<p>When true, the host is instead a point-to-point neighbor of the device’s
+node:</p>
+<ul>
+<li>A frame the host sends on <code>STR_PHY_RAW</code> is delivered to the node as
+though the node had heard it, and is never transmitted directly. It
+spends no airtime and is not subject to the duty-cycle limit.</li>
+<li>Frames the node transmits are delivered to the host with
+<code>RX_FLAG_SELF_TX</code> set, subject to the usual receive filtering.</li>
+<li>Frames the radio receives are not delivered to the host at all. The
+node is the only thing listening to the medium.</li>
+</ul>
+<p>Traffic between the host and the mesh therefore crosses the device’s
+<a href="repeater-operation.html">repeater</a>: hop accounting, duplicate suppression,
+and forwarding policy are the node’s, applied to the host’s traffic as to
+anyone else’s. A device whose repeater is disabled still delivers the
+host’s frames to its own identities, but carries nothing onward.</p>
+<p><code>PROP_MAC_PROMISCUOUS</code> composes with this: it removes receive filtering
+from what the host is delivered, which in this mode is the node’s
+transmissions.</p>
+<p>Session-scoped: it reverts to false on every attach.</p>
 <h3 id="prop-dev-key"><a class="header" href="#prop-dev-key">PROP 64: <code>PROP_DEV_KEY</code></a></h3>
 <ul>
 <li>Type: Single-Value, Read-Only</li>
@@ -1513,18 +1546,21 @@ duplicate-acknowledgement window (see (#ack-delegation)). For frames the
 device cannot authenticate (no provisioned keys), no protocol-defined
 duplicate detection applies and each received frame occupies its own
 entry.</p>
-<h3 id="buffered-metadata"><a class="header" href="#buffered-metadata">Buffered-Frame Metadata</a></h3>
+<h3 id="buffered-metadata"><a class="header" href="#buffered-metadata">Extended Recv Metadata</a></h3>
 <p>The <code>Recv</code> metadata of <code>STR_PHY_RAW</code>
-(see <a href="ulcp-minimal.html#str-radio-raw">Metadata for Recv</a>) is
-extended with two trailing fields:</p>
+(see <a href="ulcp-minimal.html#str-radio-raw">Metadata for Recv</a>) may carry two
+further trailing fields:</p>
 <ul>
-<li><code>RX_FLAGS</code> (<code>u8</code>): Buffered-frame flags
+<li><code>RX_FLAGS</code> (<code>u8</code>): Delivery flags
 <ul>
 <li><code>RX_FLAG_BUFFERED</code> Bit 0: The frame was held in the inbound queue and
 is being delivered by <code>CMD_QUEUE_DRAIN</code>.</li>
 <li><code>RX_FLAG_ACKED</code> Bit 1: The device already transmitted a MAC ack for this
 frame on the host’s behalf. The host <strong>MUST NOT</strong> send another ack for
 it.</li>
+<li><code>RX_FLAG_SELF_TX</code> Bit 2: The device transmitted this frame itself and
+is delivering a copy of it. <code>RX_RSSI</code> and <code>RX_SNR</code> <strong>MUST</strong> carry their
+unsupported sentinels: a transmitter measures nothing.</li>
 <li>All other bits: <em>RESERVED</em>, transmitted as zero</li>
 </ul>
 </li>
@@ -1532,9 +1568,9 @@ it.</li>
 frame and its delivery to the host. Zero for live delivery.</li>
 </ul>
 <p>As with the existing metadata fields, the metadata may be truncated at any
-field boundary; absent fields are treated as zero. Live deliveries MAY
-therefore continue to omit these fields entirely, which keeps the encoding
-byte-compatible with the minimal protocol.</p>
+field boundary; absent fields are treated as zero. A live delivery with
+nothing to flag MAY therefore omit these fields entirely, which keeps the
+encoding byte-compatible with the minimal protocol.</p>
 <h2 id="ack-delegation"><a class="header" href="#ack-delegation">Acknowledgement Delegation</a></h2>
 <p>With <code>PROP_HOST_AUTO_ACK</code> enabled, the device acknowledges qualifying inbound
 frames so that senders’ retransmission logic is satisfied while the host is

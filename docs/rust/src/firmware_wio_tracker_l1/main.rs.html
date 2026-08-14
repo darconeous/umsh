@@ -2680,7 +2680,7 @@
 <a href=#2680 id=2680 data-nosnippet>2680</a>    /// completion routing plus RX fan-out to every client.
 <a href=#2681 id=2681 data-nosnippet>2681</a>    </span><span class="attr">#[embassy_executor::task]
 <a href=#2682 id=2682 data-nosnippet>2682</a>    </span><span class="kw">async fn </span>radio_mux_task() {
-<a href=#2683 id=2683 data-nosnippet>2683</a>        <span class="kw">super</span>::radio_mux::radio_mux(<span class="kw-2">&amp;</span>RADIO_CH, <span class="kw-2">&amp;</span>MUX_CLIENTS).<span class="kw">await
+<a href=#2683 id=2683 data-nosnippet>2683</a>        <span class="kw">super</span>::radio_mux::radio_mux(<span class="kw-2">&amp;</span>RADIO_CH, <span class="kw-2">&amp;</span>MUX_CLIENTS, <span class="kw-2">&amp;</span><span class="kw">super</span>::radio_mux::MUX_MODE).<span class="kw">await
 <a href=#2684 id=2684 data-nosnippet>2684</a>    </span>}
 <a href=#2685 id=2685 data-nosnippet>2685</a>
 <a href=#2686 id=2686 data-nosnippet>2686</a>    <span class="doccomment">/// Owns the USB `Sender`, HDLC-encodes frames, and writes USB packets.
