@@ -17,6 +17,7 @@ capability inventory, not a feature wish list.
 
 - Refreshable color or monochrome display
 - E-paper or other persistent, slow-refresh display
+- Enough panel area to render a QR code a phone camera can resolve
 - Single-color or RGB LED
 - Buzzer or speaker with controllable pitch and volume
 - Haptic motor
@@ -29,6 +30,8 @@ capability inventory, not a feature wish list.
 - Deep sleep and hardware wake sources
 - BLE pairing and bond storage
 - GNSS or other sensors
+- Runtime control over Bluetooth, GNSS, and frame forwarding
+- A clock the device can stand behind
 - Autonomous UMSH identity and transmission
 - Companion-radio-only operation
 - Safe bootloader and factory-recovery paths

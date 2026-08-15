@@ -55,7 +55,7 @@ Before the multi-identity experience ships, decide:
 - whether saved and observed nodes are shared across identities or held
   per identity;
 - how switching interacts with the radio, whose provisioned host identity is
-  singular — switching likely reuses the host-replacement takeover flow;
+  singular—switching likely reuses the host-replacement takeover flow;
 - how notifications attribute a message to an identity without leaking
   content;
 - whether identities lock and unlock independently; and
@@ -116,7 +116,7 @@ urgent notification treatment.
 Resolved: there is no deferred application outbox. An eligible logical send
 starts immediately; when the radio is disconnected or duty-limited, Send looks
 blocked and explains the reason while the text remains a draft. Once a send has
-started, MAC scheduling, backoff, acknowledgement handling, and retransmission
+started, MAC scheduling, backoff, acknowledgment handling, and retransmission
 remain part of that active send and are not UI-level deferral. A terminal
 failure offers an explicit manual Retry after re-validating identity, radio,
 and channel context. Retry reuses the chat Message Sequence ID while fresh
@@ -197,8 +197,8 @@ people or between one person's devices.
 
 ## Bulk device commissioning
 
-Configuring several devices identically — a set of repeaters for one
-deployment — is not supported and is deliberately left for later. The
+Configuring several devices identically—a set of repeaters for one
+deployment—is not supported and is deliberately left for later. The
 underlying model keeps it reachable: a device's configuration is a set of
 whole-value settings, so a saved template is a stored set of those values
 replayed against another device rather than a new mechanism.

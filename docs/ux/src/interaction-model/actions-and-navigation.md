@@ -15,6 +15,8 @@ UMSH interfaces should use these user-facing concepts consistently:
 | Disconnect | End the current connection without forgetting trust |
 | Forget / Clear bonds | Remove stored companion trust |
 | Silence | Suppress optional audible feedback and alerts |
+| Share location | Include position in what the device advertises |
+| Forwarding | Relay other nodes' frames onward |
 | Sleep / Power off | Enter the board's lowest intended user-wakeable state |
 | Update firmware | Enter a guided maintenance flow |
 
@@ -49,6 +51,40 @@ For a headless tracker, prefer this hierarchy:
 
 Click and hold thresholds belong to a shared, tested recognizer. Board code
 must debounce input and must not infer multi-click events independently.
+
+## Display tracker navigation
+
+A display tracker navigates a list. Three intents are required of every board
+in the class, whatever controls it has:
+
+| Intent | Meaning |
+|---|---|
+| Next | Move forward to the next item, wrapping at the end |
+| Select | Open, activate, or toggle the visible item |
+| Previous | Move backward to the previous item, wrapping at the start |
+
+A board with richer input may add these, and must not require them:
+
+| Intent | Meaning |
+|---|---|
+| Up, Down | Aliases for Previous and Next within a list |
+| Back | Leave the current level, as if its Back entry had been selected |
+
+The optional intents are shortcuts to results the required three already
+reach. That is what keeps one interaction model across boards with very
+different controls: a user who learns a one-button device can operate a D-pad
+device, and a user who learns the D-pad has learned nothing that fails on the
+button. A board must not give an optional control a meaning the required three
+cannot produce.
+
+On a single-button board the mapping is single click for Next, double click for
+Select, and release after a one-to-four-second hold for Previous. Continuing to
+hold past four seconds always powers the device off, from any screen and
+regardless of display state. There is no Back gesture on such a board; the Back
+entry in each submenu is how the user gets out.
+
+The screens these intents drive, and what each one shows, are in
+[Display Tracker Screens](../classes/display-tracker-screens.md).
 
 ## Keyboard and pager navigation
 

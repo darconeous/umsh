@@ -76,14 +76,14 @@ background scan is still running.
 
 All URI entry points use the same staged behavior:
 
-1. **Acquire** — scan, paste, open a link, or type.
-2. **Parse locally** — identify the URI kind and reject malformed or unsupported
+1. **Acquire**—scan, paste, open a link, or type.
+2. **Parse locally**—identify the URI kind and reject malformed or unsupported
    values without network access.
-3. **Preview** — show the intended result, security meaning, metadata, and any
+3. **Preview**—show the intended result, security meaning, metadata, and any
    conflict with local data.
-4. **Confirm** — the user chooses an action appropriate to the URI kind.
-5. **Verify when possible** — validate embedded signatures and show the result.
-6. **Commit** — add or update local state without silently starting a
+4. **Confirm**—the user chooses an action appropriate to the URI kind.
+5. **Verify when possible**—validate embedded signatures and show the result.
+6. **Commit**—add or update local state without silently starting a
    transmission.
 
 Unknown URI parameters should not cause rejection unless the protocol marks

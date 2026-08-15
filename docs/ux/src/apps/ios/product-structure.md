@@ -34,11 +34,11 @@ color suggestions may be ignored or adapted.
 
 The compact tab bar contains:
 
-1. **Conversations** — `message` symbol; badge is unread conversations, not
+1. **Conversations**—`message` symbol; badge is unread conversations, not
    raw packets.
-2. **Peers** — `point.3.connected.trianglepath.dotted` or the closest current
+2. **Peers**—`point.3.connected.trianglepath.dotted` or the closest current
    system symbol; no badge for routine discovery.
-3. **Settings** — `gearshape`; a badge appears only for an actionable radio,
+3. **Settings**—`gearshape`; a badge appears only for an actionable radio,
    identity, or migration problem.
 
 Channels are not a tab. Membership is a handful of keys that change only when
@@ -107,8 +107,8 @@ Offer only recovery choices the product can safely support:
 - **Restore an exported identity**, shown only when the protected identity
   export format is implemented (hidden, not disabled, before then).
 
-Creation asks for a display name first — explained as advertised, changeable,
-and not unique — then generates the key pair locally, previews the exact
+Creation asks for a display name first—explained as advertised, changeable,
+and not unique—then generates the key pair locally, previews the exact
 44-character Base58 public address, and explains that losing the private key
 changes how the mesh recognizes the user. The name may be left blank; the
 address, not the name, is the identity.
@@ -177,9 +177,10 @@ traffic sits above a quiet direct chat; a conversation with no messages yet is
 as recent as its creation, so a chat just opened sits at the top where the
 user who opened it will look for it.
 
-Not every joined channel appears. Joining from Settings is membership alone —
-the conversation is created when the user asks for one, either from **New
-Channel Chat…** or from **Enter Conversation** in Channel Detail. Joining a
+Not every joined channel appears. Joining from Settings is membership
+alone—the conversation is created when the user asks for one, either from
+**New Channel Chat…** or from **Enter Conversation** in Channel Detail.
+Joining a
 channel *through* the compose menu is a request to talk in it, so that path
 creates and opens the conversation. `public` is the exception: while joined,
 its conversation always exists, because it is where an off-grid conversation
@@ -189,13 +190,13 @@ The search field is hidden until the list is dragged down, which is where a
 reader looking for someone reaches for it. Results are grouped in the order
 they are most likely wanted:
 
-1. **Conversations** — matching conversations of either kind, rendered exactly
+1. **Conversations**—matching conversations of either kind, rendered exactly
    as they are in the list proper and in the same most-recent-activity order.
    Somewhere the user already talks is almost always what they were reaching
    for.
-2. **Peers** — saved nodes with no conversation yet.
-3. **Channels** — joined channels with no conversation yet.
-4. **Discovered nodes** — the transient tier the Peers list hides, included on
+2. **Peers**—saved nodes with no conversation yet.
+3. **Channels**—joined channels with no conversation yet.
+4. **Discovered nodes**—the transient tier the Peers list hides, included on
    the reasoning that a node heard over the air is reachable, so it is
    findable.
 
@@ -206,7 +207,7 @@ companion radio is never a result; it is hardware, not a correspondent.
 
 Search matches a node's local mnemonic alias, advertised name, Base58 address,
 and canonical rendered hint; and a channel's alias, its own name, and its
-identifier. Address and identifier matching is by prefix — both are exact
+identifier. Address and identifier matching is by prefix—both are exact
 encodings, so a hit in the middle of one carries no meaning. Message search is
 not implemented. Searching does not require network access.
 
@@ -252,16 +253,16 @@ avatar color never changes for security state.
 
 Tapping the avatar/title opens the **conversation info sheet**, which both kinds
 of conversation share. It answers what the conversation *is*: a row leading to
-whoever — or whatever — is on the other end (Peer Detail for a direct chat,
+whoever—or whatever—is on the other end (Peer Detail for a direct chat,
 Channel Detail for a group one), what the transcript holds, and the
 conversation-level actions. It is deliberately not the peer or channel sheet
 itself; those describe a node and a key, which outlive any one conversation
 with them. From a group conversation, Channel Detail does not offer **Enter
-Conversation** — entering it is what got the user there.
+Conversation**—entering it is what got the user there.
 
 **Clear All Messages** erases the transcript while keeping the conversation:
 the row, its draft, and its place in the wire stream all survive, so it is the
-action for a conversation the user intends to keep using — as distinct from
+action for a conversation the user intends to keep using—as distinct from
 deleting the conversation. It is local only; nothing is sent and everyone else
 keeps their copy. Outbound stream checkpoints are retained for the same reason
 deleting a conversation retains them: sequence continuity with the far end has
@@ -282,7 +283,7 @@ eligible logical send starts immediately, although the MAC may schedule and
 retransmit while that active send is in progress. A terminal failure stays in
 the transcript with an explicit Retry action. Retry sends the same logical chat
 message and Message Sequence ID in fresh packets with fresh counters. If a send
-ends without its expected acknowledgement, **delivery unconfirmed** is an
+ends without its expected acknowledgment, **delivery unconfirmed** is an
 effectively terminal state rather than a promise to finish after reconnection.
 Valid late evidence may still upgrade it without showing ongoing progress in
 the meantime.
@@ -314,14 +315,14 @@ sender identity the wire must carry is a 3-byte hint. Each inbound bubble is
 paired with its sender's deterministic hint avatar and a label, chosen in
 descending order of authority:
 
-1. the name this phone has for that peer — an alias it was given, or a name it
+1. the name this phone has for that peer—an alias it was given, or a name it
    advertised and signed;
 2. the name the sender attached to the message itself;
 3. their address; then
 4. **Member a1b2c3**, the bare hint.
 
-The message-borne name is the sender's own unverified claim — anyone holding
-the channel key can write anything there — so it is useful exactly when
+The message-borne name is the sender's own unverified claim—anyone holding
+the channel key can write anything there—so it is useful exactly when
 nothing better is known, and never displaces a name this phone established. The
 member sheet shows it separately as **Calls themselves** when the two differ.
 Outgoing group messages carry this phone's advertised name for the same
@@ -354,12 +355,12 @@ the trailing edge and use the app's standard outgoing treatment. Timestamps and
 **Sent over radio** remain below/outside the bubble so delivery evidence is not
 mistaken for message content.
 
-Multicast has no acknowledgement, so a group message's terminal success state
+Multicast has no acknowledgment, so a group message's terminal success state
 is **Sent** and never **Delivered**. The message-detail screen explains that
 this is not a group delivery receipt. Invalid public/emergency traffic never
 appears in the normal transcript.
 
-**Details** on any received message — direct or group — reports what the radio
+**Details** on any received message—direct or group—reports what the radio
 observed of the frame it arrived on: hop count (**Direct** when nothing
 relayed it), signal strength, signal-to-noise, link quality, whether the source
 was authenticated, and the route it took. Reachability in a mesh is not
@@ -534,11 +535,11 @@ this phone holds, and nothing heard on the air can add to it.
 
 A channel is drawn as a rounded square, distinguishing it at a glance from a
 peer's circular avatar. It carries the first letter of each word of the
-channel's name, up to four, two to a line — so three and four initials stay as
+channel's name, up to four, two to a line—so three and four initials stay as
 large as two rather than shrinking. A private channel that was never named has
 nothing to initial and shows its identifier instead.
 
-The colour is derived from the key: the channel-identifier derivation run one
+The color is derived from the key: the channel-identifier derivation run one
 byte longer, `HKDF-SHA256(channel_key, salt="UMSH-CHAN-ID", info="", L=3)`, so
 its first two bytes are the identifier itself. Everyone holding the key sees
 the same badge with nothing agreed or transmitted.
@@ -546,24 +547,24 @@ the same badge with nothing agreed or transmitted.
 Two exceptions are recognized on sight rather than read: `public` is a white
 **P** on blue, `EMERGENCY` a white **E** on red.
 
-A derived colour can land anywhere, including the middle of the brightness
+A derived color can land anywhere, including the middle of the brightness
 range where neither black nor white text reads well. The badge keeps the
 derived hue and moves only brightness and saturation, into whichever of a light
 or dark band it is already nearer; each band clears 4.5:1 against a fixed text
-colour.
+color.
 
 ### Channel list
 
 Sections appear only when they contain something:
 
-- The channels this identity is in, with no section header — everything listed
+- The channels this identity is in, with no section header—everything listed
   is joined, which the screen title already says. Each row shows the channel's
   badge, its name as written, a type label (**Built-in**, **Public**,
   **Private**), the two-octet derived identifier in monospace, and which
   identities have joined it (**Phone**, **Radio**, or **Phone and radio**). A
   muted channel carries a bell-slash glyph with a text equivalent for
   VoiceOver. Swiping a row offers to leave, confirmed.
-- **On the radio only** — identifiers the companion radio's device identity
+- **On the radio only**—identifiers the companion radio's device identity
   reports that this phone holds no key for. They are shown, not named: the
   device reports derived identifiers and never key material. Selecting one
   explains that, rather than implying the phone could open it.
@@ -572,9 +573,10 @@ Sections appear only when they contain something:
 are the channels a new user is expected to be reachable on, but neither should
 announce itself before the user has a reason to care.
 
-Either may be left, and the key survives so re-joining needs no invitation —
-but a channel the user has left never appears in this list again. Leaving is a
-decision, and re-offering it here would make the tab an argument rather than a
+Either may be left, and the key survives so re-joining needs no
+invitation—but a channel the user has left never appears in this list again.
+Leaving is a decision, and re-offering it here would make the tab an argument
+rather than a
 statement of what the user is in. The standing offer belongs in the join sheet,
 where the user has already come looking.
 
@@ -591,8 +593,8 @@ applies as every other URI import: parse locally, preview, confirm.
 A **Suggested Channels** section lists any standard channel the user has left,
 as a one-tap re-join. This is the only place the app raises them again.
 
-The preview names the kind — **Public Channel** or **Private Channel
-Invitation** — and states the security meaning plainly: a public name is not a
+The preview names the kind—**Public Channel** or **Private Channel
+Invitation**—and states the security meaning plainly: a public name is not a
 password, and a private key makes its holder a full member who can also send as
 any other member. Joining `EMERGENCY` additionally describes how its traffic
 behaves.
@@ -609,20 +611,20 @@ distinct channels and messages never cross between them.
 
 ### Channel detail
 
-Leads with the channel itself — name as written, type, derived identifier, and
-join date — then local details, then membership. The key is not shown: it is
+Leads with the channel itself—name as written, type, derived identifier, and
+join date—then local details, then membership. The key is not shown: it is
 not something to read, and the invitation is the way it leaves the phone. **Alias** is the local override; it takes display precedence
 everywhere but never changes the channel's own name, exactly as a peer alias
 behaves, and it is what travels nowhere when the channel is shared. The phone and the companion radio are separate members with separate
 key tables, so each has its own control. When no radio with an identity of its
-own is attached, the radio control is unavailable and says why — never simply
+own is attached, the radio control is unavailable and says why—never simply
 "not joined".
 
 Where the protocol fixes a channel's behavior, the screen states it instead of
 offering a control the user could contradict. `public` and `EMERGENCY` show
-their hop ceiling as a value — five without a region code, seven with one —
-rather than as a picker, and a **How This Channel Works** section describes
-what the channel does.
+their hop ceiling as a value—five without a region code, seven with
+one—rather than as a picker, and a **How This Channel Works** section
+describes what the channel does.
 
 That section is written as fact, not instruction. The app applies every one of
 these rules itself, so the user has nothing to comply with and must never be
@@ -634,9 +636,10 @@ is not passed on when the channel is shared again.
 Sharing is the standard system share control in the trailing toolbar position,
 not a row in the form. It opens a sheet with a QR code and URI. A public channel shares only its name. A
 private channel's invitation is key material, and the sheet says so where the
-invitation is, not only on the way in. The name travels written as it is read —
-`umsh:cs:Trail%20Crew` — and canonicalization happens after percent-decoding on
-the way in, so casing survives sharing without changing which channel is meant.
+invitation is, not only on the way in. The name travels written as it is
+read—`umsh:cs:Trail%20Crew`—and canonicalization happens after
+percent-decoding on the way in, so casing survives sharing without changing
+which channel is meant.
 
 Leaving is confirmed. A built-in or public channel can be re-joined from its
 name at any time; a private channel's key is deleted with it, and re-joining
@@ -680,8 +683,8 @@ age where applicable.
 ### Devices
 
 A single **Set up a device…** row opens the device-setup sheet. It is the entry
-point for configuring any nearby UMSH device over its local control interface —
-a repeater or a tracker.
+point for configuring any nearby UMSH device over its local control
+interface—a repeater or a tracker.
 
 Device setup is a foreground session and is deliberately unlike the companion
 binding:
@@ -690,14 +693,14 @@ binding:
   connection, and neither interrupts the other;
 - it never claims the device for this phone, so the device's existing host
   identity, filters, and queued traffic are left alone;
-- nothing is remembered between visits — no saved device list, no automatic
+- nothing is remembered between visits—no saved device list, no automatic
   reconnection, and a dropped link ends the session with **Connection lost**
   and a retry rather than a background wait; and
 - the device's own Bluetooth pairing still gates every connection.
 
 The sheet asks what the device is for before it looks for one: **Set up a
 tracker**, **Set up a repeater**, or **Change a device's settings**. The goal
-comes first because it decides the rest — which devices can serve it, which
+comes first because it decides the rest—which devices can serve it, which
 settings a person should be asked about, and which the role itself answers.
 
 The two setup goals present a short sheet rather than the full editor. The full
@@ -706,8 +709,8 @@ editor is reached from the sheet, but only after the write.
 #### What each goal decides
 
 A goal decides what it can from context and asks about the rest. Assumed values
-are not recited back — a goal named "set up a tracker" already says the device
-will not forward — with one exception, the radio profile below, whose failure
+are not recited back—a goal named "set up a tracker" already says the device
+will not forward—with one exception, the radio profile below, whose failure
 mode is silent.
 
 | | Decided | Asked |
@@ -718,7 +721,7 @@ mode is silent.
 
 Setup is not monitoring: a setup sheet carries no live readouts, no
 find-this-device, and no battery. Those belong to the editor reached afterwards.
-The positioning **policy** — receiver, disclosure, precision, clock trust — is a
+The positioning **policy**—receiver, disclosure, precision, clock trust—is a
 decision and appears; the fix, satellite count, and coordinates are readings and
 do not.
 
@@ -727,18 +730,18 @@ do not.
 Putting a node on a mesh means putting it on the mesh's profile, and the one
 profile the phone can be sure of is the one its own radio is using. A setup
 sheet copies it, reduced to what the target device accepts, and shows the result
-as a single row naming the profile and its numbers — including transmit power,
+as a single row naming the profile and its numbers—including transmit power,
 so copying a handheld's power onto a mast-mounted repeater is visible and
 correctable. The row pushes the preset picker and the manual PHY fields.
 
 It sits at the foot of the sheet rather than the head. It is shown because its
-failure mode is silent, not because it is the first thing to decide — the sheet
+failure mode is silent, not because it is the first thing to decide—the sheet
 opens on the device's name, which is the question only the operator can answer.
 
 With no companion radio attached, or one that reported no modem settings, the
 row asks instead of guessing, and answering it is what releases Apply. When
-there is also nothing safe to offer — the device would not report the modem
-settings a profile has to set — the device is left on the profile it already
+there is also nothing safe to offer—the device would not report the modem
+settings a profile has to set—the device is left on the profile it already
 had, and the row says so.
 
 #### Goals a device cannot serve
@@ -747,7 +750,7 @@ A goal is refused only when the device cannot do the thing being asked of it,
 and the refusal happens as the device attaches, with the reason and a way back
 to the list. A tracker needs its own node identity and a way to announce it. A
 repeater needs to be able to forward, and to have reported what its forwarding
-policy currently is — a policy that cannot be read is one a sheet must not
+policy currently is—a policy that cannot be read is one a sheet must not
 overwrite.
 
 Everything else degrades and says so in a line at the top of the sheet: a device
@@ -760,8 +763,8 @@ the order they were first heard, and appear and disappear with an animation: a
 list of things in the room should not rearrange itself, and a name arriving on a
 later advertisement should not move the row it names.
 
-The editor states whose device it is — **Not configured**, **This phone**, or
-**Another host** — as information, not as a gate. A setup sheet reduces that to
+The editor states whose device it is—**Not configured**, **This phone**, or
+**Another host**—as information, not as a gate. A setup sheet reduces that to
 the one case worth interrupting for: a device that is another phone's companion
 radio. It groups device name, radio profile and PHY parameters, advertised
 identity, and repeater policy. The whole editor is applied as one operation: the
@@ -772,24 +775,24 @@ rather than quietly accepted.
 
 A device accepts its configuration whole. Settings a device advertises a
 capability for but will not report are still written, from this sheet's values,
-because the write is all-or-nothing — the interface says so rather than
+because the write is all-or-nothing—the interface says so rather than
 promising they are left alone.
 
 #### Finishing a setup
 
-Applying a setup sheet is two exchanges — the configuration, then the clock,
-which is written live because a saved epoch comes back arbitrarily wrong — and
+Applying a setup sheet is two exchanges—the configuration, then the clock,
+which is written live because a saved epoch comes back arbitrarily wrong—and
 they are reported as one result. Apply raises a modal that says what it is doing
 and cannot be dismissed while the write is in flight, then resolves in place:
 
-- **success** — a congratulation naming what was set up, a **Save to Peers**
+- **success**—a congratulation naming what was set up, a **Save to Peers**
   row, **Review all settings**, and **Set up another device**;
-- **success without the clock** — the same, plus a line saying the clock did not
+- **success without the clock**—the same, plus a line saying the clock did not
   take, because the device is set up and the retry is one tap away in the
   editor;
-- **reported differently** — not a congratulation. It names the field and says
+- **reported differently**—not a congratulation. It names the field and says
   to read the device again before relying on it; and
-- **the write did not land** — the modal goes away and the sheet behind it
+- **the write did not land**—the modal goes away and the sheet behind it
   carries the reason, so the operator can correct and retry without dismissing
   anything first.
 
@@ -802,8 +805,8 @@ kind of thing.
 #### Device identity
 
 A device that exposes its own UMSH identity offers it through the same node
-identity screen every other node uses — complete Base58 address, canonical
-hint, and shareable QR — not an abbreviated hint on the editor. A device that
+identity screen every other node uses—complete Base58 address, canonical
+hint, and shareable QR—not an abbreviated hint on the editor. A device that
 exposes no identity says so rather than showing an empty row.
 
 That screen offers **Save Peer**, which records the node locally so it can be
@@ -815,8 +818,8 @@ for it.
 #### Advertised identity
 
 Role and mobility are separate questions from forwarding. A role left as
-**Derive from what it does** lets the device present itself honestly — a
-forwarding node advertises as a repeater and anything else as a tracker — and
+**Derive from what it does** lets the device present itself honestly—a
+forwarding node advertises as a repeater and anything else as a tracker—and
 the editor states the resulting role in place rather than making the user infer
 it. An explicit role is advertised verbatim, so a mobile repeater and a
 stationary tracker both remain expressible.
@@ -838,12 +841,13 @@ A routing region is a routing domain, not an RF band plan, and the interface
 must never present the two as one choice: a region scopes how far a flood
 travels, while frequency and modulation live in the radio profile. Regions are
 entered as a three-letter airport code, a region name the local mesh has agreed
-on, or a raw code, and are always displayed with that code — `SJC (0x7853)` —
-because the code is what appears in a capture or on another node. An empty
-region list forwards traffic from every region, which is a different statement
-from forwarding nothing; the interface says which one is in effect.
+on, or a raw code, and are always displayed with that
+code—`SJC (0x7853)`—because the code is what appears in a capture or on
+another node. An empty region list forwards traffic from every region, which
+is a different statement from forwarding nothing; the interface says which one
+is in effect.
 
-The default-region choice includes an explicit **None — don't tag**, so tagging
+The default-region choice includes an explicit **None—don't tag**, so tagging
 untagged traffic is opt-in. Only a region already in the forwarding list can be
 chosen, which keeps a device from advertising a region it does not relay.
 
@@ -876,17 +880,17 @@ The Settings tab is a native grouped list, not a dashboard. The first two rows
 are the current identity and current radio because they determine whether the
 app can participate:
 
-1. **Your identity** — display name and storage/recovery status; selecting it
+1. **Your identity**—display name and storage/recovery status; selecting it
    opens the complete Base58 address, sharing, advertised metadata, and
    location-sharing defaults.
-2. **T1000-E Radio** — **Connected · 78%** (or the truthful alternative power
+2. **T1000-E Radio**—**Connected · 78%** (or the truthful alternative power
    state) and active preset; selecting it opens Radio Detail.
-3. **Set up a device…** — configuring any other nearby UMSH device, which is a
+3. **Set up a device…**—configuring any other nearby UMSH device, which is a
    separate activity from choosing the radio this phone uses.
-4. **Mesh and radio defaults** — regions, routing defaults, named presets, and
+4. **Mesh and radio defaults**—regions, routing defaults, named presets, and
    expert controls.
 5. **Notifications** and **Privacy**.
-6. **Data and diagnostics** — storage, logs, export, and versions.
+6. **Data and diagnostics**—storage, logs, export, and versions.
 7. **About UMSH**.
 
 Destructive identity and radio actions appear only inside their respective

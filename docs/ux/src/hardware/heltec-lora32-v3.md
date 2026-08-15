@@ -46,7 +46,7 @@ seconds as a warning, dark at ten. A pairing window holds it awake for its whole
 duration, because the OLED is the only place the pairing PIN is ever shown.
 
 Battery samples and bond-count changes redraw the panel while it is lit but
-never light it — the battery is sampled on a timer, so treating a sample as
+never light it—the battery is sampled on a timer, so treating a sample as
 attention would keep the display on forever. Button presses and BLE
 connection-state changes do wake it.
 
@@ -57,7 +57,7 @@ status page.
 
 ### Power off
 
-The four-second hold passes through regardless of display state — a dark board
+The four-second hold passes through regardless of display state—a dark board
 still has to be switchable off. The sequence is ordered:
 
 1. The radio enters chip sleep. It is powered from the board's main rail rather
@@ -77,6 +77,10 @@ shared [`umsh-ux-display-tracker`][ux-crate] menu, attention, and gate modules.
 
 ## Notes and limitations
 
+- The menu is flat rather than the hierarchy in
+  [Display Tracker Screens](../classes/display-tracker-screens.md). The 128×64
+  panel is too small for a scannable QR code, so Identity on this board is
+  address text alone; everything else in that model applies unchanged.
 - No locate alert. The board's only conspicuous output is the OLED, and its
   permanent wired attach means a second host can be present while an alert runs.
 - `Vext` stays powered while the display is merely lapsed. Only power-off drops

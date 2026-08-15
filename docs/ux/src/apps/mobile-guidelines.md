@@ -51,7 +51,7 @@ than blocking the mesh interface.
 
 The application should not imply that its own background execution is
 continuous. If the radio supports filtering, inbound buffering, or delegated
-acknowledgements, describe the specific assistance that is active. Never call
+acknowledgments, describe the specific assistance that is active. Never call
 the radio a backup copy of the user's identity: it does not possess the user's
 private key.
 
@@ -162,10 +162,10 @@ is one shared action with one preview-and-confirm flow.
 
 The application has several independent readiness dimensions:
 
-1. **Identity ready** — a user identity exists and is unlocked for use.
-2. **Radio connected** — a trusted companion link is active.
-3. **Radio configured** — an RF preset or explicit parameters are valid.
-4. **Mesh reachable** — recent traffic or delivery evidence suggests useful
+1. **Identity ready**—a user identity exists and is unlocked for use.
+2. **Radio connected**—a trusted companion link is active.
+3. **Radio configured**—an RF preset or explicit parameters are valid.
+4. **Mesh reachable**—recent traffic or delivery evidence suggests useful
    connectivity.
 
 Do not collapse these into one green or red dot. A disconnected radio is a
@@ -201,7 +201,7 @@ Use the most specific truthful presentation available:
 A radio that advertises no battery capability has no power position: omit it
 rather than reporting it as unavailable, and omit the power detail section of
 Radio Detail entirely. Where the radio does measure its power state, Radio
-Detail reports each measured field it publishes — level, terminal voltage in
+Detail reports each measured field it publishes—level, terminal voltage in
 volts, and charge state as discharging, charging, or charged.
 
 Never omit the power position of a battery-reporting radio merely because its

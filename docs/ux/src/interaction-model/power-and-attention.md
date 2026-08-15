@@ -31,7 +31,7 @@ differs because their costs differ.
 The user-visible rule is the same on both: after a while away, the device
 forgets what you were in the middle of, so the next press starts from a page
 whose meaning is on screen. A persistent panel must not be blanked to imitate an
-emissive one — a screen that is readable at no cost should stay readable.
+emissive one—a screen that is readable at no cost should stay readable.
 
 ### What restarts the timeout
 
@@ -39,7 +39,7 @@ Wake on anything that means the user is present or wants to be: a button or
 navigation press, a connection-state change, an opening pairing window, an
 alert, a low-battery notice, entering a maintenance flow.
 
-Do **not** wake on content the device produced on its own — a battery sample, a
+Do **not** wake on content the device produced on its own—a battery sample, a
 bond count, a periodic refresh. Redraw those only while the panel is already
 showing something. A device that samples on a timer and treats each sample as
 attention will never let its display sleep.
@@ -47,7 +47,7 @@ attention will never let its display sleep.
 Some conditions must hold the display awake for as long as they last rather than
 merely restarting the timeout. A pairing window is the clearest case: its PIN
 has to stay readable for the whole window. An ordinary connected or attached
-state is not such a condition — a device that holds its display awake whenever a
+state is not such a condition—a device that holds its display awake whenever a
 companion is connected has no display timeout at all.
 
 ### Input against a lapsed display
@@ -73,7 +73,7 @@ finished refreshing is discarded rather than acted on.
 ### Timings
 
 Ten seconds suits an emissive panel, with the last three of them dimmed. A
-persistent panel can afford longer — thirty seconds is comfortable — because
+persistent panel can afford longer—thirty seconds is comfortable—because
 only stale context is at stake, and because a visible refresh makes an
 aggressive fallback an annoyance of its own.
 

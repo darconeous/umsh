@@ -6,13 +6,17 @@ the first board in the family to combine an emissive panel with a sounder, so it
 is also the first where a locate alert has something loud to say and something
 bright to say it on.
 
-This page covers the OLED variants — L1, L1 Pro, and L1 Lite share a pin map and
+This page covers the OLED variants—L1, L1 Pro, and L1 Lite share a pin map and
 one firmware image. The L1 e-ink variant drives a different panel on a second SPI
 bus and is not supported.
 
 The board also carries a five-way joystick, which is not wired to the
 interaction model yet; making navigation direct rather than modal is the first
-thing to add here.
+thing to add here. It is the only board in the family that can offer the
+optional
+[Up, Down, and Back intents](../interaction-model/actions-and-navigation.md#display-tracker-navigation)
+alongside the three every display tracker requires, and it must reach the same
+results with them that the nav button reaches without them.
 
 Its GNSS receiver is driven, and is also the board's only clock: the module
 sits on the battery rail with no enable, so its backup domain keeps time
@@ -35,8 +39,8 @@ draw nothing, which is what leaves this five-row panel enough space to show
 both gesture hints on the page users sit on.
 
 The Stats page reports frames transmitted and received, frames repeated
-onward, receptions that went nowhere, transmit power, and duty-cycle usage —
-enough to tell a working node from a deaf one without a capture.
+onward, receptions that went nowhere, transmit power, and duty-cycle
+usage—enough to tell a working node from a deaf one without a capture.
 
 | Input | Meaning |
 |---|---|
@@ -69,7 +73,7 @@ is already lit while the user is still deciding what the press will become; the
 frame is redrawn before the panel is switched on, so a stale frame is never
 visible. Waking always lands on the status page.
 
-Battery readings never light the panel — the battery is sampled on a timer, and
+Battery readings never light the panel—the battery is sampled on a timer, and
 treating a timed sample as attention would keep the display on forever. When the
 charge class or level moves the monitor asks for a redraw, which an already-lit
 panel takes and a dark one ignores; either way the frame is built from the
@@ -86,7 +90,7 @@ silence it, not to open a menu.
 
 ### Power off
 
-The four-second hold passes through regardless of display state — a dark board
+The four-second hold passes through regardless of display state—a dark board
 still has to be switchable off. The board blanks the OLED, waits for the button
 to be released (it is also the wake pin, and arming wake under a held button
 would power straight back on), holds the radio in reset, drives the battery
@@ -99,7 +103,7 @@ mechanical power switch, so software power-off is a convenience rather than the
 only way to stop the drain. It still matters: it is what keeps the protective
 low-battery cutoff from letting an unattended pack deep-discharge with the switch
 left on. There is no board-wide peripheral rail to drop, which is why the radio
-is parked by holding its reset line rather than by cutting its power — the same
+is parked by holding its reset line rather than by cutting its power—the same
 approach the SenseCAP Solar Node takes.
 
 Implemented in [`firmware/nrf52-tracker/src/main.rs`][src] over the shared
@@ -109,6 +113,11 @@ panel, battery monitor, and buzzer in
 
 ## Notes and limitations
 
+- The menu is flat rather than the hierarchy in
+  [Display Tracker Screens](../classes/display-tracker-screens.md). The 128×64
+  panel is too small for a scannable QR code, so Identity here is address text
+  alone; with a driven GNSS receiver and a clock, this board can carry the full
+  Status page.
 - The joystick and the GNSS receiver are wired on the board but not driven.
 - There is no persisted silence preference, so the buzzer cannot be muted ahead
   of an alert the way the T-1000E's can.

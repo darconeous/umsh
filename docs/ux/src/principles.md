@@ -37,7 +37,7 @@ in, and recover pairing without already having a working phone connection.
 
 The shortest gesture or most prominent control should perform the device's
 frequent, non-destructive action. On a tracker this will usually be a check-in,
-location advertisement, or status acknowledgement. On a pager it will usually
+location advertisement, or status acknowledgment. On a pager it will usually
 be opening or sending a message.
 
 Rare, destructive, or maintenance actions must never displace the primary
@@ -83,7 +83,7 @@ blank looks like a defect. It is the worse option: a stale number carries the
 same authority as a fresh one, so the user cannot tell the difference, and
 they will act on it. A charge estimate derived from resting terminal voltage
 means nothing while the pack is charging, and on a charger that reports no
-completion there is no later moment to correct it against — so for that whole
+completion there is no later moment to correct it against—so for that whole
 period the device has no state of charge, and says so. What it does know, that
 the pack is on external power, it still shows.
 
@@ -101,8 +101,8 @@ against asserting what is false, not against admitting what is rough.
 
 A row that is present on almost every frame teaches the user to stop reading
 that row, and takes the space from something that would have been worth
-reading. State whose normal value is uninteresting — a closed pairing window,
-ordinary advertising with nobody connected — earns its place on screen only
+reading. State whose normal value is uninteresting—a closed pairing window,
+ordinary advertising with nobody connected—earns its place on screen only
 when it changes.
 
 Reserve the persistent indicators for what a user checks at a glance and acts

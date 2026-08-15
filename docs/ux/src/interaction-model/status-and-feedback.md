@@ -4,10 +4,10 @@
 
 An asynchronous action can have four states:
 
-1. **Recognized** — the input was accepted.
-2. **Working** — the device is acquiring, transmitting, pairing, or saving.
-3. **Succeeded** — the requested local operation completed.
-4. **Failed** — it did not complete, with a recovery hint where space permits.
+1. **Recognized**—the input was accepted.
+2. **Working**—the device is acquiring, transmitting, pairing, or saving.
+3. **Succeeded**—the requested local operation completed.
+4. **Failed**—it did not complete, with a recovery hint where space permits.
 
 Do not collapse Recognized and Succeeded. In particular, a transmit-start chirp
 does not mean a peer received a message.
@@ -37,14 +37,14 @@ ability:
   - Is it still charging, or is it fully charged?
 
 They are answered independently. Either may be known without the other, and
-neither may be inferred from the other's absence — charging while the level is
+neither may be inferred from the other's absence—charging while the level is
 unknown is an ordinary state, not a contradiction.
 
 ### Charge level
 
 Where the hardware permits it, the level is drawn as a body divided into
-segments. Bands are chosen so that each segment count sits *centred* on the
-level it depicts rather than starting at it — a body drawn half full should
+segments. Bands are chosen so that each segment count sits *centered* on the
+level it depicts rather than starting at it—a body drawn half full should
 mean a pack that is roughly half full. With four segments:
 
 | Level | Segments lit |
@@ -66,8 +66,8 @@ across a discharge.
 
 ### No level to show
 
-When there is no level, no body is drawn. An empty body is a reading — it means
-a pack down to its last sixth — and the absence of a reading must not borrow
+When there is no level, no body is drawn. An empty body is a reading—it means
+a pack down to its last sixth—and the absence of a reading must not borrow
 it. This is the [honesty principle](../principles.md) applied to the one
 indicator users check most often: a device that has not yet established a level,
 or that has withdrawn one it can no longer substantiate, shows nothing rather
@@ -98,7 +98,7 @@ charging and close to done; a plug beside a full body means finished. A glyph
 with no body means the power state is known and the level is not.
 
 Whichever glyph is showing holds the same position, and the same position it
-would hold if the other were showing — an indicator that slides sideways when
+would hold if the other were showing—an indicator that slides sideways when
 the charger goes in reads as two changes rather than one.
 
 ### Degrading to what the hardware can tell
@@ -141,7 +141,7 @@ system status chrome remain above the application-owned toolbar/status area.
 ## LEDs
 
 Keep the codebook small. A single LED should normally express power/liveness,
-one pending state, and immediate event acknowledgements—not the entire device
+one pending state, and immediate event acknowledgments—not the entire device
 state. Event patterns may temporarily preempt a heartbeat, then return to the
 original cadence.
 

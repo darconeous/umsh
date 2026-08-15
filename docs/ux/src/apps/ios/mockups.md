@@ -74,7 +74,7 @@ logical message, not raw companion-link traffic.
 │        ┌ Can you hear me? ───────┐  │
 │        │                     9:40│  │
 │        │          Delivered to node│ │
-│ ┌ Yes — near the ridge. ─────────┐ │
+│ ┌ Yes—near the ridge. ───────────┐ │
 │ │ 9:41                            │ │
 │ └─────────────────────────────────┘ │
 │        ┌ On my way. ─────────────┐  │
@@ -93,7 +93,7 @@ Send has a visibly blocked treatment but remains an explanatory action, using
 the same pattern as the duty-limited state below. There is no deferred outbox.
 **On my way.** was transmitted before the disconnection and shows terminal
 **Delivery unconfirmed** because its active send ended without the expected
-acknowledgement. **Copy that.** failed mid-send and offers an explicit **Retry**
+acknowledgment. **Copy that.** failed mid-send and offers an explicit **Retry**
 on the message itself. Retry sends the same logical chat Message Sequence ID in
 fresh packets with fresh counters, so an already-received copy is reconciled
 rather than shown twice. MAC retransmissions may have occurred before the

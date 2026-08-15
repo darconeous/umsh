@@ -40,16 +40,23 @@ Use the display to make local state and sensitive actions explicit.
 
 Display trackers share one interaction model regardless of panel technology or
 input richness, because a user who learns one should already know the others.
-One-button navigation uses single = next, double = select, and hold-release =
-back, with the mapping printed on every relevant screen; a longer, continuing
-hold always powers the device off. A board with a D-pad maps its own controls
-onto the same three actions rather than inventing a second vocabulary.
+Every board in the class navigates with the same three intents—Next, Select,
+and Previous—and a board with a D-pad or a Back key maps its controls onto
+those rather than inventing a second vocabulary. On a one-button board they are
+single click, double click, and hold-release, with the mapping printed on every
+relevant screen; a longer, continuing hold always powers the device off. The
+intents are specified in
+[Actions and Navigation](../interaction-model/actions-and-navigation.md#display-tracker-navigation).
 
-The menu is a wrapping list with a home page, and each board enables the subset
-of entries it can actually perform. Destructive entries open a confirmation
-that defaults to Cancel — the confirmation is what makes them safe to expose on
-the menu at all, so a board should not hide such an action behind an
-undocumented gesture instead.
+Each level of the menu is a wrapping list with a home page, and each board
+enables the subset of entries it can actually perform. Destructive entries open
+a confirmation that defaults to Cancel—the confirmation is what makes them
+safe to expose on the menu at all, so a board should not hide such an action
+behind an undocumented gesture instead.
+
+The screens themselves—what the home page shows, where each setting lives,
+and how the header reports Bluetooth, position, and power—are in
+[Display Tracker Screens](display-tracker-screens.md).
 
 Display attention, including what a lapse does on each panel technology and how
 input against a lapsed panel is treated, is specified in

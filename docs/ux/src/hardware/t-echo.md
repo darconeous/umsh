@@ -8,8 +8,8 @@ but the display makes status and sensitive device actions visible.
 ## Implemented behavior
 
 The e-paper menu contains Status, Stats, Check in, Start pairing, and Clear
-bonds. Every frame — menu, confirmation, and the transient message screens
-alike — carries a header with the device name and a battery indicator.
+bonds. Every frame—menu, confirmation, and the transient message screens
+alike—carries a header with the device name and a battery indicator.
 The indicator follows the shared
 [battery rules](../interaction-model/status-and-feedback.md): a four-segment
 body, no body at all when there is no level, and a bolt whenever the pack is on
@@ -28,7 +28,7 @@ nowhere, the configured transmit power, and duty-cycle usage. It is sampled
 when a frame is drawn rather than pushed, so watching it costs no extra panel
 refreshes.
 
-Clear bonds names the count it would destroy — "Clear 3 bonds?" — which is
+Clear bonds names the count it would destroy—"Clear 3 bonds?"—which is
 where that number changes a decision.
 
 | Input | Meaning |
@@ -53,21 +53,20 @@ A running locate alert both flashes the indicator LED and strobes the e-paper
 backlight twice a second, and the screen says so. The backlight is by far the
 most conspicuous output on this board, which is the whole point of an alert; it
 is arbitrated, so the touch control behaves normally whenever no alert is
-running. Any press during an alert cancels it instead of navigating — except the
+running. Any press during an alert cancels it instead of navigating—except the
 four-second power-off hold, which always powers off.
 
 ### Charging
 
-The board sees only VBUS presence — the charger's status line reaches no GPIO
-— so it can tell that charging has started but never that it has finished.
+The board sees only VBUS presence—the charger's status line reaches no
+GPIO—so it can tell that charging has started but never that it has finished.
 Charging terminal voltage does not map through the discharge curve, and
 without a completion signal there is no later moment to recalibrate against,
 so for as long as the board is plugged in it has no state of charge at all.
 The indicator therefore shows a bolt with no body beside it and never a plug,
 the diagnostic row reads `chg` instead of a percentage, and `PROP_BATTERY`
-omits the level
-while continuing to report voltage and charge state. A real level returns on
-the first quiet sample after the charger goes away.
+omits the level while continuing to report voltage and charge state. A real
+level returns on the first quiet sample after the charger goes away.
 
 The capacitive touch control sits outside the attention and gate models
 entirely. It is a momentary light for reading a bistable panel in the dark, not
@@ -86,6 +85,11 @@ Implemented in [`firmware/nrf52-tracker/src/main.rs`][techo-src] over the shared
 
 ## Recommended evolution
 
+- The menu is flat, and the panel is the largest in the class. It should grow
+  into the hierarchy in [Display Tracker Screens](../classes/display-tracker-screens.md):
+  Identity with a QR code, Messages, and the Bluetooth, GNSS, and Radio
+  submenus. At 200×200 this board is the one that can carry a scannable
+  `umsh:n:` symbol.
 - Keep extending the default page toward glanceability: it carries battery,
   BLE connection, and pairing today; silence/attention state, where
   applicable, is still missing.

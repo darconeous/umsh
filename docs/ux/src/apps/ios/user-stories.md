@@ -180,7 +180,7 @@ app is not connected.
 Acceptance criteria:
 
 - The summary separately describes filtering, inbound buffering, channel
-  recognition, and delegated acknowledgements.
+  recognition, and delegated acknowledgments.
 - The app names capability limitations of the current radio.
 - Enabling key provisioning includes a concise security disclosure.
 - The interface never claims the radio holds the user's private identity key.
@@ -199,7 +199,7 @@ Acceptance criteria:
 - The scan list marks the phone's own radio and does not offer it for setup.
 - Devices are listed in the order they were first heard and are not reordered
   when a name arrives later; insertions and removals are animated.
-- The device's host ownership — not configured, this phone, or another host — is
+- The device's host ownership—not configured, this phone, or another host—is
   stated as information; a device belonging to another phone remains editable
   and its host domain is untouched.
 - The device's own UMSH identity is reachable from the editor through the same
@@ -245,8 +245,8 @@ and be asked only about the things I am the one who knows.
 Acceptance criteria:
 
 - Choosing a setup goal presents a short sheet, not the full editor.
-- Everything the role settles — forwarding, the radio switch, the advertised
-  role, mobility, the time zone, the clock — is decided without being recited
+- Everything the role settles—forwarding, the radio switch, the advertised
+  role, mobility, the time zone, the clock—is decided without being recited
   back.
 - The radio profile is the exception and is shown, because a node on the wrong
   profile is not broken, it is alone. It is copied from the phone's own radio,
@@ -419,7 +419,7 @@ node.
 Acceptance criteria:
 
 - Pressing Send immediately creates one optimistic local message.
-- Local radio acceptance and remote MAC acknowledgement are distinct states.
+- Local radio acceptance and remote MAC acknowledgment are distinct states.
 - **Delivered to node** appears only with valid end-to-end evidence.
 - Failure offers Retry and Details without duplicating the logical message;
   retry is only ever a manual action on the failed message.
@@ -441,7 +441,7 @@ Acceptance criteria:
   it sends nothing and explains that a connected radio is required.
 - No outbox item is created; nothing transmits automatically on reconnection,
   and reconnecting re-enables Send with the draft intact.
-- If a send ends at disconnection without its expected acknowledgement, it
+- If a send ends at disconnection without its expected acknowledgment, it
   shows terminal **Delivery unconfirmed** rather than waiting for reconnection.
 - Valid late evidence may upgrade that result, but the UI does not show it as
   pending in the meantime.
@@ -689,7 +689,7 @@ Acceptance criteria:
   unlabeled stale reading.
 - The current draft remains intact, and Send takes on a visibly blocked
   treatment whose action explains the reason instead of queueing anything.
-- An active send that ends at the loss without its expected acknowledgement
+- An active send that ends at the loss without its expected acknowledgment
   shows terminal **Delivery unconfirmed** rather than waiting for reconnection.
 - Incoming-queue uncertainty is reconciled after identity/session checks.
 - Reconnection does not reopen pairing for a valid bond.

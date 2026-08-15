@@ -11,7 +11,7 @@ icon and accessible text:
 
 | Kind | Transport behavior | Meaning of success evidence |
 |---|---|---|
-| Direct | Unicast or blind unicast to one node | A valid MAC acknowledgement can show arrival at the destination node |
+| Direct | Unicast or blind unicast to one node | A valid MAC acknowledgment can show arrival at the destination node |
 | Channel | Multicast to every holder of a shared channel key | Transmission does not prove that any member received it |
 | Room | Unicast submission to a chat-room node, then room distribution | The room's correlated echo proves room acceptance and supplies the canonical message ID |
 
@@ -73,17 +73,17 @@ may summarize them in the transcript.
 | Preparing | Application is encoding or fragmenting | Brief progress indication |
 | Sending | One or more frames are being handed to the radio | Progress when fragmented |
 | Transmitted | The radio reported local transmission success | **Sent over radio** in details; not **Delivered** |
-| Delivered to node | A valid direct-message acknowledgement arrived | **Delivered to node** |
+| Delivered to node | A valid direct-message acknowledgment arrived | **Delivered to node** |
 | Accepted by room | A correlated room echo arrived | Replace pending local identity with canonical room message identity |
-| Delivery unconfirmed | The active send ended after local transmission without the expected direct acknowledgement or room echo | **Sent over radio · delivery unconfirmed**; effectively terminal, with no progress indicator or promised automatic resolution; valid late evidence may still upgrade it |
-| Failed | The send attempt could not complete — the link dropped mid-send, the radio rejected it, or an error occurred | Specific reason and an explicit Retry action |
+| Delivery unconfirmed | The active send ended after local transmission without the expected direct acknowledgment or room echo | **Sent over radio · delivery unconfirmed**; effectively terminal, with no progress indicator or promised automatic resolution; valid late evidence may still upgrade it |
+| Failed | The send attempt could not complete—the link dropped mid-send, the radio rejected it, or an error occurred | Specific reason and an explicit Retry action |
 | Partially sent | Some fragments transmitted but the logical message is incomplete | Name missing/failed fragments; allow retry of the logical message |
 
 There is no waiting-for-radio state: an eligible user send starts immediately,
 while an ineligible send remains a draft. After it starts, the MAC may schedule
-contention, fragmentation, acknowledgements, and retransmissions as part of
+contention, fragmentation, acknowledgments, and retransmissions as part of
 that active send. This is not a deferred application send. Waiting for a direct
-acknowledgement or room echo after transmission is likewise not queueing.
+acknowledgment or room echo after transmission is likewise not queueing.
 
 Channel messages normally stop at **Transmitted**. They must not receive a
 double-check or **Delivered** label merely because local transmission
@@ -99,7 +99,7 @@ The application does not preserve an outbound operation to begin automatically
 at some future connection or duty-limit window. Activating an eligible Send
 starts one logical send immediately; activating a blocked Send explains why it
 cannot start. Once active, ordinary MAC scheduling, backoff, fragmentation,
-acknowledgement handling, and retransmission may continue until that send
+acknowledgment handling, and retransmission may continue until that send
 reaches a terminal result. Consequences:
 
 - when no usable radio is connected, Send looks blocked and its action explains
@@ -107,13 +107,13 @@ reaches a terminal result. Consequences:
 - a failed message stays in the transcript with its reason and an explicit
   Retry action; no new application-level attempt begins automatically after a
   terminal result;
-- retry re-validates the current identity, radio, and channel context — a
+- retry re-validates the current identity, radio, and channel context—a
   failed message can never silently re-send under a replaced identity or
   changed configuration; and
 - reconnection never triggers a backlog of automatic sends, because there is
   no backlog.
 
-A message awaiting a direct acknowledgement or room echo is not queued: its
+A message awaiting a direct acknowledgment or room echo is not queued: its
 active send has already begun, and only confirmation is outstanding. If that
 send ends without confirmation, including because the radio disconnects,
 **Delivery unconfirmed** is effectively terminal. The app stops progress UI,

@@ -11,13 +11,13 @@ Their default screen should answer:
 
 ## Proposed information architecture
 
-1. **Home / Inbox** — conversations, unread state, delivery summary
-2. **Conversation** — message history and compose entry
-3. **Nodes / Contacts** — reachable identities and details
-4. **Channels** — membership and channel activity
-5. **Device status** — radio, location, battery, storage, companion state
-6. **Settings** — notifications, display, input, radio policy
-7. **Maintenance** — pairing, diagnostics, firmware update, destructive resets
+1. **Home / Inbox**—conversations, unread state, delivery summary
+2. **Conversation**—message history and compose entry
+3. **Nodes / Contacts**—reachable identities and details
+4. **Channels**—membership and channel activity
+5. **Device status**—radio, location, battery, storage, companion state
+6. **Settings**—notifications, display, input, radio policy
+7. **Maintenance**—pairing, diagnostics, firmware update, destructive resets
 
 Maintenance actions should not compete visually with messaging.
 

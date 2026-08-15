@@ -30,6 +30,7 @@
 
 - [Full Pagers](classes/full-pagers.md)
 - [Trackers](classes/trackers.md)
+  - [Display Tracker Screens](classes/display-tracker-screens.md)
 
 # Hardware Examples
 
