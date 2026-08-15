@@ -4,20 +4,20 @@
 <p>The 64-byte HKDF output is the RFC 5297 AES-SIV key <code>K = K1 || K2</code>:
 <code>k_mic</code> is the leftmost half (the S2V key <code>K1</code>) and <code>k_enc</code> is the
 rightmost half (the CTR key <code>K2</code>).</p>
-</div></details><details class="toggle method-toggle" open><summary><section id="method.derive_channel_id" class="method"><a class="src rightside" href="../src/umsh_crypto/lib.rs.html#313-317">Source</a><h4 class="code-header">pub fn <a href="#method.derive_channel_id" class="fn">derive_channel_id</a>(&amp;self, channel_key: &amp;<a class="struct" href="../umsh_core/packet/struct.ChannelKey.html" title="struct umsh_core::packet::ChannelKey">ChannelKey</a>) -&gt; <a class="struct" href="../umsh_core/packet/struct.ChannelId.html" title="struct umsh_core::packet::ChannelId">ChannelId</a></h4></section></summary><div class="docblock"><p>Derive the channel identifier from a raw channel key.</p>
-</div></details><details class="toggle method-toggle" open><summary><section id="method.derive_channel_tint" class="method"><a class="src rightside" href="../src/umsh_crypto/lib.rs.html#326-330">Source</a><h4 class="code-header">pub fn <a href="#method.derive_channel_tint" class="fn">derive_channel_tint</a>(&amp;self, channel_key: &amp;<a class="struct" href="../umsh_core/packet/struct.ChannelKey.html" title="struct umsh_core::packet::ChannelKey">ChannelKey</a>) -&gt; [<a class="primitive" href="https://doc.rust-lang.org/nightly/std/primitive.u8.html">u8</a>; <a class="primitive" href="https://doc.rust-lang.org/nightly/std/primitive.array.html">3</a>]</h4></section></summary><div class="docblock"><p>Derive three bytes for presentation — a deterministic colour a user
+</div></details><details class="toggle method-toggle" open><summary><section id="method.derive_channel_id" class="method"><a class="src rightside" href="../src/umsh_crypto/lib.rs.html#313-317">Source</a><h4 class="code-header">pub fn <a href="#method.derive_channel_id" class="fn">derive_channel_id</a>(&amp;self, channel_key: &amp;ChannelKey) -&gt; ChannelId</h4></section></summary><div class="docblock"><p>Derive the channel identifier from a raw channel key.</p>
+</div></details><details class="toggle method-toggle" open><summary><section id="method.derive_channel_tint" class="method"><a class="src rightside" href="../src/umsh_crypto/lib.rs.html#326-330">Source</a><h4 class="code-header">pub fn <a href="#method.derive_channel_tint" class="fn">derive_channel_tint</a>(&amp;self, channel_key: &amp;ChannelKey) -&gt; [<a class="primitive" href="https://doc.rust-lang.org/nightly/std/primitive.u8.html">u8</a>; <a class="primitive" href="https://doc.rust-lang.org/nightly/std/primitive.array.html">3</a>]</h4></section></summary><div class="docblock"><p>Derive three bytes for presentation — a deterministic colour a user
 interface can give a channel.</p>
 <p>This is the channel-identifier derivation run one byte longer, so the
 first two bytes are the channel identifier itself: HKDF-Expand emits a
 prefix of the same block either way. Nothing on the wire carries the
 third byte, and nothing depends on it.</p>
-</div></details><details class="toggle method-toggle" open><summary><section id="method.derive_channel_tag" class="method"><a class="src rightside" href="../src/umsh_crypto/lib.rs.html#337-341">Source</a><h4 class="code-header">pub fn <a href="#method.derive_channel_tag" class="fn">derive_channel_tag</a>(&amp;self, channel_key: &amp;<a class="struct" href="../umsh_core/packet/struct.ChannelKey.html" title="struct umsh_core::packet::ChannelKey">ChannelKey</a>) -&gt; <a class="struct" href="../umsh_core/packet/struct.ChannelTag.html" title="struct umsh_core::packet::ChannelTag">ChannelTag</a></h4></section></summary><div class="docblock"><p>Derive the channel tag — a local identity wide enough to tell apart two
+</div></details><details class="toggle method-toggle" open><summary><section id="method.derive_channel_tag" class="method"><a class="src rightside" href="../src/umsh_crypto/lib.rs.html#337-341">Source</a><h4 class="code-header">pub fn <a href="#method.derive_channel_tag" class="fn">derive_channel_tag</a>(&amp;self, channel_key: &amp;ChannelKey) -&gt; ChannelTag</h4></section></summary><div class="docblock"><p>Derive the channel tag — a local identity wide enough to tell apart two
 channels whose keys derive the same channel identifier.</p>
 <p>Same derivation as the channel identifier, run to sixteen bytes, so the
 identifier and the presentation tint are prefixes of it.</p>
 </div></details><details class="toggle method-toggle" open><summary><section id="method.derive_channel_keys" class="method"><a class="src rightside" href="../src/umsh_crypto/lib.rs.html#348-364">Source</a><h4 class="code-header">pub fn <a href="#method.derive_channel_keys" class="fn">derive_channel_keys</a>(
     &amp;self,
-    channel_key: &amp;<a class="struct" href="../umsh_core/packet/struct.ChannelKey.html" title="struct umsh_core::packet::ChannelKey">ChannelKey</a>,
+    channel_key: &amp;ChannelKey,
 ) -&gt; <a class="struct" href="struct.DerivedChannelKeys.html" title="struct umsh_crypto::DerivedChannelKeys">DerivedChannelKeys</a></h4></section></summary><div class="docblock"><p>Derive multicast transport keys and the channel identifier.</p>
 <p>As with <a href="struct.CryptoEngine.html#method.derive_pairwise_keys" title="method umsh_crypto::CryptoEngine::derive_pairwise_keys"><code>derive_pairwise_keys</code></a>, the
 64-byte HKDF output is the RFC 5297 AES-SIV key: S2V key first, CTR
@@ -30,7 +30,7 @@ key second.</p>
 </div></details><details class="toggle method-toggle" open><summary><section id="method.derive_named_channel_key" class="method"><a class="src rightside" href="../src/umsh_crypto/lib.rs.html#402-418">Source</a><h4 class="code-header">pub fn <a href="#method.derive_named_channel_key" class="fn">derive_named_channel_key</a>(
     &amp;self,
     name: &amp;<a class="primitive" href="https://doc.rust-lang.org/nightly/std/primitive.str.html">str</a>,
-) -&gt; <a class="enum" href="https://doc.rust-lang.org/nightly/core/result/enum.Result.html" title="enum core::result::Result">Result</a>&lt;<a class="struct" href="../umsh_core/packet/struct.ChannelKey.html" title="struct umsh_core::packet::ChannelKey">ChannelKey</a>, <a class="enum" href="enum.ChannelNameError.html" title="enum umsh_crypto::ChannelNameError">ChannelNameError</a>&gt;</h4></section></summary><div class="docblock"><p>Derive a channel key from a human-readable channel name.</p>
+) -&gt; <a class="enum" href="https://doc.rust-lang.org/nightly/core/result/enum.Result.html" title="enum core::result::Result">Result</a>&lt;ChannelKey, <a class="enum" href="enum.ChannelNameError.html" title="enum umsh_crypto::ChannelNameError">ChannelNameError</a>&gt;</h4></section></summary><div class="docblock"><p>Derive a channel key from a human-readable channel name.</p>
 <p>The name is canonicalized first, per the spec (multicast-channels.md
 § Named Channels): it must be ASCII, and ASCII letters are folded to
 lowercase before derivation — so <code>Public</code>, <code>public</code>, and <code>PUBLIC</code> all
@@ -40,27 +40,27 @@ is deferred by the spec). Names longer than
 the no-alloc canonicalization buffer.</p>
 </div></details><details class="toggle method-toggle" open><summary><section id="method.seal_packet" class="method"><a class="src rightside" href="../src/umsh_crypto/lib.rs.html#421-453">Source</a><h4 class="code-header">pub fn <a href="#method.seal_packet" class="fn">seal_packet</a>(
     &amp;self,
-    packet: &amp;mut <a class="struct" href="../umsh_core/packet/struct.UnsealedPacket.html" title="struct umsh_core::packet::UnsealedPacket">UnsealedPacket</a>&lt;'_&gt;,
+    packet: &amp;mut UnsealedPacket&lt;'_&gt;,
     keys: &amp;<a class="struct" href="struct.PairwiseKeys.html" title="struct umsh_crypto::PairwiseKeys">PairwiseKeys</a>,
 ) -&gt; <a class="enum" href="https://doc.rust-lang.org/nightly/core/result/enum.Result.html" title="enum core::result::Result">Result</a>&lt;<a class="primitive" href="https://doc.rust-lang.org/nightly/std/primitive.usize.html">usize</a>, <a class="enum" href="enum.CryptoError.html" title="enum umsh_crypto::CryptoError">CryptoError</a>&gt;</h4></section></summary><div class="docblock"><p>Seal a unicast or multicast packet in place.</p>
 </div></details><details class="toggle method-toggle" open><summary><section id="method.seal_blind_packet" class="method"><a class="src rightside" href="../src/umsh_crypto/lib.rs.html#456-500">Source</a><h4 class="code-header">pub fn <a href="#method.seal_blind_packet" class="fn">seal_blind_packet</a>(
     &amp;self,
-    packet: &amp;mut <a class="struct" href="../umsh_core/packet/struct.UnsealedPacket.html" title="struct umsh_core::packet::UnsealedPacket">UnsealedPacket</a>&lt;'_&gt;,
+    packet: &amp;mut UnsealedPacket&lt;'_&gt;,
     blind_keys: &amp;<a class="struct" href="struct.PairwiseKeys.html" title="struct umsh_crypto::PairwiseKeys">PairwiseKeys</a>,
     channel_keys: &amp;<a class="struct" href="struct.DerivedChannelKeys.html" title="struct umsh_crypto::DerivedChannelKeys">DerivedChannelKeys</a>,
 ) -&gt; <a class="enum" href="https://doc.rust-lang.org/nightly/core/result/enum.Result.html" title="enum core::result::Result">Result</a>&lt;<a class="primitive" href="https://doc.rust-lang.org/nightly/std/primitive.usize.html">usize</a>, <a class="enum" href="enum.CryptoError.html" title="enum umsh_crypto::CryptoError">CryptoError</a>&gt;</h4></section></summary><div class="docblock"><p>Seal a blind-unicast packet, including its hidden address block.</p>
 </div></details><details class="toggle method-toggle" open><summary><section id="method.open_packet" class="method"><a class="src rightside" href="../src/umsh_crypto/lib.rs.html#503-534">Source</a><h4 class="code-header">pub fn <a href="#method.open_packet" class="fn">open_packet</a>(
     &amp;self,
     buf: &amp;mut [<a class="primitive" href="https://doc.rust-lang.org/nightly/std/primitive.u8.html">u8</a>],
-    header: &amp;<a class="struct" href="../umsh_core/packet/struct.PacketHeader.html" title="struct umsh_core::packet::PacketHeader">PacketHeader</a>,
+    header: &amp;PacketHeader,
     keys: &amp;<a class="struct" href="struct.PairwiseKeys.html" title="struct umsh_crypto::PairwiseKeys">PairwiseKeys</a>,
 ) -&gt; <a class="enum" href="https://doc.rust-lang.org/nightly/core/result/enum.Result.html" title="enum core::result::Result">Result</a>&lt;<a class="struct" href="https://doc.rust-lang.org/nightly/core/ops/range/struct.Range.html" title="struct core::ops::range::Range">Range</a>&lt;<a class="primitive" href="https://doc.rust-lang.org/nightly/std/primitive.usize.html">usize</a>&gt;, <a class="enum" href="enum.CryptoError.html" title="enum umsh_crypto::CryptoError">CryptoError</a>&gt;</h4></section></summary><div class="docblock"><p>Verify and, if needed, decrypt a received secure packet in place.</p>
 </div></details><details class="toggle method-toggle" open><summary><section id="method.decrypt_blind_addr" class="method"><a class="src rightside" href="../src/umsh_crypto/lib.rs.html#537-585">Source</a><h4 class="code-header">pub fn <a href="#method.decrypt_blind_addr" class="fn">decrypt_blind_addr</a>(
     &amp;self,
     buf: &amp;mut [<a class="primitive" href="https://doc.rust-lang.org/nightly/std/primitive.u8.html">u8</a>],
-    header: &amp;<a class="struct" href="../umsh_core/packet/struct.PacketHeader.html" title="struct umsh_core::packet::PacketHeader">PacketHeader</a>,
+    header: &amp;PacketHeader,
     channel_keys: &amp;<a class="struct" href="struct.DerivedChannelKeys.html" title="struct umsh_crypto::DerivedChannelKeys">DerivedChannelKeys</a>,
-) -&gt; <a class="enum" href="https://doc.rust-lang.org/nightly/core/result/enum.Result.html" title="enum core::result::Result">Result</a>&lt;(<a class="struct" href="../umsh_core/packet/struct.NodeHint.html" title="struct umsh_core::packet::NodeHint">NodeHint</a>, <a class="enum" href="../umsh_core/packet/enum.SourceAddrRef.html" title="enum umsh_core::packet::SourceAddrRef">SourceAddrRef</a>), <a class="enum" href="enum.CryptoError.html" title="enum umsh_crypto::CryptoError">CryptoError</a>&gt;</h4></section></summary><div class="docblock"><p>Decrypt the blinded destination/source address block of a blind unicast.</p>
+) -&gt; <a class="enum" href="https://doc.rust-lang.org/nightly/core/result/enum.Result.html" title="enum core::result::Result">Result</a>&lt;(NodeHint, SourceAddrRef), <a class="enum" href="enum.CryptoError.html" title="enum umsh_crypto::CryptoError">CryptoError</a>&gt;</h4></section></summary><div class="docblock"><p>Decrypt the blinded destination/source address block of a blind unicast.</p>
 </div></details><details class="toggle method-toggle" open><summary><section id="method.s2v_tag" class="method"><a class="src rightside" href="../src/umsh_crypto/lib.rs.html#591-601">Source</a><h4 class="code-header">pub fn <a href="#method.s2v_tag" class="fn">s2v_tag</a>(
     &amp;self,
     k_mic: &amp;[<a class="primitive" href="https://doc.rust-lang.org/nightly/std/primitive.u8.html">u8</a>; <a class="primitive" href="https://doc.rust-lang.org/nightly/std/primitive.array.html">32</a>],

@@ -1112,58 +1112,88 @@
 <a href=#1112 id=1112 data-nosnippet>1112</a>        RouteHops::new(<span class="self">self</span>.trace_route().unwrap_or(<span class="kw-2">&amp;</span>[]))
 <a href=#1113 id=1113 data-nosnippet>1113</a>    }
 <a href=#1114 id=1114 data-nosnippet>1114</a>
-<a href=#1115 id=1115 data-nosnippet>1115</a>    <span class="kw">pub fn </span>source_route_hop_count(<span class="kw-2">&amp;</span><span class="self">self</span>) -&gt; usize {
-<a href=#1116 id=1116 data-nosnippet>1116</a>        <span class="self">self</span>.source_route()
-<a href=#1117 id=1117 data-nosnippet>1117</a>            .map(|route| route.len() / <span class="number">2</span>)
-<a href=#1118 id=1118 data-nosnippet>1118</a>            .unwrap_or(<span class="number">0</span>)
-<a href=#1119 id=1119 data-nosnippet>1119</a>    }
-<a href=#1120 id=1120 data-nosnippet>1120</a>
-<a href=#1121 id=1121 data-nosnippet>1121</a>    <span class="kw">pub fn </span>trace_route_hop_count(<span class="kw-2">&amp;</span><span class="self">self</span>) -&gt; usize {
-<a href=#1122 id=1122 data-nosnippet>1122</a>        <span class="self">self</span>.trace_route().map(|route| route.len() / <span class="number">2</span>).unwrap_or(<span class="number">0</span>)
-<a href=#1123 id=1123 data-nosnippet>1123</a>    }
-<a href=#1124 id=1124 data-nosnippet>1124</a>}
-<a href=#1125 id=1125 data-nosnippet>1125</a>
-<a href=#1126 id=1126 data-nosnippet>1126</a><span class="doccomment">/// Borrowing view of an inbound MAC event.
-<a href=#1127 id=1127 data-nosnippet>1127</a></span><span class="attr">#[derive(Clone, Debug, PartialEq, Eq)]
-<a href=#1128 id=1128 data-nosnippet>1128</a></span><span class="kw">pub enum </span>MacEventRef&lt;<span class="lifetime">'a</span>&gt; {
-<a href=#1129 id=1129 data-nosnippet>1129</a>    <span class="doccomment">/// Accepted inbound packet with parsed metadata and resolved sender/channel information.
-<a href=#1130 id=1130 data-nosnippet>1130</a>    </span>Received(ReceivedPacketRef&lt;<span class="lifetime">'a</span>&gt;),
-<a href=#1131 id=1131 data-nosnippet>1131</a>    <span class="doccomment">/// Matching transport ACK received.
-<a href=#1132 id=1132 data-nosnippet>1132</a>    </span>AckReceived {
-<a href=#1133 id=1133 data-nosnippet>1133</a>        peer: PublicKey,
-<a href=#1134 id=1134 data-nosnippet>1134</a>        receipt: SendReceipt,
-<a href=#1135 id=1135 data-nosnippet>1135</a>    },
-<a href=#1136 id=1136 data-nosnippet>1136</a>    <span class="doccomment">/// Pending ACK timed out.
-<a href=#1137 id=1137 data-nosnippet>1137</a>    </span>AckTimeout {
-<a href=#1138 id=1138 data-nosnippet>1138</a>        peer: PublicKey,
-<a href=#1139 id=1139 data-nosnippet>1139</a>        receipt: SendReceipt,
-<a href=#1140 id=1140 data-nosnippet>1140</a>    },
-<a href=#1141 id=1141 data-nosnippet>1141</a>    <span class="doccomment">/// Frame was successfully handed to the radio transmitter.
-<a href=#1142 id=1142 data-nosnippet>1142</a>    ///
-<a href=#1143 id=1143 data-nosnippet>1143</a>    /// `identity_id` + `receipt` together form the identity-scoped send token.
-<a href=#1144 id=1144 data-nosnippet>1144</a>    /// `receipt` is `Some` only for ACK-requested sends.
-<a href=#1145 id=1145 data-nosnippet>1145</a>    </span>Transmitted {
-<a href=#1146 id=1146 data-nosnippet>1146</a>        identity_id: LocalIdentityId,
-<a href=#1147 id=1147 data-nosnippet>1147</a>        receipt: <span class="prelude-ty">Option</span>&lt;SendReceipt&gt;,
-<a href=#1148 id=1148 data-nosnippet>1148</a>        wire_bytes: <span class="kw-2">&amp;</span><span class="lifetime">'a </span>[u8],
-<a href=#1149 id=1149 data-nosnippet>1149</a>    },
-<a href=#1150 id=1150 data-nosnippet>1150</a>    <span class="doccomment">/// A repeater was overheard forwarding this frame
-<a href=#1151 id=1151 data-nosnippet>1151</a>    /// (AwaitingForward → AwaitingAck transition).
-<a href=#1152 id=1152 data-nosnippet>1152</a>    </span>Forwarded {
-<a href=#1153 id=1153 data-nosnippet>1153</a>        identity_id: LocalIdentityId,
-<a href=#1154 id=1154 data-nosnippet>1154</a>        receipt: SendReceipt,
-<a href=#1155 id=1155 data-nosnippet>1155</a>        hint: <span class="prelude-ty">Option</span>&lt;RouterHint&gt;,
-<a href=#1156 id=1156 data-nosnippet>1156</a>    },
-<a href=#1157 id=1157 data-nosnippet>1157</a>    <span class="doccomment">/// The frame was dropped before it ever aired: every channel-activity
-<a href=#1158 id=1158 data-nosnippet>1158</a>    /// -detection attempt found the channel busy and the retry budget ran
-<a href=#1159 id=1159 data-nosnippet>1159</a>    /// out.
-<a href=#1160 id=1160 data-nosnippet>1160</a>    ///
-<a href=#1161 id=1161 data-nosnippet>1161</a>    /// `receipt` is `Some` for ACK-requested sends; since the frame was
-<a href=#1162 id=1162 data-nosnippet>1162</a>    /// never transmitted, no `AckReceived`/`AckTimeout` will follow — this
-<a href=#1163 id=1163 data-nosnippet>1163</a>    /// event is the send's terminal state.
-<a href=#1164 id=1164 data-nosnippet>1164</a>    </span>TxAbandoned {
-<a href=#1165 id=1165 data-nosnippet>1165</a>        identity_id: LocalIdentityId,
-<a href=#1166 id=1166 data-nosnippet>1166</a>        receipt: <span class="prelude-ty">Option</span>&lt;SendReceipt&gt;,
-<a href=#1167 id=1167 data-nosnippet>1167</a>    },
-<a href=#1168 id=1168 data-nosnippet>1168</a>}
+<a href=#1115 id=1115 data-nosnippet>1115</a>    <span class="doccomment">/// Radio links this frame crossed to reach us, counting the final one into
+<a href=#1116 id=1116 data-nosnippet>1116</a>    /// this node: a frame heard directly from its sender is one hop. `None`
+<a href=#1117 id=1117 data-nosnippet>1117</a>    /// when the frame was source-routed without a trace route — the hops it
+<a href=#1118 id=1118 data-nosnippet>1118</a>    /// took are then real but unrecorded, and a count nobody measured is not
+<a href=#1119 id=1119 data-nosnippet>1119</a>    /// reported.
+<a href=#1120 id=1120 data-nosnippet>1120</a>    ///
+<a href=#1121 id=1121 data-nosnippet>1121</a>    /// The two wire counters answer different questions and are not additive.
+<a href=#1122 id=1122 data-nosnippet>1122</a>    /// A repeater prepends its hint to the trace route however it forwarded,
+<a href=#1123 id=1123 data-nosnippet>1123</a>    /// so the trace names every hop the frame took; `FHOPS` accumulates on
+<a href=#1124 id=1124 data-nosnippet>1124</a>    /// flood forwards only, because a source-routed hop spends no flood budget
+<a href=#1125 id=1125 data-nosnippet>1125</a>    /// (packet-structure.md § Flood Hop Count). The trace is therefore the
+<a href=#1126 id=1126 data-nosnippet>1126</a>    /// larger of the two whenever it is present, and the maximum is what
+<a href=#1127 id=1127 data-nosnippet>1127</a>    /// reads correctly from a frame carrying only one of them.
+<a href=#1128 id=1128 data-nosnippet>1128</a>    ///
+<a href=#1129 id=1129 data-nosnippet>1129</a>    /// Without a trace, the source-route option is what disambiguates: each
+<a href=#1130 id=1130 data-nosnippet>1130</a>    /// repeater consumes its own hint but keeps the option, so a routed frame
+<a href=#1131 id=1131 data-nosnippet>1131</a>    /// arrives carrying it — usually emptied — and its presence is the tell
+<a href=#1132 id=1132 data-nosnippet>1132</a>    /// that the flood accumulator did not see every hop.
+<a href=#1133 id=1133 data-nosnippet>1133</a>    </span><span class="kw">pub fn </span>hop_count(<span class="kw-2">&amp;</span><span class="self">self</span>) -&gt; <span class="prelude-ty">Option</span>&lt;u8&gt; {
+<a href=#1134 id=1134 data-nosnippet>1134</a>        <span class="kw">let </span>flooded = <span class="self">self</span>.flood_hops().map(FloodHops::accumulated).unwrap_or(<span class="number">0</span>);
+<a href=#1135 id=1135 data-nosnippet>1135</a>        <span class="kw">if </span><span class="self">self</span>.trace_route().is_some() {
+<a href=#1136 id=1136 data-nosnippet>1136</a>            <span class="kw">let </span>traced = u8::try_from(<span class="self">self</span>.trace_route_hop_count()).unwrap_or(u8::MAX);
+<a href=#1137 id=1137 data-nosnippet>1137</a>            <span class="prelude-val">Some</span>(traced.max(flooded).saturating_add(<span class="number">1</span>))
+<a href=#1138 id=1138 data-nosnippet>1138</a>        } <span class="kw">else if </span><span class="self">self</span>.source_route().is_some() {
+<a href=#1139 id=1139 data-nosnippet>1139</a>            <span class="prelude-val">None
+<a href=#1140 id=1140 data-nosnippet>1140</a>        </span>} <span class="kw">else </span>{
+<a href=#1141 id=1141 data-nosnippet>1141</a>            <span class="prelude-val">Some</span>(flooded.saturating_add(<span class="number">1</span>))
+<a href=#1142 id=1142 data-nosnippet>1142</a>        }
+<a href=#1143 id=1143 data-nosnippet>1143</a>    }
+<a href=#1144 id=1144 data-nosnippet>1144</a>
+<a href=#1145 id=1145 data-nosnippet>1145</a>    <span class="kw">pub fn </span>source_route_hop_count(<span class="kw-2">&amp;</span><span class="self">self</span>) -&gt; usize {
+<a href=#1146 id=1146 data-nosnippet>1146</a>        <span class="self">self</span>.source_route()
+<a href=#1147 id=1147 data-nosnippet>1147</a>            .map(|route| route.len() / <span class="number">2</span>)
+<a href=#1148 id=1148 data-nosnippet>1148</a>            .unwrap_or(<span class="number">0</span>)
+<a href=#1149 id=1149 data-nosnippet>1149</a>    }
+<a href=#1150 id=1150 data-nosnippet>1150</a>
+<a href=#1151 id=1151 data-nosnippet>1151</a>    <span class="kw">pub fn </span>trace_route_hop_count(<span class="kw-2">&amp;</span><span class="self">self</span>) -&gt; usize {
+<a href=#1152 id=1152 data-nosnippet>1152</a>        <span class="self">self</span>.trace_route().map(|route| route.len() / <span class="number">2</span>).unwrap_or(<span class="number">0</span>)
+<a href=#1153 id=1153 data-nosnippet>1153</a>    }
+<a href=#1154 id=1154 data-nosnippet>1154</a>}
+<a href=#1155 id=1155 data-nosnippet>1155</a>
+<a href=#1156 id=1156 data-nosnippet>1156</a><span class="doccomment">/// Borrowing view of an inbound MAC event.
+<a href=#1157 id=1157 data-nosnippet>1157</a></span><span class="attr">#[derive(Clone, Debug, PartialEq, Eq)]
+<a href=#1158 id=1158 data-nosnippet>1158</a></span><span class="kw">pub enum </span>MacEventRef&lt;<span class="lifetime">'a</span>&gt; {
+<a href=#1159 id=1159 data-nosnippet>1159</a>    <span class="doccomment">/// Accepted inbound packet with parsed metadata and resolved sender/channel information.
+<a href=#1160 id=1160 data-nosnippet>1160</a>    </span>Received(ReceivedPacketRef&lt;<span class="lifetime">'a</span>&gt;),
+<a href=#1161 id=1161 data-nosnippet>1161</a>    <span class="doccomment">/// Matching transport ACK received.
+<a href=#1162 id=1162 data-nosnippet>1162</a>    </span>AckReceived {
+<a href=#1163 id=1163 data-nosnippet>1163</a>        peer: PublicKey,
+<a href=#1164 id=1164 data-nosnippet>1164</a>        receipt: SendReceipt,
+<a href=#1165 id=1165 data-nosnippet>1165</a>    },
+<a href=#1166 id=1166 data-nosnippet>1166</a>    <span class="doccomment">/// Pending ACK timed out.
+<a href=#1167 id=1167 data-nosnippet>1167</a>    </span>AckTimeout {
+<a href=#1168 id=1168 data-nosnippet>1168</a>        peer: PublicKey,
+<a href=#1169 id=1169 data-nosnippet>1169</a>        receipt: SendReceipt,
+<a href=#1170 id=1170 data-nosnippet>1170</a>    },
+<a href=#1171 id=1171 data-nosnippet>1171</a>    <span class="doccomment">/// Frame was successfully handed to the radio transmitter.
+<a href=#1172 id=1172 data-nosnippet>1172</a>    ///
+<a href=#1173 id=1173 data-nosnippet>1173</a>    /// `identity_id` + `receipt` together form the identity-scoped send token.
+<a href=#1174 id=1174 data-nosnippet>1174</a>    /// `receipt` is `Some` only for ACK-requested sends.
+<a href=#1175 id=1175 data-nosnippet>1175</a>    </span>Transmitted {
+<a href=#1176 id=1176 data-nosnippet>1176</a>        identity_id: LocalIdentityId,
+<a href=#1177 id=1177 data-nosnippet>1177</a>        receipt: <span class="prelude-ty">Option</span>&lt;SendReceipt&gt;,
+<a href=#1178 id=1178 data-nosnippet>1178</a>        wire_bytes: <span class="kw-2">&amp;</span><span class="lifetime">'a </span>[u8],
+<a href=#1179 id=1179 data-nosnippet>1179</a>    },
+<a href=#1180 id=1180 data-nosnippet>1180</a>    <span class="doccomment">/// A repeater was overheard forwarding this frame
+<a href=#1181 id=1181 data-nosnippet>1181</a>    /// (AwaitingForward → AwaitingAck transition).
+<a href=#1182 id=1182 data-nosnippet>1182</a>    </span>Forwarded {
+<a href=#1183 id=1183 data-nosnippet>1183</a>        identity_id: LocalIdentityId,
+<a href=#1184 id=1184 data-nosnippet>1184</a>        receipt: SendReceipt,
+<a href=#1185 id=1185 data-nosnippet>1185</a>        hint: <span class="prelude-ty">Option</span>&lt;RouterHint&gt;,
+<a href=#1186 id=1186 data-nosnippet>1186</a>    },
+<a href=#1187 id=1187 data-nosnippet>1187</a>    <span class="doccomment">/// The frame was dropped before it ever aired: every channel-activity
+<a href=#1188 id=1188 data-nosnippet>1188</a>    /// -detection attempt found the channel busy and the retry budget ran
+<a href=#1189 id=1189 data-nosnippet>1189</a>    /// out.
+<a href=#1190 id=1190 data-nosnippet>1190</a>    ///
+<a href=#1191 id=1191 data-nosnippet>1191</a>    /// `receipt` is `Some` for ACK-requested sends; since the frame was
+<a href=#1192 id=1192 data-nosnippet>1192</a>    /// never transmitted, no `AckReceived`/`AckTimeout` will follow — this
+<a href=#1193 id=1193 data-nosnippet>1193</a>    /// event is the send's terminal state.
+<a href=#1194 id=1194 data-nosnippet>1194</a>    </span>TxAbandoned {
+<a href=#1195 id=1195 data-nosnippet>1195</a>        identity_id: LocalIdentityId,
+<a href=#1196 id=1196 data-nosnippet>1196</a>        receipt: <span class="prelude-ty">Option</span>&lt;SendReceipt&gt;,
+<a href=#1197 id=1197 data-nosnippet>1197</a>    },
+<a href=#1198 id=1198 data-nosnippet>1198</a>}
 </code></pre></div></section></main></body></html>

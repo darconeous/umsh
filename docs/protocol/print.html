@@ -36,7 +36,7 @@
             const path_to_root = "";
             const default_light_theme = "light";
             const default_dark_theme = "ayu";
-            window.path_to_searchindex_js = "searchindex-ee1590cf.js";
+            window.path_to_searchindex_js = "searchindex-1d2ecda8.js";
         </script>
         <!-- Start loading toc.js asap -->
         <script src="toc-438957a9.js"></script>
@@ -2260,16 +2260,36 @@ repeat of itself; a requester that wants a further answer inside that window
 asks with a fresh NONCE.</li>
 </ul>
 <p>A <a href="#identity-request-options">FILTER_NODE_HINT</a> filter names a single node, so a
-request carrying one solicits a single reply however far it travels. A request
-without one selects by role or capability, and every node it reaches may answer;
-such a request is therefore confined to the requester’s own neighborhood:</p>
+request carrying one solicits a single reply however far it travels. A partial
+hint names a small set rather than one node, and the shorter it is the larger
+that set: a requester sends the longest hint it holds. A request with no hint
+filter at all selects by role or capability, and every node it reaches may
+answer; such a request is therefore confined to the requester’s own
+neighborhood:</p>
 <ul>
 <li>The FHOPS byte must either be absent or set to 0x00. A request that is flood
 routed — FHOPS present with either nibble nonzero — MUST NOT be answered.</li>
 <li>The response MUST NOT carry a FHOPS field (the FCF flood hop count flag is
-clear), keeping the reply within the single hop the request was allowed to
-cross.</li>
+clear). The invariant is that the reply travels exactly as far as the question
+did and no further: a request that crossed one hop is answered across that one
+hop, and a request steered along a <a href="#source-route-option-3">Source Route
+option</a> is answered back along the
+path it was steered down.</li>
 </ul>
+<p>A request steered by a Route option reaches its destination neighborhood with
+that option emptied, since each repeater consumes its own hint. The nodes there
+are strangers to the requester: they hold no route to it, and their replies carry
+no flood budget for a repeater to spend. Such a request therefore carries a
+<a href="#trace-route-option-2">Trace Route option</a>, and a node answering
+it sends the response as a source route built from the trace the request arrived
+with. Repeaters prepend when forwarding, so the accumulated trace already reads
+as the path back and is used as-is, without reversal.</p>
+<p>A repeater consumes its own hint while forwarding, not while receiving, so a
+request whose Route option still names a repeater is one that repeater drops.
+Asking a named router to identify itself therefore means steering the request to
+the hop <em>before</em> it and narrowing it with that router’s two-byte hint: the
+request arrives with an empty Route option, and the router answers it as any
+other node in that neighborhood would.</p>
 <p>These requirements MAY be relaxed for specific private channels, but MUST remain in place for all public channels. Note that these requirements are specifically designed to allow discovering identities from a specific repeater location on the mesh network.</p>
 <p>An Identity Request is answered with a targeted unicast identity response, never
 by flooding an <a href="#advertisements">advertisement</a> to the whole network.</p>
@@ -2293,7 +2313,7 @@ Non-filter options (such as NONCE) do not participate in this matching.</p>
 </thead>
 <tbody>
 <tr><td style="text-align: right">1</td><td>Yes</td><td>NONCE</td><td>4 bytes</td><td>Correlation identifier the responder MUST echo in its response’s <a href="#nonce-option-5">Nonce option</a>. Not a filter.</td></tr>
-<tr><td style="text-align: right">3</td><td>Yes</td><td>FILTER_NODE_HINT</td><td>3 bytes</td><td>Respond only if this matches the responder’s own <a href="#node-hint">node hint</a>.</td></tr>
+<tr><td style="text-align: right">3</td><td>Yes</td><td>FILTER_NODE_HINT</td><td>1–3 bytes</td><td>Respond only if this is a leading part of the responder’s own <a href="#node-hint">node hint</a>. A 3-byte value is the whole hint; a 2-byte value is the <a href="#router-hint">router hint</a>, which is all a <a href="#source-route-option-3">Source Route</a> or <a href="#trace-route-option-2">Trace Route</a> reveals about the hops it names. A zero-length value matches nothing.</td></tr>
 <tr><td style="text-align: right">5</td><td>Yes</td><td>FILTER_NODE_ROLE</td><td>1 byte</td><td>Respond only if the responder’s <a href="#node-primary-role">primary role</a> equals this value.</td></tr>
 <tr><td style="text-align: right">7</td><td>Yes</td><td>FILTER_NODE_CAPS</td><td>1 byte</td><td>Respond only if the responder’s <a href="#capability-bitmap">capability bitmap</a> has every bit set that is set in this value.</td></tr>
 </tbody>

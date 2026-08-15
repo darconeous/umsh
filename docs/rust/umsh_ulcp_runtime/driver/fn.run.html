@@ -5,8 +5,8 @@
     rt: <a class="struct" href="struct.DeviceRuntime.html" title="struct umsh_ulcp_runtime::driver::DeviceRuntime">DeviceRuntime</a>&lt;M, RX, TX&gt;,
     env: E,
 ) -&gt; <a class="primitive" href="https://doc.rust-lang.org/nightly/std/primitive.never.html">!</a><div class="where">where
-    A: AesProvider,
-    S: Sha256Provider,
+    A: <a class="trait" href="../../umsh_crypto/trait.AesProvider.html" title="trait umsh_crypto::AesProvider">AesProvider</a>,
+    S: <a class="trait" href="../../umsh_crypto/trait.Sha256Provider.html" title="trait umsh_crypto::Sha256Provider">Sha256Provider</a>,
     M: <a class="trait" href="https://docs.rs/embassy-sync/0.8.0/embassy_sync/blocking_mutex/raw/trait.RawMutex.html" title="trait embassy_sync::blocking_mutex::raw::RawMutex">RawMutex</a>,
     E: <a class="trait" href="trait.DeviceEnv.html" title="trait umsh_ulcp_runtime::driver::DeviceEnv">DeviceEnv</a>,</div></code></pre><details class="toggle top-doc" open><summary class="hideme"><span>Expand description</span></summary><div class="docblock"><p>Drive the ULCP session forever: restore persisted state, then
 select over host frames, radio receptions, and transmit completions,
