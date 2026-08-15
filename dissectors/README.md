@@ -331,10 +331,13 @@ carried and the summary line gets a one-line précis of it.
 | 3 | Text Message | `UMSH-TC` |
 | 5 | Chat-Room Message | `UMSH-CR` |
 | 7 | CoAP-over-UMSH | `CoAP` (from the built-in CoAP dissector) |
-| 8 | Node Management | `UMSH-NM` |
+| 8 | Node Management Request | `UMSH-NM` |
+| 9 | Node Management Response | `UMSH-NM` |
 
-Node Management payloads carry ULCP frames, which are handed to the same frame
-dissector the local-link ULCP capture uses.
+Node Management payloads carry one ULCP frame each, which is handed to the same
+frame dissector the local-link ULCP capture uses. The payload type is the
+direction, so the summary line reads the exchange as a request or a response
+and pairs it with the token.
 
 ## MAC Options
 

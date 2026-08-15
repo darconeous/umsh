@@ -7,10 +7,45 @@ local COMMANDS = {
   [1] = "CMD_RST",
   [2] = "CMD_PROP_GET",
   [3] = "CMD_PROP_SET",
+  [4] = "CMD_PROP_INSERT",
+  [5] = "CMD_PROP_REMOVE",
   [6] = "CMD_PROP_IS",
+  [7] = "CMD_PROP_INSERTED",
+  [8] = "CMD_PROP_REMOVED",
   [9] = "CMD_STR_SEND",
   [10] = "CMD_STR_RECV",
+  [11] = "CMD_QUEUE_DRAIN",
+  [12] = "CMD_SAVE",
+  [13] = "CMD_CLEAR",
+  [14] = "CMD_RESTORE",
+  [15] = "CMD_FACTORY_RESET",
+  [21] = "CMD_PROP_MULTI_GET",
+  [22] = "CMD_PROP_MULTI_SET",
+  [23] = "CMD_PROP_ARE",
 }
+
+M.COMMANDS = COMMANDS
+
+-- Which way each command travels. Node Management carries the same grammar
+-- over the mesh, where the payload type fixes the direction, so a frame
+-- going the wrong way is a violation the dissector can name.
+M.COMMAND_TO_DEVICE = {
+  [0] = true, [1] = true, [2] = true, [3] = true, [4] = true, [5] = true,
+  [9] = true, [11] = true, [12] = true, [13] = true, [14] = true,
+  [15] = true, [21] = true, [22] = true,
+}
+M.COMMAND_TO_HOST = {
+  [6] = true, [7] = true, [8] = true, [10] = true, [23] = true,
+}
+
+-- Commands whose payload is a property key followed by a value or item.
+local KEYED_COMMANDS = {
+  [2] = true, [3] = true, [4] = true, [5] = true,
+  [6] = true, [7] = true, [8] = true,
+}
+
+-- Commands whose payload is a list of length-prefixed key-and-value entries.
+local ENTRY_LIST_COMMANDS = {[22] = true, [23] = true}
 
 local PROPERTIES = {
   [0] = "PROP_LAST_STATUS",
@@ -48,6 +83,8 @@ f.tid = ProtoField.uint8("umsh.ulcp.tid", "Transaction ID", base.DEC, nil, 0x07)
 f.command = ProtoField.uint8("umsh.ulcp.command", "Command", base.DEC, COMMANDS)
 f.property = ProtoField.uint32("umsh.ulcp.property", "Property", base.DEC, PROPERTIES)
 f.property_value = ProtoField.bytes("umsh.ulcp.property_value", "Property Value")
+f.entry = ProtoField.bytes("umsh.ulcp.entry", "Entry")
+f.entry_length = ProtoField.uint32("umsh.ulcp.entry_length", "Entry Length", base.DEC)
 f.stream = ProtoField.uint32("umsh.ulcp.stream", "Stream", base.DEC, STREAMS)
 f.data_length = ProtoField.uint16("umsh.ulcp.data_length", "Data Length", base.DEC)
 f.stream_data = ProtoField.bytes("umsh.ulcp.stream_data", "Stream Data")
@@ -86,26 +123,11 @@ local function add_malformed(item, message)
   item:add_proto_expert_info(malformed, message)
 end
 
--- The same decoder over a Lua string, for callers holding raw payload bytes
--- rather than a Tvb. Returns value, bytes consumed (1-indexed position).
-function M.decode_pui_str(s, pos)
-  local value, shift = 0, 0
-  for i = 0, 2 do
-    if pos + i > #s then return nil, 0 end
-    local byte = s:byte(pos + i)
-    value = value | ((byte & 0x7f) << shift)
-    if (byte & 0x80) == 0 then return value, i + 1 end
-    shift = shift + 7
-  end
-  return nil, 0
-end
-
 -- Dissect one ULCP frame into `tree`, returning the summary line.
 --
 -- Split out from proto.dissector so that Node Management payloads can reuse
--- it over the mesh, where the direction comes from the payload's own R flag
--- rather than from a UDP port, and the protocol column belongs to whoever
--- called us.
+-- it over the mesh, where the direction comes from the payload type rather
+-- than from a UDP port, and the protocol column belongs to whoever called us.
 local function dissect_frame(buf, pinfo, tree, direction)
   local root = tree:add(proto, buf())
   root:add(f.direction, direction)
@@ -128,7 +150,7 @@ local function dissect_frame(buf, pinfo, tree, direction)
   local command_name = COMMANDS[command] or string.format("CMD_%d", command)
   local info = string.format("%s %s TID=%d", direction, command_name, header & 0x07)
 
-  if command == 2 or command == 3 or command == 6 then
+  if KEYED_COMMANDS[command] then
     local key, consumed = decode_pui(buf, 2)
     if not key then
       add_malformed(root, "truncated or malformed property key")
@@ -139,6 +161,70 @@ local function dissect_frame(buf, pinfo, tree, direction)
       if value_offset < buf:len() then
         root:add(f.property_value, buf(value_offset))
       end
+    end
+  elseif command == 21 then
+    -- CMD_PROP_MULTI_GET: property keys one after another, no delimiters.
+    local pos, names, stopped = 2, {}, false
+    while pos < buf:len() do
+      local key, consumed = decode_pui(buf, pos)
+      if not key then
+        add_malformed(root, "truncated or malformed property key")
+        stopped = true
+        break
+      end
+      root:add(f.property, buf(pos, consumed), key)
+      names[#names + 1] = PROPERTIES[key] or string.format("PROP_%d", key)
+      pos = pos + consumed
+    end
+    if #names > 0 then
+      info = info .. " " .. table.concat(names, ", ")
+    elseif not stopped then
+      -- The list is empty rather than broken: nothing was asked for.
+      add_malformed(root, "CMD_PROP_MULTI_GET carries no property keys")
+    end
+  elseif ENTRY_LIST_COMMANDS[command] then
+    -- CMD_PROP_MULTI_SET / CMD_PROP_ARE: entries of the combined key and
+    -- value length as a PUI, the property key as a PUI, then the value.
+    local pos, count, names, stopped = 2, 0, {}, false
+    while pos < buf:len() do
+      local entry_len, consumed = decode_pui(buf, pos)
+      if not entry_len then
+        add_malformed(root, "truncated or malformed entry length")
+        stopped = true
+        break
+      end
+      local body = pos + consumed
+      if body + entry_len > buf:len() then
+        add_malformed(root:add(f.entry_length, buf(pos, consumed), entry_len),
+                      "entry length exceeds frame")
+        stopped = true
+        break
+      end
+
+      count = count + 1
+      local entry = root:add(f.entry, buf(pos, consumed + entry_len))
+      entry:add(f.entry_length, buf(pos, consumed), entry_len)
+
+      local key, key_consumed = decode_pui(buf, body)
+      if not key or key_consumed > entry_len then
+        entry:set_text(string.format("Entry %d (%d bytes)", count, entry_len))
+        add_malformed(entry, "truncated or malformed property key")
+      else
+        local name = PROPERTIES[key] or string.format("PROP_%d", key)
+        entry:add(f.property, buf(body, key_consumed), key)
+        entry:set_text(string.format("Entry %d: %s (%d byte value)",
+                                     count, name, entry_len - key_consumed))
+        if key_consumed < entry_len then
+          entry:add(f.property_value, buf(body + key_consumed, entry_len - key_consumed))
+        end
+        names[#names + 1] = name
+      end
+      pos = body + entry_len
+    end
+    if #names > 0 then
+      info = info .. " " .. table.concat(names, ", ")
+    elseif count == 0 and not stopped then
+      add_malformed(root, string.format("%s carries no entries", command_name))
     end
   elseif command == 9 or command == 10 then
     local stream, consumed = decode_pui(buf, 2)

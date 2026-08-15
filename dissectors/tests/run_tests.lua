@@ -732,6 +732,286 @@ else
 end
 
 -- ─────────────────────────────────────────────────────────────────────────────
+-- Wireshark API stubs
+--
+-- app.lua and ulcp.lua build their output through Wireshark's dissection API,
+-- so exercising them outside Wireshark means standing in for the parts they
+-- touch: fields, tree items, expert info, and a byte range that can be
+-- sliced. The stub records the text of every item added, which is what the
+-- assertions below read.
+-- ─────────────────────────────────────────────────────────────────────────────
+
+-- Display bases and expert enums are only ever compared or stored, so a
+-- table that answers any key with its own name is enough.
+local function enum_table()
+  return setmetatable({}, {__index = function(_, k) return k end})
+end
+
+base   = enum_table()
+expert = {group = enum_table(), severity = enum_table()}
+
+local function field_ctor(kind, size)
+  return function(abbrev, name, disp, valuestring, mask)
+    return {kind = kind, size = size, abbrev = abbrev, name = name,
+            disp = disp, valuestring = valuestring, mask = mask}
+  end
+end
+
+ProtoField = {
+  uint8  = field_ctor("uint", 1), uint16 = field_ctor("uint", 2),
+  uint24 = field_ctor("uint", 3), uint32 = field_ctor("uint", 4),
+  int8   = field_ctor("int",  1), int16  = field_ctor("int",  2),
+  int32  = field_ctor("int",  4),
+  bytes  = field_ctor("bytes"),   string = field_ctor("string"),
+  bool   = field_ctor("bool"),    none   = field_ctor("none"),
+}
+
+ProtoExpert = {new = function(abbrev, name) return {abbrev = abbrev, name = name} end}
+Dissector   = {get = function() return nil end}
+
+function Proto(abbrev, desc) return {abbrev = abbrev, name = desc} end
+
+-- A byte range, callable to slice itself the way a Tvb or TvbRange is.
+local Range = {}
+Range.__index = Range
+
+local function new_range(data) return setmetatable({data = data}, Range) end
+
+Range.__call = function(self, off, len)
+  if off == nil then return self end
+  local avail = #self.data - off
+  if off < 0 or avail < 0 then error("range offset out of bounds") end
+  if len == nil then len = avail end
+  if len < 0 or len > avail then error("range length out of bounds") end
+  return new_range(self.data:sub(off + 1, off + len))
+end
+
+function Range:len()   return #self.data end
+function Range:raw()   return self.data end
+function Range:tvb()   return self end
+function Range:bytes() return self end
+function Range:uint()
+  local v = 0
+  for i = 1, #self.data do v = v * 256 + self.data:byte(i) end
+  return v
+end
+function Range:le_uint()
+  local v = 0
+  for i = #self.data, 1, -1 do v = v * 256 + self.data:byte(i) end
+  return v
+end
+local function signed(v, nbytes)
+  local half = 1 << (nbytes * 8 - 1)
+  return v >= half and v - (half * 2) or v
+end
+function Range:int()    return signed(self:uint(),    #self.data) end
+function Range:le_int() return signed(self:le_uint(), #self.data) end
+
+ByteArray = {
+  new = function(hexstr)
+    local raw = from_hex(hexstr)
+    return {tvb = function(_, _name) return new_range(raw) end}
+  end,
+}
+
+local tree_log = {}
+
+local function mask_shift(mask)
+  local n = 0
+  while mask ~= 0 and (mask & 1) == 0 do mask = mask >> 1; n = n + 1 end
+  return n
+end
+
+-- Render an item the way Wireshark's default formatting would: a value
+-- string wins, a hex display base shows hex, and a field with no explicit
+-- value takes it from the range it covers.
+local function render(field, range, value, little_endian)
+  local kind = field.kind
+  if kind == nil then return field.name end  -- a Proto, not a field
+  if value == nil and range then
+    if kind == "uint" or kind == "bool" then
+      value = little_endian and range:le_uint() or range:uint()
+    elseif kind == "int" then
+      value = little_endian and range:le_int() or range:int()
+    elseif kind == "bytes" then
+      value = hex(range:raw())
+    elseif kind == "string" then
+      value = range:raw()
+    end
+  end
+  if field.mask and type(value) == "number" then
+    value = (value & field.mask) >> mask_shift(field.mask)
+  end
+  if value == nil then return field.name end
+  if type(value) == "number" then
+    if field.valuestring and field.valuestring[value] then
+      return string.format("%s: %s (%d)", field.name, field.valuestring[value], value)
+    elseif field.disp == "HEX" then
+      return string.format("%s: 0x%0" .. ((field.size or 1) * 2) .. "X",
+                           field.name, value)
+    end
+  end
+  return field.name .. ": " .. tostring(value)
+end
+
+local TreeItem = {}
+TreeItem.__index = TreeItem
+
+local function record(text)
+  tree_log[#tree_log + 1] = text
+  return setmetatable({index = #tree_log}, TreeItem)
+end
+
+local function add_item(field, a, b, little_endian)
+  local range, value
+  if getmetatable(a) == Range then range, value = a, b else value = a end
+  return record(render(field, range, value, little_endian))
+end
+
+function TreeItem:add(field, a, b)    return add_item(field, a, b, false) end
+function TreeItem:add_le(field, a, b) return add_item(field, a, b, true)  end
+function TreeItem:set_text(text)      tree_log[self.index] = text; return self end
+function TreeItem:append_text(text)
+  tree_log[self.index] = tree_log[self.index] .. text
+  return self
+end
+function TreeItem:add_proto_expert_info(e, message)
+  tree_log[#tree_log + 1] = "EXPERT: " .. tostring(message or (e and e.name))
+  return self
+end
+
+local function new_pinfo()
+  local info = {text = ""}
+  function info:append(s)  self.text = self.text .. s end
+  function info:prepend(s) self.text = s .. self.text end
+  function info:set(s)     self.text = s end
+  return {cols = {protocol = "", info = info}}
+end
+
+-- ─────────────────────────────────────────────────────────────────────────────
+-- Node Management payloads (docs/protocol/src/app-node-management.md)
+--
+-- [TOKEN:2][OPTIONS][0xFF][FRAME]: direction is the payload type, 8 for a
+-- request and 9 for a response, and exactly one unprefixed ULCP frame runs
+-- to the end of the payload.
+-- ─────────────────────────────────────────────────────────────────────────────
+section("Node Management")
+
+local app = require("app")
+
+-- Dissect a whole payload, type byte included, and return what the tree,
+-- the columns, and the violation sink ended up holding.
+local function dissect_payload(payload_hex, pkt_type)
+  tree_log = {}
+  local violations = {}
+  local pinfo = new_pinfo()
+  local root  = record("Frame")
+  local ctx   = {
+    pkt_type = pkt_type or 2,  -- unicast unless the test says otherwise
+    full_src = true,
+    flag     = function(_tree, _range, text) violations[#violations + 1] = text end,
+  }
+  app.dissect(from_hex(payload_hex), root, pinfo, nil, nil, ctx)
+  return {
+    items      = tree_log,
+    info       = pinfo.cols.info.text,
+    protocol   = pinfo.cols.protocol,
+    violations = violations,
+  }
+end
+
+local function has(result, text)
+  for _, item in ipairs(result.items) do
+    if item:find(text, 1, true) then return true end
+  end
+  return false
+end
+
+-- A request carrying CMD_PROP_MULTI_GET of PROP_CAPS and PROP_DEV_NAME.
+local req = dissect_payload("08 1234 FF 8015 05 44")
+check("request names its payload type",  has(req, "Node Management Request"), true)
+check("request sets the protocol column", req.protocol, "UMSH-NM")
+check("request info line",
+      req.info, " Node Mgmt: request (token 0x1234)")
+check("request token",                   has(req, "Token: 0x1234"), true)
+check("no FLAGS byte is parsed",         has(req, "Flags"), false)
+check("embedded frame decodes",
+      has(req, "Command: CMD_PROP_MULTI_GET (21)"), true)
+check("multi-get first key",             has(req, "Property: PROP_CAPS (5)"), true)
+check("multi-get second key",            has(req, "Property: PROP_DEV_NAME (68)"), true)
+check("clean request has no violations", #req.violations, 0)
+
+-- The response to it: CMD_PROP_ARE with one entry per property.
+local resp = dissect_payload("09 1234 FF 8017 020541 034468 69")
+check("response names its payload type", has(resp, "Node Management Response"), true)
+check("response info line",
+      resp.info, " Node Mgmt: response (token 0x1234)")
+check("response frame decodes",   has(resp, "Command: CMD_PROP_ARE (23)"), true)
+check("first entry",  has(resp, "Entry 1: PROP_CAPS (1 byte value)"), true)
+check("second entry", has(resp, "Entry 2: PROP_DEV_NAME (2 byte value)"), true)
+check("clean response has no violations", #resp.violations, 0)
+
+-- The frame runs to the end of the payload, so a length prefix would be
+-- read as part of the frame—here as a header with the wrong flag bits.
+local prefixed = dissect_payload("08 1234 FF 03 800205")
+check("a length-prefixed frame no longer parses",
+      has(prefixed, "EXPERT: invalid ULCP header flag/reserved bits"), true)
+
+-- Cursor and remaining options on a continued read.
+local cursored = dissect_payload("09 1234 14AABBCCDD 1140 FF 800605")
+check("cursor option",    has(cursored, "Cursor: AABBCCDD"), true)
+check("remaining option", has(cursored, "Remaining: 64"), true)
+check("options carry no violations", #cursored.violations, 0)
+
+-- Correlation is by token, so the frame's TID has to be zero.
+local tid = dissect_payload("08 0001 FF 830205")
+check("non-zero TID is flagged", #tid.violations, 1)
+check("non-zero TID names the rule",
+      tid.violations[1] and tid.violations[1]:find("TID bits set to zero", 1, true) ~= nil,
+      true)
+
+-- The payload type fixes the direction, so a command going the other way
+-- is one the receiver cannot act on.
+local backwards = dissect_payload("08 0001 FF 800605")
+check("Device→Host command in a request is flagged", #backwards.violations, 1)
+check("the flagged command is named",
+      backwards.violations[1] and
+        backwards.violations[1]:find("CMD_PROP_IS", 1, true) ~= nil,
+      true)
+
+-- A payload that stops at the end-of-options marker carries no frame.
+local no_frame = dissect_payload("08 0001 FF")
+check("missing frame is flagged", #no_frame.violations, 1)
+check("missing frame names the rule",
+      no_frame.violations[1] and
+        no_frame.violations[1]:find("one ULCP frame", 1, true) ~= nil,
+      true)
+
+-- An entry claiming more bytes than the frame holds. The list is broken,
+-- not empty, so it is reported once and not also as carrying nothing.
+local overrun = dissect_payload("08 0001 FF 8016 05 0541")
+check("over-long entry is flagged",
+      has(overrun, "EXPERT: entry length exceeds frame"), true)
+check("a broken entry list is not also called empty",
+      has(overrun, "carries no entries"), false)
+
+-- A multi-set with nothing to set, on the other hand, is empty.
+local empty = dissect_payload("08 0001 FF 8016")
+check("empty entry list is flagged",
+      has(empty, "EXPERT: CMD_PROP_MULTI_SET carries no entries"), true)
+local empty_get = dissect_payload("08 0001 FF 8015")
+check("empty key list is flagged",
+      has(empty_get, "EXPERT: CMD_PROP_MULTI_GET carries no property keys"), true)
+
+-- Both directions ride unicast only.
+local mcast = dissect_payload("09 1234 FF 800605", 4)
+check("a response must not be multicast", #mcast.violations, 1)
+check("the multicast rule names the payload type",
+      mcast.violations[1] and
+        mcast.violations[1]:find("Node Management Response payload must not", 1, true) ~= nil,
+      true)
+
+-- ─────────────────────────────────────────────────────────────────────────────
 -- Results
 -- ─────────────────────────────────────────────────────────────────────────────
 io.write(string.format(

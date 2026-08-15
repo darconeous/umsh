@@ -16,7 +16,8 @@ local PAYLOAD_TYPES = {
   [0x03] = "Text Message",
   [0x05] = "Chat-Room Message",
   [0x07] = "CoAP",
-  [0x08] = "Node Management",
+  [0x08] = "Node Management Request",
+  [0x09] = "Node Management Response",
 }
 
 -- The protocol column names the application protocol the packet actually
@@ -28,6 +29,7 @@ local PROTO_COLUMN = {
   [0x03] = "UMSH-TC",
   [0x05] = "UMSH-CR",
   [0x08] = "UMSH-NM",
+  [0x09] = "UMSH-NM",
 }
 
 -- Which payload types each packet type may carry.
@@ -42,6 +44,7 @@ local ALLOWED_IN = {
   [0x05] = {           [UNIC]=true, [UNAR]=true,              [BUNI]=true, [BUAR]=true},
   [0x07] = {           [UNIC]=true, [UNAR]=true, [MCST]=true, [BUNI]=true, [BUAR]=true},
   [0x08] = {           [UNIC]=true, [UNAR]=true,              [BUNI]=true, [BUAR]=true},
+  [0x09] = {           [UNIC]=true, [UNAR]=true,              [BUNI]=true, [BUAR]=true},
 }
 local PKT_TYPE_NAME = {
   [0]="broadcast", [1]="MAC ack", [2]="unicast", [3]="unicast",
@@ -139,16 +142,12 @@ f.cr_max_count = ProtoField.uint8  ("umsh.app.cr.max_count","Max Count",      ba
 f.cr_body      = ProtoField.bytes  ("umsh.app.cr.body",     "Action Body")
 
 -- Node Management (ULCP over UMSH)
-f.nm_flags     = ProtoField.uint8  ("umsh.app.nm.flags",    "Flags",          base.HEX)
-f.nm_flag_r    = ProtoField.bool   ("umsh.app.nm.flags.r",  "Response (R)",   8, nil, 0x80)
-f.nm_flag_rsvd = ProtoField.uint8  ("umsh.app.nm.flags.rsvd","Reserved",      base.HEX, nil, 0x7F)
 f.nm_token     = ProtoField.uint16 ("umsh.app.nm.token",    "Token",          base.HEX)
 f.nm_opts      = ProtoField.bytes  ("umsh.app.nm.opts",     "Options")
 f.nm_cursor    = ProtoField.bytes  ("umsh.app.nm.cursor",   "Cursor")
 f.nm_remaining = ProtoField.uint32 ("umsh.app.nm.remaining","Remaining",      base.DEC)
 f.nm_unknown   = ProtoField.bytes  ("umsh.app.nm.unk",      "Unknown Option")
-f.nm_frames    = ProtoField.bytes  ("umsh.app.nm.frames",   "Frame List")
-f.nm_frame_len = ProtoField.uint32 ("umsh.app.nm.frame_len","Frame Length",   base.DEC)
+f.nm_frame     = ProtoField.bytes  ("umsh.app.nm.frame",    "Frame")
 
 proto.fields = {
   f.type_byte, f.opaque,
@@ -165,8 +164,8 @@ proto.fields = {
   f.txt_unknown, f.txt_body,
   f.cr_action, f.cr_opts, f.cr_opt_str, f.cr_opt_uint, f.cr_opt_bytes,
   f.cr_desc, f.cr_timestamp, f.cr_max_count, f.cr_body,
-  f.nm_flags, f.nm_flag_r, f.nm_flag_rsvd, f.nm_token, f.nm_opts,
-  f.nm_cursor, f.nm_remaining, f.nm_unknown, f.nm_frames, f.nm_frame_len,
+  f.nm_token, f.nm_opts, f.nm_cursor, f.nm_remaining, f.nm_unknown,
+  f.nm_frame,
 }
 
 -- ──────────────────────────────────────────────────────────────────────────
@@ -725,40 +724,36 @@ end
 -- Node Management dissector (ULCP frames carried over the mesh)
 --
 -- Wire layout (docs/protocol/src/app-node-management.md):
---   [FLAGS:1] [TOKEN:2] [OPTIONS] [0xFF] [FRAME LIST]
--- Each frame in the list is preceded by its length as a packed unsigned
--- integer.
+--   [TOKEN:2] [OPTIONS] [0xFF] [FRAME]
+-- Direction is the payload type—8 is a request, 9 a response—and the one
+-- frame that follows the terminator runs to the end of the payload, which
+-- is why it carries no length of its own.
 -- ──────────────────────────────────────────────────────────────────────────
-local function dissect_node_management(payload, subtree, tvb, pinfo, ctx)
-  local len = #payload
-  if len < 3 then return end
+local function dissect_node_management(payload, subtree, tvb, pinfo, ctx, is_response)
+  local len  = #payload
+  local kind = is_response and "response" or "request"
 
-  local flags = byte_at(payload, 1)
-  local is_response = (flags & 0x80) ~= 0
-  local flags_tree = subtree:add(f.nm_flags, tvb(0, 1), flags)
-  flags_tree:add(f.nm_flag_r,    tvb(0, 1))
-  flags_tree:add(f.nm_flag_rsvd, tvb(0, 1))
-
-  -- An unknown flag may change the meaning of everything that follows,
-  -- including the token, so a receiver cannot even form a response.
-  if (flags & 0x7F) ~= 0 and ctx and ctx.flag then
-    ctx.flag(flags_tree, tvb(0, 1), string.format(
-      "Node Management reserved flag bits must be zero (is 0x%02X)", flags & 0x7F))
+  if len < 2 then
+    if ctx and ctx.flag then
+      ctx.flag(subtree, tvb(0, len), string.format(
+        "Node Management payload must carry a 2-octet token (has %d byte%s)",
+        len, len == 1 and "" or "s"))
+    end
+    return
   end
 
-  local token = uint16_be(payload, 2)
-  subtree:add(f.nm_token, tvb(1, 2), token)
+  local token = uint16_be(payload, 1)
+  subtree:add(f.nm_token, tvb(0, 2), token)
   if pinfo then
     pinfo.cols.info:append(string.format(" Node Mgmt: %s (token 0x%04X)",
-                                         is_response and "response" or "request",
-                                         token))
+                                         kind, token))
   end
 
-  -- Options block, then the frame list after the terminator.
+  -- Options block, then the embedded frame after the terminator.
   local opts_module
   pcall(function() opts_module = require("options") end)
 
-  local off = 4  -- 1-indexed: after FLAGS(1) + TOKEN(2)
+  local off = 3  -- 1-indexed: after TOKEN(2)
   local opts_end = off
   if opts_module and off <= len then
     local scan_ok = pcall(function()
@@ -791,45 +786,56 @@ local function dissect_node_management(payload, subtree, tvb, pinfo, ctx)
     end)
   end
 
-  if opts_end > len then return end
+  -- Exactly one ULCP frame, extending to the end of the payload. The
+  -- terminator is always present, since the frame always follows it.
+  if opts_end > len then
+    if ctx and ctx.flag then
+      ctx.flag(subtree, tvb(0, len),
+        "Node Management payload must carry one ULCP frame after the end-of-options marker")
+    end
+    return
+  end
 
-  -- Frame list: each ULCP frame preceded by its length as a PUI.
-  local list_len  = len - opts_end + 1
-  local list_tree = subtree:add(f.nm_frames, tvb(opts_end - 1, list_len))
+  local frame_len  = len - opts_end + 1
+  local frame_tree = subtree:add(f.nm_frame, tvb(opts_end - 1, frame_len))
+  frame_tree:set_text(string.format("Frame (%d bytes)", frame_len))
+
+  -- Correlation here is by token, so the frame's TID means nothing and the
+  -- sender is required to zero it.
+  local tid = byte_at(payload, opts_end) & 0x07
+  if tid ~= 0 and ctx and ctx.flag then
+    ctx.flag(frame_tree, tvb(opts_end - 1, 1), string.format(
+      "Node Management frame must have its TID bits set to zero (is %d)", tid))
+  end
 
   local ulcp
   pcall(function() ulcp = require("ulcp") end)
 
-  local pos    = opts_end
-  local frames = 0
-  while pos <= len do
-    local flen, consumed = nil, 0
-    if ulcp and ulcp.decode_pui_str then
-      flen, consumed = ulcp.decode_pui_str(payload, pos)
+  -- The payload type fixes which way the exchange runs, so a frame carrying
+  -- a command that travels the other way cannot be acted on: a device
+  -- answers such a request STATUS_INVALID_COMMAND, and a response is only
+  -- ever what the device would have emitted on a local binding.
+  if ulcp and frame_len >= 2 and ctx and ctx.flag then
+    local cmd  = byte_at(payload, opts_end + 1)
+    local name = ulcp.COMMANDS and ulcp.COMMANDS[cmd]
+    if name then
+      local wrong_way
+      if is_response then wrong_way = ulcp.COMMAND_TO_DEVICE[cmd]
+      else                wrong_way = ulcp.COMMAND_TO_HOST[cmd]
+      end
+      if wrong_way then
+        ctx.flag(frame_tree, tvb(opts_end, 1), string.format(
+          "Node Management %s must not carry %s, which travels %s",
+          kind, name,
+          is_response and "toward the device" or "toward the administrator"))
+      end
     end
-    if not flen or consumed == 0 then break end
-    local body_start = pos + consumed
-    if body_start + flen - 1 > len then
-      list_tree:add(f.nm_frame_len, tvb(pos - 1, consumed), flen):set_text(
-        string.format("Frame Length: %d (exceeds the payload)", flen))
-      break
-    end
-
-    frames = frames + 1
-    local frame_tree = list_tree:add(f.nm_frames,
-                                     tvb(pos - 1, consumed + flen))
-    frame_tree:set_text(string.format("Frame %d (%d bytes)", frames, flen))
-    frame_tree:add(f.nm_frame_len, tvb(pos - 1, consumed), flen)
-
-    if flen > 0 and ulcp and ulcp.dissect_frame then
-      pcall(ulcp.dissect_frame, tvb(body_start - 1, flen):tvb(), pinfo, frame_tree,
-            is_response and "Device → Administrator" or "Administrator → Device")
-    end
-    pos = body_start + flen
   end
 
-  list_tree:set_text(string.format("Frame List (%d frame%s, %d bytes)",
-                                   frames, frames == 1 and "" or "s", list_len))
+  if ulcp and ulcp.dissect_frame then
+    pcall(ulcp.dissect_frame, tvb(opts_end - 1, frame_len):tvb(), pinfo, frame_tree,
+          is_response and "Device → Administrator" or "Administrator → Device")
+  end
 end
 
 -- ──────────────────────────────────────────────────────────────────────────
@@ -903,11 +909,10 @@ function M.dissect(payload_bytes, parent_tree, pinfo, ks, crypto_mod, ctx)
       end
     end
 
-  elseif ptype == 0x08 then
-    -- Node Management
-    if inner_len > 0 then
-      dissect_node_management(inner, subtree, tvb(1), pinfo, ctx)
-    end
+  elseif ptype == 0x08 or ptype == 0x09 then
+    -- Node Management: the type is the direction.
+    dissect_node_management(inner, subtree, inner_len > 0 and tvb(1) or tvb(0, 0),
+                            pinfo, ctx, ptype == 0x09)
 
   else
     -- Unspecified / unknown / raw

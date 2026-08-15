@@ -97,15 +97,14 @@ VECTORS = [
           "05" "61 6C 69 63 65"),   # option 0 Handle, "alice"
     ),
     (
-        # Node management is unicast only too. The frame list holds one ULCP
-        # CMD_PROP_GET of PROP_DEV_VERSION.
+        # Node management is unicast only too. The embedded frame is one
+        # ULCP CMD_PROP_GET of PROP_DEV_VERSION.
         "Node management request in a broadcast",
         h("C0", SRC_A, "FF",
-          "08"          # payload type: Node Management
-          "00"          # flags: request
+          "08"          # payload type: Node Management Request
           "12 34"       # token
           "FF"          # end of options
-          "03" "81 02 02"),   # PUI length 3, then the ULCP frame
+          "80 02 02"),  # the ULCP frame, to the end of the payload
     ),
     (
         # Emergency traffic has to be readable by every node in range.
