@@ -160,17 +160,23 @@ in [Frame Transport](ulcp-transport.md), `CMD_QUEUE_DRAIN` in
 commands in [Saved State](ulcp-saved-state.md). The complete numeric
 allocation is in the [Command and Property Index](ulcp-index.md).
 
-Id | Mnemonic            | Dir          | Description
----|---------------------|--------------|-------------
-0  | `CMD_NOP`           | Host->Device | No-Operation
-1  | `CMD_RST`           | Host->Device | Reset the device
-2  | `CMD_PROP_GET`      | Host->Device | Get property value
-3  | `CMD_PROP_SET`      | Host->Device | Set property value
-4  | `CMD_PROP_INSERT`   | Host->Device | Insert an item into a multi-value property
-5  | `CMD_PROP_REMOVE`   | Host->Device | Remove an item from a multi-value property
-6  | `CMD_PROP_IS`       | Device->Host | Property value notification
-7  | `CMD_PROP_INSERTED` | Device->Host | Item-inserted notification
-8  | `CMD_PROP_REMOVED`  | Device->Host | Item-removed notification
+Id | Mnemonic             | Dir          | Description
+---|----------------------|--------------|-------------
+0  | `CMD_NOP`            | Host->Device | No-Operation
+1  | `CMD_RST`            | Host->Device | Reset the device
+2  | `CMD_PROP_GET`       | Host->Device | Get property value
+3  | `CMD_PROP_SET`       | Host->Device | Set property value
+4  | `CMD_PROP_INSERT`    | Host->Device | Insert an item into a multi-value property
+5  | `CMD_PROP_REMOVE`    | Host->Device | Remove an item from a multi-value property
+6  | `CMD_PROP_IS`        | Device->Host | Property value notification
+7  | `CMD_PROP_INSERTED`  | Device->Host | Item-inserted notification
+8  | `CMD_PROP_REMOVED`   | Device->Host | Item-removed notification
+21 | `CMD_PROP_MULTI_GET` | Host->Device | Get several property values
+22 | `CMD_PROP_MULTI_SET` | Host->Device | Set several property values in order
+23 | `CMD_PROP_ARE`       | Device->Host | Multiple property value notification
+
+The multi-property commands (21–23) are gated by `CAP_CMD_MULTI` (see
+[Capabilities](#capabilities)); everything else is unconditional.
 
 ### CMD 0: (Host -> Device) `CMD_NOP` {#cmd-noop}
 
@@ -388,6 +394,98 @@ own reasons.
 
 The payload is the property identifier followed by the removed item as the
 device reports it.
+
+### CMD 21: (Host -> Device) `CMD_PROP_MULTI_GET` {#cmd-prop-multi-get}
+
+~~~
+  0                   1                   2                   3
+ 0 1 2 3 4 5 6 7 8 9 0 1 2 3 4 5 6 7 8 9 0 1 2 3 4 5 6 7 8 9 0 1
++-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+
+|1 0| RES | TID |      CMD      | PROP_KEY (PUI) | PROP_KEY ...
++-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+
+~~~
+Figure: Structure of `CMD_PROP_MULTI_GET`
+
+Get several property values at once. Commands the device to reply with a
+single [`CMD_PROP_ARE`](#cmd-prop-are) carrying one entry for each
+requested property, in request order.
+
+The payload is one or more property identifiers, each encoded in the
+packed unsigned integer format, one after another with no delimiters.
+
+Fetching continues past failures: a property that cannot be fetched
+occupies its position in the reply as a `PROP_LAST_STATUS` entry whose
+value is the status code a `CMD_PROP_GET` of that property would have
+produced. Position, not the entry's key, identifies which request an
+entry answers.
+
+This command is available only on devices advertising `CAP_CMD_MULTI`.
+On any other device it is an unrecognized command,
+`STATUS_INVALID_COMMAND`.
+
+### CMD 22: (Host -> Device) `CMD_PROP_MULTI_SET` {#cmd-prop-multi-set}
+
+~~~
+  0                   1                   2                   3
+ 0 1 2 3 4 5 6 7 8 9 0 1 2 3 4 5 6 7 8 9 0 1 2 3 4 5 6 7 8 9 0 1
++-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+
+|1 0| RES | TID |      CMD      | ENTRY | ENTRY | ENTRY ...
++-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+
+~~~
+Figure: Structure of `CMD_PROP_MULTI_SET`
+
+Set several property values in order. The payload is a sequence of
+entries, each the combined length of its key and value encoded as a
+packed unsigned integer, followed by that many octets — the property
+identifier as a packed unsigned integer, then the value:
+
+~~~
++--------------+---------------------------+--------------------+
+| LENGTH (PUI) | PROP_KEY (PUI, 1-3 bytes) | VALUE (remainder)  |
++--------------+---------------------------+--------------------+
+~~~
+Figure: `CMD_PROP_MULTI_SET` Entry Format
+
+The device applies each entry exactly as a `CMD_PROP_SET` of that
+property would, strictly in payload order, stopping at the first entry
+that fails. [Mutation Atomicity](#mutation-atomicity) applies to each
+entry alone: the sequence is not a transaction, and a failure partway
+leaves the earlier entries applied.
+
+The reply is a single [`CMD_PROP_ARE`](#cmd-prop-are) containing, for
+each applied entry in order, the property and its reported value —
+exactly what the `CMD_PROP_IS` answering a lone `CMD_PROP_SET` would
+carry — and, for the failing entry, a `PROP_LAST_STATUS` entry carrying
+the error, after which the reply ends. Entries past the failure are not
+executed and contribute nothing; a reply whose every entry is a success
+covers the entire request.
+
+This command is available only on devices advertising `CAP_CMD_MULTI`.
+On any other device it is an unrecognized command,
+`STATUS_INVALID_COMMAND`.
+
+### CMD 23: (Device -> Host) `CMD_PROP_ARE` {#cmd-prop-are}
+
+~~~
+  0                   1                   2                   3
+ 0 1 2 3 4 5 6 7 8 9 0 1 2 3 4 5 6 7 8 9 0 1 2 3 4 5 6 7 8 9 0 1
++-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+
+|1 0| RES | TID |      CMD      | ENTRY | ENTRY | ENTRY ...
++-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+
+~~~
+Figure: Structure of `CMD_PROP_ARE`
+
+Multiple property value notification. The payload is a sequence of
+entries in the same encoding as `CMD_PROP_MULTI_SET`: a combined
+key-and-value length as a packed unsigned integer, the property
+identifier, and the value as the device reports it — under the same
+reporting rules as `CMD_PROP_IS`, so key material never appears (see
+[Multi-Value Properties](#multi-value-properties)).
+
+The device emits this command only in response to `CMD_PROP_MULTI_GET`
+or `CMD_PROP_MULTI_SET`, with the TID of that command. It **MUST NOT**
+be emitted unsolicited: asynchronous updates use `CMD_PROP_IS` and its
+companions, one property at a time.
 
 ## Properties and Streams
 
@@ -881,10 +979,10 @@ Id | Name
 
 `STATUS_CURSOR_INVALID`
 : The cursor presented in a [Node Management](app-node-management.md#cursors)
-  continuation is not one the device can honor — it does not parse, names a
-  different property, or the underlying data has changed so that the
-  position is meaningless. The administrator restarts the read from an
-  initial, cursor-less request.
+  continuation is not one the device can honor — it does not parse, it was
+  issued for a different request, or the underlying data has changed so
+  that the position is meaningless. The administrator restarts the read
+  from an initial, cursor-less request.
 
 `STATUS_CCA_FAILURE`
 : The packet was not sent due to a CCA failure. This status code is only
@@ -988,16 +1086,18 @@ Code | Name                      | Requires                             | Define
 40   | `CAP_REPEATER`            | `CAP_DEV_IDENTITY`                   | [Device Domain](ulcp-device.md#capabilities)
 41   | `CAP_IDENT`               | `CAP_DEV_IDENTITY`                   | [Device Domain](ulcp-device.md#capabilities)
 42   | `CAP_ALERT`               | —                                    | [Device Domain](ulcp-device.md#capabilities)
-43   | `CAP_ADMIN`               | `CAP_DEV_IDENTITY`                   | [Node Management](app-node-management.md#capabilities)
+43   | `CAP_ADMIN`               | `CAP_DEV_IDENTITY`, `CAP_CMD_MULTI`  | [Node Management](app-node-management.md#capabilities)
 44   | `CAP_TIME`                | —                                    | [Device Domain](ulcp-device.md#capabilities)
 45   | `CAP_GNSS`                | `CAP_TIME`                           | [Device Domain](ulcp-device.md#capabilities)
 46   | `CAP_ADVERT`              | `CAP_DEV_IDENTITY`                   | [Device Domain](ulcp-device.md#capabilities)
 47   | `CAP_ILLUMINANCE`         | —                                    | [Device Domain](ulcp-device.md#capabilities)
 48   | `CAP_MAC_BACKHAUL`        | `CAP_REPEATER`                       | [Tethered Host Services](ulcp-host.md#capabilities)
+49   | `CAP_CMD_MULTI`           | —                                    | [Framing and Common Semantics](ulcp-core.md#cmd-prop-multi-get)
 515  | `CAP_PHY_LORA`            | —                                    | [Radio Control](ulcp-radio.md#capabilities)
 
 A device **MUST NOT** advertise a capability without also advertising the
-capabilities it requires. The commands and status codes defined in this
+capabilities it requires. Apart from the multi-property commands, which
+`CAP_CMD_MULTI` gates, the commands and status codes defined in this
 chapter are unconditional and need no capability; a device that defines no
 mutable multi-value properties simply has nothing to apply
 `CMD_PROP_INSERT`/`CMD_PROP_REMOVE` to.

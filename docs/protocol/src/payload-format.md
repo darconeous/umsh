@@ -17,7 +17,8 @@ Payloads are typically prefixed by a 1-byte payload type identifier. Values from
 | 5     | Chat-Room Message                      |
 | 6     | *RESERVED*                             |
 | 7     | CoAP-over-UMSH                         |
-| 8     | [Node Management Command](app-node-management.md) |
+| 8     | [Node Management Request](app-node-management.md) |
+| 9     | [Node Management Response](app-node-management.md) |
 
 ## Payload and Packet Type Compatibility
 
@@ -31,7 +32,8 @@ Not all payload types are valid with all packet types. A receiver should drop a 
 | Text Message        | Yes     | Yes       | No        |
 | Chat-Room Message   | Yes     | No        | No        |
 | CoAP-over-UMSH      | Yes     | Yes       | No        |
-| Node Management Cmd | Yes     | No        | No        |
+| Node Management Req | Yes     | No        | No        |
+| Node Management Resp| Yes     | No        | No        |
 
 Unless explicitly configured otherwise, the only payload types allowed for broadcast are empty payloads, node identities, and the broadcast-permitted MAC commands (Note 2).
 
@@ -41,4 +43,4 @@ Unless explicitly configured otherwise, the only payload types allowed for broad
 
 ## In-Band Node Management
 
-Nodes may optionally support remote management via **Node Management Command** payloads, which carry ULCP exchanges over the mesh itself. The payload format, authorization model, and reachable state are specified in [Node Management](app-node-management.md); support is advertised through the `CAP_ADMIN` ULCP capability.
+Nodes may optionally support remote management via **Node Management Request** and **Node Management Response** payloads, which carry ULCP exchanges over the mesh itself. The payload format, authorization model, and reachable state are specified in [Node Management](app-node-management.md); support is advertised through the `CAP_ADMIN` ULCP capability.

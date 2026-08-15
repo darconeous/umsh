@@ -5,9 +5,10 @@
 
 A node that supports node management can be configured and observed over the
 mesh itself, using the same command grammar, property model, and numeric
-registries that [ULCP](ulcp.md) defines for the local link. A **Node
-Management Command** payload (payload type 8) carries ordinary ULCP frames
-between an **administrator** — a node listed in the device's
+registries that [ULCP](ulcp.md) defines for the local link. **Node
+Management Request** (payload type 8) and **Node Management Response**
+(payload type 9) payloads carry ordinary ULCP frames between an
+**administrator** — a node listed in the device's
 [administrator list](#prop-dev-admins) — and the **device**, in unicast
 packets exchanged with the [device identity](ulcp-device.md#device-identity).
 Support is optional and advertised through [`CAP_ADMIN`](#capabilities).
@@ -33,10 +34,12 @@ adds what the ULCP grammar needs on such a transport:
   round trips, in place of the TID of the local bindings;
 - **retained responses** make retransmission safe: a repeated request is
   answered again, not executed again;
-- **batches** order execution within a single payload, for writes whose
-  effects depend on sequence;
-- **cursors** carry values larger than one frame across as many exchanges
-  as needed, without per-read state on the device.
+- **cursors** carry responses larger than one frame across as many
+  exchanges as needed, without per-read state on the device.
+
+Several operations per exchange need nothing from the envelope: the
+[multi-property commands](ulcp-core.md#cmd-prop-multi-get) already carry
+several reads, or several ordered writes, in a single frame.
 
 Because wire-level duplicates are impossible, the binding has no
 deduplication window of its own; the only duplicates that can exist are an
@@ -44,41 +47,27 @@ administrator's own retransmissions, which the token identifies.
 
 ## Payload Format {#payload-format}
 
-A Node Management Command payload consists of, following the payload type
-byte:
+Request and Response payloads share one format, consisting of, following
+the payload type byte:
 
 ```text
-+-------+-------+---------+------+------------+
-| FLAGS | TOKEN | OPTIONS | 0xFF | FRAME LIST |
-+-------+-------+---------+------+------------+
-  1 B     2 B    variable   1 B    variable
++-------+---------+------+----------+
+| TOKEN | OPTIONS | 0xFF |  FRAME   |
++-------+---------+------+----------+
+  2 B    variable   1 B    variable
 ```
 
+Direction lives entirely in the payload type. A device drops a Response
+payload — it never solicits anything — and an administrator that receives
+a Response matching no outstanding exchange of its own discards it, both
+with accounting.
+
 Node Management payloads travel only in unicast and blind unicast packets:
-requests are addressed to the device identity, and responses return to the
+Requests are addressed to the device identity, and Responses return to the
 requesting node as ordinary unicast replies, using whatever routing state
 the exchange has supplied (see [Route Learning](beacons.md#route-learning)).
 A device drops a Node Management payload arriving by multicast or
 broadcast, with accounting.
-
-### Flags
-
-```text
-  7   6   5   4   3   2   1   0
-+---+---+---+---+---+---+---+---+
-| R |         RESERVED          |
-+---+---+---+---+---+---+---+---+
-```
-
-Bit 7 (`R`) is clear in a request and set in a response. A device drops a
-payload with `R` set — it never solicits anything — and a node that
-receives a response matching no outstanding exchange of its own discards
-it.
-
-The reserved bits MUST be zero. A receiver drops a payload with any
-reserved bit set, with accounting: an unknown flag may change the meaning
-of everything that follows, including the token, so no response can be
-formed.
 
 ### Token
 
@@ -107,32 +96,25 @@ unrecognized critical option treats the exchange as failed.
 | 1 | Yes | CURSOR | 1–8 octets, see [Reading Large Values](#cursors) |
 | 2 | No | REMAINING | PUI, see [Reading Large Values](#cursors) |
 
-The `0xFF` end-of-options marker is always present, since the frame list
+The `0xFF` end-of-options marker is always present, since the frame
 follows.
 
-### Frame List
+### Frame
 
-One or more ULCP frames, each preceded by its length in octets encoded as
-a [packed unsigned integer](ulcp-core.md#packed-unsigned-integer):
-
-```text
-+--------------+----------------------------+
-| LENGTH (PUI) | ULCP FRAME (LENGTH octets) |
-+--------------+----------------------------+
-```
-
-Embedded frames use the exact [frame format](ulcp-core.md#frame-format) of
-the local bindings, so a device dispatches them through the same machinery
-that serves its local link. Senders MUST set the TID bits of every
-embedded frame to zero, and receivers ignore them: correlation is by
-token, and within a payload by position. A payload containing no frames is
-dropped, with accounting.
+Exactly one ULCP frame, extending to the end of the payload — the payload
+bounds it, so it carries no length prefix. The embedded frame uses the
+exact [frame format](ulcp-core.md#frame-format) of the local bindings, so
+a device dispatches it through the same machinery that serves its local
+link. Senders MUST set its TID bits to zero, and receivers ignore them:
+correlation is by token. A request whose frame is absent or cannot be
+parsed is answered with a `CMD_PROP_IS` of `PROP_LAST_STATUS` reporting
+`STATUS_PARSE_ERROR`.
 
 The payload, envelope included, must fit a single UMSH frame; there is no
-fragmentation. The reserved flag bits and the unassigned option numbers
-are this payload's growth space: a future need — carrying a request larger
-than one frame, say — is met by assigning one of them, and existing
-devices already reject what they do not recognize.
+fragmentation. The unassigned option numbers are this format's growth
+space: a future need — carrying a request larger than one frame, say — is
+met by assigning a critical option, and existing devices already reject
+what they do not recognize.
 
 ## Exchanges {#exchanges}
 
@@ -143,46 +125,41 @@ in its unsolicited role, and `CMD_PROP_INSERTED` and `CMD_PROP_REMOVED` as
 spontaneous notifications, do not occur here. State an administrator cares
 about is read, not pushed.
 
-The response echoes the token, sets `R`, and contains one frame per
-executed request frame, in request order: exactly the frame the device
-would emit in reply on a local binding — a `CMD_PROP_IS`,
-`CMD_PROP_INSERTED`, or `CMD_PROP_REMOVED` on success, or a `CMD_PROP_IS`
-of `PROP_LAST_STATUS` reporting the error. A request frame carrying a
-Device→Host command is answered `STATUS_INVALID_COMMAND`. Long-running
-operations report `STATUS_IN_PROGRESS` as on any binding; the
-administrator observes completion by reading state in a later exchange.
+The Response echoes the token and carries one frame: exactly
+the frame the device would emit in reply on a local binding — a
+`CMD_PROP_IS`, `CMD_PROP_INSERTED`, `CMD_PROP_REMOVED`, or `CMD_PROP_ARE`
+on success, or a `CMD_PROP_IS` of `PROP_LAST_STATUS` reporting the error.
+A request frame carrying a Device→Host command is answered
+`STATUS_INVALID_COMMAND`. Long-running operations report
+`STATUS_IN_PROGRESS` as on any binding; the administrator observes
+completion by reading state in a later exchange.
 
-### Batches {#batches}
+### Multi-Property Requests {#multi-property}
 
-A payload may carry several frames; the device executes them strictly in
-order, so a batch is how an administrator expresses writes whose effects
-depend on sequence. A batch is a sequencing construct, not a transaction:
-[Mutation Atomicity](ulcp-core.md#mutation-atomicity) applies to each
-frame alone, and an interrupted batch leaves the earlier frames applied.
+Several operations travel in one exchange through the multi-property
+commands, whose semantics this binding leaves untouched:
+[`CMD_PROP_MULTI_GET`](ulcp-core.md#cmd-prop-multi-get) reads several
+properties, continuing past per-property failures, and
+[`CMD_PROP_MULTI_SET`](ulcp-core.md#cmd-prop-multi-set) applies writes
+strictly in order, stopping at the first failure — which is how an
+administrator expresses writes whose effects depend on sequence.
+`CAP_ADMIN` requires `CAP_CMD_MULTI`, so an administrator may rely on
+both.
 
-The device stops executing a batch at:
+One rule is the binding's own: the device does not execute a
+`CMD_PROP_MULTI_SET` entry whose reply entry would not fit the remaining
+space in the response payload, and stops there exactly as an error would
+stop it. An administrator that receives fewer reply entries than it sent
+examines the last entry it did receive: an error means the sequence
+stopped on that failure; a success means it stopped for space, and the
+administrator reissues the remainder as a new exchange.
 
-- the first frame whose response is a `PROP_LAST_STATUS` frame reporting
-  an error — any status other than `STATUS_OK`;
-- the first frame whose response would not fit the remaining space in the
-  response payload;
-- any frame that initiates a reset;
-- a frame that cannot be parsed, whose response frame is
-  `STATUS_PARSE_ERROR`.
-
-Request frames past the stopping point are not executed and produce no
-response frames. An administrator that receives fewer response frames than
-it sent request frames examines the last response frame it did receive: an
-error status means the batch stopped on that failure; a success means it
-stopped for space, and the administrator reissues the remainder as a new
-exchange. A value too large to fit whole within the remaining space stops
-the batch the same way; the administrator reads that property alone, where
-fragmentation applies (see [Reading Large Values](#cursors)).
+### Resets {#resets}
 
 Commands that initiate a reset — `CMD_RST`, `CMD_RESTORE` in its reset
-form, and `CMD_FACTORY_RESET` — produce **no** response frame and
-terminate the batch. Delivery of such a command is confirmed by requesting
-a MAC acknowledgment, and its completion by a later exchange reading
+form, and `CMD_FACTORY_RESET` — are answered by **no** response payload.
+Delivery of such a command is confirmed by requesting a MAC
+acknowledgment, and its completion by a later exchange reading
 `PROP_LAST_STATUS` for the reset code.
 
 ### Retries and At-Most-Once Processing {#at-most-once}
@@ -210,40 +187,42 @@ result.
 
 ## Reading Large Values {#cursors}
 
-A property value that does not fit one response is read across several
-exchanges. The device returns a leading fragment of the value together
-with a **CURSOR** option: an opaque continuation handle, one to eight
-octets, chosen entirely by the device. The administrator continues with a
-new exchange — fresh token — whose request carries the returned cursor
-verbatim alongside the same `CMD_PROP_GET`. Each response carries the
-cursor to present in the *next* request; a response without one ends the
-read, its fragment being the last. Fragment sizes are the device's choice,
-made to fill each frame; there is no fixed block size and no position
-numbering.
+A read whose response does not fit one payload is completed across
+several exchanges. This applies to both read requests: a `CMD_PROP_GET`
+whose value does not fit, and a `CMD_PROP_MULTI_GET` whose entry list
+does not fit. The response frame is well-formed but its trailing content
+— the value of the `CMD_PROP_IS`, or the entry list of the
+`CMD_PROP_ARE` — is a leading fragment, accompanied by a **CURSOR**
+option: an opaque continuation handle, one to eight octets, chosen
+entirely by the device. The administrator continues with a new exchange —
+fresh token — whose request carries the returned cursor verbatim
+alongside a repeat of the request being continued. Each response carries
+the cursor to present in the *next* request; a response without one ends
+the read, its fragment being the last. Fragment sizes are the device's
+choice, made to fill each frame; there is no fixed block size and no
+position numbering.
 
-A request carrying a CURSOR option MUST consist of exactly one frame, a
-`CMD_PROP_GET`; anything else is answered `STATUS_INVALID_ARGUMENT`. The
-device fragments only when answering such a single-`GET` payload — within
-a larger batch, a value too large for the remaining response budget stops
-the batch instead (see [Batches](#batches)).
+A request carrying a CURSOR option MUST be the read being continued — the
+same `CMD_PROP_GET` or `CMD_PROP_MULTI_GET` that began it. A cursor on
+any other request is answered `STATUS_INVALID_ARGUMENT`.
 
 The contract:
 
 - A cursor is meaningful only to the device that issued it, and only for
-  the property it was issued for. The administrator returns it
+  the request it was issued for. The administrator returns it
   byte-for-byte and MUST NOT construct or modify one.
-- For a multi-value property, fragment boundaries MUST fall on item
-  boundaries, so that every fragment is a well-formed item sequence on
-  its own, the property's item length prefix rule applying within each
-  fragment. A single-value property's value is split at arbitrary octet
-  boundaries and reassembled by concatenation.
+- Fragment boundaries are the device's choice and carry no meaning. The
+  administrator reassembles the read by concatenating the fragments in
+  order and parses the whole: a property value under the property's own
+  rules, an entry list under `CMD_PROP_ARE`'s.
 - Presenting the same cursor again SHOULD yield the same fragment or an
   equivalent one; a retransmitted continuation is in any case answered
   from the retained response (see
   [Retries and At-Most-Once Processing](#at-most-once)).
 - Cursors are untrusted input. The device validates every cursor it
-  receives and answers one it cannot honor — it does not parse, or the
-  underlying data has changed out from under the position — with
+  receives and answers one it cannot honor — it does not parse, it was
+  issued for a different request, or the underlying data has changed out
+  from under the position — with
   `STATUS_CURSOR_INVALID` (see [Status Codes](ulcp-core.md#status-codes));
   the administrator restarts from a cursor-less request. A practical
   cursor encodes the position together with a generation of the
@@ -253,7 +232,7 @@ The contract:
   presented, meaning nothing further is available yet; this suits data
   that accumulates over time.
 - A response MAY carry a **REMAINING** option: the approximate number of
-  items not yet returned, as a packed unsigned integer. It is advisory,
+  octets not yet returned, as a packed unsigned integer. It is advisory,
   for progress reporting.
 - The read holds no state on the device: between exchanges, the position
   lives entirely in the cursor the administrator holds.
@@ -311,9 +290,9 @@ administrators, itself included.
 
 ## Capabilities {#capabilities}
 
-Code | Name        | Requires           | Grants
------|-------------|--------------------|--------
-43   | `CAP_ADMIN` | `CAP_DEV_IDENTITY` | Node management: processing of Node Management Command payloads addressed to the device identity, and `PROP_DEV_ADMINS`
+Code | Name        | Requires                            | Grants
+-----|-------------|-------------------------------------|--------
+43   | `CAP_ADMIN` | `CAP_DEV_IDENTITY`, `CAP_CMD_MULTI` | Node management: processing of Node Management Request payloads addressed to the device identity, and `PROP_DEV_ADMINS`
 
 A device that does not advertise `CAP_ADMIN` drops Node Management
 payloads, with accounting.
