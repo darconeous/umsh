@@ -3149,7 +3149,18 @@ mod tests {
                             replies.push(buf[..len].to_vec());
                         }
                     }
-                    Cmd::PropIs | Cmd::StrRecv | Cmd::PropInserted | Cmd::PropRemoved => {
+                    // This device predates CAP_CMD_MULTI: it answers the
+                    // multi-property commands the way any device that
+                    // does not implement a command answers it.
+                    Cmd::PropMultiGet | Cmd::PropMultiSet => {
+                        let len = frame::last_status(&mut buf, tid, Status::UNIMPLEMENTED).unwrap();
+                        replies.push(buf[..len].to_vec());
+                    }
+                    Cmd::PropIs
+                    | Cmd::StrRecv
+                    | Cmd::PropInserted
+                    | Cmd::PropRemoved
+                    | Cmd::PropAre => {
                         panic!("host sent a device-only command")
                     }
                 }
@@ -3443,6 +3454,20 @@ mod tests {
                 .unwrap();
             assert_eq!(&buf[..info.len], &[expected]);
         }
+    }
+
+    /// A device that never learned the multi-property commands answers
+    /// with a plain status rather than a `CMD_PROP_ARE`. That is the
+    /// exchange failing, not a malformed reply, and the client must say
+    /// which status ended it.
+    #[tokio::test]
+    async fn a_device_without_multi_property_support_reports_unimplemented() {
+        let mut radio = attached_radio().await;
+        let error = radio
+            .get_props(&[prop::PHY_FREQ, prop::PHY_TX_POWER])
+            .await
+            .expect_err("the fake device does not implement CMD_PROP_MULTI_GET");
+        assert!(matches!(error, UlcpError::Status(Status::UNIMPLEMENTED)));
     }
 
     #[tokio::test]

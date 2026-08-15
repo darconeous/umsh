@@ -1,4 +1,5 @@
-//! `dev-channel` / `dev-peer`: the device identity's own key tables.
+//! `dev-channel` / `dev-peer` / `dev-admin`: the device identity's own
+//! key tables.
 //!
 //! The digest form differs by table (a 2-byte channel id versus the
 //! 32-byte peer key itself), so listings and mutation reports print

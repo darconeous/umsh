@@ -36,9 +36,17 @@ use umsh_radio_loraphy::{
     bandwidth_from_hz, coding_rate_from_denom, spreading_factor_from_u8,
 };
 use umsh_ulcp_device::{
-    Effect, IdentitySource, MAX_CHANNEL_KEYS, MAX_DEV_PEERS, MAX_REPEATER_REGIONS, RadioRxInfo,
-    SNAPSHOT_MAX, SavedStatus, Session, TxOutcome, TxPower,
+    Effect, IdentitySource, MAX_CHANNEL_KEYS, MAX_DEV_ADMINS, MAX_DEV_PEERS, MAX_REPEATER_REGIONS,
+    RadioRxInfo, SNAPSHOT_MAX, SavedStatus, Session, TxOutcome, TxPower,
 };
+
+/// The session sizes its snapshots and the journal sizes its records
+/// independently. This is the only place both are visible, so it is
+/// where a snapshot growing past what a record can carry is caught.
+const _: () = assert!(
+    SNAPSHOT_MAX <= proto::MAX_PAYLOAD,
+    "SNAPSHOT_MAX outgrew what a journal record can carry"
+);
 
 use crate::transport_policy::{SessionArbitration, Transport};
 
@@ -138,6 +146,11 @@ impl<M: RawMutex> TransportChannels<M> {
 pub struct DevDomainSnapshot {
     pub channel_keys: heapless::Vec<[u8; 32], MAX_CHANNEL_KEYS>,
     pub peers: heapless::Vec<[u8; 32], MAX_DEV_PEERS>,
+    /// `PROP_DEV_ADMINS`: the nodes allowed to manage this device over
+    /// the mesh. Mirrored here because authorization is checked against
+    /// the arriving frame's source key before anything reaches the
+    /// session, and the responder holds no session borrow.
+    pub admins: heapless::Vec<[u8; 32], MAX_DEV_ADMINS>,
     /// The session's live `PROP_DEV_KEY`.
     ///
     /// The device node compares this against the key its MAC was built
@@ -661,6 +674,7 @@ fn sync_dev_domain<A, S, const TXQ: usize, E>(
     let mut snapshot = DevDomainSnapshot {
         channel_keys: heapless::Vec::new(),
         peers: heapless::Vec::new(),
+        admins: heapless::Vec::new(),
         dev_key: session.dev_key().copied(),
         repeater_enabled: session.repeater_enabled(),
         repeater_regions: heapless::Vec::from_slice(session.repeater_regions()).unwrap_or_default(),
@@ -684,6 +698,9 @@ fn sync_dev_domain<A, S, const TXQ: usize, E>(
     }
     for public_key in session.dev_peers() {
         let _ = snapshot.peers.push(public_key);
+    }
+    for public_key in session.dev_admins() {
+        let _ = snapshot.admins.push(public_key);
     }
     env.publish_dev_domain(snapshot);
 }

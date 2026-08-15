@@ -125,6 +125,12 @@ pub enum Command {
         op: Option<tables::TableOp>,
     },
 
+    /// Nodes authorized to manage this device over the mesh.
+    DevAdmin {
+        #[command(subcommand)]
+        op: Option<tables::TableOp>,
+    },
+
     /// Read several properties in one exchange.
     Props {
         /// Property identifiers, decimal or `0x`-prefixed.
@@ -228,6 +234,7 @@ impl Command {
                 tables::run(app, prop::DEV_CHANNEL_KEYS, "channel", op).await
             }
             Self::DevPeer { op } => tables::run(app, prop::DEV_PEERS, "peer", op).await,
+            Self::DevAdmin { op } => tables::run(app, prop::DEV_ADMINS, "administrator", op).await,
             Self::Props { keys } => info::props(app.device()?, &keys).await,
             Self::Illuminance => info::illuminance(app.device()?).await,
             Self::Alert { op } => lifecycle::alert(app.device()?, op).await,

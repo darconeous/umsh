@@ -56,6 +56,16 @@ impl PropertyNotificationKind {
         }
     }
 
+    /// The command this kind was decoded from.
+    pub const fn command(self) -> Cmd {
+        match self {
+            Self::Is => Cmd::PropIs,
+            Self::Inserted => Cmd::PropInserted,
+            Self::Removed => Cmd::PropRemoved,
+            Self::Are => Cmd::PropAre,
+        }
+    }
+
     /// Whether this notification carries one key and value.
     pub const fn is_single_property(self) -> bool {
         !matches!(self, Self::Are)

@@ -438,6 +438,10 @@ struct DeviceDomain {
     channel_keys: ChannelKeyTable,
     /// `PROP_DEV_PEERS`: peer public keys the device node recognizes.
     peers: DevPeerTable,
+    /// `PROP_DEV_ADMINS`: nodes authorized to manage this device over
+    /// the mesh. Empty by default — a device answers node management
+    /// only from keys someone deliberately put here.
+    admins: DevAdminTable,
     /// `PROP_MAC_REPEATER_ENABLED`: when set, the device identity's
     /// on-board MAC autonomously forwards overheard routable frames.
     /// Persisted device-domain state; takes effect only once a device
@@ -538,6 +542,7 @@ impl DeviceDomain {
             name_len,
             channel_keys: ChannelKeyTable::default(),
             peers: DevPeerTable::default(),
+            admins: DevAdminTable::default(),
             repeater_enabled: false,
             repeater_regions: RepeaterRegions::default(),
             repeater_default_region: None,
@@ -1048,28 +1053,51 @@ pub const PRIVATE_KEY_LEN: usize = 32;
 /// Maximum number of `PROP_DEV_PEERS` entries.
 pub const MAX_DEV_PEERS: usize = 8;
 
-/// `PROP_DEV_PEERS`: an unordered set of peer public keys. No key
-/// material — the device holds the device identity's private key and
-/// performs its own key agreement — so the digest form and remove
-/// selector are both the item itself.
-#[derive(Clone, Copy, Default)]
-struct DevPeerTable {
-    entries: [[u8; items::PUBLIC_KEY_LEN]; MAX_DEV_PEERS],
+/// Maximum number of `PROP_DEV_ADMINS` entries.
+pub const MAX_DEV_ADMINS: usize = 8;
+
+/// An unordered set of public keys held as a device-domain property.
+///
+/// Neither property built on this carries key material, so the digest
+/// form and the remove selector are both the item itself.
+///
+/// - `PROP_DEV_PEERS`: peers the device identity recognizes. The device
+///   holds its own private key and performs its own key agreement.
+/// - `PROP_DEV_ADMINS`: nodes authorized to manage this device over the
+///   mesh.
+#[derive(Clone, Copy)]
+struct PublicKeyTable<const N: usize> {
+    entries: [[u8; items::PUBLIC_KEY_LEN]; N],
     len: usize,
 }
 
-impl DevPeerTable {
+/// `PROP_DEV_PEERS`.
+type DevPeerTable = PublicKeyTable<MAX_DEV_PEERS>;
+/// `PROP_DEV_ADMINS`.
+type DevAdminTable = PublicKeyTable<MAX_DEV_ADMINS>;
+
+// `[[u8; 32]; N]` does not derive `Default` for an arbitrary const N.
+impl<const N: usize> Default for PublicKeyTable<N> {
+    fn default() -> Self {
+        Self {
+            entries: [[0; items::PUBLIC_KEY_LEN]; N],
+            len: 0,
+        }
+    }
+}
+
+impl<const N: usize> PublicKeyTable<N> {
     fn iter(&self) -> impl Iterator<Item = &[u8; items::PUBLIC_KEY_LEN]> {
         self.entries[..self.len].iter()
     }
 
-    /// Add a peer; duplicates fail with `STATUS_ALREADY`, a full table
+    /// Add a key; duplicates fail with `STATUS_ALREADY`, a full table
     /// with `STATUS_NOMEM`.
     fn insert(&mut self, public_key: [u8; items::PUBLIC_KEY_LEN]) -> Result<(), Status> {
         if self.iter().any(|existing| *existing == public_key) {
             return Err(Status::ALREADY);
         }
-        if self.len == MAX_DEV_PEERS {
+        if self.len == N {
             return Err(Status::NOMEM);
         }
         self.entries[self.len] = public_key;
@@ -1354,10 +1382,13 @@ impl HostDomain {
 /// [`Session::encode_snapshot`]); sized for every table at capacity
 /// with headroom for future properties.
 ///
-/// The option framing costs roughly two octets per table entry over the
-/// retired positional format, which the ~1.55 KB worst case here already
-/// includes (`snapshot_at_capacity_fits_the_buffer` pins it). It must
-/// stay within `umsh_journal_store::proto::MAX_PAYLOAD`.
+/// Every table at capacity currently encodes to 972 octets, option
+/// framing included (`snapshot_at_capacity_fits_the_buffer` pins it);
+/// the rest is headroom for properties not yet allocated. A persisted
+/// table of public keys costs about 272 octets at capacity, so there is
+/// room for three more before this has to grow, and it can only grow to
+/// `umsh_journal_store::proto::MAX_PAYLOAD` — 2029 — before the journal
+/// record format itself has to change.
 pub const SNAPSHOT_MAX: usize = 1792;
 
 /// Snapshot payload format discriminator.
@@ -1465,6 +1496,7 @@ const SAVED_SCHEMA: &[SavedProperty] = &[
     saved(prop::STARTUP_BEACON, ApplyPhase::Config, false),
     saved(prop::GNSS_ENABLED, ApplyPhase::Config, false),
     saved(prop::PHY_DUTY_LIMIT, ApplyPhase::Config, false),
+    saved(prop::DEV_ADMINS, ApplyPhase::Keys, true),
     saved(prop::TZ_OFFSET, ApplyPhase::Config, false),
     saved(prop::GNSS_IDENT_UPDATE, ApplyPhase::Config, false),
     saved(prop::GNSS_IDENT_PRECISION, ApplyPhase::Config, false),
@@ -1550,6 +1582,7 @@ struct SavedState {
     dev_key: Option<[u8; items::PUBLIC_KEY_LEN]>,
     dev_channel_keys: ChannelKeyTable,
     dev_peers: DevPeerTable,
+    dev_admins: DevAdminTable,
     repeater_enabled: bool,
     repeater_regions: RepeaterRegions,
     repeater_default_region: Option<[u8; REGION_CODE_LEN]>,
@@ -1583,6 +1616,7 @@ impl SavedState {
             dev_key,
             dev_channel_keys: device.channel_keys,
             dev_peers: device.peers,
+            dev_admins: device.admins,
             repeater_enabled: device.repeater_enabled,
             repeater_regions: device.repeater_regions,
             repeater_default_region: device.repeater_default_region,
@@ -1620,6 +1654,7 @@ impl SavedState {
             dev_key: None,
             dev_channel_keys: ChannelKeyTable::default(),
             dev_peers: DevPeerTable::default(),
+            dev_admins: DevAdminTable::default(),
             repeater_enabled: false,
             repeater_regions: RepeaterRegions::default(),
             repeater_default_region: None,
@@ -1722,6 +1757,12 @@ impl SavedState {
             prop::STARTUP_BEACON => encoder.put(number, &[self.startup_beacon as u8]),
             prop::GNSS_ENABLED => encoder.put(number, &[self.gnss_enabled as u8]),
             prop::PHY_DUTY_LIMIT => encoder.put(number, &self.duty_limit.to_le_bytes()),
+            prop::DEV_ADMINS => {
+                for public_key in self.dev_admins.iter() {
+                    encoder.put(number, public_key)?;
+                }
+                Ok(())
+            }
             prop::TZ_OFFSET => encoder.put(number, &self.tz_offset_min.to_le_bytes()),
             prop::GNSS_IDENT_UPDATE => encoder.put(number, &[self.gnss_ident_update as u8]),
             prop::GNSS_IDENT_PRECISION => encoder.put(number, &[self.gnss_ident_precision]),
@@ -1846,6 +1887,11 @@ impl SavedState {
             prop::STARTUP_BEACON => self.startup_beacon = parse_bool(value).map_err(invalid)?,
             prop::GNSS_ENABLED => self.gnss_enabled = parse_bool(value).map_err(invalid)?,
             prop::PHY_DUTY_LIMIT => self.duty_limit = parse_u16(value).map_err(invalid)?,
+            prop::DEV_ADMINS => {
+                let public_key: [u8; items::PUBLIC_KEY_LEN] =
+                    value.try_into().map_err(|_| SnapshotError::InvalidValue)?;
+                self.dev_admins.insert(public_key).map_err(invalid)?;
+            }
             prop::TZ_OFFSET => self.tz_offset_min = validate_tz_offset(value).map_err(invalid)?,
             prop::GNSS_IDENT_UPDATE => {
                 self.gnss_ident_update = parse_bool(value).map_err(invalid)?
@@ -2185,6 +2231,13 @@ impl<A: AesProvider, S: Sha256Provider, const TX: usize> Session<A, S, TX> {
         self.device.peers.iter().copied()
     }
 
+    /// The nodes authorized to manage this device over the mesh. The
+    /// firmware mirrors these to whatever answers Node Management
+    /// Requests, which admits an exchange only from a key in this set.
+    pub fn dev_admins(&self) -> impl Iterator<Item = [u8; items::PUBLIC_KEY_LEN]> + '_ {
+        self.device.admins.iter().copied()
+    }
+
     /// `PROP_MAC_REPEATER_ENABLED`: whether the device node should
     /// autonomously forward overheard routable frames and advertise
     /// `NodeRole::Repeater`. Part of the device domain, so it changes
@@ -2307,6 +2360,7 @@ impl<A: AesProvider, S: Sha256Provider, const TX: usize> Session<A, S, TX> {
                     prop::PHY_LORA_CR => self.device.settings.cr_denom = saved.settings.cr_denom,
                     prop::DEV_CHANNEL_KEYS => self.device.channel_keys = saved.dev_channel_keys,
                     prop::DEV_PEERS => self.device.peers = saved.dev_peers,
+                    prop::DEV_ADMINS => self.device.admins = saved.dev_admins,
                     prop::DEV_NAME => {
                         self.device.name = saved.name;
                         self.device.name_len = saved.name_len;
@@ -3969,6 +4023,13 @@ impl<A: AesProvider, S: Sha256Provider, const TX: usize> Session<A, S, TX> {
                 self.bump_dev_domain();
                 Ok(false)
             }
+            // Likewise public keys, and likewise ungated: authorizing a
+            // node to manage this device says nothing secret.
+            prop::DEV_ADMINS => {
+                self.device.admins = DevAdminTable::parse_table(value)?;
+                self.bump_dev_domain();
+                Ok(false)
+            }
             // Device-domain forwarding switch. Accepted regardless of
             // whether a device identity exists yet: the flag is persisted
             // and takes effect the moment the device node is brought up
@@ -4192,6 +4253,21 @@ impl<A: AesProvider, S: Sha256Provider, const TX: usize> Session<A, S, TX> {
                     Err(status) => self.complete(tid, status, emit),
                 }
             }
+            prop::DEV_ADMINS => {
+                let result = item
+                    .try_into()
+                    .map_err(|_| Status::INVALID_ARGUMENT)
+                    .and_then(|public_key: &[u8; items::PUBLIC_KEY_LEN]| {
+                        self.device.admins.insert(*public_key)
+                    });
+                match result {
+                    Ok(()) => {
+                        self.bump_dev_domain();
+                        self.send_prop_inserted(tid, key, item, emit);
+                    }
+                    Err(status) => self.complete(tid, status, emit),
+                }
+            }
             // A known property that is not a mutable multi-value
             // property cannot be inserted into.
             _ if self.known_prop(key) => self.complete(tid, Status::INVALID_ARGUMENT, emit),
@@ -4263,6 +4339,21 @@ impl<A: AesProvider, S: Sha256Provider, const TX: usize> Session<A, S, TX> {
                     .map_err(|_| Status::INVALID_ARGUMENT)
                     .and_then(|public_key: &[u8; items::PUBLIC_KEY_LEN]| {
                         self.device.peers.remove(public_key)
+                    });
+                match result {
+                    Ok(()) => {
+                        self.bump_dev_domain();
+                        self.send_prop_removed(tid, key, selector, emit);
+                    }
+                    Err(status) => self.complete(tid, status, emit),
+                }
+            }
+            prop::DEV_ADMINS => {
+                let result = selector
+                    .try_into()
+                    .map_err(|_| Status::INVALID_ARGUMENT)
+                    .and_then(|public_key: &[u8; items::PUBLIC_KEY_LEN]| {
+                        self.device.admins.remove(public_key)
                     });
                 match result {
                     Ok(()) => {
@@ -4436,6 +4527,7 @@ impl<A: AesProvider, S: Sha256Provider, const TX: usize> Session<A, S, TX> {
                 | prop::DEV_PRIVATE_KEY
                 | prop::DEV_CHANNEL_KEYS
                 | prop::DEV_PEERS
+                | prop::DEV_ADMINS
                 | prop::MAC_REPEATER_ENABLED
                 | prop::MAC_REPEATER_REGIONS
                 | prop::MAC_REPEATER_DEFAULT_REGION
@@ -4493,6 +4585,7 @@ impl<A: AesProvider, S: Sha256Provider, const TX: usize> Session<A, S, TX> {
                     cap::DEV_IDENTITY,
                     cap::REPEATER,
                     cap::IDENT,
+                    cap::ADMIN,
                     cap::ADVERT,
                     cap::MAC_BACKHAUL,
                     cap::CMD_MULTI,
@@ -4556,6 +4649,13 @@ impl<A: AesProvider, S: Sha256Provider, const TX: usize> Session<A, S, TX> {
             prop::DEV_PEERS => {
                 let mut len = 0;
                 for public_key in self.device.peers.iter() {
+                    len += put(&mut out[len..], public_key);
+                }
+                len
+            }
+            prop::DEV_ADMINS => {
+                let mut len = 0;
+                for public_key in self.device.admins.iter() {
                     len += put(&mut out[len..], public_key);
                 }
                 len
@@ -5400,6 +5500,7 @@ mod tests {
                 cap::DEV_IDENTITY,
                 cap::REPEATER,
                 cap::IDENT,
+                cap::ADMIN,
                 cap::ADVERT,
                 cap::MAC_BACKHAUL,
                 cap::CMD_MULTI,
@@ -9154,6 +9255,9 @@ mod tests {
         for seed in 0..MAX_DEV_PEERS as u8 {
             let _ = session.device.peers.insert([seed; items::PUBLIC_KEY_LEN]);
         }
+        for seed in 0..MAX_DEV_ADMINS as u8 {
+            let _ = session.device.admins.insert([seed; items::PUBLIC_KEY_LEN]);
+        }
         session.device.name = [b'n'; MAX_DEVICE_NAME_LEN];
         session.device.name_len = MAX_DEVICE_NAME_LEN;
         session.set_boot_identity([0xEE; 32]);
@@ -9162,7 +9266,7 @@ mod tests {
         let len = session
             .encode_snapshot(&mut bytes)
             .expect("a full snapshot must fit SNAPSHOT_MAX");
-        assert!(len <= SNAPSHOT_MAX);
+        assert!(len <= SNAPSHOT_MAX, "worst case is {len} octets");
 
         let mut booted: TestSession =
             Session::new(test_config(), Status::RESET_POWER_ON, test_engine());
@@ -9170,6 +9274,7 @@ mod tests {
         booted.restore_at_boot(&bytes[..len]).unwrap();
         assert_eq!(booted.device.channel_keys.len, MAX_CHANNEL_KEYS);
         assert_eq!(booted.device.peers.len, MAX_DEV_PEERS);
+        assert_eq!(booted.device.admins.len, MAX_DEV_ADMINS);
     }
 
     #[test]
@@ -9768,6 +9873,86 @@ mod tests {
         }
         let (emitted, _) = insert_item(&mut session, prop::DEV_PEERS, &[0xFF; 32]);
         expect_status(&emitted[0], 5, Status::NOMEM);
+    }
+
+    /// The administrator list is a second public-key table with the same
+    /// shape as the peer list, and independent of it: authorizing a node
+    /// to manage this device is not the same as recognizing it as a
+    /// correspondent.
+    #[test]
+    fn dev_admins_lifecycle() {
+        let mut session = test_session();
+
+        let (emitted, _) = insert_item(&mut session, prop::DEV_ADMINS, &[0xA0; 32]);
+        let (key, digest) = parse_table_notice(&emitted[0], Cmd::PropInserted, 5);
+        assert_eq!(key, prop::DEV_ADMINS);
+        assert_eq!(digest, [0xA0; 32], "the digest form is the key itself");
+        assert_eq!(session.dev_admins().collect::<Vec<_>>(), [[0xA0; 32]]);
+        assert_eq!(session.dev_peers().count(), 0, "peers are a separate set");
+
+        let (emitted, _) = insert_item(&mut session, prop::DEV_ADMINS, &[0xA0; 32]);
+        expect_status(&emitted[0], 5, Status::ALREADY);
+
+        // Whole-table set collapses duplicates, like every key table.
+        let mut two = Vec::new();
+        two.extend_from_slice(&[0xA1; 32]);
+        two.extend_from_slice(&[0xA1; 32]);
+        let (emitted, _) = set(&mut session, prop::DEV_ADMINS, &two);
+        let (_, key, value) = parse_prop_is(&emitted[0]);
+        assert_eq!(key, prop::DEV_ADMINS);
+        assert_eq!(value, [0xA1; 32]);
+
+        let (emitted, _) = remove_item(&mut session, prop::DEV_ADMINS, &[0xA1; 32]);
+        let (_, digest) = parse_table_notice(&emitted[0], Cmd::PropRemoved, 6);
+        assert_eq!(digest, [0xA1; 32]);
+        let (emitted, _) = remove_item(&mut session, prop::DEV_ADMINS, &[0xA1; 32]);
+        expect_status(&emitted[0], 6, Status::ITEM_NOT_FOUND);
+
+        for seed in 0..MAX_DEV_ADMINS as u8 {
+            insert_item(&mut session, prop::DEV_ADMINS, &[seed; 32]);
+        }
+        let (emitted, _) = insert_item(&mut session, prop::DEV_ADMINS, &[0xFF; 32]);
+        expect_status(&emitted[0], 5, Status::NOMEM);
+    }
+
+    /// Who may manage the device is device-domain state, so every change
+    /// to it has to reach whatever answers management requests.
+    #[test]
+    fn dev_admin_changes_move_the_dev_domain_version() {
+        let mut session = test_session();
+        let start = session.dev_domain_version();
+
+        insert_item(&mut session, prop::DEV_ADMINS, &[0xA0; 32]);
+        assert_eq!(session.dev_domain_version(), start + 1);
+        set(&mut session, prop::DEV_ADMINS, &[0xA1; 32]);
+        assert_eq!(session.dev_domain_version(), start + 2);
+        remove_item(&mut session, prop::DEV_ADMINS, &[0xA1; 32]);
+        assert_eq!(session.dev_domain_version(), start + 3);
+
+        // A failed removal changes nothing to publish.
+        remove_item(&mut session, prop::DEV_ADMINS, &[0xEE; 32]);
+        assert_eq!(session.dev_domain_version(), start + 3);
+    }
+
+    /// An administrator list outlives a power cycle: a device managed
+    /// only over the mesh would otherwise become unmanageable at its
+    /// first reboot.
+    #[test]
+    fn dev_admins_survive_a_save_and_boot() {
+        let mut session = test_session();
+        insert_item(&mut session, prop::DEV_ADMINS, &[0xA0; 32]);
+        insert_item(&mut session, prop::DEV_ADMINS, &[0xA1; 32]);
+        save(&mut session);
+
+        let mut bytes = [0u8; SNAPSHOT_MAX];
+        let len = session.encode_snapshot(&mut bytes).unwrap();
+        let mut booted: TestSession =
+            Session::new(test_config(), Status::RESET_POWER_ON, test_engine());
+        booted.restore_at_boot(&bytes[..len]).unwrap();
+        assert_eq!(
+            booted.dev_admins().collect::<Vec<_>>(),
+            [[0xA0; 32], [0xA1; 32]]
+        );
     }
 
     #[test]

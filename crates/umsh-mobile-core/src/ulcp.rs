@@ -9,7 +9,7 @@ use umsh_ulcp::{
     AlertState, BatteryChargeState, BatteryStatus, Cmd, Frame, StreamPayload, frame,
     gatt::{self, MAX_FRAME, Reassembler},
     gnss::{FixKind, GnssSnapshot},
-    host::{PropertyNotification, PropertyNotificationKind, TidAllocator},
+    host::{PropertyNotification, TidAllocator},
     ids::{
         INTERFACE_TYPE, MAX_AUTO_ANNOUNCE_INTERVAL_S, MIN_AUTO_ANNOUNCE_INTERVAL_S,
         PROTOCOL_MAJOR_VERSION, PROTOCOL_MINOR_VERSION, cap, prop, saved,
@@ -3163,14 +3163,9 @@ fn ulcp_operation_error(
 #[uniffi::export]
 pub fn inspect_ulcp_property_frame(bytes: Vec<u8>) -> Result<UlcpPropertyFrameRecord, MobileError> {
     let parsed = PropertyNotification::parse(&bytes).map_err(|_| MobileError::InvalidUlcpFrame)?;
-    let command = match parsed.kind {
-        PropertyNotificationKind::Is => Cmd::PropIs,
-        PropertyNotificationKind::Inserted => Cmd::PropInserted,
-        PropertyNotificationKind::Removed => Cmd::PropRemoved,
-    };
     Ok(UlcpPropertyFrameRecord {
         transaction_id: parsed.tid,
-        command: command as u8,
+        command: parsed.kind.command() as u8,
         property_id: parsed.key,
         value: parsed.value.to_vec(),
     })
