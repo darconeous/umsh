@@ -31,6 +31,10 @@ use crate::mac_command::IdentityRequestFilters;
 /// flood-management rules. Every node the solicitation selected is answering
 /// the same frame, so the hold spreads the replies across the window instead
 /// of piling them onto one another.
+///
+/// A solicitation narrowed to a single node is exempt: there is no crowd to
+/// spread, and holding the one reply would only make the answer late. See
+/// [`IdentityRequestFilters::hint_names_one_node`].
 pub(crate) const RESPONSE_MIN_DELAY_MS: u16 = 500;
 pub(crate) const RESPONSE_MAX_DELAY_MS: u16 = 30_000;
 
@@ -42,6 +46,11 @@ pub(crate) const RESPONSE_MAX_DELAY_MS: u16 = 30_000;
 /// random hold, since a duplicate landing while the first reply still sits in
 /// the transmit queue is the case that queues a second one — so it is derived
 /// from that hold rather than chosen independently.
+///
+/// An immediate reply is covered by the same window with room to spare, and
+/// keeping one window for both cases costs nothing: it suppresses repeats of a
+/// solicitation, and a requester wanting a fresh answer inside it asks with a
+/// fresh nonce.
 const SOLICITATION_SUPPRESSION_MS: u64 = RESPONSE_MAX_DELAY_MS as u64 * 2;
 
 /// How many recently answered solicitations are remembered at once.
@@ -263,8 +272,11 @@ pub(crate) struct IdentityResponsePlan {
     /// Whether the reply should carry our full source key.
     pub(crate) full_source: bool,
     /// Whether the reply must be held for a random delay before transmit.
-    /// Set for broadcast/multicast solicitations, where every selected node
-    /// answers at once and undelayed replies would collide on the channel.
+    ///
+    /// Set for a broadcast/multicast solicitation that more than one node may
+    /// satisfy, where every selected node answers the same frame and undelayed
+    /// replies would collide on the channel. A request narrowed to a single
+    /// node has no crowd to spread and is answered immediately.
     pub(crate) delayed: bool,
     /// Whether the reply must carry no flood hop count field at all.
     /// Set for a solicitation that no `FILTER_NODE_HINT` narrowed: such a
@@ -342,7 +354,7 @@ impl IdentityResponder {
         Some(IdentityResponsePlan {
             to: ctx.from_key,
             full_source,
-            delayed: solicitation,
+            delayed: solicitation && !ctx.filters.hint_names_one_node(),
             no_flood: solicitation && !ctx.filters.hint_filtered(),
             route,
             framed: Vec::from(&buf[..len]),

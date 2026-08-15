@@ -47,6 +47,12 @@ In order to manage the potential flood of responses, the following rules MUST be
   0.5 to 30 seconds, so that the selected nodes do not all answer at once. A
   delayed response that then fails channel-activity assessment follows the
   responder's normal bounded CCA backoff-and-retry before being dropped.
+  A request every [FILTER_NODE_HINT](#identity-request-options) of which is 2 or
+  3 bytes is exempt and MUST be answered without the delay: such a request names
+  a node rather than a share of the mesh, so there is no crowd of replies to
+  spread and the hold would only make the answer late. One byte names a 256th of
+  what the request reaches, so it is not exempt; filters of the same type combine
+  as OR, and the shortest one decides.
 - One solicitation is answered at most once. A request reaches a node once per
   path it travels, and a plain broadcast carries no frame counter for a lower
   layer to recognize the repeat by; the [NONCE](#identity-request-options) is

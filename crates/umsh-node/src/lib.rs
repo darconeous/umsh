@@ -1082,6 +1082,42 @@ mod tests {
             unicasts[0].options.flood_hops.is_some(),
             "the reply may be flooded back to a requester that named us"
         );
+        assert_eq!(
+            unicasts[0].options.tx_delay_ms, None,
+            "a whole hint names one node, so the reply goes out at once"
+        );
+    }
+
+    /// A one-byte prefix keeps the hold: it selects a 256th of everything the
+    /// request reaches, and a hint-filtered request may be flood routed, so
+    /// that fraction is of the whole mesh rather than one neighborhood.
+    #[cfg(all(feature = "software-crypto", feature = "unsafe-advanced"))]
+    #[test]
+    fn responder_holds_a_reply_to_a_one_byte_hint_prefix() {
+        let mac = FakeMac::new(vec![[0x12; 32]]);
+        let node = responder_node(&mac);
+        let our_key = PublicKey([0x11; 32]);
+        let requester = PublicKey([0x41; 32]);
+        node.enable_identity_responder_default(test_profile(our_key));
+
+        let options = crate::mac_command::IdentityRequestBuilder::new()
+            .filter_hint_prefix(&our_key.hint().0[..1])
+            .unwrap()
+            .build();
+        let packet = test_broadcast_packet(requester, None, None);
+
+        let plan = node
+            .evaluate_identity_request(&packet, requester, &options, 0)
+            .expect("a one-byte prefix still selects the nodes it covers");
+        block_on_ready(node.send_identity_response(plan));
+
+        let unicasts = mac.take_unicasts();
+        assert_eq!(unicasts.len(), 1);
+        let delay = unicasts[0]
+            .options
+            .tx_delay_ms
+            .expect("a prefix this short may select a crowd, which is held");
+        assert!((500..=30_000).contains(&delay));
     }
 
     /// The shape that identifies an intermediate hop: the requester knows only
@@ -1119,6 +1155,10 @@ mod tests {
             unicasts[0].options.source_route.as_deref(),
             Some([umsh_core::RouterHint([0x12, 0x34])].as_slice()),
             "the reply retraces the path the question came by"
+        );
+        assert_eq!(
+            unicasts[0].options.tx_delay_ms, None,
+            "two bytes name one node, so there is no crowd of replies to spread"
         );
 
         // A hint that is a prefix of somebody else's is not a prefix of ours.

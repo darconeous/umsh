@@ -885,10 +885,12 @@ struct PeerDetailView: View {
                         .foregroundStyle(.secondary)
                 }
                 if let hint = hop.hint, askedRouters.contains(hint.bytes) {
-                    // The responder holds its reply for a random slice of the
-                    // 30-second identity window, so silence for a while is the
-                    // protocol working, not a failure.
-                    Text("Asked—a reply can take up to 30 seconds")
+                    // A router hint names one node, so the responder answers
+                    // at once rather than holding its reply the way it does
+                    // for an ask a crowd might answer. What is left is the
+                    // round trip: several LoRa hops, each with its own
+                    // channel-activity backoff.
+                    Text("Asked—waiting for a reply")
                         .font(.caption)
                         .foregroundStyle(.secondary)
                 }
@@ -917,15 +919,15 @@ struct PeerDetailView: View {
                         // never claims an ask that never went out.
                         guard await identifyRouter(hint, hop.precedingRouters) else { return }
                         askedRouters.insert(hint.bytes)
-                        // The caption is a timed state, not a latched one: the
-                        // responder holds its reply for at most this long, so
-                        // waiting it out is what makes the caption stop being
-                        // true. Clearing on a reply instead would leave the
-                        // failure case claiming an answer was still coming, and
-                        // gating on the row having a name would suppress the
-                        // caption exactly when a named-by-guess row is asked to
-                        // confirm itself.
-                        try? await Task.sleep(for: .seconds(30))
+                        // The caption is a timed state, not a latched one, and
+                        // this is how long a round trip is worth waiting on: a
+                        // hint-filtered reply is sent immediately, so what is
+                        // left is travel over a few hops. Clearing on a reply
+                        // instead would leave the failure case claiming an
+                        // answer was still coming, and gating on the row having
+                        // a name would suppress the caption exactly when a
+                        // named-by-guess row is asked to confirm itself.
+                        try? await Task.sleep(for: .seconds(15))
                         askedRouters.remove(hint.bytes)
                     }
                 } label: {

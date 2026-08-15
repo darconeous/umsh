@@ -31,6 +31,14 @@ pub mod identity_filter {
 /// Length of a [`NodeHint`], the longest a `FILTER_NODE_HINT` value may be.
 const NODE_HINT_LEN: usize = 3;
 
+/// The shortest `FILTER_NODE_HINT` that names a node rather than a share of
+/// the mesh.
+///
+/// Two bytes is one node in 65,536 and three is one in 16.7 million, either of
+/// which is unique across any plausible mesh. One byte is one node in 256 — a
+/// fraction, not a name.
+const UNIQUE_HINT_PREFIX_LEN: usize = 2;
+
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 #[repr(u8)]
 pub enum CommandId {
@@ -296,6 +304,39 @@ impl<'a> IdentityRequestFilters<'a> {
         OptionDecoder::new(self.options)
             .map_while(Result::ok)
             .any(|(number, _)| number == identity_filter::FILTER_NODE_HINT)
+    }
+
+    /// Whether this request's hint filters name a node rather than a share of
+    /// the mesh: at least one `FILTER_NODE_HINT` is present and every one of
+    /// them is at least [`UNIQUE_HINT_PREFIX_LEN`] bytes.
+    ///
+    /// This is the question the reply's random hold turns on. The hold exists
+    /// to keep many selected nodes from answering the same frame at once, so a
+    /// request only one node can satisfy has nothing to spread and is answered
+    /// straight away. A one-byte prefix selects a 256th of everything it
+    /// reaches, which is a crowd, so it keeps the hold.
+    ///
+    /// Stricter than [`hint_filtered`](Self::hint_filtered), which asks only
+    /// whether the request is aimed at all. Filters of the same type combine as
+    /// OR, so one short filter widens the whole request and the shortest is
+    /// what decides.
+    ///
+    /// A malformed option block reads as unnarrowed — the conservative answer,
+    /// since it keeps the hold in force.
+    pub fn hint_names_one_node(&self) -> bool {
+        let mut named = false;
+        for item in OptionDecoder::new(self.options) {
+            let Ok((number, value)) = item else {
+                return false;
+            };
+            if number == identity_filter::FILTER_NODE_HINT {
+                if value.len() < UNIQUE_HINT_PREFIX_LEN {
+                    return false;
+                }
+                named = true;
+            }
+        }
+        named
     }
 
     /// Whether a node with the given identity is selected by this request.
@@ -601,6 +642,50 @@ mod tests {
             assert!(filters.hint_filtered());
             assert!(!filters.selects(NodeRole::Chat, caps, &hint).unwrap());
         }
+    }
+
+    #[test]
+    fn identity_filters_report_whether_a_hint_names_one_node() {
+        let named = |prefixes: &[&[u8]]| {
+            let mut builder = IdentityRequestBuilder::new();
+            for prefix in prefixes {
+                builder = builder.filter_hint_prefix(prefix).unwrap();
+            }
+            IdentityRequestFilters::new(&builder.build()).hint_names_one_node()
+        };
+
+        // Two bytes is one node in 65,536, three is one in 16.7 million.
+        assert!(named(&[&[0xAA, 0xBB, 0xCC]]));
+        assert!(named(&[&[0xAA, 0xBB]]));
+        // One byte is a 256th of the mesh, which is a crowd, not a name.
+        assert!(!named(&[&[0xAA]]));
+
+        // Same-type filters are OR, so the shortest one decides.
+        assert!(named(&[&[0xAA, 0xBB], &[0xCC, 0xDD]]));
+        assert!(!named(&[&[0xAA, 0xBB], &[0xCC]]));
+
+        // A request with no hint filter at all is narrowed by nothing, however
+        // else it selects.
+        let by_role = IdentityRequestBuilder::new()
+            .filter_role(NodeRole::Chat)
+            .unwrap()
+            .build();
+        assert!(!IdentityRequestFilters::new(&by_role).hint_names_one_node());
+
+        // A block that will not decode reads as unnarrowed, so the reply keeps
+        // its hold rather than racing every other answer on a malformed ask.
+        // A hint option claiming five bytes of value with none behind it: the
+        // case where trusting the decode would drop the hold on a filter whose
+        // length is exactly what could not be read.
+        let truncated = [0x35u8];
+        let filters = IdentityRequestFilters::new(&truncated);
+        assert!(
+            filters
+                .selects(NodeRole::Chat, NodeCapabilities::empty(), &NodeHint([0; 3]))
+                .is_err(),
+            "the block has to be undecodable for this to test the error path"
+        );
+        assert!(!filters.hint_names_one_node());
     }
 
     #[test]
