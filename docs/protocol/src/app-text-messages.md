@@ -29,6 +29,7 @@ Repeated unrecognized options remain ignorable.
 | 7 | Text Color | 3 bytes, RGB |
 | 8 | Channel Group Resend | 0 bytes (flag) |
 | 9 | Padding | Anything |
+| 10 | Timestamp Sent | 4-byte unix timestamp |
 
 ### Message Type
 
@@ -44,6 +45,17 @@ If absent or empty, the message type defaults to 0 (basic text).
 The presence of the `Regarding` option changes the semantics a bit: A **reply** is a type 0 message with a `Regarding` option specifying which message is being replied to. A **reaction** is a type 1 message with a `Regarding` option specifying which message is being reacted to; the body is a single Unicode emoji or a short text token such as `+1`, `-1`, `!`, or `?`. Implementations may differentiate reactions from plain status text by the presence of the Regarding option.
 
 Reaction bodies SHOULD be short text tokens rather than emoji: `<3`, `+1`, `-1`, `ha`, `!`, and `?` cover the common reactions in one or two bytes. Receivers SHOULD accept the equivalent spellings — `♥` for `<3`, `haha` or `lol` for `ha`, `!!` for `!`, letter case being insignificant — as well as the emoji themselves, and SHOULD render a reaction as a single glyph, taking the first one when a body carries more.
+
+There are five canonical reactions:
+
+| Name | Emoji | Acceptable ASCII Representations
+|------|-------|-------------------------------------
+| Approve | 👍 | `+1`
+| Disapprove | 👎 | `-1`
+| Love | ❤️    | `<3`
+| Haha | 🤣    | `ha`, `lol`, `haha`
+| Surprise | ‼️ | `!!`, `!`
+| Question | ❓ | `?`
 
 A sender has at most one reaction in force per message. Sending another supersedes the previous one, and a reaction with a zero-length body withdraws it; a receiver displays the most recently received reaction from each sender (unless it was withdrawn).
 
