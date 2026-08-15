@@ -23,6 +23,7 @@ impl Status {
     pub const CCA_FAILURE: Self = Self(18);
     pub const ALREADY: Self = Self(19);
     pub const ITEM_NOT_FOUND: Self = Self(20);
+    pub const CURSOR_INVALID: Self = Self(21);
     pub const DUTY_LIMIT: Self = Self(32);
 
     pub const RESET_POWER_ON: Self = Self(112);
@@ -57,6 +58,7 @@ impl Status {
             Self::CCA_FAILURE => "CCA_FAILURE",
             Self::ALREADY => "ALREADY",
             Self::ITEM_NOT_FOUND => "ITEM_NOT_FOUND",
+            Self::CURSOR_INVALID => "CURSOR_INVALID",
             Self::DUTY_LIMIT => "DUTY_LIMIT",
             Self::RESET_POWER_ON => "RESET_POWER_ON",
             Self::RESET_EXTERNAL => "RESET_EXTERNAL",

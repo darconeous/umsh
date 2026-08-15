@@ -8,6 +8,7 @@ use umsh::ulcp::{FrameLink, HostOwnership, SavedSnapshot, UlcpDevice};
 use umsh::ulcp_wire::battery::{BatteryChargeState, BatteryStatus};
 use umsh::ulcp_wire::ids::{DUTY_LIMIT_DISABLED, cap, prop};
 use umsh::ulcp_wire::items::Filter;
+use umsh::ulcp_wire::property_name;
 
 use super::values::{FilterArg, KeyArg};
 use super::{decode_u16, duty_percent, phy, repeater};
@@ -246,6 +247,39 @@ fn battery_display(status: &BatteryStatus) -> String {
 /// Separate from `info` because calibrating the sensor against a
 /// reference meter means taking readings in a tight loop, and a full
 /// report per data point is unusable for that.
+/// Read several properties in one exchange.
+///
+/// The point is the round trip, not the rendering: values print as raw
+/// hex, because the interesting question is whether the device answered
+/// every slot in order and put a status where it could not.
+pub async fn props<L: FrameLink>(device: &mut UlcpDevice<L>, keys: &[u32]) -> Result<()> {
+    let answers = device.get_props(keys).await?;
+    for (requested, answer) in keys.iter().zip(&answers) {
+        let label = match property_name(*requested) {
+            Some(name) => name.to_owned(),
+            None => format!("prop {requested}"),
+        };
+        match answer {
+            Ok((key, value)) if key == requested => field(&label, hex(value)),
+            // Position identifies the slot, so a key that disagrees with
+            // what was asked for is worth showing rather than hiding.
+            Ok((key, value)) => field(&label, format!("{} (answered prop {key})", hex(value))),
+            Err(status) => field(&label, format!("{status:?}")),
+        }
+    }
+    if answers.len() < keys.len() {
+        field(
+            "truncated",
+            format!(
+                "{} of {} answered; reissue the rest",
+                answers.len(),
+                keys.len()
+            ),
+        );
+    }
+    Ok(())
+}
+
 pub async fn illuminance<L: FrameLink>(device: &mut UlcpDevice<L>) -> Result<()> {
     if !device.capabilities().await?.contains(&cap::ILLUMINANCE) {
         field("illuminance", "unsupported (no CAP_ILLUMINANCE)");

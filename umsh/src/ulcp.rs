@@ -28,7 +28,7 @@ use umsh_ulcp::Status;
 use umsh_ulcp::airtime::lora_airtime_ms;
 use umsh_ulcp::alert::AlertState;
 use umsh_ulcp::battery::BatteryStatus;
-use umsh_ulcp::frame::{self, Cmd, Frame, StreamPayload, TID_UNSOLICITED};
+use umsh_ulcp::frame::{self, Cmd, Frame, MultiEntries, StreamPayload, TID_UNSOLICITED};
 use umsh_ulcp::gnss::GnssSnapshot;
 use umsh_ulcp::hdlc;
 use umsh_ulcp::host::{PropertyNotification, PropertyNotificationKind, TidAllocator};
@@ -160,6 +160,10 @@ struct RxPacket {
 
 /// Which device-to-host property command carried a payload.
 type ResponseKind = PropertyNotificationKind;
+
+/// One position in a `CMD_PROP_ARE`: the property and the value the
+/// device reported, or the status that stands in its place.
+pub type MultiValue = Result<(u32, Vec<u8>), Status>;
 
 /// A property notification received with a non-zero TID (a command
 /// response).
@@ -1671,6 +1675,86 @@ where
             .await
     }
 
+    /// Read several properties in one exchange via
+    /// `CMD_PROP_MULTI_GET`.
+    ///
+    /// Reading continues past failures: a property that could not be
+    /// fetched occupies its own position as an `Err` carrying the status
+    /// a lone `CMD_PROP_GET` would have produced. A device that answers
+    /// with fewer entries than were requested ran out of room in the
+    /// response; the caller reissues the remainder.
+    pub async fn get_props(&mut self, keys: &[u32]) -> Result<Vec<MultiValue>, UlcpError> {
+        for &key in keys {
+            self.require_tethered(key)?;
+        }
+        let tid = self.alloc_tid();
+        let mut buf = vec![0u8; keys.len() * pui::MAX_LEN + 8];
+        let len = frame::prop_multi_get(&mut buf, tid, keys)
+            .map_err(|_| UlcpError::Protocol("frame encode"))?;
+        self.send(&buf[..len]).await?;
+        self.finish_multi_transaction(tid).await
+    }
+
+    /// Write several properties in order in one exchange via
+    /// `CMD_PROP_MULTI_SET`.
+    ///
+    /// The device applies the writes strictly in order and stops at the
+    /// first failure, so the returned entries cover a prefix of the
+    /// request: each is either the authoritative value the device echoed
+    /// or the status that ended the sequence. A short reply whose last
+    /// entry succeeded means the device ran out of response space; the
+    /// caller reissues the remainder.
+    pub async fn set_props(
+        &mut self,
+        entries: &[(u32, Vec<u8>)],
+    ) -> Result<Vec<MultiValue>, UlcpError> {
+        let mut capacity = 8;
+        for (key, value) in entries {
+            self.require_tethered(*key)?;
+            capacity += value.len() + pui::MAX_LEN * 2;
+        }
+        let borrowed: Vec<(u32, &[u8])> = entries
+            .iter()
+            .map(|(key, value)| (*key, value.as_slice()))
+            .collect();
+        let tid = self.alloc_tid();
+        let mut buf = vec![0u8; capacity];
+        let len = frame::prop_multi_set(&mut buf, tid, &borrowed)
+            .map_err(|_| UlcpError::Protocol("frame encode"))?;
+        self.send(&buf[..len]).await?;
+        self.finish_multi_transaction(tid).await
+    }
+
+    /// Await the `CMD_PROP_ARE` answering a multi-property command and
+    /// split it into per-position outcomes.
+    async fn finish_multi_transaction(&mut self, tid: u8) -> Result<Vec<MultiValue>, UlcpError> {
+        let deadline = Instant::now() + self.config.response_timeout;
+        let response = self.wait_response(tid, deadline).await?;
+        match response.kind {
+            ResponseKind::Are => {}
+            // A device without `CAP_CMD_MULTI` answers the unrecognized
+            // command with a plain status.
+            ResponseKind::Is if response.key == prop::LAST_STATUS => {
+                return Err(UlcpError::Status(decode_status(&response.value)));
+            }
+            _ => {
+                return Err(UlcpError::Protocol(
+                    "single-property response answering a multi-property command",
+                ));
+            }
+        }
+        let mut values = Vec::new();
+        for entry in MultiEntries::new(&response.value) {
+            let entry = entry.map_err(|_| UlcpError::Protocol("malformed multi-property entry"))?;
+            values.push(if entry.key == prop::LAST_STATUS {
+                Err(decode_status(entry.value))
+            } else {
+                Ok((entry.key, entry.value.to_vec()))
+            });
+        }
+        Ok(values)
+    }
+
     /// Insert one item into a multi-value property via
     /// `CMD_PROP_INSERT`, returning the inserted item's digest form
     /// from the correlated `CMD_PROP_INSERTED`.
@@ -2297,6 +2381,24 @@ where
                 self.ingest_prop_notification(ResponseKind::Inserted, &frame)
             }
             Some(Cmd::PropRemoved) => self.ingest_prop_notification(ResponseKind::Removed, &frame),
+            // `CMD_PROP_ARE` carries entries rather than one key and
+            // value, so it is queued whole and decoded by whichever
+            // multi-property transaction is waiting on the TID. It is
+            // never unsolicited, so a TID-0 one is dropped.
+            Some(Cmd::PropAre) => {
+                let tid = frame.header.tid();
+                if tid != TID_UNSOLICITED {
+                    if self.responses.len() >= RESPONSE_QUEUE_DEPTH {
+                        self.responses.pop_front();
+                    }
+                    self.responses.push_back(Response {
+                        tid,
+                        kind: ResponseKind::Are,
+                        key: prop::LAST_STATUS,
+                        value: frame.payload.to_vec(),
+                    });
+                }
+            }
             _ => {}
         }
         false
@@ -2346,6 +2448,10 @@ where
                 key: notification.key,
                 digest: notification.value.to_vec(),
             },
+            // Unreachable: `PropertyNotification` refuses the
+            // multi-property form, and this path only sees notifications
+            // it parsed.
+            ResponseKind::Are => return,
         };
         if self.prop_events.len() >= PROP_EVENT_DEPTH {
             self.prop_events.pop_front();

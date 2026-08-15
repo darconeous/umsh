@@ -11,7 +11,9 @@ use umsh_ulcp::Status;
 use umsh_ulcp::airtime::lora_airtime_ms;
 use umsh_ulcp::alert::AlertState;
 use umsh_ulcp::battery::{self, BatteryStatus};
-use umsh_ulcp::frame::{self, Cmd, Frame, PropPayload, StreamPayload, TID_UNSOLICITED};
+use umsh_ulcp::frame::{
+    self, Cmd, Frame, Header, MultiEntries, PropPayload, StreamPayload, TID_UNSOLICITED,
+};
 use umsh_ulcp::gnss::{self, GnssSnapshot};
 use umsh_ulcp::ids::{
     self, DEFAULT_ADVERT_INTERVAL_S, DEFAULT_BEACON_INTERVAL_S, MAX_AUTO_ANNOUNCE_INTERVAL_S,
@@ -1980,7 +1982,92 @@ pub struct Session<A: AesProvider, S: Sha256Provider, const TX: usize = 1> {
     /// The deadline is the only thing that stops it unattended.
     alert: AlertState,
     alert_deadline_ms: Option<u64>,
+    /// A `CMD_PROP_MULTI_GET` or `CMD_PROP_MULTI_SET` part-way through
+    /// its entries. Present only between the arrival of that frame and
+    /// the `CMD_PROP_ARE` answering it, which is why it belongs to no
+    /// state class: it does not outlive the exchange that created it.
+    multi: Option<MultiState>,
     scratch: [u8; SCRATCH],
+}
+
+/// Largest multi-property request the session accepts, and the most it
+/// will ever accumulate into a `CMD_PROP_ARE`, both bounded by what one
+/// transport frame carries.
+pub const MULTI_MAX: usize = 300;
+
+/// A multi-property command being served entry by entry.
+///
+/// The request is kept verbatim rather than pre-decoded: the same bytes
+/// serve `CMD_PROP_MULTI_GET`'s bare key list and `CMD_PROP_MULTI_SET`'s
+/// length-prefixed entries, and holding them lets a value be handed
+/// straight to the ordinary single-property paths without a copy.
+struct MultiState {
+    tid: u8,
+    /// Whether entries are writes (`CMD_PROP_MULTI_SET`) rather than
+    /// bare keys (`CMD_PROP_MULTI_GET`).
+    writes: bool,
+    request: HeaplessVec<u8, MULTI_MAX>,
+    /// How far into `request` the next entry begins.
+    offset: usize,
+    /// The `CMD_PROP_ARE` accumulated so far, header included.
+    reply: HeaplessVec<u8, MULTI_MAX>,
+    /// How large the finished reply frame may be. The local bindings
+    /// pass their transport ceiling; a binding whose responses travel in
+    /// something smaller passes that instead, and the sequence stops
+    /// where the smaller budget runs out.
+    reply_budget: usize,
+    /// Set when an entry reported an error, which ends a write sequence.
+    failed: bool,
+    /// Set when an entry's reply would not fit, which ends the sequence
+    /// without executing it.
+    truncated: bool,
+}
+
+impl MultiState {
+    fn new(tid: u8, writes: bool, payload: &[u8], reply_budget: usize) -> Option<Self> {
+        let mut request = HeaplessVec::new();
+        request.extend_from_slice(payload).ok()?;
+        let mut reply = HeaplessVec::new();
+        let header = Header::new(tid)?;
+        reply.push(header.to_byte()).ok()?;
+        reply.push(Cmd::PropAre as u8).ok()?;
+        Some(Self {
+            tid,
+            writes,
+            request,
+            offset: 0,
+            reply,
+            reply_budget: reply_budget.min(MULTI_MAX),
+            failed: false,
+            truncated: false,
+        })
+    }
+
+    fn room(&self) -> usize {
+        self.reply_budget.saturating_sub(self.reply.len())
+    }
+
+    /// Append one entry, reporting whether it fit.
+    fn push_entry(&mut self, key: u32, value: &[u8]) -> bool {
+        let Some(needed) = frame::entry_len(key, value.len()) else {
+            return false;
+        };
+        if needed > self.room() {
+            return false;
+        }
+        let mut header = [0u8; pui::MAX_LEN * 2];
+        let body = pui::encoded_len(key) + value.len();
+        let mut written = pui::encode(body as u32, &mut header).unwrap_or(0);
+        written += pui::encode(key, &mut header[written..]).unwrap_or(0);
+        self.reply.extend_from_slice(&header[..written]).is_ok()
+            && self.reply.extend_from_slice(value).is_ok()
+    }
+
+    fn push_status(&mut self, status: Status) -> bool {
+        let mut value = [0u8; pui::MAX_LEN];
+        let len = pui::encode(status.0, &mut value).unwrap_or(0);
+        self.push_entry(prop::LAST_STATUS, &value[..len])
+    }
 }
 
 impl<A: AesProvider, S: Sha256Provider, const TX: usize> Session<A, S, TX> {
@@ -2005,6 +2092,7 @@ impl<A: AesProvider, S: Sha256Provider, const TX: usize> Session<A, S, TX> {
             dev_domain_version: 0,
             alert: AlertState::None,
             alert_deadline_ms: None,
+            multi: None,
             scratch: [0; SCRATCH],
         }
     }
@@ -2303,6 +2391,22 @@ impl<A: AesProvider, S: Sha256Provider, const TX: usize> Session<A, S, TX> {
         now_ms: u64,
         emit: &mut impl FnMut(&[u8]),
     ) -> Option<Effect> {
+        self.handle_frame_budgeted(bytes, now_ms, MULTI_MAX, emit)
+    }
+
+    /// Handle one decoded ULCP frame whose response must fit
+    /// `reply_budget` octets.
+    ///
+    /// Only the multi-property commands consult the budget, and only to
+    /// decide where a sequence stops; every other response is bounded by
+    /// its own property's value.
+    pub fn handle_frame_budgeted(
+        &mut self,
+        bytes: &[u8],
+        now_ms: u64,
+        reply_budget: usize,
+        emit: &mut impl FnMut(&[u8]),
+    ) -> Option<Effect> {
         // Malformed frames (bad flag, reserved bits, command MSB) are
         // ignored per the spec.
         let received = Frame::parse(bytes).ok()?;
@@ -2401,8 +2505,21 @@ impl<A: AesProvider, S: Sha256Provider, const TX: usize> Session<A, S, TX> {
             // reply: the platform wipes storage and resets, so the link
             // drops. The TID is irrelevant (no response is sent).
             Some(Cmd::FactoryReset) => Some(Effect::FactoryReset),
+            // Several properties in one exchange. Both commands are
+            // served entry by entry through the ordinary single-property
+            // paths, so a value that needs a platform round trip defers
+            // exactly as a lone get or set would and the multi-property
+            // reply waits for it.
+            Some(Cmd::PropMultiGet) => {
+                self.begin_multi(tid, false, received.payload, now_ms, reply_budget, emit)
+            }
+            Some(Cmd::PropMultiSet) => {
+                self.begin_multi(tid, true, received.payload, now_ms, reply_budget, emit)
+            }
             // device-to-host commands arriving from the host.
-            Some(Cmd::PropIs | Cmd::StrRecv | Cmd::PropInserted | Cmd::PropRemoved) => {
+            Some(
+                Cmd::PropIs | Cmd::StrRecv | Cmd::PropInserted | Cmd::PropRemoved | Cmd::PropAre,
+            ) => {
                 self.complete(tid, Status::INVALID_COMMAND, emit);
                 None
             }
@@ -2795,6 +2912,134 @@ impl<A: AesProvider, S: Sha256Provider, const TX: usize> Session<A, S, TX> {
     }
 
     // ─── Command implementations ─────────────────────────────────────
+
+    /// Begin a multi-property command, serving as many entries as can be
+    /// answered without leaving the session.
+    fn begin_multi(
+        &mut self,
+        tid: u8,
+        writes: bool,
+        payload: &[u8],
+        now_ms: u64,
+        reply_budget: usize,
+        emit: &mut impl FnMut(&[u8]),
+    ) -> Option<Effect> {
+        debug_assert!(self.multi.is_none());
+        let Some(state) = MultiState::new(tid, writes, payload, reply_budget) else {
+            // More request than one frame can carry; the host asks for
+            // less.
+            self.complete(tid, Status::NOMEM, emit);
+            return None;
+        };
+        self.multi = Some(state);
+        self.advance_multi(now_ms, emit)
+    }
+
+    /// Serve entries until one needs a platform round trip, or until the
+    /// sequence ends and the `CMD_PROP_ARE` is emitted.
+    ///
+    /// Each entry runs through `prop_get` or `prop_set` exactly as a lone
+    /// command would; `send_prop_is` and `complete` divert what those
+    /// would have sent into the reply being accumulated.
+    fn advance_multi(&mut self, now_ms: u64, emit: &mut impl FnMut(&[u8])) -> Option<Effect> {
+        loop {
+            let mut value = [0u8; MULTI_MAX];
+            let (tid, writes) = {
+                let state = self.multi.as_ref()?;
+                (state.tid, state.writes)
+            };
+            let next = {
+                let state = self.multi.as_mut()?;
+                // A write sequence stops at the first failure; both stop
+                // once the reply is full.
+                if state.truncated || (state.writes && state.failed) {
+                    None
+                } else {
+                    let rest = &state.request[state.offset..];
+                    if rest.is_empty() {
+                        None
+                    } else if state.writes {
+                        let mut entries = MultiEntries::new(rest);
+                        match entries.next() {
+                            Some(Ok(entry)) => {
+                                let consumed = rest.len() - entries.remainder().len();
+                                state.offset += consumed;
+                                // The entry is not executed unless its
+                                // reply entry fits what is left of the
+                                // response, so a sequence that runs out
+                                // of room stops rather than applying a
+                                // write it cannot report.
+                                match frame::entry_len(entry.key, entry.value.len()) {
+                                    Some(needed) if needed <= state.room() => {
+                                        value[..entry.value.len()].copy_from_slice(entry.value);
+                                        Some((entry.key, entry.value.len()))
+                                    }
+                                    _ => {
+                                        state.truncated = true;
+                                        None
+                                    }
+                                }
+                            }
+                            Some(Err(_)) => {
+                                state.offset = state.request.len();
+                                state.failed = true;
+                                state.truncated |= !state.push_status(Status::PARSE_ERROR);
+                                None
+                            }
+                            None => None,
+                        }
+                    } else {
+                        match pui::decode(rest) {
+                            Ok((key, consumed)) => {
+                                state.offset += consumed;
+                                Some((key, 0))
+                            }
+                            Err(_) => {
+                                state.offset = state.request.len();
+                                state.truncated |= !state.push_status(Status::PARSE_ERROR);
+                                None
+                            }
+                        }
+                    }
+                }
+            };
+            let Some((key, value_len)) = next else {
+                return self.finish_multi(emit);
+            };
+            let effect = if writes {
+                self.prop_set(tid, key, &value[..value_len], now_ms, emit)
+            } else {
+                self.prop_get(tid, key, now_ms, emit)
+            };
+            // A deferred value: the driver serves the effect, the
+            // matching `respond_*` fills the slot, and `resume_multi`
+            // brings us back here for the next entry.
+            if effect.is_some() {
+                return effect;
+            }
+        }
+    }
+
+    /// Emit the accumulated `CMD_PROP_ARE`.
+    ///
+    /// A reply that ran out of room carries the entries that fit and
+    /// nothing else: the requester compares what it asked for against
+    /// what came back and reissues the remainder.
+    fn finish_multi(&mut self, emit: &mut impl FnMut(&[u8])) -> Option<Effect> {
+        let state = self.multi.take()?;
+        emit(&state.reply);
+        None
+    }
+
+    /// Continue a multi-property command that was waiting on a deferred
+    /// value, returning the next effect to serve.
+    ///
+    /// Returns `None` when no multi-property command is in flight, which
+    /// is the ordinary case after a single-property deferral.
+    pub fn resume_multi(&mut self, now_ms: u64, emit: &mut impl FnMut(&[u8])) -> Option<Effect> {
+        self.multi.as_ref()?;
+        self.advance_multi(now_ms, emit)
+    }
 
     fn prop_get(
         &mut self,
@@ -4250,6 +4495,7 @@ impl<A: AesProvider, S: Sha256Provider, const TX: usize> Session<A, S, TX> {
                     cap::IDENT,
                     cap::ADVERT,
                     cap::MAC_BACKHAUL,
+                    cap::CMD_MULTI,
                 ] {
                     len += pui::encode(capability, &mut out[len..]).unwrap_or(0);
                 }
@@ -4451,6 +4697,16 @@ impl<A: AesProvider, S: Sha256Provider, const TX: usize> Session<A, S, TX> {
     /// response. Fire-and-forget commands (TID 0) receive nothing —
     /// the state change still happened.
     fn send_prop_is(&mut self, tid: u8, key: u32, value: &[u8], emit: &mut impl FnMut(&[u8])) {
+        // While a multi-property command is being served, the value a
+        // single-property path would have sent becomes that entry's
+        // slot instead. This is what lets `CMD_PROP_MULTI_GET` and
+        // `CMD_PROP_MULTI_SET` reuse `prop_get` and `prop_set` whole,
+        // deferred platform round trips included, rather than
+        // reimplementing the property surface.
+        if let Some(state) = self.multi.as_mut() {
+            state.truncated |= !state.push_entry(key, value);
+            return;
+        }
         if tid == TID_UNSOLICITED {
             return;
         }
@@ -4533,6 +4789,15 @@ impl<A: AesProvider, S: Sha256Provider, const TX: usize> Session<A, S, TX> {
     /// unsolicited notifications (reset notices, `STATUS_RESET_RESTORED`)
     /// bypass this via [`Self::send_status`] with `TID_UNSOLICITED`.
     fn complete(&mut self, tid: u8, status: Status, emit: &mut impl FnMut(&[u8])) {
+        // As in `send_prop_is`: inside a multi-property command the
+        // status occupies the failing entry's slot. A read continues
+        // past it; a write sequence stops there.
+        if let Some(state) = self.multi.as_mut() {
+            self.last_status = status;
+            state.failed |= status != Status::OK;
+            state.truncated |= !state.push_status(status);
+            return;
+        }
         if tid == TID_UNSOLICITED {
             self.last_status = status;
         } else {
@@ -4836,6 +5101,228 @@ mod tests {
         assert!(matches!(effect, Some(Effect::ApplyRadio(settings)) if settings.enabled));
     }
 
+    /// Drive a multi-property command to completion, serving every
+    /// deferred effect the way the driver loop does, and return the
+    /// entries of the `CMD_PROP_ARE`.
+    fn multi(
+        session: &mut TestSession,
+        request: &[u8],
+        now_ms: u64,
+    ) -> (u8, Vec<(u32, Vec<u8>)>, Vec<Effect>) {
+        multi_budgeted(session, request, now_ms, MULTI_MAX)
+    }
+
+    fn multi_budgeted(
+        session: &mut TestSession,
+        request: &[u8],
+        now_ms: u64,
+        reply_budget: usize,
+    ) -> (u8, Vec<(u32, Vec<u8>)>, Vec<Effect>) {
+        let mut emitted = Vec::new();
+        let mut served = Vec::new();
+        let mut pending =
+            session.handle_frame_budgeted(request, now_ms, reply_budget, &mut |bytes: &[u8]| {
+                emitted.push(bytes.to_vec())
+            });
+        while let Some(effect) = pending.take() {
+            // Stand in for the platform round trips the driver performs.
+            match effect {
+                Effect::SampleBattery { tid } => session.respond_battery(
+                    tid,
+                    Ok(BatteryStatus::default()),
+                    &mut |bytes: &[u8]| emitted.push(bytes.to_vec()),
+                ),
+                Effect::ReadTime { tid } => {
+                    session.respond_time(tid, Some(1_700_000_000), &mut |bytes: &[u8]| {
+                        emitted.push(bytes.to_vec())
+                    })
+                }
+                Effect::SampleIlluminance { tid } => {
+                    session.respond_illuminance(tid, Some(1234), &mut |bytes: &[u8]| {
+                        emitted.push(bytes.to_vec())
+                    })
+                }
+                other => served.push(other),
+            }
+            pending =
+                session.resume_multi(now_ms, &mut |bytes: &[u8]| emitted.push(bytes.to_vec()));
+        }
+        assert_eq!(emitted.len(), 1, "a multi command answers with one frame");
+        let parsed = Frame::parse(&emitted[0]).unwrap();
+        assert_eq!(parsed.command(), Some(Cmd::PropAre));
+        let entries = MultiEntries::new(parsed.payload)
+            .map(|entry| entry.unwrap())
+            .map(|entry| (entry.key, entry.value.to_vec()))
+            .collect();
+        (parsed.header.tid(), entries, served)
+    }
+
+    fn entry_status(value: &[u8]) -> Status {
+        Status(pui::decode(value).unwrap().0)
+    }
+
+    #[test]
+    fn multi_get_answers_every_slot_in_order() {
+        let mut session = test_session();
+        let mut buf = [0u8; 64];
+        // A known property, an unknown one, and a write-only one: the
+        // read continues past both failures.
+        let len = frame::prop_multi_get(
+            &mut buf,
+            3,
+            &[
+                prop::PHY_TX_POWER,
+                60_000,
+                prop::DEV_PRIVATE_KEY,
+                prop::PHY_LORA_SF,
+            ],
+        )
+        .unwrap();
+        let (tid, entries, _) = multi(&mut session, &buf[..len], 0);
+
+        assert_eq!(tid, 3);
+        assert_eq!(entries.len(), 4);
+        assert_eq!(entries[0], (prop::PHY_TX_POWER, vec![14]));
+        assert_eq!(entries[1].0, prop::LAST_STATUS);
+        assert_eq!(entry_status(&entries[1].1), Status::PROP_NOT_FOUND);
+        assert_eq!(entries[2].0, prop::LAST_STATUS);
+        assert_eq!(entry_status(&entries[2].1), Status::UNIMPLEMENTED);
+        assert_eq!(entries[3], (prop::PHY_LORA_SF, vec![7]));
+    }
+
+    /// A property whose value the session cannot produce on its own is
+    /// sampled from the platform and lands in its own slot, rather than
+    /// suspending the whole read.
+    #[test]
+    fn multi_get_completes_deferred_values_in_place() {
+        let mut session = test_session();
+        let mut buf = [0u8; 64];
+        let len = frame::prop_multi_get(
+            &mut buf,
+            1,
+            &[prop::DEV_NAME, prop::TIME, prop::ILLUMINANCE, prop::PHY_MTU],
+        )
+        .unwrap();
+        let (_, entries, _) = multi(&mut session, &buf[..len], 0);
+
+        assert_eq!(entries.len(), 4);
+        assert_eq!(entries[0].0, prop::DEV_NAME);
+        assert_eq!(entries[1].0, prop::TIME);
+        assert_eq!(entries[1].1, 1_700_000_000u32.to_le_bytes());
+        assert_eq!(entries[2].0, prop::ILLUMINANCE);
+        assert_eq!(entries[3].0, prop::PHY_MTU);
+    }
+
+    #[test]
+    fn multi_set_applies_in_order_and_echoes_values() {
+        let mut session = test_session();
+        let mut buf = [0u8; 128];
+        let entries: [(u32, &[u8]); 2] = [(prop::PHY_TX_POWER, &[20]), (prop::PHY_LORA_SF, &[9])];
+        let len = frame::prop_multi_set(&mut buf, 4, &entries).unwrap();
+        let (tid, reply, _) = multi(&mut session, &buf[..len], 0);
+
+        assert_eq!(tid, 4);
+        assert_eq!(reply.len(), 2);
+        assert_eq!(reply[0], (prop::PHY_TX_POWER, vec![20]));
+        assert_eq!(reply[1], (prop::PHY_LORA_SF, vec![9]));
+        assert_eq!(get(&mut session, prop::PHY_TX_POWER), vec![20]);
+        assert_eq!(get(&mut session, prop::PHY_LORA_SF), vec![9]);
+    }
+
+    #[test]
+    fn multi_set_stops_at_the_first_failure() {
+        let mut session = test_session();
+        let mut buf = [0u8; 128];
+        // Spreading factor 99 is out of range; the write after it must
+        // not be applied.
+        let entries: [(u32, &[u8]); 3] = [
+            (prop::PHY_TX_POWER, &[20]),
+            (prop::PHY_LORA_SF, &[99]),
+            (prop::PHY_LORA_CR, &[8]),
+        ];
+        let len = frame::prop_multi_set(&mut buf, 5, &entries).unwrap();
+        let (_, reply, _) = multi(&mut session, &buf[..len], 0);
+
+        assert_eq!(reply.len(), 2);
+        assert_eq!(reply[0], (prop::PHY_TX_POWER, vec![20]));
+        assert_eq!(reply[1].0, prop::LAST_STATUS);
+        assert_eq!(entry_status(&reply[1].1), Status::INVALID_ARGUMENT);
+        assert_eq!(get(&mut session, prop::PHY_LORA_CR), vec![5]);
+    }
+
+    /// The reply bounds the sequence: an entry whose echo would not fit
+    /// is not executed, and the requester reissues the remainder.
+    #[test]
+    fn multi_set_stops_before_an_entry_it_cannot_report() {
+        let mut session = test_session();
+        let mut buf = [0u8; 256];
+        let name = [0x41u8; 40];
+        let entries: [(u32, &[u8]); 3] = [
+            (prop::DEV_NAME, &name),
+            (prop::PHY_TX_POWER, &[17]),
+            (prop::PHY_LORA_CR, &[8]),
+        ];
+        let len = frame::prop_multi_set(&mut buf, 6, &entries).unwrap();
+        // Room for the name entry and nothing after it.
+        let budget = 2 + frame::entry_len(prop::DEV_NAME, name.len()).unwrap() + 1;
+        let (_, reply, _) = multi_budgeted(&mut session, &buf[..len], 0, budget);
+
+        assert_eq!(reply.len(), 1);
+        assert_eq!(reply[0].0, prop::DEV_NAME);
+        // Neither trailing write executed, so both properties keep the
+        // values they had.
+        assert_eq!(get(&mut session, prop::PHY_TX_POWER), vec![14]);
+        assert_eq!(get(&mut session, prop::PHY_LORA_CR), vec![5]);
+    }
+
+    /// A read that overruns its budget comes back short rather than
+    /// wrong: the requester sees fewer entries than it asked for and
+    /// reissues the remainder.
+    #[test]
+    fn multi_get_returns_what_fits() {
+        let mut session = test_session();
+        let mut buf = [0u8; 64];
+        let keys = [prop::DEV_NAME, prop::PHY_TX_POWER, prop::PHY_LORA_SF];
+        let len = frame::prop_multi_get(&mut buf, 7, &keys).unwrap();
+        let full = multi(&mut session, &buf[..len], 0).1;
+        assert_eq!(full.len(), 3);
+
+        let budget = 2 + frame::entry_len(prop::DEV_NAME, full[0].1.len()).unwrap() + 1;
+        let (tid, short, _) = multi_budgeted(&mut session, &buf[..len], 0, budget);
+        assert_eq!(tid, 7);
+        assert_eq!(short.len(), 1);
+        assert_eq!(short[0], full[0]);
+    }
+
+    #[test]
+    fn multi_commands_reject_malformed_and_oversized_requests() {
+        let mut session = test_session();
+
+        // A truncated key PUI in a read.
+        let request = [0x81, Cmd::PropMultiGet as u8, 0x80];
+        let (_, entries, _) = multi(&mut session, &request, 0);
+        assert_eq!(entries.len(), 1);
+        assert_eq!(entry_status(&entries[0].1), Status::PARSE_ERROR);
+
+        // A request longer than one frame can carry answers with a
+        // plain status rather than an empty entry list.
+        let mut buf = [0u8; 1024];
+        let keys = [prop::PHY_TX_POWER; 400];
+        let len = frame::prop_multi_get(&mut buf, 2, &keys).unwrap();
+        let (emitted, effect) = dispatch(&mut session, &buf[..len], 0);
+        assert!(effect.is_none());
+        expect_status(&emitted[0], 2, Status::NOMEM);
+    }
+
+    #[test]
+    fn prop_are_from_the_host_is_an_invalid_command() {
+        let mut session = test_session();
+        let request = [0x83, Cmd::PropAre as u8];
+        let (emitted, effect) = dispatch(&mut session, &request, 0);
+        assert!(effect.is_none());
+        expect_status(&emitted[0], 3, Status::INVALID_COMMAND);
+    }
+
     #[test]
     fn nop_replies_ok() {
         let mut session = test_session();
@@ -4915,6 +5402,7 @@ mod tests {
                 cap::IDENT,
                 cap::ADVERT,
                 cap::MAC_BACKHAUL,
+                cap::CMD_MULTI,
                 cap::BATTERY,
                 cap::ALERT,
                 cap::TIME,

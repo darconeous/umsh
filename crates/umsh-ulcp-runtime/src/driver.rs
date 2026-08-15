@@ -904,170 +904,190 @@ where
             Either4::First(InEvent::Frame(transport, frame_bytes)) => {
                 if arbitration.accepts_frame(transport) {
                     let now_ms = Instant::now().as_millis();
-                    let effect =
+                    let mut pending =
                         session.handle_frame(&frame_bytes, now_ms, &mut |frame: &[u8]| {
                             emitter.push(frame)
                         });
                     emitter.flush(arbitration.destination(), rt.out).await;
-                    match effect {
-                        Some(Effect::SampleRssi { tid }) => {
-                            // Round-trip to the radio runner for an
-                            // instantaneous RSSI sample, then answer the
-                            // deferred PROP_PHY_RSSI get.
-                            rt.ctl.request_rssi();
-                            let sample = rt.ctl.wait_rssi().await;
-                            session
-                                .respond_rssi(tid, sample, &mut |frame: &[u8]| emitter.push(frame));
-                            emitter.flush(arbitration.destination(), rt.out).await;
-                        }
-                        Some(Effect::SignIdentity { tid }) => {
-                            // The session holds no signing key, so the
-                            // platform builds the canonical node-identity
-                            // payload from the same profile the Identity
-                            // Request responder advertises and signs it
-                            // with the device identity.
-                            let mut blob = [0u8; IDENTITY_BLOB_MAX];
-                            let signed = env.sign_identity(&mut blob).await;
-                            session.respond_identity_blob(
-                                tid,
-                                signed.map(|len| &blob[..len]).ok_or(()),
-                                &mut |frame: &[u8]| emitter.push(frame),
-                            );
-                            emitter.flush(arbitration.destination(), rt.out).await;
-                        }
-                        Some(Effect::SampleBattery { tid }) => {
-                            // Round-trip to the platform battery
-                            // source for a fresh measurement, then
-                            // answer the deferred PROP_BATTERY get.
-                            let sample = env.sample_battery().await;
-                            session.respond_battery(tid, sample, &mut |frame: &[u8]| {
-                                emitter.push(frame)
-                            });
-                            emitter.flush(arbitration.destination(), rt.out).await;
-                        }
-                        Some(Effect::SampleIlluminance { tid }) => {
-                            let millilux = env.sample_illuminance().await;
-                            session.respond_illuminance(tid, millilux, &mut |frame: &[u8]| {
-                                emitter.push(frame)
-                            });
-                            emitter.flush(arbitration.destination(), rt.out).await;
-                        }
-                        Some(Effect::ReadTime { tid }) => {
-                            let epoch = env.read_time().await;
-                            session
-                                .respond_time(tid, epoch, &mut |frame: &[u8]| emitter.push(frame));
-                            emitter.flush(arbitration.destination(), rt.out).await;
-                        }
-                        Some(Effect::SampleGnss { tid, key }) => {
-                            let sample = env.sample_gnss().await;
-                            session.respond_gnss(tid, key, sample, &mut |frame: &[u8]| {
-                                emitter.push(frame)
-                            });
-                            emitter.flush(arbitration.destination(), rt.out).await;
-                        }
-                        Some(Effect::DrainQueue) => {
-                            // Deliver the covered frames one per
-                            // step, flushing between steps so the
-                            // two-slot emitter never overflows and
-                            // the transport applies backpressure.
-                            loop {
-                                let more = session.drain_step(
-                                    Instant::now().as_millis(),
+                    // A multi-property command is served entry by entry:
+                    // each deferred value returns here for its platform
+                    // round trip, and `resume_multi` hands back the next
+                    // one until the reply is emitted. For every other
+                    // command `resume_multi` answers `None` and the loop
+                    // runs exactly once.
+                    while pending.is_some() {
+                        match pending.take() {
+                            Some(Effect::SampleRssi { tid }) => {
+                                // Round-trip to the radio runner for an
+                                // instantaneous RSSI sample, then answer the
+                                // deferred PROP_PHY_RSSI get.
+                                rt.ctl.request_rssi();
+                                let sample = rt.ctl.wait_rssi().await;
+                                session.respond_rssi(tid, sample, &mut |frame: &[u8]| {
+                                    emitter.push(frame)
+                                });
+                                emitter.flush(arbitration.destination(), rt.out).await;
+                            }
+                            Some(Effect::SignIdentity { tid }) => {
+                                // The session holds no signing key, so the
+                                // platform builds the canonical node-identity
+                                // payload from the same profile the Identity
+                                // Request responder advertises and signs it
+                                // with the device identity.
+                                let mut blob = [0u8; IDENTITY_BLOB_MAX];
+                                let signed = env.sign_identity(&mut blob).await;
+                                session.respond_identity_blob(
+                                    tid,
+                                    signed.map(|len| &blob[..len]).ok_or(()),
                                     &mut |frame: &[u8]| emitter.push(frame),
                                 );
                                 emitter.flush(arbitration.destination(), rt.out).await;
-                                if !more {
-                                    break;
-                                }
                             }
-                            env.clear_attention();
-                        }
-                        Some(Effect::SaveSnapshot { tid }) => {
-                            let result = match session.encode_snapshot(&mut snapshot_buf) {
-                                Some(len) => env.persist_snapshot(&snapshot_buf[..len]).await,
-                                None => Err(()),
-                            };
-                            session
-                                .respond_save(tid, result, &mut |frame: &[u8]| emitter.push(frame));
-                            emitter.flush(arbitration.destination(), rt.out).await;
-                        }
-                        Some(Effect::ClearSaved { tid }) => {
-                            // CMD_CLEAR covers all persisted
-                            // provisioning: the snapshot and the
-                            // independently persisted device
-                            // identity. Each journal's tombstone is
-                            // individually atomic; an interruption
-                            // between them reports failure and the
-                            // host's retry completes the erase.
-                            let result = match env.clear_snapshot().await {
-                                Ok(()) => env.clear_identity().await,
-                                Err(()) => Err(()),
-                            };
-                            // With the identity durably gone, its
-                            // counter boundaries are dead weight;
-                            // drop them with it. (Kept if the
-                            // identity clear failed — the identity
-                            // then survives the reboot and still
-                            // needs its TX boundary.)
-                            if result.is_ok() {
-                                env.clear_counters().await;
+                            Some(Effect::SampleBattery { tid }) => {
+                                // Round-trip to the platform battery
+                                // source for a fresh measurement, then
+                                // answer the deferred PROP_BATTERY get.
+                                let sample = env.sample_battery().await;
+                                session.respond_battery(tid, sample, &mut |frame: &[u8]| {
+                                    emitter.push(frame)
+                                });
+                                emitter.flush(arbitration.destination(), rt.out).await;
                             }
-                            session.respond_clear(tid, result, &mut |frame: &[u8]| {
-                                emitter.push(frame)
-                            });
-                            emitter.flush(arbitration.destination(), rt.out).await;
-                        }
-                        Some(Effect::ProvisionIdentity { tid }) => {
-                            // Build the keypair (drawing a fresh
-                            // secret from the platform RNG for
-                            // on-device generation), persist it, and
-                            // only then report the public key.
-                            let result = match session.identity_request() {
-                                Some(source) => {
-                                    let secret = match source {
-                                        IdentitySource::Install(secret) => Ok(secret),
-                                        IdentitySource::Generate => {
-                                            let mut secret = [0u8; 32];
-                                            env.fill_secret(&mut secret).map(|()| secret)
-                                        }
-                                    };
-                                    match secret {
-                                        Ok(secret) => {
-                                            let (public_key, payload) =
-                                                device_identity_record(&secret);
-                                            env.persist_identity(&payload)
-                                                .await
-                                                .map(|()| public_key)
-                                        }
-                                        Err(()) => Err(()),
+                            Some(Effect::SampleIlluminance { tid }) => {
+                                let millilux = env.sample_illuminance().await;
+                                session.respond_illuminance(
+                                    tid,
+                                    millilux,
+                                    &mut |frame: &[u8]| emitter.push(frame),
+                                );
+                                emitter.flush(arbitration.destination(), rt.out).await;
+                            }
+                            Some(Effect::ReadTime { tid }) => {
+                                let epoch = env.read_time().await;
+                                session.respond_time(tid, epoch, &mut |frame: &[u8]| {
+                                    emitter.push(frame)
+                                });
+                                emitter.flush(arbitration.destination(), rt.out).await;
+                            }
+                            Some(Effect::SampleGnss { tid, key }) => {
+                                let sample = env.sample_gnss().await;
+                                session.respond_gnss(tid, key, sample, &mut |frame: &[u8]| {
+                                    emitter.push(frame)
+                                });
+                                emitter.flush(arbitration.destination(), rt.out).await;
+                            }
+                            Some(Effect::DrainQueue) => {
+                                // Deliver the covered frames one per
+                                // step, flushing between steps so the
+                                // two-slot emitter never overflows and
+                                // the transport applies backpressure.
+                                loop {
+                                    let more = session.drain_step(
+                                        Instant::now().as_millis(),
+                                        &mut |frame: &[u8]| emitter.push(frame),
+                                    );
+                                    emitter.flush(arbitration.destination(), rt.out).await;
+                                    if !more {
+                                        break;
                                     }
                                 }
-                                None => Err(()),
-                            };
-                            session.respond_identity(tid, result, &mut |frame: &[u8]| {
+                                env.clear_attention();
+                            }
+                            Some(Effect::SaveSnapshot { tid }) => {
+                                let result = match session.encode_snapshot(&mut snapshot_buf) {
+                                    Some(len) => env.persist_snapshot(&snapshot_buf[..len]).await,
+                                    None => Err(()),
+                                };
+                                session.respond_save(tid, result, &mut |frame: &[u8]| {
+                                    emitter.push(frame)
+                                });
+                                emitter.flush(arbitration.destination(), rt.out).await;
+                            }
+                            Some(Effect::ClearSaved { tid }) => {
+                                // CMD_CLEAR covers all persisted
+                                // provisioning: the snapshot and the
+                                // independently persisted device
+                                // identity. Each journal's tombstone is
+                                // individually atomic; an interruption
+                                // between them reports failure and the
+                                // host's retry completes the erase.
+                                let result = match env.clear_snapshot().await {
+                                    Ok(()) => env.clear_identity().await,
+                                    Err(()) => Err(()),
+                                };
+                                // With the identity durably gone, its
+                                // counter boundaries are dead weight;
+                                // drop them with it. (Kept if the
+                                // identity clear failed — the identity
+                                // then survives the reboot and still
+                                // needs its TX boundary.)
+                                if result.is_ok() {
+                                    env.clear_counters().await;
+                                }
+                                session.respond_clear(tid, result, &mut |frame: &[u8]| {
+                                    emitter.push(frame)
+                                });
+                                emitter.flush(arbitration.destination(), rt.out).await;
+                            }
+                            Some(Effect::ProvisionIdentity { tid }) => {
+                                // Build the keypair (drawing a fresh
+                                // secret from the platform RNG for
+                                // on-device generation), persist it, and
+                                // only then report the public key.
+                                let result = match session.identity_request() {
+                                    Some(source) => {
+                                        let secret = match source {
+                                            IdentitySource::Install(secret) => Ok(secret),
+                                            IdentitySource::Generate => {
+                                                let mut secret = [0u8; 32];
+                                                env.fill_secret(&mut secret).map(|()| secret)
+                                            }
+                                        };
+                                        match secret {
+                                            Ok(secret) => {
+                                                let (public_key, payload) =
+                                                    device_identity_record(&secret);
+                                                env.persist_identity(&payload)
+                                                    .await
+                                                    .map(|()| public_key)
+                                            }
+                                            Err(()) => Err(()),
+                                        }
+                                    }
+                                    None => Err(()),
+                                };
+                                session.respond_identity(tid, result, &mut |frame: &[u8]| {
+                                    emitter.push(frame)
+                                });
+                                emitter.flush(arbitration.destination(), rt.out).await;
+                            }
+                            Some(Effect::SetPairingPin { tid, pin }) => {
+                                let applied = env.apply_pairing_pin(pin).await;
+                                session.respond_pin_set(
+                                    tid,
+                                    applied.then_some(()).ok_or(()),
+                                    &mut |frame: &[u8]| emitter.push(frame),
+                                );
+                                emitter.flush(arbitration.destination(), rt.out).await;
+                            }
+                            Some(Effect::FactoryReset) => {
+                                // Hand off to the platform, which erases every
+                                // persistent journal and reboots. This never
+                                // returns; no acknowledgement is sent because the
+                                // reset drops the link. Any frames the session
+                                // already staged were flushed above.
+                                env.trace(format_args!(
+                                    "CMD_FACTORY_RESET: wiping all state + reboot"
+                                ));
+                                env.factory_reset().await
+                            }
+                            other => apply_effect(&session, other, &rt, &mut env).await,
+                        }
+                        pending = session
+                            .resume_multi(Instant::now().as_millis(), &mut |frame: &[u8]| {
                                 emitter.push(frame)
                             });
-                            emitter.flush(arbitration.destination(), rt.out).await;
-                        }
-                        Some(Effect::SetPairingPin { tid, pin }) => {
-                            let applied = env.apply_pairing_pin(pin).await;
-                            session.respond_pin_set(
-                                tid,
-                                applied.then_some(()).ok_or(()),
-                                &mut |frame: &[u8]| emitter.push(frame),
-                            );
-                            emitter.flush(arbitration.destination(), rt.out).await;
-                        }
-                        Some(Effect::FactoryReset) => {
-                            // Hand off to the platform, which erases every
-                            // persistent journal and reboots. This never
-                            // returns; no acknowledgement is sent because the
-                            // reset drops the link. Any frames the session
-                            // already staged were flushed above.
-                            env.trace(format_args!("CMD_FACTORY_RESET: wiping all state + reboot"));
-                            env.factory_reset().await
-                        }
-                        other => apply_effect(&session, other, &rt, &mut env).await,
+                        emitter.flush(arbitration.destination(), rt.out).await;
                     }
                     // A device identity always exists. `CMD_CLEAR`
                     // erases the stored one without touching live state,

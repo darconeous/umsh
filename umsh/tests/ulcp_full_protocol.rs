@@ -257,12 +257,20 @@ impl FrameLink for SessionLink {
             .push(format!("host→device {}", describe_frame(frame)));
         let now_ms = sim.now_ms;
         let mut emitted = Vec::new();
-        let effect = sim
+        let mut pending = sim
             .session
             .handle_frame(frame, now_ms, &mut |bytes: &[u8]| {
                 emitted.push(bytes.to_vec())
             });
-        sim.execute(effect, &mut emitted);
+        // As in the firmware driver: a multi-property command comes back
+        // here once per deferred value, and `resume_multi` carries it to
+        // the next entry until the reply is emitted.
+        while pending.is_some() {
+            sim.execute(pending.take(), &mut emitted);
+            pending = sim
+                .session
+                .resume_multi(now_ms, &mut |bytes: &[u8]| emitted.push(bytes.to_vec()));
+        }
         sim.finish(emitted);
         Ok(())
     }
@@ -825,4 +833,89 @@ async fn positioning_reports_the_receiver_state_and_the_fix() {
     assert!(status.ident_update);
     assert_eq!(status.ident_precision, 3);
     assert!(!status.time_trust);
+}
+
+/// Several properties in one exchange, against the real session: values
+/// the session holds, values it has to sample from the platform, and a
+/// property that does not exist all come back in request order.
+#[tokio::test]
+async fn several_properties_travel_in_one_exchange() {
+    let sim = SimDevice::new();
+    let mut radio = attached_host(&sim).await;
+
+    let keys = [
+        umsh_ulcp::ids::prop::PHY_TX_POWER,
+        umsh_ulcp::ids::prop::TIME,
+        60_000,
+        umsh_ulcp::ids::prop::PHY_LORA_SF,
+    ];
+    let answers = radio.get_props(&keys).await.unwrap();
+
+    assert_eq!(answers.len(), keys.len());
+    assert_eq!(
+        answers[0].as_ref().unwrap(),
+        &(umsh_ulcp::ids::prop::PHY_TX_POWER, vec![14])
+    );
+    // The clock is deferred to the platform and still lands in its slot;
+    // the simulator boots without one set, so the value is empty.
+    assert_eq!(
+        answers[1].as_ref().unwrap(),
+        &(umsh_ulcp::ids::prop::TIME, Vec::new())
+    );
+    assert_eq!(answers[2], Err(Status::PROP_NOT_FOUND));
+    assert_eq!(
+        answers[3].as_ref().unwrap(),
+        &(umsh_ulcp::ids::prop::PHY_LORA_SF, vec![7])
+    );
+
+    // Writes apply in order and echo the authoritative value.
+    let applied = radio
+        .set_props(&[
+            (umsh_ulcp::ids::prop::PHY_TX_POWER, vec![20]),
+            (umsh_ulcp::ids::prop::PHY_LORA_SF, vec![9]),
+        ])
+        .await
+        .unwrap();
+    assert_eq!(applied.len(), 2);
+    assert_eq!(
+        applied[0].as_ref().unwrap(),
+        &(umsh_ulcp::ids::prop::PHY_TX_POWER, vec![20])
+    );
+    assert_eq!(
+        radio
+            .get_prop(umsh_ulcp::ids::prop::PHY_LORA_SF)
+            .await
+            .unwrap(),
+        vec![9]
+    );
+}
+
+/// A write sequence stops where it fails, and nothing after it runs.
+#[tokio::test]
+async fn an_ordered_write_sequence_stops_at_its_first_failure() {
+    let sim = SimDevice::new();
+    let mut radio = attached_host(&sim).await;
+
+    let applied = radio
+        .set_props(&[
+            (umsh_ulcp::ids::prop::PHY_TX_POWER, vec![20]),
+            (umsh_ulcp::ids::prop::PHY_LORA_SF, vec![99]),
+            (umsh_ulcp::ids::prop::PHY_LORA_CR, vec![8]),
+        ])
+        .await
+        .unwrap();
+
+    assert_eq!(applied.len(), 2);
+    assert_eq!(
+        applied[0].as_ref().unwrap(),
+        &(umsh_ulcp::ids::prop::PHY_TX_POWER, vec![20])
+    );
+    assert_eq!(applied[1], Err(Status::INVALID_ARGUMENT));
+    assert_eq!(
+        radio
+            .get_prop(umsh_ulcp::ids::prop::PHY_LORA_CR)
+            .await
+            .unwrap(),
+        vec![5]
+    );
 }

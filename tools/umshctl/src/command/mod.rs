@@ -125,6 +125,13 @@ pub enum Command {
         op: Option<tables::TableOp>,
     },
 
+    /// Read several properties in one exchange.
+    Props {
+        /// Property identifiers, decimal or `0x`-prefixed.
+        #[arg(value_name = "PROP", required = true, value_parser = values::parse_u32)]
+        keys: Vec<u32>,
+    },
+
     /// Take one ambient light reading.
     Illuminance,
 
@@ -221,6 +228,7 @@ impl Command {
                 tables::run(app, prop::DEV_CHANNEL_KEYS, "channel", op).await
             }
             Self::DevPeer { op } => tables::run(app, prop::DEV_PEERS, "peer", op).await,
+            Self::Props { keys } => info::props(app.device()?, &keys).await,
             Self::Illuminance => info::illuminance(app.device()?).await,
             Self::Alert { op } => lifecycle::alert(app.device()?, op).await,
             Self::Capture(args) => capture::run(app, args).await,

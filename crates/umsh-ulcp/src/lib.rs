@@ -36,7 +36,10 @@ pub mod status;
 pub use alert::AlertState;
 pub use battery::{BatteryChargeState, BatteryError, BatteryStatus};
 pub use describe::{FrameDescription, capability_name, property_name};
-pub use frame::{Cmd, Frame, FrameWriter, Header, PropPayload, StreamPayload};
+pub use frame::{
+    Cmd, Frame, FrameWriter, Header, MultiEntries, MultiEntry, MultiGetKeys, PropPayload,
+    StreamPayload,
+};
 pub use gnss::{FixKind, GnssError, GnssSnapshot};
 pub use meta::{BufferedRxMeta, RxMeta, TxMeta};
 pub use status::Status;

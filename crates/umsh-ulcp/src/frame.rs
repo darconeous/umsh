@@ -100,6 +100,15 @@ pub enum Cmd {
     /// this returns the radio to a blank factory state and does not reply:
     /// the reboot drops the link.
     FactoryReset = 15,
+    /// Get several property values (host to device). Requires
+    /// `CAP_CMD_MULTI`.
+    PropMultiGet = 21,
+    /// Set several property values in order (host to device). Requires
+    /// `CAP_CMD_MULTI`.
+    PropMultiSet = 22,
+    /// Multiple property value notification (device to host), answering
+    /// `CMD_PROP_MULTI_GET` or `CMD_PROP_MULTI_SET`. Never unsolicited.
+    PropAre = 23,
 }
 
 impl Cmd {
@@ -121,6 +130,9 @@ impl Cmd {
             13 => Some(Self::Clear),
             14 => Some(Self::Restore),
             15 => Some(Self::FactoryReset),
+            21 => Some(Self::PropMultiGet),
+            22 => Some(Self::PropMultiSet),
+            23 => Some(Self::PropAre),
             _ => None,
         }
     }
@@ -258,10 +270,60 @@ impl<'a> FrameWriter<'a> {
         self.write_bytes(&value.to_le_bytes())
     }
 
+    /// Bytes still available in the buffer.
+    pub const fn remaining(&self) -> usize {
+        self.buf.len() - self.len
+    }
+
+    /// Bytes written so far.
+    pub const fn len(&self) -> usize {
+        self.len
+    }
+
+    pub const fn is_empty(&self) -> bool {
+        self.len == 0
+    }
+
+    /// Append one multi-property entry: the combined length of the key
+    /// and value, then the key, then the value.
+    ///
+    /// The entry is written whole or not at all, so a caller that runs
+    /// out of room keeps a well-formed frame of the entries that fit.
+    pub fn write_entry(&mut self, key: u32, value: &[u8]) -> Result<(), WriteError> {
+        let total = entry_len(key, value.len()).ok_or(WriteError::ValueTooLarge)?;
+        if self.remaining() < total {
+            return Err(WriteError::BufferTooSmall);
+        }
+        let body = pui::encoded_len(key) + value.len();
+        self.write_pui(body as u32)?;
+        self.write_pui(key)?;
+        self.write_bytes(value)
+    }
+
+    /// Append an entry reporting a status in the position of the property
+    /// it answers.
+    pub fn write_status_entry(&mut self, status: Status) -> Result<(), WriteError> {
+        let mut value = [0u8; pui::MAX_LEN];
+        let len = pui::encode(status.0, &mut value)?;
+        self.write_entry(crate::ids::prop::LAST_STATUS, &value[..len])
+    }
+
     /// Finish the frame, returning its total length in the buffer.
     pub fn finish(self) -> usize {
         self.len
     }
+}
+
+/// Space a multi-property entry occupies, its length prefix included.
+///
+/// Returns `None` when the combined key and value exceed what the length
+/// prefix can express.
+pub const fn entry_len(key: u32, value_len: usize) -> Option<usize> {
+    let body = pui::encoded_len(key) + value_len;
+    if body > pui::MAX_VALUE as usize {
+        return None;
+    }
+    Some(pui::encoded_len(body as u32) + body)
 }
 
 /// Encode a `CMD_NOP` frame.
@@ -341,6 +403,128 @@ pub fn prop_removed(buf: &mut [u8], tid: u8, key: u32, digest: &[u8]) -> Result<
     writer.write_pui(key)?;
     writer.write_bytes(digest)?;
     Ok(writer.finish())
+}
+
+/// Encode a `CMD_PROP_MULTI_GET` frame: the property identifiers one
+/// after another, with no delimiters.
+pub fn prop_multi_get(buf: &mut [u8], tid: u8, keys: &[u32]) -> Result<usize, WriteError> {
+    let mut writer = FrameWriter::new(buf, tid, Cmd::PropMultiGet)?;
+    for &key in keys {
+        writer.write_pui(key)?;
+    }
+    Ok(writer.finish())
+}
+
+/// Encode a `CMD_PROP_MULTI_SET` frame from key and value pairs.
+pub fn prop_multi_set(
+    buf: &mut [u8],
+    tid: u8,
+    entries: &[(u32, &[u8])],
+) -> Result<usize, WriteError> {
+    let mut writer = FrameWriter::new(buf, tid, Cmd::PropMultiSet)?;
+    for &(key, value) in entries {
+        writer.write_entry(key, value)?;
+    }
+    Ok(writer.finish())
+}
+
+/// Begin a `CMD_PROP_ARE` frame, to which the caller appends entries with
+/// [`FrameWriter::write_entry`] and [`FrameWriter::write_status_entry`].
+pub fn prop_are(buf: &mut [u8], tid: u8) -> Result<FrameWriter<'_>, WriteError> {
+    FrameWriter::new(buf, tid, Cmd::PropAre)
+}
+
+/// One entry of a `CMD_PROP_MULTI_SET` or `CMD_PROP_ARE` payload.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct MultiEntry<'a> {
+    pub key: u32,
+    pub value: &'a [u8],
+}
+
+/// Iterator over the entries of a `CMD_PROP_MULTI_SET` or `CMD_PROP_ARE`
+/// payload.
+///
+/// A malformed entry yields one error and ends the iteration: the
+/// remaining bytes cannot be located once a length is untrustworthy.
+#[derive(Clone, Copy, Debug)]
+pub struct MultiEntries<'a> {
+    rest: &'a [u8],
+}
+
+impl<'a> MultiEntries<'a> {
+    pub const fn new(payload: &'a [u8]) -> Self {
+        Self { rest: payload }
+    }
+
+    /// The bytes not yet consumed, so a caller serving entries across
+    /// several calls can record where it stopped.
+    pub const fn remainder(&self) -> &'a [u8] {
+        self.rest
+    }
+
+    fn take_entry(&mut self) -> Result<MultiEntry<'a>, ParseError> {
+        let payload = core::mem::take(&mut self.rest);
+        let (body_len, consumed) = pui::decode(payload)?;
+        let after_len = &payload[consumed..];
+        let body_len = body_len as usize;
+        if after_len.len() < body_len {
+            return Err(ParseError::Truncated);
+        }
+        let (body, tail) = after_len.split_at(body_len);
+        let (key, key_len) = pui::decode(body)?;
+        self.rest = tail;
+        Ok(MultiEntry {
+            key,
+            value: &body[key_len..],
+        })
+    }
+}
+
+impl<'a> Iterator for MultiEntries<'a> {
+    type Item = Result<MultiEntry<'a>, ParseError>;
+
+    fn next(&mut self) -> Option<Self::Item> {
+        if self.rest.is_empty() {
+            return None;
+        }
+        Some(self.take_entry())
+    }
+}
+
+/// Iterator over the property identifiers of a `CMD_PROP_MULTI_GET`
+/// payload.
+#[derive(Clone, Copy, Debug)]
+pub struct MultiGetKeys<'a> {
+    rest: &'a [u8],
+}
+
+impl<'a> MultiGetKeys<'a> {
+    pub const fn new(payload: &'a [u8]) -> Self {
+        Self { rest: payload }
+    }
+
+    /// The bytes not yet consumed.
+    pub const fn remainder(&self) -> &'a [u8] {
+        self.rest
+    }
+}
+
+impl Iterator for MultiGetKeys<'_> {
+    type Item = Result<u32, ParseError>;
+
+    fn next(&mut self) -> Option<Self::Item> {
+        if self.rest.is_empty() {
+            return None;
+        }
+        let payload = core::mem::take(&mut self.rest);
+        match pui::decode(payload) {
+            Ok((key, consumed)) => {
+                self.rest = &payload[consumed..];
+                Some(Ok(key))
+            }
+            Err(error) => Some(Err(error.into())),
+        }
+    }
 }
 
 /// Encode a `CMD_QUEUE_DRAIN` frame (no payload).
@@ -594,11 +778,13 @@ mod tests {
 
     #[test]
     fn every_assigned_command_round_trips() {
-        for id in 0..=15u8 {
+        for id in (0..=15u8).chain(21..=23) {
             let cmd = Cmd::from_u8(id).unwrap_or_else(|| panic!("command {id} unassigned"));
             assert_eq!(cmd as u8, id);
         }
-        assert_eq!(Cmd::from_u8(16), None);
+        for id in (16..=20u8).chain(24..=127) {
+            assert_eq!(Cmd::from_u8(id), None, "command {id} should be unassigned");
+        }
     }
 
     #[test]
@@ -664,6 +850,125 @@ mod tests {
             assert_eq!(frame.command(), Some(cmd));
             assert!(frame.payload.is_empty());
         }
+    }
+
+    #[test]
+    fn multi_get_round_trip() {
+        let mut buf = [0u8; 32];
+        let keys = [prop::CAPS, prop::PHY_DUTY_LIMIT, prop::DEV_ADMINS];
+        let len = prop_multi_get(&mut buf, 6, &keys).unwrap();
+
+        let frame = Frame::parse(&buf[..len]).unwrap();
+        assert_eq!(frame.header.tid(), 6);
+        assert_eq!(frame.command(), Some(Cmd::PropMultiGet));
+        let decoded: Result<std::vec::Vec<_>, _> = MultiGetKeys::new(frame.payload).collect();
+        assert_eq!(decoded.unwrap(), keys);
+    }
+
+    #[test]
+    fn multi_set_round_trip() {
+        let mut buf = [0u8; 64];
+        let long = [0xA5u8; 32];
+        let entries: [(u32, &[u8]); 3] = [
+            (prop::PHY_FREQ, &906_875u32.to_le_bytes()),
+            (prop::DEV_ADMINS, &long),
+            (prop::PHY_TX_POWER, &[]),
+        ];
+        let len = prop_multi_set(&mut buf, 2, &entries).unwrap();
+
+        let frame = Frame::parse(&buf[..len]).unwrap();
+        assert_eq!(frame.command(), Some(Cmd::PropMultiSet));
+        let decoded: std::vec::Vec<_> = MultiEntries::new(frame.payload)
+            .map(|entry| entry.unwrap())
+            .map(|entry| (entry.key, entry.value))
+            .collect();
+        assert_eq!(decoded, entries);
+    }
+
+    #[test]
+    fn are_carries_values_and_statuses() {
+        let mut buf = [0u8; 32];
+        let mut writer = prop_are(&mut buf, 4).unwrap();
+        writer.write_entry(prop::PHY_TX_POWER, &[14]).unwrap();
+        writer.write_status_entry(Status::PROP_NOT_FOUND).unwrap();
+        let len = writer.finish();
+
+        let frame = Frame::parse(&buf[..len]).unwrap();
+        assert_eq!(frame.header.tid(), 4);
+        assert_eq!(frame.command(), Some(Cmd::PropAre));
+        let entries: std::vec::Vec<_> = MultiEntries::new(frame.payload)
+            .map(|entry| entry.unwrap())
+            .collect();
+        assert_eq!(entries.len(), 2);
+        assert_eq!(entries[0].key, prop::PHY_TX_POWER);
+        assert_eq!(entries[0].value, &[14]);
+        assert_eq!(entries[1].key, prop::LAST_STATUS);
+        let (code, _) = crate::pui::decode(entries[1].value).unwrap();
+        assert_eq!(Status(code), Status::PROP_NOT_FOUND);
+    }
+
+    #[test]
+    fn entry_length_matches_what_is_written() {
+        let mut buf = [0u8; 512];
+        // A value long enough to push the length prefix to two bytes.
+        for value_len in [0usize, 1, 125, 126, 127, 300] {
+            let value = std::vec![0x5Au8; value_len];
+            for key in [prop::CAPS, prop::PHY_DUTY_LIMIT] {
+                let mut writer = prop_are(&mut buf, 1).unwrap();
+                let before = writer.len();
+                writer.write_entry(key, &value).unwrap();
+                assert_eq!(
+                    writer.len() - before,
+                    entry_len(key, value_len).unwrap(),
+                    "key {key}, value length {value_len}"
+                );
+            }
+        }
+    }
+
+    #[test]
+    fn entry_that_does_not_fit_leaves_the_frame_intact() {
+        let mut buf = [0u8; 12];
+        let mut writer = prop_are(&mut buf, 1).unwrap();
+        writer.write_entry(prop::PHY_TX_POWER, &[7]).unwrap();
+        let after_first = writer.len();
+        assert_eq!(
+            writer.write_entry(prop::CAPS, &[0u8; 32]),
+            Err(WriteError::BufferTooSmall)
+        );
+        assert_eq!(writer.len(), after_first);
+
+        let len = writer.finish();
+        let frame = Frame::parse(&buf[..len]).unwrap();
+        let entries: std::vec::Vec<_> = MultiEntries::new(frame.payload)
+            .map(|entry| entry.unwrap())
+            .collect();
+        assert_eq!(entries.len(), 1);
+        assert_eq!(entries[0].value, &[7]);
+    }
+
+    #[test]
+    fn malformed_entries_end_the_iteration() {
+        // Body length 9 with only three bytes behind it.
+        let mut entries = MultiEntries::new(&[0x09, 0x71, 0xAA, 0xBB]);
+        assert_eq!(entries.next(), Some(Err(ParseError::Truncated)));
+        assert_eq!(entries.next(), None);
+
+        // A truncated key PUI inside an otherwise well-framed entry.
+        let mut entries = MultiEntries::new(&[0x01, 0x80]);
+        assert_eq!(entries.next(), Some(Err(ParseError::Truncated)));
+        assert_eq!(entries.next(), None);
+
+        let mut keys = MultiGetKeys::new(&[0x71, 0x80]);
+        assert_eq!(keys.next(), Some(Ok(113)));
+        assert_eq!(keys.next(), Some(Err(ParseError::Truncated)));
+        assert_eq!(keys.next(), None);
+    }
+
+    #[test]
+    fn empty_multi_payloads_yield_nothing() {
+        assert_eq!(MultiEntries::new(&[]).next(), None);
+        assert_eq!(MultiGetKeys::new(&[]).next(), None);
     }
 
     #[test]

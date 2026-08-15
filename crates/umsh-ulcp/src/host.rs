@@ -38,6 +38,11 @@ pub enum PropertyNotificationKind {
     Is,
     Inserted,
     Removed,
+    /// `CMD_PROP_ARE`: several properties at once. Its payload is a
+    /// list of entries rather than one key and value, so it has no
+    /// [`PropertyNotification`] form — iterate it with
+    /// [`crate::frame::MultiEntries`].
+    Are,
 }
 
 impl PropertyNotificationKind {
@@ -46,8 +51,14 @@ impl PropertyNotificationKind {
             Cmd::PropIs => Some(Self::Is),
             Cmd::PropInserted => Some(Self::Inserted),
             Cmd::PropRemoved => Some(Self::Removed),
+            Cmd::PropAre => Some(Self::Are),
             _ => None,
         }
+    }
+
+    /// Whether this notification carries one key and value.
+    pub const fn is_single_property(self) -> bool {
+        !matches!(self, Self::Are)
     }
 }
 
@@ -72,6 +83,7 @@ impl<'a> PropertyNotification<'a> {
         let kind = frame
             .command()
             .and_then(PropertyNotificationKind::from_command)
+            .filter(|kind| kind.is_single_property())
             .ok_or(PropertyNotificationError::UnexpectedCommand)?;
         let payload = PropPayload::parse(frame.payload)
             .map_err(|_| PropertyNotificationError::MalformedPayload)?;
@@ -115,6 +127,23 @@ mod tests {
                 value: &[5, 6],
             }
         );
+    }
+
+    #[test]
+    fn multi_property_notifications_have_no_single_property_form() {
+        let mut bytes = [0; 32];
+        let mut writer = frame::prop_are(&mut bytes, 2).unwrap();
+        writer.write_entry(0x1234, &[7]).unwrap();
+        let len = writer.finish();
+        assert_eq!(
+            PropertyNotification::parse(&bytes[..len]),
+            Err(PropertyNotificationError::UnexpectedCommand)
+        );
+        assert_eq!(
+            PropertyNotificationKind::from_command(Cmd::PropAre),
+            Some(PropertyNotificationKind::Are)
+        );
+        assert!(!PropertyNotificationKind::Are.is_single_property());
     }
 
     #[test]

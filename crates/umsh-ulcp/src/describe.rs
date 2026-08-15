@@ -8,7 +8,7 @@ use core::fmt;
 
 use crate::{
     Status,
-    frame::{Cmd, Frame, PropPayload, StreamPayload},
+    frame::{Cmd, Frame, MultiEntries, MultiGetKeys, PropPayload, StreamPayload},
     ids::{cap, prop},
     pui,
 };
@@ -71,6 +71,7 @@ pub const fn property_name(key: u32) -> Option<&'static str> {
         prop::PHY_DUTY_NOW => "PROP_PHY_DUTY_NOW",
         prop::PHY_DUTY_LIMIT => "PROP_PHY_DUTY_LIMIT",
         prop::BLE_PAIRING_PIN => "PROP_BLE_PAIRING_PIN",
+        prop::DEV_ADMINS => "PROP_DEV_ADMINS",
         prop::TIME => "PROP_TIME",
         prop::TZ_OFFSET => "PROP_TZ_OFFSET",
         prop::GNSS_IDENT_UPDATE => "PROP_GNSS_IDENT_UPDATE",
@@ -102,6 +103,8 @@ pub const fn capability_name(code: u32) -> Option<&'static str> {
         cap::ADVERT => "ADVERT",
         cap::ILLUMINANCE => "ILLUMINANCE",
         cap::MAC_BACKHAUL => "MAC_BACKHAUL",
+        cap::ADMIN => "ADMIN",
+        cap::CMD_MULTI => "CMD_MULTI",
         _ => return None,
     })
 }
@@ -171,6 +174,31 @@ impl fmt::Display for FrameDescription<'_> {
                     )
                 }
             }
+            Cmd::PropMultiGet => {
+                let mut count = 0usize;
+                for key in MultiGetKeys::new(frame.payload) {
+                    if key.is_err() {
+                        return write!(out, "{command:?} tid={tid} (malformed payload)");
+                    }
+                    count += 1;
+                }
+                write!(out, "{command:?} tid={tid} ({count} properties)")
+            }
+            Cmd::PropMultiSet | Cmd::PropAre => {
+                let mut count = 0usize;
+                let mut value_bytes = 0usize;
+                for entry in MultiEntries::new(frame.payload) {
+                    let Ok(entry) = entry else {
+                        return write!(out, "{command:?} tid={tid} (malformed payload)");
+                    };
+                    count += 1;
+                    value_bytes += entry.value.len();
+                }
+                write!(
+                    out,
+                    "{command:?} tid={tid} ({count} entries, {value_bytes} value bytes)"
+                )
+            }
             Cmd::StrSend | Cmd::StrRecv => match StreamPayload::parse(frame.payload) {
                 Ok(payload) => write!(
                     out,
@@ -217,6 +245,32 @@ mod tests {
         assert_eq!(
             FrameDescription(&[0x80]).to_string(),
             "malformed frame (1 bytes)"
+        );
+    }
+
+    #[test]
+    fn describes_multi_property_frames() {
+        let mut buf = [0u8; 64];
+        let len = frame::prop_multi_get(&mut buf, 1, &[prop::CAPS, prop::DEV_ADMINS]).unwrap();
+        assert_eq!(
+            FrameDescription(&buf[..len]).to_string(),
+            "PropMultiGet tid=1 (2 properties)"
+        );
+
+        let mut writer = frame::prop_are(&mut buf, 2).unwrap();
+        writer.write_entry(prop::PHY_TX_POWER, &[14]).unwrap();
+        writer.write_status_entry(Status::PROP_NOT_FOUND).unwrap();
+        let len = writer.finish();
+        assert_eq!(
+            FrameDescription(&buf[..len]).to_string(),
+            "PropAre tid=2 (2 entries, 2 value bytes)"
+        );
+
+        // A body length that runs past the end of the payload.
+        let malformed = [0x82, 0x17, 0x09, 0x71, 0xAA];
+        assert_eq!(
+            FrameDescription(&malformed).to_string(),
+            "PropAre tid=2 (malformed payload)"
         );
     }
 

@@ -188,6 +188,11 @@ pub mod prop {
     pub const PHY_DUTY_LIMIT: u32 = 4822;
     /// Persisted, write-only BLE pairing passkey (`PROP_BLE_PAIRING_PIN`).
     pub const BLE_PAIRING_PIN: u32 = 4864;
+    /// Nodes authorized to manage this device over the mesh
+    /// (`PROP_DEV_ADMINS`) — a multiple-value property whose items are
+    /// 32-octet Ed25519 public keys, reported verbatim. An empty list
+    /// disables node management. Requires `CAP_ADMIN`.
+    pub const DEV_ADMINS: u32 = 4865;
     /// Wall-clock time (`PROP_TIME`) — `UINT32_LE` seconds since the Unix
     /// epoch, or **empty** when the device does not know what time it is.
     /// Unsigned, so the encoding is wrap-free into 2106. Requires
@@ -270,6 +275,11 @@ pub mod cap {
     /// physically conspicuous on demand (`PROP_ALERT`). It says nothing
     /// about *which* means, so a host must not assume audibility.
     pub const ALERT: u32 = 42;
+    /// `CAP_ADMIN` — the device can be managed over the mesh by the nodes
+    /// listed in `PROP_DEV_ADMINS`. Requires `CAP_DEV_IDENTITY`, since an
+    /// administrator addresses the device identity, and `CAP_CMD_MULTI`,
+    /// so an administrator may rely on the multi-property commands.
+    pub const ADMIN: u32 = 43;
     /// `CAP_TIME` — the device keeps a wall clock (`PROP_TIME`,
     /// `PROP_TZ_OFFSET`). It says nothing about where the time comes from
     /// or whether it survives a power cycle.
@@ -291,6 +301,9 @@ pub mod cap {
     /// Requires `CAP_REPEATER`: without a repeater there is nothing on
     /// the far side of that link to carry the host's traffic onward.
     pub const MAC_BACKHAUL: u32 = 48;
+    /// `CAP_CMD_MULTI` — the device accepts `CMD_PROP_MULTI_GET` and
+    /// `CMD_PROP_MULTI_SET` and answers them with `CMD_PROP_ARE`.
+    pub const CMD_MULTI: u32 = 49;
 }
 
 /// Value used in `PROP_PHY_DUTY_LIMIT` to disable duty-cycle limiting.
