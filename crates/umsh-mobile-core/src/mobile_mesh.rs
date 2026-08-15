@@ -2187,8 +2187,10 @@ async fn run_worker(
                                     } else {
                                         // Trace route so a listener learns a
                                         // path back to this phone from the
-                                        // same frame.
-                                        options.with_trace_route()
+                                        // same frame, and trace signal so it
+                                        // learns what that path costs — the
+                                        // two pair entry for entry.
+                                        options.with_trace_route().with_trace_signal()
                                     };
                                     node.send_all(&frame, &options)
                                         .await

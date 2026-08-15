@@ -39,7 +39,9 @@ See [Packet Options § Minimum RSSI](packet-options.md#minimum-rssi-option-5) an
 
 When the sender knows a path to the destination, it can include a **source-route option** listing the sequence of repeater hints the packet should traverse. Each repeater checks whether it matches the next hint, removes its own hint, and forwards. Only the designated repeaters handle the packet, so source routing avoids the airtime cost of flooding.
 
-Source routes are learned from the **trace-route option**: when a flooded packet carries a trace-route option, each forwarding repeater prepends its own hint. The recipient can reverse the accumulated trace and cache it as a source route for future replies. This means path discovery is not a separate operation — it falls out of normal packet exchange.
+Source routes are learned from the **trace-route option**: when a packet carries a trace-route option, each forwarding repeater prepends its own hint, on routed hops as well as flooded ones. The recipient can reverse the accumulated trace and cache it as a source route for future replies. This means path discovery is not a separate operation — it falls out of normal packet exchange.
+
+Knowing the path forward is not the same as the destination knowing the path back. A source-routed packet arrives with its hints consumed, so nothing on it describes the return direction, and a destination with no cached route composes a reply that no repeater may carry. A sender that source-routes a packet requesting an acknowledgement should therefore include a trace-route option as well, unless it already knows the destination can reach it. The routed hops record themselves, and the acknowledgement has a path home.
 
 See [Packet Options § Source Route](packet-options.md#source-route-option-3), [Packet Options § Trace Route](packet-options.md#trace-route-option-2), and [Beacons & Path Discovery § Route Learning](beacons.md#route-learning).
 

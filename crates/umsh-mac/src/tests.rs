@@ -3826,7 +3826,8 @@ fn unicast_to_a_flood_distance_peer_still_carries_a_trace_route() {
 
 /// A frame that follows a source route already knows its path, and paying to
 /// record it again is the proactive-refresh behavior the spec leaves
-/// unspecified.
+/// unspecified. This holds only while nothing has to come back — see
+/// [`unicast_over_a_source_route_traces_when_it_asks_for_an_ack`].
 #[test]
 fn unicast_over_a_cached_source_route_carries_no_trace_route() {
     let mut mac = make_mac();
@@ -3863,6 +3864,51 @@ fn unicast_over_a_cached_source_route_carries_no_trace_route() {
     .unwrap();
     let queued = mac.tx_queue_mut().pop_next().expect("queued unicast");
     assert!(frame_has_trace_route(queued.frame.as_slice()));
+}
+
+/// The frame knows its path; the ack it asks for does not. A source route
+/// arrives consumed, so nothing on the frame describes the way back, and the
+/// destination composes its ack against an empty route cache: no flood
+/// budget, no route, dead at the first hop. The trace the routed hops record
+/// is the only thing that closes the return direction.
+#[test]
+fn unicast_over_a_source_route_traces_when_it_asks_for_an_ack() {
+    let mut mac = make_mac();
+    let local_id = mac.add_identity(DummyIdentity::new([0x10; 32])).unwrap();
+    let peer_key = test_pubkey(0xAB);
+    let peer_id = mac.add_peer(peer_key).unwrap();
+    mac.install_pairwise_keys(
+        local_id,
+        peer_id,
+        PairwiseKeys {
+            k_enc: [1; 32],
+            k_mic: [2; 32],
+        },
+    )
+    .unwrap();
+    mac.peer_registry_mut().update_route(
+        peer_id,
+        CachedRoute::Source(heapless::Vec::from_slice(&[RouterHint([0x01, 0x02])]).unwrap()),
+    );
+
+    let _ = block_on(mac.send_unicast(
+        local_id,
+        &peer_key,
+        b"hi",
+        &SendOptions::default().with_ack_requested(true),
+    ))
+    .unwrap();
+
+    let queued = mac.tx_queue_mut().pop_next().expect("queued unicast");
+    assert!(frame_has_trace_route(queued.frame.as_slice()));
+    // The route still goes out: the trace rides alongside it, it does not
+    // replace it.
+    let header = PacketHeader::parse(queued.frame.as_slice()).unwrap();
+    let options = ParsedOptions::extract(queued.frame.as_slice(), header.options_range).unwrap();
+    assert_eq!(
+        queued.frame.as_slice()[options.source_route.unwrap()],
+        [0x01, 0x02]
+    );
 }
 
 /// A trace route asks repeaters to record themselves. With no flood budget
@@ -4053,6 +4099,97 @@ fn mac_ack_mirrors_the_trace_route_of_the_frame_it_acknowledges() {
             "sender_traced={sender_traced}",
         );
     }
+}
+
+/// A retransmission is the one frame carrying route information the original
+/// did not, because reaching the retry ladder is itself the evidence that the
+/// first ack never landed. Composing the re-ack from the stale cache instead
+/// re-sends the same unroutable frame the sender is retrying against, and the
+/// exchange never converges.
+#[test]
+fn a_retried_frame_teaches_its_route_before_the_re_ack_is_composed() {
+    let mut mac = make_mac();
+    let local_id = mac.add_identity(DummyIdentity::new([0x10; 32])).unwrap();
+    let remote = DummyIdentity::new([0xAB; 32]);
+    let peer_key = *remote.public_key();
+    let peer_id = mac.add_peer(peer_key).unwrap();
+    let keys = PairwiseKeys {
+        k_enc: [1; 32],
+        k_mic: [2; 32],
+    };
+    mac.install_pairwise_keys(local_id, peer_id, keys.clone())
+        .unwrap();
+    let dst_hint = mac
+        .identity(local_id)
+        .unwrap()
+        .identity()
+        .public_key()
+        .hint();
+
+    // First attempt: source-routed, so it arrives with its hints consumed and
+    // nothing on it describes the way back.
+    mac.radio_mut().queue_received_unicast_with_route(
+        &remote,
+        &keys,
+        &dst_hint,
+        b"hello",
+        true,
+        7,
+        None,
+        None,
+        Some(&[]),
+    );
+    assert!(block_on(mac.receive_one(|_, _| {})).unwrap());
+    let queued = mac.tx_queue_mut().pop_next().expect("queued mac ack");
+    assert!(
+        ParsedOptions::extract(
+            queued.frame.as_slice(),
+            PacketHeader::parse(queued.frame.as_slice())
+                .unwrap()
+                .options_range,
+        )
+        .unwrap()
+        .source_route
+        .is_none(),
+        "nothing was known to route the first ack by",
+    );
+    assert_eq!(mac.peer_registry().get(peer_id).unwrap().route, None);
+
+    // Past the re-ack holdoff, the sender retries — this time flooding, with a
+    // trace to collect a replacement route. Same counter, same MIC: the
+    // rewritten options are dynamic and excluded from the associated data.
+    mac.clock().advance_ms(60_000);
+    let trace = [RouterHint([0x01, 0x02]), RouterHint([0x03, 0x04])];
+    mac.radio_mut().queue_received_unicast_with_route(
+        &remote,
+        &keys,
+        &dst_hint,
+        b"hello",
+        true,
+        7,
+        Some((3, 2)),
+        Some(trace.as_slice()),
+        None,
+    );
+    assert!(block_on(mac.receive_one(|_, _| {})).unwrap());
+
+    assert_eq!(
+        mac.peer_registry().get(peer_id).unwrap().route,
+        Some(CachedRoute::Source(
+            heapless::Vec::from_slice(&trace).unwrap()
+        )),
+        "the retry's trace is the route the sender asked us to learn",
+    );
+    let queued = mac.tx_queue_mut().pop_next().expect("queued re-ack");
+    let header = PacketHeader::parse(queued.frame.as_slice()).unwrap();
+    assert_eq!(header.fcf.packet_type(), PacketType::MacAck);
+    let options = ParsedOptions::extract(queued.frame.as_slice(), header.options_range).unwrap();
+    assert_eq!(
+        queued.frame.as_slice()[options
+            .source_route
+            .expect("re-ack carries the learned route")],
+        [0x01, 0x02, 0x03, 0x04],
+    );
 }
 
 /// An ack-only exchange produces exactly one packet back from the peer. If

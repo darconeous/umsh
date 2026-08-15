@@ -1779,6 +1779,7 @@ impl<
                 peer_id,
                 effective_source_route.as_ref(),
                 effective_flood_hops,
+                options.ack_requested,
             )
         {
             builder = builder.trace_route();
@@ -1921,6 +1922,7 @@ impl<
                 peer_id,
                 effective_source_route.as_ref(),
                 effective_flood_hops,
+                options.ack_requested,
             )
         {
             builder = builder.trace_route();
@@ -2699,6 +2701,16 @@ impl<
                         &buf[..frame_len],
                     )
                 {
+                    // Before the ack is composed, because the ack is built
+                    // from whatever route this teaches. A retransmission is
+                    // the one frame carrying route information we did not
+                    // already have: the sender reached the retry ladder
+                    // precisely because its first attempt went unanswered,
+                    // and a route-recovery retry attaches a fresh trace to
+                    // say so. Composing the re-ack from the stale cache
+                    // instead throws that away and re-sends the same
+                    // unroutable frame the sender is retrying against.
+                    self.learn_route_for_peer(peer_id, &buf[..frame_len], header);
                     let ack_trailer = self.compute_received_ack_trailer(
                         &buf[..frame_len],
                         header,
@@ -2982,6 +2994,10 @@ impl<
                                 &buf[..frame_len],
                             )
                         {
+                            // Same reason as the unicast path: the retry is
+                            // what carries the route the first attempt
+                            // lacked, and the re-ack is composed from it.
+                            self.learn_route_for_peer(peer_id, &buf[..frame_len], header);
                             let ack_trailer = self.compute_received_ack_trailer(
                                 &buf[..frame_len],
                                 header,
@@ -3694,10 +3710,9 @@ impl<
     /// the destination learns the link is direct from the frame's own shape
     /// anyway — see [`Coordinator::learn_route_for_peer`].
     ///
-    /// Past that, a frame that follows a source route already knows its path,
-    /// and a peer heard directly has no repeaters for a trace to record.
-    /// Everything else floods toward a destination whose distance we can at
-    /// best estimate, and that is exactly the frame whose path is worth
+    /// Past that, a peer heard directly has no repeaters for a trace to
+    /// record. Everything else floods toward a destination whose distance we
+    /// can at best estimate, and that is exactly the frame whose path is worth
     /// writing down: it costs one byte on the way out and buys the
     /// destination a precise route back. The destination mirrors the option
     /// onto its ack, which closes the return direction, so a single exchange
@@ -3706,15 +3721,35 @@ impl<
     /// always-on variant is [proactive route refresh], which the spec
     /// deliberately leaves unspecified.
     ///
+    /// A source route is the one case where knowing the path is not enough.
+    /// The frame reaches the destination with its hints consumed, so nothing
+    /// on it describes the way back, and an ack composed against an empty
+    /// route cache carries neither a flood budget nor a route of its own —
+    /// it dies at the first hop, and the sender retries against a peer that
+    /// has been answering all along. So a routed frame that asks for an ack
+    /// traces as well: the routed hops record themselves, and the ack has a
+    /// path home.
+    ///
+    /// This is unconditional for now. The narrower form only traces when the
+    /// peer has not shown it can reach us — a frame arriving from it with a
+    /// source-route option present, or with accumulated flood hops, is that
+    /// proof, and [`Coordinator::learn_route_for_peer`] already sees both.
+    /// Relax to that once there is enough field data to say the evidence bit
+    /// tracks reality; until then the extra byte is cheaper than a delivery
+    /// that silently never lands.
+    ///
     /// [proactive route refresh]: https://darconeous.github.io/umsh/docs/protocol/beacons.html#potential-improvement-proactive-route-refresh
     fn needs_route_discovery(
         &self,
         peer_id: PeerId,
         source_route: Option<&Vec<RouterHint, MAX_SOURCE_ROUTE_HOPS>>,
         flood_hops: Option<u8>,
+        ack_requested: bool,
     ) -> bool {
         if source_route.is_some_and(|route| !route.is_empty()) {
-            return false;
+            // Routed hops prepend to a trace like flooded ones do, so the
+            // option arrives populated even though `FHOPS` never moved.
+            return ack_requested;
         }
         if flood_hops.unwrap_or(0) == 0 {
             return false;

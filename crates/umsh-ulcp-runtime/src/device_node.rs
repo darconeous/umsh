@@ -753,8 +753,11 @@ async fn send_advertisement<CS: CounterStore + 'static>(
     // exactly the audience an advertisement is for.
     let options = SendOptions::default().with_full_source();
     let options = match reach {
-        // Trace route for the same reason a beacon carries one.
-        AdvertReach::Mesh => options.with_trace_route(),
+        // Trace route for the same reason a beacon carries one, and trace
+        // signal for the same reason again: the two are read as one list,
+        // and a route with no signal beside it cannot be ranked against
+        // the next one to arrive.
+        AdvertReach::Mesh => options.with_trace_route().with_trace_signal(),
         // No flood budget and no trace: a scheduled advertisement is
         // already the largest packet this node originates, and the path
         // back to it is what the beacon interval is for.
