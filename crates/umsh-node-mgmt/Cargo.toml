@@ -1,0 +1,16 @@
+[package]
+name = "umsh-node-mgmt"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+repository.workspace = true
+description = "Node Management binding: ULCP over the mesh (payload types 8 and 9)"
+documentation = "https://darconeous.github.io/umsh/docs/rust/umsh_node_mgmt/"
+
+[features]
+default = ["std"]
+std = ["umsh-core/std"]
+
+[dependencies]
+umsh-core = { path = "../umsh-core", default-features = false }
+umsh-ulcp = { path = "../umsh-ulcp" }
