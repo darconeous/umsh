@@ -79,8 +79,10 @@ pub enum PayloadType {
     ChatRoomMessage = 5,
     /// CoAP-over-UMSH payload.
     CoapOverUmsh = 7,
-    /// Node-management payload.
-    NodeManagement = 8,
+    /// Node-management request payload, administrator to device.
+    NodeManagementRequest = 8,
+    /// Node-management response payload, device to administrator.
+    NodeManagementResponse = 9,
 }
 
 impl PayloadType {
@@ -93,7 +95,8 @@ impl PayloadType {
             3 => Some(Self::TextMessage),
             5 => Some(Self::ChatRoomMessage),
             7 => Some(Self::CoapOverUmsh),
-            8 => Some(Self::NodeManagement),
+            8 => Some(Self::NodeManagementRequest),
+            9 => Some(Self::NodeManagementResponse),
             _ => None,
         }
     }
@@ -125,13 +128,15 @@ impl PayloadType {
                     | PacketType::BlindUnicastAckReq
                     | PacketType::Multicast
             ),
-            Self::NodeManagement | Self::ChatRoomMessage => matches!(
-                packet_type,
-                PacketType::Unicast
-                    | PacketType::UnicastAckReq
-                    | PacketType::BlindUnicast
-                    | PacketType::BlindUnicastAckReq
-            ),
+            Self::NodeManagementRequest | Self::NodeManagementResponse | Self::ChatRoomMessage => {
+                matches!(
+                    packet_type,
+                    PacketType::Unicast
+                        | PacketType::UnicastAckReq
+                        | PacketType::BlindUnicast
+                        | PacketType::BlindUnicastAckReq
+                )
+            }
         }
     }
 }
@@ -1195,23 +1200,40 @@ mod tests {
 
     #[test]
     fn node_management_rides_only_unicast() {
-        for packet_type in [
-            PacketType::Unicast,
-            PacketType::UnicastAckReq,
-            PacketType::BlindUnicast,
-            PacketType::BlindUnicastAckReq,
+        for payload_type in [
+            PayloadType::NodeManagementRequest,
+            PayloadType::NodeManagementResponse,
         ] {
-            assert!(PayloadType::NodeManagement.allowed_for(packet_type));
-        }
-        for packet_type in [
-            PacketType::Multicast,
-            PacketType::Broadcast,
-            PacketType::MacAck,
-        ] {
-            assert!(!PayloadType::NodeManagement.allowed_for(packet_type));
+            for packet_type in [
+                PacketType::Unicast,
+                PacketType::UnicastAckReq,
+                PacketType::BlindUnicast,
+                PacketType::BlindUnicastAckReq,
+            ] {
+                assert!(payload_type.allowed_for(packet_type));
+            }
+            for packet_type in [
+                PacketType::Multicast,
+                PacketType::Broadcast,
+                PacketType::MacAck,
+            ] {
+                assert!(!payload_type.allowed_for(packet_type));
+            }
         }
         assert!(PayloadType::TextMessage.allowed_for(PacketType::Multicast));
         assert!(PayloadType::CoapOverUmsh.allowed_for(PacketType::Multicast));
+    }
+
+    #[test]
+    fn node_management_directions_are_distinct_payload_types() {
+        assert_eq!(
+            PayloadType::from_byte(8),
+            Some(PayloadType::NodeManagementRequest)
+        );
+        assert_eq!(
+            PayloadType::from_byte(9),
+            Some(PayloadType::NodeManagementResponse)
+        );
     }
 
     // Reference address from the addressing chapter discussion; first byte 0x5e.
