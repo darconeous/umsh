@@ -21,6 +21,11 @@ struct AppRootView: View {
     @State private var selectedTab: AppTab = .conversations
     @State private var radioSnapshot = RadioSnapshot.idle
     @State private var showsRadioDetail = false
+    @State private var showsDiscovery = false
+    /// Where the Discover sheet's next ask is aimed. Held here because the
+    /// sheet lives here, and because a peer page deep-linking into an already
+    /// open sheet has to be able to re-aim it.
+    @State private var discoveryVantage: SolicitVantage?
     @State private var localIdentity: LocalIdentitySnapshot?
     @State private var identityError: IdentityVaultError?
     @State private var isLoadingIdentity = true
@@ -124,6 +129,7 @@ struct AppRootView: View {
             updateAlias: updateAlias,
             loadRoute: peerRoute,
             resetRoute: clearPeerRoute,
+            identifyRouter: identifyRouter(_:precededBy:),
             setFavorite: setPeerFavorite,
             promoteToSaved: promotePeerToSaved,
             demoteToTransient: demotePeerToTransient,
@@ -254,10 +260,7 @@ struct AppRootView: View {
                         clearMessages: clearConversationMessages,
                         countMessages: countConversationMessages
                     ),
-                    advertiseIdentity: advertiseIdentity,
-                    advertisedName: advertisedName,
-                    clearDiscoveredNodes: clearDiscoveredNodes,
-                    solicitNearbyIdentities: solicitNearbyIdentities
+                    discoverPeers: { openDiscovery(nil) }
                 )
                     .appRadioToolbar(radioSnapshot) {
                         showsRadioDetail = true
@@ -291,10 +294,7 @@ struct AppRootView: View {
                         selectedTab = .conversations
                         openedConversation = conversation
                     },
-                    advertiseIdentity: advertiseIdentity,
-                    advertisedName: advertisedName,
-                    clearDiscoveredNodes: clearDiscoveredNodes,
-                    solicitNearbyIdentities: solicitNearbyIdentities,
+                    discoverPeers: { openDiscovery(nil) },
                     refreshPosition: refreshRadioPosition
                 )
                     .appRadioToolbar(radioSnapshot) {
@@ -440,6 +440,38 @@ struct AppRootView: View {
                 )
             }
         }
+        // Presented here rather than in Peers and Map, which each had their
+        // own copy: a peer page deep-linking into it has to reach one sheet,
+        // not whichever tab happened to open it.
+        .sheet(isPresented: $showsDiscovery) {
+            DiscoverPeersView(
+                radioSnapshot: $radioSnapshot,
+                conversations: $conversations,
+                peers: peers,
+                peerActions: peerActions,
+                updateDraft: updateDraft,
+                sendMessage: { conversation, body in
+                    await sendMessage(.direct(conversation), body)
+                },
+                messageActions: ChatMessageActions(
+                    edit: editMessage,
+                    delete: deleteMessage,
+                    react: reactToMessage,
+                    clearMessages: clearConversationMessages,
+                    countMessages: countConversationMessages
+                ),
+                advertiseIdentity: advertiseIdentity,
+                advertisedName: advertisedName,
+                clearDiscoveredNodes: clearDiscoveredNodes,
+                solicitNearbyIdentities: solicitNearbyIdentities,
+                vantage: $discoveryVantage,
+                openConversation: { conversation in
+                    showsDiscovery = false
+                    selectedTab = .conversations
+                    openedConversation = conversation
+                }
+            )
+        }
         .fullScreenCover(isPresented: $showsOnboarding) {
             if let localIdentity {
                 OnboardingView(
@@ -560,6 +592,19 @@ struct AppRootView: View {
         // A composer with no radio behind it offers the way to attach one, and
         // the sheet that does it lives here.
         .environment(\.openRadioDetail) { showsRadioDetail = true }
+        // Any peer page below this — in Peers, on the Map, in a transcript's
+        // info view — can aim discovery at the node it is showing. The
+        // Discover sheet overrides this for its own subtree, so a peer page
+        // reached from inside it re-aims that sheet instead.
+        .environment(\.askNearbyIdentities, openDiscovery)
+    }
+
+    /// Open Discover Peers with its ask aimed at `vantage` — nil for this
+    /// phone's own neighborhood.
+    @MainActor
+    private func openDiscovery(_ vantage: SolicitVantage?) {
+        discoveryVantage = vantage
+        showsDiscovery = true
     }
 
     @MainActor
@@ -1715,16 +1760,54 @@ struct AppRootView: View {
         data.map { String(format: "%02x", $0) }.joined()
     }
 
-    /// One zero-hop broadcast Identity Request for the Discover sheet:
-    /// nodes in direct radio range that match the role filter reply with
-    /// their identities, which land through `applyReceivedAdvertisement`.
-    /// Returns whether the request was handed to the radio.
-    private func solicitNearbyIdentities(_ roleFilter: PeerRole?) async -> Bool {
+    /// One broadcast Identity Request for the Discover sheet: matching nodes
+    /// reply with their identities, which land through
+    /// `applyReceivedAdvertisement`. Returns whether the request was handed to
+    /// the radio.
+    ///
+    /// Without a vantage it is zero-hop, answered by nodes in this phone's own
+    /// range. With one it is steered down that route and answered by whatever
+    /// is in range of where it lands.
+    private func solicitNearbyIdentities(
+        _ roleFilter: PeerRole?,
+        _ vantage: SolicitVantage?
+    ) async -> Bool {
         guard radioSnapshot.linkState == .attached || radioSnapshot.linkState == .ready,
               radioSnapshot.hostState == .matchesCurrentIdentity
         else { return false }
         do {
-            try await radioConnection.requestNearbyIdentities(roleFilter: roleFilter?.roleCode)
+            try await radioConnection.requestNearbyIdentities(
+                roleFilter: roleFilter?.roleCode,
+                nodeHint: nil,
+                sourceRoute: vantage?.routers ?? []
+            )
+            return true
+        } catch {
+            return false
+        }
+    }
+
+    /// Ask one router named by a route who it is.
+    ///
+    /// A repeater consumes its own hint while forwarding rather than while
+    /// receiving, so a request whose route still names it is one it drops.
+    /// The ask is steered to the hop *before* it — `precedingRouters`, which
+    /// is empty for a first hop, since that one is in direct range by
+    /// construction — and narrowed to the router's own two bytes, so it is
+    /// the only node in that neighborhood that answers.
+    private func identifyRouter(
+        _ hint: MeshRouterHint,
+        precededBy precedingRouters: [MeshRouterHint]
+    ) async -> Bool {
+        guard radioSnapshot.linkState == .attached || radioSnapshot.linkState == .ready,
+              radioSnapshot.hostState == .matchesCurrentIdentity
+        else { return false }
+        do {
+            try await radioConnection.requestNearbyIdentities(
+                roleFilter: nil,
+                nodeHint: hint.bytes,
+                sourceRoute: precedingRouters.map(\.bytes)
+            )
             return true
         } catch {
             return false

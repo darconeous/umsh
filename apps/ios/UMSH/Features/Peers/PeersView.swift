@@ -20,17 +20,9 @@ struct PeersView: View {
     let updateDraft: ((Int64, String) async -> Void)?
     let sendMessage: ((DirectConversationSummary, String) async -> MessageSendResult)?
     var messageActions: ChatMessageActions = .unavailable
-    /// Broadcast this phone's signed identity, for the Discover sheet's
-    /// Announce action. Returns a failure message or nil.
-    var advertiseIdentity: (() async -> String?)? = nil
-    /// The name that announcement carries, for its confirmation preview.
-    var advertisedName: String = ""
-    /// Drop every transient row nothing depends on.
-    var clearDiscoveredNodes: (() async -> Void)? = nil
-    /// Send one zero-hop Identity Request soliciting nearby nodes.
-    var solicitNearbyIdentities: ((PeerRole?) async -> Bool)? = nil
+    /// Open the Discover Peers sheet, which the app root owns and presents.
+    var discoverPeers: () -> Void = {}
     @State private var showsAddPeer = false
-    @State private var showsDiscovery = false
     @AppStorage("peers.sort") private var sortOrder: PeersSortOrder = .alphabetic
     @State private var roleFilter: PeersRoleFilter = .all
     @State private var searchText = ""
@@ -57,7 +49,7 @@ struct PeersView: View {
                 } description: {
                     Text("Import a peer to get started, or listen for nodes announcing themselves nearby.")
                 } actions: {
-                    Button("Discover peers") { showsDiscovery = true }
+                    Button("Discover peers") { discoverPeers() }
                         .buttonStyle(.borderedProminent)
                 }
             } else {
@@ -88,25 +80,6 @@ struct PeersView: View {
                     }
                 )
             }
-        }
-        .sheet(isPresented: $showsDiscovery) {
-            DiscoverPeersView(
-                radioSnapshot: $radioSnapshot,
-                conversations: $conversations,
-                peers: peers,
-                peerActions: peerActions,
-                updateDraft: updateDraft,
-                sendMessage: sendMessage,
-                messageActions: messageActions,
-                advertiseIdentity: advertiseIdentity,
-                advertisedName: advertisedName,
-                clearDiscoveredNodes: clearDiscoveredNodes,
-                solicitNearbyIdentities: solicitNearbyIdentities,
-                openConversation: { conversation in
-                    showsDiscovery = false
-                    openConversation(conversation)
-                }
-            )
         }
         .confirmationDialog(
             peerPendingRemoval.map { Text("Remove \($0.displayName)?") } ?? Text("Remove peer?"),
@@ -172,9 +145,9 @@ struct PeersView: View {
             }
         }
         Section {
-            Button("Discover peers") { showsDiscovery = true }
+            Button("Discover peers") { discoverPeers() }
         } footer: {
-            Text("A bounded listening session for nodes announcing themselves nearby.")
+            Text("A live view of nodes announcing themselves, and the place to ask them to.")
         }
     }
 
@@ -311,7 +284,7 @@ struct PeersView: View {
             .pickerStyle(.inline)
             Divider()
             Button("Discover Peers", systemImage: "dot.radiowaves.left.and.right") {
-                showsDiscovery = true
+                discoverPeers()
             }
         } label: {
             Label(

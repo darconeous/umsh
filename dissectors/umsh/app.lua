@@ -96,7 +96,7 @@ local MAC_COMMANDS = {
 }
 f.mac_cmd_id   = ProtoField.uint8  ("umsh.app.mac.cmd",     "Command",        base.HEX, MAC_COMMANDS)
 f.mac_nonce    = ProtoField.bytes  ("umsh.app.mac.nonce",   "Nonce")
-f.mac_filt_hint= ProtoField.string ("umsh.app.mac.filter_hint", "Filter: Node Hint")
+f.mac_filt_hint= ProtoField.string ("umsh.app.mac.filter_hint", "Filter: Node Hint Prefix")
 f.mac_filt_role= ProtoField.uint8  ("umsh.app.mac.filter_role", "Filter: Node Role", base.DEC)
 f.mac_filt_caps= ProtoField.uint8  ("umsh.app.mac.filter_caps", "Filter: Capabilities", base.HEX)
 f.mac_unknown  = ProtoField.bytes  ("umsh.app.mac.unk",     "Unknown Option")
@@ -398,7 +398,24 @@ local function dissect_mac_command(payload, subtree, tvb, ctx, pinfo)
           elseif num == 3 then
             n_filters = n_filters + 1
             saw_hint_filter = true
-            subtree:add(f.mac_filt_hint, opt_tvb, base58.node_hint_full(val))
+            -- The filter matches a leading part of the node hint, so the
+            -- value may be shorter than one: two bytes is a router hint,
+            -- which is all a route reveals about the hops it names.
+            local shown
+            if v_len == 2 then
+              shown = base58.router_hint_full(val) .. " (router hint)"
+            elseif v_len == 3 then
+              shown = base58.node_hint_full(val)
+            else
+              shown = base58.hex_bytes(val)
+            end
+            subtree:add(f.mac_filt_hint, opt_tvb, shown)
+            if v_len < 1 or v_len > 3 then
+              if ctx and ctx.flag then
+                ctx.flag(subtree, opt_tvb, string.format(
+                  "FILTER_NODE_HINT must be 1 to 3 bytes (is %d)", v_len))
+              end
+            end
           elseif num == 5 then
             n_filters = n_filters + 1
             if v_len >= 1 then subtree:add(f.mac_filt_role, opt_tvb, byte_at(val, 1)) end
@@ -427,8 +444,9 @@ local function dissect_mac_command(payload, subtree, tvb, ctx, pinfo)
       end
       -- The hop limit is confined only for a request that selects by role
       -- or capability, since every node it reaches may answer. One naming
-      -- a single node by hint draws a single reply however far it travels,
-      -- so its hop count is its own business.
+      -- a node by hint draws a single reply however far it travels — a few
+      -- at most, where the hint is partial — so its hop count is its own
+      -- business.
       if not saw_hint_filter and ctx.fhops ~= nil and ctx.fhops ~= 0 then
         ctx.flag(subtree, tvb(0, 1), string.format(
           "Identity Request without a node-hint filter must have FHOPS absent or 0x00 (is 0x%02X)",

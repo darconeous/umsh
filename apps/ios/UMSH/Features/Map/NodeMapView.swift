@@ -23,10 +23,8 @@ struct NodeMapView: View {
     /// Send the reader to the Peers tab, for the empty state's way out.
     var openPeersList: () -> Void = {}
     var openConversation: (DirectConversationSummary) -> Void = { _ in }
-    var advertiseIdentity: (() async -> String?)? = nil
-    var advertisedName: String = ""
-    var clearDiscoveredNodes: (() async -> Void)? = nil
-    var solicitNearbyIdentities: ((PeerRole?) async -> Bool)? = nil
+    /// Open the Discover Peers sheet, which the app root owns and presents.
+    var discoverPeers: () -> Void = {}
     /// Ask the radio where it is. Driven on a cadence by
     /// ``RadioPositionPoll`` — the radio never volunteers this.
     var refreshPosition: (() async -> Void)? = nil
@@ -42,7 +40,6 @@ struct NodeMapView: View {
     @State private var hasFramedNodes = false
     @State private var selectedNodeID: Int64?
     @State private var cardDetent: MapCardDetent = .peek
-    @State private var showsDiscovery = false
     @State private var viewport = MapViewport()
 
     /// Enough of the card for the grabber, the header, and one whole row. A
@@ -157,25 +154,6 @@ struct NodeMapView: View {
         .toolbar {
             ToolbarItem(placement: .topBarTrailing) { filterMenu }
         }
-        .sheet(isPresented: $showsDiscovery) {
-            DiscoverPeersView(
-                radioSnapshot: $radioSnapshot,
-                conversations: $conversations,
-                peers: peers,
-                peerActions: peerActions,
-                updateDraft: updateDraft,
-                sendMessage: sendMessage,
-                messageActions: messageActions,
-                advertiseIdentity: advertiseIdentity,
-                advertisedName: advertisedName,
-                clearDiscoveredNodes: clearDiscoveredNodes,
-                solicitNearbyIdentities: solicitNearbyIdentities,
-                openConversation: { conversation in
-                    showsDiscovery = false
-                    openConversation(conversation)
-                }
-            )
-        }
         .onAppear {
             frameNodesIfNeeded(nodes)
             revealEmptyStateIfNeeded(nodes)
@@ -255,7 +233,7 @@ struct NodeMapView: View {
                 isFiltered: isFiltered,
                 isLoading: isLoading,
                 clearFilters: clearFilters,
-                discoverPeers: { showsDiscovery = true },
+                discoverPeers: discoverPeers,
                 openPeersList: openPeersList,
                 radioSnapshot: $radioSnapshot,
                 conversations: $conversations,

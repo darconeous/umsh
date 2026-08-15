@@ -52,6 +52,27 @@ struct PeerSummary: Identifiable, Hashable, Sendable {
                 .contains(MeshNodeIdentity.repeaterCapabilityLabel) == true
     }
 
+    /// What this phone actually knows about whether the node repeats.
+    ///
+    /// `isLikelyRepeater` answers `false` identically for a node we know to be
+    /// a tracker and a node we have only ever seen as a hint in someone else's
+    /// trace. Those are different states, and a decision that treats them the
+    /// same gets one of them wrong. `role` already falls back to `storedRole`
+    /// and `.unknown` already names an absence rather than a choice, so the
+    /// third value is there for the asking.
+    var repeaterEvidence: RepeaterEvidence {
+        if isLikelyRepeater { return .yes }
+        return role == .unknown ? .unknown : .no
+    }
+
+    /// This node's own two-byte router hint — the leading bytes of its key,
+    /// which is what a repeater carrying its traffic would put on the wire.
+    /// `nil` only for a hint too short to take one from.
+    var routerHintBytes: Data? {
+        let bytes = identity.hint.bytes.prefix(2)
+        return bytes.count == 2 ? Data(bytes) : nil
+    }
+
     /// Whether the advertised claims may be attributed to this peer at all.
     ///
     /// Something has to have authenticated them: either the bundle's own
@@ -545,6 +566,115 @@ struct PeerRoute: Equatable, Sendable {
     }
 }
 
+/// How sure this phone is that a node forwards other nodes' traffic.
+enum RepeaterEvidence: Equatable, Sendable {
+    /// It advertised the repeater role or capability.
+    case yes
+    /// No identity has been heard for it, so there is nothing to go on.
+    case unknown
+    /// It advertised something else.
+    case no
+}
+
+/// Where an Identity Request is asked from.
+///
+/// `nil` — no vantage — is this phone's own neighborhood: the zero-hop
+/// broadcast only direct neighbors hear. A vantage steers the same ask down a
+/// route instead, so the nodes that answer are the ones in radio range of
+/// wherever it lands, which is the only way to discover nodes this phone
+/// cannot hear. A flood-routed ask is not an option: nothing narrows how many
+/// nodes would answer it.
+struct SolicitVantage: Hashable, Sendable {
+    let peerName: String
+    let peerAddress: String
+    /// Two-byte router hints to steer through, in send order. Never empty.
+    ///
+    /// Snapshotted when the vantage was chosen: the learned route may move
+    /// while the sheet is open, and the ask should go where the user aimed it.
+    let routers: [Data]
+    /// The last router the ask passes through, when that is *not* the peer
+    /// itself. `nil` means the ask is aimed at the peer, which is what lets the
+    /// copy say "at" rather than "near" without overclaiming.
+    let landingRouter: MeshRouterHint?
+    /// What was known about the peer when the vantage was built. Carried so the
+    /// copy can hedge exactly as much as the routing did: aiming at a peer whose
+    /// role was never heard is a guess, and reads as one.
+    let evidence: RepeaterEvidence
+
+    var landsAtPeer: Bool { landingRouter == nil }
+
+    /// Derive the vantage for asking near `peer`, or `nil` when there is no
+    /// honest way to steer an ask there.
+    ///
+    /// A cached route excludes its endpoints, so the route *to* a peer stops
+    /// at the last router before it. Landing *at* the peer means appending the
+    /// peer's own hint, which is only safe when we have positive evidence it
+    /// repeats: the choice is asymmetric. Not appending when the peer does
+    /// repeat lands the ask one hop short, which is still useful. Appending
+    /// when it does not kills the ask outright — the router before it looks
+    /// for a next hop that will never forward. So append only on evidence, and
+    /// let the copy carry the uncertainty rather than the route.
+    init?(peer: PeerSummary, route: PeerRoute?) {
+        guard let route, let peerHint = peer.routerHintBytes else { return nil }
+        let evidence = peer.repeaterEvidence
+        self.evidence = evidence
+
+        switch route.kind {
+        case .source where !route.hints.isEmpty:
+            let learned = route.hints
+            if evidence == .yes {
+                routers = learned.map(\.bytes) + [peerHint]
+                landingRouter = nil
+            } else {
+                routers = learned.map(\.bytes)
+                landingRouter = learned.last
+            }
+        case .direct, .source:
+            // Heard directly, so the route names no routers. Asking *through*
+            // this node is exactly how to reach what sits behind it — the
+            // bench case worth having — but only if it forwards at all. When
+            // we know it does not, a plain nearby ask already covers it.
+            guard evidence != .no else { return nil }
+            routers = [peerHint]
+            landingRouter = nil
+        case .flood, .unknown, .unavailable:
+            // A flood route counts routers, it does not name them, so there is
+            // nothing to steer with.
+            return nil
+        }
+
+        peerName = peer.displayName
+        peerAddress = peer.identity.canonicalAddress
+    }
+}
+
+/// Put what name we can to a two-byte router hint.
+///
+/// A hint is 16 bits of a public key, so it narrows the field rather than
+/// identifying a node: a single match is named, several matches are counted,
+/// and a match among repeater-capable nodes is preferred over a bare one.
+/// Any name it yields is a guess and must be shown as one.
+enum RouterHintNaming {
+    /// The one node a hint most plausibly names, or `nil` when the hint is
+    /// ambiguous or matches nothing known.
+    static func match(_ hint: MeshRouterHint, among peers: [PeerSummary]) -> PeerSummary? {
+        let candidates = peers.filter { hint.matches($0.identity) }
+        let repeaters = candidates.filter(\.isLikelyRepeater)
+        if repeaters.count == 1 { return repeaters.first }
+        return candidates.count == 1 ? candidates.first : nil
+    }
+
+    /// A hint rendered for prose: a matched node's name, else the hint text.
+    static func label(_ hint: MeshRouterHint, among peers: [PeerSummary]) -> String {
+        match(hint, among: peers)?.displayName ?? hint.text
+    }
+
+    /// The sentence to append wherever a name came from `match`, since a
+    /// two-byte hint can never prove which node forwarded a frame.
+    static let ambiguityNote =
+        "Router names are matched by a two-byte hint and may not be the node shown."
+}
+
 /// Everything the peer sheet can do with the node it is showing.
 ///
 /// Bundled because `PeerDetailView` is presented from four places — the
@@ -565,6 +695,12 @@ struct PeerActions {
     var loadRoute: ((PeerSummary) async -> PeerRoute)? = nil
     /// Discard that route, reporting whether one was held.
     var resetRoute: ((PeerSummary) async -> Bool)? = nil
+    /// Ask one intermediate router on a route to identify itself, given its
+    /// hint and the routers ahead of it in send order.
+    ///
+    /// A route names its hops by two bytes and nothing else, so the answer is
+    /// the only way to know who is actually carrying the traffic.
+    var identifyRouter: ((MeshRouterHint, [MeshRouterHint]) async -> Bool)? = nil
     /// Mark or unmark the node as a favorite. Saved nodes only.
     var setFavorite: ((PeerSummary, Bool) async -> Bool)? = nil
     /// Save a transient node onto the local identity.

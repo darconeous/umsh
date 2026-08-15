@@ -447,6 +447,12 @@ enum WorkerCommand {
     DiscoverIdentities {
         role_code: Option<u8>,
         capability_bits: Option<u8>,
+        /// Leading bytes of the one node's hint that should answer; two of
+        /// them is a router hint.
+        node_hint: Option<Vec<u8>>,
+        /// Routers to steer the request through, in send order; empty for a
+        /// zero-hop ask of this node's own neighbors.
+        source_route: Vec<Vec<u8>>,
         response: oneshot::Sender<Result<(), MobileMeshError>>,
     },
     RequestIdentityByHint {
@@ -1002,27 +1008,47 @@ impl MobileMeshSession {
             .map_err(|_| MobileMeshError::SessionUnavailable)?
     }
 
-    /// Solicit identities from nearby nodes with one zero-hop broadcast MAC
-    /// Identity Request.
+    /// Solicit identities with one broadcast MAC Identity Request, either
+    /// from this node's own neighbors or from a remote vantage point.
     ///
-    /// The request goes out as a direct broadcast with no flood budget, so
-    /// repeaters never carry it — the blast radius is exactly the nodes in
-    /// radio range. It carries this phone's full source address, so a
-    /// matching node can reply with a targeted unicast without any prior
-    /// contact; replies arrive as ordinary `NodeIdentity` advertisements on
-    /// the receive path. `role_code` and `capability_bits` narrow which
-    /// nodes respond (AND-combined when both are given); `None` for both
-    /// asks every node in range.
+    /// With an empty `source_route` the request goes out as a direct
+    /// broadcast with no flood budget, so repeaters never carry it — the
+    /// blast radius is exactly the nodes in radio range. Given a route, the
+    /// request is steered along it instead: each repeater consumes its hint,
+    /// so the request arrives with an empty Route option in the neighborhood
+    /// the route ends at, and the nodes *there* are the ones that answer. A
+    /// steered request also carries a trace route, which is what gives the
+    /// answering strangers a path back — without it their replies would have
+    /// no route and no flood budget, and would die on their own transmitter.
+    ///
+    /// Either way it carries this phone's full source address, so a matching
+    /// node can reply with a targeted unicast without any prior contact;
+    /// replies arrive as ordinary `NodeIdentity` advertisements on the
+    /// receive path. `role_code` and `capability_bits` narrow which nodes
+    /// respond (AND-combined when both are given); `None` for all three
+    /// filters asks every node the request reaches.
+    ///
+    /// `node_hint` narrows the ask to one node by the leading bytes of its
+    /// node hint. Two bytes is a router hint, which is all a route reveals
+    /// about the hops it crosses: pair it with a route ending at the hop
+    /// *before* the one in question, since a repeater consumes its own hint
+    /// only when forwarding and drops a request that still names it.
+    ///
+    /// Each entry of `source_route` is one 2-byte router hint in send order.
     pub async fn discover_identities(
         &self,
         role_code: Option<u8>,
         capability_bits: Option<u8>,
+        node_hint: Option<Vec<u8>>,
+        source_route: Vec<Vec<u8>>,
     ) -> Result<(), MobileMeshError> {
         let (response, result) = oneshot::channel();
         self.commands
             .send(WorkerCommand::DiscoverIdentities {
                 role_code,
                 capability_bits,
+                node_hint,
+                source_route,
                 response,
             })
             .map_err(|_| MobileMeshError::SessionUnavailable)?;
@@ -2311,6 +2337,8 @@ async fn run_worker(
                         Some(WorkerCommand::DiscoverIdentities {
                             role_code,
                             capability_bits,
+                            node_hint,
+                            source_route,
                             response,
                         }) => {
                             let result = async {
@@ -2320,6 +2348,14 @@ async fn run_worker(
                                 builder = builder
                                     .nonce(u32::from_be_bytes(nonce_bytes))
                                     .map_err(|_| MobileMeshError::SendFailed)?;
+                                // Options are emitted in ascending key order, so
+                                // the hint filter goes between the nonce and
+                                // the role.
+                                if let Some(hint) = node_hint.as_deref() {
+                                    builder = builder
+                                        .filter_hint_prefix(hint)
+                                        .map_err(|_| MobileMeshError::SendFailed)?;
+                                }
                                 if let Some(role) = role_code {
                                     builder = builder
                                         .filter_role(NodeRole::from_byte(role))
@@ -2328,9 +2364,11 @@ async fn run_worker(
                                 // A broadcast request must carry at least one
                                 // filter option. An unrestricted ask carries a
                                 // zero-bit capability filter, which every node
-                                // satisfies.
-                                let capability_bits = capability_bits
-                                    .or(if role_code.is_none() { Some(0) } else { None });
+                                // satisfies — but a hint filter already narrows
+                                // the ask, and padding it would only cost bytes.
+                                let unfiltered = role_code.is_none() && node_hint.is_none();
+                                let capability_bits =
+                                    capability_bits.or(if unfiltered { Some(0) } else { None });
                                 if let Some(bits) = capability_bits {
                                     builder = builder
                                         .filter_caps(NodeCapabilities::from_bits_truncate(bits))
@@ -2345,16 +2383,46 @@ async fn run_worker(
                                 let length = umsh_node::mac_command::encode(&cmd, &mut frame[1..])
                                     .map_err(|_| MobileMeshError::SendFailed)?
                                     + 1;
-                                // Zero-hop by design: no flood budget, so
-                                // repeaters never carry the solicitation.
                                 // Full source lets a stranger unicast back.
-                                node.send_all(
-                                    &frame[..length],
-                                    &SendOptions::default().with_full_source().no_flood(),
-                                )
-                                .await
-                                .map(|_| ())
-                                .map_err(|_| MobileMeshError::SendFailed)
+                                let mut options = SendOptions::default().with_full_source();
+                                if !source_route.is_empty() {
+                                    let hops = source_route
+                                        .iter()
+                                        .map(|hint| {
+                                            <[u8; 2]>::try_from(hint.as_slice())
+                                                .map(umsh_core::RouterHint)
+                                                .map_err(|_| MobileMeshError::SendFailed)
+                                        })
+                                        .collect::<Result<Vec<_>, _>>()?;
+                                    // Unlike a hint-filtered ask over a
+                                    // channel, this one must never fall back to
+                                    // flooding. A role- or capability-filtered
+                                    // request is answered by every node it
+                                    // reaches, and even a hint-filtered one is
+                                    // aimed at a particular place rather than
+                                    // at the mesh: a route we cannot express is
+                                    // a failure, not a licence to broadcast.
+                                    options = options
+                                        .try_with_source_route(&hops)
+                                        .map_err(|_| MobileMeshError::SendFailed)?
+                                        // The trace the request accumulates is
+                                        // the answering strangers' only path
+                                        // home: a broadcast teaches the MAC no
+                                        // route, and the reply carries no flood
+                                        // budget.
+                                        .with_trace_route();
+                                }
+                                // Last, always: try_with_source_route back-fills
+                                // a flood budget from the route length, and any
+                                // FHOPS field at all makes the far end drop an
+                                // unhinted solicitation. A hint filter would
+                                // license a flood budget, but this ask is aimed
+                                // and has no use for one.
+                                let options = options.no_flood();
+                                node.send_all(&frame[..length], &options)
+                                    .await
+                                    .map(|_| ())
+                                    .map_err(|_| MobileMeshError::SendFailed)
                             }
                             .await;
                             if result.is_ok()
@@ -3376,7 +3444,10 @@ mod tests {
             .await
             .unwrap();
 
-        alice.discover_identities(None, Some(0x02)).await.unwrap();
+        alice
+            .discover_identities(None, Some(0x02), None, Vec::new())
+            .await
+            .unwrap();
 
         let deadline = Instant::now() + Duration::from_secs(10);
         let frames = loop {
@@ -3412,7 +3483,10 @@ mod tests {
         // An unrestricted ask still satisfies the rule that a broadcast
         // request carries at least one filter: it gets a zero-bit
         // capability filter, which every node matches.
-        alice.discover_identities(None, None).await.unwrap();
+        alice
+            .discover_identities(None, None, None, Vec::new())
+            .await
+            .unwrap();
         let deadline = Instant::now() + Duration::from_secs(10);
         let frames = loop {
             let update = alice.poll_update();
@@ -3439,6 +3513,83 @@ mod tests {
                 number == umsh_node::mac_command::identity_filter::FILTER_NODE_CAPS && value == [0]
             });
         assert!(has_vacuous_caps_filter);
+
+        // Steered at a remote vantage point and aimed at one router there by
+        // its two-byte hint — the shape that identifies an intermediate hop.
+        // The ask still goes out with no flood budget for a repeater to spend
+        // on its own initiative.
+        alice
+            .discover_identities(
+                None,
+                None,
+                Some(vec![0x5A, 0x5B]),
+                vec![vec![0xAB, 0xCD], vec![0x12, 0x34]],
+            )
+            .await
+            .unwrap();
+        let deadline = Instant::now() + Duration::from_secs(10);
+        let frames = loop {
+            let update = alice.poll_update();
+            if !update.outbound_frames.is_empty() {
+                break update.outbound_frames;
+            }
+            assert!(
+                Instant::now() < deadline,
+                "routed solicitation never went out"
+            );
+            std::thread::sleep(Duration::from_millis(5));
+        };
+        assert_eq!(frames.len(), 1);
+        let frame = frames.into_iter().next().unwrap();
+        alice.complete_outbound_frame(frame.id, true).unwrap();
+        let header = umsh_core::PacketHeader::parse(&frame.data).unwrap();
+        assert_eq!(header.packet_type(), umsh_core::PacketType::Broadcast);
+        // No FHOPS field, despite the route: try_with_source_route back-fills
+        // a flood budget from the route length, and any budget at all makes
+        // the far end drop an unhinted solicitation.
+        assert!(header.flood_hops.is_none());
+        assert!(header.fcf.full_source());
+        let options =
+            umsh_core::ParsedOptions::extract(&frame.data, header.options_range.clone()).unwrap();
+        // The route we asked for, in send order.
+        let route = options
+            .source_route
+            .clone()
+            .map(|range| frame.data[range].to_vec())
+            .expect("a steered request carries a Route option");
+        assert_eq!(route, vec![0xAB, 0xCD, 0x12, 0x34]);
+        // And an empty trace for the repeaters to fill, which is what gives
+        // the answering strangers a path home.
+        let trace = options
+            .trace_route
+            .clone()
+            .map(|range| frame.data[range].to_vec())
+            .expect("a steered request carries a trace route");
+        assert!(trace.is_empty());
+
+        // The hint filter rides as the two bytes given, and the vacuous caps
+        // filter is dropped: the ask is already narrowed to one node.
+        let body = &frame.data[header.body_range.clone()];
+        let umsh_node::MacCommand::IdentityRequest { options } =
+            umsh_node::mac_command::parse(&body[1..]).unwrap()
+        else {
+            panic!("expected an identity request");
+        };
+        let filters: Vec<_> = umsh_core::options::OptionDecoder::new(options)
+            .filter_map(Result::ok)
+            .map(|(number, value)| (number, value.to_vec()))
+            .collect();
+        assert!(filters.contains(&(
+            umsh_node::mac_command::identity_filter::FILTER_NODE_HINT,
+            vec![0x5A, 0x5B]
+        )));
+        assert!(
+            !filters
+                .iter()
+                .any(|(number, _)| *number
+                    == umsh_node::mac_command::identity_filter::FILTER_NODE_CAPS),
+            "a hint-filtered ask needs no vacuous capability filter"
+        );
     }
 
     /// The whole discover loop between two strangers: Alice's zero-hop
@@ -3481,7 +3632,10 @@ mod tests {
         .await
         .unwrap();
 
-        alice.discover_identities(None, None).await.unwrap();
+        alice
+            .discover_identities(None, None, None, Vec::new())
+            .await
+            .unwrap();
 
         // Shuttle frames both ways until Bob's identity lands at Alice.
         let bob_address = address(&bob_identity);
@@ -3533,7 +3687,10 @@ mod tests {
 
         // Opting out is honored: a fresh ask earns silence from Bob.
         bob.set_discoverable(false, None).await.unwrap();
-        alice.discover_identities(None, None).await.unwrap();
+        alice
+            .discover_identities(None, None, None, Vec::new())
+            .await
+            .unwrap();
         let quiet_until = Instant::now() + Duration::from_secs(6);
         while Instant::now() < quiet_until {
             let alice_update = alice.poll_update();

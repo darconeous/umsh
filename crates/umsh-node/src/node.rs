@@ -654,6 +654,7 @@ impl<M: MacBackend> LocalNode<M> {
             filters,
             rssi: packet.rssi(),
             snr: packet.snr(),
+            trace_route: packet.trace_route().unwrap_or(&[]),
         };
         self.state
             .borrow_mut()
@@ -669,10 +670,30 @@ impl<M: MacBackend> LocalNode<M> {
     /// transient — and never promotes/pins the peer. Failures are dropped: the
     /// requester can always ask again.
     pub(crate) async fn send_identity_response(&self, plan: IdentityResponsePlan) {
-        let mut options = SendOptions::default();
-        if plan.full_source {
-            options = options.with_full_source();
-        }
+        let unrouted = || {
+            let options = SendOptions::default();
+            if plan.full_source {
+                options.with_full_source()
+            } else {
+                options
+            }
+        };
+        // Steer the reply back down the trace the request arrived by. An
+        // explicit route beats whatever the peer registry cached, which for a
+        // broadcast solicitation is nothing at all. A route too long to
+        // express falls back to no route rather than to a truncated one,
+        // which would strand the reply mid-path.
+        //
+        // Routed before the no_flood block deliberately: try_with_source_route
+        // back-fills a flood budget from the route length, and the reply to an
+        // unhinted solicitation must carry no FHOPS field at all.
+        let mut options = if plan.route.is_empty() {
+            unrouted()
+        } else {
+            unrouted()
+                .try_with_source_route(&plan.route)
+                .unwrap_or_else(|_| unrouted())
+        };
         if plan.no_flood {
             // The solicitation named no single node, so it was allowed one hop
             // and no more; the reply carries no FHOPS field so no repeater can

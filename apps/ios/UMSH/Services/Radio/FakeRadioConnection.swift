@@ -105,7 +105,11 @@ actor FakeRadioConnection: RadioConnection {
         throw RadioConnectionError.identityUnavailable
     }
 
-    func requestNearbyIdentities(roleFilter: UInt8?) async throws {}
+    func requestNearbyIdentities(
+        roleFilter: UInt8?,
+        nodeHint: Data?,
+        sourceRoute: [Data]
+    ) async throws {}
 
     func signIdentityBundle(name: String?) async throws -> Data {
         throw RadioConnectionError.identityUnavailable

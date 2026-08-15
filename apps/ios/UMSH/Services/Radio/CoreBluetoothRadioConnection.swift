@@ -351,9 +351,18 @@ final class CoreBluetoothRadioConnection: NSObject, RadioConnection, @unchecked 
         try await session.requestIdentity(peerAddress: peerAddress)
     }
 
-    func requestNearbyIdentities(roleFilter: UInt8?) async throws {
+    func requestNearbyIdentities(
+        roleFilter: UInt8?,
+        nodeHint: Data?,
+        sourceRoute: [Data]
+    ) async throws {
         let session = try await currentMeshSession()
-        try await session.discoverIdentities(roleCode: roleFilter, capabilityBits: nil)
+        try await session.discoverIdentities(
+            roleCode: roleFilter,
+            capabilityBits: nil,
+            nodeHint: nodeHint,
+            sourceRoute: sourceRoute
+        )
     }
 
     func requestIdentityByHint(conversationAddress: String, hint: Data) async throws {

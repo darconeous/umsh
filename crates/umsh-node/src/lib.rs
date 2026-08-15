@@ -678,31 +678,45 @@ mod tests {
         flood_hops: Option<u8>,
         route: Option<&'static [u8]>,
     ) -> ReceivedPacketRef<'static> {
+        test_broadcast_packet_with_trace(from, flood_hops, route, None)
+    }
+
+    /// As above, plus an accumulated trace route — what a steered
+    /// solicitation looks like once repeaters have prepended themselves to it.
+    #[cfg(all(feature = "software-crypto", feature = "unsafe-advanced"))]
+    fn test_broadcast_packet_with_trace(
+        from: PublicKey,
+        flood_hops: Option<u8>,
+        route: Option<&'static [u8]>,
+        trace: Option<&'static [u8]>,
+    ) -> ReceivedPacketRef<'static> {
         let route_len = route.map_or(0, <[u8]>::len);
-        let wire: &'static [u8] = Box::leak(
-            route
-                .map_or_else(Vec::new, <[u8]>::to_vec)
-                .into_boxed_slice(),
-        );
+        let trace_len = trace.map_or(0, <[u8]>::len);
+        let mut bytes = route.map_or_else(Vec::new, <[u8]>::to_vec);
+        bytes.extend_from_slice(trace.unwrap_or(&[]));
+        let wire: &'static [u8] = Box::leak(bytes.into_boxed_slice());
         let mut options = umsh_core::ParsedOptions::default();
         if route.is_some() {
             options.source_route = Some(0..route_len);
         }
+        if trace.is_some() {
+            options.trace_route = Some(route_len..route_len + trace_len);
+        }
         let header = umsh_core::PacketHeader {
             fcf: umsh_core::Fcf::new(umsh_core::PacketType::Broadcast, false, false),
-            options_range: 0..route_len,
+            options_range: 0..route_len + trace_len,
             flood_hops: flood_hops.map(umsh_core::FloodHops),
             dst: None,
             channel: None,
             source: umsh_core::SourceAddrRef::Hint(from.hint()),
             sec_info: None,
-            body_range: route_len..wire.len(),
+            body_range: route_len + trace_len..wire.len(),
             mic_range: wire.len()..wire.len(),
             total_len: wire.len(),
         };
         ReceivedPacketRef::new(
             wire,
-            &wire[route_len..],
+            &wire[route_len + trace_len..],
             header,
             options,
             Some(from),
@@ -1070,6 +1084,55 @@ mod tests {
         );
     }
 
+    /// The shape that identifies an intermediate hop: the requester knows only
+    /// the two-byte router hint a route named it by, steers the ask to the hop
+    /// before it so it arrives with an empty Route option, and gets an answer
+    /// back down the trace the request accumulated on the way.
+    #[cfg(all(feature = "software-crypto", feature = "unsafe-advanced"))]
+    #[test]
+    fn responder_answers_a_router_hint_prefix_and_replies_down_the_trace() {
+        let mac = FakeMac::new(vec![[0x12; 32]]);
+        let node = responder_node(&mac);
+        let our_key = PublicKey([0x11; 32]);
+        let requester = PublicKey([0x41; 32]);
+        node.enable_identity_responder_default(test_profile(our_key));
+
+        // Two bytes of our own hint — everything a route reveals about us.
+        let router_hint = &our_key.hint().0[..2];
+        let options = crate::mac_command::IdentityRequestBuilder::new()
+            .filter_hint_prefix(router_hint)
+            .unwrap()
+            .build();
+        // Steered here, so the Route option arrived emptied, and traced, so
+        // the repeater that carried it prepended its own hint.
+        let steered =
+            test_broadcast_packet_with_trace(requester, Some(0x00), Some(&[]), Some(&[0x12, 0x34]));
+
+        let plan = node
+            .evaluate_identity_request(&steered, requester, &options, 0)
+            .expect("a router-hint prefix selects the node it names");
+        block_on_ready(node.send_identity_response(plan));
+
+        let unicasts = mac.take_unicasts();
+        assert_eq!(unicasts.len(), 1);
+        assert_eq!(
+            unicasts[0].options.source_route.as_deref(),
+            Some([umsh_core::RouterHint([0x12, 0x34])].as_slice()),
+            "the reply retraces the path the question came by"
+        );
+
+        // A hint that is a prefix of somebody else's is not a prefix of ours.
+        let stranger = crate::mac_command::IdentityRequestBuilder::new()
+            .filter_hint_prefix(&[router_hint[0], router_hint[1] ^ 0xFF])
+            .unwrap()
+            .build();
+        assert!(
+            node.evaluate_identity_request(&steered, requester, &stranger, 0)
+                .is_none(),
+            "a prefix naming another router selects nobody here"
+        );
+    }
+
     /// One solicitation gets one reply, however many copies of it arrive.
     ///
     /// A request is unauthenticated and carries no frame counter, so nothing
@@ -1206,6 +1269,86 @@ mod tests {
         );
     }
 
+    /// A steered solicitation arrives with its Route option emptied by the
+    /// repeaters that spent it and a trace route they filled in on the way.
+    /// That trace is the requester's only path home — the reply carries no
+    /// flood budget, and receiving a broadcast teaches the MAC no route — so
+    /// the reply must go back down it, copied verbatim rather than reversed.
+    #[cfg(all(feature = "software-crypto", feature = "unsafe-advanced"))]
+    #[test]
+    fn responder_routes_its_reply_back_down_the_requests_trace() {
+        let mac = FakeMac::new(vec![[0x00; 32]]);
+        let node = responder_node(&mac);
+        let our_key = PublicKey([0x11; 32]);
+        let requester = PublicKey([0x41; 32]);
+        node.enable_identity_responder_default(test_profile(our_key));
+        let options = crate::mac_command::IdentityRequestBuilder::new()
+            .filter_role(crate::NodeRole::Repeater)
+            .unwrap()
+            .build();
+
+        // Two repeaters carried it: each consumed its own hint from the Route
+        // option, leaving it empty, and prepended itself to the trace.
+        let steered = test_broadcast_packet_with_trace(
+            requester,
+            Some(0x00),
+            Some(&[]),
+            Some(&[0x12, 0x34, 0xAB, 0xCD]),
+        );
+        let plan = node
+            .evaluate_identity_request(&steered, requester, &options, 0)
+            .expect("an emptied route is an arrived request, and we answer it");
+        block_on_ready(node.send_identity_response(plan));
+
+        let unicasts = mac.take_unicasts();
+        assert_eq!(unicasts.len(), 1);
+        let reply = &unicasts[0];
+        let route = reply
+            .options
+            .source_route
+            .as_ref()
+            .expect("the reply is steered back");
+        // Same order as the trace: repeaters prepend, so an accumulated trace
+        // already reads as the path back.
+        assert_eq!(
+            route.as_slice(),
+            &[
+                umsh_core::RouterHint([0x12, 0x34]),
+                umsh_core::RouterHint([0xAB, 0xCD])
+            ]
+        );
+        // And still no flood budget: routing it home must not also license
+        // every repeater that hears it to flood it onward.
+        assert_eq!(reply.options.flood_hops, None);
+    }
+
+    /// The ordinary in-range case is unchanged: no trace in, no route out,
+    /// and above all no empty Route option on the wire.
+    #[cfg(all(feature = "software-crypto", feature = "unsafe-advanced"))]
+    #[test]
+    fn responder_leaves_an_untraced_reply_unrouted() {
+        let mac = FakeMac::new(vec![[0x00; 32]]);
+        let node = responder_node(&mac);
+        let our_key = PublicKey([0x11; 32]);
+        let requester = PublicKey([0x41; 32]);
+        node.enable_identity_responder_default(test_profile(our_key));
+        let options = crate::mac_command::IdentityRequestBuilder::new()
+            .filter_role(crate::NodeRole::Repeater)
+            .unwrap()
+            .build();
+
+        let direct = test_broadcast_packet(requester, None, None);
+        let plan = node
+            .evaluate_identity_request(&direct, requester, &options, 0)
+            .expect("a zero-hop solicitation is answered");
+        block_on_ready(node.send_identity_response(plan));
+
+        let unicasts = mac.take_unicasts();
+        assert_eq!(unicasts.len(), 1);
+        assert!(unicasts[0].options.source_route.is_none());
+        assert_eq!(unicasts[0].options.flood_hops, None);
+    }
+
     #[cfg(all(feature = "software-crypto", feature = "unsafe-advanced"))]
     #[test]
     fn responder_ignores_request_that_filters_exclude() {
@@ -1303,6 +1446,7 @@ mod tests {
             filters: IdentityRequestFilters::new(&[]),
             rssi: None,
             snr: None,
+            trace_route: &[],
         };
 
         // Authenticated request → sender already holds our key → hint reply.

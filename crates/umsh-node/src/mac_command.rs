@@ -17,8 +17,9 @@ pub mod identity_filter {
     /// Correlation identifier the responder echoes into the identity Nonce
     /// option (identity option 5). 4 bytes. Not a filter.
     pub const NONCE: u16 = 1;
-    /// Match only nodes whose own [node hint](umsh_core::NodeHint) equals this
-    /// value. 3 bytes.
+    /// Match only nodes whose own [node hint](umsh_core::NodeHint) starts with
+    /// this value. 1 to 3 bytes; a 2-byte value is a
+    /// [router hint](umsh_core::RouterHint).
     pub const FILTER_NODE_HINT: u16 = 3;
     /// Match only nodes whose primary role equals this value. 1 byte.
     pub const FILTER_NODE_ROLE: u16 = 5;
@@ -26,6 +27,9 @@ pub mod identity_filter {
     /// in this value. 1 byte.
     pub const FILTER_NODE_CAPS: u16 = 7;
 }
+
+/// Length of a [`NodeHint`], the longest a `FILTER_NODE_HINT` value may be.
+const NODE_HINT_LEN: usize = 3;
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 #[repr(u8)]
@@ -280,11 +284,11 @@ impl<'a> IdentityRequestFilters<'a> {
 
     /// Whether the request carries at least one `FILTER_NODE_HINT` filter.
     ///
-    /// A hint filter names a single node, so such a request solicits one reply
-    /// however far it travels. Without one the request selects by role or
-    /// capability and every node it reaches may answer, which is what confines
-    /// a broadcast or multicast solicitation — and its replies — to the
-    /// requester's own neighbourhood.
+    /// A hint filter names one node, or with a partial hint a handful, so such
+    /// a request solicits few replies however far it travels. Without one the
+    /// request selects by role or capability and every node it reaches may
+    /// answer, which is what confines a broadcast or multicast solicitation —
+    /// and its replies — to the requester's own neighbourhood.
     ///
     /// A malformed option block reads as unfiltered, which is the conservative
     /// answer: it keeps the strict rules in force.
@@ -321,7 +325,14 @@ impl<'a> IdentityRequestFilters<'a> {
                 identity_filter::NONCE => {} // correlation id, not a filter
                 identity_filter::FILTER_NODE_HINT => {
                     hint_present = true;
-                    hint_match |= value == hint.0.as_slice();
+                    // A partial hint matches as a prefix of the node hint. That
+                    // is what lets a two-byte router hint — the only name a
+                    // route gives an intermediate hop — ask that hop to
+                    // identify itself. An empty value matches nothing: it would
+                    // otherwise select every node while `hint_filtered` reported
+                    // the request narrowed to one.
+                    hint_match |=
+                        (1..=hint.0.len()).contains(&value.len()) && hint.0.starts_with(value);
                 }
                 identity_filter::FILTER_NODE_ROLE => {
                     role_present = true;
@@ -383,6 +394,20 @@ impl IdentityRequestBuilder {
     /// Add a `FILTER_NODE_HINT` filter (repeatable; repeats are OR-combined).
     pub fn filter_hint(self, hint: &NodeHint) -> Result<Self, AppEncodeError> {
         self.put(identity_filter::FILTER_NODE_HINT, &hint.0)
+    }
+
+    /// Add a `FILTER_NODE_HINT` filter that matches on a leading part of the
+    /// node hint, for a caller that holds less than the whole of one — a route
+    /// names its intermediate hops by a two-byte
+    /// [router hint](umsh_core::RouterHint) and nothing more.
+    ///
+    /// Rejects an empty prefix, which would select every node, and one longer
+    /// than a node hint, which would select none.
+    pub fn filter_hint_prefix(self, prefix: &[u8]) -> Result<Self, AppEncodeError> {
+        if !(1..=NODE_HINT_LEN).contains(&prefix.len()) {
+            return Err(AppEncodeError::InvalidField);
+        }
+        self.put(identity_filter::FILTER_NODE_HINT, prefix)
     }
 
     /// Add a `FILTER_NODE_ROLE` filter (repeatable; repeats are OR-combined).
@@ -521,6 +546,61 @@ mod tests {
                 .selects(NodeRole::Chat, caps, &NodeHint([0xAA, 0xBB, 0xCD]))
                 .unwrap()
         );
+    }
+
+    #[test]
+    fn identity_filters_hint_matches_on_a_prefix() {
+        let caps = NodeCapabilities::empty();
+        let selects = |prefix: &[u8], hint: NodeHint| {
+            let options = IdentityRequestBuilder::new()
+                .filter_hint_prefix(prefix)
+                .unwrap()
+                .build();
+            IdentityRequestFilters::new(&options)
+                .selects(NodeRole::Chat, caps, &hint)
+                .unwrap()
+        };
+
+        // Two bytes is the router hint a route names its hops by.
+        assert!(selects(&[0xAA, 0xBB], NodeHint([0xAA, 0xBB, 0xCC])));
+        assert!(!selects(&[0xAA, 0xBC], NodeHint([0xAA, 0xBB, 0xCC])));
+        assert!(selects(&[0xAA], NodeHint([0xAA, 0xBB, 0xCC])));
+        assert!(!selects(&[0xAB], NodeHint([0xAA, 0xBB, 0xCC])));
+
+        // A prefix is only ever a prefix: it never matches from the middle.
+        assert!(!selects(&[0xBB, 0xCC], NodeHint([0xAA, 0xBB, 0xCC])));
+    }
+
+    #[test]
+    fn identity_filters_reject_unusable_hint_lengths() {
+        // An empty prefix would select every node while `hint_filtered` said
+        // the request was narrowed, and an over-long one can select nobody.
+        assert!(
+            IdentityRequestBuilder::new()
+                .filter_hint_prefix(&[])
+                .is_err()
+        );
+        assert!(
+            IdentityRequestBuilder::new()
+                .filter_hint_prefix(&[0xAA, 0xBB, 0xCC, 0xDD])
+                .is_err()
+        );
+
+        // Off the wire those lengths are still refused, since nothing stops a
+        // peer from encoding one by hand.
+        let caps = NodeCapabilities::empty();
+        let hint = NodeHint([0xAA, 0xBB, 0xCC]);
+        for value in [[].as_slice(), &[0xAA, 0xBB, 0xCC, 0xDD]] {
+            let mut options = Vec::new();
+            let mut scratch = [0u8; 8];
+            let mut enc = OptionEncoder::new(&mut scratch);
+            enc.put(identity_filter::FILTER_NODE_HINT, value).unwrap();
+            let n = enc.finish();
+            options.extend_from_slice(&scratch[..n]);
+            let filters = IdentityRequestFilters::new(&options);
+            assert!(filters.hint_filtered());
+            assert!(!filters.selects(NodeRole::Chat, caps, &hint).unwrap());
+        }
     }
 
     #[test]

@@ -57,15 +57,37 @@ In order to manage the potential flood of responses, the following rules MUST be
   asks with a fresh NONCE.
 
 A [FILTER_NODE_HINT](#identity-request-options) filter names a single node, so a
-request carrying one solicits a single reply however far it travels. A request
-without one selects by role or capability, and every node it reaches may answer;
-such a request is therefore confined to the requester's own neighborhood:
+request carrying one solicits a single reply however far it travels. A partial
+hint names a small set rather than one node, and the shorter it is the larger
+that set: a requester sends the longest hint it holds. A request with no hint
+filter at all selects by role or capability, and every node it reaches may
+answer; such a request is therefore confined to the requester's own
+neighborhood:
 
 - The FHOPS byte must either be absent or set to 0x00. A request that is flood
   routed — FHOPS present with either nibble nonzero — MUST NOT be answered.
 - The response MUST NOT carry a FHOPS field (the FCF flood hop count flag is
-  clear), keeping the reply within the single hop the request was allowed to
-  cross.
+  clear). The invariant is that the reply travels exactly as far as the question
+  did and no further: a request that crossed one hop is answered across that one
+  hop, and a request steered along a [Source Route
+  option](packet-options.md#source-route-option-3) is answered back along the
+  path it was steered down.
+
+A request steered by a Route option reaches its destination neighborhood with
+that option emptied, since each repeater consumes its own hint. The nodes there
+are strangers to the requester: they hold no route to it, and their replies carry
+no flood budget for a repeater to spend. Such a request therefore carries a
+[Trace Route option](packet-options.md#trace-route-option-2), and a node answering
+it sends the response as a source route built from the trace the request arrived
+with. Repeaters prepend when forwarding, so the accumulated trace already reads
+as the path back and is used as-is, without reversal.
+
+A repeater consumes its own hint while forwarding, not while receiving, so a
+request whose Route option still names a repeater is one that repeater drops.
+Asking a named router to identify itself therefore means steering the request to
+the hop *before* it and narrowing it with that router's two-byte hint: the
+request arrives with an empty Route option, and the router answers it as any
+other node in that neighborhood would.
 
 These requirements MAY be relaxed for specific private channels, but MUST remain in place for all public channels. Note that these requirements are specifically designed to allow discovering identities from a specific repeater location on the mesh network.
 
@@ -92,7 +114,7 @@ Non-filter options (such as NONCE) do not participate in this matching.
 | Key | Critical | Name | Value | Description |
 |---:|---|---|---|---|
 | 1 | Yes | NONCE | 4 bytes | Correlation identifier the responder MUST echo in its response's [Nonce option](node-identity.md#nonce-option-5). Not a filter. |
-| 3 | Yes | FILTER_NODE_HINT | 3 bytes | Respond only if this matches the responder's own [node hint](addressing.md#node-hint). |
+| 3 | Yes | FILTER_NODE_HINT | 1–3 bytes | Respond only if this is a leading part of the responder's own [node hint](addressing.md#node-hint). A 3-byte value is the whole hint; a 2-byte value is the [router hint](addressing.md#router-hint), which is all a [Source Route](packet-options.md#source-route-option-3) or [Trace Route](packet-options.md#trace-route-option-2) reveals about the hops it names. A zero-length value matches nothing. |
 | 5 | Yes | FILTER_NODE_ROLE | 1 byte | Respond only if the responder's [primary role](node-identity.md#node-primary-role) equals this value. |
 | 7 | Yes | FILTER_NODE_CAPS | 1 byte | Respond only if the responder's [capability bitmap](node-identity.md#capability-bitmap) has every bit set that is set in this value. |
 

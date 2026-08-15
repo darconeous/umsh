@@ -131,11 +131,26 @@ protocol RadioConnection: AnyObject, Sendable {
     /// Identity Request. Resolves once the request is handed to the radio;
     /// the peer's response arrives asynchronously on `advertisementEvents()`.
     func requestIdentity(peerAddress: String) async throws
-    /// Ask every matching node in direct radio range to identify itself,
-    /// with one zero-hop broadcast Identity Request (repeaters never carry
-    /// it). `roleFilter` is a wire role byte to narrow who answers; nil asks
-    /// everyone. Replies arrive on `advertisementEvents()`.
-    func requestNearbyIdentities(roleFilter: UInt8?) async throws
+    /// Ask matching nodes around a chosen point to identify themselves, with
+    /// one broadcast Identity Request. Replies arrive on
+    /// `advertisementEvents()`.
+    ///
+    /// An empty `sourceRoute` asks this phone's own neighbors: the request is
+    /// zero-hop, so repeaters never carry it. Otherwise it is steered along
+    /// those two-byte router hints, in send order, and answered by whatever is
+    /// in range of where the route ends. It is never flooded — nothing would
+    /// bound how many nodes replied.
+    ///
+    /// The filters narrow who answers, and nil for all of them asks everyone
+    /// the request reaches. `roleFilter` is a wire role byte. `nodeHint` is a
+    /// leading part of one node's hint: two bytes is a router hint, which is
+    /// what a route names its hops by, and pairing it with a route that stops
+    /// one hop short is how a named router is asked who it is.
+    func requestNearbyIdentities(
+        roleFilter: UInt8?,
+        nodeHint: Data?,
+        sourceRoute: [Data]
+    ) async throws
     /// Ask one channel member — known only by the hint their group messages
     /// claim — to identify themselves. The request goes out over that
     /// channel, since a hint is not an address anything can be unicast to.

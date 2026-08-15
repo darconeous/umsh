@@ -19,8 +19,8 @@ use alloc::string::String;
 use alloc::vec::Vec;
 
 use heapless::Deque;
-use umsh_core::{ChannelId, NodeHint, PayloadType, PublicKey};
-use umsh_mac::{PacketFamily, Snr};
+use umsh_core::{ChannelId, NodeHint, PayloadType, PublicKey, RouterHint};
+use umsh_mac::{PacketFamily, RouteHops, Snr};
 
 use crate::identity::{NodeCapabilities, NodeIdentityPayload, NodeRole};
 use crate::location::NodeLocation;
@@ -186,6 +186,13 @@ pub struct IdentityRequestContext<'a> {
     pub rssi: Option<i16>,
     /// Signal-to-noise ratio of the request, if measured.
     pub snr: Option<Snr>,
+    /// The request's accumulated trace route, as packed option bytes.
+    ///
+    /// Repeaters prepend their hint when forwarding, so this reads
+    /// front-to-back as the path *back* to the requester and needs no
+    /// reversal. It is the only route home a broadcast solicitation offers:
+    /// broadcast reception registers no route with the MAC.
+    pub trace_route: &'a [u8],
 }
 
 /// A respond policy's verdict for one Identity Request.
@@ -264,6 +271,14 @@ pub(crate) struct IdentityResponsePlan {
     /// request was confined to the requester's neighbours on the way in, and
     /// its reply stays there too rather than being flooded back.
     pub(crate) no_flood: bool,
+    /// Routers to steer the reply back through, in send order; empty when the
+    /// request arrived with no trace to follow.
+    ///
+    /// A steered solicitation is the case this exists for: the requester is
+    /// several hops away, the reply carries no flood budget, and broadcast
+    /// reception left the MAC with no cached route to them. The trace the
+    /// request accumulated on the way in is the path home.
+    pub(crate) route: Vec<RouterHint>,
     /// The framed reply payload: `PayloadType::NodeIdentity` + encoded identity.
     pub(crate) framed: Vec<u8>,
 }
@@ -321,11 +336,15 @@ impl IdentityResponder {
         // policy declined or the encoder could not frame was never answered,
         // and must not suppress a later attempt that would succeed.
         self.record_answered(requester, nonce, now_ms);
+        // Repeaters prepend as they forward, so the accumulated trace already
+        // reads as the path back and is copied verbatim rather than reversed.
+        let route = RouteHops::new(ctx.trace_route).collect::<Vec<_>>();
         Some(IdentityResponsePlan {
             to: ctx.from_key,
             full_source,
             delayed: solicitation,
             no_flood: solicitation && !ctx.filters.hint_filtered(),
+            route,
             framed: Vec::from(&buf[..len]),
         })
     }

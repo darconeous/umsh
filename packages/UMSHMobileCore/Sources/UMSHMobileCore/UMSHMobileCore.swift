@@ -1209,19 +1209,35 @@ public protocol MobileMeshSessionProtocol: AnyObject, Sendable {
     func composeText(conversationAddress: String, clientToken: UInt32, body: String) async throws  -> MobileChatComposeBatchRecord
 
     /**
-     * Solicit identities from nearby nodes with one zero-hop broadcast MAC
-     * Identity Request.
+     * Solicit identities with one broadcast MAC Identity Request, either
+     * from this node's own neighbors or from a remote vantage point.
      *
-     * The request goes out as a direct broadcast with no flood budget, so
-     * repeaters never carry it — the blast radius is exactly the nodes in
-     * radio range. It carries this phone's full source address, so a
-     * matching node can reply with a targeted unicast without any prior
-     * contact; replies arrive as ordinary `NodeIdentity` advertisements on
-     * the receive path. `role_code` and `capability_bits` narrow which
-     * nodes respond (AND-combined when both are given); `None` for both
-     * asks every node in range.
+     * With an empty `source_route` the request goes out as a direct
+     * broadcast with no flood budget, so repeaters never carry it — the
+     * blast radius is exactly the nodes in radio range. Given a route, the
+     * request is steered along it instead: each repeater consumes its hint,
+     * so the request arrives with an empty Route option in the neighborhood
+     * the route ends at, and the nodes *there* are the ones that answer. A
+     * steered request also carries a trace route, which is what gives the
+     * answering strangers a path back — without it their replies would have
+     * no route and no flood budget, and would die on their own transmitter.
+     *
+     * Either way it carries this phone's full source address, so a matching
+     * node can reply with a targeted unicast without any prior contact;
+     * replies arrive as ordinary `NodeIdentity` advertisements on the
+     * receive path. `role_code` and `capability_bits` narrow which nodes
+     * respond (AND-combined when both are given); `None` for all three
+     * filters asks every node the request reaches.
+     *
+     * `node_hint` narrows the ask to one node by the leading bytes of its
+     * node hint. Two bytes is a router hint, which is all a route reveals
+     * about the hops it crosses: pair it with a route ending at the hop
+     * *before* the one in question, since a repeater consumes its own hint
+     * only when forwarding and drops a request that still names it.
+     *
+     * Each entry of `source_route` is one 2-byte router hint in send order.
      */
-    func discoverIdentities(roleCode: UInt8?, capabilityBits: UInt8?) async throws
+    func discoverIdentities(roleCode: UInt8?, capabilityBits: UInt8?, nodeHint: Data?, sourceRoute: [Data]) async throws
 
     /**
      * Fail every chat transmission currently owned by the mobile radio
@@ -1648,24 +1664,40 @@ open func composeText(conversationAddress: String, clientToken: UInt32, body: St
 }
 
     /**
-     * Solicit identities from nearby nodes with one zero-hop broadcast MAC
-     * Identity Request.
+     * Solicit identities with one broadcast MAC Identity Request, either
+     * from this node's own neighbors or from a remote vantage point.
      *
-     * The request goes out as a direct broadcast with no flood budget, so
-     * repeaters never carry it — the blast radius is exactly the nodes in
-     * radio range. It carries this phone's full source address, so a
-     * matching node can reply with a targeted unicast without any prior
-     * contact; replies arrive as ordinary `NodeIdentity` advertisements on
-     * the receive path. `role_code` and `capability_bits` narrow which
-     * nodes respond (AND-combined when both are given); `None` for both
-     * asks every node in range.
+     * With an empty `source_route` the request goes out as a direct
+     * broadcast with no flood budget, so repeaters never carry it — the
+     * blast radius is exactly the nodes in radio range. Given a route, the
+     * request is steered along it instead: each repeater consumes its hint,
+     * so the request arrives with an empty Route option in the neighborhood
+     * the route ends at, and the nodes *there* are the ones that answer. A
+     * steered request also carries a trace route, which is what gives the
+     * answering strangers a path back — without it their replies would have
+     * no route and no flood budget, and would die on their own transmitter.
+     *
+     * Either way it carries this phone's full source address, so a matching
+     * node can reply with a targeted unicast without any prior contact;
+     * replies arrive as ordinary `NodeIdentity` advertisements on the
+     * receive path. `role_code` and `capability_bits` narrow which nodes
+     * respond (AND-combined when both are given); `None` for all three
+     * filters asks every node the request reaches.
+     *
+     * `node_hint` narrows the ask to one node by the leading bytes of its
+     * node hint. Two bytes is a router hint, which is all a route reveals
+     * about the hops it crosses: pair it with a route ending at the hop
+     * *before* the one in question, since a repeater consumes its own hint
+     * only when forwarding and drops a request that still names it.
+     *
+     * Each entry of `source_route` is one 2-byte router hint in send order.
      */
-open func discoverIdentities(roleCode: UInt8?, capabilityBits: UInt8?)async throws   {
+open func discoverIdentities(roleCode: UInt8?, capabilityBits: UInt8?, nodeHint: Data?, sourceRoute: [Data])async throws   {
     return
         try  await uniffiRustCallAsync(
             rustFutureFunc: {
                 uniffi_umsh_mobile_core_fn_method_mobilemeshsession_discover_identities(
-                        self.uniffiCloneHandle(),FfiConverterOptionUInt8.lower(roleCode),FfiConverterOptionUInt8.lower(capabilityBits)
+                        self.uniffiCloneHandle(),FfiConverterOptionUInt8.lower(roleCode),FfiConverterOptionUInt8.lower(capabilityBits),FfiConverterOptionData.lower(nodeHint),FfiConverterSequenceData.lower(sourceRoute)
                 )
             },
             pollFunc: ffi_umsh_mobile_core_rust_future_poll_void,
@@ -10855,7 +10887,7 @@ private let initializationResult: InitializationResult = {
     if (uniffi_umsh_mobile_core_checksum_method_mobilemeshsession_compose_text() != 46919) {
         return InitializationResult.apiChecksumMismatch
     }
-    if (uniffi_umsh_mobile_core_checksum_method_mobilemeshsession_discover_identities() != 55700) {
+    if (uniffi_umsh_mobile_core_checksum_method_mobilemeshsession_discover_identities() != 27442) {
         return InitializationResult.apiChecksumMismatch
     }
     if (uniffi_umsh_mobile_core_checksum_method_mobilemeshsession_fail_outbound_transmissions() != 10556) {
