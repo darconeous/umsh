@@ -35,7 +35,7 @@
             const path_to_root = "";
             const default_light_theme = "light";
             const default_dark_theme = "ayu";
-            window.path_to_searchindex_js = "searchindex-1d2ecda8.js";
+            window.path_to_searchindex_js = "searchindex-2628c86f.js";
         </script>
         <!-- Start loading toc.js asap -->
         <script src="toc-438957a9.js"></script>
@@ -222,7 +222,13 @@ when its filters are broad enough to solicit a large number of replies.</li>
 <li>Responses must be delayed by a random amount of time drawn from a window of
 0.5 to 30 seconds, so that the selected nodes do not all answer at once. A
 delayed response that then fails channel-activity assessment follows the
-responder’s normal bounded CCA backoff-and-retry before being dropped.</li>
+responder’s normal bounded CCA backoff-and-retry before being dropped.
+A request every <a href="#identity-request-options">FILTER_NODE_HINT</a> of which is 2 or
+3 bytes is exempt and MUST be answered without the delay: such a request names
+a node rather than a share of the mesh, so there is no crowd of replies to
+spread and the hold would only make the answer late. One byte names a 256th of
+what the request reaches, so it is not exempt; filters of the same type combine
+as OR, and the shortest one decides.</li>
 <li>One solicitation is answered at most once. A request reaches a node once per
 path it travels, and a plain broadcast carries no frame counter for a lower
 layer to recognize the repeat by; the <a href="#identity-request-options">NONCE</a> is

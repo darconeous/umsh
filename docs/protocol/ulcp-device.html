@@ -35,7 +35,7 @@
             const path_to_root = "";
             const default_light_theme = "light";
             const default_dark_theme = "ayu";
-            window.path_to_searchindex_js = "searchindex-1d2ecda8.js";
+            window.path_to_searchindex_js = "searchindex-2628c86f.js";
         </script>
         <!-- Start loading toc.js asap -->
         <script src="toc-438957a9.js"></script>
@@ -524,7 +524,7 @@ does not produce excessive ULCP traffic.</p>
 <h3 id="prop-mac-repeater-enabled"><a class="header" href="#prop-mac-repeater-enabled">PROP 70: <code>PROP_MAC_REPEATER_ENABLED</code></a></h3>
 <ul>
 <li>Type: Single-Value, Read-Write</li>
-<li>Asynchronous Updates: No</li>
+<li>Asynchronous Updates: Yes</li>
 <li>Required: <code>CAP_REPEATER</code></li>
 <li>Value Type: BOOL</li>
 <li>Post-Reset Value: Persisted</li>
@@ -551,6 +551,11 @@ host-delivery mode) and of the host identity, which never forwards.</p>
 <p>The flag is device-domain state: it is part of the saved snapshot, so a
 <code>CMD_SAVE</code> arms an unattended repeater across power cycles, and it
 survives a change of host.</p>
+<p>Asynchronous because a device <strong>MAY</strong> offer forwarding as a control the
+operator can reach — the menu on a device with a screen is where a user
+decides whether to spend their battery carrying other people’s traffic.
+A device that flips it locally <strong>MUST</strong> publish the new value like any
+other transition the host did not command.</p>
 <p>Flood-contention tuning — the forwarding delay window, deferral count,
 and similar timing parameters — is not exposed; a repeater applies its
 local defaults.</p>
@@ -1105,7 +1110,7 @@ whatever adjusts the device’s clock adjusts its offset.</p>
 <h3 id="prop-gnss-ident-update"><a class="header" href="#prop-gnss-ident-update">PROP 4868: <code>PROP_GNSS_IDENT_UPDATE</code></a></h3>
 <ul>
 <li>Type: Single-Value, Read-Write</li>
-<li>Asynchronous Updates: No</li>
+<li>Asynchronous Updates: Yes</li>
 <li>Required: <code>CAP_GNSS</code></li>
 <li>Value Type: BOOL</li>
 <li>Post-Reset Value: 0 (false), or restored from saved state</li>
@@ -1121,6 +1126,10 @@ before advertising it. A device <strong>SHOULD</strong> act on a fix only when t
 clamped position actually changes, rather than on every fix: at a coarse
 precision a stationary node’s fixes all land in the same cell, and
 re-advertising each one spends airtime to say nothing.</p>
+<p>Asynchronous because a device <strong>MAY</strong> offer this as a control the
+operator can reach, alongside the receiver switch it is deliberately
+separate from. A device that flips it locally <strong>MUST</strong> publish the new
+value like any other transition the host did not command.</p>
 <p>Switching it off <strong>retracts</strong> the advertised position rather than
 freezing the last one. So does switching the receiver off. A position
 that nothing is refreshing any more is a claim the device cannot

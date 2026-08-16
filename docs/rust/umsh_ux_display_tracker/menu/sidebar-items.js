@@ -1,1 +1,1 @@
-window.SIDEBAR_ITEMS = {"enum":["MenuItem","Page","UiEffect","UiInput","UiNotice"],"struct":["MenuItems","UiModel"]};
+window.SIDEBAR_ITEMS = {"enum":["EntryKind","Level","MenuItem","Page","ToggleId","UiEffect","UiInput","UiNotice"],"struct":["MenuItems","UiModel"]};

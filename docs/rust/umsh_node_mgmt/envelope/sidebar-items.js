@@ -1,0 +1,1 @@
+window.SIDEBAR_ITEMS = {"constant":["CURSOR_MAX","OPT_CURSOR","OPT_REMAINING","OVERHEAD_MAX"],"enum":["EnvelopeError"],"struct":["Envelope"],"type":["Token"]};

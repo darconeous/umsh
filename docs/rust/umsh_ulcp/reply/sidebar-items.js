@@ -1,0 +1,1 @@
+window.SIDEBAR_ITEMS = {"enum":["Answer","EntriesError"],"fn":["entries","property","status_of"]};

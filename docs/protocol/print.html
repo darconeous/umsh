@@ -36,7 +36,7 @@
             const path_to_root = "";
             const default_light_theme = "light";
             const default_dark_theme = "ayu";
-            window.path_to_searchindex_js = "searchindex-1d2ecda8.js";
+            window.path_to_searchindex_js = "searchindex-2628c86f.js";
         </script>
         <!-- Start loading toc.js asap -->
         <script src="toc-438957a9.js"></script>
@@ -1319,7 +1319,8 @@ Region scoping is not enforced during the source-routed portion of a hybrid rout
 <p>See <a href="#minimum-rssi-option-5">Packet Options § Minimum RSSI</a> and <a href="#minimum-snr-option-9">Packet Options § Minimum SNR</a>.</p>
 <h2 id="source-routing-1"><a class="header" href="#source-routing-1">Source Routing</a></h2>
 <p>When the sender knows a path to the destination, it can include a <strong>source-route option</strong> listing the sequence of repeater hints the packet should traverse. Each repeater checks whether it matches the next hint, removes its own hint, and forwards. Only the designated repeaters handle the packet, so source routing avoids the airtime cost of flooding.</p>
-<p>Source routes are learned from the <strong>trace-route option</strong>: when a flooded packet carries a trace-route option, each forwarding repeater prepends its own hint. The recipient can reverse the accumulated trace and cache it as a source route for future replies. This means path discovery is not a separate operation — it falls out of normal packet exchange.</p>
+<p>Source routes are learned from the <strong>trace-route option</strong>: when a packet carries a trace-route option, each forwarding repeater prepends its own hint, on routed hops as well as flooded ones. The recipient can reverse the accumulated trace and cache it as a source route for future replies. This means path discovery is not a separate operation — it falls out of normal packet exchange.</p>
+<p>Knowing the path forward is not the same as the destination knowing the path back. A source-routed packet arrives with its hints consumed, so nothing on it describes the return direction, and a destination with no cached route composes a reply that no repeater may carry. A sender that source-routes a packet requesting an acknowledgement should therefore include a trace-route option as well, unless it already knows the destination can reach it. The routed hops record themselves, and the acknowledgement has a path home.</p>
 <p>See <a href="#source-route-option-3">Packet Options § Source Route</a>, <a href="#trace-route-option-2">Packet Options § Trace Route</a>, and <a href="#route-learning">Beacons &amp; Path Discovery § Route Learning</a>.</p>
 <h2 id="hybrid-routing"><a class="header" href="#hybrid-routing">Hybrid Routing</a></h2>
 <p>A packet can carry both a source-route option and a flood hop count. The packet is source-routed through the listed repeaters first; once the source-route hints are exhausted, it transitions to flood routing bounded by the remaining flood hop count. This enables “deliver to a region, then flood locally” behavior — useful for reaching a node in a known area without flooding the entire mesh.</p>
@@ -1970,7 +1971,8 @@ these periods are the advertisement-policy properties.</p>
 <tr><td style="text-align: right">5</td><td>Chat-Room Message</td></tr>
 <tr><td style="text-align: right">6</td><td><em>RESERVED</em></td></tr>
 <tr><td style="text-align: right">7</td><td>CoAP-over-UMSH</td></tr>
-<tr><td style="text-align: right">8</td><td><a href="#node-management">Node Management Command</a></td></tr>
+<tr><td style="text-align: right">8</td><td><a href="#node-management">Node Management Request</a></td></tr>
+<tr><td style="text-align: right">9</td><td><a href="#node-management">Node Management Response</a></td></tr>
 </tbody>
 </table>
 </div>
@@ -1988,7 +1990,8 @@ these periods are the advertisement-policy properties.</p>
 <tr><td>Text Message</td><td style="text-align: center">Yes</td><td style="text-align: center">Yes</td><td style="text-align: center">No</td></tr>
 <tr><td>Chat-Room Message</td><td style="text-align: center">Yes</td><td style="text-align: center">No</td><td style="text-align: center">No</td></tr>
 <tr><td>CoAP-over-UMSH</td><td style="text-align: center">Yes</td><td style="text-align: center">Yes</td><td style="text-align: center">No</td></tr>
-<tr><td>Node Management Cmd</td><td style="text-align: center">Yes</td><td style="text-align: center">No</td><td style="text-align: center">No</td></tr>
+<tr><td>Node Management Req</td><td style="text-align: center">Yes</td><td style="text-align: center">No</td><td style="text-align: center">No</td></tr>
+<tr><td>Node Management Resp</td><td style="text-align: center">Yes</td><td style="text-align: center">No</td><td style="text-align: center">No</td></tr>
 </tbody>
 </table>
 </div>
@@ -1996,7 +1999,7 @@ these periods are the advertisement-policy properties.</p>
 <p><strong>Note 1:</strong> Some MAC commands may be permitted on specific channels. For example, a private channel might allow echo requests to all members and receive echo responses from everyone. Whether a given MAC command is accepted over multicast is deployment-defined and not yet specified by the protocol.</p>
 <p><strong>Note 2:</strong> MAC commands are admitted to broadcast individually: a command may be carried in a broadcast only when its definition says so, and any such definition must weigh the solicitation load a broadcast can create. Currently only the <a href="#identity-request-1">Identity Request</a> permits broadcast carriage, under the flood-management restrictions defined there. Receivers drop any other MAC command arriving by broadcast.</p>
 <h2 id="in-band-node-management"><a class="header" href="#in-band-node-management">In-Band Node Management</a></h2>
-<p>Nodes may optionally support remote management via <strong>Node Management Command</strong> payloads, which carry ULCP exchanges over the mesh itself. The payload format, authorization model, and reachable state are specified in <a href="#node-management">Node Management</a>; support is advertised through the <code>CAP_ADMIN</code> ULCP capability.</p>
+<p>Nodes may optionally support remote management via <strong>Node Management Request</strong> and <strong>Node Management Response</strong> payloads, which carry ULCP exchanges over the mesh itself. The payload format, authorization model, and reachable state are specified in <a href="#node-management">Node Management</a>; support is advertised through the <code>CAP_ADMIN</code> ULCP capability.</p>
 <div style="break-before: page; page-break-before: always;"></div>
 <h1 id="node-identity"><a class="header" href="#node-identity">Node Identity</a></h1>
 <p>The node identity payload is an application-layer structure carried inside the UMSH payload. Its contents — including the timestamp option below — are not interpreted or required by the MAC layer. The MAC layer itself is timestamp-free (see <a href="#frame-counter-1">Frame Counter</a>).</p>
@@ -2249,7 +2252,13 @@ when its filters are broad enough to solicit a large number of replies.</li>
 <li>Responses must be delayed by a random amount of time drawn from a window of
 0.5 to 30 seconds, so that the selected nodes do not all answer at once. A
 delayed response that then fails channel-activity assessment follows the
-responder’s normal bounded CCA backoff-and-retry before being dropped.</li>
+responder’s normal bounded CCA backoff-and-retry before being dropped.
+A request every <a href="#identity-request-options">FILTER_NODE_HINT</a> of which is 2 or
+3 bytes is exempt and MUST be answered without the delay: such a request names
+a node rather than a share of the mesh, so there is no crowd of replies to
+spread and the hold would only make the answer late. One byte names a 256th of
+what the request reaches, so it is not exempt; filters of the same type combine
+as OR, and the shortest one decides.</li>
 <li>One solicitation is answered at most once. A request reaches a node once per
 path it travels, and a plain broadcast carries no frame counter for a lower
 layer to recognize the repeat by; the <a href="#identity-request-options">NONCE</a> is
@@ -2406,9 +2415,10 @@ This section is an early work in progress and this protocol may change significa
 </blockquote>
 <p>A node that supports node management can be configured and observed over the
 mesh itself, using the same command grammar, property model, and numeric
-registries that <a href="#local-control-protocol-ulcp">ULCP</a> defines for the local link. A <strong>Node
-Management Command</strong> payload (payload type 8) carries ordinary ULCP frames
-between an <strong>administrator</strong> — a node listed in the device’s
+registries that <a href="#local-control-protocol-ulcp">ULCP</a> defines for the local link. <strong>Node
+Management Request</strong> (payload type 8) and <strong>Node Management Response</strong>
+(payload type 9) payloads carry ordinary ULCP frames between an
+<strong>administrator</strong> — a node listed in the device’s
 <a href="#prop-dev-admins">administrator list</a> — and the <strong>device</strong>, in unicast
 packets exchanged with the <a href="#device-identity">device identity</a>.
 Support is optional and advertised through <a href="#capabilities"><code>CAP_ADMIN</code></a>.</p>
@@ -2431,42 +2441,33 @@ adds what the ULCP grammar needs on such a transport:</p>
 round trips, in place of the TID of the local bindings;</li>
 <li><strong>retained responses</strong> make retransmission safe: a repeated request is
 answered again, not executed again;</li>
-<li><strong>batches</strong> order execution within a single payload, for writes whose
-effects depend on sequence;</li>
-<li><strong>cursors</strong> carry values larger than one frame across as many exchanges
-as needed, without per-read state on the device.</li>
+<li><strong>cursors</strong> carry responses larger than one frame across as many
+exchanges as needed, without per-read state on the device.</li>
 </ul>
+<p>Several operations per exchange need nothing from the envelope: the
+<a href="#cmd-prop-multi-get">multi-property commands</a> already carry
+several reads, or several ordered writes, in a single frame.</p>
 <p>Because wire-level duplicates are impossible, the binding has no
 deduplication window of its own; the only duplicates that can exist are an
 administrator’s own retransmissions, which the token identifies.</p>
 <h2 id="payload-format-1"><a class="header" href="#payload-format-1">Payload Format</a></h2>
-<p>A Node Management Command payload consists of, following the payload type
-byte:</p>
-<pre><code class="language-text">+-------+-------+---------+------+------------+
-| FLAGS | TOKEN | OPTIONS | 0xFF | FRAME LIST |
-+-------+-------+---------+------+------------+
-  1 B     2 B    variable   1 B    variable
+<p>Request and Response payloads share one format, consisting of, following
+the payload type byte:</p>
+<pre><code class="language-text">+-------+---------+------+----------+
+| TOKEN | OPTIONS | 0xFF |  FRAME   |
++-------+---------+------+----------+
+  2 B    variable   1 B    variable
 </code></pre>
+<p>Direction lives entirely in the payload type. A device drops a Response
+payload — it never solicits anything — and an administrator that receives
+a Response matching no outstanding exchange of its own discards it, both
+with accounting.</p>
 <p>Node Management payloads travel only in unicast and blind unicast packets:
-requests are addressed to the device identity, and responses return to the
+Requests are addressed to the device identity, and Responses return to the
 requesting node as ordinary unicast replies, using whatever routing state
 the exchange has supplied (see <a href="#route-learning">Route Learning</a>).
 A device drops a Node Management payload arriving by multicast or
 broadcast, with accounting.</p>
-<h3 id="flags"><a class="header" href="#flags">Flags</a></h3>
-<pre><code class="language-text">  7   6   5   4   3   2   1   0
-+---+---+---+---+---+---+---+---+
-| R |         RESERVED          |
-+---+---+---+---+---+---+---+---+
-</code></pre>
-<p>Bit 7 (<code>R</code>) is clear in a request and set in a response. A device drops a
-payload with <code>R</code> set — it never solicits anything — and a node that
-receives a response matching no outstanding exchange of its own discards
-it.</p>
-<p>The reserved bits MUST be zero. A receiver drops a payload with any
-reserved bit set, with accounting: an unknown flag may change the meaning
-of everything that follows, including the token, so no response can be
-formed.</p>
 <h3 id="token"><a class="header" href="#token">Token</a></h3>
 <p>Two opaque octets chosen by the administrator and echoed verbatim in the
 response. The token correlates a response with its request and identifies
@@ -2496,26 +2497,22 @@ unrecognized critical option treats the exchange as failed.</p>
 </tbody>
 </table>
 </div>
-<p>The <code>0xFF</code> end-of-options marker is always present, since the frame list
+<p>The <code>0xFF</code> end-of-options marker is always present, since the frame
 follows.</p>
-<h3 id="frame-list"><a class="header" href="#frame-list">Frame List</a></h3>
-<p>One or more ULCP frames, each preceded by its length in octets encoded as
-a <a href="#packed-unsigned-integer">packed unsigned integer</a>:</p>
-<pre><code class="language-text">+--------------+----------------------------+
-| LENGTH (PUI) | ULCP FRAME (LENGTH octets) |
-+--------------+----------------------------+
-</code></pre>
-<p>Embedded frames use the exact <a href="#frame-format">frame format</a> of
-the local bindings, so a device dispatches them through the same machinery
-that serves its local link. Senders MUST set the TID bits of every
-embedded frame to zero, and receivers ignore them: correlation is by
-token, and within a payload by position. A payload containing no frames is
-dropped, with accounting.</p>
+<h3 id="frame-1"><a class="header" href="#frame-1">Frame</a></h3>
+<p>Exactly one ULCP frame, extending to the end of the payload — the payload
+bounds it, so it carries no length prefix. The embedded frame uses the
+exact <a href="#frame-format">frame format</a> of the local bindings, so
+a device dispatches it through the same machinery that serves its local
+link. Senders MUST set its TID bits to zero, and receivers ignore them:
+correlation is by token. A request whose frame is absent or cannot be
+parsed is answered with a <code>CMD_PROP_IS</code> of <code>PROP_LAST_STATUS</code> reporting
+<code>STATUS_PARSE_ERROR</code>.</p>
 <p>The payload, envelope included, must fit a single UMSH frame; there is no
-fragmentation. The reserved flag bits and the unassigned option numbers
-are this payload’s growth space: a future need — carrying a request larger
-than one frame, say — is met by assigning one of them, and existing
-devices already reject what they do not recognize.</p>
+fragmentation. The unassigned option numbers are this format’s growth
+space: a future need — carrying a request larger than one frame, say — is
+met by assigning a critical option, and existing devices already reject
+what they do not recognize.</p>
 <h2 id="exchanges"><a class="header" href="#exchanges">Exchanges</a></h2>
 <p>Every interaction is an <strong>exchange</strong>: one request payload from an
 administrator, one response payload from the device. The device sends
@@ -2523,42 +2520,36 @@ nothing over this binding except in response to a request — <code>CMD_PROP_IS<
 in its unsolicited role, and <code>CMD_PROP_INSERTED</code> and <code>CMD_PROP_REMOVED</code> as
 spontaneous notifications, do not occur here. State an administrator cares
 about is read, not pushed.</p>
-<p>The response echoes the token, sets <code>R</code>, and contains one frame per
-executed request frame, in request order: exactly the frame the device
-would emit in reply on a local binding — a <code>CMD_PROP_IS</code>,
-<code>CMD_PROP_INSERTED</code>, or <code>CMD_PROP_REMOVED</code> on success, or a <code>CMD_PROP_IS</code>
-of <code>PROP_LAST_STATUS</code> reporting the error. A request frame carrying a
-Device→Host command is answered <code>STATUS_INVALID_COMMAND</code>. Long-running
-operations report <code>STATUS_IN_PROGRESS</code> as on any binding; the
-administrator observes completion by reading state in a later exchange.</p>
-<h3 id="batches"><a class="header" href="#batches">Batches</a></h3>
-<p>A payload may carry several frames; the device executes them strictly in
-order, so a batch is how an administrator expresses writes whose effects
-depend on sequence. A batch is a sequencing construct, not a transaction:
-<a href="#mutation-atomicity">Mutation Atomicity</a> applies to each
-frame alone, and an interrupted batch leaves the earlier frames applied.</p>
-<p>The device stops executing a batch at:</p>
-<ul>
-<li>the first frame whose response is a <code>PROP_LAST_STATUS</code> frame reporting
-an error — any status other than <code>STATUS_OK</code>;</li>
-<li>the first frame whose response would not fit the remaining space in the
-response payload;</li>
-<li>any frame that initiates a reset;</li>
-<li>a frame that cannot be parsed, whose response frame is
-<code>STATUS_PARSE_ERROR</code>.</li>
-</ul>
-<p>Request frames past the stopping point are not executed and produce no
-response frames. An administrator that receives fewer response frames than
-it sent request frames examines the last response frame it did receive: an
-error status means the batch stopped on that failure; a success means it
-stopped for space, and the administrator reissues the remainder as a new
-exchange. A value too large to fit whole within the remaining space stops
-the batch the same way; the administrator reads that property alone, where
-fragmentation applies (see <a href="#cursors">Reading Large Values</a>).</p>
+<p>The Response echoes the token and carries one frame: exactly
+the frame the device would emit in reply on a local binding — a
+<code>CMD_PROP_IS</code>, <code>CMD_PROP_INSERTED</code>, <code>CMD_PROP_REMOVED</code>, or <code>CMD_PROP_ARE</code>
+on success, or a <code>CMD_PROP_IS</code> of <code>PROP_LAST_STATUS</code> reporting the error.
+A request frame carrying a Device→Host command is answered
+<code>STATUS_INVALID_COMMAND</code>. Long-running operations report
+<code>STATUS_IN_PROGRESS</code> as on any binding; the administrator observes
+completion by reading state in a later exchange.</p>
+<h3 id="multi-property"><a class="header" href="#multi-property">Multi-Property Requests</a></h3>
+<p>Several operations travel in one exchange through the multi-property
+commands, whose semantics this binding leaves untouched:
+<a href="#cmd-prop-multi-get"><code>CMD_PROP_MULTI_GET</code></a> reads several
+properties, continuing past per-property failures, and
+<a href="#cmd-prop-multi-set"><code>CMD_PROP_MULTI_SET</code></a> applies writes
+strictly in order, stopping at the first failure — which is how an
+administrator expresses writes whose effects depend on sequence.
+<code>CAP_ADMIN</code> requires <code>CAP_CMD_MULTI</code>, so an administrator may rely on
+both.</p>
+<p>One rule is the binding’s own: the device does not execute a
+<code>CMD_PROP_MULTI_SET</code> entry whose reply entry would not fit the remaining
+space in the response payload, and stops there exactly as an error would
+stop it. An administrator that receives fewer reply entries than it sent
+examines the last entry it did receive: an error means the sequence
+stopped on that failure; a success means it stopped for space, and the
+administrator reissues the remainder as a new exchange.</p>
+<h3 id="resets"><a class="header" href="#resets">Resets</a></h3>
 <p>Commands that initiate a reset — <code>CMD_RST</code>, <code>CMD_RESTORE</code> in its reset
-form, and <code>CMD_FACTORY_RESET</code> — produce <strong>no</strong> response frame and
-terminate the batch. Delivery of such a command is confirmed by requesting
-a MAC acknowledgment, and its completion by a later exchange reading
+form, and <code>CMD_FACTORY_RESET</code> — are answered by <strong>no</strong> response payload.
+Delivery of such a command is confirmed by requesting a MAC
+acknowledgment, and its completion by a later exchange reading
 <code>PROP_LAST_STATUS</code> for the reset code.</p>
 <h3 id="at-most-once"><a class="header" href="#at-most-once">Retries and At-Most-Once Processing</a></h3>
 <p>The MAC layer’s replay protection means a device never receives the same
@@ -2580,38 +2571,40 @@ exchange outstanding with a given device.</p>
 after it has already acted is therefore executed again — with the same
 result.</p>
 <h2 id="cursors"><a class="header" href="#cursors">Reading Large Values</a></h2>
-<p>A property value that does not fit one response is read across several
-exchanges. The device returns a leading fragment of the value together
-with a <strong>CURSOR</strong> option: an opaque continuation handle, one to eight
-octets, chosen entirely by the device. The administrator continues with a
-new exchange — fresh token — whose request carries the returned cursor
-verbatim alongside the same <code>CMD_PROP_GET</code>. Each response carries the
-cursor to present in the <em>next</em> request; a response without one ends the
-read, its fragment being the last. Fragment sizes are the device’s choice,
-made to fill each frame; there is no fixed block size and no position
-numbering.</p>
-<p>A request carrying a CURSOR option MUST consist of exactly one frame, a
-<code>CMD_PROP_GET</code>; anything else is answered <code>STATUS_INVALID_ARGUMENT</code>. The
-device fragments only when answering such a single-<code>GET</code> payload — within
-a larger batch, a value too large for the remaining response budget stops
-the batch instead (see <a href="#batches">Batches</a>).</p>
+<p>A read whose response does not fit one payload is completed across
+several exchanges. This applies to both read requests: a <code>CMD_PROP_GET</code>
+whose value does not fit, and a <code>CMD_PROP_MULTI_GET</code> whose entry list
+does not fit. The response frame is well-formed but its trailing content
+— the value of the <code>CMD_PROP_IS</code>, or the entry list of the
+<code>CMD_PROP_ARE</code> — is a leading fragment, accompanied by a <strong>CURSOR</strong>
+option: an opaque continuation handle, one to eight octets, chosen
+entirely by the device. The administrator continues with a new exchange —
+fresh token — whose request carries the returned cursor verbatim
+alongside a repeat of the request being continued. Each response carries
+the cursor to present in the <em>next</em> request; a response without one ends
+the read, its fragment being the last. Fragment sizes are the device’s
+choice, made to fill each frame; there is no fixed block size and no
+position numbering.</p>
+<p>A request carrying a CURSOR option MUST be the read being continued — the
+same <code>CMD_PROP_GET</code> or <code>CMD_PROP_MULTI_GET</code> that began it. A cursor on
+any other request is answered <code>STATUS_INVALID_ARGUMENT</code>.</p>
 <p>The contract:</p>
 <ul>
 <li>A cursor is meaningful only to the device that issued it, and only for
-the property it was issued for. The administrator returns it
+the request it was issued for. The administrator returns it
 byte-for-byte and MUST NOT construct or modify one.</li>
-<li>For a multi-value property, fragment boundaries MUST fall on item
-boundaries, so that every fragment is a well-formed item sequence on
-its own, the property’s item length prefix rule applying within each
-fragment. A single-value property’s value is split at arbitrary octet
-boundaries and reassembled by concatenation.</li>
+<li>Fragment boundaries are the device’s choice and carry no meaning. The
+administrator reassembles the read by concatenating the fragments in
+order and parses the whole: a property value under the property’s own
+rules, an entry list under <code>CMD_PROP_ARE</code>’s.</li>
 <li>Presenting the same cursor again SHOULD yield the same fragment or an
 equivalent one; a retransmitted continuation is in any case answered
 from the retained response (see
 <a href="#at-most-once">Retries and At-Most-Once Processing</a>).</li>
 <li>Cursors are untrusted input. The device validates every cursor it
-receives and answers one it cannot honor — it does not parse, or the
-underlying data has changed out from under the position — with
+receives and answers one it cannot honor — it does not parse, it was
+issued for a different request, or the underlying data has changed out
+from under the position — with
 <code>STATUS_CURSOR_INVALID</code> (see <a href="#status-codes">Status Codes</a>);
 the administrator restarts from a cursor-less request. A practical
 cursor encodes the position together with a generation of the
@@ -2621,7 +2614,7 @@ that invalidates positions is detected rather than served wrong.</li>
 presented, meaning nothing further is available yet; this suits data
 that accumulates over time.</li>
 <li>A response MAY carry a <strong>REMAINING</strong> option: the approximate number of
-items not yet returned, as a packed unsigned integer. It is advisory,
+octets not yet returned, as a packed unsigned integer. It is advisory,
 for progress reporting.</li>
 <li>The read holds no state on the device: between exchanges, the position
 lives entirely in the cursor the administrator holds.</li>
@@ -2679,7 +2672,7 @@ administrators, itself included.</p>
 <tr><th>Code</th><th>Name</th><th>Requires</th><th>Grants</th></tr>
 </thead>
 <tbody>
-<tr><td>43</td><td><code>CAP_ADMIN</code></td><td><code>CAP_DEV_IDENTITY</code></td><td>Node management: processing of Node Management Command payloads addressed to the device identity, and <code>PROP_DEV_ADMINS</code></td></tr>
+<tr><td>43</td><td><code>CAP_ADMIN</code></td><td><code>CAP_DEV_IDENTITY</code>, <code>CAP_CMD_MULTI</code></td><td>Node management: processing of Node Management Request payloads addressed to the device identity, and <code>PROP_DEV_ADMINS</code></td></tr>
 </tbody>
 </table>
 </div>
@@ -2717,6 +2710,7 @@ This section is an early work in progress and this protocol may change significa
 <tr><td style="text-align: right">7</td><td>Text Color</td><td>3 bytes, RGB</td></tr>
 <tr><td style="text-align: right">8</td><td>Channel Group Resend</td><td>0 bytes (flag)</td></tr>
 <tr><td style="text-align: right">9</td><td>Padding</td><td>Anything</td></tr>
+<tr><td style="text-align: right">10</td><td>Timestamp Sent</td><td>4-byte unix timestamp</td></tr>
 </tbody>
 </table>
 </div>
@@ -2737,6 +2731,22 @@ This section is an early work in progress and this protocol may change significa
 <p>If absent or empty, the message type defaults to 0 (basic text).</p>
 <p>The presence of the <code>Regarding</code> option changes the semantics a bit: A <strong>reply</strong> is a type 0 message with a <code>Regarding</code> option specifying which message is being replied to. A <strong>reaction</strong> is a type 1 message with a <code>Regarding</code> option specifying which message is being reacted to; the body is a single Unicode emoji or a short text token such as <code>+1</code>, <code>-1</code>, <code>!</code>, or <code>?</code>. Implementations may differentiate reactions from plain status text by the presence of the Regarding option.</p>
 <p>Reaction bodies SHOULD be short text tokens rather than emoji: <code>&lt;3</code>, <code>+1</code>, <code>-1</code>, <code>ha</code>, <code>!</code>, and <code>?</code> cover the common reactions in one or two bytes. Receivers SHOULD accept the equivalent spellings — <code>♥</code> for <code>&lt;3</code>, <code>haha</code> or <code>lol</code> for <code>ha</code>, <code>!!</code> for <code>!</code>, letter case being insignificant — as well as the emoji themselves, and SHOULD render a reaction as a single glyph, taking the first one when a body carries more.</p>
+<p>There are five canonical reactions:</p>
+<div class="table-wrapper">
+<table>
+<thead>
+<tr><th>Name</th><th>Emoji</th><th>Acceptable ASCII Representations</th></tr>
+</thead>
+<tbody>
+<tr><td>Approve</td><td>👍</td><td><code>+1</code></td></tr>
+<tr><td>Disapprove</td><td>👎</td><td><code>-1</code></td></tr>
+<tr><td>Love</td><td>❤️</td><td><code>&lt;3</code></td></tr>
+<tr><td>Haha</td><td>🤣</td><td><code>ha</code>, <code>lol</code>, <code>haha</code></td></tr>
+<tr><td>Surprise</td><td>‼️</td><td><code>!!</code>, <code>!</code></td></tr>
+<tr><td>Question</td><td>❓</td><td><code>?</code></td></tr>
+</tbody>
+</table>
+</div>
 <p>A sender has at most one reaction in force per message. Sending another supersedes the previous one, and a reaction with a zero-length body withdraws it; a receiver displays the most recently received reaction from each sender (unless it was withdrawn).</p>
 <p>Reactions reference the original message’s ID even when the message has since been edited, as <a href="#editing">Editing</a> requires of every reference. A receiver MAY additionally tolerate a reaction that names an edit’s own ID by resolving it to the message that edit replaced.</p>
 <p>A message resend request is itself not a message but a request to re-send a message that was inferred to exist but was not received. Such a request SHALL contain exactly one Message Type option with value 2 and exactly one Message Sequence option identifying the missing frame. A request with duplicate Message Type or Message Sequence options is invalid and MUST be ignored. It MAY also contain the Channel Group Resend flag described below and SHOULD NOT contain any other options. After validating the required options and the Channel Group Resend flag, receivers MUST ignore every other option and the entire body. Senders SHOULD use an empty body. The request MUST be received via unicast (for one-on-one messages) or blind-unicast (for channel messages), and SHALL be dropped if received via broadcast or multicast.</p>
@@ -3586,9 +3596,14 @@ allocation is in the <a href="#ulcp-command-and-property-index">Command and Prop
 <tr><td>6</td><td><code>CMD_PROP_IS</code></td><td>Device-&gt;Host</td><td>Property value notification</td></tr>
 <tr><td>7</td><td><code>CMD_PROP_INSERTED</code></td><td>Device-&gt;Host</td><td>Item-inserted notification</td></tr>
 <tr><td>8</td><td><code>CMD_PROP_REMOVED</code></td><td>Device-&gt;Host</td><td>Item-removed notification</td></tr>
+<tr><td>21</td><td><code>CMD_PROP_MULTI_GET</code></td><td>Host-&gt;Device</td><td>Get several property values</td></tr>
+<tr><td>22</td><td><code>CMD_PROP_MULTI_SET</code></td><td>Host-&gt;Device</td><td>Set several property values in order</td></tr>
+<tr><td>23</td><td><code>CMD_PROP_ARE</code></td><td>Device-&gt;Host</td><td>Multiple property value notification</td></tr>
 </tbody>
 </table>
 </div>
+<p>The multi-property commands (21–23) are gated by <code>CAP_CMD_MULTI</code> (see
+<a href="#capabilities-1">Capabilities</a>); everything else is unconditional.</p>
 <h3 id="cmd-noop"><a class="header" href="#cmd-noop">CMD 0: (Host -&gt; Device) <code>CMD_NOP</code></a></h3>
 <pre><code> 0                   1
  0 1 2 3 4 5 6 7 8 9 0 1 2 3 4 5
@@ -3752,6 +3767,77 @@ of zero when the device removes an item from a multi-value property for its
 own reasons.</p>
 <p>The payload is the property identifier followed by the removed item as the
 device reports it.</p>
+<h3 id="cmd-prop-multi-get"><a class="header" href="#cmd-prop-multi-get">CMD 21: (Host -&gt; Device) <code>CMD_PROP_MULTI_GET</code></a></h3>
+<pre><code>  0                   1                   2                   3
+ 0 1 2 3 4 5 6 7 8 9 0 1 2 3 4 5 6 7 8 9 0 1 2 3 4 5 6 7 8 9 0 1
++-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+
+|1 0| RES | TID |      CMD      | PROP_KEY (PUI) | PROP_KEY ...
++-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+
+</code></pre>
+<p>Figure: Structure of <code>CMD_PROP_MULTI_GET</code></p>
+<p>Get several property values at once. Commands the device to reply with a
+single <a href="#cmd-prop-are"><code>CMD_PROP_ARE</code></a> carrying one entry for each
+requested property, in request order.</p>
+<p>The payload is one or more property identifiers, each encoded in the
+packed unsigned integer format, one after another with no delimiters.</p>
+<p>Fetching continues past failures: a property that cannot be fetched
+occupies its position in the reply as a <code>PROP_LAST_STATUS</code> entry whose
+value is the status code a <code>CMD_PROP_GET</code> of that property would have
+produced. Position, not the entry’s key, identifies which request an
+entry answers.</p>
+<p>This command is available only on devices advertising <code>CAP_CMD_MULTI</code>.
+On any other device it is an unrecognized command,
+<code>STATUS_INVALID_COMMAND</code>.</p>
+<h3 id="cmd-prop-multi-set"><a class="header" href="#cmd-prop-multi-set">CMD 22: (Host -&gt; Device) <code>CMD_PROP_MULTI_SET</code></a></h3>
+<pre><code>  0                   1                   2                   3
+ 0 1 2 3 4 5 6 7 8 9 0 1 2 3 4 5 6 7 8 9 0 1 2 3 4 5 6 7 8 9 0 1
++-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+
+|1 0| RES | TID |      CMD      | ENTRY | ENTRY | ENTRY ...
++-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+
+</code></pre>
+<p>Figure: Structure of <code>CMD_PROP_MULTI_SET</code></p>
+<p>Set several property values in order. The payload is a sequence of
+entries, each the combined length of its key and value encoded as a
+packed unsigned integer, followed by that many octets — the property
+identifier as a packed unsigned integer, then the value:</p>
+<pre><code>+--------------+---------------------------+--------------------+
+| LENGTH (PUI) | PROP_KEY (PUI, 1-3 bytes) | VALUE (remainder)  |
++--------------+---------------------------+--------------------+
+</code></pre>
+<p>Figure: <code>CMD_PROP_MULTI_SET</code> Entry Format</p>
+<p>The device applies each entry exactly as a <code>CMD_PROP_SET</code> of that
+property would, strictly in payload order, stopping at the first entry
+that fails. <a href="#mutation-atomicity">Mutation Atomicity</a> applies to each
+entry alone: the sequence is not a transaction, and a failure partway
+leaves the earlier entries applied.</p>
+<p>The reply is a single <a href="#cmd-prop-are"><code>CMD_PROP_ARE</code></a> containing, for
+each applied entry in order, the property and its reported value —
+exactly what the <code>CMD_PROP_IS</code> answering a lone <code>CMD_PROP_SET</code> would
+carry — and, for the failing entry, a <code>PROP_LAST_STATUS</code> entry carrying
+the error, after which the reply ends. Entries past the failure are not
+executed and contribute nothing; a reply whose every entry is a success
+covers the entire request.</p>
+<p>This command is available only on devices advertising <code>CAP_CMD_MULTI</code>.
+On any other device it is an unrecognized command,
+<code>STATUS_INVALID_COMMAND</code>.</p>
+<h3 id="cmd-prop-are"><a class="header" href="#cmd-prop-are">CMD 23: (Device -&gt; Host) <code>CMD_PROP_ARE</code></a></h3>
+<pre><code>  0                   1                   2                   3
+ 0 1 2 3 4 5 6 7 8 9 0 1 2 3 4 5 6 7 8 9 0 1 2 3 4 5 6 7 8 9 0 1
++-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+
+|1 0| RES | TID |      CMD      | ENTRY | ENTRY | ENTRY ...
++-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+
+</code></pre>
+<p>Figure: Structure of <code>CMD_PROP_ARE</code></p>
+<p>Multiple property value notification. The payload is a sequence of
+entries in the same encoding as <code>CMD_PROP_MULTI_SET</code>: a combined
+key-and-value length as a packed unsigned integer, the property
+identifier, and the value as the device reports it — under the same
+reporting rules as <code>CMD_PROP_IS</code>, so key material never appears (see
+<a href="#multi-value-properties">Multi-Value Properties</a>).</p>
+<p>The device emits this command only in response to <code>CMD_PROP_MULTI_GET</code>
+or <code>CMD_PROP_MULTI_SET</code>, with the TID of that command. It <strong>MUST NOT</strong>
+be emitted unsolicited: asynchronous updates use <code>CMD_PROP_IS</code> and its
+companions, one property at a time.</p>
 <h2 id="properties-and-streams"><a class="header" href="#properties-and-streams">Properties and Streams</a></h2>
 <p>A <strong>property</strong> is a piece of device state with a value the host can read
 and, where the property allows it, write. A <strong>stream</strong> is a packet-like
@@ -4202,10 +4288,10 @@ to <code>CMD_PROP_INSERT</code> is already present in the property.</dd>
 in the property.</dd>
 <dt id="status_cursor_invalid"><a class="header" href="#status_cursor_invalid"><code>STATUS_CURSOR_INVALID</code></a></dt>
 <dd>The cursor presented in a <a href="#cursors">Node Management</a>
-continuation is not one the device can honor — it does not parse, names a
-different property, or the underlying data has changed so that the
-position is meaningless. The administrator restarts the read from an
-initial, cursor-less request.</dd>
+continuation is not one the device can honor — it does not parse, it was
+issued for a different request, or the underlying data has changed so
+that the position is meaningless. The administrator restarts the read
+from an initial, cursor-less request.</dd>
 <dt id="status_cca_failure"><a class="header" href="#status_cca_failure"><code>STATUS_CCA_FAILURE</code></a></dt>
 <dd>The packet was not sent due to a CCA failure. This status code is only
 emitted when sending data to a packet stream with a TID other than zero.</dd>
@@ -4304,18 +4390,21 @@ grants:</p>
 <tr><td>40</td><td><code>CAP_REPEATER</code></td><td><code>CAP_DEV_IDENTITY</code></td><td><a href="#capabilities-4">Device Domain</a></td></tr>
 <tr><td>41</td><td><code>CAP_IDENT</code></td><td><code>CAP_DEV_IDENTITY</code></td><td><a href="#capabilities-4">Device Domain</a></td></tr>
 <tr><td>42</td><td><code>CAP_ALERT</code></td><td>—</td><td><a href="#capabilities-4">Device Domain</a></td></tr>
-<tr><td>43</td><td><code>CAP_ADMIN</code></td><td><code>CAP_DEV_IDENTITY</code></td><td><a href="#capabilities">Node Management</a></td></tr>
+<tr><td>43</td><td><code>CAP_ADMIN</code></td><td><code>CAP_DEV_IDENTITY</code>, <code>CAP_CMD_MULTI</code></td><td><a href="#capabilities">Node Management</a></td></tr>
 <tr><td>44</td><td><code>CAP_TIME</code></td><td>—</td><td><a href="#capabilities-4">Device Domain</a></td></tr>
 <tr><td>45</td><td><code>CAP_GNSS</code></td><td><code>CAP_TIME</code></td><td><a href="#capabilities-4">Device Domain</a></td></tr>
 <tr><td>46</td><td><code>CAP_ADVERT</code></td><td><code>CAP_DEV_IDENTITY</code></td><td><a href="#capabilities-4">Device Domain</a></td></tr>
 <tr><td>47</td><td><code>CAP_ILLUMINANCE</code></td><td>—</td><td><a href="#capabilities-4">Device Domain</a></td></tr>
 <tr><td>48</td><td><code>CAP_MAC_BACKHAUL</code></td><td><code>CAP_REPEATER</code></td><td><a href="#capabilities-6">Tethered Host Services</a></td></tr>
+<tr><td>49</td><td><code>CAP_CMD_MULTI</code></td><td>—</td><td><a href="#cmd-prop-multi-get">Framing and Common Semantics</a></td></tr>
+<tr><td>50</td><td><code>CAP_BLE</code></td><td>—</td><td><a href="#capabilities-8">BLE Binding</a></td></tr>
 <tr><td>515</td><td><code>CAP_PHY_LORA</code></td><td>—</td><td><a href="#capabilities-2">Radio Control</a></td></tr>
 </tbody>
 </table>
 </div>
 <p>A device <strong>MUST NOT</strong> advertise a capability without also advertising the
-capabilities it requires. The commands and status codes defined in this
+capabilities it requires. Apart from the multi-property commands, which
+<code>CAP_CMD_MULTI</code> gates, the commands and status codes defined in this
 chapter are unconditional and need no capability; a device that defines no
 mutable multi-value properties simply has nothing to apply
 <code>CMD_PROP_INSERT</code>/<code>CMD_PROP_REMOVE</code> to.</p>
@@ -5057,7 +5146,7 @@ does not produce excessive ULCP traffic.</p>
 <h3 id="prop-mac-repeater-enabled"><a class="header" href="#prop-mac-repeater-enabled">PROP 70: <code>PROP_MAC_REPEATER_ENABLED</code></a></h3>
 <ul>
 <li>Type: Single-Value, Read-Write</li>
-<li>Asynchronous Updates: No</li>
+<li>Asynchronous Updates: Yes</li>
 <li>Required: <code>CAP_REPEATER</code></li>
 <li>Value Type: BOOL</li>
 <li>Post-Reset Value: Persisted</li>
@@ -5084,6 +5173,11 @@ host-delivery mode) and of the host identity, which never forwards.</p>
 <p>The flag is device-domain state: it is part of the saved snapshot, so a
 <code>CMD_SAVE</code> arms an unattended repeater across power cycles, and it
 survives a change of host.</p>
+<p>Asynchronous because a device <strong>MAY</strong> offer forwarding as a control the
+operator can reach — the menu on a device with a screen is where a user
+decides whether to spend their battery carrying other people’s traffic.
+A device that flips it locally <strong>MUST</strong> publish the new value like any
+other transition the host did not command.</p>
 <p>Flood-contention tuning — the forwarding delay window, deferral count,
 and similar timing parameters — is not exposed; a repeater applies its
 local defaults.</p>
@@ -5638,7 +5732,7 @@ whatever adjusts the device’s clock adjusts its offset.</p>
 <h3 id="prop-gnss-ident-update"><a class="header" href="#prop-gnss-ident-update">PROP 4868: <code>PROP_GNSS_IDENT_UPDATE</code></a></h3>
 <ul>
 <li>Type: Single-Value, Read-Write</li>
-<li>Asynchronous Updates: No</li>
+<li>Asynchronous Updates: Yes</li>
 <li>Required: <code>CAP_GNSS</code></li>
 <li>Value Type: BOOL</li>
 <li>Post-Reset Value: 0 (false), or restored from saved state</li>
@@ -5654,6 +5748,10 @@ before advertising it. A device <strong>SHOULD</strong> act on a fix only when t
 clamped position actually changes, rather than on every fix: at a coarse
 precision a stationary node’s fixes all land in the same cell, and
 re-advertising each one spends airtime to say nothing.</p>
+<p>Asynchronous because a device <strong>MAY</strong> offer this as a control the
+operator can reach, alongside the receiver switch it is deliberately
+separate from. A device that flips it locally <strong>MUST</strong> publish the new
+value like any other transition the host did not command.</p>
 <p>Switching it off <strong>retracts</strong> the advertised position rather than
 freezing the last one. So does switching the receiver off. A position
 that nothing is refreshing any more is a claim the device cannot
@@ -6769,10 +6867,13 @@ it can do.</p>
 <tr><td>13</td><td><a href="#cmd-clear"><code>CMD_CLEAR</code></a></td><td>Host-&gt;Device</td><td>—</td></tr>
 <tr><td>14</td><td><a href="#cmd-restore"><code>CMD_RESTORE</code></a></td><td>Host-&gt;Device</td><td><code>CAP_SAVE</code></td></tr>
 <tr><td>15</td><td><a href="#cmd-factory-reset"><code>CMD_FACTORY_RESET</code></a></td><td>Host-&gt;Device</td><td>—</td></tr>
+<tr><td>21</td><td><a href="#cmd-prop-multi-get"><code>CMD_PROP_MULTI_GET</code></a></td><td>Host-&gt;Device</td><td><code>CAP_CMD_MULTI</code></td></tr>
+<tr><td>22</td><td><a href="#cmd-prop-multi-set"><code>CMD_PROP_MULTI_SET</code></a></td><td>Host-&gt;Device</td><td><code>CAP_CMD_MULTI</code></td></tr>
+<tr><td>23</td><td><a href="#cmd-prop-are"><code>CMD_PROP_ARE</code></a></td><td>Device-&gt;Host</td><td><code>CAP_CMD_MULTI</code></td></tr>
 </tbody>
 </table>
 </div>
-<p>Command identifiers are 7-bit; 16–127 are unassigned.</p>
+<p>Command identifiers are 7-bit; 16–20 and 24–127 are unassigned.</p>
 <h2 id="properties-and-streams-1"><a class="header" href="#properties-and-streams-1">Properties and Streams</a></h2>
 <p>Identifiers are allocated by state class; see
 <a href="#property-allocation">Property Allocation</a>.</p>
@@ -6844,6 +6945,7 @@ it can do.</p>
 <tr><td>4868</td><td><a href="#prop-gnss-ident-update"><code>PROP_GNSS_IDENT_UPDATE</code></a></td><td>Get, Set</td><td><code>CAP_GNSS</code></td></tr>
 <tr><td>4869</td><td><a href="#prop-gnss-ident-precision"><code>PROP_GNSS_IDENT_PRECISION</code></a></td><td>Get, Set</td><td><code>CAP_GNSS</code></td></tr>
 <tr><td>4870</td><td><a href="#prop-gnss-time-trust"><code>PROP_GNSS_TIME_TRUST</code></a></td><td>Get, Set</td><td><code>CAP_GNSS</code></td></tr>
+<tr><td>4871</td><td><a href="#prop-ble-enabled"><code>PROP_BLE_ENABLED</code></a></td><td>Get, Set, Is</td><td><code>CAP_BLE</code></td></tr>
 </tbody>
 </table>
 </div>
@@ -6875,6 +6977,8 @@ is in <a href="#capabilities-1">Capabilities</a>.</p>
 <tr><td>46</td><td><code>CAP_ADVERT</code></td><td><a href="#capabilities-4">Device Domain</a></td></tr>
 <tr><td>47</td><td><code>CAP_ILLUMINANCE</code></td><td><a href="#capabilities-4">Device Domain</a></td></tr>
 <tr><td>48</td><td><code>CAP_MAC_BACKHAUL</code></td><td><a href="#capabilities-6">Tethered Host Services</a></td></tr>
+<tr><td>49</td><td><code>CAP_CMD_MULTI</code></td><td><a href="#cmd-prop-multi-get">Framing and Common Semantics</a></td></tr>
+<tr><td>50</td><td><code>CAP_BLE</code></td><td><a href="#capabilities-8">BLE Binding</a></td></tr>
 <tr><td>515</td><td><code>CAP_PHY_LORA</code></td><td><a href="#capabilities-2">Radio Control</a></td></tr>
 </tbody>
 </table>
@@ -7130,6 +7234,52 @@ private addresses.</p>
 pairing requests; it does not affect advertising. In particular, a
 bonded device continues to advertise outside pairing mode so that its
 bonded hosts can reconnect.</p>
+<h2 id="capabilities-8"><a class="header" href="#capabilities-8">Capabilities</a></h2>
+<div class="table-wrapper">
+<table>
+<thead>
+<tr><th>Code</th><th>Name</th><th>Requires</th><th>Grants</th></tr>
+</thead>
+<tbody>
+<tr><td>50</td><td><code>CAP_BLE</code></td><td>—</td><td>A Bluetooth transport whose reachability the device can turn on and off: <code>PROP_BLE_ENABLED</code></td></tr>
+</tbody>
+</table>
+</div>
+<p>A device implementing this binding <strong>MAY</strong> advertise <code>CAP_BLE</code>. Not
+advertising it means the transport is always reachable while the device
+is powered, which is what every device did before the capability
+existed; it does not mean the device has no BLE.</p>
+<h2 id="ble-reachability"><a class="header" href="#ble-reachability">Reachability</a></h2>
+<h3 id="prop-ble-enabled"><a class="header" href="#prop-ble-enabled">PROP 4871: <code>PROP_BLE_ENABLED</code></a></h3>
+<ul>
+<li>Type: Single-Value, Read-Write</li>
+<li>Asynchronous Updates: Yes</li>
+<li>Required: <code>CAP_BLE</code></li>
+<li>Value Type: BOOL</li>
+<li>Post-Reset Value: 1 (true), or restored from saved state</li>
+</ul>
+<p>Whether the device is reachable over this transport. Cleared, the
+device <strong>MUST</strong> stop advertising and <strong>MUST</strong> drop any host attached
+over BLE; set again, it advertises as it did before. Bonds are
+untouched in both directions, so a bonded host reconnects without
+pairing again.</p>
+<p>It says nothing about the radio itself. A device <strong>MAY</strong> power the
+controller down behind this and <strong>MAY</strong> leave the whole stack running;
+what the property promises is reachability, which is what an operator
+turning it off is asking about. Claiming the radio is off would be a
+claim most platforms cannot honor — a vendor stack that cannot be torn
+down at runtime is common — and a property that lies in the direction
+of “more private than it is” is the wrong one to guess at.</p>
+<p>Asynchronous for the same reason <code>PROP_GNSS_ENABLED</code> is: a device
+<strong>MAY</strong> offer this as a control the operator can reach, and a switch
+someone can flip is a value that moves without the host asking. A
+device that flips it locally <strong>MUST</strong> publish the new value like any
+other transition the host did not command — which, when it is being
+cleared, is the last thing the attached host hears.</p>
+<p>The post-reset value is true. A device unreachable by default is a
+device that cannot be configured by the host that would make it
+reachable again, and on most hardware the only other way in is the menu
+on the front of it.</p>
 <h2 id="ble-security"><a class="header" href="#ble-security">Security</a></h2>
 <p>ULCP is a privileged interface: an attached
 host commands transmission with arbitrary content, timing, and power
@@ -8042,7 +8192,7 @@ stack overflow.</dd>
 <dt id="status_reset_watchdog-1"><a class="header" href="#status_reset_watchdog-1"><code>STATUS_RESET_WATCHDOG</code></a></dt>
 <dd>Watchdog timer expired, forcing a reset.</dd>
 </dl>
-<h2 id="capabilities-8"><a class="header" href="#capabilities-8">Capabilities</a></h2>
+<h2 id="capabilities-9"><a class="header" href="#capabilities-9">Capabilities</a></h2>
 <p>Capabilities are how a device can advertise support for specific behaviors and
 functionalities. They can be fetched via the <code>PROP_CAPS</code> property.</p>
 <p>See (#prop-caps) for more information on <code>PROP_CAPS</code>.</p>
@@ -9619,7 +9769,7 @@ not indicate a problem.</dd>
 </dl>
 <h2 id="full-capabilities"><a class="header" href="#full-capabilities">Additional Capabilities</a></h2>
 <p>The full protocol assigns the following capability codes
-(see <a href="#capabilities-8">Capabilities</a>):</p>
+(see <a href="#capabilities-9">Capabilities</a>):</p>
 <div class="table-wrapper">
 <table>
 <thead>

@@ -1,1 +1,1 @@
-window.SIDEBAR_ITEMS = {"fn":["parse_bool","parse_hex","parse_key32","parse_region","parse_u32"],"struct":["DutyLimitArg","FilterArg","HexU16Arg","KeyArg","MinRssiArg","MinSnrArg","OnOffArg","OptRegionArg","PeerArg","PinArg","RegionListArg"]};
+window.SIDEBAR_ITEMS = {"fn":["parse_bool","parse_hex","parse_key32","parse_region","parse_u32"],"struct":["AssignArg","BytesArg","DutyLimitArg","FilterArg","HexU16Arg","KeyArg","MinRssiArg","MinSnrArg","OnOffArg","OptRegionArg","PeerArg","PinArg","RegionListArg"]};

@@ -1,1 +1,1 @@
-window.SIDEBAR_ITEMS = {"fn":["battery_display","cap_name","filter_list","format_millilux","illuminance","run"],"struct":["InfoArgs"]};
+window.SIDEBAR_ITEMS = {"fn":["battery_display","cap_name","filter_list","format_millilux","illuminance","props","run"],"struct":["InfoArgs"]};

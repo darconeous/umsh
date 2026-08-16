@@ -35,7 +35,7 @@
             const path_to_root = "";
             const default_light_theme = "light";
             const default_dark_theme = "ayu";
-            window.path_to_searchindex_js = "searchindex-1d2ecda8.js";
+            window.path_to_searchindex_js = "searchindex-2628c86f.js";
         </script>
         <!-- Start loading toc.js asap -->
         <script src="toc-438957a9.js"></script>
@@ -199,10 +199,13 @@
 <tr><td>13</td><td><a href="ulcp-saved-state.html#cmd-clear"><code>CMD_CLEAR</code></a></td><td>Host-&gt;Device</td><td>—</td></tr>
 <tr><td>14</td><td><a href="ulcp-saved-state.html#cmd-restore"><code>CMD_RESTORE</code></a></td><td>Host-&gt;Device</td><td><code>CAP_SAVE</code></td></tr>
 <tr><td>15</td><td><a href="ulcp-saved-state.html#cmd-factory-reset"><code>CMD_FACTORY_RESET</code></a></td><td>Host-&gt;Device</td><td>—</td></tr>
+<tr><td>21</td><td><a href="ulcp-core.html#cmd-prop-multi-get"><code>CMD_PROP_MULTI_GET</code></a></td><td>Host-&gt;Device</td><td><code>CAP_CMD_MULTI</code></td></tr>
+<tr><td>22</td><td><a href="ulcp-core.html#cmd-prop-multi-set"><code>CMD_PROP_MULTI_SET</code></a></td><td>Host-&gt;Device</td><td><code>CAP_CMD_MULTI</code></td></tr>
+<tr><td>23</td><td><a href="ulcp-core.html#cmd-prop-are"><code>CMD_PROP_ARE</code></a></td><td>Device-&gt;Host</td><td><code>CAP_CMD_MULTI</code></td></tr>
 </tbody>
 </table>
 </div>
-<p>Command identifiers are 7-bit; 16–127 are unassigned.</p>
+<p>Command identifiers are 7-bit; 16–20 and 24–127 are unassigned.</p>
 <h2 id="properties-and-streams"><a class="header" href="#properties-and-streams">Properties and Streams</a></h2>
 <p>Identifiers are allocated by state class; see
 <a href="ulcp-core.html#property-allocation">Property Allocation</a>.</p>
@@ -274,6 +277,7 @@
 <tr><td>4868</td><td><a href="ulcp-device.html#prop-gnss-ident-update"><code>PROP_GNSS_IDENT_UPDATE</code></a></td><td>Get, Set</td><td><code>CAP_GNSS</code></td></tr>
 <tr><td>4869</td><td><a href="ulcp-device.html#prop-gnss-ident-precision"><code>PROP_GNSS_IDENT_PRECISION</code></a></td><td>Get, Set</td><td><code>CAP_GNSS</code></td></tr>
 <tr><td>4870</td><td><a href="ulcp-device.html#prop-gnss-time-trust"><code>PROP_GNSS_TIME_TRUST</code></a></td><td>Get, Set</td><td><code>CAP_GNSS</code></td></tr>
+<tr><td>4871</td><td><a href="ulcp-ble.html#prop-ble-enabled"><code>PROP_BLE_ENABLED</code></a></td><td>Get, Set, Is</td><td><code>CAP_BLE</code></td></tr>
 </tbody>
 </table>
 </div>
@@ -305,6 +309,8 @@ is in <a href="ulcp-core.html#capabilities">Capabilities</a>.</p>
 <tr><td>46</td><td><code>CAP_ADVERT</code></td><td><a href="ulcp-device.html#capabilities">Device Domain</a></td></tr>
 <tr><td>47</td><td><code>CAP_ILLUMINANCE</code></td><td><a href="ulcp-device.html#capabilities">Device Domain</a></td></tr>
 <tr><td>48</td><td><code>CAP_MAC_BACKHAUL</code></td><td><a href="ulcp-host.html#capabilities">Tethered Host Services</a></td></tr>
+<tr><td>49</td><td><code>CAP_CMD_MULTI</code></td><td><a href="ulcp-core.html#cmd-prop-multi-get">Framing and Common Semantics</a></td></tr>
+<tr><td>50</td><td><code>CAP_BLE</code></td><td><a href="ulcp-ble.html#capabilities">BLE Binding</a></td></tr>
 <tr><td>515</td><td><code>CAP_PHY_LORA</code></td><td><a href="ulcp-radio.html#capabilities">Radio Control</a></td></tr>
 </tbody>
 </table>

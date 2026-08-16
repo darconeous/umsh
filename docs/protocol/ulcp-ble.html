@@ -35,7 +35,7 @@
             const path_to_root = "";
             const default_light_theme = "light";
             const default_dark_theme = "ayu";
-            window.path_to_searchindex_js = "searchindex-1d2ecda8.js";
+            window.path_to_searchindex_js = "searchindex-2628c86f.js";
         </script>
         <!-- Start loading toc.js asap -->
         <script src="toc-438957a9.js"></script>
@@ -368,6 +368,52 @@ private addresses.</p>
 pairing requests; it does not affect advertising. In particular, a
 bonded device continues to advertise outside pairing mode so that its
 bonded hosts can reconnect.</p>
+<h2 id="capabilities"><a class="header" href="#capabilities">Capabilities</a></h2>
+<div class="table-wrapper">
+<table>
+<thead>
+<tr><th>Code</th><th>Name</th><th>Requires</th><th>Grants</th></tr>
+</thead>
+<tbody>
+<tr><td>50</td><td><code>CAP_BLE</code></td><td>—</td><td>A Bluetooth transport whose reachability the device can turn on and off: <code>PROP_BLE_ENABLED</code></td></tr>
+</tbody>
+</table>
+</div>
+<p>A device implementing this binding <strong>MAY</strong> advertise <code>CAP_BLE</code>. Not
+advertising it means the transport is always reachable while the device
+is powered, which is what every device did before the capability
+existed; it does not mean the device has no BLE.</p>
+<h2 id="ble-reachability"><a class="header" href="#ble-reachability">Reachability</a></h2>
+<h3 id="prop-ble-enabled"><a class="header" href="#prop-ble-enabled">PROP 4871: <code>PROP_BLE_ENABLED</code></a></h3>
+<ul>
+<li>Type: Single-Value, Read-Write</li>
+<li>Asynchronous Updates: Yes</li>
+<li>Required: <code>CAP_BLE</code></li>
+<li>Value Type: BOOL</li>
+<li>Post-Reset Value: 1 (true), or restored from saved state</li>
+</ul>
+<p>Whether the device is reachable over this transport. Cleared, the
+device <strong>MUST</strong> stop advertising and <strong>MUST</strong> drop any host attached
+over BLE; set again, it advertises as it did before. Bonds are
+untouched in both directions, so a bonded host reconnects without
+pairing again.</p>
+<p>It says nothing about the radio itself. A device <strong>MAY</strong> power the
+controller down behind this and <strong>MAY</strong> leave the whole stack running;
+what the property promises is reachability, which is what an operator
+turning it off is asking about. Claiming the radio is off would be a
+claim most platforms cannot honor — a vendor stack that cannot be torn
+down at runtime is common — and a property that lies in the direction
+of “more private than it is” is the wrong one to guess at.</p>
+<p>Asynchronous for the same reason <code>PROP_GNSS_ENABLED</code> is: a device
+<strong>MAY</strong> offer this as a control the operator can reach, and a switch
+someone can flip is a value that moves without the host asking. A
+device that flips it locally <strong>MUST</strong> publish the new value like any
+other transition the host did not command — which, when it is being
+cleared, is the last thing the attached host hears.</p>
+<p>The post-reset value is true. A device unreachable by default is a
+device that cannot be configured by the host that would make it
+reachable again, and on most hardware the only other way in is the menu
+on the front of it.</p>
 <h2 id="ble-security"><a class="header" href="#ble-security">Security</a></h2>
 <p>ULCP is a privileged interface: an attached
 host commands transmission with arbitrary content, timing, and power

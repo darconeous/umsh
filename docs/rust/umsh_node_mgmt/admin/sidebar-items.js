@@ -1,0 +1,1 @@
+window.SIDEBAR_ITEMS = {"constant":["MAX_ATTEMPTS","RETRY_MS"],"enum":["Failure","Outcome","Step"],"struct":["Exchange","Reassembly"]};
