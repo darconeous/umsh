@@ -16,6 +16,7 @@ use umsh_ulcp::frame::{self, Cmd, Frame};
 use umsh_ulcp::status::Status;
 
 use crate::envelope::{Envelope, EnvelopeError, Token};
+use crate::fragment::continuable;
 
 /// An Ed25519 public key naming a node.
 pub type PublicKey = [u8; 32];
@@ -170,11 +171,6 @@ fn request_tag(frame: &[u8]) -> u16 {
     // Fold to 16 bits rather than truncate, so every input byte reaches
     // the result.
     ((hash >> 16) ^ hash) as u16
-}
-
-/// Whether a cursor may continue this command.
-const fn continuable(cmd: Cmd) -> bool {
-    matches!(cmd, Cmd::PropGet | Cmd::PropMultiGet)
 }
 
 /// Whether this command initiates a reset, and so is answered by no

@@ -2761,6 +2761,14 @@ dependencies = [
 ]
 
 [[package]]
+name = "umsh-node-mgmt"
+version = "0.1.0"
+dependencies = [
+ "umsh-core",
+ "umsh-ulcp",
+]
+
+[[package]]
 name = "umsh-radio-loraphy"
 version = "0.1.0"
 dependencies = [
@@ -2822,6 +2830,7 @@ dependencies = [
  "umsh-journal-store",
  "umsh-mac",
  "umsh-node",
+ "umsh-node-mgmt",
  "umsh-radio-loraphy",
  "umsh-sync",
  "umsh-ulcp",

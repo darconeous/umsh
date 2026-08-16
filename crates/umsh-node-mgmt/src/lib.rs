@@ -30,10 +30,34 @@
 //! [`device::DeviceEngine`] only after its source has been checked
 //! against the administrator list.
 
+#[cfg(feature = "alloc")]
+extern crate alloc;
+
 pub mod admin;
 pub mod device;
 pub mod envelope;
+pub mod fragment;
+#[cfg(feature = "node")]
+pub mod node_adapter;
 
 pub use admin::{Exchange, Failure, Outcome, Reassembly, Step};
 pub use device::{DeviceEngine, Dispatch, DropReason, Ingress, Produced, PublicKey};
 pub use envelope::{Envelope, EnvelopeError, Token};
+pub use fragment::{continuable, produce, trailing, trailing_offset};
+#[cfg(feature = "node")]
+pub use node_adapter::{BeginError, ManagementError, NodeManager, Progress};
+
+/// The Node Management payload an administrator sizes its requests
+/// against.
+///
+/// A device derives its own ceiling from the radio it has — see
+/// `ADMIN_PAYLOAD_MAX` in `umsh-ulcp-runtime` — and it is the device's
+/// number that actually bounds an exchange. An administrator cannot ask
+/// what that number is, so it assumes the smallest a device is allowed
+/// to have, and the device's derivation is checked against this one at
+/// compile time.
+pub const PAYLOAD_MAX: usize = 180;
+
+/// The largest request frame that fits a payload once its envelope is
+/// accounted for.
+pub const REQUEST_MAX: usize = PAYLOAD_MAX - envelope::OVERHEAD_MAX;

@@ -306,6 +306,37 @@ pub mod cap {
     pub const CMD_MULTI: u32 = 49;
 }
 
+/// Whether a property is reachable from a mesh administrator.
+///
+/// The out-of-reach set is small and named explicitly by the spec rather
+/// than derived, because "device domain" is not a property of the key: a
+/// host-domain table and a device-domain one differ only by which half of
+/// the device they configure. A device answers all three with
+/// `STATUS_PROP_NOT_FOUND` — an administrator learns that the property does
+/// not exist for it, not that it exists and was refused — and an
+/// administrator that reads this first spends no airtime asking.
+pub fn admin_reachable(key: u32) -> bool {
+    !matches!(
+        key,
+        // The host domain in full: the assistance the device owes to
+        // whatever host it serves is that host's business.
+        prop::HOST_KEY
+            | prop::HOST_CHANNEL_KEYS
+            | prop::HOST_PEER_KEYS
+            | prop::HOST_RX_FILTERS
+            | prop::HOST_AUTO_ACK
+            | prop::HOST_RX_QUEUE_COUNT
+            | prop::HOST_RX_QUEUE_CAPACITY
+            | prop::HOST_RX_QUEUE_DROPPED
+            // Session state: an exchange is not an attach, so there is no
+            // session for it to describe.
+            | prop::MAC_PROMISCUOUS
+            | prop::MAC_BACKHAUL
+            // A device identity cannot be installed over the mesh.
+            | prop::DEV_PRIVATE_KEY
+    )
+}
+
 /// Value used in `PROP_PHY_DUTY_LIMIT` to disable duty-cycle limiting.
 pub const DUTY_LIMIT_DISABLED: u16 = 0xFFFF;
 

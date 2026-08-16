@@ -65,7 +65,7 @@ use umsh_node::{
     never_respond_policy,
 };
 use umsh_sync::AsyncRefCell;
-use umsh_ulcp_device::{MAX_CHANNEL_KEYS, MAX_DEV_PEERS, MAX_DEVICE_NAME_LEN};
+use umsh_ulcp_device::{MAX_CHANNEL_KEYS, MAX_DEV_ADMINS, MAX_DEV_PEERS, MAX_DEVICE_NAME_LEN};
 
 use crate::driver::DevDomainSnapshot;
 use crate::duty_gate::DutyGatedRadio;
@@ -146,9 +146,14 @@ impl<CS: CounterStore + 'static> umsh_mac::Platform for DeviceNodePlatform<CS> {
     type KeyValueStore = NoKeyValueStore;
 }
 
+/// Every node the device domain names, which is what the MAC peer table
+/// has to hold: a full peer list and a full administrator list can be
+/// provisioned at once, and each needs a pairwise session.
+pub const MAX_NODE_PEERS: usize = MAX_DEV_PEERS + MAX_DEV_ADMINS;
+
 /// Device-node MAC sized to the session's device-domain tables, which are
 /// the only provisioning source it has: 1 identity (the device identity;
-/// no PFS ephemerals on the device node), `MAX_DEV_PEERS` peers,
+/// no PFS ephemerals on the device node), `MAX_NODE_PEERS` peers,
 /// `MAX_CHANNEL_KEYS` channels (a smaller MAC table would refuse channels
 /// the property surface accepted), 4 pending ACKs, 4 TX slots (beacons
 /// and future acks — no application traffic), 255-byte frames, 32-entry
@@ -157,12 +162,12 @@ impl<CS: CounterStore + 'static> umsh_mac::Platform for DeviceNodePlatform<CS> {
 /// channel keeps the whole table ~2 KiB/channel; extra concurrent senders
 /// on one channel fail closed (dropped, never accepted unchecked).
 pub type DeviceNodeMac<CS> =
-    umsh_mac::Mac<DeviceNodePlatform<CS>, 1, MAX_DEV_PEERS, MAX_CHANNEL_KEYS, 4, 4, 255, 32, 4, 2>;
+    umsh_mac::Mac<DeviceNodePlatform<CS>, 1, MAX_NODE_PEERS, MAX_CHANNEL_KEYS, 4, 4, 255, 32, 4, 2>;
 pub type DeviceNodeHandle<CS> = MacHandle<
     'static,
     DeviceNodePlatform<CS>,
     1,
-    MAX_DEV_PEERS,
+    MAX_NODE_PEERS,
     MAX_CHANNEL_KEYS,
     4,
     4,
@@ -377,6 +382,11 @@ pub async fn dev_sync_loop<CS: CounterStore + 'static>(
     let mut applied: heapless::Vec<[u8; 32], MAX_CHANNEL_KEYS> = heapless::Vec::new();
     loop {
         let snapshot = DEV_SYNC.wait().await;
+        // Published first: the administrator list gates whether an
+        // arriving request is heard at all, and its generation is what a
+        // Node Management cursor is validated against. Neither should lag
+        // a device-domain change by the length of a MAC reconciliation.
+        crate::admin_responder::publish_dev_domain(&snapshot);
         // The gate is key equality, not mere presence. The session's live
         // identity and the one this MAC was built around can legitimately
         // differ — an installed `PROP_DEV_PRIVATE_KEY` takes effect at the
@@ -487,8 +497,12 @@ pub async fn dev_sync_loop<CS: CounterStore + 'static>(
                 )),
             }
         }
-        // Registration is add-or-refresh; repeats are harmless.
-        for public_key in snapshot.peers.iter() {
+        // Registration is add-or-refresh; repeats are harmless. An
+        // administrator is registered alongside the peers: it is by
+        // definition a node this device must be able to unseal a request
+        // from and seal an answer to, and registering it is what lets
+        // both travel under the ordinary source hint.
+        for public_key in snapshot.peers.iter().chain(snapshot.admins.iter()) {
             if node.peer(PublicKey(*public_key)).await.is_err() {
                 debug_log(format_args!(
                     "node dev-sync: peer {:02x}{:02x}.. register FAILED",
@@ -1087,6 +1101,14 @@ pub async fn bring_up<CS: CounterStore + 'static>(
             packet.payload().len(),
             packet.source_authenticated(),
         ));
+        false
+    }));
+    // Node Management Requests. The tap only decides whether the sender
+    // is entitled to be heard and queues what is; the exchange itself is
+    // run by `admin_responder::responder_loop`, which the board spawns.
+    // Never consumes: this is one more observer of every packet.
+    core::mem::forget(node.on_receive(|packet| {
+        crate::admin_responder::admit(packet);
         false
     }));
     // Identity Request observability tap. The actual reply is produced by

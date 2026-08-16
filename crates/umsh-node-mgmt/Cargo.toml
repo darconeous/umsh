@@ -9,8 +9,32 @@ documentation = "https://darconeous.github.io/umsh/docs/rust/umsh_node_mgmt/"
 
 [features]
 default = ["std"]
-std = ["umsh-core/std"]
+std = ["alloc", "node", "umsh-core/std", "umsh-mac/std", "umsh-node/std"]
+alloc = []
+# The administrator half bound to a node: everything a device needs is
+# in the sans-IO engines, so a firmware build never pulls this in.
+# `umsh-node`'s PFS handling is behind its own `software-crypto`, and a
+# `Host` is not buildable without it.
+node = [
+    "dep:umsh-mac",
+    "dep:umsh-node",
+    "umsh-node/software-crypto",
+    "alloc",
+]
 
 [dependencies]
 umsh-core = { path = "../umsh-core", default-features = false }
+umsh-mac = { path = "../umsh-mac", default-features = false, optional = true }
+umsh-node = { path = "../umsh-node", default-features = false, optional = true }
 umsh-ulcp = { path = "../umsh-ulcp" }
+
+[dev-dependencies]
+# The `binding` integration test drives a real device session — the same
+# one the firmware runs — from the administrator engine, so the two halves
+# of the binding are exercised against each other rather than against a
+# stand-in. Nothing in the library depends on either.
+umsh-ulcp-device = { path = "../umsh-ulcp-device" }
+umsh-crypto = { path = "../umsh-crypto", features = ["software-crypto"] }
+# The session's duty ledger is a `blocking_mutex`, which needs a
+# critical-section implementation to link on the host.
+critical-section = { version = "1", features = ["std"] }

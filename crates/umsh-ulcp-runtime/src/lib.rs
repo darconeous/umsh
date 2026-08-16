@@ -27,6 +27,8 @@ pub mod log;
 pub mod transport_policy;
 
 // Gated so non-radio / non-persistent consumers stay lightweight.
+#[cfg(feature = "device-node")]
+pub mod admin_responder;
 #[cfg(feature = "counters")]
 pub mod counter_map;
 #[cfg(feature = "device-node")]

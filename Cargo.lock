@@ -3880,6 +3880,7 @@ dependencies = [
  "umsh-hal",
  "umsh-mac",
  "umsh-node",
+ "umsh-node-mgmt",
  "umsh-sync",
  "umsh-text",
  "umsh-ulcp",
@@ -4142,6 +4143,7 @@ dependencies = [
  "umsh-hal",
  "umsh-mac",
  "umsh-node",
+ "umsh-node-mgmt",
  "umsh-sync",
  "umsh-text",
  "umsh-ulcp",
@@ -4169,8 +4171,13 @@ dependencies = [
 name = "umsh-node-mgmt"
 version = "0.1.0"
 dependencies = [
+ "critical-section",
  "umsh-core",
+ "umsh-crypto",
+ "umsh-mac",
+ "umsh-node",
  "umsh-ulcp",
+ "umsh-ulcp-device",
 ]
 
 [[package]]
@@ -4241,6 +4248,7 @@ dependencies = [
  "umsh-journal-store",
  "umsh-mac",
  "umsh-node",
+ "umsh-node-mgmt",
  "umsh-radio-loraphy",
  "umsh-sync",
  "umsh-ulcp",
@@ -4298,12 +4306,14 @@ dependencies = [
  "clap",
  "hamaddr",
  "libc",
+ "rand 0.10.1",
  "rustyline",
  "shlex",
  "tokio",
  "tokio-serial",
  "umsh",
  "umsh-gnss",
+ "umsh-sync",
 ]
 
 [[package]]

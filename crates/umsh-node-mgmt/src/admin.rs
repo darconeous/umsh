@@ -96,9 +96,29 @@ impl<'a> Reassembly<'a> {
         Self { buf, len: 0 }
     }
 
+    /// Take up a reassembly whose position the caller kept.
+    ///
+    /// A caller that cannot hold the borrow between exchanges — anything
+    /// awaiting a radio round trip — keeps the storage and the length it
+    /// reached, and hands both back for the next fragment.
+    pub fn resume(buf: &'a mut [u8], len: usize) -> Self {
+        let len = len.min(buf.len());
+        Self { buf, len }
+    }
+
     /// The reply frame assembled so far.
     pub fn frame(&self) -> &[u8] {
         &self.buf[..self.len]
+    }
+
+    /// Octets assembled so far.
+    pub fn len(&self) -> usize {
+        self.len
+    }
+
+    /// Whether no fragment has been taken up yet.
+    pub fn is_empty(&self) -> bool {
+        self.len == 0
     }
 
     /// Discard what has been assembled, so the storage can serve
@@ -186,6 +206,15 @@ impl<const REQUEST: usize> Exchange<REQUEST> {
     /// advisory and present only during a continued read.
     pub fn remaining(&self) -> Option<u32> {
         self.remaining
+    }
+
+    /// When the outstanding attempt stops waiting, or `None` once the
+    /// exchange has finished.
+    pub fn deadline_ms(&self) -> Option<u64> {
+        match self.state {
+            State::Awaiting { deadline_ms, .. } => Some(deadline_ms),
+            State::Finished(_) => None,
+        }
     }
 
     /// What to do now: send an attempt, wait for the deadline, or stop.
@@ -300,7 +329,7 @@ impl<const REQUEST: usize> Exchange<REQUEST> {
         let contribution = if reassembly.len == 0 {
             response.frame
         } else {
-            trailing(&parsed)
+            crate::fragment::trailing(response.frame)
         };
         if !reassembly.append(contribution) {
             return Some(self.finish(Outcome::Failed(Failure::TooLarge)));
@@ -342,20 +371,6 @@ impl<const REQUEST: usize> Exchange<REQUEST> {
     fn finish(&mut self, outcome: Outcome) -> Step {
         self.state = State::Finished(outcome);
         Step::Done(outcome)
-    }
-}
-
-/// The trailing content of a reply frame: the value of a `CMD_PROP_IS`
-/// or the entry list of a `CMD_PROP_ARE`, which is what a fragment of a
-/// continued read carries.
-fn trailing<'a>(parsed: &Frame<'a>) -> &'a [u8] {
-    match parsed.command() {
-        Some(Cmd::PropIs) => match umsh_ulcp::pui::decode(parsed.payload) {
-            Ok((_, consumed)) => &parsed.payload[consumed..],
-            Err(_) => &[],
-        },
-        Some(Cmd::PropAre) => parsed.payload,
-        _ => &[],
     }
 }
 
@@ -548,8 +563,7 @@ mod tests {
             panic!("expected a reply, got {outcome:?}");
         };
         assert_eq!(len, assembled.len());
-        let parsed = Frame::parse(&assembled).expect("frame");
-        assert_eq!(trailing(&parsed), &value[..]);
+        assert_eq!(crate::fragment::trailing(&assembled), &value[..]);
     }
 
     #[test]
@@ -565,8 +579,11 @@ mod tests {
                 matches!(outcome, Outcome::Replied { .. }),
                 "chunk {chunk}: {outcome:?}"
             );
-            let parsed = Frame::parse(&assembled).expect("frame");
-            assert_eq!(trailing(&parsed), &value[..], "chunk {chunk}");
+            assert_eq!(
+                crate::fragment::trailing(&assembled),
+                &value[..],
+                "chunk {chunk}"
+            );
         }
     }
 
@@ -708,10 +725,7 @@ mod tests {
             })
         );
         // Nothing was contributed, and the read is still going.
-        assert_eq!(
-            Frame::parse(reassembly.frame()).map(|f| trailing(&f)),
-            Ok(&[1u8, 2][..])
-        );
+        assert_eq!(crate::fragment::trailing(reassembly.frame()), &[1u8, 2][..]);
         assert!(matches!(
             admin.poll(100 + RETRY_MS, &mut wire),
             Step::Send { .. }

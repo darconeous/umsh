@@ -4976,6 +4976,13 @@ mod firmware {
         let identity_rng = <IdentityRng as rand_core::SeedableRng>::from_seed(identity_seed);
         let mut node_seed = [0u8; 32];
         rng.fill_bytes(&mut node_seed).await;
+        // The Node Management cursor nonce. Drawn from the TRNG for the
+        // same reason as the seeds above and at the same moment, while
+        // the peripheral is still ours: it is what keeps a cursor issued
+        // before a reboot from being honored after one.
+        let mut admin_nonce = [0u8; 2];
+        rng.fill_bytes(&mut admin_nonce).await;
+        let admin_nonce = u16::from_be_bytes(admin_nonce);
 
         #[cfg(not(feature = "no-ble"))]
         let (controller, ble_store) = {
@@ -5146,6 +5153,8 @@ mod firmware {
                 node_seed,
                 t_frame_ms,
                 node_counters,
+                &INPUT_CH,
+                admin_nonce,
             )
             .await;
         }

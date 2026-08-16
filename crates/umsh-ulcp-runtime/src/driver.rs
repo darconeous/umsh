@@ -89,11 +89,44 @@ pub const FRAME_OUT_MAX: usize = 300;
 /// One raw ULCP frame moving through the driver.
 pub type FrameBuf = heapless::Vec<u8, FRAME_IN_MAX>;
 
+/// A Node Management Request's ULCP frame on its way into the session,
+/// and the response frame on its way back out.
+///
+/// The exchange crosses the driver's event loop rather than borrowing the
+/// session, because the session is exclusively owned by [`run`] and an
+/// exchange can await several platform round trips before it is finished.
+pub type AdminFrame = FrameBuf;
+
+/// One-slot return path for [`InEvent::Admin`].
+///
+/// A single static rather than a channel per request: there is one
+/// session driver per device, it serves one event at a time, and the
+/// responder that feeds it holds one exchange open at a time. An empty
+/// response — which is what a reset-class command produces — is
+/// distinguished by its length, so the responder always receives exactly
+/// one message per request and never has to time the loop out.
+pub static ADMIN_REPLY: Channel<
+    embassy_sync::blocking_mutex::raw::CriticalSectionRawMutex,
+    AdminFrame,
+    1,
+> = Channel::new();
+
 /// Framing-free receive path and connection edges into the driver.
 pub enum InEvent {
     Attached(Transport),
     Detached(Transport),
     Frame(Transport, FrameBuf),
+    /// One ULCP frame from a mesh administrator, whose response must fit
+    /// `reply_budget` octets. The driver answers on [`ADMIN_REPLY`].
+    ///
+    /// Authorization has already happened: the responder checked that the
+    /// packet arrived by unicast or blind unicast, that its source is
+    /// authenticated, and that the source key is listed in
+    /// `PROP_DEV_ADMINS`. Nothing that fails those checks reaches here.
+    Admin {
+        frame: AdminFrame,
+        reply_budget: usize,
+    },
     /// Someone cancelled a running locate alert at the device — the
     /// button press of whoever found the radio. Ignored when no alert is
     /// running, so a board may report the press unconditionally.
@@ -144,6 +177,11 @@ impl<M: RawMutex> TransportChannels<M> {
 /// The session's device-domain tables, mirrored to the board's device
 /// node whenever their generation moves (device-node plan increment 3).
 pub struct DevDomainSnapshot {
+    /// The session's device-domain generation when this snapshot was
+    /// taken. Every mutation moves it, which is what a Node Management
+    /// cursor encodes so that a position taken before a change is
+    /// detected rather than served wrong.
+    pub version: u32,
     pub channel_keys: heapless::Vec<[u8; 32], MAX_CHANNEL_KEYS>,
     pub peers: heapless::Vec<[u8; 32], MAX_DEV_PEERS>,
     /// `PROP_DEV_ADMINS`: the nodes allowed to manage this device over
@@ -486,31 +524,69 @@ impl Emitter {
         }
     }
 
-    /// Queue all staged frames for the active transport output task.
-    async fn flush<M: RawMutex>(
-        &mut self,
-        destination: Option<(Transport, u32)>,
-        out: &TransportChannels<M>,
-    ) {
-        if let Some((transport, generation)) = destination {
-            for index in 0..self.count {
-                let mut frame: FrameBuf = heapless::Vec::new();
-                if frame
-                    .extend_from_slice(&self.bufs[index][..self.lens[index]])
-                    .is_err()
-                {
-                    // FRAME_OUT_MAX == FrameBuf capacity, so this cannot
-                    // happen; assert in debug rather than silently drop.
-                    debug_assert!(false, "Emitter frame copy exceeded FrameBuf capacity");
-                    continue;
+    /// Hand all staged frames to whoever is being answered.
+    async fn flush<M: RawMutex>(&mut self, sink: &mut ReplySink<'_, M>) {
+        for index in 0..self.count {
+            let frame = &self.bufs[index][..self.lens[index]];
+            match sink {
+                ReplySink::Transport {
+                    destination: Some((transport, generation)),
+                    out,
+                } => {
+                    let mut copy: FrameBuf = heapless::Vec::new();
+                    if copy.extend_from_slice(frame).is_err() {
+                        // FRAME_OUT_MAX == FrameBuf capacity, so this
+                        // cannot happen; assert in debug rather than
+                        // silently drop.
+                        debug_assert!(false, "Emitter frame copy exceeded FrameBuf capacity");
+                        continue;
+                    }
+                    out.for_transport(*transport)
+                        .send(OutFrame {
+                            generation: *generation,
+                            frame: copy,
+                        })
+                        .await;
                 }
-                out.for_transport(transport)
-                    .send(OutFrame { generation, frame })
-                    .await;
+                // Nobody attached: the response has nowhere to go.
+                ReplySink::Transport {
+                    destination: None, ..
+                } => {}
+                ReplySink::Admin { reply } => {
+                    // An exchange is one request and one response. A
+                    // second frame would mean the session emitted
+                    // something unsolicited, which this binding does not
+                    // carry, so keep the first and account for the rest.
+                    if reply.is_empty() {
+                        let _ = reply.extend_from_slice(frame);
+                    } else {
+                        debug_assert!(false, "admin exchange emitted more than one frame");
+                    }
+                }
             }
         }
         self.count = 0;
     }
+}
+
+/// Where the frames a session emits while serving one command are
+/// delivered.
+///
+/// The command paths do not know which they are feeding — that is the
+/// point. A deferred property read makes the same `respond_*` call
+/// whether the value is going to an attached host over USB or back to an
+/// administrator across the mesh.
+enum ReplySink<'a, M: RawMutex> {
+    /// The attached host's output queue, or nowhere when none is
+    /// attached.
+    Transport {
+        destination: Option<(Transport, u32)>,
+        out: &'a TransportChannels<M>,
+    },
+    /// The response frame of a Node Management exchange, staged for the
+    /// responder that will envelope and transmit it. Empty when the
+    /// command produced no response, which is what a reset does.
+    Admin { reply: &'a mut AdminFrame },
 }
 
 /// Execute a radio side effect requested by the session.
@@ -672,6 +748,7 @@ fn sync_dev_domain<A, S, const TXQ: usize, E>(
     }
     *synced_version = session.dev_domain_version();
     let mut snapshot = DevDomainSnapshot {
+        version: *synced_version,
         channel_keys: heapless::Vec::new(),
         peers: heapless::Vec::new(),
         admins: heapless::Vec::new(),
@@ -703,6 +780,232 @@ fn sync_dev_domain<A, S, const TXQ: usize, E>(
         let _ = snapshot.admins.push(public_key);
     }
     env.publish_dev_domain(snapshot);
+}
+
+/// One ULCP frame to serve, and what its binding needs to know.
+enum Exchange<'a> {
+    /// A frame from the attached host. The reply is bounded by the
+    /// transport frame, which is what the session assumes by default.
+    Local(&'a [u8]),
+    /// A frame from a mesh administrator, whose reply must fit
+    /// `reply_budget` octets of Node Management payload.
+    Admin {
+        frame: &'a [u8],
+        reply_budget: usize,
+    },
+}
+
+/// Serve one ULCP frame to completion, deferred platform round trips
+/// included, delivering everything the session emits to `sink`.
+///
+/// This is the whole of the driver's command path, and it is deliberately
+/// one function for both bindings. A multi-property command is served
+/// entry by entry: each deferred value returns here for its platform
+/// round trip, and `resume_multi` hands back the next one until the reply
+/// is emitted. For every other command `resume_multi` answers `None` and
+/// the loop runs exactly once. None of that changes because the answer is
+/// going to the mesh instead of to a cable — the only thing that changes
+/// is where the frames go, which is `sink`'s business.
+async fn serve_frame<A, S, const TXQ: usize, M, const RX: usize, const TX: usize, E>(
+    session: &mut Session<A, S, TXQ>,
+    exchange: Exchange<'_>,
+    emitter: &mut Emitter,
+    sink: &mut ReplySink<'_, M>,
+    snapshot_buf: &mut [u8; SNAPSHOT_MAX],
+    rt: &DeviceRuntime<M, RX, TX>,
+    env: &mut E,
+) where
+    A: AesProvider,
+    S: Sha256Provider,
+    M: RawMutex,
+    E: DeviceEnv,
+{
+    let now_ms = Instant::now().as_millis();
+    let mut pending = match exchange {
+        Exchange::Local(bytes) => {
+            session.handle_frame(bytes, now_ms, &mut |frame: &[u8]| emitter.push(frame))
+        }
+        Exchange::Admin {
+            frame,
+            reply_budget,
+        } => session.handle_admin_frame(frame, now_ms, reply_budget, &mut |frame: &[u8]| {
+            emitter.push(frame)
+        }),
+    };
+    emitter.flush(sink).await;
+    while pending.is_some() {
+        match pending.take() {
+            Some(Effect::SampleRssi { tid }) => {
+                // Round-trip to the radio runner for an
+                // instantaneous RSSI sample, then answer the
+                // deferred PROP_PHY_RSSI get.
+                rt.ctl.request_rssi();
+                let sample = rt.ctl.wait_rssi().await;
+                session.respond_rssi(tid, sample, &mut |frame: &[u8]| emitter.push(frame));
+                emitter.flush(sink).await;
+            }
+            Some(Effect::SignIdentity { tid }) => {
+                // The session holds no signing key, so the
+                // platform builds the canonical node-identity
+                // payload from the same profile the Identity
+                // Request responder advertises and signs it
+                // with the device identity.
+                let mut blob = [0u8; IDENTITY_BLOB_MAX];
+                let signed = env.sign_identity(&mut blob).await;
+                session.respond_identity_blob(
+                    tid,
+                    signed.map(|len| &blob[..len]).ok_or(()),
+                    &mut |frame: &[u8]| emitter.push(frame),
+                );
+                emitter.flush(sink).await;
+            }
+            Some(Effect::SampleBattery { tid }) => {
+                // Round-trip to the platform battery
+                // source for a fresh measurement, then
+                // answer the deferred PROP_BATTERY get.
+                let sample = env.sample_battery().await;
+                session.respond_battery(tid, sample, &mut |frame: &[u8]| emitter.push(frame));
+                emitter.flush(sink).await;
+            }
+            Some(Effect::SampleIlluminance { tid }) => {
+                let millilux = env.sample_illuminance().await;
+                session.respond_illuminance(tid, millilux, &mut |frame: &[u8]| emitter.push(frame));
+                emitter.flush(sink).await;
+            }
+            Some(Effect::ReadTime { tid }) => {
+                let epoch = env.read_time().await;
+                session.respond_time(tid, epoch, &mut |frame: &[u8]| emitter.push(frame));
+                emitter.flush(sink).await;
+            }
+            Some(Effect::SampleGnss { tid, key }) => {
+                let sample = env.sample_gnss().await;
+                session.respond_gnss(tid, key, sample, &mut |frame: &[u8]| emitter.push(frame));
+                emitter.flush(sink).await;
+            }
+            Some(Effect::DrainQueue) => {
+                // Deliver the covered frames one per
+                // step, flushing between steps so the
+                // two-slot emitter never overflows and
+                // the transport applies backpressure.
+                loop {
+                    let more = session
+                        .drain_step(Instant::now().as_millis(), &mut |frame: &[u8]| {
+                            emitter.push(frame)
+                        });
+                    emitter.flush(sink).await;
+                    if !more {
+                        break;
+                    }
+                }
+                env.clear_attention();
+            }
+            Some(Effect::SaveSnapshot { tid }) => {
+                let result = match session.encode_snapshot(snapshot_buf) {
+                    Some(len) => env.persist_snapshot(&snapshot_buf[..len]).await,
+                    None => Err(()),
+                };
+                session.respond_save(tid, result, &mut |frame: &[u8]| emitter.push(frame));
+                emitter.flush(sink).await;
+            }
+            Some(Effect::ClearSaved { tid }) => {
+                // CMD_CLEAR covers all persisted
+                // provisioning: the snapshot and the
+                // independently persisted device
+                // identity. Each journal's tombstone is
+                // individually atomic; an interruption
+                // between them reports failure and the
+                // host's retry completes the erase.
+                let result = match env.clear_snapshot().await {
+                    Ok(()) => env.clear_identity().await,
+                    Err(()) => Err(()),
+                };
+                // With the identity durably gone, its
+                // counter boundaries are dead weight;
+                // drop them with it. (Kept if the
+                // identity clear failed — the identity
+                // then survives the reboot and still
+                // needs its TX boundary.)
+                if result.is_ok() {
+                    env.clear_counters().await;
+                }
+                session.respond_clear(tid, result, &mut |frame: &[u8]| emitter.push(frame));
+                emitter.flush(sink).await;
+            }
+            Some(Effect::ProvisionIdentity { tid }) => {
+                // Build the keypair (drawing a fresh
+                // secret from the platform RNG for
+                // on-device generation), persist it, and
+                // only then report the public key.
+                let result = match session.identity_request() {
+                    Some(source) => {
+                        let secret = match source {
+                            IdentitySource::Install(secret) => Ok(secret),
+                            IdentitySource::Generate => {
+                                let mut secret = [0u8; 32];
+                                env.fill_secret(&mut secret).map(|()| secret)
+                            }
+                        };
+                        match secret {
+                            Ok(secret) => {
+                                let (public_key, payload) = device_identity_record(&secret);
+                                env.persist_identity(&payload).await.map(|()| public_key)
+                            }
+                            Err(()) => Err(()),
+                        }
+                    }
+                    None => Err(()),
+                };
+                session.respond_identity(tid, result, &mut |frame: &[u8]| emitter.push(frame));
+                emitter.flush(sink).await;
+            }
+            Some(Effect::SetPairingPin { tid, pin }) => {
+                let applied = env.apply_pairing_pin(pin).await;
+                session.respond_pin_set(
+                    tid,
+                    applied.then_some(()).ok_or(()),
+                    &mut |frame: &[u8]| emitter.push(frame),
+                );
+                emitter.flush(sink).await;
+            }
+            Some(Effect::FactoryReset) => {
+                // Hand off to the platform, which erases every
+                // persistent journal and reboots. This never
+                // returns; no acknowledgement is sent because the
+                // reset drops the link. Any frames the session
+                // already staged were flushed above.
+                env.trace(format_args!("CMD_FACTORY_RESET: wiping all state + reboot"));
+                env.factory_reset().await
+            }
+            other => apply_effect(session, other, rt, env).await,
+        }
+        pending = session.resume_multi(Instant::now().as_millis(), &mut |frame: &[u8]| {
+            emitter.push(frame)
+        });
+        emitter.flush(sink).await;
+    }
+    // Whatever this exchange was, the next frame is served on its own
+    // terms. Restoring the local binding here rather than at the next
+    // frame's arrival keeps every other emitting path — a publication, a
+    // transmit completion, an alert deadline — reading the binding it
+    // expects.
+    session.end_admin_exchange();
+    // A device identity always exists. `CMD_CLEAR` erases the stored one
+    // without touching live state, and the `CMD_RST` that completes a
+    // factory reset is where the live copy catches up — leaving the device
+    // with none, which is the one state the invariant forbids. Regenerate
+    // here, exactly as first boot would, so the only way to reach an
+    // identityless device is to physically remove it from existence.
+    //
+    // The running device node keeps the *previous* key in its MAC until
+    // the next boot (identity is fixed at bring-up), and stops
+    // originating traffic because the dev-domain sync gate compares keys
+    // rather than counting them.
+    if session.dev_key().is_none() {
+        regenerate_device_identity(session, env).await;
+    }
+    if session.queued_frame_count() == 0 {
+        env.clear_attention();
+    }
 }
 
 /// Drive the ULCP session forever: restore persisted state, then
@@ -890,7 +1193,12 @@ where
                 // attached — `cancel_alert` handles that — and a press
                 // with no alert running is simply nothing.
                 let effect = session.cancel_alert(&mut |frame: &[u8]| emitter.push(frame));
-                emitter.flush(arbitration.destination(), rt.out).await;
+                emitter
+                    .flush(&mut ReplySink::Transport {
+                        destination: arbitration.destination(),
+                        out: rt.out,
+                    })
+                    .await;
                 apply_effect(&session, effect, &rt, &mut env).await;
             }
             Either4::First(InEvent::ToggleGnss) => {
@@ -899,7 +1207,12 @@ where
                 // every other write to it.
                 if let Some(enabled) = session.toggle_gnss(&mut |frame: &[u8]| emitter.push(frame))
                 {
-                    emitter.flush(arbitration.destination(), rt.out).await;
+                    emitter
+                        .flush(&mut ReplySink::Transport {
+                            destination: arbitration.destination(),
+                            out: rt.out,
+                        })
+                        .await;
                     env.gnss_switched(enabled);
                     // Keep an existing snapshot in step, so a switch the
                     // operator flipped is still flipped after a reboot.
@@ -920,214 +1233,48 @@ where
             }
             Either4::First(InEvent::Frame(transport, frame_bytes)) => {
                 if arbitration.accepts_frame(transport) {
-                    let now_ms = Instant::now().as_millis();
-                    let mut pending =
-                        session.handle_frame(&frame_bytes, now_ms, &mut |frame: &[u8]| {
-                            emitter.push(frame)
-                        });
-                    emitter.flush(arbitration.destination(), rt.out).await;
-                    // A multi-property command is served entry by entry:
-                    // each deferred value returns here for its platform
-                    // round trip, and `resume_multi` hands back the next
-                    // one until the reply is emitted. For every other
-                    // command `resume_multi` answers `None` and the loop
-                    // runs exactly once.
-                    while pending.is_some() {
-                        match pending.take() {
-                            Some(Effect::SampleRssi { tid }) => {
-                                // Round-trip to the radio runner for an
-                                // instantaneous RSSI sample, then answer the
-                                // deferred PROP_PHY_RSSI get.
-                                rt.ctl.request_rssi();
-                                let sample = rt.ctl.wait_rssi().await;
-                                session.respond_rssi(tid, sample, &mut |frame: &[u8]| {
-                                    emitter.push(frame)
-                                });
-                                emitter.flush(arbitration.destination(), rt.out).await;
-                            }
-                            Some(Effect::SignIdentity { tid }) => {
-                                // The session holds no signing key, so the
-                                // platform builds the canonical node-identity
-                                // payload from the same profile the Identity
-                                // Request responder advertises and signs it
-                                // with the device identity.
-                                let mut blob = [0u8; IDENTITY_BLOB_MAX];
-                                let signed = env.sign_identity(&mut blob).await;
-                                session.respond_identity_blob(
-                                    tid,
-                                    signed.map(|len| &blob[..len]).ok_or(()),
-                                    &mut |frame: &[u8]| emitter.push(frame),
-                                );
-                                emitter.flush(arbitration.destination(), rt.out).await;
-                            }
-                            Some(Effect::SampleBattery { tid }) => {
-                                // Round-trip to the platform battery
-                                // source for a fresh measurement, then
-                                // answer the deferred PROP_BATTERY get.
-                                let sample = env.sample_battery().await;
-                                session.respond_battery(tid, sample, &mut |frame: &[u8]| {
-                                    emitter.push(frame)
-                                });
-                                emitter.flush(arbitration.destination(), rt.out).await;
-                            }
-                            Some(Effect::SampleIlluminance { tid }) => {
-                                let millilux = env.sample_illuminance().await;
-                                session.respond_illuminance(
-                                    tid,
-                                    millilux,
-                                    &mut |frame: &[u8]| emitter.push(frame),
-                                );
-                                emitter.flush(arbitration.destination(), rt.out).await;
-                            }
-                            Some(Effect::ReadTime { tid }) => {
-                                let epoch = env.read_time().await;
-                                session.respond_time(tid, epoch, &mut |frame: &[u8]| {
-                                    emitter.push(frame)
-                                });
-                                emitter.flush(arbitration.destination(), rt.out).await;
-                            }
-                            Some(Effect::SampleGnss { tid, key }) => {
-                                let sample = env.sample_gnss().await;
-                                session.respond_gnss(tid, key, sample, &mut |frame: &[u8]| {
-                                    emitter.push(frame)
-                                });
-                                emitter.flush(arbitration.destination(), rt.out).await;
-                            }
-                            Some(Effect::DrainQueue) => {
-                                // Deliver the covered frames one per
-                                // step, flushing between steps so the
-                                // two-slot emitter never overflows and
-                                // the transport applies backpressure.
-                                loop {
-                                    let more = session.drain_step(
-                                        Instant::now().as_millis(),
-                                        &mut |frame: &[u8]| emitter.push(frame),
-                                    );
-                                    emitter.flush(arbitration.destination(), rt.out).await;
-                                    if !more {
-                                        break;
-                                    }
-                                }
-                                env.clear_attention();
-                            }
-                            Some(Effect::SaveSnapshot { tid }) => {
-                                let result = match session.encode_snapshot(&mut snapshot_buf) {
-                                    Some(len) => env.persist_snapshot(&snapshot_buf[..len]).await,
-                                    None => Err(()),
-                                };
-                                session.respond_save(tid, result, &mut |frame: &[u8]| {
-                                    emitter.push(frame)
-                                });
-                                emitter.flush(arbitration.destination(), rt.out).await;
-                            }
-                            Some(Effect::ClearSaved { tid }) => {
-                                // CMD_CLEAR covers all persisted
-                                // provisioning: the snapshot and the
-                                // independently persisted device
-                                // identity. Each journal's tombstone is
-                                // individually atomic; an interruption
-                                // between them reports failure and the
-                                // host's retry completes the erase.
-                                let result = match env.clear_snapshot().await {
-                                    Ok(()) => env.clear_identity().await,
-                                    Err(()) => Err(()),
-                                };
-                                // With the identity durably gone, its
-                                // counter boundaries are dead weight;
-                                // drop them with it. (Kept if the
-                                // identity clear failed — the identity
-                                // then survives the reboot and still
-                                // needs its TX boundary.)
-                                if result.is_ok() {
-                                    env.clear_counters().await;
-                                }
-                                session.respond_clear(tid, result, &mut |frame: &[u8]| {
-                                    emitter.push(frame)
-                                });
-                                emitter.flush(arbitration.destination(), rt.out).await;
-                            }
-                            Some(Effect::ProvisionIdentity { tid }) => {
-                                // Build the keypair (drawing a fresh
-                                // secret from the platform RNG for
-                                // on-device generation), persist it, and
-                                // only then report the public key.
-                                let result = match session.identity_request() {
-                                    Some(source) => {
-                                        let secret = match source {
-                                            IdentitySource::Install(secret) => Ok(secret),
-                                            IdentitySource::Generate => {
-                                                let mut secret = [0u8; 32];
-                                                env.fill_secret(&mut secret).map(|()| secret)
-                                            }
-                                        };
-                                        match secret {
-                                            Ok(secret) => {
-                                                let (public_key, payload) =
-                                                    device_identity_record(&secret);
-                                                env.persist_identity(&payload)
-                                                    .await
-                                                    .map(|()| public_key)
-                                            }
-                                            Err(()) => Err(()),
-                                        }
-                                    }
-                                    None => Err(()),
-                                };
-                                session.respond_identity(tid, result, &mut |frame: &[u8]| {
-                                    emitter.push(frame)
-                                });
-                                emitter.flush(arbitration.destination(), rt.out).await;
-                            }
-                            Some(Effect::SetPairingPin { tid, pin }) => {
-                                let applied = env.apply_pairing_pin(pin).await;
-                                session.respond_pin_set(
-                                    tid,
-                                    applied.then_some(()).ok_or(()),
-                                    &mut |frame: &[u8]| emitter.push(frame),
-                                );
-                                emitter.flush(arbitration.destination(), rt.out).await;
-                            }
-                            Some(Effect::FactoryReset) => {
-                                // Hand off to the platform, which erases every
-                                // persistent journal and reboots. This never
-                                // returns; no acknowledgement is sent because the
-                                // reset drops the link. Any frames the session
-                                // already staged were flushed above.
-                                env.trace(format_args!(
-                                    "CMD_FACTORY_RESET: wiping all state + reboot"
-                                ));
-                                env.factory_reset().await
-                            }
-                            other => apply_effect(&session, other, &rt, &mut env).await,
-                        }
-                        pending = session
-                            .resume_multi(Instant::now().as_millis(), &mut |frame: &[u8]| {
-                                emitter.push(frame)
-                            });
-                        emitter.flush(arbitration.destination(), rt.out).await;
-                    }
-                    // A device identity always exists. `CMD_CLEAR`
-                    // erases the stored one without touching live state,
-                    // and the `CMD_RST` that completes a factory reset
-                    // is where the live copy catches up — leaving the
-                    // device with none, which is the one state the
-                    // invariant forbids. Regenerate here, exactly as
-                    // first boot would, so the only way to reach an
-                    // identityless device is to physically remove it
-                    // from existence.
-                    //
-                    // The running device node keeps the *previous* key
-                    // in its MAC until the next boot (identity is
-                    // fixed at bring-up), and stops originating traffic
-                    // because the dev-domain sync gate compares keys
-                    // rather than counting them.
-                    if session.dev_key().is_none() {
-                        regenerate_device_identity(&mut session, &mut env).await;
-                    }
-                    if session.queued_frame_count() == 0 {
-                        env.clear_attention();
-                    }
+                    let mut sink = ReplySink::Transport {
+                        destination: arbitration.destination(),
+                        out: rt.out,
+                    };
+                    serve_frame(
+                        &mut session,
+                        Exchange::Local(&frame_bytes),
+                        &mut emitter,
+                        &mut sink,
+                        &mut snapshot_buf,
+                        &rt,
+                        &mut env,
+                    )
+                    .await;
                 }
+            }
+            Either4::First(InEvent::Admin {
+                frame,
+                reply_budget,
+            }) => {
+                // The responder is blocked on the reply channel, so this
+                // arm must always answer. An empty reply is the answer
+                // for a reset-class command, and for anything the session
+                // declined to respond to at all.
+                let mut reply = AdminFrame::new();
+                {
+                    let mut sink = ReplySink::Admin { reply: &mut reply };
+                    serve_frame(
+                        &mut session,
+                        Exchange::Admin {
+                            frame: &frame,
+                            reply_budget,
+                        },
+                        &mut emitter,
+                        &mut sink,
+                        &mut snapshot_buf,
+                        &rt,
+                        &mut env,
+                    )
+                    .await;
+                }
+                ADMIN_REPLY.send(reply).await;
             }
             Either4::Second(RxFrame { data, info }) => {
                 // While detached this may stage a delegated MAC
@@ -1150,7 +1297,12 @@ where
                 if session.queued_frame_count() > queued_before {
                     env.request_attention();
                 }
-                emitter.flush(arbitration.destination(), rt.out).await;
+                emitter
+                    .flush(&mut ReplySink::Transport {
+                        destination: arbitration.destination(),
+                        out: rt.out,
+                    })
+                    .await;
                 apply_effect(&session, effect, &rt, &mut env).await;
             }
             Either4::Third(result) => {
@@ -1162,7 +1314,12 @@ where
                 };
                 let effect =
                     session.on_tx_result(outcome, now_ms, &mut |frame: &[u8]| emitter.push(frame));
-                emitter.flush(arbitration.destination(), rt.out).await;
+                emitter
+                    .flush(&mut ReplySink::Transport {
+                        destination: arbitration.destination(),
+                        out: rt.out,
+                    })
+                    .await;
                 apply_effect(&session, effect, &rt, &mut env).await;
             }
             Either4::Fourth(Either::First(event)) => {
@@ -1182,7 +1339,12 @@ where
                         session.publish_gnss(key, &snapshot, emit);
                     }
                 }
-                emitter.flush(arbitration.destination(), rt.out).await;
+                emitter
+                    .flush(&mut ReplySink::Transport {
+                        destination: arbitration.destination(),
+                        out: rt.out,
+                    })
+                    .await;
             }
             Either4::Fourth(Either::Second(())) => {
                 // The alert outlived its deadline: stop the indication
@@ -1191,7 +1353,12 @@ where
                     .poll_alert(Instant::now().as_millis(), &mut |frame: &[u8]| {
                         emitter.push(frame)
                     });
-                emitter.flush(arbitration.destination(), rt.out).await;
+                emitter
+                    .flush(&mut ReplySink::Transport {
+                        destination: arbitration.destination(),
+                        out: rt.out,
+                    })
+                    .await;
                 apply_effect(&session, effect, &rt, &mut env).await;
             }
         }

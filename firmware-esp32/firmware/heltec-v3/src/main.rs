@@ -2216,6 +2216,12 @@ async fn main(spawner: Spawner) {
     let identity_rng = <IdentityRng as rand_core::SeedableRng>::from_seed(identity_seed);
     let mut node_seed = [0u8; 32];
     rng.fill_bytes(&mut node_seed);
+    // The Node Management cursor nonce, from the same cryptographic
+    // source: it is what keeps a cursor issued before a reboot from being
+    // honored after one.
+    let mut admin_nonce = [0u8; 2];
+    rng.fill_bytes(&mut admin_nonce);
+    let admin_nonce = u16::from_be_bytes(admin_nonce);
 
     let boot_identity = boot_identity_keys.as_ref().map(|(_secret, public)| *public);
 
@@ -2302,6 +2308,8 @@ async fn main(spawner: Spawner) {
             node_seed,
             t_frame_ms,
             node_counters,
+            &INPUT_CH,
+            admin_nonce,
         )
         .await;
     }

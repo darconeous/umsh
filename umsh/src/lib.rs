@@ -39,6 +39,7 @@ pub use umsh_hal as hal;
 pub use umsh_mac as mac;
 pub use umsh_mac::Platform;
 pub use umsh_node as node;
+pub use umsh_node_mgmt as node_mgmt;
 pub use umsh_text as text;
 pub use umsh_ulcp as ulcp_wire;
 pub use umsh_uri as uri;

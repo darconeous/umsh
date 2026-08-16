@@ -63,6 +63,7 @@ device-node = [
     "dep:umsh-core",
     "dep:umsh-mac",
     "dep:umsh-node",
+    "dep:umsh-node-mgmt",
     "dep:umsh-sync",
     "umsh-hal/embassy",
     "dep:rand",
@@ -91,6 +92,7 @@ heapless = { workspace = true, optional = true }
 umsh-core = { path = "../umsh-core", default-features = false, optional = true }
 umsh-mac = { path = "../umsh-mac", default-features = false, features = ["software-crypto"], optional = true }
 umsh-node = { path = "../umsh-node", default-features = false, features = ["alloc", "software-crypto"], optional = true }
+umsh-node-mgmt = { path = "../umsh-node-mgmt", default-features = false, optional = true }
 umsh-gnss = { path = "../umsh-gnss", default-features = false, features = ["pump"], optional = true }
 umsh-sync = { path = "../umsh-sync", default-features = false, optional = true }
 rand = { workspace = true, optional = true }

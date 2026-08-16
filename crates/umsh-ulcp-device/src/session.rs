@@ -17,7 +17,7 @@ use umsh_ulcp::frame::{
 use umsh_ulcp::gnss::{self, GnssSnapshot};
 use umsh_ulcp::ids::{
     self, DEFAULT_ADVERT_INTERVAL_S, DEFAULT_BEACON_INTERVAL_S, MAX_AUTO_ANNOUNCE_INTERVAL_S,
-    MIN_AUTO_ANNOUNCE_INTERVAL_S, cap, prop, stream,
+    MIN_AUTO_ANNOUNCE_INTERVAL_S, admin_reachable, cap, prop, stream,
 };
 use umsh_ulcp::items::{self, Filter, ItemError, REGION_CODE_LEN};
 use umsh_ulcp::meta::{
@@ -2033,7 +2033,29 @@ pub struct Session<A: AesProvider, S: Sha256Provider, const TX: usize = 1> {
     /// the `CMD_PROP_ARE` answering it, which is why it belongs to no
     /// state class: it does not outlive the exchange that created it.
     multi: Option<MultiState>,
+    /// Which binding the frame being served arrived over. Set by the
+    /// entry point and held across deferred platform round trips, so a
+    /// `respond_*` completing an admin exchange still answers by the
+    /// admin binding's rules.
+    binding: Binding,
     scratch: [u8; SCRATCH],
+}
+
+/// Which binding a frame arrived over.
+///
+/// The command grammar and the property surface are the same either way;
+/// what differs is who is asking. A local host is tethered to the device
+/// and owns the session and host domains; a mesh administrator reaches
+/// the device domain and nothing else (spec §Node Management —
+/// Authorization).
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Default)]
+pub enum Binding {
+    /// The attached host's transport: USB-CDC, UART, or bonded BLE.
+    #[default]
+    Local,
+    /// A Node Management Request from a listed administrator, arriving
+    /// over the mesh.
+    Admin,
 }
 
 /// Largest multi-property request the session accepts, and the most it
@@ -2139,6 +2161,7 @@ impl<A: AesProvider, S: Sha256Provider, const TX: usize> Session<A, S, TX> {
             alert: AlertState::None,
             alert_deadline_ms: None,
             multi: None,
+            binding: Binding::Local,
             scratch: [0; SCRATCH],
         }
     }
@@ -2306,7 +2329,7 @@ impl<A: AesProvider, S: Sha256Provider, const TX: usize> Session<A, S, TX> {
         // The device tables were rebuilt from post-reset (and possibly
         // the saved snapshot); the node must re-sync.
         self.bump_dev_domain();
-        self.send_status(TID_UNSOLICITED, reason, emit);
+        self.announce_status(reason, emit);
         self.apply_radio()
     }
 
@@ -2461,6 +2484,66 @@ impl<A: AesProvider, S: Sha256Provider, const TX: usize> Session<A, S, TX> {
         reply_budget: usize,
         emit: &mut impl FnMut(&[u8]),
     ) -> Option<Effect> {
+        self.binding = Binding::Local;
+        self.dispatch_frame(bytes, now_ms, reply_budget, emit)
+    }
+
+    /// Handle one ULCP frame carried in a Node Management Request from a
+    /// listed administrator, whose response must fit `reply_budget`
+    /// octets.
+    ///
+    /// The caller has already established what this binding requires and
+    /// the session cannot see: that the packet arrived by unicast or
+    /// blind unicast, that its source is authenticated, and that the
+    /// source key is listed in `PROP_DEV_ADMINS`. Everything else the
+    /// binding changes is here — the property surface an administrator
+    /// reaches, the commands it may not use, and the fact that responses
+    /// are correlated by token rather than by TID, so a frame whose TID
+    /// is zero (as this binding requires) is still answered.
+    ///
+    /// The binding stays in effect across the deferred round trips of
+    /// this exchange, which is what lets the ordinary `respond_*` methods
+    /// complete it. Call [`Session::end_admin_exchange`] when the
+    /// exchange is over.
+    pub fn handle_admin_frame(
+        &mut self,
+        bytes: &[u8],
+        now_ms: u64,
+        reply_budget: usize,
+        emit: &mut impl FnMut(&[u8]),
+    ) -> Option<Effect> {
+        self.binding = Binding::Admin;
+        // A local binding ignores a frame it cannot parse — the host
+        // will notice its own transport went wrong. An administrator is
+        // owed an answer, because silence over the mesh is
+        // indistinguishable from a lost packet and it would retransmit
+        // the same unparseable frame until it gave up.
+        if Frame::parse(bytes).is_err() {
+            self.send_status(TID_UNSOLICITED, Status::PARSE_ERROR, emit);
+            return None;
+        }
+        self.dispatch_frame(bytes, now_ms, reply_budget, emit)
+    }
+
+    /// Return to serving the local binding after an administrative
+    /// exchange, deferred round trips included.
+    pub fn end_admin_exchange(&mut self) {
+        self.binding = Binding::Local;
+    }
+
+    /// Whether the frame in flight arrived over the mesh administrative
+    /// binding.
+    fn is_admin(&self) -> bool {
+        self.binding == Binding::Admin
+    }
+
+    fn dispatch_frame(
+        &mut self,
+        bytes: &[u8],
+        now_ms: u64,
+        reply_budget: usize,
+        emit: &mut impl FnMut(&[u8]),
+    ) -> Option<Effect> {
         // Malformed frames (bad flag, reserved bits, command MSB) are
         // ignored per the spec.
         let received = Frame::parse(bytes).ok()?;
@@ -2485,6 +2568,14 @@ impl<A: AesProvider, S: Sha256Provider, const TX: usize> Session<A, S, TX> {
                     None
                 }
             },
+            // The raw PHY stream and the host-facing receive queue are
+            // the tethered host's, and an administrator is not one.
+            // Answered as unrecognized commands rather than refused ones
+            // (spec §Node Management — Authorization).
+            Some(Cmd::StrSend | Cmd::QueueDrain) if self.is_admin() => {
+                self.complete(tid, Status::INVALID_COMMAND, emit);
+                None
+            }
             Some(Cmd::StrSend) => match StreamPayload::parse(received.payload) {
                 Ok(payload) => self.str_send(tid, &payload, now_ms, emit),
                 Err(_) => {
@@ -2544,7 +2635,7 @@ impl<A: AesProvider, S: Sha256Provider, const TX: usize> Session<A, S, TX> {
                 }
                 self.apply_saved_device();
                 self.session = SessionState::default();
-                self.send_status(TID_UNSOLICITED, Status::RESET_RESTORED, emit);
+                self.announce_status(Status::RESET_RESTORED, emit);
                 Some(self.apply_radio())
             }
             // Erase all persisted provisioning. Live state, BLE bonds,
@@ -3102,6 +3193,10 @@ impl<A: AesProvider, S: Sha256Provider, const TX: usize> Session<A, S, TX> {
         now_ms: u64,
         emit: &mut impl FnMut(&[u8]),
     ) -> Option<Effect> {
+        if self.is_admin() && !admin_reachable(key) {
+            self.complete(tid, Status::PROP_NOT_FOUND, emit);
+            return None;
+        }
         // PROP_PHY_RSSI is an instantaneous radio reading the session cannot
         // produce on its own. While the PHY is enabled (in RX), defer to the
         // caller to sample it; while disabled there is no ambient RSSI to read.
@@ -3750,6 +3845,10 @@ impl<A: AesProvider, S: Sha256Provider, const TX: usize> Session<A, S, TX> {
         now_ms: u64,
         emit: &mut impl FnMut(&[u8]),
     ) -> Option<Effect> {
+        if self.is_admin() && !admin_reachable(key) {
+            self.complete(tid, Status::PROP_NOT_FOUND, emit);
+            return None;
+        }
         if key == prop::BLE_PAIRING_PIN {
             let pin = if value.is_empty() {
                 None
@@ -4185,6 +4284,9 @@ impl<A: AesProvider, S: Sha256Provider, const TX: usize> Session<A, S, TX> {
     /// `CMD_PROP_INSERT`: add one item (in item form, no length prefix)
     /// to a multi-value property.
     fn prop_insert(&mut self, tid: u8, key: u32, item: &[u8], emit: &mut impl FnMut(&[u8])) {
+        if self.is_admin() && !admin_reachable(key) {
+            return self.complete(tid, Status::PROP_NOT_FOUND, emit);
+        }
         match key {
             prop::HOST_RX_FILTERS => {
                 let filter = match decode_filter(item) {
@@ -4278,6 +4380,9 @@ impl<A: AesProvider, S: Sha256Provider, const TX: usize> Session<A, S, TX> {
     /// `CMD_PROP_REMOVE`: remove the item matching the selector from a
     /// multi-value property.
     fn prop_remove(&mut self, tid: u8, key: u32, selector: &[u8], emit: &mut impl FnMut(&[u8])) {
+        if self.is_admin() && !admin_reachable(key) {
+            return self.complete(tid, Status::PROP_NOT_FOUND, emit);
+        }
         match key {
             prop::HOST_RX_FILTERS => {
                 // The remove selector is the full item.
@@ -4379,8 +4484,13 @@ impl<A: AesProvider, S: Sha256Provider, const TX: usize> Session<A, S, TX> {
 
     /// Refuse key-bearing writes over a transport that does not meet
     /// its security binding (spec §Provisioning Security).
+    ///
+    /// The mesh administrative binding meets it inherently: an executed
+    /// request has already arrived authenticated and encrypted from a
+    /// listed administrator, which is a stronger statement than either
+    /// physical possession or a bonded link.
     fn require_secure_link(&self) -> Result<(), Status> {
-        if self.link_secure {
+        if self.link_secure || self.is_admin() {
             Ok(())
         } else {
             Err(Status::INVALID_STATE)
@@ -4807,13 +4917,23 @@ impl<A: AesProvider, S: Sha256Provider, const TX: usize> Session<A, S, TX> {
             state.truncated |= !state.push_entry(key, value);
             return;
         }
-        if tid == TID_UNSOLICITED {
+        if self.suppress_response(tid) {
             return;
         }
         let mut buf = [0u8; PROP_BUF + 16];
         if let Ok(len) = frame::prop_is(&mut buf, tid, key, value) {
             emit(&buf[..len]);
         }
+    }
+
+    /// Whether a correlated response to a command bearing `tid` is owed.
+    ///
+    /// On a local binding TID 0 is fire-and-forget and the spec grants it
+    /// no response. The administrative binding requires TID 0 on every
+    /// frame and correlates by token instead, so there is no
+    /// fire-and-forget form there and every request is answered.
+    fn suppress_response(&self, tid: u8) -> bool {
+        tid == TID_UNSOLICITED && !self.is_admin()
     }
 
     /// Emit an *unsolicited* `CMD_PROP_IS` (TID 0) for `key`: the device
@@ -4845,7 +4965,7 @@ impl<A: AesProvider, S: Sha256Provider, const TX: usize> Session<A, S, TX> {
         digest: &[u8],
         emit: &mut impl FnMut(&[u8]),
     ) {
-        if tid == TID_UNSOLICITED {
+        if self.suppress_response(tid) {
             return;
         }
         let mut buf = [0u8; PROP_BUF + 16];
@@ -4863,7 +4983,7 @@ impl<A: AesProvider, S: Sha256Provider, const TX: usize> Session<A, S, TX> {
         digest: &[u8],
         emit: &mut impl FnMut(&[u8]),
     ) {
-        if tid == TID_UNSOLICITED {
+        if self.suppress_response(tid) {
             return;
         }
         let mut buf = [0u8; PROP_BUF + 16];
@@ -4898,11 +5018,29 @@ impl<A: AesProvider, S: Sha256Provider, const TX: usize> Session<A, S, TX> {
             state.truncated |= !state.push_status(status);
             return;
         }
-        if tid == TID_UNSOLICITED {
+        if self.suppress_response(tid) {
             self.last_status = status;
         } else {
             self.send_status(tid, status, emit);
         }
+    }
+
+    /// Publish a status the requester did not ask for: a reset notice, or
+    /// `STATUS_RESET_RESTORED`.
+    ///
+    /// The counterpart to [`Self::complete`], and the reason the
+    /// administrative binding needs the two told apart. That binding
+    /// carries nothing the device was not asked for — a reset command is
+    /// answered by no response payload at all, its delivery confirmed by
+    /// the MAC acknowledgment and its completion by a later exchange
+    /// reading `PROP_LAST_STATUS`. The status is still recorded, which is
+    /// what that later exchange reads.
+    fn announce_status(&mut self, status: Status, emit: &mut impl FnMut(&[u8])) {
+        if self.is_admin() {
+            self.last_status = status;
+            return;
+        }
+        self.send_status(TID_UNSOLICITED, status, emit);
     }
 }
 
@@ -10218,6 +10356,209 @@ mod tests {
             "TID-zero drain has no completion response"
         );
         assert_eq!(last_status_of(&mut session), Status::OK.0);
+    }
+
+    // ─── The mesh administrative binding ─────────────────────────────
+
+    /// Drive one administrative exchange the way the responder does:
+    /// hand the frame over, serve nothing (these cases defer nothing),
+    /// and end the exchange.
+    fn admin(session: &mut TestSession, request: &[u8]) -> Vec<Vec<u8>> {
+        let mut emitted = Vec::new();
+        let effect = session.handle_admin_frame(request, 0, 180, &mut |bytes: &[u8]| {
+            emitted.push(bytes.to_vec())
+        });
+        assert!(effect.is_none(), "this exchange defers nothing");
+        session.end_admin_exchange();
+        emitted
+    }
+
+    /// The whole point of the binding's TID handling: correlation is by
+    /// token, so a request whose TID is zero — which the spec requires —
+    /// is still answered, where a local host's TID-zero request is
+    /// fire-and-forget.
+    #[test]
+    fn an_admin_request_is_answered_despite_its_zero_tid() {
+        let mut session = test_session();
+        let mut buf = [0u8; 16];
+        let len = frame::prop_get(&mut buf, TID_UNSOLICITED, prop::PROTOCOL_VERSION).unwrap();
+        let emitted = admin(&mut session, &buf[..len]);
+        assert_eq!(emitted.len(), 1);
+        let (tid, key, _) = parse_prop_is(&emitted[0]);
+        assert_eq!(tid, TID_UNSOLICITED);
+        assert_eq!(key, prop::PROTOCOL_VERSION);
+
+        // The same request over the local binding is answered by nothing.
+        let (emitted, _) = dispatch(&mut session, &buf[..len], 0);
+        assert!(emitted.is_empty());
+    }
+
+    #[test]
+    fn an_unparseable_admin_frame_is_answered_rather_than_ignored() {
+        let mut session = test_session();
+        let emitted = admin(&mut session, &[]);
+        assert_eq!(emitted.len(), 1);
+        expect_status(&emitted[0], TID_UNSOLICITED, Status::PARSE_ERROR);
+    }
+
+    #[test]
+    fn the_host_transports_are_not_an_admins_to_command() {
+        let mut session = test_session();
+        enable(&mut session);
+        let mut buf = [0u8; 64];
+        for len in [
+            frame::str_send(&mut buf, TID_UNSOLICITED, stream::PHY_RAW, b"hi", &[]).unwrap(),
+            frame::queue_drain(&mut buf, TID_UNSOLICITED).unwrap(),
+        ]
+        .map(|len| len)
+        {
+            let emitted = admin(&mut session, &buf[..len]);
+            assert_eq!(emitted.len(), 1);
+            expect_status(&emitted[0], TID_UNSOLICITED, Status::INVALID_COMMAND);
+        }
+    }
+
+    #[test]
+    fn the_host_domain_does_not_exist_for_an_admin() {
+        let mut session = test_session();
+        let mut buf = [0u8; 64];
+        for key in [
+            prop::HOST_KEY,
+            prop::HOST_CHANNEL_KEYS,
+            prop::HOST_PEER_KEYS,
+            prop::HOST_RX_FILTERS,
+            prop::HOST_AUTO_ACK,
+            prop::HOST_RX_QUEUE_COUNT,
+            prop::HOST_RX_QUEUE_CAPACITY,
+            prop::HOST_RX_QUEUE_DROPPED,
+            prop::MAC_PROMISCUOUS,
+            prop::MAC_BACKHAUL,
+            prop::DEV_PRIVATE_KEY,
+        ] {
+            let len = frame::prop_get(&mut buf, TID_UNSOLICITED, key).unwrap();
+            let emitted = admin(&mut session, &buf[..len]);
+            expect_status(&emitted[0], TID_UNSOLICITED, Status::PROP_NOT_FOUND);
+
+            let len = frame::prop_set(&mut buf, TID_UNSOLICITED, key, &[0]).unwrap();
+            let emitted = admin(&mut session, &buf[..len]);
+            expect_status(&emitted[0], TID_UNSOLICITED, Status::PROP_NOT_FOUND);
+
+            let len = frame::prop_insert(&mut buf, TID_UNSOLICITED, key, &[0; 32]).unwrap();
+            let emitted = admin(&mut session, &buf[..len]);
+            expect_status(&emitted[0], TID_UNSOLICITED, Status::PROP_NOT_FOUND);
+
+            let len = frame::prop_remove(&mut buf, TID_UNSOLICITED, key, &[0; 32]).unwrap();
+            let emitted = admin(&mut session, &buf[..len]);
+            expect_status(&emitted[0], TID_UNSOLICITED, Status::PROP_NOT_FOUND);
+        }
+    }
+
+    /// Key-bearing device-domain writes are the reason the binding
+    /// declares itself secure: they must succeed remotely on a session
+    /// whose local transport is insecure, because there is no local
+    /// transport involved at all.
+    #[test]
+    fn device_domain_key_material_may_be_provisioned_remotely() {
+        let mut session = Session::new(test_config(), Status::RESET_POWER_ON, test_engine());
+        session.attach(false);
+        let mut buf = [0u8; 64];
+
+        // Insecure and local: refused for the transport it arrived on.
+        let len = frame::prop_insert(
+            &mut buf,
+            5,
+            prop::DEV_CHANNEL_KEYS,
+            &[7u8; items::CHANNEL_KEY_LEN],
+        )
+        .unwrap();
+        let (emitted, _) = dispatch(&mut session, &buf[..len], 0);
+        expect_status(&emitted[0], 5, Status::INVALID_STATE);
+
+        let len = frame::prop_insert(
+            &mut buf,
+            TID_UNSOLICITED,
+            prop::DEV_CHANNEL_KEYS,
+            &[7u8; items::CHANNEL_KEY_LEN],
+        )
+        .unwrap();
+        let emitted = admin(&mut session, &buf[..len]);
+        assert_eq!(
+            Frame::parse(&emitted[0]).unwrap().command(),
+            Some(Cmd::PropInserted)
+        );
+    }
+
+    /// A reset-class command executes and answers with nothing: the
+    /// administrator's exchange completes on the MAC acknowledgment.
+    /// `CMD_RESTORE` with nothing saved is not a reset, so it still
+    /// reports why it did nothing.
+    #[test]
+    fn a_reset_produces_no_response_but_a_refused_restore_does() {
+        let mut session = test_session();
+        let mut buf = [0u8; 16];
+
+        let len = frame::reset(&mut buf, TID_UNSOLICITED).unwrap();
+        let mut emitted = Vec::new();
+        let effect = session.handle_admin_frame(&buf[..len], 0, 180, &mut |bytes: &[u8]| {
+            emitted.push(bytes.to_vec())
+        });
+        session.end_admin_exchange();
+        assert!(matches!(effect, Some(Effect::ApplyRadio(_))));
+        assert!(emitted.is_empty(), "a reset is answered by no response");
+
+        let len = frame::restore(&mut buf, TID_UNSOLICITED).unwrap();
+        let emitted = admin(&mut session, &buf[..len]);
+        expect_status(&emitted[0], TID_UNSOLICITED, Status::INVALID_STATE);
+    }
+
+    /// The binding is a property of the exchange, not of the session.
+    /// Once it ends, TID zero is fire-and-forget again.
+    #[test]
+    fn ending_an_exchange_restores_the_local_binding() {
+        let mut session = test_session();
+        let mut buf = [0u8; 16];
+        let len = frame::prop_get(&mut buf, TID_UNSOLICITED, prop::HOST_AUTO_ACK).unwrap();
+        assert_eq!(admin(&mut session, &buf[..len]).len(), 1);
+
+        let (emitted, _) = dispatch(&mut session, &buf[..len], 0);
+        assert!(emitted.is_empty(), "the local binding is back");
+        // And the host domain is the host's again.
+        let (_, _, value) = parse_prop_is(&{
+            let len = frame::prop_get(&mut buf, 3, prop::HOST_AUTO_ACK).unwrap();
+            dispatch(&mut session, &buf[..len], 0).0[0].clone()
+        });
+        assert_eq!(value.len(), 1);
+    }
+
+    /// A multi read reaches the device domain and reports the
+    /// out-of-reach slots in place, without ending the sequence.
+    #[test]
+    fn a_multi_read_reports_out_of_reach_slots_in_place() {
+        let mut session = test_session();
+        let mut buf = [0u8; 64];
+        let len = frame::prop_multi_get(
+            &mut buf,
+            TID_UNSOLICITED,
+            &[prop::PROTOCOL_VERSION, prop::HOST_AUTO_ACK, prop::DEV_MODEL],
+        )
+        .unwrap();
+        let mut emitted = Vec::new();
+        let effect = session.handle_admin_frame(&buf[..len], 0, 180, &mut |bytes: &[u8]| {
+            emitted.push(bytes.to_vec())
+        });
+        session.end_admin_exchange();
+        assert!(effect.is_none());
+        let parsed = Frame::parse(&emitted[0]).unwrap();
+        assert_eq!(parsed.command(), Some(Cmd::PropAre));
+        let entries: Vec<_> = MultiEntries::new(parsed.payload)
+            .map(|entry| entry.unwrap())
+            .map(|entry| (entry.key, entry.value.to_vec()))
+            .collect();
+        assert_eq!(entries.len(), 3);
+        assert_eq!(entries[0].0, prop::PROTOCOL_VERSION);
+        assert_eq!(entries[1].0, prop::LAST_STATUS);
+        assert_eq!(entry_status(&entries[1].1), Status::PROP_NOT_FOUND);
+        assert_eq!(entries[2].0, prop::DEV_MODEL);
     }
 
     #[test]

@@ -29,6 +29,12 @@ type DeviceNode = node::DeviceNode<CounterStore>;
 type DeviceNodeHandle = node::DeviceNodeHandle<CounterStore>;
 type DeviceNodeHost = node::DeviceNodeHost<CounterStore>;
 
+/// The driver's inbound event channel, which a Node Management exchange
+/// crosses to reach the session.
+type SessionInput = umsh_ulcp_runtime::driver::InputChannel<
+    embassy_sync::blocking_mutex::raw::CriticalSectionRawMutex,
+>;
+
 static NODE_MAC_CELL: node::DeviceNodeMacCell<CounterStore> = StaticCell::new();
 
 // ─── Task shims ──────────────────────────────────────────────────────────────
@@ -67,6 +73,11 @@ async fn node_advert_task(mac: DeviceNodeHandle) {
     node::advert_loop(mac).await
 }
 
+#[embassy_executor::task]
+async fn node_admin_task(node_handle: DeviceNode, input: &'static SessionInput, nonce: u16) {
+    umsh_ulcp_runtime::admin_responder::responder_loop(node_handle, input, nonce).await
+}
+
 // ─── Bring-up ────────────────────────────────────────────────────────────────
 
 /// This board has no battery-level estimator to feed and no indicator
@@ -83,6 +94,8 @@ pub async fn bring_up(
     node_seed: [u8; 32],
     t_frame_ms: u32,
     counters: &'static crate::NodeCountersMutex,
+    input: &'static SessionInput,
+    admin_nonce: u16,
 ) {
     // Seed the node's copy of the device name before bring-up, so the
     // Identity Request responder's profile is correct from its first
@@ -109,6 +122,7 @@ pub async fn bring_up(
     );
     spawner.spawn(node_dev_sync_task(parts.node.clone(), parts.mac, parts.node_key).unwrap());
     spawner.spawn(node_identity_profile_task(parts.node.clone()).unwrap());
+    spawner.spawn(node_admin_task(parts.node.clone(), input, admin_nonce).unwrap());
     spawner.spawn(
         node_beacon_task(
             parts.node,
