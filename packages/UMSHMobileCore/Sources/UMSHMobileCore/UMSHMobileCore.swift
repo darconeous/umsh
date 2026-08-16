@@ -1158,6 +1158,122 @@ public protocol MobileMeshSessionProtocol: AnyObject, Sendable {
     func applyChatArchiveResult(requestId: UInt32, kind: MobileChatArchiveResultKind, payload: Data) throws
 
     /**
+     * Read one property from a device across the mesh.
+     *
+     * Every `begin_management_*` call returns immediately with an
+     * operation identifier, and reports through `poll_update` — the same
+     * shape as `ping`, because it is the same kind of thing: a
+     * round-trip over a network that promises nothing. One operation runs
+     * at a time; starting another while one is outstanding fails it.
+     */
+    func beginManagementGet(peerAddress: String, propertyId: UInt32) throws  -> UInt64
+
+    /**
+     * Read several properties in one exchange.
+     *
+     * A device answers as many as fit and stops; the answers that arrive
+     * are the ones it sent, and the rest are simply absent. Requires
+     * `CAP_CMD_MULTI` on the device — one that lacks it refuses the whole
+     * request rather than answering part of it.
+     */
+    func beginManagementGetMany(peerAddress: String, propertyIds: [UInt32]) throws  -> UInt64
+
+    /**
+     * Add one item to a multiple-value property on a device across the
+     * mesh — a peer key, an administrator key, a channel key.
+     */
+    func beginManagementInsert(peerAddress: String, propertyId: UInt32, item: Data) throws  -> UInt64
+
+    /**
+     * Let one more node manage this device over the mesh, by adding its
+     * public key to `PROP_DEV_ADMINS`.
+     *
+     * Named rather than left to [`Self::begin_management_insert`] for the
+     * same reason `MobileUlcpSession::insert_device_admin` is: this is a
+     * decision about who may configure a node, and a caller should not
+     * have to name the property — or be able to reach a different one by
+     * naming it wrong. The device holds it live until a save.
+     */
+    func beginManagementInsertAdmin(peerAddress: String, publicKey: Data) throws  -> UInt64
+
+    /**
+     * Take one item out of a multiple-value property on a device across
+     * the mesh.
+     */
+    func beginManagementRemove(peerAddress: String, propertyId: UInt32, selector: Data) throws  -> UInt64
+
+    /**
+     * Take a node's authority to manage this device away again.
+     *
+     * A device that removes the administrator it is answering keeps
+     * answering this exchange — the reply is already authorized — and
+     * refuses the next one.
+     */
+    func beginManagementRemoveAdmin(peerAddress: String, publicKey: Data) throws  -> UInt64
+
+    /**
+     * Reset a device across the mesh.
+     *
+     * A device answers a reset with nothing — it is busy doing what was
+     * asked — so the operation ends `Acknowledged` on the MAC
+     * acknowledgment. `Restore` on a device holding no snapshot resets
+     * nothing and answers like any other command, which arrives as an
+     * ordinary `Replied` status.
+     */
+    func beginManagementReset(peerAddress: String, scope: MobileMeshResetScope) throws  -> UInt64
+
+    /**
+     * Persist a device's live configuration across the mesh.
+     */
+    func beginManagementSave(peerAddress: String) throws  -> UInt64
+
+    /**
+     * Write one property on a device across the mesh.
+     *
+     * The answer echoes what the property is now worth, which is what the
+     * device kept rather than what was sent. The change is live and
+     * unsaved; `begin_management_save` is what makes it survive a reboot.
+     */
+    func beginManagementSet(peerAddress: String, propertyId: UInt32, value: Data) throws  -> UInt64
+
+    /**
+     * Tell a device to make itself conspicuous, or to stop
+     * (`PROP_ALERT`).
+     *
+     * Live state, never saved: an alert is a thing happening now, and one
+     * restored at boot would be a device that woke up beeping. The device
+     * ends it on its own deadline as well, so a search that outlasts that
+     * is kept alive by asking again — the same contract as the local link,
+     * with the round trip of the mesh in front of it.
+     */
+    func beginManagementSetAlert(peerAddress: String, state: UlcpAlertState) throws  -> UInt64
+
+    /**
+     * Write several properties in one exchange, in order.
+     *
+     * A device applies them until the next answer would not fit and stops
+     * there, so a short answer means the remainder was never attempted.
+     * Each position echoes what that property is now worth.
+     */
+    func beginManagementSetMany(peerAddress: String, writes: [MobileMeshPropertyWriteRecord]) throws  -> UInt64
+
+    /**
+     * Read a device whole across the mesh, reducing what comes back into
+     * the same `UlcpSyncRecord` an attached radio produces.
+     *
+     * The crawl asks what the device can do, then asks for everything
+     * those capabilities imply and an administrator is allowed to see,
+     * in as many exchanges as the answers need. A property the device
+     * declines lands in `unreadable_properties` rather than ending the
+     * read — the same tolerance a bench attach has.
+     *
+     * Expensive over LoRa: tens of properties, several round trips. It is
+     * the "open this device's settings" operation, not something to run
+     * on a timer.
+     */
+    func beginRemoteSync(peerAddress: String) throws  -> UInt64
+
+    /**
      * Forget the route cached for `peer`, returning whether one was held.
      *
      * The peer, its keys, and its counters are untouched; only the learned
@@ -1246,6 +1362,18 @@ public protocol MobileMeshSessionProtocol: AnyObject, Sendable {
      * not remain in `Sending` indefinitely.
      */
     func failOutboundTransmissions() throws
+
+    /**
+     * This phone's own node public key, which is what a device lists in
+     * `PROP_DEV_ADMINS` to let this phone manage it over the mesh.
+     *
+     * Handing this to a radio the phone is attached to —
+     * `MobileUlcpSession::insert_device_admin` — is the whole of making
+     * this phone an administrator of that radio. Nothing else is
+     * exchanged: the session both ends derive comes from their two
+     * identities.
+     */
+    func nodePublicKey()  -> Data
 
     /**
      * Report the route the MAC will use for the next frame sent to `peer`.
@@ -1515,6 +1643,231 @@ open func applyChatArchiveResult(requestId: UInt32, kind: MobileChatArchiveResul
 }
 
     /**
+     * Read one property from a device across the mesh.
+     *
+     * Every `begin_management_*` call returns immediately with an
+     * operation identifier, and reports through `poll_update` — the same
+     * shape as `ping`, because it is the same kind of thing: a
+     * round-trip over a network that promises nothing. One operation runs
+     * at a time; starting another while one is outstanding fails it.
+     */
+open func beginManagementGet(peerAddress: String, propertyId: UInt32)throws  -> UInt64  {
+    return try  FfiConverterUInt64.lift(try rustCallWithError(FfiConverterTypeMobileMeshError_lift) {
+        uniffiCallStatus in
+    uniffi_umsh_mobile_core_fn_method_mobilemeshsession_begin_management_get(
+            self.uniffiCloneHandle(),
+        FfiConverterString.lower(peerAddress),
+        FfiConverterUInt32.lower(propertyId),uniffiCallStatus
+    )
+})
+}
+
+    /**
+     * Read several properties in one exchange.
+     *
+     * A device answers as many as fit and stops; the answers that arrive
+     * are the ones it sent, and the rest are simply absent. Requires
+     * `CAP_CMD_MULTI` on the device — one that lacks it refuses the whole
+     * request rather than answering part of it.
+     */
+open func beginManagementGetMany(peerAddress: String, propertyIds: [UInt32])throws  -> UInt64  {
+    return try  FfiConverterUInt64.lift(try rustCallWithError(FfiConverterTypeMobileMeshError_lift) {
+        uniffiCallStatus in
+    uniffi_umsh_mobile_core_fn_method_mobilemeshsession_begin_management_get_many(
+            self.uniffiCloneHandle(),
+        FfiConverterString.lower(peerAddress),
+        FfiConverterSequenceUInt32.lower(propertyIds),uniffiCallStatus
+    )
+})
+}
+
+    /**
+     * Add one item to a multiple-value property on a device across the
+     * mesh — a peer key, an administrator key, a channel key.
+     */
+open func beginManagementInsert(peerAddress: String, propertyId: UInt32, item: Data)throws  -> UInt64  {
+    return try  FfiConverterUInt64.lift(try rustCallWithError(FfiConverterTypeMobileMeshError_lift) {
+        uniffiCallStatus in
+    uniffi_umsh_mobile_core_fn_method_mobilemeshsession_begin_management_insert(
+            self.uniffiCloneHandle(),
+        FfiConverterString.lower(peerAddress),
+        FfiConverterUInt32.lower(propertyId),
+        FfiConverterData.lower(item),uniffiCallStatus
+    )
+})
+}
+
+    /**
+     * Let one more node manage this device over the mesh, by adding its
+     * public key to `PROP_DEV_ADMINS`.
+     *
+     * Named rather than left to [`Self::begin_management_insert`] for the
+     * same reason `MobileUlcpSession::insert_device_admin` is: this is a
+     * decision about who may configure a node, and a caller should not
+     * have to name the property — or be able to reach a different one by
+     * naming it wrong. The device holds it live until a save.
+     */
+open func beginManagementInsertAdmin(peerAddress: String, publicKey: Data)throws  -> UInt64  {
+    return try  FfiConverterUInt64.lift(try rustCallWithError(FfiConverterTypeMobileMeshError_lift) {
+        uniffiCallStatus in
+    uniffi_umsh_mobile_core_fn_method_mobilemeshsession_begin_management_insert_admin(
+            self.uniffiCloneHandle(),
+        FfiConverterString.lower(peerAddress),
+        FfiConverterData.lower(publicKey),uniffiCallStatus
+    )
+})
+}
+
+    /**
+     * Take one item out of a multiple-value property on a device across
+     * the mesh.
+     */
+open func beginManagementRemove(peerAddress: String, propertyId: UInt32, selector: Data)throws  -> UInt64  {
+    return try  FfiConverterUInt64.lift(try rustCallWithError(FfiConverterTypeMobileMeshError_lift) {
+        uniffiCallStatus in
+    uniffi_umsh_mobile_core_fn_method_mobilemeshsession_begin_management_remove(
+            self.uniffiCloneHandle(),
+        FfiConverterString.lower(peerAddress),
+        FfiConverterUInt32.lower(propertyId),
+        FfiConverterData.lower(selector),uniffiCallStatus
+    )
+})
+}
+
+    /**
+     * Take a node's authority to manage this device away again.
+     *
+     * A device that removes the administrator it is answering keeps
+     * answering this exchange — the reply is already authorized — and
+     * refuses the next one.
+     */
+open func beginManagementRemoveAdmin(peerAddress: String, publicKey: Data)throws  -> UInt64  {
+    return try  FfiConverterUInt64.lift(try rustCallWithError(FfiConverterTypeMobileMeshError_lift) {
+        uniffiCallStatus in
+    uniffi_umsh_mobile_core_fn_method_mobilemeshsession_begin_management_remove_admin(
+            self.uniffiCloneHandle(),
+        FfiConverterString.lower(peerAddress),
+        FfiConverterData.lower(publicKey),uniffiCallStatus
+    )
+})
+}
+
+    /**
+     * Reset a device across the mesh.
+     *
+     * A device answers a reset with nothing — it is busy doing what was
+     * asked — so the operation ends `Acknowledged` on the MAC
+     * acknowledgment. `Restore` on a device holding no snapshot resets
+     * nothing and answers like any other command, which arrives as an
+     * ordinary `Replied` status.
+     */
+open func beginManagementReset(peerAddress: String, scope: MobileMeshResetScope)throws  -> UInt64  {
+    return try  FfiConverterUInt64.lift(try rustCallWithError(FfiConverterTypeMobileMeshError_lift) {
+        uniffiCallStatus in
+    uniffi_umsh_mobile_core_fn_method_mobilemeshsession_begin_management_reset(
+            self.uniffiCloneHandle(),
+        FfiConverterString.lower(peerAddress),
+        FfiConverterTypeMobileMeshResetScope_lower(scope),uniffiCallStatus
+    )
+})
+}
+
+    /**
+     * Persist a device's live configuration across the mesh.
+     */
+open func beginManagementSave(peerAddress: String)throws  -> UInt64  {
+    return try  FfiConverterUInt64.lift(try rustCallWithError(FfiConverterTypeMobileMeshError_lift) {
+        uniffiCallStatus in
+    uniffi_umsh_mobile_core_fn_method_mobilemeshsession_begin_management_save(
+            self.uniffiCloneHandle(),
+        FfiConverterString.lower(peerAddress),uniffiCallStatus
+    )
+})
+}
+
+    /**
+     * Write one property on a device across the mesh.
+     *
+     * The answer echoes what the property is now worth, which is what the
+     * device kept rather than what was sent. The change is live and
+     * unsaved; `begin_management_save` is what makes it survive a reboot.
+     */
+open func beginManagementSet(peerAddress: String, propertyId: UInt32, value: Data)throws  -> UInt64  {
+    return try  FfiConverterUInt64.lift(try rustCallWithError(FfiConverterTypeMobileMeshError_lift) {
+        uniffiCallStatus in
+    uniffi_umsh_mobile_core_fn_method_mobilemeshsession_begin_management_set(
+            self.uniffiCloneHandle(),
+        FfiConverterString.lower(peerAddress),
+        FfiConverterUInt32.lower(propertyId),
+        FfiConverterData.lower(value),uniffiCallStatus
+    )
+})
+}
+
+    /**
+     * Tell a device to make itself conspicuous, or to stop
+     * (`PROP_ALERT`).
+     *
+     * Live state, never saved: an alert is a thing happening now, and one
+     * restored at boot would be a device that woke up beeping. The device
+     * ends it on its own deadline as well, so a search that outlasts that
+     * is kept alive by asking again — the same contract as the local link,
+     * with the round trip of the mesh in front of it.
+     */
+open func beginManagementSetAlert(peerAddress: String, state: UlcpAlertState)throws  -> UInt64  {
+    return try  FfiConverterUInt64.lift(try rustCallWithError(FfiConverterTypeMobileMeshError_lift) {
+        uniffiCallStatus in
+    uniffi_umsh_mobile_core_fn_method_mobilemeshsession_begin_management_set_alert(
+            self.uniffiCloneHandle(),
+        FfiConverterString.lower(peerAddress),
+        FfiConverterTypeUlcpAlertState_lower(state),uniffiCallStatus
+    )
+})
+}
+
+    /**
+     * Write several properties in one exchange, in order.
+     *
+     * A device applies them until the next answer would not fit and stops
+     * there, so a short answer means the remainder was never attempted.
+     * Each position echoes what that property is now worth.
+     */
+open func beginManagementSetMany(peerAddress: String, writes: [MobileMeshPropertyWriteRecord])throws  -> UInt64  {
+    return try  FfiConverterUInt64.lift(try rustCallWithError(FfiConverterTypeMobileMeshError_lift) {
+        uniffiCallStatus in
+    uniffi_umsh_mobile_core_fn_method_mobilemeshsession_begin_management_set_many(
+            self.uniffiCloneHandle(),
+        FfiConverterString.lower(peerAddress),
+        FfiConverterSequenceTypeMobileMeshPropertyWriteRecord.lower(writes),uniffiCallStatus
+    )
+})
+}
+
+    /**
+     * Read a device whole across the mesh, reducing what comes back into
+     * the same `UlcpSyncRecord` an attached radio produces.
+     *
+     * The crawl asks what the device can do, then asks for everything
+     * those capabilities imply and an administrator is allowed to see,
+     * in as many exchanges as the answers need. A property the device
+     * declines lands in `unreadable_properties` rather than ending the
+     * read — the same tolerance a bench attach has.
+     *
+     * Expensive over LoRa: tens of properties, several round trips. It is
+     * the "open this device's settings" operation, not something to run
+     * on a timer.
+     */
+open func beginRemoteSync(peerAddress: String)throws  -> UInt64  {
+    return try  FfiConverterUInt64.lift(try rustCallWithError(FfiConverterTypeMobileMeshError_lift) {
+        uniffiCallStatus in
+    uniffi_umsh_mobile_core_fn_method_mobilemeshsession_begin_remote_sync(
+            self.uniffiCloneHandle(),
+        FfiConverterString.lower(peerAddress),uniffiCallStatus
+    )
+})
+}
+
+    /**
      * Forget the route cached for `peer`, returning whether one was held.
      *
      * The peer, its keys, and its counters are untouched; only the learned
@@ -1720,6 +2073,25 @@ open func failOutboundTransmissions()throws   {try rustCallWithError(FfiConverte
             self.uniffiCloneHandle(),uniffiCallStatus
     )
 }
+}
+
+    /**
+     * This phone's own node public key, which is what a device lists in
+     * `PROP_DEV_ADMINS` to let this phone manage it over the mesh.
+     *
+     * Handing this to a radio the phone is attached to —
+     * `MobileUlcpSession::insert_device_admin` — is the whole of making
+     * this phone an administrator of that radio. Nothing else is
+     * exchanged: the session both ends derive comes from their two
+     * identities.
+     */
+open func nodePublicKey() -> Data  {
+    return try!  FfiConverterData.lift(try! rustCall() {
+        uniffiCallStatus in
+    uniffi_umsh_mobile_core_fn_method_mobilemeshsession_node_public_key(
+            self.uniffiCloneHandle(),uniffiCallStatus
+    )
+})
 }
 
     /**
@@ -2442,6 +2814,26 @@ public protocol MobileUlcpSessionProtocol: AnyObject, Sendable {
     func factoryReset() throws  -> UlcpSessionUpdateRecord
 
     /**
+     * Store one administrator public key on the radio's device identity
+     * (`PROP_DEV_ADMINS`), then persist with a chained `CMD_SAVE` when the
+     * device can.
+     *
+     * This is the bench half of node management: a key listed here may
+     * manage this radio over the mesh, so the phone puts its own node key
+     * on a radio it is attached to and manages it later from across the
+     * valley. The list is what authorizes an administrator — no pairwise
+     * provisioning follows, because the session is derived from the two
+     * identities.
+     *
+     * Requires an attached, otherwise-idle session on a device advertising
+     * `CAP_ADMIN`. Failures surface as `operation_error` with the device's
+     * status name — `NOMEM` when the list is full (capacity
+     * [`ulcp_max_dev_admins`]), `ALREADY` when the key is already listed,
+     * which callers should treat as success.
+     */
+    func insertDeviceAdmin(publicKey: Data) throws  -> UlcpSessionUpdateRecord
+
+    /**
      * Store one channel key on the radio's device identity
      * (`PROP_DEV_CHANNEL_KEYS`), then persist with a chained `CMD_SAVE` when
      * the device can.
@@ -2515,6 +2907,18 @@ public protocol MobileUlcpSessionProtocol: AnyObject, Sendable {
      * position does not re-read the PHY triple every time it looks.
      */
     func refreshPositioning() throws  -> UlcpSessionUpdateRecord
+
+    /**
+     * Remove one administrator public key from the radio's device identity
+     * (`PROP_DEV_ADMINS`), then persist with a chained `CMD_SAVE` when the
+     * device can.
+     *
+     * Same preconditions as [`Self::insert_device_admin`]. Emptying the
+     * list is how a device stops being manageable over the mesh at all.
+     * `ITEM_NOT_FOUND` surfaces as `operation_error` and callers should
+     * treat it as success — the key is not listed either way.
+     */
+    func removeDeviceAdmin(publicKey: Data) throws  -> UlcpSessionUpdateRecord
 
     /**
      * Remove one channel key from the radio's device identity
@@ -2839,6 +3243,34 @@ open func factoryReset()throws  -> UlcpSessionUpdateRecord  {
 }
 
     /**
+     * Store one administrator public key on the radio's device identity
+     * (`PROP_DEV_ADMINS`), then persist with a chained `CMD_SAVE` when the
+     * device can.
+     *
+     * This is the bench half of node management: a key listed here may
+     * manage this radio over the mesh, so the phone puts its own node key
+     * on a radio it is attached to and manages it later from across the
+     * valley. The list is what authorizes an administrator — no pairwise
+     * provisioning follows, because the session is derived from the two
+     * identities.
+     *
+     * Requires an attached, otherwise-idle session on a device advertising
+     * `CAP_ADMIN`. Failures surface as `operation_error` with the device's
+     * status name — `NOMEM` when the list is full (capacity
+     * [`ulcp_max_dev_admins`]), `ALREADY` when the key is already listed,
+     * which callers should treat as success.
+     */
+open func insertDeviceAdmin(publicKey: Data)throws  -> UlcpSessionUpdateRecord  {
+    return try  FfiConverterTypeUlcpSessionUpdateRecord_lift(try rustCallWithError(FfiConverterTypeMobileError_lift) {
+        uniffiCallStatus in
+    uniffi_umsh_mobile_core_fn_method_mobileulcpsession_insert_device_admin(
+            self.uniffiCloneHandle(),
+        FfiConverterData.lower(publicKey),uniffiCallStatus
+    )
+})
+}
+
+    /**
      * Store one channel key on the radio's device identity
      * (`PROP_DEV_CHANNEL_KEYS`), then persist with a chained `CMD_SAVE` when
      * the device can.
@@ -2947,6 +3379,26 @@ open func refreshPositioning()throws  -> UlcpSessionUpdateRecord  {
         uniffiCallStatus in
     uniffi_umsh_mobile_core_fn_method_mobileulcpsession_refresh_positioning(
             self.uniffiCloneHandle(),uniffiCallStatus
+    )
+})
+}
+
+    /**
+     * Remove one administrator public key from the radio's device identity
+     * (`PROP_DEV_ADMINS`), then persist with a chained `CMD_SAVE` when the
+     * device can.
+     *
+     * Same preconditions as [`Self::insert_device_admin`]. Emptying the
+     * list is how a device stops being manageable over the mesh at all.
+     * `ITEM_NOT_FOUND` surfaces as `operation_error` and callers should
+     * treat it as success — the key is not listed either way.
+     */
+open func removeDeviceAdmin(publicKey: Data)throws  -> UlcpSessionUpdateRecord  {
+    return try  FfiConverterTypeUlcpSessionUpdateRecord_lift(try rustCallWithError(FfiConverterTypeMobileError_lift) {
+        uniffiCallStatus in
+    uniffi_umsh_mobile_core_fn_method_mobileulcpsession_remove_device_admin(
+            self.uniffiCloneHandle(),
+        FfiConverterData.lower(publicKey),uniffiCallStatus
     )
 })
 }
@@ -4387,6 +4839,211 @@ public func FfiConverterTypeMobileMeshAdvertisementRecord_lower(_ value: MobileM
 }
 
 
+/**
+ * What occupied one position of a management answer.
+ */
+public struct MobileMeshManagementAnswerRecord: Equatable, Hashable {
+    public var propertyId: UInt32
+    /**
+     * What the device reports the property is worth. A write is echoed
+     * with the value the device actually kept, which is not always the
+     * one that was sent.
+     */
+    public var value: Data?
+    /**
+     * The status that stood in place of a value: refused, absent, or out
+     * of an administrator's reach.
+     */
+    public var statusCode: UInt32?
+
+    // Default memberwise initializers are never public by default, so we
+    // declare one manually.
+    public init(propertyId: UInt32,
+        /**
+         * What the device reports the property is worth. A write is echoed
+         * with the value the device actually kept, which is not always the
+         * one that was sent.
+         */value: Data?,
+        /**
+         * The status that stood in place of a value: refused, absent, or out
+         * of an administrator's reach.
+         */statusCode: UInt32?) {
+        self.propertyId = propertyId
+        self.value = value
+        self.statusCode = statusCode
+    }
+
+
+
+
+}
+
+#if compiler(>=6)
+extension MobileMeshManagementAnswerRecord: Sendable {}
+#endif
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public struct FfiConverterTypeMobileMeshManagementAnswerRecord: FfiConverterRustBuffer {
+    public static func read(from buf: inout (data: Data, offset: Data.Index)) throws -> MobileMeshManagementAnswerRecord {
+        return
+            try MobileMeshManagementAnswerRecord(
+                propertyId: FfiConverterUInt32.read(from: &buf),
+                value: FfiConverterOptionData.read(from: &buf),
+                statusCode: FfiConverterOptionUInt32.read(from: &buf)
+        )
+    }
+
+    public static func write(_ value: MobileMeshManagementAnswerRecord, into buf: inout [UInt8]) {
+        FfiConverterUInt32.write(value.propertyId, into: &buf)
+        FfiConverterOptionData.write(value.value, into: &buf)
+        FfiConverterOptionUInt32.write(value.statusCode, into: &buf)
+    }
+}
+
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public func FfiConverterTypeMobileMeshManagementAnswerRecord_lift(_ buf: RustBuffer) throws -> MobileMeshManagementAnswerRecord {
+    return try FfiConverterTypeMobileMeshManagementAnswerRecord.lift(buf)
+}
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public func FfiConverterTypeMobileMeshManagementAnswerRecord_lower(_ value: MobileMeshManagementAnswerRecord) -> RustBuffer {
+    return FfiConverterTypeMobileMeshManagementAnswerRecord.lower(value)
+}
+
+
+/**
+ * One report from an operation started with a `begin_management_*` call.
+ *
+ * Several may arrive for one `operation_id`: any number of `Progress`
+ * reports, then exactly one ending.
+ */
+public struct MobileMeshManagementEventRecord: Equatable, Hashable {
+    public var operationId: UInt64
+    /**
+     * Canonical Base58 address of the device being managed.
+     */
+    public var peerAddress: String
+    public var outcome: MobileMeshManagementOutcome
+    /**
+     * The answers, in the order they were asked for.
+     */
+    public var answers: [MobileMeshManagementAnswerRecord]
+    /**
+     * The status when the device answered the whole exchange with one —
+     * what a save or a whole-table write reports.
+     */
+    public var statusCode: UInt32?
+    /**
+     * Octets the device has yet to return of the answer it is part-way
+     * through, as of the last frame it sent.
+     */
+    public var remainingOctets: UInt32?
+    /**
+     * Properties a whole-device read has yet to ask for. Only
+     * `begin_remote_sync` reports it, and only while it is running.
+     */
+    public var propertiesRemaining: UInt32?
+    /**
+     * The device read whole, on a completed `begin_remote_sync`.
+     */
+    public var sync: UlcpSyncRecord?
+
+    // Default memberwise initializers are never public by default, so we
+    // declare one manually.
+    public init(operationId: UInt64,
+        /**
+         * Canonical Base58 address of the device being managed.
+         */peerAddress: String, outcome: MobileMeshManagementOutcome,
+        /**
+         * The answers, in the order they were asked for.
+         */answers: [MobileMeshManagementAnswerRecord],
+        /**
+         * The status when the device answered the whole exchange with one —
+         * what a save or a whole-table write reports.
+         */statusCode: UInt32?,
+        /**
+         * Octets the device has yet to return of the answer it is part-way
+         * through, as of the last frame it sent.
+         */remainingOctets: UInt32?,
+        /**
+         * Properties a whole-device read has yet to ask for. Only
+         * `begin_remote_sync` reports it, and only while it is running.
+         */propertiesRemaining: UInt32?,
+        /**
+         * The device read whole, on a completed `begin_remote_sync`.
+         */sync: UlcpSyncRecord?) {
+        self.operationId = operationId
+        self.peerAddress = peerAddress
+        self.outcome = outcome
+        self.answers = answers
+        self.statusCode = statusCode
+        self.remainingOctets = remainingOctets
+        self.propertiesRemaining = propertiesRemaining
+        self.sync = sync
+    }
+
+
+
+
+}
+
+#if compiler(>=6)
+extension MobileMeshManagementEventRecord: Sendable {}
+#endif
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public struct FfiConverterTypeMobileMeshManagementEventRecord: FfiConverterRustBuffer {
+    public static func read(from buf: inout (data: Data, offset: Data.Index)) throws -> MobileMeshManagementEventRecord {
+        return
+            try MobileMeshManagementEventRecord(
+                operationId: FfiConverterUInt64.read(from: &buf),
+                peerAddress: FfiConverterString.read(from: &buf),
+                outcome: FfiConverterTypeMobileMeshManagementOutcome.read(from: &buf),
+                answers: FfiConverterSequenceTypeMobileMeshManagementAnswerRecord.read(from: &buf),
+                statusCode: FfiConverterOptionUInt32.read(from: &buf),
+                remainingOctets: FfiConverterOptionUInt32.read(from: &buf),
+                propertiesRemaining: FfiConverterOptionUInt32.read(from: &buf),
+                sync: FfiConverterOptionTypeUlcpSyncRecord.read(from: &buf)
+        )
+    }
+
+    public static func write(_ value: MobileMeshManagementEventRecord, into buf: inout [UInt8]) {
+        FfiConverterUInt64.write(value.operationId, into: &buf)
+        FfiConverterString.write(value.peerAddress, into: &buf)
+        FfiConverterTypeMobileMeshManagementOutcome.write(value.outcome, into: &buf)
+        FfiConverterSequenceTypeMobileMeshManagementAnswerRecord.write(value.answers, into: &buf)
+        FfiConverterOptionUInt32.write(value.statusCode, into: &buf)
+        FfiConverterOptionUInt32.write(value.remainingOctets, into: &buf)
+        FfiConverterOptionUInt32.write(value.propertiesRemaining, into: &buf)
+        FfiConverterOptionTypeUlcpSyncRecord.write(value.sync, into: &buf)
+    }
+}
+
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public func FfiConverterTypeMobileMeshManagementEventRecord_lift(_ buf: RustBuffer) throws -> MobileMeshManagementEventRecord {
+    return try FfiConverterTypeMobileMeshManagementEventRecord.lift(buf)
+}
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public func FfiConverterTypeMobileMeshManagementEventRecord_lower(_ value: MobileMeshManagementEventRecord) -> RustBuffer {
+    return FfiConverterTypeMobileMeshManagementEventRecord.lower(value)
+}
+
+
 public struct MobileMeshOutboundFrameRecord: Equatable, Hashable {
     public var id: UInt64
     public var data: Data
@@ -4664,6 +5321,63 @@ public func FfiConverterTypeMobileMeshPingEventRecord_lower(_ value: MobileMeshP
 
 
 /**
+ * One position of a multi-property write.
+ */
+public struct MobileMeshPropertyWriteRecord: Equatable, Hashable {
+    public var propertyId: UInt32
+    public var value: Data
+
+    // Default memberwise initializers are never public by default, so we
+    // declare one manually.
+    public init(propertyId: UInt32, value: Data) {
+        self.propertyId = propertyId
+        self.value = value
+    }
+
+
+
+
+}
+
+#if compiler(>=6)
+extension MobileMeshPropertyWriteRecord: Sendable {}
+#endif
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public struct FfiConverterTypeMobileMeshPropertyWriteRecord: FfiConverterRustBuffer {
+    public static func read(from buf: inout (data: Data, offset: Data.Index)) throws -> MobileMeshPropertyWriteRecord {
+        return
+            try MobileMeshPropertyWriteRecord(
+                propertyId: FfiConverterUInt32.read(from: &buf),
+                value: FfiConverterData.read(from: &buf)
+        )
+    }
+
+    public static func write(_ value: MobileMeshPropertyWriteRecord, into buf: inout [UInt8]) {
+        FfiConverterUInt32.write(value.propertyId, into: &buf)
+        FfiConverterData.write(value.value, into: &buf)
+    }
+}
+
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public func FfiConverterTypeMobileMeshPropertyWriteRecord_lift(_ buf: RustBuffer) throws -> MobileMeshPropertyWriteRecord {
+    return try FfiConverterTypeMobileMeshPropertyWriteRecord.lift(buf)
+}
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public func FfiConverterTypeMobileMeshPropertyWriteRecord_lower(_ value: MobileMeshPropertyWriteRecord) -> RustBuffer {
+    return FfiConverterTypeMobileMeshPropertyWriteRecord.lower(value)
+}
+
+
+/**
  * The route the MAC currently has cached for one peer.
  */
 public struct MobileMeshRouteRecord: Equatable, Hashable {
@@ -4818,6 +5532,11 @@ public struct MobileMeshSessionUpdateRecord: Equatable, Hashable {
      */
     public var outboundFrames: [MobileMeshOutboundFrameRecord]
     public var pingEvents: [MobileMeshPingEventRecord]
+    /**
+     * Reports from operations started with `begin_management_*` or
+     * `begin_remote_sync`, in the order they were produced.
+     */
+    public var managementEvents: [MobileMeshManagementEventRecord]
     public var advertisementEvents: [MobileMeshAdvertisementRecord]
     public var peerHeardEvents: [MobileMeshPeerHeardRecord]
     /**
@@ -4842,7 +5561,11 @@ public struct MobileMeshSessionUpdateRecord: Equatable, Hashable {
          * Complete raw UMSH frames ready for the ULCP PHY transport. Each
          * frame must be completed after the device reports the physical radio
          * result; queue acceptance is not transmit completion.
-         */outboundFrames: [MobileMeshOutboundFrameRecord], pingEvents: [MobileMeshPingEventRecord], advertisementEvents: [MobileMeshAdvertisementRecord], peerHeardEvents: [MobileMeshPeerHeardRecord],
+         */outboundFrames: [MobileMeshOutboundFrameRecord], pingEvents: [MobileMeshPingEventRecord],
+        /**
+         * Reports from operations started with `begin_management_*` or
+         * `begin_remote_sync`, in the order they were produced.
+         */managementEvents: [MobileMeshManagementEventRecord], advertisementEvents: [MobileMeshAdvertisementRecord], peerHeardEvents: [MobileMeshPeerHeardRecord],
         /**
          * Chat effects remain in the facade until Swift durably applies them and
          * acknowledges this batch. Repeated polls may return the same batch.
@@ -4853,6 +5576,7 @@ public struct MobileMeshSessionUpdateRecord: Equatable, Hashable {
          */chatSenderResolutions: [MobileChatSenderResolutionRecord], chatDiagnostics: [String]) {
         self.outboundFrames = outboundFrames
         self.pingEvents = pingEvents
+        self.managementEvents = managementEvents
         self.advertisementEvents = advertisementEvents
         self.peerHeardEvents = peerHeardEvents
         self.chatBatchId = chatBatchId
@@ -4881,6 +5605,7 @@ public struct FfiConverterTypeMobileMeshSessionUpdateRecord: FfiConverterRustBuf
             try MobileMeshSessionUpdateRecord(
                 outboundFrames: FfiConverterSequenceTypeMobileMeshOutboundFrameRecord.read(from: &buf),
                 pingEvents: FfiConverterSequenceTypeMobileMeshPingEventRecord.read(from: &buf),
+                managementEvents: FfiConverterSequenceTypeMobileMeshManagementEventRecord.read(from: &buf),
                 advertisementEvents: FfiConverterSequenceTypeMobileMeshAdvertisementRecord.read(from: &buf),
                 peerHeardEvents: FfiConverterSequenceTypeMobileMeshPeerHeardRecord.read(from: &buf),
                 chatBatchId: FfiConverterOptionUInt64.read(from: &buf),
@@ -4895,6 +5620,7 @@ public struct FfiConverterTypeMobileMeshSessionUpdateRecord: FfiConverterRustBuf
     public static func write(_ value: MobileMeshSessionUpdateRecord, into buf: inout [UInt8]) {
         FfiConverterSequenceTypeMobileMeshOutboundFrameRecord.write(value.outboundFrames, into: &buf)
         FfiConverterSequenceTypeMobileMeshPingEventRecord.write(value.pingEvents, into: &buf)
+        FfiConverterSequenceTypeMobileMeshManagementEventRecord.write(value.managementEvents, into: &buf)
         FfiConverterSequenceTypeMobileMeshAdvertisementRecord.write(value.advertisementEvents, into: &buf)
         FfiConverterSequenceTypeMobileMeshPeerHeardRecord.write(value.peerHeardEvents, into: &buf)
         FfiConverterOptionUInt64.write(value.chatBatchId, into: &buf)
@@ -6831,6 +7557,11 @@ public struct UlcpSyncRecord: Equatable, Hashable {
     public var supportsOfflineQueue: Bool
     public var supportsDelegatedAck: Bool
     public var supportsDeviceName: Bool
+    /**
+     * `PROP_DEV_NAME`, when the device has one and reported it. Empty is
+     * a device with no name rather than a device named "".
+     */
+    public var deviceName: String?
     public var supportsLora: Bool
     public var supportsDutyCycleLimit: Bool
     /**
@@ -6838,6 +7569,16 @@ public struct UlcpSyncRecord: Equatable, Hashable {
      * without it never reports a battery, so callers have nothing to show.
      */
     public var supportsBattery: Bool
+    /**
+     * `PROP_BATTERY`, when the device measures one and has reported it.
+     *
+     * A reading rather than a setting, and absent for a reason that is
+     * never a fault: on the local link a device announces this on its own
+     * schedule, so a session that has only just attached has not heard one
+     * yet. Deliberately not counted among `unreadable_properties` — there
+     * is no setting here to be written over.
+     */
+    public var battery: UlcpBatteryRecord?
     /**
      * The device can forward for the mesh on its own (`CAP_REPEATER`).
      */
@@ -6868,6 +7609,21 @@ public struct UlcpSyncRecord: Equatable, Hashable {
      * (`CAP_ADVERT`).
      */
     public var supportsAdvert: Bool
+    /**
+     * The device answers Node Management Requests from the administrators
+     * it lists (`CAP_ADMIN`). A device without it can only ever be
+     * configured by whoever is holding it.
+     */
+    public var supportsAdmin: Bool
+    /**
+     * The device can make itself conspicuous on request (`CAP_ALERT`).
+     */
+    public var supportsAlert: Bool
+    /**
+     * `PROP_ALERT`: what the device is doing to make itself findable, when
+     * it has said. Live state like `battery`, and absent on the same terms.
+     */
+    public var alert: UlcpAlertState?
     public var phyEnabled: Bool
     public var frequencyKhz: UInt32
     public var transmitPowerDbm: Int8
@@ -6894,6 +7650,13 @@ public struct UlcpSyncRecord: Equatable, Hashable {
      * `supports_device_identity` and the device reported the list.
      */
     public var devPeerKeys: [Data]?
+    /**
+     * `PROP_DEV_ADMINS`: the node public keys allowed to manage this device
+     * over the mesh, read back losslessly. Present when `supports_admin`
+     * and the device reported the list; an empty list is a device that
+     * nobody may manage remotely.
+     */
+    public var devAdminKeys: [Data]?
     /**
      * `PROP_DEV_CHANNEL_KEYS`: the two-octet identifiers of the channels the
      * device identity has joined. Key material is never read back, so a
@@ -6953,11 +7716,24 @@ public struct UlcpSyncRecord: Equatable, Hashable {
 
     // Default memberwise initializers are never public by default, so we
     // declare one manually.
-    public init(capabilityCount: UInt32, hasHostFiltering: Bool, supportsOfflineQueue: Bool, supportsDelegatedAck: Bool, supportsDeviceName: Bool, supportsLora: Bool, supportsDutyCycleLimit: Bool,
+    public init(capabilityCount: UInt32, hasHostFiltering: Bool, supportsOfflineQueue: Bool, supportsDelegatedAck: Bool, supportsDeviceName: Bool,
+        /**
+         * `PROP_DEV_NAME`, when the device has one and reported it. Empty is
+         * a device with no name rather than a device named "".
+         */deviceName: String?, supportsLora: Bool, supportsDutyCycleLimit: Bool,
         /**
          * The device measures its own power state (`CAP_BATTERY`). A device
          * without it never reports a battery, so callers have nothing to show.
          */supportsBattery: Bool,
+        /**
+         * `PROP_BATTERY`, when the device measures one and has reported it.
+         *
+         * A reading rather than a setting, and absent for a reason that is
+         * never a fault: on the local link a device announces this on its own
+         * schedule, so a session that has only just attached has not heard one
+         * yet. Deliberately not counted among `unreadable_properties` — there
+         * is no setting here to be written over.
+         */battery: UlcpBatteryRecord?,
         /**
          * The device can forward for the mesh on its own (`CAP_REPEATER`).
          */supportsRepeater: Bool,
@@ -6981,7 +7757,19 @@ public struct UlcpSyncRecord: Equatable, Hashable {
         /**
          * The device announces itself on a schedule of its own
          * (`CAP_ADVERT`).
-         */supportsAdvert: Bool, phyEnabled: Bool, frequencyKhz: UInt32, transmitPowerDbm: Int8, bandwidthHz: UInt32?, spreadingFactor: UInt8?, codingRateDenom: UInt8?, dutyCycleNow: UInt16?, dutyCycleLimit: UInt16?, saved: SavedSnapshotRecord?, queuedFrames: UInt16?, droppedFrames: UInt32?, filterCount: UInt32?, hostChannelCount: UInt32?, hostPeerCount: UInt32?, autoAck: Bool?,
+         */supportsAdvert: Bool,
+        /**
+         * The device answers Node Management Requests from the administrators
+         * it lists (`CAP_ADMIN`). A device without it can only ever be
+         * configured by whoever is holding it.
+         */supportsAdmin: Bool,
+        /**
+         * The device can make itself conspicuous on request (`CAP_ALERT`).
+         */supportsAlert: Bool,
+        /**
+         * `PROP_ALERT`: what the device is doing to make itself findable, when
+         * it has said. Live state like `battery`, and absent on the same terms.
+         */alert: UlcpAlertState?, phyEnabled: Bool, frequencyKhz: UInt32, transmitPowerDbm: Int8, bandwidthHz: UInt32?, spreadingFactor: UInt8?, codingRateDenom: UInt8?, dutyCycleNow: UInt16?, dutyCycleLimit: UInt16?, saved: SavedSnapshotRecord?, queuedFrames: UInt16?, droppedFrames: UInt32?, filterCount: UInt32?, hostChannelCount: UInt32?, hostPeerCount: UInt32?, autoAck: Bool?,
         /**
          * Present when `supports_repeater` and the device reported the whole
          * policy.
@@ -6991,6 +7779,12 @@ public struct UlcpSyncRecord: Equatable, Hashable {
          * identity, read back losslessly. Present when
          * `supports_device_identity` and the device reported the list.
          */devPeerKeys: [Data]?,
+        /**
+         * `PROP_DEV_ADMINS`: the node public keys allowed to manage this device
+         * over the mesh, read back losslessly. Present when `supports_admin`
+         * and the device reported the list; an empty list is a device that
+         * nobody may manage remotely.
+         */devAdminKeys: [Data]?,
         /**
          * `PROP_DEV_CHANNEL_KEYS`: the two-octet identifiers of the channels the
          * device identity has joined. Key material is never read back, so a
@@ -7044,15 +7838,20 @@ public struct UlcpSyncRecord: Equatable, Hashable {
         self.supportsOfflineQueue = supportsOfflineQueue
         self.supportsDelegatedAck = supportsDelegatedAck
         self.supportsDeviceName = supportsDeviceName
+        self.deviceName = deviceName
         self.supportsLora = supportsLora
         self.supportsDutyCycleLimit = supportsDutyCycleLimit
         self.supportsBattery = supportsBattery
+        self.battery = battery
         self.supportsRepeater = supportsRepeater
         self.supportsIdent = supportsIdent
         self.supportsDeviceIdentity = supportsDeviceIdentity
         self.supportsTime = supportsTime
         self.supportsGnss = supportsGnss
         self.supportsAdvert = supportsAdvert
+        self.supportsAdmin = supportsAdmin
+        self.supportsAlert = supportsAlert
+        self.alert = alert
         self.phyEnabled = phyEnabled
         self.frequencyKhz = frequencyKhz
         self.transmitPowerDbm = transmitPowerDbm
@@ -7070,6 +7869,7 @@ public struct UlcpSyncRecord: Equatable, Hashable {
         self.autoAck = autoAck
         self.repeater = repeater
         self.devPeerKeys = devPeerKeys
+        self.devAdminKeys = devAdminKeys
         self.devChannelIds = devChannelIds
         self.identRole = identRole
         self.identMobile = identMobile
@@ -7101,15 +7901,20 @@ public struct FfiConverterTypeUlcpSyncRecord: FfiConverterRustBuffer {
                 supportsOfflineQueue: FfiConverterBool.read(from: &buf),
                 supportsDelegatedAck: FfiConverterBool.read(from: &buf),
                 supportsDeviceName: FfiConverterBool.read(from: &buf),
+                deviceName: FfiConverterOptionString.read(from: &buf),
                 supportsLora: FfiConverterBool.read(from: &buf),
                 supportsDutyCycleLimit: FfiConverterBool.read(from: &buf),
                 supportsBattery: FfiConverterBool.read(from: &buf),
+                battery: FfiConverterOptionTypeUlcpBatteryRecord.read(from: &buf),
                 supportsRepeater: FfiConverterBool.read(from: &buf),
                 supportsIdent: FfiConverterBool.read(from: &buf),
                 supportsDeviceIdentity: FfiConverterBool.read(from: &buf),
                 supportsTime: FfiConverterBool.read(from: &buf),
                 supportsGnss: FfiConverterBool.read(from: &buf),
                 supportsAdvert: FfiConverterBool.read(from: &buf),
+                supportsAdmin: FfiConverterBool.read(from: &buf),
+                supportsAlert: FfiConverterBool.read(from: &buf),
+                alert: FfiConverterOptionTypeUlcpAlertState.read(from: &buf),
                 phyEnabled: FfiConverterBool.read(from: &buf),
                 frequencyKhz: FfiConverterUInt32.read(from: &buf),
                 transmitPowerDbm: FfiConverterInt8.read(from: &buf),
@@ -7127,6 +7932,7 @@ public struct FfiConverterTypeUlcpSyncRecord: FfiConverterRustBuffer {
                 autoAck: FfiConverterOptionBool.read(from: &buf),
                 repeater: FfiConverterOptionTypeUlcpRepeaterSettingsRecord.read(from: &buf),
                 devPeerKeys: FfiConverterOptionSequenceData.read(from: &buf),
+                devAdminKeys: FfiConverterOptionSequenceData.read(from: &buf),
                 devChannelIds: FfiConverterOptionSequenceData.read(from: &buf),
                 identRole: FfiConverterOptionUInt8.read(from: &buf),
                 identMobile: FfiConverterOptionBool.read(from: &buf),
@@ -7144,15 +7950,20 @@ public struct FfiConverterTypeUlcpSyncRecord: FfiConverterRustBuffer {
         FfiConverterBool.write(value.supportsOfflineQueue, into: &buf)
         FfiConverterBool.write(value.supportsDelegatedAck, into: &buf)
         FfiConverterBool.write(value.supportsDeviceName, into: &buf)
+        FfiConverterOptionString.write(value.deviceName, into: &buf)
         FfiConverterBool.write(value.supportsLora, into: &buf)
         FfiConverterBool.write(value.supportsDutyCycleLimit, into: &buf)
         FfiConverterBool.write(value.supportsBattery, into: &buf)
+        FfiConverterOptionTypeUlcpBatteryRecord.write(value.battery, into: &buf)
         FfiConverterBool.write(value.supportsRepeater, into: &buf)
         FfiConverterBool.write(value.supportsIdent, into: &buf)
         FfiConverterBool.write(value.supportsDeviceIdentity, into: &buf)
         FfiConverterBool.write(value.supportsTime, into: &buf)
         FfiConverterBool.write(value.supportsGnss, into: &buf)
         FfiConverterBool.write(value.supportsAdvert, into: &buf)
+        FfiConverterBool.write(value.supportsAdmin, into: &buf)
+        FfiConverterBool.write(value.supportsAlert, into: &buf)
+        FfiConverterOptionTypeUlcpAlertState.write(value.alert, into: &buf)
         FfiConverterBool.write(value.phyEnabled, into: &buf)
         FfiConverterUInt32.write(value.frequencyKhz, into: &buf)
         FfiConverterInt8.write(value.transmitPowerDbm, into: &buf)
@@ -7170,6 +7981,7 @@ public struct FfiConverterTypeUlcpSyncRecord: FfiConverterRustBuffer {
         FfiConverterOptionBool.write(value.autoAck, into: &buf)
         FfiConverterOptionTypeUlcpRepeaterSettingsRecord.write(value.repeater, into: &buf)
         FfiConverterOptionSequenceData.write(value.devPeerKeys, into: &buf)
+        FfiConverterOptionSequenceData.write(value.devAdminKeys, into: &buf)
         FfiConverterOptionSequenceData.write(value.devChannelIds, into: &buf)
         FfiConverterOptionUInt8.write(value.identRole, into: &buf)
         FfiConverterOptionBool.write(value.identMobile, into: &buf)
@@ -8116,6 +8928,11 @@ enum MobileMeshError: Swift.Error, Equatable, Hashable, Foundation.LocalizedErro
      * carry.
      */
     case InvalidLocation
+    /**
+     * A management request does not fit one Node Management payload, or
+     * asked for nothing at all.
+     */
+    case InvalidRequest
 
 
 
@@ -8156,6 +8973,7 @@ public struct FfiConverterTypeMobileMeshError: FfiConverterRustBuffer {
         case 9: return .ChannelCapacity
         case 10: return .UnknownConversation
         case 11: return .InvalidLocation
+        case 12: return .InvalidRequest
 
          default: throw UniffiInternalError.unexpectedEnumCase
         }
@@ -8211,6 +9029,10 @@ public struct FfiConverterTypeMobileMeshError: FfiConverterRustBuffer {
         case .InvalidLocation:
             writeInt(&buf, Int32(11))
 
+
+        case .InvalidRequest:
+            writeInt(&buf, Int32(12))
+
         }
     }
 }
@@ -8229,6 +9051,119 @@ public func FfiConverterTypeMobileMeshError_lift(_ buf: RustBuffer) throws -> Mo
 public func FfiConverterTypeMobileMeshError_lower(_ value: MobileMeshError) -> RustBuffer {
     return FfiConverterTypeMobileMeshError.lower(value)
 }
+
+
+/**
+ * How a Node Management operation ended.
+ */
+
+public enum MobileMeshManagementOutcome: Equatable, Hashable {
+
+    /**
+     * Not an ending: the operation is still running. Emitted while a
+     * device works through an answer larger than one frame, or while a
+     * whole-device read crawls; `remaining_octets` is what the device
+     * says it is still holding back.
+     */
+    case progress
+    /**
+     * The device answered, and `answers` is what it said.
+     */
+    case replied
+    /**
+     * A reset-class command, which a device answers with nothing at all.
+     * The acknowledgment is the completion.
+     */
+    case acknowledged
+    /**
+     * Nothing came back before the exchange gave up. Over LoRa this is
+     * the ordinary shape of "out of range", not a malfunction.
+     */
+    case timedOut
+    /**
+     * The operation could not be carried: an unroutable target, another
+     * operation already outstanding, or an answer that could not be read.
+     * A device that is not listing this phone as an administrator answers
+     * with silence rather than a refusal, so it arrives as `TimedOut`.
+     */
+    case failed
+
+
+
+
+
+}
+
+#if compiler(>=6)
+extension MobileMeshManagementOutcome: Sendable {}
+#endif
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public struct FfiConverterTypeMobileMeshManagementOutcome: FfiConverterRustBuffer {
+    typealias SwiftType = MobileMeshManagementOutcome
+
+    public static func read(from buf: inout (data: Data, offset: Data.Index)) throws -> MobileMeshManagementOutcome {
+        let variant: Int32 = try readInt(&buf)
+        switch variant {
+
+        case 1: return .progress
+
+        case 2: return .replied
+
+        case 3: return .acknowledged
+
+        case 4: return .timedOut
+
+        case 5: return .failed
+
+        default: throw UniffiInternalError.unexpectedEnumCase
+        }
+    }
+
+    public static func write(_ value: MobileMeshManagementOutcome, into buf: inout [UInt8]) {
+        switch value {
+
+
+        case .progress:
+            writeInt(&buf, Int32(1))
+
+
+        case .replied:
+            writeInt(&buf, Int32(2))
+
+
+        case .acknowledged:
+            writeInt(&buf, Int32(3))
+
+
+        case .timedOut:
+            writeInt(&buf, Int32(4))
+
+
+        case .failed:
+            writeInt(&buf, Int32(5))
+
+        }
+    }
+}
+
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public func FfiConverterTypeMobileMeshManagementOutcome_lift(_ buf: RustBuffer) throws -> MobileMeshManagementOutcome {
+    return try FfiConverterTypeMobileMeshManagementOutcome.lift(buf)
+}
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public func FfiConverterTypeMobileMeshManagementOutcome_lower(_ value: MobileMeshManagementOutcome) -> RustBuffer {
+    return FfiConverterTypeMobileMeshManagementOutcome.lower(value)
+}
+
 
 
 
@@ -8300,6 +9235,93 @@ public func FfiConverterTypeMobileMeshPingOutcome_lift(_ buf: RustBuffer) throws
 #endif
 public func FfiConverterTypeMobileMeshPingOutcome_lower(_ value: MobileMeshPingOutcome) -> RustBuffer {
     return FfiConverterTypeMobileMeshPingOutcome.lower(value)
+}
+
+
+
+/**
+ * What a reset-class command puts back.
+ */
+
+public enum MobileMeshResetScope: Equatable, Hashable {
+
+    /**
+     * `CMD_RST`: protocol state, leaving configuration alone.
+     */
+    case `protocol`
+    /**
+     * `CMD_RESTORE`: the saved snapshot, discarding unsaved changes.
+     */
+    case restore
+    /**
+     * `CMD_FACTORY_RESET`: everything, including the device's identity.
+     * A device that has forgotten its identity is a different node, and
+     * no longer reachable at the address this operation was sent to.
+     */
+    case factory
+
+
+
+
+
+}
+
+#if compiler(>=6)
+extension MobileMeshResetScope: Sendable {}
+#endif
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public struct FfiConverterTypeMobileMeshResetScope: FfiConverterRustBuffer {
+    typealias SwiftType = MobileMeshResetScope
+
+    public static func read(from buf: inout (data: Data, offset: Data.Index)) throws -> MobileMeshResetScope {
+        let variant: Int32 = try readInt(&buf)
+        switch variant {
+
+        case 1: return .`protocol`
+
+        case 2: return .restore
+
+        case 3: return .factory
+
+        default: throw UniffiInternalError.unexpectedEnumCase
+        }
+    }
+
+    public static func write(_ value: MobileMeshResetScope, into buf: inout [UInt8]) {
+        switch value {
+
+
+        case .`protocol`:
+            writeInt(&buf, Int32(1))
+
+
+        case .restore:
+            writeInt(&buf, Int32(2))
+
+
+        case .factory:
+            writeInt(&buf, Int32(3))
+
+        }
+    }
+}
+
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public func FfiConverterTypeMobileMeshResetScope_lift(_ buf: RustBuffer) throws -> MobileMeshResetScope {
+    return try FfiConverterTypeMobileMeshResetScope.lift(buf)
+}
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public func FfiConverterTypeMobileMeshResetScope_lower(_ value: MobileMeshResetScope) -> RustBuffer {
+    return FfiConverterTypeMobileMeshResetScope.lower(value)
 }
 
 
@@ -10076,6 +11098,56 @@ fileprivate struct FfiConverterSequenceTypeMobileMeshAdvertisementRecord: FfiCon
 #if swift(>=5.8)
 @_documentation(visibility: private)
 #endif
+fileprivate struct FfiConverterSequenceTypeMobileMeshManagementAnswerRecord: FfiConverterRustBuffer {
+    typealias SwiftType = [MobileMeshManagementAnswerRecord]
+
+    public static func write(_ value: [MobileMeshManagementAnswerRecord], into buf: inout [UInt8]) {
+        let len = Int32(value.count)
+        writeInt(&buf, len)
+        for item in value {
+            FfiConverterTypeMobileMeshManagementAnswerRecord.write(item, into: &buf)
+        }
+    }
+
+    public static func read(from buf: inout (data: Data, offset: Data.Index)) throws -> [MobileMeshManagementAnswerRecord] {
+        let len: Int32 = try readInt(&buf)
+        var seq = [MobileMeshManagementAnswerRecord]()
+        seq.reserveCapacity(Int(len))
+        for _ in 0 ..< len {
+            seq.append(try FfiConverterTypeMobileMeshManagementAnswerRecord.read(from: &buf))
+        }
+        return seq
+    }
+}
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+fileprivate struct FfiConverterSequenceTypeMobileMeshManagementEventRecord: FfiConverterRustBuffer {
+    typealias SwiftType = [MobileMeshManagementEventRecord]
+
+    public static func write(_ value: [MobileMeshManagementEventRecord], into buf: inout [UInt8]) {
+        let len = Int32(value.count)
+        writeInt(&buf, len)
+        for item in value {
+            FfiConverterTypeMobileMeshManagementEventRecord.write(item, into: &buf)
+        }
+    }
+
+    public static func read(from buf: inout (data: Data, offset: Data.Index)) throws -> [MobileMeshManagementEventRecord] {
+        let len: Int32 = try readInt(&buf)
+        var seq = [MobileMeshManagementEventRecord]()
+        seq.reserveCapacity(Int(len))
+        for _ in 0 ..< len {
+            seq.append(try FfiConverterTypeMobileMeshManagementEventRecord.read(from: &buf))
+        }
+        return seq
+    }
+}
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
 fileprivate struct FfiConverterSequenceTypeMobileMeshOutboundFrameRecord: FfiConverterRustBuffer {
     typealias SwiftType = [MobileMeshOutboundFrameRecord]
 
@@ -10143,6 +11215,31 @@ fileprivate struct FfiConverterSequenceTypeMobileMeshPingEventRecord: FfiConvert
         seq.reserveCapacity(Int(len))
         for _ in 0 ..< len {
             seq.append(try FfiConverterTypeMobileMeshPingEventRecord.read(from: &buf))
+        }
+        return seq
+    }
+}
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+fileprivate struct FfiConverterSequenceTypeMobileMeshPropertyWriteRecord: FfiConverterRustBuffer {
+    typealias SwiftType = [MobileMeshPropertyWriteRecord]
+
+    public static func write(_ value: [MobileMeshPropertyWriteRecord], into buf: inout [UInt8]) {
+        let len = Int32(value.count)
+        writeInt(&buf, len)
+        for item in value {
+            FfiConverterTypeMobileMeshPropertyWriteRecord.write(item, into: &buf)
+        }
+    }
+
+    public static func read(from buf: inout (data: Data, offset: Data.Index)) throws -> [MobileMeshPropertyWriteRecord] {
+        let len: Int32 = try readInt(&buf)
+        var seq = [MobileMeshPropertyWriteRecord]()
+        seq.reserveCapacity(Int(len))
+        for _ in 0 ..< len {
+            seq.append(try FfiConverterTypeMobileMeshPropertyWriteRecord.read(from: &buf))
         }
         return seq
     }
@@ -10513,6 +11610,33 @@ public func signNodeIdentityBundle(secretKey: Data, profile: NodeIdentityProfile
         )
 }
 /**
+ * The writes that state a whole device configuration, ordered, for a
+ * device being configured across the mesh.
+ *
+ * A phone holding a device open writes a configuration through
+ * `MobileUlcpSession::configure_device`, which owns the ordering — the
+ * PHY goes down first and comes back up last — and closes with a save.
+ * An administrator has no session to hand a record to, only the record
+ * its read produced, so it asks for the same writes here and sends them
+ * with [`MobileMeshSession::begin_management_set_many`]. The reduction is
+ * literally the same code, which is the point: the two paths cannot
+ * drift into configuring a device differently.
+ *
+ * `reported` is the device as a completed read found it. Its
+ * capabilities decide which fields must be present, and the properties
+ * it would not report are left out — writing one of those fails, and a
+ * device fails the write it is on rather than the ones after it.
+ */
+public func ulcpDeviceConfigWrites(configuration: UlcpDeviceConfigRecord, reported: UlcpSyncRecord)throws  -> [MobileMeshPropertyWriteRecord]  {
+    return try  FfiConverterSequenceTypeMobileMeshPropertyWriteRecord.lift(try rustCallWithError(FfiConverterTypeMobileMeshError_lift) {
+        uniffiCallStatus in
+    uniffi_umsh_mobile_core_fn_func_ulcp_device_config_writes(
+        FfiConverterTypeUlcpDeviceConfigRecord_lower(configuration),
+        FfiConverterTypeUlcpSyncRecord_lower(reported),uniffiCallStatus
+    )
+})
+}
+/**
  * Validate and reduce a `PROP_ALERT` value.
  */
 public func inspectUlcpAlert(value: Data)throws  -> UlcpAlertState  {
@@ -10661,6 +11785,19 @@ public func ulcpLocationCellMeters(precisionBytes: UInt8) -> Double?  {
 })
 }
 /**
+ * Capacity of the device identity's administrator list
+ * (`PROP_DEV_ADMINS`).
+ *
+ * A label constant, like [`ulcp_max_dev_peers`].
+ */
+public func ulcpMaxDevAdmins() -> UInt8  {
+    return try!  FfiConverterUInt8.lift(try! rustCall() {
+        uniffiCallStatus in
+    uniffi_umsh_mobile_core_fn_func_ulcp_max_dev_admins(uniffiCallStatus
+    )
+})
+}
+/**
  * Capacity of the device identity's channel list (`PROP_DEV_CHANNEL_KEYS`).
  *
  * A label constant, like [`ulcp_max_dev_peers`].
@@ -10718,6 +11855,23 @@ public func ulcpSave(transactionId: UInt8)throws  -> Data  {
         uniffiCallStatus in
     uniffi_umsh_mobile_core_fn_func_ulcp_save(
         FfiConverterUInt8.lower(transactionId),uniffiCallStatus
+    )
+})
+}
+/**
+ * What a status code is called.
+ *
+ * A device answering across the mesh reports a bare code, where a device
+ * on the local link reports one already named in
+ * [`UlcpOperationErrorRecord`]. Both are the same statuses, so both are
+ * named the same way here rather than by a table on the other side of
+ * the bindings that would have to be kept in step with this one.
+ */
+public func ulcpStatusName(status: UInt32) -> String  {
+    return try!  FfiConverterString.lift(try! rustCall() {
+        uniffiCallStatus in
+    uniffi_umsh_mobile_core_fn_func_ulcp_status_name(
+        FfiConverterUInt32.lower(status),uniffiCallStatus
     )
 })
 }
@@ -10794,6 +11948,9 @@ private let initializationResult: InitializationResult = {
     if (uniffi_umsh_mobile_core_checksum_func_sign_node_identity_bundle() != 18582) {
         return InitializationResult.apiChecksumMismatch
     }
+    if (uniffi_umsh_mobile_core_checksum_func_ulcp_device_config_writes() != 29397) {
+        return InitializationResult.apiChecksumMismatch
+    }
     if (uniffi_umsh_mobile_core_checksum_func_inspect_ulcp_alert() != 25982) {
         return InitializationResult.apiChecksumMismatch
     }
@@ -10827,6 +11984,9 @@ private let initializationResult: InitializationResult = {
     if (uniffi_umsh_mobile_core_checksum_func_ulcp_location_cell_meters() != 468) {
         return InitializationResult.apiChecksumMismatch
     }
+    if (uniffi_umsh_mobile_core_checksum_func_ulcp_max_dev_admins() != 2628) {
+        return InitializationResult.apiChecksumMismatch
+    }
     if (uniffi_umsh_mobile_core_checksum_func_ulcp_max_dev_channels() != 32655) {
         return InitializationResult.apiChecksumMismatch
     }
@@ -10840,6 +12000,9 @@ private let initializationResult: InitializationResult = {
         return InitializationResult.apiChecksumMismatch
     }
     if (uniffi_umsh_mobile_core_checksum_func_ulcp_save() != 15143) {
+        return InitializationResult.apiChecksumMismatch
+    }
+    if (uniffi_umsh_mobile_core_checksum_func_ulcp_status_name() != 13803) {
         return InitializationResult.apiChecksumMismatch
     }
     if (uniffi_umsh_mobile_core_checksum_method_mobileidentity_public_identity() != 38823) {
@@ -10861,6 +12024,42 @@ private let initializationResult: InitializationResult = {
         return InitializationResult.apiChecksumMismatch
     }
     if (uniffi_umsh_mobile_core_checksum_method_mobilemeshsession_apply_chat_archive_result() != 29458) {
+        return InitializationResult.apiChecksumMismatch
+    }
+    if (uniffi_umsh_mobile_core_checksum_method_mobilemeshsession_begin_management_get() != 32041) {
+        return InitializationResult.apiChecksumMismatch
+    }
+    if (uniffi_umsh_mobile_core_checksum_method_mobilemeshsession_begin_management_get_many() != 36372) {
+        return InitializationResult.apiChecksumMismatch
+    }
+    if (uniffi_umsh_mobile_core_checksum_method_mobilemeshsession_begin_management_insert() != 54728) {
+        return InitializationResult.apiChecksumMismatch
+    }
+    if (uniffi_umsh_mobile_core_checksum_method_mobilemeshsession_begin_management_insert_admin() != 57151) {
+        return InitializationResult.apiChecksumMismatch
+    }
+    if (uniffi_umsh_mobile_core_checksum_method_mobilemeshsession_begin_management_remove() != 52092) {
+        return InitializationResult.apiChecksumMismatch
+    }
+    if (uniffi_umsh_mobile_core_checksum_method_mobilemeshsession_begin_management_remove_admin() != 27122) {
+        return InitializationResult.apiChecksumMismatch
+    }
+    if (uniffi_umsh_mobile_core_checksum_method_mobilemeshsession_begin_management_reset() != 26570) {
+        return InitializationResult.apiChecksumMismatch
+    }
+    if (uniffi_umsh_mobile_core_checksum_method_mobilemeshsession_begin_management_save() != 64563) {
+        return InitializationResult.apiChecksumMismatch
+    }
+    if (uniffi_umsh_mobile_core_checksum_method_mobilemeshsession_begin_management_set() != 3) {
+        return InitializationResult.apiChecksumMismatch
+    }
+    if (uniffi_umsh_mobile_core_checksum_method_mobilemeshsession_begin_management_set_alert() != 33176) {
+        return InitializationResult.apiChecksumMismatch
+    }
+    if (uniffi_umsh_mobile_core_checksum_method_mobilemeshsession_begin_management_set_many() != 36846) {
+        return InitializationResult.apiChecksumMismatch
+    }
+    if (uniffi_umsh_mobile_core_checksum_method_mobilemeshsession_begin_remote_sync() != 12243) {
         return InitializationResult.apiChecksumMismatch
     }
     if (uniffi_umsh_mobile_core_checksum_method_mobilemeshsession_clear_peer_route() != 59203) {
@@ -10891,6 +12090,9 @@ private let initializationResult: InitializationResult = {
         return InitializationResult.apiChecksumMismatch
     }
     if (uniffi_umsh_mobile_core_checksum_method_mobilemeshsession_fail_outbound_transmissions() != 10556) {
+        return InitializationResult.apiChecksumMismatch
+    }
+    if (uniffi_umsh_mobile_core_checksum_method_mobilemeshsession_node_public_key() != 62314) {
         return InitializationResult.apiChecksumMismatch
     }
     if (uniffi_umsh_mobile_core_checksum_method_mobilemeshsession_peer_route() != 15956) {
@@ -10989,6 +12191,9 @@ private let initializationResult: InitializationResult = {
     if (uniffi_umsh_mobile_core_checksum_method_mobileulcpsession_factory_reset() != 21547) {
         return InitializationResult.apiChecksumMismatch
     }
+    if (uniffi_umsh_mobile_core_checksum_method_mobileulcpsession_insert_device_admin() != 35930) {
+        return InitializationResult.apiChecksumMismatch
+    }
     if (uniffi_umsh_mobile_core_checksum_method_mobileulcpsession_insert_device_channel_key() != 30004) {
         return InitializationResult.apiChecksumMismatch
     }
@@ -11002,6 +12207,9 @@ private let initializationResult: InitializationResult = {
         return InitializationResult.apiChecksumMismatch
     }
     if (uniffi_umsh_mobile_core_checksum_method_mobileulcpsession_refresh_positioning() != 7506) {
+        return InitializationResult.apiChecksumMismatch
+    }
+    if (uniffi_umsh_mobile_core_checksum_method_mobileulcpsession_remove_device_admin() != 25867) {
         return InitializationResult.apiChecksumMismatch
     }
     if (uniffi_umsh_mobile_core_checksum_method_mobileulcpsession_remove_device_channel_key() != 59231) {

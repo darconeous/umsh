@@ -42,6 +42,11 @@ use umsh_sync::AsyncRefCell;
 use umsh_text::engine::{ArchiveResult, DeliveryState, Destination};
 use umsh_text::model::{ConversationKey, SenderScope};
 use umsh_text::validate::{DeliveryPath, Envelope};
+use umsh_ulcp::{
+    frame,
+    ids::{self, cap, prop},
+    items,
+};
 
 use crate::mobile_chat::{
     ChannelRegistry, MobileChatArchiveLookupRecord, MobileChatArchiveResultKind,
@@ -50,6 +55,7 @@ use crate::mobile_chat::{
     MobileChatPresence, MobileChatRegardingRef, MobileChatRxMetadataRecord,
     MobileChatSenderResolutionRecord, MobileChatState,
 };
+use crate::ulcp::{UlcpPropertyFrameRecord, UlcpSyncRecord};
 use crate::{MobileCounterStore, MobileError, MobileIdentity};
 
 const MAX_FRAME_SIZE: usize = 256;
@@ -78,6 +84,9 @@ pub enum MobileMeshError {
     /// out-of-range coordinate, or a precision the cell code cannot
     /// carry.
     InvalidLocation,
+    /// A management request does not fit one Node Management payload, or
+    /// asked for nothing at all.
+    InvalidRequest,
 }
 
 impl fmt::Display for MobileMeshError {
@@ -94,6 +103,7 @@ impl fmt::Display for MobileMeshError {
             Self::ChannelCapacity => "MESH_CHANNEL_CAPACITY",
             Self::UnknownConversation => "MESH_UNKNOWN_CONVERSATION",
             Self::InvalidLocation => "MESH_INVALID_LOCATION",
+            Self::InvalidRequest => "MESH_INVALID_REQUEST",
         })
     }
 }
@@ -124,6 +134,116 @@ pub struct MobileMeshPingEventRecord {
     pub rssi_dbm: Option<i16>,
     pub snr_centibels: Option<i16>,
     pub lqi: Option<u8>,
+}
+
+/// How a Node Management operation ended.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, uniffi::Enum)]
+pub enum MobileMeshManagementOutcome {
+    /// Not an ending: the operation is still running. Emitted while a
+    /// device works through an answer larger than one frame, or while a
+    /// whole-device read crawls; `remaining_octets` is what the device
+    /// says it is still holding back.
+    Progress,
+    /// The device answered, and `answers` is what it said.
+    Replied,
+    /// A reset-class command, which a device answers with nothing at all.
+    /// The acknowledgment is the completion.
+    Acknowledged,
+    /// Nothing came back before the exchange gave up. Over LoRa this is
+    /// the ordinary shape of "out of range", not a malfunction.
+    TimedOut,
+    /// The operation could not be carried: an unroutable target, another
+    /// operation already outstanding, or an answer that could not be read.
+    /// A device that is not listing this phone as an administrator answers
+    /// with silence rather than a refusal, so it arrives as `TimedOut`.
+    Failed,
+}
+
+/// What occupied one position of a management answer.
+#[derive(Clone, Debug, PartialEq, Eq, uniffi::Record)]
+pub struct MobileMeshManagementAnswerRecord {
+    pub property_id: u32,
+    /// What the device reports the property is worth. A write is echoed
+    /// with the value the device actually kept, which is not always the
+    /// one that was sent.
+    pub value: Option<Vec<u8>>,
+    /// The status that stood in place of a value: refused, absent, or out
+    /// of an administrator's reach.
+    pub status_code: Option<u32>,
+}
+
+/// One report from an operation started with a `begin_management_*` call.
+///
+/// Several may arrive for one `operation_id`: any number of `Progress`
+/// reports, then exactly one ending.
+#[derive(Clone, Debug, PartialEq, Eq, uniffi::Record)]
+pub struct MobileMeshManagementEventRecord {
+    pub operation_id: u64,
+    /// Canonical Base58 address of the device being managed.
+    pub peer_address: String,
+    pub outcome: MobileMeshManagementOutcome,
+    /// The answers, in the order they were asked for.
+    pub answers: Vec<MobileMeshManagementAnswerRecord>,
+    /// The status when the device answered the whole exchange with one —
+    /// what a save or a whole-table write reports.
+    pub status_code: Option<u32>,
+    /// Octets the device has yet to return of the answer it is part-way
+    /// through, as of the last frame it sent.
+    pub remaining_octets: Option<u32>,
+    /// Properties a whole-device read has yet to ask for. Only
+    /// `begin_remote_sync` reports it, and only while it is running.
+    pub properties_remaining: Option<u32>,
+    /// The device read whole, on a completed `begin_remote_sync`.
+    pub sync: Option<UlcpSyncRecord>,
+}
+
+/// What a reset-class command puts back.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, uniffi::Enum)]
+pub enum MobileMeshResetScope {
+    /// `CMD_RST`: protocol state, leaving configuration alone.
+    Protocol,
+    /// `CMD_RESTORE`: the saved snapshot, discarding unsaved changes.
+    Restore,
+    /// `CMD_FACTORY_RESET`: everything, including the device's identity.
+    /// A device that has forgotten its identity is a different node, and
+    /// no longer reachable at the address this operation was sent to.
+    Factory,
+}
+
+/// One position of a multi-property write.
+#[derive(Clone, Debug, PartialEq, Eq, uniffi::Record)]
+pub struct MobileMeshPropertyWriteRecord {
+    pub property_id: u32,
+    pub value: Vec<u8>,
+}
+
+/// The writes that state a whole device configuration, ordered, for a
+/// device being configured across the mesh.
+///
+/// A phone holding a device open writes a configuration through
+/// `MobileUlcpSession::configure_device`, which owns the ordering — the
+/// PHY goes down first and comes back up last — and closes with a save.
+/// An administrator has no session to hand a record to, only the record
+/// its read produced, so it asks for the same writes here and sends them
+/// with [`MobileMeshSession::begin_management_set_many`]. The reduction is
+/// literally the same code, which is the point: the two paths cannot
+/// drift into configuring a device differently.
+///
+/// `reported` is the device as a completed read found it. Its
+/// capabilities decide which fields must be present, and the properties
+/// it would not report are left out — writing one of those fails, and a
+/// device fails the write it is on rather than the ones after it.
+#[uniffi::export]
+pub fn ulcp_device_config_writes(
+    configuration: crate::ulcp::UlcpDeviceConfigRecord,
+    reported: UlcpSyncRecord,
+) -> Result<Vec<MobileMeshPropertyWriteRecord>, MobileMeshError> {
+    let values = crate::ulcp::device_config_writes(configuration, &reported)
+        .map_err(|_| MobileMeshError::InvalidRequest)?;
+    Ok(values
+        .into_iter()
+        .map(|(property_id, value)| MobileMeshPropertyWriteRecord { property_id, value })
+        .collect())
 }
 
 /// How the MAC will address the next frame sent to a peer.
@@ -344,6 +464,9 @@ pub struct MobileMeshSessionUpdateRecord {
     /// result; queue acceptance is not transmit completion.
     pub outbound_frames: Vec<MobileMeshOutboundFrameRecord>,
     pub ping_events: Vec<MobileMeshPingEventRecord>,
+    /// Reports from operations started with `begin_management_*` or
+    /// `begin_remote_sync`, in the order they were produced.
+    pub management_events: Vec<MobileMeshManagementEventRecord>,
     pub advertisement_events: Vec<MobileMeshAdvertisementRecord>,
     pub peer_heard_events: Vec<MobileMeshPeerHeardRecord>,
     /// Chat effects remain in the facade until Swift durably applies them and
@@ -398,6 +521,11 @@ enum WorkerCommand {
         operation_id: u64,
         peer: PublicKey,
         timeout_ms: u64,
+    },
+    Manage {
+        operation_id: u64,
+        peer: PublicKey,
+        request: ManagementRequest,
     },
     RestoreChat {
         checkpoints: Vec<MobileChatCheckpointRecord>,
@@ -485,6 +613,29 @@ enum WorkerCommand {
     FailOutboundTransmissions,
     Receive(MobileMeshRxRecord),
     Shutdown,
+}
+
+/// What kind of answer a management request expects, which is what makes
+/// the reply frame readable.
+#[derive(Clone, Debug)]
+enum ReplyShape {
+    /// A `CMD_PROP_IS` for this property, or a status standing in for it.
+    Property(u32),
+    /// A `CMD_PROP_ARE` covering these properties, in order.
+    Entries(Vec<u32>),
+    /// A bare `PROP_LAST_STATUS`, which is what a save reports.
+    Status,
+    /// Nothing at all: a reset-class command is completed by the
+    /// acknowledgment.
+    Acknowledgment,
+}
+
+/// What the phone was asked to do to a device over the mesh.
+enum ManagementRequest {
+    /// One request frame, already encoded, and the shape of its answer.
+    One { frame: Vec<u8>, shape: ReplyShape },
+    /// Read the device whole, in as many exchanges as it takes.
+    Sync,
 }
 
 enum ChatComposeRequest {
@@ -889,10 +1040,15 @@ const MOBILE_CHAT_TRANSMIT_WINDOW: usize = 8;
 /// response matching, and timeout.
 #[derive(uniffi::Object)]
 pub struct MobileMeshSession {
+    /// This phone's node public key. Held here rather than asked of the
+    /// worker: it never changes for the life of a session, and it is what
+    /// a device has to list before this phone may manage it.
+    local_key: PublicKey,
     commands: mpsc::UnboundedSender<WorkerCommand>,
     outbound: Mutex<std_mpsc::Receiver<MobileMeshOutboundFrameRecord>>,
     transmit_completions: Arc<BridgeTransmitCompletions>,
     events: Mutex<std_mpsc::Receiver<MobileMeshPingEventRecord>>,
+    management: Mutex<std_mpsc::Receiver<MobileMeshManagementEventRecord>>,
     advertisements: Mutex<std_mpsc::Receiver<MobileMeshAdvertisementRecord>>,
     peer_heard: Mutex<std_mpsc::Receiver<MobileMeshPeerHeardRecord>>,
     chat_events: Mutex<std_mpsc::Receiver<MobileChatWorkerEvent>>,
@@ -914,15 +1070,7 @@ impl MobileMeshSession {
 
     pub fn ping(&self, peer_address: String, timeout_ms: u64) -> Result<u64, MobileMeshError> {
         let peer = decode_peer(&peer_address).map_err(|_| MobileMeshError::InvalidPeer)?;
-        let operation_id = {
-            let mut next = self
-                .next_operation_id
-                .lock()
-                .map_err(|_| MobileMeshError::SessionUnavailable)?;
-            let current = *next;
-            *next = next.wrapping_add(1).max(1);
-            current
-        };
+        let operation_id = self.next_operation_id()?;
         self.commands
             .send(WorkerCommand::Ping {
                 operation_id,
@@ -931,6 +1079,259 @@ impl MobileMeshSession {
             })
             .map_err(|_| MobileMeshError::SessionUnavailable)?;
         Ok(operation_id)
+    }
+
+    /// This phone's own node public key, which is what a device lists in
+    /// `PROP_DEV_ADMINS` to let this phone manage it over the mesh.
+    ///
+    /// Handing this to a radio the phone is attached to —
+    /// `MobileUlcpSession::insert_device_admin` — is the whole of making
+    /// this phone an administrator of that radio. Nothing else is
+    /// exchanged: the session both ends derive comes from their two
+    /// identities.
+    pub fn node_public_key(&self) -> Vec<u8> {
+        self.local_key.0.to_vec()
+    }
+
+    /// Read one property from a device across the mesh.
+    ///
+    /// Every `begin_management_*` call returns immediately with an
+    /// operation identifier, and reports through `poll_update` — the same
+    /// shape as `ping`, because it is the same kind of thing: a
+    /// round-trip over a network that promises nothing. One operation runs
+    /// at a time; starting another while one is outstanding fails it.
+    pub fn begin_management_get(
+        &self,
+        peer_address: String,
+        property_id: u32,
+    ) -> Result<u64, MobileMeshError> {
+        let frame = encode_management(|buf| frame::prop_get(buf, 0, property_id))?;
+        self.begin_management(
+            peer_address,
+            ManagementRequest::One {
+                frame,
+                shape: ReplyShape::Property(property_id),
+            },
+        )
+    }
+
+    /// Write one property on a device across the mesh.
+    ///
+    /// The answer echoes what the property is now worth, which is what the
+    /// device kept rather than what was sent. The change is live and
+    /// unsaved; `begin_management_save` is what makes it survive a reboot.
+    pub fn begin_management_set(
+        &self,
+        peer_address: String,
+        property_id: u32,
+        value: Vec<u8>,
+    ) -> Result<u64, MobileMeshError> {
+        let frame = encode_management(|buf| frame::prop_set(buf, 0, property_id, &value))?;
+        self.begin_management(
+            peer_address,
+            ManagementRequest::One {
+                frame,
+                shape: ReplyShape::Property(property_id),
+            },
+        )
+    }
+
+    /// Add one item to a multiple-value property on a device across the
+    /// mesh — a peer key, an administrator key, a channel key.
+    pub fn begin_management_insert(
+        &self,
+        peer_address: String,
+        property_id: u32,
+        item: Vec<u8>,
+    ) -> Result<u64, MobileMeshError> {
+        let frame = encode_management(|buf| frame::prop_insert(buf, 0, property_id, &item))?;
+        self.begin_management(
+            peer_address,
+            ManagementRequest::One {
+                frame,
+                shape: ReplyShape::Property(property_id),
+            },
+        )
+    }
+
+    /// Take one item out of a multiple-value property on a device across
+    /// the mesh.
+    pub fn begin_management_remove(
+        &self,
+        peer_address: String,
+        property_id: u32,
+        selector: Vec<u8>,
+    ) -> Result<u64, MobileMeshError> {
+        let frame = encode_management(|buf| frame::prop_remove(buf, 0, property_id, &selector))?;
+        self.begin_management(
+            peer_address,
+            ManagementRequest::One {
+                frame,
+                shape: ReplyShape::Property(property_id),
+            },
+        )
+    }
+
+    /// Let one more node manage this device over the mesh, by adding its
+    /// public key to `PROP_DEV_ADMINS`.
+    ///
+    /// Named rather than left to [`Self::begin_management_insert`] for the
+    /// same reason `MobileUlcpSession::insert_device_admin` is: this is a
+    /// decision about who may configure a node, and a caller should not
+    /// have to name the property — or be able to reach a different one by
+    /// naming it wrong. The device holds it live until a save.
+    pub fn begin_management_insert_admin(
+        &self,
+        peer_address: String,
+        public_key: Vec<u8>,
+    ) -> Result<u64, MobileMeshError> {
+        if public_key.len() != items::PUBLIC_KEY_LEN {
+            return Err(MobileMeshError::InvalidRequest);
+        }
+        self.begin_management_insert(peer_address, prop::DEV_ADMINS, public_key)
+    }
+
+    /// Take a node's authority to manage this device away again.
+    ///
+    /// A device that removes the administrator it is answering keeps
+    /// answering this exchange — the reply is already authorized — and
+    /// refuses the next one.
+    pub fn begin_management_remove_admin(
+        &self,
+        peer_address: String,
+        public_key: Vec<u8>,
+    ) -> Result<u64, MobileMeshError> {
+        if public_key.len() != items::PUBLIC_KEY_LEN {
+            return Err(MobileMeshError::InvalidRequest);
+        }
+        self.begin_management_remove(peer_address, prop::DEV_ADMINS, public_key)
+    }
+
+    /// Tell a device to make itself conspicuous, or to stop
+    /// (`PROP_ALERT`).
+    ///
+    /// Live state, never saved: an alert is a thing happening now, and one
+    /// restored at boot would be a device that woke up beeping. The device
+    /// ends it on its own deadline as well, so a search that outlasts that
+    /// is kept alive by asking again — the same contract as the local link,
+    /// with the round trip of the mesh in front of it.
+    pub fn begin_management_set_alert(
+        &self,
+        peer_address: String,
+        state: crate::ulcp::UlcpAlertState,
+    ) -> Result<u64, MobileMeshError> {
+        let value = crate::ulcp::encode_alert_state(state).map_err(|_| {
+            // The encoding is total over the enum; a failure here would be
+            // a bug in this crate rather than anything the caller did.
+            MobileMeshError::InvalidRequest
+        })?;
+        self.begin_management_set(peer_address, prop::ALERT, value)
+    }
+
+    /// Read several properties in one exchange.
+    ///
+    /// A device answers as many as fit and stops; the answers that arrive
+    /// are the ones it sent, and the rest are simply absent. Requires
+    /// `CAP_CMD_MULTI` on the device — one that lacks it refuses the whole
+    /// request rather than answering part of it.
+    pub fn begin_management_get_many(
+        &self,
+        peer_address: String,
+        property_ids: Vec<u32>,
+    ) -> Result<u64, MobileMeshError> {
+        if property_ids.is_empty() {
+            return Err(MobileMeshError::InvalidRequest);
+        }
+        let frame = encode_management(|buf| frame::prop_multi_get(buf, 0, &property_ids))?;
+        self.begin_management(
+            peer_address,
+            ManagementRequest::One {
+                frame,
+                shape: ReplyShape::Entries(property_ids),
+            },
+        )
+    }
+
+    /// Write several properties in one exchange, in order.
+    ///
+    /// A device applies them until the next answer would not fit and stops
+    /// there, so a short answer means the remainder was never attempted.
+    /// Each position echoes what that property is now worth.
+    pub fn begin_management_set_many(
+        &self,
+        peer_address: String,
+        writes: Vec<MobileMeshPropertyWriteRecord>,
+    ) -> Result<u64, MobileMeshError> {
+        if writes.is_empty() {
+            return Err(MobileMeshError::InvalidRequest);
+        }
+        let property_ids: Vec<u32> = writes.iter().map(|write| write.property_id).collect();
+        let entries: Vec<(u32, &[u8])> = writes
+            .iter()
+            .map(|write| (write.property_id, write.value.as_slice()))
+            .collect();
+        let frame = encode_management(|buf| frame::prop_multi_set(buf, 0, &entries))?;
+        self.begin_management(
+            peer_address,
+            ManagementRequest::One {
+                frame,
+                shape: ReplyShape::Entries(property_ids),
+            },
+        )
+    }
+
+    /// Persist a device's live configuration across the mesh.
+    pub fn begin_management_save(&self, peer_address: String) -> Result<u64, MobileMeshError> {
+        let frame = encode_management(|buf| frame::save(buf, 0))?;
+        self.begin_management(
+            peer_address,
+            ManagementRequest::One {
+                frame,
+                shape: ReplyShape::Status,
+            },
+        )
+    }
+
+    /// Reset a device across the mesh.
+    ///
+    /// A device answers a reset with nothing — it is busy doing what was
+    /// asked — so the operation ends `Acknowledged` on the MAC
+    /// acknowledgment. `Restore` on a device holding no snapshot resets
+    /// nothing and answers like any other command, which arrives as an
+    /// ordinary `Replied` status.
+    pub fn begin_management_reset(
+        &self,
+        peer_address: String,
+        scope: MobileMeshResetScope,
+    ) -> Result<u64, MobileMeshError> {
+        let frame = encode_management(|buf| match scope {
+            MobileMeshResetScope::Protocol => frame::reset(buf, 0),
+            MobileMeshResetScope::Restore => frame::restore(buf, 0),
+            MobileMeshResetScope::Factory => frame::factory_reset(buf, 0),
+        })?;
+        self.begin_management(
+            peer_address,
+            ManagementRequest::One {
+                frame,
+                shape: ReplyShape::Acknowledgment,
+            },
+        )
+    }
+
+    /// Read a device whole across the mesh, reducing what comes back into
+    /// the same `UlcpSyncRecord` an attached radio produces.
+    ///
+    /// The crawl asks what the device can do, then asks for everything
+    /// those capabilities imply and an administrator is allowed to see,
+    /// in as many exchanges as the answers need. A property the device
+    /// declines lands in `unreadable_properties` rather than ending the
+    /// read — the same tolerance a bench attach has.
+    ///
+    /// Expensive over LoRa: tens of properties, several round trips. It is
+    /// the "open this device's settings" operation, not something to run
+    /// on a timer.
+    pub fn begin_remote_sync(&self, peer_address: String) -> Result<u64, MobileMeshError> {
+        self.begin_management(peer_address, ManagementRequest::Sync)
     }
 
     /// Broadcast a signed node-identity advertisement describing this phone.
@@ -1494,6 +1895,10 @@ impl MobileMeshSession {
         if let Ok(receiver) = self.events.lock() {
             ping_events.extend(receiver.try_iter());
         }
+        let mut management_events = Vec::new();
+        if let Ok(receiver) = self.management.lock() {
+            management_events.extend(receiver.try_iter());
+        }
         let mut advertisement_events = Vec::new();
         if let Ok(receiver) = self.advertisements.lock() {
             advertisement_events.extend(receiver.try_iter());
@@ -1541,6 +1946,7 @@ impl MobileMeshSession {
         MobileMeshSessionUpdateRecord {
             outbound_frames,
             ping_events,
+            management_events,
             advertisement_events,
             peer_heard_events,
             chat_batch_id,
@@ -1554,6 +1960,35 @@ impl MobileMeshSession {
 }
 
 impl MobileMeshSession {
+    /// Allocate an operation identifier and hand the request to the
+    /// worker, which owns the administrator engine.
+    fn begin_management(
+        &self,
+        peer_address: String,
+        request: ManagementRequest,
+    ) -> Result<u64, MobileMeshError> {
+        let peer = decode_peer(&peer_address).map_err(|_| MobileMeshError::InvalidPeer)?;
+        let operation_id = self.next_operation_id()?;
+        self.commands
+            .send(WorkerCommand::Manage {
+                operation_id,
+                peer,
+                request,
+            })
+            .map_err(|_| MobileMeshError::SessionUnavailable)?;
+        Ok(operation_id)
+    }
+
+    fn next_operation_id(&self) -> Result<u64, MobileMeshError> {
+        let mut next = self
+            .next_operation_id
+            .lock()
+            .map_err(|_| MobileMeshError::SessionUnavailable)?;
+        let current = *next;
+        *next = next.wrapping_add(1).max(1);
+        Ok(current)
+    }
+
     async fn compose_chat(
         &self,
         conversation_address: String,
@@ -1598,6 +2033,7 @@ impl MobileMeshSession {
         let wake = Arc::new(WakeSignal::new());
         let (outbound_tx, outbound) = std_mpsc::channel();
         let (event_tx, events) = std_mpsc::channel();
+        let (management_tx, management) = std_mpsc::channel();
         let (advertisement_tx, advertisements) = std_mpsc::channel();
         let (peer_heard_tx, peer_heard) = std_mpsc::channel();
         let (chat_event_tx, chat_events) = std_mpsc::channel();
@@ -1607,6 +2043,10 @@ impl MobileMeshSession {
         };
         let event_tx = NotifyingSender {
             tx: event_tx,
+            wake: wake.clone(),
+        };
+        let management_tx = NotifyingSender {
+            tx: management_tx,
             wake: wake.clone(),
         };
         let advertisement_tx = NotifyingSender {
@@ -1623,6 +2063,7 @@ impl MobileMeshSession {
         };
         let (ready_tx, ready_rx) = oneshot::channel();
         let worker_identity = identity.take_for_session()?;
+        let local_key = *worker_identity.public_key();
         let transmit_completions = Arc::new(BridgeTransmitCompletions::new());
         let worker_transmit_completions = transmit_completions.clone();
 
@@ -1662,6 +2103,7 @@ impl MobileMeshSession {
                         outbound_tx,
                         worker_transmit_completions,
                         event_tx,
+                        management_tx,
                         advertisement_tx,
                         peer_heard_tx,
                         chat_event_tx,
@@ -1675,10 +2117,12 @@ impl MobileMeshSession {
             .await
             .map_err(|_| MobileMeshError::SessionUnavailable)??;
         Ok(Arc::new(Self {
+            local_key,
             commands,
             outbound: Mutex::new(outbound),
             transmit_completions,
             events: Mutex::new(events),
+            management: Mutex::new(management),
             advertisements: Mutex::new(advertisements),
             peer_heard: Mutex::new(peer_heard),
             chat_events: Mutex::new(chat_events),
@@ -1790,6 +2234,400 @@ async fn build_signed_identity_bundle(
     Ok(bundle)
 }
 
+/// Flood-hop budget on a management request. A device worth managing
+/// remotely is one that is not in the room, so an unrouted first request
+/// has to be able to travel.
+const MANAGEMENT_FLOOD_HOPS: u8 = 5;
+
+/// How many properties one batch of a whole-device read asks for.
+///
+/// Small enough that a device answers most batches in one frame, and that
+/// a batch lost to a timeout is cheap to have lost; a batch whose answer
+/// does overflow is continued by the binding's own cursors, so this is not
+/// a correctness bound.
+const SYNC_BATCH: usize = 8;
+
+/// Encode a management request, which must fit one Node Management
+/// payload. The frame's TID is ignored over this binding — the envelope
+/// token is what correlates a response — so every request carries zero.
+fn encode_management(
+    build: impl FnOnce(&mut [u8]) -> Result<usize, umsh_ulcp::frame::WriteError>,
+) -> Result<Vec<u8>, MobileMeshError> {
+    let mut buf = vec![0u8; umsh_node_mgmt::REQUEST_MAX];
+    let len = build(&mut buf).map_err(|_| MobileMeshError::InvalidRequest)?;
+    buf.truncate(len);
+    Ok(buf)
+}
+
+/// A whole-device read, one batch of properties at a time.
+///
+/// The device says what it can do, and what it can do says what there is
+/// to ask for. Everything out of an administrator's reach is left out
+/// before a single frame goes on the air.
+#[derive(Default)]
+struct SyncCrawl {
+    /// Whether the capabilities have come back and the rest is planned.
+    planned: bool,
+    /// Whether the device answers multi-property requests.
+    multi: bool,
+    /// What the outstanding request asked for, in order.
+    asked: Vec<u32>,
+    /// What is still to be asked for.
+    pending: VecDeque<u32>,
+    /// Everything answered so far, in the shape the reducer takes.
+    collected: Vec<UlcpPropertyFrameRecord>,
+}
+
+impl SyncCrawl {
+    /// The next request, or `None` when there is nothing left to ask.
+    fn next_request(&mut self) -> Result<Option<Vec<u8>>, MobileMeshError> {
+        if !self.planned {
+            self.asked = vec![prop::CAPS];
+            return encode_management(|buf| frame::prop_get(buf, 0, prop::CAPS)).map(Some);
+        }
+        let batch = if self.multi { SYNC_BATCH } else { 1 };
+        self.asked = self
+            .pending
+            .drain(..batch.min(self.pending.len()))
+            .collect();
+        match self.asked.as_slice() {
+            [] => Ok(None),
+            [key] => encode_management(|buf| frame::prop_get(buf, 0, *key)).map(Some),
+            keys => encode_management(|buf| frame::prop_multi_get(buf, 0, keys)).map(Some),
+        }
+    }
+
+    /// Take in one answer. Anything the device declined is left out
+    /// rather than retried: a refused property is one whose value is
+    /// unknown, which the reducer already has a place for.
+    fn receive(&mut self, reply: &[u8]) -> Result<(), MobileMeshError> {
+        if !self.planned {
+            let capabilities = match umsh_ulcp::reply::property(prop::CAPS, reply) {
+                Ok(umsh_ulcp::reply::Answer::Value(value)) => value.to_vec(),
+                // Without capabilities there is nothing to plan: this is
+                // not a device that can describe itself.
+                _ => return Err(MobileMeshError::InvalidRequest),
+            };
+            let decoded = crate::ulcp::decode_capabilities(&capabilities)
+                .map_err(|_| MobileMeshError::InvalidRequest)?;
+            self.multi = decoded.contains(&cap::CMD_MULTI);
+            let mut properties = crate::ulcp::ulcp_refresh_properties(capabilities.clone())
+                .map_err(|_| MobileMeshError::InvalidRequest)?;
+            properties.retain(|&key| key != prop::CAPS && ids::admin_reachable(key));
+            properties.dedup();
+            self.pending = properties.into();
+            self.collected
+                .push(property_record(prop::CAPS, capabilities));
+            self.planned = true;
+            return Ok(());
+        }
+
+        if let [key] = self.asked.as_slice() {
+            if let Ok(umsh_ulcp::reply::Answer::Value(value)) =
+                umsh_ulcp::reply::property(*key, reply)
+            {
+                self.collected.push(property_record(*key, value.to_vec()));
+            }
+            return Ok(());
+        }
+
+        let asked = core::mem::take(&mut self.asked);
+        let Ok(entries) = umsh_ulcp::reply::entries(&asked, reply) else {
+            // The device declined the command rather than the properties,
+            // which is what one without `CAP_CMD_MULTI` does. Ask again one
+            // at a time; its capabilities said otherwise, but the device is
+            // the authority on itself.
+            self.multi = false;
+            for key in asked.into_iter().rev() {
+                self.pending.push_front(key);
+            }
+            return Ok(());
+        };
+        let mut answered = 0usize;
+        for entry in entries.flatten() {
+            answered += 1;
+            if let (key, umsh_ulcp::reply::Answer::Value(value)) = entry {
+                self.collected.push(property_record(key, value.to_vec()));
+            }
+        }
+        // A device stops before its answer overflows rather than
+        // truncating one, so whatever it did not reach is simply asked for
+        // again. An answer that reached nothing would ask forever, so that
+        // batch is broken up instead.
+        if answered == 0 {
+            self.multi = false;
+        }
+        for key in asked.into_iter().skip(answered).rev() {
+            self.pending.push_front(key);
+        }
+        Ok(())
+    }
+}
+
+fn property_record(property_id: u32, value: Vec<u8>) -> UlcpPropertyFrameRecord {
+    UlcpPropertyFrameRecord {
+        transaction_id: 0,
+        command: umsh_ulcp::Cmd::PropIs as u8,
+        property_id,
+        value,
+    }
+}
+
+/// What the phone is doing with one device, and how to read what comes
+/// back.
+enum ManagementPlan {
+    One(ReplyShape),
+    Sync(SyncCrawl),
+}
+
+/// One outstanding management operation.
+struct ManagementJob<M: MacBackend> {
+    operation_id: u64,
+    peer: PublicKey,
+    manager: umsh_node_mgmt::NodeManager<M>,
+    plan: ManagementPlan,
+    /// The last REMAINING reported, so progress is emitted when the device
+    /// says something new rather than on every service call.
+    reported_remaining: Option<u32>,
+}
+
+impl<M: MacBackend> ManagementJob<M> {
+    fn event(&self, outcome: MobileMeshManagementOutcome) -> MobileMeshManagementEventRecord {
+        MobileMeshManagementEventRecord {
+            operation_id: self.operation_id,
+            peer_address: encode_peer_address(&self.peer),
+            outcome,
+            answers: Vec::new(),
+            status_code: None,
+            remaining_octets: self.manager.remaining(),
+            properties_remaining: match &self.plan {
+                ManagementPlan::Sync(crawl) => Some(crawl.pending.len() as u32),
+                ManagementPlan::One(_) => None,
+            },
+            sync: None,
+        }
+    }
+
+    /// A report of what the device is still holding back, the first time
+    /// it says so and whenever the number changes.
+    fn progress(&mut self) -> Option<MobileMeshManagementEventRecord> {
+        let remaining = self.manager.remaining();
+        if remaining.is_none() || remaining == self.reported_remaining {
+            return None;
+        }
+        self.reported_remaining = remaining;
+        Some(self.event(MobileMeshManagementOutcome::Progress))
+    }
+
+    /// Read a finished exchange. `None` means another exchange was begun
+    /// and the operation continues.
+    fn settle(
+        &mut self,
+        outcome: umsh_node_mgmt::Outcome,
+        now_ms: u64,
+    ) -> Option<MobileMeshManagementEventRecord> {
+        match outcome {
+            umsh_node_mgmt::Outcome::Failed(umsh_node_mgmt::Failure::TimedOut) => {
+                return Some(self.event(MobileMeshManagementOutcome::TimedOut));
+            }
+            umsh_node_mgmt::Outcome::Failed(_) => {
+                return Some(self.event(MobileMeshManagementOutcome::Failed));
+            }
+            umsh_node_mgmt::Outcome::NoResponse => {
+                return Some(match self.plan {
+                    // Only a reset-class command is answered by nothing.
+                    ManagementPlan::One(ReplyShape::Acknowledgment) => {
+                        self.event(MobileMeshManagementOutcome::Acknowledged)
+                    }
+                    _ => self.event(MobileMeshManagementOutcome::Failed),
+                });
+            }
+            // The reply is the reassembly buffer, which the manager hands
+            // out whole; its length is not needed separately.
+            umsh_node_mgmt::Outcome::Replied { .. } => {}
+        }
+
+        match &mut self.plan {
+            ManagementPlan::One(shape) => {
+                let shape = shape.clone();
+                Some(self.replied(&shape))
+            }
+            ManagementPlan::Sync(crawl) => {
+                if crawl.receive(self.manager.reply()).is_err() {
+                    return Some(self.event(MobileMeshManagementOutcome::Failed));
+                }
+                match crawl.next_request() {
+                    Ok(Some(request)) => match self.manager.begin(&request, now_ms) {
+                        Ok(()) => {
+                            self.reported_remaining = None;
+                            None
+                        }
+                        Err(_) => Some(self.event(MobileMeshManagementOutcome::Failed)),
+                    },
+                    Ok(None) => Some(self.reduced()),
+                    Err(_) => Some(self.event(MobileMeshManagementOutcome::Failed)),
+                }
+            }
+        }
+    }
+
+    /// Report a single exchange's reply, read against the shape that was
+    /// asked for.
+    fn replied(&self, shape: &ReplyShape) -> MobileMeshManagementEventRecord {
+        let reply = self.manager.reply();
+        let mut event = self.event(MobileMeshManagementOutcome::Replied);
+        match shape {
+            ReplyShape::Property(key) => match umsh_ulcp::reply::property(*key, reply) {
+                Ok(answer) => event.answers.push(answer_record(*key, answer)),
+                Err(_) => return self.event(MobileMeshManagementOutcome::Failed),
+            },
+            ReplyShape::Entries(keys) => match umsh_ulcp::reply::entries(keys, reply) {
+                Ok(entries) => {
+                    for (key, answer) in entries.flatten() {
+                        event.answers.push(answer_record(key, answer));
+                    }
+                }
+                // A device without `CAP_CMD_MULTI` declines the command
+                // itself, which is an answer about the request rather than
+                // about any one property.
+                Err(_) => event.status_code = umsh_ulcp::reply::status_of(reply).map(|s| s.0),
+            },
+            // A reset the device answered anyway — `CMD_RESTORE` with no
+            // snapshot to restore — reports like any other status.
+            ReplyShape::Status | ReplyShape::Acknowledgment => {
+                match umsh_ulcp::reply::status_of(reply) {
+                    Some(status) => event.status_code = Some(status.0),
+                    None => return self.event(MobileMeshManagementOutcome::Failed),
+                }
+            }
+        }
+        event
+    }
+
+    /// Reduce a finished crawl into the same record a bench attach builds.
+    fn reduced(&mut self) -> MobileMeshManagementEventRecord {
+        let ManagementPlan::Sync(crawl) = &mut self.plan else {
+            return self.event(MobileMeshManagementOutcome::Failed);
+        };
+        let collected = core::mem::take(&mut crawl.collected);
+        match crate::ulcp::inspect_ulcp_sync(collected) {
+            Ok(sync) => {
+                let mut event = self.event(MobileMeshManagementOutcome::Replied);
+                event.sync = Some(sync);
+                event
+            }
+            Err(_) => self.event(MobileMeshManagementOutcome::Failed),
+        }
+    }
+}
+
+fn answer_record(
+    property_id: u32,
+    answer: umsh_ulcp::reply::Answer<'_>,
+) -> MobileMeshManagementAnswerRecord {
+    MobileMeshManagementAnswerRecord {
+        property_id,
+        value: answer.value().map(<[u8]>::to_vec),
+        status_code: answer.status().map(|status| status.0),
+    }
+}
+
+/// Report an operation that never started.
+fn emit_management_failure(
+    events: &NotifyingSender<MobileMeshManagementEventRecord>,
+    operation_id: u64,
+    peer: &PublicKey,
+) {
+    let _ = events.send(MobileMeshManagementEventRecord {
+        operation_id,
+        peer_address: encode_peer_address(peer),
+        outcome: MobileMeshManagementOutcome::Failed,
+        answers: Vec::new(),
+        status_code: None,
+        remaining_octets: None,
+        properties_remaining: None,
+        sync: None,
+    });
+}
+
+/// Register the target and put the first request on the air.
+async fn start_management<M: MacBackend>(
+    node: &LocalNode<M>,
+    operation_id: u64,
+    peer: PublicKey,
+    request: ManagementRequest,
+    now_ms: u64,
+    token_seed: u16,
+) -> Option<ManagementJob<M>> {
+    let connection = node.peer(peer).await.ok()?;
+    let mut manager = umsh_node_mgmt::NodeManager::new(connection, token_seed);
+    // An acknowledgment is what completes a reset and what turns an
+    // unreachable device into an early answer; a flood budget and a trace
+    // route are what get a first request to a device no route is known
+    // for, and teach the MAC the way back.
+    *manager.send_options_mut() = SendOptions::default()
+        .with_ack_requested(true)
+        .with_flood_hops(MANAGEMENT_FLOOD_HOPS)
+        .with_trace_route();
+    let (plan, request) = match request {
+        ManagementRequest::One { frame, shape } => (ManagementPlan::One(shape), frame),
+        ManagementRequest::Sync => {
+            let mut crawl = SyncCrawl::default();
+            let request = crawl.next_request().ok()??;
+            (ManagementPlan::Sync(crawl), request)
+        }
+    };
+    manager.begin(&request, now_ms).ok()?;
+    Some(ManagementJob {
+        operation_id,
+        peer,
+        manager,
+        plan,
+        reported_remaining: None,
+    })
+}
+
+/// Carry the outstanding operation as far as it goes right now, clearing
+/// it and reporting once it ends.
+async fn service_management<M: MacBackend>(
+    job: &mut Option<ManagementJob<M>>,
+    now_ms: u64,
+    events: &NotifyingSender<MobileMeshManagementEventRecord>,
+) {
+    let Some(active) = job.as_mut() else {
+        return;
+    };
+    loop {
+        match active.manager.service(now_ms).await {
+            Err(_) => {
+                let _ = events.send(active.event(MobileMeshManagementOutcome::Failed));
+                *job = None;
+                return;
+            }
+            Ok(umsh_node_mgmt::Progress::Waiting { .. }) => {
+                if let Some(progress) = active.progress() {
+                    let _ = events.send(progress);
+                }
+                return;
+            }
+            Ok(umsh_node_mgmt::Progress::Done(outcome)) => match active.settle(outcome, now_ms) {
+                Some(event) => {
+                    let _ = events.send(event);
+                    *job = None;
+                    return;
+                }
+                None => {
+                    // Another exchange of the same operation. A crawl says
+                    // so at every batch boundary, which is the only sign
+                    // of life a long read gives before it finishes.
+                    let _ = events.send(active.event(MobileMeshManagementOutcome::Progress));
+                    continue;
+                }
+            },
+        }
+    }
+}
+
 async fn run_worker(
     identity: SoftwareIdentity,
     counter_store: SharedCounterStore,
@@ -1797,6 +2635,7 @@ async fn run_worker(
     outbound: NotifyingSender<MobileMeshOutboundFrameRecord>,
     transmit_completions: Arc<BridgeTransmitCompletions>,
     events: NotifyingSender<MobileMeshPingEventRecord>,
+    management_events: NotifyingSender<MobileMeshManagementEventRecord>,
     advertisements: NotifyingSender<MobileMeshAdvertisementRecord>,
     peer_heard: NotifyingSender<MobileMeshPeerHeardRecord>,
     chat_events: NotifyingSender<MobileChatWorkerEvent>,
@@ -1996,6 +2835,9 @@ async fn run_worker(
         });
         true
     });
+    // One device at a time: an administrator has one exchange outstanding
+    // with a device, and a phone has no reason to be managing two at once.
+    let mut management: Option<ManagementJob<_>> = None;
     let mut in_flight_chat = Vec::<InFlightChatTransmission>::new();
     // How each channel member was last reached, so an identity request can be
     // routed by evidence rather than flooded at the default budget.
@@ -2161,6 +3003,34 @@ async fn run_worker(
                             }
                             if result.is_err() {
                                 emit_ping_failure(&events, operation_id);
+                            }
+                        }
+                        Some(WorkerCommand::Manage { operation_id, peer, request }) => {
+                            if management.is_some() {
+                                emit_management_failure(&management_events, operation_id, &peer);
+                                continue;
+                            }
+                            let now_ms = handle.now_ms().await;
+                            // The token only has to differ from the last
+                            // exchange's with this device; the operation
+                            // identifier already counts.
+                            let seed = operation_id as u16;
+                            management = start_management(
+                                &node,
+                                operation_id,
+                                peer,
+                                request,
+                                now_ms,
+                                seed,
+                            )
+                            .await;
+                            if management.is_none() {
+                                emit_management_failure(&management_events, operation_id, &peer);
+                                continue;
+                            }
+                            service_management(&mut management, now_ms, &management_events).await;
+                            if handle.service_counter_persistence().await.is_err() {
+                                return;
                             }
                         }
                         Some(WorkerCommand::Advertise { name, timestamp, scheduled, response }) => {
@@ -2746,6 +3616,16 @@ async fn run_worker(
                 _ = protocol_timeout_tick.tick() => {
                     timeout_servicer.service().await;
                     let now_ms = handle.now_ms().await;
+                    if management.is_some() {
+                        // Retries, cursor continuations, and the batches of
+                        // a crawl all leave on this tick. Persistence is
+                        // serviced alongside because each of those is a
+                        // real authenticated send.
+                        service_management(&mut management, now_ms, &management_events).await;
+                        if handle.service_counter_persistence().await.is_err() {
+                            return;
+                        }
+                    }
                     chat.engine.tick(now_ms);
                     service_chat_tickets(
                         &mut chat,
@@ -3197,6 +4077,210 @@ mod tests {
 
     fn address(identity: &MobileIdentity) -> String {
         identity.public_identity.canonical_address.clone()
+    }
+
+    // ─── Reading a device whole, across the mesh ─────────────────────────
+
+    fn caps_reply(capabilities: &[u32]) -> Vec<u8> {
+        let mut encoded = Vec::new();
+        for capability in capabilities {
+            let mut bytes = [0u8; umsh_ulcp::pui::MAX_LEN];
+            let len = umsh_ulcp::pui::encode(*capability, &mut bytes).unwrap();
+            encoded.extend_from_slice(&bytes[..len]);
+        }
+        is_reply(prop::CAPS, &encoded)
+    }
+
+    fn is_reply(property: u32, value: &[u8]) -> Vec<u8> {
+        let mut buf = vec![0u8; 512];
+        let len = frame::prop_is(&mut buf, 0, property, value).unwrap();
+        buf.truncate(len);
+        buf
+    }
+
+    /// A `CMD_PROP_ARE` answering the first `answered` of `keys` with an
+    /// empty value each, as a device that ran out of room would.
+    fn are_reply(keys: &[u32]) -> Vec<u8> {
+        let mut buf = vec![0u8; 512];
+        let mut writer = frame::prop_are(&mut buf, 0).unwrap();
+        for key in keys {
+            writer.write_entry(*key, &[]).unwrap();
+        }
+        let len = writer.finish();
+        buf.truncate(len);
+        buf
+    }
+
+    /// Ask what the outstanding request was, without decoding the frame.
+    fn asked(crawl: &SyncCrawl) -> Vec<u32> {
+        crawl.asked.clone()
+    }
+
+    #[test]
+    fn a_crawl_asks_what_the_device_can_do_before_anything_else() {
+        let mut crawl = SyncCrawl::default();
+        assert!(crawl.next_request().unwrap().is_some());
+        assert_eq!(asked(&crawl), vec![prop::CAPS]);
+
+        crawl
+            .receive(&caps_reply(&[
+                cap::SAVE,
+                cap::DEV_NAME,
+                cap::DEV_IDENTITY,
+                cap::ADMIN,
+                cap::CMD_MULTI,
+            ]))
+            .unwrap();
+        assert!(crawl.multi, "the device said it takes multi-property reads");
+        // What it can do is what there is to ask for, and the
+        // administrator list is part of that.
+        assert!(crawl.pending.contains(&prop::DEV_ADMINS));
+        assert!(crawl.pending.contains(&prop::DEV_NAME));
+        // The phone's own relationship with a radio is not an
+        // administrator's business, and asking would spend airtime on a
+        // refusal.
+        assert!(!crawl.pending.contains(&prop::HOST_KEY));
+        assert!(!crawl.pending.contains(&prop::MAC_PROMISCUOUS));
+
+        crawl.next_request().unwrap().unwrap();
+        assert_eq!(asked(&crawl).len(), SYNC_BATCH);
+    }
+
+    #[test]
+    fn a_crawl_asks_again_for_what_a_short_answer_left_out() {
+        let mut crawl = SyncCrawl::default();
+        crawl.next_request().unwrap();
+        crawl
+            .receive(&caps_reply(&[cap::DEV_IDENTITY, cap::CMD_MULTI]))
+            .unwrap();
+        crawl.next_request().unwrap().unwrap();
+        let batch = asked(&crawl);
+        assert!(batch.len() > 1);
+
+        // The device stopped before its answer overflowed.
+        crawl.receive(&are_reply(&batch[..2])).unwrap();
+        assert_eq!(
+            crawl
+                .pending
+                .iter()
+                .take(batch.len() - 2)
+                .copied()
+                .collect::<Vec<_>>(),
+            batch[2..].to_vec(),
+            "the unanswered keys go back to the front of the queue"
+        );
+        assert_eq!(crawl.collected.len(), 3, "capabilities plus two answers");
+    }
+
+    #[test]
+    fn a_crawl_falls_back_to_one_property_at_a_time() {
+        let mut crawl = SyncCrawl::default();
+        crawl.next_request().unwrap();
+        crawl
+            .receive(&caps_reply(&[cap::DEV_IDENTITY, cap::CMD_MULTI]))
+            .unwrap();
+        crawl.next_request().unwrap().unwrap();
+        let batch = asked(&crawl);
+
+        // A device that declines the command itself, whatever its
+        // capabilities claimed.
+        crawl
+            .receive(&is_reply(
+                prop::LAST_STATUS,
+                &[umsh_ulcp::Status::UNIMPLEMENTED.0 as u8],
+            ))
+            .unwrap();
+        assert!(!crawl.multi);
+        assert_eq!(
+            crawl
+                .pending
+                .iter()
+                .take(batch.len())
+                .copied()
+                .collect::<Vec<_>>(),
+            batch
+        );
+
+        crawl.next_request().unwrap().unwrap();
+        assert_eq!(asked(&crawl), vec![batch[0]]);
+
+        // A property it will not report is left absent rather than
+        // retried; the reducer names it unreadable.
+        crawl
+            .receive(&is_reply(
+                prop::LAST_STATUS,
+                &[umsh_ulcp::Status::PROP_NOT_FOUND.0 as u8],
+            ))
+            .unwrap();
+        assert_eq!(crawl.collected.len(), 1, "only the capabilities");
+        assert!(!crawl.pending.contains(&batch[0]));
+    }
+
+    #[tokio::test]
+    async fn the_phones_node_key_is_what_a_device_lists() {
+        let directory = tempfile::tempdir().unwrap();
+        let phone_identity = identity(21);
+        let store = MobileCounterStore::new(directory.path().display().to_string()).unwrap();
+        let phone = MobileMeshSession::new(phone_identity.clone(), store)
+            .await
+            .unwrap();
+        assert_eq!(
+            phone.node_public_key(),
+            decode_peer(&address(&phone_identity)).unwrap().0.to_vec()
+        );
+    }
+
+    #[tokio::test]
+    async fn one_device_is_managed_at_a_time() {
+        let directory = tempfile::tempdir().unwrap();
+        let phone_identity = identity(22);
+        let device = address(&identity(23));
+        let store = MobileCounterStore::new(directory.path().display().to_string()).unwrap();
+        let phone = MobileMeshSession::new(phone_identity, store).await.unwrap();
+
+        let first = phone
+            .begin_management_get(device.clone(), prop::DEV_NAME)
+            .unwrap();
+        let second = phone.begin_remote_sync(device.clone()).unwrap();
+        assert_ne!(first, second);
+
+        // The first operation is on the air and will not be answered here;
+        // the second is refused outright rather than queued behind it.
+        let deadline = Instant::now() + Duration::from_secs(5);
+        let refusal = loop {
+            assert!(
+                Instant::now() < deadline,
+                "no report for the second operation"
+            );
+            if let Some(event) = phone
+                .poll_update()
+                .management_events
+                .into_iter()
+                .find(|event| event.operation_id == second)
+            {
+                break event;
+            }
+        };
+        assert_eq!(refusal.outcome, MobileMeshManagementOutcome::Failed);
+        assert_eq!(refusal.peer_address, device);
+    }
+
+    #[tokio::test]
+    async fn a_request_larger_than_one_payload_is_refused_before_it_is_sent() {
+        let directory = tempfile::tempdir().unwrap();
+        let phone_identity = identity(24);
+        let device = address(&identity(25));
+        let store = MobileCounterStore::new(directory.path().display().to_string()).unwrap();
+        let phone = MobileMeshSession::new(phone_identity, store).await.unwrap();
+
+        assert_eq!(
+            phone.begin_management_set(device.clone(), prop::DEV_NAME, vec![0x41; 400]),
+            Err(MobileMeshError::InvalidRequest)
+        );
+        assert_eq!(
+            phone.begin_management_get_many(device, Vec::new()),
+            Err(MobileMeshError::InvalidRequest)
+        );
     }
 
     /// The 3-byte hint a node's multicast frames claim, which is the leading

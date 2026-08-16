@@ -17,6 +17,9 @@ umsh-ulcp = { path = "../umsh-ulcp" }
 umsh-uri = { path = "../umsh-uri" }
 umsh-mac = { path = "../umsh-mac", features = ["std", "software-crypto"] }
 umsh-node = { path = "../umsh-node", features = ["std", "software-crypto"] }
+# Managing another node over the mesh: the phone drives the administrator
+# half of the binding from its own worker.
+umsh-node-mgmt = { path = "../umsh-node-mgmt" }
 umsh-sync = { path = "../umsh-sync" }
 umsh-text = { path = "../umsh-text" }
 embedded-hal-async.workspace = true

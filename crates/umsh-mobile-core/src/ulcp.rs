@@ -223,11 +223,22 @@ pub struct UlcpSyncRecord {
     pub supports_offline_queue: bool,
     pub supports_delegated_ack: bool,
     pub supports_device_name: bool,
+    /// `PROP_DEV_NAME`, when the device has one and reported it. Empty is
+    /// a device with no name rather than a device named "".
+    pub device_name: Option<String>,
     pub supports_lora: bool,
     pub supports_duty_cycle_limit: bool,
     /// The device measures its own power state (`CAP_BATTERY`). A device
     /// without it never reports a battery, so callers have nothing to show.
     pub supports_battery: bool,
+    /// `PROP_BATTERY`, when the device measures one and has reported it.
+    ///
+    /// A reading rather than a setting, and absent for a reason that is
+    /// never a fault: on the local link a device announces this on its own
+    /// schedule, so a session that has only just attached has not heard one
+    /// yet. Deliberately not counted among `unreadable_properties` — there
+    /// is no setting here to be written over.
+    pub battery: Option<UlcpBatteryRecord>,
     /// The device can forward for the mesh on its own (`CAP_REPEATER`).
     pub supports_repeater: bool,
     /// The device serves and configures its own advertised node identity
@@ -246,6 +257,15 @@ pub struct UlcpSyncRecord {
     /// The device announces itself on a schedule of its own
     /// (`CAP_ADVERT`).
     pub supports_advert: bool,
+    /// The device answers Node Management Requests from the administrators
+    /// it lists (`CAP_ADMIN`). A device without it can only ever be
+    /// configured by whoever is holding it.
+    pub supports_admin: bool,
+    /// The device can make itself conspicuous on request (`CAP_ALERT`).
+    pub supports_alert: bool,
+    /// `PROP_ALERT`: what the device is doing to make itself findable, when
+    /// it has said. Live state like `battery`, and absent on the same terms.
+    pub alert: Option<UlcpAlertState>,
     pub phy_enabled: bool,
     pub frequency_khz: u32,
     pub transmit_power_dbm: i8,
@@ -268,6 +288,11 @@ pub struct UlcpSyncRecord {
     /// identity, read back losslessly. Present when
     /// `supports_device_identity` and the device reported the list.
     pub dev_peer_keys: Option<Vec<Vec<u8>>>,
+    /// `PROP_DEV_ADMINS`: the node public keys allowed to manage this device
+    /// over the mesh, read back losslessly. Present when `supports_admin`
+    /// and the device reported the list; an empty list is a device that
+    /// nobody may manage remotely.
+    pub dev_admin_keys: Option<Vec<Vec<u8>>>,
     /// `PROP_DEV_CHANNEL_KEYS`: the two-octet identifiers of the channels the
     /// device identity has joined. Key material is never read back, so a
     /// caller names these by deriving identifiers from the keys it holds; one
@@ -585,12 +610,23 @@ enum ExpectedResponse {
     ConfigurationProperty(u32),
     SaveConfiguration,
     RawTransmit,
-    /// A `CMD_PROP_INSERT` of this key into `PROP_DEV_PEERS`.
-    DevPeerInsert(Vec<u8>),
-    /// A `CMD_PROP_REMOVE` of this key from `PROP_DEV_PEERS`.
-    DevPeerRemove(Vec<u8>),
-    /// The `CMD_SAVE` chained behind a device-peer mutation.
-    SaveDevPeers,
+    /// A `CMD_PROP_INSERT` of this key into a device-domain public-key
+    /// table: `PROP_DEV_PEERS` or `PROP_DEV_ADMINS`. The two are the same
+    /// operation on different lists — a table of 32-byte keys the device
+    /// echoes back item by item — so they are confirmed the same way.
+    DevKeyInsert {
+        property: u32,
+        item: Vec<u8>,
+    },
+    /// A `CMD_PROP_REMOVE` of this key from a device-domain public-key table.
+    DevKeyRemove {
+        property: u32,
+        item: Vec<u8>,
+    },
+    /// The `CMD_SAVE` chained behind a device-domain key-table mutation.
+    SaveDevKeys {
+        property: u32,
+    },
     /// A `CMD_PROP_INSERT` into `PROP_DEV_CHANNEL_KEYS`. Carries the derived
     /// identifier rather than the key, because the device confirms a channel
     /// mutation by echoing the identifier — key material is never read back.
@@ -829,14 +865,12 @@ impl MobileUlcpSession {
         if !session.has_capability(cap::ALERT)? {
             return Err(MobileError::UnsupportedCapability);
         }
-        let mut value = [0u8; pui::MAX_LEN];
-        let len = pui::encode(state.to_wire().code(), &mut value)
-            .map_err(|_| MobileError::InvalidUlcpFrame)?;
+        let value = encode_alert_state(state)?;
         let tid = session.allocate_tid();
         session
             .expected
             .insert(tid, ExpectedResponse::Property(prop::ALERT));
-        let frame = ulcp_prop_set(tid, prop::ALERT, value[..len].to_vec())?;
+        let frame = ulcp_prop_set(tid, prop::ALERT, value)?;
         Ok(session.update(vec![frame]))
     }
 
@@ -886,7 +920,7 @@ impl MobileUlcpSession {
         if state.stage != SessionStage::Attached {
             return Err(MobileError::InvalidUlcpFrame);
         }
-        validate_radio_settings(&settings, &state)?;
+        validate_radio_settings(&settings, DeviceCapabilities::read(&state)?)?;
 
         state.expected.clear();
         state.configuration_queue = state.writable(configuration_values(settings, Vec::new()));
@@ -911,8 +945,9 @@ impl MobileUlcpSession {
         if state.stage != SessionStage::Attached {
             return Err(MobileError::InvalidUlcpFrame);
         }
-        validate_radio_settings(&configuration.radio, &state)?;
-        let device_values = validate_device_settings(&configuration, &state)?;
+        let capabilities = DeviceCapabilities::read(&state)?;
+        validate_radio_settings(&configuration.radio, capabilities)?;
+        let device_values = validate_device_settings(&configuration, capabilities)?;
 
         state.expected.clear();
         state.configuration_queue =
@@ -946,7 +981,7 @@ impl MobileUlcpSession {
         if state.stage != SessionStage::Attached {
             return Err(MobileError::InvalidUlcpFrame);
         }
-        let values = positioning_values(gnss, tz_offset_min, &state)?;
+        let values = positioning_values(gnss, tz_offset_min, DeviceCapabilities::read(&state)?)?;
         // A radio with neither capability has nothing here to configure,
         // which is a caller mistake rather than an empty success.
         if values.is_empty() {
@@ -974,7 +1009,7 @@ impl MobileUlcpSession {
         if state.stage != SessionStage::Attached {
             return Err(MobileError::InvalidUlcpFrame);
         }
-        let values = advert_values(advert, &state)?;
+        let values = advert_values(advert, DeviceCapabilities::read(&state)?)?;
         // A radio that announces nothing on its own has nothing here to
         // configure, which is a caller mistake rather than a no-op.
         if values.is_empty() {
@@ -1068,7 +1103,7 @@ impl MobileUlcpSession {
     ) -> Result<UlcpSessionUpdateRecord, MobileError> {
         let id = dev_channel_id(&channel_key)?;
         let mut state = self.inner.lock().expect("ULCP session mutex poisoned");
-        state.begin_dev_peer_operation()?;
+        state.begin_device_domain_operation(cap::DEV_IDENTITY)?;
         let tid = state.allocate_tid();
         state
             .expected
@@ -1091,7 +1126,7 @@ impl MobileUlcpSession {
     ) -> Result<UlcpSessionUpdateRecord, MobileError> {
         let id = dev_channel_id(&channel_key)?;
         let mut state = self.inner.lock().expect("ULCP session mutex poisoned");
-        state.begin_dev_peer_operation()?;
+        state.begin_device_domain_operation(cap::DEV_IDENTITY)?;
         let tid = state.allocate_tid();
         state
             .expected
@@ -1184,17 +1219,7 @@ impl MobileUlcpSession {
         &self,
         public_key: Vec<u8>,
     ) -> Result<UlcpSessionUpdateRecord, MobileError> {
-        let public_key: [u8; 32] = public_key
-            .try_into()
-            .map_err(|_| MobileError::InvalidPublicKeyLength)?;
-        let mut state = self.inner.lock().expect("ULCP session mutex poisoned");
-        state.begin_dev_peer_operation()?;
-        let tid = state.allocate_tid();
-        state
-            .expected
-            .insert(tid, ExpectedResponse::DevPeerInsert(public_key.to_vec()));
-        let frame = ulcp_prop_insert(tid, prop::DEV_PEERS, &public_key)?;
-        Ok(state.update(vec![frame]))
+        self.insert_device_key(cap::DEV_IDENTITY, prop::DEV_PEERS, public_key)
     }
 
     /// Remove one peer public key from the radio's device identity
@@ -1208,17 +1233,45 @@ impl MobileUlcpSession {
         &self,
         public_key: Vec<u8>,
     ) -> Result<UlcpSessionUpdateRecord, MobileError> {
-        let public_key: [u8; 32] = public_key
-            .try_into()
-            .map_err(|_| MobileError::InvalidPublicKeyLength)?;
-        let mut state = self.inner.lock().expect("ULCP session mutex poisoned");
-        state.begin_dev_peer_operation()?;
-        let tid = state.allocate_tid();
-        state
-            .expected
-            .insert(tid, ExpectedResponse::DevPeerRemove(public_key.to_vec()));
-        let frame = ulcp_prop_remove(tid, prop::DEV_PEERS, &public_key)?;
-        Ok(state.update(vec![frame]))
+        self.remove_device_key(cap::DEV_IDENTITY, prop::DEV_PEERS, public_key)
+    }
+
+    /// Store one administrator public key on the radio's device identity
+    /// (`PROP_DEV_ADMINS`), then persist with a chained `CMD_SAVE` when the
+    /// device can.
+    ///
+    /// This is the bench half of node management: a key listed here may
+    /// manage this radio over the mesh, so the phone puts its own node key
+    /// on a radio it is attached to and manages it later from across the
+    /// valley. The list is what authorizes an administrator — no pairwise
+    /// provisioning follows, because the session is derived from the two
+    /// identities.
+    ///
+    /// Requires an attached, otherwise-idle session on a device advertising
+    /// `CAP_ADMIN`. Failures surface as `operation_error` with the device's
+    /// status name — `NOMEM` when the list is full (capacity
+    /// [`ulcp_max_dev_admins`]), `ALREADY` when the key is already listed,
+    /// which callers should treat as success.
+    pub fn insert_device_admin(
+        &self,
+        public_key: Vec<u8>,
+    ) -> Result<UlcpSessionUpdateRecord, MobileError> {
+        self.insert_device_key(cap::ADMIN, prop::DEV_ADMINS, public_key)
+    }
+
+    /// Remove one administrator public key from the radio's device identity
+    /// (`PROP_DEV_ADMINS`), then persist with a chained `CMD_SAVE` when the
+    /// device can.
+    ///
+    /// Same preconditions as [`Self::insert_device_admin`]. Emptying the
+    /// list is how a device stops being manageable over the mesh at all.
+    /// `ITEM_NOT_FOUND` surfaces as `operation_error` and callers should
+    /// treat it as success — the key is not listed either way.
+    pub fn remove_device_admin(
+        &self,
+        public_key: Vec<u8>,
+    ) -> Result<UlcpSessionUpdateRecord, MobileError> {
+        self.remove_device_key(cap::ADMIN, prop::DEV_ADMINS, public_key)
     }
 
     /// Queue one complete raw UMSH frame on `STR_PHY_RAW`.
@@ -1589,65 +1642,71 @@ impl MobileUlcpSession {
                     )?);
                 }
             }
-            ExpectedResponse::DevPeerInsert(item) => {
+            ExpectedResponse::DevKeyInsert { property, item } => {
+                let table = dev_key_table_name(property);
                 if response.property_id == prop::LAST_STATUS {
                     let error = ulcp_operation_error(
-                        "insert device peer".to_owned(),
+                        format!("insert device {table}"),
                         response.value.as_slice(),
                     )?;
                     // ALREADY is the device saying the key is stored; keep
                     // the cache truthful even though the operation "failed".
                     if error.status_code == umsh_ulcp::Status::ALREADY.0 {
-                        state.patch_dev_peers(&item, true);
+                        state.patch_dev_keys(property, &item, true);
                         state.refresh_attached_snapshot(None)?;
                     }
                     operation_error = Some(error);
                 } else {
-                    if response.property_id != prop::DEV_PEERS
+                    if response.property_id != property
                         || response.command != Cmd::PropInserted as u8
                         || response.value != item
                     {
                         return Err(MobileError::InvalidUlcpFrame);
                     }
-                    state.patch_dev_peers(&item, true);
+                    state.patch_dev_keys(property, &item, true);
                     if state.has_capability(cap::SAVE)? {
                         let tid = state.allocate_tid();
-                        state.expected.insert(tid, ExpectedResponse::SaveDevPeers);
+                        state
+                            .expected
+                            .insert(tid, ExpectedResponse::SaveDevKeys { property });
                         outbound.push(ulcp_save(tid)?);
                     }
                     state.refresh_attached_snapshot(None)?;
                 }
             }
-            ExpectedResponse::DevPeerRemove(item) => {
+            ExpectedResponse::DevKeyRemove { property, item } => {
+                let table = dev_key_table_name(property);
                 if response.property_id == prop::LAST_STATUS {
                     let error = ulcp_operation_error(
-                        "remove device peer".to_owned(),
+                        format!("remove device {table}"),
                         response.value.as_slice(),
                     )?;
                     // ITEM_NOT_FOUND means the key is not on the device,
                     // which is the state the caller asked for.
                     if error.status_code == umsh_ulcp::Status::ITEM_NOT_FOUND.0 {
-                        state.patch_dev_peers(&item, false);
+                        state.patch_dev_keys(property, &item, false);
                         state.refresh_attached_snapshot(None)?;
                     }
                     operation_error = Some(error);
                 } else {
-                    if response.property_id != prop::DEV_PEERS
+                    if response.property_id != property
                         || response.command != Cmd::PropRemoved as u8
                         || response.value != item
                     {
                         return Err(MobileError::InvalidUlcpFrame);
                     }
-                    state.patch_dev_peers(&item, false);
+                    state.patch_dev_keys(property, &item, false);
                     if state.has_capability(cap::SAVE)? {
                         let tid = state.allocate_tid();
-                        state.expected.insert(tid, ExpectedResponse::SaveDevPeers);
+                        state
+                            .expected
+                            .insert(tid, ExpectedResponse::SaveDevKeys { property });
                         outbound.push(ulcp_save(tid)?);
                     }
                     state.refresh_attached_snapshot(None)?;
                 }
             }
-            ExpectedResponse::SaveDevPeers => {
+            ExpectedResponse::SaveDevKeys { property } => {
                 if response.property_id != prop::LAST_STATUS
                     || response.command != Cmd::PropIs as u8
                 {
@@ -1657,8 +1716,9 @@ impl MobileUlcpSession {
                     // The live mutation stuck; only persistence failed. The
                     // session stays attached and the caller sees the same
                     // `saved` warning path a failed configuration save uses.
+                    let table = dev_key_table_name(property);
                     operation_error = Some(ulcp_operation_error(
-                        "save device peers".to_owned(),
+                        format!("save device {table}s"),
                         response.value.as_slice(),
                     )?);
                 }
@@ -1714,6 +1774,63 @@ impl MobileUlcpSession {
             }),
             mode,
         }
+    }
+
+    /// Add one key to a device-domain public-key table.
+    fn insert_device_key(
+        &self,
+        capability: u32,
+        property: u32,
+        public_key: Vec<u8>,
+    ) -> Result<UlcpSessionUpdateRecord, MobileError> {
+        let public_key: [u8; 32] = public_key
+            .try_into()
+            .map_err(|_| MobileError::InvalidPublicKeyLength)?;
+        let mut state = self.inner.lock().expect("ULCP session mutex poisoned");
+        state.begin_device_domain_operation(capability)?;
+        let tid = state.allocate_tid();
+        state.expected.insert(
+            tid,
+            ExpectedResponse::DevKeyInsert {
+                property,
+                item: public_key.to_vec(),
+            },
+        );
+        let frame = ulcp_prop_insert(tid, property, &public_key)?;
+        Ok(state.update(vec![frame]))
+    }
+
+    /// Take one key out of a device-domain public-key table.
+    fn remove_device_key(
+        &self,
+        capability: u32,
+        property: u32,
+        public_key: Vec<u8>,
+    ) -> Result<UlcpSessionUpdateRecord, MobileError> {
+        let public_key: [u8; 32] = public_key
+            .try_into()
+            .map_err(|_| MobileError::InvalidPublicKeyLength)?;
+        let mut state = self.inner.lock().expect("ULCP session mutex poisoned");
+        state.begin_device_domain_operation(capability)?;
+        let tid = state.allocate_tid();
+        state.expected.insert(
+            tid,
+            ExpectedResponse::DevKeyRemove {
+                property,
+                item: public_key.to_vec(),
+            },
+        );
+        let frame = ulcp_prop_remove(tid, property, &public_key)?;
+        Ok(state.update(vec![frame]))
+    }
+}
+
+/// What a device-domain key table holds, for the operation names an error
+/// carries.
+fn dev_key_table_name(property: u32) -> &'static str {
+    match property {
+        prop::DEV_ADMINS => "administrator",
+        _ => "peer",
     }
 }
 
@@ -1887,13 +2004,14 @@ impl UlcpSessionState {
             )
     }
 
-    /// Gate a device-peer mutation: attached, no other operation in
-    /// flight, and the device actually has a device identity domain.
-    fn begin_dev_peer_operation(&mut self) -> Result<(), MobileError> {
+    /// Gate a device-domain mutation: attached, no other operation in
+    /// flight, and the device advertising whatever capability puts the
+    /// table being written within reach.
+    fn begin_device_domain_operation(&mut self, capability: u32) -> Result<(), MobileError> {
         if self.stage != SessionStage::Attached || !self.expected.is_empty() {
             return Err(MobileError::InvalidUlcpFrame);
         }
-        if !self.has_capability(cap::DEV_IDENTITY)? {
+        if !self.has_capability(capability)? {
             return Err(MobileError::InvalidUlcpFrame);
         }
         Ok(())
@@ -1967,18 +2085,18 @@ impl UlcpSessionState {
         entry.value = value;
     }
 
-    /// Patch the cached `PROP_DEV_PEERS` table after a confirmed mutation,
-    /// keeping it lossless without a round-trip re-read.
-    fn patch_dev_peers(&mut self, key: &[u8], present: bool) {
-        let entry =
-            self.responses
-                .entry(prop::DEV_PEERS)
-                .or_insert_with(|| UlcpPropertyFrameRecord {
-                    transaction_id: frame::TID_UNSOLICITED,
-                    command: Cmd::PropIs as u8,
-                    property_id: prop::DEV_PEERS,
-                    value: Vec::new(),
-                });
+    /// Patch a cached device-domain public-key table after a confirmed
+    /// mutation, keeping it lossless without a round-trip re-read.
+    fn patch_dev_keys(&mut self, property: u32, key: &[u8], present: bool) {
+        let entry = self
+            .responses
+            .entry(property)
+            .or_insert_with(|| UlcpPropertyFrameRecord {
+                transaction_id: frame::TID_UNSOLICITED,
+                command: Cmd::PropIs as u8,
+                property_id: property,
+                value: Vec::new(),
+            });
         let mut value = Vec::with_capacity(entry.value.len() + key.len());
         let mut found = false;
         for chunk in entry.value.chunks(items::PUBLIC_KEY_LEN) {
@@ -2004,32 +2122,13 @@ impl UlcpSessionState {
         Ok(decode_capabilities(&capabilities.value)?.contains(&capability))
     }
 
-    /// Drop the writes the device has already refused to answer for.
-    ///
-    /// A capability-gated property that would not read is one the device
-    /// does not implement, so writing it fails — and one rejected write
-    /// abandons the whole configuration pass. The caller still states a
-    /// complete configuration; what cannot land is left out here, where the
-    /// device's own answers are known, rather than in the form.
     fn writable(&self, values: Vec<(u32, Vec<u8>)>) -> VecDeque<(u32, Vec<u8>)> {
-        let Some(unreadable) = self
+        let unreadable = self
             .provisioning
             .as_ref()
             .map(|sync| sync.unreadable_properties.as_slice())
-            .filter(|unreadable| !unreadable.is_empty())
-        else {
-            return values.into();
-        };
-        let dropped = |property: u32| {
-            unreadable.contains(&property)
-                || WHOLE_WRITE_GROUPS.iter().any(|group| {
-                    group.contains(&property) && group.iter().any(|part| unreadable.contains(part))
-                })
-        };
-        values
-            .into_iter()
-            .filter(|(property, _)| !dropped(*property))
-            .collect()
+            .unwrap_or_default();
+        writable(values, unreadable).into()
     }
 
     fn advance_completed_stage(&mut self, outbound: &mut Vec<Vec<u8>>) -> Result<(), MobileError> {
@@ -2261,6 +2360,9 @@ pub fn ulcp_inspection_properties(capabilities: Vec<u8>) -> Result<Vec<u32>, Mob
             prop::DEV_DISCOVERABLE,
         ]);
     }
+    if has(cap::ADMIN) {
+        properties.push(prop::DEV_ADMINS);
+    }
     if has(cap::ALERT) {
         // Read at attach so a phone reconnecting mid-search finds the
         // alert it left running rather than a stale "off".
@@ -2296,7 +2398,7 @@ pub fn ulcp_inspection_properties(capabilities: Vec<u8>) -> Result<Vec<u32>, Mob
     Ok(properties)
 }
 
-fn ulcp_refresh_properties(capabilities: Vec<u8>) -> Result<Vec<u32>, MobileError> {
+pub(crate) fn ulcp_refresh_properties(capabilities: Vec<u8>) -> Result<Vec<u32>, MobileError> {
     let decoded = decode_capabilities(&capabilities)?;
     validate_capability_dependencies(&decoded)?;
     let has = |capability| decoded.contains(&capability);
@@ -2386,6 +2488,31 @@ pub fn inspect_ulcp_sync(
         prop::DEV_CHANNEL_KEYS,
         decode_fixed_list::<{ items::CHANNEL_ID_LEN }>,
     );
+    let manageable = has(cap::ADMIN);
+    let dev_admin_keys = expected.read(
+        manageable,
+        prop::DEV_ADMINS,
+        decode_fixed_list::<{ items::PUBLIC_KEY_LEN }>,
+    );
+    // Read here as well as onto the session snapshot, because a phone
+    // reading a device across the mesh has no session with it and this
+    // record is the whole of what it learned.
+    let device_name = expected
+        .read(has(cap::DEV_NAME), prop::DEV_NAME, decode_device_name)
+        .flatten();
+
+    // Readings, not settings, so they go around `expected`: a device that
+    // has not reported its battery yet has not withheld a setting, and
+    // saying it had would put "its battery" in a notice about configuration
+    // this phone is about to write over. On the local link neither is even
+    // asked for at attach — the battery arrives unsolicited — while a
+    // reading across the mesh asks for both and gets an answer or none.
+    let battery = reported_value(&responses, has(cap::BATTERY), prop::BATTERY, |value| {
+        inspect_ulcp_battery(value.to_vec())
+    });
+    let alert = reported_value(&responses, has(cap::ALERT), prop::ALERT, |value| {
+        inspect_ulcp_alert(value.to_vec())
+    });
 
     // Every part of the policy is read before any of it is required, so one
     // unreadable property does not hide the others behind it.
@@ -2468,15 +2595,20 @@ pub fn inspect_ulcp_sync(
         supports_offline_queue: has(cap::HOST_RX_QUEUE),
         supports_delegated_ack: has(cap::HOST_AUTO_ACK),
         supports_device_name: has(cap::DEV_NAME),
+        device_name,
         supports_lora: has(cap::PHY_LORA),
         supports_duty_cycle_limit: has(cap::PHY_DUTY_LIMIT),
         supports_battery: has(cap::BATTERY),
+        battery,
         supports_repeater: has(cap::REPEATER),
         supports_ident: has(cap::IDENT),
         supports_device_identity: has(cap::DEV_IDENTITY),
         supports_time: has(cap::TIME),
         supports_gnss: positioning,
         supports_advert: announces,
+        supports_admin: manageable,
+        supports_alert: has(cap::ALERT),
+        alert,
         phy_enabled,
         frequency_khz,
         transmit_power_dbm,
@@ -2494,6 +2626,7 @@ pub fn inspect_ulcp_sync(
         auto_ack,
         repeater,
         dev_peer_keys,
+        dev_admin_keys,
         dev_channel_ids,
         ident_role,
         ident_mobile,
@@ -2563,6 +2696,23 @@ impl ExpectedProperties<'_> {
     }
 }
 
+/// Decode a live reading the device may or may not have reported.
+///
+/// The counterpart to [`ExpectedProperties::read`] for values that are not
+/// configuration: absence is ordinary rather than a withheld setting, so
+/// nothing is recorded and the reduction reports what it has.
+fn reported_value<T>(
+    responses: &[UlcpPropertyFrameRecord],
+    gated_on: bool,
+    key: u32,
+    decode: impl FnOnce(&[u8]) -> Result<T, MobileError>,
+) -> Option<T> {
+    if !gated_on {
+        return None;
+    }
+    property_value(responses, key).and_then(decode).ok()
+}
+
 fn property_value(responses: &[UlcpPropertyFrameRecord], key: u32) -> Result<&[u8], MobileError> {
     let mut matching = responses
         .iter()
@@ -2574,7 +2724,7 @@ fn property_value(responses: &[UlcpPropertyFrameRecord], key: u32) -> Result<&[u
     Ok(&response.value)
 }
 
-fn decode_capabilities(value: &[u8]) -> Result<Vec<u32>, MobileError> {
+pub(crate) fn decode_capabilities(value: &[u8]) -> Result<Vec<u32>, MobileError> {
     let mut capabilities = Vec::new();
     let mut rest = value;
     while !rest.is_empty() {
@@ -2597,6 +2747,10 @@ fn validate_capability_dependencies(capabilities: &[u32]) -> Result<(), MobileEr
         // and nothing to advertise.
         || has(cap::REPEATER) && !has(cap::DEV_IDENTITY)
         || has(cap::IDENT) && !has(cap::DEV_IDENTITY)
+        // An administrator is authorized against the device identity and
+        // reaches the device domain, so there is nothing to manage without
+        // one.
+        || has(cap::ADMIN) && !has(cap::DEV_IDENTITY)
         // What a scheduled advertisement carries *is* the device identity.
         || has(cap::ADVERT) && !has(cap::DEV_IDENTITY)
         // A receiver that cannot set a clock is still a receiver, but the
@@ -2703,6 +2857,102 @@ fn decode_optional_region(value: &[u8]) -> Result<Option<Vec<u8>>, MobileError> 
     }
 }
 
+/// Drop the writes the device has already refused to answer for.
+///
+/// A capability-gated property that would not read is one the device does
+/// not implement, so writing it fails — and one rejected write abandons
+/// the whole configuration pass. The caller still states a complete
+/// configuration; what cannot land is left out here, where the device's
+/// own answers are known, rather than in the form.
+fn writable(values: Vec<(u32, Vec<u8>)>, unreadable: &[u32]) -> Vec<(u32, Vec<u8>)> {
+    if unreadable.is_empty() {
+        return values;
+    }
+    let dropped = |property: u32| {
+        unreadable.contains(&property)
+            || WHOLE_WRITE_GROUPS.iter().any(|group| {
+                group.contains(&property) && group.iter().any(|part| unreadable.contains(part))
+            })
+    };
+    values
+        .into_iter()
+        .filter(|(property, _)| !dropped(*property))
+        .collect()
+}
+
+/// Reduce a whole device configuration to the property writes that state
+/// it, in the order they must be sent, against a device known only by
+/// what a completed read reported.
+///
+/// This is [`MobileUlcpSession::configure_device`] with the session taken
+/// out of it: an administrator on the mesh writes the same properties, in
+/// the same order, and drops the same unreadable ones — it just has no
+/// attached device to ask, only the record it read.
+pub(crate) fn device_config_writes(
+    configuration: UlcpDeviceConfigRecord,
+    reported: &UlcpSyncRecord,
+) -> Result<Vec<(u32, Vec<u8>)>, MobileError> {
+    let capabilities = DeviceCapabilities::reported(reported);
+    validate_radio_settings(&configuration.radio, capabilities)?;
+    let device_values = validate_device_settings(&configuration, capabilities)?;
+    Ok(writable(
+        configuration_values(configuration.radio, device_values),
+        &reported.unreadable_properties,
+    ))
+}
+
+/// What a device can be told, as either half of the app learns it.
+///
+/// A bench session reads the capability list off the device it is holding
+/// open; a mesh administrator reads it out of the record a whole-device
+/// read produced. The configuration reduces to the same writes either
+/// way, so both build one of these and nothing below has to ask which
+/// side it came from.
+#[derive(Clone, Copy)]
+struct DeviceCapabilities {
+    device_name: bool,
+    lora: bool,
+    duty_cycle_limit: bool,
+    ident: bool,
+    dev_identity: bool,
+    repeater: bool,
+    time: bool,
+    gnss: bool,
+    advert: bool,
+}
+
+impl DeviceCapabilities {
+    /// What the attached device answered `PROP_CAPS` with.
+    fn read(state: &UlcpSessionState) -> Result<Self, MobileError> {
+        Ok(Self {
+            device_name: state.has_capability(cap::DEV_NAME)?,
+            lora: state.has_capability(cap::PHY_LORA)?,
+            duty_cycle_limit: state.has_capability(cap::PHY_DUTY_LIMIT)?,
+            ident: state.has_capability(cap::IDENT)?,
+            dev_identity: state.has_capability(cap::DEV_IDENTITY)?,
+            repeater: state.has_capability(cap::REPEATER)?,
+            time: state.has_capability(cap::TIME)?,
+            gnss: state.has_capability(cap::GNSS)?,
+            advert: state.has_capability(cap::ADVERT)?,
+        })
+    }
+
+    /// The same list as a completed read reports it.
+    fn reported(sync: &UlcpSyncRecord) -> Self {
+        Self {
+            device_name: sync.supports_device_name,
+            lora: sync.supports_lora,
+            duty_cycle_limit: sync.supports_duty_cycle_limit,
+            ident: sync.supports_ident,
+            dev_identity: sync.supports_device_identity,
+            repeater: sync.supports_repeater,
+            time: sync.supports_time,
+            gnss: sync.supports_gnss,
+            advert: sync.supports_advert,
+        }
+    }
+}
+
 /// Order one configuration pass: everything that changes live PHY
 /// behavior happens with the radio down, and the radio comes back up only
 /// once the complete new profile is in place.
@@ -2758,11 +3008,11 @@ fn configuration_values(
 /// silently drop.
 fn validate_device_settings(
     configuration: &UlcpDeviceConfigRecord,
-    state: &UlcpSessionState,
+    capabilities: DeviceCapabilities,
 ) -> Result<Vec<(u32, Vec<u8>)>, MobileError> {
     let mut values = Vec::new();
 
-    let supports_ident = state.has_capability(cap::IDENT)?;
+    let supports_ident = capabilities.ident;
     if configuration.ident_mobile.is_some() != supports_ident
         || (configuration.ident_role.is_some() && !supports_ident)
     {
@@ -2783,7 +3033,7 @@ fn validate_device_settings(
         ));
     }
 
-    let supports_dev_identity = state.has_capability(cap::DEV_IDENTITY)?;
+    let supports_dev_identity = capabilities.dev_identity;
     if configuration.dev_discoverable.is_some() != supports_dev_identity {
         return Err(MobileError::InvalidUlcpFrame);
     }
@@ -2791,7 +3041,7 @@ fn validate_device_settings(
         values.push((prop::DEV_DISCOVERABLE, vec![discoverable as u8]));
     }
 
-    let supports_repeater = state.has_capability(cap::REPEATER)?;
+    let supports_repeater = capabilities.repeater;
     if configuration.repeater.is_some() != supports_repeater {
         return Err(MobileError::InvalidUlcpFrame);
     }
@@ -2839,9 +3089,9 @@ fn validate_device_settings(
     values.extend(positioning_values(
         configuration.gnss,
         configuration.tz_offset_min,
-        state,
+        capabilities,
     )?);
-    values.extend(advert_values(configuration.advert, state)?);
+    values.extend(advert_values(configuration.advert, capabilities)?);
     Ok(values)
 }
 
@@ -2852,9 +3102,9 @@ fn validate_device_settings(
 /// and both paths have to produce the same writes.
 fn advert_values(
     advert: Option<UlcpAdvertSettingsRecord>,
-    state: &UlcpSessionState,
+    capabilities: DeviceCapabilities,
 ) -> Result<Vec<(u32, Vec<u8>)>, MobileError> {
-    let announces = state.has_capability(cap::ADVERT)?;
+    let announces = capabilities.advert;
     if advert.is_some() != announces {
         return Err(MobileError::InvalidUlcpFrame);
     }
@@ -2901,11 +3151,11 @@ fn advert_values(
 fn positioning_values(
     gnss: Option<UlcpGnssSettingsRecord>,
     tz_offset_min: Option<i16>,
-    state: &UlcpSessionState,
+    capabilities: DeviceCapabilities,
 ) -> Result<Vec<(u32, Vec<u8>)>, MobileError> {
     let mut values = Vec::new();
 
-    let keeps_time = state.has_capability(cap::TIME)?;
+    let keeps_time = capabilities.time;
     if tz_offset_min.is_some() != keeps_time {
         return Err(MobileError::InvalidUlcpFrame);
     }
@@ -2919,7 +3169,7 @@ fn positioning_values(
         values.push((prop::TZ_OFFSET, minutes.to_le_bytes().to_vec()));
     }
 
-    let positioning = state.has_capability(cap::GNSS)?;
+    let positioning = capabilities.gnss;
     if gnss.is_some() != positioning {
         return Err(MobileError::InvalidUlcpFrame);
     }
@@ -2942,13 +3192,13 @@ fn positioning_values(
 
 fn validate_radio_settings(
     settings: &UlcpRadioSettingsRecord,
-    state: &UlcpSessionState,
+    capabilities: DeviceCapabilities,
 ) -> Result<(), MobileError> {
     if settings.frequency_khz == 0 {
         return Err(MobileError::InvalidUlcpFrame);
     }
     if let Some(name) = &settings.device_name {
-        if !state.has_capability(cap::DEV_NAME)?
+        if !capabilities.device_name
             || name.is_empty()
             || name.len() > 64
             || name.as_bytes().contains(&0)
@@ -2962,18 +3212,25 @@ fn validate_radio_settings(
         settings.coding_rate_denom,
     );
     match lora {
-        (None, None, None) if !state.has_capability(cap::PHY_LORA)? => {}
+        (None, None, None) if !capabilities.lora => {}
         (Some(bandwidth), Some(sf), Some(cr))
-            if state.has_capability(cap::PHY_LORA)?
+            if capabilities.lora
                 && bandwidth > 0
                 && (5..=12).contains(&sf)
                 && (5..=8).contains(&cr) => {}
         _ => return Err(MobileError::InvalidUlcpFrame),
     }
-    if settings.duty_cycle_limit.is_some() != state.has_capability(cap::PHY_DUTY_LIMIT)? {
+    if settings.duty_cycle_limit.is_some() != capabilities.duty_cycle_limit {
         return Err(MobileError::InvalidUlcpFrame);
     }
     Ok(())
+}
+
+/// A device name, which is UTF-8 and may be empty — a device that has not
+/// been named, rather than one named nothing.
+fn decode_device_name(value: &[u8]) -> Result<Option<String>, MobileError> {
+    let name = core::str::from_utf8(value).map_err(|_| MobileError::InvalidUlcpFrame)?;
+    Ok((!name.is_empty()).then(|| name.to_owned()))
 }
 
 fn decode_u32(value: &[u8]) -> Result<u32, MobileError> {
@@ -3108,6 +3365,15 @@ pub fn ulcp_max_dev_channels() -> u8 {
     8
 }
 
+/// Capacity of the device identity's administrator list
+/// (`PROP_DEV_ADMINS`).
+///
+/// A label constant, like [`ulcp_max_dev_peers`].
+#[uniffi::export]
+pub fn ulcp_max_dev_admins() -> u8 {
+    8
+}
+
 /// Derive the identifier a device will echo for a channel key.
 fn dev_channel_id(channel_key: &[u8]) -> Result<Vec<u8>, MobileError> {
     let bytes: [u8; items::CHANNEL_KEY_LEN] = channel_key
@@ -3132,6 +3398,18 @@ pub fn ulcp_factory_reset(transaction_id: u8) -> Result<Vec<u8>, MobileError> {
     let length = frame::factory_reset(&mut output, transaction_id)
         .map_err(|_| MobileError::InvalidUlcpFrame)?;
     Ok(output[..length].to_vec())
+}
+
+/// What a status code is called.
+///
+/// A device answering across the mesh reports a bare code, where a device
+/// on the local link reports one already named in
+/// [`UlcpOperationErrorRecord`]. Both are the same statuses, so both are
+/// named the same way here rather than by a table on the other side of
+/// the bindings that would have to be kept in step with this one.
+#[uniffi::export]
+pub fn ulcp_status_name(status: u32) -> String {
+    format!("{:?}", umsh_ulcp::Status(status))
 }
 
 /// Decode an exact packed status value from `PROP_LAST_STATUS`.
@@ -3180,6 +3458,17 @@ pub fn inspect_ulcp_battery(value: Vec<u8>) -> Result<UlcpBatteryRecord, MobileE
         voltage_mv: battery.voltage_mv,
         charge_state: battery.charge_state.map(UlcpChargeState::from_wire),
     })
+}
+
+/// Encode a `PROP_ALERT` value.
+///
+/// Shared by the local link and by a mesh administrator so an alert is one
+/// encoding rather than two that have to agree.
+pub(crate) fn encode_alert_state(state: UlcpAlertState) -> Result<Vec<u8>, MobileError> {
+    let mut value = [0u8; pui::MAX_LEN];
+    let len = pui::encode(state.to_wire().code(), &mut value)
+        .map_err(|_| MobileError::InvalidUlcpFrame)?;
+    Ok(value[..len].to_vec())
 }
 
 /// Validate and reduce a `PROP_ALERT` value.
@@ -3312,7 +3601,8 @@ mod tests {
     }
 
     /// Capabilities of a device that is a full mesh citizen in its own
-    /// right: it has an identity, advertises one, and can forward.
+    /// right: it has an identity, advertises one, can forward, and answers
+    /// to the administrators it lists.
     fn commissionable_capabilities() -> Vec<u32> {
         vec![
             cap::HOST_FILTER,
@@ -3321,6 +3611,7 @@ mod tests {
             cap::DEV_IDENTITY,
             cap::REPEATER,
             cap::IDENT,
+            cap::ADMIN,
         ]
     }
 
@@ -3347,6 +3638,7 @@ mod tests {
             | prop::MAC_REPEATER_MIN_SNR
             | prop::IDENT_ROLE
             | prop::DEV_PEERS
+            | prop::DEV_ADMINS
             | prop::DEV_CHANNEL_KEYS => Vec::new(),
             prop::IDENT_MOBILE => vec![0],
             prop::DEV_DISCOVERABLE => vec![1],
@@ -3537,6 +3829,39 @@ mod tests {
                 charge_state: None,
             }
         );
+    }
+
+    #[test]
+    fn a_reading_is_carried_when_reported_and_missed_quietly_when_not() {
+        let capabilities = encoded_capabilities(&[cap::BATTERY, cap::ALERT]);
+        let base = |extra: Vec<UlcpPropertyFrameRecord>| {
+            let mut responses = vec![
+                response(prop::CAPS, &capabilities),
+                response(prop::INTERFACE_TYPE, &[INTERFACE_TYPE as u8]),
+                response(prop::PHY_ENABLED, &[1]),
+                response(prop::PHY_FREQ, &915_000u32.to_le_bytes()),
+                response(prop::PHY_TX_POWER, &[14]),
+            ];
+            responses.extend(extra);
+            inspect_ulcp_sync(responses).unwrap()
+        };
+
+        let reported = base(vec![
+            response(prop::BATTERY, &[0b110, 82, 1]),
+            response(prop::ALERT, &[AlertState::Locate.code() as u8]),
+        ]);
+        assert_eq!(reported.battery.unwrap().percentage, Some(82));
+        assert_eq!(reported.alert, Some(UlcpAlertState::Locate));
+
+        // The case that matters: a device that has said nothing about
+        // either is not a device withholding settings. Both are absent, and
+        // neither shows up in the notice about configuration this phone
+        // would write over.
+        let silent = base(Vec::new());
+        assert!(silent.supports_battery && silent.supports_alert);
+        assert_eq!(silent.battery, None);
+        assert_eq!(silent.alert, None);
+        assert!(silent.unreadable_properties.is_empty());
     }
 
     #[test]
@@ -4731,6 +5056,242 @@ mod tests {
 
         // The session remains attached and usable.
         assert!(session.insert_device_peer(vec![0xC4; 32]).is_ok());
+    }
+
+    fn dev_admin_keys(update: &UlcpSessionUpdateRecord) -> Vec<Vec<u8>> {
+        update
+            .snapshot
+            .provisioning
+            .as_ref()
+            .unwrap()
+            .dev_admin_keys
+            .clone()
+            .unwrap()
+    }
+
+    #[test]
+    fn listing_an_administrator_is_the_bench_half_of_node_management() {
+        let session = MobileUlcpSession::new();
+        let attached = attach_commissionable(&session, Some(vec![0xAA; 32]), vec![0xAA; 32]);
+        assert!(
+            attached
+                .snapshot
+                .provisioning
+                .as_ref()
+                .unwrap()
+                .supports_admin
+        );
+        assert_eq!(dev_admin_keys(&attached), Vec::<Vec<u8>>::new());
+
+        // The phone's own node key, put on a radio it is holding so it can
+        // manage that radio from somewhere else later.
+        let phone = vec![0x11; 32];
+        let insert = session.insert_device_admin(phone.clone()).unwrap();
+        let request = Frame::parse(&insert.outbound_frames[0]).unwrap();
+        assert_eq!(request.command(), Some(Cmd::PropInsert));
+
+        let confirmed = session
+            .consume(inserted_response(
+                request.header.tid(),
+                prop::DEV_ADMINS,
+                &phone,
+            ))
+            .unwrap();
+        assert_eq!(dev_admin_keys(&confirmed), vec![phone.clone()]);
+        // Administrators are the one table that must survive a reboot to be
+        // worth anything, so the save rides behind the mutation.
+        let save = Frame::parse(&confirmed.outbound_frames[0]).unwrap();
+        assert_eq!(save.command(), Some(Cmd::Save));
+        session
+            .consume(property_response(
+                save.header.tid(),
+                prop::LAST_STATUS,
+                &[umsh_ulcp::Status::OK.0 as u8],
+            ))
+            .unwrap();
+
+        // The peer table is a different list and is untouched by any of it.
+        assert_eq!(dev_peer_keys(&confirmed), Vec::<Vec<u8>>::new());
+
+        let remove = session.remove_device_admin(phone.clone()).unwrap();
+        let request = Frame::parse(&remove.outbound_frames[0]).unwrap();
+        assert_eq!(request.command(), Some(Cmd::PropRemove));
+        let confirmed = session
+            .consume(removed_response(
+                request.header.tid(),
+                prop::DEV_ADMINS,
+                &phone,
+            ))
+            .unwrap();
+        assert_eq!(dev_admin_keys(&confirmed), Vec::<Vec<u8>>::new());
+    }
+
+    /// An administrator on the mesh has no session to hand a configuration
+    /// to, only the record its read produced. It must still write exactly
+    /// what a phone holding the device would write, in the same order.
+    #[test]
+    fn a_configuration_reduces_the_same_way_with_or_without_a_session() {
+        let configuration = UlcpDeviceConfigRecord {
+            radio: UlcpRadioSettingsRecord {
+                device_name: Some("Ridge repeater".into()),
+                phy_enabled: true,
+                frequency_khz: 906_875,
+                transmit_power_dbm: 20,
+                bandwidth_hz: None,
+                spreading_factor: None,
+                coding_rate_denom: None,
+                duty_cycle_limit: None,
+            },
+            ident_role: None,
+            ident_mobile: Some(false),
+            dev_discoverable: Some(true),
+            repeater: Some(UlcpRepeaterSettingsRecord {
+                enabled: true,
+                regions: Vec::new(),
+                default_region: None,
+                min_rssi_dbm: None,
+                min_snr_db: None,
+            }),
+            tz_offset_min: None,
+            gnss: None,
+            advert: None,
+        };
+
+        let session = MobileUlcpSession::new();
+        let attached = attach_commissionable(&session, Some(vec![0xAA; 32]), vec![0xAA; 32]);
+        let reported = attached.snapshot.provisioning.clone().unwrap();
+
+        let configured = session.configure_device(configuration.clone()).unwrap();
+        let (written, order, _) = drive_configuration(&session, configured.outbound_frames);
+
+        let writes = device_config_writes(configuration, &reported).unwrap();
+        assert_eq!(
+            writes.iter().map(|(key, _)| *key).collect::<Vec<_>>(),
+            order
+        );
+        for (key, value) in &writes {
+            assert_eq!(written.get(key), Some(value));
+        }
+        // Not vacuous: the name leads, and the PHY is the last thing turned
+        // on — a repeater must not start forwarding under half a policy.
+        assert_eq!(writes.first().unwrap().0, prop::DEV_NAME);
+        assert_eq!(writes.last().unwrap(), &(prop::PHY_ENABLED, vec![1]));
+    }
+
+    /// A device that would not report a property is a device that will
+    /// refuse to be told it, whichever side is doing the telling.
+    #[test]
+    fn an_unreadable_property_is_left_out_of_an_administrator_s_write() {
+        let mut reported = attach_commissionable(
+            &MobileUlcpSession::new(),
+            Some(vec![0xAA; 32]),
+            vec![0xAA; 32],
+        )
+        .snapshot
+        .provisioning
+        .clone()
+        .unwrap();
+        reported.unreadable_properties = vec![prop::DEV_DISCOVERABLE];
+
+        let configuration = UlcpDeviceConfigRecord {
+            radio: UlcpRadioSettingsRecord {
+                device_name: None,
+                phy_enabled: true,
+                frequency_khz: 906_875,
+                transmit_power_dbm: 20,
+                bandwidth_hz: None,
+                spreading_factor: None,
+                coding_rate_denom: None,
+                duty_cycle_limit: None,
+            },
+            ident_role: None,
+            ident_mobile: Some(false),
+            dev_discoverable: Some(true),
+            repeater: Some(UlcpRepeaterSettingsRecord {
+                enabled: true,
+                regions: Vec::new(),
+                default_region: None,
+                min_rssi_dbm: None,
+                min_snr_db: None,
+            }),
+            tz_offset_min: None,
+            gnss: None,
+            advert: None,
+        };
+        // The record still states discoverability — the form does not know
+        // which properties a device refuses — and the write does not.
+        let writes = device_config_writes(configuration, &reported).unwrap();
+        assert!(!writes.iter().any(|(key, _)| *key == prop::DEV_DISCOVERABLE));
+    }
+
+    #[test]
+    fn an_administrator_failure_names_the_list_it_came_from() {
+        let session = MobileUlcpSession::new();
+        attach_commissionable(&session, Some(vec![0xAA; 32]), vec![0xAA; 32]);
+
+        let insert = session.insert_device_admin(vec![0x22; 32]).unwrap();
+        let request = Frame::parse(&insert.outbound_frames[0]).unwrap();
+        let full = session
+            .consume(property_response(
+                request.header.tid(),
+                prop::LAST_STATUS,
+                &[umsh_ulcp::Status::NOMEM.0 as u8],
+            ))
+            .unwrap();
+        assert_eq!(
+            full.operation_error,
+            Some(UlcpOperationErrorRecord {
+                operation: "insert device administrator".into(),
+                status_code: umsh_ulcp::Status::NOMEM.0,
+                status_name: "Status::NOMEM".into(),
+            })
+        );
+        assert_eq!(dev_admin_keys(&full), Vec::<Vec<u8>>::new());
+        assert_eq!(full.snapshot.phase, UlcpSessionPhase::Attached);
+    }
+
+    #[test]
+    fn a_radio_that_cannot_be_managed_refuses_the_administrator_table() {
+        let session = MobileUlcpSession::new();
+        // CAP_ADMIN withheld: the list does not exist on this device, so
+        // writing it is not something to try and fail at.
+        let capabilities = vec![
+            cap::HOST_FILTER,
+            cap::SAVE,
+            cap::DEV_NAME,
+            cap::DEV_IDENTITY,
+        ];
+        let sync = inspect_ulcp_sync(vec![
+            response(prop::CAPS, &encoded_capabilities(&capabilities)),
+            response(prop::INTERFACE_TYPE, &[INTERFACE_TYPE as u8]),
+            response(prop::PHY_ENABLED, &[1]),
+            response(prop::PHY_FREQ, &915_000u32.to_le_bytes()),
+            response(prop::PHY_TX_POWER, &[14]),
+            response(prop::HOST_RX_FILTERS, &[]),
+            response(prop::SAVED, &[saved::CURRENT]),
+            response(prop::DEV_PEERS, &[]),
+            response(prop::DEV_CHANNEL_KEYS, &[]),
+            response(prop::DEV_DISCOVERABLE, &[1]),
+        ])
+        .unwrap();
+        assert!(!sync.supports_admin);
+        assert_eq!(sync.dev_admin_keys, None);
+        assert!(!sync.unreadable_properties.contains(&prop::DEV_ADMINS));
+        assert!(
+            !ulcp_inspection_properties(encoded_capabilities(&capabilities))
+                .unwrap()
+                .contains(&prop::DEV_ADMINS)
+        );
+
+        assert!(session.insert_device_admin(vec![0x33; 32]).is_err());
+    }
+
+    #[test]
+    fn an_administrator_list_needs_a_device_identity_to_authorize_against() {
+        assert!(
+            ulcp_inspection_properties(encoded_capabilities(&[cap::ADMIN])).is_err(),
+            "CAP_ADMIN without CAP_DEV_IDENTITY is not a device this phone can describe"
+        );
     }
 
     fn dev_channel_ids(update: &UlcpSessionUpdateRecord) -> Vec<Vec<u8>> {
