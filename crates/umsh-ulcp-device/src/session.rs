@@ -231,6 +231,10 @@ pub struct SessionConfig {
     /// `CAP_ILLUMINANCE` is advertised and `PROP_ILLUMINANCE` samples on
     /// every read; otherwise the property is unknown.
     pub illuminance: bool,
+    /// Whether the device has a Bluetooth transport it can make
+    /// unreachable on demand. When set, `CAP_BLE` is advertised and
+    /// `PROP_BLE_ENABLED` exists; otherwise the property is unknown.
+    pub ble: bool,
 }
 
 /// Physical-radio outcome of the transmit started by
@@ -520,6 +524,11 @@ struct DeviceDomain {
     /// wall clock. On by default — the sky is normally the best clock a
     /// board has — and the opt-out for when it demonstrably is not.
     gnss_time_trust: bool,
+    /// `PROP_BLE_ENABLED`: whether the device is reachable over
+    /// Bluetooth. On by default — a device nobody can attach to is a
+    /// device nobody can configure, and on most boards the menu that
+    /// clears this is reached over the very link it drops.
+    ble_enabled: bool,
 }
 
 impl DeviceDomain {
@@ -559,6 +568,7 @@ impl DeviceDomain {
             gnss_ident_update: false,
             gnss_ident_precision: DEFAULT_IDENT_PRECISION,
             gnss_time_trust: true,
+            ble_enabled: true,
         }
     }
 }
@@ -1501,6 +1511,7 @@ const SAVED_SCHEMA: &[SavedProperty] = &[
     saved(prop::GNSS_IDENT_UPDATE, ApplyPhase::Config, false),
     saved(prop::GNSS_IDENT_PRECISION, ApplyPhase::Config, false),
     saved(prop::GNSS_TIME_TRUST, ApplyPhase::Config, false),
+    saved(prop::BLE_ENABLED, ApplyPhase::Config, false),
 ];
 
 /// [`SavedState::decode`] tracks which single-valued properties it has
@@ -1510,6 +1521,22 @@ const _: () = assert!(
     SAVED_SCHEMA.len() <= u32::BITS as usize,
     "SAVED_SCHEMA outgrew the duplicate-detection bitmask"
 );
+
+/// The snapshot is a delta-encoded option list, so the schema has to be
+/// in ascending property order. A row in the wrong place still compiles
+/// and still passes every test that does not save — it fails at the
+/// encoder, at runtime, on every device at once — so the order is
+/// checked here instead.
+const _: () = {
+    let mut index = 1;
+    while index < SAVED_SCHEMA.len() {
+        assert!(
+            SAVED_SCHEMA[index - 1].number < SAVED_SCHEMA[index].number,
+            "SAVED_SCHEMA is not in ascending property order"
+        );
+        index += 1;
+    }
+};
 
 /// Why a stored snapshot payload was rejected. Rejection is never
 /// silent: the boot path walks back a generation and reports through
@@ -1599,6 +1626,7 @@ struct SavedState {
     gnss_ident_update: bool,
     gnss_ident_precision: u8,
     gnss_time_trust: bool,
+    ble_enabled: bool,
 }
 
 impl SavedState {
@@ -1633,6 +1661,7 @@ impl SavedState {
             gnss_ident_update: device.gnss_ident_update,
             gnss_ident_precision: device.gnss_ident_precision,
             gnss_time_trust: device.gnss_time_trust,
+            ble_enabled: device.ble_enabled,
         }
     }
 
@@ -1675,6 +1704,7 @@ impl SavedState {
             gnss_ident_update: false,
             gnss_ident_precision: DEFAULT_IDENT_PRECISION,
             gnss_time_trust: true,
+            ble_enabled: true,
         }
     }
 
@@ -1767,6 +1797,7 @@ impl SavedState {
             prop::GNSS_IDENT_UPDATE => encoder.put(number, &[self.gnss_ident_update as u8]),
             prop::GNSS_IDENT_PRECISION => encoder.put(number, &[self.gnss_ident_precision]),
             prop::GNSS_TIME_TRUST => encoder.put(number, &[self.gnss_time_trust as u8]),
+            prop::BLE_ENABLED => encoder.put(number, &[self.ble_enabled as u8]),
             _ => unreachable!("SAVED_SCHEMA row without an encoder arm"),
         }
     }
@@ -1900,6 +1931,7 @@ impl SavedState {
                 self.gnss_ident_precision = validate_ident_precision(value).map_err(invalid)?
             }
             prop::GNSS_TIME_TRUST => self.gnss_time_trust = parse_bool(value).map_err(invalid)?,
+            prop::BLE_ENABLED => self.ble_enabled = parse_bool(value).map_err(invalid)?,
             _ => unreachable!("SAVED_SCHEMA row without a decoder arm"),
         }
         Ok(())
@@ -2427,6 +2459,7 @@ impl<A: AesProvider, S: Sha256Provider, const TX: usize> Session<A, S, TX> {
                         self.device.gnss_ident_precision = saved.gnss_ident_precision
                     }
                     prop::GNSS_TIME_TRUST => self.device.gnss_time_trust = saved.gnss_time_trust,
+                    prop::BLE_ENABLED => self.device.ble_enabled = saved.ble_enabled,
                     _ => unreachable!("SAVED_SCHEMA row without an apply arm"),
                 }
             }
@@ -3349,6 +3382,15 @@ impl<A: AesProvider, S: Sha256Provider, const TX: usize> Session<A, S, TX> {
         self.config.gnss.is_some() && self.device.gnss_ident_update
     }
 
+    /// `PROP_BLE_ENABLED`: whether the device is reachable over
+    /// Bluetooth.
+    ///
+    /// Always false on a board without `CAP_BLE`, so a platform can act
+    /// on it without first asking whether it has a transport.
+    pub fn ble_enabled(&self) -> bool {
+        self.config.ble && self.device.ble_enabled
+    }
+
     /// `PROP_GNSS_IDENT_PRECISION`: the precision the advertised location
     /// is clamped to.
     pub fn gnss_ident_precision(&self) -> u8 {
@@ -3407,24 +3449,83 @@ impl<A: AesProvider, S: Sha256Provider, const TX: usize> Session<A, S, TX> {
     /// board that offers the receiver as a user-facing switch.
     ///
     /// Returns the new state, or `None` on a device without `CAP_GNSS`
-    /// (so a board can report a press unconditionally). No effect is
-    /// returned: the switch reaches the platform through the
-    /// device-domain mirror, the same path a host write, a boot restore
-    /// and a `CMD_RST` all take.
-    ///
-    /// The transition is announced like any the host did not command.
-    /// `PROP_GNSS_ENABLED` is not otherwise an asynchronous property —
-    /// nothing else moves it behind the host's back — but a switch the
-    /// operator can reach is exactly a thing that does.
+    /// (so a board can report a press unconditionally).
     pub fn toggle_gnss(&mut self, emit: &mut impl FnMut(&[u8])) -> Option<bool> {
-        if self.config.gnss.is_none() {
+        self.toggle_device_flag(
+            self.config.gnss.is_some(),
+            prop::GNSS_ENABLED,
+            |device| &mut device.gnss_enabled,
+            emit,
+        )
+    }
+
+    /// Flip `PROP_GNSS_IDENT_UPDATE` from the device itself.
+    ///
+    /// Whether the device knows where it is and whether it says so are
+    /// two decisions, and a board that offers the first as a switch owes
+    /// the user the second: nothing else on the device distinguishes a
+    /// position kept for the screen from one put on the air.
+    pub fn toggle_gnss_ident_update(&mut self, emit: &mut impl FnMut(&[u8])) -> Option<bool> {
+        self.toggle_device_flag(
+            self.config.gnss.is_some(),
+            prop::GNSS_IDENT_UPDATE,
+            |device| &mut device.gnss_ident_update,
+            emit,
+        )
+    }
+
+    /// Flip `PROP_MAC_REPEATER_ENABLED` from the device itself.
+    ///
+    /// Every device carries the repeater, so this never refuses — the
+    /// return is the new state rather than an availability answer.
+    pub fn toggle_repeater(&mut self, emit: &mut impl FnMut(&[u8])) -> Option<bool> {
+        self.toggle_device_flag(
+            true,
+            prop::MAC_REPEATER_ENABLED,
+            |device| &mut device.repeater_enabled,
+            emit,
+        )
+    }
+
+    /// Flip `PROP_BLE_ENABLED` from the device itself.
+    ///
+    /// The one toggle whose own effect can carry away the host that
+    /// would have watched it: clearing it drops the attached link, so
+    /// the announcement below is the last thing that host hears.
+    pub fn toggle_ble(&mut self, emit: &mut impl FnMut(&[u8])) -> Option<bool> {
+        self.toggle_device_flag(
+            self.config.ble,
+            prop::BLE_ENABLED,
+            |device| &mut device.ble_enabled,
+            emit,
+        )
+    }
+
+    /// Flip one device-domain boolean on behalf of a control the operator
+    /// can reach, and announce where it landed.
+    ///
+    /// No effect is returned: the switch reaches the platform through the
+    /// device-domain mirror, the same path a host write, a boot restore
+    /// and a `CMD_RST` all take. The transition is published like any the
+    /// host did not command — none of these properties otherwise moves
+    /// behind the host's back, but a switch someone can flip is exactly a
+    /// thing that does.
+    fn toggle_device_flag(
+        &mut self,
+        available: bool,
+        key: u32,
+        pick: fn(&mut DeviceDomain) -> &mut bool,
+        emit: &mut impl FnMut(&[u8]),
+    ) -> Option<bool> {
+        if !available {
             return None;
         }
-        let enabled = !self.device.gnss_enabled;
-        self.device.gnss_enabled = enabled;
+        let flag = pick(&mut self.device);
+        *flag = !*flag;
+        let enabled = *flag;
         self.bump_dev_domain();
         if self.attached {
-            self.announce_prop_is(prop::GNSS_ENABLED, &[enabled as u8], emit);
+            self.announce_prop_is(key, &[enabled as u8], emit);
         }
         Some(enabled)
     }
@@ -4243,6 +4344,14 @@ impl<A: AesProvider, S: Sha256Provider, const TX: usize> Session<A, S, TX> {
                 self.bump_dev_domain();
                 Ok(false)
             }
+            // Reaches the transport through the device-domain mirror
+            // like the rest, so the host write, the boot restore, and the
+            // button on the front of the device all land the same way.
+            prop::BLE_ENABLED if self.config.ble => {
+                self.device.ble_enabled = parse_bool(value)?;
+                self.bump_dev_domain();
+                Ok(false)
+            }
             prop::GNSS_TIME_TRUST if self.config.gnss.is_some() => {
                 self.device.gnss_time_trust = parse_bool(value)?;
                 self.bump_dev_domain();
@@ -4602,6 +4711,9 @@ impl<A: AesProvider, S: Sha256Provider, const TX: usize> Session<A, S, TX> {
         if key == prop::ILLUMINANCE {
             return self.config.illuminance;
         }
+        if key == prop::BLE_ENABLED {
+            return self.config.ble;
+        }
         if matches!(key, prop::TIME | prop::TZ_OFFSET) {
             return self.config.time.is_some();
         }
@@ -4717,6 +4829,9 @@ impl<A: AesProvider, S: Sha256Provider, const TX: usize> Session<A, S, TX> {
                 if self.config.illuminance {
                     len += pui::encode(cap::ILLUMINANCE, &mut out[len..]).unwrap_or(0);
                 }
+                if self.config.ble {
+                    len += pui::encode(cap::BLE, &mut out[len..]).unwrap_or(0);
+                }
                 len
             }
             prop::PHY_ENABLED => {
@@ -4824,6 +4939,10 @@ impl<A: AesProvider, S: Sha256Provider, const TX: usize> Session<A, S, TX> {
             }
             prop::GNSS_TIME_TRUST if self.config.gnss.is_some() => {
                 out[0] = self.device.gnss_time_trust as u8;
+                1
+            }
+            prop::BLE_ENABLED if self.config.ble => {
+                out[0] = self.device.ble_enabled as u8;
                 1
             }
             prop::MAC_REPEATER_REGIONS => put(out, self.device.repeater_regions.as_slice()),
@@ -5265,6 +5384,7 @@ mod tests {
             time: Some(TimeConfig),
             gnss: Some(GnssConfig::DEFAULT),
             illuminance: true,
+            ble: true,
         }
     }
 
@@ -5646,7 +5766,8 @@ mod tests {
                 cap::ALERT,
                 cap::TIME,
                 cap::GNSS,
-                cap::ILLUMINANCE
+                cap::ILLUMINANCE,
+                cap::BLE
             ]
         );
     }
@@ -5977,6 +6098,97 @@ mod tests {
             Some(false)
         );
         assert!(!session.gnss_enabled());
+    }
+
+    /// The other three switches a display board offers behave the same
+    /// way: flip the value, move the mirror, publish the transition.
+    #[test]
+    fn every_local_toggle_flips_its_own_property() {
+        // (start, toggle, property) — each starts at its post-reset value.
+        let cases: [(
+            bool,
+            fn(&mut TestSession, &mut Vec<Vec<u8>>) -> Option<bool>,
+            u32,
+        ); 3] = [
+            (
+                false,
+                |session, emitted| {
+                    session.toggle_gnss_ident_update(&mut |b: &[u8]| emitted.push(b.to_vec()))
+                },
+                prop::GNSS_IDENT_UPDATE,
+            ),
+            (
+                false,
+                |session, emitted| {
+                    session.toggle_repeater(&mut |b: &[u8]| emitted.push(b.to_vec()))
+                },
+                prop::MAC_REPEATER_ENABLED,
+            ),
+            (
+                true,
+                |session, emitted| session.toggle_ble(&mut |b: &[u8]| emitted.push(b.to_vec())),
+                prop::BLE_ENABLED,
+            ),
+        ];
+
+        for (start, toggle, key) in cases {
+            let mut session = test_session();
+            assert_eq!(get(&mut session, key), [start as u8], "prop {key} start");
+            let before = session.dev_domain_version();
+
+            let mut emitted = Vec::new();
+            assert_eq!(toggle(&mut session, &mut emitted), Some(!start));
+            assert_eq!(get(&mut session, key), [!start as u8]);
+            assert_ne!(
+                session.dev_domain_version(),
+                before,
+                "prop {key} never reached the mirror"
+            );
+            assert_eq!(
+                parse_prop_is(&emitted[0]),
+                (TID_UNSOLICITED, key, vec![!start as u8]),
+                "prop {key} was not announced"
+            );
+
+            // And back, because it is a toggle rather than a set.
+            emitted.clear();
+            assert_eq!(toggle(&mut session, &mut emitted), Some(start));
+        }
+    }
+
+    /// Bluetooth is a capability like any other: a board without the
+    /// transport has neither the property nor the switch.
+    #[test]
+    fn a_board_without_bluetooth_has_neither_the_property_nor_the_switch() {
+        let config = SessionConfig {
+            ble: false,
+            ..test_config()
+        };
+        let mut session: TestSession = Session::new(config, Status::RESET_POWER_ON, test_engine());
+        session.attach(true);
+
+        assert!(!session.ble_enabled());
+        let mut emitted = Vec::new();
+        assert_eq!(
+            session.toggle_ble(&mut |bytes: &[u8]| emitted.push(bytes.to_vec())),
+            None
+        );
+        assert!(emitted.is_empty());
+
+        let raw = get(&mut session, prop::CAPS);
+        let mut offset = 0;
+        while offset < raw.len() {
+            let (value, used) = pui::decode(&raw[offset..]).unwrap();
+            assert_ne!(value, cap::BLE);
+            offset += used;
+        }
+
+        let mut buf = [0u8; 16];
+        let len = frame::prop_get(&mut buf, 6, prop::BLE_ENABLED).unwrap();
+        let (emitted, _) = dispatch(&mut session, &buf[..len], 0);
+        let (_, status_key, value) = parse_prop_is(&emitted[0]);
+        assert_eq!(status_key, prop::LAST_STATUS);
+        assert_eq!(pui::decode(&value).unwrap().0, Status::PROP_NOT_FOUND.0);
     }
 
     /// A press on a board with no receiver is nothing at all, so a board

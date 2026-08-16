@@ -7,8 +7,10 @@ but the display makes status and sensitive device actions visible.
 
 ## Implemented behavior
 
-The e-paper menu contains Status, Stats, Check in, Start pairing, and Clear
-bonds. Every frame—menu, confirmation, and the transient message screens
+The e-paper menu is the three-level tree in
+[Display Tracker Screens](../classes/display-tracker-screens.md): Status,
+Identity, and Settings at the top, and Bluetooth, GNSS, and Radio behind
+Settings. Every frame—menu, confirmation, and the transient message screens
 alike—carries a header with the device name and a battery indicator.
 The indicator follows the shared
 [battery rules](../interaction-model/status-and-feedback.md): a four-segment
@@ -22,14 +24,31 @@ ordinary advertising say nothing at all, because they are what the board does
 whenever nothing is happening. What remains on a resting device is one
 diagnostic line giving pack voltage and, when it is known, charge level.
 
-The Stats page reports what the radio has actually done since boot: frames
+The Identity page shows the device's 44-character Base58 address, wrapped
+across three rows with the four-character node hint above it. The QR code the
+spec wants here is not implemented; see below.
+
+The Statistics page, at the bottom of the Radio submenu, reports what the radio
+has actually done since boot: frames
 transmitted and received, frames repeated onward, receptions that went
 nowhere, the configured transmit power, and duty-cycle usage. It is sampled
 when a frame is drawn rather than pushed, so watching it costs no extra panel
 refreshes.
 
-Clear bonds names the count it would destroy—"Clear 3 bonds?"—which is
-where that number changes a decision.
+Clear bonds, in the Bluetooth submenu, names the count it would destroy—"Clear
+3 bonds?"—which is where that number changes a decision.
+
+Four switches are settable from the panel: Bluetooth reachability
+(`PROP_BLE_ENABLED`), the GNSS receiver, whether position is shared, and frame
+forwarding. Each flips through the ULCP session rather than at the subsystem, so
+the property, an attached host, and the saved snapshot all see the same flip;
+each stays on its entry and shows the new state there. Entries the board cannot
+perform are absent, and a submenu with nothing in it does not appear.
+
+The highlighted entry is drawn inverted across the whole row. The settings
+levels are drawn as lists—every entry of the level at once—while the entries
+with something to read (Status, Identity, Statistics) take the panel to
+themselves.
 
 | Input | Meaning |
 |---|---|
@@ -85,11 +104,11 @@ Implemented in [`firmware/nrf52-tracker/src/main.rs`][techo-src] over the shared
 
 ## Recommended evolution
 
-- The menu is flat, and the panel is the largest in the class. It should grow
-  into the hierarchy in [Display Tracker Screens](../classes/display-tracker-screens.md):
-  Identity with a QR code, Messages, and the Bluetooth, GNSS, and Radio
-  submenus. At 200×200 this board is the one that can carry a scannable
-  `umsh:n:` symbol.
+- Identity falls back to address text. At 200×200 this board is the one panel
+  in the class that can carry a scannable `umsh:n:` symbol—about 110 px square
+  below the header—and it should. No QR encoder exists in either workspace yet.
+- Messages is not implemented. The device node's receive hook logs the payload
+  and returns; there is no device-side text store for the page to read.
 - Keep extending the default page toward glanceability: it carries battery,
   BLE connection, and pairing today; silence/attention state, where
   applicable, is still missing.

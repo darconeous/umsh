@@ -37,7 +37,7 @@
 use core::fmt::Write as _;
 
 use embedded_graphics::mono_font::ascii::{FONT_6X10, FONT_10X20};
-use embedded_graphics::mono_font::{MonoFont, MonoTextStyle};
+use embedded_graphics::mono_font::{MonoFont, MonoTextStyle, MonoTextStyleBuilder};
 use embedded_graphics::pixelcolor::BinaryColor;
 use embedded_graphics::prelude::*;
 use embedded_graphics::primitives::{
@@ -46,7 +46,7 @@ use embedded_graphics::primitives::{
 use embedded_graphics::text::{Baseline, Text};
 use heapless::String;
 
-use crate::menu::{MenuItem, Page, UiModel, UiNotice};
+use crate::menu::{EntryKind, MenuItem, Page, ToggleId, UiEffect, UiModel, UiNotice};
 use umsh_ux_tracker::battery::ChargeClass;
 
 /// Scratch buffer for a composed line. No panel in the class shows more
@@ -69,7 +69,7 @@ pub const BATTERY_SEGMENTS: u8 = 4;
 /// Number of lit segments for a *known* charge level, from 0 to
 /// [`BATTERY_SEGMENTS`].
 ///
-/// The bands centre each bar count on the level it depicts: two of four
+/// The bands center each bar count on the level it depicts: two of four
 /// bars covers 37–63 %, so a half-full pack draws half a body. The two
 /// end bands are deliberately narrower than the middle ones — full and
 /// empty are absolute claims, and a body should not look full at 80 %
@@ -146,11 +146,37 @@ impl BatteryIconMetrics {
     }
 }
 
-/// A board's screen geometry.
+/// What the board gives the user to drive the menu with.
+///
+/// The hints at the bottom of every page name gestures the hardware
+/// actually has, so the renderer has to know which set it is looking at.
+/// Nothing else about a frame changes.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum Controls {
+    /// One button carrying the whole vocabulary: click advances,
+    /// double-click selects, a released hold goes back one entry.
+    OneButton,
+    /// A four-way pad with a center press, beside a button the case
+    /// labels Back. Up and down move, the center selects, and Back
+    /// leaves the screen — no gesture means two things.
+    Dpad,
+}
+
+/// A board's panel and controls.
 ///
 /// Everything the renderer needs to place a row of text and the battery
-/// indicator. A board picks one of the constants — or writes its own if
-/// its panel is neither of the two shapes in the class today.
+/// indicator, plus which gestures to name in the hints. A board picks one
+/// of the constants — or writes its own if its panel is neither of the
+/// two shapes in the class today — and overrides the fields its hardware
+/// disagrees about:
+///
+/// ```
+/// # use umsh_ux_display_tracker::screen::{Controls, Layout};
+/// const LAYOUT: Layout = Layout {
+///     controls: Controls::Dpad,
+///     ..Layout::OLED_128X64
+/// };
+/// ```
 #[derive(Clone, Copy, Debug)]
 pub struct Layout {
     pub font: &'static MonoFont<'static>,
@@ -164,6 +190,26 @@ pub struct Layout {
     pub rows: usize,
     pub size: Size,
     pub battery: BatteryIconMetrics,
+    /// How this panel says a list continues past what it can draw.
+    pub overflow: Overflow,
+    /// What the user drives it with.
+    pub controls: Controls,
+}
+
+/// How a board shows that a list has more entries than fit.
+///
+/// One per board, used on every list. Two overflow idioms in one product
+/// teach the user to read neither.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum Overflow {
+    /// Cut the row past the last complete one off half-way, so a partial
+    /// row hangs over the bottom. Costs nothing horizontally, which is
+    /// what recommends it on a panel already short of characters.
+    ClipRow,
+    /// A track down the right edge with a thumb sized to the visible
+    /// fraction. Takes a column from every row to say how much list there
+    /// is and how far through it you are.
+    ScrollBar,
 }
 
 impl Layout {
@@ -177,6 +223,12 @@ impl Layout {
         rows: 5,
         size: Size::new(128, 64),
         battery: BatteryIconMetrics::OLED,
+        // 21 characters to a row already; a bar would take one of them
+        // from every row on the screen.
+        overflow: Overflow::ClipRow,
+        // The narrower assumption: a board with more controls says so,
+        // and one with fewer than a single button has no menu at all.
+        controls: Controls::OneButton,
     };
 
     /// 200×200 e-paper: seven rows of `FONT_10X20`. The T-Echo's SSD1681.
@@ -188,11 +240,29 @@ impl Layout {
         rows: 7,
         size: Size::new(200, 200),
         battery: BatteryIconMetrics::EPD,
+        // 200 px across can spare the column, and a bistable panel is
+        // read at leisure, which is when extent is worth knowing.
+        overflow: Overflow::ScrollBar,
+        controls: Controls::OneButton,
     };
 
     /// Top of `row`'s glyph band.
     pub const fn row_top(&self, row: usize) -> i32 {
         self.top + row as i32 * self.row_pitch
+    }
+
+    /// The full-width band `row` occupies.
+    ///
+    /// A highlight fills this rather than the glyph cells, so it reads as
+    /// a solid bar rather than as emphasized text.
+    pub fn row_rect(&self, row: usize) -> Rectangle {
+        let top = self.row_top(row);
+        let height = self.row_pitch.max(self.font.character_size.height as i32);
+        let bottom = (top + height).min(self.size.height as i32);
+        Rectangle::new(
+            Point::new(0, top),
+            Size::new(self.size.width, (bottom - top).max(0) as u32),
+        )
     }
 
     /// The rectangle the battery indicator owns, right-aligned on row 0.
@@ -329,6 +399,41 @@ pub struct StatusModel<'a> {
     /// what keeps it true: there is no way to render a clock without a
     /// reading to render.
     pub clock: Option<ClockModel>,
+    /// The values behind the toggle entries.
+    pub settings: SettingsModel,
+    /// This device's own address, for the Status and Identity screens.
+    pub identity: Option<IdentityModel<'a>>,
+}
+
+/// What the toggle entries currently read.
+///
+/// Every field is an `Option` for the same reason [`StatusModel::clock`]
+/// is: a board that cannot say which way a setting is set draws no state
+/// rather than a plausible guess. `None` is also what a board without the
+/// subsystem reports, and such a board does not enable the entry anyway.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub struct SettingsModel {
+    pub bluetooth: Option<bool>,
+    pub gnss: Option<bool>,
+    pub share_location: Option<bool>,
+    pub forwarding: Option<bool>,
+}
+
+/// This device's own address, rendered by the firmware.
+///
+/// Both forms arrive pre-formatted because base58 lives in `umsh-core`,
+/// which this crate does not depend on — and because the hint's
+/// star-truncated rendering is canonical elsewhere and must not be
+/// reinvented here.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct IdentityModel<'a> {
+    /// The four-character node hint, `*` and all. What a person compares
+    /// by eye.
+    pub hint: &'a str,
+    /// The complete 44-character Base58 address. What a machine reads —
+    /// and what Identity falls back to on a panel with no room for a
+    /// scannable symbol, which today is every panel in the class.
+    pub address: &'a str,
 }
 
 /// A local wall-clock reading for the header.
@@ -345,7 +450,7 @@ pub struct ClockModel {
 }
 
 impl ClockModel {
-    /// Render the status-page row, labelled to match the battery row
+    /// Render the status-page row, labeled to match the battery row
     /// beside it — a bare `14:30` on a line of its own reads as a
     /// measurement without a name.
     fn write(&self, out: &mut String<LINE>) {
@@ -365,17 +470,26 @@ where
 
     let mut line: String<LINE> = String::new();
     let content_end = match model.page() {
-        Page::Menu(item) => {
-            draw_row(target, layout, 1, menu_label(item));
-            match item {
-                MenuItem::Status => draw_status_page(target, layout, model, status, &mut line),
-                MenuItem::Stats => draw_stats_page(target, layout, status, &mut line),
-                other => {
-                    draw_row(target, layout, 2, action_label(other));
-                    3
-                }
-            }
+        // An entry with something to read gets the panel to itself: the
+        // highlight names what is being read and the rows below are the
+        // reading. Which entries those are is a property of the entry,
+        // not of the level it sits in — Statistics reads in place from
+        // two levels down.
+        Page::Menu(MenuItem::Status) => {
+            draw_row_inverted(target, layout, 1, menu_label(MenuItem::Status));
+            draw_status_page(target, layout, model, status, &mut line)
         }
+        Page::Menu(MenuItem::Identity) => {
+            draw_row_inverted(target, layout, 1, menu_label(MenuItem::Identity));
+            draw_identity_page(target, layout, status)
+        }
+        Page::Menu(MenuItem::Stats) => {
+            draw_row_inverted(target, layout, 1, menu_label(MenuItem::Stats));
+            draw_stats_page(target, layout, status, &mut line)
+        }
+        // Everything else is only meaningful beside its neighbors, so
+        // the list it belongs to is the screen.
+        Page::Menu(item) => draw_level_list(target, layout, model, status, item),
         Page::Confirm {
             confirm_selected, ..
         } => {
@@ -384,33 +498,29 @@ where
             // the status page no longer spends a row carrying it around.
             write_clear_question(&mut line, status.bonds);
             draw_row(target, layout, 1, &line);
-            draw_row(
-                target,
-                layout,
-                2,
-                if confirm_selected {
-                    "  Cancel"
-                } else {
-                    "> Cancel"
-                },
-            );
-            draw_row(
-                target,
-                layout,
-                3,
-                if confirm_selected {
-                    "> CLEAR"
-                } else {
-                    "  CLEAR"
-                },
-            );
+            // The two choices carry the same inversion the menu uses, so
+            // "which one is under the cursor" is one question everywhere.
+            draw_row_selectable(target, layout, 2, "Cancel", !confirm_selected);
+            draw_row_selectable(target, layout, 3, "CLEAR", confirm_selected);
             4
         }
     };
 
+    // The second hint names what Select would actually do here, so it is
+    // built rather than picked from a table of literals.
+    let mut menu_hints = [move_hint(layout.controls), ""];
     let hints: &[&str] = match model.page() {
-        Page::Menu(_) => &["1x: next", "hold: back"],
-        Page::Confirm { .. } => &["1x/hold: toggle", "2x: confirm"],
+        Page::Menu(item) => match select_hint(layout.controls, item) {
+            Some(hint) => {
+                menu_hints[1] = hint;
+                &menu_hints[..]
+            }
+            None => &menu_hints[..1],
+        },
+        Page::Confirm { .. } => match layout.controls {
+            Controls::OneButton => &["1x/hold: toggle", "2x: confirm"],
+            Controls::Dpad => &["up/dn: pick", "OK: confirm"],
+        },
     };
     draw_hints(target, layout, content_end, hints);
 }
@@ -632,6 +742,199 @@ where
     5
 }
 
+/// Draw this device's address.
+///
+/// The QR code the spec wants here needs a symbol a camera can resolve —
+/// about 110 px square for a `umsh:n:` URI — which neither panel in the
+/// class can offer below the header. So both fall back to the address as
+/// text, wrapped across the rows below, with the four-character hint
+/// above it as the part a person can compare by eye where there is room
+/// for both.
+fn draw_identity_page<D>(target: &mut D, layout: &Layout, status: &StatusModel<'_>) -> usize
+where
+    D: DrawTarget<Color = BinaryColor>,
+{
+    let Some(identity) = status.identity else {
+        // No identity yet is a real state on a freshly flashed board, and
+        // an empty screen says it better than a row of placeholder.
+        return 2;
+    };
+
+    // The address is 44 characters and no panel in the class shows more
+    // than 21, so it wraps. Splitting on the character grid rather than
+    // at a fixed width keeps every chunk the same length, which is what
+    // makes a transcription check possible at all.
+    let room = layout.size.width.saturating_sub(layout.left.max(0) as u32);
+    let per_row = clip(layout, identity.address, room).chars().count().max(1);
+    let needed = identity.address.chars().count().div_ceil(per_row);
+
+    // The address goes on whole or not at all. An address cut off at the
+    // bottom of the panel is worse than none, because it looks like a
+    // complete one — and this screen exists to be transcribed from.
+    let mut row = 2;
+    let available = layout.rows.saturating_sub(row);
+    if needed > available {
+        // Not even alone. Show what a person can compare by eye and leave
+        // the machine-readable form to the phone.
+        draw_row(target, layout, row, identity.hint);
+        return row + 1;
+    }
+    // The hint is what yields the row when both will not fit: the spec
+    // offers it as a convenience, and the header still names the device.
+    if needed < available {
+        draw_row(target, layout, row, identity.hint);
+        row += 1;
+    }
+
+    let mut rest = identity.address;
+    while !rest.is_empty() && row < layout.rows {
+        let end = rest
+            .char_indices()
+            .nth(per_row)
+            .map_or(rest.len(), |(at, _)| at);
+        let (chunk, remainder) = rest.split_at(end);
+        draw_row(target, layout, row, chunk);
+        rest = remainder;
+        row += 1;
+    }
+    row
+}
+
+/// Draw one settings level as a list, with the highlight on `selected`.
+///
+/// The window always contains the highlighted entry drawn complete: a
+/// Select against a row the user can only half read is a guess.
+fn draw_level_list<D>(
+    target: &mut D,
+    layout: &Layout,
+    model: &UiModel,
+    status: &StatusModel<'_>,
+    selected: MenuItem,
+) -> usize
+where
+    D: DrawTarget<Color = BinaryColor>,
+{
+    let level = selected.level();
+    let items = model.items();
+    let count = items.entries(level).count();
+    let index = items
+        .entries(level)
+        .position(|item| item == selected)
+        .unwrap_or(0);
+
+    // Rows 1.. belong to the list; row 0 is the header.
+    let available = layout.rows.saturating_sub(1);
+    let overflows = count > available;
+    // With a clipped row the last slot shows a partial entry, so one
+    // fewer entry is drawn complete. A scroll bar costs width, not rows.
+    let visible = match (overflows, layout.overflow) {
+        (true, Overflow::ClipRow) => available.saturating_sub(1).max(1),
+        _ => available,
+    };
+
+    let start = if index < visible {
+        0
+    } else {
+        (index + 1 - visible).min(count.saturating_sub(visible))
+    };
+
+    let mut line: String<LINE> = String::new();
+    for (offset, item) in items.entries(level).skip(start).take(visible).enumerate() {
+        line.clear();
+        write_entry(&mut line, item, &status.settings);
+        draw_row_selectable(target, layout, 1 + offset, &line, item == selected);
+    }
+
+    if !overflows {
+        return 1 + count;
+    }
+
+    match layout.overflow {
+        Overflow::ClipRow => {
+            let after = start + visible;
+            if let Some(item) = items.entries(level).nth(after) {
+                line.clear();
+                write_entry(&mut line, item, &status.settings);
+                draw_clipped_row(target, layout, 1 + visible, &line);
+            }
+        }
+        Overflow::ScrollBar => draw_scroll_bar(target, layout, count, start, visible),
+    }
+    layout.rows
+}
+
+/// An entry's name and, for a toggle, the state it is in.
+fn write_entry(line: &mut String<LINE>, item: MenuItem, settings: &SettingsModel) {
+    let _ = write!(line, "{}", menu_label(item));
+    let state = toggle_label(item, settings);
+    if !state.is_empty() {
+        let _ = write!(line, "  {state}");
+    }
+}
+
+/// Draw a row cut off half-way by the bottom of the panel.
+///
+/// The clip is explicit rather than left to the panel: a partially
+/// off-target row is a bug everywhere else, and the test panel rightly
+/// asserts on one.
+fn draw_clipped_row<D>(target: &mut D, layout: &Layout, row: usize, text: &str)
+where
+    D: DrawTarget<Color = BinaryColor>,
+{
+    let band = layout.row_rect(row);
+    let half = Rectangle::new(
+        band.top_left,
+        Size::new(band.size.width, band.size.height / 2),
+    );
+    if half.size.height == 0 {
+        return;
+    }
+    let mut clipped = target.clipped(&half);
+    draw_row(&mut clipped, layout, row, text);
+}
+
+/// Draw the scroll bar: a track down the right edge with a thumb sized to
+/// the visible fraction and placed at the current position.
+fn draw_scroll_bar<D>(target: &mut D, layout: &Layout, count: usize, start: usize, visible: usize)
+where
+    D: DrawTarget<Color = BinaryColor>,
+{
+    if count == 0 {
+        return;
+    }
+    let width = layout.battery.border.max(2);
+    let x = layout.size.width as i32 - width as i32;
+    let top = layout.row_top(1);
+    let bottom = layout.size.height as i32;
+    let height = (bottom - top).max(0) as u32;
+    if height == 0 {
+        return;
+    }
+
+    let track = Rectangle::new(Point::new(x, top), Size::new(width, height));
+    let _ = track
+        .into_styled(
+            PrimitiveStyleBuilder::new()
+                .stroke_color(BinaryColor::On)
+                .stroke_width(1)
+                .stroke_alignment(StrokeAlignment::Inside)
+                .build(),
+        )
+        .draw(target);
+
+    let thumb_height = ((height as usize * visible.min(count)) / count).max(2) as u32;
+    let span = height.saturating_sub(thumb_height);
+    let scrollable = count.saturating_sub(visible).max(1);
+    let offset = (span as usize * start.min(scrollable)) / scrollable;
+    let thumb = Rectangle::new(
+        Point::new(x, top + offset as i32),
+        Size::new(width, thumb_height.min(height)),
+    );
+    let _ = thumb
+        .into_styled(PrimitiveStyle::with_fill(BinaryColor::On))
+        .draw(target);
+}
+
 // ─── Drawing helpers ─────────────────────────────────────────────────────────
 
 fn draw_header<D>(target: &mut D, layout: &Layout, status: &StatusModel<'_>)
@@ -711,6 +1014,59 @@ where
     let _ = Text::with_baseline(text, at, style, Baseline::Top).draw(target);
 }
 
+/// Draw `row` inverted: the panel's foreground and background swap across
+/// the whole width of the row, including the space either side of the
+/// label.
+///
+/// Inversion survives everything these panels do badly. It needs no color,
+/// no second font, and no glyph column stolen from a row that is already
+/// narrow, and it is legible on a monochrome OLED at a glance and on a
+/// bistable panel with no backlight. Filling the band and *then* drawing
+/// the glyphs on their own inverted background is what makes it one solid
+/// bar rather than a row of boxed letters.
+fn draw_row_inverted<D>(target: &mut D, layout: &Layout, row: usize, text: &str)
+where
+    D: DrawTarget<Color = BinaryColor>,
+{
+    if row >= layout.rows {
+        return;
+    }
+    let band = layout.row_rect(row);
+    let _ = band
+        .into_styled(PrimitiveStyle::with_fill(BinaryColor::On))
+        .draw(target);
+
+    let room = layout.size.width.saturating_sub(layout.left.max(0) as u32);
+    let text = clip(layout, text, room);
+    if text.is_empty() {
+        return;
+    }
+    let style = MonoTextStyleBuilder::new()
+        .font(layout.font)
+        .text_color(BinaryColor::Off)
+        .background_color(BinaryColor::On)
+        .build();
+    let _ = Text::with_baseline(
+        text,
+        Point::new(layout.left, layout.row_top(row)),
+        style,
+        Baseline::Top,
+    )
+    .draw(target);
+}
+
+/// Draw a row highlighted or plain, so callers stop repeating the choice.
+fn draw_row_selectable<D>(target: &mut D, layout: &Layout, row: usize, text: &str, selected: bool)
+where
+    D: DrawTarget<Color = BinaryColor>,
+{
+    if selected {
+        draw_row_inverted(target, layout, row, text);
+    } else {
+        draw_row(target, layout, row, text);
+    }
+}
+
 /// Park the gesture hints against the bottom of the panel, dropping them
 /// from the front when the page has left fewer rows than there are hints.
 ///
@@ -753,24 +1109,82 @@ where
 
 // ─── Strings ─────────────────────────────────────────────────────────────────
 
+/// The entry's name, with no cursor decoration — the highlight is the
+/// inversion, not a prefix.
+///
+/// Back reads as the way out of the level it sits in rather than naming
+/// the destination, because that is the word the user is looking for.
 const fn menu_label(item: MenuItem) -> &'static str {
     match item {
-        MenuItem::Status => "> Status",
-        MenuItem::Stats => "> Stats",
-        MenuItem::CheckIn => "> Check in",
-        MenuItem::StartPairing => "> Start pairing",
-        MenuItem::ClearBonds => "> Clear bonds",
+        MenuItem::Status => "Status",
+        MenuItem::Identity => "Identity",
+        MenuItem::Settings => "Settings",
+        MenuItem::SettingsBack
+        | MenuItem::BluetoothBack
+        | MenuItem::GnssBack
+        | MenuItem::RadioBack => "Back",
+        MenuItem::Bluetooth => "Bluetooth",
+        MenuItem::Gnss => "GNSS",
+        MenuItem::Radio => "Radio",
+        MenuItem::BluetoothToggle => "Bluetooth",
+        MenuItem::StartPairing => "Start pairing",
+        MenuItem::ClearBonds => "Clear bonds",
+        MenuItem::GnssToggle => "GNSS",
+        MenuItem::ShareLocation => "Share location",
+        MenuItem::Forwarding => "Forwarding",
+        MenuItem::Stats => "Statistics",
     }
 }
 
-/// What a double-click would do from this item. `Status` and `Stats` are
-/// pages, not actions, and never reach here.
-const fn action_label(item: MenuItem) -> &'static str {
-    match item {
-        MenuItem::CheckIn => "2x: check in",
-        MenuItem::StartPairing => "2x: start",
-        MenuItem::ClearBonds => "2x: continue",
-        MenuItem::Status | MenuItem::Stats => "",
+/// How this board says "move to the next entry".
+const fn move_hint(controls: Controls) -> &'static str {
+    match controls {
+        Controls::OneButton => "1x: next",
+        Controls::Dpad => "up/dn: move",
+    }
+}
+
+/// What a Select would do from this entry, or `None` where it would do
+/// nothing and the hint would be a lie.
+///
+/// The verb comes from the entry and the gesture from the hardware, so
+/// the two tables below say the same things in each board's own words.
+const fn select_hint(controls: Controls, item: MenuItem) -> Option<&'static str> {
+    match (controls, item.kind()) {
+        (_, EntryKind::Reading(None)) => None,
+        (Controls::OneButton, kind) => Some(match kind {
+            EntryKind::Reading(Some(UiEffect::CheckIn)) => "2x: check in",
+            EntryKind::Submenu(_) => "2x: open",
+            EntryKind::Back => "2x: back",
+            EntryKind::Toggle(_) => "2x: toggle",
+            _ => "2x: select",
+        }),
+        (Controls::Dpad, kind) => Some(match kind {
+            EntryKind::Reading(Some(UiEffect::CheckIn)) => "OK: check in",
+            EntryKind::Submenu(_) => "OK: open",
+            EntryKind::Back => "OK: back",
+            EntryKind::Toggle(_) => "OK: toggle",
+            _ => "OK: select",
+        }),
+    }
+}
+
+/// The state a toggle entry reports, drawn after its name.
+///
+/// A board that cannot say draws nothing rather than guessing, which is
+/// why this returns an empty string rather than "off".
+fn toggle_label(item: MenuItem, settings: &SettingsModel) -> &'static str {
+    let value = match item.kind() {
+        EntryKind::Toggle(ToggleId::Bluetooth) => settings.bluetooth,
+        EntryKind::Toggle(ToggleId::Gnss) => settings.gnss,
+        EntryKind::Toggle(ToggleId::ShareLocation) => settings.share_location,
+        EntryKind::Toggle(ToggleId::Forwarding) => settings.forwarding,
+        _ => return "",
+    };
+    match value {
+        Some(true) => "on",
+        Some(false) => "off",
+        None => "",
     }
 }
 
@@ -781,6 +1195,7 @@ const fn notice_label(notice: UiNotice) -> &'static str {
         UiNotice::PairingUnavailable => "pair unavailable",
         UiNotice::BondsCleared => "bonds cleared",
         UiNotice::ClearFailed => "CLEAR FAILED",
+        UiNotice::ToggleUnavailable => "not available",
     }
 }
 
@@ -844,7 +1259,7 @@ fn write_battery(line: &mut String<LINE>, status: &StatusModel<'_>) {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::menu::{MenuItems, UiInput};
+    use crate::menu::{Level, MenuItems, UiInput};
 
     /// Widest panel in the class, bit-packed: 200 × 200 costs 5 kB, which
     /// a test can keep several of without thinking about it.
@@ -949,6 +1364,16 @@ mod tests {
             // The device does not know what time it is, which is the
             // state every panel must render as no clock at all.
             clock: None,
+            settings: SettingsModel {
+                bluetooth: Some(true),
+                gnss: Some(false),
+                share_location: Some(false),
+                forwarding: Some(true),
+            },
+            identity: Some(IdentityModel {
+                hint: "7bQ*",
+                address: "1BvYtT4nCJmqvKGpZbW8XdRfLhNs2eQaUxAyDzMr6HkP",
+            }),
         }
     }
 
@@ -956,8 +1381,35 @@ mod tests {
         [Layout::OLED_128X64, Layout::EPD_200X200]
     }
 
+    /// Walk to `item` within the level it lives in.
+    fn walk_to(model: &mut UiModel, item: MenuItem) {
+        for _ in 0..MenuItem::ALL.len() + 1 {
+            if model.page() == Page::Menu(item) {
+                return;
+            }
+            model.apply(UiInput::Forward);
+        }
+        panic!("never reached {item:?}");
+    }
+
+    /// Descend from home into `item`'s level and highlight it.
+    fn navigate_to(model: &mut UiModel, item: MenuItem) {
+        let level = item.level();
+        if level != Level::Top {
+            walk_to(model, MenuItem::Settings);
+            model.apply(UiInput::Select);
+            if let Some(opener) = level.opened_by() {
+                if opener.level() != Level::Top {
+                    walk_to(model, opener);
+                    model.apply(UiInput::Select);
+                }
+            }
+        }
+        walk_to(model, item);
+    }
+
     #[test]
-    fn segments_centre_each_bar_count_on_the_level_it_depicts() {
+    fn segments_center_each_bar_count_on_the_level_it_depicts() {
         assert_eq!(battery_segments(0), 0);
         assert_eq!(battery_segments(14), 0);
         assert_eq!(battery_segments(15), 1);
@@ -1007,7 +1459,7 @@ mod tests {
             assert!(panel.lit_in(zone) > 0, "message frame lost the battery");
 
             // Walk to the destructive item and open its confirmation.
-            model.apply(UiInput::Backward);
+            navigate_to(&mut model, MenuItem::ClearBonds);
             model.apply(UiInput::Select);
             assert!(matches!(model.page(), Page::Confirm { .. }));
             let mut panel = TestPanel::new(layout.size);
@@ -1407,6 +1859,40 @@ mod tests {
         assert!(panel.lit_in(row_area(&epd, 6)) > 0);
     }
 
+    /// A hint that names a gesture the board does not have is worse than
+    /// no hint: every string has to be in the vocabulary of the hardware
+    /// it is drawn on, and has to fit the narrowest panel in the class.
+    #[test]
+    fn each_control_set_is_hinted_in_its_own_words() {
+        // 128 px of FONT_6X10.
+        let budget = (Layout::OLED_128X64.size.width / 6) as usize;
+        for controls in [Controls::OneButton, Controls::Dpad] {
+            let clicks = controls == Controls::OneButton;
+            let mut hints: heapless::Vec<&str, 24> = heapless::Vec::new();
+            hints.push(move_hint(controls)).unwrap();
+            for item in MenuItem::ALL {
+                // Which entries answer a Select is a property of the
+                // entry, so the two vocabularies must agree about it.
+                assert_eq!(
+                    select_hint(controls, item).is_some(),
+                    select_hint(Controls::OneButton, item).is_some(),
+                    "{controls:?} disagrees about {item:?}"
+                );
+                if let Some(hint) = select_hint(controls, item) {
+                    let _ = hints.push(hint);
+                }
+            }
+            for hint in hints {
+                assert_eq!(
+                    hint.contains("1x") || hint.contains("2x"),
+                    clicks,
+                    "{controls:?} hint {hint:?} counts clicks"
+                );
+                assert!(hint.len() <= budget, "{hint:?} does not fit a 128px row");
+            }
+        }
+    }
+
     /// The rows a resting device is not spending: neither a closed
     /// pairing window nor plain advertising may put anything on screen.
     #[test]
@@ -1459,7 +1945,7 @@ mod tests {
         let mut counts = [0usize; 3];
         for (index, bonds) in [0u8, 1, 4].iter().enumerate() {
             let mut model = UiModel::new(MenuItems::all());
-            model.apply(UiInput::Backward);
+            navigate_to(&mut model, MenuItem::ClearBonds);
             model.apply(UiInput::Select);
             assert!(matches!(model.page(), Page::Confirm { .. }));
 
@@ -1479,8 +1965,7 @@ mod tests {
     fn the_stats_page_shows_its_counters() {
         for layout in layouts() {
             let mut model = UiModel::new(MenuItems::all());
-            model.apply(UiInput::Forward);
-            assert_eq!(model.page(), Page::Menu(MenuItem::Stats));
+            navigate_to(&mut model, MenuItem::Stats);
 
             let mut panel = TestPanel::new(layout.size);
             render_frame(&mut panel, &layout, &model, &demo_status());
@@ -1535,11 +2020,25 @@ mod tests {
                     status.pairing = pairing;
                     status.link = link;
 
-                    let mut model = UiModel::new(MenuItems::all());
-                    for _ in 0..MenuItem::ALL.len() {
+                    // Every entry of every level, plus the confirmation
+                    // each destructive one opens.
+                    for item in MenuItem::ALL {
+                        let mut model = UiModel::new(MenuItems::all());
+                        navigate_to(&mut model, item);
                         let mut panel = TestPanel::new(layout.size);
                         render_frame(&mut panel, &layout, &model, &status);
-                        model.apply(UiInput::Forward);
+
+                        if item.requires_confirmation() {
+                            model.apply(UiInput::Select);
+                            // Both sides of the confirmation, since the
+                            // highlight moves between them.
+                            for _ in 0..2 {
+                                assert!(matches!(model.page(), Page::Confirm { .. }));
+                                let mut panel = TestPanel::new(layout.size);
+                                render_frame(&mut panel, &layout, &model, &status);
+                                model.apply(UiInput::Forward);
+                            }
+                        }
                     }
 
                     let mut panel = TestPanel::new(layout.size);
@@ -1553,6 +2052,254 @@ mod tests {
                 }
             }
         }
+    }
+
+    /// What fraction of a row band is lit, in percent. An inverted row is
+    /// nearly solid; an ordinary one is a scattering of glyph pixels.
+    fn row_fill(panel: &TestPanel, layout: &Layout, row: usize) -> usize {
+        let band = layout.row_rect(row);
+        let area = (band.size.width * band.size.height) as usize;
+        if area == 0 {
+            return 0;
+        }
+        panel.lit_in(band) * 100 / area
+    }
+
+    /// Which rows read as inverted, on a panel drawn from `model`.
+    fn inverted_rows(
+        layout: &Layout,
+        model: &UiModel,
+        status: &StatusModel<'_>,
+    ) -> heapless::Vec<usize, 8> {
+        let mut panel = TestPanel::new(layout.size);
+        render_frame(&mut panel, layout, model, status);
+        (0..layout.rows)
+            .filter(|&row| row_fill(&panel, layout, row) > 50)
+            .collect()
+    }
+
+    /// The highlight is a solid bar across the whole row, not emphasized
+    /// text — that is what makes it legible on a bistable panel with no
+    /// backlight, and it is the contract Select is drawn against.
+    #[test]
+    fn the_highlight_is_a_solid_bar_and_there_is_exactly_one() {
+        for layout in layouts() {
+            for item in MenuItem::ALL {
+                let mut model = UiModel::new(MenuItems::all());
+                navigate_to(&mut model, item);
+                let rows = inverted_rows(&layout, &model, &demo_status());
+                assert_eq!(
+                    rows.len(),
+                    1,
+                    "{item:?} inverted {rows:?} on {:?}",
+                    layout.size
+                );
+                // Never the header, which is not a list entry.
+                assert_ne!(rows[0], 0, "{item:?} inverted the header");
+            }
+        }
+    }
+
+    /// The confirmation's two choices use the same inversion, and it
+    /// follows the cursor rather than sitting on the destructive one.
+    #[test]
+    fn the_confirmation_inverts_whichever_choice_the_cursor_is_on() {
+        for layout in layouts() {
+            let mut model = UiModel::new(MenuItems::all());
+            navigate_to(&mut model, MenuItem::ClearBonds);
+            model.apply(UiInput::Select);
+
+            // Opens on Cancel, per the spec's default.
+            let cancel = inverted_rows(&layout, &model, &demo_status());
+            model.apply(UiInput::Forward);
+            let clear = inverted_rows(&layout, &model, &demo_status());
+
+            assert_eq!(cancel.len(), 1, "confirmation lost its highlight");
+            assert_eq!(clear.len(), 1, "confirmation lost its highlight");
+            assert_ne!(cancel, clear, "the highlight did not move to CLEAR");
+        }
+    }
+
+    /// The address is what the screen is transcribed from, so every
+    /// character of it reaches the panel. The 128×64 has exactly enough
+    /// rows for the 44 characters and none to spare, so the hint yields
+    /// its row there and keeps it on the 200×200.
+    #[test]
+    fn the_identity_page_shows_the_whole_address_or_none_of_it() {
+        for layout in layouts() {
+            let status = demo_status();
+            let identity = status.identity.expect("fixture has an identity");
+            let mut model = UiModel::new(MenuItems::all());
+            navigate_to(&mut model, MenuItem::Identity);
+            let mut panel = TestPanel::new(layout.size);
+            render_frame(&mut panel, &layout, &model, &status);
+
+            // Every chunk the wrap produces, at the panel's own width.
+            let room = layout.size.width.saturating_sub(layout.left.max(0) as u32);
+            let per_row = clip(&layout, identity.address, room).chars().count();
+            let mut rest = identity.address;
+            while !rest.is_empty() {
+                let end = rest
+                    .char_indices()
+                    .nth(per_row)
+                    .map_or(rest.len(), |(at, _)| at);
+                let (chunk, remainder) = rest.split_at(end);
+                assert!(
+                    shows_row(&panel, &layout, chunk),
+                    "{:?} lost {chunk:?} off the address",
+                    layout.size
+                );
+                rest = remainder;
+            }
+        }
+
+        // And a panel with room for both keeps the hint.
+        let layout = Layout::EPD_200X200;
+        let status = demo_status();
+        let mut model = UiModel::new(MenuItems::all());
+        navigate_to(&mut model, MenuItem::Identity);
+        let mut panel = TestPanel::new(layout.size);
+        render_frame(&mut panel, &layout, &model, &status);
+        assert!(shows_row(&panel, &layout, status.identity.unwrap().hint));
+    }
+
+    /// A settings level is a list: every entry it holds is on the panel at
+    /// once, not one at a time behind a gesture.
+    #[test]
+    fn a_settings_level_draws_all_of_its_entries() {
+        for layout in layouts() {
+            let items = MenuItems::all();
+            for level in [Level::Settings, Level::Bluetooth, Level::Gnss] {
+                let selected = items.first_after_back(level);
+                let mut model = UiModel::new(items);
+                navigate_to(&mut model, selected);
+                let mut panel = TestPanel::new(layout.size);
+                render_frame(&mut panel, &layout, &model, &demo_status());
+
+                // The highlighted entry is drawn inverted, so its glyphs
+                // are unlit and there is nothing for `shows_row` to find;
+                // the bar it draws instead is what the highlight tests
+                // check.
+                for entry in items.entries(level).filter(|&e| e != selected) {
+                    assert!(
+                        shows_row(&panel, &layout, menu_label(entry)),
+                        "{level:?} did not draw {entry:?} on {:?}",
+                        layout.size
+                    );
+                }
+            }
+        }
+    }
+
+    /// A toggle carries its state beside its name, because the state is
+    /// the whole reason to walk to it. A board that cannot report one
+    /// draws no state rather than guessing "off".
+    #[test]
+    fn a_toggle_reports_its_state_and_an_unknown_one_reports_nothing() {
+        let mut settings = SettingsModel {
+            bluetooth: Some(true),
+            gnss: Some(false),
+            share_location: None,
+            forwarding: Some(true),
+        };
+        let mut line: String<LINE> = String::new();
+
+        write_entry(&mut line, MenuItem::BluetoothToggle, &settings);
+        assert_eq!(line.as_str(), "Bluetooth  on");
+
+        line.clear();
+        write_entry(&mut line, MenuItem::GnssToggle, &settings);
+        assert_eq!(line.as_str(), "GNSS  off");
+
+        line.clear();
+        write_entry(&mut line, MenuItem::ShareLocation, &settings);
+        assert_eq!(line.as_str(), "Share location");
+
+        // And a non-toggle never grows one.
+        line.clear();
+        settings.forwarding = Some(false);
+        write_entry(&mut line, MenuItem::StartPairing, &settings);
+        assert_eq!(line.as_str(), "Start pairing");
+    }
+
+    /// Both overflow idioms keep the highlighted entry drawn complete: a
+    /// Select against a row the user can only half read is a guess.
+    #[test]
+    fn overflow_never_leaves_the_highlight_half_drawn() {
+        let items = MenuItems::all();
+        // Neither shipping panel overflows a level today, so the window
+        // arithmetic is exercised against panels short enough that they
+        // must — three content rows against a four-entry level.
+        for style in [Overflow::ClipRow, Overflow::ScrollBar] {
+            for base in layouts() {
+                let layout = Layout {
+                    rows: 4,
+                    overflow: style,
+                    ..base
+                };
+                for entry in items.entries(Level::Bluetooth) {
+                    let mut model = UiModel::new(items);
+                    navigate_to(&mut model, entry);
+                    let mut panel = TestPanel::new(layout.size);
+                    render_frame(&mut panel, &layout, &model, &demo_status());
+
+                    // The bar is the highlight, and it is drawn across the
+                    // whole row band. A band only half filled is a row
+                    // the clip cut in two, which the highlight may never
+                    // land on.
+                    let bars: heapless::Vec<usize, 8> = (1..layout.rows)
+                        .map(|row| row_fill(&panel, &layout, row))
+                        .filter(|&fill| fill > 50)
+                        .collect();
+                    assert_eq!(
+                        bars.len(),
+                        1,
+                        "{entry:?} under {style:?} inverted {bars:?} on {:?}",
+                        layout.size
+                    );
+                    assert!(
+                        bars[0] > 80,
+                        "{entry:?} was drawn half a row under {style:?} on {:?}",
+                        layout.size
+                    );
+                }
+            }
+        }
+    }
+
+    /// A clipped row hangs over the bottom; a scroll bar takes a column
+    /// from every row instead. A board uses one, and the other must leave
+    /// no trace.
+    #[test]
+    fn each_overflow_style_marks_the_list_its_own_way() {
+        let items = MenuItems::all();
+        let base = Layout::EPD_200X200;
+        let mut lit = [0usize; 2];
+        for (index, style) in [Overflow::ClipRow, Overflow::ScrollBar]
+            .into_iter()
+            .enumerate()
+        {
+            let layout = Layout {
+                rows: 4,
+                overflow: style,
+                ..base
+            };
+            let mut model = UiModel::new(items);
+            navigate_to(&mut model, items.first_after_back(Level::Bluetooth));
+            let mut panel = TestPanel::new(layout.size);
+            render_frame(&mut panel, &layout, &model, &demo_status());
+
+            // The right-hand column the bar would own, below the header.
+            let bar = Rectangle::new(
+                Point::new(layout.size.width as i32 - 2, layout.row_top(1)),
+                Size::new(2, layout.size.height - layout.row_top(1) as u32),
+            );
+            lit[index] = panel.lit_in(bar);
+        }
+        assert!(
+            lit[1] > lit[0],
+            "the scroll bar did not claim the edge column"
+        );
     }
 
     /// A notice takes the top content row and pushes the rest down rather

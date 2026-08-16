@@ -18,8 +18,8 @@ use umsh_ulcp_runtime::device_node as node;
 // board with a primary-action button, so it is unused in some builds.
 #[allow(unused_imports)]
 pub use umsh_ulcp_runtime::device_node::{
-    BeaconTrigger, DEV_SYNC, NODE_CH, mac_counters, request_beacon, set_device_name,
-    set_tx_power_dbm, sign_identity_blob, tx_power_dbm,
+    BeaconTrigger, DEV_SYNC, NODE_CH, mac_counters, node_key, repeater_enabled, request_beacon,
+    set_device_name, set_tx_power_dbm, sign_identity_blob, tx_power_dbm,
 };
 
 /// The node's platform binding: everything generic resolved against this

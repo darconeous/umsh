@@ -204,8 +204,38 @@ pub static DEV_SYNC: Signal<NodeMutex, DevDomainSnapshot> = Signal::new();
 static NODE_ACTIVE: AtomicBool = AtomicBool::new(true);
 
 /// Whether the device node is acting as a repeater
-/// (`PROP_MAC_REPEATER_ENABLED`), for transition logging only.
+/// (`PROP_MAC_REPEATER_ENABLED`).
 static NODE_IS_REPEATER: AtomicBool = AtomicBool::new(false);
+
+/// The public key the running MAC actually holds, published once at
+/// bring-up.
+///
+/// The session has the same value in `PROP_DEV_KEY`, but a display
+/// reading it there would be reading what the device is *configured*
+/// with; this is what it is answering to on the air, which is the thing
+/// someone comparing an address against a phone screen needs.
+///
+/// `None` until bring-up runs, and on a board that never brings a node
+/// up at all — which is the honest answer for a screen that would
+/// otherwise print a placeholder address.
+static NODE_KEY: BlockingMutex<CriticalSectionRawMutex, RefCell<Option<[u8; 32]>>> =
+    BlockingMutex::new(RefCell::new(None));
+
+/// Whether the device node forwards other nodes' frames.
+///
+/// Reads the same state the session's `PROP_MAC_REPEATER_ENABLED` names,
+/// published here so a display can glance at it without borrowing the
+/// coordinator or racing `dev_sync_loop` for the mirror — which is a
+/// single-consumer `Signal` and already has one.
+pub fn repeater_enabled() -> bool {
+    NODE_IS_REPEATER.load(Ordering::Relaxed)
+}
+
+/// The public key the running node answers to, or `None` before
+/// bring-up.
+pub fn node_key() -> Option<[u8; 32]> {
+    NODE_KEY.lock(|key| *key.borrow())
+}
 
 /// Whether bring-up ran this boot. Without it nothing answers
 /// [`IDENT_REQUEST`], and a `PROP_IDENT` read must fail rather than hang
@@ -1066,6 +1096,7 @@ pub async fn bring_up<CS: CounterStore + 'static>(
     // Retained for the device-domain sync gate, which compares the
     // session's live PROP_DEV_KEY against the key this MAC actually holds.
     let node_key = umsh_crypto::NodeIdentity::public_key(&identity).0;
+    NODE_KEY.lock(|key| key.replace(Some(node_key)));
     let identity_id = mac_cell
         .try_borrow_mut()
         .expect("mac cell is unshared during bring-up")

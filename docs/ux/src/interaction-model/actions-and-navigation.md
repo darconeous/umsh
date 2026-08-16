@@ -83,6 +83,17 @@ hold past four seconds always powers the device off, from any screen and
 regardless of display state. There is no Back gesture on such a board; the Back
 entry in each submenu is how the user gets out.
 
+On a board with a four-way pad and a Back button the mapping is one control per
+intent and no control with two meanings: the center press for Select, the Back
+button for Back, and the pad for moving through the list. All four directions
+move—down and right for Next, up and left for Previous—because the pad is one
+control for walking a list, not a map of where the tree sits on screen. Nothing
+on the pad leaves a screen; that is the Back button's job and nothing else's.
+The power-off hold also stays on the Back button, which is the one control such
+a board still has when nothing is on the panel. The Back entry remains in every
+submenu—a user who has not found the button is not stuck—and the gesture hints
+name the controls the board actually has, so a pad device never says "2x".
+
 The screens these intents drive, and what each one shows, are in
 [Display Tracker Screens](../classes/display-tracker-screens.md).
 

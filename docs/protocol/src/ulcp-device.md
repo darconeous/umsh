@@ -367,7 +367,7 @@ does not produce excessive ULCP traffic.
 ### PROP 70: `PROP_MAC_REPEATER_ENABLED` {#prop-mac-repeater-enabled}
 
 * Type: Single-Value, Read-Write
-* Asynchronous Updates: No
+* Asynchronous Updates: Yes
 * Required: `CAP_REPEATER`
 * Value Type: BOOL
 * Post-Reset Value: Persisted
@@ -397,6 +397,12 @@ host-delivery mode) and of the host identity, which never forwards.
 The flag is device-domain state: it is part of the saved snapshot, so a
 `CMD_SAVE` arms an unattended repeater across power cycles, and it
 survives a change of host.
+
+Asynchronous because a device **MAY** offer forwarding as a control the
+operator can reach — the menu on a device with a screen is where a user
+decides whether to spend their battery carrying other people's traffic.
+A device that flips it locally **MUST** publish the new value like any
+other transition the host did not command.
 
 Flood-contention tuning — the forwarding delay window, deferral count,
 and similar timing parameters — is not exposed; a repeater applies its
@@ -1022,7 +1028,7 @@ whatever adjusts the device's clock adjusts its offset.
 ### PROP 4868: `PROP_GNSS_IDENT_UPDATE` {#prop-gnss-ident-update}
 
 * Type: Single-Value, Read-Write
-* Asynchronous Updates: No
+* Asynchronous Updates: Yes
 * Required: `CAP_GNSS`
 * Value Type: BOOL
 * Post-Reset Value: 0 (false), or restored from saved state
@@ -1040,6 +1046,11 @@ before advertising it. A device **SHOULD** act on a fix only when the
 clamped position actually changes, rather than on every fix: at a coarse
 precision a stationary node's fixes all land in the same cell, and
 re-advertising each one spends airtime to say nothing.
+
+Asynchronous because a device **MAY** offer this as a control the
+operator can reach, alongside the receiver switch it is deliberately
+separate from. A device that flips it locally **MUST** publish the new
+value like any other transition the host did not command.
 
 Switching it off **retracts** the advertised position rather than
 freezing the last one. So does switching the receiver off. A position

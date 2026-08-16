@@ -104,6 +104,10 @@ impl DeviceSide {
             time: Some(TimeConfig),
             gnss: Some(GnssConfig::DEFAULT),
             illuminance: true,
+            // The simulated board is reachable over Bluetooth, so
+            // `PROP_BLE_ENABLED` is one more property an administrator
+            // can find over the mesh.
+            ble: true,
         };
         let mut session = Session::new(
             config,

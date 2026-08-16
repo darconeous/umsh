@@ -39,18 +39,31 @@ open.
   implement them today they are one press from home. Does a diagnostic page
   belong beside the settings for the subsystem it describes, or beside the
   other pages a user reads at a glance?
-- The Bluetooth, GNSS, Share location, and Forwarding toggles are the same
-  state a companion can set over ULCP. Do local changes persist across a
-  reboot, and what happens when the device and a reconnecting phone disagree
-  about a value the user changed locally?
 - Select on the home screen checks in, and on a one-button board Select is a
   double click. Is that frequent enough to be worth the occasional accidental
   advertisement, and does the display-lapse gate absorb enough of them?
-- Should Messages offer any reply path on a board with no text entry, or is
-  read-only the honest answer until a canned-reply set has a product reason to
-  exist?
 - Silence and locate-alert state have no place in the header yet. Do they earn
   a glyph, or does an alert own the whole screen while it runs?
+
+Two screens in that hierarchy are deferred rather than open:
+
+- **Identity's QR code.** Only the T-Echo's 200×200 panel can carry a scannable
+  `umsh:n:` symbol, and no QR encoder exists in either workspace. Adding one is
+  a new dependency that four of the five nRF images would carry and none but the
+  T-Echo could use. Every board falls back to address text meanwhile, which is
+  what a person compares by eye anyway.
+- **Messages.** The device node logs a received payload and returns; there is no
+  device-side text store for the page to read. The page is a consequence of
+  building that store, not a screen that could be added on its own. Whether it
+  should then offer any reply path on a board with no text entry, or stay
+  read-only until a canned-reply set has a product reason to exist, is the
+  question to settle at that point.
+
+The toggles are settled: Bluetooth, GNSS, Share location, and Forwarding all
+flip through the ULCP session rather than at the subsystem, so a local change
+is the same event as a host write—it persists in the saved snapshot, and an
+attached host is told about it asynchronously. There is no disagreement to
+resolve because there is only one writer.
 
 ## E-paper trackers
 

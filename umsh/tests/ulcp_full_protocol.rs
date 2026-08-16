@@ -81,6 +81,7 @@ fn session_config() -> SessionConfig {
         // And a synthetic light sensor, so the host wrapper is exercised
         // against the real session too.
         illuminance: true,
+        ble: true,
     }
 }
 

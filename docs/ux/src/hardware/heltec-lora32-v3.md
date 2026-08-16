@@ -12,13 +12,21 @@ except the panel technology and what powering off means.
 
 ## Implemented behavior
 
-The menu contains Status, Stats, Check in, Start pairing, and Clear bonds. Row
-0 always names the device and carries the battery indicator, and row 1 always
-shows the menu cursor, so the current position is visible without remembering
-it. As on the other display trackers, the Status page shows only state that
-departs from nominal, the Stats page reports radio activity since boot, and the
-indicator follows the shared
+The menu is the three-level tree in
+[Display Tracker Screens](../classes/display-tracker-screens.md): Status,
+Identity, and Settings at the top, and Bluetooth and Radio behind Settings.
+There is no GNSS submenu, because the board has no receiver and an entry that
+cannot answer is not shown. Row 0 always names the device and carries the
+battery indicator, and the entry under the cursor is drawn inverted across the
+whole row. As on the other display trackers, the Status page shows only state
+that departs from nominal, the Statistics page reports radio activity since
+boot, and the indicator follows the shared
 [battery rules](../interaction-model/status-and-feedback.md).
+
+Two switches are settable from the panel: Bluetooth reachability
+(`PROP_BLE_ENABLED`) and frame forwarding. Each flips through the ULCP session
+rather than at the subsystem, stays on its entry, and shows the new state
+there.
 
 No external-power signal reaches the S3 on this board, which is a different
 thing from knowing the pack is discharging: the indicator therefore draws
@@ -34,8 +42,8 @@ withdraw it on.
 | Release after a 1–4 second hold | Move backward |
 | Continue holding for 4 seconds | Power off (deep sleep) |
 
-Clear bonds opens a confirmation page defaulting to Cancel, exactly as on the
-T-Echo. Pairing is a menu item rather than a bare button press: a board this
+Clear bonds, in the Bluetooth submenu, opens a confirmation page defaulting to
+Cancel, exactly as on the T-Echo. Pairing is a menu item rather than a bare button press: a board this
 easy to lean on should not open a pairing window by accident, and the menu makes
 the action visible before it happens.
 
@@ -77,10 +85,10 @@ shared [`umsh-ux-display-tracker`][ux-crate] menu, attention, and gate modules.
 
 ## Notes and limitations
 
-- The menu is flat rather than the hierarchy in
-  [Display Tracker Screens](../classes/display-tracker-screens.md). The 128×64
-  panel is too small for a scannable QR code, so Identity on this board is
-  address text alone; everything else in that model applies unchanged.
+- The 128×64 panel is too small for a scannable QR code, so Identity on this
+  board is address text alone.
+- Messages is not implemented on any board in the class: there is no
+  device-side text store for the page to read.
 - No locate alert. The board's only conspicuous output is the OLED, and its
   permanent wired attach means a second host can be present while an alert runs.
 - `Vext` stays powered while the display is merely lapsed. Only power-off drops

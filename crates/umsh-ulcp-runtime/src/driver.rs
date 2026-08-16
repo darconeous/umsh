@@ -131,10 +131,32 @@ pub enum InEvent {
     /// button press of whoever found the radio. Ignored when no alert is
     /// running, so a board may report the press unconditionally.
     CancelAlert,
-    /// The receiver switch was flipped at the device, on a board that
-    /// offers GNSS as a user-facing control. Ignored without `CAP_GNSS`,
-    /// so a board may report the press unconditionally.
-    ToggleGnss,
+    /// A switch was flipped at the device, on a board that offers the
+    /// setting as a user-facing control. Ignored when the device lacks
+    /// the capability behind it, so a board may report the press
+    /// unconditionally.
+    Toggle(Setting),
+}
+
+/// A device-domain switch a board may offer as a control the operator
+/// can reach — a menu entry, a button, a gesture.
+///
+/// Each names a property rather than a piece of hardware: what the
+/// device does with it is the platform's business, and a board that
+/// cannot perform one simply never sends it.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum Setting {
+    /// `PROP_BLE_ENABLED`: whether the device is reachable over
+    /// Bluetooth.
+    Bluetooth,
+    /// `PROP_GNSS_ENABLED`: whether the receiver is powered.
+    Gnss,
+    /// `PROP_GNSS_IDENT_UPDATE`: whether position goes out in what the
+    /// device advertises.
+    ShareLocation,
+    /// `PROP_MAC_REPEATER_ENABLED`: whether the node forwards other
+    /// nodes' frames.
+    Forwarding,
 }
 
 /// The inbound event channel the board's tasks feed: every transport
@@ -257,6 +279,15 @@ pub struct DevDomainSnapshot {
     /// `PROP_GNSS_TIME_TRUST`: whether receiver-derived time may set the
     /// wall clock.
     pub gnss_time_trust: bool,
+    /// `PROP_BLE_ENABLED`: whether the device is reachable over
+    /// Bluetooth. Always false on a board without `CAP_BLE`.
+    ///
+    /// Carried here for the same reason the receiver switch is: the
+    /// mirror is published whenever the device domain moves, which is
+    /// exactly the set of moments this can change, so the transport
+    /// hears about a host write, a boot restore, a `CMD_RST` and a menu
+    /// entry by one path instead of four.
+    pub ble_enabled: bool,
 }
 
 /// A device-initiated property publication, yielded by
@@ -448,6 +479,22 @@ pub trait DeviceEnv {
     /// state rather than the fact of a press, because "on" and "off"
     /// are what the operator needs told apart.
     fn gnss_switched(&mut self, enabled: bool) {
+        let _ = enabled;
+    }
+    /// Make the Bluetooth transport reachable, or stop it being so.
+    ///
+    /// Called from the device-domain mirror rather than from any one
+    /// gesture, so it arrives for a host write, a boot restore, a
+    /// `CMD_RST` and a menu entry alike — and arrives again whenever
+    /// anything else in the domain moves. Implementations must therefore
+    /// be idempotent, and boards without `CAP_BLE` never see anything
+    /// but the default.
+    ///
+    /// Disabled means unreachable, not powered down: dropping the
+    /// attached host and stopping advertising is what a user turns this
+    /// off for, and a stack that cannot be torn down at runtime is no
+    /// reason to refuse them that.
+    fn set_ble_enabled(&mut self, enabled: bool) {
         let _ = enabled;
     }
     /// A covered frame was queued for an attached-or-future host
@@ -769,6 +816,7 @@ fn sync_dev_domain<A, S, const TXQ: usize, E>(
         gnss_ident_update: session.gnss_ident_update(),
         gnss_ident_precision: session.gnss_ident_precision(),
         gnss_time_trust: session.gnss_time_trust(),
+        ble_enabled: session.ble_enabled(),
     };
     for key in session.dev_channel_keys() {
         let _ = snapshot.channel_keys.push(key);
@@ -779,6 +827,10 @@ fn sync_dev_domain<A, S, const TXQ: usize, E>(
     for public_key in session.dev_admins() {
         let _ = snapshot.admins.push(public_key);
     }
+    // Ahead of the mirror: the mirror is consumed by the device node,
+    // and Bluetooth reachability is the transport's business rather than
+    // the node's.
+    env.set_ble_enabled(snapshot.ble_enabled);
     env.publish_dev_domain(snapshot);
 }
 
@@ -1201,19 +1253,32 @@ where
                     .await;
                 apply_effect(&session, effect, &rt, &mut env).await;
             }
-            Either4::First(InEvent::ToggleGnss) => {
-                // The switch itself reaches the receiver through the
+            Either4::First(InEvent::Toggle(setting)) => {
+                // The switch itself reaches the platform through the
                 // device-domain mirror at the bottom of this loop, like
                 // every other write to it.
-                if let Some(enabled) = session.toggle_gnss(&mut |frame: &[u8]| emitter.push(frame))
-                {
+                let flipped = match setting {
+                    Setting::Bluetooth => {
+                        session.toggle_ble(&mut |frame: &[u8]| emitter.push(frame))
+                    }
+                    Setting::Gnss => session.toggle_gnss(&mut |frame: &[u8]| emitter.push(frame)),
+                    Setting::ShareLocation => {
+                        session.toggle_gnss_ident_update(&mut |frame: &[u8]| emitter.push(frame))
+                    }
+                    Setting::Forwarding => {
+                        session.toggle_repeater(&mut |frame: &[u8]| emitter.push(frame))
+                    }
+                };
+                if let Some(enabled) = flipped {
                     emitter
                         .flush(&mut ReplySink::Transport {
                             destination: arbitration.destination(),
                             out: rt.out,
                         })
                         .await;
-                    env.gnss_switched(enabled);
+                    if setting == Setting::Gnss {
+                        env.gnss_switched(enabled);
+                    }
                     // Keep an existing snapshot in step, so a switch the
                     // operator flipped is still flipped after a reboot.
                     // A device with nothing saved gets nothing saved:
@@ -1226,7 +1291,8 @@ where
                         session.note_snapshot_saved();
                     }
                     crate::log::debug_log(format_args!(
-                        "ulcp: gnss {} at the device",
+                        "ulcp: {:?} {} at the device",
+                        setting,
                         if enabled { "ON" } else { "off" }
                     ));
                 }

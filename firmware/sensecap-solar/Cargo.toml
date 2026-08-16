@@ -19,7 +19,7 @@ default = ["board-sensecap-solar"]
 board-techo = ["display-epd", "button-nav", "system-off-techo", "led-active-low", "cap-battery-saadc", "cap-gnss"]
 board-t1000e = ["t1000e", "cap-battery-saadc", "cap-gnss", "gnss-holds-the-clock", "cap-illuminance"]
 board-sensecap-solar = ["cap-battery-saadc", "power-button", "cap-gnss"]
-board-wio-tracker-l1 = ["display-oled", "button-nav", "system-off-wio", "cap-battery-saadc", "cap-buzzer", "cap-gnss", "gnss-holds-the-clock"]
+board-wio-tracker-l1 = ["display-oled", "dpad-nav", "system-off-wio", "cap-battery-saadc", "cap-buzzer", "cap-gnss", "gnss-holds-the-clock"]
 board-xiao-nrf52 = ["cap-battery-saadc", "led-active-low", "boot-pairing-window"]
 t1000e = []
 cap-battery-saadc = []
@@ -38,6 +38,11 @@ has-display = []
 display-epd = ["has-display"]
 display-oled = ["has-display"]
 button-nav = []
+# The board has a four-way pad with a center press beside the button its
+# case labels Back, so no control has to carry more than one meaning: the
+# pad moves and selects and the button goes back. Implies `button-nav`,
+# which is still what resolves the Back button's power-off hold.
+dpad-nav = ["button-nav"]
 system-off-techo = []
 system-off-wio = []
 led-active-low = []

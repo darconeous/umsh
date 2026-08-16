@@ -88,14 +88,16 @@ use umsh_ulcp::{Status, gatt, hdlc};
 use umsh_ulcp_device::{BatteryFields, MAX_DEVICE_NAME_LEN, RadioSettings, SessionConfig};
 use umsh_ulcp_runtime::ble_security::{PairingFailureClass, PairingRuntime, pairing_enabled};
 use umsh_ulcp_runtime::driver::{
-    self, DeviceEnv, DeviceRuntime, InEvent, InputChannel, OutFrame, TransportChannels,
+    self, DeviceEnv, DeviceRuntime, InEvent, InputChannel, OutFrame, Setting, TransportChannels,
 };
 use umsh_ulcp_runtime::{radio_mux, transport_policy};
 use umsh_ux_display_tracker::attention::{
     Attention, AttentionConfig, DisplayKind, HoldReason, Transition,
 };
 use umsh_ux_display_tracker::gate::{Disposition, Gate, GateReason};
-use umsh_ux_display_tracker::menu::{MenuItems, UiEffect, UiInput, UiModel, UiNotice};
+use umsh_ux_display_tracker::menu::{
+    MenuItem, MenuItems, ToggleId, UiEffect, UiInput, UiModel, UiNotice,
+};
 use umsh_ux_display_tracker::screen;
 use umsh_ux_tracker::battery::soc_from_ocv;
 use umsh_ux_tracker::button::{ButtonEdge, ButtonEvent, ButtonFsm};
@@ -244,6 +246,9 @@ fn session_config() -> SessionConfig {
         gnss: None,
         // No ambient light sensor.
         illuminance: false,
+        // The ESP32-S3 radio is always up on this board, but the
+        // peripheral can be made unfindable: see `advertising_permitted`.
+        ble: true,
     }
 }
 
@@ -414,6 +419,10 @@ static BLE_WIPE_REQUEST: Signal<CriticalSectionRawMutex, ()> = Signal::new();
 /// Wired protocol attachment suppresses BLE advertising. The signal
 /// wakes a pending advertiser/connection so it can apply the policy.
 static ADV_ALLOWED: AtomicBool = AtomicBool::new(true);
+/// `PROP_BLE_ENABLED`, mirrored from the session. True at boot, before
+/// any restore, so a device that never reaches its saved state is still
+/// reachable by the host that could fix it.
+static BLE_ENABLED: AtomicBool = AtomicBool::new(true);
 static ADV_POLICY_CHANGED: Signal<CriticalSectionRawMutex, ()> = Signal::new();
 
 /// OLED redraw trigger for content that changed without the user asking
@@ -628,6 +637,27 @@ fn battery_snapshot(mv: u16) -> umsh_ulcp::battery::BatteryStatus {
 
 // ─── Pairing runtime plumbing (port of the nRF firmware's) ────────────────────
 
+/// Whether the peripheral may be findable right now: transport
+/// arbitration and the user's own `PROP_BLE_ENABLED`, both of which have
+/// to agree.
+fn advertising_permitted() -> bool {
+    ADV_ALLOWED.load(Ordering::Acquire) && BLE_ENABLED.load(Ordering::Acquire)
+}
+
+/// Apply `PROP_BLE_ENABLED` by reusing the advertising-policy path, which
+/// already stops the advertiser and drops a live connection. Bonds are
+/// untouched, so the host reconnects without pairing again.
+fn set_ble_enabled(enabled: bool) {
+    if BLE_ENABLED.swap(enabled, Ordering::AcqRel) != enabled {
+        debug_log(format_args!(
+            "ble reachability {}",
+            if enabled { "ON" } else { "off" }
+        ));
+        ADV_POLICY_CHANGED.signal(());
+        UI_REFRESH.signal(());
+    }
+}
+
 fn set_advertising_allowed(allowed: bool) {
     let previous = ADV_ALLOWED.swap(allowed, Ordering::AcqRel);
     debug_log(format_args!(
@@ -800,6 +830,10 @@ impl DeviceEnv for BoardDeviceEnv {
         todo!("Implement factory reset for esp32");
     }
 
+    fn set_ble_enabled(&mut self, enabled: bool) {
+        set_ble_enabled(enabled);
+    }
+
     fn set_advertising_allowed(&mut self, allowed: bool) {
         // ble-debug builds keep advertising open regardless of the
         // arbitration policy so the diagnostic path stays reachable.
@@ -909,7 +943,13 @@ async fn pairing_config_task<C: Controller, P: PacketPool>(
                 debug_log(format_args!("pairing mode requested"));
                 PAIRING_MODE.store(true, Ordering::Release);
                 BLE_LED_MODE.store(1, Ordering::Release);
-                UI_REFRESH.signal(());
+                let unavailable = PAIRING_LOCKED_OUT.load(Ordering::Acquire)
+                    || usize::from(BLE_BOND_COUNT.load(Ordering::Acquire)) >= ble_store::MAX_BONDS;
+                UI_NOTICE.signal(if unavailable {
+                    UiNotice::PairingUnavailable
+                } else {
+                    UiNotice::PairingStarted
+                });
                 PAIRING_TIMER_RESET.signal(());
                 apply_pairing_gate(stack);
             }
@@ -937,10 +977,11 @@ async fn pairing_config_task<C: Controller, P: PacketPool>(
                     PAIRING_TIMER_RESET.signal(());
                     apply_pairing_gate(stack);
                     debug_log(format_args!("security wipe complete"));
+                    UI_NOTICE.signal(UiNotice::BondsCleared);
                 } else {
                     debug_log(format_args!("security wipe flash=FAILED"));
+                    UI_NOTICE.signal(UiNotice::ClearFailed);
                 }
-                UI_REFRESH.signal(());
             }
         }
     }
@@ -1316,7 +1357,7 @@ async fn gatt_connection<C: Controller, P: PacketPool>(
                 }
             }
             Either3::Third(LinkSignal::AdvertisingPolicy) => {
-                if !ADV_ALLOWED.load(Ordering::Acquire) {
+                if !advertising_permitted() {
                     debug_log(format_args!(
                         "disconnect initiated by transport arbitration"
                     ));
@@ -1346,7 +1387,7 @@ async fn ble_peripheral<'values, C: Controller>(
     server: &UlcpServer<'values>,
 ) -> ! {
     loop {
-        if !ADV_ALLOWED.load(Ordering::Acquire) {
+        if !advertising_permitted() {
             ADV_POLICY_CHANGED.wait().await;
             continue;
         }
@@ -1653,11 +1694,64 @@ async fn device_task(
 
 // ─── UI: OLED, button, LED ───────────────────────────────────────────────
 
-/// The whole class vocabulary: this board can beacon, pair, and clear
-/// its bonds. Clearing is a menu item rather than a bare gesture because
-/// the confirmation page in front of it is what makes it safe.
+/// What this board's menu can do.
+///
+/// Everything the class defines except the receiver: no GNSS is fitted,
+/// so both its entries come out and the submenu that led to them goes
+/// with them. Clearing bonds is a menu item rather than a bare gesture
+/// because the confirmation page in front of it is what makes it safe.
 fn heltec_menu_items() -> MenuItems {
     MenuItems::all()
+        .without(MenuItem::GnssToggle)
+        .without(MenuItem::ShareLocation)
+}
+
+/// Which device-domain switch a menu toggle names.
+const fn ulcp_setting(id: ToggleId) -> Setting {
+    match id {
+        ToggleId::Bluetooth => Setting::Bluetooth,
+        ToggleId::Gnss => Setting::Gnss,
+        ToggleId::ShareLocation => Setting::ShareLocation,
+        ToggleId::Forwarding => Setting::Forwarding,
+    }
+}
+
+/// Backing store for the identity page's two strings, which
+/// [`screen::StatusModel`] only borrows.
+#[derive(Default)]
+struct IdentityText {
+    hint: heapless::String<8>,
+    address: heapless::String<{ umsh_core::base58::ENCODED_LEN }>,
+}
+
+impl IdentityText {
+    /// The running node's address, or empty before bring-up.
+    fn current() -> Self {
+        use core::fmt::Write as _;
+        let Some(key) = device_node::node_key() else {
+            return Self::default();
+        };
+        let mut text = Self::default();
+        let _ = write!(
+            text.hint,
+            "{}",
+            umsh_core::NodeHint::from_public_key(&umsh_core::PublicKey(key))
+        );
+        for digit in umsh_core::base58::encode(&key) {
+            let _ = text.address.push(digit as char);
+        }
+        text
+    }
+
+    fn model(&self) -> Option<screen::IdentityModel<'_>> {
+        if self.address.is_empty() {
+            return None;
+        }
+        Some(screen::IdentityModel {
+            hint: &self.hint,
+            address: &self.address,
+        })
+    }
 }
 
 /// Everything the shared renderer draws that is not menu state.
@@ -1665,10 +1759,19 @@ fn heltec_menu_items() -> MenuItems {
 /// The device name is passed in rather than read here: reading it is
 /// async and the model borrows it, so the display task snapshots it once
 /// per frame and lends it to this.
-fn ui_status(name: &DeviceName) -> screen::StatusModel<'_> {
+fn ui_status<'a>(name: &'a DeviceName, identity: &'a IdentityText) -> screen::StatusModel<'a> {
     let mv = BATTERY_MV.load(Ordering::Acquire);
     screen::StatusModel {
         device_name: core::str::from_utf8(name).unwrap_or(DEFAULT_DEVICE_NAME),
+        // No receiver on this board, so both positioning switches report
+        // nothing rather than a guess — and neither is on the menu.
+        settings: screen::SettingsModel {
+            bluetooth: Some(BLE_ENABLED.load(Ordering::Acquire)),
+            gnss: None,
+            share_location: None,
+            forwarding: Some(device_node::repeater_enabled()),
+        },
+        identity: identity.model(),
         battery: screen::BatteryIndicator {
             level_percent: (mv != 0).then(|| soc_from_ocv(mv)),
             // No charger telemetry reaches the MCU on this board, so the
@@ -1680,7 +1783,7 @@ fn ui_status(name: &DeviceName) -> screen::StatusModel<'_> {
         link: match BLE_LINK.load(Ordering::Acquire) {
             2 => screen::LinkState::Attached,
             1 => screen::LinkState::Connected,
-            _ if ADV_ALLOWED.load(Ordering::Acquire) => screen::LinkState::Advertising,
+            _ if advertising_permitted() => screen::LinkState::Advertising,
             _ => screen::LinkState::OffWired,
         },
         bonds: BLE_BOND_COUNT.load(Ordering::Acquire),
@@ -1762,14 +1865,17 @@ async fn display_task(mut display: Display, mut vext: Vext) {
     let _ = display.set_brightness(Brightness::NORMAL).await;
     {
         let name = device_name_snapshot().await;
-        render_frame(&mut display, &model, &ui_status(&name)).await;
+        let identity = IdentityText::current();
+        render_frame(&mut display, &model, &ui_status(&name, &identity)).await;
     }
 
     loop {
         // The name changes rarely but every frame this pass might draw
         // needs it, so it is snapshotted once and lent out; the rest of
-        // the status is rebuilt at each draw.
+        // the status is rebuilt at each draw. The identity is rendered
+        // the same way, and is empty until node bring-up runs.
         let name = device_name_snapshot().await;
+        let identity = IdentityText::current();
 
         let now = Instant::now().as_millis();
         attention.set_hold(
@@ -1814,6 +1920,14 @@ async fn display_task(mut display: Display, mut vext: Vext) {
                     }
                     Some(UiEffect::StartPairing) => PAIRING_MODE_REQUEST.signal(()),
                     Some(UiEffect::ClearBonds) => BLE_WIPE_REQUEST.signal(()),
+                    Some(UiEffect::Toggle(id)) => {
+                        // Applied by the ULCP session, so the property, an
+                        // attached host and the saved snapshot all see the
+                        // same flip. The new state reaches the panel
+                        // through `ui_status` on the redraw below, which
+                        // is why the entry stays put.
+                        INPUT_CH.send(InEvent::Toggle(ulcp_setting(id))).await;
+                    }
                     None => {}
                 }
             }
@@ -1839,7 +1953,7 @@ async fn display_task(mut display: Display, mut vext: Vext) {
             Either4::Third(()) => {
                 render_message(
                     &mut display,
-                    &ui_status(&name),
+                    &ui_status(&name, &identity),
                     "Powering off",
                     "hold to wake",
                 )
@@ -1870,7 +1984,7 @@ async fn display_task(mut display: Display, mut vext: Vext) {
         }
 
         if redraw && attention.accepts_redraw() {
-            render_frame(&mut display, &model, &ui_status(&name)).await;
+            render_frame(&mut display, &model, &ui_status(&name, &identity)).await;
         }
         // Ordered after the redraw so the panel never lights on a stale
         // frame.

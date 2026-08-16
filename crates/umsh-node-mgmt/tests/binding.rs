@@ -86,6 +86,7 @@ impl<const PAYLOAD: usize> Device<PAYLOAD> {
             time: Some(TimeConfig),
             gnss: Some(GnssConfig::DEFAULT),
             illuminance: true,
+            ble: true,
         };
         let mut session = Session::new(
             config,

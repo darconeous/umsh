@@ -18,7 +18,7 @@
 #![cfg(feature = "screen")]
 use embedded_graphics::pixelcolor::BinaryColor;
 use embedded_graphics::prelude::*;
-use umsh_ux_display_tracker::menu::{MenuItems, UiInput, UiModel};
+use umsh_ux_display_tracker::menu::{Level, MenuItem, MenuItems, Page, UiInput, UiModel};
 use umsh_ux_display_tracker::screen::*;
 use umsh_ux_tracker::battery::ChargeClass;
 
@@ -168,7 +168,44 @@ fn status(
             hour: 14,
             minute: 30,
         }),
+        settings: SettingsModel {
+            bluetooth: Some(true),
+            gnss: Some(true),
+            share_location: Some(false),
+            forwarding: Some(true),
+        },
+        identity: Some(IdentityModel {
+            hint: "7bQ*",
+            address: "1BvYtT4nCJmqvKGpZbW8XdRfLhNs2eQaUxAyDzMr6HkP",
+        }),
     }
+}
+
+/// Walk to `item` within the level it lives in.
+fn walk_to(model: &mut UiModel, item: MenuItem) {
+    for _ in 0..MenuItem::ALL.len() + 1 {
+        if model.page() == Page::Menu(item) {
+            return;
+        }
+        model.apply(UiInput::Forward);
+    }
+    panic!("never reached {item:?}");
+}
+
+/// Descend from home into `item`'s level and highlight it.
+fn navigate_to(model: &mut UiModel, item: MenuItem) {
+    let level = item.level();
+    if level != Level::Top {
+        walk_to(model, MenuItem::Settings);
+        model.apply(UiInput::Select);
+        if let Some(opener) = level.opened_by() {
+            if opener.level() != Level::Top {
+                walk_to(model, opener);
+                model.apply(UiInput::Select);
+            }
+        }
+    }
+    walk_to(model, item);
 }
 
 /// Every frame kind, in the order a user would meet them.
@@ -233,58 +270,47 @@ fn frames(layout: &Layout) -> Vec<Panel> {
         )
     });
 
-    // The stats page.
-    let mut s = UiModel::new(MenuItems::all());
-    s.apply(UiInput::Forward);
-    push(&|p| {
-        render_frame(
-            p,
-            layout,
-            &s,
-            &status(
-                Some(60),
-                Some(ChargeClass::Discharging),
-                PairingState::Closed,
-                LinkState::Advertising,
-            ),
-        )
-    });
+    // Every entry of every level, in the order the tree declares them:
+    // the reading pages, then each settings list with its highlight on a
+    // different row so the window and the bar can both be looked at.
+    for item in MenuItem::ALL {
+        let mut m = UiModel::new(MenuItems::all());
+        navigate_to(&mut m, item);
+        push(&|p| {
+            render_frame(
+                p,
+                layout,
+                &m,
+                &status(
+                    Some(60),
+                    Some(ChargeClass::Discharging),
+                    open,
+                    LinkState::Advertising,
+                ),
+            )
+        });
+    }
 
-    // A non-status menu item, where the gesture hints come back.
-    let mut m = UiModel::new(MenuItems::all());
-    m.apply(UiInput::Forward);
-    m.apply(UiInput::Forward);
-    push(&|p| {
-        render_frame(
-            p,
-            layout,
-            &m,
-            &status(
-                Some(60),
-                Some(ChargeClass::Discharging),
-                open,
-                LinkState::Advertising,
-            ),
-        )
-    });
-
-    // The confirmation page.
+    // The confirmation page, both ways round.
     let mut c = UiModel::new(MenuItems::all());
-    c.apply(UiInput::Backward);
+    navigate_to(&mut c, MenuItem::ClearBonds);
     c.apply(UiInput::Select);
-    push(&|p| {
-        render_frame(
-            p,
-            layout,
-            &c,
-            &status(
-                Some(60),
-                Some(ChargeClass::Discharging),
-                open,
-                LinkState::Advertising,
-            ),
-        )
-    });
+    for _ in 0..2 {
+        push(&|p| {
+            render_frame(
+                p,
+                layout,
+                &c,
+                &status(
+                    Some(60),
+                    Some(ChargeClass::Discharging),
+                    open,
+                    LinkState::Advertising,
+                ),
+            )
+        });
+        c.apply(UiInput::Forward);
+    }
 
     // A message frame.
     push(&|p| {
@@ -338,6 +364,19 @@ fn preview() {
         [235, 240, 255],
         [8, 10, 14],
         &dir.join("oled-128x64.bmp"),
+    );
+    // The same panel driven by a pad rather than one button. Only the
+    // hints differ, and they are exactly what needs looking at: they are
+    // the longest strings on the narrowest screen in the class.
+    sheet(
+        &Layout {
+            controls: Controls::Dpad,
+            ..Layout::OLED_128X64
+        },
+        3,
+        [235, 240, 255],
+        [8, 10, 14],
+        &dir.join("oled-128x64-dpad.bmp"),
     );
     sheet(
         &Layout::EPD_200X200,

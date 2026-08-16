@@ -21,12 +21,14 @@
 //!   bringup harness
 //!
 //! Concrete pins for the radio (SX1262 on TWISPI1 plus the external
-//! RXEN on P1.08), the user LED (P1.01, active-high), and the nav button
-//! (P0.08) are chosen by the firmware, following the pattern the other
-//! nRF52840 tracker boards use.
+//! RXEN on P1.08), the user LED (P1.01, active-high), the Back button
+//! (P0.08), and the four-way pad with its center press (P1.04, P0.12,
+//! P0.11, P1.03, P1.05 — up, down, left, right, press) are chosen by the
+//! firmware, following the pattern the other nRF52840 tracker boards
+//! use. All six switches are active-low with pull-ups.
 //!
-//! Not yet wired: the joystick / trackball, the Grove expansion I²C bus,
-//! and the QSPI external flash.
+//! Not yet wired: the Grove expansion I²C bus and the QSPI external
+//! flash.
 //!
 //! See `docs/hardware/seeed-wio-tracker-l1-pro-hardware.md` for the
 //! firmware-derived hardware reference.

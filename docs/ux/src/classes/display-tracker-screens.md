@@ -70,6 +70,15 @@ waste the press that got them there. On a board with a Back control, the
 gesture does exactly what selecting the entry does—the entry is what makes
 the way out discoverable, and the control is what makes it quick.
 
+**Gesture hints name the controls the board has.** The rows at the foot of a
+page say how to move and what Select would do from the entry under the cursor,
+in the vocabulary of that hardware: a one-button board counts clicks, a board
+with a pad names its directions, and neither ever shows the other's wording. A
+hint that names a gesture the device does not have is worse than no hint, which
+is also why the second row is built from the highlighted entry rather than
+picked from a fixed pair—it says *open*, *toggle*, or *check in*, not *select*,
+wherever the entry knows better.
+
 **A board enables the subset it can perform**, and navigation skips the rest. A
 board with no GNSS does not show a GNSS submenu; a board with no bond storage
 does not show Clear bonds. A submenu whose entries are all disabled is not

@@ -97,6 +97,7 @@ Id   | Mnemonic                                                                 
 4868 | [`PROP_GNSS_IDENT_UPDATE`](ulcp-device.md#prop-gnss-ident-update)          | Get, Set                 | `CAP_GNSS`
 4869 | [`PROP_GNSS_IDENT_PRECISION`](ulcp-device.md#prop-gnss-ident-precision)    | Get, Set                 | `CAP_GNSS`
 4870 | [`PROP_GNSS_TIME_TRUST`](ulcp-device.md#prop-gnss-time-trust)              | Get, Set                 | `CAP_GNSS`
+4871 | [`PROP_BLE_ENABLED`](ulcp-ble.md#prop-ble-enabled)                         | Get, Set, Is             | `CAP_BLE`
 
 ## Capabilities
 
@@ -125,6 +126,7 @@ Code | Name                      | Defined in
 47   | `CAP_ILLUMINANCE`         | [Device Domain](ulcp-device.md#capabilities)
 48   | `CAP_MAC_BACKHAUL`        | [Tethered Host Services](ulcp-host.md#capabilities)
 49   | `CAP_CMD_MULTI`           | [Framing and Common Semantics](ulcp-core.md#cmd-prop-multi-get)
+50   | `CAP_BLE`                 | [BLE Binding](ulcp-ble.md#capabilities)
 515  | `CAP_PHY_LORA`            | [Radio Control](ulcp-radio.md#capabilities)
 
 ## Status Codes

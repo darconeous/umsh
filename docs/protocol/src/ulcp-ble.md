@@ -221,6 +221,53 @@ pairing requests; it does not affect advertising. In particular, a
 bonded device continues to advertise outside pairing mode so that its
 bonded hosts can reconnect.
 
+## Capabilities {#capabilities}
+
+Code | Name      | Requires | Grants
+-----|-----------|----------|--------
+50   | `CAP_BLE` | —        | A Bluetooth transport whose reachability the device can turn on and off: `PROP_BLE_ENABLED`
+
+A device implementing this binding **MAY** advertise `CAP_BLE`. Not
+advertising it means the transport is always reachable while the device
+is powered, which is what every device did before the capability
+existed; it does not mean the device has no BLE.
+
+## Reachability {#ble-reachability}
+
+### PROP 4871: `PROP_BLE_ENABLED` {#prop-ble-enabled}
+
+* Type: Single-Value, Read-Write
+* Asynchronous Updates: Yes
+* Required: `CAP_BLE`
+* Value Type: BOOL
+* Post-Reset Value: 1 (true), or restored from saved state
+
+Whether the device is reachable over this transport. Cleared, the
+device **MUST** stop advertising and **MUST** drop any host attached
+over BLE; set again, it advertises as it did before. Bonds are
+untouched in both directions, so a bonded host reconnects without
+pairing again.
+
+It says nothing about the radio itself. A device **MAY** power the
+controller down behind this and **MAY** leave the whole stack running;
+what the property promises is reachability, which is what an operator
+turning it off is asking about. Claiming the radio is off would be a
+claim most platforms cannot honor — a vendor stack that cannot be torn
+down at runtime is common — and a property that lies in the direction
+of "more private than it is" is the wrong one to guess at.
+
+Asynchronous for the same reason `PROP_GNSS_ENABLED` is: a device
+**MAY** offer this as a control the operator can reach, and a switch
+someone can flip is a value that moves without the host asking. A
+device that flips it locally **MUST** publish the new value like any
+other transition the host did not command — which, when it is being
+cleared, is the last thing the attached host hears.
+
+The post-reset value is true. A device unreachable by default is a
+device that cannot be configured by the host that would make it
+reachable again, and on most hardware the only other way in is the menu
+on the front of it.
+
 ## Security {#ble-security}
 
 ULCP is a privileged interface: an attached

@@ -216,6 +216,16 @@ pub mod prop {
     /// manually-set clock proof against a jammed or spoofed sky. Position
     /// reporting is unaffected. Requires `CAP_GNSS`.
     pub const GNSS_TIME_TRUST: u32 = 4870;
+    /// Whether the device is reachable over Bluetooth
+    /// (`PROP_BLE_ENABLED`) — BOOL, default 1. Requires `CAP_BLE`.
+    ///
+    /// Cleared, the device stops advertising and drops any attached
+    /// host; bonds survive, and the host reconnects when it is set
+    /// again. It does not claim the radio is powered down: tearing a
+    /// vendor stack down at runtime is not something every platform can
+    /// do, and a property that says "off" while a stack is still up
+    /// would be lying about the thing a user turns it off for.
+    pub const BLE_ENABLED: u32 = 4871;
 }
 
 /// `PROP_SAVED` values.
@@ -304,6 +314,11 @@ pub mod cap {
     /// `CAP_CMD_MULTI` — the device accepts `CMD_PROP_MULTI_GET` and
     /// `CMD_PROP_MULTI_SET` and answers them with `CMD_PROP_ARE`.
     pub const CMD_MULTI: u32 = 49;
+    /// `CAP_BLE` — the device has a Bluetooth transport whose
+    /// reachability it can turn on and off (`PROP_BLE_ENABLED`). It says
+    /// nothing about the stack underneath, and in particular does not
+    /// promise that clearing the property powers a radio down.
+    pub const BLE: u32 = 50;
 }
 
 /// Whether a property is reachable from a mesh administrator.

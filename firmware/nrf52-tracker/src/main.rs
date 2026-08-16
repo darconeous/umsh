@@ -126,6 +126,8 @@ mod firmware {
     use core::sync::atomic::{AtomicBool, AtomicU8, AtomicU16, AtomicU32, Ordering};
     use embassy_executor::Spawner;
     use embassy_futures::join::join;
+    #[cfg(feature = "dpad-nav")]
+    use embassy_futures::select::select_array;
     use embassy_futures::select::{Either, Either3, select, select3};
     #[cfg(any(feature = "has-display", feature = "button-nav", feature = "t1000e"))]
     use embassy_futures::select::{Either4, select4};
@@ -268,7 +270,7 @@ mod firmware {
     use umsh_ux_display_tracker::gate::{Disposition, Gate, GateReason};
     use umsh_ux_display_tracker::menu::UiNotice;
     #[cfg(feature = "has-display")]
-    use umsh_ux_display_tracker::menu::{MenuItems, UiEffect, UiInput, UiModel};
+    use umsh_ux_display_tracker::menu::{MenuItems, ToggleId, UiEffect, UiInput, UiModel};
     #[cfg(feature = "has-display")]
     use umsh_ux_display_tracker::screen;
     #[cfg(any(feature = "button-nav", feature = "t1000e"))]
@@ -474,6 +476,10 @@ mod firmware {
             // The T-1000E is the one board here with an ambient light
             // sensor fitted.
             illuminance: cfg!(feature = "cap-illuminance"),
+            // Every board here is an nRF52840 running the SoftDevice
+            // controller, and every one can be made unfindable: see
+            // `advertising_permitted`.
+            ble: true,
         }
     }
 
@@ -1143,6 +1149,18 @@ mod firmware {
     static ADV_ALLOWED: AtomicBool = AtomicBool::new(true);
     static ADV_POLICY_CHANGED: Signal<ThreadModeRawMutex, ()> = Signal::new();
 
+    /// `PROP_BLE_ENABLED`, mirrored from the session.
+    ///
+    /// The second gate on advertising, and the one the user owns: where
+    /// [`ADV_ALLOWED`] says "a wired host is talking to me right now",
+    /// this says "do not be findable at all". Both have to agree before
+    /// the advertiser runs.
+    ///
+    /// True at boot, before any restore has happened, so a device that
+    /// never gets as far as its saved state is still reachable by the
+    /// host that could fix it.
+    static BLE_ENABLED: AtomicBool = AtomicBool::new(true);
+
     #[cfg(feature = "ble-debug")]
     type DebugLine = heapless::String<192>;
     #[cfg(feature = "ble-debug")]
@@ -1241,6 +1259,35 @@ mod firmware {
     // ─── Outgoing frame limits ───────────────────────────────────────────────
 
     const WIRE_MAX: usize = hdlc::max_encoded_len(driver::FRAME_OUT_MAX);
+
+    /// Whether the peripheral may be findable right now.
+    ///
+    /// Two independent gates, and both have to agree: transport
+    /// arbitration (a wired host is attached) and the user's own
+    /// `PROP_BLE_ENABLED`. One predicate rather than two loads at each
+    /// site, so a new gate is added in one place and the advertiser,
+    /// the live-connection teardown and the status line cannot disagree
+    /// about what it means to be reachable.
+    fn advertising_permitted() -> bool {
+        ADV_ALLOWED.load(Ordering::Acquire) && BLE_ENABLED.load(Ordering::Acquire)
+    }
+
+    /// Apply `PROP_BLE_ENABLED`.
+    ///
+    /// Reuses the advertising-policy path, which already stops the
+    /// advertiser and drops a live connection — which is exactly what
+    /// the property requires and nothing more: bonds are untouched, so
+    /// the host reconnects without pairing again when it comes back on.
+    fn set_ble_enabled(enabled: bool) {
+        if BLE_ENABLED.swap(enabled, Ordering::AcqRel) != enabled {
+            debug_log(format_args!(
+                "ble reachability {}",
+                if enabled { "ON" } else { "off" }
+            ));
+            ADV_POLICY_CHANGED.signal(());
+            UI_REFRESH.signal(());
+        }
+    }
 
     fn set_advertising_allowed(allowed: bool) {
         let previous = ADV_ALLOWED.swap(allowed, Ordering::AcqRel);
@@ -1614,6 +1661,10 @@ mod firmware {
 
         fn set_alert(&mut self, state: umsh_ulcp::alert::AlertState) {
             set_alert_indication(state.is_active());
+        }
+
+        fn set_ble_enabled(&mut self, enabled: bool) {
+            set_ble_enabled(enabled);
         }
 
         #[cfg(all(feature = "cap-gnss", feature = "t1000e"))]
@@ -2472,7 +2523,7 @@ mod firmware {
                     }
                 }
                 Either3::Third(LinkSignal::AdvertisingPolicy) => {
-                    if !ADV_ALLOWED.load(Ordering::Acquire) {
+                    if !advertising_permitted() {
                         debug_log(format_args!(
                             "disconnect initiated by transport arbitration"
                         ));
@@ -2501,7 +2552,7 @@ mod firmware {
         server: &UlcpServer<'values>,
     ) -> ! {
         loop {
-            if !ADV_ALLOWED.load(Ordering::Acquire) {
+            if !advertising_permitted() {
                 ADV_POLICY_CHANGED.wait().await;
                 continue;
             }
@@ -2822,15 +2873,88 @@ mod firmware {
         .await
     }
 
+    /// Backing store for the identity page's two strings, which
+    /// [`screen::StatusModel`] only borrows.
+    ///
+    /// Rendered rather than stored: the node key is 32 octets and the
+    /// page needs base58, so somewhere has to own the digits. Here is
+    /// the display's own frame, which is the shortest life that works.
+    #[cfg(feature = "has-display")]
+    #[derive(Default)]
+    struct IdentityText {
+        hint: heapless::String<8>,
+        address: heapless::String<{ umsh_core::base58::ENCODED_LEN }>,
+    }
+
+    #[cfg(feature = "has-display")]
+    impl IdentityText {
+        /// The running node's address, or empty before bring-up.
+        ///
+        /// Read from the node rather than from the session's
+        /// `PROP_DEV_KEY`: this is the key the device is answering to on
+        /// the air, which is what someone comparing an address against a
+        /// phone screen is checking.
+        fn current() -> Self {
+            let Some(key) = super::device_node::node_key() else {
+                return Self::default();
+            };
+            use core::fmt::Write as _;
+            let mut text = Self::default();
+            let _ = write!(
+                text.hint,
+                "{}",
+                umsh_core::NodeHint::from_public_key(&umsh_core::PublicKey(key))
+            );
+            for digit in umsh_core::base58::encode(&key) {
+                let _ = text.address.push(digit as char);
+            }
+            text
+        }
+
+        fn model(&self) -> Option<screen::IdentityModel<'_>> {
+            if self.address.is_empty() {
+                return None;
+            }
+            Some(screen::IdentityModel {
+                hint: &self.hint,
+                address: &self.address,
+            })
+        }
+    }
+
+    /// The four switches the settings menu offers, as they stand now.
+    ///
+    /// Each is `None` on a build that cannot answer, which the renderer
+    /// draws as no state at all rather than as "off" — a switch labeled
+    /// with a guess is worse than one labeled with nothing.
+    #[cfg(feature = "has-display")]
+    fn ui_settings() -> screen::SettingsModel {
+        screen::SettingsModel {
+            bluetooth: Some(BLE_ENABLED.load(Ordering::Acquire)),
+            #[cfg(feature = "cap-gnss")]
+            gnss: Some(umsh_ulcp_runtime::gnss::enabled()),
+            #[cfg(not(feature = "cap-gnss"))]
+            gnss: None,
+            #[cfg(feature = "cap-gnss")]
+            share_location: Some(umsh_ulcp_runtime::gnss::policy().update_identity),
+            #[cfg(not(feature = "cap-gnss"))]
+            share_location: None,
+            forwarding: Some(super::device_node::repeater_enabled()),
+        }
+    }
+
     /// Everything the shared renderer draws that is not menu state.
     ///
-    /// The device name is passed in rather than read here: reading it is
-    /// async and the model borrows it, so the display task snapshots it
-    /// once per frame and lends it to this.
+    /// The device name and the identity text are passed in rather than
+    /// read here: reading the name is async and the model borrows both,
+    /// so the display task snapshots them once per frame and lends them
+    /// to this.
     #[cfg(feature = "has-display")]
-    fn ui_status(name: &DeviceName) -> screen::StatusModel<'_> {
+    fn ui_status<'a>(name: &'a DeviceName, identity: &'a IdentityText) -> screen::StatusModel<'a> {
         screen::StatusModel {
             device_name: core::str::from_utf8(name).unwrap_or(DEFAULT_DEVICE_NAME),
+            settings: ui_settings(),
+            identity: identity.model(),
             battery: ui_battery(),
             battery_mv: ui_battery_mv(),
             // A live host outranks discoverability: "somebody is talking
@@ -2839,7 +2963,7 @@ mod firmware {
             link: match BLE_LINK.load(Ordering::Acquire) {
                 BLE_LINK_ATTACHED => screen::LinkState::Attached,
                 BLE_LINK_CONNECTED => screen::LinkState::Connected,
-                _ if ADV_ALLOWED.load(Ordering::Acquire) => screen::LinkState::Advertising,
+                _ if advertising_permitted() => screen::LinkState::Advertising,
                 _ => screen::LinkState::OffWired,
             },
             stats: ui_stats(),
@@ -3051,13 +3175,39 @@ mod firmware {
         );
     }
 
-    /// Everything this board's menu can do. Every display tracker in this
-    /// family has a panel and a nav button, which between them cover the
-    /// whole class vocabulary; a board with fewer affordances would
-    /// return a narrower set and the menu would skip what it omits.
+    /// Which device-domain switch a menu toggle names.
+    ///
+    /// The UX crate knows nothing about ULCP and the driver knows nothing
+    /// about menus; this is the whole of the translation between them.
+    #[cfg(feature = "has-display")]
+    const fn ulcp_setting(id: ToggleId) -> driver::Setting {
+        match id {
+            ToggleId::Bluetooth => driver::Setting::Bluetooth,
+            ToggleId::Gnss => driver::Setting::Gnss,
+            ToggleId::ShareLocation => driver::Setting::ShareLocation,
+            ToggleId::Forwarding => driver::Setting::Forwarding,
+        }
+    }
+
+    /// Everything this board's menu can do.
+    ///
+    /// A board enables the subset it can perform and navigation skips the
+    /// rest — a submenu whose entries are all disabled is not shown at
+    /// all, rather than opening onto a list containing only Back. Every
+    /// display tracker in this family has Bluetooth and a radio; what
+    /// varies is the receiver.
     #[cfg(feature = "has-display")]
     fn board_menu_items() -> MenuItems {
-        MenuItems::all()
+        #[allow(unused_mut)]
+        let mut items = MenuItems::all();
+        #[cfg(not(feature = "cap-gnss"))]
+        {
+            use umsh_ux_display_tracker::menu::MenuItem;
+            items = items
+                .without(MenuItem::GnssToggle)
+                .without(MenuItem::ShareLocation);
+        }
+        items
     }
 
     /// Owns the e-paper bus and renders the BLE menu. Input is serialized
@@ -3087,7 +3237,8 @@ mod firmware {
         let mut next = [0xff; display::BUF_SIZE];
         {
             let name = device_name_snapshot().await;
-            render_ui_frame(&mut next, &model, &ui_status(&name));
+            let identity = IdentityText::current();
+            render_ui_frame(&mut next, &model, &ui_status(&name, &identity));
         }
         display::init(&mut spi, &mut cs, &mut dc, &mut rst, &mut busy).await;
         display::render(&mut spi, &mut cs, &mut dc, &mut busy, &next).await;
@@ -3110,6 +3261,7 @@ mod firmware {
             // rebuilt at each draw, since an effect handled below can
             // change it.
             let name = device_name_snapshot().await;
+            let identity = IdentityText::current();
 
             // Both holds are edge-published by other tasks, but re-deriving
             // them here each pass is idempotent and cannot miss an edge.
@@ -3156,7 +3308,7 @@ mod firmware {
                         Some(UiEffect::StartPairing) => {
                             render_message_frame(
                                 &mut next,
-                                &ui_status(&name),
+                                &ui_status(&name, &identity),
                                 "Starting",
                                 "pairing mode...",
                             );
@@ -3167,13 +3319,23 @@ mod firmware {
                         Some(UiEffect::ClearBonds) => {
                             render_message_frame(
                                 &mut next,
-                                &ui_status(&name),
+                                &ui_status(&name, &identity),
                                 "Clearing",
                                 "bonds + PIN...",
                             );
                             push!();
                             redraw = false;
                             BLE_WIPE_REQUEST.signal(());
+                        }
+                        Some(UiEffect::Toggle(id)) => {
+                            // The switch is applied by the ULCP session, so
+                            // the property, an attached host and the saved
+                            // snapshot all see the same flip; poking the
+                            // subsystem here would be undone by the next
+                            // device-domain sync. The new state reaches the
+                            // panel through `ui_settings` on the redraw
+                            // below, which is why the entry stays put.
+                            INPUT_CH.send(InEvent::Toggle(ulcp_setting(id))).await;
                         }
                         None => {}
                     }
@@ -3196,7 +3358,7 @@ mod firmware {
                             if alert_active() {
                                 render_message_frame(
                                     &mut next,
-                                    &ui_status(&name),
+                                    &ui_status(&name, &identity),
                                     "Locate alert",
                                     "Press to stop",
                                 );
@@ -3215,7 +3377,12 @@ mod firmware {
                     }
                 }
                 Either4::Third(()) => {
-                    render_message_frame(&mut next, &ui_status(&name), "Sleeping", "Good night");
+                    render_message_frame(
+                        &mut next,
+                        &ui_status(&name, &identity),
+                        "Sleeping",
+                        "Good night",
+                    );
                     push!();
                     display::sleep(&mut spi, &mut cs, &mut dc).await;
                     DISPLAY_SHUTDOWN_DONE.signal(());
@@ -3233,16 +3400,42 @@ mod firmware {
             }
 
             if redraw {
-                render_ui_frame(&mut next, &model, &ui_status(&name));
+                render_ui_frame(&mut next, &model, &ui_status(&name, &identity));
                 push!();
             }
         }
     }
 
+    /// What this board's own button means, power-off aside.
+    ///
+    /// A board whose only control is this button has to carry the whole
+    /// vocabulary on it: click advances, double-click selects, and a
+    /// 1–4 second hold released by the user goes back one entry. Beside
+    /// a D-pad the same button is only what the case labels it — Back —
+    /// and the pad carries the rest, so a click leaves the screen and
+    /// nothing else on the button means anything.
+    #[cfg(all(feature = "button-nav", not(feature = "dpad-nav")))]
+    const fn nav_input(event: ButtonEvent) -> Option<UiInput> {
+        match event {
+            ButtonEvent::Single => Some(UiInput::Forward),
+            ButtonEvent::Double => Some(UiInput::Select),
+            ButtonEvent::Long => Some(UiInput::Backward),
+            ButtonEvent::Triple | ButtonEvent::Quad | ButtonEvent::VeryLong => None,
+        }
+    }
+
+    #[cfg(feature = "dpad-nav")]
+    const fn nav_input(event: ButtonEvent) -> Option<UiInput> {
+        match event {
+            ButtonEvent::Single => Some(UiInput::Back),
+            _ => None,
+        }
+    }
+
     /// Resolves the board's nav button (active-low, pull-up) into the
-    /// display-tracker vocabulary: single advances, double selects, a
-    /// 1–4 second hold released by the user goes back, and a continuing
-    /// four-second hold always powers off.
+    /// display-tracker vocabulary — see [`nav_input`] for which gestures
+    /// mean what on this board — and powers off on a continuing
+    /// four-second hold whatever else the button does.
     ///
     /// What a gesture means is decided by [`Gate`] at the press that
     /// starts it, not at the event that ends it, so a chord begun while
@@ -3303,16 +3496,13 @@ mod firmware {
                     Disposition::ConsumedByWake | Disposition::Discard => {}
                     Disposition::Deliver => {
                         let input = match event {
-                            ButtonEvent::Single => Some(UiInput::Forward),
-                            ButtonEvent::Double => Some(UiInput::Select),
-                            ButtonEvent::Long => Some(UiInput::Backward),
                             ButtonEvent::VeryLong => {
                                 pressed = false;
                                 fsm = ButtonFsm::new(umsh_ux_display_tracker::button_timings());
                                 SHUTDOWN_SIGNAL.signal(());
                                 None
                             }
-                            ButtonEvent::Triple | ButtonEvent::Quad => None,
+                            event => nav_input(event),
                         };
                         if let Some(input) = input {
                             UI_INPUT_CH.send(input).await;
@@ -3322,6 +3512,71 @@ mod firmware {
             }
 
             gate.settle(fsm.next_deadline().is_none());
+        }
+    }
+
+    /// Resolves the board's four-way pad and its center press (all
+    /// active-low with pull-ups) into the display-tracker vocabulary.
+    ///
+    /// Nothing here is a chord: a pad key means one thing, so there is
+    /// no recognizer and no timing to get wrong. [`Gate`] still decides
+    /// what a press means, by the same alert-cancel and wake-the-panel
+    /// rules the button obeys — a press against a dark panel lights it
+    /// and goes no further, whichever control it arrived on.
+    ///
+    /// One key at a time: the task waits out the release of whichever
+    /// key it acted on before looking at the others again, which is what
+    /// a momentary switch means and what keeps a rocked pad from
+    /// resolving into two directions at once.
+    #[cfg(feature = "dpad-nav")]
+    #[embassy_executor::task]
+    async fn dpad_task(mut keys: [Input<'static>; 5]) {
+        const DEBOUNCE: Duration = Duration::from_millis(15);
+        // What each key means, in the order the pins are passed. All
+        // four directions walk the list: the pad is one control for
+        // moving through it, however the user happens to hold the board.
+        // Leaving a screen is the Back button's job and nothing else's.
+        const MEANING: [UiInput; 5] = [
+            UiInput::Backward, // up
+            UiInput::Forward,  // down
+            UiInput::Backward, // left
+            UiInput::Forward,  // right
+            UiInput::Select,   // center
+        ];
+        let mut gate = Gate::new();
+        loop {
+            let index = {
+                let [up, down, left, right, center] = &mut keys;
+                select_array([
+                    up.wait_for_low(),
+                    down.wait_for_low(),
+                    left.wait_for_low(),
+                    right.wait_for_low(),
+                    center.wait_for_low(),
+                ])
+                .await
+                .1
+            };
+            Timer::after(DEBOUNCE).await;
+            if !keys[index].is_low() {
+                continue;
+            }
+
+            gate.set(GateReason::AlertActive, alert_active());
+            #[cfg(feature = "display-oled")]
+            gate.set(GateReason::ScreenOff, SCREEN_OFF.load(Ordering::Acquire));
+            gate.on_press();
+            #[cfg(feature = "display-oled")]
+            UI_WAKE.signal(());
+            match gate.disposition(ButtonEvent::Single) {
+                Disposition::CancelAlert => INPUT_CH.send(InEvent::CancelAlert).await,
+                Disposition::ConsumedByWake | Disposition::Discard => {}
+                Disposition::Deliver => UI_INPUT_CH.send(MEANING[index]).await,
+            }
+            gate.settle(true);
+
+            keys[index].wait_for_high().await;
+            Timer::after(DEBOUNCE).await;
         }
     }
 
@@ -3392,13 +3647,23 @@ mod firmware {
         }
     }
 
+    /// The panel is the same 128×64 on every OLED board in the family;
+    /// what differs is what the user drives it with, and the gesture
+    /// hints have to name controls the board actually has.
+    #[cfg(feature = "display-oled")]
+    const OLED_LAYOUT: screen::Layout = screen::Layout {
+        #[cfg(feature = "dpad-nav")]
+        controls: screen::Controls::Dpad,
+        ..screen::Layout::OLED_128X64
+    };
+
     #[cfg(feature = "display-oled")]
     fn render_oled_frame(
         fb: &mut display::Sh1106Fb,
         model: &UiModel,
         status: &screen::StatusModel<'_>,
     ) {
-        screen::render_frame(fb, &screen::Layout::OLED_128X64, model, status);
+        screen::render_frame(fb, &OLED_LAYOUT, model, status);
     }
 
     #[cfg(feature = "display-oled")]
@@ -3408,7 +3673,7 @@ mod firmware {
         title: &str,
         detail: &str,
     ) {
-        screen::render_message(fb, &screen::Layout::OLED_128X64, status, title, detail);
+        screen::render_message(fb, &OLED_LAYOUT, status, title, detail);
     }
 
     /// Owns the SH1106 panel and the display attention policy.
@@ -3430,7 +3695,8 @@ mod firmware {
         oled.init().await;
         {
             let name = device_name_snapshot().await;
-            render_oled_frame(&mut fb, &model, &ui_status(&name));
+            let identity = IdentityText::current();
+            render_oled_frame(&mut fb, &model, &ui_status(&name, &identity));
         }
         oled.flush(&fb).await;
 
@@ -3439,6 +3705,7 @@ mod firmware {
             // needs it, so it is snapshotted once and lent out; the rest of
             // the status is rebuilt at each draw.
             let name = device_name_snapshot().await;
+            let identity = IdentityText::current();
 
             // Both holds are edge-published by other tasks, but re-deriving
             // them here each pass is idempotent and cannot miss an edge.
@@ -3494,6 +3761,16 @@ mod firmware {
                         }
                         Some(UiEffect::StartPairing) => PAIRING_MODE_REQUEST.signal(()),
                         Some(UiEffect::ClearBonds) => BLE_WIPE_REQUEST.signal(()),
+                        Some(UiEffect::Toggle(id)) => {
+                            // The switch is applied by the ULCP session, so
+                            // the property, an attached host and the saved
+                            // snapshot all see the same flip; poking the
+                            // subsystem here would be undone by the next
+                            // device-domain sync. The new state reaches the
+                            // panel through `ui_settings` on the redraw
+                            // below, which is why the entry stays put.
+                            INPUT_CH.send(InEvent::Toggle(ulcp_setting(id))).await;
+                        }
                         None => {}
                     }
                 }
@@ -3533,7 +3810,7 @@ mod firmware {
                 Either4::Third(()) => {
                     render_oled_message(
                         &mut fb,
-                        &ui_status(&name),
+                        &ui_status(&name, &identity),
                         "Powering off",
                         "press to wake",
                     );
@@ -3564,7 +3841,7 @@ mod firmware {
             }
 
             if redraw && attention.accepts_redraw() {
-                let status = ui_status(&name);
+                let status = ui_status(&name, &identity);
                 if alert_frame {
                     render_oled_message(&mut fb, &status, "Locate alert", "Press to stop");
                 } else {
@@ -3701,7 +3978,7 @@ mod firmware {
                     // which way the switch went, and the session answers
                     // that through `gnss_switched`.
                     #[cfg(feature = "cap-gnss")]
-                    INPUT_CH.send(InEvent::ToggleGnss).await;
+                    INPUT_CH.send(InEvent::Toggle(driver::Setting::Gnss)).await;
                 }
                 Some(ButtonEvent::Long) => {
                     pressed = false;
@@ -5460,10 +5737,24 @@ mod firmware {
             let divider_gate = Output::new(p.P0_04, Level::Low, OutputDrive::Standard);
             spawner.spawn(wio_power_task(saadc, divider_gate).unwrap());
 
-            // D13 / P0.08, active-low with a pull-up (MeshCore configures
-            // every button on this board as INPUT_PULLUP).
+            // Every button on this board is active-low with a pull-up
+            // (MeshCore configures all six as INPUT_PULLUP). D13 / P0.08
+            // is the one the case labels Back, and is where the
+            // four-second power-off hold lives.
             let button = Input::new(p.P0_08, Pull::Up);
             spawner.spawn(button_task(button).unwrap());
+            // The four-way pad and its center press: D25–D29, in the
+            // order `dpad_task` reads them.
+            spawner.spawn(
+                dpad_task([
+                    Input::new(p.P1_04, Pull::Up), // D25, up
+                    Input::new(p.P0_12, Pull::Up), // D26, down
+                    Input::new(p.P0_11, Pull::Up), // D27, left
+                    Input::new(p.P1_03, Pull::Up), // D28, right
+                    Input::new(p.P1_05, Pull::Up), // D29, press
+                ])
+                .unwrap(),
+            );
             spawner.spawn(wio_shutdown_task().unwrap());
 
             // Quectel L76K on UARTE0. `BufferedUarte` rather than a plain

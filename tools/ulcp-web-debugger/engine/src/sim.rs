@@ -328,6 +328,10 @@ fn session_config() -> SessionConfig {
         time: Some(TimeConfig),
         gnss: Some(GnssConfig::DEFAULT),
         illuminance: true,
+        // The simulator has no radio at all, but it does have a
+        // reachability switch the debugger can flip, which is the whole
+        // of what the capability claims.
+        ble: true,
     }
 }
 
