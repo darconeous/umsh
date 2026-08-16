@@ -461,6 +461,23 @@ final class AdministrativeDeviceSession: NSObject, @unchecked Sendable {
         _ = try await perform { session in try session.configureDevice(configuration: configuration) }
     }
 
+    /// Let a node manage this device over the mesh, or stop it from doing
+    /// so. Persisted by a save the Rust session chains behind the write.
+    ///
+    /// The device's own list is the authority and comes back on the
+    /// snapshot, so nothing here reads it separately: a mutation that
+    /// resolves has already republished `dev_admin_keys`.
+    func setAdministrator(_ publicKey: Data, present: Bool) async throws {
+        Self.logger.notice(
+            "action: user \(present ? "added" : "removed", privacy: .public) an administrator"
+        )
+        _ = try await perform { session in
+            present
+                ? try session.insertDeviceAdmin(publicKey: publicKey)
+                : try session.removeDeviceAdmin(publicKey: publicKey)
+        }
+    }
+
     /// Start or stop the device's locate alert (`PROP_ALERT`).
     ///
     /// Live behavior rather than configuration: it is never part of a

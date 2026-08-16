@@ -144,6 +144,13 @@ final class CoreBluetoothRadioConnection: NSObject, RadioConnection, @unchecked 
     private var devicePeerWaiter: CheckedContinuation<Void, any Error>?
     private var meshSession: MobileMeshSession?
     private var pingWaiters: [UInt64: CheckedContinuation<RadioPingResult, any Error>] = [:]
+    /// Callers awaiting a node-management exchange, by operation id.
+    ///
+    /// Shaped like `pingWaiters` because the operations are shaped alike —
+    /// the Rust worker owns the timeout and reports the outcome as an event
+    /// — with one addition: a whole-device read reports its progress along
+    /// the way, and the handler for that has to outlive each report.
+    private var managementWaiters: [UInt64: ManagementWaiter] = [:]
     private var meshPumpGeneration = UUID()
     private var meshPumpScheduled = false
     /// The last logged reason the mesh pump declined to run, so a wake storm
@@ -947,6 +954,18 @@ final class CoreBluetoothRadioConnection: NSObject, RadioConnection, @unchecked 
         }
     }
 
+    func addDeviceAdmin(_ publicKey: Data) async throws {
+        try await performDevicePeerOperation { session in
+            try session.insertDeviceAdmin(publicKey: publicKey)
+        }
+    }
+
+    func removeDeviceAdmin(_ publicKey: Data) async throws {
+        try await performDevicePeerOperation { session in
+            try session.removeDeviceAdmin(publicKey: publicKey)
+        }
+    }
+
     func addDeviceChannel(_ channelKey: Data) async throws {
         try await performDevicePeerOperation { session in
             try session.insertDeviceChannelKey(channelKey: channelKey)
@@ -1138,6 +1157,182 @@ final class CoreBluetoothRadioConnection: NSObject, RadioConnection, @unchecked 
                     result.resume(throwing: error)
                 }
             }
+        }
+    }
+
+    // MARK: - Managing another node over the mesh
+
+    /// One outstanding node-management exchange.
+    private struct ManagementWaiter {
+        let continuation: CheckedContinuation<MobileMeshManagementEventRecord, any Error>
+        /// Called for every progress report, and never after the exchange
+        /// resolves.
+        let progress: (@Sendable (UInt32?) -> Void)?
+    }
+
+    func nodePublicKey() async -> Data? {
+        await withCheckedContinuation { (result: CheckedContinuation<Data?, Never>) in
+            bluetoothQueue.async { [self] in
+                result.resume(returning: meshSession?.nodePublicKey())
+            }
+        }
+    }
+
+    func readRemoteDevice(
+        peerAddress: String,
+        progress: (@Sendable (UInt32?) -> Void)?
+    ) async throws -> UlcpSyncRecord {
+        let event = try await performManagement(progress: progress) { session in
+            try session.beginRemoteSync(peerAddress: peerAddress)
+        }
+        // A read that ends without a record read nothing it could reduce —
+        // every property refused, or a device that answered the capability
+        // question with something else.
+        guard let sync = event.sync else { throw RemoteManagementError.unreadable }
+        return sync
+    }
+
+    func writeRemoteProperties(
+        peerAddress: String,
+        writes: [MobileMeshPropertyWriteRecord]
+    ) async throws -> [MobileMeshManagementAnswerRecord] {
+        var remaining = writes
+        var answers: [MobileMeshManagementAnswerRecord] = []
+        while !remaining.isEmpty {
+            let batch = remaining
+            let event = try await performManagement { session in
+                try session.beginManagementSetMany(peerAddress: peerAddress, writes: batch)
+            }
+            // A device stops before the answer it is composing would
+            // overflow, so a short reply is the ordinary case rather than a
+            // fault — but a reply with nothing in it says the first write
+            // alone would not fit, and reissuing it would loop forever.
+            guard !event.answers.isEmpty else { throw RemoteManagementError.unreadable }
+            answers.append(contentsOf: event.answers)
+            remaining.removeFirst(min(event.answers.count, remaining.count))
+        }
+        return answers
+    }
+
+    func saveRemoteDevice(peerAddress: String) async throws {
+        let event = try await performManagement { session in
+            try session.beginManagementSave(peerAddress: peerAddress)
+        }
+        try Self.requireSuccess(event.statusCode)
+    }
+
+    func setRemoteDeviceAdmin(
+        peerAddress: String,
+        publicKey: Data,
+        present: Bool
+    ) async throws {
+        let event = try await performManagement { session in
+            present
+                ? try session.beginManagementInsertAdmin(
+                    peerAddress: peerAddress,
+                    publicKey: publicKey
+                )
+                : try session.beginManagementRemoveAdmin(
+                    peerAddress: peerAddress,
+                    publicKey: publicKey
+                )
+        }
+        // The device answers with the list as it now stands, or with a
+        // status where that list belonged. `ALREADY` and `ITEM_NOT_FOUND`
+        // are the request already satisfied, as on the bench path.
+        guard let answer = event.answers.first else {
+            try Self.requireSuccess(event.statusCode)
+            return
+        }
+        if let status = answer.statusCode {
+            try Self.requireSuccess(status)
+        }
+    }
+
+    func setRemoteAlert(
+        peerAddress: String,
+        state: RadioAlertState
+    ) async throws -> RadioAlertState {
+        let event = try await performManagement { session in
+            try session.beginManagementSetAlert(
+                peerAddress: peerAddress,
+                state: state.wire
+            )
+        }
+        guard let answer = event.answers.first else {
+            try Self.requireSuccess(event.statusCode)
+            throw RemoteManagementError.unreadable
+        }
+        if let status = answer.statusCode {
+            try Self.requireSuccess(status)
+        }
+        // A write is echoed with what the device is now doing, and that is
+        // the answer worth showing: a device may refuse to start an alert
+        // it has no way to make, and one already running restarts its own
+        // deadline rather than reporting anything new.
+        guard let value = answer.value,
+              let reported = try? inspectUlcpAlert(value: value)
+        else { throw RemoteManagementError.unreadable }
+        return RadioAlertState(reported)
+    }
+
+    /// Treat as success anything that leaves the device holding what was
+    /// asked for.
+    ///
+    /// `ALREADY` and `ITEM_NOT_FOUND` are a complaint about a request that
+    /// was already satisfied — the same reading `devicePeerOutcome` gives
+    /// them on the local link, and for the same reason: an operator asked
+    /// for a state, not for a change.
+    private static func requireSuccess(_ status: UInt32?) throws {
+        guard let status, status != 0 else { return }
+        let name = ulcpStatusName(status: status)
+        guard !name.hasSuffix("ALREADY"), !name.hasSuffix("ITEM_NOT_FOUND") else { return }
+        throw RemoteManagementError.refused(status: status)
+    }
+
+    /// Run one node-management exchange to completion.
+    ///
+    /// Unlike a ULCP operation over the local link, several of these can be
+    /// in flight — the Rust worker refuses a second device outright and
+    /// answers for it, so there is nothing to serialize here.
+    private func performManagement(
+        progress: (@Sendable (UInt32?) -> Void)? = nil,
+        _ start: @escaping (MobileMeshSession) throws -> UInt64
+    ) async throws -> MobileMeshManagementEventRecord {
+        let event = try await withCheckedThrowingContinuation {
+            (result: CheckedContinuation<MobileMeshManagementEventRecord, any Error>) in
+            bluetoothQueue.async { [self] in
+                guard let meshSession,
+                      let peripheral,
+                      peripheral.state == .connected,
+                      snapshot.linkState == .attached,
+                      snapshot.hostState == .matchesCurrentIdentity
+                else {
+                    result.resume(throwing: RemoteManagementError.unavailable)
+                    return
+                }
+                do {
+                    let operation = try start(meshSession)
+                    managementWaiters[operation] = ManagementWaiter(
+                        continuation: result,
+                        progress: progress
+                    )
+                } catch {
+                    result.resume(throwing: RemoteManagementError.unavailable)
+                }
+            }
+        }
+        switch event.outcome {
+        case .replied, .acknowledged:
+            return event
+        case .timedOut:
+            throw RemoteManagementError.noAnswer
+        case .failed:
+            throw RemoteManagementError.unreadable
+        case .progress:
+            // Progress never resolves a waiter; reaching here would mean the
+            // pump resumed one with a report rather than an ending.
+            throw RemoteManagementError.unreadable
         }
     }
 
@@ -2399,6 +2594,17 @@ final class CoreBluetoothRadioConnection: NSObject, RadioConnection, @unchecked 
                     waiter.resume(throwing: RadioConnectionError.incompatibleProtocol)
                 }
             }
+            for event in update.managementEvents {
+                // A progress report leaves the waiter in place: several
+                // arrive for one operation, and exactly one ending follows.
+                if event.outcome == .progress {
+                    managementWaiters[event.operationId]?
+                        .progress?(event.propertiesRemaining)
+                    continue
+                }
+                managementWaiters.removeValue(forKey: event.operationId)?
+                    .continuation.resume(returning: event)
+            }
             for event in update.advertisementEvents {
                 let advertisement = RadioAdvertisementEvent(
                     peerAddress: event.peerAddress,
@@ -2456,6 +2662,10 @@ final class CoreBluetoothRadioConnection: NSObject, RadioConnection, @unchecked 
                 waiter.resume(throwing: RadioConnectionError.incompatibleProtocol)
             }
             pingWaiters.removeAll()
+            for waiter in managementWaiters.values {
+                waiter.continuation.resume(throwing: RemoteManagementError.unavailable)
+            }
+            managementWaiters.removeAll()
             reportOperationFailure(
                 "The Rust mesh session could not use the companion radio: \(error)",
                 name: displayName(for: peripheral)
@@ -2703,6 +2913,13 @@ final class CoreBluetoothRadioConnection: NSObject, RadioConnection, @unchecked 
             waiter.resume(throwing: error)
         }
         pingWaiters.removeAll()
+        // A management exchange lives in the Rust worker, which the link
+        // going down takes with it: nothing will ever report its outcome,
+        // so the callers are released here alongside the pings.
+        for waiter in managementWaiters.values {
+            waiter.continuation.resume(throwing: RemoteManagementError.unavailable)
+        }
+        managementWaiters.removeAll()
         meshPumpGeneration = UUID()
     }
 

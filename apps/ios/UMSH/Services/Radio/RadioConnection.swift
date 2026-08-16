@@ -109,6 +109,16 @@ protocol RadioConnection: AnyObject, Sendable {
     /// Remove a peer public key from the radio's device identity.
     /// Idempotent: a key the radio does not hold resolves as success.
     func removeDevicePeer(_ publicKey: Data) async throws
+    /// Let a node manage the radio over the mesh, by storing its public key
+    /// on `PROP_DEV_ADMINS` and persisting it with a chained save.
+    /// Idempotent, like the peer list.
+    ///
+    /// Separate from `addDevicePeer` because the two lists answer different
+    /// questions: a peer is someone the radio can talk to, an administrator
+    /// is someone it takes orders from.
+    func addDeviceAdmin(_ publicKey: Data) async throws
+    /// Take a node's authority to manage the radio away again. Idempotent.
+    func removeDeviceAdmin(_ publicKey: Data) async throws
     /// Store a channel key on the radio's device identity
     /// (`PROP_DEV_CHANNEL_KEYS`), persisting it with a chained save. This is
     /// the device's own membership, separate from the phone's. Idempotent.
@@ -127,6 +137,50 @@ protocol RadioConnection: AnyObject, Sendable {
     /// on attach and after every membership change, and never surface it.
     func reconcileHostChannels(_ channelKeys: [Data]) async throws
     func ping(peerAddress: String) async throws -> RadioPingResult
+    /// This phone's own node public key — what a device lists to let this
+    /// phone manage it from a distance. Nil before a mesh session exists.
+    func nodePublicKey() async -> Data?
+    /// Read a device on the mesh whole — every property its capabilities
+    /// imply, in as few exchanges as the device will take — and reduce it
+    /// to the record the settings form is built from.
+    ///
+    /// `progress` reports how many properties the read has yet to ask for,
+    /// which is the only honest measure of how long this takes: the number
+    /// of exchanges depends on what the device agrees to answer at once.
+    func readRemoteDevice(
+        peerAddress: String,
+        progress: (@Sendable (UInt32?) -> Void)?
+    ) async throws -> UlcpSyncRecord
+    /// Write properties to a device on the mesh, and answer with what it
+    /// says each is now worth.
+    ///
+    /// All of them or none: a device applies writes until the next answer
+    /// would not fit and stops there, so what it left out is reissued until
+    /// every write has been answered for. A caller that got a value back
+    /// knows that value reached the device.
+    func writeRemoteProperties(
+        peerAddress: String,
+        writes: [MobileMeshPropertyWriteRecord]
+    ) async throws -> [MobileMeshManagementAnswerRecord]
+    /// Persist a remote device's live configuration.
+    func saveRemoteDevice(peerAddress: String) async throws
+    /// Add or remove one administrator on a device across the mesh. Live
+    /// until a save, like every other remote write.
+    func setRemoteDeviceAdmin(
+        peerAddress: String,
+        publicKey: Data,
+        present: Bool
+    ) async throws
+    /// Tell a device across the mesh to make itself conspicuous, or to
+    /// stop, and answer with the state it reports.
+    ///
+    /// Never saved, unlike the writes above: an alert is something
+    /// happening now. The device ends it on a deadline of its own, so a
+    /// search that outlasts that is kept alive by asking again.
+    func setRemoteAlert(
+        peerAddress: String,
+        state: RadioAlertState
+    ) async throws -> RadioAlertState
     /// Solicit a peer's current node identity by sending a targeted MAC
     /// Identity Request. Resolves once the request is handed to the radio;
     /// the peer's response arrives asynchronously on `advertisementEvents()`.
@@ -360,6 +414,28 @@ enum RadioConnectionError: Error, Equatable, Sendable {
     /// device saying no, and this is the device saying nothing — so whether it
     /// acted on the request is unknown.
     case operationTimedOut
+}
+
+/// Failures of managing a device across the mesh, shaped for the copy the
+/// remote-management screen shows.
+enum RemoteManagementError: Error, Equatable, Sendable {
+    /// Nothing came back inside the exchange's budget.
+    ///
+    /// Deliberately one case for two causes: a device out of reach and a
+    /// device that does not list this phone as an administrator are
+    /// indistinguishable from here, because an unauthorized request is
+    /// answered with silence rather than a refusal. The screen says both.
+    case noAnswer
+    /// The device answered, and the answer was a refusal. Carries the ULCP
+    /// status so the screen can name it.
+    case refused(status: UInt32)
+    /// The device answered something this exchange cannot make sense of —
+    /// a value where a status belonged, or a read that ended with nothing
+    /// read.
+    case unreadable
+    /// No mesh session to send through: no companion radio attached, or
+    /// one that is not this phone's.
+    case unavailable
 }
 
 /// Failures of device-identity peer mutations, shaped for the UI's

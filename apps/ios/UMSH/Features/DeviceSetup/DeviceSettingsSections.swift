@@ -156,6 +156,11 @@ struct DeviceFindSection: View {
     /// a second outright, so offering this during a save would produce a
     /// failure that says nothing about the device.
     let isBusy: Bool
+    /// What to say when the request does not come back. Supplied rather
+    /// than written here because silence means different things on the two
+    /// transports: a device on the bench is out of range, and one across
+    /// the mesh may simply not take orders from this phone.
+    let failureText: String
     let setAlert: (RadioAlertState) async throws -> Void
 
     @State private var requestInFlight = false
@@ -171,7 +176,7 @@ struct DeviceFindSection: View {
                     do {
                         try await setAlert(desired)
                     } catch {
-                        problem = "The device did not answer. It may have moved out of range."
+                        problem = failureText
                     }
                     requestInFlight = false
                 }
@@ -207,6 +212,10 @@ struct DevicePowerSection: View {
     let percentage: Int?
     let voltageMillivolts: Int?
     let chargeState: RadioChargeState?
+    /// Whether the device volunteers a new reading when this one changes.
+    /// It does over the local link and does not across the mesh, where
+    /// what is shown is what the last read found.
+    let reportsChanges: Bool
 
     var body: some View {
         Section {
@@ -220,7 +229,9 @@ struct DevicePowerSection: View {
         } header: {
             Text("Power")
         } footer: {
-            Text("Read from the device when this session started, and again whenever it reports a change.")
+            Text(reportsChanges
+                ? "Read from the device when this session started, and again whenever it reports a change."
+                : "Read from the device when its settings were last read. It is not watched from here, so reopening this screen is what asks again.")
         }
     }
 }

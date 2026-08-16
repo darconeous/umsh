@@ -246,6 +246,15 @@ actor FakeRadioConnection: RadioConnection {
         }
     }
 
+    /// The administrator list is not mirrored on `RadioProvisioningSummary`
+    /// — nothing in the app reads the phone's *own* radio's administrators,
+    /// because managing that radio is what the local link is for. Accepting
+    /// the mutation silently keeps a preview from reporting a failure that
+    /// says nothing about the app.
+    func addDeviceAdmin(_ publicKey: Data) async throws {}
+
+    func removeDeviceAdmin(_ publicKey: Data) async throws {}
+
     func addDeviceChannel(_ channelKey: Data) async throws {
         try mutateDeviceChannels(channelKey) { identifiers, identifier in
             guard !identifiers.contains(identifier) else { return }
@@ -329,6 +338,46 @@ actor FakeRadioConnection: RadioConnection {
                 linkQuality: 180
             )
         )
+    }
+
+    /// No mesh administration against a fake radio: the exchange is a real
+    /// authenticated conversation with a device that is not there, and
+    /// there is no honest stand-in for one. Every operation reports what a
+    /// device out of reach reports, which is the state the screen is built
+    /// to survive.
+    func nodePublicKey() async -> Data? { nil }
+
+    func readRemoteDevice(
+        peerAddress: String,
+        progress: (@Sendable (UInt32?) -> Void)?
+    ) async throws -> UlcpSyncRecord {
+        throw RemoteManagementError.noAnswer
+    }
+
+    func writeRemoteProperties(
+        peerAddress: String,
+        writes: [MobileMeshPropertyWriteRecord]
+    ) async throws -> [MobileMeshManagementAnswerRecord] {
+        throw RemoteManagementError.noAnswer
+    }
+
+    func saveRemoteDevice(peerAddress: String) async throws {
+        throw RemoteManagementError.noAnswer
+    }
+
+    func setRemoteDeviceAdmin(
+        peerAddress: String,
+        publicKey: Data,
+        present: Bool
+    ) async throws {
+        throw RemoteManagementError.noAnswer
+    }
+
+    func setRemoteAlert(
+        peerAddress: String,
+        state: RadioAlertState
+    ) async throws -> RadioAlertState {
+        throw RemoteManagementError.noAnswer
     }
 
     /// Mirrors the fake ping: one router on the way to the peer, so the route

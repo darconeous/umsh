@@ -68,6 +68,20 @@ final class DeviceConfigDraft {
     var advertIntervalSeconds: UInt32
     var beaconIntervalSeconds: UInt32
     var startupBeacon: Bool
+    /// Node public keys the device will take orders from, in the order it
+    /// reported them.
+    ///
+    /// Not part of `configuration`: the list is a table the device edits an
+    /// item at a time and persists on its own, where the record states a
+    /// whole configuration written in one pass. It is applied alongside,
+    /// not inside.
+    var adminKeys: [Data]
+    /// The list as the device last reported it, so applying knows what to
+    /// add and what to take away.
+    private(set) var reportedAdminKeys: [Data]
+    /// This phone's own node key, when the app knows it. Nil leaves the
+    /// list editable and the phone simply not on it.
+    let phoneNodeKey: Data?
 
     // MARK: - Write state
 
@@ -80,7 +94,9 @@ final class DeviceConfigDraft {
     private(set) var verificationProblem: String?
 
     var applied: Bool {
-        appliedConfiguration != nil && appliedConfiguration == configuration
+        appliedConfiguration != nil
+            && appliedConfiguration == configuration
+            && Set(adminKeys) == Set(reportedAdminKeys)
     }
 
     /// How a setup sheet's write is going, or nil when there is nothing to
@@ -117,6 +133,7 @@ final class DeviceConfigDraft {
         reportedName: String?,
         plan: DeviceSetupPlan,
         resolvedProfile: ResolvedRadioProfile?,
+        phoneNodeKey: Data? = nil,
         writer: any DeviceConfigurationWriting
     ) {
         self.sync = sync
@@ -124,7 +141,11 @@ final class DeviceConfigDraft {
         self.plan = plan
         self.resolvedProfile = resolvedProfile
         self.profileChosen = resolvedProfile?.requiresChoice != true
+        self.phoneNodeKey = phoneNodeKey
         self.writer = writer
+        let admins = sync.devAdminKeys ?? []
+        adminKeys = admins
+        reportedAdminKeys = admins
 
         let repeater = sync.repeater
         deviceName = reportedName ?? ""
@@ -213,6 +234,12 @@ final class DeviceConfigDraft {
         sync.supportsDutyCycleLimit && sync.dutyCycleLimit != nil
     }
 
+    /// A device that would not report the list it holds is one this form
+    /// must not edit: every change would be a guess about what it is
+    /// writing over, and this is the list that decides who can change the
+    /// device at all.
+    var showsAdmins: Bool { sync.supportsAdmin && sync.devAdminKeys != nil }
+
     /// A preset sets every radio parameter at once, so it is only offered when
     /// every parameter it sets is one this device will accept.
     var showsPresets: Bool {
@@ -235,8 +262,50 @@ final class DeviceConfigDraft {
             settings.append("what it announces on its own")
         }
         if sync.supportsTime, !showsTimeZone { settings.append("its time zone") }
+        if sync.supportsAdmin, !showsAdmins { settings.append("who may manage it remotely") }
         return settings
     }
+
+    // MARK: - Administrators
+
+    /// The administrator list, named as well as this phone can name it.
+    var administrators: [DeviceAdministrator] {
+        adminKeys.map {
+            DeviceAdministrator(publicKey: $0, isThisPhone: $0 == phoneNodeKey)
+        }
+    }
+
+    /// Whether this phone is on the list, which is the whole of whether it
+    /// can manage this device once it is out of Bluetooth range.
+    var phoneAdministers: Bool {
+        guard let phoneNodeKey else { return false }
+        return adminKeys.contains(phoneNodeKey)
+    }
+
+    /// Put this phone on the device's administrator list, or take it off.
+    /// Does nothing on a phone whose own node key is not known, and never
+    /// pushes the list past what the device will hold.
+    func setPhoneAdministers(_ administers: Bool) {
+        guard let phoneNodeKey else { return }
+        if administers {
+            add(administrator: phoneNodeKey)
+        } else {
+            adminKeys.removeAll { $0 == phoneNodeKey }
+        }
+    }
+
+    /// Let one more node manage this device. Idempotent, and bounded by
+    /// what the device will hold — the device's own refusal stays
+    /// authoritative, but a form that offers a ninth entry only to have it
+    /// rejected is a form that wasted the operator's time.
+    func add(administrator publicKey: Data) {
+        guard !adminKeys.contains(publicKey), adminKeys.count < deviceAdminCapacity else {
+            return
+        }
+        adminKeys.append(publicKey)
+    }
+
+    var administratorListFull: Bool { adminKeys.count >= deviceAdminCapacity }
 
     // MARK: - Derived state
 
@@ -451,6 +520,26 @@ final class DeviceConfigDraft {
         // power it cannot produce.
         transmitPowerDBm = String(readback.transmitPowerDbm)
 
+        // The administrator list is saved configuration like everything
+        // above, and travels separately for a different reason: it is a
+        // table the device edits an item at a time. Written after the
+        // configuration so a device left half-configured is not also left
+        // answering to a phone that has not finished with it.
+        if showsAdmins, Set(adminKeys) != Set(reportedAdminKeys) {
+            do {
+                try await writer.setAdministrators(adminKeys)
+                reportedAdminKeys = adminKeys
+            } catch {
+                verificationProblem = """
+                    The device took its settings but not the list of who may \
+                    manage it. Read it again before relying on being able to \
+                    reach it over the mesh.
+                    """
+                applyPhase = nil
+                return
+            }
+        }
+
         // The clock is not in the configuration record and never will be — an
         // epoch in flash comes back arbitrarily wrong. So a goal that sets it
         // does so as a second, live write, strictly after the first: the
@@ -570,4 +659,54 @@ final class DeviceConfigDraft {
 protocol DeviceConfigurationWriting: AnyObject {
     func configure(_ configuration: UlcpDeviceConfigRecord) async -> UlcpSyncRecord?
     func setTime(epochSeconds: UInt32?) async throws
+    /// Bring the device's administrator list to exactly `keys`, and persist
+    /// it. Throws if any part of that did not land — the device's list is
+    /// then whatever it is, and the form says to read it again.
+    func setAdministrators(_ keys: [Data]) async throws
+}
+
+/// The session behind the settings form, as that form needs it.
+///
+/// `DeviceSettingsView` renders one device's settings whether the device
+/// is on the other end of a Bluetooth link or several hops away on the
+/// mesh. The two sessions have almost nothing in common — one owns a
+/// peripheral and a scan list, the other an operation on a worker thread —
+/// but the form asks the same handful of questions of both, and this is
+/// that handful.
+///
+/// The live controls have default implementations that decline, because
+/// they are the things only a device in hand can do: a locate alert, a
+/// clock, a position sampled on a timer. Their sections are absent from a
+/// remote plan, so declining is a statement about reachability rather than
+/// something a screen has to handle.
+@MainActor
+protocol DeviceAdministering: AnyObject, DeviceConfigurationWriting {
+    /// The device as it stands, for the parts of the form that report
+    /// rather than edit.
+    var snapshot: AdministeredDeviceSnapshot { get }
+    /// Why the last write did not land, if it did not.
+    var problem: String? { get }
+    /// Whether this session can record the device in Peers.
+    var canSavePeer: Bool { get }
+    func savePeer(role: PeerRole) async -> Bool
+    func setAlert(_ state: RadioAlertState) async throws
+    func refreshPositioning() async
+    /// Open the full editor over the device just set up, and start again on
+    /// another one: both are steps of the setup sheet's navigation.
+    func reviewAllSettings()
+    func startOver() async
+}
+
+extension DeviceAdministering {
+    var canSavePeer: Bool { false }
+    func savePeer(role: PeerRole) async -> Bool { false }
+    func setAlert(_ state: RadioAlertState) async throws {
+        throw RadioConnectionError.radioNotFound
+    }
+    func refreshPositioning() async {}
+    func setTime(epochSeconds: UInt32?) async throws {
+        throw RadioConnectionError.radioNotFound
+    }
+    func reviewAllSettings() {}
+    func startOver() async {}
 }

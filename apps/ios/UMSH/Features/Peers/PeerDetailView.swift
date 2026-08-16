@@ -170,7 +170,8 @@ struct PeerDetailView: View {
                 }
             }
 
-            if actions.startConversation != nil || actions.ping != nil {
+            if actions.startConversation != nil || actions.ping != nil
+                || actions.manageDevice != nil {
                 Section("Actions") {
                     HStack(spacing: 12) {
                         if actions.startConversation != nil {
@@ -216,6 +217,24 @@ struct PeerDetailView: View {
 
                         if let identityRequest {
                             identityRequestStatus(identityRequest)
+                        }
+                    }
+
+                    // Offered whether or not this node has ever said it
+                    // takes orders from anyone: a device tells only its own
+                    // administrators that it can be managed at all, so
+                    // hiding this behind what the mesh has heard would hide
+                    // it exactly where it works. Silence is the answer, and
+                    // the screen behind this says so in a sentence.
+                    if let management = actions.manageDevice, !peer.isUlcpDevice {
+                        NavigationLink {
+                            RemoteDeviceView(
+                                peer: peer,
+                                management: management,
+                                peerActions: actions
+                            )
+                        } label: {
+                            Label("Manage Device", systemImage: "slider.horizontal.3")
                         }
                     }
 
@@ -485,6 +504,12 @@ struct PeerDetailView: View {
         var lines = [
             "The radio's own node identity can only communicate with peers whose public keys it holds. Add your own key, for example, so you can manage the radio remotely later."
         ]
+        if actions.manageDevice != nil {
+            // The other half of the same arrangement, and the half people
+            // look for: this list is who the radio can reach, and Manage
+            // Device is what reaching a node is for.
+            lines.append("Managing this node from here instead is under Manage Device, above — it works if the node lists this phone as one of its administrators.")
+        }
         if let devicePeerNotice {
             lines.append(devicePeerNotice)
         } else if !radioAttachedForThisPhone {

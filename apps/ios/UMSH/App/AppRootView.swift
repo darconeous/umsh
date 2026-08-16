@@ -140,6 +140,55 @@ struct AppRootView: View {
             },
             removeFromDeviceIdentity: { peer in
                 await mutateDeviceIdentityPeer(peer, add: false)
+            },
+            manageDevice: remoteDeviceManagement
+        )
+    }
+
+    /// Managing another node across the mesh, as the peer screen needs it.
+    ///
+    /// Handed over whether or not a radio is attached: every one of these
+    /// reports its own unreachability, and a Manage Device that appears and
+    /// disappears with the radio is one an operator cannot find when they
+    /// need it.
+    private var remoteDeviceManagement: RemoteDeviceManagement {
+        RemoteDeviceManagement(
+            read: { address, progress in
+                try await radioConnection.readRemoteDevice(
+                    peerAddress: address,
+                    progress: progress
+                )
+            },
+            write: { address, writes in
+                try await radioConnection.writeRemoteProperties(
+                    peerAddress: address,
+                    writes: writes
+                )
+            },
+            save: { address in
+                try await radioConnection.saveRemoteDevice(peerAddress: address)
+            },
+            setAdministrator: { address, key, present in
+                try await radioConnection.setRemoteDeviceAdmin(
+                    peerAddress: address,
+                    publicKey: key,
+                    present: present
+                )
+            },
+            setAlert: { address, state in
+                try await radioConnection.setRemoteAlert(
+                    peerAddress: address,
+                    state: state
+                )
+            },
+            // Derived from the phone's own identity rather than asked of the
+            // mesh session: an address is that key rendered, so these are the
+            // same bytes `nodePublicKey()` reports, and this one is available
+            // before a radio is.
+            phoneNodeKey: localIdentity.flatMap {
+                try? UMSHMobileCore.publicIdentityBytes(
+                    address: $0.publicIdentity.canonicalAddress
+                )
             }
         )
     }

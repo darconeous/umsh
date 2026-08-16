@@ -554,6 +554,10 @@ let devicePeerCapacity = Int(ulcpMaxDevPeers())
 /// Capacity of a radio's device-identity channel list, for labels only.
 let deviceChannelCapacity = Int(ulcpMaxDevChannels())
 
+/// How many nodes a device will let manage it over the mesh, for labels
+/// only — the device's own `NOMEM` stays authoritative.
+let deviceAdminCapacity = Int(ulcpMaxDevAdmins())
+
 extension SavedSnapshotRecord {
     /// One-line answer to "is this radio armed for restart?".
     var summary: String {

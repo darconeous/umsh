@@ -69,6 +69,13 @@ enum DeviceSetupAssumption: String, Hashable {
     case mobile
     case stationary
     case phoneTimeZone
+    /// List this phone among the device's administrators, so it can be
+    /// managed over the mesh once it is out of Bluetooth range.
+    ///
+    /// Assumed rather than asked because the alternative is a device on a
+    /// mast that nobody can reach: the list is on the form either way, and
+    /// taking this phone off it is one tap.
+    case phoneAdministers
     /// Set the device's wall clock from the phone's when the sheet applies.
     ///
     /// Alone among these it forces nothing on the draft, because the clock is
@@ -94,6 +101,11 @@ enum DeviceSetupAssumption: String, Hashable {
             return true
         case .advertisesTracker, .roleDerivedFromForwarding, .mobile, .stationary:
             return sync.supportsIdent
+        case .phoneAdministers:
+            // Not merely `supportsAdmin`: a device that would not report the
+            // list it already holds is one this phone cannot add to without
+            // guessing what it would be writing over.
+            return sync.supportsAdmin && sync.devAdminKeys != nil
         case .phoneTimeZone, .clockFromPhone:
             return sync.supportsTime
         }
@@ -111,6 +123,7 @@ enum DeviceSetupAssumption: String, Hashable {
         case .roleDerivedFromForwarding: draft.identRole = nil
         case .mobile: draft.identMobile = true
         case .stationary: draft.identMobile = false
+        case .phoneAdministers: draft.setPhoneAdministers(true)
         case .phoneTimeZone: draft.timeZoneOffsetMinutes = phoneUTCOffsetMinutes
         case .clockFromPhone: break
         }
@@ -154,6 +167,8 @@ enum DeviceSetupSection: String, Hashable {
     case announcements
     case time
     case forwarding
+    /// Who may configure this device from a distance.
+    case administrators
     case applyStatus
 }
 
@@ -171,6 +186,11 @@ struct DeviceSetupPlan {
     let applyTitle: String
     /// What the device is called once it is set up, for the success screen.
     let deviceNoun: String
+    /// Whether the device is being reached across the mesh rather than
+    /// held. It changes what is safe to offer, not what is shown: a phone
+    /// cannot take its own name off the administrator list of a device it
+    /// is administering by that name.
+    let managesOverMesh: Bool
 
     /// Whether this goal decides most of the configuration and presents a short
     /// sheet, rather than opening the whole editor.
@@ -263,23 +283,25 @@ struct DeviceSetupPlan {
         ],
         title: "Set Up a Tracker",
         applyTitle: "Set Up Tracker",
-        deviceNoun: "tracker"
+        deviceNoun: "tracker",
+        managesOverMesh: false
     )
 
     static let repeaterNode = Self(
         goal: .repeaterNode,
         assumptions: [
             .forwardingOn, .radioEnabled, .roleDerivedFromForwarding,
-            .stationary, .phoneTimeZone, .clockFromPhone,
+            .stationary, .phoneAdministers, .phoneTimeZone, .clockFromPhone,
         ],
         sections: [
             .link, .note, .ownershipWarning, .name, .forwarding,
             .discoverability, .positioningPolicy, .announcements,
-            .radioProfile, .applyStatus,
+            .radioProfile, .administrators, .applyStatus,
         ],
         title: "Set Up a Repeater",
         applyTitle: "Set Up Repeater",
-        deviceNoun: "repeater"
+        deviceNoun: "repeater",
+        managesOverMesh: false
     )
 
     static let revisit = Self(
@@ -288,10 +310,40 @@ struct DeviceSetupPlan {
         sections: [
             .link, .ownership, .find, .power, .name, .presets, .radio,
             .identity, .positioning, .announcements, .time, .forwarding,
-            .applyStatus,
+            .administrators, .applyStatus,
         ],
         title: "Device",
         applyTitle: "Apply",
-        deviceNoun: "device"
+        deviceNoun: "device",
+        managesOverMesh: false
+    )
+
+    /// The same editor, over a device reached across the mesh.
+    ///
+    /// It carries `revisit`'s goal because that is what it is — changing
+    /// what a device already set up is doing — and only the sections
+    /// differ. The battery and the locate alert are here: both are
+    /// reachable from an administrator, the read asks for them anyway, and
+    /// they are worth more at a distance than in the hand — a repeater on
+    /// a mast is exactly the node whose charge nobody can go and look at.
+    ///
+    /// What falls away needs the device in hand or a session with it: the
+    /// clock, which the local link volunteers, and the positioning
+    /// readout, which is a live sample rather than a setting and is not
+    /// worth the airtime of asking for repeatedly. The link notices stay —
+    /// a device several hops away withholds a setting exactly as one on
+    /// the bench does.
+    static let remote = Self(
+        goal: .revisit,
+        assumptions: [],
+        sections: [
+            .link, .find, .power, .name, .presets, .radio, .identity,
+            .positioningPolicy, .announcements, .forwarding,
+            .administrators, .applyStatus,
+        ],
+        title: "Manage Device",
+        applyTitle: "Apply",
+        deviceNoun: "device",
+        managesOverMesh: true
     )
 }

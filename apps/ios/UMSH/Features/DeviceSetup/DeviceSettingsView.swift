@@ -13,7 +13,7 @@ import UMSHMobileCore
 /// edited here is the same configuration another screen may have started —
 /// see `DeviceConfigDraft`.
 struct DeviceSettingsView: View {
-    let controller: AdminFlowController
+    let controller: any DeviceAdministering
     @Bindable var draft: DeviceConfigDraft
     let sections: [DeviceSetupSection]
     let title: String
@@ -149,6 +149,9 @@ struct DeviceSettingsView: View {
                 DeviceFindSection(
                     alert: alert,
                     isBusy: isBusy,
+                    failureText: draft.plan.managesOverMesh
+                        ? "No response. The device may be out of reach, or this phone may not be one of its administrators."
+                        : "The device did not answer. It may have moved out of range.",
                     setAlert: controller.setAlert
                 )
             }
@@ -158,7 +161,8 @@ struct DeviceSettingsView: View {
                 DevicePowerSection(
                     percentage: snapshot.batteryPercentage,
                     voltageMillivolts: snapshot.batteryVoltageMillivolts,
-                    chargeState: snapshot.chargeState
+                    chargeState: snapshot.chargeState,
+                    reportsChanges: !draft.plan.managesOverMesh
                 )
             }
 
@@ -260,6 +264,25 @@ struct DeviceSettingsView: View {
                     defaultRegion: $draft.defaultRegion,
                     minRssiDBm: $draft.minRssiDBm,
                     minSnrDB: $draft.minSnrDB
+                )
+            }
+
+        case .administrators:
+            if draft.showsAdmins {
+                DeviceAdministratorsSection(
+                    administrators: draft.administrators,
+                    phoneAdministers: Binding(
+                        get: { draft.phoneAdministers },
+                        set: { draft.setPhoneAdministers($0) }
+                    ),
+                    phoneKeyKnown: draft.phoneNodeKey != nil,
+                    allowsPhoneRemoval: !draft.plan.managesOverMesh,
+                    isFull: draft.administratorListFull,
+                    knownPeers: peerActions.knownPeers,
+                    add: { draft.add(administrator: $0) },
+                    remove: { administrator in
+                        draft.adminKeys.removeAll { $0 == administrator.publicKey }
+                    }
                 )
             }
 

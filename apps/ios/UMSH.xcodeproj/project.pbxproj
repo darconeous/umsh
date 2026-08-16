@@ -14,6 +14,8 @@
 		10000000000000000000001D /* UMSH/Features/DeviceSetup/DeviceSetupFlowView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 20000000000000000000001D /* UMSH/Features/DeviceSetup/DeviceSetupFlowView.swift */; };
 		10000000000000000000001E /* UMSH/Features/DeviceSetup/DeviceScanView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 20000000000000000000001E /* UMSH/Features/DeviceSetup/DeviceScanView.swift */; };
 		10000000000000000000001F /* UMSH/Features/DeviceSetup/DeviceSettingsView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 20000000000000000000001F /* UMSH/Features/DeviceSetup/DeviceSettingsView.swift */; };
+		DCEE96125C7BBCCD38ED7D74 /* UMSH/Features/DeviceSetup/DeviceAdministratorsSection.swift in Sources */ = {isa = PBXBuildFile; fileRef = 3FC48986181109287574447F /* UMSH/Features/DeviceSetup/DeviceAdministratorsSection.swift */; };
+		691F409414615C43EE4FC8A6 /* UMSH/Features/RemoteManagement/RemoteDeviceView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 71202284CCBE0671787626BF /* UMSH/Features/RemoteManagement/RemoteDeviceView.swift */; };
 		100000000000000000000002 /* UMSH/App/AppRootView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 200000000000000000000002 /* UMSH/App/AppRootView.swift */; };
 		10000000000000000000002A /* UMSH/Features/DeviceSetup/RepeaterSettingsSection.swift in Sources */ = {isa = PBXBuildFile; fileRef = 20000000000000000000002A /* UMSH/Features/DeviceSetup/RepeaterSettingsSection.swift */; };
 		1869C93FA5740240966C2CEB /* UMSH/Features/DeviceSetup/RadioProfileSource.swift in Sources */ = {isa = PBXBuildFile; fileRef = 2869C93FA5740240966C2CEB /* UMSH/Features/DeviceSetup/RadioProfileSource.swift */; };
@@ -87,6 +89,8 @@
 		20000000000000000000001D /* UMSH/Features/DeviceSetup/DeviceSetupFlowView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = UMSH/Features/DeviceSetup/DeviceSetupFlowView.swift; sourceTree = "<group>"; };
 		20000000000000000000001E /* UMSH/Features/DeviceSetup/DeviceScanView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = UMSH/Features/DeviceSetup/DeviceScanView.swift; sourceTree = "<group>"; };
 		20000000000000000000001F /* UMSH/Features/DeviceSetup/DeviceSettingsView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = UMSH/Features/DeviceSetup/DeviceSettingsView.swift; sourceTree = "<group>"; };
+		3FC48986181109287574447F /* UMSH/Features/DeviceSetup/DeviceAdministratorsSection.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = UMSH/Features/DeviceSetup/DeviceAdministratorsSection.swift; sourceTree = "<group>"; };
+		71202284CCBE0671787626BF /* UMSH/Features/RemoteManagement/RemoteDeviceView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = UMSH/Features/RemoteManagement/RemoteDeviceView.swift; sourceTree = "<group>"; };
 		200000000000000000000002 /* UMSH/App/AppRootView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = UMSH/App/AppRootView.swift; sourceTree = "<group>"; };
 		20000000000000000000002A /* UMSH/Features/DeviceSetup/RepeaterSettingsSection.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = UMSH/Features/DeviceSetup/RepeaterSettingsSection.swift; sourceTree = "<group>"; };
 		2869C93FA5740240966C2CEB /* UMSH/Features/DeviceSetup/RadioProfileSource.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = UMSH/Features/DeviceSetup/RadioProfileSource.swift; sourceTree = "<group>"; };
@@ -234,6 +238,8 @@
 				20000000000000000000001D /* UMSH/Features/DeviceSetup/DeviceSetupFlowView.swift */,
 				20000000000000000000001E /* UMSH/Features/DeviceSetup/DeviceScanView.swift */,
 				20000000000000000000001F /* UMSH/Features/DeviceSetup/DeviceSettingsView.swift */,
+				3FC48986181109287574447F /* UMSH/Features/DeviceSetup/DeviceAdministratorsSection.swift */,
+				71202284CCBE0671787626BF /* UMSH/Features/RemoteManagement/RemoteDeviceView.swift */,
 				20000000000000000000002A /* UMSH/Features/DeviceSetup/RepeaterSettingsSection.swift */,
 				2869C93FA5740240966C2CEB /* UMSH/Features/DeviceSetup/RadioProfileSource.swift */,
 				225C4AB3541CAADCD692DEB3 /* UMSH/Features/DeviceSetup/DeviceConfigDraft.swift */,
@@ -391,6 +397,8 @@
 				10000000000000000000001D /* UMSH/Features/DeviceSetup/DeviceSetupFlowView.swift in Sources */,
 				10000000000000000000001E /* UMSH/Features/DeviceSetup/DeviceScanView.swift in Sources */,
 				10000000000000000000001F /* UMSH/Features/DeviceSetup/DeviceSettingsView.swift in Sources */,
+				DCEE96125C7BBCCD38ED7D74 /* UMSH/Features/DeviceSetup/DeviceAdministratorsSection.swift in Sources */,
+				691F409414615C43EE4FC8A6 /* UMSH/Features/RemoteManagement/RemoteDeviceView.swift in Sources */,
 				10000000000000000000002A /* UMSH/Features/DeviceSetup/RepeaterSettingsSection.swift in Sources */,
 				1869C93FA5740240966C2CEB /* UMSH/Features/DeviceSetup/RadioProfileSource.swift in Sources */,
 				125C4AB3541CAADCD692DEB3 /* UMSH/Features/DeviceSetup/DeviceConfigDraft.swift in Sources */,

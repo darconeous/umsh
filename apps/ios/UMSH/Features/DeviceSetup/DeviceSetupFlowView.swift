@@ -113,6 +113,18 @@ final class AdminFlowController {
         }
     }
 
+    /// This phone's own node key.
+    ///
+    /// Derived from the identity this session classifies host keys against
+    /// rather than asked of the mesh session, which the setup sheet has no
+    /// business holding: an address is that key rendered, so these are the
+    /// same bytes `MobileMeshSession.nodePublicKey()` reports.
+    private var phoneNodeKey: Data? {
+        hostIdentity.flatMap {
+            try? UMSHMobileCore.publicIdentityBytes(address: $0.canonicalAddress)
+        }
+    }
+
     /// Build the draft from what the device reported as it attached.
     private func makeDraft(_ sync: UlcpSyncRecord) -> DeviceConfigDraft {
         let plan = plan
@@ -126,6 +138,7 @@ final class AdminFlowController {
             resolvedProfile: plan.isAbbreviated
                 ? .resolve(companion: companionProfile, target: sync)
                 : nil,
+            phoneNodeKey: phoneNodeKey,
             writer: self
         )
     }
@@ -342,6 +355,23 @@ final class AdminFlowController {
         }
     }
 
+    /// Bring the device's administrator list to `keys`.
+    ///
+    /// The device edits this list an item at a time, so the difference is
+    /// applied item by item — and in this order, because a list at capacity
+    /// takes a removal but not an addition, and an operator swapping one
+    /// administrator for another should not have to know that.
+    func setAdministrators(_ keys: [Data]) async throws {
+        let desired = Set(keys)
+        let current = Set(snapshot.sync?.devAdminKeys ?? [])
+        for key in current.subtracting(desired) {
+            try await session.setAdministrator(key, present: false)
+        }
+        for key in desired.subtracting(current) {
+            try await session.setAdministrator(key, present: true)
+        }
+    }
+
     /// Why a write did not land, in terms that do not accuse the device of
     /// something it did not do.
     ///
@@ -370,9 +400,9 @@ final class AdminFlowController {
     }
 }
 
-/// Both members already exist above with these signatures; the conformance
-/// only narrows what a draft is allowed to reach.
-extension AdminFlowController: DeviceConfigurationWriting {}
+/// Every member already exists above with these signatures; the
+/// conformances only narrow what a draft and a form are allowed to reach.
+extension AdminFlowController: DeviceAdministering {}
 
 /// Guided setup for a device this phone is not tethered to.
 ///
