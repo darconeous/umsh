@@ -675,6 +675,22 @@ pub fn history_path() -> Option<PathBuf> {
     state_dir().map(|dir| dir.join("umshctl-history"))
 }
 
+/// The Ed25519 seed this tool administers devices with, and beside it the
+/// frame counters that identity has spent.
+///
+/// The identity is persistent because a device authorizes an
+/// administrator by public key: a tool that generated a fresh one each
+/// run would have to be re-authorized every time. The counters must
+/// persist for the same reason any node's must — a peer that has seen a
+/// higher counter rejects a lower one as a replay.
+pub fn admin_identity_path() -> Option<PathBuf> {
+    state_dir().map(|dir| dir.join("umshctl-admin.key"))
+}
+
+pub fn admin_counter_path() -> Option<PathBuf> {
+    state_dir().map(|dir| dir.join("umshctl-admin.counters"))
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

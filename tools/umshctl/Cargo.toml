@@ -17,6 +17,11 @@ ble-radio = ["umsh/ble-radio"]
 [dependencies]
 umsh = { path = "../../umsh", features = ["tokio-support"] }
 umsh-gnss = { path = "../../crates/umsh-gnss" }
+# `manage` borrows the attached radio and runs a host MAC over it, which
+# means holding the coordinator in the same shared cell every other host
+# application does, and generating the administrator identity's seed.
+umsh-sync = { path = "../../crates/umsh-sync" }
+rand.workspace = true
 hamaddr.workspace = true
 anyhow = "1"
 clap = { version = "4", features = ["derive", "env", "wrap_help"] }

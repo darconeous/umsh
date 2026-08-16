@@ -10,6 +10,7 @@ pub mod duty;
 pub mod gnss;
 pub mod info;
 pub mod lifecycle;
+pub mod manage;
 pub mod phy;
 pub mod provision;
 pub mod repeater;
@@ -131,6 +132,20 @@ pub enum Command {
         op: Option<tables::TableOp>,
     },
 
+    /// Administer another device over the mesh, using the attached radio
+    /// to reach it.
+    Manage {
+        /// The device to manage, as its node public key.
+        #[arg(value_name = "KEY")]
+        target: values::KeyArg,
+
+        #[command(subcommand)]
+        op: manage::ManageOp,
+    },
+
+    /// Show the administrator identity this tool manages devices with.
+    AdminKey,
+
     /// Read several properties in one exchange.
     Props {
         /// Property identifiers, decimal or `0x`-prefixed.
@@ -185,6 +200,9 @@ impl Command {
     pub fn needs_device(&self) -> bool {
         match self {
             Self::Scan { .. } => false,
+            // The administrator identity is this tool's own; no radio is
+            // involved in reading it out.
+            Self::AdminKey => false,
             // Saving the attached radio as the default needs one; naming
             // a selector outright does not.
             Self::Default { op } => matches!(op, Some(DefaultOp::Set { selector: None })),
@@ -235,6 +253,8 @@ impl Command {
             }
             Self::DevPeer { op } => tables::run(app, prop::DEV_PEERS, "peer", op).await,
             Self::DevAdmin { op } => tables::run(app, prop::DEV_ADMINS, "administrator", op).await,
+            Self::Manage { target, op } => manage::run(app, target, op).await,
+            Self::AdminKey => manage::show_admin_key(),
             Self::Props { keys } => info::props(app.device()?, &keys).await,
             Self::Illuminance => info::illuminance(app.device()?).await,
             Self::Alert { op } => lifecycle::alert(app.device()?, op).await,

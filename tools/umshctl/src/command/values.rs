@@ -47,6 +47,47 @@ pub fn parse_u32(text: &str) -> Result<u32, String> {
     .map_err(|_| format!("invalid number: {text}"))
 }
 
+/// A property value written as hex, of whatever length the property
+/// takes. Empty is a value too — it is how a string property is cleared.
+#[derive(Clone, Debug, Default, PartialEq, Eq)]
+pub struct BytesArg(pub Vec<u8>);
+
+impl FromStr for BytesArg {
+    type Err = String;
+
+    fn from_str(text: &str) -> Result<Self, Self::Err> {
+        let text = text.trim();
+        if !text.len().is_multiple_of(2) || !text.chars().all(|c| c.is_ascii_hexdigit()) {
+            return Err(format!(
+                "expected an even number of hex digits, got {text:?}"
+            ));
+        }
+        text.as_bytes()
+            .chunks_exact(2)
+            .map(|pair| {
+                u8::from_str_radix(core::str::from_utf8(pair).unwrap_or_default(), 16)
+                    .map_err(|error| error.to_string())
+            })
+            .collect::<Result<Vec<u8>, String>>()
+            .map(Self)
+    }
+}
+
+/// `PROP=HEX`: one entry of a write sequence.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct AssignArg(pub u32, pub Vec<u8>);
+
+impl FromStr for AssignArg {
+    type Err = String;
+
+    fn from_str(text: &str) -> Result<Self, Self::Err> {
+        let Some((key, value)) = text.split_once('=') else {
+            return Err(format!("expected PROP=HEX, got {text:?}"));
+        };
+        Ok(Self(parse_u32(key.trim())?, value.parse::<BytesArg>()?.0))
+    }
+}
+
 /// A 32-byte public key or channel key, written as base58 or hex.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub struct KeyArg(pub [u8; 32]);

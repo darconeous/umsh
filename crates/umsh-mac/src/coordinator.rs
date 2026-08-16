@@ -974,6 +974,15 @@ impl<
         &mut self.radio
     }
 
+    /// Give up this coordinator and recover the radio underneath it.
+    ///
+    /// A host tool that borrows a device for the duration of one mesh
+    /// operation gets its handle back this way, rather than dropping the
+    /// attachment and paying for another.
+    pub fn into_radio(self) -> P::Radio {
+        self.radio
+    }
+
     /// Borrow the crypto engine.
     pub fn crypto(&self) -> &CryptoEngine<P::Aes, P::Sha> {
         &self.crypto
