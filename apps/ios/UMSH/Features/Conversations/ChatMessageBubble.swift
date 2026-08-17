@@ -186,7 +186,7 @@ struct ChatMessageBubble: View, @MainActor Equatable {
 
     let message: ChatMessageSummary
     /// How well the conversation this bubble belongs to is protected, which is
-    /// what an outbound bubble is coloured by.
+    /// what an outbound bubble is colored by.
     let security: ConversationSecurity
     /// Where this message sits in its run, which decides the tail, the sender
     /// header, the avatar, and the space above it.
@@ -522,7 +522,7 @@ struct ChatMessageBubble: View, @MainActor Equatable {
 private struct SelectableMessageText: UIViewRepresentable {
     let text: String
     /// Set explicitly because an outbound bubble is filled with a solid
-    /// colour: the body text and any link the detector finds both have to stay
+    /// color: the body text and any link the detector finds both have to stay
     /// legible against it, and a link left to its own devices would not be.
     let textColor: UIColor
 

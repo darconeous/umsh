@@ -397,7 +397,7 @@ struct MessageReaction: Identifiable, Hashable, Sendable {
     /// The single glyph this reaction renders as.
     var glyph: String { ReactionEmoji.displayGlyph(for: body) }
 
-    /// Spoken description, so a reaction is never conveyed by colour or
+    /// Spoken description, so a reaction is never conveyed by color or
     /// glyph alone.
     var accessibilityDescription: String {
         let name = ReactionEmoji.name(for: glyph)

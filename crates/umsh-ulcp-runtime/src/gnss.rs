@@ -554,7 +554,7 @@ mod tests {
         let here = fix_location(&fixed_at(481_173_000, 115_166_666))
             .unwrap()
             .clamped(precision);
-        // A jitter of a few centimetres.
+        // A jitter of a few centimeters.
         let jittered = fix_location(&fixed_at(481_173_010, 115_166_680))
             .unwrap()
             .clamped(precision);

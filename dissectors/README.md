@@ -232,14 +232,14 @@ A channel ID is a 2-byte hint of a key and the spec permits collisions, so a
 finding that rests on one says "channel identified by ID only" until the MIC
 verifies under that channel's key and settles which channel it really is.
 
-To colour those frames — red background, white text — install the coloring
+To color those frames — red background, white text — install the coloring
 rule:
 
 ```sh
 make install-colorfilters
 ```
 
-A Lua dissector cannot colour a packet-list row on its own, which is why this
+A Lua dissector cannot color a packet-list row on its own, which is why this
 is a separate step; the `umsh.violation` field exists for the rule to match on.
 The target seeds a personal rule set from Wireshark's stock rules if you have
 none, puts the UMSH rule at the top (rules are first-match-wins), and does

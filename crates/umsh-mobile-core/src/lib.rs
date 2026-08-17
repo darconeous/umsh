@@ -287,7 +287,7 @@ pub struct ChannelPreviewRecord {
     /// identity: distinct keys may derive the same value, and receivers
     /// resolve collisions by trial decryption.
     pub channel_id: Vec<u8>,
-    /// Three octets for presentation — a deterministic colour for the
+    /// Three octets for presentation — a deterministic color for the
     /// channel. The first two are the identifier above.
     pub tint: Vec<u8>,
     /// Suggested local display name from the invitation (`n=`), decoded.
@@ -368,7 +368,7 @@ pub fn derive_channel_id(key: Vec<u8>) -> Result<Vec<u8>, MobileError> {
 }
 
 /// Derive the three presentation octets for a key — the identifier extended by
-/// one byte, so a channel's colour is stable wherever it is shown.
+/// one byte, so a channel's color is stable wherever it is shown.
 #[uniffi::export]
 pub fn derive_channel_tint(key: Vec<u8>) -> Result<Vec<u8>, MobileError> {
     Ok(channel_tint(&channel_key_from_bytes(&key)?))
@@ -616,7 +616,7 @@ pub struct NodeIdentityProfileRecord {
     pub role_code: u8,
     pub capability_bits: u8,
     pub name: Option<String>,
-    /// Centre of the disclosed cell. Reduced to `location_precision` during
+    /// Center of the disclosed cell. Reduced to `location_precision` during
     /// encoding, so nothing finer than the stated cell reaches the bundle.
     /// Latitude and longitude are only carried when both are present
     /// alongside a precision.
@@ -952,7 +952,7 @@ mod tests {
         assert_eq!(decoded.timestamp, Some(1_760_000_000));
         assert_eq!(decoded.location_precision, Some(5));
         // The cell the coordinates were reduced to is ~38 m across, so the
-        // decoded centre lands near the input rather than exactly on it.
+        // decoded center lands near the input rather than exactly on it.
         assert!((decoded.latitude.unwrap() - 37.7749).abs() < 0.001);
         assert!((decoded.longitude.unwrap() + 122.4194).abs() < 0.001);
     }
@@ -1201,7 +1201,7 @@ mod tests {
     fn a_channels_tint_extends_its_identifier() {
         let preview = inspect_channel_name("Public".to_owned()).unwrap();
         assert_eq!(preview.tint.len(), 3);
-        // The interface colours a channel from the tint and labels it with the
+        // The interface colors a channel from the tint and labels it with the
         // identifier; they have to agree about which channel they describe.
         assert_eq!(&preview.tint[..2], &preview.channel_id[..]);
         assert_eq!(derive_channel_tint(preview.key).unwrap(), preview.tint);

@@ -1541,7 +1541,7 @@ async fn output_task(mut tx: UartTx<'static, Async>, panic_report: Option<heaple
     // resynchronize past it; humans read it with a serial terminal.
     // UART has no DTR, so this cannot wait for a reader — it lands in
     // the CP2102 and is lost if no terminal is attached, which is the
-    // correct behaviour for a serial console.
+    // correct behavior for a serial console.
     if let Some(report) = panic_report {
         uart_write_all(&mut tx, b"[PREV PANIC]: ").await;
         uart_write_all(&mut tx, report.as_bytes()).await;

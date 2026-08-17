@@ -93,7 +93,7 @@ struct MapCapabilityFilterOption: Identifiable, Hashable {
 /// Where the operator is, from whichever source is wired.
 ///
 /// Today the only answer is the companion radio's own receiver, which is why
-/// it is labelled as the radio's rather than drawn as this phone's. A
+/// it is labeled as the radio's rather than drawn as this phone's. A
 /// CoreLocation provider can fill the same slot later without the map
 /// changing shape.
 struct MapSelfPosition: Equatable {

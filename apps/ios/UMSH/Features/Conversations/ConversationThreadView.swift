@@ -1162,7 +1162,7 @@ struct ConversationTitlePill: View {
                 .foregroundStyle(.primary)
                 .lineLimit(1)
             // An explicit grey rather than `.secondary`: inside a button the
-            // hierarchy collapses to the label's own colour, and the chevron
+            // hierarchy collapses to the label's own color, and the chevron
             // comes out as dark as the name beside it.
             Image(systemName: "chevron.right")
                 .font(.system(size: 13, weight: .semibold))

@@ -1236,7 +1236,7 @@ impl<
     /// store them in [`PeerInfo::initial_rx_counter`].
     ///
     /// Call this once at boot after registering all known peers. When pairwise
-    /// keys are first derived for each peer, the replay window is initialised
+    /// keys are first derived for each peer, the replay window is initialized
     /// to the loaded boundary so frames replayed from before the reboot are
     /// rejected.
     pub async fn load_all_persisted_rx_counters(
@@ -4861,7 +4861,7 @@ impl<
             // the *next* repeater, which sees an empty route and pays for the
             // first real flood hop. Everything gated below — hop accounting,
             // signal thresholds, region policy, contention delay — is flood
-            // behaviour and does not apply to a hop that was named explicitly.
+            // behavior and does not apply to a hop that was named explicitly.
             if source_route_bytes[..2] != router_hint.0 {
                 return None;
             }

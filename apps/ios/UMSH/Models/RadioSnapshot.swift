@@ -367,7 +367,7 @@ struct RadioPosition: Equatable, Sendable {
     }
 
     /// The receiver's own accuracy estimate. Scaled from dilution of
-    /// precision rather than measured, and labelled as such wherever it
+    /// precision rather than measured, and labeled as such wherever it
     /// is shown.
     var accuracyText: String? {
         accuracyDecimeters.map { decimeters in

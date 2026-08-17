@@ -22,7 +22,7 @@ struct MessageComposer: View {
     /// Names who is being written to, in the empty field.
     let placeholder: String
     /// How well the conversation being written to is protected. The send
-    /// button carries the same colour the message will land in, so the answer
+    /// button carries the same color the message will land in, so the answer
     /// is in front of the writer before they send rather than after.
     let security: ConversationSecurity
     let blocked: ComposerBlock?

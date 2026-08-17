@@ -2,7 +2,7 @@
 """Generate a pcap of frames the spec's own test vectors do not reach.
 
 Some of these break protocol prohibitions on purpose and some are perfectly
-valid; what they have in common is exercising dissector behaviour the spec
+valid; what they have in common is exercising dissector behavior the spec
 vectors cannot, since those are all either beacons or encrypted with keys a
 capture does not carry. They live apart from `make_test_pcap.py` for that
 reason — every frame in that file is valid and matches the spec byte for

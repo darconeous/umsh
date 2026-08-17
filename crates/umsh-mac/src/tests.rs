@@ -6069,7 +6069,7 @@ fn counters_record_a_frame_abandoned_to_a_busy_channel() {
 
 /// A node hearing traffic it cannot use still counts the reception. The
 /// gap between the two numbers is the whole point: it is what tells a
-/// deaf radio (`rx_frames` flat) apart from a busy neighbourhood
+/// deaf radio (`rx_frames` flat) apart from a busy neighborhood
 /// (`rx_frames` climbing, `rx_accepted` not).
 #[test]
 fn counters_separate_receptions_from_receptions_that_meant_something() {

@@ -345,7 +345,7 @@ local function dissect_node_identity(payload, subtree, tvb, ctx, pinfo)
     subtree:add(f.ni_sig, tvb(off - 1, 64))
   end
 
-  -- Summarise the identity in the Info column: who it is, what it says it
+  -- Summarize the identity in the Info column: who it is, what it says it
   -- does, and whether it stands on its own signature.
   if pinfo then
     local parts = {}
@@ -370,7 +370,7 @@ local function dissect_node_identity(payload, subtree, tvb, ctx, pinfo)
 
   -- Not checked here: "the response MUST NOT carry a FHOPS field". That
   -- rule holds for a response to a request confined to its requester's
-  -- neighbourhood, and a response frame does not record which kind of
+  -- neighborhood, and a response frame does not record which kind of
   -- request drew it — the echoed nonce marks it as a response but says
   -- nothing about how the request was addressed or filtered.
 end

@@ -14,7 +14,7 @@ import UMSHMobileCore
 ///
 /// The keys are derived from fixed seeds, so reseeding reproduces the same
 /// mesh: a screenshot retaken next week has the same nodes at the same
-/// addresses with the same avatar colours as the one taken today.
+/// addresses with the same avatar colors as the one taken today.
 enum StagingScenario {
     /// Where the staged crew is working. Coordinates sit around Desolation
     /// Wilderness, west of Lake Tahoe — real terrain, so the map has contours
@@ -142,7 +142,7 @@ enum StagingScenario {
     ]
 
     /// The radio the staged phone is attached to: a T-Echo sitting at the
-    /// centre of the staged mesh, so the map's "this radio" marker lands among
+    /// center of the staged mesh, so the map's "this radio" marker lands among
     /// the nodes rather than an ocean away.
     static var radioSnapshot: RadioSnapshot {
         var snapshot = RadioSnapshot.previewReady
@@ -172,7 +172,7 @@ enum StagingScenario {
 /// One node in the staged mesh.
 struct StagingNode {
     /// Fills all 32 secret-key bytes. A fixed value rather than a random key,
-    /// so a node keeps its address — and therefore its avatar colour and its
+    /// so a node keeps its address — and therefore its avatar color and its
     /// place in every sorted list — across reseeds.
     let seed: UInt8
     let name: String
@@ -513,7 +513,7 @@ struct StagingSeeder {
     ]
 
     /// The crew channel. Several voices, so the group-chat presentation —
-    /// sender names, per-sender avatar colours, reactions from more than one
+    /// sender names, per-sender avatar colors, reactions from more than one
     /// person — has something to render.
     private static let channelLines: [Line] = [
         Line(speaker: "Echo Basecamp", body: "Morning all. Weather's holding through about four, then a chance of thunder over the crest.", minutesAgo: 210, reactions: [(token: "+1", from: "Maya Ortiz", minutesAgo: 208), (token: "+1", from: "Dev Raman", minutesAgo: 206)]),

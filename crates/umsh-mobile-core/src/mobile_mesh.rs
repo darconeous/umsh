@@ -3340,7 +3340,7 @@ async fn run_worker(
                                     // reaches, and even a hint-filtered one is
                                     // aimed at a particular place rather than
                                     // at the mesh: a route we cannot express is
-                                    // a failure, not a licence to broadcast.
+                                    // a failure, not a license to broadcast.
                                     options = options
                                         .try_with_source_route(&hops)
                                         .map_err(|_| MobileMeshError::SendFailed)?

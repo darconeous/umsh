@@ -130,7 +130,7 @@ impl<
     /// Call this once at boot, after all known peers have been registered with
     /// [`add_peer`](Self::add_peer), and before the first call to
     /// [`next_event`](crate::Mac::next_event). When pairwise keys are later
-    /// derived for a peer, the replay window is automatically initialised to
+    /// derived for a peer, the replay window is automatically initialized to
     /// the loaded boundary.
     pub async fn load_all_persisted_rx_counters(
         &self,

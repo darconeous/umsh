@@ -4850,7 +4850,7 @@ mod firmware {
         #[cfg(feature = "board-wio-tracker-l1")]
         let led = Output::new(p.P1_01, Level::Low, OutputDrive::Standard);
         // XIAO nRF52840: blue segment of the common-anode RGB LED (P0.06),
-        // **active-low** — Level::High is off. Blue is the status colour
+        // **active-low** — Level::High is off. Blue is the status color
         // here (MeshCore's choice on this board); red stays free as a TX
         // indicator and green is the 10 kΩ leg, noticeably dimmer.
         #[cfg(feature = "board-xiao-nrf52")]

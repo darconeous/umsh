@@ -167,7 +167,7 @@ struct StoredChannel: Equatable, Sendable {
     /// keys may collide here.
     let channelIDHex: String
     /// Three presentation octets — the identifier extended by one byte — kept
-    /// here so a list can colour its rows without unlocking every key.
+    /// here so a list can color its rows without unlocking every key.
     let tint: Data
     let regionCode: Data?
     let maxFloodHops: Int?
@@ -2182,7 +2182,7 @@ actor SQLiteApplicationStore {
             before: anchor,
             limit: radius
         )
-        // Including the anchor keeps the centred message in the window even
+        // Including the anchor keeps the centered message in the window even
         // when nothing follows it.
         let newer = try chatMessagePage(
             ownerIdentityID: ownerIdentityID,

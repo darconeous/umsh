@@ -329,7 +329,7 @@ Outgoing group messages carry this phone's advertised name for the same
 reason; direct messages do not, because the recipient authenticated us by key.
 
 A hint resolves to a full address on its own, since group sends carry the full
-source address. When it does, earlier messages from that member are relabelled
+source address. When it does, earlier messages from that member are relabeled
 retroactively rather than left inconsistent. Tapping a sender opens what is
 known about them, and offers **Request Identity** for a member still
 unidentified; that request goes out over the channel itself, since a hint is

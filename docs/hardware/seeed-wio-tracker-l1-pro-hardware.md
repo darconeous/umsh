@@ -542,7 +542,7 @@ Practical interpretation:
 - The board definitions do not prove an onboard always-powered RTC, and
   none has been found on the I²C bus.
 - There is nevertheless a clock that survives System OFF, and it is the
-  one nobody labelled: the L76K's backup domain. The module sits on the
+  one nobody labeled: the L76K's backup domain. The module sits on the
   battery rail with no enable this board can cut, so standby is as far
   down as it goes and the domain keeps counting. UMSH treats it as the
   board's RTC and reads it back at boot — see the GNSS section above.

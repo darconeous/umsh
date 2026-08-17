@@ -15,10 +15,10 @@ enum ConversationSecurity: Hashable, Sendable {
     /// the clear.
     case open
 
-    /// The colour an outbound message and its send button wear.
+    /// The color an outbound message and its send button wear.
     ///
     /// Not a warning. An open channel is a legitimate place to talk and much
-    /// of the traffic on the mesh belongs there; the colour says who can read
+    /// of the traffic on the mesh belongs there; the color says who can read
     /// what is being written, which is something the writer should know
     /// without having to go and look it up.
     var tint: Color {

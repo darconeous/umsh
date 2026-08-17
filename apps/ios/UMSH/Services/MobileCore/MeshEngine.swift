@@ -149,7 +149,7 @@ protocol MeshEngine: Actor {
     /// it is matched against.
     func channelConversationAddress(key: Data) throws -> String
     /// Three presentation octets for a key — the identifier extended by one
-    /// byte, so a channel's colour is stable wherever it is shown.
+    /// byte, so a channel's color is stable wherever it is shown.
     func deriveChannelTint(key: Data) throws -> Data
     func formatChannelInvitation(
         key: Data,

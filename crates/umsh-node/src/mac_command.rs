@@ -408,7 +408,7 @@ impl<'a> IdentityRequestFilters<'a> {
     /// a request solicits few replies however far it travels. Without one the
     /// request selects by role or capability and every node it reaches may
     /// answer, which is what confines a broadcast or multicast solicitation —
-    /// and its replies — to the requester's own neighbourhood.
+    /// and its replies — to the requester's own neighborhood.
     ///
     /// A malformed option block reads as unfiltered, which is the conservative
     /// answer: it keeps the strict rules in force.

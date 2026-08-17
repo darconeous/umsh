@@ -293,7 +293,7 @@ impl PcapWriter {
 /// rather than a scale factor, so it cannot express the 62.5 kHz UMSH
 /// normally runs at. Anything it cannot name is reported as zero, which
 /// Wireshark renders as "Unknown" — a narrower bandwidth silently
-/// labelled as one of the three would misdescribe the radio.
+/// labeled as one of the three would misdescribe the radio.
 fn loratap_bandwidth(bw_hz: u32) -> u8 {
     match bw_hz {
         125_000 => 1,

@@ -21,7 +21,7 @@ struct ChannelSummary: Identifiable, Hashable, Sendable {
     /// an identity — distinct keys may collide here.
     let channelIDHex: String
     /// Three presentation octets, the identifier extended by one byte. Drives
-    /// the channel's colour so it looks the same on every device that holds
+    /// the channel's color so it looks the same on every device that holds
     /// the key.
     let tint: Data
     let regionCode: Data?

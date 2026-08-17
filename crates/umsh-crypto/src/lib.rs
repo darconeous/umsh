@@ -316,7 +316,7 @@ impl<A: AesProvider, S: Sha256Provider> CryptoEngine<A, S> {
         ChannelId(out)
     }
 
-    /// Derive three bytes for presentation — a deterministic colour a user
+    /// Derive three bytes for presentation — a deterministic color a user
     /// interface can give a channel.
     ///
     /// This is the channel-identifier derivation run one byte longer, so the
@@ -1586,7 +1586,7 @@ mod tests {
         let engine = SoftwareCryptoEngine::new(SoftwareAes, SoftwareSha256);
         let key = ChannelKey([0x5Au8; 32]);
         let tint = engine.derive_channel_tint(&key);
-        // The presentation colour is the identifier derivation run one byte
+        // The presentation color is the identifier derivation run one byte
         // longer, so a caller holding either can recognize the other.
         assert_eq!(&tint[..2], &engine.derive_channel_id(&key).0[..]);
         assert_eq!(tint, engine.derive_channel_tint(&key));

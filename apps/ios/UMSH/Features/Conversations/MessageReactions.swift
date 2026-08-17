@@ -11,7 +11,7 @@ struct ReactionBadgeView: View {
     /// How much room a reacted message must reserve above its bubble. The
     /// chips live mostly in that space, dipping only a little way onto the
     /// bubble's corner, so they never spill into the row above and be drawn
-    /// under it — and so their page-colour halos are never sliced at the
+    /// under it — and so their page-color halos are never sliced at the
     /// reserved space's edge.
     static let overhang: CGFloat = 30
     /// How much room is reserved on the bubble's *outer* side. The corner
@@ -27,7 +27,7 @@ struct ReactionBadgeView: View {
     /// The direction of the message being reacted to. Chips sit over its
     /// outer top corner, so everything mirrors with it.
     let isOutbound: Bool
-    /// The conversation's protection, which colours our own chips the same as
+    /// The conversation's protection, which colors our own chips the same as
     /// the bubbles we send here.
     let security: ConversationSecurity
 
@@ -98,7 +98,7 @@ struct ReactionBadgeView: View {
         return isOutbound ? mine + theirs : theirs + mine
     }
 
-    /// Reactions have to read as text as well as colour and glyph.
+    /// Reactions have to read as text as well as color and glyph.
     private var accessibilityLabel: String {
         "Reactions: " + reactions.map(\.accessibilityDescription).joined(separator: ", ")
     }
@@ -132,7 +132,7 @@ private struct ThoughtChip: View {
         style == .failed ? 0.5 : 1
     }
 
-    /// A circle of the page colour, two points proud of whatever it backs.
+    /// A circle of the page color, two points proud of whatever it backs.
     private var halo: some View {
         Circle()
             .fill(Color(uiColor: .systemBackground))
@@ -144,7 +144,7 @@ private struct ThoughtChip: View {
             .font(.system(size: 19))
             .frame(width: Self.diameter, height: Self.diameter)
             .background(fill, in: Circle())
-            // A ring of the page colour, so a grey chip on a grey bubble is
+            // A ring of the page color, so a grey chip on a grey bubble is
             // still a separate object — the chips sit on the bubble, and
             // without this the inbound pair merges into one shape.
             .background(halo)

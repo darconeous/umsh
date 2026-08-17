@@ -27,7 +27,7 @@ struct TranscriptLoader: Sendable {
     /// how a window re-reads the extent it already holds, picking up edits and
     /// delivery changes without moving the reading position.
     var newer: @Sendable (String, ChatMessageCursor, _ including: Bool, Int) async -> TranscriptPage
-    /// A window centred on one message, for opening a search result in place.
+    /// A window centered on one message, for opening a search result in place.
     /// `nil` when that message is no longer in the conversation.
     var around: @Sendable (String, _ messageID: String, _ radius: Int) async -> TranscriptPage?
 
@@ -103,7 +103,7 @@ struct TranscriptWindow: Equatable {
     /// the unbounded transcript one page at a time. Every row here is a live
     /// `UITextView`, so this is a comfort budget, not just a memory one.
     static let capacity = 400
-    /// How much of a centred window sits either side of its anchor.
+    /// How much of a centered window sits either side of its anchor.
     static let focusRadius = 60
     /// How long a lull has to run before the transcript says out loud when the
     /// conversation picked up again. An hour, as in Messages.

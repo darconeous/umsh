@@ -13,7 +13,7 @@
 //! What does NOT carry over is connection state. UART has no notion of a
 //! host opening the port, so there is no `wait_connection` and no
 //! disconnect handling — bytes written with no terminal attached simply
-//! go to the CP2102 and are lost, which is the correct behaviour for a
+//! go to the CP2102 and are lost, which is the correct behavior for a
 //! serial console.
 //!
 //! `esp-println` writes to this same UART0 by direct register access.

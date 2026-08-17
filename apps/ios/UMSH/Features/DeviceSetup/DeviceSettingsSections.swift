@@ -240,7 +240,7 @@ struct DevicePowerSection: View {
 
 /// What to call this device.
 ///
-/// Labelled in the row rather than only by a section header: a bare text field
+/// Labeled in the row rather than only by a section header: a bare text field
 /// showing a value says nothing about what the value is, and a header reading
 /// "Device" said even less. `Required` is not decoration — a device that
 /// accepts a name will not accept an empty one, and an empty field is what

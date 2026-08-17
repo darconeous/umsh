@@ -1659,7 +1659,7 @@ struct AppRootView: View {
         guard let applicationStore, let localIdentity else { return }
         // Written the way the protocol names them. Only the canonicalized
         // form reaches the key derivation, so the casing here is purely how
-        // the channels are labelled.
+        // the channels are labeled.
         for name in ["Public", "EMERGENCY"] {
             guard let preview = try? await meshEngine.inspectChannelName(name) else { continue }
             let digest = Self.keyDigest(preview.key)

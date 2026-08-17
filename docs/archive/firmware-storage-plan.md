@@ -159,7 +159,7 @@ not inside the store itself.
 If real-time disruption becomes intolerable, the migration path is
 external QSPI (DMA-based, truly async via `embassy-nrf::qspi`) for the
 peer/counter store, with identity remaining on internal NVMC because it
-must be readable before QSPI initialises.
+must be readable before QSPI initializes.
 
 ### No bad-block handling
 

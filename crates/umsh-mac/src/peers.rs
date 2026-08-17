@@ -36,7 +36,7 @@ pub struct PeerInfo {
     /// Highest RX frame counter loaded from persistent storage at boot.
     ///
     /// Non-zero means a stored boundary was found. When pairwise keys are
-    /// first installed for this peer, the replay window is initialised to
+    /// first installed for this peer, the replay window is initialized to
     /// this value so that frames from before the reboot are rejected.
     pub initial_rx_counter: u32,
 }

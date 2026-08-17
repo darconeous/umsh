@@ -21,7 +21,7 @@ private struct RadioPositionPoll: ViewModifier {
     let isNeeded: Bool
     let sample: (() async -> Void)?
 
-    /// Once a minute. A tracker on foot moves metres in that time and the
+    /// Once a minute. A tracker on foot moves meters in that time and the
     /// distances this feeds are rounded to tenths of a mile, so a faster
     /// cadence would spend the radio's battery redrawing the same numbers.
     private static let interval = Duration.seconds(60)

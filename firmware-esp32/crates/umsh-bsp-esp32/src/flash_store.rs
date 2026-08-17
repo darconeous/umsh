@@ -11,7 +11,7 @@
 //! ## The region is discovered, never hardcoded
 //!
 //! [`new_storage`] reads the ESP-IDF partition table at boot and looks up
-//! the data partition labelled [`STORAGE_PARTITION_LABEL`], deriving the
+//! the data partition labeled [`STORAGE_PARTITION_LABEL`], deriving the
 //! `sequential-storage` range from the table itself. A hardcoded offset
 //! would silently corrupt an adjacent partition the moment the CSV moved;
 //! this way a mismatch is a clean [`StorageInitError::PartitionNotFound`]
@@ -82,7 +82,7 @@ pub type EspChannelStore = umsh_flash_store::ChannelView<FlashDriver, CriticalSe
 pub enum StorageInitError {
     /// The partition table could not be read or failed MD5 validation.
     PartitionTable(partitions::Error),
-    /// No partition labelled [`STORAGE_PARTITION_LABEL`] exists. Almost
+    /// No partition labeled [`STORAGE_PARTITION_LABEL`] exists. Almost
     /// always means the board was flashed with the default partition
     /// table instead of the board's `partitions.csv`.
     PartitionNotFound,

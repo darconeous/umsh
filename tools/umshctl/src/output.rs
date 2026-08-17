@@ -1,11 +1,11 @@
-//! Shared presentation: the colour decision, the field-tinted styling
+//! Shared presentation: the color decision, the field-tinted styling
 //! the capture decoder needs, and the key/value report layout every
 //! command prints.
 
 use std::io::IsTerminal;
 use std::sync::atomic::{AtomicBool, Ordering};
 
-/// When decoded output carries ANSI colour.
+/// When decoded output carries ANSI color.
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq, clap::ValueEnum)]
 pub enum ColorChoice {
     #[default]

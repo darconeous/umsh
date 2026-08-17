@@ -47,6 +47,6 @@ impl Platform for HeltecV3Platform {
 /// 2 identities (1 long-term + 1 PFS ephemeral session), 8 peers, 4 channels,
 /// 4 pending ACKs, 8 TX queue slots, 255-byte frame buffer, 32-entry dup cache.
 ///
-/// Matches the T-Echo's capacities so behaviour is comparable across the
+/// Matches the T-Echo's capacities so behavior is comparable across the
 /// two reference boards.
 pub type HeltecV3Mac = umsh_mac::Mac<HeltecV3Platform, 2, 8, 4, 4, 8, 255, 32>;

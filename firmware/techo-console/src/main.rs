@@ -397,7 +397,7 @@ mod firmware {
             .draw(&mut fb);
         };
 
-        // Renders centred lines (one per slice element) onto an all-white frame.
+        // Renders centered lines (one per slice element) onto an all-white frame.
         let render_lines = |buf: &mut [u8; display::BUF_SIZE], lines: &[(&str, i32)]| {
             buf.fill(0xFF);
             let mut fb = display::EpdFb(buf);

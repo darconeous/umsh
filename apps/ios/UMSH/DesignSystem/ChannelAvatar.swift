@@ -1,10 +1,10 @@
 import SwiftUI
 import UIKit
 
-/// A channel's badge: a rounded square, initialled from its name and coloured
+/// A channel's badge: a rounded square, initialed from its name and colored
 /// from its key.
 ///
-/// The colour comes from the same derivation as the channel identifier, run
+/// The color comes from the same derivation as the channel identifier, run
 /// one byte longer, so everyone holding the key sees the same badge without
 /// anything being agreed or transmitted. The square distinguishes a channel
 /// from a peer's circular avatar at a glance.
@@ -68,7 +68,7 @@ struct ChannelAvatar: View {
 
     private var fillColor: Color {
         // The two standard channels are recognized on sight rather than by
-        // reading, so they keep fixed colours instead of derived ones.
+        // reading, so they keep fixed colors instead of derived ones.
         switch channel.canonicalName {
         case "public": return .blue
         case "emergency": return .red
@@ -89,13 +89,13 @@ struct ChannelAvatar: View {
         }
     }
 
-    /// The derived colour pulled out of the middle of the brightness range,
+    /// The derived color pulled out of the middle of the brightness range,
     /// where neither black nor white reads well.
     ///
     /// Hue survives untouched, so a channel keeps the identity its key gives
     /// it; only brightness and saturation move, and they move to one of two
     /// bands that each clear the WCAG 4.5:1 threshold against a fixed text
-    /// colour. Picking the nearer band keeps light channels light and dark
+    /// color. Picking the nearer band keeps light channels light and dark
     /// ones dark.
     private var derivedFill: (hue: Double, saturation: Double, brightness: Double, prefersWhiteText: Bool) {
         var hue: CGFloat = 0

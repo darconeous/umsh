@@ -64,7 +64,7 @@ async fn push_chunk(bytes: &[u8]) {
 /// Push `bytes` in 63-byte chunks. Multi-chunk pushes are not atomic with
 /// other writers — echo bytes can land between chunks of a long line. In
 /// practice CLI lines are short, so this matches the existing visible
-/// behaviour from prior revisions.
+/// behavior from prior revisions.
 async fn push_chunks(bytes: &[u8]) {
     for chunk in bytes.chunks(63) {
         push_chunk(chunk).await;
