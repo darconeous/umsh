@@ -309,6 +309,36 @@ impl<M: crate::mac::MacBackend> PeerConnection<LocalNode<M>> {
         self.send(&buf[..n], options).await
     }
 
+    /// Ask this peer for one page of its known peer repeaters (command 10).
+    ///
+    /// `nonce` is echoed in the response, which is what tells one page's
+    /// answer from a stale copy of an earlier one. `cursor` resumes an
+    /// enumeration from where a previous response said to; pass `None` for
+    /// the first page, and expect a Total on the answer to that one.
+    ///
+    /// The response arrives asynchronously as a MAC command on the normal
+    /// receive path, not as the return value here.
+    pub async fn request_peer_repeaters(
+        &self,
+        nonce: u16,
+        cursor: Option<&[u8]>,
+        options: &SendOptions,
+    ) -> Result<SendProgressTicket, NodeError<M>> {
+        let mut builder = crate::mac_command::PeerRepeatersRequestBuilder::new().nonce(nonce)?;
+        if let Some(cursor) = cursor {
+            builder = builder.cursor(cursor)?;
+        }
+        let opts_block = builder.build();
+        let cmd = crate::mac_command::MacCommand::PeerRepeatersRequest {
+            options: &opts_block,
+        };
+        let mut buf = [0u8; 128];
+        buf[0] = umsh_core::PayloadType::MacCommand as u8;
+        let n = crate::mac_command::encode(&cmd, &mut buf[1..])? + 1;
+
+        self.send(&buf[..n], options).await
+    }
+
     /// The route the MAC has cached for this peer, if any.
     pub async fn route(&self) -> Option<umsh_mac::CachedRoute> {
         self.transport.peer_route(&self.peer).await

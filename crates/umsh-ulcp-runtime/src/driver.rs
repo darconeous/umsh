@@ -37,7 +37,7 @@ use umsh_radio_loraphy::{
 };
 use umsh_ulcp_device::{
     Effect, IdentitySource, MAX_CHANNEL_KEYS, MAX_DEV_ADMINS, MAX_DEV_PEERS, MAX_REPEATER_REGIONS,
-    RadioRxInfo, SNAPSHOT_MAX, SavedStatus, Session, TxOutcome, TxPower,
+    REGION_STRING_MAX_LEN, RadioRxInfo, SNAPSHOT_MAX, SavedStatus, Session, TxOutcome, TxPower,
 };
 
 /// The session sizes its snapshots and the journal sizes its records
@@ -226,13 +226,15 @@ pub struct DevDomainSnapshot {
     /// capability bit — a fact about what the node does, not a choice
     /// about what it calls itself.
     pub repeater_enabled: bool,
-    /// `PROP_MAC_REPEATER_REGIONS`: the flood-forwarding region filter,
-    /// as concatenated 2-octet codes. Empty imposes no restriction.
-    ///
-    /// Carried in wire order so the device node can both configure the
-    /// MAC's region filter and hand the same bytes to the Supported
-    /// Regions identity option without reshaping either.
-    pub repeater_regions: heapless::Vec<u8, { MAX_REPEATER_REGIONS * 2 }>,
+    /// `PROP_MAC_REPEATER_REGIONS` as the MAC's forwarding filter needs
+    /// it: the 2-octet code derived from each configured region. Empty
+    /// imposes no restriction.
+    pub repeater_region_codes: heapless::Vec<[u8; 2], MAX_REPEATER_REGIONS>,
+    /// The same regions as the identity advertises them: the string form
+    /// of each, which is what a reader can make sense of — a hash-derived
+    /// code cannot be turned back into a name.
+    pub repeater_region_names:
+        heapless::Vec<heapless::Vec<u8, REGION_STRING_MAX_LEN>, MAX_REPEATER_REGIONS>,
     /// `PROP_MAC_REPEATER_DEFAULT_REGION`: the code the node inserts
     /// into an untagged flood packet, or `None` to never tag.
     pub repeater_default_region: Option<[u8; 2]>,
@@ -801,7 +803,11 @@ fn sync_dev_domain<A, S, const TXQ: usize, E>(
         admins: heapless::Vec::new(),
         dev_key: session.dev_key().copied(),
         repeater_enabled: session.repeater_enabled(),
-        repeater_regions: heapless::Vec::from_slice(session.repeater_regions()).unwrap_or_default(),
+        repeater_region_codes: session.repeater_region_codes().collect(),
+        repeater_region_names: session
+            .repeater_region_names()
+            .filter_map(|name| heapless::Vec::from_slice(name.as_bytes()).ok())
+            .collect(),
         repeater_default_region: session.repeater_default_region(),
         repeater_min_rssi: session.repeater_min_rssi(),
         repeater_min_snr: session.repeater_min_snr(),

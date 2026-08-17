@@ -191,13 +191,13 @@ pub(crate) const MAX_FORWARD_RETRIES: u8 = 3;
 
 /// CAD attempts a frame gets before it is dropped, from
 /// [Channel Access § Backoff Procedure][spec]: one initial attempt and
-/// four retries. Public because every UMSH transmitter shares the
+/// fifteen retries. Public because every UMSH transmitter shares the
 /// procedure — a host relaying frames onto a segment contends with the
-/// same neighbours as the MAC does, and a second opinion about how long
+/// same neighbors as the MAC does, and a second opinion about how long
 /// to persist would just be a second, wrong answer.
 ///
 /// [spec]: https://darconeous.github.io/umsh/docs/protocol/channel-access.html#backoff-procedure
-pub const MAX_CAD_ATTEMPTS: u8 = 5;
+pub const MAX_CAD_ATTEMPTS: u8 = 16;
 
 /// Default identity-slot capacity for the common `Mac<P>` configuration.
 pub const DEFAULT_IDENTITIES: usize = 4;
@@ -301,6 +301,7 @@ mod cache;
 mod coordinator;
 pub mod forward_id;
 mod handle;
+mod observations;
 mod peers;
 mod send;
 
@@ -313,6 +314,9 @@ pub use coordinator::{
     WakeReason,
 };
 pub use handle::MacHandle;
+pub use observations::{
+    MAX_TRANSMITTER_OBSERVATIONS, TransmitterObservation, TransmitterObservations,
+};
 pub use peers::{
     CachedRoute, ChannelState, ChannelTable, HintReplayState, PeerCryptoMap, PeerCryptoState,
     PeerId, PeerInfo, PeerRegistry, PeerRemoval,

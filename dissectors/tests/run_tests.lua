@@ -1012,6 +1012,133 @@ check("the multicast rule names the payload type",
       true)
 
 -- ─────────────────────────────────────────────────────────────────────────────
+-- Node Identity regions (docs/protocol/src/node-identity.md)
+--
+-- Option 4 is repeated: one region name per option, as UTF-8. The 2-octet
+-- forwarding code is derived from the name rather than carried.
+-- ─────────────────────────────────────────────────────────────────────────────
+section("Node Identity regions")
+
+-- A repeater forwarding for two named regions, one an airport code and one
+-- a name with a space in it.
+local ni_regions = dissect_payload(
+  "01 01 01 43 534A43 0C 526F6775652056616C6C6579")
+check("first region",  has(ni_regions, "Supported Region: SJC"), true)
+check("second region", has(ni_regions, "Supported Region: Rogue Valley"), true)
+check("clean regions carry no violations", #ni_regions.violations, 0)
+
+-- The cap is on the octets, not the characters.
+local ni_long = dissect_payload(
+  "01 01 01 4D 0C 41414141414141414141414141414141414141414141414141")
+check("an over-long region is flagged",
+      ni_long.violations[1] and
+        ni_long.violations[1]:find("1 to 24 octets", 1, true) ~= nil,
+      true)
+
+-- ─────────────────────────────────────────────────────────────────────────────
+-- Peer Repeaters (docs/protocol/src/mac-commands.md)
+--
+-- Command 10 is a CoAP option block and nothing else; command 11 follows its
+-- own option block with a list of entries, each an option list terminated by
+-- its own 0xFF that the last entry may leave off.
+-- ─────────────────────────────────────────────────────────────────────────────
+section("Peer Repeaters")
+
+-- A first ask: a nonce to correlate the answer with, no cursor to resume from.
+local pr_req = dissect_payload("02 0A 02BEEF")
+check("request names the command",
+      has(pr_req, "Command: Peer Repeaters Req (10)"), true)
+check("request info line carries the nonce",
+      pr_req.info, " MAC Command: Peer Repeaters Req (nonce 0xBEEF)")
+check("a cursorless request says nothing about resuming",
+      pr_req.info:find("resuming", 1, true), nil)
+check("a unicast request is not flagged", #pr_req.violations, 0)
+
+-- The follow-up page: the same ask with the cursor the last answer gave back.
+local pr_resume = dissect_payload("02 0A 02BEEF 13AABBCC")
+check("request cursor",  has(pr_resume, "Cursor: AABBCC"), true)
+check("a resumed request says so",
+      pr_resume.info:find("resuming", 1, true) ~= nil, true)
+
+-- One page holding the whole listing: Total, no cursor, one full entry.
+local pr_resp = dissect_payload(
+  "02 0B 02BEEF 2101 FF 03AABBCC 155269646765 125F08 1105 227853")
+check("response names the command",
+      has(pr_resp, "Command: Peer Repeaters Resp (11)"), true)
+check("response reports the listing size", has(pr_resp, "Total Entries: 1"), true)
+check("entry names the peer",  has(pr_resp, "Peer Repeater: Ridge"), true)
+check("entry node hint",       has(pr_resp, "Node Hint: "), true)
+check("entry hint bytes",      has(pr_resp, "AA:BB:CC"), true)
+check("entry node name",       has(pr_resp, "Node Name: Ridge"), true)
+-- RSSI is unsigned negative dBm and SNR is quarter-decibel steps, so 0x5F
+-- and 0x08 read as -95 dBm and 2 dB.
+check("entry RSSI",            has(pr_resp, "RSSI: -95 dBm"), true)
+check("entry SNR",             has(pr_resp, "SNR: 2.00 dB"), true)
+check("entry last heard",      has(pr_resp, "Last Heard (min): 5"), true)
+check("entry region code reads as its airport code",
+      has(pr_resp, "Supported Flood Regions: SJC"), true)
+check("response info line",
+      pr_resp.info, " MAC Command: Peer Repeaters Resp (nonce 0xBEEF, 1 of 1 entries)")
+check("a clean response has no violations", #pr_resp.violations, 0)
+
+-- Two entries, the first terminated and the last not, and a peer known only
+-- from a route: a two-byte hint, signal, and nothing else.
+local pr_pages = dissect_payload(
+  "02 0B 13AABBCC 1102 FF 021122 2264F8 FF 03DDEEFF 3105")
+check("both entries are walked",
+      has(pr_pages, "Peer Repeater"), true)
+check("the observation-only entry names a router hint",
+      has(pr_pages, "router hint"), true)
+check("its signal is still reported", has(pr_pages, "RSSI: -100 dBm"), true)
+check("a negative SNR reads as one",  has(pr_pages, "SNR: -2.00 dB"), true)
+check("the unterminated final entry is still counted",
+      pr_pages.info:find("2 of 2 entries", 1, true) ~= nil, true)
+check("a cursored response says more follow",
+      pr_pages.info:find("more follow", 1, true) ~= nil, true)
+check("a nonceless response says nothing about a nonce",
+      pr_pages.info:find("nonce", 1, true), nil)
+
+-- Both commands are addressed to one node, so neither may be flooded.
+local pr_bcast = dissect_payload("02 0A 02BEEF", 0)
+check("a broadcast Peer Repeaters Request is flagged", #pr_bcast.violations, 1)
+check("the rule names the command",
+      pr_bcast.violations[1] and
+        pr_bcast.violations[1]:find("Peer Repeaters Req", 1, true) ~= nil,
+      true)
+
+-- A hint the spec does not allow: a receiver has to make sense of the rest
+-- of the entry anyway.
+local pr_badhint = dissect_payload("02 0B 2101 FF 0555667788 99 15526964 6765")
+check("an out-of-range hint length is flagged",
+      pr_badhint.violations[1] and
+        pr_badhint.violations[1]:find("must be 2 or 3 bytes", 1, true) ~= nil,
+      true)
+
+-- Field widths the spec fixes: Total is one byte, last heard one or two,
+-- RSSI/SNR exactly two. Off-size values are flagged, not rendered.
+local pr_fat_total = dissect_payload("02 0B 220100")
+check("an oversize total is flagged",
+      pr_fat_total.violations[1] and
+        pr_fat_total.violations[1]:find("total must be 1 byte", 1, true) ~= nil,
+      true)
+check("an oversize total is not rendered",
+      has(pr_fat_total, "Total Entries"), false)
+
+local pr_fat_heard = dissect_payload("02 0B FF 03AABBCC 33010203")
+check("an oversize last heard is flagged",
+      pr_fat_heard.violations[1] and
+        pr_fat_heard.violations[1]:find("must be 1 or 2 bytes", 1, true) ~= nil,
+      true)
+check("an oversize last heard is not rendered",
+      has(pr_fat_heard, "Last Heard"), false)
+
+local pr_thin_signal = dissect_payload("02 0B FF 03AABBCC 215F")
+check("a one-byte RSSI/SNR is flagged",
+      pr_thin_signal.violations[1] and
+        pr_thin_signal.violations[1]:find("must be 2 bytes", 1, true) ~= nil,
+      true)
+
+-- ─────────────────────────────────────────────────────────────────────────────
 -- Results
 -- ─────────────────────────────────────────────────────────────────────────────
 io.write(string.format(

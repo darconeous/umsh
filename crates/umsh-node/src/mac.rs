@@ -140,6 +140,19 @@ pub trait MacBackend: Clone {
         let _ = (from, f);
     }
 
+    /// Invoke `f` for each transmitter the radio has heard, with the most
+    /// recent measurements from it.
+    ///
+    /// This is what a peer-repeater listing reports about the hops it names:
+    /// a frame forwarded past this node or simply overheard proves a
+    /// neighbor was on the air, and no peer-oriented view sees it.
+    async fn for_each_transmitter_observation(
+        &self,
+        f: &mut dyn FnMut(umsh_mac::TransmitterObservation),
+    ) {
+        let _ = f;
+    }
+
     /// Return the route the MAC currently has cached for `peer`.
     async fn peer_route(&self, peer: &PublicKey) -> Option<CachedRoute> {
         let _ = peer;
@@ -324,6 +337,13 @@ impl<
         f: &mut dyn FnMut(umsh_core::PublicKey, u32, u32),
     ) {
         self.for_each_peer_counter(from, f).await
+    }
+
+    async fn for_each_transmitter_observation(
+        &self,
+        f: &mut dyn FnMut(umsh_mac::TransmitterObservation),
+    ) {
+        self.for_each_transmitter_observation(f).await
     }
 
     async fn peer_route(&self, peer: &PublicKey) -> Option<CachedRoute> {

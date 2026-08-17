@@ -16,12 +16,31 @@ use crate::identity_responder::{
 };
 use crate::mac::MacBackend;
 use crate::peer::PeerConnection;
+use crate::peer_repeaters::{self, PeerRepeaterTable};
 #[cfg(feature = "software-crypto")]
 use crate::pfs::{PfsSessionManager, PfsState};
 use crate::receive::ReceivedPacketRef;
 use crate::ticket::{SendProgressTicket, SendToken};
 use crate::transport::Transport;
 use crate::{AppEncodeError, OwnedMacCommand};
+
+/// Octets one Peer Repeaters Response body may occupy.
+///
+/// Sized against the same 192-octet reply buffer the identity responder
+/// works to, less the payload-type and command bytes and the MAC's own
+/// per-frame overhead. A list that does not fit is paged, so this is a
+/// packing budget rather than a limit on what the node can report.
+const PEER_REPEATERS_RESPONSE_BUDGET: usize = 160;
+
+/// A cursor is the listing generation and the index to resume at.
+///
+/// The generation moves when an identity is recorded, which is what makes a
+/// stale cursor recognizable. It does not move when the MAC hears a new
+/// transmitter, so a neighbor first heard part way through a walk can shift
+/// the entries after it by one — a listing describes a neighborhood at a
+/// moment, and the spec lets a responder page imperfectly rather than freeze
+/// a snapshot per requester.
+const PEER_REPEATERS_CURSOR_LEN: usize = 3;
 
 /// Per-node shared membership state. All cloned `LocalNode` handles and
 /// their `BoundChannel`s share the same instance via `Rc<RefCell<...>>`.
@@ -191,6 +210,10 @@ pub(crate) struct LocalNodeState {
     pending_pings: Vec<PendingPing>,
     peer_subscriptions: Vec<PeerSubscriptions>,
     identity_responder: Option<IdentityResponder>,
+    /// The repeaters whose identities this node has seen, and whether it
+    /// answers questions about them.
+    peer_repeaters: PeerRepeaterTable,
+    peer_repeaters_responder: bool,
     #[cfg(feature = "software-crypto")]
     pfs: PfsSessionManager,
 }
@@ -214,6 +237,8 @@ impl LocalNodeState {
             pending_pings: Vec::new(),
             peer_subscriptions: Vec::new(),
             identity_responder: None,
+            peer_repeaters: PeerRepeaterTable::new(),
+            peer_repeaters_responder: false,
             #[cfg(feature = "software-crypto")]
             pfs: PfsSessionManager::new(),
         }
@@ -722,6 +747,135 @@ impl<M: MacBackend> LocalNode<M> {
         let _ = self
             .mac
             .send_unicast(self.identity_id, &plan.to, &plan.framed, &options)
+            .await;
+    }
+
+    /// Answer Peer Repeaters Requests with what this node knows about the
+    /// repeaters around it.
+    ///
+    /// Off by default. The table itself fills regardless — an identity is
+    /// recorded when it arrives, whether or not anyone will ever ask — so
+    /// switching this on does not start from an empty neighborhood.
+    pub fn enable_peer_repeaters_responder(&self) {
+        self.state.borrow_mut().peer_repeaters_responder = true;
+    }
+
+    pub fn disable_peer_repeaters_responder(&self) {
+        self.state.borrow_mut().peer_repeaters_responder = false;
+    }
+
+    pub fn peer_repeaters_responder_enabled(&self) -> bool {
+        self.state.borrow().peer_repeaters_responder
+    }
+
+    /// Record what an arriving identity said, if it came from a repeater.
+    pub(crate) fn observe_peer_identity(
+        &self,
+        from: PublicKey,
+        identity: &crate::NodeIdentityPayload,
+        now_ms: u64,
+    ) {
+        self.state
+            .borrow_mut()
+            .peer_repeaters
+            .observe_identity(&from, identity, now_ms);
+    }
+
+    /// The peer repeaters this node knows of, merged with what the radio has
+    /// heard from each.
+    pub async fn peer_repeaters(&self) -> Vec<peer_repeaters::MergedPeerRepeater> {
+        let now_ms = self.mac.now_ms().await;
+        let mut observations = Vec::new();
+        self.mac
+            .for_each_transmitter_observation(&mut |observation| observations.push(observation))
+            .await;
+        // The borrow ends before the merge so a handler holding the state
+        // across an await cannot deadlock against it.
+        let identities = self.state.borrow().peer_repeaters.clone();
+        peer_repeaters::merge(&identities, observations.iter(), now_ms)
+    }
+
+    /// Build and send one page of this node's peer-repeater list.
+    ///
+    /// Evaluated here rather than in the synchronous receive dispatch because
+    /// the answer needs the MAC's observations, which only an async borrow
+    /// reaches.
+    pub(crate) async fn answer_peer_repeaters_request(&self, to: PublicKey, request: &[u8]) {
+        if !self.peer_repeaters_responder_enabled() {
+            return;
+        }
+        let view = crate::mac_command::PeerRepeatersRequestView::new(request);
+        let generation = self.state.borrow().peer_repeaters.generation();
+        let peers = self.peer_repeaters().await;
+
+        // A cursor from a listing that has since changed names a place in a
+        // list that no longer exists, so the enumeration restarts rather than
+        // resuming into a different neighborhood.
+        let start = match view.cursor() {
+            Some([high, low, index]) if u16::from_be_bytes([*high, *low]) == generation => {
+                usize::from(*index)
+            }
+            _ => 0,
+        };
+        let total = u8::try_from(peers.len()).unwrap_or(u8::MAX);
+
+        let mut builder =
+            crate::mac_command::PeerRepeatersResponseBuilder::new(PEER_REPEATERS_RESPONSE_BUDGET)
+                .total(total)
+                .reserve_cursor(PEER_REPEATERS_CURSOR_LEN);
+        if let Some(nonce) = view.nonce() {
+            builder = builder.nonce(nonce);
+        }
+
+        let mut next = start;
+        for peer in peers.iter().skip(start) {
+            let regions: Vec<u8> = peer.regions.iter().flatten().copied().collect();
+            let entry = crate::mac_command::PeerRepeaterEntry {
+                hint: &peer.hint,
+                name: peer.name.as_deref(),
+                rssi_snr: match (peer.rssi_dbm, peer.snr) {
+                    (Some(rssi), Some(snr)) => Some((rssi, snr)),
+                    _ => None,
+                },
+                last_heard_min: peer.last_heard_min,
+                location: peer.location,
+                regions: &regions,
+            };
+            // A single entry too large for a whole page would stall the
+            // enumeration on it forever, so it is skipped rather than retried.
+            match builder.try_push(&entry) {
+                Ok(true) => next += 1,
+                Ok(false) => break,
+                Err(_) => next += 1,
+            }
+        }
+        if next < peers.len() {
+            let [high, low] = generation.to_be_bytes();
+            builder = builder.cursor(&[high, low, u8::try_from(next).unwrap_or(u8::MAX)]);
+        }
+        let Ok(body) = builder.build() else {
+            return;
+        };
+
+        // The payload-type byte, then the command — the framing every MAC
+        // command travels in.
+        let mut framed = [0u8; PEER_REPEATERS_RESPONSE_BUDGET + 8];
+        framed[0] = umsh_core::PayloadType::MacCommand as u8;
+        let Ok(len) = crate::mac_command::encode(
+            &crate::mac_command::MacCommand::PeerRepeatersResponse { body: &body },
+            &mut framed[1..],
+        ) else {
+            return;
+        };
+        let _ = self.mac.ensure_transient_peer(&to).await;
+        let _ = self
+            .mac
+            .send_unicast(
+                self.identity_id,
+                &to,
+                &framed[..len + 1],
+                &SendOptions::default(),
+            )
             .await;
     }
 

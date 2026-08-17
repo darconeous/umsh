@@ -143,6 +143,14 @@ pub enum Command {
         op: manage::ManageOp,
     },
 
+    /// Ask a repeater which repeaters it knows of, using the attached
+    /// radio to reach it.
+    PeerRepeaters {
+        /// The repeater to ask, as its node public key.
+        #[arg(value_name = "KEY")]
+        target: values::KeyArg,
+    },
+
     /// Show the administrator identity this tool manages devices with.
     AdminKey,
 
@@ -253,7 +261,12 @@ impl Command {
             }
             Self::DevPeer { op } => tables::run(app, prop::DEV_PEERS, "peer", op).await,
             Self::DevAdmin { op } => tables::run(app, prop::DEV_ADMINS, "administrator", op).await,
-            Self::Manage { target, op } => manage::run(app, target, op).await,
+            Self::Manage { target, op } => {
+                manage::run(app, target, manage::Operation::Manage(op)).await
+            }
+            Self::PeerRepeaters { target } => {
+                manage::run(app, target, manage::Operation::PeerRepeaters).await
+            }
             Self::AdminKey => manage::show_admin_key(),
             Self::Props { keys } => info::props(app.device()?, &keys).await,
             Self::Illuminance => info::illuminance(app.device()?).await,

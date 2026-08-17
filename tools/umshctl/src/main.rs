@@ -504,8 +504,12 @@ mod tests {
         assert_eq!(dbm.0, Some(-110));
         assert!(parse(&["repeater", "min-rssi", "none"]).is_ok());
         assert!(parse(&["repeater", "min-rssi", "loud"]).is_err());
-        assert!(parse(&["repeater", "regions"]).is_err());
-        assert!(parse(&["repeater", "regions", "SJC,"]).is_err());
+        // The region table is edited entry at a time or replaced whole;
+        // a bare `regions` lists it.
+        assert!(parse(&["repeater", "regions"]).is_ok());
+        assert!(parse(&["repeater", "regions", "add", "Rogue Valley"]).is_ok());
+        assert!(parse(&["repeater", "regions", "set", "SJC,"]).is_err());
+        assert!(parse(&["repeater", "regions", "SJC"]).is_err());
         assert!(parse(&["repeater", "yes"]).is_err());
     }
 

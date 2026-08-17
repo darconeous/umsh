@@ -11,7 +11,9 @@ default = ["std", "region-codec"]
 std = []
 alloc = []
 # Textual region codes: ARNCE/HAM-16 for airport regions, SHA-256 for named
-# ones. Off for firmware, which only ever handles the 2-byte wire form.
+# ones. Firmware needs this too — a device stores its repeater regions as
+# strings and derives the 2-byte forwarding codes itself — and pays little
+# for it, since SHA-256 is already linked in for Ed25519.
 region-codec = ["dep:hamaddr", "dep:sha2"]
 
 [dependencies]

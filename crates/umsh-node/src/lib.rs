@@ -150,6 +150,7 @@ mod mac;
 pub mod mac_command;
 mod node;
 mod peer;
+pub mod peer_repeaters;
 #[cfg(feature = "software-crypto")]
 mod pfs;
 mod receive;
@@ -177,6 +178,9 @@ pub use node::BoundChannel;
 pub use node::PfsStatus;
 pub use node::{LocalNode, NodeError, PfsFailure, PongMetadata, Subscription};
 pub use peer::{PING_MIC_SIZE, PeerConnection};
+pub use peer_repeaters::{
+    MAX_PEER_REPEATERS, MergedPeerRepeater, PeerRepeaterRecord, PeerRepeaterTable,
+};
 pub use receive::{ChannelInfoRef, PacketFamily, ReceivedPacketRef, RouteHops, RxMetadata, Snr};
 pub use ticket::{SendProgressTicket, SendToken};
 pub use transport::Transport;
@@ -744,6 +748,7 @@ mod tests {
         removed_ephemerals: Vec<LocalIdentityId>,
         peers: Vec<(PublicKey, PeerId)>,
         channels: Vec<umsh_core::ChannelKey>,
+        observations: Vec<umsh_mac::TransmitterObservation>,
     }
 
     #[cfg(all(feature = "software-crypto", feature = "unsafe-advanced"))]
@@ -775,6 +780,17 @@ mod tests {
 
         fn holds_channel(&self, key: &umsh_core::ChannelKey) -> bool {
             self.state.borrow().channels.iter().any(|k| k.0 == key.0)
+        }
+
+        fn observe(&self, hint: umsh_core::RouterHint, rssi_dbm: i16, snr: umsh_hal::Snr) {
+            let mut state = self.state.borrow_mut();
+            let last_seen_ms = state.now_ms;
+            state.observations.push(umsh_mac::TransmitterObservation {
+                hint,
+                rssi_dbm,
+                snr,
+                last_seen_ms,
+            });
         }
     }
 
@@ -909,6 +925,16 @@ mod tests {
         async fn remove_ephemeral(&self, id: LocalIdentityId) -> bool {
             self.state.borrow_mut().removed_ephemerals.push(id);
             true
+        }
+
+        async fn for_each_transmitter_observation(
+            &self,
+            f: &mut dyn FnMut(umsh_mac::TransmitterObservation),
+        ) {
+            let observations = self.state.borrow().observations.clone();
+            for observation in observations {
+                f(observation);
+            }
         }
     }
 
@@ -1499,5 +1525,250 @@ mod tests {
             default_respond_policy(&base(false)),
             crate::RespondDecision::Respond { full_source: true }
         );
+    }
+
+    // --- Peer Repeaters responder ---
+
+    #[cfg(all(feature = "software-crypto", feature = "unsafe-advanced"))]
+    fn peer_identity(name: &str, regions: &[&str]) -> crate::NodeIdentityPayload {
+        crate::NodeIdentityPayload {
+            role: crate::NodeRole::Repeater,
+            capabilities: crate::NodeCapabilities::REPEATER,
+            name: Some(String::from(name)),
+            location: None,
+            altitude_m: None,
+            timestamp: None,
+            supported_regions: Some(regions.iter().map(|text| String::from(*text)).collect()),
+            nonce: None,
+            signature: None,
+        }
+    }
+
+    /// The request options a requester would put on the wire.
+    #[cfg(all(feature = "software-crypto", feature = "unsafe-advanced"))]
+    fn peer_repeaters_request(nonce: Option<u16>, cursor: Option<&[u8]>) -> Vec<u8> {
+        let mut builder = crate::mac_command::PeerRepeatersRequestBuilder::new();
+        if let Some(nonce) = nonce {
+            builder = builder.nonce(nonce).unwrap();
+        }
+        if let Some(cursor) = cursor {
+            builder = builder.cursor(cursor).unwrap();
+        }
+        builder.build()
+    }
+
+    /// Pull the one response the responder sent back off the fake MAC and
+    /// reparse it exactly as a receiver would.
+    #[cfg(all(feature = "software-crypto", feature = "unsafe-advanced"))]
+    fn sent_response(mac: &FakeMac) -> (PublicKey, Vec<u8>) {
+        let mut unicasts = mac.take_unicasts();
+        assert_eq!(unicasts.len(), 1, "exactly one response frame");
+        let sent = unicasts.remove(0);
+        assert_eq!(
+            sent.payload[0],
+            umsh_core::PayloadType::MacCommand as u8,
+            "responses travel as MAC commands"
+        );
+        let body = match crate::mac_command::parse(&sent.payload[1..]).unwrap() {
+            crate::mac_command::MacCommand::PeerRepeatersResponse { body } => body.to_vec(),
+            other => panic!("expected a Peer Repeaters Response, got {other:?}"),
+        };
+        (sent.to, body)
+    }
+
+    #[cfg(all(feature = "software-crypto", feature = "unsafe-advanced"))]
+    #[test]
+    fn a_disabled_responder_answers_nothing() {
+        let mac = FakeMac::new(Vec::new());
+        let node = responder_node(&mac);
+        node.observe_peer_identity(PublicKey([0xAA; 32]), &peer_identity("Ridge", &[]), 0);
+
+        block_on_ready(node.answer_peer_repeaters_request(
+            PublicKey([0x41; 32]),
+            &peer_repeaters_request(None, None),
+        ));
+        assert!(mac.take_unicasts().is_empty());
+    }
+
+    #[cfg(all(feature = "software-crypto", feature = "unsafe-advanced"))]
+    #[test]
+    fn a_response_echoes_the_nonce_and_reports_what_both_sources_know() {
+        let mac = FakeMac::new(Vec::new());
+        let node = responder_node(&mac);
+        node.enable_peer_repeaters_responder();
+
+        let peer = PublicKey([0xAA; 32]);
+        node.observe_peer_identity(peer, &peer_identity("Ridge", &["SJC", "0x1234"]), 0);
+        // The same peer heard on the air: only this supplies signal.
+        mac.observe(
+            umsh_core::RouterHint([peer.0[0], peer.0[1]]),
+            -95,
+            umsh_hal::Snr::from_decibels(2),
+        );
+        // A hop nothing has an identity for still names itself in a trace.
+        mac.observe(
+            umsh_core::RouterHint([0x11, 0x22]),
+            -70,
+            umsh_hal::Snr::from_decibels(-4),
+        );
+
+        let requester = PublicKey([0x41; 32]);
+        block_on_ready(
+            node.answer_peer_repeaters_request(
+                requester,
+                &peer_repeaters_request(Some(0xBEEF), None),
+            ),
+        );
+
+        let (to, body) = sent_response(&mac);
+        assert_eq!(to, requester);
+        let view = crate::mac_command::PeerRepeatersResponseView::new(&body);
+        assert_eq!(view.nonce(), Some(0xBEEF), "request nonce echoed");
+        assert_eq!(view.total(), Some(2));
+        assert_eq!(view.cursor(), None, "one page held everything");
+
+        let entries: Vec<_> = view.entries().collect();
+        assert_eq!(entries.len(), 2);
+
+        assert_eq!(entries[0].hint(), Some(&peer.hint().0[..]));
+        assert_eq!(entries[0].name(), Some("Ridge"));
+        let (rssi, snr) = entries[0].rssi_snr().unwrap();
+        assert_eq!(rssi, -95);
+        assert_eq!(snr, umsh_hal::Snr::from_decibels(2));
+        assert_eq!(
+            entries[0].regions().collect::<Vec<_>>(),
+            vec![[0x78, 0x53], [0x12, 0x34]],
+            "the identity's region strings arrive as derived codes"
+        );
+
+        assert_eq!(
+            entries[1].hint(),
+            Some(&[0x11, 0x22][..]),
+            "an unclaimed observation is named by its router hint alone"
+        );
+        assert_eq!(entries[1].name(), None);
+        assert_eq!(entries[1].rssi_snr().unwrap().0, -70);
+        assert!(entries[1].regions().next().is_none());
+    }
+
+    #[cfg(all(feature = "software-crypto", feature = "unsafe-advanced"))]
+    #[test]
+    fn a_full_table_pages_and_the_cursor_resumes_where_it_stopped() {
+        let mac = FakeMac::new(Vec::new());
+        let node = responder_node(&mac);
+        node.enable_peer_repeaters_responder();
+
+        // Long names, so the entries are large enough that one page cannot
+        // hold the whole table.
+        for seed in 0..crate::peer_repeaters::MAX_PEER_REPEATERS as u8 {
+            node.observe_peer_identity(
+                PublicKey([seed; 32]),
+                &peer_identity(&format!("Repeater number {seed:08}"), &["Rogue Valley"]),
+                0,
+            );
+        }
+
+        let requester = PublicKey([0x41; 32]);
+        let mut seen: Vec<Vec<u8>> = Vec::new();
+        let mut cursor: Option<Vec<u8>> = None;
+        let mut pages = 0;
+        loop {
+            block_on_ready(node.answer_peer_repeaters_request(
+                requester,
+                &peer_repeaters_request(Some(1), cursor.as_deref()),
+            ));
+            let (_, body) = sent_response(&mac);
+            let view = crate::mac_command::PeerRepeatersResponseView::new(&body);
+            assert_eq!(
+                view.total(),
+                Some(crate::peer_repeaters::MAX_PEER_REPEATERS as u8),
+                "every page reports the whole listing's size"
+            );
+            seen.extend(
+                view.entries()
+                    .filter_map(|entry| entry.hint().map(Vec::from)),
+            );
+            pages += 1;
+            assert!(pages < 10, "paging should terminate");
+            match view.cursor() {
+                Some(next) => cursor = Some(next.to_vec()),
+                None => break,
+            }
+        }
+
+        assert!(pages > 1, "the table did not fit one page");
+        assert_eq!(seen.len(), crate::peer_repeaters::MAX_PEER_REPEATERS);
+        for seed in 0..crate::peer_repeaters::MAX_PEER_REPEATERS as u8 {
+            assert!(
+                seen.contains(&Vec::from(&PublicKey([seed; 32]).hint().0[..])),
+                "every repeater was listed exactly once across the pages"
+            );
+        }
+        let mut sorted = seen.clone();
+        sorted.sort();
+        sorted.dedup();
+        assert_eq!(
+            sorted.len(),
+            seen.len(),
+            "no entry was repeated across pages"
+        );
+    }
+
+    /// A cursor names a place in a listing. If the listing has changed since,
+    /// resuming into it would skip or repeat peers, so the walk restarts.
+    #[cfg(all(feature = "software-crypto", feature = "unsafe-advanced"))]
+    #[test]
+    fn a_cursor_from_a_changed_listing_restarts_the_walk() {
+        let mac = FakeMac::new(Vec::new());
+        let node = responder_node(&mac);
+        node.enable_peer_repeaters_responder();
+        for seed in 0..3u8 {
+            node.observe_peer_identity(PublicKey([seed; 32]), &peer_identity("Peer", &[]), 0);
+        }
+
+        // A cursor whose generation matches resumes; index 2 leaves one entry.
+        let generation = 3u16.to_be_bytes();
+        block_on_ready(node.answer_peer_repeaters_request(
+            PublicKey([0x41; 32]),
+            &peer_repeaters_request(None, Some(&[generation[0], generation[1], 2])),
+        ));
+        let (_, body) = sent_response(&mac);
+        let view = crate::mac_command::PeerRepeatersResponseView::new(&body);
+        assert_eq!(view.entries().count(), 1, "resumed at the third entry");
+
+        // One more identity moves the generation on, and the same cursor is
+        // now stale.
+        node.observe_peer_identity(PublicKey([0x77; 32]), &peer_identity("Newcomer", &[]), 0);
+        block_on_ready(node.answer_peer_repeaters_request(
+            PublicKey([0x41; 32]),
+            &peer_repeaters_request(None, Some(&[generation[0], generation[1], 2])),
+        ));
+        let (_, body) = sent_response(&mac);
+        let view = crate::mac_command::PeerRepeatersResponseView::new(&body);
+        assert_eq!(
+            view.entries().count(),
+            4,
+            "the stale cursor restarted the walk"
+        );
+    }
+
+    /// The listing is the answer even when it is empty — a repeater that
+    /// knows of nobody says so rather than staying silent.
+    #[cfg(all(feature = "software-crypto", feature = "unsafe-advanced"))]
+    #[test]
+    fn an_empty_neighborhood_still_answers() {
+        let mac = FakeMac::new(Vec::new());
+        let node = responder_node(&mac);
+        node.enable_peer_repeaters_responder();
+
+        block_on_ready(node.answer_peer_repeaters_request(
+            PublicKey([0x41; 32]),
+            &peer_repeaters_request(None, None),
+        ));
+        let (_, body) = sent_response(&mac);
+        let view = crate::mac_command::PeerRepeatersResponseView::new(&body);
+        assert_eq!(view.total(), Some(0));
+        assert_eq!(view.entries().count(), 0);
+        assert_eq!(view.cursor(), None);
     }
 }

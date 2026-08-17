@@ -95,7 +95,10 @@ pub struct NodeIdentityProfile {
     pub name: Option<String>,
     pub location: Option<NodeLocation>,
     pub altitude_m: Option<i32>,
-    pub supported_regions: Option<Vec<u8>>,
+    /// The regions this node floods for, in their string form. Trailing
+    /// entries are dropped from an advertisement that would not otherwise
+    /// fit (node-identity.md § Supported Regions).
+    pub supported_regions: Option<Vec<String>>,
     /// Where identity option 3 comes from: the current Unix time, or
     /// `None` on a node that does not know what time it is.
     ///
@@ -339,7 +342,7 @@ impl IdentityResponder {
         let payload = self.profile.to_payload(nonce);
         let mut buf = [0u8; 192];
         buf[0] = PayloadType::NodeIdentity as u8;
-        let len = 1 + payload.encode(&mut buf[1..]).ok()?;
+        let len = 1 + payload.encode_fitting(&mut buf[1..]).ok()?;
         let solicitation = matches!(
             ctx.family,
             crate::PacketFamily::Broadcast | crate::PacketFamily::Multicast

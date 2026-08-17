@@ -140,7 +140,7 @@ struct MobileCoreSmokeTest {
                     devDiscoverable: nil,
                     repeater: UlcpRepeaterSettingsRecord(
                         enabled: true,
-                        regions: [sjc],
+                        regions: ["SJC"],
                         defaultRegion: sjc,
                         minRssiDbm: -115,
                         minSnrDb: -7

@@ -2,11 +2,19 @@ use alloc::string::String;
 use alloc::vec::Vec;
 
 use bitflags::bitflags;
+use umsh_core::REGION_NAME_MAX_LEN as REGION_STRING_MAX_LEN;
 use umsh_core::options::{OptionDecoder, OptionEncoder, parse_be_i32, parse_be_u32};
 
 use crate::app_util::parse_utf8;
 use crate::location::NodeLocation;
 use crate::{AppEncodeError, AppParseError};
+
+/// Most regions one identity payload names.
+///
+/// The list is a claim about where a repeater forwards, not an inventory, and
+/// ten of them is already more than a packet comfortably carries
+/// (node-identity.md § Supported Regions).
+pub const MAX_SUPPORTED_REGIONS: usize = 10;
 
 mod opt {
     pub const NAME: u16 = 0;
@@ -85,8 +93,17 @@ pub struct NodeIdentityPayload {
     pub altitude_m: Option<i32>,
     /// Option 3 — seconds since the Unix epoch (freshness marker).
     pub timestamp: Option<u32>,
-    /// Option 4 — concatenated 2-byte region codes this repeater serves.
-    pub supported_regions: Option<Vec<u8>>,
+    /// Option 4 — the regions this repeater floods for, in their string form,
+    /// one repetition of the option per region.
+    ///
+    /// The string travels rather than the derived code because the code is
+    /// always recoverable from the string while a hash-derived code cannot be
+    /// turned back into a name. A node lists at most
+    /// [`MAX_SUPPORTED_REGIONS`], and a list that does not fit its packet is
+    /// legitimately shortened, so this names regions the node forwards for
+    /// without promising to name them all
+    /// (node-identity.md § Supported Regions).
+    pub supported_regions: Option<Vec<String>>,
     /// Option 5 — nonce echoed from a soliciting Advertisement Request.
     /// Present only in solicited advertisements whose request carried one.
     pub nonce: Option<u32>,
@@ -130,10 +147,20 @@ impl NodeIdentityPayload {
                 opt::ALTITUDE => altitude_m = Some(parse_be_i32(value)?),
                 opt::TIMESTAMP => timestamp = Some(parse_be_u32(value)?),
                 opt::SUPPORTED_REGIONS => {
-                    if value.len() % 2 != 0 {
-                        return Err(AppParseError::InvalidOptionValue);
+                    // Repeated once per region. An entry that is empty,
+                    // over-long, or not UTF-8 is skipped rather than taken as
+                    // grounds to reject the identity, and so is anything past
+                    // the tenth: the list is advisory, and a reader that
+                    // throws away a whole advertisement over one bad region
+                    // learns nothing about the node instead of nearly
+                    // everything.
+                    let regions = supported_regions.get_or_insert_with(|| Vec::with_capacity(1));
+                    if regions.len() < MAX_SUPPORTED_REGIONS
+                        && (1..=REGION_STRING_MAX_LEN).contains(&value.len())
+                        && let Ok(text) = core::str::from_utf8(value)
+                    {
+                        regions.push(String::from(text));
                     }
-                    supported_regions = Some(Vec::from(value));
                 }
                 opt::NONCE => {
                     // A verbatim copy of the request's 4-byte field —
@@ -202,7 +229,12 @@ impl NodeIdentityPayload {
                 enc.put_u32(opt::TIMESTAMP, ts)?;
             }
             if let Some(regions) = self.supported_regions.as_deref() {
-                enc.put(opt::SUPPORTED_REGIONS, regions)?;
+                for region in regions.iter().take(MAX_SUPPORTED_REGIONS) {
+                    if !(1..=REGION_STRING_MAX_LEN).contains(&region.len()) {
+                        return Err(AppEncodeError::InvalidField);
+                    }
+                    enc.put(opt::SUPPORTED_REGIONS, region.as_bytes())?;
+                }
             }
             if let Some(nonce) = self.nonce {
                 enc.put(opt::NONCE, &nonce.to_be_bytes())?;
@@ -224,6 +256,42 @@ impl NodeIdentityPayload {
         Ok(pos)
     }
 
+    /// Encode, dropping regions from the end of the list until the result
+    /// fits.
+    ///
+    /// The region list is the one part of an identity that is allowed to
+    /// arrive incomplete: it names regions the node forwards for without
+    /// promising to name every one (node-identity.md § Supported Regions).
+    /// Everything else in the payload is a fact about the node, so a buffer
+    /// too small to hold it after the last region is gone is still an error.
+    pub fn encode_fitting(&self, buf: &mut [u8]) -> Result<usize, AppEncodeError> {
+        fn out_of_room(error: &AppEncodeError) -> bool {
+            matches!(
+                error,
+                AppEncodeError::BufferTooSmall
+                    | AppEncodeError::Core(umsh_core::EncodeError::BufferTooSmall)
+            )
+        }
+
+        match self.encode(buf) {
+            Err(error) if out_of_room(&error) => {}
+            result => return result,
+        }
+
+        let Some(regions) = self.supported_regions.as_deref() else {
+            return Err(AppEncodeError::BufferTooSmall);
+        };
+        let mut shortened = self.clone();
+        for keep in (0..regions.len()).rev() {
+            shortened.supported_regions = (keep > 0).then(|| Vec::from(&regions[..keep]));
+            match shortened.encode(buf) {
+                Err(error) if out_of_room(&error) => continue,
+                result => return result,
+            }
+        }
+        Err(AppEncodeError::BufferTooSmall)
+    }
+
     /// Encode the signed byte range — `ROLE` through the `0xFF`
     /// options terminator, inclusive — for a detached signing step.
     /// `self.signature` is ignored; the caller signs exactly the
@@ -241,7 +309,10 @@ impl NodeIdentityPayload {
             signature: None,
             ..self.clone()
         };
-        let mut pos = unsigned.encode(buf)?;
+        // Fit-aware, because a standalone identity is framed into a fixed
+        // advertisement buffer and the region list is the part that is
+        // allowed to arrive short.
+        let mut pos = unsigned.encode_fitting(buf)?;
         let mut enc = OptionEncoder::new(&mut buf[pos..]);
         enc.end_marker()?;
         pos += enc.finish();
@@ -307,11 +378,146 @@ mod tests {
             location: Some(loc),
             altitude_m: Some(1500),
             timestamp: Some(1_700_000_000),
-            supported_regions: Some(vec![0x00, 0x01, 0x00, 0x02]),
+            supported_regions: Some(vec!["SJC".into(), "Rogue Valley".into()]),
             nonce: None,
             signature: None,
         };
         assert!(round_trip(&id));
+    }
+
+    /// One option per region, so the wire carries the list rather than a
+    /// concatenation a reader would have to know how to split.
+    #[test]
+    fn each_region_is_its_own_option() {
+        let id = NodeIdentityPayload {
+            role: NodeRole::Repeater,
+            capabilities: NodeCapabilities::REPEATER,
+            name: None,
+            location: None,
+            altitude_m: None,
+            timestamp: None,
+            supported_regions: Some(vec!["SJC".into(), "MFR".into(), "0x31d9".into()]),
+            nonce: None,
+            signature: None,
+        };
+        let mut buf = [0u8; 64];
+        let len = id.encode(&mut buf).unwrap();
+
+        let mut seen = Vec::new();
+        for entry in OptionDecoder::new(&buf[2..len]) {
+            let (number, value) = entry.unwrap();
+            if number == opt::SUPPORTED_REGIONS {
+                seen.push(String::from(core::str::from_utf8(value).unwrap()));
+            }
+        }
+        assert_eq!(seen, ["SJC", "MFR", "0x31d9"]);
+        assert!(round_trip(&id));
+    }
+
+    /// The list is advisory. A reader keeps what it can use and drops the
+    /// rest rather than discarding everything else the identity says.
+    #[test]
+    fn skips_regions_it_cannot_use_and_keeps_the_identity() {
+        let mut buf = [0u8; 256];
+        buf[0] = NodeRole::Repeater.as_byte();
+        buf[1] = NodeCapabilities::REPEATER.bits();
+        let long = "R".repeat(REGION_STRING_MAX_LEN + 1);
+        let mut pos = 2;
+        {
+            let mut enc = OptionEncoder::new(&mut buf[pos..]);
+            enc.put(opt::NAME, b"tower").unwrap();
+            enc.put(opt::SUPPORTED_REGIONS, b"SJC").unwrap();
+            enc.put(opt::SUPPORTED_REGIONS, b"").unwrap();
+            enc.put(opt::SUPPORTED_REGIONS, long.as_bytes()).unwrap();
+            enc.put(opt::SUPPORTED_REGIONS, &[0xFF, 0xFE]).unwrap();
+            enc.put(opt::SUPPORTED_REGIONS, b"MFR").unwrap();
+            pos += enc.finish();
+        }
+
+        let decoded = NodeIdentityPayload::from_bytes(&buf[..pos]).unwrap();
+        assert_eq!(decoded.name.as_deref(), Some("tower"));
+        assert_eq!(decoded.supported_regions.unwrap(), ["SJC", "MFR"]);
+    }
+
+    #[test]
+    fn keeps_only_the_first_ten_regions() {
+        let mut buf = [0u8; 256];
+        buf[0] = NodeRole::Repeater.as_byte();
+        buf[1] = NodeCapabilities::REPEATER.bits();
+        let mut pos = 2;
+        {
+            let mut enc = OptionEncoder::new(&mut buf[pos..]);
+            for index in 0..MAX_SUPPORTED_REGIONS + 4 {
+                let name = alloc::format!("R{index:02}");
+                enc.put(opt::SUPPORTED_REGIONS, name.as_bytes()).unwrap();
+            }
+            pos += enc.finish();
+        }
+
+        let regions = NodeIdentityPayload::from_bytes(&buf[..pos])
+            .unwrap()
+            .supported_regions
+            .unwrap();
+        assert_eq!(regions.len(), MAX_SUPPORTED_REGIONS);
+        assert_eq!(regions[0], "R00");
+        assert_eq!(regions[MAX_SUPPORTED_REGIONS - 1], "R09");
+    }
+
+    /// A list that does not fit is shortened from the end; the rest of the
+    /// identity still goes out.
+    #[test]
+    fn drops_trailing_regions_to_fit_the_buffer() {
+        let id = NodeIdentityPayload {
+            role: NodeRole::Repeater,
+            capabilities: NodeCapabilities::REPEATER,
+            name: Some("tower".into()),
+            location: None,
+            altitude_m: None,
+            timestamp: None,
+            supported_regions: Some(vec![
+                "Rogue Valley".into(),
+                "SF Bay Area".into(),
+                "Southern Oregon".into(),
+            ]),
+            nonce: None,
+            signature: None,
+        };
+
+        let mut full = [0u8; 128];
+        let full_len = id.encode(&mut full).unwrap();
+
+        let mut clipped = [0u8; 128];
+        let clipped_len = id.encode_fitting(&mut clipped[..full_len - 8]).unwrap();
+        let decoded = NodeIdentityPayload::from_bytes(&clipped[..clipped_len]).unwrap();
+
+        assert_eq!(decoded.name.as_deref(), Some("tower"));
+        assert_eq!(
+            decoded.supported_regions.unwrap(),
+            ["Rogue Valley", "SF Bay Area"],
+            "only the entries that did not fit are dropped, and from the end"
+        );
+    }
+
+    /// Only the regions are optional. A buffer that cannot hold the identity
+    /// with every region gone is an encoding failure, not a shorter identity.
+    #[test]
+    fn refuses_to_shorten_anything_but_the_regions() {
+        let id = NodeIdentityPayload {
+            role: NodeRole::Repeater,
+            capabilities: NodeCapabilities::REPEATER,
+            name: Some("a rather long tower name".into()),
+            location: None,
+            altitude_m: None,
+            timestamp: None,
+            supported_regions: Some(vec!["SJC".into()]),
+            nonce: None,
+            signature: None,
+        };
+        let mut buf = [0u8; 12];
+        assert!(matches!(
+            id.encode_fitting(&mut buf),
+            Err(AppEncodeError::BufferTooSmall)
+        ));
     }
 
     #[test]

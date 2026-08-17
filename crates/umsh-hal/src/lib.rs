@@ -58,6 +58,20 @@ impl Snr {
     pub const fn as_decibels(self) -> i16 {
         self.0 / 10
     }
+
+    /// Return the stored value in quarter-dB steps, rounding to the nearest
+    /// step — the form a peer-repeater entry reports.
+    ///
+    /// The rounding inverse of [`from_quarter_db_steps`](Self::from_quarter_db_steps):
+    /// every value that came from a quarter-dB step returns that step.
+    pub const fn as_quarter_db_steps(self) -> i16 {
+        let scaled = self.0.saturating_mul(2);
+        if scaled >= 0 {
+            (scaled + 2) / 5
+        } else {
+            (scaled - 2) / 5
+        }
+    }
 }
 
 impl core::fmt::Display for Snr {
@@ -378,5 +392,34 @@ impl KeyValueStore for NoKeyValueStore {
 
     async fn delete(&self, _: &[u8]) -> Result<(), Self::Error> {
         Ok(())
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::Snr;
+
+    /// The wire form of an SNR in a peer-repeater entry is quarter-dB
+    /// steps, so a value that arrived as one has to leave as the same one
+    /// — otherwise relaying an observation would drift it a step at a
+    /// time.
+    #[test]
+    fn quarter_db_steps_round_trip_through_centibels() {
+        for steps in -128..=127i16 {
+            assert_eq!(
+                Snr::from_quarter_db_steps(steps).as_quarter_db_steps(),
+                steps,
+                "steps {steps}"
+            );
+        }
+    }
+
+    #[test]
+    fn quarter_db_steps_round_to_the_nearest_step() {
+        assert_eq!(Snr::from_decibels(0).as_quarter_db_steps(), 0);
+        assert_eq!(Snr::from_decibels(5).as_quarter_db_steps(), 20);
+        assert_eq!(Snr::from_decibels(-7).as_quarter_db_steps(), -28);
+        // 0.3 dB sits between the first and second step and rounds up.
+        assert_eq!(Snr::from_centibels(3).as_quarter_db_steps(), 1);
     }
 }

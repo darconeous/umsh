@@ -608,9 +608,10 @@ impl Default for OperatingPolicy {
 ///   received below these values are not flood-forwarded; this prevents marginal receptions
 ///   from being re-injected into the network at full power, which would degrade SNR for
 ///   nearby nodes rather than help. These thresholds do not apply to source-routed hops.
-/// - **Flood contention tuning** — controls the SNR-to-delay mapping used when several
-///   eligible repeaters contend to flood-forward the same frame. These values should usually
-///   remain aligned across the mesh.
+/// - **Flood contention tuning** — controls the signal-to-delay mapping used when several
+///   eligible repeaters contend to flood-forward the same frame. The window is deterministic
+///   in the reception's SNR and RSSI, with a small random tie-breaker on top. These values
+///   should usually remain aligned across the mesh.
 /// - **`amateur_radio_mode`** — determines whether the repeater may forward encrypted or
 ///   blind-unicast frames, and whether it must inject a station callsign. See
 ///   [`AmateurRadioMode`].
@@ -632,14 +633,21 @@ pub struct RepeaterConfig {
     pub min_rssi: Option<i16>,
     /// Minimum SNR threshold for flood forwarding.
     pub min_snr: Option<i8>,
-    /// Lower clamp bound for SNR-based flood forwarding contention.
+    /// Lower clamp bound for the SNR quality term of flood forwarding contention.
     pub flood_contention_snr_low_db: i8,
-    /// Upper clamp bound for SNR-based flood forwarding contention.
+    /// Upper clamp bound for the SNR quality term of flood forwarding contention.
     pub flood_contention_snr_high_db: i8,
+    /// Lower clamp bound for the RSSI signal term of flood forwarding contention.
+    pub flood_contention_rssi_low_dbm: i16,
+    /// Upper clamp bound for the RSSI signal term of flood forwarding contention.
+    pub flood_contention_rssi_high_dbm: i16,
     /// Minimum forwarding contention window as a percentage of `T_frame`.
     pub flood_contention_min_window_percent: u8,
-    /// Maximum forwarding contention window as a multiple of `T_frame`.
-    pub flood_contention_max_window_frames: u8,
+    /// Maximum forwarding contention window as a percentage of `T_frame`.
+    pub flood_contention_max_window_percent: u8,
+    /// Random tie-breaker added to the deterministic contention window, as a
+    /// percentage of `T_frame`.
+    pub flood_contention_jitter_percent: u8,
     /// ACK protection interval as a percentage of `T_frame`, added to the
     /// contention delay when flood-forwarding an ack-requested packet that was
     /// received with no remaining source-route hops (see channel-access.md
@@ -661,10 +669,13 @@ impl Default for RepeaterConfig {
             default_region: None,
             min_rssi: None,
             min_snr: None,
-            flood_contention_snr_low_db: -6,
-            flood_contention_snr_high_db: 15,
-            flood_contention_min_window_percent: 20,
-            flood_contention_max_window_frames: 2,
+            flood_contention_snr_low_db: -9,
+            flood_contention_snr_high_db: 3,
+            flood_contention_rssi_low_dbm: -100,
+            flood_contention_rssi_high_dbm: -70,
+            flood_contention_min_window_percent: 0,
+            flood_contention_max_window_percent: 50,
+            flood_contention_jitter_percent: 10,
             flood_contention_ack_guard_percent: 25,
             flood_contention_max_deferrals: 3,
             amateur_radio_mode: AmateurRadioMode::Unlicensed,
@@ -903,6 +914,7 @@ pub struct Mac<
     counter_store: P::CounterStore,
     identities: Vec<Option<IdentitySlot<P::Identity, PEERS, ACKS, FRAME>>, IDENTITIES>,
     peer_registry: PeerRegistry<PEERS>,
+    transmitter_observations: crate::TransmitterObservations,
     channels: ChannelTable<CHANNELS, RN, HN>,
     dup_cache: DuplicateCache<DUP>,
     multicast_unknown_dup_cache: DuplicateCache<DUP>,
@@ -946,6 +958,7 @@ impl<
             counter_store,
             identities: Vec::new(),
             peer_registry: PeerRegistry::new(),
+            transmitter_observations: crate::TransmitterObservations::new(),
             channels: ChannelTable::new(),
             dup_cache: DuplicateCache::new(),
             multicast_unknown_dup_cache: DuplicateCache::new(),
@@ -962,6 +975,12 @@ impl<
     /// Cumulative frame tallies since construction.
     pub const fn counters(&self) -> MacCounters {
         self.counters
+    }
+
+    /// What has been heard from whom, most recently — the signal half of a
+    /// peer-repeater listing.
+    pub fn transmitter_observations(&self) -> &crate::TransmitterObservations {
+        &self.transmitter_observations
     }
 
     /// Borrow the underlying radio.
@@ -2118,9 +2137,18 @@ impl<
                     }
                     return Ok(None);
                 }
+                // Uniform over [T_frame/40, T_frame/4] (channel-access.md
+                // § Backoff Procedure): long enough that a frame already on the
+                // air has a chance to finish, short enough that sixteen
+                // attempts still fit inside the sender's patience.
+                let t_frame_ms = self.radio.t_frame_ms();
+                let backoff_lo_ms = t_frame_ms / 40;
+                let backoff_hi_ms = (t_frame_ms / 4).max(backoff_lo_ms);
                 let backoff_ms = u64::from(
-                    self.rng
-                        .random_range(..self.radio.t_frame_ms().saturating_add(1)),
+                    backoff_lo_ms.saturating_add(
+                        self.rng
+                            .random_range(..(backoff_hi_ms - backoff_lo_ms).saturating_add(1)),
+                    ),
                 );
                 self.tx_queue
                     .enqueue_with_state(
@@ -2431,6 +2459,7 @@ impl<
         on_event: impl FnMut(LocalIdentityId, crate::MacEventRef<'_>),
     ) -> bool {
         MacCounters::bump(&mut self.counters.rx_frames);
+        self.note_transmitter_observation(&buf[..frame_len], rx);
         let handled = self
             .process_received_frame_inner(buf, frame_len, rx, on_event)
             .await;
@@ -3343,7 +3372,9 @@ impl<
                             // send — and drop the frame back out of the queue —
                             // before the retry it just scheduled ever aired.
                             let retry_deadline_ms =
-                                not_before_ms.saturating_add(self.forwarded_ack_timeout_ms());
+                                not_before_ms.saturating_add(self.forwarded_ack_timeout_ms(
+                                    Self::allowed_hop_distance(rewritten.frame.as_slice()),
+                                ));
                             if let Some(pending) = self
                                 .identity_mut(identity_id)
                                 .and_then(|slot| slot.pending_ack_mut(&receipt))
@@ -4504,6 +4535,53 @@ impl<
         Some((peer_id, info.public_key))
     }
 
+    /// Record who was heard, and how well, from any frame off the air.
+    ///
+    /// Distinct from route learning, which records the way to a *peer*: this
+    /// is the transmitter, whoever it was talking to. A frame forwarded past
+    /// this node or simply overheard teaches nothing about a peer and never
+    /// reaches the host, but it is exactly what proves a neighboring repeater
+    /// is on the air — which is what a peer-repeater listing reports.
+    ///
+    /// Repeaters prepend to a trace route, so a trace's first hint is the hop
+    /// just heard. Without one the frame came off the originator's own
+    /// transmitter, and the originator is who was heard.
+    fn note_transmitter_observation(&mut self, frame: &[u8], rx: &RxInfo) {
+        // Only a real reception carries measurements; a loopback or a
+        // backhauled frame would record a link that has no radio in it.
+        if !rx.origin.is_measured() {
+            return;
+        }
+        let Ok(header) = PacketHeader::parse(frame) else {
+            return;
+        };
+        let hint = ParsedOptions::extract(frame, header.options_range.clone())
+            .ok()
+            .and_then(|options| options.trace_route)
+            .and_then(|range| frame.get(range))
+            .and_then(|trace| trace.get(..2))
+            .map(|hint| RouterHint([hint[0], hint[1]]))
+            .or_else(|| match header.source {
+                SourceAddrRef::Hint(hint) => Some(RouterHint([hint.0[0], hint.0[1]])),
+                SourceAddrRef::FullKeyAt { offset } => frame
+                    .get(offset..offset + 32)
+                    .and_then(|bytes| <[u8; 32]>::try_from(bytes).ok())
+                    .map(|bytes| {
+                        let node = PublicKey(bytes).hint();
+                        RouterHint([node.0[0], node.0[1]])
+                    }),
+                // A blind frame hides who sent it, so there is nobody here
+                // to record.
+                SourceAddrRef::None | SourceAddrRef::Encrypted { .. } => None,
+            });
+        let Some(hint) = hint else {
+            return;
+        };
+        let now_ms = self.clock.now_ms();
+        self.transmitter_observations
+            .observe(hint, rx.rssi, rx.snr, now_ms);
+    }
+
     fn learn_route_for_peer(&mut self, peer_id: PeerId, frame: &[u8], header: &PacketHeader) {
         let now_ms = self.clock.now_ms();
         self.peer_registry.touch(peer_id, now_ms);
@@ -4846,7 +4924,11 @@ impl<
             // An ack-requested packet flood-forwarded with no remaining
             // source-route hops elicits an immediate, CAD-skipping ACK from its
             // destination (channel-access.md § Immediate ACK Transmission);
-            // hold the forward back long enough for that ACK to clear.
+            // hold the forward back long enough for that ACK to clear. Reaching
+            // this branch already means the source route is exhausted, so the
+            // "no remaining hops" half of the condition is satisfied here by
+            // construction; the deferral path, which judges an overheard copy
+            // that may still be routed, tests it explicitly.
             if header.ack_requested() {
                 delay_ms = delay_ms.saturating_add(self.ack_guard_delay_ms());
             }
@@ -5302,6 +5384,21 @@ impl<
         }
     }
 
+    /// Deterministic flood-forwarding contention window, plus its random
+    /// tie-breaker (channel-access.md § Flood Forwarding Contention).
+    ///
+    /// Two clamped terms describe the reception: `quality` from SNR, which says
+    /// how cleanly the frame was demodulated, and `signal` from RSSI, which says
+    /// how loud its transmitter is here. The window takes
+    /// `max(1 − quality, signal)`, so a repeater waits longer if either the copy
+    /// it holds is poor *or* it sits close enough to the previous hop that its
+    /// forward would mostly cover ground already covered. Clean, distant
+    /// receptions — the ones that carry the flood outward — go first.
+    ///
+    /// The quality scale's floor is raised from the spec's constant to the
+    /// effective minimum-SNR forwarding threshold when one is set: eligibility
+    /// already cut the range off there, and grading receptions against ground
+    /// none of them can occupy would compress every survivor toward "clean".
     fn sample_flood_contention_delay_ms(&mut self, rx: &RxInfo, options: &ParsedOptions) -> u64 {
         // Contention delay staggers the repeaters that all heard one
         // transmission, weighted so the best-placed one goes first. A
@@ -5312,38 +5409,48 @@ impl<
         }
         let effective_threshold_db =
             Self::effective_min_snr(options, &self.repeater).unwrap_or(i8::MIN);
-        let low_db = self
+        let snr_low_db = self
             .repeater
             .flood_contention_snr_low_db
             .max(effective_threshold_db);
-        let high_db = self
+        let snr_high_db = self
             .repeater
             .flood_contention_snr_high_db
-            .max(low_db.saturating_add(1));
-        let low = i32::from(Snr::from_decibels(low_db).as_centibels());
-        let high = i32::from(Snr::from_decibels(high_db).as_centibels());
-        let received = i32::from(rx.snr.as_centibels());
-        let clamped = (received - low).clamp(0, high - low) as u32;
-        let range = (high - low) as u32;
+            .max(snr_low_db.saturating_add(1));
+        let snr_low = i32::from(Snr::from_decibels(snr_low_db).as_centibels());
+        let snr_high = i32::from(Snr::from_decibels(snr_high_db).as_centibels());
+        let snr_received = i32::from(rx.snr.as_centibels());
+        let quality_den = (snr_high - snr_low) as u64;
+        let quality_num = (snr_received - snr_low).clamp(0, snr_high - snr_low) as u64;
+
+        let rssi_low = i32::from(self.repeater.flood_contention_rssi_low_dbm);
+        let rssi_high =
+            i32::from(self.repeater.flood_contention_rssi_high_dbm).max(rssi_low.saturating_add(1));
+        let rssi_received = i32::from(rx.rssi);
+        let signal_den = (rssi_high - rssi_low) as u64;
+        let signal_num = (rssi_received - rssi_low).clamp(0, rssi_high - rssi_low) as u64;
+
         let t_frame_ms = u64::from(self.radio.t_frame_ms());
         let min_window_ms = t_frame_ms
             .saturating_mul(u64::from(self.repeater.flood_contention_min_window_percent))
             / 100;
         let max_window_ms = t_frame_ms
-            .saturating_mul(u64::from(self.repeater.flood_contention_max_window_frames))
-            .max(min_window_ms);
-        let window_span_ms = max_window_ms.saturating_sub(min_window_ms);
-        let window_ms = if range == 0 {
-            max_window_ms
+            .saturating_mul(u64::from(self.repeater.flood_contention_max_window_percent))
+            / 100;
+        let max_window_ms = max_window_ms.max(min_window_ms);
+        let span_ms = max_window_ms.saturating_sub(min_window_ms);
+        // span × (1 − quality) and span × signal, each as one integer product.
+        let quality_term = span_ms.saturating_mul(quality_den - quality_num) / quality_den;
+        let signal_term = span_ms.saturating_mul(signal_num) / signal_den;
+        let window_ms = min_window_ms.saturating_add(quality_term.max(signal_term));
+
+        let jitter_ms = t_frame_ms
+            .saturating_mul(u64::from(self.repeater.flood_contention_jitter_percent))
+            / 100;
+        if jitter_ms == 0 {
+            window_ms
         } else {
-            max_window_ms.saturating_sub(
-                window_span_ms.saturating_mul(u64::from(clamped)) / u64::from(range),
-            )
-        };
-        if window_ms == 0 {
-            0
-        } else {
-            self.rng.random_range(..window_ms.saturating_add(1))
+            window_ms.saturating_add(self.rng.random_range(..jitter_ms.saturating_add(1)))
         }
     }
 
@@ -5512,7 +5619,8 @@ impl<
     fn note_transmitted_tracked(&mut self, receipt: SendReceipt, frame: &[u8]) {
         let sent_ms = self.clock.now_ms();
         let direct_ack_deadline_ms = sent_ms.saturating_add(self.direct_ack_timeout_ms());
-        let forwarded_ack_deadline_ms = sent_ms.saturating_add(self.forwarded_ack_timeout_ms());
+        let forwarded_ack_deadline_ms = sent_ms
+            .saturating_add(self.forwarded_ack_timeout_ms(Self::allowed_hop_distance(frame)));
         let repeat_only_deadline_ms = sent_ms.saturating_add(self.repeat_confirm_timeout_ms());
         let confirm_timeout_ms = self.forward_confirm_timeout_ms();
         let confirm_key = Self::confirmation_key(frame);
@@ -5586,6 +5694,12 @@ impl<
         }
     }
 
+    /// How long to wait for the next hop to retransmit before retrying.
+    ///
+    /// The next hop must hear the frame out, wait out its contention window and
+    /// jitter, hold back for the destination's immediate ACK, and then transmit:
+    /// `2 × T_frame + W_max + W_jitter + D_ack`, which at the default tuning is
+    /// `2.85 × T_frame` (repeater-operation.md § Forwarding Confirmation).
     fn forward_confirm_timeout_ms(&self) -> u64 {
         let t_frame_ms = u64::from(self.radio.t_frame_ms());
         t_frame_ms
@@ -5594,9 +5708,17 @@ impl<
             .saturating_add(t_frame_ms)
     }
 
+    /// Longest contention delay a forwarding repeater can draw: the deterministic
+    /// window at its maximum plus the whole jitter range.
     fn max_forward_contention_delay_ms(&self) -> u64 {
-        u64::from(self.radio.t_frame_ms())
-            .saturating_mul(u64::from(self.repeater.flood_contention_max_window_frames))
+        let t_frame_ms = u64::from(self.radio.t_frame_ms());
+        let max_window_ms = t_frame_ms
+            .saturating_mul(u64::from(self.repeater.flood_contention_max_window_percent))
+            / 100;
+        let jitter_ms = t_frame_ms
+            .saturating_mul(u64::from(self.repeater.flood_contention_jitter_percent))
+            / 100;
+        max_window_ms.saturating_add(jitter_ms)
     }
 
     /// Jitter cap for a forwarding-confirmation retry: one frame time, flat
@@ -5668,9 +5790,50 @@ impl<
         u64::from(self.radio.t_frame_ms()).saturating_mul(10)
     }
 
-    fn forwarded_ack_timeout_ms(&self) -> u64 {
-        self.repeat_confirm_timeout_ms()
-            .saturating_add(u64::from(self.radio.t_frame_ms()))
+    /// How long an ACK-requested send that travels through repeaters waits
+    /// before the ACK is declared lost.
+    ///
+    /// The retry ladder covers the first hop — that is the only hop this node
+    /// can observe. Everything past it is distance: the packet has to cross
+    /// `hops` forwards to arrive and the ACK has to cross them back, and each
+    /// crossing costs a frame time plus the forwarder's contention window and
+    /// ACK guard. Charging for that distance is what keeps a delivery that
+    /// genuinely succeeded from reporting a timeout to the application; a
+    /// single frame time, which is what this allowed before, only ever
+    /// sufficed for a one-hop return.
+    fn forwarded_ack_timeout_ms(&self, hops: u8) -> u64 {
+        let t_frame_ms = u64::from(self.radio.t_frame_ms());
+        let per_hop_ms = self
+            .forward_confirm_timeout_ms()
+            .saturating_sub(t_frame_ms)
+            .max(t_frame_ms);
+        self.repeat_confirm_timeout_ms().saturating_add(
+            per_hop_ms
+                .saturating_mul(2)
+                .saturating_mul(u64::from(hops.max(1))),
+        )
+    }
+
+    /// Hops the sender allowed this frame, and so the distance its ACK has to
+    /// come back over.
+    ///
+    /// A hybrid route spends both budgets in turn, so they add. The floor of
+    /// one keeps a frame whose header cannot be re-read from collapsing the
+    /// return allowance to nothing.
+    fn allowed_hop_distance(frame: &[u8]) -> u8 {
+        let Ok(header) = PacketHeader::parse(frame) else {
+            return 1;
+        };
+        let mut hops = header
+            .flood_hops
+            .map(|flood_hops| flood_hops.remaining())
+            .unwrap_or(0);
+        if let Ok(options) = ParsedOptions::extract(frame, header.options_range.clone())
+            && let Some(range) = options.source_route
+        {
+            hops = hops.saturating_add(u8::try_from(range.len() / 2).unwrap_or(u8::MAX));
+        }
+        hops.max(1)
     }
 
     /// How long a send waits to overhear its own packet carried onward before

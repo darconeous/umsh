@@ -56,7 +56,7 @@ final class DeviceConfigDraft {
     var identMobile: Bool
     var devDiscoverable: Bool
     var repeaterEnabled: Bool
-    var regions: [Data]
+    var regions: [String]
     var defaultRegion: Data?
     var minRssiDBm: Int16?
     var minSnrDB: Int8?

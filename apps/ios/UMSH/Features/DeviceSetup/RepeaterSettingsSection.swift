@@ -19,6 +19,21 @@ enum RegionCodeText {
     static func hex(_ code: Data) -> String {
         "0x" + code.map { String(format: "%02X", $0) }.joined()
     }
+
+    /// `SJC (0x7853)` for a region as the operator wrote it. The code is
+    /// what a capture shows, and a hashed name cannot be read back out of
+    /// it, so the string alone would leave the two unconnectable.
+    static func label(region: String) -> String {
+        guard let code = try? regionCodeFromString(text: region) else { return region }
+        let hex = self.hex(code)
+        return region.caseInsensitiveCompare(hex) == .orderedSame ? hex : "\(region) (\(hex))"
+    }
+
+    /// The code a region string derives to, which is what travels on the
+    /// air and what the default-region tag is chosen from.
+    static func code(of region: String) -> Data? {
+        try? regionCodeFromString(text: region)
+    }
 }
 
 /// The repeater forwarding policy for one device.
@@ -30,7 +45,7 @@ enum RegionCodeText {
 /// that is silent for reasons nobody can find.
 struct RepeaterSettingsSection: View {
     @Binding var enabled: Bool
-    @Binding var regions: [Data]
+    @Binding var regions: [String]
     @Binding var defaultRegion: Data?
     @Binding var minRssiDBm: Int16?
     @Binding var minSnrDB: Int8?
@@ -52,11 +67,11 @@ struct RepeaterSettingsSection: View {
         if enabled {
             Section {
                 ForEach(regions, id: \.self) { region in
-                    Text(RegionCodeText.label(region))
+                    Text(RegionCodeText.label(region: region))
                         .font(.body.monospaced())
                 }
                 .onDelete { offsets in
-                    let removed = offsets.map { regions[$0] }
+                    let removed = offsets.compactMap { RegionCodeText.code(of: regions[$0]) }
                     regions.remove(atOffsets: offsets)
                     if let defaultRegion, removed.contains(defaultRegion) {
                         self.defaultRegion = nil
@@ -91,7 +106,7 @@ struct RepeaterSettingsSection: View {
                 }
                 .disabled(defaultRegionChoices.isEmpty)
             } footer: {
-                if let defaultRegion, !regions.contains(defaultRegion) {
+                if let defaultRegion, !regionCodes.contains(defaultRegion) {
                     Text("This device tags untagged traffic with a region it does not relay. Add \(RegionCodeText.label(defaultRegion)) to the list above, or choose a different tag.")
                 } else if regions.isEmpty {
                     Text("Add a routing region to be able to tag traffic that arrives without one.")
@@ -128,13 +143,20 @@ struct RepeaterSettingsSection: View {
     /// cross-check the two, so that state is reachable — and hiding it would
     /// show **None** over a value still on the device, leave no way to clear
     /// it, and write it back unchanged on the next apply.
+    /// The codes the listed regions derive to, which is the form the
+    /// default-region tag is stored and compared in.
+    private var regionCodes: [Data] {
+        regions.compactMap(RegionCodeText.code(of:))
+    }
+
     private var defaultRegionChoices: [Data] {
-        guard let defaultRegion, !regions.contains(defaultRegion) else { return regions }
-        return regions + [defaultRegion]
+        let codes = regionCodes
+        guard let defaultRegion, !codes.contains(defaultRegion) else { return codes }
+        return codes + [defaultRegion]
     }
 
     private func defaultRegionLabel(_ region: Data) -> String {
-        regions.contains(region)
+        regionCodes.contains(region)
             ? RegionCodeText.label(region)
             : "\(RegionCodeText.label(region)) — not relayed"
     }
@@ -150,13 +172,16 @@ struct RepeaterSettingsSection: View {
     private func addRegion() {
         let text = regionInput.trimmingCharacters(in: .whitespaces)
         guard !text.isEmpty else { return }
-        guard let code = try? regionCodeFromString(text: text) else {
-            regionProblem = "That is not a region code. Use a three-letter airport code, a region name, or 0x followed by up to four hex digits."
+        // Any string within the length bound is a region — an airport
+        // code, a name, or a literal code — so the only rejection left is
+        // one the device would refuse to store.
+        guard RegionCodeText.code(of: text) != nil else {
+            regionProblem = "That region name is too long. Use up to 24 characters — a three-letter airport code, a region name, or 0x followed by four hex digits."
             return
         }
         regionProblem = nil
         regionInput = ""
-        guard !regions.contains(code) else { return }
-        regions.append(code)
+        guard !regions.contains(text) else { return }
+        regions.append(text)
     }
 }

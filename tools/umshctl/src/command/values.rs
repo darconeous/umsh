@@ -219,18 +219,20 @@ impl FromStr for DutyLimitArg {
     }
 }
 
-/// Parse one region code, rejecting the empty element a stray comma
-/// leaves behind. Anything that is not an airport code or `0x` literal
-/// is hashed as a region name, so this only fails on empty input.
-fn parse_region(text: &str) -> Result<RegionCode, String> {
+/// Parse one region string — an airport code, a name, or a `0x` literal.
+/// The string is what the device stores; deriving it here only proves it
+/// is within the bounds a device will accept, which rejects the empty
+/// element a stray comma leaves behind and anything past 24 octets.
+fn parse_region(text: &str) -> Result<String, String> {
     text.parse::<RegionCode>()
-        .map_err(|error| format!("region {text:?}: {error}"))
+        .map_err(|error| format!("region {text:?}: {error}"))?;
+    Ok(text.to_owned())
 }
 
 /// A comma-separated region list, or `none` for the empty list — which
 /// means "no regional restriction", not a region named "none".
 #[derive(Clone, Debug, PartialEq, Eq)]
-pub struct RegionListArg(pub Vec<RegionCode>);
+pub struct RegionListArg(pub Vec<String>);
 
 impl FromStr for RegionListArg {
     type Err = String;
@@ -246,6 +248,18 @@ impl FromStr for RegionListArg {
     }
 }
 
+/// One region string, for the entry-at-a-time edits.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct RegionArg(pub String);
+
+impl FromStr for RegionArg {
+    type Err = String;
+
+    fn from_str(text: &str) -> Result<Self, Self::Err> {
+        parse_region(text).map(Self)
+    }
+}
+
 /// One region code, or `none` to clear the setting.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub struct OptRegionArg(pub Option<RegionCode>);
@@ -257,7 +271,10 @@ impl FromStr for OptRegionArg {
         if text.eq_ignore_ascii_case("none") {
             return Ok(Self(None));
         }
-        parse_region(text).map(|code| Self(Some(code)))
+        // The default region is stored as a code, so it derives here.
+        text.parse::<RegionCode>()
+            .map(|code| Self(Some(code)))
+            .map_err(|error| format!("region {text:?}: {error}"))
     }
 }
 
@@ -364,22 +381,27 @@ mod tests {
     }
 
     #[test]
-    fn region_lists_parse_every_code_form() {
+    fn region_lists_keep_every_string_form_as_written() {
         assert_eq!(
             "SJC,0x7853,Rogue Valley"
                 .parse::<RegionListArg>()
                 .unwrap()
                 .0,
-            vec![
-                RegionCode::from_iata("SJC").unwrap(),
-                RegionCode::from_u16(0x7853),
-                RegionCode::from_name("Rogue Valley"),
-            ]
+            vec!["SJC", "0x7853", "Rogue Valley"]
         );
         // `none` is the empty list, which means "no regional
         // restriction" — not a region literally named "none".
-        assert_eq!("none".parse::<RegionListArg>().unwrap().0, Vec::new());
+        assert_eq!(
+            "none".parse::<RegionListArg>().unwrap().0,
+            Vec::<String>::new()
+        );
         assert!("SJC,".parse::<RegionListArg>().is_err());
+        // The device's bounds are enforced here, not a round trip later.
+        assert!("A".repeat(25).parse::<RegionArg>().is_err());
+        assert_eq!(
+            "Rogue Valley".parse::<RegionArg>().unwrap().0,
+            "Rogue Valley"
+        );
     }
 
     #[test]

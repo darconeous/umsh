@@ -84,7 +84,7 @@ f.ni_name      = ProtoField.string ("umsh.app.ni.name",     "Node Name")
 f.ni_location  = ProtoField.bytes  ("umsh.app.ni.location", "Node Location")
 f.ni_altitude  = ProtoField.int32  ("umsh.app.ni.altitude", "Altitude (m)",   base.DEC)
 f.ni_timestamp = ProtoField.uint32 ("umsh.app.ni.timestamp","Unix Timestamp", base.DEC)
-f.ni_regions   = ProtoField.bytes  ("umsh.app.ni.regions",  "Supported Regions")
+f.ni_regions   = ProtoField.string ("umsh.app.ni.regions",  "Supported Region")
 f.ni_nonce     = ProtoField.bytes  ("umsh.app.ni.nonce",    "Nonce")
 f.ni_unknown   = ProtoField.bytes  ("umsh.app.ni.unk",      "Unknown Option")
 f.ni_sig       = ProtoField.bytes  ("umsh.app.ni.sig",      "EdDSA Signature")
@@ -96,6 +96,7 @@ local MAC_COMMANDS = {
   [4]="Echo Request",       [5]="Echo Response",
   [6]="PFS Session Request",[7]="PFS Session Response",
   [8]="End PFS Session",    [9]="No-op",
+  [10]="Peer Repeaters Req",[11]="Peer Repeaters Resp",
 }
 f.mac_cmd_id   = ProtoField.uint8  ("umsh.app.mac.cmd",     "Command",        base.HEX, MAC_COMMANDS)
 f.mac_nonce    = ProtoField.bytes  ("umsh.app.mac.nonce",   "Nonce")
@@ -108,6 +109,19 @@ f.mac_snr      = ProtoField.int8   ("umsh.app.mac.snr",     "SNR",            ba
 f.mac_echo     = ProtoField.bytes  ("umsh.app.mac.echo",    "Echo Data")
 f.mac_pfs_key  = ProtoField.bytes  ("umsh.app.mac.pfs_key", "Ephemeral Address")
 f.mac_duration = ProtoField.uint16 ("umsh.app.mac.dur",     "Session Duration (min)", base.DEC)
+
+-- Peer Repeaters (MAC commands 10 and 11)
+f.pr_cursor    = ProtoField.bytes  ("umsh.app.mac.pr.cursor","Cursor")
+f.pr_total     = ProtoField.uint8  ("umsh.app.mac.pr.total", "Total Entries",  base.DEC)
+f.pr_entry     = ProtoField.bytes  ("umsh.app.mac.pr.entry", "Peer Repeater")
+f.pr_hint      = ProtoField.string ("umsh.app.mac.pr.hint",  "Node Hint")
+f.pr_name      = ProtoField.string ("umsh.app.mac.pr.name",  "Node Name")
+f.pr_rssi      = ProtoField.int16  ("umsh.app.mac.pr.rssi",  "RSSI",           base.DEC)
+f.pr_snr       = ProtoField.int8   ("umsh.app.mac.pr.snr",   "SNR",            base.DEC)
+f.pr_heard     = ProtoField.uint16 ("umsh.app.mac.pr.heard", "Last Heard (min)", base.DEC)
+f.pr_location  = ProtoField.bytes  ("umsh.app.mac.pr.loc",   "Location")
+f.pr_regions   = ProtoField.string ("umsh.app.mac.pr.regions","Supported Flood Regions")
+f.pr_unknown   = ProtoField.bytes  ("umsh.app.mac.pr.unk",   "Unknown Option")
 
 -- Text Message
 f.txt_opts     = ProtoField.bytes  ("umsh.app.txt.opts",    "Message Options")
@@ -159,6 +173,9 @@ proto.fields = {
   f.mac_cmd_id, f.mac_nonce, f.mac_rssi, f.mac_snr,
   f.mac_echo, f.mac_pfs_key, f.mac_duration,
   f.mac_filt_hint, f.mac_filt_role, f.mac_filt_caps, f.mac_unknown,
+  f.pr_cursor, f.pr_total, f.pr_entry, f.pr_hint, f.pr_name,
+  f.pr_rssi, f.pr_snr, f.pr_heard, f.pr_location, f.pr_regions,
+  f.pr_unknown,
   f.txt_opts, f.txt_opt_type, f.txt_handle, f.txt_seq,
   f.txt_regarding, f.txt_edit, f.txt_bg_color, f.txt_fg_color,
   f.txt_unknown, f.txt_body,
@@ -299,10 +316,15 @@ local function dissect_node_identity(payload, subtree, tvb, ctx, pinfo)
           for i = 1, v_len do v = v * 256 + byte_at(val, i) end
           opts_tree:add(f.ni_timestamp, opt_tvb, v)
         elseif num == 4 then
-          opts_tree:add(f.ni_regions, opt_tvb)
-            :set_text(string.format("Supported Regions (%d region%s)",
-                                     v_len / 2,
-                                     (v_len == 2) and "" or "s"))
+          -- Repeated: one region name per option, as UTF-8. The 2-octet
+          -- forwarding code is derived from the name, not carried here.
+          local item = opts_tree:add(f.ni_regions, opt_tvb, val)
+          if v_len < 1 or v_len > 24 then
+            if ctx and ctx.flag then
+              ctx.flag(item, opt_tvb, string.format(
+                "Supported region must be 1 to 24 octets of UTF-8 (is %d)", v_len))
+            end
+          end
         elseif num == 5 then
           -- Echoed from the Identity Request that solicited this payload.
           opts_tree:add(f.ni_nonce, tvb(opts_start - 1 + raw_pos - 1 + consumed - v_len, v_len))
@@ -354,6 +376,119 @@ local function dissect_node_identity(payload, subtree, tvb, ctx, pinfo)
 end
 
 -- ──────────────────────────────────────────────────────────────────────────
+-- Peer Repeaters entry list (MAC command 11, after the response options)
+--
+-- Each entry is its own CoAP option list terminated by 0xFF; the last one may
+-- leave the terminator off. Entry options:
+--   0=Node Hint, 1=Node Name, 2=RSSI/SNR, 3=Last Heard, 4=Location,
+--   5=Supported Flood Regions.
+-- ──────────────────────────────────────────────────────────────────────────
+
+-- A minimal big-endian unsigned integer, as several entry options carry.
+local function minimal_uint(val)
+  local v = 0
+  for i = 1, #val do v = v * 256 + byte_at(val, i) end
+  return v
+end
+
+-- The reading of a 2-byte region code: an IATA airport code where one
+-- decodes, hex otherwise. Mirrors the packet-option rendering in umsh.lua.
+local function region_code_label(opts_module, code)
+  if opts_module and opts_module.decode_arnce then
+    local iata
+    pcall(function() iata = opts_module.decode_arnce(code) end)
+    if iata and iata:match("^%u%u%u$") then return iata end
+  end
+  return "0x" .. base58.hex_bytes(code)
+end
+
+local function dissect_peer_repeater_entry(opts_module, payload, start, entry_len,
+                                           subtree, tvb, ctx)
+  local entry_tree = subtree:add(f.pr_entry, tvb(start - 1, entry_len))
+  local label
+  pcall(function()
+    local pos = 1
+    for num, val, consumed in opts_module.decode(payload, start) do
+      local v_len   = #val
+      local opt_tvb = tvb(start - 1 + pos - 1, consumed)
+      local val_tvb = tvb(start - 1 + pos - 1 + consumed - v_len, v_len)
+
+      if num == 0 then
+        -- Two bytes when the answering node knows this hop only from a
+        -- route, three when an identity named it.
+        local shown
+        if v_len == 2 then
+          shown = base58.router_hint_full(val) .. " (router hint)"
+        elseif v_len == 3 then
+          shown = base58.node_hint_full(val)
+        else
+          shown = base58.hex_bytes(val)
+        end
+        entry_tree:add(f.pr_hint, opt_tvb, shown)
+        label = label or shown
+        if v_len ~= 2 and v_len ~= 3 and ctx and ctx.flag then
+          ctx.flag(entry_tree, opt_tvb, string.format(
+            "Peer repeater node hint must be 2 or 3 bytes (is %d)", v_len))
+        end
+      elseif num == 1 then
+        entry_tree:add(f.pr_name, opt_tvb, val)
+        label = val
+        if v_len > 24 and ctx and ctx.flag then
+          ctx.flag(entry_tree, opt_tvb, string.format(
+            "Peer repeater node name must not exceed 24 octets (is %d)", v_len))
+        end
+      elseif num == 2 then
+        local val_off = start - 1 + pos - 1 + consumed - v_len
+        if v_len >= 2 then
+          -- RSSI is unsigned negative dBm; SNR is signed quarter-decibel
+          -- steps, so a whole decibel is four of them.
+          local rssi_raw = byte_at(val, 1)
+          local snr_raw  = byte_at(val, 2)
+          local steps    = (snr_raw >= 128) and (snr_raw - 256) or snr_raw
+          entry_tree:add(f.pr_rssi, tvb(val_off, 1), -rssi_raw):set_text(
+            string.format("RSSI: -%d dBm", rssi_raw))
+          entry_tree:add(f.pr_snr, tvb(val_off + 1, 1), steps):set_text(
+            string.format("SNR: %.2f dB", steps / 4))
+        end
+        if v_len ~= 2 and ctx and ctx.flag then
+          ctx.flag(entry_tree, opt_tvb, string.format(
+            "Peer repeater RSSI/SNR must be 2 bytes (is %d)", v_len))
+        end
+      elseif num == 3 then
+        if v_len >= 1 and v_len <= 2 then
+          entry_tree:add(f.pr_heard, opt_tvb, minimal_uint(val))
+        elseif ctx and ctx.flag then
+          ctx.flag(entry_tree, opt_tvb, string.format(
+            "Peer repeater last heard must be 1 or 2 bytes (is %d)", v_len))
+        end
+      elseif num == 4 then
+        local item = entry_tree:add(f.pr_location, val_tvb)
+        item:set_text(string.format("Location (%d bytes)", v_len))
+        if (v_len < 1 or v_len > 7) and ctx and ctx.flag then
+          ctx.flag(item, opt_tvb, string.format(
+            "Peer repeater location must be 1 to 7 bytes (is %d)", v_len))
+        end
+      elseif num == 5 then
+        local codes = {}
+        for i = 1, v_len - 1, 2 do
+          codes[#codes + 1] = region_code_label(opts_module, sub(val, i, i + 1))
+        end
+        entry_tree:add(f.pr_regions, opt_tvb, table.concat(codes, ", "))
+        if v_len % 2 ~= 0 and ctx and ctx.flag then
+          ctx.flag(entry_tree, opt_tvb, string.format(
+            "Supported flood regions must be a whole number of 2-byte codes (is %d)", v_len))
+        end
+      else
+        entry_tree:add(f.pr_unknown, opt_tvb):set_text(
+          string.format("Unknown Option %d (%d bytes)", num, v_len))
+      end
+      pos = pos + consumed
+    end
+  end)
+  entry_tree:set_text("Peer Repeater" .. (label and (": " .. label) or ""))
+end
+
+-- ──────────────────────────────────────────────────────────────────────────
 -- MAC Command dissector
 -- ──────────────────────────────────────────────────────────────────────────
 local function dissect_mac_command(payload, subtree, tvb, ctx, pinfo)
@@ -368,12 +503,14 @@ local function dissect_mac_command(payload, subtree, tvb, ctx, pinfo)
   -- Detail worth a place on the summary line, filled in per command below.
   local detail
 
-  -- Only the Identity Request is admitted to broadcast; a receiver drops
-  -- any other MAC command that arrives that way.
-  if ctx and ctx.flag and ctx.pkt_type == 0 and cmd ~= 1 then
+  -- A MAC command is addressed to one node. Only a command whose definition
+  -- provides rules for multicast or broadcast use may arrive that way, and the
+  -- Identity Request is the only one that does; a receiver drops the rest.
+  if ctx and ctx.flag and (ctx.pkt_type == 0 or ctx.pkt_type == 4) and cmd ~= 1 then
     ctx.flag(subtree, tvb(0, 1), string.format(
-      "%s must not be carried in a broadcast — only the Identity Request may be",
-      MAC_COMMANDS[cmd] or string.format("MAC command %d", cmd)))
+      "%s must not be carried in a %s — only the Identity Request defines rules for that",
+      MAC_COMMANDS[cmd] or string.format("MAC command %d", cmd),
+      PKT_TYPE_NAME[ctx.pkt_type] or "?"))
   end
 
   if cmd == 1 then
@@ -496,6 +633,81 @@ local function dissect_mac_command(payload, subtree, tvb, ctx, pinfo)
   elseif cmd == 9 then
     -- No-op: no payload. Sent to draw a MAC ack and nothing else.
     subtree:set_text("MAC Command: No-op")
+
+  elseif cmd == 10 or cmd == 11 then
+    -- Peer Repeaters Request / Response. Both open with a CoAP option block;
+    -- the response follows its terminator with a list of entries.
+    local opts_module
+    pcall(function() opts_module = require("options") end)
+
+    local nonce, cursor, total
+    local opts_end = 2
+    if opts_module and rest > 0 then
+      local scan_ok = pcall(function()
+        opts_end = 2 + opts_module.scan_length(payload, 2)
+      end)
+      if not scan_ok then opts_end = 2 end
+      pcall(function()
+        local pos = 1
+        for num, val, consumed in opts_module.decode(payload, 2) do
+          local v_len   = #val
+          local opt_tvb = tvb(pos, consumed)
+          local val_tvb = tvb(pos + consumed - v_len, v_len)
+          if num == 0 then
+            nonce = minimal_uint(val)
+            subtree:add(f.mac_nonce, val_tvb)
+          elseif num == 1 then
+            cursor = val
+            subtree:add(f.pr_cursor, val_tvb)
+          elseif num == 2 and cmd == 11 then
+            if v_len == 1 then
+              total = minimal_uint(val)
+              subtree:add(f.pr_total, opt_tvb, total)
+            elseif ctx and ctx.flag then
+              ctx.flag(subtree, opt_tvb, string.format(
+                "Peer repeaters total must be 1 byte (is %d)", v_len))
+            end
+          else
+            subtree:add(f.mac_unknown, opt_tvb):set_text(
+              string.format("Unknown Option %d (%d bytes)", num, v_len))
+          end
+          pos = pos + consumed
+        end
+      end)
+    end
+
+    local entries = 0
+    if cmd == 11 and opts_module then
+      -- Each entry is its own option list, so the walk is by scan length
+      -- rather than by any count in the header. A final entry may leave its
+      -- terminator off, in which case the scan runs to the end of the frame.
+      local pos = opts_end
+      while pos <= len do
+        local entry_len
+        local scan_ok = pcall(function()
+          entry_len = opts_module.scan_length(payload, pos)
+        end)
+        if not scan_ok or not entry_len or entry_len < 1 then break end
+        dissect_peer_repeater_entry(opts_module, payload, pos, entry_len,
+                                    subtree, tvb, ctx)
+        entries = entries + 1
+        pos = pos + entry_len
+      end
+    end
+
+    local parts = {}
+    if nonce then parts[#parts + 1] = string.format("nonce 0x%04X", nonce) end
+    if cmd == 11 then
+      parts[#parts + 1] = total
+        and string.format("%d of %d entries", entries, total)
+        or string.format("%d entries", entries)
+    end
+    -- On a request the cursor says where to resume; on a response it says
+    -- there is somewhere left to resume from.
+    if cursor then
+      parts[#parts + 1] = (cmd == 10) and "resuming" or "more follow"
+    end
+    if #parts > 0 then detail = table.concat(parts, ", ") end
   end
 
   -- Name the command on the summary line. Which command it is is the whole

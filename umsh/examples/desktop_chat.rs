@@ -759,6 +759,24 @@ fn format_mac_command(command: &umsh::node::OwnedMacCommand) -> String {
             full_key(ephemeral_key)
         ),
         umsh::node::OwnedMacCommand::EndPfsSession => String::from("EndPfsSession"),
+        umsh::node::OwnedMacCommand::Noop => String::from("Noop"),
+        umsh::node::OwnedMacCommand::PeerRepeatersRequest { options } => {
+            let view = umsh::node::mac_command::PeerRepeatersRequestView::new(options);
+            match view.nonce() {
+                Some(nonce) => format!("PeerRepeatersRequest nonce=0x{nonce:04x}"),
+                None => String::from("PeerRepeatersRequest"),
+            }
+        }
+        umsh::node::OwnedMacCommand::PeerRepeatersResponse { body } => {
+            let view = umsh::node::mac_command::PeerRepeatersResponseView::new(body);
+            format!(
+                "PeerRepeatersResponse {} of {} entries",
+                view.entries().count(),
+                view.total()
+                    .map(|total| total.to_string())
+                    .unwrap_or_else(|| String::from("?"))
+            )
+        }
     }
 }
 

@@ -13,7 +13,9 @@
 //! that key is listed in its `PROP_DEV_ADMINS`, which `dev-admin add`
 //! does over a bench link.
 
+use std::cell::RefCell;
 use std::path::Path;
+use std::rc::Rc;
 use std::time::Duration;
 
 use anyhow::{Context, Result, anyhow, bail};
@@ -184,9 +186,23 @@ pub fn show_admin_key() -> Result<()> {
 
 // ─── Bring-up ────────────────────────────────────────────────────────────────
 
+/// What the borrowed radio is being lent out for.
+///
+/// Administering a device and asking a repeater who its neighbors are are
+/// different conversations — one is authorized node management, the other a
+/// plain MAC command anyone may send — but both need this tool to stop being
+/// a serial client and become a node on the mesh. That apparatus is what this
+/// enum is here to share.
+#[derive(Debug)]
+pub enum Operation {
+    Manage(ManageOp),
+    /// Ask the target for the repeaters it knows of.
+    PeerRepeaters,
+}
+
 /// Take the attachment over as this tool's radio, run `op` against
 /// `target`, and hand the attachment back.
-pub async fn run(app: &mut App, target: KeyArg, op: ManageOp) -> Result<()> {
+pub async fn run(app: &mut App, target: KeyArg, op: Operation) -> Result<()> {
     let identity = admin_identity()?;
     let no_save = app.no_save;
 
@@ -293,7 +309,7 @@ async fn manage(
     radio: UlcpDevice<SessionLink>,
     identity: SoftwareIdentity,
     target: PublicKey,
-    op: ManageOp,
+    op: Operation,
     no_save: bool,
 ) -> (UlcpDevice<SessionLink>, Result<()>) {
     let counters = match connection::admin_counter_path() {
@@ -327,7 +343,7 @@ async fn operate<R: Radio>(
     mac: &AsyncRefCell<CtlMac<R>>,
     identity: SoftwareIdentity,
     target: PublicKey,
-    op: ManageOp,
+    op: Operation,
     no_save: bool,
 ) -> Result<()>
 where
@@ -363,6 +379,8 @@ where
 
     let mut ctl = Ctl {
         host,
+        node,
+        target,
         manager,
         handle: &handle,
         started: Instant::now(),
@@ -375,6 +393,8 @@ where
 /// The tool as a node, for the duration of one operation.
 struct Ctl<'a, R: Radio> {
     host: CtlHost<'a, R>,
+    node: umsh::node::LocalNode<CtlHandle<'a, R>>,
+    target: PublicKey,
     manager: NodeManager<CtlHandle<'a, R>>,
     handle: &'a CtlHandle<'a, R>,
     started: Instant,
@@ -450,10 +470,14 @@ fn describe(failure: Failure) -> anyhow::Error {
 
 // ─── Operations ──────────────────────────────────────────────────────────────
 
-async fn run_op<R: Radio>(ctl: &mut Ctl<'_, R>, op: ManageOp, no_save: bool) -> Result<()>
+async fn run_op<R: Radio>(ctl: &mut Ctl<'_, R>, op: Operation, no_save: bool) -> Result<()>
 where
     R::Error: core::fmt::Debug,
 {
+    let op = match op {
+        Operation::Manage(op) => op,
+        Operation::PeerRepeaters => return peer_repeaters(ctl).await,
+    };
     match op {
         ManageOp::Info => info(ctl).await,
         ManageOp::Get { key } => {
@@ -523,6 +547,146 @@ where
             }
         }
         ManageOp::Admins { op } => admins(ctl, op.unwrap_or(TableOp::List), no_save).await,
+    }
+}
+
+/// `peer-repeaters`: ask the target which repeaters it knows of.
+///
+/// Not node management — it is a plain MAC command any node may send, and
+/// the target need not list this tool as an administrator. It reuses the
+/// same borrowed radio because the tool still has to be a node to ask.
+async fn peer_repeaters<R: Radio>(ctl: &mut Ctl<'_, R>) -> Result<()>
+where
+    R::Error: core::fmt::Debug,
+{
+    use umsh::node::OwnedMacCommand;
+    use umsh::node::mac_command::PeerRepeatersResponseView;
+
+    // Answers arrive asynchronously on the receive path, so they are
+    // collected by a subscription and matched to the page that asked.
+    let pages: Rc<RefCell<Vec<Vec<u8>>>> = Rc::new(RefCell::new(Vec::new()));
+    let sink = pages.clone();
+    let target = ctl.target;
+    let _subscription = ctl.node.on_mac_command(move |from, command| {
+        if from != target {
+            return;
+        }
+        if let OwnedMacCommand::PeerRepeatersResponse { body } = command {
+            sink.borrow_mut().push(body.clone());
+        }
+    });
+
+    let peer = ctl
+        .node
+        .peer(target)
+        .await
+        .map_err(|error| anyhow!("registering the repeater as a peer: {error:?}"))?;
+
+    field("repeater", target.to_string());
+    let mut seed = [0u8; 2];
+    rng().fill_bytes(&mut seed);
+    let mut nonce = u16::from_be_bytes(seed);
+    let mut cursor: Option<Vec<u8>> = None;
+    let mut listed = 0usize;
+    let mut total: Option<u8> = None;
+
+    loop {
+        pages.borrow_mut().clear();
+        peer.request_peer_repeaters(nonce, cursor.as_deref(), &Default::default())
+            .await
+            .map_err(|error| anyhow!("asking for the listing: {error:?}"))?;
+
+        let deadline = Instant::now() + PEER_REPEATERS_PAGE_TIMEOUT;
+        let body = loop {
+            if let Some(body) = pages
+                .borrow()
+                .iter()
+                .find(|body| PeerRepeatersResponseView::new(body).nonce() == Some(nonce))
+                .cloned()
+            {
+                break Some(body);
+            }
+            if Instant::now() >= deadline {
+                break None;
+            }
+            tokio::select! {
+                result = ctl.host.pump_once() => {
+                    result.map_err(|error| anyhow!("the radio stopped answering: {error:?}"))?;
+                }
+                _ = tokio::time::sleep_until(deadline) => {}
+            }
+            ctl.host.service_protocol_timeouts().await;
+            let _ = ctl.handle.service_counter_persistence().await;
+        };
+
+        let Some(body) = body else {
+            if listed == 0 {
+                bail!(
+                    "no answer — the repeater may be out of range, or may not answer peer-repeater \
+                     requests"
+                );
+            }
+            note("the listing stopped part way; run the command again to start over");
+            break;
+        };
+
+        let view = PeerRepeatersResponseView::new(&body);
+        total = total.or_else(|| view.total());
+        for entry in view.entries() {
+            print_peer_repeater(&entry);
+            listed += 1;
+        }
+        match view.cursor() {
+            Some(next) => cursor = Some(next.to_vec()),
+            None => break,
+        }
+        // A fresh nonce per page, so a late copy of the previous answer
+        // cannot be mistaken for this one.
+        nonce = nonce.wrapping_add(1);
+    }
+
+    match total {
+        Some(total) if usize::from(total) != listed => {
+            note(format!("listed {listed} of {total} peer repeaters"))
+        }
+        _ if listed == 0 => note("the repeater knows of no peers"),
+        _ => {}
+    }
+    Ok(())
+}
+
+/// How long one page may take before the tool gives up on it.
+const PEER_REPEATERS_PAGE_TIMEOUT: Duration = Duration::from_secs(30);
+
+fn print_peer_repeater(entry: &umsh::node::mac_command::PeerRepeaterEntryView<'_>) {
+    let Some(hint) = entry.hint() else {
+        // An entry that names nobody is not an entry; the responder is
+        // still describing a real neighborhood around it.
+        return;
+    };
+    field(
+        "peer",
+        match entry.name() {
+            Some(name) => format!("{} ({name})", hex(hint)),
+            None => hex(hint),
+        },
+    );
+    if let Some((rssi, snr)) = entry.rssi_snr() {
+        subfield("signal", format!("{rssi} dBm, {snr}"));
+    }
+    if let Some(minutes) = entry.last_heard_min() {
+        subfield("last heard", format!("{minutes} min ago"));
+    }
+    if let Some(location) = entry.location() {
+        let (lat, lon) = location.center();
+        subfield("location", format!("{lat:.4}, {lon:.4}"));
+    }
+    let regions: Vec<String> = entry
+        .regions()
+        .map(|code| umsh::core::RegionCode::from_bytes(code).to_string())
+        .collect();
+    if !regions.is_empty() {
+        subfield("regions", regions.join(", "));
     }
 }
 

@@ -71,19 +71,21 @@ impl UlcpChargeState {
 
 /// The device identity's autonomous flood-forwarding policy.
 ///
-/// Region codes travel as the opaque 2-octet wire values they are on the
-/// air: the same bytes the device advertises as its Supported Regions
-/// identity option. Text forms are a presentation concern —
-/// [`region_code_from_string`] and [`region_code_description`] convert.
+/// The filter is written as region strings — the same strings the device
+/// advertises as its Supported Regions identity option — while the
+/// default tag is a 2-octet code, because that is what goes on the air
+/// packet by packet. [`region_code_from_string`] and
+/// [`region_code_description`] convert between the two.
 #[derive(Clone, Debug, PartialEq, Eq, uniffi::Record)]
 pub struct UlcpRepeaterSettingsRecord {
     /// `PROP_MAC_REPEATER_ENABLED`. The remaining fields are inert while
     /// this is false, but are still read and written.
     pub enabled: bool,
     /// `PROP_MAC_REPEATER_REGIONS`: which region-tagged floods to
-    /// forward, each entry exactly two octets. Empty imposes no regional
+    /// forward, as region strings of 1 to 24 octets — an airport code, a
+    /// name, or a literal `0x1234`. Empty imposes no regional
     /// restriction rather than blocking every flood.
-    pub regions: Vec<Vec<u8>>,
+    pub regions: Vec<String>,
     /// `PROP_MAC_REPEATER_DEFAULT_REGION`: the tag inserted into an
     /// untagged flood before forwarding it. `None` forwards untagged.
     pub default_region: Option<Vec<u8>>,
@@ -2834,19 +2836,19 @@ fn decode_optional<T>(
     decode(value).map(Some)
 }
 
-/// Split a `PROP_MAC_REPEATER_REGIONS` value into individual codes.
+/// Split a `PROP_MAC_REPEATER_REGIONS` value into its region strings.
 ///
 /// Deliberately imposes no upper bound: how many regions a device holds
 /// is its own business, and a device reporting more than this phone would
 /// ever write is not a malformed frame.
-fn decode_region_list(value: &[u8]) -> Result<Vec<Vec<u8>>, MobileError> {
-    if !value.len().is_multiple_of(items::REGION_CODE_LEN) {
-        return Err(MobileError::InvalidUlcpFrame);
+fn decode_region_list(value: &[u8]) -> Result<Vec<String>, MobileError> {
+    let mut regions = Vec::new();
+    for item in items::prefixed_items(value) {
+        let item = item.map_err(|_| MobileError::InvalidUlcpFrame)?;
+        let text = core::str::from_utf8(item).map_err(|_| MobileError::InvalidUlcpFrame)?;
+        regions.push(text.to_owned());
     }
-    Ok(value
-        .chunks(items::REGION_CODE_LEN)
-        .map(<[u8]>::to_vec)
-        .collect())
+    Ok(regions)
 }
 
 fn decode_optional_region(value: &[u8]) -> Result<Option<Vec<u8>>, MobileError> {
@@ -3046,12 +3048,17 @@ fn validate_device_settings(
         return Err(MobileError::InvalidUlcpFrame);
     }
     if let Some(repeater) = &configuration.repeater {
-        let mut regions = Vec::with_capacity(repeater.regions.len() * items::REGION_CODE_LEN);
+        let mut regions = Vec::new();
         for region in &repeater.regions {
-            if region.len() != items::REGION_CODE_LEN {
+            // The device refuses these outright, so catching them here
+            // saves a round trip that could only fail.
+            if !(1..=items::REGION_STRING_MAX_LEN).contains(&region.len()) {
                 return Err(MobileError::InvalidUlcpFrame);
             }
-            regions.extend_from_slice(region);
+            let mut item = vec![0u8; region.len() + 4];
+            let len = items::encode_prefixed_item(region.as_bytes(), &mut item)
+                .map_err(|_| MobileError::InvalidUlcpFrame)?;
+            regions.extend_from_slice(&item[..len]);
         }
         if let Some(default_region) = &repeater.default_region {
             if default_region.len() != items::REGION_CODE_LEN {
@@ -4190,8 +4197,11 @@ mod tests {
             response(prop::SAVED, &[saved::CURRENT]),
             response(prop::HOST_RX_FILTERS, &[]),
             response(prop::MAC_REPEATER_ENABLED, &[1]),
-            // SJC and SFO, the two-octet codes exactly as advertised.
-            response(prop::MAC_REPEATER_REGIONS, &[0x78, 0x53, 0x7C, 0x0F]),
+            // SJC and SFO, the strings exactly as they were written.
+            response(
+                prop::MAC_REPEATER_REGIONS,
+                &[3, b'S', b'J', b'C', 3, b'S', b'F', b'O'],
+            ),
             response(prop::MAC_REPEATER_DEFAULT_REGION, &[0x78, 0x53]),
             response(prop::MAC_REPEATER_MIN_RSSI, &(-115i16).to_le_bytes()),
             response(prop::MAC_REPEATER_MIN_SNR, &[(-7i8) as u8]),
@@ -4205,7 +4215,7 @@ mod tests {
             sync.repeater,
             Some(UlcpRepeaterSettingsRecord {
                 enabled: true,
-                regions: vec![vec![0x78, 0x53], vec![0x7C, 0x0F]],
+                regions: vec!["SJC".to_owned(), "SFO".to_owned()],
                 default_region: Some(vec![0x78, 0x53]),
                 min_rssi_dbm: Some(-115),
                 min_snr_db: Some(-7),
@@ -4370,7 +4380,7 @@ mod tests {
                 dev_discoverable: Some(false),
                 repeater: Some(UlcpRepeaterSettingsRecord {
                     enabled: true,
-                    regions: vec![vec![0x78, 0x53]],
+                    regions: vec!["SJC".to_owned()],
                     default_region: Some(vec![0x78, 0x53]),
                     min_rssi_dbm: Some(-115),
                     min_snr_db: Some(-7),
@@ -4396,7 +4406,7 @@ mod tests {
                 (prop::IDENT_ROLE, vec![3]),
                 (prop::IDENT_MOBILE, vec![0]),
                 (prop::DEV_DISCOVERABLE, vec![0]),
-                (prop::MAC_REPEATER_REGIONS, vec![0x78, 0x53]),
+                (prop::MAC_REPEATER_REGIONS, vec![3, b'S', b'J', b'C']),
                 (prop::MAC_REPEATER_DEFAULT_REGION, vec![0x78, 0x53]),
                 (
                     prop::MAC_REPEATER_MIN_RSSI,
@@ -4429,7 +4439,7 @@ mod tests {
             provisioning.repeater,
             Some(UlcpRepeaterSettingsRecord {
                 enabled: true,
-                regions: vec![vec![0x78, 0x53]],
+                regions: vec!["SJC".to_owned()],
                 default_region: Some(vec![0x78, 0x53]),
                 min_rssi_dbm: Some(-115),
                 min_snr_db: Some(-7),
@@ -4486,19 +4496,22 @@ mod tests {
             configure(None, Some(false), None, Some(repeater.clone())),
             Err(MobileError::InvalidUlcpFrame)
         );
-        // A region code is two octets or it is not a region code.
-        assert_eq!(
-            configure(
-                None,
-                Some(false),
-                Some(true),
-                Some(UlcpRepeaterSettingsRecord {
-                    regions: vec![vec![0x78]],
-                    ..repeater.clone()
-                })
-            ),
-            Err(MobileError::InvalidUlcpFrame)
-        );
+        // A region string is 1 to 24 octets; outside that the device
+        // refuses it, so the write never leaves the phone.
+        for bad in ["", &"A".repeat(items::REGION_STRING_MAX_LEN + 1)] {
+            assert_eq!(
+                configure(
+                    None,
+                    Some(false),
+                    Some(true),
+                    Some(UlcpRepeaterSettingsRecord {
+                        regions: vec![bad.to_owned()],
+                        ..repeater.clone()
+                    })
+                ),
+                Err(MobileError::InvalidUlcpFrame)
+            );
+        }
         assert_eq!(
             configure(
                 None,

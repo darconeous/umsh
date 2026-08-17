@@ -1734,6 +1734,9 @@ fn mac_cmd_id(cmd: &OwnedMacCommand) -> u8 {
         OwnedMacCommand::PfsSessionRequest { .. } => CommandId::PfsSessionRequest as u8,
         OwnedMacCommand::PfsSessionResponse { .. } => CommandId::PfsSessionResponse as u8,
         OwnedMacCommand::EndPfsSession => CommandId::EndPfsSession as u8,
+        OwnedMacCommand::Noop => CommandId::Noop as u8,
+        OwnedMacCommand::PeerRepeatersRequest { .. } => CommandId::PeerRepeatersRequest as u8,
+        OwnedMacCommand::PeerRepeatersResponse { .. } => CommandId::PeerRepeatersResponse as u8,
     }
 }
 

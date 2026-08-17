@@ -59,7 +59,7 @@ pub use packet::{
     SourceAddr, SourceAddrRef, UMSH_VERSION, UnsealedPacket, feed_aad, iter_options,
 };
 #[cfg(feature = "region-codec")]
-pub use region::{RegionCode, RegionCodeError};
+pub use region::{REGION_NAME_MAX_LEN, RegionCode, RegionCodeError};
 
 #[cfg(test)]
 mod tests {

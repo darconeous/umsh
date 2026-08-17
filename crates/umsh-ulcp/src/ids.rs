@@ -90,9 +90,12 @@ pub mod prop {
     /// (`PROP_IDENT_MOBILE`) — mobile versus fixed, which is orthogonal
     /// to tethered versus standalone.
     pub const IDENT_MOBILE: u32 = 73;
-    /// Region codes the device identity flood-forwards for
-    /// (`PROP_MAC_REPEATER_REGIONS`) — concatenated 2-octet codes, empty
-    /// for "forward regardless of region code".
+    /// Regions the device identity flood-forwards for
+    /// (`PROP_MAC_REPEATER_REGIONS`) — multiple-value, each item 1 to 24
+    /// octets of UTF-8 naming a region in its string form, empty for
+    /// "forward regardless of region code". The device derives the
+    /// 2-octet forwarding codes itself; the strings are what it
+    /// advertises, since a hash-derived code names nothing.
     pub const MAC_REPEATER_REGIONS: u32 = 74;
     /// Region code inserted into untagged flood packets
     /// (`PROP_MAC_REPEATER_DEFAULT_REGION`) — one 2-octet code, or empty

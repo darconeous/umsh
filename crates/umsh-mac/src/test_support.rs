@@ -565,8 +565,21 @@ impl ModeledNetwork {
         let Some(row) = state.links.get(from) else {
             panic!("unknown modeled radio id {from}");
         };
-        let start_ms = now_ms;
-        let end_ms = now_ms.saturating_add(u64::from(t_frame_ms));
+        // A half-duplex radio cannot start a frame while it is still sending
+        // one. A real driver's transmit blocks for the airtime; the model has
+        // no way to block a caller, so the new frame queues behind whatever
+        // this radio still has on the air. Without this a node polled twice
+        // inside one frame time transmits over itself, and every neighbour
+        // discards both copies as a collision.
+        let busy_until_ms = state
+            .in_flight
+            .iter()
+            .filter(|tx| tx.from == from)
+            .map(|tx| tx.end_ms)
+            .max()
+            .unwrap_or(0);
+        let start_ms = now_ms.max(busy_until_ms);
+        let end_ms = start_ms.saturating_add(u64::from(t_frame_ms));
         let deliveries: Vec<(usize, ModeledLinkProfile)> = row
             .iter()
             .enumerate()

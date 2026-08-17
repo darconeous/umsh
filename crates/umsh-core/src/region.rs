@@ -29,6 +29,13 @@ const LETTER_MAX: u16 = 26;
 /// First code reserved for transformed named regions.
 const TRANSFORM_BASE: u16 = 27 * 1600;
 
+/// Longest a region's string form may be, in UTF-8 bytes.
+///
+/// Names travel on the wire in identity payloads, one option per region, and
+/// this bound is what lets a list of them fit
+/// (packet-options.md § Region Code Encoding).
+pub const REGION_NAME_MAX_LEN: usize = 24;
+
 /// A 2-byte region identifier.
 ///
 /// ```
@@ -149,8 +156,12 @@ impl fmt::Write for Letters {
 
 /// Parse a region code from its textual form.
 ///
-/// Three ASCII letters are an IATA code, `0xXXXX` is a raw code, and
-/// anything else is a region name.
+/// Three ASCII letters are an IATA code, `0x` followed by exactly four hex
+/// digits is the code it spells, and anything else is a region name. The
+/// derivation is total over every string of one to
+/// [`REGION_NAME_MAX_LEN`] bytes: a string that merely looks like a literal
+/// code — `0x12`, `0xzz` — is not one, and is hashed as the name it is
+/// (packet-options.md § Region Code Encoding).
 impl FromStr for RegionCode {
     type Err = RegionCodeError;
 
@@ -159,14 +170,16 @@ impl FromStr for RegionCode {
         if trimmed.is_empty() {
             return Err(RegionCodeError::Empty);
         }
+        if trimmed.len() > REGION_NAME_MAX_LEN {
+            return Err(RegionCodeError::TooLong);
+        }
         if let Some(hex) = trimmed
             .strip_prefix("0x")
             .or_else(|| trimmed.strip_prefix("0X"))
+            && hex.len() == 4
+            && hex.bytes().all(|b| b.is_ascii_hexdigit())
+            && let Ok(value) = u16::from_str_radix(hex, 16)
         {
-            if hex.is_empty() || hex.len() > 4 || !hex.bytes().all(|b| b.is_ascii_hexdigit()) {
-                return Err(RegionCodeError::InvalidHex);
-            }
-            let value = u16::from_str_radix(hex, 16).map_err(|_| RegionCodeError::InvalidHex)?;
             return Ok(Self(value));
         }
         Self::from_iata(trimmed).or_else(|_| Ok(Self::from_name(trimmed)))
@@ -205,8 +218,8 @@ impl From<[u8; 2]> for RegionCode {
 pub enum RegionCodeError {
     /// The input was empty or only whitespace.
     Empty,
-    /// A `0x`-prefixed value was not one to four hex digits.
-    InvalidHex,
+    /// The input was longer than [`REGION_NAME_MAX_LEN`] bytes.
+    TooLong,
     /// The input was not exactly three ASCII letters.
     NotIata,
 }
@@ -215,7 +228,7 @@ impl fmt::Display for RegionCodeError {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
             Self::Empty => f.write_str("empty region code"),
-            Self::InvalidHex => f.write_str("expected one to four hex digits after `0x`"),
+            Self::TooLong => write!(f, "region name longer than {REGION_NAME_MAX_LEN} bytes"),
             Self::NotIata => f.write_str("expected a three-letter IATA code"),
         }
     }
@@ -312,22 +325,37 @@ mod tests {
     }
 
     #[test]
-    fn parses_raw_hex_codes() {
+    fn parses_literal_codes_of_exactly_four_hex_digits() {
         assert_eq!("0x7853".parse::<RegionCode>().unwrap().as_u16(), 0x7853);
         assert_eq!("0X7853".parse::<RegionCode>().unwrap().as_u16(), 0x7853);
         assert_eq!("0xdf6f".parse::<RegionCode>().unwrap().as_u16(), 0xDF6F);
-        assert_eq!("0x1".parse::<RegionCode>().unwrap().as_u16(), 1);
+        assert_eq!("0x0001".parse::<RegionCode>().unwrap().as_u16(), 1);
     }
 
     #[test]
-    fn rejects_malformed_hex_codes() {
-        for input in ["0x", "0x12345", "0xzz", "0x 12", "0x+1"] {
+    fn hashes_anything_that_only_looks_like_a_literal_code() {
+        // Only `0x` plus exactly four hex digits spells a code. Everything
+        // else is a name, which keeps the derivation total: there is no such
+        // thing as a string with no region.
+        for input in ["0x", "0x1", "0x12345", "0xzz", "0x 12", "0x+1"] {
             assert_eq!(
-                input.parse::<RegionCode>(),
-                Err(RegionCodeError::InvalidHex),
-                "{input:?} should not parse as a hex code"
+                input.parse::<RegionCode>().unwrap(),
+                RegionCode::from_name(input),
+                "{input:?} should hash as a name"
             );
         }
+    }
+
+    #[test]
+    fn rejects_a_name_longer_than_the_wire_allows() {
+        let long = "R".repeat(REGION_NAME_MAX_LEN + 1);
+        assert_eq!(long.parse::<RegionCode>(), Err(RegionCodeError::TooLong));
+
+        let limit = "R".repeat(REGION_NAME_MAX_LEN);
+        assert_eq!(
+            limit.parse::<RegionCode>().unwrap(),
+            RegionCode::from_name(&limit)
+        );
     }
 
     #[test]

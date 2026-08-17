@@ -1441,6 +1441,18 @@ public protocol MobileMeshSessionProtocol: AnyObject, Sendable {
      */
     func requestIdentityByHint(conversationAddress: String, hint: Data) async throws
 
+    /**
+     * Ask one repeater which repeaters it knows of, and return the whole
+     * listing.
+     *
+     * Unlike `discover_identities`, which scatters a request and lets the
+     * answers arrive as events, this is one node's own account of its
+     * neighborhood: a single addressed exchange, paged when it does not fit
+     * one frame, so it resolves to a list rather than a stream. Pages are
+     * followed here; the caller sees only the finished listing.
+     */
+    func requestPeerRepeaters(peer: Data) async throws  -> [MobileMeshPeerRepeaterRecord]
+
     func restoreChat(checkpoints: [MobileChatCheckpointRecord]) async throws
 
     func sendAdvertisement(name: String?, timestamp: UInt32?, scheduled: Bool) async throws
@@ -2291,6 +2303,32 @@ open func requestIdentityByHint(conversationAddress: String, hint: Data)async th
             completeFunc: ffi_umsh_mobile_core_rust_future_complete_void,
             freeFunc: ffi_umsh_mobile_core_rust_future_free_void,
             liftFunc: { $0 },
+            errorHandler: FfiConverterTypeMobileMeshError_lift
+        )
+}
+
+    /**
+     * Ask one repeater which repeaters it knows of, and return the whole
+     * listing.
+     *
+     * Unlike `discover_identities`, which scatters a request and lets the
+     * answers arrive as events, this is one node's own account of its
+     * neighborhood: a single addressed exchange, paged when it does not fit
+     * one frame, so it resolves to a list rather than a stream. Pages are
+     * followed here; the caller sees only the finished listing.
+     */
+open func requestPeerRepeaters(peer: Data)async throws  -> [MobileMeshPeerRepeaterRecord]  {
+    return
+        try  await uniffiRustCallAsync(
+            rustFutureFunc: {
+                uniffi_umsh_mobile_core_fn_method_mobilemeshsession_request_peer_repeaters(
+                        self.uniffiCloneHandle(),FfiConverterData.lower(peer)
+                )
+            },
+            pollFunc: ffi_umsh_mobile_core_rust_future_poll_rust_buffer,
+            completeFunc: ffi_umsh_mobile_core_rust_future_complete_rust_buffer,
+            freeFunc: ffi_umsh_mobile_core_rust_future_free_rust_buffer,
+            liftFunc: FfiConverterSequenceTypeMobileMeshPeerRepeaterRecord.lift,
             errorHandler: FfiConverterTypeMobileMeshError_lift
         )
 }
@@ -5216,6 +5254,126 @@ public func FfiConverterTypeMobileMeshPeerHeardRecord_lower(_ value: MobileMeshP
 }
 
 
+/**
+ * One repeater a repeater told this phone about, from a Peer Repeaters
+ * Response.
+ *
+ * Everything past the hint is optional because the answering node reports
+ * only what it has: an identity supplies the name, position, and regions; a
+ * reception supplies the signal; neither supplies the other. A hop that has
+ * only been heard is named by a two-byte router hint, which is all a trace
+ * reveals about it.
+ */
+public struct MobileMeshPeerRepeaterRecord: Equatable, Hashable {
+    /**
+     * Three bytes when an identity named the peer, two when only a
+     * reception did.
+     */
+    public var hint: Data
+    public var name: String?
+    public var rssiDbm: Int16?
+    /**
+     * Signal-to-noise ratio in quarter-decibel steps, as the wire carries
+     * it.
+     */
+    public var snrQuarterDb: Int16?
+    /**
+     * Minutes since the answering node last heard from this peer.
+     */
+    public var lastHeardMinutes: UInt16?
+    /**
+     * The peer's position as a raw location cell, decodable with the
+     * location helpers.
+     */
+    public var location: Data?
+    /**
+     * The 2-octet flood-forwarding codes the peer advertised.
+     */
+    public var regionCodes: [Data]
+
+    // Default memberwise initializers are never public by default, so we
+    // declare one manually.
+    public init(
+        /**
+         * Three bytes when an identity named the peer, two when only a
+         * reception did.
+         */hint: Data, name: String?, rssiDbm: Int16?,
+        /**
+         * Signal-to-noise ratio in quarter-decibel steps, as the wire carries
+         * it.
+         */snrQuarterDb: Int16?,
+        /**
+         * Minutes since the answering node last heard from this peer.
+         */lastHeardMinutes: UInt16?,
+        /**
+         * The peer's position as a raw location cell, decodable with the
+         * location helpers.
+         */location: Data?,
+        /**
+         * The 2-octet flood-forwarding codes the peer advertised.
+         */regionCodes: [Data]) {
+        self.hint = hint
+        self.name = name
+        self.rssiDbm = rssiDbm
+        self.snrQuarterDb = snrQuarterDb
+        self.lastHeardMinutes = lastHeardMinutes
+        self.location = location
+        self.regionCodes = regionCodes
+    }
+
+
+
+
+}
+
+#if compiler(>=6)
+extension MobileMeshPeerRepeaterRecord: Sendable {}
+#endif
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public struct FfiConverterTypeMobileMeshPeerRepeaterRecord: FfiConverterRustBuffer {
+    public static func read(from buf: inout (data: Data, offset: Data.Index)) throws -> MobileMeshPeerRepeaterRecord {
+        return
+            try MobileMeshPeerRepeaterRecord(
+                hint: FfiConverterData.read(from: &buf),
+                name: FfiConverterOptionString.read(from: &buf),
+                rssiDbm: FfiConverterOptionInt16.read(from: &buf),
+                snrQuarterDb: FfiConverterOptionInt16.read(from: &buf),
+                lastHeardMinutes: FfiConverterOptionUInt16.read(from: &buf),
+                location: FfiConverterOptionData.read(from: &buf),
+                regionCodes: FfiConverterSequenceData.read(from: &buf)
+        )
+    }
+
+    public static func write(_ value: MobileMeshPeerRepeaterRecord, into buf: inout [UInt8]) {
+        FfiConverterData.write(value.hint, into: &buf)
+        FfiConverterOptionString.write(value.name, into: &buf)
+        FfiConverterOptionInt16.write(value.rssiDbm, into: &buf)
+        FfiConverterOptionInt16.write(value.snrQuarterDb, into: &buf)
+        FfiConverterOptionUInt16.write(value.lastHeardMinutes, into: &buf)
+        FfiConverterOptionData.write(value.location, into: &buf)
+        FfiConverterSequenceData.write(value.regionCodes, into: &buf)
+    }
+}
+
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public func FfiConverterTypeMobileMeshPeerRepeaterRecord_lift(_ buf: RustBuffer) throws -> MobileMeshPeerRepeaterRecord {
+    return try FfiConverterTypeMobileMeshPeerRepeaterRecord.lift(buf)
+}
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public func FfiConverterTypeMobileMeshPeerRepeaterRecord_lower(_ value: MobileMeshPeerRepeaterRecord) -> RustBuffer {
+    return FfiConverterTypeMobileMeshPeerRepeaterRecord.lower(value)
+}
+
+
 public struct MobileMeshPingEventRecord: Equatable, Hashable {
     public var operationId: UInt64
     public var outcome: MobileMeshPingOutcome
@@ -7197,10 +7355,11 @@ public func FfiConverterTypeUlcpReceivedFrameRecord_lower(_ value: UlcpReceivedF
 /**
  * The device identity's autonomous flood-forwarding policy.
  *
- * Region codes travel as the opaque 2-octet wire values they are on the
- * air: the same bytes the device advertises as its Supported Regions
- * identity option. Text forms are a presentation concern —
- * [`region_code_from_string`] and [`region_code_description`] convert.
+ * The filter is written as region strings — the same strings the device
+ * advertises as its Supported Regions identity option — while the
+ * default tag is a 2-octet code, because that is what goes on the air
+ * packet by packet. [`region_code_from_string`] and
+ * [`region_code_description`] convert between the two.
  */
 public struct UlcpRepeaterSettingsRecord: Equatable, Hashable {
     /**
@@ -7210,10 +7369,11 @@ public struct UlcpRepeaterSettingsRecord: Equatable, Hashable {
     public var enabled: Bool
     /**
      * `PROP_MAC_REPEATER_REGIONS`: which region-tagged floods to
-     * forward, each entry exactly two octets. Empty imposes no regional
+     * forward, as region strings of 1 to 24 octets — an airport code, a
+     * name, or a literal `0x1234`. Empty imposes no regional
      * restriction rather than blocking every flood.
      */
-    public var regions: [Data]
+    public var regions: [String]
     /**
      * `PROP_MAC_REPEATER_DEFAULT_REGION`: the tag inserted into an
      * untagged flood before forwarding it. `None` forwards untagged.
@@ -7237,9 +7397,10 @@ public struct UlcpRepeaterSettingsRecord: Equatable, Hashable {
          */enabled: Bool,
         /**
          * `PROP_MAC_REPEATER_REGIONS`: which region-tagged floods to
-         * forward, each entry exactly two octets. Empty imposes no regional
+         * forward, as region strings of 1 to 24 octets — an airport code, a
+         * name, or a literal `0x1234`. Empty imposes no regional
          * restriction rather than blocking every flood.
-         */regions: [Data],
+         */regions: [String],
         /**
          * `PROP_MAC_REPEATER_DEFAULT_REGION`: the tag inserted into an
          * untagged flood before forwarding it. `None` forwards untagged.
@@ -7274,7 +7435,7 @@ public struct FfiConverterTypeUlcpRepeaterSettingsRecord: FfiConverterRustBuffer
         return
             try UlcpRepeaterSettingsRecord(
                 enabled: FfiConverterBool.read(from: &buf),
-                regions: FfiConverterSequenceData.read(from: &buf),
+                regions: FfiConverterSequenceString.read(from: &buf),
                 defaultRegion: FfiConverterOptionData.read(from: &buf),
                 minRssiDbm: FfiConverterOptionInt16.read(from: &buf),
                 minSnrDb: FfiConverterOptionInt8.read(from: &buf)
@@ -7283,7 +7444,7 @@ public struct FfiConverterTypeUlcpRepeaterSettingsRecord: FfiConverterRustBuffer
 
     public static func write(_ value: UlcpRepeaterSettingsRecord, into buf: inout [UInt8]) {
         FfiConverterBool.write(value.enabled, into: &buf)
-        FfiConverterSequenceData.write(value.regions, into: &buf)
+        FfiConverterSequenceString.write(value.regions, into: &buf)
         FfiConverterOptionData.write(value.defaultRegion, into: &buf)
         FfiConverterOptionInt16.write(value.minRssiDbm, into: &buf)
         FfiConverterOptionInt8.write(value.minSnrDb, into: &buf)
@@ -11198,6 +11359,31 @@ fileprivate struct FfiConverterSequenceTypeMobileMeshPeerHeardRecord: FfiConvert
 #if swift(>=5.8)
 @_documentation(visibility: private)
 #endif
+fileprivate struct FfiConverterSequenceTypeMobileMeshPeerRepeaterRecord: FfiConverterRustBuffer {
+    typealias SwiftType = [MobileMeshPeerRepeaterRecord]
+
+    public static func write(_ value: [MobileMeshPeerRepeaterRecord], into buf: inout [UInt8]) {
+        let len = Int32(value.count)
+        writeInt(&buf, len)
+        for item in value {
+            FfiConverterTypeMobileMeshPeerRepeaterRecord.write(item, into: &buf)
+        }
+    }
+
+    public static func read(from buf: inout (data: Data, offset: Data.Index)) throws -> [MobileMeshPeerRepeaterRecord] {
+        let len: Int32 = try readInt(&buf)
+        var seq = [MobileMeshPeerRepeaterRecord]()
+        seq.reserveCapacity(Int(len))
+        for _ in 0 ..< len {
+            seq.append(try FfiConverterTypeMobileMeshPeerRepeaterRecord.read(from: &buf))
+        }
+        return seq
+    }
+}
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
 fileprivate struct FfiConverterSequenceTypeMobileMeshPingEventRecord: FfiConverterRustBuffer {
     typealias SwiftType = [MobileMeshPingEventRecord]
 
@@ -12126,6 +12312,9 @@ private let initializationResult: InitializationResult = {
         return InitializationResult.apiChecksumMismatch
     }
     if (uniffi_umsh_mobile_core_checksum_method_mobilemeshsession_request_identity_by_hint() != 57685) {
+        return InitializationResult.apiChecksumMismatch
+    }
+    if (uniffi_umsh_mobile_core_checksum_method_mobilemeshsession_request_peer_repeaters() != 29496) {
         return InitializationResult.apiChecksumMismatch
     }
     if (uniffi_umsh_mobile_core_checksum_method_mobilemeshsession_restore_chat() != 28606) {

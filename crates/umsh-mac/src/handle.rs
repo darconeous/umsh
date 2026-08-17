@@ -494,6 +494,21 @@ impl<
         }
     }
 
+    /// Invoke `f` for each transmitter heard on the air, most recent
+    /// reception first held.
+    ///
+    /// Copies each observation out rather than lending the table, so the
+    /// borrow ends with the call and a caller may send while it walks them.
+    pub async fn for_each_transmitter_observation(
+        &self,
+        f: &mut dyn FnMut(crate::TransmitterObservation),
+    ) {
+        let mac = self.mac.borrow().await;
+        for observation in mac.transmitter_observations().iter() {
+            f(*observation);
+        }
+    }
+
     /// Return the route currently cached for `peer`, if the peer is registered
     /// and a route has been learned for it.
     pub async fn peer_route(&self, peer: &umsh_core::PublicKey) -> Option<crate::CachedRoute> {

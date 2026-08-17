@@ -1,9 +1,12 @@
 //! The ULCP session state machine.
 
+use core::str::FromStr;
+
 use heapless::{Deque, Vec as HeaplessVec};
 use umsh_core::options::{OptionDecoder, OptionEncoder};
 use umsh_core::{
-    ChannelKey, EncodeError, NodeHint, PacketBuilder, PacketHeader, PacketType, SourceAddrRef,
+    ChannelKey, EncodeError, NodeHint, PacketBuilder, PacketHeader, PacketType, RegionCode,
+    SourceAddrRef,
 };
 use umsh_crypto::replay::{ReplayVerdict, ReplayWindow};
 use umsh_crypto::{AesProvider, CryptoEngine, PairwiseKeys, Sha256Provider};
@@ -19,6 +22,7 @@ use umsh_ulcp::ids::{
     self, DEFAULT_ADVERT_INTERVAL_S, DEFAULT_BEACON_INTERVAL_S, MAX_AUTO_ANNOUNCE_INTERVAL_S,
     MIN_AUTO_ANNOUNCE_INTERVAL_S, admin_reachable, cap, prop, stream,
 };
+pub use umsh_ulcp::items::REGION_STRING_MAX_LEN;
 use umsh_ulcp::items::{self, Filter, ItemError, REGION_CODE_LEN};
 use umsh_ulcp::meta::{
     self, BufferedRxMeta, RX_FLAG_ACKED, RX_FLAG_BUFFERED, RX_FLAG_SELF_TX, RxMeta, TxMeta,
@@ -1147,43 +1151,105 @@ impl<const N: usize> PublicKeyTable<N> {
 /// fits the forwarding policy it ends up configuring.
 pub const MAX_REPEATER_REGIONS: usize = 8;
 
-/// `PROP_MAC_REPEATER_REGIONS`: the region codes the device identity
-/// flood-forwards for.
+/// One configured region: the string the operator wrote, and the code it
+/// derives to.
 ///
-/// Held in the wire encoding — codes concatenated with no delimiter —
-/// because that is byte-for-byte the Supported Regions node identity
-/// option, so the property value and the advertisement are the same
-/// bytes and neither has to reshape the other.
+/// Both are kept because they answer different questions. The string is
+/// what the device advertises and what an administrator reads back, and it
+/// cannot be recovered from a hash-derived code. The code is what the
+/// forwarding filter compares against on every flooded packet, and
+/// re-deriving it there would mean hashing on the receive path.
+#[derive(Clone, Copy)]
+struct RegionEntry {
+    text: [u8; REGION_STRING_MAX_LEN],
+    text_len: usize,
+    code: [u8; REGION_CODE_LEN],
+}
+
+impl RegionEntry {
+    fn text(&self) -> &[u8] {
+        &self.text[..self.text_len]
+    }
+}
+
+/// `PROP_MAC_REPEATER_REGIONS`: the regions the device identity
+/// flood-forwards for, as written and as derived.
 #[derive(Clone, Copy, Default)]
 struct RepeaterRegions {
-    bytes: [u8; MAX_REPEATER_REGIONS * REGION_CODE_LEN],
+    entries: [Option<RegionEntry>; MAX_REPEATER_REGIONS],
     len: usize,
 }
 
 impl RepeaterRegions {
-    fn as_slice(&self) -> &[u8] {
-        &self.bytes[..self.len]
+    fn iter(&self) -> impl Iterator<Item = &RegionEntry> {
+        self.entries[..self.len].iter().filter_map(Option::as_ref)
     }
 
-    fn is_empty(&self) -> bool {
-        self.len == 0
+    fn contains(&self, text: &[u8]) -> bool {
+        self.iter().any(|entry| entry.text() == text)
     }
 
-    /// Parse a whole-value write. An odd length is a malformed value
-    /// rather than an oversized one; more codes than the device can hold
-    /// is `STATUS_NOMEM`, the same answer the key tables give.
-    fn parse(value: &[u8]) -> Result<Self, Status> {
-        if !value.len().is_multiple_of(REGION_CODE_LEN) {
-            return Err(Status::INVALID_ARGUMENT);
+    fn push(&mut self, entry: RegionEntry) -> Result<(), Status> {
+        if self.contains(entry.text()) {
+            return Err(Status::ALREADY);
         }
-        if value.len() > MAX_REPEATER_REGIONS * REGION_CODE_LEN {
+        if self.len == MAX_REPEATER_REGIONS {
             return Err(Status::NOMEM);
         }
+        self.entries[self.len] = Some(entry);
+        self.len += 1;
+        Ok(())
+    }
+
+    fn remove(&mut self, text: &[u8]) -> Result<(), Status> {
+        let index = self
+            .iter()
+            .position(|entry| entry.text() == text)
+            .ok_or(Status::ITEM_NOT_FOUND)?;
+        // Order is not meaningful, so the tail fills the hole.
+        self.len -= 1;
+        self.entries[index] = self.entries[self.len];
+        self.entries[self.len] = None;
+        Ok(())
+    }
+
+    /// Parse a whole-table write of length-prefixed string items.
+    ///
+    /// The whole value is validated before anything is committed, so a
+    /// rejected write leaves the previous table exactly as it was. A
+    /// repeated item collapses, matching the property's set semantics.
+    fn parse_table(value: &[u8]) -> Result<Self, Status> {
         let mut regions = Self::default();
-        regions.bytes[..value.len()].copy_from_slice(value);
-        regions.len = value.len();
+        for item in items::prefixed_items(value) {
+            let entry = region_entry(item.map_err(|_| Status::INVALID_ARGUMENT)?)?;
+            match regions.push(entry) {
+                Ok(()) | Err(Status::ALREADY) => {}
+                Err(status) => return Err(status),
+            }
+        }
         Ok(regions)
     }
+}
+
+/// Validate one region item and derive its forwarding code.
+///
+/// The derivation itself is total over every string this accepts — an
+/// airport code, a name, or a literal `0x` code — so the only failures are
+/// the bounds the property sets: 1 to 24 octets of UTF-8
+/// (ulcp-device.md § PROP_MAC_REPEATER_REGIONS).
+fn region_entry(item: &[u8]) -> Result<RegionEntry, Status> {
+    if !(1..=REGION_STRING_MAX_LEN).contains(&item.len()) {
+        return Err(Status::INVALID_ARGUMENT);
+    }
+    let text = core::str::from_utf8(item).map_err(|_| Status::INVALID_ARGUMENT)?;
+    let code = RegionCode::from_str(text).map_err(|_| Status::INVALID_ARGUMENT)?;
+    let mut entry = RegionEntry {
+        text: [0; REGION_STRING_MAX_LEN],
+        text_len: item.len(),
+        code: code.to_bytes(),
+    };
+    entry.text[..item.len()].copy_from_slice(item);
+    Ok(entry)
 }
 
 /// Parse a `PROP_MAC_REPEATER_DEFAULT_REGION` value: one region code, or
@@ -1496,7 +1562,7 @@ const SAVED_SCHEMA: &[SavedProperty] = &[
     saved(prop::MAC_REPEATER_ENABLED, ApplyPhase::Config, false),
     saved(prop::IDENT_ROLE, ApplyPhase::Config, false),
     saved(prop::IDENT_MOBILE, ApplyPhase::Config, false),
-    saved(prop::MAC_REPEATER_REGIONS, ApplyPhase::Config, false),
+    saved(prop::MAC_REPEATER_REGIONS, ApplyPhase::Config, true),
     saved(prop::MAC_REPEATER_DEFAULT_REGION, ApplyPhase::Config, false),
     saved(prop::MAC_REPEATER_MIN_RSSI, ApplyPhase::Config, false),
     saved(prop::MAC_REPEATER_MIN_SNR, ApplyPhase::Config, false),
@@ -1765,10 +1831,15 @@ impl SavedState {
             // The unset forms of the repeater policy are all "empty", and
             // empty is the default, so an unset gate is omitted outright
             // rather than written as a zero-length option.
-            prop::MAC_REPEATER_REGIONS => match self.repeater_regions.is_empty() {
-                true => Ok(()),
-                false => encoder.put(number, self.repeater_regions.as_slice()),
-            },
+            // Repeatable: one option per region string. The derived codes
+            // are not persisted — they follow from the strings, and a
+            // stored copy could only ever disagree with them.
+            prop::MAC_REPEATER_REGIONS => {
+                for entry in self.repeater_regions.iter() {
+                    encoder.put(number, entry.text())?;
+                }
+                Ok(())
+            }
             prop::MAC_REPEATER_DEFAULT_REGION => match &self.repeater_default_region {
                 Some(code) => encoder.put(number, code),
                 None => Ok(()),
@@ -1897,7 +1968,12 @@ impl SavedState {
             prop::IDENT_ROLE => self.ident_role = Some(parse_u8(value).map_err(invalid)?),
             prop::IDENT_MOBILE => self.ident_mobile = parse_bool(value).map_err(invalid)?,
             prop::MAC_REPEATER_REGIONS => {
-                self.repeater_regions = RepeaterRegions::parse(value).map_err(invalid)?
+                // One option per entry, re-validated and re-derived: a
+                // stored region that no longer parses is dropped rather
+                // than allowed to fail the whole restore.
+                if let Ok(entry) = region_entry(value) {
+                    let _ = self.repeater_regions.push(entry);
+                }
             }
             prop::MAC_REPEATER_DEFAULT_REGION => {
                 self.repeater_default_region = parse_region_code(value).map_err(invalid)?
@@ -2302,13 +2378,21 @@ impl<A: AesProvider, S: Sha256Provider, const TX: usize> Session<A, S, TX> {
         self.device.repeater_enabled
     }
 
-    /// `PROP_MAC_REPEATER_REGIONS`: the flood-forwarding region filter,
-    /// in wire order — concatenated 2-octet codes, empty for no
-    /// restriction. This is also exactly the Supported Regions identity
-    /// option payload, so a caller advertising the device's regions can
-    /// forward these bytes unchanged.
-    pub fn repeater_regions(&self) -> &[u8] {
-        self.device.repeater_regions.as_slice()
+    /// `PROP_MAC_REPEATER_REGIONS`, as the forwarding filter needs it: the
+    /// 2-octet code derived from each configured region. Empty means no
+    /// restriction.
+    pub fn repeater_region_codes(&self) -> impl Iterator<Item = [u8; REGION_CODE_LEN]> + '_ {
+        self.device.repeater_regions.iter().map(|entry| entry.code)
+    }
+
+    /// `PROP_MAC_REPEATER_REGIONS`, as the identity advertises it: the
+    /// string form of each configured region, in the order it was written.
+    pub fn repeater_region_names(&self) -> impl Iterator<Item = &str> + '_ {
+        self.device
+            .repeater_regions
+            .iter()
+            // Validated as UTF-8 on the way in, so this cannot fail.
+            .filter_map(|entry| core::str::from_utf8(entry.text()).ok())
     }
 
     /// `PROP_MAC_REPEATER_DEFAULT_REGION`: the code inserted into an
@@ -2976,15 +3060,16 @@ impl<A: AesProvider, S: Sha256Provider, const TX: usize> Session<A, S, TX> {
                 // MIC and counter): coalesce, and re-ack only within
                 // the idempotent duplicate-acknowledgement window — and
                 // at most once per holdoff, so flood copies of one
-                // transmission share a single ack. Four frame-times
-                // stands in for the MAC's forwarding-confirmation
-                // window: frame, contention, guard, frame.
-                let holdoff_ms = 4 * u64::from(lora_airtime_ms(
+                // transmission share a single ack. The holdoff stands in
+                // for the MAC's forwarding-confirmation window,
+                // `2 × T_frame + W_max + W_jitter + D_ack` = 2.85 × T_frame.
+                let holdoff_ms = u64::from(lora_airtime_ms(
                     self.device.settings.sf,
                     self.device.settings.bw_hz,
                     self.device.settings.cr_denom,
                     data.len(),
-                ));
+                )) * 285
+                    / 100;
                 let ack = window
                     .note_acknowledgeable_duplicate(counter, mic, now_ms, holdoff_ms)
                     .then_some(())
@@ -4288,7 +4373,7 @@ impl<A: AesProvider, S: Sha256Provider, const TX: usize> Session<A, S, TX> {
             // configuration and turn it on last. Empty means "no gate"
             // in every case, which is also the post-reset value.
             prop::MAC_REPEATER_REGIONS => {
-                self.device.repeater_regions = RepeaterRegions::parse(value)?;
+                self.device.repeater_regions = RepeaterRegions::parse_table(value)?;
                 self.bump_dev_domain();
                 Ok(false)
             }
@@ -4407,6 +4492,20 @@ impl<A: AesProvider, S: Sha256Provider, const TX: usize> Session<A, S, TX> {
                     Err(status) => self.complete(tid, status, emit),
                 }
             }
+            // The item is the region string; the device derives the code.
+            prop::MAC_REPEATER_REGIONS => {
+                let entry = match region_entry(item) {
+                    Ok(entry) => entry,
+                    Err(status) => return self.complete(tid, status, emit),
+                };
+                match self.device.repeater_regions.push(entry) {
+                    Ok(()) => {
+                        self.bump_dev_domain();
+                        self.send_prop_inserted(tid, key, item, emit)
+                    }
+                    Err(status) => self.complete(tid, status, emit),
+                }
+            }
             // Key-bearing inserts require the transport's security
             // binding. The emitted digest never contains key material.
             prop::HOST_CHANNEL_KEYS => {
@@ -4501,6 +4600,21 @@ impl<A: AesProvider, S: Sha256Provider, const TX: usize> Session<A, S, TX> {
                 };
                 match self.host.filters.remove(filter) {
                     Ok(()) => self.send_prop_removed(tid, key, selector, emit),
+                    Err(status) => self.complete(tid, status, emit),
+                }
+            }
+            // Selected by the string as written, not by the derived code:
+            // two names can share a code only by collision, and the list
+            // an administrator reads back is the list they remove from.
+            prop::MAC_REPEATER_REGIONS => {
+                if let Err(status) = region_entry(selector) {
+                    return self.complete(tid, status, emit);
+                }
+                match self.device.repeater_regions.remove(selector) {
+                    Ok(()) => {
+                        self.bump_dev_domain();
+                        self.send_prop_removed(tid, key, selector, emit)
+                    }
                     Err(status) => self.complete(tid, status, emit),
                 }
             }
@@ -4945,7 +5059,16 @@ impl<A: AesProvider, S: Sha256Provider, const TX: usize> Session<A, S, TX> {
                 out[0] = self.device.ble_enabled as u8;
                 1
             }
-            prop::MAC_REPEATER_REGIONS => put(out, self.device.repeater_regions.as_slice()),
+            prop::MAC_REPEATER_REGIONS => {
+                // Digest form equals item form; items carry PUI length
+                // prefixes in whole-table values.
+                let mut len = 0;
+                for entry in self.device.repeater_regions.iter() {
+                    len += items::encode_prefixed_item(entry.text(), &mut out[len..])
+                        .expect("out sized for a full region table");
+                }
+                len
+            }
             prop::MAC_REPEATER_DEFAULT_REGION => match &self.device.repeater_default_region {
                 Some(code) => put(out, code),
                 None => 0,
@@ -5440,6 +5563,36 @@ mod tests {
         let mut buf = [0u8; 1024];
         let len = frame::prop_set(&mut buf, 2, key, value).unwrap();
         dispatch(session, &buf[..len], 0)
+    }
+
+    /// Build a `PROP_MAC_REPEATER_REGIONS` whole-table value: one
+    /// length-prefixed item per region string.
+    fn region_table(regions: &[&str]) -> Vec<u8> {
+        region_table_raw(
+            &regions
+                .iter()
+                .map(|text| text.as_bytes())
+                .collect::<Vec<_>>(),
+        )
+    }
+
+    /// The same, for items that are deliberately not valid regions.
+    fn region_table_raw(items: &[&[u8]]) -> Vec<u8> {
+        let mut table = Vec::new();
+        for item in items {
+            let mut encoded = [0u8; 64];
+            let len = items::encode_prefixed_item(item, &mut encoded).unwrap();
+            table.extend_from_slice(&encoded[..len]);
+        }
+        table
+    }
+
+    fn region_codes(session: &TestSession) -> Vec<[u8; REGION_CODE_LEN]> {
+        session.repeater_region_codes().collect()
+    }
+
+    fn region_names(session: &TestSession) -> Vec<String> {
+        session.repeater_region_names().map(str::to_owned).collect()
     }
 
     fn send_packet<const TX: usize>(
@@ -6486,15 +6639,12 @@ mod tests {
 
         // Written with forwarding still disabled.
         assert_eq!(get(&mut session, prop::MAC_REPEATER_ENABLED), [0]);
-        let (emitted, effect) = set(
-            &mut session,
-            prop::MAC_REPEATER_REGIONS,
-            &[0x78, 0x53, 0x31, 0xD9],
-        );
+        let table = region_table(&["SJC", "Rogue Valley"]);
+        let (emitted, effect) = set(&mut session, prop::MAC_REPEATER_REGIONS, &table);
         assert_eq!(effect, None, "policy is not radio-affecting");
         let (_, key, value) = parse_prop_is(&emitted[0]);
         assert_eq!(key, prop::MAC_REPEATER_REGIONS);
-        assert_eq!(value, [0x78, 0x53, 0x31, 0xD9]);
+        assert_eq!(value, table, "the strings read back as they were written");
         set(
             &mut session,
             prop::MAC_REPEATER_DEFAULT_REGION,
@@ -6505,7 +6655,12 @@ mod tests {
         // −7 dB.
         set(&mut session, prop::MAC_REPEATER_MIN_SNR, &[0xF9]);
 
-        assert_eq!(session.repeater_regions(), [0x78, 0x53, 0x31, 0xD9]);
+        assert_eq!(region_names(&session), ["SJC", "Rogue Valley"]);
+        assert_eq!(
+            region_codes(&session),
+            [[0x78, 0x53], [0xDF, 0x6F]],
+            "an airport code and a hashed name, derived once at the write"
+        );
         assert_eq!(session.repeater_default_region(), Some([0x78, 0x53]));
         assert_eq!(session.repeater_min_rssi(), Some(-115));
         assert_eq!(session.repeater_min_snr(), Some(-7));
@@ -6517,7 +6672,12 @@ mod tests {
         let mut booted: TestSession =
             Session::new(test_config(), Status::RESET_POWER_ON, test_engine());
         booted.restore_at_boot(&bytes[..len]).unwrap();
-        assert_eq!(booted.repeater_regions(), [0x78, 0x53, 0x31, 0xD9]);
+        assert_eq!(region_names(&booted), ["SJC", "Rogue Valley"]);
+        assert_eq!(
+            region_codes(&booted),
+            [[0x78, 0x53], [0xDF, 0x6F]],
+            "the snapshot carries the strings; the codes re-derive on restore"
+        );
         assert_eq!(booted.repeater_default_region(), Some([0x78, 0x53]));
         assert_eq!(booted.repeater_min_rssi(), Some(-115));
         assert_eq!(booted.repeater_min_snr(), Some(-7));
@@ -6536,7 +6696,11 @@ mod tests {
     #[test]
     fn repeater_policy_clears_back_to_unset() {
         let mut session = test_session();
-        set(&mut session, prop::MAC_REPEATER_REGIONS, &[0x78, 0x53]);
+        set(
+            &mut session,
+            prop::MAC_REPEATER_REGIONS,
+            &region_table(&["SJC"]),
+        );
         set(
             &mut session,
             prop::MAC_REPEATER_DEFAULT_REGION,
@@ -6550,7 +6714,7 @@ mod tests {
         set(&mut session, prop::MAC_REPEATER_MIN_RSSI, &[]);
         set(&mut session, prop::MAC_REPEATER_MIN_SNR, &[]);
 
-        assert_eq!(session.repeater_regions(), Vec::<u8>::new());
+        assert_eq!(region_names(&session), Vec::<String>::new());
         assert_eq!(session.repeater_default_region(), None);
         assert_eq!(session.repeater_min_rssi(), None);
         assert_eq!(session.repeater_min_snr(), None);
@@ -6561,7 +6725,7 @@ mod tests {
         let mut booted: TestSession =
             Session::new(test_config(), Status::RESET_POWER_ON, test_engine());
         booted.restore_at_boot(&bytes[..len]).unwrap();
-        assert_eq!(booted.repeater_regions(), Vec::<u8>::new());
+        assert_eq!(region_names(&booted), Vec::<String>::new());
         assert_eq!(booted.repeater_default_region(), None);
         assert_eq!(booted.repeater_min_rssi(), None);
         assert_eq!(booted.repeater_min_snr(), None);
@@ -6574,16 +6738,30 @@ mod tests {
     fn repeater_policy_rejects_malformed_values() {
         let mut session = test_session();
 
-        // Region lists are whole codes; an odd length is malformed, not
-        // merely oversized.
-        let (emitted, _) = set(
-            &mut session,
-            prop::MAC_REPEATER_REGIONS,
-            &[0x78, 0x53, 0x31],
-        );
+        // A region string is 1 to 24 octets of UTF-8. Everything outside
+        // that is malformed, not merely unrecognized — the derivation
+        // itself is total over every string within the bounds.
+        for bad in [
+            b"".as_slice(),
+            // Twenty-five octets: one past the cap.
+            b"AAAAAAAAAAAAAAAAAAAAAAAAA",
+            b"\xFF\xFE not text",
+        ] {
+            let (emitted, _) = set(
+                &mut session,
+                prop::MAC_REPEATER_REGIONS,
+                &region_table_raw(&[bad]),
+            );
+            expect_status(&emitted[0], 2, Status::INVALID_ARGUMENT);
+        }
+        // A truncated length prefix is malformed the same way.
+        let (emitted, _) = set(&mut session, prop::MAC_REPEATER_REGIONS, &[9, b'S', b'J']);
         expect_status(&emitted[0], 2, Status::INVALID_ARGUMENT);
-        // More codes than the device can hold is a capacity answer.
-        let over_capacity = [0xAAu8; (MAX_REPEATER_REGIONS + 1) * REGION_CODE_LEN];
+        // More regions than the device can hold is a capacity answer.
+        let names: Vec<String> = (0..=MAX_REPEATER_REGIONS)
+            .map(|index| format!("Region {index}"))
+            .collect();
+        let over_capacity = region_table(&names.iter().map(String::as_str).collect::<Vec<_>>());
         let (emitted, _) = set(&mut session, prop::MAC_REPEATER_REGIONS, &over_capacity);
         expect_status(&emitted[0], 2, Status::NOMEM);
 
@@ -6602,7 +6780,7 @@ mod tests {
         expect_status(&emitted[0], 2, Status::INVALID_ARGUMENT);
 
         // Nothing was partially applied.
-        assert_eq!(session.repeater_regions(), Vec::<u8>::new());
+        assert_eq!(region_names(&session), Vec::<String>::new());
         assert_eq!(session.repeater_default_region(), None);
         assert_eq!(session.repeater_min_rssi(), None);
         assert_eq!(session.repeater_min_snr(), None);
@@ -6622,8 +6800,12 @@ mod tests {
             &[0x78, 0x53],
         );
         assert_eq!(session.repeater_default_region(), Some([0x78, 0x53]));
-        set(&mut session, prop::MAC_REPEATER_REGIONS, &[0x31, 0xD9]);
-        assert_eq!(session.repeater_regions(), [0x31, 0xD9]);
+        set(
+            &mut session,
+            prop::MAC_REPEATER_REGIONS,
+            &region_table(&["SF Bay Area"]),
+        );
+        assert_eq!(region_codes(&session), [[0x31, 0xD9]]);
         assert_eq!(
             session.repeater_default_region(),
             Some([0x78, 0x53]),
@@ -6638,8 +6820,61 @@ mod tests {
             prop::MAC_REPEATER_DEFAULT_REGION,
             &[0xAB, 0xCD],
         );
-        assert_eq!(session.repeater_regions(), Vec::<u8>::new());
+        assert_eq!(region_names(&session), Vec::<String>::new());
         assert_eq!(session.repeater_default_region(), Some([0xAB, 0xCD]));
+    }
+
+    /// The region table is also editable one entry at a time, so a host
+    /// adding a region does not have to know — or resend — the rest of
+    /// the table it is not changing.
+    #[test]
+    fn repeater_regions_insert_and_remove_one_entry_at_a_time() {
+        let mut session = test_session();
+
+        let (emitted, effect) = insert_item(&mut session, prop::MAC_REPEATER_REGIONS, b"SJC");
+        assert!(effect.is_none());
+        let (key, digest) = parse_table_notice(&emitted[0], Cmd::PropInserted, 5);
+        assert_eq!(key, prop::MAC_REPEATER_REGIONS);
+        assert_eq!(digest, b"SJC", "the inserted item is echoed as written");
+        insert_item(&mut session, prop::MAC_REPEATER_REGIONS, b"Rogue Valley");
+        assert_eq!(region_names(&session), ["SJC", "Rogue Valley"]);
+        assert_eq!(region_codes(&session), [[0x78, 0x53], [0xDF, 0x6F]]);
+        assert_eq!(
+            get(&mut session, prop::MAC_REPEATER_REGIONS),
+            region_table(&["SJC", "Rogue Valley"])
+        );
+
+        // A literal code is a region string too, and derives to itself.
+        insert_item(&mut session, prop::MAC_REPEATER_REGIONS, b"0x1234");
+        assert_eq!(region_codes(&session)[2], [0x12, 0x34]);
+
+        // Re-inserting is idempotent, not an error the host has to
+        // distinguish from a real failure.
+        let (emitted, _) = insert_item(&mut session, prop::MAC_REPEATER_REGIONS, b"SJC");
+        expect_status(&emitted[0], 5, Status::ALREADY);
+        assert_eq!(region_names(&session), ["SJC", "Rogue Valley", "0x1234"]);
+
+        // Removal selects by the string that was written, not the code.
+        let (emitted, _) = remove_item(&mut session, prop::MAC_REPEATER_REGIONS, b"SJC");
+        let (key, digest) = parse_table_notice(&emitted[0], Cmd::PropRemoved, 6);
+        assert_eq!(key, prop::MAC_REPEATER_REGIONS);
+        assert_eq!(digest, b"SJC");
+        assert_eq!(region_names(&session), ["0x1234", "Rogue Valley"]);
+
+        let (emitted, _) = remove_item(&mut session, prop::MAC_REPEATER_REGIONS, b"SJC");
+        expect_status(&emitted[0], 6, Status::ITEM_NOT_FOUND);
+        // A malformed selector is refused before the lookup, so it reads
+        // as bad input rather than a missing entry.
+        let (emitted, _) = remove_item(&mut session, prop::MAC_REPEATER_REGIONS, b"");
+        expect_status(&emitted[0], 6, Status::INVALID_ARGUMENT);
+
+        // Filling the table leaves the insert answering out of capacity.
+        for index in 0..MAX_REPEATER_REGIONS - 2 {
+            let name = format!("Region {index}");
+            insert_item(&mut session, prop::MAC_REPEATER_REGIONS, name.as_bytes());
+        }
+        let (emitted, _) = insert_item(&mut session, prop::MAC_REPEATER_REGIONS, b"One too many");
+        expect_status(&emitted[0], 5, Status::NOMEM);
     }
 
     #[test]
@@ -7795,9 +8030,8 @@ mod tests {
             prop::IDENT_ROLE,
             prop::IDENT_MOBILE,
             prop::DEV_DISCOVERABLE,
-            // The repeater policy is whole-value too: a region list is
-            // replaced outright, never accumulated a code at a time.
-            prop::MAC_REPEATER_REGIONS,
+            // The rest of the repeater policy is whole-value; only the
+            // region table is edited entry by entry.
             prop::MAC_REPEATER_DEFAULT_REGION,
             prop::MAC_REPEATER_MIN_RSSI,
             prop::MAC_REPEATER_MIN_SNR,
@@ -9607,6 +9841,15 @@ mod tests {
         }
         for seed in 0..MAX_DEV_ADMINS as u8 {
             let _ = session.device.admins.insert([seed; items::PUBLIC_KEY_LEN]);
+        }
+        for seed in 0..MAX_REPEATER_REGIONS as u8 {
+            // Distinct, and each the longest a region string may be.
+            let mut text = [b'r'; REGION_STRING_MAX_LEN];
+            text[0] = b'a' + seed;
+            let _ = session
+                .device
+                .repeater_regions
+                .push(region_entry(&text).unwrap());
         }
         session.device.name = [b'n'; MAX_DEVICE_NAME_LEN];
         session.device.name_len = MAX_DEVICE_NAME_LEN;

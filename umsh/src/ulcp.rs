@@ -351,9 +351,12 @@ pub struct RepeaterPolicy {
     /// `PROP_MAC_REPEATER_ENABLED`: whether the on-board node forwards at
     /// all. The remaining fields are inert while this is false.
     pub enabled: bool,
-    /// `PROP_MAC_REPEATER_REGIONS`: which region-tagged floods to forward.
-    /// Empty imposes no regional restriction.
-    pub regions: Vec<RegionCode>,
+    /// `PROP_MAC_REPEATER_REGIONS`: which region-tagged floods to forward,
+    /// as the strings an operator wrote — an airport code, a name, or a
+    /// literal `0x1234`. Empty imposes no regional restriction. The
+    /// device derives the 2-octet codes the filter actually compares;
+    /// pass a name through [`RegionCode::from_str`] to see them.
+    pub regions: Vec<String>,
     /// `PROP_MAC_REPEATER_DEFAULT_REGION`: the tag inserted into an
     /// untagged flood before forwarding it. `None` forwards untagged.
     pub default_region: Option<RegionCode>,
@@ -1323,24 +1326,52 @@ where
         }))
     }
 
+    /// Read the forwarding filter's region strings on their own, without
+    /// the four extra round trips a whole-policy read costs.
+    pub async fn repeater_regions(&mut self) -> Result<Vec<String>, UlcpError> {
+        decode_region_list(&self.get_prop(prop::MAC_REPEATER_REGIONS).await?)
+    }
+
     /// Set which region-tagged floods the device forwards
-    /// (`PROP_MAC_REPEATER_REGIONS`). An empty list clears the filter,
-    /// which imposes no regional restriction rather than blocking every
-    /// flood.
+    /// (`PROP_MAC_REPEATER_REGIONS`), as region strings. An empty list
+    /// clears the filter, which imposes no regional restriction rather
+    /// than blocking every flood.
     ///
     /// Returns the list the device actually stored. A device with less
-    /// capacity than the caller offered keeps a prefix, so a shorter
-    /// return is a truncation, not an error.
+    /// capacity than the caller offered refuses the write outright, so a
+    /// shorter return means it collapsed a repeat.
     pub async fn set_repeater_regions(
         &mut self,
-        regions: &[RegionCode],
-    ) -> Result<Vec<RegionCode>, UlcpError> {
-        let mut value = Vec::with_capacity(regions.len() * 2);
+        regions: &[String],
+    ) -> Result<Vec<String>, UlcpError> {
+        let mut value = Vec::new();
         for region in regions {
-            value.extend_from_slice(&region.to_bytes());
+            check_region(region)?;
+            let mut item = vec![0u8; region.len() + 4];
+            let len = items::encode_prefixed_item(region.as_bytes(), &mut item)
+                .map_err(|_| UlcpError::Protocol("region item encode"))?;
+            value.extend_from_slice(&item[..len]);
         }
         let authoritative = self.set_prop(prop::MAC_REPEATER_REGIONS, &value).await?;
         decode_region_list(&authoritative)
+    }
+
+    /// Add one region to the forwarding filter without resending the rest
+    /// of the table. A region already present fails with `STATUS_ALREADY`.
+    pub async fn add_repeater_region(&mut self, region: &str) -> Result<(), UlcpError> {
+        check_region(region)?;
+        self.insert_prop_item(prop::MAC_REPEATER_REGIONS, region.as_bytes())
+            .await
+            .map(|_| ())
+    }
+
+    /// Remove one region from the forwarding filter. The selector is the
+    /// string as it was written, not the code it derives to.
+    pub async fn remove_repeater_region(&mut self, region: &str) -> Result<(), UlcpError> {
+        check_region(region)?;
+        self.remove_prop_item(prop::MAC_REPEATER_REGIONS, region.as_bytes())
+            .await
+            .map(|_| ())
     }
 
     /// Set the region code inserted into untagged floods before
@@ -2816,16 +2847,29 @@ fn decode_filter_table(value: &[u8]) -> Result<Vec<items::Filter>, UlcpError> {
     Ok(filters)
 }
 
-/// Decode `PROP_MAC_REPEATER_REGIONS`: 2-byte region codes back to back,
-/// with no separator and no length prefix.
-fn decode_region_list(value: &[u8]) -> Result<Vec<RegionCode>, UlcpError> {
-    if value.len() % 2 != 0 {
-        return Err(UlcpError::Protocol("malformed PROP_MAC_REPEATER_REGIONS"));
+/// Decode `PROP_MAC_REPEATER_REGIONS`: length-prefixed UTF-8 region
+/// strings, in the order they were written.
+fn decode_region_list(value: &[u8]) -> Result<Vec<String>, UlcpError> {
+    let mut regions = Vec::new();
+    for item in items::prefixed_items(value) {
+        let item = item.map_err(|_| UlcpError::Protocol("malformed PROP_MAC_REPEATER_REGIONS"))?;
+        let text = core::str::from_utf8(item)
+            .map_err(|_| UlcpError::Protocol("malformed PROP_MAC_REPEATER_REGIONS"))?;
+        regions.push(text.to_owned());
     }
-    Ok(value
-        .chunks_exact(2)
-        .map(|code| RegionCode::from_bytes([code[0], code[1]]))
-        .collect())
+    Ok(regions)
+}
+
+/// Reject a region string the device is bound to refuse, so a malformed
+/// write fails here rather than costing a round trip
+/// (ulcp-device.md § `PROP_MAC_REPEATER_REGIONS`).
+fn check_region(region: &str) -> Result<(), UlcpError> {
+    match (1..=umsh_core::REGION_NAME_MAX_LEN).contains(&region.len()) {
+        true => Ok(()),
+        false => Err(UlcpError::Protocol(
+            "a region string is 1 to 24 octets of UTF-8",
+        )),
+    }
 }
 
 /// Decode a single optional region code. Empty means unset.

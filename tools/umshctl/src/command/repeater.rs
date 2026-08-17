@@ -12,7 +12,7 @@ use umsh::core::RegionCode;
 use umsh::ulcp_wire::ids::prop;
 
 use super::persist;
-use super::values::{MinRssiArg, MinSnrArg, OptRegionArg, RegionListArg};
+use super::values::{MinRssiArg, MinSnrArg, OptRegionArg, RegionArg, RegionListArg};
 use crate::App;
 use crate::output::{subfield, warn};
 
@@ -24,11 +24,10 @@ pub enum RepeaterOp {
     On,
     /// Stop forwarding.
     Off,
-    /// Only flood-forward packets tagged with one of these regions;
-    /// `none` clears the filter, which forwards regardless of region.
+    /// Only flood-forward packets tagged with one of these regions.
     Regions {
-        #[arg(value_name = "CODE[,...]|none")]
-        list: RegionListArg,
+        #[command(subcommand)]
+        op: Option<RegionOp>,
     },
     /// Tag untagged floods with this region before forwarding; `none`
     /// forwards them untagged.
@@ -45,6 +44,31 @@ pub enum RepeaterOp {
     MinSnr {
         #[arg(value_name = "DB|none", allow_hyphen_values = true)]
         db: MinSnrArg,
+    },
+}
+
+/// A region is written as an airport code, a name, or a literal
+/// `0x1234`; the device stores the string and derives the 2-octet code
+/// its forwarding filter compares.
+#[derive(Debug, clap::Subcommand)]
+pub enum RegionOp {
+    /// List the regions the device forwards for.
+    List,
+    /// Add one region to the filter.
+    Add {
+        #[arg(value_name = "REGION")]
+        region: RegionArg,
+    },
+    /// Remove one region from the filter.
+    Remove {
+        #[arg(value_name = "REGION")]
+        region: RegionArg,
+    },
+    /// Replace the whole filter; `none` clears it, which forwards
+    /// regardless of region.
+    Set {
+        #[arg(value_name = "REGION[,...]|none")]
+        list: RegionListArg,
     },
 }
 
@@ -72,7 +96,7 @@ pub async fn run(app: &mut App, op: Option<RepeaterOp>) -> Result<()> {
             }
             if policy.enabled
                 && policy.default_region.is_some_and(|code| {
-                    !policy.regions.is_empty() && !policy.regions.contains(&code)
+                    !policy.regions.is_empty() && !region_codes(&policy.regions).contains(&code)
                 })
             {
                 // Legal, and not enforced by the device: the two
@@ -88,17 +112,32 @@ pub async fn run(app: &mut App, op: Option<RepeaterOp>) -> Result<()> {
         }
         RepeaterOp::On => set_enabled(device, true).await?,
         RepeaterOp::Off => set_enabled(device, false).await?,
-        RepeaterOp::Regions { list } => {
-            let stored = device.set_repeater_regions(&list.0).await?;
-            println!("repeater regions {}", format_regions(&stored));
-            if stored.len() < list.0.len() {
-                warn(format!(
-                    "the device kept {} of {} regions (capacity)",
-                    stored.len(),
-                    list.0.len()
-                ));
+        RepeaterOp::Regions { op } => match op.unwrap_or(RegionOp::List) {
+            RegionOp::List => {
+                let regions = device.repeater_regions().await?;
+                println!("repeater regions {}", format_regions(&regions));
+                return Ok(());
             }
-        }
+            RegionOp::Add { region } => {
+                device.add_repeater_region(&region.0).await?;
+                println!("repeater region added: {}", format_region(&region.0));
+            }
+            RegionOp::Remove { region } => {
+                device.remove_repeater_region(&region.0).await?;
+                println!("repeater region removed: {}", format_region(&region.0));
+            }
+            RegionOp::Set { list } => {
+                let stored = device.set_repeater_regions(&list.0).await?;
+                println!("repeater regions {}", format_regions(&stored));
+                if stored.len() < list.0.len() {
+                    warn(format!(
+                        "the device kept {} of {} regions (repeats collapse)",
+                        stored.len(),
+                        list.0.len()
+                    ));
+                }
+            }
+        },
         RepeaterOp::DefaultRegion { code } => {
             match device.set_repeater_default_region(code.0).await? {
                 Some(code) => println!("repeater default region {code}"),
@@ -136,15 +175,38 @@ fn print_enabled(byte: Option<u8>) {
     }
 }
 
+/// The codes a stored region list derives to, for the cross-checks that
+/// compare against a default region.
+fn region_codes(regions: &[String]) -> Vec<RegionCode> {
+    regions
+        .iter()
+        .filter_map(|region| region.parse::<RegionCode>().ok())
+        .collect()
+}
+
+/// Render one region as the operator wrote it, with the code the
+/// forwarding filter actually compares — a hashed name is otherwise
+/// unrecognizable in a packet capture.
+pub fn format_region(region: &str) -> String {
+    let Ok(code) = region.parse::<RegionCode>() else {
+        return region.to_string();
+    };
+    let hex = format!("0x{:04X}", code.as_u16());
+    match region.eq_ignore_ascii_case(&hex) {
+        true => hex,
+        false => format!("{region} ({hex})"),
+    }
+}
+
 /// Render a region list for display, naming the empty list as what it
 /// means rather than printing nothing.
-pub fn format_regions(regions: &[RegionCode]) -> String {
+pub fn format_regions(regions: &[String]) -> String {
     if regions.is_empty() {
         return "any (no regional restriction)".to_string();
     }
     regions
         .iter()
-        .map(RegionCode::to_string)
+        .map(|region| format_region(region))
         .collect::<Vec<_>>()
         .join(", ")
 }
@@ -156,9 +218,13 @@ mod tests {
     #[test]
     fn the_empty_region_list_says_what_it_means() {
         assert_eq!(format_regions(&[]), "any (no regional restriction)");
-        assert_eq!(
-            format_regions(&[RegionCode::from_iata("SJC").unwrap()]),
-            "SJC"
-        );
+    }
+
+    #[test]
+    fn a_region_prints_the_code_its_string_derives_to() {
+        assert_eq!(format_region("SJC"), "SJC (0x7853)");
+        assert_eq!(format_region("Rogue Valley"), "Rogue Valley (0xDF6F)");
+        // A literal already is its code; quoting it twice says nothing.
+        assert_eq!(format_region("0x1234"), "0x1234");
     }
 }

@@ -1837,7 +1837,13 @@ fn transmit_next_requeues_non_immediate_frame_when_cad_detects_activity() {
     assert_eq!(queued.receipt, Some(SendReceipt(3)));
     assert_eq!(queued.frame.as_slice(), b"app");
     assert_eq!(queued.cad_attempts, 1);
-    assert!(queued.not_before_ms >= mac.clock().now_ms());
+    // Backoff is uniform over [T_frame/40, T_frame/4] — long enough for a frame
+    // already on the air to finish, short enough that sixteen attempts stay
+    // inside the sender's patience (channel-access.md § Backoff Procedure).
+    let t_frame_ms = u64::from(mac.radio().t_frame_ms());
+    let now_ms = mac.clock().now_ms();
+    assert!(queued.not_before_ms >= now_ms + t_frame_ms / 40);
+    assert!(queued.not_before_ms <= now_ms + t_frame_ms / 4);
 }
 
 #[test]
@@ -1866,7 +1872,7 @@ fn transmit_next_waits_for_backoff_deadline_before_retrying_cad() {
 }
 
 #[test]
-fn transmit_next_drops_frame_after_five_busy_cad_attempts() {
+fn transmit_next_drops_frame_after_sixteen_busy_cad_attempts() {
     let mut mac = make_mac();
     for _ in 0..crate::MAX_CAD_ATTEMPTS {
         mac.radio_mut().cad_responses.push_back(true).unwrap();
@@ -3535,6 +3541,38 @@ fn receive_one_delivers_multicast_for_known_channel() {
     );
 }
 
+/// A MAC command is addressed to one node, and only a command whose own
+/// definition provides rules for multicast or broadcast is acted on when it
+/// arrives that way (mac-commands.md). The built-in Echo reply is not one of
+/// them: answering a multicast ping would hand one frame a reply from every
+/// member of the channel.
+#[test]
+fn receive_one_does_not_answer_an_echo_request_carried_by_multicast() {
+    let mut mac = make_mac();
+    let _local_id = mac.add_identity(DummyIdentity::new([0x10; 32])).unwrap();
+    let remote = DummyIdentity::new([0xAB; 32]);
+    let channel_key = ChannelKey([0x5A; 32]);
+    let channel_id = mac.crypto().derive_channel_id(&channel_key);
+    mac.add_peer(*remote.public_key()).unwrap();
+    mac.add_channel(channel_key.clone()).unwrap();
+
+    let derived = mac.crypto().derive_channel_keys(&channel_key);
+    let keys = PairwiseKeys {
+        k_enc: derived.k_enc,
+        k_mic: derived.k_mic,
+    };
+    // PayloadType::MacCommand, Echo Request, one byte of echo data.
+    let echo_request = [PayloadType::MacCommand as u8, 4, 0x7E];
+    mac.radio_mut()
+        .queue_received_multicast(&remote, channel_id, &keys, &echo_request);
+
+    assert!(block_on(mac.receive_one(|_, _| {})).unwrap());
+    assert!(
+        mac.tx_queue_mut().pop_next().is_none(),
+        "a multicast echo request must not raise a reply"
+    );
+}
+
 #[test]
 fn receive_one_drops_replayed_multicast_after_first_delivery() {
     let mut mac = make_mac();
@@ -4969,8 +5007,10 @@ fn receive_one_repeater_flood_forwards_with_delay_and_decrements_hops() {
     assert_eq!(mac.tx_queue().len(), 1);
     let forwarded = mac.tx_queue_mut().pop_next().unwrap();
     assert_eq!(forwarded.priority, TxPriority::Forward);
-    assert!(forwarded.not_before_ms >= 123);
-    assert!(forwarded.not_before_ms <= 323);
+    // The dummy radio reports 0 dBm, so the signal term saturates and the
+    // deterministic window sits at its maximum; only the jitter varies.
+    assert!(forwarded.not_before_ms >= 123 + 50);
+    assert!(forwarded.not_before_ms <= 123 + 60);
     assert_eq!(forwarded.forward_deferrals, 0);
 
     let header = PacketHeader::parse(forwarded.frame.as_slice()).unwrap();
@@ -4984,10 +5024,11 @@ fn receive_one_repeater_adds_ack_guard_to_flood_forward_of_ack_requested_packet(
         {
             let repeater = mac.repeater_config_mut();
             repeater.enabled = true;
-            // Collapse the random contention window so the ACK protection
-            // interval is the only delay component.
+            // Collapse the contention window and its jitter so the ACK
+            // protection interval is the only delay component.
             repeater.flood_contention_min_window_percent = 0;
-            repeater.flood_contention_max_window_frames = 0;
+            repeater.flood_contention_max_window_percent = 0;
+            repeater.flood_contention_jitter_percent = 0;
         }
         let _repeater_id = mac.add_identity(DummyIdentity::new([0x10; 32])).unwrap();
 
@@ -5220,6 +5261,98 @@ fn repeater_forwards_an_identical_reack_once_the_ack_entry_ages_out() {
     assert!(
         mac.tx_queue_mut().pop_next().is_some(),
         "a re-ack after the ack window is carried onward"
+    );
+}
+
+/// Queue a flooded beacon at a chosen signal level and report the contention
+/// delay the repeater scheduled it with, relative to the clock.
+fn flood_contention_delay_at(rssi_dbm: i16, snr: Snr) -> u64 {
+    let mut mac = make_mac();
+    mac.repeater_config_mut().enabled = true;
+    mac.radio_mut().rx_rssi = rssi_dbm;
+    mac.radio_mut().rx_snr = snr;
+    let _repeater_id = mac.add_identity(DummyIdentity::new([0x10; 32])).unwrap();
+
+    let source = DummyIdentity::new([0xAB; 32]);
+    let mut buf = [0u8; 256];
+    let beacon = PacketBuilder::new(&mut buf)
+        .broadcast()
+        .source_full(source.public_key())
+        .flood_hops(3)
+        .build()
+        .unwrap();
+    let beacon: heapless::Vec<u8, 256> = beacon.iter().copied().collect();
+
+    mac.radio_mut().queue_received_frame(beacon.as_slice());
+    assert!(block_on(mac.receive_one(|_, _| {})).unwrap());
+    let forwarded = mac.tx_queue_mut().pop_next().unwrap();
+    forwarded.not_before_ms.saturating_sub(mac.clock().now_ms())
+}
+
+/// `W = W_min + (W_max − W_min) × max(1 − quality, signal)` (channel-access.md
+/// § Flood Forwarding Contention). Two receptions demodulated equally cleanly
+/// are separated by how loud they were: the faint one covers ground the
+/// previous hop did not, so it goes first.
+#[test]
+fn flood_contention_makes_a_loud_reception_wait_longer_than_a_faint_one() {
+    let clean = Snr::from_decibels(10);
+    let faint = flood_contention_delay_at(-95, clean);
+    let loud = flood_contention_delay_at(-50, clean);
+
+    assert!(
+        faint < loud,
+        "faint {faint} ms should precede loud {loud} ms at equal quality"
+    );
+}
+
+/// Either term alone can push the window to its maximum: a reception that is
+/// barely demodulable waits as long as one that arrives on top of the sender.
+#[test]
+fn flood_contention_saturates_at_either_extreme() {
+    // T_frame is 100 ms, so W_max is 50 ms and the jitter spans 10 ms.
+    let noisy_and_faint = flood_contention_delay_at(-120, Snr::from_decibels(-20));
+    let clean_and_loud = flood_contention_delay_at(-20, Snr::from_decibels(20));
+
+    for delay in [noisy_and_faint, clean_and_loud] {
+        assert!(
+            (50..=60).contains(&delay),
+            "{delay} ms should sit at W_max plus jitter"
+        );
+    }
+}
+
+/// With both window bounds collapsed the delay is jitter and nothing else,
+/// which is what keeps repeaters that measured a reception identically from
+/// transmitting in the same instant.
+#[test]
+fn flood_contention_leaves_only_jitter_when_the_window_is_collapsed() {
+    let mut mac = make_mac();
+    {
+        let repeater = mac.repeater_config_mut();
+        repeater.enabled = true;
+        repeater.flood_contention_min_window_percent = 0;
+        repeater.flood_contention_max_window_percent = 0;
+    }
+    let _repeater_id = mac.add_identity(DummyIdentity::new([0x10; 32])).unwrap();
+
+    let source = DummyIdentity::new([0xAB; 32]);
+    let mut buf = [0u8; 256];
+    let beacon = PacketBuilder::new(&mut buf)
+        .broadcast()
+        .source_full(source.public_key())
+        .flood_hops(3)
+        .build()
+        .unwrap();
+    let beacon: heapless::Vec<u8, 256> = beacon.iter().copied().collect();
+
+    mac.radio_mut().queue_received_frame(beacon.as_slice());
+    assert!(block_on(mac.receive_one(|_, _| {})).unwrap());
+    let forwarded = mac.tx_queue_mut().pop_next().unwrap();
+    let delay = forwarded.not_before_ms.saturating_sub(mac.clock().now_ms());
+
+    assert!(
+        (0..=10).contains(&delay),
+        "{delay} ms should be jitter only"
     );
 }
 
@@ -6474,33 +6607,35 @@ fn modeled_route_retry_recovers_after_mid_route_break_via_alternate_repeaters() 
 }
 
 #[test]
-fn modeled_parallel_paths_prefer_stronger_branch_for_route_learning() {
+fn modeled_parallel_paths_prefer_reaching_branch_for_route_learning() {
     // Diamond topology:
-    // Alice -> strong -> Bob
-    // Alice -> weak   -> Bob
+    // Alice -> reaching -> Bob
+    // Alice -> crowding -> Bob
     //
-    // The initial flooded packet should still arrive either way, but the trace
-    // route Bob learns back to Alice should prefer the stronger branch.
+    // Both branches hear Alice cleanly, but the crowding one sits close enough
+    // that its forward would mostly re-cover Alice's own footprint, so it waits.
+    // The initial flooded packet arrives either way; the trace route Bob learns
+    // back to Alice should follow the branch that transmitted first.
     let mut scenario = build_modeled_line_scenario(4);
     let alice = 0usize;
-    let strong = 1usize;
-    let weak = 2usize;
+    let reaching = 1usize;
+    let crowding = 2usize;
     let bob = 3usize;
     install_pairwise_keys_between(&mut scenario, alice, bob);
 
     disconnect_modeled_bidirectional(
         &scenario.network,
-        scenario.radio_ids[strong],
-        scenario.radio_ids[weak],
+        scenario.radio_ids[reaching],
+        scenario.radio_ids[crowding],
     );
     connect_modeled_bidirectional_with_profile(
         &scenario.network,
         scenario.radio_ids[alice],
-        scenario.radio_ids[strong],
+        scenario.radio_ids[reaching],
         crate::test_support::ModeledLinkProfile {
             connected: true,
-            base_rssi: -60,
-            base_snr: Snr::from_decibels(14),
+            base_rssi: -92,
+            base_snr: Snr::from_decibels(6),
             rssi_jitter_dbm: 0,
             snr_jitter_centibels: 0,
             propagation_delay_ms: 2,
@@ -6509,12 +6644,12 @@ fn modeled_parallel_paths_prefer_stronger_branch_for_route_learning() {
     );
     connect_modeled_bidirectional_with_profile(
         &scenario.network,
-        scenario.radio_ids[strong],
+        scenario.radio_ids[reaching],
         scenario.radio_ids[bob],
         crate::test_support::ModeledLinkProfile {
             connected: true,
-            base_rssi: -61,
-            base_snr: Snr::from_decibels(12),
+            base_rssi: -90,
+            base_snr: Snr::from_decibels(6),
             rssi_jitter_dbm: 0,
             snr_jitter_centibels: 0,
             propagation_delay_ms: 2,
@@ -6524,39 +6659,39 @@ fn modeled_parallel_paths_prefer_stronger_branch_for_route_learning() {
     connect_modeled_bidirectional_with_profile(
         &scenario.network,
         scenario.radio_ids[alice],
-        scenario.radio_ids[weak],
+        scenario.radio_ids[crowding],
         crate::test_support::ModeledLinkProfile {
             connected: true,
-            base_rssi: -84,
-            base_snr: Snr::from_decibels(1),
+            base_rssi: -55,
+            base_snr: Snr::from_decibels(15),
             rssi_jitter_dbm: 0,
             snr_jitter_centibels: 0,
-            propagation_delay_ms: 6,
+            propagation_delay_ms: 2,
             drop_per_thousand: 0,
         },
     );
     connect_modeled_bidirectional_with_profile(
         &scenario.network,
-        scenario.radio_ids[weak],
+        scenario.radio_ids[crowding],
         scenario.radio_ids[bob],
         crate::test_support::ModeledLinkProfile {
             connected: true,
-            base_rssi: -84,
-            base_snr: Snr::from_decibels(1),
+            base_rssi: -55,
+            base_snr: Snr::from_decibels(15),
             rssi_jitter_dbm: 0,
             snr_jitter_centibels: 0,
-            propagation_delay_ms: 6,
+            propagation_delay_ms: 2,
             drop_per_thousand: 0,
         },
     );
     connect_modeled_bidirectional_with_profile(
         &scenario.network,
-        scenario.radio_ids[strong],
-        scenario.radio_ids[weak],
+        scenario.radio_ids[reaching],
+        scenario.radio_ids[crowding],
         crate::test_support::ModeledLinkProfile {
             connected: true,
-            base_rssi: -58,
-            base_snr: Snr::from_decibels(16),
+            base_rssi: -70,
+            base_snr: Snr::from_decibels(10),
             rssi_jitter_dbm: 0,
             snr_jitter_centibels: 0,
             propagation_delay_ms: 1,
@@ -6605,7 +6740,7 @@ fn modeled_parallel_paths_prefer_stronger_branch_for_route_learning() {
                     .pending_ack(&receipt)
                     .is_none()
         },
-        "bob should receive the initial packet across the stronger branch",
+        "bob should receive the initial packet across the reaching branch",
     );
 
     let (alice_peer_id, _) = scenario.macs[bob]
@@ -6620,9 +6755,9 @@ fn modeled_parallel_paths_prefer_stronger_branch_for_route_learning() {
         .unwrap()
         .route
         .clone();
-    let strong_hint = scenario.macs[strong]
+    let reaching_hint = scenario.macs[reaching]
         .borrow()
-        .identity(scenario.identity_ids[strong])
+        .identity(scenario.identity_ids[reaching])
         .unwrap()
         .identity()
         .public_key()
@@ -6630,7 +6765,7 @@ fn modeled_parallel_paths_prefer_stronger_branch_for_route_learning() {
     assert_eq!(
         learned_route,
         Some(CachedRoute::Source(
-            heapless::Vec::from_slice(&[strong_hint]).unwrap()
+            heapless::Vec::from_slice(&[reaching_hint]).unwrap()
         ))
     );
 }
@@ -6815,8 +6950,10 @@ fn modeled_asymmetric_links_still_support_bidirectional_exchange() {
 
 #[test]
 fn modeled_dense_repeater_neighborhood_prefers_one_of_the_best_candidates() {
-    // Alice and Bob have four candidate relays between them. Two are strong and
-    // two are weak. Flood learning should settle on one of the stronger relays.
+    // Alice and Bob have four candidate relays between them. Two hear Alice
+    // cleanly but faintly — the ones whose forward covers new ground — and two
+    // sit right on top of her, loud enough that repeating buys little reach.
+    // Flood learning should settle on one of the reaching pair.
     let clock = crate::test_support::DummyClock::new(0);
     let network = crate::test_support::ModeledNetwork::with_clock(clock.clone());
     let mut macs = Vec::new();
@@ -6840,23 +6977,25 @@ fn modeled_dense_repeater_neighborhood_prefers_one_of_the_best_candidates() {
 
     for repeater in 1..=4 {
         let profile = if repeater <= 2 {
+            // Clean and faint: full quality, little of the signal term.
             crate::test_support::ModeledLinkProfile {
                 connected: true,
-                base_rssi: -61,
-                base_snr: Snr::from_decibels(12),
+                base_rssi: -88,
+                base_snr: Snr::from_decibels(8),
                 rssi_jitter_dbm: 0,
                 snr_jitter_centibels: 0,
                 propagation_delay_ms: 2,
                 drop_per_thousand: 0,
             }
         } else {
+            // Clean and loud: the signal term saturates and the forward waits.
             crate::test_support::ModeledLinkProfile {
                 connected: true,
-                base_rssi: -82,
-                base_snr: Snr::from_decibels(1),
+                base_rssi: -55,
+                base_snr: Snr::from_decibels(15),
                 rssi_jitter_dbm: 0,
                 snr_jitter_centibels: 0,
-                propagation_delay_ms: 6,
+                propagation_delay_ms: 2,
                 drop_per_thousand: 0,
             }
         };
@@ -6927,6 +7066,12 @@ fn modeled_dense_repeater_neighborhood_prefers_one_of_the_best_candidates() {
             .unwrap()
     };
     let bob_delivery = Cell::new(0usize);
+    // The route Bob learns from the *delivering* copy is what the contention
+    // window decides. Later flood copies of the same packet keep arriving, and
+    // one that lands outside the re-ack holdoff is re-acknowledged and teaches
+    // its own path, so the registry read after the exchange settles reflects
+    // whichever repeater forwarded last — not which one won the race.
+    let delivering_trace = RefCell::new(None::<heapless::Vec<u8, 32>>);
     pump_modeled_until(
         &network,
         &macs,
@@ -6940,6 +7085,13 @@ fn modeled_dense_repeater_neighborhood_prefers_one_of_the_best_candidates() {
                 return;
             };
             if packet.payload_bytes() == b"dense-neighborhood" {
+                if bob_delivery.get() == 0 {
+                    let trace = packet
+                        .trace_route()
+                        .and_then(|bytes| heapless::Vec::from_slice(bytes).ok())
+                        .expect("the delivered copy carries its accumulated trace");
+                    *delivering_trace.borrow_mut() = Some(trace);
+                }
                 bob_delivery.set(bob_delivery.get() + 1);
             }
         },
@@ -6952,7 +7104,7 @@ fn modeled_dense_repeater_neighborhood_prefers_one_of_the_best_candidates() {
                     .pending_ack(&receipt)
                     .is_none()
         },
-        "one of the stronger candidate repeaters should carry the first route-learning packet",
+        "one of the reaching candidate repeaters should carry the first route-learning packet",
     );
 
     let (alice_peer_id, _) = macs[5]
@@ -6967,7 +7119,7 @@ fn modeled_dense_repeater_neighborhood_prefers_one_of_the_best_candidates() {
         .unwrap()
         .route
         .clone();
-    let strong_hints = [
+    let reaching_hints = [
         macs[1]
             .borrow()
             .identity(identity_ids[1])
@@ -6983,10 +7135,18 @@ fn modeled_dense_repeater_neighborhood_prefers_one_of_the_best_candidates() {
             .public_key()
             .router_hint(),
     ];
+    let delivering_trace = delivering_trace.borrow().clone().unwrap();
+    let delivering_hint = RouterHint([delivering_trace[0], delivering_trace[1]]);
+    assert_eq!(delivering_trace.len(), 2);
+    assert!(
+        reaching_hints.contains(&delivering_hint),
+        "packet was delivered via {delivering_hint:?}, expected one of {reaching_hints:?}"
+    );
+    // Whichever copy taught it last, a one-hop route is all any of these
+    // candidates can offer.
     assert!(matches!(
         learned_route,
-        Some(CachedRoute::Source(route))
-            if route.len() == 1 && strong_hints.contains(&route[0])
+        Some(CachedRoute::Source(route)) if route.len() == 1
     ));
 }
 
@@ -7937,6 +8097,65 @@ fn service_pending_ack_timeouts_reroutes_failed_source_route_once() {
     )
     .unwrap();
     assert!(pending_options.route_retry);
+}
+
+/// Send a flooded, ack-requested unicast and report how long the MAC will wait
+/// for the acknowledgement.
+fn forwarded_ack_window_for_flood_hops(flood_hops: u8) -> u64 {
+    let mut mac = make_mac();
+    let local_id = mac.add_identity(DummyIdentity::new([0x10; 32])).unwrap();
+    let peer_key = test_pubkey(0xAB);
+    let peer_id = mac.add_peer(peer_key).unwrap();
+    mac.install_pairwise_keys(
+        local_id,
+        peer_id,
+        PairwiseKeys {
+            k_enc: [1; 32],
+            k_mic: [2; 32],
+        },
+    )
+    .unwrap();
+
+    let receipt = mac
+        .queue_unicast(
+            local_id,
+            &peer_key,
+            b"hello",
+            &SendOptions::default()
+                .with_ack_requested(true)
+                .with_flood_hops(flood_hops),
+        )
+        .unwrap()
+        .unwrap();
+    let _ = block_on(mac.transmit_next(&mut |_, _| {})).unwrap();
+
+    let sent_ms = mac.clock().now_ms();
+    mac.identity(local_id)
+        .unwrap()
+        .pending_ack(&receipt)
+        .unwrap()
+        .ack_deadline_ms
+        .saturating_sub(sent_ms)
+}
+
+/// The retry ladder only measures the first hop, which is the only one this
+/// node can watch. The rest of the wait is distance: an acknowledgement from
+/// four hops away has eight forwarding delays to cross before it arrives, and
+/// charging for them is what stops a delivery that actually worked from being
+/// reported as a timeout.
+#[test]
+fn forwarded_ack_window_grows_with_the_hops_the_ack_must_cross() {
+    let near = forwarded_ack_window_for_flood_hops(1);
+    let far = forwarded_ack_window_for_flood_hops(4);
+
+    assert!(
+        far > near,
+        "a four-hop flood ({far} ms) should be given longer than a one-hop one ({near} ms)"
+    );
+    // T_frame is 100 ms: the ladder is 2.85 + 3 × 3.85 = 14.4 frame times and
+    // each further hop of round trip costs 2 × 1.85.
+    assert_eq!(near, 1_440 + 2 * 185);
+    assert_eq!(far, 1_440 + 8 * 185);
 }
 
 /// A route retry waits out a backoff in the transmit queue. The sweep that

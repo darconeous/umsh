@@ -389,9 +389,18 @@ fn advertised_identity(
 /// an empty list forwards regardless of region, which is likewise not a
 /// claim about any particular region. Only a forwarding device with a
 /// configured list has something to say.
-fn advertised_regions(snapshot: &DevDomainSnapshot) -> Option<alloc::vec::Vec<u8>> {
-    (snapshot.repeater_enabled && !snapshot.repeater_regions.is_empty())
-        .then(|| snapshot.repeater_regions.to_vec())
+fn advertised_regions(
+    snapshot: &DevDomainSnapshot,
+) -> Option<alloc::vec::Vec<alloc::string::String>> {
+    (snapshot.repeater_enabled && !snapshot.repeater_region_names.is_empty()).then(|| {
+        snapshot
+            .repeater_region_names
+            .iter()
+            // Validated as UTF-8 by the session that stored them.
+            .filter_map(|name| core::str::from_utf8(name).ok())
+            .map(alloc::string::String::from)
+            .collect()
+    })
 }
 
 // ─── Device-domain sync ──────────────────────────────────────────────────────
@@ -430,11 +439,8 @@ pub async fn dev_sync_loop<CS: CounterStore + 'static>(
         // refreshed unconditionally because the role and mobility
         // properties can move without the forwarding flag.
         mac.set_repeater_enabled(snapshot.repeater_enabled).await;
-        let regions: heapless::Vec<[u8; 2], 8> = snapshot
-            .repeater_regions
-            .chunks_exact(2)
-            .map(|code| [code[0], code[1]])
-            .collect();
+        let regions: heapless::Vec<[u8; 2], 8> =
+            snapshot.repeater_region_codes.iter().copied().collect();
         let stored = mac
             .set_repeater_policy(
                 &regions,
@@ -478,6 +484,15 @@ pub async fn dev_sync_loop<CS: CounterStore + 'static>(
             node.enable_identity_responder(profile, default_respond_policy);
         } else {
             node.enable_identity_responder(profile, never_respond_policy);
+        }
+        // A repeater answers for its neighborhood; a node that forwards
+        // nothing has no peer repeaters to describe and stays quiet. Gated
+        // on forwarding rather than on discoverability, because the listing
+        // is about the mesh around this node, not about this node.
+        if snapshot.repeater_enabled {
+            node.enable_peer_repeaters_responder();
+        } else {
+            node.disable_peer_repeaters_responder();
         }
         if NODE_IS_REPEATER.swap(snapshot.repeater_enabled, Ordering::Relaxed)
             != snapshot.repeater_enabled
@@ -772,11 +787,16 @@ async fn send_advertisement<CS: CounterStore + 'static>(
     let Some(payload) = node.with_identity_profile(|profile| profile.to_payload(nonce)) else {
         return false;
     };
-    // Payload-type byte + role/caps + name (≤26) + regions (≤20) + nonce
-    // (6) + 0xFF + 64-byte signature — 192 covers it with headroom.
+    // Payload-type byte + role/caps + name (≤26) + nonce (6) + 0xFF +
+    // 64-byte signature, plus whatever the region list fits in what is
+    // left. The signature's room is reserved up front rather than
+    // discovered afterwards, so the encoder can drop trailing regions to
+    // fit instead of framing a payload that then has nowhere to be signed.
+    const SIGNATURE_LEN: usize = 64;
     let mut buf = [0u8; 192];
     buf[0] = umsh_core::PayloadType::NodeIdentity as u8;
-    let Ok(body_len) = payload.encode_for_signing(&mut buf[1..]) else {
+    let signable = buf.len() - 1 - SIGNATURE_LEN;
+    let Ok(body_len) = payload.encode_for_signing(&mut buf[1..1 + signable]) else {
         return false;
     };
     let mut len = 1 + body_len;
@@ -785,11 +805,8 @@ async fn send_advertisement<CS: CounterStore + 'static>(
     let Ok(signature) = identity.sign(&buf[1..len]).await else {
         return false;
     };
-    if buf.len() < len + 64 {
-        return false;
-    }
-    buf[len..len + 64].copy_from_slice(&signature);
-    len += 64;
+    buf[len..len + SIGNATURE_LEN].copy_from_slice(&signature);
+    len += SIGNATURE_LEN;
     // Full source, not a hint: the bundle's detached signature is only
     // checkable against the sender's public key, and a broadcast carries no
     // MIC to authenticate it otherwise. A hint-only advertisement is

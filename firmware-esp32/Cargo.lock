@@ -2689,6 +2689,8 @@ dependencies = [
 name = "umsh-core"
 version = "0.1.0"
 dependencies = [
+ "hamaddr",
+ "sha2",
  "zeroize",
 ]
 

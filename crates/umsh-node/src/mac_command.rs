@@ -28,8 +28,61 @@ pub mod identity_filter {
     pub const FILTER_NODE_CAPS: u16 = 7;
 }
 
+/// Option keys carried in a [`MacCommand::PeerRepeatersRequest`] payload.
+///
+/// Both keys are even, so a responder that does not understand one ignores it
+/// rather than declining to answer.
+pub mod peer_repeaters_request {
+    /// Correlation identifier the responder echoes into its response. 2 bytes.
+    pub const NONCE: u16 = 0;
+    /// Resume token copied verbatim from a previous response's `CURSOR`.
+    /// Absent on the first request of an enumeration.
+    pub const CURSOR: u16 = 1;
+}
+
+/// Option keys carried in a [`MacCommand::PeerRepeatersResponse`]'s leading
+/// option block, before the `0xFF` that introduces the entries.
+pub mod peer_repeaters_response {
+    /// Copied verbatim from the request; present only when the request
+    /// carried one. 2 bytes.
+    pub const NONCE: u16 = 0;
+    /// Opaque resume token for the next page. Absent on the final page.
+    pub const CURSOR: u16 = 1;
+    /// Entries in the whole list, not the page. 1 byte.
+    pub const TOTAL: u16 = 2;
+}
+
+/// Option keys carried in one peer-repeater entry.
+///
+/// An option the responder has no value for is omitted, so every one but the
+/// hint is optional.
+pub mod peer_repeater_entry {
+    /// The peer's node hint: 3 bytes when the responder holds the whole of
+    /// it, or the 2-byte router hint when that is all it has observed.
+    pub const NODE_HINT: u16 = 0;
+    /// The peer's display name, as learned from its identity. UTF-8, at most
+    /// 24 bytes.
+    pub const NODE_NAME: u16 = 1;
+    /// The most recent reception: RSSI as an unsigned negative-dBm value,
+    /// then SNR in quarter-dB steps. 2 bytes.
+    pub const RSSI_SNR: u16 = 2;
+    /// Minutes since the peer was last heard, minimal big-endian. 1–2 bytes.
+    pub const LAST_HEARD: u16 = 3;
+    /// The peer's position in the variable-precision location format.
+    pub const LOCATION: u16 = 4;
+    /// The region codes the peer flood-forwards for, n × 2 bytes.
+    pub const REGIONS: u16 = 5;
+}
+
 /// Length of a [`NodeHint`], the longest a `FILTER_NODE_HINT` value may be.
 const NODE_HINT_LEN: usize = 3;
+
+/// The shortest hint a peer-repeater entry may name a peer by: the 2-byte
+/// router hint a trace or source route reveals.
+const ROUTER_HINT_LEN: usize = 2;
+
+/// Longest peer name a peer-repeater entry carries.
+pub const PEER_REPEATER_NAME_MAX_LEN: usize = 24;
 
 /// The shortest `FILTER_NODE_HINT` that names a node rather than a share of
 /// the mesh.
@@ -50,6 +103,9 @@ pub enum CommandId {
     PfsSessionRequest = 6,
     PfsSessionResponse = 7,
     EndPfsSession = 8,
+    Noop = 9,
+    PeerRepeatersRequest = 10,
+    PeerRepeatersResponse = 11,
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -82,6 +138,25 @@ pub enum MacCommand<'a> {
         duration_minutes: u16,
     },
     EndPfsSession,
+    /// Costs a frame and asks for nothing. Useful for keeping a session's
+    /// counters moving and for proving a peer is still reachable.
+    Noop,
+    /// Ask the destination for its list of known peer repeaters.
+    ///
+    /// `options` is a CoAP-style option block of [`peer_repeaters_request`]
+    /// keys, empty for the first page of an unnonced enumeration. Interpret
+    /// it with [`PeerRepeatersRequestView`].
+    PeerRepeatersRequest {
+        options: &'a [u8],
+    },
+    /// One page of a peer-repeater list.
+    ///
+    /// `body` is the whole payload after the command id: the response's own
+    /// option block, the `0xFF` end marker, then the entries. Interpret it
+    /// with [`PeerRepeatersResponseView`].
+    PeerRepeatersResponse {
+        body: &'a [u8],
+    },
 }
 
 pub fn parse(payload: &[u8]) -> Result<MacCommand<'_>, AppParseError> {
@@ -127,6 +202,20 @@ pub fn parse(payload: &[u8]) -> Result<MacCommand<'_>, AppParseError> {
                 Err(AppParseError::InvalidOptionValue)
             }
         }
+        // Nothing to read and nothing to do, so a body is nothing to reject
+        // over either.
+        9 => Ok(MacCommand::Noop),
+        10 => {
+            // Structurally well-formed options; values are interpreted
+            // lazily by the view, per receiver tolerance.
+            for item in OptionDecoder::new(body) {
+                item.map_err(AppParseError::Core)?;
+            }
+            Ok(MacCommand::PeerRepeatersRequest { options: body })
+        }
+        // The entry list past the end marker is walked lazily: broken entry
+        // framing ends the walk, keeping the entries decoded before it.
+        11 => Ok(MacCommand::PeerRepeatersResponse { body }),
         other => Err(AppParseError::InvalidCommandId(other)),
     }
 }
@@ -178,6 +267,13 @@ pub enum OwnedMacCommand {
         duration_minutes: u16,
     },
     EndPfsSession,
+    Noop,
+    PeerRepeatersRequest {
+        options: Vec<u8>,
+    },
+    PeerRepeatersResponse {
+        body: Vec<u8>,
+    },
 }
 
 impl From<MacCommand<'_>> for OwnedMacCommand {
@@ -211,6 +307,13 @@ impl From<MacCommand<'_>> for OwnedMacCommand {
                 duration_minutes,
             },
             MacCommand::EndPfsSession => Self::EndPfsSession,
+            MacCommand::Noop => Self::Noop,
+            MacCommand::PeerRepeatersRequest { options } => Self::PeerRepeatersRequest {
+                options: Vec::from(options),
+            },
+            MacCommand::PeerRepeatersResponse { body } => Self::PeerRepeatersResponse {
+                body: Vec::from(body),
+            },
         }
     }
 }
@@ -255,6 +358,15 @@ pub fn encode(cmd: &MacCommand<'_>, buf: &mut [u8]) -> Result<usize, AppEncodeEr
             copy_into(buf, &mut pos, &duration_minutes.to_be_bytes())?;
         }
         MacCommand::EndPfsSession => push_byte(buf, &mut pos, CommandId::EndPfsSession as u8)?,
+        MacCommand::Noop => push_byte(buf, &mut pos, CommandId::Noop as u8)?,
+        MacCommand::PeerRepeatersRequest { options } => {
+            push_byte(buf, &mut pos, CommandId::PeerRepeatersRequest as u8)?;
+            copy_into(buf, &mut pos, options)?;
+        }
+        MacCommand::PeerRepeatersResponse { body } => {
+            push_byte(buf, &mut pos, CommandId::PeerRepeatersResponse as u8)?;
+            copy_into(buf, &mut pos, body)?;
+        }
     }
     Ok(pos)
 }
@@ -465,6 +577,473 @@ impl IdentityRequestBuilder {
     pub fn build(self) -> Vec<u8> {
         self.buf
     }
+}
+
+/// Interprets the option block of a [`MacCommand::PeerRepeatersRequest`].
+///
+/// Borrows the raw block and decodes on demand. Both keys are elective, so an
+/// option this does not understand is skipped rather than refused.
+#[derive(Clone, Copy, Debug)]
+pub struct PeerRepeatersRequestView<'a> {
+    options: &'a [u8],
+}
+
+impl<'a> PeerRepeatersRequestView<'a> {
+    pub fn new(options: &'a [u8]) -> Self {
+        Self { options }
+    }
+
+    /// The correlation nonce to echo, or `None` when the request carried
+    /// none. Tolerates a minimal (≤2 byte) encoding.
+    pub fn nonce(&self) -> Option<u16> {
+        self.find(peer_repeaters_request::NONCE)
+            .and_then(parse_minimal_be_u16)
+    }
+
+    /// The opaque resume token, or `None` on the first request of an
+    /// enumeration.
+    pub fn cursor(&self) -> Option<&'a [u8]> {
+        self.find(peer_repeaters_request::CURSOR)
+    }
+
+    fn find(&self, number: u16) -> Option<&'a [u8]> {
+        OptionDecoder::new(self.options)
+            .map_while(Result::ok)
+            .find(|(key, _)| *key == number)
+            .map(|(_, value)| value)
+    }
+}
+
+/// Interprets the body of a [`MacCommand::PeerRepeatersResponse`]: the page's
+/// own options, then the entries that follow the end marker.
+#[derive(Clone, Copy, Debug)]
+pub struct PeerRepeatersResponseView<'a> {
+    body: &'a [u8],
+}
+
+impl<'a> PeerRepeatersResponseView<'a> {
+    pub fn new(body: &'a [u8]) -> Self {
+        Self { body }
+    }
+
+    /// The nonce copied from the request, present only when the request
+    /// carried one.
+    pub fn nonce(&self) -> Option<u16> {
+        self.find(peer_repeaters_response::NONCE)
+            .and_then(parse_minimal_be_u16)
+    }
+
+    /// The resume token for the next page. Absent on the final page, which
+    /// is what ends an enumeration.
+    pub fn cursor(&self) -> Option<&'a [u8]> {
+        self.find(peer_repeaters_response::CURSOR)
+    }
+
+    /// Entries in the whole list, not this page. Required on the response to
+    /// a cursorless request and optional afterwards.
+    pub fn total(&self) -> Option<u8> {
+        match self.find(peer_repeaters_response::TOTAL) {
+            Some([total]) => Some(*total),
+            _ => None,
+        }
+    }
+
+    /// Walk the entries this page carries.
+    ///
+    /// A malformed entry ends the walk rather than the page: everything
+    /// decoded before it is still an answer.
+    pub fn entries(&self) -> PeerRepeaterEntries<'a> {
+        let mut decoder = OptionDecoder::new(self.body);
+        while decoder.next().is_some() {}
+        PeerRepeaterEntries {
+            rest: decoder.remainder(),
+        }
+    }
+
+    fn find(&self, number: u16) -> Option<&'a [u8]> {
+        OptionDecoder::new(self.body)
+            .map_while(Result::ok)
+            .find(|(key, _)| *key == number)
+            .map(|(_, value)| value)
+    }
+}
+
+/// Iterator over the entries of a [`PeerRepeatersResponseView`].
+#[derive(Clone, Debug)]
+pub struct PeerRepeaterEntries<'a> {
+    rest: &'a [u8],
+}
+
+impl<'a> Iterator for PeerRepeaterEntries<'a> {
+    type Item = PeerRepeaterEntryView<'a>;
+
+    fn next(&mut self) -> Option<Self::Item> {
+        if self.rest.is_empty() {
+            return None;
+        }
+        let mut decoder = OptionDecoder::new(self.rest);
+        while decoder.next().is_some() {}
+        // The decoder stops at this entry's `0xFF`; what it leaves is the
+        // next entry. The final entry may omit its terminator, in which case
+        // the decoder runs to the end and leaves nothing.
+        let consumed = self.rest.len() - decoder.remainder().len();
+        let (entry, rest) = self.rest.split_at(consumed);
+        self.rest = rest;
+        Some(PeerRepeaterEntryView { options: entry })
+    }
+}
+
+/// One peer repeater, as a lazily decoded option list.
+///
+/// Every accessor returns `None` for an option the responder omitted or wrote
+/// in a length this cannot read — a peer that names itself and nothing else is
+/// a legitimate entry, and one bad field is not a reason to drop the rest.
+#[derive(Clone, Copy, Debug)]
+pub struct PeerRepeaterEntryView<'a> {
+    options: &'a [u8],
+}
+
+impl<'a> PeerRepeaterEntryView<'a> {
+    /// The peer's hint: 3 bytes for a whole node hint, 2 for a router hint.
+    /// The only required option; an entry without one names nobody.
+    pub fn hint(&self) -> Option<&'a [u8]> {
+        self.find(peer_repeater_entry::NODE_HINT)
+            .filter(|value| (ROUTER_HINT_LEN..=NODE_HINT_LEN).contains(&value.len()))
+    }
+
+    /// The peer's display name, as learned from its identity.
+    pub fn name(&self) -> Option<&'a str> {
+        self.find(peer_repeater_entry::NODE_NAME)
+            .filter(|value| !value.is_empty() && value.len() <= PEER_REPEATER_NAME_MAX_LEN)
+            .and_then(|value| core::str::from_utf8(value).ok())
+    }
+
+    /// The most recent reception: RSSI in dBm and SNR.
+    pub fn rssi_snr(&self) -> Option<(i16, umsh_hal::Snr)> {
+        match self.find(peer_repeater_entry::RSSI_SNR) {
+            Some([rssi, snr]) => Some((
+                -i16::from(*rssi),
+                umsh_hal::Snr::from_quarter_db_steps(i16::from(*snr as i8)),
+            )),
+            _ => None,
+        }
+    }
+
+    /// Minutes since the responder last heard the peer.
+    pub fn last_heard_min(&self) -> Option<u16> {
+        self.find(peer_repeater_entry::LAST_HEARD)
+            .and_then(parse_minimal_be_u16)
+    }
+
+    /// The peer's position, in the variable-precision location format.
+    pub fn location(&self) -> Option<crate::location::NodeLocation> {
+        self.find(peer_repeater_entry::LOCATION)
+            .filter(|value| !value.is_empty())
+            .map(crate::location::NodeLocation::from_bytes)
+    }
+
+    /// The region codes the peer flood-forwards for.
+    ///
+    /// Codes rather than the strings an identity carries: the entry format is
+    /// tighter on space, and the string form is available from the peer's own
+    /// identity when one is wanted.
+    pub fn regions(&self) -> impl Iterator<Item = [u8; 2]> + 'a {
+        self.find(peer_repeater_entry::REGIONS)
+            .unwrap_or(&[])
+            .chunks_exact(2)
+            .map(|code| [code[0], code[1]])
+    }
+
+    fn find(&self, number: u16) -> Option<&'a [u8]> {
+        OptionDecoder::new(self.options)
+            .map_while(Result::ok)
+            .find(|(key, _)| *key == number)
+            .map(|(_, value)| value)
+    }
+}
+
+/// Decode a minimal big-endian unsigned integer of up to two octets.
+///
+/// The wire form drops leading zero octets, so a value under 256 arrives as
+/// one byte and an absent value as none at all.
+fn parse_minimal_be_u16(value: &[u8]) -> Option<u16> {
+    match value {
+        [] => Some(0),
+        [low] => Some(u16::from(*low)),
+        [high, low] => Some(u16::from_be_bytes([*high, *low])),
+        _ => None,
+    }
+}
+
+/// Builds the option block for a [`MacCommand::PeerRepeatersRequest`].
+///
+/// Options are emitted in ascending key order, so a nonce is added before a
+/// cursor. No `0xFF` marker is written: the payload is options-only.
+#[derive(Debug, Default)]
+pub struct PeerRepeatersRequestBuilder {
+    buf: Vec<u8>,
+    last_number: u16,
+}
+
+impl PeerRepeatersRequestBuilder {
+    /// Start an empty builder — the first page of an unnonced enumeration.
+    pub fn new() -> Self {
+        Self::default()
+    }
+
+    /// Add the correlation nonce the responder echoes.
+    pub fn nonce(mut self, nonce: u16) -> Result<Self, AppEncodeError> {
+        put_option(
+            &mut self.buf,
+            &mut self.last_number,
+            peer_repeaters_request::NONCE,
+            &nonce.to_be_bytes(),
+        )?;
+        Ok(self)
+    }
+
+    /// Resume from a cursor a previous response handed back.
+    pub fn cursor(mut self, cursor: &[u8]) -> Result<Self, AppEncodeError> {
+        put_option(
+            &mut self.buf,
+            &mut self.last_number,
+            peer_repeaters_request::CURSOR,
+            cursor,
+        )?;
+        Ok(self)
+    }
+
+    pub fn build(self) -> Vec<u8> {
+        self.buf
+    }
+}
+
+/// Builds the body of a [`MacCommand::PeerRepeatersResponse`] within a byte
+/// budget, so a responder packs whatever fits and pages the rest.
+///
+/// The page's own options are held as values rather than appended as they
+/// arrive: they are emitted in key order at [`build`](Self::build), so a
+/// responder that learns it needs a cursor only after packing stopped can
+/// still add one.
+#[derive(Debug)]
+pub struct PeerRepeatersResponseBuilder {
+    nonce: Option<u16>,
+    cursor: Option<Vec<u8>>,
+    total: Option<u8>,
+    cursor_reserve: usize,
+    entries: Vec<u8>,
+    budget: usize,
+}
+
+impl PeerRepeatersResponseBuilder {
+    /// Start a response whose whole body must fit `budget` octets.
+    pub fn new(budget: usize) -> Self {
+        Self {
+            nonce: None,
+            cursor: None,
+            total: None,
+            cursor_reserve: 0,
+            entries: Vec::new(),
+            budget,
+        }
+    }
+
+    /// Echo the request's nonce.
+    pub fn nonce(mut self, nonce: u16) -> Self {
+        self.nonce = Some(nonce);
+        self
+    }
+
+    /// Report how many entries the whole list holds.
+    pub fn total(mut self, total: u8) -> Self {
+        self.total = Some(total);
+        self
+    }
+
+    /// Hold back room for a cursor of `octets`, whose value is not known
+    /// until packing stops. Without it a response that fills its budget has
+    /// nowhere left to say where the next page begins.
+    pub fn reserve_cursor(mut self, octets: usize) -> Self {
+        self.cursor_reserve = match octets {
+            0 => 0,
+            // The option header is one octet for a cursor this short.
+            octets => octets + 1,
+        };
+        self
+    }
+
+    /// Name where a follow-up request should resume. Omit on the final page.
+    pub fn cursor(mut self, cursor: &[u8]) -> Self {
+        self.cursor = Some(Vec::from(cursor));
+        self
+    }
+
+    /// Append one entry if it still fits the budget.
+    ///
+    /// Returns whether it was taken, so a responder stops packing and issues
+    /// a cursor at the first refusal rather than at a count it guessed.
+    pub fn try_push(&mut self, entry: &PeerRepeaterEntry<'_>) -> Result<bool, AppEncodeError> {
+        let encoded = entry.encode()?;
+        // Every entry but the last is followed by its terminator, and the
+        // last one may omit it — so an entry fits when it and one separator
+        // do.
+        let separator = usize::from(!self.entries.is_empty());
+        let options = self.encode_options()?.len() + self.cursor_reserve;
+        if options + 1 + self.entries.len() + separator + encoded.len() > self.budget {
+            return Ok(false);
+        }
+        if separator == 1 {
+            self.entries.push(0xFF);
+        }
+        self.entries.extend_from_slice(&encoded);
+        Ok(true)
+    }
+
+    fn encode_options(&self) -> Result<Vec<u8>, AppEncodeError> {
+        let mut buf = Vec::new();
+        let mut last_number = 0u16;
+        if let Some(nonce) = self.nonce {
+            put_option(
+                &mut buf,
+                &mut last_number,
+                peer_repeaters_response::NONCE,
+                &nonce.to_be_bytes(),
+            )?;
+        }
+        if let Some(cursor) = &self.cursor {
+            put_option(
+                &mut buf,
+                &mut last_number,
+                peer_repeaters_response::CURSOR,
+                cursor,
+            )?;
+        }
+        if let Some(total) = self.total {
+            put_option(
+                &mut buf,
+                &mut last_number,
+                peer_repeaters_response::TOTAL,
+                &[total],
+            )?;
+        }
+        Ok(buf)
+    }
+
+    /// Finish the body: options, `0xFF`, then the entries.
+    pub fn build(self) -> Result<Vec<u8>, AppEncodeError> {
+        let mut body = self.encode_options()?;
+        body.push(0xFF);
+        body.extend_from_slice(&self.entries);
+        Ok(body)
+    }
+}
+
+/// One peer repeater to encode into a response, with every field the
+/// responder happens to know.
+#[derive(Clone, Copy, Debug, Default)]
+pub struct PeerRepeaterEntry<'a> {
+    /// 3 bytes when the whole node hint is known, 2 for a router hint.
+    pub hint: &'a [u8],
+    pub name: Option<&'a str>,
+    /// RSSI in dBm and SNR from the most recent reception.
+    pub rssi_snr: Option<(i16, umsh_hal::Snr)>,
+    pub last_heard_min: Option<u16>,
+    pub location: Option<crate::location::NodeLocation>,
+    /// Concatenated 2-octet region codes.
+    pub regions: &'a [u8],
+}
+
+impl PeerRepeaterEntry<'_> {
+    fn encode(&self) -> Result<Vec<u8>, AppEncodeError> {
+        if !(ROUTER_HINT_LEN..=NODE_HINT_LEN).contains(&self.hint.len()) {
+            return Err(AppEncodeError::InvalidField);
+        }
+        let mut buf = Vec::new();
+        let mut last_number = 0u16;
+        put_option(
+            &mut buf,
+            &mut last_number,
+            peer_repeater_entry::NODE_HINT,
+            self.hint,
+        )?;
+        if let Some(name) = self.name {
+            if name.len() > PEER_REPEATER_NAME_MAX_LEN {
+                return Err(AppEncodeError::InvalidField);
+            }
+            put_option(
+                &mut buf,
+                &mut last_number,
+                peer_repeater_entry::NODE_NAME,
+                name.as_bytes(),
+            )?;
+        }
+        if let Some((rssi_dbm, snr)) = self.rssi_snr {
+            // RSSI travels as an unsigned negative-dBm magnitude; a positive
+            // reading is not one a receiver can express, and one past −255
+            // dBm is below any radio's floor.
+            let rssi =
+                u8::try_from(-rssi_dbm.clamp(-255, 0)).map_err(|_| AppEncodeError::InvalidField)?;
+            let snr = i8::try_from(snr.as_quarter_db_steps().clamp(-128, 127))
+                .map_err(|_| AppEncodeError::InvalidField)?;
+            put_option(
+                &mut buf,
+                &mut last_number,
+                peer_repeater_entry::RSSI_SNR,
+                &[rssi, snr as u8],
+            )?;
+        }
+        if let Some(minutes) = self.last_heard_min {
+            let bytes = minutes.to_be_bytes();
+            let minimal = match bytes[0] {
+                0 => &bytes[1..],
+                _ => &bytes[..],
+            };
+            put_option(
+                &mut buf,
+                &mut last_number,
+                peer_repeater_entry::LAST_HEARD,
+                minimal,
+            )?;
+        }
+        if let Some(location) = self.location
+            && !location.is_unspecified()
+        {
+            put_option(
+                &mut buf,
+                &mut last_number,
+                peer_repeater_entry::LOCATION,
+                location.as_bytes(),
+            )?;
+        }
+        if !self.regions.is_empty() {
+            if self.regions.len() % 2 != 0 {
+                return Err(AppEncodeError::InvalidField);
+            }
+            put_option(
+                &mut buf,
+                &mut last_number,
+                peer_repeater_entry::REGIONS,
+                self.regions,
+            )?;
+        }
+        Ok(buf)
+    }
+}
+
+/// Append one option to a growing block, continuing its delta chain.
+fn put_option(
+    buf: &mut Vec<u8>,
+    last_number: &mut u16,
+    number: u16,
+    value: &[u8],
+) -> Result<(), AppEncodeError> {
+    let mut scratch = alloc::vec![0u8; value.len() + 8];
+    let mut encoder = OptionEncoder::with_last_number(&mut scratch, *last_number);
+    encoder.put(number, value).map_err(AppEncodeError::Core)?;
+    let written = encoder.finish();
+    buf.extend_from_slice(&scratch[..written]);
+    *last_number = number;
+    Ok(())
 }
 
 #[cfg(test)]
@@ -893,6 +1472,19 @@ mod tests {
         assert_eq!(&buf[..len], &[0x08]);
     }
 
+    #[test]
+    fn noop() {
+        encode_decode(MacCommand::Noop);
+        let mut buf = [0u8; 4];
+        let len = encode(&MacCommand::Noop, &mut buf).unwrap();
+        assert_eq!(&buf[..len], &[0x09]);
+    }
+
+    #[test]
+    fn noop_tolerates_a_body_it_has_no_use_for() {
+        assert_eq!(parse(&[0x09, 0xDE, 0xAD]).unwrap(), MacCommand::Noop);
+    }
+
     // --- OwnedMacCommand From conversion ---
 
     #[test]
@@ -961,5 +1553,264 @@ mod tests {
     #[test]
     fn parse_end_pfs_nonempty_body() {
         assert!(parse(&[0x08, 0x00]).is_err());
+    }
+
+    // --- peer repeaters ---
+
+    #[test]
+    fn a_cursorless_peer_repeaters_request_is_one_byte() {
+        let mut buf = [0u8; 4];
+        let len = encode(
+            &MacCommand::PeerRepeatersRequest {
+                options: &PeerRepeatersRequestBuilder::new().build(),
+            },
+            &mut buf,
+        )
+        .unwrap();
+        assert_eq!(&buf[..len], &[0x0A], "options-only, so no end marker");
+    }
+
+    #[test]
+    fn a_peer_repeaters_request_carries_its_nonce_and_cursor() {
+        let options = PeerRepeatersRequestBuilder::new()
+            .nonce(0xBEEF)
+            .unwrap()
+            .cursor(&[0x01, 0x02, 0x03])
+            .unwrap()
+            .build();
+        encode_decode(MacCommand::PeerRepeatersRequest { options: &options });
+
+        let view = PeerRepeatersRequestView::new(&options);
+        assert_eq!(view.nonce(), Some(0xBEEF));
+        assert_eq!(view.cursor(), Some(&[0x01, 0x02, 0x03][..]));
+
+        let empty = PeerRepeatersRequestView::new(&[]);
+        assert_eq!(empty.nonce(), None);
+        assert_eq!(empty.cursor(), None);
+    }
+
+    /// The entry fields are individually optional, so a page has to read
+    /// back whatever subset of them the responder happened to know.
+    #[test]
+    fn a_peer_repeaters_response_round_trips_every_entry_field() {
+        let mut builder = PeerRepeatersResponseBuilder::new(200)
+            .nonce(0xBEEF)
+            .total(2);
+        let location = crate::location::NodeLocation::from_lat_lon(44.05, -123.09, 4);
+        assert!(
+            builder
+                .try_push(&PeerRepeaterEntry {
+                    hint: &[0xAA, 0xBB, 0xCC],
+                    name: Some("Ridge"),
+                    rssi_snr: Some((-97, umsh_hal::Snr::from_decibels(-7))),
+                    last_heard_min: Some(400),
+                    location: Some(location),
+                    regions: &[0x78, 0x53, 0x31, 0xD9],
+                })
+                .unwrap()
+        );
+        // A hint and nothing else is a legitimate entry: an observation
+        // with no identity behind it names a hop and reports what was
+        // heard, and here not even that.
+        assert!(
+            builder
+                .try_push(&PeerRepeaterEntry {
+                    hint: &[0x11, 0x22],
+                    ..PeerRepeaterEntry::default()
+                })
+                .unwrap()
+        );
+        let body = builder.build().unwrap();
+
+        let view = PeerRepeatersResponseView::new(&body);
+        assert_eq!(view.nonce(), Some(0xBEEF));
+        assert_eq!(view.total(), Some(2));
+        assert_eq!(view.cursor(), None, "the final page names no resume point");
+
+        let entries: Vec<_> = view.entries().collect();
+        assert_eq!(entries.len(), 2);
+        assert_eq!(entries[0].hint(), Some(&[0xAA, 0xBB, 0xCC][..]));
+        assert_eq!(entries[0].name(), Some("Ridge"));
+        assert_eq!(
+            entries[0].rssi_snr(),
+            Some((-97, umsh_hal::Snr::from_decibels(-7)))
+        );
+        assert_eq!(entries[0].last_heard_min(), Some(400));
+        assert_eq!(entries[0].location(), Some(location));
+        assert_eq!(
+            entries[0].regions().collect::<Vec<_>>(),
+            [[0x78, 0x53], [0x31, 0xD9]]
+        );
+        assert_eq!(entries[1].hint(), Some(&[0x11, 0x22][..]));
+        assert_eq!(entries[1].name(), None);
+        assert_eq!(entries[1].rssi_snr(), None);
+        assert_eq!(entries[1].last_heard_min(), None);
+        assert_eq!(entries[1].location(), None);
+        assert_eq!(entries[1].regions().count(), 0);
+
+        encode_decode_long(MacCommand::PeerRepeatersResponse { body: &body });
+    }
+
+    /// The last entry may omit its terminator, so the walk cannot rely on
+    /// one to know an entry ended.
+    #[test]
+    fn the_final_entry_needs_no_terminator() {
+        let mut builder = PeerRepeatersResponseBuilder::new(64);
+        for hint in [[0x11u8, 0x22], [0x33, 0x44]] {
+            assert!(
+                builder
+                    .try_push(&PeerRepeaterEntry {
+                        hint: &hint,
+                        ..PeerRepeaterEntry::default()
+                    })
+                    .unwrap()
+            );
+        }
+        let body = builder.build().unwrap();
+        assert_ne!(
+            body.last(),
+            Some(&0xFF),
+            "nothing follows the last entry, so nothing marks its end"
+        );
+        assert_eq!(PeerRepeatersResponseView::new(&body).entries().count(), 2);
+
+        // A responder that writes the terminator anyway is read the same
+        // way rather than as an extra empty entry.
+        let mut terminated = body.clone();
+        terminated.push(0xFF);
+        assert_eq!(
+            PeerRepeatersResponseView::new(&terminated)
+                .entries()
+                .count(),
+            2
+        );
+    }
+
+    #[test]
+    fn a_response_stops_packing_at_its_budget_rather_than_overrunning_it() {
+        // Options (none) plus the end marker leave four octets, which is
+        // one four-octet entry and no room for a separator and a second.
+        let mut builder = PeerRepeatersResponseBuilder::new(5);
+        let entry = PeerRepeaterEntry {
+            hint: &[0x11, 0x22, 0x33],
+            ..PeerRepeaterEntry::default()
+        };
+        assert!(builder.try_push(&entry).unwrap());
+        assert!(!builder.try_push(&entry).unwrap());
+        let body = builder.build().unwrap();
+        assert!(body.len() <= 5, "body is {} octets", body.len());
+        assert_eq!(PeerRepeatersResponseView::new(&body).entries().count(), 1);
+    }
+
+    /// A page that fills its budget is exactly the page that needs a
+    /// cursor, so the room for one is held back before packing starts.
+    #[test]
+    fn a_reserved_cursor_still_fits_after_the_page_is_packed() {
+        const BUDGET: usize = 16;
+        let mut builder = PeerRepeatersResponseBuilder::new(BUDGET).reserve_cursor(3);
+        let entry = PeerRepeaterEntry {
+            hint: &[0x11, 0x22, 0x33],
+            ..PeerRepeaterEntry::default()
+        };
+        let mut packed = 0;
+        while builder.try_push(&entry).unwrap() {
+            packed += 1;
+        }
+        assert!(packed > 0);
+        let body = builder.cursor(&[0x00, 0x01, 0x02]).build().unwrap();
+        assert!(body.len() <= BUDGET, "body is {} octets", body.len());
+        let view = PeerRepeatersResponseView::new(&body);
+        assert_eq!(view.cursor(), Some(&[0x00, 0x01, 0x02][..]));
+        assert_eq!(view.entries().count(), packed);
+    }
+
+    #[test]
+    fn a_paged_response_names_where_to_resume() {
+        let body = PeerRepeatersResponseBuilder::new(64)
+            .total(9)
+            .cursor(&[0x00, 0x07, 0x04])
+            .build()
+            .unwrap();
+        let view = PeerRepeatersResponseView::new(&body);
+        assert_eq!(view.total(), Some(9));
+        assert_eq!(view.cursor(), Some(&[0x00, 0x07, 0x04][..]));
+        assert_eq!(view.entries().count(), 0);
+    }
+
+    #[test]
+    fn an_entry_without_a_usable_hint_names_nobody() {
+        let mut buf = Vec::new();
+        let mut last = 0u16;
+        // One octet is a 256th of the mesh, not a peer.
+        put_option(&mut buf, &mut last, peer_repeater_entry::NODE_HINT, &[0x11]).unwrap();
+        let mut body = alloc::vec![0xFFu8];
+        body.extend_from_slice(&buf);
+        let entries: Vec<_> = PeerRepeatersResponseView::new(&body).entries().collect();
+        assert_eq!(entries.len(), 1);
+        assert_eq!(entries[0].hint(), None);
+    }
+
+    /// Once an entry's framing is broken, the next entry boundary is
+    /// unknowable — the terminator is only recognizable through correct
+    /// framing, since values may contain `0xFF`. The walk keeps what it
+    /// decoded and stops there.
+    #[test]
+    fn a_broken_entry_ends_the_walk_but_keeps_what_came_before() {
+        let mut body = alloc::vec![0xFFu8];
+        // A whole entry, then one whose second option claims 253 octets it
+        // does not have, then a well-formed entry stranded behind it.
+        body.extend_from_slice(&[0x03, 0xAA, 0xBB, 0xCC, 0xFF]);
+        body.extend_from_slice(&[0x03, 0x11, 0x22, 0x33, 0x0D, 0xF0, 0xFF]);
+        body.extend_from_slice(&[0x03, 0x44, 0x55, 0x66]);
+        let entries: Vec<_> = PeerRepeatersResponseView::new(&body).entries().collect();
+        assert_eq!(entries.len(), 2);
+        assert_eq!(entries[0].hint(), Some(&[0xAA, 0xBB, 0xCC][..]));
+        // The broken entry still answers with the options ahead of the
+        // damage; the entry stranded behind it is the cost.
+        assert_eq!(entries[1].hint(), Some(&[0x11, 0x22, 0x33][..]));
+    }
+
+    #[test]
+    fn an_entry_hint_outside_two_or_three_octets_is_refused_at_the_encoder() {
+        let mut builder = PeerRepeatersResponseBuilder::new(64);
+        for hint in [&[0x11u8][..], &[0x11, 0x22, 0x33, 0x44][..], &[][..]] {
+            assert!(
+                builder
+                    .try_push(&PeerRepeaterEntry {
+                        hint,
+                        ..PeerRepeaterEntry::default()
+                    })
+                    .is_err()
+            );
+        }
+    }
+
+    #[test]
+    fn last_heard_uses_the_shortest_encoding_that_holds_it() {
+        for (minutes, expected) in [(0u16, 1usize), (255, 1), (256, 2), (65535, 2)] {
+            let mut builder = PeerRepeatersResponseBuilder::new(64);
+            builder
+                .try_push(&PeerRepeaterEntry {
+                    hint: &[0x11, 0x22],
+                    last_heard_min: Some(minutes),
+                    ..PeerRepeaterEntry::default()
+                })
+                .unwrap();
+            let body = builder.build().unwrap();
+            let view = PeerRepeatersResponseView::new(&body);
+            let entry = view.entries().next().unwrap();
+            assert_eq!(entry.last_heard_min(), Some(minutes));
+            assert_eq!(
+                entry.find(peer_repeater_entry::LAST_HEARD).unwrap().len(),
+                expected,
+                "minutes {minutes}"
+            );
+        }
+    }
+
+    fn encode_decode_long(cmd: MacCommand<'_>) {
+        let mut buf = [0u8; 256];
+        let len = encode(&cmd, &mut buf).expect("encode failed");
+        assert_eq!(parse(&buf[..len]).expect("parse failed"), cmd);
     }
 }

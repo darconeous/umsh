@@ -1219,8 +1219,12 @@ mod tests {
     fn an_unparseable_region_recommendation_does_not_fail_the_import() {
         // Advisory parameters are the sender's suggestion, not policy, so a
         // corrupted one is dropped rather than blocking the join.
+        // Derivation is total over region strings within the bounds, so
+        // the only unparseable form left is one that is out of them.
         let address = umsh_uri::encode_channel_key_base58(&umsh_core::ChannelKey([0x21; 32]));
-        let preview = inspect_channel_uri(format!("umsh:ck:{address}?n=Camp;r=0xZZZZ")).unwrap();
+        let too_long = "A".repeat(umsh_core::REGION_NAME_MAX_LEN + 1);
+        let preview =
+            inspect_channel_uri(format!("umsh:ck:{address}?n=Camp;r={too_long}")).unwrap();
         assert_eq!(preview.display_name.as_deref(), Some("Camp"));
         assert_eq!(preview.region, None);
     }

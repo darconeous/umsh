@@ -332,6 +332,33 @@ pub struct MobileMeshAdvertisementRecord {
     pub source_authenticated: bool,
 }
 
+/// One repeater a repeater told this phone about, from a Peer Repeaters
+/// Response.
+///
+/// Everything past the hint is optional because the answering node reports
+/// only what it has: an identity supplies the name, position, and regions; a
+/// reception supplies the signal; neither supplies the other. A hop that has
+/// only been heard is named by a two-byte router hint, which is all a trace
+/// reveals about it.
+#[derive(Clone, Debug, PartialEq, Eq, uniffi::Record)]
+pub struct MobileMeshPeerRepeaterRecord {
+    /// Three bytes when an identity named the peer, two when only a
+    /// reception did.
+    pub hint: Vec<u8>,
+    pub name: Option<String>,
+    pub rssi_dbm: Option<i16>,
+    /// Signal-to-noise ratio in quarter-decibel steps, as the wire carries
+    /// it.
+    pub snr_quarter_db: Option<i16>,
+    /// Minutes since the answering node last heard from this peer.
+    pub last_heard_minutes: Option<u16>,
+    /// The peer's position as a raw location cell, decodable with the
+    /// location helpers.
+    pub location: Option<Vec<u8>>,
+    /// The 2-octet flood-forwarding codes the peer advertised.
+    pub region_codes: Vec<Vec<u8>>,
+}
+
 /// The position this phone is willing to put in its identity.
 ///
 /// Precision is the disclosure decision: the wire format carries a cell,
@@ -587,6 +614,10 @@ enum WorkerCommand {
         conversation_address: String,
         hint: NodeHint,
         response: oneshot::Sender<Result<(), MobileMeshError>>,
+    },
+    PeerRepeaters {
+        peer: PublicKey,
+        response: oneshot::Sender<Result<Vec<MobileMeshPeerRepeaterRecord>, MobileMeshError>>,
     },
     SetDiscoverable {
         enabled: bool,
@@ -1482,6 +1513,31 @@ impl MobileMeshSession {
             .send(WorkerCommand::RequestIdentityByHint {
                 conversation_address,
                 hint: NodeHint(hint),
+                response,
+            })
+            .map_err(|_| MobileMeshError::SessionUnavailable)?;
+        result
+            .await
+            .map_err(|_| MobileMeshError::SessionUnavailable)?
+    }
+
+    /// Ask one repeater which repeaters it knows of, and return the whole
+    /// listing.
+    ///
+    /// Unlike `discover_identities`, which scatters a request and lets the
+    /// answers arrive as events, this is one node's own account of its
+    /// neighborhood: a single addressed exchange, paged when it does not fit
+    /// one frame, so it resolves to a list rather than a stream. Pages are
+    /// followed here; the caller sees only the finished listing.
+    pub async fn request_peer_repeaters(
+        &self,
+        peer: Vec<u8>,
+    ) -> Result<Vec<MobileMeshPeerRepeaterRecord>, MobileMeshError> {
+        let peer: [u8; 32] = peer.try_into().map_err(|_| MobileMeshError::InvalidPeer)?;
+        let (response, result) = oneshot::channel();
+        self.commands
+            .send(WorkerCommand::PeerRepeaters {
+                peer: PublicKey(peer),
                 response,
             })
             .map_err(|_| MobileMeshError::SessionUnavailable)?;
@@ -3173,6 +3229,17 @@ async fn run_worker(
                             }
                             let _ = response.send(result);
                         }
+                        Some(WorkerCommand::PeerRepeaters { peer, mut response }) => {
+                            let result = tokio::select! {
+                                result = collect_peer_repeaters(&node, &handle, peer) => result,
+                                // The asker let go of its half. The pages still
+                                // outstanding are for nobody, and waiting out
+                                // their timeouts would hold this loop against
+                                // every command behind them.
+                                _ = response.closed() => continue,
+                            };
+                            let _ = response.send(result);
+                        }
                         Some(WorkerCommand::SetChatDisplayName { name, response }) => {
                             chat.engine.set_local_handle(&name);
                             let _ = response.send(());
@@ -3878,6 +3945,131 @@ async fn request_identity_over_channel<M: MacBackend>(
         .map_err(|_| MobileMeshError::SendFailed)
 }
 
+/// How long one page of a Peer Repeaters listing is waited for.
+///
+/// A repeater builds its answer from tables it already holds, so the wait is
+/// the mesh crossing and the responder's own channel-access window, not any
+/// work on its part.
+const PEER_REPEATERS_PAGE_TIMEOUT: Duration = Duration::from_secs(30);
+
+/// The most pages one listing is followed across.
+///
+/// A responder's table is bounded, so an enumeration that keeps handing back
+/// cursors is a responder that has lost its place; the ask ends rather than
+/// following it forever.
+const PEER_REPEATERS_MAX_PAGES: usize = 8;
+
+/// The most time one listing is followed for, across all its pages.
+///
+/// The worker loop serves every command in turn, so a walk that kept waiting
+/// out page timeouts back to back would hold the whole session hostage. Pages
+/// from a live responder arrive in seconds; a walk this old is being dripped
+/// at, and ends with what it has.
+const PEER_REPEATERS_WALK_TIMEOUT: Duration = Duration::from_secs(60);
+
+/// Ask one repeater for its peer-repeater listing, following cursors until
+/// the answer is complete.
+///
+/// Each page carries its own nonce, so a late page from an abandoned ask
+/// cannot be mistaken for the one being waited on.
+async fn collect_peer_repeaters<M: MacBackend>(
+    node: &LocalNode<M>,
+    handle: &M,
+    peer: PublicKey,
+) -> Result<Vec<MobileMeshPeerRepeaterRecord>, MobileMeshError> {
+    let connection = node
+        .peer(peer)
+        .await
+        .map_err(|_| MobileMeshError::InvalidPeer)?;
+
+    let pages: Rc<RefCell<Vec<Vec<u8>>>> = Rc::new(RefCell::new(Vec::new()));
+    let _subscription = {
+        let pages = pages.clone();
+        node.on_mac_command(move |from, command| {
+            if from != peer {
+                return;
+            }
+            if let umsh_node::OwnedMacCommand::PeerRepeatersResponse { body } = command {
+                pages.borrow_mut().push(body.clone());
+            }
+        })
+    };
+
+    let mut listing = Vec::new();
+    let mut cursor: Option<Vec<u8>> = None;
+    let walk_deadline = tokio::time::Instant::now() + PEER_REPEATERS_WALK_TIMEOUT;
+    for _ in 0..PEER_REPEATERS_MAX_PAGES {
+        let mut nonce_bytes = [0u8; 2];
+        handle.fill_random(&mut nonce_bytes).await;
+        let nonce = u16::from_be_bytes(nonce_bytes);
+        pages.borrow_mut().clear();
+        let sent = connection
+            .request_peer_repeaters(nonce, cursor.as_deref(), &SendOptions::default())
+            .await;
+        if sent.is_err() {
+            if listing.is_empty() {
+                return Err(MobileMeshError::SendFailed);
+            }
+            // A follow-up ask that cannot leave ends the walk the same way
+            // an unanswered one does: with the pages already in hand.
+            break;
+        }
+
+        let deadline =
+            (tokio::time::Instant::now() + PEER_REPEATERS_PAGE_TIMEOUT).min(walk_deadline);
+        let page = loop {
+            let matched = pages.borrow_mut().iter().position(|body| {
+                umsh_node::mac_command::PeerRepeatersResponseView::new(body).nonce() == Some(nonce)
+            });
+            if let Some(index) = matched {
+                break Some(pages.borrow_mut().remove(index));
+            }
+            if tokio::time::Instant::now() >= deadline {
+                break None;
+            }
+            // The worker's pump runs as a sibling future, so yielding here is
+            // what lets the answer arrive at all.
+            tokio::time::sleep(Duration::from_millis(20)).await;
+        };
+        let Some(page) = page else {
+            // A listing that stopped part way is still what the repeater
+            // said; the caller gets it rather than nothing.
+            break;
+        };
+
+        let view = umsh_node::mac_command::PeerRepeatersResponseView::new(&page);
+        listing.extend(view.entries().map(peer_repeater_record));
+        match view.cursor() {
+            Some(next) => cursor = Some(next.to_vec()),
+            None => break,
+        }
+        if tokio::time::Instant::now() >= walk_deadline {
+            // No answer to the next ask would be waited for, so it is not
+            // worth the airtime.
+            break;
+        }
+    }
+    Ok(listing)
+}
+
+fn peer_repeater_record(
+    entry: umsh_node::mac_command::PeerRepeaterEntryView<'_>,
+) -> MobileMeshPeerRepeaterRecord {
+    let signal = entry.rssi_snr();
+    MobileMeshPeerRepeaterRecord {
+        hint: entry.hint().map(Vec::from).unwrap_or_default(),
+        name: entry.name().map(String::from),
+        rssi_dbm: signal.map(|(rssi, _)| rssi),
+        snr_quarter_db: signal.map(|(_, snr)| snr.as_quarter_db_steps()),
+        last_heard_minutes: entry.last_heard_min(),
+        location: entry
+            .location()
+            .filter(|location| !location.is_unspecified())
+            .map(|location| location.as_bytes().to_vec()),
+        region_codes: entry.regions().map(Vec::from).collect(),
+    }
+}
+
 /// Bind the channel a transmission names, so it can be sent over.
 fn bound_channel<M: MacBackend>(
     node: &LocalNode<M>,
@@ -4512,6 +4704,57 @@ mod tests {
             .await
             .unwrap();
         complete_ping(&alice, &bob, address(&bob_identity)).await;
+    }
+
+    /// The ask is addressed and authenticated: one repeater's own account of
+    /// its neighborhood, not a question put to the mesh at large.
+    #[tokio::test]
+    async fn request_peer_repeaters_emits_a_unicast_addressed_to_the_peer() {
+        let directory = tempfile::tempdir().unwrap();
+        let alice_identity = identity(51);
+        let bob_key = *SoftwareIdentity::from_secret_bytes(&[53; 32]).public_key();
+        let alice_store =
+            MobileCounterStore::new(directory.path().join("alice").display().to_string()).unwrap();
+        let alice = MobileMeshSession::new(alice_identity, alice_store)
+            .await
+            .unwrap();
+
+        // The listing never arrives — no repeater is listening — so the ask
+        // runs beside a loop watching for what it put on the air, and is
+        // dropped once that has been seen.
+        let deadline = tokio::time::Instant::now() + Duration::from_secs(10);
+        let frame = tokio::select! {
+            _ = alice.request_peer_repeaters(bob_key.0.to_vec()) => {
+                panic!("the listing cannot complete with nobody to answer")
+            }
+            frame = async {
+                loop {
+                    let update = alice.poll_update();
+                    if let Some(frame) = update.outbound_frames.into_iter().next() {
+                        break frame;
+                    }
+                    assert!(tokio::time::Instant::now() < deadline, "no request went out");
+                    tokio::time::sleep(Duration::from_millis(5)).await;
+                }
+            } => frame,
+        };
+
+        // The payload is sealed to the peer, so the frame proves addressing
+        // and nothing further from outside; that the body really is command
+        // ten is what the two-node mesh test decrypts and answers.
+        let header = umsh_core::PacketHeader::parse(&frame.data).unwrap();
+        assert_eq!(header.packet_type(), umsh_core::PacketType::Unicast);
+        assert_eq!(
+            header.dst,
+            Some(umsh_core::NodeHint::from_public_key(&bob_key))
+        );
+        alice.complete_outbound_frame(frame.id, true).unwrap();
+
+        // An unparseable key is refused before anything is sent.
+        assert_eq!(
+            alice.request_peer_repeaters(vec![0x01, 0x02]).await,
+            Err(MobileMeshError::InvalidPeer)
+        );
     }
 
     #[tokio::test]
