@@ -84,6 +84,6 @@ See [Repeater Operation § Forwarding Confirmation](repeater-operation.md#forwar
 
 ## Channel Access
 
-Before any transmission — original, forwarded, or acknowledgment — a node performs Channel Activity Detection (CAD) and backs off if the channel is busy. Flood-forwarding repeaters additionally use a contention window based on received SNR, so that better-positioned repeaters transmit first and weaker ones can suppress their retransmission if they overhear an earlier forward.
+Before any transmission — original, forwarded, or acknowledgment — a node performs Channel Activity Detection (CAD) and backs off if the channel is busy. Flood-forwarding repeaters additionally use a contention window based on received SNR and RSSI, so that better-positioned repeaters transmit first and the rest can suppress their retransmission if they overhear an earlier forward.
 
 See [Channel Access](channel-access.md).

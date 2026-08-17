@@ -203,6 +203,10 @@ These collisions are rarely of practical concern. If a region code in one part o
 
 The assignment and scope of non-IATA-based region codes—and resolution of any collisions—are generally handled locally.
 
+**Literal codes.** In any context that takes a region's string form, a string of `0x` followed by four hexadecimal digits (e.g. `0x31d9`) denotes the two-byte code it spells. Strings of this shape are by definition excluded from the hash derivation—there is no named region `0x31d9`, only the code. This is also the display form for a code that decodes to no three-letter IATA code and whose name is unknown, so a region list read off the air can be fed back in unchanged.
+
+A region name MUST NOT exceed 24 bytes of UTF-8. Names travel on the wire in [identity payloads](node-identity.md#supported-regions-option-4), and the bound is what lets a list of them fit there.
+
 ## Routing Option Layouts
 
 ### Source Route Option Value

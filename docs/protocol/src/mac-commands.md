@@ -7,6 +7,8 @@ A MAC command payload consists of:
 
 Support for MAC commands is optional.
 
+MAC commands are addressed to a single node. Unless a command's definition provides rules for multicast or broadcast use, as [Identity Request](#identity-request-1) does, a node ignores a command that arrives by multicast or broadcast.
+
 ## Command Registry
 
 | Value | Command | Direction |
@@ -20,7 +22,9 @@ Support for MAC commands is optional.
 | 6 | PFS Session Request | Request |
 | 7 | PFS Session Response | Response |
 | 8 | End PFS Session | Either |
-| 9 | No-op | Request | 
+| 9 | No-op | Request |
+| 10 | Peer Repeaters Request | Request |
+| 11 | Peer Repeaters Response | Response |
 
 ## Identity Request (1)
 
@@ -191,3 +195,51 @@ No command-specific payload. The sender and recipient are identified by the pack
 
 This command does nothing, however it will produce a UACK when sent via a packet
 type that requests an ACK.
+
+## Peer Repeaters Request (10)
+
+Asks the destination—typically a repeater—for its list of known peer repeaters.
+
+The command-specific payload is a CoAP-style option list, using the delta-length encoding defined in [Packet Options](packet-options.md#attribute-encoding):
+
+| Number | Name | Value | Description |
+|---:|---|---|---|
+| 0 | Nonce | 2 bytes | Correlation identifier the responder MUST echo in its response's Nonce option. |
+| 1 | Cursor | variable | Resume token, copied verbatim from the Cursor option of a previous response. Absent on the first request of an enumeration. |
+
+No payload follows the options, so the sender omits the 0xFF end-of-options marker.
+
+A list too large for one response is retrieved page by page: the first request carries no Cursor, and each response that carries one names the place a follow-up request should resume from. The cursor is opaque to the requester; only the responder gives it meaning.
+
+## Peer Repeaters Response (11)
+
+Returns one page of the responder's peer-repeater list in response to a Peer Repeaters Request:
+
+```text
++---------+------+---------+------+---------+------+     +---------+--------+
+| OPTIONS | 0xFF | ENTRY 0 | 0xFF | ENTRY 1 | 0xFF | ... | ENTRY N | (0xFF) |
++---------+------+---------+------+---------+------+     +---------+--------+
+```
+
+The response options:
+
+| Number | Name | Value | Description |
+|---:|---|---|---|
+| 0 | Nonce | 2 bytes | Copied verbatim from the request. Present only when the request carried a Nonce. |
+| 1 | Cursor | variable | Opaque resume token for the next page. Present when further entries remain; the final page carries no Cursor. |
+| 2 | Total | 1 byte | Unsigned count of entries in the full list, not the page. Required in the response to a cursorless request; optional on later pages. |
+
+The `0xFF` after the response options is the ordinary end-of-options marker; the entry list that follows is the command's payload. Each entry is itself a CoAP-style option list terminated by its own `0xFF` byte. The final entry MAY omit its terminator, consistent with omitting the marker when nothing follows.
+
+The options per entry:
+
+| Number | Name | Value | Description |
+|---:|---|---|---|
+| 0 | Node Hint | 2 or 3 bytes | The peer's [node hint](addressing.md#node-hint)—3 bytes when the responder holds it in full, or the 2-byte [router hint](addressing.md#router-hint) when that is all it has observed. The only required option. |
+| 1 | Node Name | UTF-8, max 24 bytes | The peer's display name, as learned from its [identity](node-identity.md#node-name-option-0). |
+| 2 | RSSI/SNR | 2 bytes | Signal measurements from the most recent reception: RSSI as an unsigned value representing negative dBm (e.g. 130 = −130 dBm), then SNR as a signed value in quarter-dB steps. |
+| 3 | Last Heard | 1–2 bytes | Minutes since the responder last heard the peer, as a minimal big-endian unsigned integer. Saturates at 65535 (about 45 days). |
+| 4 | Location | 1–7 bytes | The peer's position, in the [variable-precision location format](node-identity.md#variable-precision-location-format). |
+| 5 | Supported Flood Regions | n × 2 bytes | Concatenated 2-byte [region codes](packet-options.md#region-code-encoding) the peer flood-forwards for. |
+
+An option whose value the responder does not know is omitted. Entries carry region codes rather than the strings the [identity option](node-identity.md#supported-regions-option-4) carries—the entry format is tighter on space, and the string form of a code, when one is wanted, is available from the peer's own identity.

@@ -140,10 +140,10 @@ Confirmation, and the retry ladder below, apply whether or not the packet reques
 After transmitting, the node listens for the same packet — identified by its [cache key](#duplicate-suppression) — to be retransmitted. This confirmation timeout MUST be large enough to cover the worst-case forwarding delay allowed by [Channel Access](channel-access.md#flood-forwarding-contention-window), plus the airtime of the forwarded frame itself, plus a guard margin. A safe default is:
 
 ```text
-confirm_timeout = 2 × T_frame + W_max + D_ack
+confirm_timeout = 2 × T_frame + W_max + W_jitter + D_ack
 ```
 
-where `W_max` is the maximum intentional forwarding-delay window permitted for the path and `D_ack` is the [ACK protection interval](channel-access.md#ack-protection-interval) when it applies. With the suggested defaults `W_max = 2 × T_frame` and `D_ack = 0.25 × T_frame`, this yields `confirm_timeout = 4.25 × T_frame`.
+where `W_max` and `W_jitter` bound the intentional forwarding delay permitted for the path and `D_ack` is the [ACK protection interval](channel-access.md#ack-protection-interval) when it applies. With the suggested defaults `W_max = T_frame/2`, `W_jitter = T_frame/10`, and `D_ack = 0.25 × T_frame`, this yields `confirm_timeout = 2.85 × T_frame`.
 
 If the packet is heard before `confirm_timeout` expires, forwarding is confirmed.
 
@@ -201,7 +201,7 @@ This preserves a useful separation of responsibilities:
 
 For flood-forwarding repeaters that have accepted a packet for forwarding but have not yet transmitted it, overhearing another forwarding of the same packet SHOULD normally cause a bounded deferral rather than an immediate transmission. A safe default is:
 
-1. resample a forwarding delay using the contention-window procedure in [Channel Access](channel-access.md#flood-forwarding-contention-window)
+1. recalculate a forwarding delay using the contention-window procedure in [Channel Access](channel-access.md#flood-forwarding-contention-window)
 2. restart the waiting period
 3. after 3 such deferrals, abandon the pending forward
 

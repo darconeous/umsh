@@ -26,14 +26,14 @@ CAD is a LoRa hardware primitive that detects preamble energy on the channel wit
 
 When CAD indicates the channel is busy:
 
-1. Wait a random duration uniformly sampled from [0, T_frame].
+1. Wait a random duration uniformly sampled from [T_frame/40, T_frame/4].
 2. Perform CAD again.
-3. Repeat up to 4 more times (5 CAD attempts total).
+3. Repeat up to 15 more times (16 CAD attempts total).
 4. If the channel remains busy after all attempts, drop the packet silently.
 
 ## Flood Forwarding Contention Window
 
-When a repeater is eligible to flood-forward a packet, it SHOULD NOT just transmit like it would any other packet. Instead, it waits a contention delay inversely proportional to the quality of the received signal. Nodes that heard the packet most clearly transmit first; nodes that barely met the signal threshold wait longer. When a well-positioned repeater transmits, others overhear it, recognize the packet via duplicate suppression, and usually defer or abandon their own pending forwarding.
+When a repeater is eligible to flood-forward a packet, it SHOULD NOT just transmit like it would any other packet. Instead, it waits a contention delay proportional to the power of the received signal yet also inversely proportional to the quality of the received signal. Nodes that heard the packet cleanly but faintly transmit first; nodes that barely met the signal threshold, or heard it very strongly, wait longer. When a well-positioned repeater transmits, others overhear it, recognize the packet via duplicate suppression, and usually defer or abandon their own pending forwarding.
 
 > [!NOTE]
 > This guidance is still provisional and should be treated as a starting point until it is validated with real-world measurements.
@@ -43,25 +43,35 @@ Although the contention parameters below are configurable in principle, nodes in
 For the first forwarding decision after reception, compute the contention window as:
 
 ```text
+SNR_low = -9 dB
+SNR_high = 3 dB
+RSSI_low = -100 dBm
+RSSI_high = -70 dBm
+
+W_min = 0
+W_max = T_frame/2
+W_jitter = T_frame/10
+
 quality = clamp((received_SNR − SNR_low) / (SNR_high − SNR_low), 0, 1)
-W       = W_min + (W_max − W_min) × (1 − quality)
-delay   = D_ack + uniform_random(0, W)
+signal = clamp((received_RSSI − RSSI_low) / (RSSI_high − RSSI_low), 0, 1)
+
+W       = W_min + (W_max − W_min) × max((1 − quality), signal)
+delay   = D_ack + W + uniform_random(0, W_jitter)
 ```
 
 Where:
 
-- `SNR_low` and `SNR_high` define the clamp range used for the contention heuristic. The suggested defaults are **−6 dB** and **+15 dB**, respectively.
 - When flood-forwarding, the effective minimum SNR threshold is the higher of the Minimum SNR packet option (if present) and any locally configured minimum SNR. A repeater MUST NOT flood-forward if the received SNR is below that effective threshold. (Signal-quality thresholds do not apply to source-routed hops.)
-- `W_min` is the minimum contention window for strong receptions. The suggested default is **0.2 × T_frame**.
-- `W_max` is the maximum intentional forwarding-delay window. The suggested default is **2 × T_frame**.
-- `received_SNR` is the SNR measured during reception of the packet being forwarded.
+- `SNR_low`/`SNR_high` and `RSSI_low`/`RSSI_high` define the clamp ranges that normalize the two measurements for the contention heuristic.
+- `W_min` is the minimum contention window for strong receptions.
+- `W_max` is the maximum intentional forwarding-delay window.
+- `W_jitter` bounds the random tie-breaking delay added after the deterministic window, so that nodes whose measurements agree do not transmit in the same instant.
+- `received_SNR` and `received_RSSI` are the SNR and RSSI measured during reception of the packet being forwarded.
 - `D_ack` is the [ACK protection interval](#ack-protection-interval): a guard delay that applies when the forwarded packet may elicit an immediate ACK from its destination, and zero otherwise.
 
-If SNR is unavailable but RSSI is, the same formula MAY be applied with RSSI values substituted for SNR, using appropriate threshold and range parameters.
+After computing the delay, the repeater waits. Other packets SHOULD continue to be forwarded while waiting, assuming the channel is clear.
 
-After computing the delay, the repeater waits. Other packets SHOULD continue to be be forwarded while waiting, assuming the channel is clear.
-
-If the repeater overhears the same packet forwarded by another node (identified by MIC in the duplicate cache) before the delay expires, it SHOULD defer rather than transmit. A safe default is to resample a delay using the same `W_min`/`W_max` limits — including `D_ack` when it applies, since the overheard copy may itself elicit an immediate ACK from the destination — and restart the waiting period. A repeater SHOULD NOT do this more than 3 times; after the third such deferral it SHOULD abandon the pending forward.
+If the repeater overhears the same packet forwarded by another node (identified by MIC in the duplicate cache) before the delay expires, it SHOULD defer rather than transmit. A safe default is to recalculate a new delay using the same `W_min`/`W_max` limits—including `D_ack` when it applies, since the overheard copy may itself elicit an immediate ACK from the destination—and restart the waiting period. A repeater SHOULD NOT do this more than 3 times; after the third such deferral it SHOULD abandon the pending forward.
 
 If the repeater instead overhears a MAC ack whose `ack_mic` matches the pending packet's MIC prefix, it SHOULD [cancel the pending forward outright](repeater-operation.md#ack-cancellation) rather than defer: the destination provably has the packet.
 
@@ -70,15 +80,15 @@ This deferral behavior is intended only for the first local forwarding decision 
 Nodes waiting for implicit forwarding confirmation MUST size their confirmation timeout to include this full forwarding-delay window. A safe default is to allow:
 
 - up to `D_ack` of ACK protection delay, when it applies
-- up to `W_max` of intentional forwarding delay
+- up to `W_max + W_jitter` of intentional forwarding delay
 - up to `T_frame` for the forwarded transmission itself
 - an additional guard margin of up to `T_frame`
 
 ## ACK Protection Interval
 
-The final destination of an ack-requested packet transmits its ACK as soon as the packet ends, without performing CAD (see [Immediate ACK Transmission](#immediate-ack-transmission)). CAD alone cannot protect that ACK from flood forwarders triggered by the end of the same reception: the sampled contention delay `uniform_random(0, W)` may be arbitrarily small, CAD detects preamble energy and may miss an ACK already past its preamble, and a forwarder may not be able to hear the destination at all.
+The final destination of an ack-requested packet transmits its ACK as soon as the packet ends, without performing CAD (see [Immediate ACK Transmission](#immediate-ack-transmission)). CAD alone cannot protect that ACK from flood forwarders triggered by the end of the same reception: the contention delay `W + uniform_random(0, W_jitter)` may be arbitrarily small, CAD detects preamble energy and may miss an ACK already past its preamble, and a forwarder may not be able to hear the destination at all.
 
-`D_ack` therefore provides deterministic separation. When the packet being flood-forwarded requests an ACK (UNAR or BUAR) and was received with no remaining source-route hops — the conditions under which its destination transmits an immediate ACK — the forwarder MUST delay by at least `D_ack` before transmitting, in addition to the sampled contention delay. `D_ack` SHOULD cover the destination's receive-to-transmit turnaround plus the on-air duration of a MAC Ack packet at the configured channel settings. The suggested default is **0.25 × T_frame**; implementations that compute the actual MAC Ack airtime MAY use a tighter bound.
+`D_ack` therefore provides deterministic separation. When the packet being flood-forwarded requests an ACK (UNAR or BUAR) and was received with no remaining source-route hops — the conditions under which its destination transmits an immediate ACK — the forwarder MUST delay by at least `D_ack` before transmitting, in addition to the computed contention delay. `D_ack` SHOULD cover the destination's receive-to-transmit turnaround plus the on-air duration of a MAC Ack packet at the configured channel settings. The suggested default is **0.25 × T_frame**; implementations that compute the actual MAC Ack airtime MAY use a tighter bound.
 
 A packet received with source-route hops still pending does not elicit an immediate ACK from its destination, so `D_ack` does not apply when forwarding it.
 

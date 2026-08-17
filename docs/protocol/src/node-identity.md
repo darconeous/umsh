@@ -66,7 +66,7 @@ Options use the CoAP-style delta-length encoding defined in [Packet Options](pac
 | 1 | Node Location | 1-7 bytes, see [Variable-Precision Location Format](#variable-precision-location-format) |
 | 2 | Altitude in Meters | signed integer, meters above mean sea level |
 | 3 | Unix Timestamp | unsigned integer, seconds since the Unix epoch, UTC |
-| 4 | Supported Flood Regions | one or more concatenated 2-byte region codes |
+| 4 | Supported Flood Regions | one option per region, its UTF-8 string form, max 24 bytes each |
 | 5 | Nonce | 4 bytes, echoed from a soliciting Identity Request |
 
 ### Node Name (option 0)
@@ -82,7 +82,7 @@ The node's altitude above mean sea level in meters, encoded as a minimal big-end
 Seconds since the Unix epoch indicating when this identity payload was generated. Lets a consumer judge how fresh the identity is — most useful when the identity stands alone (e.g. in a QR code), where a stale capture could otherwise be presented indefinitely. Not used by the MAC layer. Encoded as a minimal big-endian unsigned integer (leading zero bytes omitted). Max length: 4 bytes.
 
 ### Supported Regions (option 4)
-For repeaters, the list of [region codes](packet-options.md#region-code-encoding) the node will flood-forward for. Entries are 2 bytes each, concatenated with no delimiter. A node that omits this option makes no claim about its regional forwarding policy. Max length: 20 bytes.
+For repeaters, the regions the node will flood-forward for, one option per region. Each entry carries the region's string form—the three-letter IATA code for an IATA-based region, the region name otherwise—rather than its two-byte [region code](packet-options.md#region-code-encoding): the code is always derivable from the string, while a hash-derived code cannot be turned back into a name. A sender lists at most 10 regions, and the identity payload must still fit its enclosing packet, so a node whose full list does not fit omits regions; the option names regions the node forwards for without promising to name every one. A node that omits the option entirely makes no claim about its regional forwarding policy. Max length: 24 bytes per entry, the [bound on region names](packet-options.md#region-code-encoding).
 
 ### Nonce (option 5)
 Copied verbatim from the [Identity Request](mac-commands.md#identity-request-1) that solicited this identity payload, letting the requester correlate the response to its request. Present only in responses whose request carried a NONCE option. Length: 4 bytes.

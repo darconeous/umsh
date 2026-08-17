@@ -100,7 +100,7 @@ Id | Mnemonic                    | Commands                 | Description
 71 | `PROP_IDENT`                | Get                      | Signed node identity of the device identity
 72 | `PROP_IDENT_ROLE`           | Get, Set                 | Advertised node role, or empty to derive it
 73 | `PROP_IDENT_MOBILE`         | Get, Set                 | Advertise the mobile capability bit
-74 | `PROP_MAC_REPEATER_REGIONS` | Get, Set                | Region codes the device forwards for
+74 | `PROP_MAC_REPEATER_REGIONS` | Get, Set, Insert, Remove | Region strings the device forwards for
 75 | `PROP_MAC_REPEATER_DEFAULT_REGION` | Get, Set         | Region code inserted into untagged flood packets
 76 | `PROP_MAC_REPEATER_MIN_RSSI` | Get, Set                | Minimum received RSSI for flood forwarding
 77 | `PROP_MAC_REPEATER_MIN_SNR` | Get, Set                 | Minimum received SNR for flood forwarding
@@ -478,29 +478,35 @@ pole-mounted sensor are both ordinary configurations.
 
 ### PROP 74: `PROP_MAC_REPEATER_REGIONS` {#prop-mac-repeater-regions}
 
-* Type: Single-Value, Read-Write
+* Type: Multiple-Value, Read-Write
+* Has Item Length Prefix: Yes
 * Asynchronous Updates: No
 * Required: `CAP_REPEATER`
-* Value Type: Concatenated 2-octet [region codes](packet-options.md#region-code-encoding)
+* Item Form: 1–24 octets of UTF-8 (the region's string form)
+* Remove Selector: the region string
 * Post-Reset Value: Empty, or restored from saved state
 
-The set of regions the device identity flood-forwards for, as the codes
-themselves concatenated with no delimiter — byte-for-byte the encoding of
-the [Supported Regions](node-identity.md#supported-regions-option-4)
-identity option. The value length is therefore always even; a device
-**MUST** reject an odd-length write with `STATUS_INVALID_ARGUMENT`, and
-**MAY** reject a write that exceeds the number of entries it can hold.
-
-The list is the filter applied at the region-policy step of the [forwarding
+The set of regions the device flood-forwards for, each held in its string
+form—the three-letter IATA code for an IATA-based region, the region name
+otherwise—the same form the
+[Supported Regions](node-identity.md#supported-regions-option-4) identity
+option carries. From each string the device derives the 2-octet
+[region code](packet-options.md#region-code-encoding); the derived codes
+are the filter applied at the region-policy step of the [forwarding
 procedure](repeater-operation.md#forwarding-procedure): a flood packet
-carrying region codes is forwarded only if at least one of them appears
-here. An **empty** list — the factory default — imposes no regional
-restriction, so a tagged packet is forwarded whatever its region.
+carrying region codes is forwarded only if at least one of them matches.
+An **empty** set—the factory default—imposes no regional restriction, so
+a tagged packet is forwarded whatever its region.
 
-A device with forwarding enabled and a non-empty list **SHOULD** advertise
-the same codes in its node identity, so that a peer choosing a route can
-see what a repeater will carry. A device that is not forwarding makes no
-such claim and omits the option.
+A device **MUST** reject an item that is empty or longer than 24 octets
+with `STATUS_INVALID_ARGUMENT`, and **MAY** reject a write that exceeds
+the number of entries it can hold.
+
+A device with forwarding enabled and a non-empty set **SHOULD** advertise
+the same strings in its node identity, subject to that option's count and
+packet-fit limits, so that a peer choosing a route can see what a repeater
+will carry. A device that is not forwarding makes no such claim and omits
+the option.
 
 Whether an untagged packet is tagged on the way out is a separate
 decision, governed by `PROP_MAC_REPEATER_DEFAULT_REGION`.
