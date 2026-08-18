@@ -316,7 +316,7 @@
 <a href=#316 id=316 data-nosnippet>316</a>        ChannelId(out)
 <a href=#317 id=317 data-nosnippet>317</a>    }
 <a href=#318 id=318 data-nosnippet>318</a>
-<a href=#319 id=319 data-nosnippet>319</a>    <span class="doccomment">/// Derive three bytes for presentation — a deterministic colour a user
+<a href=#319 id=319 data-nosnippet>319</a>    <span class="doccomment">/// Derive three bytes for presentation — a deterministic color a user
 <a href=#320 id=320 data-nosnippet>320</a>    /// interface can give a channel.
 <a href=#321 id=321 data-nosnippet>321</a>    ///
 <a href=#322 id=322 data-nosnippet>322</a>    /// This is the channel-identifier derivation run one byte longer, so the
@@ -1586,7 +1586,7 @@
 <a href=#1586 id=1586 data-nosnippet>1586</a>        <span class="kw">let </span>engine = SoftwareCryptoEngine::new(SoftwareAes, SoftwareSha256);
 <a href=#1587 id=1587 data-nosnippet>1587</a>        <span class="kw">let </span>key = ChannelKey([<span class="number">0x5Au8</span>; <span class="number">32</span>]);
 <a href=#1588 id=1588 data-nosnippet>1588</a>        <span class="kw">let </span>tint = engine.derive_channel_tint(<span class="kw-2">&amp;</span>key);
-<a href=#1589 id=1589 data-nosnippet>1589</a>        <span class="comment">// The presentation colour is the identifier derivation run one byte
+<a href=#1589 id=1589 data-nosnippet>1589</a>        <span class="comment">// The presentation color is the identifier derivation run one byte
 <a href=#1590 id=1590 data-nosnippet>1590</a>        // longer, so a caller holding either can recognize the other.
 <a href=#1591 id=1591 data-nosnippet>1591</a>        </span><span class="macro">assert_eq!</span>(<span class="kw-2">&amp;</span>tint[..<span class="number">2</span>], <span class="kw-2">&amp;</span>engine.derive_channel_id(<span class="kw-2">&amp;</span>key).<span class="number">0</span>[..]);
 <a href=#1592 id=1592 data-nosnippet>1592</a>        <span class="macro">assert_eq!</span>(tint, engine.derive_channel_tint(<span class="kw-2">&amp;</span>key));

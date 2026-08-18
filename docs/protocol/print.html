@@ -36,7 +36,7 @@
             const path_to_root = "";
             const default_light_theme = "light";
             const default_dark_theme = "ayu";
-            window.path_to_searchindex_js = "searchindex-2628c86f.js";
+            window.path_to_searchindex_js = "searchindex-4cee91e1.js";
         </script>
         <!-- Start loading toc.js asap -->
         <script src="toc-438957a9.js"></script>
@@ -926,6 +926,8 @@ region codes. This allows all region codes which decode to three letters to be a
 <p>However, collisions can still happen between hash-originated region codes.
 These collisions are rarely of practical concern. If a region code in one part of the world collides with a region code in a different part of the world, there is no actual ambiguity because flood repeating is an inherently local event. In the rare case of a collision within a geographic area, it can be resolved by adjusting the named region slightly (for example, making it more specific).</p>
 <p>The assignment and scope of non-IATA-based region codes—and resolution of any collisions—are generally handled locally.</p>
+<p><strong>Literal codes.</strong> In any context that takes a region’s string form, a string of <code>0x</code> followed by four hexadecimal digits (e.g. <code>0x31d9</code>) denotes the two-byte code it spells. Strings of this shape are by definition excluded from the hash derivation—there is no named region <code>0x31d9</code>, only the code. This is also the display form for a code that decodes to no three-letter IATA code and whose name is unknown, so a region list read off the air can be fed back in unchanged.</p>
+<p>A region name MUST NOT exceed 24 bytes of UTF-8. Names travel on the wire in <a href="#supported-regions-option-4">identity payloads</a>, and the bound is what lets a list of them fit there.</p>
 <h2 id="routing-option-layouts"><a class="header" href="#routing-option-layouts">Routing Option Layouts</a></h2>
 <h3 id="source-route-option-value"><a class="header" href="#source-route-option-value">Source Route Option Value</a></h3>
 <p>A source-route option contains zero or more router hints:</p>
@@ -1346,7 +1348,7 @@ rate-limit each participant and MAY clamp the hop count further.</p>
 <p>A cached source route is the visible case, but not the only one. A sender that believes the destination is directly reachable, or reachable within a known flood distance, narrows <code>FHOPS</code> accordingly and carries no option recording that it did so. When such a packet goes unacknowledged, the cached distance is as stale as a dead source-route hint, and the recovery transmission restores the flood budget the sending application originally allowed. A radius the application itself chose is not a stale assumption and is not widened.</p>
 <p>See <a href="#forwarding-confirmation">Repeater Operation § Forwarding Confirmation</a> and <a href="#route-failure-recovery">Repeater Operation § Route Failure Recovery</a>.</p>
 <h2 id="channel-access"><a class="header" href="#channel-access">Channel Access</a></h2>
-<p>Before any transmission — original, forwarded, or acknowledgment — a node performs Channel Activity Detection (CAD) and backs off if the channel is busy. Flood-forwarding repeaters additionally use a contention window based on received SNR, so that better-positioned repeaters transmit first and weaker ones can suppress their retransmission if they overhear an earlier forward.</p>
+<p>Before any transmission — original, forwarded, or acknowledgment — a node performs Channel Activity Detection (CAD) and backs off if the channel is busy. Flood-forwarding repeaters additionally use a contention window based on received SNR and RSSI, so that better-positioned repeaters transmit first and the rest can suppress their retransmission if they overhear an earlier forward.</p>
 <p>See <a href="#channel-access-1">Channel Access</a>.</p>
 <div style="break-before: page; page-break-before: always;"></div>
 <h1 id="packet-processing"><a class="header" href="#packet-processing">Packet Processing</a></h1>
@@ -1537,47 +1539,58 @@ CAD is a LoRa hardware primitive that detects preamble energy on the channel wit
 <h2 id="backoff-procedure"><a class="header" href="#backoff-procedure">Backoff Procedure</a></h2>
 <p>When CAD indicates the channel is busy:</p>
 <ol>
-<li>Wait a random duration uniformly sampled from [0, T_frame].</li>
+<li>Wait a random duration uniformly sampled from [T_frame/40, T_frame/4].</li>
 <li>Perform CAD again.</li>
-<li>Repeat up to 4 more times (5 CAD attempts total).</li>
+<li>Repeat up to 15 more times (16 CAD attempts total).</li>
 <li>If the channel remains busy after all attempts, drop the packet silently.</li>
 </ol>
 <h2 id="flood-forwarding-contention-window"><a class="header" href="#flood-forwarding-contention-window">Flood Forwarding Contention Window</a></h2>
-<p>When a repeater is eligible to flood-forward a packet, it SHOULD NOT just transmit like it would any other packet. Instead, it waits a contention delay inversely proportional to the quality of the received signal. Nodes that heard the packet most clearly transmit first; nodes that barely met the signal threshold wait longer. When a well-positioned repeater transmits, others overhear it, recognize the packet via duplicate suppression, and usually defer or abandon their own pending forwarding.</p>
+<p>When a repeater is eligible to flood-forward a packet, it SHOULD NOT just transmit like it would any other packet. Instead, it waits a contention delay proportional to the power of the received signal yet also inversely proportional to the quality of the received signal. Nodes that heard the packet cleanly but faintly transmit first; nodes that barely met the signal threshold, or heard it very strongly, wait longer. When a well-positioned repeater transmits, others overhear it, recognize the packet via duplicate suppression, and usually defer or abandon their own pending forwarding.</p>
 <blockquote class="blockquote-tag blockquote-tag-note">
 <p class="blockquote-tag-title"><svg viewbox="0 0 16 16" width="18" height="18"><path d="M0 8a8 8 0 1 1 16 0A8 8 0 0 1 0 8Zm8-6.5a6.5 6.5 0 1 0 0 13 6.5 6.5 0 0 0 0-13ZM6.5 7.75A.75.75 0 0 1 7.25 7h1a.75.75 0 0 1 .75.75v2.75h.25a.75.75 0 0 1 0 1.5h-2a.75.75 0 0 1 0-1.5h.25v-2h-.25a.75.75 0 0 1-.75-.75ZM8 6a1 1 0 1 1 0-2 1 1 0 0 1 0 2Z"></path></svg>Note</p>
 <p>This guidance is still provisional and should be treated as a starting point until it is validated with real-world measurements.</p>
 </blockquote>
 <p>Although the contention parameters below are configurable in principle, nodes in the same mesh SHOULD use the same values so that forwarding behavior remains predictable. Unless a deployment intentionally overrides them, implementations SHOULD use the defaults in this section.</p>
 <p>For the first forwarding decision after reception, compute the contention window as:</p>
-<pre><code class="language-text">quality = clamp((received_SNR − SNR_low) / (SNR_high − SNR_low), 0, 1)
-W       = W_min + (W_max − W_min) × (1 − quality)
-delay   = D_ack + uniform_random(0, W)
+<pre><code class="language-text">SNR_low = -9 dB
+SNR_high = 3 dB
+RSSI_low = -100 dBm
+RSSI_high = -70 dBm
+
+W_min = 0
+W_max = T_frame/2
+W_jitter = T_frame/10
+
+quality = clamp((received_SNR − SNR_low) / (SNR_high − SNR_low), 0, 1)
+signal = clamp((received_RSSI − RSSI_low) / (RSSI_high − RSSI_low), 0, 1)
+
+W       = W_min + (W_max − W_min) × max((1 − quality), signal)
+delay   = D_ack + W + uniform_random(0, W_jitter)
 </code></pre>
 <p>Where:</p>
 <ul>
-<li><code>SNR_low</code> and <code>SNR_high</code> define the clamp range used for the contention heuristic. The suggested defaults are <strong>−6 dB</strong> and <strong>+15 dB</strong>, respectively.</li>
 <li>When flood-forwarding, the effective minimum SNR threshold is the higher of the Minimum SNR packet option (if present) and any locally configured minimum SNR. A repeater MUST NOT flood-forward if the received SNR is below that effective threshold. (Signal-quality thresholds do not apply to source-routed hops.)</li>
-<li><code>W_min</code> is the minimum contention window for strong receptions. The suggested default is <strong>0.2 × T_frame</strong>.</li>
-<li><code>W_max</code> is the maximum intentional forwarding-delay window. The suggested default is <strong>2 × T_frame</strong>.</li>
-<li><code>received_SNR</code> is the SNR measured during reception of the packet being forwarded.</li>
+<li><code>SNR_low</code>/<code>SNR_high</code> and <code>RSSI_low</code>/<code>RSSI_high</code> define the clamp ranges that normalize the two measurements for the contention heuristic.</li>
+<li><code>W_min</code> is the minimum contention window for strong receptions.</li>
+<li><code>W_max</code> is the maximum intentional forwarding-delay window.</li>
+<li><code>W_jitter</code> bounds the random tie-breaking delay added after the deterministic window, so that nodes whose measurements agree do not transmit in the same instant.</li>
+<li><code>received_SNR</code> and <code>received_RSSI</code> are the SNR and RSSI measured during reception of the packet being forwarded.</li>
 <li><code>D_ack</code> is the <a href="#ack-protection-interval">ACK protection interval</a>: a guard delay that applies when the forwarded packet may elicit an immediate ACK from its destination, and zero otherwise.</li>
 </ul>
-<p>If SNR is unavailable but RSSI is, the same formula MAY be applied with RSSI values substituted for SNR, using appropriate threshold and range parameters.</p>
-<p>After computing the delay, the repeater waits. Other packets SHOULD continue to be be forwarded while waiting, assuming the channel is clear.</p>
-<p>If the repeater overhears the same packet forwarded by another node (identified by MIC in the duplicate cache) before the delay expires, it SHOULD defer rather than transmit. A safe default is to resample a delay using the same <code>W_min</code>/<code>W_max</code> limits — including <code>D_ack</code> when it applies, since the overheard copy may itself elicit an immediate ACK from the destination — and restart the waiting period. A repeater SHOULD NOT do this more than 3 times; after the third such deferral it SHOULD abandon the pending forward.</p>
+<p>After computing the delay, the repeater waits. Other packets SHOULD continue to be forwarded while waiting, assuming the channel is clear.</p>
+<p>If the repeater overhears the same packet forwarded by another node (identified by MIC in the duplicate cache) before the delay expires, it SHOULD defer rather than transmit. A safe default is to recalculate a new delay using the same <code>W_min</code>/<code>W_max</code> limits—including <code>D_ack</code> when it applies, since the overheard copy may itself elicit an immediate ACK from the destination—and restart the waiting period. A repeater SHOULD NOT do this more than 3 times; after the third such deferral it SHOULD abandon the pending forward.</p>
 <p>If the repeater instead overhears a MAC ack whose <code>ack_mic</code> matches the pending packet’s MIC prefix, it SHOULD <a href="#ack-cancellation">cancel the pending forward outright</a> rather than defer: the destination provably has the packet.</p>
 <p>This deferral behavior is intended only for the first local forwarding decision after reception. Once a repeater has actually transmitted its own copy, any later retransmission behavior is governed by <a href="#forwarding-confirmation">Repeater Operation</a>.</p>
 <p>Nodes waiting for implicit forwarding confirmation MUST size their confirmation timeout to include this full forwarding-delay window. A safe default is to allow:</p>
 <ul>
 <li>up to <code>D_ack</code> of ACK protection delay, when it applies</li>
-<li>up to <code>W_max</code> of intentional forwarding delay</li>
+<li>up to <code>W_max + W_jitter</code> of intentional forwarding delay</li>
 <li>up to <code>T_frame</code> for the forwarded transmission itself</li>
 <li>an additional guard margin of up to <code>T_frame</code></li>
 </ul>
 <h2 id="ack-protection-interval"><a class="header" href="#ack-protection-interval">ACK Protection Interval</a></h2>
-<p>The final destination of an ack-requested packet transmits its ACK as soon as the packet ends, without performing CAD (see <a href="#immediate-ack-transmission">Immediate ACK Transmission</a>). CAD alone cannot protect that ACK from flood forwarders triggered by the end of the same reception: the sampled contention delay <code>uniform_random(0, W)</code> may be arbitrarily small, CAD detects preamble energy and may miss an ACK already past its preamble, and a forwarder may not be able to hear the destination at all.</p>
-<p><code>D_ack</code> therefore provides deterministic separation. When the packet being flood-forwarded requests an ACK (UNAR or BUAR) and was received with no remaining source-route hops — the conditions under which its destination transmits an immediate ACK — the forwarder MUST delay by at least <code>D_ack</code> before transmitting, in addition to the sampled contention delay. <code>D_ack</code> SHOULD cover the destination’s receive-to-transmit turnaround plus the on-air duration of a MAC Ack packet at the configured channel settings. The suggested default is <strong>0.25 × T_frame</strong>; implementations that compute the actual MAC Ack airtime MAY use a tighter bound.</p>
+<p>The final destination of an ack-requested packet transmits its ACK as soon as the packet ends, without performing CAD (see <a href="#immediate-ack-transmission">Immediate ACK Transmission</a>). CAD alone cannot protect that ACK from flood forwarders triggered by the end of the same reception: the contention delay <code>W + uniform_random(0, W_jitter)</code> may be arbitrarily small, CAD detects preamble energy and may miss an ACK already past its preamble, and a forwarder may not be able to hear the destination at all.</p>
+<p><code>D_ack</code> therefore provides deterministic separation. When the packet being flood-forwarded requests an ACK (UNAR or BUAR) and was received with no remaining source-route hops — the conditions under which its destination transmits an immediate ACK — the forwarder MUST delay by at least <code>D_ack</code> before transmitting, in addition to the computed contention delay. <code>D_ack</code> SHOULD cover the destination’s receive-to-transmit turnaround plus the on-air duration of a MAC Ack packet at the configured channel settings. The suggested default is <strong>0.25 × T_frame</strong>; implementations that compute the actual MAC Ack airtime MAY use a tighter bound.</p>
 <p>A packet received with source-route hops still pending does not elicit an immediate ACK from its destination, so <code>D_ack</code> does not apply when forwarding it.</p>
 <h2 id="immediate-ack-transmission"><a class="header" href="#immediate-ack-transmission">Immediate ACK Transmission</a></h2>
 <p>When a node is the final destination of an ack-requested packet (UNAR or BUAR) and the packet has no remaining source route hops, the node SHOULD transmit the ACK immediately — without performing CAD — provided the radio is available for transmission. This is warranted because the channel is known to have been clear at the moment the received packet ended, and flood forwarders hold their transmissions back by the <a href="#ack-protection-interval">ACK protection interval</a> so the ACK gets first use of the channel.</p>
@@ -1771,9 +1784,9 @@ delay   = D_ack + uniform_random(0, W)
 </ul>
 <p>Confirmation, and the retry ladder below, apply whether or not the packet requests an ACK. An ack-requested sender goes on to await the ACK once forwarding is confirmed; a sender that requested no ACK is finished the moment it hears the packet carried onward, and if the retry budget runs out without that, the send simply ends — there is no failure signal to wait for. A point-to-point packet with no flood budget and no source route travels straight to its destination, confirms nothing, and MUST be transmitted exactly once.</p>
 <p>After transmitting, the node listens for the same packet — identified by its <a href="#duplicate-suppression-1">cache key</a> — to be retransmitted. This confirmation timeout MUST be large enough to cover the worst-case forwarding delay allowed by <a href="#flood-forwarding-contention-window">Channel Access</a>, plus the airtime of the forwarded frame itself, plus a guard margin. A safe default is:</p>
-<pre><code class="language-text">confirm_timeout = 2 × T_frame + W_max + D_ack
+<pre><code class="language-text">confirm_timeout = 2 × T_frame + W_max + W_jitter + D_ack
 </code></pre>
-<p>where <code>W_max</code> is the maximum intentional forwarding-delay window permitted for the path and <code>D_ack</code> is the <a href="#ack-protection-interval">ACK protection interval</a> when it applies. With the suggested defaults <code>W_max = 2 × T_frame</code> and <code>D_ack = 0.25 × T_frame</code>, this yields <code>confirm_timeout = 4.25 × T_frame</code>.</p>
+<p>where <code>W_max</code> and <code>W_jitter</code> bound the intentional forwarding delay permitted for the path and <code>D_ack</code> is the <a href="#ack-protection-interval">ACK protection interval</a> when it applies. With the suggested defaults <code>W_max = T_frame/2</code>, <code>W_jitter = T_frame/10</code>, and <code>D_ack = 0.25 × T_frame</code>, this yields <code>confirm_timeout = 2.85 × T_frame</code>.</p>
 <p>If the packet is heard before <code>confirm_timeout</code> expires, forwarding is confirmed.</p>
 <p>If <code>confirm_timeout</code> expires without a retransmission, the node SHOULD schedule a retry after a jittered delay:</p>
 <pre><code class="language-text">retry_delay = uniform_random(0, T_frame)
@@ -1817,7 +1830,7 @@ delay   = D_ack + uniform_random(0, W)
 </ul>
 <p>For flood-forwarding repeaters that have accepted a packet for forwarding but have not yet transmitted it, overhearing another forwarding of the same packet SHOULD normally cause a bounded deferral rather than an immediate transmission. A safe default is:</p>
 <ol>
-<li>resample a forwarding delay using the contention-window procedure in <a href="#flood-forwarding-contention-window">Channel Access</a></li>
+<li>recalculate a forwarding delay using the contention-window procedure in <a href="#flood-forwarding-contention-window">Channel Access</a></li>
 <li>restart the waiting period</li>
 <li>after 3 such deferrals, abandon the pending forward</li>
 </ol>
@@ -2060,7 +2073,7 @@ these periods are the advertisement-policy properties.</p>
 <tr><td style="text-align: right">1</td><td>Node Location</td><td>1-7 bytes, see <a href="#variable-precision-location-format">Variable-Precision Location Format</a></td></tr>
 <tr><td style="text-align: right">2</td><td>Altitude in Meters</td><td>signed integer, meters above mean sea level</td></tr>
 <tr><td style="text-align: right">3</td><td>Unix Timestamp</td><td>unsigned integer, seconds since the Unix epoch, UTC</td></tr>
-<tr><td style="text-align: right">4</td><td>Supported Flood Regions</td><td>one or more concatenated 2-byte region codes</td></tr>
+<tr><td style="text-align: right">4</td><td>Supported Flood Regions</td><td>one option per region, its UTF-8 string form, max 24 bytes each</td></tr>
 <tr><td style="text-align: right">5</td><td>Nonce</td><td>4 bytes, echoed from a soliciting Identity Request</td></tr>
 </tbody>
 </table>
@@ -2074,7 +2087,7 @@ these periods are the advertisement-policy properties.</p>
 <h3 id="unix-timestamp-option-3"><a class="header" href="#unix-timestamp-option-3">Unix Timestamp (option 3)</a></h3>
 <p>Seconds since the Unix epoch indicating when this identity payload was generated. Lets a consumer judge how fresh the identity is — most useful when the identity stands alone (e.g. in a QR code), where a stale capture could otherwise be presented indefinitely. Not used by the MAC layer. Encoded as a minimal big-endian unsigned integer (leading zero bytes omitted). Max length: 4 bytes.</p>
 <h3 id="supported-regions-option-4"><a class="header" href="#supported-regions-option-4">Supported Regions (option 4)</a></h3>
-<p>For repeaters, the list of <a href="#region-code-encoding">region codes</a> the node will flood-forward for. Entries are 2 bytes each, concatenated with no delimiter. A node that omits this option makes no claim about its regional forwarding policy. Max length: 20 bytes.</p>
+<p>For repeaters, the regions the node will flood-forward for, one option per region. Each entry carries the region’s string form—the three-letter IATA code for an IATA-based region, the region name otherwise—rather than its two-byte <a href="#region-code-encoding">region code</a>: the code is always derivable from the string, while a hash-derived code cannot be turned back into a name. A sender lists at most 10 regions, and the identity payload must still fit its enclosing packet, so a node whose full list does not fit omits regions; the option names regions the node forwards for without promising to name every one. A node that omits the option entirely makes no claim about its regional forwarding policy. Max length: 24 bytes per entry, the <a href="#region-code-encoding">bound on region names</a>.</p>
 <h3 id="nonce-option-5"><a class="header" href="#nonce-option-5">Nonce (option 5)</a></h3>
 <p>Copied verbatim from the <a href="#identity-request-1">Identity Request</a> that solicited this identity payload, letting the requester correlate the response to its request. Present only in responses whose request carried a NONCE option. Length: 4 bytes.</p>
 <h3 id="variable-precision-location-format"><a class="header" href="#variable-precision-location-format">Variable-Precision Location Format</a></h3>
@@ -2211,6 +2224,7 @@ these periods are the advertisement-policy properties.</p>
 <li><strong>optional bytes</strong>: command-specific payload</li>
 </ul>
 <p>Support for MAC commands is optional.</p>
+<p>MAC commands are addressed to a single node. Unless a command’s definition provides rules for multicast or broadcast use, as <a href="#identity-request-1">Identity Request</a> does, a node ignores a command that arrives by multicast or broadcast.</p>
 <h2 id="command-registry"><a class="header" href="#command-registry">Command Registry</a></h2>
 <div class="table-wrapper">
 <table>
@@ -2228,6 +2242,8 @@ these periods are the advertisement-policy properties.</p>
 <tr><td style="text-align: right">7</td><td>PFS Session Response</td><td>Response</td></tr>
 <tr><td style="text-align: right">8</td><td>End PFS Session</td><td>Either</td></tr>
 <tr><td style="text-align: right">9</td><td>No-op</td><td>Request</td></tr>
+<tr><td style="text-align: right">10</td><td>Peer Repeaters Request</td><td>Request</td></tr>
+<tr><td style="text-align: right">11</td><td>Peer Repeaters Response</td><td>Response</td></tr>
 </tbody>
 </table>
 </div>
@@ -2407,6 +2423,59 @@ Non-filter options (such as NONCE) do not participate in this matching.</p>
 <h2 id="no-op-9"><a class="header" href="#no-op-9">No-Op (9)</a></h2>
 <p>This command does nothing, however it will produce a UACK when sent via a packet
 type that requests an ACK.</p>
+<h2 id="peer-repeaters-request-10"><a class="header" href="#peer-repeaters-request-10">Peer Repeaters Request (10)</a></h2>
+<p>Asks the destination—typically a repeater—for its list of known peer repeaters.</p>
+<p>The command-specific payload is a CoAP-style option list, using the delta-length encoding defined in <a href="#attribute-encoding">Packet Options</a>:</p>
+<div class="table-wrapper">
+<table>
+<thead>
+<tr><th style="text-align: right">Number</th><th>Name</th><th>Value</th><th>Description</th></tr>
+</thead>
+<tbody>
+<tr><td style="text-align: right">0</td><td>Nonce</td><td>2 bytes</td><td>Correlation identifier the responder MUST echo in its response’s Nonce option.</td></tr>
+<tr><td style="text-align: right">1</td><td>Cursor</td><td>variable</td><td>Resume token, copied verbatim from the Cursor option of a previous response. Absent on the first request of an enumeration.</td></tr>
+</tbody>
+</table>
+</div>
+<p>No payload follows the options, so the sender omits the 0xFF end-of-options marker.</p>
+<p>A list too large for one response is retrieved page by page: the first request carries no Cursor, and each response that carries one names the place a follow-up request should resume from. The cursor is opaque to the requester; only the responder gives it meaning.</p>
+<h2 id="peer-repeaters-response-11"><a class="header" href="#peer-repeaters-response-11">Peer Repeaters Response (11)</a></h2>
+<p>Returns one page of the responder’s peer-repeater list in response to a Peer Repeaters Request:</p>
+<pre><code class="language-text">+---------+------+---------+------+---------+------+     +---------+--------+
+| OPTIONS | 0xFF | ENTRY 0 | 0xFF | ENTRY 1 | 0xFF | ... | ENTRY N | (0xFF) |
++---------+------+---------+------+---------+------+     +---------+--------+
+</code></pre>
+<p>The response options:</p>
+<div class="table-wrapper">
+<table>
+<thead>
+<tr><th style="text-align: right">Number</th><th>Name</th><th>Value</th><th>Description</th></tr>
+</thead>
+<tbody>
+<tr><td style="text-align: right">0</td><td>Nonce</td><td>2 bytes</td><td>Copied verbatim from the request. Present only when the request carried a Nonce.</td></tr>
+<tr><td style="text-align: right">1</td><td>Cursor</td><td>variable</td><td>Opaque resume token for the next page. Present when further entries remain; the final page carries no Cursor.</td></tr>
+<tr><td style="text-align: right">2</td><td>Total</td><td>1 byte</td><td>Unsigned count of entries in the full list, not the page. Required in the response to a cursorless request; optional on later pages.</td></tr>
+</tbody>
+</table>
+</div>
+<p>The <code>0xFF</code> after the response options is the ordinary end-of-options marker; the entry list that follows is the command’s payload. Each entry is itself a CoAP-style option list terminated by its own <code>0xFF</code> byte. The final entry MAY omit its terminator, consistent with omitting the marker when nothing follows.</p>
+<p>The options per entry:</p>
+<div class="table-wrapper">
+<table>
+<thead>
+<tr><th style="text-align: right">Number</th><th>Name</th><th>Value</th><th>Description</th></tr>
+</thead>
+<tbody>
+<tr><td style="text-align: right">0</td><td>Node Hint</td><td>2 or 3 bytes</td><td>The peer’s <a href="#node-hint">node hint</a>—3 bytes when the responder holds it in full, or the 2-byte <a href="#router-hint">router hint</a> when that is all it has observed. The only required option.</td></tr>
+<tr><td style="text-align: right">1</td><td>Node Name</td><td>UTF-8, max 24 bytes</td><td>The peer’s display name, as learned from its <a href="#node-name-option-0">identity</a>.</td></tr>
+<tr><td style="text-align: right">2</td><td>RSSI/SNR</td><td>2 bytes</td><td>Signal measurements from the most recent reception: RSSI as an unsigned value representing negative dBm (e.g. 130 = −130 dBm), then SNR as a signed value in quarter-dB steps.</td></tr>
+<tr><td style="text-align: right">3</td><td>Last Heard</td><td>1–2 bytes</td><td>Minutes since the responder last heard the peer, as a minimal big-endian unsigned integer. Saturates at 65535 (about 45 days).</td></tr>
+<tr><td style="text-align: right">4</td><td>Location</td><td>1–7 bytes</td><td>The peer’s position, in the <a href="#variable-precision-location-format">variable-precision location format</a>.</td></tr>
+<tr><td style="text-align: right">5</td><td>Supported Flood Regions</td><td>n × 2 bytes</td><td>Concatenated 2-byte <a href="#region-code-encoding">region codes</a> the peer flood-forwards for.</td></tr>
+</tbody>
+</table>
+</div>
+<p>An option whose value the responder does not know is omitted. Entries carry region codes rather than the strings the <a href="#supported-regions-option-4">identity option</a> carries—the entry format is tighter on space, and the string form of a code, when one is wanted, is available from the peer’s own identity.</p>
 <div style="break-before: page; page-break-before: always;"></div>
 <h1 id="node-management"><a class="header" href="#node-management">Node Management</a></h1>
 <blockquote>
@@ -4893,7 +4962,7 @@ device range, alongside the wall clock at 4866–4867.</p>
 <tr><td>71</td><td><code>PROP_IDENT</code></td><td>Get</td><td>Signed node identity of the device identity</td></tr>
 <tr><td>72</td><td><code>PROP_IDENT_ROLE</code></td><td>Get, Set</td><td>Advertised node role, or empty to derive it</td></tr>
 <tr><td>73</td><td><code>PROP_IDENT_MOBILE</code></td><td>Get, Set</td><td>Advertise the mobile capability bit</td></tr>
-<tr><td>74</td><td><code>PROP_MAC_REPEATER_REGIONS</code></td><td>Get, Set</td><td>Region codes the device forwards for</td></tr>
+<tr><td>74</td><td><code>PROP_MAC_REPEATER_REGIONS</code></td><td>Get, Set, Insert, Remove</td><td>Region strings the device forwards for</td></tr>
 <tr><td>75</td><td><code>PROP_MAC_REPEATER_DEFAULT_REGION</code></td><td>Get, Set</td><td>Region code inserted into untagged flood packets</td></tr>
 <tr><td>76</td><td><code>PROP_MAC_REPEATER_MIN_RSSI</code></td><td>Get, Set</td><td>Minimum received RSSI for flood forwarding</td></tr>
 <tr><td>77</td><td><code>PROP_MAC_REPEATER_MIN_SNR</code></td><td>Get, Set</td><td>Minimum received SNR for flood forwarding</td></tr>
@@ -5242,27 +5311,33 @@ orthogonal to whether a host is tethered. A hand-carried repeater and a
 pole-mounted sensor are both ordinary configurations.</p>
 <h3 id="prop-mac-repeater-regions"><a class="header" href="#prop-mac-repeater-regions">PROP 74: <code>PROP_MAC_REPEATER_REGIONS</code></a></h3>
 <ul>
-<li>Type: Single-Value, Read-Write</li>
+<li>Type: Multiple-Value, Read-Write</li>
+<li>Has Item Length Prefix: Yes</li>
 <li>Asynchronous Updates: No</li>
 <li>Required: <code>CAP_REPEATER</code></li>
-<li>Value Type: Concatenated 2-octet <a href="#region-code-encoding">region codes</a></li>
+<li>Item Form: 1–24 octets of UTF-8 (the region’s string form)</li>
+<li>Remove Selector: the region string</li>
 <li>Post-Reset Value: Empty, or restored from saved state</li>
 </ul>
-<p>The set of regions the device identity flood-forwards for, as the codes
-themselves concatenated with no delimiter — byte-for-byte the encoding of
-the <a href="#supported-regions-option-4">Supported Regions</a>
-identity option. The value length is therefore always even; a device
-<strong>MUST</strong> reject an odd-length write with <code>STATUS_INVALID_ARGUMENT</code>, and
-<strong>MAY</strong> reject a write that exceeds the number of entries it can hold.</p>
-<p>The list is the filter applied at the region-policy step of the <a href="#forwarding-procedure">forwarding
+<p>The set of regions the device flood-forwards for, each held in its string
+form—the three-letter IATA code for an IATA-based region, the region name
+otherwise—the same form the
+<a href="#supported-regions-option-4">Supported Regions</a> identity
+option carries. From each string the device derives the 2-octet
+<a href="#region-code-encoding">region code</a>; the derived codes
+are the filter applied at the region-policy step of the <a href="#forwarding-procedure">forwarding
 procedure</a>: a flood packet
-carrying region codes is forwarded only if at least one of them appears
-here. An <strong>empty</strong> list — the factory default — imposes no regional
-restriction, so a tagged packet is forwarded whatever its region.</p>
-<p>A device with forwarding enabled and a non-empty list <strong>SHOULD</strong> advertise
-the same codes in its node identity, so that a peer choosing a route can
-see what a repeater will carry. A device that is not forwarding makes no
-such claim and omits the option.</p>
+carrying region codes is forwarded only if at least one of them matches.
+An <strong>empty</strong> set—the factory default—imposes no regional restriction, so
+a tagged packet is forwarded whatever its region.</p>
+<p>A device <strong>MUST</strong> reject an item that is empty or longer than 24 octets
+with <code>STATUS_INVALID_ARGUMENT</code>, and <strong>MAY</strong> reject a write that exceeds
+the number of entries it can hold.</p>
+<p>A device with forwarding enabled and a non-empty set <strong>SHOULD</strong> advertise
+the same strings in its node identity, subject to that option’s count and
+packet-fit limits, so that a peer choosing a route can see what a repeater
+will carry. A device that is not forwarding makes no such claim and omits
+the option.</p>
 <p>Whether an untagged packet is tagged on the way out is a separate
 decision, governed by <code>PROP_MAC_REPEATER_DEFAULT_REGION</code>.</p>
 <h3 id="prop-mac-repeater-default-region"><a class="header" href="#prop-mac-repeater-default-region">PROP 75: <code>PROP_MAC_REPEATER_DEFAULT_REGION</code></a></h3>

@@ -35,7 +35,7 @@
             const path_to_root = "";
             const default_light_theme = "light";
             const default_dark_theme = "ayu";
-            window.path_to_searchindex_js = "searchindex-2628c86f.js";
+            window.path_to_searchindex_js = "searchindex-4cee91e1.js";
         </script>
         <!-- Start loading toc.js asap -->
         <script src="toc-438957a9.js"></script>
@@ -181,6 +181,7 @@
 <li><strong>optional bytes</strong>: command-specific payload</li>
 </ul>
 <p>Support for MAC commands is optional.</p>
+<p>MAC commands are addressed to a single node. Unless a command’s definition provides rules for multicast or broadcast use, as <a href="#identity-request-1">Identity Request</a> does, a node ignores a command that arrives by multicast or broadcast.</p>
 <h2 id="command-registry"><a class="header" href="#command-registry">Command Registry</a></h2>
 <div class="table-wrapper">
 <table>
@@ -198,6 +199,8 @@
 <tr><td style="text-align: right">7</td><td>PFS Session Response</td><td>Response</td></tr>
 <tr><td style="text-align: right">8</td><td>End PFS Session</td><td>Either</td></tr>
 <tr><td style="text-align: right">9</td><td>No-op</td><td>Request</td></tr>
+<tr><td style="text-align: right">10</td><td>Peer Repeaters Request</td><td>Request</td></tr>
+<tr><td style="text-align: right">11</td><td>Peer Repeaters Response</td><td>Response</td></tr>
 </tbody>
 </table>
 </div>
@@ -377,6 +380,59 @@ Non-filter options (such as NONCE) do not participate in this matching.</p>
 <h2 id="no-op-9"><a class="header" href="#no-op-9">No-Op (9)</a></h2>
 <p>This command does nothing, however it will produce a UACK when sent via a packet
 type that requests an ACK.</p>
+<h2 id="peer-repeaters-request-10"><a class="header" href="#peer-repeaters-request-10">Peer Repeaters Request (10)</a></h2>
+<p>Asks the destination—typically a repeater—for its list of known peer repeaters.</p>
+<p>The command-specific payload is a CoAP-style option list, using the delta-length encoding defined in <a href="packet-options.html#attribute-encoding">Packet Options</a>:</p>
+<div class="table-wrapper">
+<table>
+<thead>
+<tr><th style="text-align: right">Number</th><th>Name</th><th>Value</th><th>Description</th></tr>
+</thead>
+<tbody>
+<tr><td style="text-align: right">0</td><td>Nonce</td><td>2 bytes</td><td>Correlation identifier the responder MUST echo in its response’s Nonce option.</td></tr>
+<tr><td style="text-align: right">1</td><td>Cursor</td><td>variable</td><td>Resume token, copied verbatim from the Cursor option of a previous response. Absent on the first request of an enumeration.</td></tr>
+</tbody>
+</table>
+</div>
+<p>No payload follows the options, so the sender omits the 0xFF end-of-options marker.</p>
+<p>A list too large for one response is retrieved page by page: the first request carries no Cursor, and each response that carries one names the place a follow-up request should resume from. The cursor is opaque to the requester; only the responder gives it meaning.</p>
+<h2 id="peer-repeaters-response-11"><a class="header" href="#peer-repeaters-response-11">Peer Repeaters Response (11)</a></h2>
+<p>Returns one page of the responder’s peer-repeater list in response to a Peer Repeaters Request:</p>
+<pre><code class="language-text">+---------+------+---------+------+---------+------+     +---------+--------+
+| OPTIONS | 0xFF | ENTRY 0 | 0xFF | ENTRY 1 | 0xFF | ... | ENTRY N | (0xFF) |
++---------+------+---------+------+---------+------+     +---------+--------+
+</code></pre>
+<p>The response options:</p>
+<div class="table-wrapper">
+<table>
+<thead>
+<tr><th style="text-align: right">Number</th><th>Name</th><th>Value</th><th>Description</th></tr>
+</thead>
+<tbody>
+<tr><td style="text-align: right">0</td><td>Nonce</td><td>2 bytes</td><td>Copied verbatim from the request. Present only when the request carried a Nonce.</td></tr>
+<tr><td style="text-align: right">1</td><td>Cursor</td><td>variable</td><td>Opaque resume token for the next page. Present when further entries remain; the final page carries no Cursor.</td></tr>
+<tr><td style="text-align: right">2</td><td>Total</td><td>1 byte</td><td>Unsigned count of entries in the full list, not the page. Required in the response to a cursorless request; optional on later pages.</td></tr>
+</tbody>
+</table>
+</div>
+<p>The <code>0xFF</code> after the response options is the ordinary end-of-options marker; the entry list that follows is the command’s payload. Each entry is itself a CoAP-style option list terminated by its own <code>0xFF</code> byte. The final entry MAY omit its terminator, consistent with omitting the marker when nothing follows.</p>
+<p>The options per entry:</p>
+<div class="table-wrapper">
+<table>
+<thead>
+<tr><th style="text-align: right">Number</th><th>Name</th><th>Value</th><th>Description</th></tr>
+</thead>
+<tbody>
+<tr><td style="text-align: right">0</td><td>Node Hint</td><td>2 or 3 bytes</td><td>The peer’s <a href="addressing.html#node-hint">node hint</a>—3 bytes when the responder holds it in full, or the 2-byte <a href="addressing.html#router-hint">router hint</a> when that is all it has observed. The only required option.</td></tr>
+<tr><td style="text-align: right">1</td><td>Node Name</td><td>UTF-8, max 24 bytes</td><td>The peer’s display name, as learned from its <a href="node-identity.html#node-name-option-0">identity</a>.</td></tr>
+<tr><td style="text-align: right">2</td><td>RSSI/SNR</td><td>2 bytes</td><td>Signal measurements from the most recent reception: RSSI as an unsigned value representing negative dBm (e.g. 130 = −130 dBm), then SNR as a signed value in quarter-dB steps.</td></tr>
+<tr><td style="text-align: right">3</td><td>Last Heard</td><td>1–2 bytes</td><td>Minutes since the responder last heard the peer, as a minimal big-endian unsigned integer. Saturates at 65535 (about 45 days).</td></tr>
+<tr><td style="text-align: right">4</td><td>Location</td><td>1–7 bytes</td><td>The peer’s position, in the <a href="node-identity.html#variable-precision-location-format">variable-precision location format</a>.</td></tr>
+<tr><td style="text-align: right">5</td><td>Supported Flood Regions</td><td>n × 2 bytes</td><td>Concatenated 2-byte <a href="packet-options.html#region-code-encoding">region codes</a> the peer flood-forwards for.</td></tr>
+</tbody>
+</table>
+</div>
+<p>An option whose value the responder does not know is omitted. Entries carry region codes rather than the strings the <a href="node-identity.html#supported-regions-option-4">identity option</a> carries—the entry format is tighter on space, and the string form of a code, when one is wanted, is available from the peer’s own identity.</p>
 
                     </main>
 

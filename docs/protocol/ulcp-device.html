@@ -35,7 +35,7 @@
             const path_to_root = "";
             const default_light_theme = "light";
             const default_dark_theme = "ayu";
-            window.path_to_searchindex_js = "searchindex-2628c86f.js";
+            window.path_to_searchindex_js = "searchindex-4cee91e1.js";
         </script>
         <!-- Start loading toc.js asap -->
         <script src="toc-438957a9.js"></script>
@@ -271,7 +271,7 @@ device range, alongside the wall clock at 4866–4867.</p>
 <tr><td>71</td><td><code>PROP_IDENT</code></td><td>Get</td><td>Signed node identity of the device identity</td></tr>
 <tr><td>72</td><td><code>PROP_IDENT_ROLE</code></td><td>Get, Set</td><td>Advertised node role, or empty to derive it</td></tr>
 <tr><td>73</td><td><code>PROP_IDENT_MOBILE</code></td><td>Get, Set</td><td>Advertise the mobile capability bit</td></tr>
-<tr><td>74</td><td><code>PROP_MAC_REPEATER_REGIONS</code></td><td>Get, Set</td><td>Region codes the device forwards for</td></tr>
+<tr><td>74</td><td><code>PROP_MAC_REPEATER_REGIONS</code></td><td>Get, Set, Insert, Remove</td><td>Region strings the device forwards for</td></tr>
 <tr><td>75</td><td><code>PROP_MAC_REPEATER_DEFAULT_REGION</code></td><td>Get, Set</td><td>Region code inserted into untagged flood packets</td></tr>
 <tr><td>76</td><td><code>PROP_MAC_REPEATER_MIN_RSSI</code></td><td>Get, Set</td><td>Minimum received RSSI for flood forwarding</td></tr>
 <tr><td>77</td><td><code>PROP_MAC_REPEATER_MIN_SNR</code></td><td>Get, Set</td><td>Minimum received SNR for flood forwarding</td></tr>
@@ -620,27 +620,33 @@ orthogonal to whether a host is tethered. A hand-carried repeater and a
 pole-mounted sensor are both ordinary configurations.</p>
 <h3 id="prop-mac-repeater-regions"><a class="header" href="#prop-mac-repeater-regions">PROP 74: <code>PROP_MAC_REPEATER_REGIONS</code></a></h3>
 <ul>
-<li>Type: Single-Value, Read-Write</li>
+<li>Type: Multiple-Value, Read-Write</li>
+<li>Has Item Length Prefix: Yes</li>
 <li>Asynchronous Updates: No</li>
 <li>Required: <code>CAP_REPEATER</code></li>
-<li>Value Type: Concatenated 2-octet <a href="packet-options.html#region-code-encoding">region codes</a></li>
+<li>Item Form: 1–24 octets of UTF-8 (the region’s string form)</li>
+<li>Remove Selector: the region string</li>
 <li>Post-Reset Value: Empty, or restored from saved state</li>
 </ul>
-<p>The set of regions the device identity flood-forwards for, as the codes
-themselves concatenated with no delimiter — byte-for-byte the encoding of
-the <a href="node-identity.html#supported-regions-option-4">Supported Regions</a>
-identity option. The value length is therefore always even; a device
-<strong>MUST</strong> reject an odd-length write with <code>STATUS_INVALID_ARGUMENT</code>, and
-<strong>MAY</strong> reject a write that exceeds the number of entries it can hold.</p>
-<p>The list is the filter applied at the region-policy step of the <a href="repeater-operation.html#forwarding-procedure">forwarding
+<p>The set of regions the device flood-forwards for, each held in its string
+form—the three-letter IATA code for an IATA-based region, the region name
+otherwise—the same form the
+<a href="node-identity.html#supported-regions-option-4">Supported Regions</a> identity
+option carries. From each string the device derives the 2-octet
+<a href="packet-options.html#region-code-encoding">region code</a>; the derived codes
+are the filter applied at the region-policy step of the <a href="repeater-operation.html#forwarding-procedure">forwarding
 procedure</a>: a flood packet
-carrying region codes is forwarded only if at least one of them appears
-here. An <strong>empty</strong> list — the factory default — imposes no regional
-restriction, so a tagged packet is forwarded whatever its region.</p>
-<p>A device with forwarding enabled and a non-empty list <strong>SHOULD</strong> advertise
-the same codes in its node identity, so that a peer choosing a route can
-see what a repeater will carry. A device that is not forwarding makes no
-such claim and omits the option.</p>
+carrying region codes is forwarded only if at least one of them matches.
+An <strong>empty</strong> set—the factory default—imposes no regional restriction, so
+a tagged packet is forwarded whatever its region.</p>
+<p>A device <strong>MUST</strong> reject an item that is empty or longer than 24 octets
+with <code>STATUS_INVALID_ARGUMENT</code>, and <strong>MAY</strong> reject a write that exceeds
+the number of entries it can hold.</p>
+<p>A device with forwarding enabled and a non-empty set <strong>SHOULD</strong> advertise
+the same strings in its node identity, subject to that option’s count and
+packet-fit limits, so that a peer choosing a route can see what a repeater
+will carry. A device that is not forwarding makes no such claim and omits
+the option.</p>
 <p>Whether an untagged packet is tagged on the way out is a separate
 decision, governed by <code>PROP_MAC_REPEATER_DEFAULT_REGION</code>.</p>
 <h3 id="prop-mac-repeater-default-region"><a class="header" href="#prop-mac-repeater-default-region">PROP 75: <code>PROP_MAC_REPEATER_DEFAULT_REGION</code></a></h3>

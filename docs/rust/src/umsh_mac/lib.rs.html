@@ -191,13 +191,13 @@
 <a href=#191 id=191 data-nosnippet>191</a>
 <a href=#192 id=192 data-nosnippet>192</a><span class="doccomment">/// CAD attempts a frame gets before it is dropped, from
 <a href=#193 id=193 data-nosnippet>193</a>/// [Channel Access § Backoff Procedure][spec]: one initial attempt and
-<a href=#194 id=194 data-nosnippet>194</a>/// four retries. Public because every UMSH transmitter shares the
+<a href=#194 id=194 data-nosnippet>194</a>/// fifteen retries. Public because every UMSH transmitter shares the
 <a href=#195 id=195 data-nosnippet>195</a>/// procedure — a host relaying frames onto a segment contends with the
-<a href=#196 id=196 data-nosnippet>196</a>/// same neighbours as the MAC does, and a second opinion about how long
+<a href=#196 id=196 data-nosnippet>196</a>/// same neighbors as the MAC does, and a second opinion about how long
 <a href=#197 id=197 data-nosnippet>197</a>/// to persist would just be a second, wrong answer.
 <a href=#198 id=198 data-nosnippet>198</a>///
 <a href=#199 id=199 data-nosnippet>199</a>/// [spec]: https://darconeous.github.io/umsh/docs/protocol/channel-access.html#backoff-procedure
-<a href=#200 id=200 data-nosnippet>200</a></span><span class="kw">pub const </span>MAX_CAD_ATTEMPTS: u8 = <span class="number">5</span>;
+<a href=#200 id=200 data-nosnippet>200</a></span><span class="kw">pub const </span>MAX_CAD_ATTEMPTS: u8 = <span class="number">16</span>;
 <a href=#201 id=201 data-nosnippet>201</a>
 <a href=#202 id=202 data-nosnippet>202</a><span class="doccomment">/// Default identity-slot capacity for the common `Mac&lt;P&gt;` configuration.
 <a href=#203 id=203 data-nosnippet>203</a></span><span class="kw">pub const </span>DEFAULT_IDENTITIES: usize = <span class="number">4</span>;
@@ -301,32 +301,36 @@
 <a href=#301 id=301 data-nosnippet>301</a><span class="kw">mod </span>coordinator;
 <a href=#302 id=302 data-nosnippet>302</a><span class="kw">pub mod </span>forward_id;
 <a href=#303 id=303 data-nosnippet>303</a><span class="kw">mod </span>handle;
-<a href=#304 id=304 data-nosnippet>304</a><span class="kw">mod </span>peers;
-<a href=#305 id=305 data-nosnippet>305</a><span class="kw">mod </span>send;
-<a href=#306 id=306 data-nosnippet>306</a>
-<a href=#307 id=307 data-nosnippet>307</a><span class="kw">pub use </span>cache::{
-<a href=#308 id=308 data-nosnippet>308</a>    DUP_CACHE_TTL_MS, DupCacheKey, DuplicateCache, RecentMic, ReplayVerdict, ReplayWindow,
-<a href=#309 id=309 data-nosnippet>309</a>};
-<a href=#310 id=310 data-nosnippet>310</a><span class="kw">pub use </span>coordinator::{
-<a href=#311 id=311 data-nosnippet>311</a>    AmateurRadioMode, ChannelPolicy, CounterPersistenceError, IdentitySlot, LocalIdentity,
-<a href=#312 id=312 data-nosnippet>312</a>    LocalIdentityId, Mac, MacCounters, MacError, OperatingPolicy, RepeaterConfig, SendError,
-<a href=#313 id=313 data-nosnippet>313</a>    WakeReason,
-<a href=#314 id=314 data-nosnippet>314</a>};
-<a href=#315 id=315 data-nosnippet>315</a><span class="kw">pub use </span>handle::MacHandle;
-<a href=#316 id=316 data-nosnippet>316</a><span class="kw">pub use </span>peers::{
-<a href=#317 id=317 data-nosnippet>317</a>    CachedRoute, ChannelState, ChannelTable, HintReplayState, PeerCryptoMap, PeerCryptoState,
-<a href=#318 id=318 data-nosnippet>318</a>    PeerId, PeerInfo, PeerRegistry, PeerRemoval,
+<a href=#304 id=304 data-nosnippet>304</a><span class="kw">mod </span>observations;
+<a href=#305 id=305 data-nosnippet>305</a><span class="kw">mod </span>peers;
+<a href=#306 id=306 data-nosnippet>306</a><span class="kw">mod </span>send;
+<a href=#307 id=307 data-nosnippet>307</a>
+<a href=#308 id=308 data-nosnippet>308</a><span class="kw">pub use </span>cache::{
+<a href=#309 id=309 data-nosnippet>309</a>    DUP_CACHE_TTL_MS, DupCacheKey, DuplicateCache, RecentMic, ReplayVerdict, ReplayWindow,
+<a href=#310 id=310 data-nosnippet>310</a>};
+<a href=#311 id=311 data-nosnippet>311</a><span class="kw">pub use </span>coordinator::{
+<a href=#312 id=312 data-nosnippet>312</a>    AmateurRadioMode, ChannelPolicy, CounterPersistenceError, IdentitySlot, LocalIdentity,
+<a href=#313 id=313 data-nosnippet>313</a>    LocalIdentityId, Mac, MacCounters, MacError, OperatingPolicy, RepeaterConfig, SendError,
+<a href=#314 id=314 data-nosnippet>314</a>    WakeReason,
+<a href=#315 id=315 data-nosnippet>315</a>};
+<a href=#316 id=316 data-nosnippet>316</a><span class="kw">pub use </span>handle::MacHandle;
+<a href=#317 id=317 data-nosnippet>317</a><span class="kw">pub use </span>observations::{
+<a href=#318 id=318 data-nosnippet>318</a>    MAX_TRANSMITTER_OBSERVATIONS, TransmitterObservation, TransmitterObservations,
 <a href=#319 id=319 data-nosnippet>319</a>};
-<a href=#320 id=320 data-nosnippet>320</a><span class="kw">pub use </span>send::{
-<a href=#321 id=321 data-nosnippet>321</a>    AckState, ChannelInfoRef, CompletionSignal, MacEventRef, PacketFamily, PendingAck,
-<a href=#322 id=322 data-nosnippet>322</a>    PendingAckError, QueuedTx, ReceivedPacketRef, ResendRecord, RouteHops, RxMetadata, SendOptions,
-<a href=#323 id=323 data-nosnippet>323</a>    SendReceipt, TxPriority, TxQueue,
-<a href=#324 id=324 data-nosnippet>324</a>};
-<a href=#325 id=325 data-nosnippet>325</a><span class="kw">pub use </span>umsh_hal::Snr;
-<a href=#326 id=326 data-nosnippet>326</a>
-<a href=#327 id=327 data-nosnippet>327</a><span class="attr">#[cfg(feature = <span class="string">"std"</span>)]
-<a href=#328 id=328 data-nosnippet>328</a></span><span class="kw">pub mod </span>test_support;
-<a href=#329 id=329 data-nosnippet>329</a>
-<a href=#330 id=330 data-nosnippet>330</a><span class="attr">#[cfg(test)]
-<a href=#331 id=331 data-nosnippet>331</a></span><span class="kw">mod </span>tests;
+<a href=#320 id=320 data-nosnippet>320</a><span class="kw">pub use </span>peers::{
+<a href=#321 id=321 data-nosnippet>321</a>    CachedRoute, ChannelState, ChannelTable, HintReplayState, PeerCryptoMap, PeerCryptoState,
+<a href=#322 id=322 data-nosnippet>322</a>    PeerId, PeerInfo, PeerRegistry, PeerRemoval,
+<a href=#323 id=323 data-nosnippet>323</a>};
+<a href=#324 id=324 data-nosnippet>324</a><span class="kw">pub use </span>send::{
+<a href=#325 id=325 data-nosnippet>325</a>    AckState, ChannelInfoRef, CompletionSignal, MacEventRef, PacketFamily, PendingAck,
+<a href=#326 id=326 data-nosnippet>326</a>    PendingAckError, QueuedTx, ReceivedPacketRef, ResendRecord, RouteHops, RxMetadata, SendOptions,
+<a href=#327 id=327 data-nosnippet>327</a>    SendReceipt, TxPriority, TxQueue,
+<a href=#328 id=328 data-nosnippet>328</a>};
+<a href=#329 id=329 data-nosnippet>329</a><span class="kw">pub use </span>umsh_hal::Snr;
+<a href=#330 id=330 data-nosnippet>330</a>
+<a href=#331 id=331 data-nosnippet>331</a><span class="attr">#[cfg(feature = <span class="string">"std"</span>)]
+<a href=#332 id=332 data-nosnippet>332</a></span><span class="kw">pub mod </span>test_support;
+<a href=#333 id=333 data-nosnippet>333</a>
+<a href=#334 id=334 data-nosnippet>334</a><span class="attr">#[cfg(test)]
+<a href=#335 id=335 data-nosnippet>335</a></span><span class="kw">mod </span>tests;
 </code></pre></div></section></main></body></html>

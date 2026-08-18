@@ -1,1 +1,1 @@
-window.SIDEBAR_ITEMS = {"enum":["RepeaterOp"],"fn":["format_regions","print_enabled","run","set_enabled"]};
+window.SIDEBAR_ITEMS = {"enum":["RegionOp","RepeaterOp"],"fn":["format_region","format_regions","print_enabled","region_codes","run","set_enabled"]};

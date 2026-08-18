@@ -1,1 +1,1 @@
-window.SIDEBAR_ITEMS = {"mod":["duty","session"]};
+window.SIDEBAR_ITEMS = {"constant":["REGION_STRING_MAX_LEN"],"mod":["duty","session"]};

@@ -35,7 +35,7 @@
             const path_to_root = "";
             const default_light_theme = "light";
             const default_dark_theme = "ayu";
-            window.path_to_searchindex_js = "searchindex-2628c86f.js";
+            window.path_to_searchindex_js = "searchindex-4cee91e1.js";
         </script>
         <!-- Start loading toc.js asap -->
         <script src="toc-438957a9.js"></script>
@@ -412,6 +412,8 @@ region codes. This allows all region codes which decode to three letters to be a
 <p>However, collisions can still happen between hash-originated region codes.
 These collisions are rarely of practical concern. If a region code in one part of the world collides with a region code in a different part of the world, there is no actual ambiguity because flood repeating is an inherently local event. In the rare case of a collision within a geographic area, it can be resolved by adjusting the named region slightly (for example, making it more specific).</p>
 <p>The assignment and scope of non-IATA-based region codes—and resolution of any collisions—are generally handled locally.</p>
+<p><strong>Literal codes.</strong> In any context that takes a region’s string form, a string of <code>0x</code> followed by four hexadecimal digits (e.g. <code>0x31d9</code>) denotes the two-byte code it spells. Strings of this shape are by definition excluded from the hash derivation—there is no named region <code>0x31d9</code>, only the code. This is also the display form for a code that decodes to no three-letter IATA code and whose name is unknown, so a region list read off the air can be fed back in unchanged.</p>
+<p>A region name MUST NOT exceed 24 bytes of UTF-8. Names travel on the wire in <a href="node-identity.html#supported-regions-option-4">identity payloads</a>, and the bound is what lets a list of them fit there.</p>
 <h2 id="routing-option-layouts"><a class="header" href="#routing-option-layouts">Routing Option Layouts</a></h2>
 <h3 id="source-route-option-value"><a class="header" href="#source-route-option-value">Source Route Option Value</a></h3>
 <p>A source-route option contains zero or more router hints:</p>
