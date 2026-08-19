@@ -35,7 +35,7 @@
             const path_to_root = "";
             const default_light_theme = "light";
             const default_dark_theme = "ayu";
-            window.path_to_searchindex_js = "searchindex-4cee91e1.js";
+            window.path_to_searchindex_js = "searchindex-c81560d3.js";
         </script>
         <!-- Start loading toc.js asap -->
         <script src="toc-438957a9.js"></script>
@@ -223,7 +223,7 @@ private key and every pairwise key must be provisioned explicitly (see
 <tr><td>38</td><td><code>CAP_DEV_NAME</code></td><td>—</td><td><code>PROP_DEV_NAME</code></td></tr>
 <tr><td>39</td><td><code>CAP_BATTERY</code></td><td>—</td><td>Battery-powered operation and <code>PROP_BATTERY</code></td></tr>
 <tr><td>40</td><td><code>CAP_REPEATER</code></td><td><code>CAP_DEV_IDENTITY</code></td><td>Autonomous repeater forwarding by the device identity: <code>PROP_MAC_REPEATER_ENABLED</code>, <code>PROP_MAC_REPEATER_REGIONS</code>, <code>PROP_MAC_REPEATER_DEFAULT_REGION</code>, <code>PROP_MAC_REPEATER_MIN_RSSI</code>, <code>PROP_MAC_REPEATER_MIN_SNR</code></td></tr>
-<tr><td>41</td><td><code>CAP_IDENT</code></td><td><code>CAP_DEV_IDENTITY</code></td><td><code>PROP_IDENT</code>, <code>PROP_IDENT_ROLE</code>, <code>PROP_IDENT_MOBILE</code> — serving and configuring the device identity’s advertised node identity</td></tr>
+<tr><td>41</td><td><code>CAP_IDENT</code></td><td><code>CAP_DEV_IDENTITY</code></td><td><code>PROP_IDENT</code>, <code>PROP_IDENT_ROLE</code>, <code>PROP_IDENT_MOBILE</code>, <code>PROP_IDENT_LOCATION</code>, <code>PROP_IDENT_ALTITUDE</code> — serving and configuring the device identity’s advertised node identity</td></tr>
 <tr><td>42</td><td><code>CAP_ALERT</code></td><td>—</td><td>Some means of making the device physically conspicuous on demand, and <code>PROP_ALERT</code></td></tr>
 <tr><td>44</td><td><code>CAP_TIME</code></td><td>—</td><td>A wall clock: <code>PROP_TIME</code>, <code>PROP_TZ_OFFSET</code></td></tr>
 <tr><td>45</td><td><code>CAP_GNSS</code></td><td><code>CAP_TIME</code></td><td>A GNSS receiver: <code>PROP_GNSS_ENABLED</code>, <code>PROP_GNSS_LOCATION</code>, <code>PROP_GNSS_ALTITUDE</code>, <code>PROP_GNSS_FIX</code>, <code>PROP_GNSS_PRECISION</code>, <code>PROP_GNSS_SATELLITES</code>, <code>PROP_GNSS_IDENT_UPDATE</code>, <code>PROP_GNSS_IDENT_PRECISION</code>, <code>PROP_GNSS_TIME_TRUST</code></td></tr>
@@ -246,10 +246,15 @@ time source for a clock it does not have.</p>
 <h2 id="properties"><a class="header" href="#properties">Properties</a></h2>
 <p>The device domain occupies property identifiers 64–95. Identifiers 70–95
 are the device-behavior range: 70–78 are the repeater policy and
-advertised node identity settings, 79 is the locate alert, 80–87 are the
-advertisement policy — 80–82 allocated, 83–87 reserved — 88–93 are
-positioning (88 the receiver switch, 89–93 the fix telemetry), and 94–95
-are environmental sensing: 94 illuminance, 95 reserved.</p>
+advertised node identity settings, 79 is the locate alert, 80–87 are what
+the device announces about itself — 80–82 the advertisement schedule,
+83–84 the advertised position, 85–87 reserved — 88–93 are positioning (88
+the receiver switch, 89–93 the fix telemetry), and 94–95 are
+environmental sensing: 94 illuminance, 95 reserved.</p>
+<p>The advertised position at 83–84 and the fix telemetry at 89–90 are
+deliberately separate properties. The fix is what the receiver currently
+sees; the advertised position is what the identity claims, which a device
+without a receiver still has.</p>
 <p>A single-octet identifier is the scarce resource, so the positioning
 range holds the properties a host reads and the device announces
 continually. The positioning <strong>configuration</strong> — which is written during
@@ -280,6 +285,8 @@ device range, alongside the wall clock at 4866–4867.</p>
 <tr><td>80</td><td><code>PROP_ADVERT_INTERVAL</code></td><td>Get, Set</td><td>Seconds between unsolicited advertisements</td></tr>
 <tr><td>81</td><td><code>PROP_BEACON_INTERVAL</code></td><td>Get, Set</td><td>Seconds between unsolicited beacons</td></tr>
 <tr><td>82</td><td><code>PROP_STARTUP_BEACON</code></td><td>Get, Set</td><td>Whether a beacon goes out at bring-up</td></tr>
+<tr><td>83</td><td><code>PROP_IDENT_LOCATION</code></td><td>Get, Set</td><td>Position the advertised node identity carries</td></tr>
+<tr><td>84</td><td><code>PROP_IDENT_ALTITUDE</code></td><td>Get, Set</td><td>Altitude the advertised node identity carries</td></tr>
 <tr><td>88</td><td><code>PROP_GNSS_ENABLED</code></td><td>Get, Set</td><td>Whether the GNSS receiver is powered</td></tr>
 <tr><td>89</td><td><code>PROP_GNSS_LOCATION</code></td><td>Get, Is</td><td>Position of the last fix</td></tr>
 <tr><td>90</td><td><code>PROP_GNSS_ALTITUDE</code></td><td>Get</td><td>Altitude of the last fix</td></tr>
@@ -867,6 +874,68 @@ applied, so it reflects the device as it will actually run rather than
 as it booted. Unlike a scheduled period it is not scattered: devices do
 not restart in unison, so bring-up is already spread out by whatever
 staggered it.</p>
+<h3 id="prop-ident-location"><a class="header" href="#prop-ident-location">PROP 83: <code>PROP_IDENT_LOCATION</code></a></h3>
+<ul>
+<li>Type: Single-Value, Read-Write</li>
+<li>Asynchronous Updates: Yes</li>
+<li>Required: <code>CAP_IDENT</code></li>
+<li>Value Type: 0–7 octets</li>
+<li>Post-Reset Value: Empty, or restored from saved state</li>
+</ul>
+<p>The position the device identity carries in its
+<a href="node-identity.html">node identity</a>, in the <a href="node-identity.html#variable-precision-location-format">variable-precision
+location</a> encoding.
+An <strong>empty</strong> value means the identity advertises no position.</p>
+<p>This property is where the advertised position comes from, whatever put
+it there. A fix writes it when
+<a href="ulcp-device.html#prop-gnss-ident-update"><code>PROP_GNSS_IDENT_UPDATE</code></a> is set;
+a host or administrator writes it when that is clear. There is one
+advertised position and one place to read it.</p>
+<p>Required by <code>CAP_IDENT</code> rather than <code>CAP_GNSS</code>, because where a node is
+and whether it can determine that itself are different questions. A fixed
+repeater on a hilltop has a position worth advertising and no receiver to
+find it with, and a host placing that node needs somewhere to put the
+coordinates.</p>
+<p>The value’s length is its precision, so a written position needs no
+separate precision setting: a host that wants to advertise a
+neighborhood rather than an address writes a shorter value.
+<a href="ulcp-device.html#prop-gnss-ident-precision"><code>PROP_GNSS_IDENT_PRECISION</code></a>
+governs what the <em>device</em> clamps its own fixes to and does not constrain
+a written value.</p>
+<p>A write is refused with <code>STATUS_INVALID_STATE</code> while
+<a href="ulcp-device.html#prop-gnss-ident-update"><code>PROP_GNSS_IDENT_UPDATE</code></a> is set.
+The device is maintaining the value from its own fixes, and a written
+position would survive only until the next one — a setting that silently
+reverts is worse than one that refuses. A host that means to place the
+node clears auto-update first.</p>
+<p>Devices <strong>SHOULD</strong> announce this property when it changes. Unlike
+<a href="ulcp-device.html#prop-gnss-location"><code>PROP_GNSS_LOCATION</code></a> it moves only
+when the advertised identity does, which is already rate-limited by the
+clamping precision, so announcing it costs what it is worth.</p>
+<h3 id="prop-ident-altitude"><a class="header" href="#prop-ident-altitude">PROP 84: <code>PROP_IDENT_ALTITUDE</code></a></h3>
+<ul>
+<li>Type: Single-Value, Read-Write</li>
+<li>Asynchronous Updates: Yes</li>
+<li>Required: <code>CAP_IDENT</code></li>
+<li>Value Type: 1–4 octets, or empty</li>
+<li>Post-Reset Value: Empty, or restored from saved state</li>
+</ul>
+<p>The altitude the device identity carries, in meters above the WGS-84
+ellipsoid — the same units and reference as the node identity’s altitude
+option. Writable and refused under exactly the conditions described for
+<a href="ulcp-device.html#prop-ident-location"><code>PROP_IDENT_LOCATION</code></a>.</p>
+<p>The value is a two’s-complement signed integer, little-endian, in the
+fewest octets that hold it: an altitude of 100 m occupies one octet, 200 m
+two, and the range extends to four. Most nodes are within a byte of sea
+level, and this property is read over a link where a byte is worth
+saving. Negative values are ordinary — a node below the ellipsoid, which
+much of the world’s dry land is.</p>
+<p>A device <strong>MUST</strong> accept any length from one through four and sign-extend
+it, so a host that pads to a fixed width is understood. A device
+<strong>SHOULD</strong> report the minimal form.</p>
+<p>An <strong>empty</strong> value means no altitude is advertised. A device that
+advertises no <a href="ulcp-device.html#prop-ident-location">location</a> advertises
+no altitude either: an altitude alone places nothing.</p>
 <h3 id="prop-gnss-enabled"><a class="header" href="#prop-gnss-enabled">PROP 88: <code>PROP_GNSS_ENABLED</code></a></h3>
 <ul>
 <li>Type: Single-Value, Read-Write</li>
@@ -939,9 +1008,10 @@ too late to be the point.</p>
 value carries what a read would have returned, a device may have its own
 reason to volunteer one, and a host that treats it as a protocol error
 gains nothing for the strictness.</p>
-<p>Read-only in this revision. A manually-placed fixed node is a real use,
-but writing a position requires a rule for which source wins when the
-receiver also has one, and this revision does not define that rule.</p>
+<p>Read-only. This property reports what the receiver sees, and nothing a
+host writes could make that true. A position placed by hand belongs to
+<a href="ulcp-device.html#prop-ident-location"><code>PROP_IDENT_LOCATION</code></a>, which is
+what the identity advertises and is writable for exactly that reason.</p>
 <h3 id="prop-gnss-altitude"><a class="header" href="#prop-gnss-altitude">PROP 90: <code>PROP_GNSS_ALTITUDE</code></a></h3>
 <ul>
 <li>Type: Single-Value, Read-Only</li>
@@ -1136,12 +1206,18 @@ re-advertising each one spends airtime to say nothing.</p>
 operator can reach, alongside the receiver switch it is deliberately
 separate from. A device that flips it locally <strong>MUST</strong> publish the new
 value like any other transition the host did not command.</p>
-<p>Switching it off <strong>retracts</strong> the advertised position rather than
-freezing the last one. So does switching the receiver off. A position
-that nothing is refreshing any more is a claim the device cannot
-support, and it ages into a false one at whatever speed the device
-moves; a device therefore drops the location and the altitude together
-when it stops updating them.</p>
+<p>Switching it off stops the updating and leaves
+<a href="ulcp-device.html#prop-ident-location"><code>PROP_IDENT_LOCATION</code></a> and
+<a href="ulcp-device.html#prop-ident-altitude"><code>PROP_IDENT_ALTITUDE</code></a> holding the
+last position written to them, which becomes an ordinary written value
+that a host may then change or clear. This is how a fixed node is
+placed without anyone reading coordinates off a screen: switch the
+receiver on, let it find where it is, switch auto-update off, and what
+it found stays.</p>
+<p>The value is therefore a claim the operator is making rather than one
+the device is maintaining, and a node that moves afterward advertises
+where it was. Clearing the location is the way to stop advertising a
+position; a host that wants no stale claim writes an empty value.</p>
 <p>Note that the <a href="node-identity.html#unix-timestamp-option-3">Unix Timestamp</a>
 option dates the identity payload, not the position — a node that has
 been stationary for a day still stamps each payload with the moment it

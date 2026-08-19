@@ -35,7 +35,7 @@
             const path_to_root = "";
             const default_light_theme = "light";
             const default_dark_theme = "ayu";
-            window.path_to_searchindex_js = "searchindex-4cee91e1.js";
+            window.path_to_searchindex_js = "searchindex-c81560d3.js";
         </script>
         <!-- Start loading toc.js asap -->
         <script src="toc-438957a9.js"></script>
@@ -230,10 +230,11 @@ a Response matching no outstanding exchange of its own discards it, both
 with accounting.</p>
 <p>Node Management payloads travel only in unicast and blind unicast packets:
 Requests are addressed to the device identity, and Responses return to the
-requesting node as ordinary unicast replies, using whatever routing state
-the exchange has supplied (see <a href="beacons.html#route-learning">Route Learning</a>).
-A device drops a Node Management payload arriving by multicast or
-broadcast, with accounting.</p>
+requesting node on the carriage the Request arrived on (see
+<a href="payload-format.html#response-carriage">Response Carriage</a>), using whatever
+routing state the exchange has supplied (see
+<a href="beacons.html#route-learning">Route Learning</a>). A device drops a Node
+Management payload arriving by multicast or broadcast, with accounting.</p>
 <h3 id="token"><a class="header" href="#token">Token</a></h3>
 <p>Two opaque octets chosen by the administrator and echoed verbatim in the
 response. The token correlates a response with its request and identifies

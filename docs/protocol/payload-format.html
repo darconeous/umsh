@@ -35,7 +35,7 @@
             const path_to_root = "";
             const default_light_theme = "light";
             const default_dark_theme = "ayu";
-            window.path_to_searchindex_js = "searchindex-4cee91e1.js";
+            window.path_to_searchindex_js = "searchindex-c81560d3.js";
         </script>
         <!-- Start loading toc.js asap -->
         <script src="toc-438957a9.js"></script>
@@ -220,6 +220,10 @@
 <p>Unless explicitly configured otherwise, the only payload types allowed for broadcast are empty payloads, node identities, and the broadcast-permitted MAC commands (Note 2).</p>
 <p><strong>Note 1:</strong> Some MAC commands may be permitted on specific channels. For example, a private channel might allow echo requests to all members and receive echo responses from everyone. Whether a given MAC command is accepted over multicast is deployment-defined and not yet specified by the protocol.</p>
 <p><strong>Note 2:</strong> MAC commands are admitted to broadcast individually: a command may be carried in a broadcast only when its definition says so, and any such definition must weigh the solicitation load a broadcast can create. Currently only the <a href="mac-commands.html#identity-request-1">Identity Request</a> permits broadcast carriage, under the flood-management restrictions defined there. Receivers drop any other MAC command arriving by broadcast.</p>
+<h2 id="response-carriage"><a class="header" href="#response-carriage">Response Carriage</a></h2>
+<p>A response to a unicast request is carried the same way the request was: a request that arrived as <a href="packet-types.html#blind-unicast-packet">blind unicast</a> on a channel is answered as blind unicast on that same channel, and a request that arrived as plain <a href="packet-types.html#unicast-packet">unicast</a> is answered as plain unicast. This holds for every request and response the protocol defines—MAC commands, node identity, node management—and applies whether the response comes from the MAC layer or from an application above it.</p>
+<p>Blind unicast conceals both endpoints from observers who lack the channel key. A response sent off the channel names the parties the request took care to hide, so it would undo that concealment for the exchange as a whole. A <a href="packet-types.html#mac-ack-packet">MAC acknowledgement</a> is not a response and remains channel-less; it carries no destination hint and so names neither party.</p>
+<p>A node answering a multicast or broadcast request is not bound by this rule, since such a request has no pairwise carriage to mirror. What a node may answer with is left to each command’s own definition.</p>
 <h2 id="in-band-node-management"><a class="header" href="#in-band-node-management">In-Band Node Management</a></h2>
 <p>Nodes may optionally support remote management via <strong>Node Management Request</strong> and <strong>Node Management Response</strong> payloads, which carry ULCP exchanges over the mesh itself. The payload format, authorization model, and reachable state are specified in <a href="app-node-management.html">Node Management</a>; support is advertised through the <code>CAP_ADMIN</code> ULCP capability.</p>
 

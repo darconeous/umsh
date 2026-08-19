@@ -7,7 +7,7 @@ presenting itself as something else — but a node whose whole role is
 repeating counts even if it advertises no capability bitmap.</p>
 </div></details><details class="toggle method-toggle" open><summary><section id="method.observe_identity" class="method"><a class="src rightside" href="../../src/umsh_node/peer_repeaters.rs.html#92-132">Source</a><h4 class="code-header">pub fn <a href="#method.observe_identity" class="fn">observe_identity</a>(
     &amp;mut self,
-    from: &amp;<a class="struct" href="../../umsh_core/packet/struct.PublicKey.html" title="struct umsh_core::packet::PublicKey">PublicKey</a>,
+    from: &amp;PublicKey,
     identity: &amp;<a class="struct" href="../struct.NodeIdentityPayload.html" title="struct umsh_node::NodeIdentityPayload">NodeIdentityPayload</a>,
     now_ms: <a class="primitive" href="https://doc.rust-lang.org/nightly/std/primitive.u64.html">u64</a>,
 ) -&gt; <a class="primitive" href="https://doc.rust-lang.org/nightly/std/primitive.bool.html">bool</a></h4></section></summary><div class="docblock"><p>Record what an identity said, if it came from a repeater.</p>

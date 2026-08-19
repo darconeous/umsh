@@ -1,1 +1,1 @@
-window.SIDEBAR_ITEMS = {"enum":["Announce"],"fn":["absorb","advertised_altitude_m","advertised_location","announcer","clear","configure","enabled","identity_updates","policy","snapshot","stamp_identity","to_snapshot","wait_configured"],"struct":["EnableSource","FixSink","Outcome","Policy"],"type":["Announcer","IdentityUpdates"]};
+window.SIDEBAR_ITEMS = {"enum":["Announce"],"fn":["absorb","announcer","clear","configure","enabled","policy","snapshot","to_snapshot","wait_configured"],"struct":["EnableSource","FixSink","Outcome","Policy"],"type":["Announcer"]};

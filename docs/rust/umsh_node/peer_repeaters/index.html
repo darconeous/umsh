@@ -10,7 +10,7 @@ says nothing about the link to the node that sent it.</li>
 Every frame off the air proves who was on it and how well they were
 heard, including hops that never send this node anything of their own.</li>
 </ul>
-<p>A <a href="../../umsh_core/packet/struct.RouterHint.html" title="struct umsh_core::packet::RouterHint"><code>RouterHint</code></a> is the first two bytes of a public key and a <a href="../../umsh_core/packet/struct.NodeHint.html" title="struct umsh_core::packet::NodeHint"><code>NodeHint</code></a>
+<p>A [<code>RouterHint</code>] is the first two bytes of a public key and a [<code>NodeHint</code>]
 the first three, so the observation’s key is a prefix of the identity’s.
 That is what lets the two merge: an identity claims the observation whose
 hint it starts with, and an observation nothing claims becomes an entry

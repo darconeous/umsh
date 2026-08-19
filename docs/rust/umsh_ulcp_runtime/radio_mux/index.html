@@ -10,7 +10,7 @@ contention) and forwarded to the real TX queue; the real <code>tx_done</code>
 result is routed to the granting client’s own <code>tx_done</code>, so each
 client sees exactly the completions for its own requests. Once the
 frame is on the air every <em>other</em> client receives a copy of it,
-marked <a href="../../umsh_hal/enum.RxOrigin.html#variant.LocalTx" title="variant umsh_hal::RxOrigin::LocalTx"><code>RxOrigin::LocalTx</code></a>. A radio cannot hear itself, but the
+marked [<code>RxOrigin::LocalTx</code>]. A radio cannot hear itself, but the
 clients share one antenna, and a client that never learns what the
 antenna beside it emitted cannot talk to it at all.</li>
 <li><strong>RX</strong>: every received frame is fanned out to every client. Dual
@@ -30,7 +30,7 @@ medium and onto a point-to-point link with the rest of the clients:</p>
 <ul>
 <li>Receptions off the air go to the medium clients only.</li>
 <li>A session transmit never reaches the radio. It is handed to the
-medium clients as <a href="../../umsh_hal/enum.RxOrigin.html#variant.Backhaul" title="variant umsh_hal::RxOrigin::Backhaul"><code>RxOrigin::Backhaul</code></a>, which the MAC treats as a
+medium clients as [<code>RxOrigin::Backhaul</code>], which the MAC treats as a
 frame heard from a neighbor and may therefore repeat.</li>
 <li>Medium transmits are unchanged, so the session still sees everything
 the device puts on the air.</li>
