@@ -1590,6 +1590,16 @@ fn canonical_peer(state: &LocalNodeState, peer: PublicKey) -> PublicKey {
     peer
 }
 
+impl<M: MacBackend> crate::transport::sealed::Sealed for LocalNode<M> {}
+
+impl<M: MacBackend> crate::transport::NodeAccess for LocalNode<M> {
+    type Backend = M;
+
+    fn local_node(&self) -> &LocalNode<M> {
+        self
+    }
+}
+
 impl<M: MacBackend> Transport for LocalNode<M> {
     type Error = NodeError<M>;
 
@@ -1686,6 +1696,18 @@ impl<M: MacBackend> BoundChannel<M> {
 
     /// Return the owning local node for this bound channel.
     pub fn node(&self) -> &LocalNode<M> {
+        &self.node
+    }
+}
+
+#[cfg(feature = "software-crypto")]
+impl<M: MacBackend> crate::transport::sealed::Sealed for BoundChannel<M> {}
+
+#[cfg(feature = "software-crypto")]
+impl<M: MacBackend> crate::transport::NodeAccess for BoundChannel<M> {
+    type Backend = M;
+
+    fn local_node(&self) -> &LocalNode<M> {
         &self.node
     }
 }

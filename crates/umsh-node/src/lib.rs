@@ -498,6 +498,79 @@ mod tests {
         assert_eq!(crate::PING_MIC_SIZE.byte_len(), 8);
     }
 
+    /// How much echo data fits is a property of the frame the ping is sealed
+    /// into—MIC size, source form, options—and the MAC builder is the only
+    /// thing that knows all of it. A ping asks for the size it was told to and
+    /// lets an oversize request fail at the builder, rather than being quietly
+    /// shortened to a length that measures a different frame than the caller
+    /// asked about.
+    #[cfg(all(feature = "software-crypto", feature = "unsafe-advanced"))]
+    #[test]
+    fn ping_data_is_not_capped_by_the_node_layer() {
+        let mac = FakeMac::new(vec![[7u8; 32]]);
+        let node = test_node(mac.clone());
+        let peer_connection = block_on_ready(node.peer(PublicKey([0x55; 32]))).unwrap();
+
+        block_on_ready(peer_connection.ping(120, &SendOptions::default(), 1_000)).unwrap();
+
+        let sent = mac.take_unicasts().pop().expect("ping send");
+        match parse_owned_mac_command(&sent.payload) {
+            OwnedMacCommand::EchoRequest { data } => {
+                assert_eq!(data.len(), 2 + 120, "2-byte nonce plus the requested fill");
+            }
+            other => panic!("unexpected ping payload: {other:?}"),
+        }
+    }
+
+    /// A peer reached through a channel pings over that channel. The ping is
+    /// measuring the path the channel's traffic takes, so it has to be carried
+    /// the same way—and the reply that comes back on the channel matches the
+    /// pending ping just as a unicast reply would.
+    #[cfg(all(feature = "software-crypto", feature = "unsafe-advanced"))]
+    #[test]
+    fn ping_over_a_bound_channel_sends_a_blind_unicast() {
+        let mac = FakeMac::new(vec![[0x3c; 32]]);
+        let node = test_node(mac.clone());
+        let channel = crate::Channel::private(umsh_core::ChannelKey([0x66; 32]), "trail");
+        let bound = block_on_ready(node.join(&channel)).unwrap();
+
+        let peer = PublicKey([0x55; 32]);
+        let pongs = Rc::new(RefCell::new(Vec::new()));
+        let pong_log = pongs.clone();
+        let peer_connection = bound.peer(peer);
+        let _pong_subscription = peer_connection.on_pong(move |rtt_ms| {
+            pong_log.borrow_mut().push(rtt_ms);
+        });
+
+        block_on_ready(peer_connection.ping(4, &SendOptions::default(), 1_000)).unwrap();
+
+        let sent = mac.take_unicasts().pop().expect("ping send");
+        assert_eq!(
+            sent.channel,
+            Some(*channel.channel_id()),
+            "a channel-bound ping goes out blind on that channel"
+        );
+        assert!(!sent.options.ack_requested, "the echo response is the ack");
+        let nonce = match parse_owned_mac_command(&sent.payload) {
+            OwnedMacCommand::EchoRequest { data } => {
+                assert_eq!(data.len(), 2 + 4);
+                [data[0], data[1]]
+            }
+            other => panic!("unexpected ping payload: {other:?}"),
+        };
+
+        let packet = test_channel_packet(
+            peer,
+            umsh_core::PacketType::BlindUnicast,
+            channel.key(),
+            *channel.channel_id(),
+            &nonce,
+        );
+        node.match_pong(peer, &nonce, &packet, 1_250);
+
+        assert_eq!(pongs.borrow().as_slice(), &[250]);
+    }
+
     #[cfg(all(feature = "software-crypto", feature = "unsafe-advanced"))]
     #[test]
     fn pfs_routed_send_tracks_ack_against_ephemeral_identity() {

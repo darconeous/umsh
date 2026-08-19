@@ -8,7 +8,9 @@
 use std::fmt;
 use std::str::FromStr;
 
-use umsh::core::{PublicKey, RegionCode};
+use umsh::core::{ChannelKey, MicSize, PublicKey, RegionCode, RouterHint};
+use umsh::crypto::{ChannelNameError, MAX_CHANNEL_NAME_LEN};
+use umsh::node::Channel;
 use umsh::ulcp_wire::items::{Filter, PeerKeyEntry};
 
 pub fn parse_key32(text: &str) -> Result<[u8; 32], String> {
@@ -340,6 +342,116 @@ impl FromStr for HexU16Arg {
     }
 }
 
+/// A MIC size, written as its byte length.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct MicArg(pub MicSize);
+
+impl FromStr for MicArg {
+    type Err = String;
+
+    fn from_str(text: &str) -> Result<Self, Self::Err> {
+        match text {
+            "4" => Ok(Self(MicSize::Mic4)),
+            "8" => Ok(Self(MicSize::Mic8)),
+            "12" => Ok(Self(MicSize::Mic12)),
+            "16" => Ok(Self(MicSize::Mic16)),
+            other => Err(format!("expected 4, 8, 12, or 16, got {other:?}")),
+        }
+    }
+}
+
+/// One region code to stamp on an outgoing frame.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct RegionCodeArg(pub RegionCode);
+
+impl FromStr for RegionCodeArg {
+    type Err = String;
+
+    fn from_str(text: &str) -> Result<Self, Self::Err> {
+        text.parse::<RegionCode>()
+            .map(Self)
+            .map_err(|error| format!("region {text:?}: {error}"))
+    }
+}
+
+/// A comma-separated source route, first hop first.
+///
+/// Each hop is either the four hex digits of a router hint, as a capture or
+/// a trace route renders it, or a full public key to derive the hint from.
+/// An empty route is not a way to say "flood"—`--flood` is—so it is
+/// rejected rather than quietly meaning something else.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct RouteArg(pub Vec<RouterHint>);
+
+impl FromStr for RouteArg {
+    type Err = String;
+
+    fn from_str(text: &str) -> Result<Self, Self::Err> {
+        let hops = text
+            .split(|c: char| c == ',' || c.is_whitespace())
+            .filter(|hop| !hop.is_empty())
+            .map(|hop| {
+                if hop.len() == 4 {
+                    parse_hex::<2>(hop).map(RouterHint)
+                } else {
+                    parse_key32(hop)
+                        .map(|key| RouterHint::from_public_key(&PublicKey(key)))
+                        .map_err(|error| {
+                            format!("hop {hop:?}: 4 hex digits or a full key: {error}")
+                        })
+                }
+            })
+            .collect::<Result<Vec<_>, String>>()?;
+        if hops.is_empty() {
+            return Err(String::from("a source route needs at least one hop"));
+        }
+        // The MAC rejects a longer route too; catching it here attributes the
+        // error to the flag that carried it.
+        if hops.len() > MAX_ROUTE_HOPS {
+            return Err(format!(
+                "a source route carries at most {MAX_ROUTE_HOPS} hops, got {}",
+                hops.len()
+            ));
+        }
+        Ok(Self(hops))
+    }
+}
+
+/// The MAC's ceiling on an explicit source route.
+const MAX_ROUTE_HOPS: usize = 15;
+
+/// A channel, named or given by its raw 32-byte key.
+///
+/// A key is spelled the same way a public key is, so anything that parses as
+/// one is taken for a private channel key and everything else is a channel
+/// name. The name of a key-given channel is its own derived identifier, since
+/// there is no name to show and the key must never be printed.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct ChannelArg(pub Channel);
+
+impl FromStr for ChannelArg {
+    type Err = String;
+
+    fn from_str(text: &str) -> Result<Self, Self::Err> {
+        if let Ok(key) = parse_key32(text) {
+            let channel = Channel::private(ChannelKey(key), "");
+            let named = Channel::private(
+                ChannelKey(key),
+                &crate::output::hex(&channel.channel_id().0),
+            );
+            return Ok(Self(named));
+        }
+        Channel::named(text).map(Self).map_err(|error| match error {
+            ChannelNameError::NotAscii => {
+                format!("channel {text:?}: names must be ASCII")
+            }
+            ChannelNameError::TooLong => {
+                format!("channel {text:?}: names are at most {MAX_CHANNEL_NAME_LEN} characters")
+            }
+        })
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -434,6 +546,44 @@ mod tests {
         assert_eq!(peer.0.k_mic, [0x50; 32]);
         // Secrets are never rendered, not even by a debug format.
         assert!(!format!("{peer:?}").contains("e0e0"));
+    }
+
+    #[test]
+    fn mic_sizes_are_named_by_their_byte_length() {
+        assert_eq!("4".parse::<MicArg>().unwrap().0, MicSize::Mic4);
+        assert_eq!("16".parse::<MicArg>().unwrap().0, MicSize::Mic16);
+        assert!("10".parse::<MicArg>().is_err());
+        assert!("mic8".parse::<MicArg>().is_err());
+    }
+
+    #[test]
+    fn routes_take_hints_or_whole_keys() {
+        let route = format!("a1b2,{KEY_HEX}").parse::<RouteArg>().unwrap();
+        assert_eq!(
+            route.0,
+            vec![RouterHint([0xA1, 0xB2]), RouterHint([0xC4, 0xC4])]
+        );
+        // An empty route would silently mean "flood", which is a separate
+        // flag, so it is an error rather than a shorthand.
+        assert!("".parse::<RouteArg>().is_err());
+        assert!("a1b".parse::<RouteArg>().is_err());
+        assert!(vec!["a1b2"; 16].join(",").parse::<RouteArg>().is_err());
+    }
+
+    #[test]
+    fn channels_come_from_a_name_or_a_raw_key() {
+        let named = "public".parse::<ChannelArg>().unwrap();
+        assert_eq!(named.0, Channel::named("public").unwrap());
+        assert_eq!(named.0.name(), "public");
+
+        let private = KEY_HEX.parse::<ChannelArg>().unwrap();
+        assert_eq!(private.0.key().0, [0xC4; 32]);
+        // The key is never the display name.
+        assert!(!private.0.name().contains("c4c4"));
+        assert_eq!(
+            private.0.name(),
+            crate::output::hex(&private.0.channel_id().0)
+        );
     }
 
     #[test]

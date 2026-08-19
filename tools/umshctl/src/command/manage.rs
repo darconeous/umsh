@@ -59,7 +59,7 @@ const DUP: usize = 32;
 
 type CtlPlatform<R> = TokioPlatform<R, TokioFileCounterStore, TokioFileKeyValueStore>;
 type CtlMac<R> = Mac<CtlPlatform<R>, IDENTITIES, PEERS, CHANNELS, ACKS, TX, FRAME, DUP>;
-type CtlHandle<'a, R> =
+pub type CtlHandle<'a, R> =
     MacHandle<'a, CtlPlatform<R>, IDENTITIES, PEERS, CHANNELS, ACKS, TX, FRAME, DUP>;
 type CtlHost<'a, R> = Host<CtlHandle<'a, R>>;
 
@@ -198,6 +198,8 @@ pub enum Operation {
     Manage(ManageOp),
     /// Ask the target for the repeaters it knows of.
     PeerRepeaters,
+    /// Measure the path to the target.
+    Ping(super::ping::PingArgs),
 }
 
 /// Take the attachment over as this tool's radio, run `op` against
@@ -375,7 +377,14 @@ where
     let manager = NodeManager::new(peer, u16::from_be_bytes(seed));
 
     field("administrator", local_key.to_string());
-    field("device", target.to_string());
+    field(
+        match op {
+            Operation::Manage(_) => "device",
+            Operation::PeerRepeaters => "repeater",
+            Operation::Ping(_) => "target",
+        },
+        target.to_string(),
+    );
 
     let mut ctl = Ctl {
         host,
@@ -391,12 +400,12 @@ where
 }
 
 /// The tool as a node, for the duration of one operation.
-struct Ctl<'a, R: Radio> {
-    host: CtlHost<'a, R>,
-    node: umsh::node::LocalNode<CtlHandle<'a, R>>,
-    target: PublicKey,
+pub struct Ctl<'a, R: Radio> {
+    pub(super) host: CtlHost<'a, R>,
+    pub(super) node: umsh::node::LocalNode<CtlHandle<'a, R>>,
+    pub(super) target: PublicKey,
     manager: NodeManager<CtlHandle<'a, R>>,
-    handle: &'a CtlHandle<'a, R>,
+    pub(super) handle: &'a CtlHandle<'a, R>,
     started: Instant,
 }
 
@@ -477,6 +486,9 @@ where
     let op = match op {
         Operation::Manage(op) => op,
         Operation::PeerRepeaters => return peer_repeaters(ctl).await,
+        // A ping is bounded by its own count, interval, and per-ping
+        // timeout, so the exchange engine's deadline does not apply.
+        Operation::Ping(args) => return super::ping::run(ctl, args).await,
     };
     match op {
         ManageOp::Info => info(ctl).await,
@@ -582,7 +594,6 @@ where
         .await
         .map_err(|error| anyhow!("registering the repeater as a peer: {error:?}"))?;
 
-    field("repeater", target.to_string());
     let mut seed = [0u8; 2];
     rng().fill_bytes(&mut seed);
     let mut nonce = u16::from_be_bytes(seed);

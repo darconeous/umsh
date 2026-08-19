@@ -563,6 +563,82 @@ mod tests {
     }
 
     #[test]
+    fn ping_defaults_to_one_traced_ping() {
+        const KEY: &str = "c4c4c4c4c4c4c4c4c4c4c4c4c4c4c4c4c4c4c4c4c4c4c4c4c4c4c4c4c4c4c4c4";
+        let Some(Command::Ping(args)) = parse(&["ping", KEY]).unwrap().command else {
+            panic!("expected ping");
+        };
+        assert_eq!(args.target.0, [0xC4; 32]);
+        assert_eq!(args.count, 1);
+        assert_eq!(args.size, 8);
+        assert!(!args.untraced);
+        assert!(args.channel.is_none());
+        // Borrowing the radio is what a ping does, so it needs one.
+        assert!(
+            parse(&["ping", KEY])
+                .unwrap()
+                .command
+                .unwrap()
+                .needs_device()
+        );
+    }
+
+    #[test]
+    fn ping_flags_shape_the_frame() {
+        const KEY: &str = "c4c4c4c4c4c4c4c4c4c4c4c4c4c4c4c4c4c4c4c4c4c4c4c4c4c4c4c4c4c4c4c4";
+        let Some(Command::Ping(args)) = parse(&[
+            "ping",
+            KEY,
+            "-c",
+            "5",
+            "-i",
+            "10",
+            "-W",
+            "45",
+            "-s",
+            "120",
+            "--hops",
+            "3",
+            "--route",
+            "a1b2,9b68",
+            "--channel",
+            "trail",
+            "--mic",
+            "16",
+            "--region",
+            "SJC",
+            "--full-source",
+            "--salt",
+            "--untraced",
+        ])
+        .unwrap()
+        .command
+        else {
+            panic!("expected ping");
+        };
+        assert_eq!((args.count, args.interval, args.timeout), (5, 10, 45));
+        assert_eq!(args.size, 120);
+        assert_eq!(args.hops, Some(3));
+        assert_eq!(args.route.as_ref().unwrap().0.len(), 2);
+        assert_eq!(args.channel.as_ref().unwrap().0.name(), "trail");
+        assert!(args.full_source && args.salt && args.untraced);
+    }
+
+    #[test]
+    fn ping_rejects_contradictions_and_out_of_range_values() {
+        const KEY: &str = "c4c4c4c4c4c4c4c4c4c4c4c4c4c4c4c4c4c4c4c4c4c4c4c4c4c4c4c4c4c4c4c4";
+        // A steered route and a forced flood ask for opposite things.
+        assert!(parse(&["ping", KEY, "--flood", "--route", "a1b2"]).is_err());
+        // An ack-only ping carries no echo data to size.
+        assert!(parse(&["ping", KEY, "--ack-only", "-s", "40"]).is_err());
+        // Two bytes of the echo are the nonce that matches the reply.
+        assert!(parse(&["ping", KEY, "-s", "1"]).is_err());
+        assert!(parse(&["ping", KEY, "-c", "0"]).is_err());
+        assert!(parse(&["ping", KEY, "--hops", "16"]).is_err());
+        assert!(parse(&["ping", KEY, "--mic", "10"]).is_err());
+    }
+
+    #[test]
     fn the_name_command_replaces_set_name() {
         assert!(matches!(
             parse(&["name"]).unwrap().command,

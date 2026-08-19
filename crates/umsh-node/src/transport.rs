@@ -38,3 +38,23 @@ pub trait Transport {
         options: &SendOptions,
     ) -> Result<SendProgressTicket, Self::Error>;
 }
+
+/// The node a transport context sends through.
+///
+/// Bookkeeping that belongs to the node rather than the carriage—pending
+/// pings, per-peer subscriptions, the MAC's clock and route cache—lives on
+/// [`LocalNode`](crate::LocalNode) whichever way a frame goes out. Reaching it
+/// through this trait is what lets one implementation of ping, identity
+/// requests, and peer subscriptions serve both a plain unicast peer and one
+/// bound to a channel.
+///
+/// Sealed: implemented for `LocalNode` and `BoundChannel` only.
+pub trait NodeAccess: sealed::Sealed {
+    type Backend: crate::mac::MacBackend;
+
+    fn local_node(&self) -> &crate::node::LocalNode<Self::Backend>;
+}
+
+pub(crate) mod sealed {
+    pub trait Sealed {}
+}

@@ -52,12 +52,22 @@ impl<T: Transport> PeerConnection<T> {
     }
 }
 
-impl<M: crate::mac::MacBackend> PeerConnection<LocalNode<M>> {
+/// Everything a peer relationship needs from the node behind its transport.
+///
+/// Implemented once for both carriages: a peer reached through a channel gets
+/// the same pings, subscriptions, and identity requests as one reached by
+/// plain unicast, and each frame goes out over the transport it was built on.
+impl<M, T> PeerConnection<T>
+where
+    M: crate::mac::MacBackend,
+    T: Transport<Error = NodeError<M>> + crate::transport::NodeAccess<Backend = M>,
+{
     fn add_receive_handler<F>(&self, handler: F) -> SubscriptionHandle
     where
         F: FnMut(&ReceivedPacketRef<'_>) -> bool + 'static,
     {
         self.transport
+            .local_node()
             .state()
             .borrow_mut()
             .peer_subscriptions_mut(self.peer)
@@ -70,7 +80,7 @@ impl<M: crate::mac::MacBackend> PeerConnection<LocalNode<M>> {
         F: FnMut(&ReceivedPacketRef<'_>) -> bool + 'static,
     {
         let handle = self.add_receive_handler(handler);
-        let state = self.transport.state().clone();
+        let state = self.transport.local_node().state().clone();
         let peer = self.peer;
         Subscription::new(move || {
             let mut state = state.borrow_mut();
@@ -86,6 +96,7 @@ impl<M: crate::mac::MacBackend> PeerConnection<LocalNode<M>> {
         F: FnMut(crate::SendToken) + 'static,
     {
         self.transport
+            .local_node()
             .state()
             .borrow_mut()
             .peer_subscriptions_mut(self.peer)
@@ -98,7 +109,7 @@ impl<M: crate::mac::MacBackend> PeerConnection<LocalNode<M>> {
         F: FnMut(crate::SendToken) + 'static,
     {
         let handle = self.add_ack_received_handler(handler);
-        let state = self.transport.state().clone();
+        let state = self.transport.local_node().state().clone();
         let peer = self.peer;
         Subscription::new(move || {
             let mut state = state.borrow_mut();
@@ -114,6 +125,7 @@ impl<M: crate::mac::MacBackend> PeerConnection<LocalNode<M>> {
         F: FnMut(crate::SendToken) + 'static,
     {
         self.transport
+            .local_node()
             .state()
             .borrow_mut()
             .peer_subscriptions_mut(self.peer)
@@ -126,7 +138,7 @@ impl<M: crate::mac::MacBackend> PeerConnection<LocalNode<M>> {
         F: FnMut(crate::SendToken) + 'static,
     {
         let handle = self.add_ack_timeout_handler(handler);
-        let state = self.transport.state().clone();
+        let state = self.transport.local_node().state().clone();
         let peer = self.peer;
         Subscription::new(move || {
             let mut state = state.borrow_mut();
@@ -143,12 +155,13 @@ impl<M: crate::mac::MacBackend> PeerConnection<LocalNode<M>> {
     {
         let handle = self
             .transport
+            .local_node()
             .state()
             .borrow_mut()
             .peer_subscriptions_mut(self.peer)
             .pfs_established_handlers
             .insert(Box::new(handler));
-        let state = self.transport.state().clone();
+        let state = self.transport.local_node().state().clone();
         let peer = self.peer;
         Subscription::new(move || {
             let mut state = state.borrow_mut();
@@ -165,12 +178,13 @@ impl<M: crate::mac::MacBackend> PeerConnection<LocalNode<M>> {
     {
         let handle = self
             .transport
+            .local_node()
             .state()
             .borrow_mut()
             .peer_subscriptions_mut(self.peer)
             .pfs_ended_handlers
             .insert(Box::new(handler));
-        let state = self.transport.state().clone();
+        let state = self.transport.local_node().state().clone();
         let peer = self.peer;
         Subscription::new(move || {
             let mut state = state.borrow_mut();
@@ -187,12 +201,13 @@ impl<M: crate::mac::MacBackend> PeerConnection<LocalNode<M>> {
     {
         let handle = self
             .transport
+            .local_node()
             .state()
             .borrow_mut()
             .peer_subscriptions_mut(self.peer)
             .pong_handlers
             .insert(Box::new(handler));
-        let state = self.transport.state().clone();
+        let state = self.transport.local_node().state().clone();
         let peer = self.peer;
         Subscription::new(move || {
             let mut state = state.borrow_mut();
@@ -209,12 +224,13 @@ impl<M: crate::mac::MacBackend> PeerConnection<LocalNode<M>> {
     {
         let handle = self
             .transport
+            .local_node()
             .state()
             .borrow_mut()
             .peer_subscriptions_mut(self.peer)
             .ping_timeout_handlers
             .insert(Box::new(handler));
-        let state = self.transport.state().clone();
+        let state = self.transport.local_node().state().clone();
         let peer = self.peer;
         Subscription::new(move || {
             let mut state = state.borrow_mut();
@@ -239,6 +255,10 @@ impl<M: crate::mac::MacBackend> PeerConnection<LocalNode<M>> {
     /// with frame length, so a minimal ping reports a link as usable when a
     /// full-size message would not get through. See [`PING_MIC_SIZE`] for the
     /// MIC size callers should normally ask for.
+    ///
+    /// The padding is bounded by what one frame can carry, not by this call:
+    /// a ping too large to build fails with the MAC's own send error rather
+    /// than being quietly shortened into a measurement of a smaller frame.
     pub async fn ping(
         &self,
         extra_bytes: usize,
@@ -247,11 +267,14 @@ impl<M: crate::mac::MacBackend> PeerConnection<LocalNode<M>> {
     ) -> Result<crate::ticket::SendProgressTicket, NodeError<M>> {
         // Generate a 2-byte nonce via the MAC RNG.
         let mut nonce_bytes = [0u8; 2];
-        self.transport.fill_random(&mut nonce_bytes).await;
+        self.transport
+            .local_node()
+            .fill_random(&mut nonce_bytes)
+            .await;
         let nonce = u16::from_be_bytes(nonce_bytes);
 
-        // Build data: [nonce_hi, nonce_lo, 0xA5, 0xA5, ...] capped at 60 bytes.
-        let total = (2 + extra_bytes).min(60);
+        // Build data: [nonce_hi, nonce_lo, 0xA5, 0xA5, ...].
+        let total = 2 + extra_bytes;
         let mut data = alloc::vec![0xA5u8; total];
         data[0] = nonce_bytes[0];
         data[1] = nonce_bytes[1];
@@ -261,15 +284,19 @@ impl<M: crate::mac::MacBackend> PeerConnection<LocalNode<M>> {
         // and the EchoRequest auto-reply in the coordinator depends on this
         // framing.
         let cmd = crate::mac_command::MacCommand::EchoRequest { data: &data };
-        let mut buf = [0u8; 128];
+        let mut buf = alloc::vec![0u8; total + 2];
         buf[0] = umsh_core::PayloadType::MacCommand as u8;
         let n = crate::mac_command::encode(&cmd, &mut buf[1..])?;
         let n = n + 1;
 
         // Record the pending ping BEFORE sending (avoid race if response is very fast).
-        let sent_at_ms = self.transport.now_ms().await;
-        self.transport
-            .record_ping(nonce, self.peer, sent_at_ms, sent_at_ms + timeout_ms);
+        let sent_at_ms = self.transport.local_node().now_ms().await;
+        self.transport.local_node().record_ping(
+            nonce,
+            self.peer,
+            sent_at_ms,
+            sent_at_ms + timeout_ms,
+        );
 
         // The caller's options carry through unchanged: a ping that is
         // secured, sized or routed differently from real traffic measures a
@@ -293,7 +320,10 @@ impl<M: crate::mac::MacBackend> PeerConnection<LocalNode<M>> {
         options: &SendOptions,
     ) -> Result<SendProgressTicket, NodeError<M>> {
         let mut nonce_bytes = [0u8; 4];
-        self.transport.fill_random(&mut nonce_bytes).await;
+        self.transport
+            .local_node()
+            .fill_random(&mut nonce_bytes)
+            .await;
         let nonce = u32::from_be_bytes(nonce_bytes);
 
         let opts_block = crate::mac_command::IdentityRequestBuilder::new()
@@ -341,14 +371,22 @@ impl<M: crate::mac::MacBackend> PeerConnection<LocalNode<M>> {
 
     /// The route the MAC has cached for this peer, if any.
     pub async fn route(&self) -> Option<umsh_mac::CachedRoute> {
-        self.transport.peer_route(&self.peer).await
+        self.transport.local_node().peer_route(&self.peer).await
     }
 
     /// Forget this peer's cached route, returning whether one was held.
     pub async fn clear_route(&self) -> bool {
-        self.transport.clear_peer_route(&self.peer).await
+        self.transport
+            .local_node()
+            .clear_peer_route(&self.peer)
+            .await
     }
+}
 
+/// Forward secrecy is negotiated between two nodes, not inside a channel: the
+/// session it establishes replaces the pairwise keys a unicast is sealed with.
+/// These stay on the plain-unicast transport.
+impl<M: crate::mac::MacBackend> PeerConnection<LocalNode<M>> {
     #[cfg(feature = "software-crypto")]
     pub async fn request_pfs(
         &self,

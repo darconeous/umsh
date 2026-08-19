@@ -12,6 +12,7 @@ pub mod info;
 pub mod lifecycle;
 pub mod manage;
 pub mod phy;
+pub mod ping;
 pub mod provision;
 pub mod repeater;
 pub mod tables;
@@ -151,6 +152,10 @@ pub enum Command {
         target: values::KeyArg,
     },
 
+    /// Measure the path to another node: reachability, round-trip time,
+    /// hops, and signal. Needs no authorization from the far end.
+    Ping(ping::PingArgs),
+
     /// Show the administrator identity this tool manages devices with.
     AdminKey,
 
@@ -266,6 +271,10 @@ impl Command {
             }
             Self::PeerRepeaters { target } => {
                 manage::run(app, target, manage::Operation::PeerRepeaters).await
+            }
+            Self::Ping(args) => {
+                let target = args.target;
+                manage::run(app, target, manage::Operation::Ping(args)).await
             }
             Self::AdminKey => manage::show_admin_key(),
             Self::Props { keys } => info::props(app.device()?, &keys).await,
