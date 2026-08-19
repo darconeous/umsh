@@ -67,9 +67,10 @@ unauthenticated and stays on the loopback; the bridge's README has the
 cautions. One host holds an interface at a time, but unlike the socat recipe a
 new connection displaces the old one, so relaunching the app just works.
 
-The device starts with its PHY disabled, as a real radio does after a reset, so
-turn it on once per interface — `umshctl --tcp 127.0.0.1:21838 phy on` — before
-expecting traffic to cross.
+The device starts with its PHY disabled, as a real radio does after a reset.
+The app turns it on itself once it has claimed the host, so there is nothing to
+do here; only a bare `umshctl` session needs `phy on` first, since it attaches
+administratively and claims nothing.
 
 ## TestFlight
 

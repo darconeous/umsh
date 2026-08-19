@@ -98,9 +98,11 @@ umshctl --tcp 127.0.0.1:21838 info
 ```
 
 The device starts with its PHY disabled, exactly as a real one does after a
-reset, so a host must enable the radio before anything crosses (`umshctl --tcp
-… phy on`). That is deliberate: a simulated device that switched itself on
-would hide the bug where a host forgets to.
+reset, so a host must enable the radio before anything crosses. A host that
+claims the device does that for itself — the iOS app does — but a bare
+`umshctl` session attaches administratively and claims nothing, so it needs
+`umshctl --tcp … phy on` first. The device not switching itself on is
+deliberate: it would hide the bug where a host forgets to.
 
 Frames delivered to a host carry no signal measurements. The measurement that
 crossed the tunnel describes a reception on some other segment by some other
