@@ -13,6 +13,39 @@ orientations for multitasking, and the UI is portrait-only. Signing is automatic
 against team `2ZEL2X74K7`; override `DEVELOPMENT_TEAM` locally if you build
 under a different account.
 
+## Running against a real radio in the simulator
+
+The simulator has no Bluetooth, so a simulator build cannot reach a
+companion radio the way a device does. Debug builds can reach one over a
+socket instead: the bytes are the same HDLC-Lite frames the USB-CDC link
+carries, so the radio cannot tell it is not talking to a wire.
+
+Plug the radio in and bridge its port:
+
+```sh
+socat TCP-LISTEN:9000,reuseaddr /dev/cu.usbmodemXXXX,raw,echo=0,b115200
+```
+
+Run it one-shot, without `fork`. Each run opens the tty fresh — which
+asserts DTR, the attach signal — and exits when the socket closes,
+deasserting it again. A forking listener holds the port, and with it DTR,
+across sessions, so the device never sees an attach or a detach.
+
+Then in the app: Settings → Bridged radio → *Radio over TCP*, pointed at
+`127.0.0.1:9000`. Editing the endpoint rebuilds the connection. The
+address can be another machine's as easily as the loopback, though a
+build on a physical device would need `NSLocalNetworkUsageDescription`
+in `Info.plist`, which is deliberately not there — this is a simulator
+facility.
+
+Sanity-check the bridge before involving the app:
+
+```sh
+cargo run -p umshctl -- --tcp 127.0.0.1:9000 info
+```
+
+Both cannot hold the bridge at once: socat serves one connection.
+
 ## TestFlight
 
 ```sh

@@ -9,6 +9,7 @@ use umsh_ulcp::{
     AlertState, BatteryChargeState, BatteryStatus, Cmd, Frame, StreamPayload, frame,
     gatt::{self, MAX_FRAME, Reassembler},
     gnss::{FixKind, GnssSnapshot},
+    hdlc,
     host::{PropertyNotification, TidAllocator},
     ids::{
         INTERFACE_TYPE, MAX_AUTO_ANNOUNCE_INTERVAL_S, MIN_AUTO_ANNOUNCE_INTERVAL_S,
@@ -3994,6 +3995,23 @@ pub fn ulcp_gatt_segments(
         .collect())
 }
 
+/// Frame a ULCP frame for an HDLC-Lite byte stream — a serial port, or
+/// a socket standing in for one — including both delimiting flags.
+///
+/// The byte-stream counterpart of [`ulcp_gatt_segments`]: a stream has
+/// no segmentation, so one frame encodes to one write.
+#[uniffi::export]
+pub fn ulcp_hdlc_encode(frame: Vec<u8>) -> Result<Vec<u8>, MobileError> {
+    if frame.len() > MAX_FRAME {
+        return Err(MobileError::InvalidUlcpFrame);
+    }
+    let mut wire = vec![0; hdlc::max_encoded_len(frame.len())];
+    let length =
+        hdlc::encode_frame(&frame, &mut wire).map_err(|_| MobileError::InvalidUlcpFrame)?;
+    wire.truncate(length);
+    Ok(wire)
+}
+
 /// Encode a `CMD_PROP_GET` request with the shared ULCP codec.
 #[uniffi::export]
 pub fn ulcp_prop_get(transaction_id: u8, property_id: u32) -> Result<Vec<u8>, MobileError> {
@@ -4243,6 +4261,57 @@ impl MobileGattReassembler {
     }
 }
 
+/// Stateful, bounded receiver for an HDLC-Lite byte stream.
+///
+/// Sized to admit exactly the frames [`MobileGattReassembler`] does:
+/// the decoder's bound counts the two FCS octets, which a ULCP frame's
+/// own length does not.
+#[derive(uniffi::Object)]
+pub struct MobileHdlcDecoder {
+    inner: Mutex<hdlc::Decoder<{ MAX_FRAME + 2 }>>,
+}
+
+#[uniffi::export]
+impl MobileHdlcDecoder {
+    #[uniffi::constructor]
+    pub fn new() -> Arc<Self> {
+        Arc::new(Self {
+            inner: Mutex::new(hdlc::Decoder::new()),
+        })
+    }
+
+    /// Consume received bytes, returning every frame they completed.
+    ///
+    /// A stream delivers arbitrary chunks rather than whole frames, so
+    /// one call can complete none or several. Corrupt and oversized
+    /// frames are discarded rather than reported: the decoder
+    /// resynchronizes on the next flag, and a byte stream can carry
+    /// line noise that belongs to nobody — a bridge opening a serial
+    /// port mid-transmission, most commonly. This is the one place the
+    /// two transports differ, GATT being reliable enough that a bad
+    /// segment is a protocol violation worth surfacing.
+    pub fn push(&self, bytes: Vec<u8>) -> Vec<Vec<u8>> {
+        let mut decoder = self.inner.lock().expect("HDLC decoder mutex poisoned");
+        let mut frames = Vec::new();
+        for byte in bytes {
+            if let Some(Ok(frame)) = decoder.push(byte) {
+                frames.push(frame.to_vec());
+            }
+        }
+        frames
+    }
+
+    /// Discard any partially received frame. Used when the link comes
+    /// up, so a half-frame from a previous connection cannot merge into
+    /// the first frame of this one.
+    pub fn reset(&self) {
+        self.inner
+            .lock()
+            .expect("HDLC decoder mutex poisoned")
+            .reset();
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -4444,6 +4513,89 @@ mod tests {
             }
         }
         assert_eq!(completed, Some(frame));
+    }
+
+    #[test]
+    fn exported_hdlc_round_trip_uses_shared_codec() {
+        let frame = ulcp_prop_get(3, 4_864).unwrap();
+        let wire = ulcp_hdlc_encode(frame.clone()).unwrap();
+
+        // The export must produce the bytes the shared encoder does,
+        // or a phone and a serial host would disagree on the wire.
+        let mut expected = vec![0; hdlc::max_encoded_len(frame.len())];
+        let length = hdlc::encode_frame(&frame, &mut expected).unwrap();
+        expected.truncate(length);
+        assert_eq!(wire, expected);
+
+        let decoder = MobileHdlcDecoder::new();
+        assert_eq!(decoder.push(wire), vec![frame]);
+    }
+
+    #[test]
+    fn hdlc_decoding_spans_chunk_boundaries_and_batches() {
+        // A stream hands over arbitrary chunks: a frame can arrive in
+        // pieces, and one read can carry several frames.
+        let first = ulcp_prop_get(1, 4_864).unwrap();
+        let second = ulcp_prop_get(2, 4_865).unwrap();
+        let mut wire = ulcp_hdlc_encode(first.clone()).unwrap();
+        wire.extend(ulcp_hdlc_encode(second.clone()).unwrap());
+
+        let decoder = MobileHdlcDecoder::new();
+        let split = wire.len() / 3;
+        assert!(decoder.push(wire[..split].to_vec()).is_empty());
+        assert_eq!(decoder.push(wire[split..].to_vec()), vec![first, second]);
+    }
+
+    #[test]
+    fn hdlc_decoding_escapes_the_framing_bytes() {
+        // A frame whose payload spells the delimiters must survive.
+        let frame = vec![hdlc::FLAG, hdlc::ESCAPE, 0x11, 0x13, 0x00, 0xFF];
+        let decoder = MobileHdlcDecoder::new();
+        assert_eq!(
+            decoder.push(ulcp_hdlc_encode(frame.clone()).unwrap()),
+            vec![frame]
+        );
+    }
+
+    #[test]
+    fn hdlc_decoding_resynchronizes_past_noise() {
+        // Opening a bridged port mid-transmission leaves a partial
+        // frame in the stream; the next good one must still arrive.
+        let frame = ulcp_prop_get(7, 4_864).unwrap();
+        let mut wire = vec![0x01, 0x02, hdlc::FLAG, 0xDE, 0xAD];
+        wire.extend(ulcp_hdlc_encode(frame.clone()).unwrap());
+
+        let decoder = MobileHdlcDecoder::new();
+        assert_eq!(decoder.push(wire), vec![frame]);
+    }
+
+    #[test]
+    fn hdlc_encoding_admits_exactly_what_gatt_does() {
+        // Both transports carry the same frames, so a phone cannot
+        // build one it could send over BLE but not over a socket.
+        let largest = vec![0xA5; MAX_FRAME];
+        let decoder = MobileHdlcDecoder::new();
+        assert_eq!(
+            decoder.push(ulcp_hdlc_encode(largest.clone()).unwrap()),
+            vec![largest]
+        );
+        assert!(matches!(
+            ulcp_hdlc_encode(vec![0xA5; MAX_FRAME + 1]),
+            Err(MobileError::InvalidUlcpFrame)
+        ));
+    }
+
+    #[test]
+    fn a_reset_decoder_drops_the_partial_frame() {
+        let frame = ulcp_prop_get(5, 4_864).unwrap();
+        let wire = ulcp_hdlc_encode(frame.clone()).unwrap();
+
+        let decoder = MobileHdlcDecoder::new();
+        assert!(decoder.push(wire[..wire.len() - 2].to_vec()).is_empty());
+        // Without the reset the tail would finish the stale frame.
+        decoder.reset();
+        assert!(decoder.push(wire[wire.len() - 2..].to_vec()).is_empty());
+        assert_eq!(decoder.push(wire), vec![frame]);
     }
 
     #[test]

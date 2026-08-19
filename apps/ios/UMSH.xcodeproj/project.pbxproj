@@ -52,6 +52,8 @@
 		11CF9DB4C5A8F3900BB6E891 /* UMSH/Services/Staging/StagingScenario.swift in Sources */ = {isa = PBXBuildFile; fileRef = 2C1621A99B18BF611FB18B4E /* UMSH/Services/Staging/StagingScenario.swift */; };
 		4B88F0D3A17C46E09D2E7714 /* UMSH/Services/Staging/StagingMeshAir.swift in Sources */ = {isa = PBXBuildFile; fileRef = 7E30A1C29D44E2A16F0B5C21 /* UMSH/Services/Staging/StagingMeshAir.swift */; };
 		100000000000000000000013 /* UMSH/Services/Radio/CoreBluetoothRadioConnection.swift in Sources */ = {isa = PBXBuildFile; fileRef = 200000000000000000000013 /* UMSH/Services/Radio/CoreBluetoothRadioConnection.swift */; };
+		100000000000000000000054 /* UMSH/Services/Radio/TcpRadioConnection.swift in Sources */ = {isa = PBXBuildFile; fileRef = 200000000000000000000054 /* UMSH/Services/Radio/TcpRadioConnection.swift */; };
+		100000000000000000000053 /* UMSH/Services/Radio/UlcpRadioSession.swift in Sources */ = {isa = PBXBuildFile; fileRef = 200000000000000000000053 /* UMSH/Services/Radio/UlcpRadioSession.swift */; };
 		100000000000000000000014 /* UMSH/Models/ConversationModels.swift in Sources */ = {isa = PBXBuildFile; fileRef = 200000000000000000000014 /* UMSH/Models/ConversationModels.swift */; };
 		100000000000000000000015 /* UMSH/DesignSystem/IdentityQRCodeView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 200000000000000000000015 /* UMSH/DesignSystem/IdentityQRCodeView.swift */; };
 		100000000000000000000016 /* UMSH/Services/Notifications/ChatNotificationService.swift in Sources */ = {isa = PBXBuildFile; fileRef = 200000000000000000000016 /* UMSH/Services/Notifications/ChatNotificationService.swift */; };
@@ -132,6 +134,8 @@
 		2C1621A99B18BF611FB18B4E /* UMSH/Services/Staging/StagingScenario.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = UMSH/Services/Staging/StagingScenario.swift; sourceTree = "<group>"; };
 		7E30A1C29D44E2A16F0B5C21 /* UMSH/Services/Staging/StagingMeshAir.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = UMSH/Services/Staging/StagingMeshAir.swift; sourceTree = "<group>"; };
 		200000000000000000000013 /* UMSH/Services/Radio/CoreBluetoothRadioConnection.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = UMSH/Services/Radio/CoreBluetoothRadioConnection.swift; sourceTree = "<group>"; };
+		200000000000000000000054 /* UMSH/Services/Radio/TcpRadioConnection.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = UMSH/Services/Radio/TcpRadioConnection.swift; sourceTree = "<group>"; };
+		200000000000000000000053 /* UMSH/Services/Radio/UlcpRadioSession.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = UMSH/Services/Radio/UlcpRadioSession.swift; sourceTree = "<group>"; };
 		200000000000000000000014 /* UMSH/Models/ConversationModels.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = UMSH/Models/ConversationModels.swift; sourceTree = "<group>"; };
 		200000000000000000000015 /* UMSH/DesignSystem/IdentityQRCodeView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = UMSH/DesignSystem/IdentityQRCodeView.swift; sourceTree = "<group>"; };
 		200000000000000000000016 /* UMSH/Services/Notifications/ChatNotificationService.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = UMSH/Services/Notifications/ChatNotificationService.swift; sourceTree = "<group>"; };
@@ -242,6 +246,8 @@
 				2C1621A99B18BF611FB18B4E /* UMSH/Services/Staging/StagingScenario.swift */,
 				7E30A1C29D44E2A16F0B5C21 /* UMSH/Services/Staging/StagingMeshAir.swift */,
 				200000000000000000000013 /* UMSH/Services/Radio/CoreBluetoothRadioConnection.swift */,
+				200000000000000000000054 /* UMSH/Services/Radio/TcpRadioConnection.swift */,
+				200000000000000000000053 /* UMSH/Services/Radio/UlcpRadioSession.swift */,
 				20000000000000000000001A /* UMSH/Services/Radio/RadioGatt.swift */,
 				20000000000000000000001B /* UMSH/Services/Radio/AdminSessionRegistry.swift */,
 				20000000000000000000001C /* UMSH/Services/Radio/AdministrativeDeviceSession.swift */,
@@ -406,6 +412,8 @@
 				11CF9DB4C5A8F3900BB6E891 /* UMSH/Services/Staging/StagingScenario.swift in Sources */,
 				4B88F0D3A17C46E09D2E7714 /* UMSH/Services/Staging/StagingMeshAir.swift in Sources */,
 				100000000000000000000013 /* UMSH/Services/Radio/CoreBluetoothRadioConnection.swift in Sources */,
+				100000000000000000000054 /* UMSH/Services/Radio/TcpRadioConnection.swift in Sources */,
+				100000000000000000000053 /* UMSH/Services/Radio/UlcpRadioSession.swift in Sources */,
 				10000000000000000000001A /* UMSH/Services/Radio/RadioGatt.swift in Sources */,
 				10000000000000000000001B /* UMSH/Services/Radio/AdminSessionRegistry.swift in Sources */,
 				10000000000000000000001C /* UMSH/Services/Radio/AdministrativeDeviceSession.swift in Sources */,

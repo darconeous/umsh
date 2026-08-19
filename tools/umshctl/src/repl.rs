@@ -15,6 +15,10 @@ use crate::command::Command;
 use crate::connection::{self, Target};
 use crate::output::warn;
 
+/// What marks a `connect` selector as a TCP endpoint rather than a
+/// radio name.
+const TCP_SCHEME: &str = "tcp://";
+
 /// The REPL's grammar: everything the one-shot tree has, plus the few
 /// verbs that only mean something inside a session.
 #[derive(Debug, clap::Subcommand)]
@@ -25,8 +29,8 @@ pub enum ReplCommand {
     /// Attach to a radio, replacing the current attachment. With no
     /// argument, rediscovers the way a bare launch does.
     Connect {
-        /// A scan-listing number, a BLE name or id, or a serial port
-        /// path.
+        /// A scan-listing number, a BLE name or id, a serial port
+        /// path, or `tcp://HOST:PORT`.
         #[arg(value_name = "SELECTOR")]
         selector: Option<String>,
 
@@ -255,15 +259,7 @@ async fn connect(app: &mut App, selector: Option<String>, pick: bool) -> Result<
                 "no radio {index} in the last scan ({} listed); run `scan` again",
                 app.last_scan.len()
             ),
-            // A path is a serial port; anything else is a BLE selector.
-            Err(_) if selector.contains('/') => Target::Serial {
-                port: selector,
-                baud: app.baud,
-            },
-            Err(_) => Target::Ble {
-                selector,
-                name: None,
-            },
+            Err(_) => named_target(selector, app.baud)?,
         },
         None => {
             let how = if pick {
@@ -283,6 +279,28 @@ async fn connect(app: &mut App, selector: Option<String>, pick: bool) -> Result<
     app.attach(target).await
 }
 
+/// Classify a `connect` selector that is not a scan-listing number.
+///
+/// The `tcp://` test comes first: the scheme's own slashes would
+/// satisfy the path rule below it. A bare `host:port` stays a BLE
+/// selector — the scheme is what separates an endpoint from a name.
+fn named_target(selector: String, baud: u32) -> Result<Target> {
+    if let Some(endpoint) = selector.strip_prefix(TCP_SCHEME) {
+        let (host, port) = connection::parse_endpoint(endpoint)?;
+        return Ok(Target::Tcp { host, port });
+    }
+    if selector.contains('/') {
+        return Ok(Target::Serial {
+            port: selector,
+            baud,
+        });
+    }
+    Ok(Target::Ble {
+        selector,
+        name: None,
+    })
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -296,6 +314,38 @@ mod tests {
     fn parse(line: &str) -> Result<ReplCommand> {
         let args = shlex::split(line).expect("balanced quotes");
         Ok(ReplCommandLine::try_parse_from(args)?.command)
+    }
+
+    #[test]
+    fn a_tcp_selector_beats_the_serial_path_rule() {
+        // `tcp://` contains the slashes the path rule looks for, so the
+        // order of the two tests is what makes this work at all.
+        assert_eq!(
+            named_target("tcp://127.0.0.1:9000".into(), 115_200).unwrap(),
+            Target::Tcp {
+                host: "127.0.0.1".into(),
+                port: 9000,
+            }
+        );
+        assert_eq!(
+            named_target("/dev/cu.usbmodem101".into(), 115_200).unwrap(),
+            Target::Serial {
+                port: "/dev/cu.usbmodem101".into(),
+                baud: 115_200,
+            }
+        );
+        // A bare endpoint is still a name: BLE radios are named freely,
+        // and the scheme is the only reliable signal.
+        assert_eq!(
+            named_target("127.0.0.1:9000".into(), 115_200).unwrap(),
+            Target::Ble {
+                selector: "127.0.0.1:9000".into(),
+                name: None,
+            }
+        );
+        // A malformed endpoint is reported, not silently taken for a
+        // radio name.
+        assert!(named_target("tcp://127.0.0.1".into(), 115_200).is_err());
     }
 
     #[test]

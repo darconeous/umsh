@@ -17,6 +17,8 @@ flow control. The framing mechanism depends on the underlying transport:
   exactly as used by Spinel.
 * BLE uses the GATT frame transport defined in
   [ULCP over BLE](ulcp-ble.md).
+* A reliable, in-order byte stream standing in for a serial link — a TCP
+  connection to a bridged port, say — uses the same HDLC-Lite framing.
 
 In this chapter, the **device** is the side that owns the transceiver and
 the **host** is the side that attaches to it over the local link (see
@@ -810,6 +812,7 @@ How attach and detach are detected is defined by the transport binding:
   [ULCP over BLE](ulcp-ble.md#attach-semantics).
 * **USB-CDC** — assertion and deassertion of DTR on the ULCP
   interface.
+* **TCP** — establishment and closure of the connection.
 * **Bare UART** — implementation-defined. A device with no way to detect
   host presence MAY treat the host as permanently attached, in which case
   it never enters detached operation and offline assistance

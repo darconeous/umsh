@@ -2985,7 +2985,11 @@ mod tests {
     /// Minimal in-process device: answers the initialization handshake,
     /// stores property sets and multi-value tables, and echoes
     /// transmitted frames back as received frames.
-    async fn fake_device(mut io: DuplexStream) {
+    ///
+    /// Generic over the stream so the same device can be reached down a
+    /// pipe or across a socket — which is the whole claim TCP support
+    /// rests on.
+    async fn fake_device<IO: AsyncRead + AsyncWrite + Unpin>(mut io: IO) {
         let mut decoder = hdlc::Decoder::<WIRE_BUF>::new();
         let mut props: HashMap<u32, Vec<u8>> = HashMap::new();
         let mut tables: HashMap<u32, Vec<Vec<u8>>> = HashMap::new();
@@ -3272,6 +3276,70 @@ mod tests {
         );
         server.write_all(&second[split..]).await.unwrap();
         assert_eq!(link.recv_frame().await.unwrap(), b"second");
+    }
+
+    /// A socket is a serial link with a different name on it, which is
+    /// what lets a bridged port serve a radio over TCP. The payload
+    /// carries every byte the framing gives meaning to — flag, escape,
+    /// and both flow-control bytes — so any encoder that treated the
+    /// socket as transparent would fail here.
+    #[tokio::test]
+    async fn serial_link_frames_the_same_bytes_over_a_socket() {
+        let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let endpoint = listener.local_addr().unwrap();
+        let accepted = tokio::spawn(async move { listener.accept().await.unwrap().0 });
+        let client = tokio::net::TcpStream::connect(endpoint).await.unwrap();
+
+        let mut device = SerialFrameLink::new(accepted.await.unwrap());
+        let mut host = SerialFrameLink::new(client);
+
+        let hostile = [0x7E, 0x7D, 0x11, 0x13, 0x00, 0xFF];
+        host.send_frame(&hostile).await.unwrap();
+        assert_eq!(device.recv_frame().await.unwrap(), hostile);
+
+        device.send_frame(b"pong").await.unwrap();
+        assert_eq!(host.recv_frame().await.unwrap(), b"pong");
+    }
+
+    /// The handshake itself over a socket, not just the framing under
+    /// it: a bridged radio has to attach exactly as a wired one does.
+    #[tokio::test]
+    async fn a_radio_attaches_over_a_socket() {
+        let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let endpoint = listener.local_addr().unwrap();
+        tokio::spawn(async move {
+            let (stream, _) = listener.accept().await.unwrap();
+            fake_device(stream).await;
+        });
+
+        let stream = tokio::net::TcpStream::connect(endpoint).await.unwrap();
+        stream.set_nodelay(true).unwrap();
+        let mut device = UlcpDevice::new(SerialFrameLink::new(stream), test_config())
+            .await
+            .unwrap();
+
+        // Attach is only half of it; a property exchange proves the
+        // session is live in both directions.
+        device.set_prop(prop::PHY_TX_POWER, &[14]).await.unwrap();
+        assert_eq!(device.get_prop(prop::PHY_TX_POWER).await.unwrap(), [14]);
+    }
+
+    /// The far end going away has to surface as a dropped link rather
+    /// than an endless wait, or a session whose bridge was killed would
+    /// hang instead of reporting a detach.
+    #[tokio::test]
+    async fn serial_link_reports_a_closed_socket_as_a_lost_link() {
+        let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let endpoint = listener.local_addr().unwrap();
+        let accepted = tokio::spawn(async move { listener.accept().await.unwrap().0 });
+        let client = tokio::net::TcpStream::connect(endpoint).await.unwrap();
+
+        drop(accepted.await.unwrap());
+        let mut host = SerialFrameLink::new(client);
+        assert!(matches!(
+            host.recv_frame().await,
+            Err(UlcpError::Disconnected)
+        ));
     }
 
     #[cfg(feature = "ble-radio")]

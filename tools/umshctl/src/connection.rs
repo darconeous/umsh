@@ -53,6 +53,13 @@ pub enum Target {
         selector: String,
         name: Option<String>,
     },
+    /// A serial link carried over a socket: the bytes are the same
+    /// HDLC-Lite frames a UART would carry, so anything that bridges a
+    /// port to a listening socket serves a radio this way.
+    Tcp {
+        host: String,
+        port: u16,
+    },
 }
 
 impl Target {
@@ -61,6 +68,7 @@ impl Target {
         match self {
             Self::Serial { .. } => "serial",
             Self::Ble { .. } => "ble",
+            Self::Tcp { .. } => "tcp",
         }
     }
 
@@ -71,8 +79,49 @@ impl Target {
                 port.rsplit('/').next().unwrap_or(port.as_str()).to_string()
             }
             Self::Ble { selector, name } => name.clone().unwrap_or_else(|| selector.clone()),
+            Self::Tcp { host, port } => format_endpoint(host, *port),
         }
     }
+}
+
+/// Render a host and port the way the user would type them, bracketing
+/// a bare IPv6 literal so the result parses back.
+pub fn format_endpoint(host: &str, port: u16) -> String {
+    if host.contains(':') {
+        format!("[{host}]:{port}")
+    } else {
+        format!("{host}:{port}")
+    }
+}
+
+/// Parse a `host:port` endpoint, accepting a bracketed IPv6 literal.
+///
+/// The port is required: a bare host would have to guess a port number,
+/// and there is no registered one to guess.
+pub fn parse_endpoint(spec: &str) -> Result<(String, u16)> {
+    let spec = spec.trim();
+    let (host, port) = if let Some(rest) = spec.strip_prefix('[') {
+        let (host, rest) = rest
+            .split_once(']')
+            .ok_or_else(|| anyhow!("unterminated IPv6 literal in {spec:?}"))?;
+        let port = rest
+            .strip_prefix(':')
+            .ok_or_else(|| anyhow!("{spec:?} names no port (expected [host]:port)"))?;
+        (host, port)
+    } else {
+        spec.rsplit_once(':')
+            .ok_or_else(|| anyhow!("{spec:?} names no port (expected host:port)"))?
+    };
+    if host.is_empty() {
+        bail!("{spec:?} names no host");
+    }
+    let port: u16 = port
+        .parse()
+        .with_context(|| format!("{port:?} is not a port number"))?;
+    if port == 0 {
+        bail!("port 0 is not a destination");
+    }
+    Ok((host.to_string(), port))
 }
 
 // ---------------------------------------------------------------------
@@ -86,6 +135,9 @@ pub enum AnyLink {
     Serial(umsh::ulcp::SerialFrameLink<tokio_serial::SerialStream>),
     #[cfg(feature = "ble-radio")]
     Ble(umsh::ulcp::BleFrameLink),
+    /// Ungated: a socket needs no driver crate, so every build can reach
+    /// a bridged radio.
+    Tcp(umsh::ulcp::SerialFrameLink<tokio::net::TcpStream>),
     /// Keeps the type inhabited in a build with no transport feature.
     /// Never constructed.
     #[allow(dead_code)]
@@ -99,6 +151,7 @@ impl FrameLink for AnyLink {
             Self::Serial(link) => link.send_frame(frame).await,
             #[cfg(feature = "ble-radio")]
             Self::Ble(link) => link.send_frame(frame).await,
+            Self::Tcp(link) => link.send_frame(frame).await,
             Self::Unavailable => Err(UlcpError::Disconnected),
         }
     }
@@ -112,6 +165,7 @@ impl FrameLink for AnyLink {
             Self::Serial(link) => link.poll_recv_frame(cx),
             #[cfg(feature = "ble-radio")]
             Self::Ble(link) => link.poll_recv_frame(cx),
+            Self::Tcp(link) => link.poll_recv_frame(cx),
             Self::Unavailable => core::task::Poll::Ready(Err(UlcpError::Disconnected)),
         }
     }
@@ -259,7 +313,23 @@ pub async fn open(target: &Target) -> Result<AnyLink> {
     match target {
         Target::Serial { port, baud } => open_serial(port, *baud).await,
         Target::Ble { selector, .. } => open_ble(selector).await,
+        Target::Tcp { host, port } => open_tcp(host, *port).await,
     }
+}
+
+/// Open a bridged serial link.
+///
+/// Nagle is off: ULCP frames are small and each one is a turn in a
+/// request/response exchange, so coalescing only adds latency.
+async fn open_tcp(host: &str, port: u16) -> Result<AnyLink> {
+    let endpoint = format_endpoint(host, port);
+    let stream = tokio::net::TcpStream::connect((host, port))
+        .await
+        .with_context(|| format!("connecting to {endpoint}"))?;
+    stream
+        .set_nodelay(true)
+        .with_context(|| format!("disabling Nagle on {endpoint}"))?;
+    Ok(AnyLink::Tcp(umsh::ulcp::SerialFrameLink::new(stream)))
 }
 
 // Each transport comes in a working form and an explanatory one, chosen
@@ -701,6 +771,48 @@ mod tests {
             name: name.map(str::to_string),
             rssi,
         }
+    }
+
+    #[test]
+    fn endpoints_round_trip_through_their_written_form() {
+        for (spec, host, port) in [
+            ("127.0.0.1:9000", "127.0.0.1", 9000u16),
+            ("localhost:9000", "localhost", 9000),
+            ("[::1]:9000", "::1", 9000),
+            ("[fe80::1%en0]:65535", "fe80::1%en0", 65535),
+        ] {
+            let parsed = parse_endpoint(spec).unwrap();
+            assert_eq!(parsed, (host.to_string(), port), "parsing {spec}");
+            assert_eq!(format_endpoint(host, port), spec, "rendering {spec}");
+        }
+    }
+
+    #[test]
+    fn an_endpoint_without_a_usable_port_is_refused() {
+        // There is no registered port to guess, so a bare host cannot
+        // be completed into a destination.
+        for spec in [
+            "127.0.0.1",
+            "localhost",
+            "[::1]",
+            "[::1:9000",
+            "127.0.0.1:",
+            "127.0.0.1:0",
+            "127.0.0.1:70000",
+            ":9000",
+        ] {
+            assert!(parse_endpoint(spec).is_err(), "{spec} should not parse");
+        }
+    }
+
+    #[test]
+    fn a_tcp_target_is_labeled_by_its_endpoint() {
+        let target = Target::Tcp {
+            host: "::1".into(),
+            port: 9000,
+        };
+        assert_eq!(target.transport(), "tcp");
+        assert_eq!(target.provisional_label(), "[::1]:9000");
     }
 
     #[test]

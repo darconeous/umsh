@@ -24,6 +24,23 @@ private final class StagingRadioConnectionOwner: ObservableObject {
         air: StagingMeshAir()
     )
 }
+
+/// Owns the bridged-radio connection, rebuilt only when the endpoint
+/// itself changes. Same reasoning as the two owners above: the session
+/// accumulates state that must not be discarded on a body
+/// re-evaluation.
+private final class TcpRadioConnectionOwner: ObservableObject {
+    private var current: (endpoint: TcpEndpoint, connection: TcpRadioConnection)?
+
+    func connection(for endpoint: TcpEndpoint) -> TcpRadioConnection {
+        if let current, current.endpoint == endpoint {
+            return current.connection
+        }
+        let connection = TcpRadioConnection(endpoint: endpoint)
+        current = (endpoint, connection)
+        return connection
+    }
+}
 #endif
 
 @main
@@ -32,10 +49,17 @@ struct UMSHApp: App {
 
     #if DEBUG
     @StateObject private var stagingRadioConnection = StagingRadioConnectionOwner()
+    @StateObject private var tcpRadioConnection = TcpRadioConnectionOwner()
 
     /// Whether to run against the fabricated mesh in the staging store, for
     /// taking marketing screenshots in the simulator. See ``StagingScenario``.
     @AppStorage("staging.enabled") private var stagingEnabled = false
+
+    /// Whether to reach the companion radio over TCP instead of BLE. The
+    /// simulator has no Bluetooth, so this is how a simulator build talks
+    /// to a real radio. See ``TcpRadioConnection``.
+    @AppStorage("debug.radioTcp.enabled") private var tcpRadioEnabled = false
+    @AppStorage("debug.radioTcp.endpoint") private var tcpRadioEndpoint = "127.0.0.1:9000"
     #endif
 
     var body: some Scene {
@@ -52,6 +76,12 @@ struct UMSHApp: App {
                     isStaging: true
                 )
                 .id("staging")
+            } else if tcpRadioEnabled, let endpoint = TcpEndpoint(tcpRadioEndpoint) {
+                // A bridged radio is a real radio, so this uses the real
+                // store — unlike staging. Keyed on the endpoint so
+                // editing it builds a connection to the new one.
+                AppRootView(radioConnection: tcpRadioConnection.connection(for: endpoint))
+                    .id("tcp:\(endpoint.text)")
             } else {
                 AppRootView(radioConnection: liveRadioConnection.connection)
                     .id("live")

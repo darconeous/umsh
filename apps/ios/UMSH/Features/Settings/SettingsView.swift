@@ -59,6 +59,8 @@ struct SettingsView: View {
     /// so a closure round trip would only add a way for the two to disagree.
     @AppStorage("staging.enabled") private var stagingEnabled = false
     @State private var stagingResetFailed = false
+    @AppStorage("debug.radioTcp.enabled") private var tcpRadioEnabled = false
+    @AppStorage("debug.radioTcp.endpoint") private var tcpRadioEndpoint = "127.0.0.1:9000"
     #endif
 
     private func seedConversation(_ count: Int) async {
@@ -165,6 +167,24 @@ struct SettingsView: View {
             }
 
             #if DEBUG
+            Section {
+                Toggle("Radio over TCP", isOn: $tcpRadioEnabled)
+                TextField("127.0.0.1:9000", text: $tcpRadioEndpoint)
+                    .textInputAutocapitalization(.never)
+                    .autocorrectionDisabled()
+                    .keyboardType(.URL)
+                    .font(.body.monospaced())
+                if TcpEndpoint(tcpRadioEndpoint) == nil {
+                    Text("Give the bridge as host:port.")
+                        .font(.caption)
+                        .foregroundStyle(.red)
+                }
+            } header: {
+                Text("Bridged radio")
+            } footer: {
+                Text("Reaches a companion radio over a socket instead of Bluetooth, which is the only way a simulator build can talk to real hardware. Bridge the radio's port with socat, then point this at it. Debug builds only.")
+            }
+
             Section {
                 Toggle("Staging mode", isOn: $stagingEnabled)
                 Button("Reset staged data", role: .destructive) {
@@ -503,7 +523,9 @@ struct RadioDetailView: View {
                     LabeledContent("Radio", value: name)
                 }
                 if let identifier = snapshot.localIdentifier {
-                    LabeledContent("Bluetooth ID") {
+                    // Not "Bluetooth ID": a bridged radio has one of
+                    // these too, and it never came from Bluetooth.
+                    LabeledContent("Radio ID") {
                         Text(identifier.uuidString)
                             .font(.caption.monospaced())
                             .textSelection(.enabled)

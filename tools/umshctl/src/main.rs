@@ -48,7 +48,9 @@ With no connection, discovers a radio over BLE: one match is used, and
 several offer a numbered choice, which --pick asks for outright. A
 serial port is used only when named,
 because identifying one means opening it, and opening a port can reset
-or DFU-trigger hardware that is not a ULCP radio at all.
+or DFU-trigger hardware that is not a ULCP radio at all. --tcp reaches a
+radio whose port has been bridged to a socket, which carries the same
+framing a wire does; there is nothing to discover, so it is always named.
 
 KEY values are 44-character base58 or 64-character hex. Secrets are
 never echoed in output or traces — though shell history keeps whatever
@@ -83,6 +85,16 @@ pub struct ToolArgs {
         global = true
     )]
     ble: Option<Option<String>>,
+
+    /// Attach to a radio served over TCP, as `HOST:PORT`.
+    ///
+    /// The socket carries the same framing a serial port does, so
+    /// anything bridging one to a listening socket serves a radio this
+    /// way:
+    ///
+    ///   socat TCP-LISTEN:9000,reuseaddr /dev/cu.usbmodem101,raw,echo=0,b115200
+    #[arg(long, value_name = "HOST:PORT", env = "UMSHCTL_TCP", global = true)]
+    tcp: Option<String>,
 
     /// Choose the radio from a numbered listing, ignoring the saved
     /// default.
@@ -253,8 +265,19 @@ fn announce_attached(session: &Session) {
 /// Work out which radio to talk to, from the flags, the environment,
 /// the saved default, and finally the air.
 async fn resolve(args: &ToolArgs, prefs: &Prefs) -> Result<Option<Target>> {
-    if args.pick && (args.port.is_some() || matches!(args.ble, Some(Some(_)))) {
-        bail!("--pick chooses a radio from a listing; --port and --ble=SELECTOR already name one");
+    if args.pick && (args.port.is_some() || args.tcp.is_some() || matches!(args.ble, Some(Some(_))))
+    {
+        bail!(
+            "--pick chooses a radio from a listing; --port, --tcp, and --ble=SELECTOR already \
+             name one"
+        );
+    }
+    if let Some(endpoint) = &args.tcp {
+        if args.port.is_some() || args.ble.is_some() {
+            bail!("--tcp, --port, and --ble name different radios; give one");
+        }
+        let (host, port) = connection::parse_endpoint(endpoint)?;
+        return Ok(Some(Target::Tcp { host, port }));
     }
     if let Some(port) = &args.port {
         if args.ble.is_some() {
@@ -318,7 +341,7 @@ async fn run(args: ToolArgs) -> Result<()> {
             }
             // The shell can still scan and connect; a one-shot cannot.
             None if interactive => {}
-            None => bail!("no ULCP radios found; name one with --port or --ble=SELECTOR"),
+            None => bail!("no ULCP radios found; name one with --port, --tcp, or --ble=SELECTOR"),
         }
     }
 

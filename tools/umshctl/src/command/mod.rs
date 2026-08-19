@@ -325,6 +325,10 @@ fn default(app: &mut App, op: DefaultOp) -> Result<()> {
                             "the saved default is a BLE radio: serial port names change between \
                              plug-ins, so name one with --port or set UMSHCTL_PORT instead"
                         ),
+                        Target::Tcp { .. } => bail!(
+                            "the saved default is a BLE radio: a bridged radio is already named \
+                             by its endpoint, so give it with --tcp or set UMSHCTL_TCP instead"
+                        ),
                     }
                 }
             };

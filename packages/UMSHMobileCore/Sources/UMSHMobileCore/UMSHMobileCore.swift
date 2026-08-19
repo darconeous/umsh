@@ -993,6 +993,190 @@ public func FfiConverterTypeMobileGattReassembler_lower(_ value: MobileGattReass
 
 
 /**
+ * Stateful, bounded receiver for an HDLC-Lite byte stream.
+ *
+ * Sized to admit exactly the frames [`MobileGattReassembler`] does:
+ * the decoder's bound counts the two FCS octets, which a ULCP frame's
+ * own length does not.
+ */
+public protocol MobileHdlcDecoderProtocol: AnyObject, Sendable {
+
+    /**
+     * Consume received bytes, returning every frame they completed.
+     *
+     * A stream delivers arbitrary chunks rather than whole frames, so
+     * one call can complete none or several. Corrupt and oversized
+     * frames are discarded rather than reported: the decoder
+     * resynchronizes on the next flag, and a byte stream can carry
+     * line noise that belongs to nobody — a bridge opening a serial
+     * port mid-transmission, most commonly. This is the one place the
+     * two transports differ, GATT being reliable enough that a bad
+     * segment is a protocol violation worth surfacing.
+     */
+    func push(bytes: Data)  -> [Data]
+
+    /**
+     * Discard any partially received frame. Used when the link comes
+     * up, so a half-frame from a previous connection cannot merge into
+     * the first frame of this one.
+     */
+    func reset()
+
+}
+/**
+ * Stateful, bounded receiver for an HDLC-Lite byte stream.
+ *
+ * Sized to admit exactly the frames [`MobileGattReassembler`] does:
+ * the decoder's bound counts the two FCS octets, which a ULCP frame's
+ * own length does not.
+ */
+open class MobileHdlcDecoder: MobileHdlcDecoderProtocol, @unchecked Sendable {
+    fileprivate let handle: UInt64
+
+    /// Used to instantiate a [FFIObject] without an actual handle, for fakes in tests, mostly.
+#if swift(>=5.8)
+    @_documentation(visibility: private)
+#endif
+    public struct NoHandle {
+        public init() {}
+    }
+
+    // TODO: We'd like this to be `private` but for Swifty reasons,
+    // we can't implement `FfiConverter` without making this `required` and we can't
+    // make it `required` without making it `public`.
+#if swift(>=5.8)
+    @_documentation(visibility: private)
+#endif
+    required public init(unsafeFromHandle handle: UInt64) {
+        self.handle = handle
+    }
+
+    // This constructor can be used to instantiate a fake object.
+    // - Parameter noHandle: Placeholder value so we can have a constructor separate from the default empty one that may be implemented for classes extending [FFIObject].
+    //
+    // - Warning:
+    //     Any object instantiated with this constructor cannot be passed to an actual Rust-backed object. Since there isn't a backing handle the FFI lower functions will crash.
+#if swift(>=5.8)
+    @_documentation(visibility: private)
+#endif
+    public init(noHandle: NoHandle) {
+        self.handle = 0
+    }
+
+#if swift(>=5.8)
+    @_documentation(visibility: private)
+#endif
+    public func uniffiCloneHandle() -> UInt64 {
+        return try! rustCall { uniffi_umsh_mobile_core_fn_clone_mobilehdlcdecoder(self.handle, $0) }
+    }
+public convenience init() {
+    let handle =
+        try! rustCall() {
+        uniffiCallStatus in
+    uniffi_umsh_mobile_core_fn_constructor_mobilehdlcdecoder_new(uniffiCallStatus
+    )
+}
+    self.init(unsafeFromHandle: handle)
+}
+
+    deinit {
+        if handle == 0 {
+            // Mock objects have handle=0 don't try to free them
+            return
+        }
+
+        try! rustCall { uniffi_umsh_mobile_core_fn_free_mobilehdlcdecoder(handle, $0) }
+    }
+
+
+
+
+    /**
+     * Consume received bytes, returning every frame they completed.
+     *
+     * A stream delivers arbitrary chunks rather than whole frames, so
+     * one call can complete none or several. Corrupt and oversized
+     * frames are discarded rather than reported: the decoder
+     * resynchronizes on the next flag, and a byte stream can carry
+     * line noise that belongs to nobody — a bridge opening a serial
+     * port mid-transmission, most commonly. This is the one place the
+     * two transports differ, GATT being reliable enough that a bad
+     * segment is a protocol violation worth surfacing.
+     */
+open func push(bytes: Data) -> [Data]  {
+    return try!  FfiConverterSequenceData.lift(try! rustCall() {
+        uniffiCallStatus in
+    uniffi_umsh_mobile_core_fn_method_mobilehdlcdecoder_push(
+            self.uniffiCloneHandle(),
+        FfiConverterData.lower(bytes),uniffiCallStatus
+    )
+})
+}
+
+    /**
+     * Discard any partially received frame. Used when the link comes
+     * up, so a half-frame from a previous connection cannot merge into
+     * the first frame of this one.
+     */
+open func reset()  {try! rustCall() {
+        uniffiCallStatus in
+    uniffi_umsh_mobile_core_fn_method_mobilehdlcdecoder_reset(
+            self.uniffiCloneHandle(),uniffiCallStatus
+    )
+}
+}
+
+
+
+}
+
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public struct FfiConverterTypeMobileHdlcDecoder: FfiConverter {
+    typealias FfiType = UInt64
+    typealias SwiftType = MobileHdlcDecoder
+
+    public static func lift(_ handle: UInt64) throws -> MobileHdlcDecoder {
+        return MobileHdlcDecoder(unsafeFromHandle: handle)
+    }
+
+    public static func lower(_ value: MobileHdlcDecoder) -> UInt64 {
+        return value.uniffiCloneHandle()
+    }
+
+    public static func read(from buf: inout (data: Data, offset: Data.Index)) throws -> MobileHdlcDecoder {
+        let handle: UInt64 = try readInt(&buf)
+        return try lift(handle)
+    }
+
+    public static func write(_ value: MobileHdlcDecoder, into buf: inout [UInt8]) {
+        writeInt(&buf, lower(value))
+    }
+}
+
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public func FfiConverterTypeMobileHdlcDecoder_lift(_ handle: UInt64) throws -> MobileHdlcDecoder {
+    return try FfiConverterTypeMobileHdlcDecoder.lift(handle)
+}
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public func FfiConverterTypeMobileHdlcDecoder_lower(_ value: MobileHdlcDecoder) -> UInt64 {
+    return FfiConverterTypeMobileHdlcDecoder.lower(value)
+}
+
+
+
+
+
+
+/**
  * Identity secret retained by the Rust engine after one controlled unlock
  * transfer. Swift receives only public identity records from this object.
  */
@@ -12823,6 +13007,21 @@ public func ulcpGattSegments(frame: Data, maximumValueLength: UInt16)throws  -> 
 })
 }
 /**
+ * Frame a ULCP frame for an HDLC-Lite byte stream — a serial port, or
+ * a socket standing in for one — including both delimiting flags.
+ *
+ * The byte-stream counterpart of [`ulcp_gatt_segments`]: a stream has
+ * no segmentation, so one frame encodes to one write.
+ */
+public func ulcpHdlcEncode(frame: Data)throws  -> Data  {
+    return try  FfiConverterData.lift(try rustCallWithError(FfiConverterTypeMobileError_lift) {
+        uniffiCallStatus in
+    uniffi_umsh_mobile_core_fn_func_ulcp_hdlc_encode(
+        FfiConverterData.lower(frame),uniffiCallStatus
+    )
+})
+}
+/**
  * Return the authoritative properties needed for the read-only post-attach
  * inspection, gated by the supplied `PROP_CAPS` value.
  */
@@ -13094,6 +13293,9 @@ private let initializationResult: InitializationResult = {
     if (uniffi_umsh_mobile_core_checksum_func_ulcp_gatt_segments() != 568) {
         return InitializationResult.apiChecksumMismatch
     }
+    if (uniffi_umsh_mobile_core_checksum_func_ulcp_hdlc_encode() != 61541) {
+        return InitializationResult.apiChecksumMismatch
+    }
     if (uniffi_umsh_mobile_core_checksum_func_ulcp_inspection_properties() != 61576) {
         return InitializationResult.apiChecksumMismatch
     }
@@ -13292,6 +13494,12 @@ private let initializationResult: InitializationResult = {
     if (uniffi_umsh_mobile_core_checksum_method_mobilegattreassembler_reset() != 47215) {
         return InitializationResult.apiChecksumMismatch
     }
+    if (uniffi_umsh_mobile_core_checksum_method_mobilehdlcdecoder_push() != 56894) {
+        return InitializationResult.apiChecksumMismatch
+    }
+    if (uniffi_umsh_mobile_core_checksum_method_mobilehdlcdecoder_reset() != 13551) {
+        return InitializationResult.apiChecksumMismatch
+    }
     if (uniffi_umsh_mobile_core_checksum_method_mobileulcpsession_abandon_raw_transmits() != 18682) {
         return InitializationResult.apiChecksumMismatch
     }
@@ -13371,6 +13579,9 @@ private let initializationResult: InitializationResult = {
         return InitializationResult.apiChecksumMismatch
     }
     if (uniffi_umsh_mobile_core_checksum_constructor_mobilegattreassembler_new() != 56519) {
+        return InitializationResult.apiChecksumMismatch
+    }
+    if (uniffi_umsh_mobile_core_checksum_constructor_mobilehdlcdecoder_new() != 12133) {
         return InitializationResult.apiChecksumMismatch
     }
     if (uniffi_umsh_mobile_core_checksum_constructor_mobileulcpsession_administrative() != 16912) {
