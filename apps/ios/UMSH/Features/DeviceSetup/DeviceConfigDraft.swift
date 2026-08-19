@@ -180,7 +180,7 @@ final class DeviceConfigDraft {
         startupBeacon = advert?.startupBeacon ?? true
 
         // The goal's decisions land on top of the device's own settings, and
-        // only where the device can honour them. Everything the goal does not
+        // only where the device can honor them. Everything the goal does not
         // decide stays as the device reported it.
         if let copied = resolvedProfile?.copiedProfile { adopt(copied) }
         for assumption in plan.assumptions where assumption.applies(to: sync) {
@@ -452,7 +452,7 @@ final class DeviceConfigDraft {
         dutyCycleLimit = preset.dutyCycleLimit
     }
 
-    /// Put the radio fields on `profile`, honouring what this device accepts.
+    /// Put the radio fields on `profile`, honoring what this device accepts.
     func adopt(_ profile: RadioProfile) {
         radioEnabled = true
         frequencyKHz = String(profile.frequencyKHz)

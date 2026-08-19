@@ -68,6 +68,27 @@ struct RemoteRadioEditor: View {
 
     var body: some View {
         Form {
+            if showsPresets {
+                Section {
+                    Picker("Radio profile", selection: $edits.presetIdentifier) {
+                        Text("Custom / manual").tag("custom")
+                        ForEach(RadioPreset.vetted) { preset in
+                            Text(preset.name).tag(preset.id)
+                        }
+                    }
+                } header: {
+                    Text("Preset")
+                } footer: {
+                    Text(
+                        """
+                        A preset sets every radio parameter below. Choose the one \
+                        your local mesh uses; nodes with different PHY settings \
+                        cannot hear each other.
+                        """
+                    )
+                }
+            }
+
             Section {
                 if edits.enabled.isKnown {
                     Toggle(isOn: $edits.enabled.edited.replacingNil(with: true)) {
@@ -82,14 +103,6 @@ struct RemoteRadioEditor: View {
                     text: $edits.frequency,
                     isKnown: edits.frequencyField.isKnown,
                     problem: problems[edits.frequencyField.property]
-                )
-                RemoteNumberField(
-                    "Transmit power",
-                    unit: "dBm",
-                    text: $edits.transmitPower,
-                    isKnown: edits.transmitPowerField.isKnown,
-                    signed: true,
-                    problem: problems[edits.transmitPowerField.property]
                 )
             } header: {
                 Text("Radio")
@@ -127,8 +140,16 @@ struct RemoteRadioEditor: View {
                 }
             }
 
-            if model.card?.supportsDutyCycleLimit == true {
-                Section {
+            Section {
+                RemoteNumberField(
+                    "Transmit power",
+                    unit: "dBm",
+                    text: $edits.transmitPower,
+                    isKnown: edits.transmitPowerField.isKnown,
+                    signed: true,
+                    problem: problems[edits.transmitPowerField.property]
+                )
+                if model.card?.supportsDutyCycleLimit == true {
                     if let used = reading?.properties.dutyCycleNow {
                         LabeledContent("Past-hour usage", value: Self.dutyLabel(used))
                     }
@@ -143,9 +164,9 @@ struct RemoteRadioEditor: View {
                             ).tag(limit)
                         }
                     }
-                } header: {
-                    Text("Duty cycle")
                 }
+            } header: {
+                Text("Transmit")
             }
             RemoteProblemSection(model: model)
         }
@@ -155,16 +176,28 @@ struct RemoteRadioEditor: View {
             title: "Radio",
             apply: { await apply() },
             hasEdits: !edits.dirty.isEmpty,
-            applyWarning: (
-                title: "Change This Device's Radio",
-                message: """
-                    A device left on a frequency or modem profile the rest of \
-                    the mesh is not using cannot be reached to change back.
-                    """
-            )
+            // Power and the transmit limit change how far this device
+            // reaches, not what it can hear, so they apply unwarned.
+            applyWarning: edits.strandsIfWrong
+                ? (
+                    title: "Change This Device's Radio",
+                    message: """
+                        A device left on a frequency or modem profile the rest of \
+                        the mesh is not using cannot be reached to change back.
+                        """
+                )
+                : nil
         )
         .onChange(of: reading?.asOf) { edits = Edits(reading) }
         .onAppear { if edits.isEmpty { edits = Edits(reading) } }
+    }
+
+    /// A preset names every radio parameter at once, so it is only offered
+    /// when every parameter it would set has been read from the device.
+    private var showsPresets: Bool {
+        edits.frequencyField.isKnown && edits.transmitPowerField.isKnown
+            && (model.card?.supportsLora != true || edits.bandwidth.isKnown)
+            && (model.card?.supportsDutyCycleLimit != true || edits.dutyLimit.isKnown)
     }
 
     private func apply() async {
@@ -214,6 +247,60 @@ struct RemoteRadioEditor: View {
             typed.frequencyField.fold(UInt32(frequency))
             typed.transmitPowerField.fold(Int8(transmitPower))
             return typed
+        }
+
+        /// The vetted profile the fields currently spell out, or "custom".
+        /// Settable, so the picker binds straight to it: choosing a
+        /// profile writes every radio parameter it names.
+        var presetIdentifier: String {
+            get { RadioPreset.vetted.first { matches($0) }?.id ?? "custom" }
+            set {
+                guard let preset = RadioPreset.vetted.first(where: { $0.id == newValue })
+                else { return }
+                adopt(preset)
+            }
+        }
+
+        /// Which vetted profile a device is on is a question about the mesh
+        /// it can talk to, so only the parameters that decide that are
+        /// compared. Transmit power and the transmit limit are how hard
+        /// this one device pushes and how often — local decisions that
+        /// leave it on the same profile as everyone else, and a radio
+        /// reports power clamped to what it can actually reach. Comparing
+        /// either would call a device "custom" for turning itself down.
+        /// The same exclusion `RadioProfile.interoperates(with:)` makes.
+        private func matches(_ preset: RadioPreset) -> Bool {
+            let typed = self.typed
+            // A field the device never answered for is left out of the
+            // comparison the same way it is left out of the form.
+            return typed.frequencyField.value == preset.frequencyKHz
+                && (!bandwidth.isKnown || typed.bandwidth.value == preset.bandwidthHz)
+                && (!spreadingFactor.isKnown
+                    || typed.spreadingFactor.value == preset.spreadingFactor)
+                && (!codingRate.isKnown || typed.codingRate.value == preset.codingRate)
+        }
+
+        private mutating func adopt(_ preset: RadioPreset) {
+            if enabled.isKnown { enabled.edited = true }
+            frequency = String(preset.frequencyKHz)
+            transmitPower = String(preset.transmitPowerDBm)
+            if bandwidth.isKnown { bandwidth.edited = preset.bandwidthHz }
+            if spreadingFactor.isKnown { spreadingFactor.edited = preset.spreadingFactor }
+            if codingRate.isKnown { codingRate.edited = preset.codingRate }
+            if dutyLimit.isKnown { dutyLimit.edited = preset.dutyCycleLimit }
+        }
+
+        /// Whether these edits touch what the device listens on. Frequency
+        /// and the modem profile decide who can hear whom, and a radio
+        /// switched off hears nothing — those get the warning. Power and
+        /// the transmit limit only change how far the device reaches.
+        var strandsIfWrong: Bool {
+            let typed = self.typed
+            return typed.frequencyField.isDirty
+                || typed.bandwidth.isDirty
+                || typed.spreadingFactor.isDirty
+                || typed.codingRate.isDirty
+                || (typed.enabled.isDirty && typed.enabled.edited == false)
         }
 
         var dirty: Set<UInt32> {

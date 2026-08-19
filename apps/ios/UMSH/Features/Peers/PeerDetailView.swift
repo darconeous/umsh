@@ -70,8 +70,11 @@ struct PeerDetailView: View {
     // moment it is tapped, not when the parent's peer list refresh
     // eventually reaches this pushed view.
     @State private var currentFavorite: Bool
-    @State private var isEditingAlias = false
-    @State private var aliasDraft = ""
+    /// What is in the name field. Empty means the peer has no name of this
+    /// phone's choosing and goes by whatever it advertises, which is what
+    /// the field shows as its placeholder.
+    @State private var nameDraft: String
+    @FocusState private var isNamingFocused: Bool
     @State private var isSavingPeer = false
     @State private var didSavePeer = false
     @State private var savePeerFailed = false
@@ -113,24 +116,58 @@ struct PeerDetailView: View {
         self.savePeer = savePeer
         self.isPeerSaved = isPeerSaved
         _currentAlias = State(initialValue: peer.alias)
+        _nameDraft = State(initialValue: peer.alias ?? "")
         _currentFavorite = State(initialValue: peer.isFavorite)
     }
 
     var body: some View {
         List {
             Section {
+                // The name is the field, edited where it is shown, so there
+                // is no second row saying the same name again under another
+                // word. The hint is not written out either — the avatar is
+                // the hint, drawn.
                 HStack(spacing: 16) {
                     PeerAvatar(hint: peer.identity.hint, diameter: 64)
                     VStack(alignment: .leading) {
-                        Text(displayedName).font(.title2.bold())
-                        Text(peer.isUlcpDevice ? "Companion radio identity" : "UMSH peer")
+                        if actions.updateAlias != nil {
+                            // Emptied, it goes back to the name the node
+                            // advertises for itself, which is what having no
+                            // name of our own means.
+                            TextField(advertisedName, text: $nameDraft)
+                                .font(.title2.bold())
+                                .textInputAutocapitalization(.words)
+                                .autocorrectionDisabled()
+                                .submitLabel(.done)
+                                .focused($isNamingFocused)
+                                .onSubmit { Task { await saveName() } }
+                                .onChange(of: isNamingFocused) { _, focused in
+                                    if !focused { Task { await saveName() } }
+                                }
+                                // Sitting there, this is a label and reads
+                                // like one — the advertised name in full
+                                // strength, not the gray of a field waiting
+                                // to be filled. The gray placeholder beneath
+                                // is uncovered only once editing starts,
+                                // where it means "nothing set".
+                                .overlay(alignment: .leading) {
+                                    if !isNamingFocused, nameDraft.isEmpty {
+                                        Text(advertisedName)
+                                            .font(.title2.bold())
+                                            .foregroundStyle(.primary)
+                                            .allowsHitTesting(false)
+                                    }
+                                }
+                        } else {
+                            Text(displayedName).font(.title2.bold())
+                        }
+                        // The node's own claim, refreshed whenever a fresher
+                        // identity lands — not a local category anyone has to
+                        // keep correct.
+                        Text(peer.isUlcpDevice ? "Companion radio identity" : peer.role.label)
                             .foregroundStyle(.secondary)
                     }
                 }
-                // The node's own claim, refreshed whenever a fresher identity
-                // lands — not a local category anyone has to keep correct.
-                LabeledContent("Role", value: peer.role.label)
-                LabeledContent("Node hint", value: peer.identity.hint.text)
                 // The one-line answer to "how does this phone reach it?",
                 // above the fold; the Route section below has the detail.
                 LabeledContent("Route", value: Self.routeSummary(route))
@@ -151,21 +188,6 @@ struct PeerDetailView: View {
                             }
                         }
                     ))
-                }
-                if actions.updateAlias != nil {
-                    LabeledContent("Alias") {
-                        Button {
-                            aliasDraft = currentAlias ?? ""
-                            isEditingAlias = true
-                        } label: {
-                            HStack(spacing: 6) {
-                                Text(currentAlias ?? "None")
-                                    .foregroundStyle(currentAlias == nil ? .secondary : .primary)
-                                Image(systemName: "pencil")
-                                    .font(.caption)
-                            }
-                        }
-                    }
                 }
             }
 
@@ -331,28 +353,25 @@ struct PeerDetailView: View {
                 }
             }
         }
-        .navigationTitle(displayedName)
+        // No navigation title: the name is already the first thing on the
+        // screen, beside the avatar, and printing it twice was reading as
+        // two different facts. Inline, so the bar does not go on reserving
+        // the height a large title would have taken — and with the list's
+        // own top margin dropped, since that margin exists to separate the
+        // content from a title this screen does not have.
+        .navigationBarTitleDisplayMode(.inline)
+        .contentMargins(.top, 0, for: .scrollContent)
+        // Return commits the name, and so does scrolling away from it. But
+        // leaving the screen outright is the case worth catching: a name
+        // typed and then navigated away from is one the operator believes
+        // they gave this node.
+        .scrollDismissesKeyboard(.interactively)
+        .onDisappear { Task { await saveName() } }
         // Anything inbound from this peer is what teaches the MAC a route, so
         // the cached route on screen is stale exactly when we hear from them.
         // `lastHeard` moves on every such event, which makes it the trigger.
         .task(id: RouteRefreshKey(address: peer.identity.canonicalAddress, lastHeard: peer.lastHeard)) {
             await loadRoute()
-        }
-        .alert("Alias", isPresented: $isEditingAlias) {
-            TextField("Alias", text: $aliasDraft)
-                .textInputAutocapitalization(.words)
-            Button("Save") {
-                Task { await saveAlias() }
-            }
-            if currentAlias != nil {
-                Button("Remove Alias", role: .destructive) {
-                    aliasDraft = ""
-                    Task { await saveAlias() }
-                }
-            }
-            Button("Cancel", role: .cancel) {}
-        } message: {
-            Text("The alias is a private name stored only on this phone.")
         }
         .navigationDestination(item: $openedConversation) { opened in
             if let conversation = binding(for: opened.id) {
@@ -600,20 +619,34 @@ struct PeerDetailView: View {
     }
 
     private var displayedName: String {
-        currentAlias
-            ?? peer.advertisedName
+        currentAlias ?? advertisedName
+    }
+
+    /// What the node calls itself, for a phone that has not renamed it.
+    private var advertisedName: String {
+        peer.advertisedName
             ?? (peer.isUlcpDevice ? "Companion radio" : peer.identity.hint.text)
     }
 
-    private func saveAlias() async {
+    /// Store what is in the name field, blank meaning no name of our own.
+    ///
+    /// Called on every commit — submitting and leaving the field both — so
+    /// it returns early when nothing moved rather than writing the same
+    /// name back each time the field loses focus.
+    private func saveName() async {
         guard let updateAlias = actions.updateAlias else { return }
-        let trimmed = aliasDraft.trimmingCharacters(in: .whitespacesAndNewlines)
+        let trimmed = nameDraft.trimmingCharacters(in: .whitespacesAndNewlines)
         let newAlias = trimmed.isEmpty ? nil : trimmed
+        guard newAlias != currentAlias else { return }
         if await updateAlias(peer, newAlias) {
             currentAlias = newAlias
+            nameDraft = newAlias ?? ""
         } else {
-            feedbackTitle = "Alias not saved"
-            feedbackMessage = "The alias could not be stored. Try again."
+            // Put the field back to what the peer is actually called, so it
+            // does not go on showing a name nothing stored.
+            nameDraft = currentAlias ?? ""
+            feedbackTitle = "Name not saved"
+            feedbackMessage = "The name could not be stored. Try again."
             showsFeedback = true
         }
     }
