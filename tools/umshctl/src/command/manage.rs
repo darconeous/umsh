@@ -370,8 +370,10 @@ where
         .peer(target)
         .await
         .map_err(|error| anyhow!("registering the device as a peer: {error:?}"))?;
-    // The first token has only to be unpredictable; the engine keeps
-    // every one after it distinct from the last.
+    // The first token has only to be unpredictable; the manager keeps
+    // every one after it distinct from all of its own, and the device
+    // forgets this process's tokens long before another random seed
+    // could land on them.
     let mut seed = [0u8; 2];
     rng().fill_bytes(&mut seed);
     let manager = NodeManager::new(peer, u16::from_be_bytes(seed));

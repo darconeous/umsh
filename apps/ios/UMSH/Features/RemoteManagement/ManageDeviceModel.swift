@@ -117,6 +117,10 @@ final class ManageDeviceModel {
     private(set) var propertiesRemaining: UInt32?
     /// What went wrong, in a sentence an operator can act on.
     var problem: String?
+    /// Values the device rejected on the last apply, by property — each a
+    /// sentence for the row that offered the value. Cleared by the next
+    /// apply or refresh of that category.
+    private(set) var writeRefusals: [UlcpManageCategory: [UInt32: String]] = [:]
 
     let address: String
     /// What to call the device before it has said. The peer's own name.
@@ -270,6 +274,7 @@ final class ManageDeviceModel {
     func refreshCategory(_ category: UlcpManageCategory) async {
         let properties = properties(of: category)
         guard !properties.isEmpty, let card else { return }
+        writeRefusals[category] = nil
         await run { [self] in
             let answers = try await fetch(properties, multiHint: card.supportsMulti)
             let reported = Self.values(in: answers)
@@ -304,6 +309,7 @@ final class ManageDeviceModel {
     ) async -> Bool {
         guard !dirty.isEmpty else { return true }
         var answered = false
+        writeRefusals[category] = nil
         await run { [self] in
             let writes = try ulcpDirtyWrites(
                 desired: desired,
@@ -316,21 +322,42 @@ final class ManageDeviceModel {
             readings[category]?.absorb(echoed, at: Date(), fromAir: true)
 
             // A status where a value belonged is a setting the device would
-            // not take. The device stops at the first refusal, so the writes
-            // behind it never ran and nothing is saved: saying so is the
-            // difference between a device left half-changed and one an
-            // operator knows to look at.
+            // not take. Each rejection goes on the row that offered the
+            // value; nothing is saved, and saying so is the difference
+            // between a device left half-changed and one an operator knows
+            // to look at.
             let refused = answers.filter { $0.value == nil }
             guard refused.isEmpty else {
-                problem = """
-                    The device refused \(refused.count) of \(writes.count) settings. \
-                    What it did take is running but not saved.
-                    """
+                writeRefusals[category] = refused.reduce(into: [:]) { map, answer in
+                    map[answer.propertyId] = Self.refusalText(answer.statusCode)
+                }
+                problem = "Settings the device did accept are running but not saved."
                 return
             }
             try await management.save(address)
         }
         return answered
+    }
+
+    /// Why the device would not take a value, said for the row that
+    /// offered it.
+    private static func refusalText(_ status: UInt32?) -> String {
+        guard let status else { return "The device rejected this value." }
+        let reason = switch status {
+        case 2, 13: // UNIMPLEMENTED, PROP_NOT_FOUND
+            "the device does not implement this setting"
+        case 3: // INVALID_ARGUMENT
+            "the device says it is out of range"
+        case 4: // INVALID_STATE
+            "the device's current state does not allow it"
+        case 11: // NOMEM
+            "it is too large for the device to hold"
+        case 10, 12: // IN_PROGRESS, BUSY
+            "the device was busy — try again"
+        default:
+            "the device answered \(ulcpStatusName(status: status))"
+        }
+        return "Rejected: \(reason)."
     }
 
     // MARK: - Peers and administrators
@@ -391,6 +418,7 @@ final class ManageDeviceModel {
         card = nil
         cardAsOf = nil
         readings.removeAll()
+        writeRefusals.removeAll()
     }
 
     // MARK: - Running one operation at a time

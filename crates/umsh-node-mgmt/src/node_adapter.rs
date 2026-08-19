@@ -154,6 +154,18 @@ impl<M: MacBackend> NodeManager<M> {
         self.stray.get()
     }
 
+    /// The counter behind the last token any exchange here consumed,
+    /// the outstanding one included.
+    ///
+    /// A caller that builds one manager per operation seeds the next one
+    /// from this, so no token is ever issued twice against a device that
+    /// holds answered tokens against retransmission.
+    pub fn counter(&self) -> u16 {
+        self.exchange
+            .as_ref()
+            .map_or(self.counter, Exchange::counter)
+    }
+
     /// The device's most recent estimate of octets not yet returned,
     /// present only during a continued read.
     pub fn remaining(&self) -> Option<u32> {
@@ -257,6 +269,13 @@ impl<M: MacBackend> NodeManager<M> {
     }
 
     fn settle(&mut self, outcome: Outcome) -> Progress {
+        // A continued read rotated tokens the manager's own counter never
+        // saw. Taking the exchange's final count back is what keeps the
+        // next `begin` from reissuing one of them — which the device
+        // would answer with the old exchange's retained response.
+        if let Some(exchange) = &self.exchange {
+            self.counter = exchange.counter();
+        }
         self.exchange = None;
         self.ticket = None;
         if let Outcome::Replied { len } = outcome {

@@ -2693,12 +2693,19 @@ async fn service_management<M: MacBackend>(
     job: &mut Option<ManagementJob<M>>,
     now_ms: u64,
     events: &NotifyingSender<MobileMeshManagementEventRecord>,
+    token: &mut u16,
 ) {
     let Some(active) = job.as_mut() else {
         return;
     };
     loop {
-        match active.manager.service(now_ms).await {
+        let progress = active.manager.service(now_ms).await;
+        // The service call may have advanced the token ledger, and the
+        // next operation's manager is seeded from here — a token issued
+        // twice is answered with the earlier exchange's retained
+        // response instead of running.
+        *token = active.manager.counter();
+        match progress {
             Err(_) => {
                 let _ = events.send(active.event(MobileMeshManagementOutcome::Failed));
                 *job = None;
@@ -2938,6 +2945,14 @@ async fn run_worker(
     // One device at a time: an administrator has one exchange outstanding
     // with a device, and a phone has no reason to be managing two at once.
     let mut management: Option<ManagementJob<_>> = None;
+    // One advancing token counter for every management exchange this
+    // worker will ever run. An operation consumes as many tokens as it
+    // has batches and continuations, and a device holds every answered
+    // token against retransmission — a request reusing one is answered
+    // with the old exchange's response and never runs. Seeded randomly
+    // so a fresh session cannot land on tokens a device still retains
+    // from the previous one.
+    let mut management_token: u16 = rand::random();
     let mut in_flight_chat = Vec::<InFlightChatTransmission>::new();
     // How each channel member was last reached, so an identity request can be
     // routed by evidence rather than flooded at the default budget.
@@ -3111,24 +3126,26 @@ async fn run_worker(
                                 continue;
                             }
                             let now_ms = handle.now_ms().await;
-                            // The token only has to differ from the last
-                            // exchange's with this device; the operation
-                            // identifier already counts.
-                            let seed = operation_id as u16;
                             management = start_management(
                                 &node,
                                 operation_id,
                                 peer,
                                 request,
                                 now_ms,
-                                seed,
+                                management_token,
                             )
                             .await;
                             if management.is_none() {
                                 emit_management_failure(&management_events, operation_id, &peer);
                                 continue;
                             }
-                            service_management(&mut management, now_ms, &management_events).await;
+                            service_management(
+                                &mut management,
+                                now_ms,
+                                &management_events,
+                                &mut management_token,
+                            )
+                            .await;
                             if handle.service_counter_persistence().await.is_err() {
                                 return;
                             }
@@ -3732,7 +3749,13 @@ async fn run_worker(
                         // a crawl all leave on this tick. Persistence is
                         // serviced alongside because each of those is a
                         // real authenticated send.
-                        service_management(&mut management, now_ms, &management_events).await;
+                        service_management(
+                            &mut management,
+                            now_ms,
+                            &management_events,
+                            &mut management_token,
+                        )
+                        .await;
                         if handle.service_counter_persistence().await.is_err() {
                             return;
                         }

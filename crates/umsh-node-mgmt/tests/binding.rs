@@ -569,6 +569,34 @@ fn a_retransmission_is_answered_without_executing_again() {
     assert_eq!(device.executed, 1, "the request did not run twice");
 }
 
+/// The other face of at-most-once, and why a token may never be issued
+/// twice: a *different* request arriving under an already-answered token
+/// is indistinguishable from a retransmission. The device replays the
+/// retained answer, the new request never runs, and the administrator
+/// walks away holding the old exchange's values as if they answered the
+/// new one.
+#[test]
+fn a_reused_token_replays_the_past_and_runs_nothing() {
+    let mut device = managed();
+    let mut buf = [0u8; 64];
+
+    let len = frame::prop_get(&mut buf, 0, prop::DEV_NAME).unwrap();
+    let read = converse(&mut device, &buf[..len], 7);
+    assert_eq!(value_of(&read.reply), b"Simulated Device");
+    assert_eq!(device.executed, 1);
+
+    let len = frame::prop_set(&mut buf, 0, prop::DEV_NAME, b"Windy Gap").unwrap();
+    let collided = converse(&mut device, &buf[..len], 7);
+    assert!(matches!(collided.outcome, Outcome::Replied { .. }));
+    assert_eq!(device.executed, 1, "the write never ran");
+    assert_eq!(
+        value_of(&collided.reply),
+        b"Simulated Device",
+        "and what came back was the old read's answer"
+    );
+    assert_eq!(device.local_get(prop::DEV_NAME), b"Simulated Device");
+}
+
 /// A lost response costs a round trip and nothing else: the retry finds
 /// the retained answer waiting.
 #[test]

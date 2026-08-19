@@ -50,23 +50,28 @@ struct RemoteGnssScreen: View {
     @State private var edits = Edits()
 
     private var reading: RemoteCategoryReading? { model.readings[.gnss] }
+    private var problems: [UInt32: String] { model.writeRefusals[.gnss] ?? [:] }
 
     var body: some View {
         Form {
             Section("Receiver") {
                 if edits.enabled.isKnown {
-                    Toggle(
-                        "Receiver enabled",
-                        isOn: $edits.enabled.edited.replacingNil(with: false)
-                    )
+                    Toggle(isOn: $edits.enabled.edited.replacingNil(with: false)) {
+                        RemoteFieldTitle(
+                            "Receiver enabled",
+                            problem: problems[edits.enabled.property]
+                        )
+                    }
                 } else {
                     RemoteReadOnlyToggle("Receiver enabled", isOn: nil)
                 }
                 if edits.timeTrust.isKnown {
-                    Toggle(
-                        "Trust the receiver's clock",
-                        isOn: $edits.timeTrust.edited.replacingNil(with: false)
-                    )
+                    Toggle(isOn: $edits.timeTrust.edited.replacingNil(with: false)) {
+                        RemoteFieldTitle(
+                            "Trust the receiver's clock",
+                            problem: problems[edits.timeTrust.property]
+                        )
+                    }
                 } else {
                     RemoteReadOnlyToggle("Trust the receiver's clock", isOn: nil)
                 }
@@ -145,11 +150,8 @@ struct RemoteGnssScreen: View {
         }
 
         var desired: UlcpDevicePropertiesRecord {
-            // Based on what the device last reported, not on nothing: a
-            // whole-write group can reach across screens, and its members
-            // over on another one still have to be stated. Only the dirty
-            // set and its groups are written, so carrying the rest here
-            // cannot write anything stale back.
+            // Only the dirty set is written; the rest of the record is
+            // carried for completeness and never reaches the air.
             var desired = held
             desired.gnssEnabled = enabled.value
             desired.gnssTimeTrust = timeTrust.value

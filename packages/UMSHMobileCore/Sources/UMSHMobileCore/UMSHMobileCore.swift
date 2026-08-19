@@ -12762,10 +12762,6 @@ public func ulcpCategoryProperties(category: UlcpManageCategory, capabilities: D
  * else in `desired` is ignored, so a record filled in from a stale
  * cache cannot write stale values back.
  *
- * Members of a whole-write group come along with any one of them —
- * writing half a modem profile leaves the device running a
- * configuration nobody asked for.
- *
  * The radio is bracketed when any of its parameters move: the PHY goes
  * down first and comes back up last, so a device is never asked to
  * change the frequency it is transmitting on.
@@ -13086,7 +13082,7 @@ private let initializationResult: InitializationResult = {
     if (uniffi_umsh_mobile_core_checksum_func_ulcp_category_properties() != 65528) {
         return InitializationResult.apiChecksumMismatch
     }
-    if (uniffi_umsh_mobile_core_checksum_func_ulcp_dirty_writes() != 10269) {
+    if (uniffi_umsh_mobile_core_checksum_func_ulcp_dirty_writes() != 41791) {
         return InitializationResult.apiChecksumMismatch
     }
     if (uniffi_umsh_mobile_core_checksum_func_ulcp_encode_location() != 15462) {

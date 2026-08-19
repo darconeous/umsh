@@ -5,10 +5,8 @@ import UMSHMobileCore
 /// has made of it.
 ///
 /// A field the device has never answered for stays `nil` and renders as
-/// read-only. That is not squeamishness: several of these travel in
-/// whole-write groups, so writing one means stating all of them, and a
-/// modem profile assembled half from a device and half from a default is a
-/// device left on a configuration nobody chose.
+/// read-only: there is no baseline to compare an edit against, so nothing
+/// typed into it could ever be told apart from a value nobody entered.
 struct RemoteField<Value: Equatable & Sendable>: Sendable {
     let property: UInt32
     let reported: Value?
@@ -22,8 +20,7 @@ struct RemoteField<Value: Equatable & Sendable>: Sendable {
 
     var isKnown: Bool { reported != nil }
     var isDirty: Bool { edited != reported }
-    /// What to write: the edit, falling back to what the device already
-    /// holds so a whole-write group can state its untouched members.
+    /// The edit, falling back to what the device already holds.
     var value: Value? { edited ?? reported }
 
     /// Fold a typed field's text back in, once it has parsed.
@@ -67,12 +64,15 @@ struct RemoteRadioEditor: View {
     @State private var edits = Edits()
 
     private var reading: RemoteCategoryReading? { model.readings[.radio] }
+    private var problems: [UInt32: String] { model.writeRefusals[.radio] ?? [:] }
 
     var body: some View {
         Form {
             Section {
                 if edits.enabled.isKnown {
-                    Toggle("Radio enabled", isOn: $edits.enabled.edited.replacingNil(with: true))
+                    Toggle(isOn: $edits.enabled.edited.replacingNil(with: true)) {
+                        RemoteFieldTitle("Radio enabled", problem: problems[edits.enabled.property])
+                    }
                 } else {
                     RemoteReadOnlyToggle("Radio enabled", isOn: nil)
                 }
@@ -80,14 +80,16 @@ struct RemoteRadioEditor: View {
                     "Frequency",
                     unit: "kHz",
                     text: $edits.frequency,
-                    isKnown: edits.frequencyField.isKnown
+                    isKnown: edits.frequencyField.isKnown,
+                    problem: problems[edits.frequencyField.property]
                 )
                 RemoteNumberField(
                     "Transmit power",
                     unit: "dBm",
                     text: $edits.transmitPower,
                     isKnown: edits.transmitPowerField.isKnown,
-                    signed: true
+                    signed: true,
+                    problem: problems[edits.transmitPowerField.property]
                 )
             } header: {
                 Text("Radio")
@@ -97,15 +99,27 @@ struct RemoteRadioEditor: View {
 
             if model.card?.supportsLora == true {
                 Section {
-                    RemotePicker("Bandwidth", selection: $edits.bandwidth.edited) {
+                    RemotePicker(
+                        "Bandwidth",
+                        selection: $edits.bandwidth.edited,
+                        problem: problems[edits.bandwidth.property]
+                    ) {
                         ForEach(Self.bandwidths, id: \.self) { hertz in
                             Text(Self.bandwidthLabel(hertz)).tag(hertz)
                         }
                     }
-                    RemotePicker("Spreading factor", selection: $edits.spreadingFactor.edited) {
+                    RemotePicker(
+                        "Spreading factor",
+                        selection: $edits.spreadingFactor.edited,
+                        problem: problems[edits.spreadingFactor.property]
+                    ) {
                         ForEach(UInt8(5) ... UInt8(12), id: \.self) { Text("SF\($0)").tag($0) }
                     }
-                    RemotePicker("Coding rate", selection: $edits.codingRate.edited) {
+                    RemotePicker(
+                        "Coding rate",
+                        selection: $edits.codingRate.edited,
+                        problem: problems[edits.codingRate.property]
+                    ) {
                         ForEach(UInt8(5) ... UInt8(8), id: \.self) { Text("4/\($0)").tag($0) }
                     }
                 } header: {
@@ -118,7 +132,11 @@ struct RemoteRadioEditor: View {
                     if let used = reading?.properties.dutyCycleNow {
                         LabeledContent("Past-hour usage", value: Self.dutyLabel(used))
                     }
-                    RemotePicker("Transmit limit", selection: $edits.dutyLimit.edited) {
+                    RemotePicker(
+                        "Transmit limit",
+                        selection: $edits.dutyLimit.edited,
+                        problem: problems[edits.dutyLimit.property]
+                    ) {
                         ForEach(Self.dutyLimits, id: \.self) { limit in
                             Text(
                                 limit == UInt16.max ? "Disabled" : Self.dutyLabel(limit)
@@ -217,11 +235,8 @@ struct RemoteRadioEditor: View {
 
         var desired: UlcpDevicePropertiesRecord {
             let typed = self.typed
-            // Based on what the device last reported, not on nothing: a
-            // whole-write group can reach across screens, and its members
-            // over on another one still have to be stated. Only the dirty
-            // set and its groups are written, so carrying the rest here
-            // cannot write anything stale back.
+            // Only the dirty set is written; the rest of the record is
+            // carried for completeness and never reaches the air.
             var desired = held
             desired.phyEnabled = typed.enabled.value
             desired.frequencyKhz = typed.frequencyField.value
@@ -265,13 +280,19 @@ struct RemoteIdentityEditor: View {
     @State private var edits = Edits()
 
     private var reading: RemoteCategoryReading? { model.readings[.identity] }
+    private var problems: [UInt32: String] { model.writeRefusals[.identity] ?? [:] }
 
     var body: some View {
         Form {
             if model.card?.supportsDeviceName == true {
                 Section {
                     if edits.name.isKnown {
-                        TextField("Name", text: $edits.nameText)
+                        VStack(alignment: .leading, spacing: 2) {
+                            TextField("Name", text: $edits.nameText)
+                            if let problem = problems[edits.name.property] {
+                                Text(problem).font(.caption).foregroundStyle(.red)
+                            }
+                        }
                     } else {
                         LabeledContent("Name", value: "Not read")
                     }
@@ -284,20 +305,34 @@ struct RemoteIdentityEditor: View {
 
             if model.card?.supportsIdent == true {
                 Section("Advertised identity") {
-                    RemotePicker("Role", selection: $edits.role.edited) {
+                    RemotePicker(
+                        "Role",
+                        selection: $edits.role.edited,
+                        problem: problems[edits.role.property]
+                    ) {
                         Text("Derive from what it does").tag(UInt8?.none)
                         ForEach(PeerRole.selectable) { role in
                             Text(role.label).tag(role.roleCode)
                         }
                     }
                     if edits.mobile.isKnown {
-                        Toggle("Device moves around", isOn: $edits.mobile.edited.replacingNil(with: false))
+                        Toggle(isOn: $edits.mobile.edited.replacingNil(with: false)) {
+                            RemoteFieldTitle(
+                                "Device moves around",
+                                problem: problems[edits.mobile.property]
+                            )
+                        }
                     } else {
                         RemoteReadOnlyToggle("Device moves around", isOn: nil)
                     }
                     if model.card?.supportsDeviceIdentity == true {
                         if edits.discoverable.isKnown {
-                            Toggle("Discoverable", isOn: $edits.discoverable.edited.replacingNil(with: false))
+                            Toggle(isOn: $edits.discoverable.edited.replacingNil(with: false)) {
+                                RemoteFieldTitle(
+                                    "Discoverable",
+                                    problem: problems[edits.discoverable.property]
+                                )
+                            }
                         } else {
                             RemoteReadOnlyToggle("Discoverable", isOn: nil)
                         }
@@ -309,18 +344,31 @@ struct RemoteIdentityEditor: View {
 
             if model.card?.supportsAdvert == true {
                 Section {
-                    RemotePicker("Beacon", selection: $edits.beaconInterval.edited) {
+                    RemotePicker(
+                        "Beacon",
+                        selection: $edits.beaconInterval.edited,
+                        problem: problems[edits.beaconInterval.property]
+                    ) {
                         ForEach(beaconIntervalChoices, id: \.self) {
                             Text(formattedAnnouncementInterval($0)).tag($0)
                         }
                     }
-                    RemotePicker("Identity", selection: $edits.advertInterval.edited) {
+                    RemotePicker(
+                        "Identity",
+                        selection: $edits.advertInterval.edited,
+                        problem: problems[edits.advertInterval.property]
+                    ) {
                         ForEach(advertisementIntervalChoices, id: \.self) {
                             Text(formattedAnnouncementInterval($0)).tag($0)
                         }
                     }
                     if edits.startupBeacon.isKnown {
-                        Toggle("Beacon at startup", isOn: $edits.startupBeacon.edited.replacingNil(with: false))
+                        Toggle(isOn: $edits.startupBeacon.edited.replacingNil(with: false)) {
+                            RemoteFieldTitle(
+                                "Beacon at startup",
+                                problem: problems[edits.startupBeacon.property]
+                            )
+                        }
                     } else {
                         RemoteReadOnlyToggle("Beacon at startup", isOn: nil)
                     }
@@ -357,7 +405,8 @@ struct RemoteIdentityEditor: View {
                     text: $edits.latitude,
                     isKnown: edits.location.isKnown,
                     signed: true,
-                    decimal: true
+                    decimal: true,
+                    problem: problems[edits.location.property]
                 )
                 RemoteNumberField(
                     "Longitude",
@@ -372,19 +421,26 @@ struct RemoteIdentityEditor: View {
                     unit: "m",
                     text: $edits.altitudeText,
                     isKnown: edits.altitude.isKnown,
-                    signed: true
+                    signed: true,
+                    problem: problems[edits.altitude.property]
                 )
             }
             if model.card?.supportsGnss == true {
                 if edits.selfPositions.isKnown {
-                    Toggle(
-                        "Update position from GNSS",
-                        isOn: $edits.selfPositions.edited.replacingNil(with: false)
-                    )
+                    Toggle(isOn: $edits.selfPositions.edited.replacingNil(with: false)) {
+                        RemoteFieldTitle(
+                            "Update position from GNSS",
+                            problem: problems[edits.selfPositions.property]
+                        )
+                    }
                 } else {
                     RemoteReadOnlyToggle("Update position from GNSS", isOn: nil)
                 }
-                RemotePicker("Reported precision", selection: $edits.precision.edited) {
+                RemotePicker(
+                    "Reported precision",
+                    selection: $edits.precision.edited,
+                    problem: problems[edits.precision.property]
+                ) {
                     ForEach(UInt8(1) ... UInt8(7), id: \.self) { precision in
                         Text(Self.precisionLabel(precision)).tag(precision)
                     }
@@ -528,11 +584,8 @@ struct RemoteIdentityEditor: View {
 
         var desired: UlcpDevicePropertiesRecord {
             let typed = self.typed
-            // Based on what the device last reported, not on nothing: a
-            // whole-write group can reach across screens, and its members
-            // over on another one still have to be stated. Only the dirty
-            // set and its groups are written, so carrying the rest here
-            // cannot write anything stale back.
+            // Only the dirty set is written; the rest of the record is
+            // carried for completeness and never reaches the air.
             var desired = held
             desired.deviceName = typed.name.value
             desired.identRole = typed.role.value ?? nil
@@ -575,12 +628,18 @@ struct RemoteRepeaterEditor: View {
     @State private var newRegion = ""
 
     private var reading: RemoteCategoryReading? { model.readings[.repeater] }
+    private var problems: [UInt32: String] { model.writeRefusals[.repeater] ?? [:] }
 
     var body: some View {
         Form {
             Section {
                 if edits.enabled.isKnown {
-                    Toggle("Forward for others", isOn: $edits.enabled.edited.replacingNil(with: false))
+                    Toggle(isOn: $edits.enabled.edited.replacingNil(with: false)) {
+                        RemoteFieldTitle(
+                            "Forward for others",
+                            problem: problems[edits.enabled.property]
+                        )
+                    }
                 } else {
                     RemoteReadOnlyToggle("Forward for others", isOn: nil)
                 }
@@ -621,15 +680,24 @@ struct RemoteRepeaterEditor: View {
             } header: {
                 Text("Flood regions")
             } footer: {
-                // An empty list meaning "everything" is the one thing here
-                // nobody would guess.
-                if edits.regions.edited?.isEmpty == true {
-                    Text("With none listed, the device forwards every flood it hears.")
+                VStack(alignment: .leading, spacing: 4) {
+                    if let problem = problems[edits.regions.property] {
+                        Text(problem).foregroundStyle(.red)
+                    }
+                    // An empty list meaning "everything" is the one thing
+                    // here nobody would guess.
+                    if edits.regions.edited?.isEmpty == true {
+                        Text("With none listed, the device forwards every flood it hears.")
+                    }
                 }
             }
 
             Section {
-                RemotePicker("Tag untagged floods", selection: $edits.defaultRegion.edited) {
+                RemotePicker(
+                    "Tag untagged floods",
+                    selection: $edits.defaultRegion.edited,
+                    problem: problems[edits.defaultRegion.property]
+                ) {
                     Text("Leave untagged").tag(Data?.none)
                     // The device's own choice is offered whether or not it
                     // is still in the list above: deleting a region the
@@ -649,14 +717,16 @@ struct RemoteRepeaterEditor: View {
                     unit: "dBm",
                     text: $edits.minRssiText,
                     isKnown: edits.minRssi.isKnown,
-                    signed: true
+                    signed: true,
+                    problem: problems[edits.minRssi.property]
                 )
                 RemoteNumberField(
                     "Minimum SNR",
                     unit: "dB",
                     text: $edits.minSnrText,
                     isKnown: edits.minSnr.isKnown,
-                    signed: true
+                    signed: true,
+                    problem: problems[edits.minSnr.property]
                 )
             } header: {
                 Text("Forwarding thresholds")
@@ -758,11 +828,8 @@ struct RemoteRepeaterEditor: View {
 
         var desired: UlcpDevicePropertiesRecord {
             let typed = self.typed
-            // Based on what the device last reported, not on nothing: a
-            // whole-write group can reach across screens, and its members
-            // over on another one still have to be stated. Only the dirty
-            // set and its groups are written, so carrying the rest here
-            // cannot write anything stale back.
+            // Only the dirty set is written; the rest of the record is
+            // carried for completeness and never reaches the air.
             var desired = held
             desired.repeaterEnabled = typed.enabled.value
             desired.repeaterRegions = typed.regions.value
@@ -776,6 +843,29 @@ struct RemoteRepeaterEditor: View {
 
 // MARK: - Shared controls
 
+/// A row's title, turned red and explained when the device rejected the
+/// value the operator offered for it.
+struct RemoteFieldTitle: View {
+    let title: String
+    let problem: String?
+
+    init(_ title: String, problem: String?) {
+        self.title = title
+        self.problem = problem
+    }
+
+    var body: some View {
+        if let problem {
+            VStack(alignment: .leading, spacing: 2) {
+                Text(title).foregroundStyle(.red)
+                Text(problem).font(.caption).foregroundStyle(.red)
+            }
+        } else {
+            Text(title)
+        }
+    }
+}
+
 /// A typed setting, editable only once the device has said what it holds.
 struct RemoteNumberField: View {
     let title: String
@@ -784,6 +874,7 @@ struct RemoteNumberField: View {
     let isKnown: Bool
     var signed = false
     var decimal = false
+    var problem: String?
 
     init(
         _ title: String,
@@ -791,7 +882,8 @@ struct RemoteNumberField: View {
         text: Binding<String>,
         isKnown: Bool,
         signed: Bool = false,
-        decimal: Bool = false
+        decimal: Bool = false,
+        problem: String? = nil
     ) {
         self.title = title
         self.unit = unit
@@ -799,11 +891,12 @@ struct RemoteNumberField: View {
         self.isKnown = isKnown
         self.signed = signed
         self.decimal = decimal
+        self.problem = problem
     }
 
     var body: some View {
         if isKnown {
-            LabeledContent(title) {
+            LabeledContent {
                 HStack(spacing: 5) {
                     TextField(title, text: $text)
                         .keyboardType(
@@ -813,6 +906,8 @@ struct RemoteNumberField: View {
                         .accessibilityLabel("\(title) in \(unit)")
                     Text(unit).foregroundStyle(.secondary)
                 }
+            } label: {
+                RemoteFieldTitle(title, problem: problem)
             }
         } else {
             LabeledContent(title, value: "Not read")
@@ -826,21 +921,26 @@ struct RemotePicker<Value: Hashable & Sendable, Content: View>: View {
     /// What the device holds, which is also where an edit goes. Nil until
     /// the device has said, which is when this goes read-only.
     @Binding var selection: Value?
+    var problem: String?
     @ViewBuilder let content: () -> Content
 
     init(
         _ title: String,
         selection: Binding<Value?>,
+        problem: String? = nil,
         @ViewBuilder content: @escaping () -> Content
     ) {
         self.title = title
         _selection = selection
+        self.problem = problem
         self.content = content
     }
 
     var body: some View {
         if let value = selection {
-            Picker(title, selection: $selection.replacingNil(with: value), content: content)
+            Picker(selection: $selection.replacingNil(with: value), content: content) {
+                RemoteFieldTitle(title, problem: problem)
+            }
         } else {
             LabeledContent(title, value: "Not read")
         }

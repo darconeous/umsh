@@ -2853,48 +2853,7 @@ pub fn ulcp_category_properties(
         }
     }
     properties.retain(|&key| umsh_ulcp::ids::admin_reachable(key));
-    // A screen that can change one member of a whole-write group has to be
-    // able to state the rest of it, and it can only state what it read. The
-    // groups do not follow the categories — the receiver's own switches sit
-    // with the fix, while the policy for what the device does with a fix
-    // sits with the identity it advertises — so the reads are widened here
-    // rather than by hand in each list, where the two would drift apart.
-    for group in WHOLE_WRITE_GROUPS {
-        if !group.iter().any(|key| properties.contains(key)) {
-            continue;
-        }
-        for key in group {
-            if !properties.contains(key)
-                && umsh_ulcp::ids::admin_reachable(*key)
-                && capability_for(*key).is_none_or(has)
-            {
-                properties.push(*key);
-            }
-        }
-    }
     Ok(properties)
-}
-
-/// The capability a property is gated behind, where it has one.
-///
-/// Only the members of the whole-write groups need answering: this exists
-/// so widening a category's reads cannot ask a device for something its
-/// capabilities say it does not have.
-fn capability_for(property: u32) -> Option<u32> {
-    match property {
-        prop::PHY_LORA_BW | prop::PHY_LORA_SF | prop::PHY_LORA_CR => Some(cap::PHY_LORA),
-        prop::MAC_REPEATER_ENABLED
-        | prop::MAC_REPEATER_REGIONS
-        | prop::MAC_REPEATER_DEFAULT_REGION
-        | prop::MAC_REPEATER_MIN_RSSI
-        | prop::MAC_REPEATER_MIN_SNR => Some(cap::REPEATER),
-        prop::GNSS_ENABLED
-        | prop::GNSS_IDENT_UPDATE
-        | prop::GNSS_IDENT_PRECISION
-        | prop::GNSS_TIME_TRUST => Some(cap::GNSS),
-        prop::ADVERT_INTERVAL | prop::BEACON_INTERVAL | prop::STARTUP_BEACON => Some(cap::ADVERT),
-        _ => None,
-    }
 }
 
 /// What a device is, as opposed to how it is configured.
@@ -3206,10 +3165,6 @@ fn decode_optional_altitude(value: &[u8]) -> Result<Option<i32>, MobileError> {
 /// else in `desired` is ignored, so a record filled in from a stale
 /// cache cannot write stale values back.
 ///
-/// Members of a whole-write group come along with any one of them —
-/// writing half a modem profile leaves the device running a
-/// configuration nobody asked for.
-///
 /// The radio is bracketed when any of its parameters move: the PHY goes
 /// down first and comes back up last, so a device is never asked to
 /// change the frequency it is transmitting on.
@@ -3219,11 +3174,6 @@ pub fn ulcp_dirty_writes(
     dirty_property_ids: Vec<u32>,
 ) -> Result<Vec<MobileMeshPropertyWriteRecord>, MobileError> {
     let mut dirty: Vec<u32> = dirty_property_ids;
-    for group in WHOLE_WRITE_GROUPS {
-        if group.iter().any(|key| dirty.contains(key)) {
-            dirty.extend_from_slice(group);
-        }
-    }
     dirty.sort_unstable();
     dirty.dedup();
 
@@ -7450,44 +7400,28 @@ mod tests {
         );
     }
 
-    /// The bug this pins: the GNSS screen switches the receiver, the
-    /// Identity screen decides what the device does with a fix, and all four
-    /// of those properties are written as one group. A screen that reads
-    /// only its own half cannot state the group, so the write fails before
-    /// it reaches the air.
+    /// The bug this pins: an edit to one property must not drag its
+    /// neighbors into the write. A device holding a value nobody touched
+    /// keeps it because nothing was sent, not because the same value was
+    /// sent back — restating it can be refused, and a refusal abandons
+    /// the settings someone actually changed.
     #[test]
-    fn a_category_reads_every_group_it_could_have_to_write() {
-        let caps = managed_capabilities();
-        for category in [
-            UlcpManageCategory::Power,
-            UlcpManageCategory::Radio,
-            UlcpManageCategory::Identity,
-            UlcpManageCategory::Gnss,
-            UlcpManageCategory::Repeater,
-            UlcpManageCategory::PeerNodes,
-        ] {
-            let asked = ulcp_category_properties(category, caps.clone()).unwrap();
-            for group in WHOLE_WRITE_GROUPS {
-                if !group.iter().any(|key| asked.contains(key)) {
-                    continue;
-                }
-                for key in group {
-                    assert!(
-                        asked.contains(key),
-                        "{category:?} can write property {key} but never reads it"
-                    );
-                }
-            }
-        }
-        let gnss = ulcp_category_properties(UlcpManageCategory::Gnss, caps.clone()).unwrap();
-        assert!(
-            gnss.contains(&prop::GNSS_IDENT_UPDATE),
-            "the receiver's screen reads the identity's policy to write beside it"
-        );
-        let identity = ulcp_category_properties(UlcpManageCategory::Identity, caps).unwrap();
-        assert!(
-            identity.contains(&prop::GNSS_ENABLED),
-            "and the identity screen reads the receiver's switch for the same reason"
+    fn only_what_was_edited_is_written() {
+        let written = dirty(
+            UlcpDevicePropertiesRecord {
+                gnss_enabled: Some(true),
+                gnss_ident_update: Some(false),
+                gnss_ident_precision: Some(4),
+                gnss_time_trust: Some(true),
+                ..Default::default()
+            },
+            &[prop::GNSS_IDENT_UPDATE],
+        )
+        .unwrap();
+        assert_eq!(
+            written,
+            vec![(prop::GNSS_IDENT_UPDATE, vec![0])],
+            "the other three GNSS settings were not edited, so they do not travel"
         );
     }
 
@@ -7711,7 +7645,7 @@ mod tests {
     }
 
     #[test]
-    fn a_modem_profile_is_written_whole_even_when_one_knob_moved() {
+    fn a_modem_knob_travels_alone_inside_the_bracket() {
         let written = dirty(
             UlcpDevicePropertiesRecord {
                 phy_enabled: Some(true),
@@ -7726,14 +7660,8 @@ mod tests {
         let keys: Vec<u32> = written.iter().map(|(key, _)| *key).collect();
         assert_eq!(
             keys,
-            vec![
-                prop::PHY_ENABLED,
-                prop::PHY_LORA_BW,
-                prop::PHY_LORA_SF,
-                prop::PHY_LORA_CR,
-                prop::PHY_ENABLED,
-            ],
-            "half a modem profile leaves the device on a configuration nobody asked for"
+            vec![prop::PHY_ENABLED, prop::PHY_LORA_SF, prop::PHY_ENABLED],
+            "the untouched bandwidth and coding rate stay home"
         );
         assert_eq!(written.first().unwrap().1, vec![0], "the radio goes down");
         assert_eq!(
@@ -7857,7 +7785,7 @@ mod tests {
     }
 
     #[test]
-    fn a_forwarding_policy_is_written_whole() {
+    fn a_forwarding_policy_edit_travels_alone() {
         let written = dirty(
             UlcpDevicePropertiesRecord {
                 repeater_enabled: Some(true),
@@ -7867,24 +7795,18 @@ mod tests {
                 repeater_min_snr_db: None,
                 ..Default::default()
             },
-            &[prop::MAC_REPEATER_MIN_RSSI],
+            &[prop::MAC_REPEATER_MIN_RSSI, prop::MAC_REPEATER_REGIONS],
         )
         .unwrap();
         assert_eq!(
             written.iter().map(|(key, _)| *key).collect::<Vec<_>>(),
-            vec![
-                prop::MAC_REPEATER_ENABLED,
-                prop::MAC_REPEATER_REGIONS,
-                prop::MAC_REPEATER_DEFAULT_REGION,
-                prop::MAC_REPEATER_MIN_RSSI,
-                prop::MAC_REPEATER_MIN_SNR,
-            ]
+            vec![prop::MAC_REPEATER_REGIONS, prop::MAC_REPEATER_MIN_RSSI],
+            "the three untouched policy settings stay home"
         );
         assert_eq!(
-            written[1].1,
+            written[0].1,
             vec![3, b'S', b'J', b'C'],
             "regions pack the same way they do over the local link"
         );
-        assert!(written[4].1.is_empty(), "no threshold is an empty value");
     }
 }

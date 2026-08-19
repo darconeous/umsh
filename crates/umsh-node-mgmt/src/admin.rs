@@ -165,10 +165,12 @@ pub struct Exchange<const REQUEST: usize> {
 impl<const REQUEST: usize> Exchange<REQUEST> {
     /// Begin an operation carrying `frame`.
     ///
-    /// `seed` picks the first token; anything unpredictable will do,
-    /// including a counter the caller keeps across exchanges. The
-    /// requirement is only that a new exchange's token differ from the
-    /// previous one's, which the engine maintains from there.
+    /// `seed` picks the first token. A device retains its answer to every
+    /// recent token against retransmission, and answers a reused token
+    /// with the retained response instead of executing — so the seed must
+    /// come from above [`Exchange::counter`] of every exchange the device
+    /// may still remember: a counter carried across exchanges, itself
+    /// seeded unpredictably.
     pub fn new(frame: &[u8], seed: u16, now_ms: u64) -> Result<Self, Failure> {
         if frame.len() > REQUEST {
             return Err(Failure::TooLarge);
@@ -200,6 +202,18 @@ impl<const REQUEST: usize> Exchange<REQUEST> {
     /// belongs to someone else's exchange.
     pub fn token(&self) -> Token {
         self.token
+    }
+
+    /// The counter behind the last token this exchange issued.
+    ///
+    /// A continued read issues a fresh token per fragment, so an exchange
+    /// consumes a caller-invisible stretch of the counter space. The next
+    /// exchange's seed must come from above this value: the device holds
+    /// every answered token against retransmission, and a new request
+    /// under any of them is answered with the old response instead of
+    /// running.
+    pub fn counter(&self) -> u16 {
+        self.counter
     }
 
     /// The device's most recent estimate of octets not yet returned,
@@ -631,6 +645,12 @@ mod tests {
         assert_eq!(continuation.cursor, Some(&cursor[..]));
         assert_eq!(continuation.frame, frame, "the read is repeated verbatim");
         assert_eq!(admin.remaining(), Some(12));
+        assert_eq!(
+            admin.counter(),
+            101,
+            "the counter reports the continuation's token, so a successor \
+             seeded from it cannot reissue one the device has answered"
+        );
     }
 
     #[test]
