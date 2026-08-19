@@ -63,6 +63,61 @@ from everywhere the bridge reaches, and its own traffic crosses, but nothing is
 carried onward from its segment. That is a deployment, not a fault, and it is
 logged as such.
 
+## Host interfaces
+
+A server can also offer **host interfaces**: a plain socket presenting a ULCP
+device whose radio is the bridge itself. Whoever connects joins the bridged
+medium as an ordinary node — its own MAC, its own identity — without a radio
+anywhere in the path. See the specification's
+[Host Interfaces](https://darconeous.github.io/umsh/docs/protocol/internet-bridging.html#host-interfaces).
+
+```toml
+[[server.hosts]]
+name = "phone"
+listen = "127.0.0.1:21838"
+max_frames_per_minute = 600
+```
+
+The rate limit is required here, unlike a client's. A host spends no airtime of
+its own, so nothing bounds it naturally, while every frame it injects is
+transmitted by every participant's node.
+
+> [!CAUTION]
+> The socket is **unauthenticated**, and it grants what a serial cable grants —
+> key provisioning and administrative access to the device it presents.
+> Whoever reaches it also has an RF presence on every segment the bridge
+> touches. It listens on the loopback by default, and a `listen` anywhere else
+> is refused unless the entry also sets `allow_remote = true`.
+
+Two hosts and no radio at all is a two-node mesh on one machine, which is what
+these are mainly for — testing an iOS simulator build, or `umshctl`, against a
+real mesh stack without hardware:
+
+```sh
+umshctl --tcp 127.0.0.1:21838 info
+```
+
+The device starts with its PHY disabled, exactly as a real one does after a
+reset, so a host must enable the radio before anything crosses (`umshctl --tcp
+… phy on`). That is deliberate: a simulated device that switched itself on
+would hide the bug where a host forgets to.
+
+Frames delivered to a host carry no signal measurements. The measurement that
+crossed the tunnel describes a reception on some other segment by some other
+radio, and reporting it here would attribute it to a reception that never
+happened.
+
+One host holds an interface at a time, and a second connection displaces the
+first rather than queueing behind it — the same rule a tunnel client follows,
+and the reason a simulator that dies without closing its socket does not wedge
+the interface. The device itself outlives them all: it is built once at
+startup, so what one host provisions is still there for the next, exactly as a
+radio keeps its configuration when a phone walks away.
+
+The device presents no node of its own — it advertises neither `CAP_REPEATER`
+nor `CAP_MAC_BACKHAUL` — so a bridge *client* pointed at a host interface
+refuses to attach rather than silently running un-backhauled.
+
 ## Installation
 
 `umsh-bridge` is built from this repository; it is not published on crates.io.

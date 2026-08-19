@@ -19,9 +19,67 @@ use umsh_ulcp::{
 };
 
 #[cfg(feature = "sim-device")]
-mod sim;
+pub use umsh_ulcp_simdev::SimulatedDevice;
+
+/// The browser-simulated device's shape: every optional surface enabled,
+/// so the whole property schema is explorable, and no node behind it —
+/// see [`umsh_ulcp_simdev::SessionConfig::mac_node`].
 #[cfg(feature = "sim-device")]
-pub use sim::SimulatedDevice;
+pub fn web_sim_config() -> umsh_ulcp_simdev::SessionConfig {
+    use umsh_ulcp_simdev::{
+        AlertConfig, BatteryFields, DutyLedger, GnssConfig, RadioSettings, SessionConfig,
+        TimeConfig,
+    };
+    SessionConfig {
+        dev_version: "umsh-web-sim/0.1",
+        // The simulator is not a board, and saying so exercises the
+        // absent-model path a host has to tolerate.
+        dev_model: None,
+        default_device_name: "Browser simulated device",
+        mtu: 255,
+        sync_word: 0x1424,
+        min_tx_power_dbm: -9,
+        max_tx_power_dbm: 22,
+        freq_khz_min: 150_000,
+        freq_khz_max: 960_000,
+        defaults: RadioSettings {
+            enabled: false,
+            freq_khz: 910_525,
+            bw_hz: 62_500,
+            sf: 7,
+            cr_denom: 5,
+            tx_power_dbm: 14,
+        },
+        default_duty_limit: 0xFFFF,
+        duty: Box::leak(Box::new(DutyLedger::new())),
+        // The browser simulator reports all three battery measurements.
+        battery: Some(BatteryFields {
+            voltage: true,
+            level: true,
+            charge_state: true,
+        }),
+        // Advertised so the property surface is explorable, even though
+        // a browser tab has nothing to actually flash or beep.
+        alert: Some(AlertConfig::DEFAULT),
+        // Likewise for the clock and the receiver: the simulator keeps a
+        // settable epoch and walks a scripted track, which is enough to
+        // exercise every state of the property surface including the two
+        // that matter most — a clock that is not set, and a receiver that
+        // is switched off.
+        time: Some(TimeConfig),
+        gnss: Some(GnssConfig::DEFAULT),
+        illuminance: true,
+        // The simulator has no radio at all, but it does have a
+        // reachability switch the debugger can flip, which is the whole
+        // of what the capability claims.
+        ble: true,
+        // No node behind the session: `Effect::ApplyBackhaul` would
+        // connect the host to nothing, so the device must not claim
+        // `CAP_MAC_BACKHAUL` — that claim is exactly what a bridge
+        // checks before trusting a device to front a segment.
+        mac_node: false,
+    }
+}
 
 const FRAME_CAPACITY: usize = gatt::MAX_FRAME;
 const RESPONSE_TIMEOUT_MS: u64 = 2_000;
@@ -1956,7 +2014,7 @@ mod wasm {
     impl WebSimulatedDevice {
         #[wasm_bindgen(constructor)]
         pub fn new() -> WebSimulatedDevice {
-            Self(SimulatedDevice::new())
+            Self(SimulatedDevice::new(crate::web_sim_config()))
         }
 
         pub fn attach(&mut self) {
@@ -2358,7 +2416,7 @@ mod tests {
     #[test]
     fn host_engine_attaches_through_real_simulated_session() {
         let mut engine = DebuggerEngine::default();
-        let mut device = SimulatedDevice::new();
+        let mut device = SimulatedDevice::new(crate::web_sim_config());
         device.attach();
         engine.tick(1_000);
         engine.attach().unwrap();

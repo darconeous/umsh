@@ -16,14 +16,24 @@ use crate::tunnel::{TunnelFrame, TunnelQueue};
 /// Index into [`Interfaces::all`].
 pub type InterfaceId = usize;
 
+/// What stands behind an interface.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum InterfaceKind {
+    /// The server's own radio.
+    Radio,
+    /// A tunnel client, as an index into `ServerConfig::clients`.
+    Client(usize),
+    /// A host interface, as an index into `ServerConfig::hosts`: a
+    /// socket presenting a simulated device whose radio is the bridge.
+    Host(usize),
+}
+
 pub struct Interface {
     pub id: InterfaceId,
     pub name: String,
     /// Frames waiting to leave through this interface.
     pub egress: Arc<TunnelQueue>,
-    /// The client this interface belongs to, as an index into
-    /// `ServerConfig::clients`. `None` for the server's own radio.
-    pub client: Option<usize>,
+    pub kind: InterfaceKind,
     connected: AtomicBool,
 }
 
@@ -65,7 +75,7 @@ impl Interfaces {
                 id: 0,
                 name: RADIO_INTERFACE.to_string(),
                 egress: Arc::new(TunnelQueue::new(depth, max_age)),
-                client: None,
+                kind: InterfaceKind::Radio,
                 // Always up: the relay re-opens a failed device on its
                 // own, and the bounded, staleness-dropped queue holds
                 // what little accrues in the meantime.
@@ -79,7 +89,17 @@ impl Interfaces {
                 id: all.len(),
                 name: client.name.clone(),
                 egress: Arc::new(TunnelQueue::new(depth, max_age)),
-                client: Some(index),
+                kind: InterfaceKind::Client(index),
+                connected: AtomicBool::new(false),
+            }));
+        }
+
+        for (index, host) in config.hosts.iter().enumerate() {
+            all.push(Arc::new(Interface {
+                id: all.len(),
+                name: host.name.clone(),
+                egress: Arc::new(TunnelQueue::new(depth, max_age)),
+                kind: InterfaceKind::Host(index),
                 connected: AtomicBool::new(false),
             }));
         }
@@ -92,7 +112,15 @@ impl Interfaces {
     }
 
     pub fn by_client(&self, client: usize) -> Option<&Arc<Interface>> {
-        self.all.iter().find(|iface| iface.client == Some(client))
+        self.all
+            .iter()
+            .find(|iface| iface.kind == InterfaceKind::Client(client))
+    }
+
+    pub fn by_host(&self, host: usize) -> Option<&Arc<Interface>> {
+        self.all
+            .iter()
+            .find(|iface| iface.kind == InterfaceKind::Host(host))
     }
 
     pub fn name(&self, id: InterfaceId) -> &str {

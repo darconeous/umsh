@@ -62,7 +62,7 @@ pub async fn run(identity: BridgeIdentity, config: Config) -> Result<()> {
     for iface in &interfaces.all {
         tracing::info!(
             iface = %iface.name,
-            fan_out = %policy.describe_fan_out(&interfaces, iface.id),
+            fan_out = %policy.describe_fan_out(iface.id),
             "interface"
         );
     }
@@ -82,6 +82,22 @@ pub async fn run(identity: BridgeIdentity, config: Config) -> Result<()> {
         );
         tokio::task::spawn_local(async move { relay.run().await });
         spawn_ingress(inbound, radio, ingress_tx.clone());
+    }
+
+    // Host interfaces need no credential and no radio: each is a socket
+    // presenting a simulated device whose radio is this hub.
+    for (index, entry) in server.hosts.iter().enumerate() {
+        let iface = interfaces
+            .by_host(index)
+            .ok_or_else(|| anyhow!("host {index} has no interface"))?
+            .clone();
+        let relay = crate::host::HostRelay::new(entry, iface, ingress_tx.clone());
+        let name = entry.name.clone();
+        tokio::task::spawn_local(async move {
+            if let Err(error) = relay.run().await {
+                tracing::error!(iface = %name, "host interface stopped: {error:#}");
+            }
+        });
     }
 
     let hub = Hub::new(interfaces.clone(), policy, server.limits.exit_clamp);

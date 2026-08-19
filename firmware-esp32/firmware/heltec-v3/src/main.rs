@@ -249,6 +249,8 @@ fn session_config() -> SessionConfig {
         // The ESP32-S3 radio is always up on this board, but the
         // peripheral can be made unfindable: see `advertising_permitted`.
         ble: true,
+        // A real MAC runs behind this session.
+        mac_node: true,
     }
 }
 

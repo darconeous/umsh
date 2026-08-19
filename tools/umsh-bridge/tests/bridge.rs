@@ -578,3 +578,243 @@ fn a_server_whose_identity_does_not_match_is_refused_by_the_client() {
         assert!(outcome.is_err(), "the pin is the whole trust decision");
     });
 }
+
+// ---------------------------------------------------------------------
+// Host interfaces
+// ---------------------------------------------------------------------
+
+/// A server that is nothing but host interfaces: no radio, no clients,
+/// no hardware anywhere. Two hosts on it are a two-node mesh on one
+/// machine, which is what host interfaces exist for.
+fn host_only_deployment(dir: &Path, ports: (u16, u16), limits: (u32, u32)) -> String {
+    umsh_bridge::keygen::write_identity(&dir.join("identity.key"), false).unwrap();
+    let d = dir.display();
+    format!(
+        "[identity]\nkey_file = \"{d}/identity.key\"\n\
+         [server]\nlisten = [\"127.0.0.1:{}\"]\n\
+         [[server.hosts]]\nname = \"alice\"\nlisten = \"127.0.0.1:{}\"\n\
+         max_frames_per_minute = {}\n\
+         [[server.hosts]]\nname = \"bob\"\nlisten = \"127.0.0.1:{}\"\n\
+         max_frames_per_minute = {}\n",
+        free_port(),
+        ports.0,
+        limits.0,
+        ports.1,
+        limits.1,
+    )
+}
+
+/// Attach to a host interface exactly as `umshctl --tcp` does: the same
+/// HDLC framing a serial link carries, over a socket.
+async fn attach_host(
+    port: u16,
+) -> umsh::ulcp::UlcpDevice<umsh::ulcp::SerialFrameLink<tokio::net::TcpStream>> {
+    let stream = tokio::net::TcpStream::connect(SocketAddr::from(([127, 0, 0, 1], port)))
+        .await
+        .expect("connecting to the host interface");
+    stream.set_nodelay(true).unwrap();
+    let link = umsh::ulcp::SerialFrameLink::new(stream);
+    let mut device = umsh::ulcp::UlcpDevice::attach_existing(
+        link,
+        umsh::ulcp::UlcpDeviceConfig::new(910_525, 62_500, 7, 5),
+    )
+    .await
+    .expect("attaching to the host interface");
+    // A host on the medium drives its own PHY; nothing is heard or sent
+    // until it switches the radio on, simulated or not.
+    device
+        .set_prop(umsh_ulcp::ids::prop::PHY_ENABLED, &[1])
+        .await
+        .expect("enabling the simulated PHY");
+    device
+}
+
+/// Wait for a raw frame from a host interface's device.
+async fn expect_host_frame(
+    device: &mut umsh::ulcp::UlcpDevice<umsh::ulcp::SerialFrameLink<tokio::net::TcpStream>>,
+) -> Option<Vec<u8>> {
+    tokio::time::timeout(Duration::from_secs(3), async {
+        core::future::poll_fn(|cx| device.poll_receive_raw(cx)).await
+    })
+    .await
+    .ok()?
+    .ok()
+    .map(|raw| raw.data)
+}
+
+async fn transmit_from_host(
+    device: &mut umsh::ulcp::UlcpDevice<umsh::ulcp::SerialFrameLink<tokio::net::TcpStream>>,
+    frame: &[u8],
+) {
+    let mut meta = [0u8; umsh_ulcp::meta::TxMeta::WIRE_LEN];
+    umsh_ulcp::meta::TxMeta::default()
+        .encode(&mut meta)
+        .unwrap();
+    device
+        .transmit_raw_with_meta(frame, &meta)
+        .await
+        .expect("the simulated PHY accepts a transmit");
+}
+
+#[test]
+fn two_hosts_reach_each_other_with_no_radio_anywhere() {
+    with_local(|| async {
+        let dir = tempfile::tempdir().unwrap();
+        let ports = (free_port(), free_port());
+        let config = parse(&host_only_deployment(dir.path(), ports, (600, 600)));
+        tokio::task::spawn_local(async move {
+            if let Err(error) = umsh_bridge::server::run_config(config).await {
+                eprintln!("server: {error:#}");
+            }
+        });
+        tokio::time::sleep(Duration::from_millis(300)).await;
+
+        let mut alice = attach_host(ports.0).await;
+        let mut bob = attach_host(ports.1).await;
+
+        let sent = broadcast(3, 0x11, &[]);
+        transmit_from_host(&mut alice, &sent).await;
+
+        let arrived = expect_host_frame(&mut bob)
+            .await
+            .expect("the frame should have reached the other host");
+        assert_eq!(
+            arrived, sent,
+            "a host interface carries frames; it does not rewrite them"
+        );
+    });
+}
+
+#[test]
+fn a_hosts_frames_stop_at_the_hub_once_its_budget_is_spent() {
+    with_local(|| async {
+        let dir = tempfile::tempdir().unwrap();
+        let ports = (free_port(), free_port());
+        // One frame a minute for alice: the second is refused by the
+        // hub, not by her device.
+        let config = parse(&host_only_deployment(dir.path(), ports, (1, 600)));
+        tokio::task::spawn_local(async move {
+            if let Err(error) = umsh_bridge::server::run_config(config).await {
+                eprintln!("server: {error:#}");
+            }
+        });
+        tokio::time::sleep(Duration::from_millis(300)).await;
+
+        let mut alice = attach_host(ports.0).await;
+        let mut bob = attach_host(ports.1).await;
+
+        transmit_from_host(&mut alice, &broadcast(3, 0x11, &[])).await;
+        assert!(
+            expect_host_frame(&mut bob).await.is_some(),
+            "the first frame is within budget"
+        );
+
+        // A second frame is accepted by the device — a host's own duty
+        // ledger has nothing to say about simulated airtime — and then
+        // discarded by the hub.
+        transmit_from_host(&mut alice, &broadcast(3, 0x22, &[])).await;
+        let starved = tokio::time::timeout(Duration::from_millis(500), async {
+            core::future::poll_fn(|cx| bob.poll_receive_raw(cx)).await
+        })
+        .await;
+        assert!(starved.is_err(), "the spent budget should stop the frame");
+    });
+}
+
+#[test]
+fn a_host_that_reconnects_finds_the_device_where_it_left_it() {
+    with_local(|| async {
+        let dir = tempfile::tempdir().unwrap();
+        let ports = (free_port(), free_port());
+        let config = parse(&host_only_deployment(dir.path(), ports, (600, 600)));
+        tokio::task::spawn_local(async move {
+            if let Err(error) = umsh_bridge::server::run_config(config).await {
+                eprintln!("server: {error:#}");
+            }
+        });
+        tokio::time::sleep(Duration::from_millis(300)).await;
+
+        // The device outlives the host, as a radio outlives whoever
+        // unplugs from it: a name set through one attachment is still
+        // there for the next.
+        let mut alice = attach_host(ports.0).await;
+        alice
+            .set_prop(umsh_ulcp::ids::prop::DEV_NAME, b"named by the first host")
+            .await
+            .unwrap();
+        drop(alice);
+        tokio::time::sleep(Duration::from_millis(200)).await;
+
+        let mut again = attach_host(ports.0).await;
+        let name = again
+            .get_prop(umsh_ulcp::ids::prop::DEV_NAME)
+            .await
+            .unwrap();
+        assert_eq!(
+            name.strip_suffix(&[0]).unwrap_or(&name),
+            b"named by the first host",
+            "device-domain state should survive a host detaching"
+        );
+    });
+}
+
+/// The safety claim in one assertion: the device a host interface
+/// presents does not advertise a node, so a participant's own
+/// `CAP_MAC_BACKHAUL` check refuses to bridge through it.
+#[test]
+fn a_host_interface_does_not_pretend_to_have_a_node() {
+    with_local(|| async {
+        let dir = tempfile::tempdir().unwrap();
+        let ports = (free_port(), free_port());
+        let config = parse(&host_only_deployment(dir.path(), ports, (600, 600)));
+        tokio::task::spawn_local(async move {
+            if let Err(error) = umsh_bridge::server::run_config(config).await {
+                eprintln!("server: {error:#}");
+            }
+        });
+        tokio::time::sleep(Duration::from_millis(300)).await;
+
+        let mut device = attach_host(ports.0).await;
+        let capabilities = device.capabilities().await.unwrap();
+        assert!(!capabilities.contains(&umsh_ulcp::ids::cap::MAC_BACKHAUL));
+        assert!(!capabilities.contains(&umsh_ulcp::ids::cap::REPEATER));
+        assert!(
+            capabilities.contains(&umsh_ulcp::ids::cap::WRITABLE_RAW_STREAM),
+            "a host still has to be able to transmit"
+        );
+    });
+}
+
+/// A host that connects while another holds the interface takes it over,
+/// rather than waiting behind a socket nobody may ever close. Same rule
+/// as a tunnel client, and for the same reason: the newer connection is
+/// the live host.
+#[test]
+fn a_second_host_displaces_the_first() {
+    with_local(|| async {
+        let dir = tempfile::tempdir().unwrap();
+        let ports = (free_port(), free_port());
+        let config = parse(&host_only_deployment(dir.path(), ports, (600, 600)));
+        tokio::task::spawn_local(async move {
+            if let Err(error) = umsh_bridge::server::run_config(config).await {
+                eprintln!("server: {error:#}");
+            }
+        });
+        tokio::time::sleep(Duration::from_millis(300)).await;
+
+        // The first host attaches and is deliberately left holding its
+        // socket open, as a wedged simulator would.
+        let first = attach_host(ports.0).await;
+        let mut bob = attach_host(ports.1).await;
+
+        // A second host on the same interface takes it over.
+        let mut second = attach_host(ports.0).await;
+        transmit_from_host(&mut second, &broadcast(3, 0x33, &[])).await;
+        assert!(
+            expect_host_frame(&mut bob).await.is_some(),
+            "the displacing host should own the interface"
+        );
+
+        drop(first);
+    });
+}

@@ -3916,6 +3916,7 @@ dependencies = [
  "umsh-crypto",
  "umsh-hal",
  "umsh-ulcp",
+ "umsh-ulcp-simdev",
 ]
 
 [[package]]
@@ -4256,17 +4257,27 @@ dependencies = [
 ]
 
 [[package]]
-name = "umsh-ulcp-web-engine"
+name = "umsh-ulcp-simdev"
 version = "0.1.0"
 dependencies = [
  "critical-section",
- "serde",
- "serde_json",
  "umsh-core",
  "umsh-crypto",
  "umsh-gnss",
  "umsh-ulcp",
  "umsh-ulcp-device",
+]
+
+[[package]]
+name = "umsh-ulcp-web-engine"
+version = "0.1.0"
+dependencies = [
+ "serde",
+ "serde_json",
+ "umsh-core",
+ "umsh-gnss",
+ "umsh-ulcp",
+ "umsh-ulcp-simdev",
  "wasm-bindgen",
 ]
 

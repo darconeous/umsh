@@ -87,6 +87,7 @@ impl<const PAYLOAD: usize> Device<PAYLOAD> {
             gnss: Some(GnssConfig::DEFAULT),
             illuminance: true,
             ble: true,
+            mac_node: true,
         };
         let mut session = Session::new(
             config,

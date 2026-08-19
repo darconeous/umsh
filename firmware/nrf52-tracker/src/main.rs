@@ -480,6 +480,8 @@ mod firmware {
             // controller, and every one can be made unfindable: see
             // `advertising_permitted`.
             ble: true,
+            // A real MAC runs behind every session here.
+            mac_node: true,
         }
     }
 

@@ -46,6 +46,31 @@ cargo run -p umshctl -- --tcp 127.0.0.1:9000 info
 
 Both cannot hold the bridge at once: socat serves one connection.
 
+### Without any radio at all
+
+`socat` puts one *particular* radio in front of the simulator. When what you
+want is a mesh rather than a specific device, `umsh-bridge` can serve the same
+socket from a simulated device of its own — a
+[host interface](../../tools/umsh-bridge/README.md#host-interfaces) — whose
+radio is the bridge. Two of them is a two-node mesh on the laptop, so two
+simulators can message each other with nothing plugged in:
+
+```toml
+[[server.hosts]]
+name = "phone"
+listen = "127.0.0.1:21838"
+max_frames_per_minute = 600
+```
+
+Point Settings → Bridged radio at `127.0.0.1:21838`. The socket is
+unauthenticated and stays on the loopback; the bridge's README has the
+cautions. One host holds an interface at a time, but unlike the socat recipe a
+new connection displaces the old one, so relaunching the app just works.
+
+The device starts with its PHY disabled, as a real radio does after a reset, so
+turn it on once per interface — `umshctl --tcp 127.0.0.1:21838 phy on` — before
+expecting traffic to cross.
+
 ## TestFlight
 
 ```sh

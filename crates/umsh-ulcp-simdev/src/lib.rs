@@ -1,4 +1,18 @@
-//! Real ULCP device session behind a deterministic in-memory virtual link.
+//! Simulated ULCP device: the production device [`Session`] behind a
+//! deterministic in-memory link.
+//!
+//! The storage, radio, RSSI sampler, and entropy source are small
+//! stand-ins; every protocol decision is made by the real session. What
+//! stands where a radio would is a queue: transmissions accumulate until
+//! [`SimulatedDevice::take_transmitted`] drains them, so the caller
+//! decides what "the air" is — the web debugger discards it, a bridge
+//! copies it to real segments.
+//!
+//! The [`SessionConfig`] is the caller's: it names the device and
+//! declares its capability surface. A simulated device has no node
+//! behind it, so its configuration must leave
+//! [`SessionConfig::mac_node`] unset — `Effect::ApplyBackhaul` would
+//! connect the host to nothing.
 
 use std::collections::VecDeque;
 
@@ -10,9 +24,11 @@ use umsh_crypto::{
 use umsh_ulcp::battery::{BatteryChargeState, BatteryStatus};
 use umsh_ulcp::gnss::{FixKind, GnssSnapshot};
 use umsh_ulcp::{Status, hdlc};
-use umsh_ulcp_device::{
-    AlertConfig, BatteryFields, DutyLedger, Effect, GnssConfig, IdentitySource, RadioRxInfo,
-    RadioSettings, SNAPSHOT_MAX, Session, SessionConfig, TimeConfig, TxOutcome,
+use umsh_ulcp_device::{Effect, IdentitySource, SNAPSHOT_MAX, Session, TxOutcome};
+
+pub use umsh_ulcp_device::{
+    AlertConfig, BatteryFields, DutyLedger, GnssConfig, RadioRxInfo, RadioSettings, SessionConfig,
+    TimeConfig,
 };
 
 const WIRE_CAPACITY: usize = umsh_ulcp::gatt::MAX_FRAME;
@@ -20,11 +36,9 @@ const WIRE_CAPACITY: usize = umsh_ulcp::gatt::MAX_FRAME;
 type DeviceSession = Session<SoftwareAes, SoftwareSha256>;
 
 /// A deterministic, RAM-backed device that speaks HDLC-Lite exactly like USB.
-///
-/// The storage, radio, RSSI sampler, and entropy source are small stand-ins;
-/// every protocol decision is made by the production device [`Session`].
 pub struct SimulatedDevice {
     session: DeviceSession,
+    config: SessionConfig,
     decoder: hdlc::Decoder<WIRE_CAPACITY>,
     outbound: VecDeque<Vec<u8>>,
     snapshot: Option<Vec<u8>>,
@@ -43,20 +57,15 @@ pub struct SimulatedDevice {
     fix_step: u32,
 }
 
-impl Default for SimulatedDevice {
-    fn default() -> Self {
-        Self::new()
-    }
-}
-
 impl SimulatedDevice {
-    pub fn new() -> Self {
+    pub fn new(config: SessionConfig) -> Self {
         Self {
             session: DeviceSession::new(
-                session_config(),
+                config,
                 Status::RESET_POWER_ON,
                 CryptoEngine::new(SoftwareAes, SoftwareSha256),
             ),
+            config,
             decoder: hdlc::Decoder::new(),
             outbound: VecDeque::new(),
             snapshot: None,
@@ -103,16 +112,27 @@ impl SimulatedDevice {
         self.outbound.pop_front()
     }
 
+    /// Everything the device has transmitted since the last drain, in
+    /// order. The queue grows until drained; a caller with no air to put
+    /// frames on drains and discards.
+    pub fn take_transmitted(&mut self) -> Vec<Vec<u8>> {
+        std::mem::take(&mut self.air)
+    }
+
     /// Put a canned radio frame through the real device receive path.
     pub fn inject_radio_rx(&mut self, bytes: &[u8], now_ms: u64) {
+        self.inject_radio_rx_with_info(bytes, &RadioRxInfo::measured(-82, 35, None), now_ms);
+    }
+
+    /// Put a radio frame through the real device receive path with the
+    /// caller's own reception facts — all-`None` for a frame that
+    /// crossed no air and was measured by nobody.
+    pub fn inject_radio_rx_with_info(&mut self, bytes: &[u8], info: &RadioRxInfo, now_ms: u64) {
         self.now_ms = now_ms;
         let mut emitted = Vec::new();
-        let effect = self.session.on_radio_rx(
-            bytes,
-            &RadioRxInfo::measured(-82, 35, None),
-            now_ms,
-            &mut |frame| emitted.push(frame.to_vec()),
-        );
+        let effect = self.session.on_radio_rx(bytes, info, now_ms, &mut |frame| {
+            emitted.push(frame.to_vec())
+        });
         self.execute(effect, &mut emitted);
         self.queue_emitted(emitted);
     }
@@ -129,11 +149,6 @@ impl SimulatedDevice {
             .expect("fixed demo packet fits")
             .to_vec();
         self.inject_radio_rx(&packet, now_ms);
-    }
-
-    #[cfg(test)]
-    fn transmitted_frames(&self) -> &[Vec<u8>] {
-        &self.air
     }
 
     fn handle_frame(&mut self, frame: &[u8]) {
@@ -166,8 +181,8 @@ impl SimulatedDevice {
                 self.session.respond_rssi(tid, Ok(-77), &mut emit);
             }
             Some(Effect::SampleBattery { tid }) => {
-                // Stable, human-recognizable simulated measurement
-                // matching the configured field set below.
+                // Stable, human-recognizable simulated measurement; the
+                // configured field set decides what of it is reported.
                 self.session.respond_battery(
                     tid,
                     Ok(BatteryStatus {
@@ -183,7 +198,7 @@ impl SimulatedDevice {
                 self.session
                     .respond_illuminance(tid, Some(320_000), &mut emit);
             }
-            // The web simulator has no device node and no signing key,
+            // The simulated device has no device node and no signing key,
             // so PROP_IDENT reads report failure rather than a blob.
             Some(Effect::SignIdentity { tid }) => {
                 self.session.respond_identity_blob(tid, Err(()), &mut emit);
@@ -219,7 +234,7 @@ impl SimulatedDevice {
                 self.identity_seed = 0;
                 self.pairing_pin = None;
                 self.session = DeviceSession::new(
-                    session_config(),
+                    self.config,
                     Status::RESET_POWER_ON,
                     CryptoEngine::new(SoftwareAes, SoftwareSha256),
                 );
@@ -288,57 +303,45 @@ impl SimulatedDevice {
     }
 }
 
-fn session_config() -> SessionConfig {
-    SessionConfig {
-        dev_version: "umsh-web-sim/0.1",
-        // The simulator is not a board, and saying so exercises the
-        // absent-model path a host has to tolerate.
-        dev_model: None,
-        default_device_name: "Browser simulated device",
-        mtu: 255,
-        sync_word: 0x1424,
-        min_tx_power_dbm: -9,
-        max_tx_power_dbm: 22,
-        freq_khz_min: 150_000,
-        freq_khz_max: 960_000,
-        defaults: RadioSettings {
-            enabled: false,
-            freq_khz: 910_525,
-            bw_hz: 62_500,
-            sf: 7,
-            cr_denom: 5,
-            tx_power_dbm: 14,
-        },
-        default_duty_limit: 0xFFFF,
-        duty: Box::leak(Box::new(DutyLedger::new())),
-        // The browser simulator reports all three battery measurements.
-        battery: Some(BatteryFields {
-            voltage: true,
-            level: true,
-            charge_state: true,
-        }),
-        // Advertised so the property surface is explorable, even though
-        // a browser tab has nothing to actually flash or beep.
-        alert: Some(AlertConfig::DEFAULT),
-        // Likewise for the clock and the receiver: the simulator keeps a
-        // settable epoch and walks a scripted track, which is enough to
-        // exercise every state of the property surface including the two
-        // that matter most — a clock that is not set, and a receiver that
-        // is switched off.
-        time: Some(TimeConfig),
-        gnss: Some(GnssConfig::DEFAULT),
-        illuminance: true,
-        // The simulator has no radio at all, but it does have a
-        // reachability switch the debugger can flip, which is the whole
-        // of what the capability claims.
-        ble: true,
-    }
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
     use umsh_ulcp::{Frame, PropPayload, frame, ids::prop};
+
+    fn test_config() -> SessionConfig {
+        SessionConfig {
+            dev_version: "umsh-simdev-test/0.1",
+            dev_model: None,
+            default_device_name: "Simulated test device",
+            mtu: 255,
+            sync_word: 0x1424,
+            min_tx_power_dbm: -9,
+            max_tx_power_dbm: 22,
+            freq_khz_min: 150_000,
+            freq_khz_max: 960_000,
+            defaults: RadioSettings {
+                enabled: false,
+                freq_khz: 910_525,
+                bw_hz: 62_500,
+                sf: 7,
+                cr_denom: 5,
+                tx_power_dbm: 14,
+            },
+            default_duty_limit: 0xFFFF,
+            duty: Box::leak(Box::new(DutyLedger::new())),
+            battery: Some(BatteryFields {
+                voltage: true,
+                level: true,
+                charge_state: true,
+            }),
+            alert: Some(AlertConfig::DEFAULT),
+            time: Some(TimeConfig),
+            gnss: Some(GnssConfig::DEFAULT),
+            illuminance: true,
+            ble: true,
+            mac_node: false,
+        }
+    }
 
     fn exchange(sim: &mut SimulatedDevice, request: &[u8]) -> Vec<Vec<u8>> {
         let mut wire = vec![0; hdlc::max_encoded_len(request.len())];
@@ -359,7 +362,7 @@ mod tests {
 
     #[test]
     fn real_session_answers_attach_property_over_hdlc() {
-        let mut sim = SimulatedDevice::new();
+        let mut sim = SimulatedDevice::new(test_config());
         sim.attach();
         let mut request = [0; 16];
         let len = frame::prop_get(&mut request, 1, prop::DEV_VERSION).unwrap();
@@ -368,12 +371,12 @@ mod tests {
         let response = Frame::parse(&responses[0]).unwrap();
         let payload = PropPayload::parse(response.payload).unwrap();
         assert_eq!(payload.key, prop::DEV_VERSION);
-        assert_eq!(payload.value, b"umsh-web-sim/0.1\0");
+        assert_eq!(payload.value, b"umsh-simdev-test/0.1\0");
     }
 
     #[test]
     fn real_session_executes_radio_transmit_effect() {
-        let mut sim = SimulatedDevice::new();
+        let mut sim = SimulatedDevice::new(test_config());
         sim.attach();
         let mut request = [0; 64];
         let len = frame::prop_set(&mut request, 1, prop::PHY_ENABLED, &[1]).unwrap();
@@ -387,12 +390,16 @@ mod tests {
         )
         .unwrap();
         exchange(&mut sim, &request[..len]);
-        assert_eq!(sim.transmitted_frames(), &[b"demo".to_vec()]);
+        assert_eq!(sim.take_transmitted(), &[b"demo".to_vec()]);
+        assert!(
+            sim.take_transmitted().is_empty(),
+            "the drain leaves nothing behind"
+        );
     }
 
     #[test]
     fn demo_packet_uses_the_real_receive_path() {
-        let mut sim = SimulatedDevice::new();
+        let mut sim = SimulatedDevice::new(test_config());
         sim.attach();
         let mut request = [0; 16];
         let len = frame::prop_set(&mut request, 1, prop::PHY_ENABLED, &[1]).unwrap();
@@ -409,5 +416,28 @@ mod tests {
             Frame::parse(&response).unwrap().command(),
             Some(umsh_ulcp::Cmd::StrRecv)
         );
+    }
+
+    /// The whole point of the honest capability surface: nothing this
+    /// device advertises invites a bridge to backhaul through it.
+    #[test]
+    fn a_simulated_device_claims_no_node() {
+        let mut sim = SimulatedDevice::new(test_config());
+        sim.attach();
+        let mut request = [0; 16];
+        let len = frame::prop_get(&mut request, 1, umsh_ulcp::ids::prop::CAPS).unwrap();
+        let responses = exchange(&mut sim, &request[..len]);
+        let response = Frame::parse(&responses[0]).unwrap();
+        let payload = PropPayload::parse(response.payload).unwrap();
+        let mut caps = Vec::new();
+        let mut offset = 0;
+        while offset < payload.value.len() {
+            let (value, used) = umsh_ulcp::pui::decode(&payload.value[offset..]).unwrap();
+            caps.push(value);
+            offset += used;
+        }
+        assert!(!caps.contains(&umsh_ulcp::ids::cap::MAC_BACKHAUL));
+        assert!(!caps.contains(&umsh_ulcp::ids::cap::REPEATER));
+        assert!(caps.contains(&umsh_ulcp::ids::cap::WRITABLE_RAW_STREAM));
     }
 }

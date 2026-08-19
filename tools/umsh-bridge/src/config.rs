@@ -18,6 +18,10 @@ use crate::tls::Address;
 /// unlikely to collide with something else on a shared host.
 pub const DEFAULT_PORT: u16 = 21837;
 
+/// Default host-interface port: one above the tunnel, so a bench
+/// deployment of both needs no configuration at all.
+pub const DEFAULT_HOST_PORT: u16 = 21838;
+
 /// Interface name of a participant's own radio. Reserved: a client
 /// entry may not take it.
 pub const RADIO_INTERFACE: &str = "radio";
@@ -52,6 +56,8 @@ pub struct ServerConfig {
     pub tunnel: TunnelConfig,
     #[serde(default)]
     pub clients: Vec<ClientEntry>,
+    #[serde(default)]
+    pub hosts: Vec<HostEntry>,
 }
 
 #[derive(Debug, Deserialize)]
@@ -69,6 +75,37 @@ pub struct ClientEntry {
     /// Interfaces this client's traffic may be fanned out to. Absent
     /// means all of them.
     pub allow_to: Option<Vec<String>>,
+}
+
+/// A host interface: a plain socket presenting a simulated ULCP device
+/// whose radio is the bridge itself. Whoever connects attaches to the
+/// bridged medium directly, as a host — no radio, no repeater, no
+/// tunnel credential.
+///
+/// The binding is unauthenticated and grants what a serial cable
+/// grants, key provisioning included, which is why it stays on the
+/// loopback unless the deployment says otherwise in so many words.
+#[derive(Debug, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct HostEntry {
+    /// Interface name, used in log lines and in `allow_to`.
+    pub name: String,
+    /// Where the ULCP socket listens.
+    #[serde(default = "default_host_listen")]
+    pub listen: SocketAddr,
+    /// Forwarding budget for frames this host injects. Required, not
+    /// optional as for a client: a host spends no airtime of its own,
+    /// but every frame it injects is transmitted by every participant's
+    /// node.
+    pub max_frames_per_minute: u32,
+    /// Interfaces this host's traffic may be fanned out to. Absent
+    /// means all of them.
+    pub allow_to: Option<Vec<String>>,
+    /// Confirm a non-loopback `listen` on purpose. Reaching this socket
+    /// is an RF presence on every segment the bridge touches, plus a
+    /// physically-secure ULCP attachment to the simulated device.
+    #[serde(default)]
+    pub allow_remote: bool,
 }
 
 #[derive(Debug, Deserialize)]
@@ -307,6 +344,10 @@ fn default_listen() -> Vec<SocketAddr> {
     ]
 }
 
+fn default_host_listen() -> SocketAddr {
+    SocketAddr::from(([127, 0, 0, 1], DEFAULT_HOST_PORT))
+}
+
 fn default_keepalive() -> u64 {
     10
 }
@@ -381,8 +422,8 @@ impl ServerConfig {
         if self.listen.is_empty() {
             bail!("[server] listen is empty; the server would accept nothing");
         }
-        if self.clients.is_empty() && self.radio.is_none() {
-            bail!("[server] has no clients and no radio; there is nothing to bridge");
+        if self.clients.is_empty() && self.hosts.is_empty() && self.radio.is_none() {
+            bail!("[server] has no clients, no hosts, and no radio; there is nothing to bridge");
         }
         if let Some(clamp) = self.limits.exit_clamp
             && clamp > 15
@@ -424,26 +465,65 @@ impl ServerConfig {
             }
         }
 
-        for client in &self.clients {
-            let Some(allow_to) = &client.allow_to else {
+        let mut listens = HashSet::new();
+        for host in &self.hosts {
+            if host.name == RADIO_INTERFACE {
+                bail!("host name \"{RADIO_INTERFACE}\" is reserved for the server's own radio");
+            }
+            if host.name.trim().is_empty() {
+                bail!("every [[server.hosts]] needs a name; it is how policy refers to it");
+            }
+            if !names.insert(host.name.as_str()) {
+                bail!(
+                    "\"{}\" names two interfaces; clients and hosts share one namespace",
+                    host.name
+                );
+            }
+            if !listens.insert(host.listen) {
+                bail!(
+                    "host \"{}\" listens on {}, which another host already holds",
+                    host.name,
+                    host.listen
+                );
+            }
+            if !host.listen.ip().is_loopback() && !host.allow_remote {
+                bail!(
+                    "host \"{}\" listens on {}, which is not the loopback. The socket is \
+                     unauthenticated and reaching it is an RF presence on every segment this \
+                     bridge touches; set allow_remote = true to do this on purpose",
+                    host.name,
+                    host.listen
+                );
+            }
+        }
+
+        let allowlists = self
+            .clients
+            .iter()
+            .map(|client| (client.name.as_str(), &client.allow_to))
+            .chain(
+                self.hosts
+                    .iter()
+                    .map(|host| (host.name.as_str(), &host.allow_to)),
+            );
+        for (name, allow_to) in allowlists {
+            let Some(allow_to) = allow_to else {
                 continue;
             };
             for target in allow_to {
                 if target == RADIO_INTERFACE {
                     if self.radio.is_none() {
                         bail!(
-                            "client \"{}\" allows forwarding to \"{RADIO_INTERFACE}\", but \
-                             [server.radio] is none",
-                            client.name
+                            "\"{name}\" allows forwarding to \"{RADIO_INTERFACE}\", but \
+                             [server.radio] is none"
                         );
                     }
                     continue;
                 }
                 if !names.contains(target.as_str()) {
                     bail!(
-                        "client \"{}\" allows forwarding to \"{target}\", which is not a \
-                         configured client",
-                        client.name
+                        "\"{name}\" allows forwarding to \"{target}\", which is not a \
+                         configured interface"
                     );
                 }
             }
@@ -458,6 +538,7 @@ impl ServerConfig {
             names.push(RADIO_INTERFACE.to_string());
         }
         names.extend(self.clients.iter().map(|client| client.name.clone()));
+        names.extend(self.hosts.iter().map(|host| host.name.clone()));
         names
     }
 }
@@ -677,6 +758,106 @@ mod tests {
     #[test]
     fn a_server_that_bridges_nothing_is_rejected() {
         assert!(parse(&server_config("")).is_err());
+    }
+
+    /// Two hosts and no radio is a whole mesh on one machine, and the
+    /// reason host interfaces exist: it needs no hardware at all.
+    #[test]
+    fn two_hosts_are_something_to_bridge() {
+        let text = server_config(
+            "[[server.hosts]]\nname = \"phone\"\nlisten = \"127.0.0.1:21838\"\n\
+             max_frames_per_minute = 60\n\
+             [[server.hosts]]\nname = \"laptop\"\nlisten = \"127.0.0.1:21839\"\n\
+             max_frames_per_minute = 60\n",
+        );
+        let config = parse(&text).unwrap();
+        let server = config.server.unwrap();
+        assert_eq!(server.hosts.len(), 2);
+        assert_eq!(server.interface_names(), ["phone", "laptop"]);
+    }
+
+    #[test]
+    fn a_host_needs_a_rate_limit() {
+        // Not optional as for a client: a host spends no airtime itself,
+        // but every frame it injects is transmitted by every
+        // participant's node.
+        let text = server_config(
+            "[server.radio]\ntype = \"ble\"\n\
+             [[server.hosts]]\nname = \"phone\"\n",
+        );
+        let error = parse(&text).unwrap_err().to_string();
+        assert!(error.contains("max_frames_per_minute"), "{error}");
+    }
+
+    #[test]
+    fn a_host_listens_on_the_loopback_unless_told_otherwise() {
+        let remote = |extra: &str| {
+            server_config(&format!(
+                "[server.radio]\ntype = \"ble\"\n\
+                 [[server.hosts]]\nname = \"phone\"\nlisten = \"0.0.0.0:21838\"\n\
+                 max_frames_per_minute = 60\n{extra}"
+            ))
+        };
+        let error = parse(&remote("")).unwrap_err().to_string();
+        assert!(error.contains("loopback"), "{error}");
+        assert!(error.contains("allow_remote"), "{error}");
+        assert!(parse(&remote("allow_remote = true\n")).is_ok());
+
+        // The default needs no opt-in, and is the loopback.
+        let text = server_config(
+            "[server.radio]\ntype = \"ble\"\n\
+             [[server.hosts]]\nname = \"phone\"\nmax_frames_per_minute = 60\n",
+        );
+        let server = parse(&text).unwrap().server.unwrap();
+        assert!(server.hosts[0].listen.ip().is_loopback());
+        assert_eq!(server.hosts[0].listen.port(), DEFAULT_HOST_PORT);
+    }
+
+    #[test]
+    fn hosts_and_clients_share_one_namespace() {
+        let text = server_config(&format!(
+            "[[server.clients]]\nname = \"cabin\"\naddress = \"{}\"\n\
+             [[server.hosts]]\nname = \"cabin\"\nmax_frames_per_minute = 60\n",
+            address(2)
+        ));
+        assert!(parse(&text).is_err(), "a host may not take a client's name");
+
+        let text = server_config(
+            "[server.radio]\ntype = \"ble\"\n\
+             [[server.hosts]]\nname = \"radio\"\nmax_frames_per_minute = 60\n",
+        );
+        assert!(parse(&text).is_err(), "the radio name is reserved");
+    }
+
+    #[test]
+    fn two_hosts_may_not_share_a_port() {
+        let text = server_config(
+            "[server.radio]\ntype = \"ble\"\n\
+             [[server.hosts]]\nname = \"phone\"\nmax_frames_per_minute = 60\n\
+             [[server.hosts]]\nname = \"laptop\"\nmax_frames_per_minute = 60\n",
+        );
+        let error = parse(&text).unwrap_err().to_string();
+        assert!(error.contains("21838"), "{error}");
+    }
+
+    #[test]
+    fn a_hosts_allowlist_must_name_a_real_interface() {
+        let text = server_config(
+            "[server.radio]\ntype = \"ble\"\n\
+             [[server.hosts]]\nname = \"phone\"\nmax_frames_per_minute = 60\n\
+             allow_to = [\"radio\", \"summit\"]\n",
+        );
+        let error = parse(&text).unwrap_err().to_string();
+        assert!(error.contains("summit"), "{error}");
+
+        // And a client may name a host, since they are one namespace.
+        let text = server_config(&format!(
+            "[[server.clients]]\nname = \"cabin\"\naddress = \"{}\"\n\
+             allow_to = [\"phone\"]\n\
+             [[server.hosts]]\nname = \"phone\"\nmax_frames_per_minute = 60\n",
+            address(2)
+        ));
+        assert!(parse(&text).is_ok());
     }
 
     #[test]

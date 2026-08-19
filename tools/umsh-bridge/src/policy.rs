@@ -19,17 +19,20 @@ use anyhow::{Result, bail};
 use tokio::time::Instant;
 
 use crate::config::ServerConfig;
-use crate::iface::{InterfaceId, Interfaces};
+use crate::iface::{InterfaceId, InterfaceKind, Interfaces};
 
 pub struct Policy {
-    /// Indexed by client index, parallel to `ServerConfig::clients`.
-    clients: Vec<ClientPolicy>,
+    /// One entry per interface, parallel to [`Interfaces::all`].
+    interfaces: Vec<InterfacePolicy>,
 }
 
-struct ClientPolicy {
+struct InterfacePolicy {
     name: String,
+    /// `None` is exempt. Only the server's own radio is: a bridge that
+    /// rate-limited its own segment would be throttling the mesh it is
+    /// part of, not a remote peer it is protecting itself from.
     limit: Option<RateLimit>,
-    /// Interfaces this client's traffic may leave through. `None` means
+    /// Interfaces this one's traffic may leave through. `None` means
     /// all of them.
     allow_to: Option<HashSet<InterfaceId>>,
 }
@@ -37,74 +40,91 @@ struct ClientPolicy {
 impl Policy {
     /// Resolve the configured names against the interfaces that exist.
     pub fn build(config: &ServerConfig, interfaces: &Interfaces) -> Result<Self> {
-        let clients = config
-            .clients
+        let resolve = |owner: &str, names: &Option<Vec<String>>| {
+            names
+                .as_ref()
+                .map(|names| {
+                    names
+                        .iter()
+                        .map(|name| {
+                            interfaces
+                                .all
+                                .iter()
+                                .find(|iface| &iface.name == name)
+                                .map(|iface| iface.id)
+                                .ok_or_else(|| {
+                                    anyhow::anyhow!(
+                                        "\"{owner}\" allows forwarding to \"{name}\", which is \
+                                         not an interface"
+                                    )
+                                })
+                        })
+                        .collect::<Result<HashSet<_>>>()
+                })
+                .transpose()
+        };
+
+        let entries = interfaces
+            .all
             .iter()
-            .map(|client| {
-                let allow_to = client
-                    .allow_to
-                    .as_ref()
-                    .map(|names| {
-                        names
-                            .iter()
-                            .map(|name| {
-                                interfaces
-                                    .all
-                                    .iter()
-                                    .find(|iface| &iface.name == name)
-                                    .map(|iface| iface.id)
-                                    .ok_or_else(|| {
-                                        anyhow::anyhow!(
-                                            "client \"{}\" allows forwarding to \"{name}\", \
-                                             which is not an interface",
-                                            client.name
-                                        )
-                                    })
-                            })
-                            .collect::<Result<HashSet<_>>>()
-                    })
-                    .transpose()?;
-                Ok(ClientPolicy {
-                    name: client.name.clone(),
-                    limit: client.max_frames_per_minute.map(RateLimit::per_minute),
+            .map(|iface| {
+                let (limit, allow_to) = match iface.kind {
+                    InterfaceKind::Radio => (None, None),
+                    InterfaceKind::Client(index) => {
+                        let client = &config.clients[index];
+                        (
+                            client.max_frames_per_minute.map(RateLimit::per_minute),
+                            resolve(&client.name, &client.allow_to)?,
+                        )
+                    }
+                    // A host's limit is required by the configuration:
+                    // it spends no airtime of its own, but every frame
+                    // it injects is transmitted by every participant's
+                    // node.
+                    InterfaceKind::Host(index) => {
+                        let host = &config.hosts[index];
+                        (
+                            Some(RateLimit::per_minute(host.max_frames_per_minute)),
+                            resolve(&host.name, &host.allow_to)?,
+                        )
+                    }
+                };
+                Ok(InterfacePolicy {
+                    name: iface.name.clone(),
+                    limit,
                     allow_to,
                 })
             })
             .collect::<Result<Vec<_>>>()?;
 
         if config.radio.is_none()
-            && clients
+            && entries
                 .iter()
-                .all(|client| client.allow_to.as_ref().is_some_and(HashSet::is_empty))
+                .all(|entry| entry.allow_to.as_ref().is_some_and(HashSet::is_empty))
         {
-            bail!("every client's allow_to is empty; no frame could ever be forwarded");
+            bail!("every allow_to is empty; no frame could ever be forwarded");
         }
 
-        Ok(Self { clients })
+        Ok(Self {
+            interfaces: entries,
+        })
     }
 
     /// Spend one from the arrival interface's forwarding budget.
-    ///
-    /// The server's own radio has no budget: a bridge that rate-limited
-    /// its own segment would be throttling the mesh it is part of, not a
-    /// remote peer it is protecting itself from.
-    pub fn admit(&mut self, interfaces: &Interfaces, arrival: InterfaceId, now: Instant) -> bool {
-        let Some(client) = interfaces.get(arrival).client else {
-            return true;
-        };
-        let policy = &mut self.clients[client];
+    pub fn admit(&mut self, arrival: InterfaceId, now: Instant) -> bool {
+        let policy = &mut self.interfaces[arrival];
         let Some(limit) = policy.limit.as_mut() else {
             return true;
         };
         if limit.take(now) {
             return true;
         }
-        // Once per interval, not once per frame: a client hammering the
-        // tunnel must not also flood the log.
+        // Once per interval, not once per frame: a peer hammering the
+        // bridge must not also flood the log.
         if limit.note_refusal(now) {
             tracing::warn!(
-                client = %policy.name,
-                "rate limit reached; frames from this client are being dropped"
+                iface = %policy.name,
+                "rate limit reached; frames from this interface are being dropped"
             );
         }
         false
@@ -112,32 +132,25 @@ impl Policy {
 
     /// Whether a frame that arrived on `arrival` may leave through
     /// `exit`.
-    pub fn may_forward(
-        &self,
-        interfaces: &Interfaces,
-        arrival: InterfaceId,
-        exit: InterfaceId,
-    ) -> bool {
+    pub fn may_forward(&self, arrival: InterfaceId, exit: InterfaceId) -> bool {
         if arrival == exit {
             return false;
         }
-        match interfaces.get(arrival).client {
+        match &self.interfaces[arrival].allow_to {
             None => true,
-            Some(client) => match &self.clients[client].allow_to {
-                None => true,
-                Some(allowed) => allowed.contains(&exit),
-            },
+            Some(allowed) => allowed.contains(&exit),
         }
     }
 
     /// How the configured egress rules read, for `check` and start-up
     /// logging.
-    pub fn describe_fan_out(&self, interfaces: &Interfaces, arrival: InterfaceId) -> String {
-        let names: Vec<&str> = interfaces
-            .all
+    pub fn describe_fan_out(&self, arrival: InterfaceId) -> String {
+        let names: Vec<&str> = self
+            .interfaces
             .iter()
-            .filter(|iface| self.may_forward(interfaces, arrival, iface.id))
-            .map(|iface| iface.name.as_str())
+            .enumerate()
+            .filter(|(exit, _)| self.may_forward(arrival, *exit))
+            .map(|(_, entry)| entry.name.as_str())
             .collect();
         if names.is_empty() {
             "nothing".to_string()
@@ -234,7 +247,7 @@ mod tests {
     fn a_frame_never_goes_back_out_the_way_it_came() {
         let (_, interfaces, policy) = two_clients("");
         for iface in &interfaces.all {
-            assert!(!policy.may_forward(&interfaces, iface.id, iface.id));
+            assert!(!policy.may_forward(iface.id, iface.id));
         }
     }
 
@@ -243,7 +256,7 @@ mod tests {
         let (_, interfaces, policy) = two_clients("");
         let cabin = interfaces.by_client(0).unwrap().id;
         assert_eq!(
-            policy.describe_fan_out(&interfaces, cabin),
+            policy.describe_fan_out(cabin),
             "radio, summit",
             "the arrival interface is excluded, the rest are not"
         );
@@ -253,14 +266,14 @@ mod tests {
     fn an_allowlist_is_the_whole_list() {
         let (_, interfaces, policy) = two_clients("allow_to = [\"radio\"]\n");
         let cabin = interfaces.by_client(0).unwrap().id;
-        assert_eq!(policy.describe_fan_out(&interfaces, cabin), "radio");
+        assert_eq!(policy.describe_fan_out(cabin), "radio");
 
         // Two clients on the same segment: excluding one from the
         // other's fan-out is how the duplicate airtime is avoided.
         let summit = interfaces.by_client(1).unwrap().id;
-        assert!(!policy.may_forward(&interfaces, cabin, summit));
+        assert!(!policy.may_forward(cabin, summit));
         assert!(
-            policy.may_forward(&interfaces, summit, cabin),
+            policy.may_forward(summit, cabin),
             "the rule is per-arrival, not symmetric"
         );
     }
@@ -269,7 +282,7 @@ mod tests {
     fn the_servers_own_radio_forwards_everywhere_regardless() {
         let (_, interfaces, policy) = two_clients("allow_to = []\n");
         let radio = interfaces.radio.unwrap();
-        assert_eq!(policy.describe_fan_out(&interfaces, radio), "cabin, summit");
+        assert_eq!(policy.describe_fan_out(radio), "cabin, summit");
     }
 
     #[tokio::test(start_paused = true)]
@@ -279,14 +292,14 @@ mod tests {
 
         // The full minute's allowance is available as a burst.
         for _ in 0..60 {
-            assert!(policy.admit(&interfaces, cabin, Instant::now()));
+            assert!(policy.admit(cabin, Instant::now()));
         }
-        assert!(!policy.admit(&interfaces, cabin, Instant::now()));
+        assert!(!policy.admit(cabin, Instant::now()));
 
         // One frame per second thereafter.
         tokio::time::sleep(Duration::from_secs(1)).await;
-        assert!(policy.admit(&interfaces, cabin, Instant::now()));
-        assert!(!policy.admit(&interfaces, cabin, Instant::now()));
+        assert!(policy.admit(cabin, Instant::now()));
+        assert!(!policy.admit(cabin, Instant::now()));
     }
 
     #[tokio::test(start_paused = true)]
@@ -295,8 +308,8 @@ mod tests {
         let radio = interfaces.radio.unwrap();
         let cabin = interfaces.by_client(0).unwrap().id;
         for _ in 0..1000 {
-            assert!(policy.admit(&interfaces, radio, Instant::now()));
-            assert!(policy.admit(&interfaces, cabin, Instant::now()));
+            assert!(policy.admit(radio, Instant::now()));
+            assert!(policy.admit(cabin, Instant::now()));
         }
     }
 }

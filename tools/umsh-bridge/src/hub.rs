@@ -100,7 +100,7 @@ impl Hub {
     /// it.
     pub fn relay(&mut self, arrival: &mut Ingress, now: Instant) -> Verdict {
         self.counters.received += 1;
-        if !self.policy.admit(&self.interfaces, arrival.iface, now) {
+        if !self.policy.admit(arrival.iface, now) {
             self.counters.rate_limited += 1;
             return Verdict::RateLimited;
         }
@@ -113,11 +113,7 @@ impl Hub {
 
         let mut sent = 0;
         for iface in &self.interfaces.all {
-            if !iface.is_connected()
-                || !self
-                    .policy
-                    .may_forward(&self.interfaces, arrival.iface, iface.id)
-            {
+            if !iface.is_connected() || !self.policy.may_forward(arrival.iface, iface.id) {
                 continue;
             }
             iface.send(arrival.frame.clone());

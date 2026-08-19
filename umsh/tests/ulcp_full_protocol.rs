@@ -82,6 +82,7 @@ fn session_config() -> SessionConfig {
         // against the real session too.
         illuminance: true,
         ble: true,
+        mac_node: true,
     }
 }
 

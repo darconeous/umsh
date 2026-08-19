@@ -27,7 +27,8 @@ segments which are nowhere near each other.
   therefore not on the shared medium at all — it is a point-to-point
   neighbor of the device's own node.
 - The server's **interfaces** are its own radio, when it has one, plus
-  one interface per connected client. The server's radio is a
+  one interface per connected client, plus any
+  [host interfaces](#host-interfaces) it offers. The server's radio is a
   participant like any other; nothing distinguishes it but the absence
   of a tunnel.
 - The server copies each frame it receives to its other interfaces. It
@@ -35,8 +36,9 @@ segments which are nowhere near each other.
 
 The bridge has no identity on the mesh. It appears in no route, answers
 to no address, and originates no traffic. The nodes that carry bridged
-traffic are the ones behind the participants' radios, and each holds its
-own identity.
+traffic are the ones behind the participants' radios — and, where a
+[host interface](#host-interfaces) is offered, the host on the far side
+of it — each holding its own identity.
 
 ### A Crossing Is Two Repeater Hops
 
@@ -246,6 +248,54 @@ participant **MUST NOT** treat it as a failed hand-off or retry it.
 No participant provisions node logic for the bridge: there is no bridge
 identity to provision. A participant's device is configured as whatever
 node its owner intends it to be.
+
+## Host Interfaces {#host-interfaces}
+
+A server **MAY** offer **host interfaces**: interfaces whose far end is
+not a participant fronting a segment but a single host, attached
+directly to the bridge's hidden medium. The host runs its own MAC and
+holds its own identity, exactly as it would behind a radio; what it
+lacks is a radio, and therefore a node of its own standing between it
+and the medium.
+
+The server presents a ULCP device on such an interface. That device's
+radio is the bridge: what the host transmits is relayed by the
+[relay procedure](#relay-procedure) like anything else, and what the
+relay copies to the interface is delivered to the host as a reception.
+The device **MUST NOT** advertise `CAP_MAC_BACKHAUL`, because there is
+no node for a backhaul to connect the host to, and a participant
+**MUST NOT** attach to one: a bridge's forwarding policy is its
+participants' repeaters, and a host interface has none to offer.
+
+A crossing to or from a host spends **one** flood hop rather than the
+two of [§ A Crossing Is Two Repeater Hops](#a-crossing-is-two-repeater-hops),
+since no repeater stands between the host and the medium. What makes
+this safe is unchanged: a host's frames reach the air only where a
+participant's node transmits them, and that node applies the whole
+forwarding procedure — duplicate suppression, hop accounting, region and
+signal policy, duty enforcement — to them as to anything else it hears.
+
+Frames delivered to a host **MUST** carry no signal measurements. The
+measurement that accompanied such a frame across the tunnel describes a
+reception on another segment by another radio, and reporting it here
+would attribute it to a reception that did not happen. This is the same
+fact the crossing model already records as a trace signal entry saying
+nothing was measured.
+
+The server **MUST** rate-limit each host interface. A host spends no
+airtime of its own, which removes the natural bound a radio imposes,
+while every frame it injects is transmitted by every participant's node.
+
+The transport carrying ULCP to a host is a local binding and is outside
+this appendix. Whatever it is, it is a ULCP transport like any other and
+its [attach and detach](ulcp-core.md#attach-sync) are the establishment
+and closure of the underlying connection. A deployment **MUST NOT**
+expose that binding beyond a host it trusts as it would trust a device
+on the end of a cable: reaching it is an RF presence on every segment
+the bridge touches, and a binding that meets
+[Provisioning Security](ulcp-core.md#provisioning-security) by physical
+possession also carries whatever key provisioning and administrative
+authority the device offers.
 
 ## Relay Procedure {#relay-procedure}
 

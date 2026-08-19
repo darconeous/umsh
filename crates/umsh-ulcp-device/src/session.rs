@@ -240,6 +240,15 @@ pub struct SessionConfig {
     /// unreachable on demand. When set, `CAP_BLE` is advertised and
     /// `PROP_BLE_ENABLED` exists; otherwise the property is unknown.
     pub ble: bool,
+    /// Whether a mesh node runs behind this session — a MAC of the
+    /// device's own that can repeat and that a backhauled host can sit
+    /// point-to-point behind. Every firmware sets this; a simulated
+    /// device with no node behind it must not, or it would advertise
+    /// `CAP_MAC_BACKHAUL` while `Effect::ApplyBackhaul` connects the
+    /// host to nothing. When unset, `CAP_REPEATER` and
+    /// `CAP_MAC_BACKHAUL` are absent and the repeater and backhaul
+    /// properties are unknown.
+    pub mac_node: bool,
 }
 
 /// Physical-radio outcome of the transmit started by
@@ -4235,8 +4244,9 @@ impl<A: AesProvider, S: Sha256Provider, const TX: usize> Session<A, S, TX> {
         }
         // Which side of the radio multiplexer the host sits on is the
         // multiplexer's state, not the session's, so the write completes
-        // with its own effect.
-        if key == prop::MAC_BACKHAUL {
+        // with its own effect. Without a node there is no multiplexer;
+        // the key then falls through to the unknown-property refusal.
+        if key == prop::MAC_BACKHAUL && self.config.mac_node {
             let enabled = match parse_bool(value) {
                 Ok(enabled) => enabled,
                 Err(status) => {
@@ -4407,7 +4417,7 @@ impl<A: AesProvider, S: Sha256Provider, const TX: usize> Session<A, S, TX> {
             // and takes effect the moment the device node is brought up
             // (store-and-defer). The firmware reconciles it against the
             // live MAC via the dev-domain version.
-            prop::MAC_REPEATER_ENABLED => {
+            prop::MAC_REPEATER_ENABLED if self.config.mac_node => {
                 self.device.repeater_enabled = parse_bool(value)?;
                 self.bump_dev_domain();
                 Ok(false)
@@ -4479,7 +4489,7 @@ impl<A: AesProvider, S: Sha256Provider, const TX: usize> Session<A, S, TX> {
             // enabled, so an administrator can stage a whole repeater
             // configuration and turn it on last. Empty means "no gate"
             // in every case, which is also the post-reset value.
-            prop::MAC_REPEATER_REGIONS => {
+            prop::MAC_REPEATER_REGIONS if self.config.mac_node => {
                 self.device.repeater_regions = RepeaterRegions::parse_table(value)?;
                 self.bump_dev_domain();
                 Ok(false)
@@ -4488,12 +4498,12 @@ impl<A: AesProvider, S: Sha256Provider, const TX: usize> Session<A, S, TX> {
             // written separately and in either order, so enforcing
             // membership here would reject a legitimate write purely for
             // arriving first.
-            prop::MAC_REPEATER_DEFAULT_REGION => {
+            prop::MAC_REPEATER_DEFAULT_REGION if self.config.mac_node => {
                 self.device.repeater_default_region = parse_region_code(value)?;
                 self.bump_dev_domain();
                 Ok(false)
             }
-            prop::MAC_REPEATER_MIN_RSSI => {
+            prop::MAC_REPEATER_MIN_RSSI if self.config.mac_node => {
                 self.device.repeater_min_rssi = match value.is_empty() {
                     true => None,
                     false => Some(parse_i16(value)?),
@@ -4501,7 +4511,7 @@ impl<A: AesProvider, S: Sha256Provider, const TX: usize> Session<A, S, TX> {
                 self.bump_dev_domain();
                 Ok(false)
             }
-            prop::MAC_REPEATER_MIN_SNR => {
+            prop::MAC_REPEATER_MIN_SNR if self.config.mac_node => {
                 self.device.repeater_min_snr = match value.is_empty() {
                     true => None,
                     false => Some(parse_i8(value)?),
@@ -4600,7 +4610,7 @@ impl<A: AesProvider, S: Sha256Provider, const TX: usize> Session<A, S, TX> {
                 }
             }
             // The item is the region string; the device derives the code.
-            prop::MAC_REPEATER_REGIONS => {
+            prop::MAC_REPEATER_REGIONS if self.config.mac_node => {
                 let entry = match region_entry(item) {
                     Ok(entry) => entry,
                     Err(status) => return self.complete(tid, status, emit),
@@ -4713,7 +4723,7 @@ impl<A: AesProvider, S: Sha256Provider, const TX: usize> Session<A, S, TX> {
             // Selected by the string as written, not by the derived code:
             // two names can share a code only by collision, and the list
             // an administrator reads back is the list they remove from.
-            prop::MAC_REPEATER_REGIONS => {
+            prop::MAC_REPEATER_REGIONS if self.config.mac_node => {
                 if let Err(status) = region_entry(selector) {
                     return self.complete(tid, status, emit);
                 }
@@ -4938,6 +4948,17 @@ impl<A: AesProvider, S: Sha256Provider, const TX: usize> Session<A, S, TX> {
         if matches!(key, prop::TIME | prop::TZ_OFFSET) {
             return self.config.time.is_some();
         }
+        if matches!(
+            key,
+            prop::MAC_REPEATER_ENABLED
+                | prop::MAC_REPEATER_REGIONS
+                | prop::MAC_REPEATER_DEFAULT_REGION
+                | prop::MAC_REPEATER_MIN_RSSI
+                | prop::MAC_REPEATER_MIN_SNR
+                | prop::MAC_BACKHAUL
+        ) {
+            return self.config.mac_node;
+        }
         if gnss::is_positioning_property(key)
             || matches!(
                 key,
@@ -4971,11 +4992,6 @@ impl<A: AesProvider, S: Sha256Provider, const TX: usize> Session<A, S, TX> {
                 | prop::DEV_CHANNEL_KEYS
                 | prop::DEV_PEERS
                 | prop::DEV_ADMINS
-                | prop::MAC_REPEATER_ENABLED
-                | prop::MAC_REPEATER_REGIONS
-                | prop::MAC_REPEATER_DEFAULT_REGION
-                | prop::MAC_REPEATER_MIN_RSSI
-                | prop::MAC_REPEATER_MIN_SNR
                 | prop::IDENT
                 | prop::IDENT_ROLE
                 | prop::IDENT_MOBILE
@@ -4989,7 +5005,6 @@ impl<A: AesProvider, S: Sha256Provider, const TX: usize> Session<A, S, TX> {
                 | prop::PHY_DUTY_LIMIT
                 | prop::BLE_PAIRING_PIN
                 | prop::MAC_PROMISCUOUS
-                | prop::MAC_BACKHAUL
                 | prop::SAVED
                 | prop::HOST_KEY
                 | prop::HOST_RX_FILTERS
@@ -5017,24 +5032,28 @@ impl<A: AesProvider, S: Sha256Provider, const TX: usize> Session<A, S, TX> {
             prop::INTERFACE_TYPE => pui::encode(ids::INTERFACE_TYPE, out).unwrap_or(0),
             prop::CAPS => {
                 let mut len = 0;
-                for capability in [
-                    cap::WRITABLE_RAW_STREAM,
-                    cap::PHY_DUTY_LIMIT,
-                    cap::DEV_NAME,
-                    cap::PHY_LORA,
-                    cap::HOST_FILTER,
-                    cap::HOST_RX_QUEUE,
-                    cap::HOST_KEYS,
-                    cap::HOST_AUTO_ACK,
-                    cap::SAVE,
-                    cap::DEV_IDENTITY,
-                    cap::REPEATER,
-                    cap::IDENT,
-                    cap::ADMIN,
-                    cap::ADVERT,
-                    cap::MAC_BACKHAUL,
-                    cap::CMD_MULTI,
+                let mac_node = self.config.mac_node;
+                for (capability, advertised) in [
+                    (cap::WRITABLE_RAW_STREAM, true),
+                    (cap::PHY_DUTY_LIMIT, true),
+                    (cap::DEV_NAME, true),
+                    (cap::PHY_LORA, true),
+                    (cap::HOST_FILTER, true),
+                    (cap::HOST_RX_QUEUE, true),
+                    (cap::HOST_KEYS, true),
+                    (cap::HOST_AUTO_ACK, true),
+                    (cap::SAVE, true),
+                    (cap::DEV_IDENTITY, true),
+                    (cap::REPEATER, mac_node),
+                    (cap::IDENT, true),
+                    (cap::ADMIN, true),
+                    (cap::ADVERT, true),
+                    (cap::MAC_BACKHAUL, mac_node),
+                    (cap::CMD_MULTI, true),
                 ] {
+                    if !advertised {
+                        continue;
+                    }
                     len += pui::encode(capability, &mut out[len..]).unwrap_or(0);
                 }
                 if self.config.battery.is_some() {
@@ -5108,7 +5127,7 @@ impl<A: AesProvider, S: Sha256Provider, const TX: usize> Session<A, S, TX> {
                 }
                 len
             }
-            prop::MAC_REPEATER_ENABLED => {
+            prop::MAC_REPEATER_ENABLED if self.config.mac_node => {
                 out[0] = self.device.repeater_enabled as u8;
                 1
             }
@@ -5175,7 +5194,7 @@ impl<A: AesProvider, S: Sha256Provider, const TX: usize> Session<A, S, TX> {
                 out[0] = self.device.ble_enabled as u8;
                 1
             }
-            prop::MAC_REPEATER_REGIONS => {
+            prop::MAC_REPEATER_REGIONS if self.config.mac_node => {
                 // Digest form equals item form; items carry PUI length
                 // prefixes in whole-table values.
                 let mut len = 0;
@@ -5185,28 +5204,34 @@ impl<A: AesProvider, S: Sha256Provider, const TX: usize> Session<A, S, TX> {
                 }
                 len
             }
-            prop::MAC_REPEATER_DEFAULT_REGION => match &self.device.repeater_default_region {
-                Some(code) => put(out, code),
-                None => 0,
-            },
-            prop::MAC_REPEATER_MIN_RSSI => match self.device.repeater_min_rssi {
-                Some(rssi) => put(out, &rssi.to_le_bytes()),
-                None => 0,
-            },
-            prop::MAC_REPEATER_MIN_SNR => match self.device.repeater_min_snr {
-                Some(snr) => {
-                    out[0] = snr as u8;
-                    1
+            prop::MAC_REPEATER_DEFAULT_REGION if self.config.mac_node => {
+                match &self.device.repeater_default_region {
+                    Some(code) => put(out, code),
+                    None => 0,
                 }
-                None => 0,
-            },
+            }
+            prop::MAC_REPEATER_MIN_RSSI if self.config.mac_node => {
+                match self.device.repeater_min_rssi {
+                    Some(rssi) => put(out, &rssi.to_le_bytes()),
+                    None => 0,
+                }
+            }
+            prop::MAC_REPEATER_MIN_SNR if self.config.mac_node => {
+                match self.device.repeater_min_snr {
+                    Some(snr) => {
+                        out[0] = snr as u8;
+                        1
+                    }
+                    None => 0,
+                }
+            }
             prop::PHY_DUTY_NOW => put(out, &self.config.duty.usage(now_ms).to_le_bytes()),
             prop::PHY_DUTY_LIMIT => put(out, &self.config.duty.limit().to_le_bytes()),
             prop::MAC_PROMISCUOUS => {
                 out[0] = self.session.promiscuous as u8;
                 1
             }
-            prop::MAC_BACKHAUL => {
+            prop::MAC_BACKHAUL if self.config.mac_node => {
                 out[0] = self.session.backhaul as u8;
                 1
             }
@@ -5649,6 +5674,7 @@ mod tests {
             gnss: Some(GnssConfig::DEFAULT),
             illuminance: true,
             ble: true,
+            mac_node: true,
         }
     }
 
@@ -6107,6 +6133,63 @@ mod tests {
                 pui::decode(&value).unwrap().0,
                 Status::PROP_NOT_FOUND.0,
                 "prop {key} is visible without its capability"
+            );
+        }
+    }
+
+    /// A session with no node behind it — a simulated device, a bridge's
+    /// soft device — must not claim one: `CAP_MAC_BACKHAUL` is exactly
+    /// what a bridge checks before trusting a device to front a segment,
+    /// and the repeater surface configures a forwarder that does not
+    /// exist.
+    #[test]
+    fn caps_omit_the_node_when_none_runs_behind_the_session() {
+        let config = SessionConfig {
+            mac_node: false,
+            ..test_config()
+        };
+        let mut session: TestSession = Session::new(config, Status::RESET_POWER_ON, test_engine());
+        session.attach(true);
+        let raw = get(&mut session, prop::CAPS);
+        let mut caps = Vec::new();
+        let mut offset = 0;
+        while offset < raw.len() {
+            let (value, used) = pui::decode(&raw[offset..]).unwrap();
+            caps.push(value);
+            offset += used;
+        }
+        assert!(!caps.contains(&cap::REPEATER));
+        assert!(!caps.contains(&cap::MAC_BACKHAUL));
+
+        for key in [
+            prop::MAC_REPEATER_ENABLED,
+            prop::MAC_REPEATER_REGIONS,
+            prop::MAC_REPEATER_DEFAULT_REGION,
+            prop::MAC_REPEATER_MIN_RSSI,
+            prop::MAC_REPEATER_MIN_SNR,
+            prop::MAC_BACKHAUL,
+        ] {
+            let mut buf = [0u8; 16];
+            let len = frame::prop_get(&mut buf, 6, key).unwrap();
+            let (emitted, effect) = dispatch(&mut session, &buf[..len], 0);
+            assert_eq!(effect, None, "prop {key} produced an effect");
+            let (_, status_key, value) = parse_prop_is(&emitted[0]);
+            assert_eq!(status_key, prop::LAST_STATUS);
+            assert_eq!(
+                pui::decode(&value).unwrap().0,
+                Status::PROP_NOT_FOUND.0,
+                "prop {key} is visible without a node"
+            );
+
+            let len = frame::prop_set(&mut buf, 7, key, &[1]).unwrap();
+            let (emitted, effect) = dispatch(&mut session, &buf[..len], 0);
+            assert_eq!(effect, None, "setting prop {key} produced an effect");
+            let (_, status_key, value) = parse_prop_is(&emitted[0]);
+            assert_eq!(status_key, prop::LAST_STATUS);
+            assert_eq!(
+                pui::decode(&value).unwrap().0,
+                Status::PROP_NOT_FOUND.0,
+                "prop {key} is settable without a node"
             );
         }
     }

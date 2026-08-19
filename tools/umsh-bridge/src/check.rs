@@ -66,7 +66,27 @@ pub fn check(path: &Path) -> Result<()> {
                 );
             }
         }
-        if server.clients.is_empty() {
+        for host in &server.hosts {
+            let fan_out = match &host.allow_to {
+                Some(names) => names.join(", "),
+                None => other_interfaces(&server.interface_names(), &host.name).join(", "),
+            };
+            println!(
+                "host:        {} [{}] -> {fan_out} ({}/min)",
+                host.name, host.listen, host.max_frames_per_minute
+            );
+            if !host.listen.ip().is_loopback() {
+                // Validation already required `allow_remote` to reach
+                // here; saying it again is what a pre-flight check is
+                // for.
+                println!(
+                    "  warning: listening off the loopback. This socket is unauthenticated and \
+                     grants what a serial cable grants, key provisioning included; whoever \
+                     reaches it has an RF presence on every segment this bridge touches"
+                );
+            }
+        }
+        if server.clients.is_empty() && server.hosts.is_empty() {
             println!("  warning: no clients configured; the server bridges its radio to nothing");
         }
     }

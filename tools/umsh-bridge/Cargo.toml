@@ -25,6 +25,7 @@ umsh-core = { path = "../../crates/umsh-core", features = ["std", "region-codec"
 umsh-crypto = { path = "../../crates/umsh-crypto", features = ["std", "software-crypto"] }
 umsh-hal = { path = "../../crates/umsh-hal", features = ["std"] }
 umsh-ulcp = { path = "../../crates/umsh-ulcp" }
+umsh-ulcp-simdev = { path = "../../crates/umsh-ulcp-simdev" }
 tokio-serial = { version = "5", optional = true }
 anyhow = "1"
 clap = { version = "4", features = ["derive", "env", "wrap_help"] }
