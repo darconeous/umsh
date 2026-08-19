@@ -1178,18 +1178,25 @@ final class CoreBluetoothRadioConnection: NSObject, RadioConnection, @unchecked 
         }
     }
 
-    func readRemoteDevice(
+    func fetchRemoteProperties(
         peerAddress: String,
+        propertyIDs: [UInt32],
+        multiHint: Bool,
         progress: (@Sendable (UInt32?) -> Void)?
-    ) async throws -> UlcpSyncRecord {
+    ) async throws -> [MobileMeshManagementAnswerRecord] {
+        guard !propertyIDs.isEmpty else { return [] }
         let event = try await performManagement(progress: progress) { session in
-            try session.beginRemoteSync(peerAddress: peerAddress)
+            try session.beginManagementFetch(
+                peerAddress: peerAddress,
+                propertyIds: propertyIDs,
+                multiHint: multiHint
+            )
         }
-        // A read that ends without a record read nothing it could reduce —
-        // every property refused, or a device that answered the capability
-        // question with something else.
-        guard let sync = event.sync else { throw RemoteManagementError.unreadable }
-        return sync
+        // A read that comes back with nothing at all did not reach the
+        // device: a device that answered said something about every
+        // property it was asked for, refusals included.
+        guard !event.answers.isEmpty else { throw RemoteManagementError.unreadable }
+        return event.answers
     }
 
     func writeRemoteProperties(
@@ -1237,15 +1244,40 @@ final class CoreBluetoothRadioConnection: NSObject, RadioConnection, @unchecked 
                     publicKey: publicKey
                 )
         }
-        // The device answers with the list as it now stands, or with a
-        // status where that list belonged. `ALREADY` and `ITEM_NOT_FOUND`
-        // are the request already satisfied, as on the bench path.
+        try Self.requireTableEdit(event)
+    }
+
+    func setRemoteDevicePeer(
+        peerAddress: String,
+        publicKey: Data,
+        present: Bool
+    ) async throws {
+        let event = try await performManagement { session in
+            present
+                ? try session.beginManagementInsertPeer(
+                    peerAddress: peerAddress,
+                    publicKey: publicKey
+                )
+                : try session.beginManagementRemovePeer(
+                    peerAddress: peerAddress,
+                    publicKey: publicKey
+                )
+        }
+        try Self.requireTableEdit(event)
+    }
+
+    /// Read the answer to a one-entry table edit.
+    ///
+    /// The device answers with the list as it now stands, or with a status
+    /// where that list belonged. `ALREADY` and `ITEM_NOT_FOUND` are the
+    /// request already satisfied, as on the bench path.
+    private static func requireTableEdit(_ event: MobileMeshManagementEventRecord) throws {
         guard let answer = event.answers.first else {
-            try Self.requireSuccess(event.statusCode)
+            try requireSuccess(event.statusCode)
             return
         }
         if let status = answer.statusCode {
-            try Self.requireSuccess(status)
+            try requireSuccess(status)
         }
     }
 

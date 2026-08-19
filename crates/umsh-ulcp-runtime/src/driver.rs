@@ -250,6 +250,12 @@ pub struct DevDomainSnapshot {
     /// `PROP_IDENT_MOBILE`: whether to advertise the `MOB` capability
     /// bit.
     pub ident_mobile: bool,
+    /// `PROP_IDENT_LOCATION`: the position the advertised identity
+    /// carries, in the variable-precision encoding, or empty for none.
+    pub ident_location: heapless::Vec<u8, { umsh_ulcp::gnss::MAX_LOCATION_LEN }>,
+    /// `PROP_IDENT_ALTITUDE`: meters above the WGS-84 ellipsoid, or
+    /// `None`.
+    pub ident_altitude_m: Option<i32>,
     /// `PROP_DEV_DISCOVERABLE`: whether the device identity answers
     /// Identity Requests.
     pub discoverable: bool,
@@ -308,6 +314,14 @@ pub enum PublishEvent {
     /// An unsolicited positioning property, named by its key, encoded
     /// from the accompanying snapshot.
     Gnss(u32, umsh_ulcp::gnss::GnssSnapshot),
+    /// A fix offered to the advertised identity, in the
+    /// variable-precision encoding. Not a publication at all — it is an
+    /// input the session may act on — but it arrives on the same arm
+    /// because it comes from the same receiver.
+    IdentityFix(
+        heapless::Vec<u8, { umsh_ulcp::gnss::MAX_LOCATION_LEN }>,
+        Option<i32>,
+    ),
 }
 
 /// Board couplings of the session driver. Everything the loop needs from
@@ -813,6 +827,8 @@ fn sync_dev_domain<A, S, const TXQ: usize, E>(
         repeater_min_snr: session.repeater_min_snr(),
         ident_role: session.ident_role(),
         ident_mobile: session.ident_mobile(),
+        ident_location: heapless::Vec::from_slice(session.ident_location()).unwrap_or_default(),
+        ident_altitude_m: session.ident_altitude_m(),
         discoverable: session.dev_discoverable(),
         advert_interval_s: session.advert_interval_s(),
         beacon_interval_s: session.beacon_interval_s(),
@@ -1409,6 +1425,13 @@ where
                     }
                     PublishEvent::Gnss(key, snapshot) => {
                         session.publish_gnss(key, &snapshot, emit);
+                    }
+                    PublishEvent::IdentityFix(location, altitude_m) => {
+                        // The session clamps, compares, and bumps the
+                        // device-domain version if the advertised
+                        // position actually moved; the sync at the foot
+                        // of this loop carries it to the identity.
+                        session.absorb_ident_fix(&location, altitude_m);
                     }
                 }
                 emitter

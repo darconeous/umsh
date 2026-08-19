@@ -19,7 +19,7 @@ use umsh_ulcp::{
     pui,
 };
 
-use crate::MobileError;
+use crate::{MobileError, mobile_mesh::MobileMeshPropertyWriteRecord};
 
 /// One header-prefixed ATT value produced by ULCP GATT segmentation.
 #[derive(Clone, Debug, PartialEq, Eq, uniffi::Record)]
@@ -2640,6 +2640,727 @@ pub fn inspect_ulcp_sync(
     })
 }
 
+// ─── Managing one device, a screen at a time ─────────────────────────────
+
+/// One screenful of a device's settings.
+///
+/// Reading a device whole costs tens of properties and several round
+/// trips, which over a link a few hops deep is the difference between a
+/// screen that opens and one that is waited on. A category is what one
+/// screen shows, and asking for exactly that is normally one exchange.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, uniffi::Enum)]
+pub enum UlcpManageCategory {
+    /// What the battery reports. Read-only.
+    Power,
+    /// The radio: frequency, power, the modem profile, the duty ledger.
+    Radio,
+    /// What the device advertises about itself, including where it is.
+    Identity,
+    /// The receiver, and what it currently sees. The fix is read-only.
+    Gnss,
+    /// The forwarding policy.
+    Repeater,
+    /// Who this device talks to, and who may manage it.
+    PeerNodes,
+}
+
+/// The property numbers the management screens name.
+///
+/// A screen has to say which fields the operator edited, and it caches
+/// values under the number the device answered for, so the numbers cross
+/// the boundary whether or not anyone likes it. Handing them over once,
+/// from the same constants everything else here is built on, is what
+/// keeps a second copy from being written down somewhere in Swift.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, uniffi::Record)]
+pub struct UlcpManagedPropertyIds {
+    pub caps: u32,
+    pub device_version: u32,
+    pub device_model: u32,
+    pub device_name: u32,
+    pub battery: u32,
+    pub phy_enabled: u32,
+    pub frequency: u32,
+    pub transmit_power: u32,
+    pub lora_bandwidth: u32,
+    pub lora_spreading_factor: u32,
+    pub lora_coding_rate: u32,
+    pub duty_cycle_now: u32,
+    pub duty_cycle_limit: u32,
+    pub ident_role: u32,
+    pub ident_mobile: u32,
+    pub ident_location: u32,
+    pub ident_altitude: u32,
+    pub dev_discoverable: u32,
+    pub gnss_ident_update: u32,
+    pub gnss_ident_precision: u32,
+    pub advert_interval: u32,
+    pub beacon_interval: u32,
+    pub startup_beacon: u32,
+    pub gnss_enabled: u32,
+    pub gnss_time_trust: u32,
+    pub repeater_enabled: u32,
+    pub repeater_regions: u32,
+    pub repeater_default_region: u32,
+    pub repeater_min_rssi: u32,
+    pub repeater_min_snr: u32,
+    pub dev_peers: u32,
+    pub dev_admins: u32,
+}
+
+/// The property numbers, from the constants themselves.
+#[uniffi::export]
+pub fn ulcp_managed_property_ids() -> UlcpManagedPropertyIds {
+    UlcpManagedPropertyIds {
+        caps: prop::CAPS,
+        device_version: prop::DEV_VERSION,
+        device_model: prop::DEV_MODEL,
+        device_name: prop::DEV_NAME,
+        battery: prop::BATTERY,
+        phy_enabled: prop::PHY_ENABLED,
+        frequency: prop::PHY_FREQ,
+        transmit_power: prop::PHY_TX_POWER,
+        lora_bandwidth: prop::PHY_LORA_BW,
+        lora_spreading_factor: prop::PHY_LORA_SF,
+        lora_coding_rate: prop::PHY_LORA_CR,
+        duty_cycle_now: prop::PHY_DUTY_NOW,
+        duty_cycle_limit: prop::PHY_DUTY_LIMIT,
+        ident_role: prop::IDENT_ROLE,
+        ident_mobile: prop::IDENT_MOBILE,
+        ident_location: prop::IDENT_LOCATION,
+        ident_altitude: prop::IDENT_ALTITUDE,
+        dev_discoverable: prop::DEV_DISCOVERABLE,
+        gnss_ident_update: prop::GNSS_IDENT_UPDATE,
+        gnss_ident_precision: prop::GNSS_IDENT_PRECISION,
+        advert_interval: prop::ADVERT_INTERVAL,
+        beacon_interval: prop::BEACON_INTERVAL,
+        startup_beacon: prop::STARTUP_BEACON,
+        gnss_enabled: prop::GNSS_ENABLED,
+        gnss_time_trust: prop::GNSS_TIME_TRUST,
+        repeater_enabled: prop::MAC_REPEATER_ENABLED,
+        repeater_regions: prop::MAC_REPEATER_REGIONS,
+        repeater_default_region: prop::MAC_REPEATER_DEFAULT_REGION,
+        repeater_min_rssi: prop::MAC_REPEATER_MIN_RSSI,
+        repeater_min_snr: prop::MAC_REPEATER_MIN_SNR,
+        dev_peers: prop::DEV_PEERS,
+        dev_admins: prop::DEV_ADMINS,
+    }
+}
+
+/// The four properties a device is identified by, asked for together.
+///
+/// Capabilities first, so a device that declines the batch teaches the
+/// crawl to ask one at a time before the rest.
+#[uniffi::export]
+pub fn ulcp_card_properties() -> Vec<u32> {
+    vec![
+        prop::CAPS,
+        prop::DEV_VERSION,
+        prop::DEV_MODEL,
+        prop::DEV_NAME,
+    ]
+}
+
+/// What one category asks for, given what the device says it can do.
+///
+/// Capability-gated so a screen never spends airtime on a property the
+/// device does not have, and filtered to what an administrator may
+/// reach.
+#[uniffi::export]
+pub fn ulcp_category_properties(
+    category: UlcpManageCategory,
+    capabilities: Vec<u8>,
+) -> Result<Vec<u32>, MobileError> {
+    let capabilities = decode_capabilities(&capabilities)?;
+    validate_capability_dependencies(&capabilities)?;
+    let has = |capability| capabilities.contains(&capability);
+    let mut properties = Vec::new();
+    let mut when = |gate: bool, keys: &[u32]| {
+        if gate {
+            properties.extend_from_slice(keys);
+        }
+    };
+
+    match category {
+        UlcpManageCategory::Power => when(has(cap::BATTERY), &[prop::BATTERY]),
+        UlcpManageCategory::Radio => {
+            when(
+                true,
+                &[prop::PHY_ENABLED, prop::PHY_FREQ, prop::PHY_TX_POWER],
+            );
+            when(
+                has(cap::PHY_LORA),
+                &[prop::PHY_LORA_BW, prop::PHY_LORA_SF, prop::PHY_LORA_CR],
+            );
+            when(
+                has(cap::PHY_DUTY_LIMIT),
+                &[prop::PHY_DUTY_NOW, prop::PHY_DUTY_LIMIT],
+            );
+        }
+        UlcpManageCategory::Identity => {
+            when(has(cap::DEV_NAME), &[prop::DEV_NAME]);
+            when(
+                has(cap::IDENT),
+                &[
+                    prop::IDENT_ROLE,
+                    prop::IDENT_MOBILE,
+                    prop::IDENT_LOCATION,
+                    prop::IDENT_ALTITUDE,
+                ],
+            );
+            when(has(cap::DEV_IDENTITY), &[prop::DEV_DISCOVERABLE]);
+            // Whether the device maintains its own position decides
+            // whether the location rows above are editable at all, so
+            // this screen has to know even though the receiver has its
+            // own.
+            when(
+                has(cap::GNSS),
+                &[prop::GNSS_IDENT_UPDATE, prop::GNSS_IDENT_PRECISION],
+            );
+            when(
+                has(cap::ADVERT),
+                &[
+                    prop::ADVERT_INTERVAL,
+                    prop::BEACON_INTERVAL,
+                    prop::STARTUP_BEACON,
+                ],
+            );
+        }
+        UlcpManageCategory::Gnss => when(
+            has(cap::GNSS),
+            &[
+                prop::GNSS_ENABLED,
+                prop::GNSS_LOCATION,
+                prop::GNSS_ALTITUDE,
+                prop::GNSS_FIX,
+                prop::GNSS_PRECISION,
+                prop::GNSS_SATELLITES,
+                prop::GNSS_TIME_TRUST,
+            ],
+        ),
+        UlcpManageCategory::Repeater => when(
+            has(cap::REPEATER),
+            &[
+                prop::MAC_REPEATER_ENABLED,
+                prop::MAC_REPEATER_REGIONS,
+                prop::MAC_REPEATER_DEFAULT_REGION,
+                prop::MAC_REPEATER_MIN_RSSI,
+                prop::MAC_REPEATER_MIN_SNR,
+            ],
+        ),
+        UlcpManageCategory::PeerNodes => {
+            when(has(cap::DEV_IDENTITY), &[prop::DEV_PEERS]);
+            when(has(cap::ADMIN), &[prop::DEV_ADMINS]);
+        }
+    }
+    properties.retain(|&key| umsh_ulcp::ids::admin_reachable(key));
+    // A screen that can change one member of a whole-write group has to be
+    // able to state the rest of it, and it can only state what it read. The
+    // groups do not follow the categories — the receiver's own switches sit
+    // with the fix, while the policy for what the device does with a fix
+    // sits with the identity it advertises — so the reads are widened here
+    // rather than by hand in each list, where the two would drift apart.
+    for group in WHOLE_WRITE_GROUPS {
+        if !group.iter().any(|key| properties.contains(key)) {
+            continue;
+        }
+        for key in group {
+            if !properties.contains(key)
+                && umsh_ulcp::ids::admin_reachable(*key)
+                && capability_for(*key).is_none_or(has)
+            {
+                properties.push(*key);
+            }
+        }
+    }
+    Ok(properties)
+}
+
+/// The capability a property is gated behind, where it has one.
+///
+/// Only the members of the whole-write groups need answering: this exists
+/// so widening a category's reads cannot ask a device for something its
+/// capabilities say it does not have.
+fn capability_for(property: u32) -> Option<u32> {
+    match property {
+        prop::PHY_LORA_BW | prop::PHY_LORA_SF | prop::PHY_LORA_CR => Some(cap::PHY_LORA),
+        prop::MAC_REPEATER_ENABLED
+        | prop::MAC_REPEATER_REGIONS
+        | prop::MAC_REPEATER_DEFAULT_REGION
+        | prop::MAC_REPEATER_MIN_RSSI
+        | prop::MAC_REPEATER_MIN_SNR => Some(cap::REPEATER),
+        prop::GNSS_ENABLED
+        | prop::GNSS_IDENT_UPDATE
+        | prop::GNSS_IDENT_PRECISION
+        | prop::GNSS_TIME_TRUST => Some(cap::GNSS),
+        prop::ADVERT_INTERVAL | prop::BEACON_INTERVAL | prop::STARTUP_BEACON => Some(cap::ADVERT),
+        _ => None,
+    }
+}
+
+/// What a device is, as opposed to how it is configured.
+///
+/// The four properties worth learning once and keeping: capabilities and
+/// firmware version change only when the firmware does, the model never,
+/// and the name rarely. Cached against the version, this is what lets
+/// opening a device's settings cost nothing at all.
+#[derive(Clone, Debug, PartialEq, Eq, uniffi::Record)]
+pub struct UlcpDeviceCardRecord {
+    /// `PROP_CAPS` verbatim, to plan later reads against without asking
+    /// the device again.
+    pub capabilities: Vec<u8>,
+    /// `PROP_DEV_VERSION`: what firmware it is running. The natural key
+    /// for everything cached about it — capabilities cannot change
+    /// without this changing too.
+    pub device_version: Option<String>,
+    /// `PROP_DEV_MODEL`: the hardware, when the device names it.
+    pub device_model: Option<String>,
+    pub device_name: Option<String>,
+    pub supports_device_name: bool,
+    pub supports_battery: bool,
+    pub supports_lora: bool,
+    pub supports_duty_cycle_limit: bool,
+    pub supports_repeater: bool,
+    pub supports_ident: bool,
+    pub supports_device_identity: bool,
+    pub supports_gnss: bool,
+    pub supports_advert: bool,
+    pub supports_admin: bool,
+    pub supports_alert: bool,
+    pub supports_save: bool,
+    /// Whether batched property reads are worth trying. A device that
+    /// declines one is asked again a property at a time, so this is a
+    /// hint rather than a contract.
+    pub supports_multi: bool,
+}
+
+/// Reduce the answers to a card read into what a device is.
+///
+/// Capabilities are required — without them there is nothing to plan the
+/// rest against. Everything else is absent rather than fatal: a device
+/// that will not name its hardware is a device that does not name its
+/// hardware.
+#[uniffi::export]
+pub fn inspect_ulcp_device_card(
+    responses: Vec<UlcpPropertyFrameRecord>,
+) -> Result<UlcpDeviceCardRecord, MobileError> {
+    let raw = property_value(&responses, prop::CAPS)?.to_vec();
+    let capabilities = decode_capabilities(&raw)?;
+    validate_capability_dependencies(&capabilities)?;
+    let has = |capability| capabilities.contains(&capability);
+    let text = |key| {
+        property_value(&responses, key)
+            .and_then(decode_device_name)
+            .ok()
+            .flatten()
+    };
+
+    Ok(UlcpDeviceCardRecord {
+        capabilities: raw,
+        device_version: text(prop::DEV_VERSION),
+        device_model: text(prop::DEV_MODEL),
+        device_name: text(prop::DEV_NAME),
+        supports_device_name: has(cap::DEV_NAME),
+        supports_battery: has(cap::BATTERY),
+        supports_lora: has(cap::PHY_LORA),
+        supports_duty_cycle_limit: has(cap::PHY_DUTY_LIMIT),
+        supports_repeater: has(cap::REPEATER),
+        supports_ident: has(cap::IDENT),
+        supports_device_identity: has(cap::DEV_IDENTITY),
+        supports_gnss: has(cap::GNSS),
+        supports_advert: has(cap::ADVERT),
+        supports_admin: has(cap::ADMIN),
+        supports_alert: has(cap::ALERT),
+        supports_save: has(cap::SAVE),
+        supports_multi: has(cap::CMD_MULTI),
+    })
+}
+
+/// Everything the six management screens show, all of it optional.
+///
+/// A category read answers a handful of properties, so anything outside
+/// it is simply absent — this record says what the last read of *some*
+/// category found, and a screen fills in from it whatever it recognizes.
+/// The counterpart to [`UlcpSyncRecord`], which describes a whole device
+/// and can insist on the properties every device must answer.
+#[derive(Clone, Debug, Default, PartialEq, uniffi::Record)]
+pub struct UlcpDevicePropertiesRecord {
+    pub battery: Option<UlcpBatteryRecord>,
+    pub phy_enabled: Option<bool>,
+    pub frequency_khz: Option<u32>,
+    pub transmit_power_dbm: Option<i8>,
+    pub bandwidth_hz: Option<u32>,
+    pub spreading_factor: Option<u8>,
+    pub coding_rate_denom: Option<u8>,
+    pub duty_cycle_now: Option<u16>,
+    pub duty_cycle_limit: Option<u16>,
+    pub device_name: Option<String>,
+    /// `None` is the device deriving its own role, which reads the same
+    /// as never having been told.
+    pub ident_role: Option<u8>,
+    pub ident_mobile: Option<bool>,
+    /// `PROP_IDENT_LOCATION` verbatim. Empty is a device advertising no
+    /// position, which is different from not having been asked.
+    pub ident_location: Option<Vec<u8>>,
+    pub ident_latitude_deg: Option<f64>,
+    pub ident_longitude_deg: Option<f64>,
+    /// Width of the advertised cell at the equator, in meters — what the
+    /// length of the location actually discloses.
+    pub ident_location_cell_meters: Option<f64>,
+    pub ident_altitude_m: Option<i32>,
+    pub dev_discoverable: Option<bool>,
+    /// Whether the device maintains its own advertised position. Set,
+    /// the location and altitude above are the device's to write and a
+    /// host's write is refused.
+    pub gnss_ident_update: Option<bool>,
+    pub gnss_ident_precision: Option<u8>,
+    pub advert_interval_seconds: Option<u32>,
+    pub beacon_interval_seconds: Option<u32>,
+    pub startup_beacon: Option<bool>,
+    pub gnss_enabled: Option<bool>,
+    /// What the receiver currently sees. Read-only, and absent on a
+    /// device with no receiver.
+    pub gnss: Option<UlcpGnssRecord>,
+    pub gnss_time_trust: Option<bool>,
+    pub repeater_enabled: Option<bool>,
+    pub repeater_regions: Option<Vec<String>>,
+    pub repeater_default_region: Option<Vec<u8>>,
+    pub repeater_min_rssi_dbm: Option<i16>,
+    pub repeater_min_snr_db: Option<i8>,
+    pub dev_peer_keys: Option<Vec<Vec<u8>>>,
+    pub dev_admin_keys: Option<Vec<Vec<u8>>>,
+}
+
+/// Encode a place as the cell a device advertises it from.
+///
+/// The counterpart to the latitude and longitude an inspection reports:
+/// what goes on the air is a cell rather than a point, and how large that
+/// cell is — the precision, which is also the value's length — is what the
+/// device discloses. See [`ulcp_location_cell_meters`] for what each
+/// precision is worth in meters.
+///
+/// Precision must be 1 through 7. A coordinate outside its own range is
+/// refused rather than wrapped: a longitude of 200° is a typo, not a
+/// place.
+#[uniffi::export]
+pub fn ulcp_encode_location(
+    latitude_deg: f64,
+    longitude_deg: f64,
+    precision: u8,
+) -> Result<Vec<u8>, MobileError> {
+    if !(1..=MAX_PRECISION).contains(&precision)
+        || !(-90.0..=90.0).contains(&latitude_deg)
+        || !(-180.0..=180.0).contains(&longitude_deg)
+    {
+        return Err(MobileError::InvalidUlcpFrame);
+    }
+    // Through the exact constructor rather than the float one: at the
+    // finest precisions, rounding a typed-in coordinate into a binary
+    // float can land it in the neighboring cell.
+    let e7 = |degrees: f64| (degrees * 1e7).round() as i32;
+    Ok(
+        NodeLocation::from_e7(e7(latitude_deg), e7(longitude_deg), precision)
+            .as_bytes()
+            .to_vec(),
+    )
+}
+
+/// Present one remembered value as the property frame the inspectors read.
+///
+/// What [`ulcp_records_from_answers`] does for a fresh answer, for a value
+/// that came out of a cache instead. Cached octets and answered octets are
+/// the same octets, so they decode through the same path — and a caller
+/// never has to know which command byte a reported value wears.
+#[uniffi::export]
+pub fn ulcp_property_record(property_id: u32, value: Vec<u8>) -> UlcpPropertyFrameRecord {
+    UlcpPropertyFrameRecord {
+        // A management exchange is correlated by its envelope token, so
+        // every request on one carries transaction zero.
+        transaction_id: 0,
+        command: Cmd::PropIs as u8,
+        property_id,
+        value,
+    }
+}
+
+/// Decode whatever a category read answered.
+///
+/// Nothing is required and nothing fails: a property that did not come
+/// back, or came back undecodable, is left absent. Which properties were
+/// *refused* is a separate question, and the answers to the read say so
+/// directly.
+#[uniffi::export]
+pub fn inspect_ulcp_properties(
+    responses: Vec<UlcpPropertyFrameRecord>,
+) -> UlcpDevicePropertiesRecord {
+    let at = &responses;
+    let location = optional_value(at, prop::IDENT_LOCATION, |value| {
+        Ok::<Vec<u8>, MobileError>(value.to_vec())
+    });
+    let placed = location
+        .as_ref()
+        .filter(|bytes| !bytes.is_empty())
+        .map(|bytes| NodeLocation::from_bytes(bytes).center());
+
+    UlcpDevicePropertiesRecord {
+        battery: optional_value(at, prop::BATTERY, |value| {
+            inspect_ulcp_battery(value.to_vec())
+        }),
+        phy_enabled: optional_value(at, prop::PHY_ENABLED, decode_bool),
+        frequency_khz: optional_value(at, prop::PHY_FREQ, decode_u32),
+        transmit_power_dbm: optional_value(at, prop::PHY_TX_POWER, decode_i8),
+        bandwidth_hz: optional_value(at, prop::PHY_LORA_BW, decode_u32),
+        spreading_factor: optional_value(at, prop::PHY_LORA_SF, decode_u8),
+        coding_rate_denom: optional_value(at, prop::PHY_LORA_CR, decode_u8),
+        duty_cycle_now: optional_value(at, prop::PHY_DUTY_NOW, decode_u16),
+        duty_cycle_limit: optional_value(at, prop::PHY_DUTY_LIMIT, decode_u16),
+        device_name: optional_value(at, prop::DEV_NAME, decode_device_name).flatten(),
+        ident_role: optional_value(at, prop::IDENT_ROLE, |value| {
+            decode_optional(value, decode_u8)
+        })
+        .flatten(),
+        ident_mobile: optional_value(at, prop::IDENT_MOBILE, decode_bool),
+        ident_latitude_deg: placed.map(|(latitude, _)| latitude.into()),
+        ident_longitude_deg: placed.map(|(_, longitude)| longitude.into()),
+        ident_location_cell_meters: location
+            .as_ref()
+            .filter(|bytes| !bytes.is_empty())
+            .and_then(|bytes| ulcp_location_cell_meters(bytes.len() as u8)),
+        ident_location: location,
+        ident_altitude_m: optional_value(at, prop::IDENT_ALTITUDE, decode_optional_altitude)
+            .flatten(),
+        dev_discoverable: optional_value(at, prop::DEV_DISCOVERABLE, decode_bool),
+        gnss_ident_update: optional_value(at, prop::GNSS_IDENT_UPDATE, decode_bool),
+        gnss_ident_precision: optional_value(at, prop::GNSS_IDENT_PRECISION, decode_precision),
+        advert_interval_seconds: optional_value(at, prop::ADVERT_INTERVAL, decode_u32),
+        beacon_interval_seconds: optional_value(at, prop::BEACON_INTERVAL, decode_u32),
+        startup_beacon: optional_value(at, prop::STARTUP_BEACON, decode_bool),
+        gnss_enabled: optional_value(at, prop::GNSS_ENABLED, decode_bool),
+        gnss: gnss_readout(at),
+        gnss_time_trust: optional_value(at, prop::GNSS_TIME_TRUST, decode_bool),
+        repeater_enabled: optional_value(at, prop::MAC_REPEATER_ENABLED, decode_bool),
+        repeater_regions: optional_value(at, prop::MAC_REPEATER_REGIONS, decode_region_list),
+        repeater_default_region: optional_value(
+            at,
+            prop::MAC_REPEATER_DEFAULT_REGION,
+            decode_optional_region,
+        )
+        .flatten(),
+        repeater_min_rssi_dbm: optional_value(at, prop::MAC_REPEATER_MIN_RSSI, |value| {
+            decode_optional(value, decode_i16)
+        })
+        .flatten(),
+        repeater_min_snr_db: optional_value(at, prop::MAC_REPEATER_MIN_SNR, |value| {
+            decode_optional(value, decode_i8)
+        })
+        .flatten(),
+        dev_peer_keys: optional_value(
+            at,
+            prop::DEV_PEERS,
+            decode_fixed_list::<{ items::PUBLIC_KEY_LEN }>,
+        ),
+        dev_admin_keys: optional_value(
+            at,
+            prop::DEV_ADMINS,
+            decode_fixed_list::<{ items::PUBLIC_KEY_LEN }>,
+        ),
+    }
+}
+
+/// Fold whatever positioning properties came back into one readout.
+///
+/// `None` unless the fix indicator arrived: without it there is nothing
+/// to say whether the rest describes a position or the absence of one.
+fn gnss_readout(responses: &[UlcpPropertyFrameRecord]) -> Option<UlcpGnssRecord> {
+    let mut snapshot = GnssSnapshot::SEARCHING;
+    property_value(responses, prop::GNSS_FIX)
+        .ok()
+        .and_then(|value| snapshot.absorb(prop::GNSS_FIX, value).ok())?;
+    for key in [
+        prop::GNSS_LOCATION,
+        prop::GNSS_ALTITUDE,
+        prop::GNSS_PRECISION,
+        prop::GNSS_SATELLITES,
+    ] {
+        if let Ok(value) = property_value(responses, key) {
+            let _ = snapshot.absorb(key, value);
+        }
+    }
+    Some(gnss_record(&snapshot))
+}
+
+/// `PROP_IDENT_ALTITUDE`: empty, or a minimal-length signed integer.
+fn decode_optional_altitude(value: &[u8]) -> Result<Option<i32>, MobileError> {
+    match value {
+        [] => Ok(None),
+        bytes => umsh_ulcp::sint::decode(bytes)
+            .map(Some)
+            .map_err(|_| MobileError::InvalidUlcpFrame),
+    }
+}
+
+/// Encode only the properties the operator actually changed.
+///
+/// The whole point of the category screens: a device several hops away
+/// takes one write for one edit, rather than a restatement of its entire
+/// configuration. `dirty_property_ids` names what was edited; anything
+/// else in `desired` is ignored, so a record filled in from a stale
+/// cache cannot write stale values back.
+///
+/// Members of a whole-write group come along with any one of them —
+/// writing half a modem profile leaves the device running a
+/// configuration nobody asked for.
+///
+/// The radio is bracketed when any of its parameters move: the PHY goes
+/// down first and comes back up last, so a device is never asked to
+/// change the frequency it is transmitting on.
+#[uniffi::export]
+pub fn ulcp_dirty_writes(
+    desired: UlcpDevicePropertiesRecord,
+    dirty_property_ids: Vec<u32>,
+) -> Result<Vec<MobileMeshPropertyWriteRecord>, MobileError> {
+    let mut dirty: Vec<u32> = dirty_property_ids;
+    for group in WHOLE_WRITE_GROUPS {
+        if group.iter().any(|key| dirty.contains(key)) {
+            dirty.extend_from_slice(group);
+        }
+    }
+    dirty.sort_unstable();
+    dirty.dedup();
+
+    let mut values: Vec<(u32, Vec<u8>)> = Vec::new();
+    for key in &dirty {
+        // A property named as edited whose value is absent is a caller
+        // mistake: there is nothing to write, and silently skipping it
+        // would report success for an edit that never happened.
+        let missing = || MobileError::InvalidUlcpFrame;
+        let value = match *key {
+            prop::PHY_ENABLED => vec![desired.phy_enabled.ok_or_else(missing)? as u8],
+            prop::PHY_FREQ => desired
+                .frequency_khz
+                .ok_or_else(missing)?
+                .to_le_bytes()
+                .to_vec(),
+            prop::PHY_TX_POWER => vec![desired.transmit_power_dbm.ok_or_else(missing)? as u8],
+            prop::PHY_LORA_BW => desired
+                .bandwidth_hz
+                .ok_or_else(missing)?
+                .to_le_bytes()
+                .to_vec(),
+            prop::PHY_LORA_SF => vec![desired.spreading_factor.ok_or_else(missing)?],
+            prop::PHY_LORA_CR => vec![desired.coding_rate_denom.ok_or_else(missing)?],
+            prop::PHY_DUTY_LIMIT => desired
+                .duty_cycle_limit
+                .ok_or_else(missing)?
+                .to_le_bytes()
+                .to_vec(),
+            prop::DEV_NAME => desired
+                .device_name
+                .clone()
+                .ok_or_else(missing)?
+                .into_bytes(),
+            // Empty is a legitimate value for both: the device derives
+            // its own role, and advertises no position.
+            prop::IDENT_ROLE => desired
+                .ident_role
+                .map(|role| vec![role])
+                .unwrap_or_default(),
+            prop::IDENT_MOBILE => vec![desired.ident_mobile.ok_or_else(missing)? as u8],
+            prop::IDENT_LOCATION => {
+                let location = desired.ident_location.clone().unwrap_or_default();
+                if location.len() > MAX_PRECISION as usize {
+                    return Err(MobileError::InvalidUlcpFrame);
+                }
+                location
+            }
+            prop::IDENT_ALTITUDE => match desired.ident_altitude_m {
+                Some(meters) => {
+                    let mut buf = [0u8; umsh_ulcp::sint::MAX_LEN];
+                    let len = umsh_ulcp::sint::encode(meters, &mut buf)
+                        .map_err(|_| MobileError::InvalidUlcpFrame)?;
+                    buf[..len].to_vec()
+                }
+                None => Vec::new(),
+            },
+            prop::DEV_DISCOVERABLE => vec![desired.dev_discoverable.ok_or_else(missing)? as u8],
+            prop::GNSS_ENABLED => vec![desired.gnss_enabled.ok_or_else(missing)? as u8],
+            prop::GNSS_IDENT_UPDATE => vec![desired.gnss_ident_update.ok_or_else(missing)? as u8],
+            prop::GNSS_IDENT_PRECISION => {
+                let precision = desired.gnss_ident_precision.ok_or_else(missing)?;
+                if !(1..=MAX_PRECISION).contains(&precision) {
+                    return Err(MobileError::InvalidUlcpFrame);
+                }
+                vec![precision]
+            }
+            prop::GNSS_TIME_TRUST => vec![desired.gnss_time_trust.ok_or_else(missing)? as u8],
+            prop::ADVERT_INTERVAL => desired
+                .advert_interval_seconds
+                .ok_or_else(missing)?
+                .to_le_bytes()
+                .to_vec(),
+            prop::BEACON_INTERVAL => desired
+                .beacon_interval_seconds
+                .ok_or_else(missing)?
+                .to_le_bytes()
+                .to_vec(),
+            prop::STARTUP_BEACON => vec![desired.startup_beacon.ok_or_else(missing)? as u8],
+            prop::MAC_REPEATER_ENABLED => vec![desired.repeater_enabled.ok_or_else(missing)? as u8],
+            prop::MAC_REPEATER_REGIONS => encode_region_list(
+                desired
+                    .repeater_regions
+                    .clone()
+                    .ok_or_else(missing)?
+                    .as_slice(),
+            )?,
+            // Empty is "never tag" and "no threshold" respectively.
+            prop::MAC_REPEATER_DEFAULT_REGION => {
+                let region = desired.repeater_default_region.clone().unwrap_or_default();
+                if !region.is_empty() && region.len() != items::REGION_CODE_LEN {
+                    return Err(MobileError::InvalidUlcpFrame);
+                }
+                region
+            }
+            prop::MAC_REPEATER_MIN_RSSI => desired
+                .repeater_min_rssi_dbm
+                .map(|rssi| rssi.to_le_bytes().to_vec())
+                .unwrap_or_default(),
+            prop::MAC_REPEATER_MIN_SNR => desired
+                .repeater_min_snr_db
+                .map(|snr| vec![snr as u8])
+                .unwrap_or_default(),
+            // Everything else is either read-only or edited as a table,
+            // one entry at a time.
+            _ => return Err(MobileError::InvalidUlcpFrame),
+        };
+        values.push((*key, value));
+    }
+
+    // Bracket the radio when anything it is transmitting under moves.
+    const RADIO: [u32; 6] = [
+        prop::PHY_FREQ,
+        prop::PHY_TX_POWER,
+        prop::PHY_LORA_BW,
+        prop::PHY_LORA_SF,
+        prop::PHY_LORA_CR,
+        prop::PHY_DUTY_LIMIT,
+    ];
+    if values.iter().any(|(key, _)| RADIO.contains(key)) {
+        let ends_enabled = match values.iter().find(|(key, _)| *key == prop::PHY_ENABLED) {
+            Some((_, value)) => value.first() == Some(&1),
+            // Not edited, so it ends however it started — which the
+            // caller states by filling this in from the last read.
+            None => desired.phy_enabled.unwrap_or(true),
+        };
+        values.retain(|(key, _)| *key != prop::PHY_ENABLED);
+        values.insert(0, (prop::PHY_ENABLED, vec![0]));
+        values.push((prop::PHY_ENABLED, vec![ends_enabled as u8]));
+    }
+
+    Ok(values
+        .into_iter()
+        .map(|(property_id, value)| MobileMeshPropertyWriteRecord { property_id, value })
+        .collect())
+}
+
 /// Properties only ever written as a set. Writing part of a modem profile
 /// or part of a forwarding policy leaves the device running a configuration
 /// nobody asked for, so one unreadable member withdraws the whole group.
@@ -2712,6 +3433,20 @@ fn reported_value<T>(
     if !gated_on {
         return None;
     }
+    optional_value(responses, key, decode)
+}
+
+/// Decode a property a reply need not contain at all.
+///
+/// What [`reported_value`] does once a capability says the property
+/// should be there, for the reductions that make no such demand: a
+/// category read answers a handful of properties and says nothing about
+/// the rest.
+fn optional_value<T>(
+    responses: &[UlcpPropertyFrameRecord],
+    key: u32,
+    decode: impl FnOnce(&[u8]) -> Result<T, MobileError>,
+) -> Option<T> {
     property_value(responses, key).and_then(decode).ok()
 }
 
@@ -2849,6 +3584,25 @@ fn decode_region_list(value: &[u8]) -> Result<Vec<String>, MobileError> {
         regions.push(text.to_owned());
     }
     Ok(regions)
+}
+
+/// Pack region strings back into a `PROP_MAC_REPEATER_REGIONS` value.
+///
+/// Over-long names are refused here rather than on the air: the device
+/// rejects them outright, and one rejected write abandons everything
+/// after it.
+fn encode_region_list(regions: &[String]) -> Result<Vec<u8>, MobileError> {
+    let mut value = Vec::new();
+    for region in regions {
+        if !(1..=items::REGION_STRING_MAX_LEN).contains(&region.len()) {
+            return Err(MobileError::InvalidUlcpFrame);
+        }
+        let mut item = vec![0u8; region.len() + 4];
+        let len = items::encode_prefixed_item(region.as_bytes(), &mut item)
+            .map_err(|_| MobileError::InvalidUlcpFrame)?;
+        value.extend_from_slice(&item[..len]);
+    }
+    Ok(value)
 }
 
 fn decode_optional_region(value: &[u8]) -> Result<Option<Vec<u8>>, MobileError> {
@@ -3048,18 +3802,7 @@ fn validate_device_settings(
         return Err(MobileError::InvalidUlcpFrame);
     }
     if let Some(repeater) = &configuration.repeater {
-        let mut regions = Vec::new();
-        for region in &repeater.regions {
-            // The device refuses these outright, so catching them here
-            // saves a round trip that could only fail.
-            if !(1..=items::REGION_STRING_MAX_LEN).contains(&region.len()) {
-                return Err(MobileError::InvalidUlcpFrame);
-            }
-            let mut item = vec![0u8; region.len() + 4];
-            let len = items::encode_prefixed_item(region.as_bytes(), &mut item)
-                .map_err(|_| MobileError::InvalidUlcpFrame)?;
-            regions.extend_from_slice(&item[..len]);
-        }
+        let regions = encode_region_list(&repeater.regions)?;
         if let Some(default_region) = &repeater.default_region {
             if default_region.len() != items::REGION_CODE_LEN {
                 return Err(MobileError::InvalidUlcpFrame);
@@ -6659,5 +7402,489 @@ mod tests {
             UlcpSessionPhase::AwaitingHost,
             "a third phone taking the radio is the user's call"
         );
+    }
+
+    // ─── Cached, category-at-a-time remote management ────────────────────
+
+    /// The capabilities of a full-featured tracker, for planning against.
+    fn managed_capabilities() -> Vec<u8> {
+        encoded_capabilities(&[
+            cap::DEV_NAME,
+            cap::BATTERY,
+            cap::PHY_LORA,
+            cap::PHY_DUTY_LIMIT,
+            cap::REPEATER,
+            cap::IDENT,
+            cap::DEV_IDENTITY,
+            cap::GNSS,
+            cap::TIME,
+            cap::ADVERT,
+            cap::ADMIN,
+            cap::ALERT,
+            cap::SAVE,
+            cap::CMD_MULTI,
+        ])
+    }
+
+    #[test]
+    fn a_category_asks_only_for_its_own_screen() {
+        let caps = managed_capabilities();
+        let radio = ulcp_category_properties(UlcpManageCategory::Radio, caps.clone()).unwrap();
+        assert_eq!(
+            radio,
+            vec![
+                prop::PHY_ENABLED,
+                prop::PHY_FREQ,
+                prop::PHY_TX_POWER,
+                prop::PHY_LORA_BW,
+                prop::PHY_LORA_SF,
+                prop::PHY_LORA_CR,
+                prop::PHY_DUTY_NOW,
+                prop::PHY_DUTY_LIMIT,
+            ]
+        );
+        assert_eq!(
+            ulcp_category_properties(UlcpManageCategory::Power, caps).unwrap(),
+            vec![prop::BATTERY],
+            "one property is the whole of a power screen"
+        );
+    }
+
+    /// The bug this pins: the GNSS screen switches the receiver, the
+    /// Identity screen decides what the device does with a fix, and all four
+    /// of those properties are written as one group. A screen that reads
+    /// only its own half cannot state the group, so the write fails before
+    /// it reaches the air.
+    #[test]
+    fn a_category_reads_every_group_it_could_have_to_write() {
+        let caps = managed_capabilities();
+        for category in [
+            UlcpManageCategory::Power,
+            UlcpManageCategory::Radio,
+            UlcpManageCategory::Identity,
+            UlcpManageCategory::Gnss,
+            UlcpManageCategory::Repeater,
+            UlcpManageCategory::PeerNodes,
+        ] {
+            let asked = ulcp_category_properties(category, caps.clone()).unwrap();
+            for group in WHOLE_WRITE_GROUPS {
+                if !group.iter().any(|key| asked.contains(key)) {
+                    continue;
+                }
+                for key in group {
+                    assert!(
+                        asked.contains(key),
+                        "{category:?} can write property {key} but never reads it"
+                    );
+                }
+            }
+        }
+        let gnss = ulcp_category_properties(UlcpManageCategory::Gnss, caps.clone()).unwrap();
+        assert!(
+            gnss.contains(&prop::GNSS_IDENT_UPDATE),
+            "the receiver's screen reads the identity's policy to write beside it"
+        );
+        let identity = ulcp_category_properties(UlcpManageCategory::Identity, caps).unwrap();
+        assert!(
+            identity.contains(&prop::GNSS_ENABLED),
+            "and the identity screen reads the receiver's switch for the same reason"
+        );
+    }
+
+    #[test]
+    fn a_category_leaves_out_what_the_device_cannot_do() {
+        // A repeater with no receiver and no modem knobs.
+        let caps = encoded_capabilities(&[cap::REPEATER, cap::IDENT, cap::DEV_IDENTITY]);
+        assert_eq!(
+            ulcp_category_properties(UlcpManageCategory::Radio, caps.clone()).unwrap(),
+            vec![prop::PHY_ENABLED, prop::PHY_FREQ, prop::PHY_TX_POWER],
+            "a device without CAP_PHY_LORA is not asked for a modem profile"
+        );
+        assert!(
+            ulcp_category_properties(UlcpManageCategory::Gnss, caps.clone())
+                .unwrap()
+                .is_empty(),
+            "a device with no receiver has no GNSS screen to fill"
+        );
+        let identity = ulcp_category_properties(UlcpManageCategory::Identity, caps).unwrap();
+        assert!(
+            identity.contains(&prop::IDENT_LOCATION),
+            "a fixed repeater still has a position to state"
+        );
+        assert!(
+            !identity.contains(&prop::GNSS_IDENT_UPDATE),
+            "nothing to auto-update from"
+        );
+    }
+
+    #[test]
+    fn the_card_is_what_survives_between_openings() {
+        let card = inspect_ulcp_device_card(vec![
+            response(prop::CAPS, &managed_capabilities()),
+            response(prop::DEV_VERSION, b"fw-2026.08.01"),
+            response(prop::DEV_MODEL, b"T1000-E"),
+            response(prop::DEV_NAME, b"Ridge"),
+        ])
+        .unwrap();
+        assert_eq!(card.device_version.as_deref(), Some("fw-2026.08.01"));
+        assert_eq!(card.device_model.as_deref(), Some("T1000-E"));
+        assert_eq!(card.device_name.as_deref(), Some("Ridge"));
+        assert!(card.supports_alert, "the find-my-device button is offered");
+        assert!(card.supports_multi, "batched reads are worth trying");
+        assert_eq!(
+            card.capabilities,
+            managed_capabilities(),
+            "kept verbatim, to plan later reads against without asking again"
+        );
+    }
+
+    #[test]
+    fn a_card_without_capabilities_is_no_card_at_all() {
+        assert!(
+            inspect_ulcp_device_card(vec![response(prop::DEV_NAME, b"Ridge")]).is_err(),
+            "nothing can be planned against a device that would not say what it is"
+        );
+    }
+
+    #[test]
+    fn a_card_tolerates_a_device_that_names_neither_firmware_nor_model() {
+        let card =
+            inspect_ulcp_device_card(vec![response(prop::CAPS, &managed_capabilities())]).unwrap();
+        assert_eq!(card.device_version, None);
+        assert_eq!(card.device_model, None);
+        assert!(card.supports_gnss, "the capabilities still read");
+    }
+
+    #[test]
+    fn a_category_read_says_nothing_about_the_categories_it_did_not_ask_for() {
+        let read = inspect_ulcp_properties(vec![
+            response(prop::PHY_ENABLED, &[1]),
+            response(prop::PHY_FREQ, &906_875u32.to_le_bytes()),
+            response(prop::PHY_TX_POWER, &[22]),
+            response(prop::PHY_LORA_SF, &[11]),
+        ]);
+        assert_eq!(read.phy_enabled, Some(true));
+        assert_eq!(read.frequency_khz, Some(906_875));
+        assert_eq!(read.transmit_power_dbm, Some(22));
+        assert_eq!(read.spreading_factor, Some(11));
+        assert_eq!(read.device_name, None, "nobody asked");
+        assert_eq!(read.repeater_enabled, None);
+        assert_eq!(read.gnss, None);
+    }
+
+    #[test]
+    fn an_unreadable_answer_leaves_its_field_absent_rather_than_failing_the_read() {
+        let read = inspect_ulcp_properties(vec![
+            response(prop::PHY_FREQ, &[0x01, 0x02]),
+            response(prop::PHY_TX_POWER, &[17]),
+        ]);
+        assert_eq!(read.frequency_khz, None, "two octets are not a frequency");
+        assert_eq!(
+            read.transmit_power_dbm,
+            Some(17),
+            "one bad answer does not cost the screen the rest"
+        );
+    }
+
+    #[test]
+    fn an_advertised_position_reads_as_a_place() {
+        let cell = [0x84, 0x21, 0x9f, 0x40];
+        let read = inspect_ulcp_properties(vec![
+            response(prop::IDENT_LOCATION, &cell),
+            response(prop::IDENT_ALTITUDE, &[0xC8, 0x00]),
+        ]);
+        assert_eq!(read.ident_location.as_deref(), Some(&cell[..]));
+        assert!(read.ident_latitude_deg.is_some());
+        assert!(read.ident_longitude_deg.is_some());
+        assert_eq!(
+            read.ident_location_cell_meters,
+            ulcp_location_cell_meters(4),
+            "what the four octets actually disclose"
+        );
+        assert_eq!(
+            read.ident_altitude_m,
+            Some(200),
+            "a padded altitude reads the same as a minimal one"
+        );
+    }
+
+    #[test]
+    fn a_device_advertising_no_position_is_not_a_device_that_was_never_asked() {
+        let read = inspect_ulcp_properties(vec![
+            response(prop::IDENT_LOCATION, &[]),
+            response(prop::IDENT_ALTITUDE, &[]),
+        ]);
+        assert_eq!(read.ident_location, Some(Vec::new()));
+        assert_eq!(read.ident_latitude_deg, None);
+        assert_eq!(read.ident_altitude_m, None);
+    }
+
+    #[test]
+    fn a_place_encodes_to_the_cell_it_reads_back_as() {
+        let cell = ulcp_encode_location(37.3382, -121.8863, 5).unwrap();
+        assert_eq!(cell.len(), 5, "the precision is the value's length");
+        let read = inspect_ulcp_properties(vec![response(prop::IDENT_LOCATION, &cell)]);
+        assert!(
+            (read.ident_latitude_deg.unwrap() - 37.3382).abs() < 0.01,
+            "the cell the point falls in"
+        );
+        assert!((read.ident_longitude_deg.unwrap() + 121.8863).abs() < 0.01);
+    }
+
+    #[test]
+    fn a_coordinate_off_the_globe_is_a_typo_rather_than_a_place() {
+        assert!(ulcp_encode_location(37.0, 200.0, 5).is_err());
+        assert!(ulcp_encode_location(91.0, 0.0, 5).is_err());
+        assert!(ulcp_encode_location(37.0, 0.0, 0).is_err());
+        assert!(ulcp_encode_location(37.0, 0.0, 8).is_err());
+    }
+
+    #[test]
+    fn a_negative_altitude_is_an_ordinary_place() {
+        let read = inspect_ulcp_properties(vec![response(prop::IDENT_ALTITUDE, &[0x9C])]);
+        assert_eq!(read.ident_altitude_m, Some(-100), "Death Valley reads");
+    }
+
+    #[test]
+    fn a_receiver_readout_needs_the_fix_to_mean_anything() {
+        let without = inspect_ulcp_properties(vec![
+            response(prop::GNSS_ENABLED, &[1]),
+            response(prop::GNSS_SATELLITES, &[7, 9]),
+        ]);
+        assert_eq!(without.gnss_enabled, Some(true));
+        assert_eq!(
+            without.gnss, None,
+            "satellite counts alone do not say whether there is a position"
+        );
+
+        let with = inspect_ulcp_properties(vec![
+            response(prop::GNSS_FIX, &[FixKind::ThreeD as u8]),
+            response(prop::GNSS_LOCATION, &[0x84, 0x21, 0x9f, 0x40]),
+            response(prop::GNSS_ALTITUDE, &1_400i32.to_le_bytes()),
+            response(prop::GNSS_SATELLITES, &[7, 9]),
+        ]);
+        let readout = with.gnss.expect("a fix makes a readout");
+        assert_eq!(readout.altitude_m, Some(1_400));
+        assert_eq!(readout.satellites_used, 7);
+        assert!(readout.latitude_deg.is_some());
+    }
+
+    /// The writes a dirty-apply produced, in order.
+    fn dirty(
+        desired: UlcpDevicePropertiesRecord,
+        edited: &[u32],
+    ) -> Result<Vec<(u32, Vec<u8>)>, MobileError> {
+        Ok(ulcp_dirty_writes(desired, edited.to_vec())?
+            .into_iter()
+            .map(|write| (write.property_id, write.value))
+            .collect())
+    }
+
+    #[test]
+    fn one_edit_is_one_write() {
+        let written = dirty(
+            UlcpDevicePropertiesRecord {
+                device_name: Some("Saddle".into()),
+                // Everything a full read would have filled in, none of
+                // which was touched.
+                ident_mobile: Some(true),
+                repeater_enabled: Some(true),
+                dev_discoverable: Some(false),
+                ..Default::default()
+            },
+            &[prop::DEV_NAME],
+        )
+        .unwrap();
+        assert_eq!(
+            written,
+            vec![(prop::DEV_NAME, b"Saddle".to_vec())],
+            "the point of the whole design: a rename costs one write"
+        );
+    }
+
+    #[test]
+    fn an_edit_with_nothing_to_write_is_a_caller_mistake() {
+        assert!(
+            dirty(UlcpDevicePropertiesRecord::default(), &[prop::DEV_NAME]).is_err(),
+            "reporting success for an edit that carries no value would be a lie"
+        );
+    }
+
+    #[test]
+    fn a_modem_profile_is_written_whole_even_when_one_knob_moved() {
+        let written = dirty(
+            UlcpDevicePropertiesRecord {
+                phy_enabled: Some(true),
+                bandwidth_hz: Some(250_000),
+                spreading_factor: Some(10),
+                coding_rate_denom: Some(5),
+                ..Default::default()
+            },
+            &[prop::PHY_LORA_SF],
+        )
+        .unwrap();
+        let keys: Vec<u32> = written.iter().map(|(key, _)| *key).collect();
+        assert_eq!(
+            keys,
+            vec![
+                prop::PHY_ENABLED,
+                prop::PHY_LORA_BW,
+                prop::PHY_LORA_SF,
+                prop::PHY_LORA_CR,
+                prop::PHY_ENABLED,
+            ],
+            "half a modem profile leaves the device on a configuration nobody asked for"
+        );
+        assert_eq!(written.first().unwrap().1, vec![0], "the radio goes down");
+        assert_eq!(
+            written.last().unwrap().1,
+            vec![1],
+            "and comes back up as it was"
+        );
+    }
+
+    #[test]
+    fn a_radio_left_off_stays_off_after_the_change() {
+        let written = dirty(
+            UlcpDevicePropertiesRecord {
+                phy_enabled: Some(false),
+                frequency_khz: Some(915_000),
+                ..Default::default()
+            },
+            &[prop::PHY_FREQ],
+        )
+        .unwrap();
+        assert_eq!(written.first().unwrap(), &(prop::PHY_ENABLED, vec![0]));
+        assert_eq!(
+            written.last().unwrap(),
+            &(prop::PHY_ENABLED, vec![0]),
+            "bringing the radio up would be a change nobody asked for"
+        );
+    }
+
+    #[test]
+    fn turning_the_radio_off_is_not_bracketed() {
+        let written = dirty(
+            UlcpDevicePropertiesRecord {
+                phy_enabled: Some(false),
+                ..Default::default()
+            },
+            &[prop::PHY_ENABLED],
+        )
+        .unwrap();
+        assert_eq!(
+            written,
+            vec![(prop::PHY_ENABLED, vec![0])],
+            "nothing is transmitting under a parameter that moved"
+        );
+    }
+
+    #[test]
+    fn an_altitude_takes_no_more_octets_than_it_needs() {
+        for (meters, expected) in [
+            (100i32, vec![0x64]),
+            (-100, vec![0x9C]),
+            (200, vec![0xC8, 0x00]),
+            (-200, vec![0x38, 0xFF]),
+            (100_000, vec![0xA0, 0x86, 0x01]),
+            (-100_000, vec![0x60, 0x79, 0xFE]),
+        ] {
+            let written = dirty(
+                UlcpDevicePropertiesRecord {
+                    ident_altitude_m: Some(meters),
+                    ..Default::default()
+                },
+                &[prop::IDENT_ALTITUDE],
+            )
+            .unwrap();
+            assert_eq!(
+                written,
+                vec![(prop::IDENT_ALTITUDE, expected)],
+                "{meters} m"
+            );
+        }
+    }
+
+    #[test]
+    fn clearing_a_position_writes_the_clearing() {
+        let written = dirty(
+            UlcpDevicePropertiesRecord {
+                ident_location: None,
+                ident_altitude_m: None,
+                ..Default::default()
+            },
+            &[prop::IDENT_LOCATION, prop::IDENT_ALTITUDE],
+        )
+        .unwrap();
+        assert_eq!(
+            written,
+            vec![
+                (prop::IDENT_LOCATION, Vec::new()),
+                (prop::IDENT_ALTITUDE, Vec::new()),
+            ],
+            "an empty value is how a device is told it has no position"
+        );
+    }
+
+    #[test]
+    fn a_position_finer_than_the_encoding_allows_is_refused_here() {
+        assert!(
+            dirty(
+                UlcpDevicePropertiesRecord {
+                    ident_location: Some(vec![0; 8]),
+                    ..Default::default()
+                },
+                &[prop::IDENT_LOCATION],
+            )
+            .is_err(),
+            "the device would refuse it, costing a round trip that could only fail"
+        );
+    }
+
+    #[test]
+    fn a_read_only_property_is_not_something_to_apply() {
+        assert!(
+            dirty(
+                UlcpDevicePropertiesRecord {
+                    duty_cycle_now: Some(12),
+                    ..Default::default()
+                },
+                &[prop::PHY_DUTY_NOW],
+            )
+            .is_err(),
+            "a device's own report of its past hour is not the phone's to state"
+        );
+    }
+
+    #[test]
+    fn a_forwarding_policy_is_written_whole() {
+        let written = dirty(
+            UlcpDevicePropertiesRecord {
+                repeater_enabled: Some(true),
+                repeater_regions: Some(vec!["SJC".into()]),
+                repeater_default_region: None,
+                repeater_min_rssi_dbm: Some(-115),
+                repeater_min_snr_db: None,
+                ..Default::default()
+            },
+            &[prop::MAC_REPEATER_MIN_RSSI],
+        )
+        .unwrap();
+        assert_eq!(
+            written.iter().map(|(key, _)| *key).collect::<Vec<_>>(),
+            vec![
+                prop::MAC_REPEATER_ENABLED,
+                prop::MAC_REPEATER_REGIONS,
+                prop::MAC_REPEATER_DEFAULT_REGION,
+                prop::MAC_REPEATER_MIN_RSSI,
+                prop::MAC_REPEATER_MIN_SNR,
+            ]
+        );
+        assert_eq!(
+            written[1].1,
+            vec![3, b'S', b'J', b'C'],
+            "regions pack the same way they do over the local link"
+        );
+        assert!(written[4].1.is_empty(), "no threshold is an empty value");
     }
 }

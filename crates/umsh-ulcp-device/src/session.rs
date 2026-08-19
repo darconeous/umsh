@@ -28,6 +28,7 @@ use umsh_ulcp::meta::{
     self, BufferedRxMeta, RX_FLAG_ACKED, RX_FLAG_BUFFERED, RX_FLAG_SELF_TX, RxMeta, TxMeta,
 };
 use umsh_ulcp::pui;
+use umsh_ulcp::sint;
 
 use crate::duty::DutyLedger;
 
@@ -486,6 +487,18 @@ struct DeviceDomain {
     /// which is a transient local relationship and appears in no node
     /// identity at all.
     ident_mobile: bool,
+    /// `PROP_IDENT_LOCATION`: the position the advertised node identity
+    /// carries, in the variable-precision encoding, or empty for none.
+    ///
+    /// The one place the advertised position lives, whether a fix wrote
+    /// it or an administrator did. Distinct from the receiver's current
+    /// fix, which a device without a receiver does not have and this
+    /// still can.
+    ident_location: HeaplessVec<u8, { gnss::MAX_LOCATION_LEN }>,
+    /// `PROP_IDENT_ALTITUDE`: meters above the WGS-84 ellipsoid, or
+    /// `None`. Held decoded so every read reports the minimal encoding
+    /// regardless of the width it arrived in.
+    ident_altitude_m: Option<i32>,
     /// `PROP_DEV_DISCOVERABLE`: whether the device identity answers
     /// Identity Requests. On by default — a deployed device is
     /// infrastructure, and being askable is most of the point; the
@@ -563,6 +576,8 @@ impl DeviceDomain {
             repeater_min_snr: None,
             ident_role: None,
             ident_mobile: false,
+            ident_location: HeaplessVec::new(),
+            ident_altitude_m: None,
             dev_discoverable: true,
             advert_interval_s: DEFAULT_ADVERT_INTERVAL_S,
             beacon_interval_s: DEFAULT_BEACON_INTERVAL_S,
@@ -1570,6 +1585,8 @@ const SAVED_SCHEMA: &[SavedProperty] = &[
     saved(prop::ADVERT_INTERVAL, ApplyPhase::Config, false),
     saved(prop::BEACON_INTERVAL, ApplyPhase::Config, false),
     saved(prop::STARTUP_BEACON, ApplyPhase::Config, false),
+    saved(prop::IDENT_LOCATION, ApplyPhase::Config, false),
+    saved(prop::IDENT_ALTITUDE, ApplyPhase::Config, false),
     saved(prop::GNSS_ENABLED, ApplyPhase::Config, false),
     saved(prop::PHY_DUTY_LIMIT, ApplyPhase::Config, false),
     saved(prop::DEV_ADMINS, ApplyPhase::Keys, true),
@@ -1683,6 +1700,8 @@ struct SavedState {
     repeater_min_snr: Option<i8>,
     ident_role: Option<u8>,
     ident_mobile: bool,
+    ident_location: HeaplessVec<u8, { gnss::MAX_LOCATION_LEN }>,
+    ident_altitude_m: Option<i32>,
     dev_discoverable: bool,
     advert_interval_s: u32,
     beacon_interval_s: u32,
@@ -1718,6 +1737,8 @@ impl SavedState {
             repeater_min_snr: device.repeater_min_snr,
             ident_role: device.ident_role,
             ident_mobile: device.ident_mobile,
+            ident_location: device.ident_location.clone(),
+            ident_altitude_m: device.ident_altitude_m,
             dev_discoverable: device.dev_discoverable,
             advert_interval_s: device.advert_interval_s,
             beacon_interval_s: device.beacon_interval_s,
@@ -1757,6 +1778,8 @@ impl SavedState {
             repeater_min_snr: None,
             ident_role: None,
             ident_mobile: false,
+            ident_location: HeaplessVec::new(),
+            ident_altitude_m: None,
             dev_discoverable: true,
             advert_interval_s: DEFAULT_ADVERT_INTERVAL_S,
             beacon_interval_s: DEFAULT_BEACON_INTERVAL_S,
@@ -1856,6 +1879,20 @@ impl SavedState {
             prop::ADVERT_INTERVAL => encoder.put(number, &self.advert_interval_s.to_le_bytes()),
             prop::BEACON_INTERVAL => encoder.put(number, &self.beacon_interval_s.to_le_bytes()),
             prop::STARTUP_BEACON => encoder.put(number, &[self.startup_beacon as u8]),
+            // Empty is the default for both, so an unadvertised position
+            // is omitted rather than written as a zero-length option.
+            prop::IDENT_LOCATION => match self.ident_location.is_empty() {
+                true => Ok(()),
+                false => encoder.put(number, &self.ident_location),
+            },
+            prop::IDENT_ALTITUDE => match self.ident_altitude_m {
+                Some(meters) => {
+                    let mut buf = [0u8; sint::MAX_LEN];
+                    let len = sint::encode(meters, &mut buf).expect("buffer holds any i32");
+                    encoder.put(number, &buf[..len])
+                }
+                None => Ok(()),
+            },
             prop::GNSS_ENABLED => encoder.put(number, &[self.gnss_enabled as u8]),
             prop::PHY_DUTY_LIMIT => encoder.put(number, &self.duty_limit.to_le_bytes()),
             prop::DEV_ADMINS => {
@@ -1992,6 +2029,12 @@ impl SavedState {
                 self.beacon_interval_s = validate_announce_interval(value).map_err(invalid)?
             }
             prop::STARTUP_BEACON => self.startup_beacon = parse_bool(value).map_err(invalid)?,
+            prop::IDENT_LOCATION => {
+                self.ident_location = validate_ident_location(value).map_err(invalid)?
+            }
+            prop::IDENT_ALTITUDE => {
+                self.ident_altitude_m = validate_ident_altitude(value).map_err(invalid)?
+            }
             prop::GNSS_ENABLED => self.gnss_enabled = parse_bool(value).map_err(invalid)?,
             prop::PHY_DUTY_LIMIT => self.duty_limit = parse_u16(value).map_err(invalid)?,
             prop::DEV_ADMINS => {
@@ -2529,6 +2572,14 @@ impl<A: AesProvider, S: Sha256Provider, const TX: usize> Session<A, S, TX> {
                         self.device.beacon_interval_s = saved.beacon_interval_s
                     }
                     prop::STARTUP_BEACON => self.device.startup_beacon = saved.startup_beacon,
+                    // A position the operator placed is not a claim about
+                    // hardware, so it survives a restore under any
+                    // identity — the same reasoning as the receiver
+                    // switch below.
+                    prop::IDENT_LOCATION => {
+                        self.device.ident_location = saved.ident_location.clone()
+                    }
+                    prop::IDENT_ALTITUDE => self.device.ident_altitude_m = saved.ident_altitude_m,
                     // The receiver comes back up exactly as it was left.
                     // Unlike the PHY this needs no identity check: where
                     // the device is is a fact about the hardware, not a
@@ -3423,6 +3474,42 @@ impl<A: AesProvider, S: Sha256Provider, const TX: usize> Session<A, S, TX> {
     /// `MOB` capability bit.
     pub fn ident_mobile(&self) -> bool {
         self.device.ident_mobile
+    }
+
+    /// `PROP_IDENT_LOCATION`: the position the advertised node identity
+    /// carries, in the variable-precision encoding, or empty for none.
+    pub fn ident_location(&self) -> &[u8] {
+        &self.device.ident_location
+    }
+
+    /// `PROP_IDENT_ALTITUDE`: meters above the WGS-84 ellipsoid, or
+    /// `None`.
+    pub fn ident_altitude_m(&self) -> Option<i32> {
+        self.device.ident_altitude_m
+    }
+
+    /// Offer a fix to the advertised position.
+    ///
+    /// A no-op unless the device is set to update its identity from
+    /// fixes, so the platform can hand over every fix without first
+    /// asking whether this one counts. The location is clamped to
+    /// `PROP_GNSS_IDENT_PRECISION` before it is stored.
+    ///
+    /// Returns whether anything changed. A stationary node's fixes all
+    /// clamp into the same cell, and re-signing an identity that says
+    /// what the last one said would spend airtime to no purpose.
+    pub fn absorb_ident_fix(&mut self, location: &[u8], altitude_m: Option<i32>) -> bool {
+        if !self.gnss_ident_update() {
+            return false;
+        }
+        let clamped = &location[..location.len().min(self.gnss_ident_precision() as usize)];
+        if self.device.ident_location == clamped && self.device.ident_altitude_m == altitude_m {
+            return false;
+        }
+        self.device.ident_location = HeaplessVec::from_slice(clamped).unwrap_or_default();
+        self.device.ident_altitude_m = altitude_m;
+        self.bump_dev_domain();
+        true
     }
 
     /// `PROP_DEV_DISCOVERABLE`: whether the device identity answers
@@ -4344,6 +4431,26 @@ impl<A: AesProvider, S: Sha256Provider, const TX: usize> Session<A, S, TX> {
                 self.bump_dev_domain();
                 Ok(false)
             }
+            // The advertised position. Refused while the device is
+            // maintaining it from its own fixes: a written value would
+            // survive only until the next one, and a setting that
+            // silently reverts is worse than one that refuses.
+            prop::IDENT_LOCATION => {
+                if self.gnss_ident_update() {
+                    return Err(Status::INVALID_STATE);
+                }
+                self.device.ident_location = validate_ident_location(value)?;
+                self.bump_dev_domain();
+                Ok(false)
+            }
+            prop::IDENT_ALTITUDE => {
+                if self.gnss_ident_update() {
+                    return Err(Status::INVALID_STATE);
+                }
+                self.device.ident_altitude_m = validate_ident_altitude(value)?;
+                self.bump_dev_domain();
+                Ok(false)
+            }
             prop::DEV_DISCOVERABLE => {
                 self.device.dev_discoverable = parse_bool(value)?;
                 self.bump_dev_domain();
@@ -4872,6 +4979,8 @@ impl<A: AesProvider, S: Sha256Provider, const TX: usize> Session<A, S, TX> {
                 | prop::IDENT
                 | prop::IDENT_ROLE
                 | prop::IDENT_MOBILE
+                | prop::IDENT_LOCATION
+                | prop::IDENT_ALTITUDE
                 | prop::DEV_DISCOVERABLE
                 | prop::ADVERT_INTERVAL
                 | prop::BEACON_INTERVAL
@@ -5017,6 +5126,13 @@ impl<A: AesProvider, S: Sha256Provider, const TX: usize> Session<A, S, TX> {
                 out[0] = self.device.ident_mobile as u8;
                 1
             }
+            prop::IDENT_LOCATION => put(out, &self.device.ident_location),
+            // Re-encoded on every read, so what a host gets back is the
+            // minimal form whatever width it wrote.
+            prop::IDENT_ALTITUDE => match self.device.ident_altitude_m {
+                Some(meters) => sint::encode(meters, out).unwrap_or(0),
+                None => 0,
+            },
             prop::DEV_DISCOVERABLE => {
                 out[0] = self.device.dev_discoverable as u8;
                 1
@@ -5427,6 +5543,31 @@ fn validate_ident_precision(value: &[u8]) -> Result<u8, Status> {
         return Err(Status::INVALID_ARGUMENT);
     }
     Ok(precision)
+}
+
+/// `PROP_IDENT_LOCATION`, in the variable-precision encoding.
+///
+/// The length is the precision, so anything up to the encoding's limit is
+/// a legitimate statement of position — a host advertising a
+/// neighbourhood writes fewer bytes than one advertising an address.
+fn validate_ident_location(
+    value: &[u8],
+) -> Result<HeaplessVec<u8, { gnss::MAX_LOCATION_LEN }>, Status> {
+    HeaplessVec::from_slice(value).map_err(|_| Status::INVALID_ARGUMENT)
+}
+
+/// `PROP_IDENT_ALTITUDE`, in meters above the WGS-84 ellipsoid.
+///
+/// Accepts any width the encoding allows and returns the decoded value:
+/// what is stored is the number, so what is reported back is minimal
+/// however wide it arrived.
+fn validate_ident_altitude(value: &[u8]) -> Result<Option<i32>, Status> {
+    match value {
+        [] => Ok(None),
+        bytes => sint::decode(bytes)
+            .map(Some)
+            .map_err(|_| Status::INVALID_ARGUMENT),
+    }
 }
 
 /// `PROP_ADVERT_INTERVAL` / `PROP_BEACON_INTERVAL`, in seconds.
@@ -6518,6 +6659,103 @@ mod tests {
         expect_status(&emitted[0], 2, Status::INVALID_ARGUMENT);
         let (emitted, _) = set(&mut booted, prop::IDENT_MOBILE, &[2]);
         expect_status(&emitted[0], 2, Status::INVALID_ARGUMENT);
+    }
+
+    /// The advertised position is writable, survives a save, and reports
+    /// the altitude back in the minimal encoding whatever width arrived.
+    #[test]
+    fn advertised_position_is_written_and_saved() {
+        let mut session = test_session();
+        assert_eq!(get(&mut session, prop::IDENT_LOCATION), Vec::<u8>::new());
+        assert_eq!(get(&mut session, prop::IDENT_ALTITUDE), Vec::<u8>::new());
+
+        set(&mut session, prop::IDENT_LOCATION, &[1, 2, 3, 4, 5]);
+        set(&mut session, prop::IDENT_ALTITUDE, &[100]);
+        assert_eq!(get(&mut session, prop::IDENT_LOCATION), [1, 2, 3, 4, 5]);
+        assert_eq!(get(&mut session, prop::IDENT_ALTITUDE), [100]);
+
+        // A padded write is understood, and read back minimal.
+        set(&mut session, prop::IDENT_ALTITUDE, &[100, 0, 0, 0]);
+        assert_eq!(get(&mut session, prop::IDENT_ALTITUDE), [100]);
+        // Below the ellipsoid is ordinary.
+        set(&mut session, prop::IDENT_ALTITUDE, &[0x9C, 0xFF]);
+        assert_eq!(session.ident_altitude_m(), Some(-100));
+        assert_eq!(get(&mut session, prop::IDENT_ALTITUDE), [0x9C]);
+        // Two octets once the value stops fitting in one.
+        set(&mut session, prop::IDENT_ALTITUDE, &[0xC8, 0x00]);
+        assert_eq!(get(&mut session, prop::IDENT_ALTITUDE), [0xC8, 0x00]);
+
+        // Over-wide and over-long values are refused.
+        let (emitted, _) = set(&mut session, prop::IDENT_ALTITUDE, &[0; 5]);
+        expect_status(&emitted[0], 2, Status::INVALID_ARGUMENT);
+        let (emitted, _) = set(&mut session, prop::IDENT_LOCATION, &[0; 8]);
+        expect_status(&emitted[0], 2, Status::INVALID_ARGUMENT);
+
+        save(&mut session);
+        let mut bytes = [0u8; SNAPSHOT_MAX];
+        let len = session.encode_snapshot(&mut bytes).unwrap();
+        let mut booted: TestSession =
+            Session::new(test_config(), Status::RESET_POWER_ON, test_engine());
+        booted.restore_at_boot(&bytes[..len]).unwrap();
+        assert_eq!(booted.ident_location(), [1, 2, 3, 4, 5]);
+        assert_eq!(booted.ident_altitude_m(), Some(200));
+
+        // Clearing the location is how a stale claim is withdrawn.
+        booted.attach(true);
+        set(&mut booted, prop::IDENT_LOCATION, &[]);
+        assert_eq!(get(&mut booted, prop::IDENT_LOCATION), Vec::<u8>::new());
+    }
+
+    /// Where a node is and whether it can find that out itself are
+    /// separate questions: a board with no receiver still has a position
+    /// worth advertising, and nothing gates it away.
+    #[test]
+    fn a_board_without_a_receiver_still_advertises_a_position() {
+        let mut session: TestSession =
+            Session::new(timeless_config(), Status::RESET_POWER_ON, test_engine());
+        session.attach(true);
+        set(&mut session, prop::IDENT_LOCATION, &[9, 8, 7]);
+        assert_eq!(get(&mut session, prop::IDENT_LOCATION), [9, 8, 7]);
+        // The receiver's own properties are still hidden.
+        let mut buf = [0u8; 16];
+        let len = frame::prop_get(&mut buf, 1, prop::GNSS_LOCATION).unwrap();
+        let (emitted, _) = dispatch(&mut session, &buf[..len], 0);
+        expect_status(&emitted[0], 1, Status::PROP_NOT_FOUND);
+    }
+
+    /// While the device maintains the position from its own fixes, a
+    /// written one would survive only until the next fix — so it is
+    /// refused rather than silently reverted. Switching auto-update off
+    /// freezes what the fixes found, which is how a fixed node is placed.
+    #[test]
+    fn auto_update_owns_the_position_until_it_is_switched_off() {
+        let mut session = test_session();
+        set(&mut session, prop::GNSS_IDENT_UPDATE, &[1]);
+
+        let (emitted, _) = set(&mut session, prop::IDENT_LOCATION, &[1, 2, 3]);
+        expect_status(&emitted[0], 2, Status::INVALID_STATE);
+        let (emitted, _) = set(&mut session, prop::IDENT_ALTITUDE, &[10]);
+        expect_status(&emitted[0], 2, Status::INVALID_STATE);
+
+        // Fixes land, clamped to the advertised precision.
+        set(&mut session, prop::GNSS_IDENT_PRECISION, &[3]);
+        assert!(session.absorb_ident_fix(&[1, 2, 3, 4, 5, 6, 7], Some(120)));
+        assert_eq!(session.ident_location(), [1, 2, 3]);
+        assert_eq!(session.ident_altitude_m(), Some(120));
+
+        // A fix landing in the same cell changes nothing, so nothing
+        // re-signs.
+        assert!(!session.absorb_ident_fix(&[1, 2, 3, 9, 9, 9, 9], Some(120)));
+        assert!(session.absorb_ident_fix(&[1, 2, 4, 0, 0, 0, 0], Some(120)));
+
+        // Switching auto-update off freezes the last position and hands
+        // it back as an ordinary written value.
+        set(&mut session, prop::GNSS_IDENT_UPDATE, &[0]);
+        assert_eq!(session.ident_location(), [1, 2, 4]);
+        assert_eq!(session.ident_altitude_m(), Some(120));
+        assert!(!session.absorb_ident_fix(&[7, 7, 7], Some(0)));
+        set(&mut session, prop::IDENT_LOCATION, &[5, 5]);
+        assert_eq!(get(&mut session, prop::IDENT_LOCATION), [5, 5]);
     }
 
     /// Discoverability defaults on — a deployed device being askable is
@@ -8029,6 +8267,8 @@ mod tests {
             prop::MAC_REPEATER_ENABLED,
             prop::IDENT_ROLE,
             prop::IDENT_MOBILE,
+            prop::IDENT_LOCATION,
+            prop::IDENT_ALTITUDE,
             prop::DEV_DISCOVERABLE,
             // The rest of the repeater policy is whole-value; only the
             // region table is edited entry by entry.
@@ -8045,9 +8285,9 @@ mod tests {
             assert!(effect.is_none());
             expect_status(&emitted[0], 1, Status::INVALID_ARGUMENT);
         }
-        // An unknown property is not found; 83 is still-spare space in
+        // An unknown property is not found; 85 is still-spare space in
         // the advertisement sub-range.
-        for unknown in [83, 1_234] {
+        for unknown in [85, 1_234] {
             let len = frame::prop_remove(&mut buf, 2, unknown, &[0; 4]).unwrap();
             let (emitted, effect) = dispatch(&mut session, &buf[..len], 0);
             assert!(effect.is_none());

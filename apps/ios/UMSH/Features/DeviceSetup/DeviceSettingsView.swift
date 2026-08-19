@@ -149,9 +149,7 @@ struct DeviceSettingsView: View {
                 DeviceFindSection(
                     alert: alert,
                     isBusy: isBusy,
-                    failureText: draft.plan.managesOverMesh
-                        ? "No response. The device may be out of reach, or this phone may not be one of its administrators."
-                        : "The device did not answer. It may have moved out of range.",
+                    failureText: "The device did not answer. It may have moved out of range.",
                     setAlert: controller.setAlert
                 )
             }
@@ -161,8 +159,7 @@ struct DeviceSettingsView: View {
                 DevicePowerSection(
                     percentage: snapshot.batteryPercentage,
                     voltageMillivolts: snapshot.batteryVoltageMillivolts,
-                    chargeState: snapshot.chargeState,
-                    reportsChanges: !draft.plan.managesOverMesh
+                    chargeState: snapshot.chargeState
                 )
             }
 
@@ -276,7 +273,6 @@ struct DeviceSettingsView: View {
                         set: { draft.setPhoneAdministers($0) }
                     ),
                     phoneKeyKnown: draft.phoneNodeKey != nil,
-                    allowsPhoneRemoval: !draft.plan.managesOverMesh,
                     isFull: draft.administratorListFull,
                     knownPeers: peerActions.knownPeers,
                     add: { draft.add(administrator: $0) },

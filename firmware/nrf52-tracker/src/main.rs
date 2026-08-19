@@ -1558,6 +1558,15 @@ mod firmware {
                     Either::Second(umsh_ulcp_runtime::gnss::Announce::Time(epoch)) => {
                         return driver::PublishEvent::Time(epoch);
                     }
+                    Either::Second(umsh_ulcp_runtime::gnss::Announce::IdentityFix(
+                        location,
+                        altitude_m,
+                    )) => {
+                        return driver::PublishEvent::IdentityFix(
+                            heapless::Vec::from_slice(location.as_bytes()).unwrap_or_default(),
+                            altitude_m,
+                        );
+                    }
                 }
             }
         }

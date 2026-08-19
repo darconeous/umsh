@@ -44,7 +44,7 @@ use umsh_text::model::{ConversationKey, SenderScope};
 use umsh_text::validate::{DeliveryPath, Envelope};
 use umsh_ulcp::{
     frame,
-    ids::{self, cap, prop},
+    ids::{self, prop},
     items,
 };
 
@@ -190,11 +190,9 @@ pub struct MobileMeshManagementEventRecord {
     /// Octets the device has yet to return of the answer it is part-way
     /// through, as of the last frame it sent.
     pub remaining_octets: Option<u32>,
-    /// Properties a whole-device read has yet to ask for. Only
-    /// `begin_remote_sync` reports it, and only while it is running.
+    /// Properties a read has yet to ask for. Only `begin_management_fetch`
+    /// reports it, and only while it is running.
     pub properties_remaining: Option<u32>,
-    /// The device read whole, on a completed `begin_remote_sync`.
-    pub sync: Option<UlcpSyncRecord>,
 }
 
 /// What a reset-class command puts back.
@@ -665,8 +663,11 @@ enum ReplyShape {
 enum ManagementRequest {
     /// One request frame, already encoded, and the shape of its answer.
     One { frame: Vec<u8>, shape: ReplyShape },
-    /// Read the device whole, in as many exchanges as it takes.
-    Sync,
+    /// Read a named set of properties, in as many exchanges as it takes.
+    Fetch {
+        property_ids: Vec<u32>,
+        multi_hint: bool,
+    },
 }
 
 enum ChatComposeRequest {
@@ -1238,6 +1239,36 @@ impl MobileMeshSession {
         self.begin_management_remove(peer_address, prop::DEV_ADMINS, public_key)
     }
 
+    /// Store one more peer public key on a device's identity
+    /// (`PROP_DEV_PEERS`), so it can hold a secure session with that node
+    /// on its own.
+    ///
+    /// Named for the same reason the administrator pair is: the caller is
+    /// deciding who a device talks to, not writing to a numbered property.
+    /// Live until a save.
+    pub fn begin_management_insert_peer(
+        &self,
+        peer_address: String,
+        public_key: Vec<u8>,
+    ) -> Result<u64, MobileMeshError> {
+        if public_key.len() != items::PUBLIC_KEY_LEN {
+            return Err(MobileMeshError::InvalidRequest);
+        }
+        self.begin_management_insert(peer_address, prop::DEV_PEERS, public_key)
+    }
+
+    /// Drop a peer public key from a device's identity.
+    pub fn begin_management_remove_peer(
+        &self,
+        peer_address: String,
+        public_key: Vec<u8>,
+    ) -> Result<u64, MobileMeshError> {
+        if public_key.len() != items::PUBLIC_KEY_LEN {
+            return Err(MobileMeshError::InvalidRequest);
+        }
+        self.begin_management_remove(peer_address, prop::DEV_PEERS, public_key)
+    }
+
     /// Tell a device to make itself conspicuous, or to stop
     /// (`PROP_ALERT`).
     ///
@@ -1349,20 +1380,33 @@ impl MobileMeshSession {
         )
     }
 
-    /// Read a device whole across the mesh, reducing what comes back into
-    /// the same `UlcpSyncRecord` an attached radio produces.
+    /// Read a named set of properties across the mesh.
     ///
-    /// The crawl asks what the device can do, then asks for everything
-    /// those capabilities imply and an administrator is allowed to see,
-    /// in as many exchanges as the answers need. A property the device
-    /// declines lands in `unreadable_properties` rather than ending the
-    /// read — the same tolerance a bench attach has.
+    /// The caller names what it wants, in as many exchanges as the
+    /// answers need — a screenful of settings is normally one. Every
+    /// property comes back answered, refusals included, so a caller can
+    /// tell "the device would not say" from "nobody asked".
     ///
-    /// Expensive over LoRa: tens of properties, several round trips. It is
-    /// the "open this device's settings" operation, not something to run
-    /// on a timer.
-    pub fn begin_remote_sync(&self, peer_address: String) -> Result<u64, MobileMeshError> {
-        self.begin_management(peer_address, ManagementRequest::Sync)
+    /// `multi_hint` says whether to open with a batched request. A device
+    /// that declines one is asked again a property at a time, so the hint
+    /// costs a round trip when wrong rather than an answer. Pass what
+    /// `CAP_CMD_MULTI` last said, or true before anything has.
+    ///
+    /// Every exchange is airtime over a link that may be several hops
+    /// deep. Ask for what a screen needs and no more.
+    pub fn begin_management_fetch(
+        &self,
+        peer_address: String,
+        property_ids: Vec<u32>,
+        multi_hint: bool,
+    ) -> Result<u64, MobileMeshError> {
+        self.begin_management(
+            peer_address,
+            ManagementRequest::Fetch {
+                property_ids,
+                multi_hint,
+            },
+        )
     }
 
     /// Broadcast a signed node-identity advertisement describing this phone.
@@ -2315,32 +2359,43 @@ fn encode_management(
     Ok(buf)
 }
 
-/// A whole-device read, one batch of properties at a time.
+/// A read of a named set of properties, one batch at a time.
 ///
-/// The device says what it can do, and what it can do says what there is
-/// to ask for. Everything out of an administrator's reach is left out
-/// before a single frame goes on the air.
-#[derive(Default)]
-struct SyncCrawl {
-    /// Whether the capabilities have come back and the rest is planned.
-    planned: bool,
-    /// Whether the device answers multi-property requests.
+/// The caller says what to ask for, which is what keeps a screenful of
+/// settings from costing a whole-device read. Everything out of an
+/// administrator's reach is dropped before a single frame goes on the
+/// air.
+struct FetchCrawl {
+    /// Whether the device answers multi-property requests. A hint from
+    /// the caller, corrected by the device the moment it declines one.
     multi: bool,
     /// What the outstanding request asked for, in order.
     asked: Vec<u32>,
     /// What is still to be asked for.
     pending: VecDeque<u32>,
-    /// Everything answered so far, in the shape the reducer takes.
-    collected: Vec<UlcpPropertyFrameRecord>,
+    /// Every answer so far, refusals included: a property the device
+    /// would not report is a different thing from one nobody asked for,
+    /// and only the caller can tell what that means for its screen.
+    answers: Vec<MobileMeshManagementAnswerRecord>,
 }
 
-impl SyncCrawl {
+impl FetchCrawl {
+    fn new(properties: Vec<u32>, multi_hint: bool) -> Self {
+        let mut pending: Vec<u32> = properties
+            .into_iter()
+            .filter(|&key| ids::admin_reachable(key))
+            .collect();
+        pending.dedup();
+        Self {
+            multi: multi_hint,
+            asked: Vec::new(),
+            pending: pending.into(),
+            answers: Vec::new(),
+        }
+    }
+
     /// The next request, or `None` when there is nothing left to ask.
     fn next_request(&mut self) -> Result<Option<Vec<u8>>, MobileMeshError> {
-        if !self.planned {
-            self.asked = vec![prop::CAPS];
-            return encode_management(|buf| frame::prop_get(buf, 0, prop::CAPS)).map(Some);
-        }
         let batch = if self.multi { SYNC_BATCH } else { 1 };
         self.asked = self
             .pending
@@ -2353,36 +2408,13 @@ impl SyncCrawl {
         }
     }
 
-    /// Take in one answer. Anything the device declined is left out
-    /// rather than retried: a refused property is one whose value is
-    /// unknown, which the reducer already has a place for.
+    /// Take in one answer.
     fn receive(&mut self, reply: &[u8]) -> Result<(), MobileMeshError> {
-        if !self.planned {
-            let capabilities = match umsh_ulcp::reply::property(prop::CAPS, reply) {
-                Ok(umsh_ulcp::reply::Answer::Value(value)) => value.to_vec(),
-                // Without capabilities there is nothing to plan: this is
-                // not a device that can describe itself.
-                _ => return Err(MobileMeshError::InvalidRequest),
-            };
-            let decoded = crate::ulcp::decode_capabilities(&capabilities)
-                .map_err(|_| MobileMeshError::InvalidRequest)?;
-            self.multi = decoded.contains(&cap::CMD_MULTI);
-            let mut properties = crate::ulcp::ulcp_refresh_properties(capabilities.clone())
-                .map_err(|_| MobileMeshError::InvalidRequest)?;
-            properties.retain(|&key| key != prop::CAPS && ids::admin_reachable(key));
-            properties.dedup();
-            self.pending = properties.into();
-            self.collected
-                .push(property_record(prop::CAPS, capabilities));
-            self.planned = true;
-            return Ok(());
-        }
-
         if let [key] = self.asked.as_slice() {
-            if let Ok(umsh_ulcp::reply::Answer::Value(value)) =
-                umsh_ulcp::reply::property(*key, reply)
-            {
-                self.collected.push(property_record(*key, value.to_vec()));
+            let key = *key;
+            match umsh_ulcp::reply::property(key, reply) {
+                Ok(answer) => self.answers.push(answer_record(key, answer)),
+                Err(_) => return Err(MobileMeshError::InvalidRequest),
             }
             return Ok(());
         }
@@ -2391,8 +2423,8 @@ impl SyncCrawl {
         let Ok(entries) = umsh_ulcp::reply::entries(&asked, reply) else {
             // The device declined the command rather than the properties,
             // which is what one without `CAP_CMD_MULTI` does. Ask again one
-            // at a time; its capabilities said otherwise, but the device is
-            // the authority on itself.
+            // at a time; the hint said otherwise, but the device is the
+            // authority on itself.
             self.multi = false;
             for key in asked.into_iter().rev() {
                 self.pending.push_front(key);
@@ -2400,11 +2432,9 @@ impl SyncCrawl {
             return Ok(());
         };
         let mut answered = 0usize;
-        for entry in entries.flatten() {
+        for (key, answer) in entries.flatten() {
             answered += 1;
-            if let (key, umsh_ulcp::reply::Answer::Value(value)) = entry {
-                self.collected.push(property_record(key, value.to_vec()));
-            }
+            self.answers.push(answer_record(key, answer));
         }
         // A device stops before its answer overflows rather than
         // truncating one, so whatever it did not reach is simply asked for
@@ -2420,20 +2450,11 @@ impl SyncCrawl {
     }
 }
 
-fn property_record(property_id: u32, value: Vec<u8>) -> UlcpPropertyFrameRecord {
-    UlcpPropertyFrameRecord {
-        transaction_id: 0,
-        command: umsh_ulcp::Cmd::PropIs as u8,
-        property_id,
-        value,
-    }
-}
-
 /// What the phone is doing with one device, and how to read what comes
 /// back.
 enum ManagementPlan {
     One(ReplyShape),
-    Sync(SyncCrawl),
+    Fetch(FetchCrawl),
 }
 
 /// One outstanding management operation.
@@ -2457,10 +2478,9 @@ impl<M: MacBackend> ManagementJob<M> {
             status_code: None,
             remaining_octets: self.manager.remaining(),
             properties_remaining: match &self.plan {
-                ManagementPlan::Sync(crawl) => Some(crawl.pending.len() as u32),
+                ManagementPlan::Fetch(crawl) => Some(crawl.pending.len() as u32),
                 ManagementPlan::One(_) => None,
             },
-            sync: None,
         }
     }
 
@@ -2508,7 +2528,7 @@ impl<M: MacBackend> ManagementJob<M> {
                 let shape = shape.clone();
                 Some(self.replied(&shape))
             }
-            ManagementPlan::Sync(crawl) => {
+            ManagementPlan::Fetch(crawl) => {
                 if crawl.receive(self.manager.reply()).is_err() {
                     return Some(self.event(MobileMeshManagementOutcome::Failed));
                 }
@@ -2520,7 +2540,7 @@ impl<M: MacBackend> ManagementJob<M> {
                         }
                         Err(_) => Some(self.event(MobileMeshManagementOutcome::Failed)),
                     },
-                    Ok(None) => Some(self.reduced()),
+                    Ok(None) => Some(self.fetched()),
                     Err(_) => Some(self.event(MobileMeshManagementOutcome::Failed)),
                 }
             }
@@ -2560,21 +2580,43 @@ impl<M: MacBackend> ManagementJob<M> {
         event
     }
 
-    /// Reduce a finished crawl into the same record a bench attach builds.
-    fn reduced(&mut self) -> MobileMeshManagementEventRecord {
-        let ManagementPlan::Sync(crawl) = &mut self.plan else {
+    /// Hand back everything a finished crawl collected.
+    ///
+    /// Undecoded on purpose: what these values mean is the caller's
+    /// question, and it asked for a particular set of properties because
+    /// it already knew what it wanted with them.
+    fn fetched(&mut self) -> MobileMeshManagementEventRecord {
+        let ManagementPlan::Fetch(crawl) = &mut self.plan else {
             return self.event(MobileMeshManagementOutcome::Failed);
         };
-        let collected = core::mem::take(&mut crawl.collected);
-        match crate::ulcp::inspect_ulcp_sync(collected) {
-            Ok(sync) => {
-                let mut event = self.event(MobileMeshManagementOutcome::Replied);
-                event.sync = Some(sync);
-                event
-            }
-            Err(_) => self.event(MobileMeshManagementOutcome::Failed),
-        }
+        let answers = core::mem::take(&mut crawl.answers);
+        let mut event = self.event(MobileMeshManagementOutcome::Replied);
+        event.answers = answers;
+        event
     }
+}
+
+/// Present the answers to a management read as the property frames the
+/// ULCP inspectors read.
+///
+/// A mesh answer and a GATT property frame carry the same thing — a
+/// property and what the device said it is worth — so the decoders are
+/// the same decoders. Refusals drop out here: they are answers *about* a
+/// property rather than values of one, and the event still carries them
+/// for a caller that needs to know which.
+#[uniffi::export]
+pub fn ulcp_records_from_answers(
+    answers: Vec<MobileMeshManagementAnswerRecord>,
+) -> Vec<UlcpPropertyFrameRecord> {
+    answers
+        .into_iter()
+        .filter_map(|answer| {
+            Some(crate::ulcp::ulcp_property_record(
+                answer.property_id,
+                answer.value?,
+            ))
+        })
+        .collect()
 }
 
 fn answer_record(
@@ -2602,7 +2644,6 @@ fn emit_management_failure(
         status_code: None,
         remaining_octets: None,
         properties_remaining: None,
-        sync: None,
     });
 }
 
@@ -2627,10 +2668,13 @@ async fn start_management<M: MacBackend>(
         .with_trace_route();
     let (plan, request) = match request {
         ManagementRequest::One { frame, shape } => (ManagementPlan::One(shape), frame),
-        ManagementRequest::Sync => {
-            let mut crawl = SyncCrawl::default();
+        ManagementRequest::Fetch {
+            property_ids,
+            multi_hint,
+        } => {
+            let mut crawl = FetchCrawl::new(property_ids, multi_hint);
             let request = crawl.next_request().ok()??;
-            (ManagementPlan::Sync(crawl), request)
+            (ManagementPlan::Fetch(crawl), request)
         }
     };
     manager.begin(&request, now_ms).ok()?;
@@ -4273,16 +4317,6 @@ mod tests {
 
     // ─── Reading a device whole, across the mesh ─────────────────────────
 
-    fn caps_reply(capabilities: &[u32]) -> Vec<u8> {
-        let mut encoded = Vec::new();
-        for capability in capabilities {
-            let mut bytes = [0u8; umsh_ulcp::pui::MAX_LEN];
-            let len = umsh_ulcp::pui::encode(*capability, &mut bytes).unwrap();
-            encoded.extend_from_slice(&bytes[..len]);
-        }
-        is_reply(prop::CAPS, &encoded)
-    }
-
     fn is_reply(property: u32, value: &[u8]) -> Vec<u8> {
         let mut buf = vec![0u8; 512];
         let len = frame::prop_is(&mut buf, 0, property, value).unwrap();
@@ -4304,47 +4338,46 @@ mod tests {
     }
 
     /// Ask what the outstanding request was, without decoding the frame.
-    fn asked(crawl: &SyncCrawl) -> Vec<u32> {
+    fn asked(crawl: &FetchCrawl) -> Vec<u32> {
         crawl.asked.clone()
     }
 
-    #[test]
-    fn a_crawl_asks_what_the_device_can_do_before_anything_else() {
-        let mut crawl = SyncCrawl::default();
-        assert!(crawl.next_request().unwrap().is_some());
-        assert_eq!(asked(&crawl), vec![prop::CAPS]);
-
-        crawl
-            .receive(&caps_reply(&[
-                cap::SAVE,
-                cap::DEV_NAME,
-                cap::DEV_IDENTITY,
-                cap::ADMIN,
-                cap::CMD_MULTI,
-            ]))
-            .unwrap();
-        assert!(crawl.multi, "the device said it takes multi-property reads");
-        // What it can do is what there is to ask for, and the
-        // administrator list is part of that.
-        assert!(crawl.pending.contains(&prop::DEV_ADMINS));
-        assert!(crawl.pending.contains(&prop::DEV_NAME));
-        // The phone's own relationship with a radio is not an
-        // administrator's business, and asking would spend airtime on a
-        // refusal.
-        assert!(!crawl.pending.contains(&prop::HOST_KEY));
-        assert!(!crawl.pending.contains(&prop::MAC_PROMISCUOUS));
-
-        crawl.next_request().unwrap().unwrap();
-        assert_eq!(asked(&crawl).len(), SYNC_BATCH);
+    /// A list long enough to need more than one batch.
+    fn long_list() -> Vec<u32> {
+        vec![
+            prop::PHY_ENABLED,
+            prop::PHY_FREQ,
+            prop::PHY_TX_POWER,
+            prop::PHY_LORA_BW,
+            prop::PHY_LORA_SF,
+            prop::PHY_LORA_CR,
+            prop::PHY_DUTY_NOW,
+            prop::PHY_DUTY_LIMIT,
+            prop::DEV_NAME,
+            prop::DEV_DISCOVERABLE,
+        ]
     }
 
     #[test]
-    fn a_crawl_asks_again_for_what_a_short_answer_left_out() {
-        let mut crawl = SyncCrawl::default();
-        crawl.next_request().unwrap();
-        crawl
-            .receive(&caps_reply(&[cap::DEV_IDENTITY, cap::CMD_MULTI]))
-            .unwrap();
+    fn a_fetch_asks_for_what_it_was_given_and_nothing_else() {
+        let mut crawl = FetchCrawl::new(long_list(), true);
+        crawl.next_request().unwrap().unwrap();
+        assert_eq!(asked(&crawl).len(), SYNC_BATCH);
+        assert_eq!(asked(&crawl), long_list()[..SYNC_BATCH].to_vec());
+
+        // The phone's own relationship with a radio is not an
+        // administrator's business, and asking would spend airtime on a
+        // refusal — so those keys never reach the queue at all.
+        let filtered = FetchCrawl::new(
+            vec![prop::DEV_NAME, prop::HOST_KEY, prop::MAC_PROMISCUOUS],
+            true,
+        );
+        assert_eq!(filtered.pending, vec![prop::DEV_NAME]);
+    }
+
+    #[test]
+    fn a_fetch_asks_again_for_what_a_short_answer_left_out() {
+        let mut crawl = FetchCrawl::new(long_list(), true);
         crawl.next_request().unwrap().unwrap();
         let batch = asked(&crawl);
         assert!(batch.len() > 1);
@@ -4361,21 +4394,17 @@ mod tests {
             batch[2..].to_vec(),
             "the unanswered keys go back to the front of the queue"
         );
-        assert_eq!(crawl.collected.len(), 3, "capabilities plus two answers");
+        assert_eq!(crawl.answers.len(), 2);
     }
 
     #[test]
-    fn a_crawl_falls_back_to_one_property_at_a_time() {
-        let mut crawl = SyncCrawl::default();
-        crawl.next_request().unwrap();
-        crawl
-            .receive(&caps_reply(&[cap::DEV_IDENTITY, cap::CMD_MULTI]))
-            .unwrap();
+    fn a_fetch_falls_back_to_one_property_at_a_time() {
+        let mut crawl = FetchCrawl::new(long_list(), true);
         crawl.next_request().unwrap().unwrap();
         let batch = asked(&crawl);
 
-        // A device that declines the command itself, whatever its
-        // capabilities claimed.
+        // A device that declines the command itself, whatever the hint
+        // said.
         crawl
             .receive(&is_reply(
                 prop::LAST_STATUS,
@@ -4396,16 +4425,39 @@ mod tests {
         crawl.next_request().unwrap().unwrap();
         assert_eq!(asked(&crawl), vec![batch[0]]);
 
-        // A property it will not report is left absent rather than
-        // retried; the reducer names it unreadable.
+        // A property it will not report comes back as a refusal rather
+        // than as nothing: the caller has a screen to draw either way,
+        // and "would not say" is not "never asked".
         crawl
             .receive(&is_reply(
                 prop::LAST_STATUS,
                 &[umsh_ulcp::Status::PROP_NOT_FOUND.0 as u8],
             ))
             .unwrap();
-        assert_eq!(crawl.collected.len(), 1, "only the capabilities");
+        assert_eq!(crawl.answers.len(), 1);
+        assert_eq!(crawl.answers[0].property_id, batch[0]);
+        assert!(crawl.answers[0].value.is_none());
+        assert_eq!(
+            crawl.answers[0].status_code,
+            Some(umsh_ulcp::Status::PROP_NOT_FOUND.0)
+        );
         assert!(!crawl.pending.contains(&batch[0]));
+    }
+
+    /// The identity card: capabilities, firmware version, name and model
+    /// in a single exchange, which is what every later screen is planned
+    /// against and what caching it saves on every reopen.
+    #[test]
+    fn the_identity_card_is_one_exchange() {
+        let card = crate::ulcp::ulcp_card_properties();
+        let mut crawl = FetchCrawl::new(card.clone(), true);
+        crawl.next_request().unwrap().unwrap();
+        assert_eq!(asked(&crawl), card);
+
+        crawl.receive(&are_reply(&card)).unwrap();
+        assert!(crawl.pending.is_empty(), "one exchange covered the card");
+        assert_eq!(crawl.answers.len(), 4);
+        assert!(crawl.next_request().unwrap().is_none());
     }
 
     #[tokio::test]
@@ -4433,7 +4485,9 @@ mod tests {
         let first = phone
             .begin_management_get(device.clone(), prop::DEV_NAME)
             .unwrap();
-        let second = phone.begin_remote_sync(device.clone()).unwrap();
+        let second = phone
+            .begin_management_fetch(device.clone(), vec![prop::CAPS], true)
+            .unwrap();
         assert_ne!(first, second);
 
         // The first operation is on the air and will not be answered here;

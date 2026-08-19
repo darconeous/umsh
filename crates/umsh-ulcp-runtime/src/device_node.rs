@@ -60,6 +60,7 @@ use umsh_crypto::CryptoEngine;
 use umsh_crypto::software::{SoftwareAes, SoftwareIdentity, SoftwareSha256};
 use umsh_hal::{CounterStore, EmbassyClock, NoKeyValueStore};
 use umsh_mac::{MacCounters, MacHandle, OperatingPolicy, RepeaterConfig, SendOptions};
+use umsh_node::location::NodeLocation;
 use umsh_node::{
     Host, LocalNode, NodeCapabilities, NodeIdentityProfile, NodeRole, default_respond_policy,
     never_respond_policy,
@@ -403,6 +404,22 @@ fn advertised_regions(
     })
 }
 
+/// Write the advertised position into a node identity profile.
+///
+/// The position comes from the device-domain mirror like everything else
+/// the profile says, so a fix, a host write, a boot restore and a
+/// `CMD_RST` all reach the identity by one path and none of them can
+/// disagree about what it advertises.
+///
+/// Both fields move together: an altitude without a position describes
+/// nothing, so one is carried only alongside the other.
+fn stamp_position(profile: &mut NodeIdentityProfile, snapshot: &DevDomainSnapshot) {
+    let location = (!snapshot.ident_location.is_empty())
+        .then(|| NodeLocation::from_bytes(&snapshot.ident_location));
+    profile.location = location;
+    profile.altitude_m = location.and(snapshot.ident_altitude_m);
+}
+
 // ─── Device-domain sync ──────────────────────────────────────────────────────
 
 /// Reconciles the node's MAC against each [`DevDomainSnapshot`]: joins
@@ -474,8 +491,7 @@ pub async fn dev_sync_loop<CS: CounterStore + 'static>(
         // that does not know the time omits the option, which is the
         // same answer the default gives.
         profile.clock = umsh_hal::wall_clock::now;
-        #[cfg(feature = "gnss")]
-        crate::gnss::stamp_identity(&mut profile);
+        stamp_position(&mut profile, &snapshot);
         // `PROP_DEV_DISCOVERABLE` gates only the *responder*. The profile
         // stays installed either way because unsolicited advertisements are
         // built from it, and the spec keeps those governed by advertisement
@@ -964,30 +980,6 @@ pub async fn identity_profile_loop<CS: CounterStore + 'static>(node: DeviceNode<
         NAME_CHANGED.wait().await;
         let name = profile_name();
         node.update_identity_profile(move |profile| profile.name = name);
-    }
-}
-
-/// Keeps the advertised identity's position synced to what the receiver
-/// has settled on, under `PROP_GNSS_IDENT_UPDATE`.
-///
-/// Wakes on a change of the *advertised* cell rather than on each fix:
-/// at the default precision a stationary node's fixes all land in the
-/// same cell, and this would otherwise rewrite the profile every second
-/// to say exactly what it already said.
-///
-/// Nothing here runs on a timer. The identity's freshness marker dates
-/// each payload as it is built, so a stationary node has nothing to
-/// restate — the position it is advertising is still the position it is
-/// at, and rewriting it would change no byte.
-#[cfg(feature = "gnss")]
-pub async fn location_profile_loop<CS: CounterStore + 'static>(node: DeviceNode<CS>) {
-    let Some(mut moved) = crate::gnss::identity_updates() else {
-        debug_assert!(false, "node: location_profile_loop is single-caller");
-        return;
-    };
-    loop {
-        node.update_identity_profile(crate::gnss::stamp_identity);
-        moved.changed().await;
     }
 }
 

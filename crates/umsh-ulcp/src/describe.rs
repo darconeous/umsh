@@ -53,6 +53,8 @@ pub const fn property_name(key: u32) -> Option<&'static str> {
         prop::ADVERT_INTERVAL => "PROP_ADVERT_INTERVAL",
         prop::BEACON_INTERVAL => "PROP_BEACON_INTERVAL",
         prop::STARTUP_BEACON => "PROP_STARTUP_BEACON",
+        prop::IDENT_LOCATION => "PROP_IDENT_LOCATION",
+        prop::IDENT_ALTITUDE => "PROP_IDENT_ALTITUDE",
         prop::GNSS_ENABLED => "PROP_GNSS_ENABLED",
         prop::GNSS_LOCATION => "PROP_GNSS_LOCATION",
         prop::GNSS_ALTITUDE => "PROP_GNSS_ALTITUDE",

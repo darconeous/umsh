@@ -186,12 +186,6 @@ struct DeviceSetupPlan {
     let applyTitle: String
     /// What the device is called once it is set up, for the success screen.
     let deviceNoun: String
-    /// Whether the device is being reached across the mesh rather than
-    /// held. It changes what is safe to offer, not what is shown: a phone
-    /// cannot take its own name off the administrator list of a device it
-    /// is administering by that name.
-    let managesOverMesh: Bool
-
     /// Whether this goal decides most of the configuration and presents a short
     /// sheet, rather than opening the whole editor.
     var isAbbreviated: Bool { goal != .revisit }
@@ -283,8 +277,7 @@ struct DeviceSetupPlan {
         ],
         title: "Set Up a Tracker",
         applyTitle: "Set Up Tracker",
-        deviceNoun: "tracker",
-        managesOverMesh: false
+        deviceNoun: "tracker"
     )
 
     static let repeaterNode = Self(
@@ -300,8 +293,7 @@ struct DeviceSetupPlan {
         ],
         title: "Set Up a Repeater",
         applyTitle: "Set Up Repeater",
-        deviceNoun: "repeater",
-        managesOverMesh: false
+        deviceNoun: "repeater"
     )
 
     static let revisit = Self(
@@ -314,36 +306,6 @@ struct DeviceSetupPlan {
         ],
         title: "Device",
         applyTitle: "Apply",
-        deviceNoun: "device",
-        managesOverMesh: false
-    )
-
-    /// The same editor, over a device reached across the mesh.
-    ///
-    /// It carries `revisit`'s goal because that is what it is — changing
-    /// what a device already set up is doing — and only the sections
-    /// differ. The battery and the locate alert are here: both are
-    /// reachable from an administrator, the read asks for them anyway, and
-    /// they are worth more at a distance than in the hand — a repeater on
-    /// a mast is exactly the node whose charge nobody can go and look at.
-    ///
-    /// What falls away needs the device in hand or a session with it: the
-    /// clock, which the local link volunteers, and the positioning
-    /// readout, which is a live sample rather than a setting and is not
-    /// worth the airtime of asking for repeatedly. The link notices stay —
-    /// a device several hops away withholds a setting exactly as one on
-    /// the bench does.
-    static let remote = Self(
-        goal: .revisit,
-        assumptions: [],
-        sections: [
-            .link, .find, .power, .name, .presets, .radio, .identity,
-            .positioningPolicy, .announcements, .forwarding,
-            .administrators, .applyStatus,
-        ],
-        title: "Manage Device",
-        applyTitle: "Apply",
-        deviceNoun: "device",
-        managesOverMesh: true
+        deviceNoun: "device"
     )
 }

@@ -75,6 +75,37 @@ struct StoredNode: Equatable, Sendable {
     let onDeviceIdentity: Bool
 }
 
+/// What a remote device said it is, kept between openings of its settings.
+///
+/// The four things worth learning once: a device's capabilities and firmware
+/// version change only when it is reflashed, its hardware never, and its name
+/// rarely. Holding them means the second and every later open of a device's
+/// settings puts nothing on the air at all — which over five flood hops is
+/// the difference between instant and half a minute of everyone's airtime.
+struct StoredManagementCard: Equatable, Sendable {
+    /// `PROP_CAPS` verbatim, planned against without asking the device
+    /// again.
+    let capabilities: Data
+    /// `PROP_DEV_VERSION`. The key the cached values hang from: different
+    /// firmware may hold different properties, so a change here discards
+    /// them.
+    let deviceVersion: String?
+    let deviceModel: String?
+    let deviceName: String?
+    let fetchedAt: Date
+}
+
+/// One property as a device last reported it, and when.
+///
+/// Stored as the octets that came off the air: what they mean is settled by
+/// the ULCP decoders rather than here, so a value cached by one build reads
+/// the same in the next. The instant is what lets a screen date a reading
+/// rather than present it as current.
+struct StoredCachedProperty: Equatable, Sendable {
+    let value: Data
+    let fetchedAt: Date
+}
+
 /// The newest message in a conversation, reduced to what a list row draws.
 ///
 /// This is the literal last row in transcript order, tombstones and gap
@@ -355,7 +386,7 @@ actor SQLiteApplicationStore {
     /// store refuses to open any database above this constant, so a stale value
     /// lets the new schema apply once and then locks the user out of their own
     /// data on the next launch. ``migrate(_:)`` checks the two agree.
-    static let currentSchemaVersion: Int32 = 17
+    static let currentSchemaVersion: Int32 = 18
 
     nonisolated(unsafe) private let database: OpaquePointer
 
@@ -1193,6 +1224,204 @@ actor SQLiteApplicationStore {
                 radioIdentifier: radioIdentifier
             )
         }
+    }
+
+    // MARK: - Remote management cache
+
+    /// What a device last said it is, if this phone has ever asked.
+    func managementCard(
+        ownerIdentityID: String,
+        publicAddress: String
+    ) throws -> StoredManagementCard? {
+        let statement = try prepare(
+            """
+            SELECT c.capabilities, c.device_version, c.device_model, c.device_name,
+                   c.fetched_at_ms
+            FROM node_mgmt_card c JOIN node n ON n.id = c.node_id
+            WHERE n.owner_identity_id = ? AND n.public_address = ?
+            """
+        )
+        defer { sqlite3_finalize(statement) }
+        try bind(ownerIdentityID, to: statement, at: 1)
+        try bind(publicAddress, to: statement, at: 2)
+        guard sqlite3_step(statement) == SQLITE_ROW else { return nil }
+        return StoredManagementCard(
+            capabilities: Self.dataColumn(statement, at: 0),
+            deviceVersion: Self.optionalStringColumn(statement, at: 1),
+            deviceModel: Self.optionalStringColumn(statement, at: 2),
+            deviceName: Self.optionalStringColumn(statement, at: 3),
+            fetchedAt: Date(timeIntervalSince1970: Double(sqlite3_column_int64(statement, 4)) / 1000)
+        )
+    }
+
+    /// Record what a card read found.
+    ///
+    /// A device running different firmware is a device whose capabilities,
+    /// property set, and defaults may all have moved, so everything cached
+    /// about the old firmware is dropped in the same transaction. Nothing
+    /// about a cached value says which firmware produced it, and a value
+    /// that outlives its firmware is worse than no value: it prefills a
+    /// form with a plausible reading nobody can date.
+    func saveManagementCard(
+        ownerIdentityID: String,
+        publicAddress: String,
+        card: StoredManagementCard
+    ) throws {
+        try transaction {
+            guard let nodeID = try nodeIdentifier(
+                ownerIdentityID: ownerIdentityID,
+                publicAddress: publicAddress
+            ) else { return }
+
+            let known = try prepare("SELECT device_version FROM node_mgmt_card WHERE node_id = ?")
+            defer { sqlite3_finalize(known) }
+            try check(sqlite3_bind_int64(known, 1, nodeID))
+            var superseded = false
+            if sqlite3_step(known) == SQLITE_ROW {
+                superseded = Self.optionalStringColumn(known, at: 0) != card.deviceVersion
+            }
+            if superseded {
+                let stale = try prepare("DELETE FROM node_prop_cache WHERE node_id = ?")
+                defer { sqlite3_finalize(stale) }
+                try check(sqlite3_bind_int64(stale, 1, nodeID))
+                try stepDone(stale)
+            }
+
+            let statement = try prepare(
+                """
+                INSERT INTO node_mgmt_card (
+                    node_id, capabilities, device_version, device_model, device_name,
+                    fetched_at_ms
+                )
+                VALUES (?, ?, ?, ?, ?, ?)
+                ON CONFLICT(node_id) DO UPDATE SET
+                    capabilities = excluded.capabilities,
+                    device_version = excluded.device_version,
+                    device_model = excluded.device_model,
+                    device_name = excluded.device_name,
+                    fetched_at_ms = excluded.fetched_at_ms
+                """
+            )
+            defer { sqlite3_finalize(statement) }
+            try check(sqlite3_bind_int64(statement, 1, nodeID))
+            try bind(card.capabilities, to: statement, at: 2)
+            try bindOptional(card.deviceVersion, to: statement, at: 3)
+            try bindOptional(card.deviceModel, to: statement, at: 4)
+            try bindOptional(card.deviceName, to: statement, at: 5)
+            try check(sqlite3_bind_int64(statement, 6, Self.milliseconds(card.fetchedAt)))
+            try stepDone(statement)
+        }
+    }
+
+    /// Forget everything cached about a device, so the next open asks it
+    /// afresh. The card goes too: a refresh that cannot be trusted to be
+    /// about the same firmware is not a refresh.
+    func forgetManagementCache(ownerIdentityID: String, publicAddress: String) throws {
+        try transaction {
+            guard let nodeID = try nodeIdentifier(
+                ownerIdentityID: ownerIdentityID,
+                publicAddress: publicAddress
+            ) else { return }
+            for table in ["node_prop_cache", "node_mgmt_card"] {
+                let statement = try prepare("DELETE FROM \(table) WHERE node_id = ?")
+                defer { sqlite3_finalize(statement) }
+                try check(sqlite3_bind_int64(statement, 1, nodeID))
+                try stepDone(statement)
+            }
+        }
+    }
+
+    /// What a device was last seen configured as, for the properties asked
+    /// for. Absent properties are simply not in the result: never fetched
+    /// and refused read the same from here, and the screen shows both as a
+    /// field it has nothing to prefill.
+    func cachedProperties(
+        ownerIdentityID: String,
+        publicAddress: String,
+        propertyIDs: [UInt32]
+    ) throws -> [UInt32: StoredCachedProperty] {
+        guard !propertyIDs.isEmpty else { return [:] }
+        let placeholders = Array(repeating: "?", count: propertyIDs.count).joined(separator: ", ")
+        let statement = try prepare(
+            """
+            SELECT p.property_id, p.value, p.fetched_at_ms
+            FROM node_prop_cache p JOIN node n ON n.id = p.node_id
+            WHERE n.owner_identity_id = ? AND n.public_address = ?
+                AND p.property_id IN (\(placeholders))
+            """
+        )
+        defer { sqlite3_finalize(statement) }
+        try bind(ownerIdentityID, to: statement, at: 1)
+        try bind(publicAddress, to: statement, at: 2)
+        for (offset, property) in propertyIDs.enumerated() {
+            try check(sqlite3_bind_int64(statement, Int32(3 + offset), Int64(property)))
+        }
+        var cached: [UInt32: StoredCachedProperty] = [:]
+        while sqlite3_step(statement) == SQLITE_ROW {
+            let property = UInt32(sqlite3_column_int64(statement, 0))
+            cached[property] = StoredCachedProperty(
+                value: Self.dataColumn(statement, at: 1),
+                fetchedAt: Date(
+                    timeIntervalSince1970: Double(sqlite3_column_int64(statement, 2)) / 1000
+                )
+            )
+        }
+        return cached
+    }
+
+    /// Record values a device reported — from a read, or from the echo a
+    /// write comes back with, which is the freshest statement of what the
+    /// device is actually holding.
+    func saveCachedProperties(
+        ownerIdentityID: String,
+        publicAddress: String,
+        values: [UInt32: Data],
+        at instant: Date
+    ) throws {
+        guard !values.isEmpty else { return }
+        try transaction {
+            guard let nodeID = try nodeIdentifier(
+                ownerIdentityID: ownerIdentityID,
+                publicAddress: publicAddress
+            ) else { return }
+            let statement = try prepare(
+                """
+                INSERT INTO node_prop_cache (node_id, property_id, value, fetched_at_ms)
+                VALUES (?, ?, ?, ?)
+                ON CONFLICT(node_id, property_id) DO UPDATE SET
+                    value = excluded.value,
+                    fetched_at_ms = excluded.fetched_at_ms
+                """
+            )
+            defer { sqlite3_finalize(statement) }
+            let stamp = Self.milliseconds(instant)
+            for (property, value) in values {
+                try check(sqlite3_reset(statement))
+                try check(sqlite3_bind_int64(statement, 1, nodeID))
+                try check(sqlite3_bind_int64(statement, 2, Int64(property)))
+                try bind(value, to: statement, at: 3)
+                try check(sqlite3_bind_int64(statement, 4, stamp))
+                try stepDone(statement)
+            }
+        }
+    }
+
+    /// This phone's row for a peer, or `nil` for one it does not store. A
+    /// peer with no row has nowhere to hang a cache, which is ordinary
+    /// rather than an error: nothing is cached about a stranger.
+    private func nodeIdentifier(ownerIdentityID: String, publicAddress: String) throws -> Int64? {
+        let statement = try prepare(
+            "SELECT id FROM node WHERE owner_identity_id = ? AND public_address = ?"
+        )
+        defer { sqlite3_finalize(statement) }
+        try bind(ownerIdentityID, to: statement, at: 1)
+        try bind(publicAddress, to: statement, at: 2)
+        guard sqlite3_step(statement) == SQLITE_ROW else { return nil }
+        return sqlite3_column_int64(statement, 0)
+    }
+
+    private static func milliseconds(_ instant: Date) -> Int64 {
+        Int64((instant.timeIntervalSince1970 * 1000).rounded())
     }
 
     func listNodes(ownerIdentityID: String) throws -> [StoredNode] {
@@ -3543,6 +3772,56 @@ actor SQLiteApplicationStore {
                         WHERE is_reaction = 1;
 
                     PRAGMA user_version = 17;
+                    """
+                )
+                try execute(database, sql: "COMMIT")
+            } catch {
+                try? execute(database, sql: "ROLLBACK")
+                throw error
+            }
+        }
+
+        if version < 18 {
+            try execute(database, sql: "BEGIN IMMEDIATE")
+            do {
+                // What a device said about itself, kept so that opening its
+                // settings does not have to ask again. A node several flood
+                // hops away answers slowly and at the cost of everyone's
+                // airtime, so the phone asks once and remembers.
+                //
+                // `node_mgmt_card` is what a device *is*: capabilities, the
+                // firmware they belong to, the hardware, the name. Firmware
+                // version is the key the rest hangs from — capabilities
+                // cannot change without it changing too — so a card arriving
+                // with a different version invalidates every cached value
+                // alongside it.
+                //
+                // `node_prop_cache` is what a device was last seen configured
+                // as, verbatim: the bytes the device sent, decoded in Rust
+                // where the wire formats already live. `fetched_at_ms` is
+                // what lets a screen admit its age rather than present a
+                // stale reading as current.
+                try execute(
+                    database,
+                    sql: """
+                    CREATE TABLE node_mgmt_card (
+                        node_id INTEGER PRIMARY KEY REFERENCES node(id) ON DELETE CASCADE,
+                        capabilities BLOB NOT NULL,
+                        device_version TEXT,
+                        device_model TEXT,
+                        device_name TEXT,
+                        fetched_at_ms INTEGER NOT NULL
+                    );
+
+                    CREATE TABLE node_prop_cache (
+                        node_id INTEGER NOT NULL REFERENCES node(id) ON DELETE CASCADE,
+                        property_id INTEGER NOT NULL,
+                        value BLOB NOT NULL,
+                        fetched_at_ms INTEGER NOT NULL,
+                        PRIMARY KEY (node_id, property_id)
+                    ) WITHOUT ROWID;
+
+                    PRAGMA user_version = 18;
                     """
                 )
                 try execute(database, sql: "COMMIT")

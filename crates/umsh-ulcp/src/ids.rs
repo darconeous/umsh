@@ -68,7 +68,7 @@ pub mod prop {
     ///
     /// First of the device-behavior settings range (70–95), which is
     /// subdivided as 70–79 repeater and identity, 80–87 advertisement
-    /// policy (80–82 allocated, 83–87 spare), 88–93 positioning, 94–95
+    /// policy (80–84 allocated, 85–87 spare), 88–93 positioning, 94–95
     /// environmental sensing (94 illuminance, 95 spare — the board's
     /// thermistor is the expected claimant). A
     /// single-octet identifier is the scarce resource, so the positioning
@@ -135,6 +135,25 @@ pub mod prop {
     /// Whether the device emits one beacon once it comes up
     /// (`PROP_STARTUP_BEACON`) — BOOL, default 1. Requires `CAP_ADVERT`.
     pub const STARTUP_BEACON: u32 = 82;
+    /// Location the device identity advertises (`PROP_IDENT_LOCATION`) —
+    /// 0–7 octets in the variable-precision interleaved format, empty to
+    /// advertise none. The value carries its own precision, so a location
+    /// entered by hand needs no separate precision setting.
+    ///
+    /// This and [`IDENT_ALTITUDE`] are where the advertised identity gets
+    /// its position, whether a fix wrote them or an administrator did.
+    /// [`GNSS_IDENT_UPDATE`] set, the device writes them itself from each
+    /// fix and refuses a write with `STATUS_INVALID_STATE`; cleared, they
+    /// are writable and hold whatever they last held. Requires
+    /// `CAP_IDENT`, not `CAP_GNSS` — a fixed repeater with no receiver
+    /// still has somewhere to be.
+    pub const IDENT_LOCATION: u32 = 83;
+    /// Altitude the device identity advertises (`PROP_IDENT_ALTITUDE`) —
+    /// a minimal-length signed integer (see [`crate::sint`]) of meters
+    /// above the WGS-84 ellipsoid, or empty. Advertised only alongside a
+    /// location. Same writability rule as [`IDENT_LOCATION`]; requires
+    /// `CAP_IDENT`.
+    pub const IDENT_ALTITUDE: u32 = 84;
     /// Whether the GNSS receiver is powered (`PROP_GNSS_ENABLED`) — BOOL,
     /// default 0. Off means the lowest power state the receiver reaches;
     /// a board whose receiver RTC is the board's only clock keeps that

@@ -398,6 +398,106 @@ fn an_administrator_reads_and_writes_the_device_domain() {
     assert_eq!(device.local_get(prop::DEV_NAME), b"Ridgeline Repeater");
 }
 
+/// Placing a node is the case this whole surface exists for: an
+/// administrator several hops away writes where a repeater is, and the
+/// device advertises it. Refused while the device is maintaining the
+/// position from its own fixes, so a write cannot be silently reverted by
+/// the next one.
+#[test]
+fn an_administrator_places_a_node_that_cannot_place_itself() {
+    let mut device = managed();
+    let mut buf = [0u8; 64];
+
+    let cell = [0x12, 0x34, 0x56, 0x78, 0x9A];
+    let len = frame::prop_set(&mut buf, 0, prop::IDENT_LOCATION, &cell).unwrap();
+    let placed = converse(&mut device, &buf[..len], 1);
+    assert!(matches!(placed.outcome, Outcome::Replied { .. }));
+    assert_eq!(value_of(&placed.reply), cell);
+    assert_eq!(device.local_get(prop::IDENT_LOCATION), cell);
+
+    // A padded altitude is understood and reported back minimally, which
+    // is the encoding that goes back over the air.
+    let len = frame::prop_set(&mut buf, 0, prop::IDENT_ALTITUDE, &[0xC8, 0, 0, 0]).unwrap();
+    let altitude = converse(&mut device, &buf[..len], 2);
+    assert_eq!(value_of(&altitude.reply), [0xC8, 0x00]);
+
+    // Handing the position to the receiver takes it away from the
+    // administrator, who is told so rather than ignored.
+    let len = frame::prop_set(&mut buf, 0, prop::GNSS_IDENT_UPDATE, &[1]).unwrap();
+    converse(&mut device, &buf[..len], 3);
+    let len = frame::prop_set(&mut buf, 0, prop::IDENT_LOCATION, &cell).unwrap();
+    let refused = converse(&mut device, &buf[..len], 4);
+    assert_eq!(status_of(&refused.reply), Status::INVALID_STATE);
+}
+
+/// What one management screen costs: the properties it shows, asked for
+/// together and answered in one exchange.
+///
+/// The design the phone's category screens are built on — a device several
+/// flood hops away answers slowly and at everyone's expense, so a screen
+/// asks for its own handful rather than the device whole. A property the
+/// device does not implement comes back as a refusal in its own position
+/// rather than costing the rest of the answer.
+#[test]
+fn one_screens_worth_of_properties_is_one_exchange() {
+    let mut device = managed();
+    let mut buf = [0u8; 128];
+    let identity = [
+        prop::DEV_NAME,
+        prop::IDENT_ROLE,
+        prop::IDENT_MOBILE,
+        prop::IDENT_LOCATION,
+        prop::IDENT_ALTITUDE,
+        prop::GNSS_IDENT_UPDATE,
+    ];
+    let len = frame::prop_multi_get(&mut buf, 0, &identity).unwrap();
+
+    let read = converse(&mut device, &buf[..len], 1);
+    assert!(matches!(read.outcome, Outcome::Replied { .. }));
+    let entries = entries_of(&read.reply);
+    assert_eq!(
+        entries.iter().map(|(key, _)| *key).collect::<Vec<_>>(),
+        identity,
+        "every property answered, in the order it was asked for"
+    );
+    assert!(
+        entries
+            .iter()
+            .find(|(key, _)| *key == prop::IDENT_LOCATION)
+            .is_some_and(|(_, value)| value.is_empty()),
+        "a device advertising no position says so with an empty value"
+    );
+}
+
+/// The radio screen, which asks for the most of any of them.
+#[test]
+fn a_radio_screen_is_one_exchange_too() {
+    let mut device = managed();
+    let mut buf = [0u8; 128];
+    let radio = [
+        prop::PHY_ENABLED,
+        prop::PHY_FREQ,
+        prop::PHY_TX_POWER,
+        prop::PHY_LORA_BW,
+        prop::PHY_LORA_SF,
+        prop::PHY_LORA_CR,
+        prop::PHY_DUTY_NOW,
+        prop::PHY_DUTY_LIMIT,
+    ];
+    let len = frame::prop_multi_get(&mut buf, 0, &radio).unwrap();
+
+    let read = converse(&mut device, &buf[..len], 1);
+    assert!(matches!(read.outcome, Outcome::Replied { .. }));
+    assert_eq!(
+        entries_of(&read.reply)
+            .iter()
+            .map(|(key, _)| *key)
+            .collect::<Vec<_>>(),
+        radio,
+        "all eight in one answer — the screen costs one round trip, not eight"
+    );
+}
+
 #[test]
 fn an_administrator_inserts_and_removes_table_entries() {
     let mut device = managed();

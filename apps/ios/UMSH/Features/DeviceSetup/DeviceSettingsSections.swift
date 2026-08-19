@@ -212,11 +212,6 @@ struct DevicePowerSection: View {
     let percentage: Int?
     let voltageMillivolts: Int?
     let chargeState: RadioChargeState?
-    /// Whether the device volunteers a new reading when this one changes.
-    /// It does over the local link and does not across the mesh, where
-    /// what is shown is what the last read found.
-    let reportsChanges: Bool
-
     var body: some View {
         Section {
             LabeledContent("Battery", value: percentage.map { "\($0)%" } ?? "Level unavailable")
@@ -229,9 +224,7 @@ struct DevicePowerSection: View {
         } header: {
             Text("Power")
         } footer: {
-            Text(reportsChanges
-                ? "Read from the device when this session started, and again whenever it reports a change."
-                : "Read from the device when its settings were last read. It is not watched from here, so reopening this screen is what asks again.")
+            Text("Read from the device when this session started, and again whenever it reports a change.")
         }
     }
 }

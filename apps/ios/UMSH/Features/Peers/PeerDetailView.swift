@@ -18,6 +18,25 @@ struct PeerDetailView: View {
         } ?? pushedPeer
     }
 
+    /// How a screen pushed from here opens another node: by pushing this
+    /// same page for it. Everything one needs is already in hand here,
+    /// which is why the sheet builds it rather than passing the parts on.
+    private var peerBrowsing: RemotePeerBrowsing {
+        RemotePeerBrowsing(knownPeers: actions.knownPeers) { peer in
+            AnyView(
+                PeerDetailView(
+                    peer: peer,
+                    radioSnapshot: $radioSnapshot,
+                    conversations: $conversations,
+                    actions: actions,
+                    updateDraft: updateDraft,
+                    sendMessage: sendMessage,
+                    messageActions: messageActions
+                )
+            )
+        }
+    }
+
     @Binding var radioSnapshot: RadioSnapshot
     @Binding var conversations: [DirectConversationSummary]
     /// What this sheet can do with the node. One bundle so the sheet is the
@@ -228,10 +247,10 @@ struct PeerDetailView: View {
                     // the screen behind this says so in a sentence.
                     if let management = actions.manageDevice, !peer.isUlcpDevice {
                         NavigationLink {
-                            RemoteDeviceView(
+                            ManageDeviceScreen(
                                 peer: peer,
                                 management: management,
-                                peerActions: actions
+                                browsing: peerBrowsing
                             )
                         } label: {
                             Label("Manage Device", systemImage: "slider.horizontal.3")

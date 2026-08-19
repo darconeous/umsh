@@ -152,10 +152,14 @@ struct AppRootView: View {
     /// disappears with the radio is one an operator cannot find when they
     /// need it.
     private var remoteDeviceManagement: RemoteDeviceManagement {
-        RemoteDeviceManagement(
-            read: { address, progress in
-                try await radioConnection.readRemoteDevice(
+        let store = applicationStore
+        let ownerIdentityID = localIdentity?.id
+        return RemoteDeviceManagement(
+            fetch: { address, properties, multiHint, progress in
+                try await radioConnection.fetchRemoteProperties(
                     peerAddress: address,
+                    propertyIDs: properties,
+                    multiHint: multiHint,
                     progress: progress
                 )
             },
@@ -175,19 +179,71 @@ struct AppRootView: View {
                     present: present
                 )
             },
+            setPeer: { address, key, present in
+                try await radioConnection.setRemoteDevicePeer(
+                    peerAddress: address,
+                    publicKey: key,
+                    present: present
+                )
+            },
             setAlert: { address, state in
                 try await radioConnection.setRemoteAlert(
                     peerAddress: address,
                     state: state
                 )
             },
-            // Derived from the phone's own identity rather than asked of the
-            // mesh session: an address is that key rendered, so these are the
-            // same bytes `nodePublicKey()` reports, and this one is available
-            // before a radio is.
-            phoneNodeKey: localIdentity.flatMap {
-                try? UMSHMobileCore.publicIdentityBytes(
-                    address: $0.publicIdentity.canonicalAddress
+            // The attached radio's own key, which is what a managed device
+            // sees requests arrive from. The phone's stored identity is the
+            // same bytes rendered, and stands in until a radio can say —
+            // otherwise a screen opened before one attaches would think
+            // none of the listed administrators is this phone.
+            phoneNodeKey: {
+                if let key = await radioConnection.nodePublicKey() { return key }
+                return localIdentity.flatMap {
+                    try? UMSHMobileCore.publicIdentityBytes(
+                        address: $0.publicIdentity.canonicalAddress
+                    )
+                }
+            },
+            // Without a store these read empty and write nowhere, which
+            // costs a fetch on every open rather than breaking anything.
+            loadCard: { address in
+                guard let store, let ownerIdentityID else { return nil }
+                return try? await store.managementCard(
+                    ownerIdentityID: ownerIdentityID,
+                    publicAddress: address
+                )
+            },
+            saveCard: { address, card in
+                guard let store, let ownerIdentityID else { return }
+                try? await store.saveManagementCard(
+                    ownerIdentityID: ownerIdentityID,
+                    publicAddress: address,
+                    card: card
+                )
+            },
+            forgetCache: { address in
+                guard let store, let ownerIdentityID else { return }
+                try? await store.forgetManagementCache(
+                    ownerIdentityID: ownerIdentityID,
+                    publicAddress: address
+                )
+            },
+            loadValues: { address, properties in
+                guard let store, let ownerIdentityID else { return [:] }
+                return (try? await store.cachedProperties(
+                    ownerIdentityID: ownerIdentityID,
+                    publicAddress: address,
+                    propertyIDs: properties
+                )) ?? [:]
+            },
+            saveValues: { address, values in
+                guard let store, let ownerIdentityID else { return }
+                try? await store.saveCachedProperties(
+                    ownerIdentityID: ownerIdentityID,
+                    publicAddress: address,
+                    values: values,
+                    at: Date()
                 )
             }
         )

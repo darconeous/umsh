@@ -69,16 +69,17 @@ pub enum Announce {
     Gnss(u32, GnssSnapshot),
     /// The wall clock; `None` means it went back to unknown.
     Time(Option<u32>),
+    /// A fix offered to the advertised identity, at full precision with
+    /// the fix's altitude. What becomes of it is the session's decision:
+    /// it holds `PROP_IDENT_LOCATION`, clamps to the advertised
+    /// precision, and ignores the offer outright when the operator has
+    /// taken the position over.
+    IdentityFix(NodeLocation, Option<i32>),
 }
 
 /// How many consumers can wait on [`ENABLE`] at once: the pump, and
 /// nothing else.
 const ENABLE_RECEIVERS: usize = 1;
-
-/// How many consumers can wait on [`IDENTITY`] at once: whatever owns the
-/// node's identity profile. A second would be a second writer of the same
-/// three fields.
-const IDENTITY_RECEIVERS: usize = 1;
 
 /// The most recent fix, as the ULCP property surface sees it.
 ///
@@ -117,17 +118,16 @@ static CONFIGURED: Watch<CriticalSectionRawMutex, (), 1> = Watch::new();
 /// event, and a `Signal` would lose whatever it was cancelled on.
 static ANNOUNCE: Watch<CriticalSectionRawMutex, Announce, ANNOUNCE_RECEIVERS> = Watch::new();
 
-/// The position last handed to the node identity, at the advertised
-/// precision. `None` until one has been advertised.
-static ADVERTISED: CriticalSectionMutex<Cell<Option<NodeLocation>>> =
-    CriticalSectionMutex::new(Cell::new(None));
-
-/// Wakes whoever owns the identity profile when [`ADVERTISED`] moves.
+/// The last cell offered to the identity, at the advertised precision.
 ///
-/// A `Watch` for the same reason [`ANNOUNCE`] is one: the consumer selects
-/// on this against a refresh timer, so the wait is dropped and rebuilt
-/// constantly and must not lose an edge it was cancelled on.
-static IDENTITY: Watch<CriticalSectionRawMutex, (), IDENTITY_RECEIVERS> = Watch::new();
+/// A rate limit, not a source of truth — `PROP_IDENT_LOCATION` on the
+/// session is where the advertised position actually lives. A receiver
+/// produces a fix a second and a stationary node's fixes all clamp into
+/// one cell, so without this the driver would wake every second to be
+/// told nothing moved. Reset by [`configure`], since a policy change can
+/// make an already-offered cell worth offering again.
+static OFFERED: CriticalSectionMutex<Cell<Option<NodeLocation>>> =
+    CriticalSectionMutex::new(Cell::new(None));
 
 /// The receiver's current view, for a `CMD_PROP_GET`.
 ///
@@ -158,26 +158,25 @@ pub fn announcer() -> Option<Announcer> {
 /// position the device may no longer be at, and reporting it because it
 /// was the last one seen is how a tracker ends up insisting it is
 /// somewhere it left hours ago.
+///
+/// The *advertised* position is not the receiver's to forget: it is a
+/// claim the operator made, or one they froze by switching auto-update
+/// off, and it lives on the session either way.
 pub fn clear() {
     SNAPSHOT.lock(|cell| cell.set(GnssSnapshot::SEARCHING));
-    set_advertised(None);
+    offer(None);
     publish(Announce::Gnss(prop::GNSS_FIX, GnssSnapshot::SEARCHING));
 }
 
-/// Move the advertised position, waking the identity owner if this
-/// changed it. Returns whether it did.
-fn set_advertised(location: Option<NodeLocation>) -> bool {
-    let changed = ADVERTISED.lock(|cell| {
+/// Record a cell as offered, returning whether it differs from the last.
+fn offer(location: Option<NodeLocation>) -> bool {
+    OFFERED.lock(|cell| {
         let changed = cell.get() != location;
         if changed {
             cell.set(location);
         }
         changed
-    });
-    if changed {
-        IDENTITY.sender().send(());
-    }
-    changed
+    })
 }
 
 /// The policy a fix is folded in under: everything the device domain says
@@ -290,14 +289,18 @@ pub fn absorb(fix: &Fix, policy: Policy) -> Outcome {
 
     // ─── The advertised identity ─────────────────────────────────────
     //
-    // Only a change in the *clamped* cell counts. At the default
-    // precision a stationary node's fixes all land in the same cell, and
-    // re-signing for each would put a fresh identity on the air every
-    // second to say exactly what the last one said.
+    // Offered rather than applied: the session holds the advertised
+    // position and decides what a fix does to it. Only a change in the
+    // *clamped* cell is worth waking it for — at the default precision a
+    // stationary node's fixes all land in the same one.
     if policy.update_identity
         && let Some(location) = location
     {
-        outcome.identity_moved = set_advertised(Some(location.clamped(policy.identity_precision)));
+        let clamped = location.clamped(policy.identity_precision);
+        if offer(Some(clamped)) {
+            outcome.identity_moved = true;
+            publish(Announce::IdentityFix(location, fix.altitude_m));
+        }
     }
 
     outcome
@@ -310,14 +313,13 @@ pub fn absorb(fix: &Fix, policy: Policy) -> Outcome {
 /// receiver by one path. Switching the receiver off also forgets its last
 /// position: a fix from before is a place the device may have left.
 pub fn configure(enabled: bool, policy: Policy) {
-    POLICY.lock(|cell| cell.set(policy));
-    // Switching the update off retracts what it put there. Leaving the
-    // last auto-set cell in place would advertise a position nothing is
-    // refreshing any more, which ages into a lie at walking pace — and it
-    // would make the switch mean "stop correcting my location" rather
-    // than "stop telling people where I am".
-    if !policy.update_identity {
-        set_advertised(None);
+    let previous = POLICY.lock(|cell| cell.replace(policy));
+    // A policy change can make an already-offered cell worth offering
+    // again — a finer precision asks a different question of the same
+    // fix, and auto-update coming back on has to re-establish a position
+    // the operator may have edited in the meantime.
+    if previous != policy {
+        offer(None);
     }
     if ENABLED.swap(enabled, Ordering::AcqRel) != enabled {
         if !enabled {
@@ -398,46 +400,6 @@ impl umsh_gnss::pump::Sink for FixSink {
     async fn fix(&mut self, fix: &Fix) {
         absorb(fix, policy());
     }
-}
-
-/// The location to advertise, at the precision it is advertised at, or
-/// `None` when there is nothing to advertise.
-pub fn advertised_location() -> Option<NodeLocation> {
-    ADVERTISED.lock(|cell| cell.get())
-}
-
-/// The altitude to advertise alongside it.
-pub fn advertised_altitude_m() -> Option<i32> {
-    snapshot().altitude_m
-}
-
-/// A handle on the advertised position, held by whatever owns the node's
-/// identity profile.
-pub type IdentityUpdates =
-    embassy_sync::watch::Receiver<'static, CriticalSectionRawMutex, (), IDENTITY_RECEIVERS>;
-
-/// Take the identity-update receiver.
-///
-/// Cancellation-safe to await. `None` only if one was already taken,
-/// which would mean two things writing the same profile fields.
-pub fn identity_updates() -> Option<IdentityUpdates> {
-    IDENTITY.receiver()
-}
-
-/// Write the advertised position into a node identity profile.
-///
-/// The one place that decides what an identity says about where the node
-/// is, called both by the loop that reacts to movement and by the
-/// device-domain sync that rebuilds the profile from scratch — those two
-/// must not be able to disagree, and a profile rebuilt without this would
-/// silently drop the position until the node next moved.
-///
-/// Both fields move together, including to `None`: an altitude without a
-/// position describes nothing.
-pub fn stamp_identity(profile: &mut umsh_node::NodeIdentityProfile) {
-    let location = advertised_location();
-    profile.location = location;
-    profile.altitude_m = location.and(advertised_altitude_m());
 }
 
 fn publish(announce: Announce) {
@@ -572,18 +534,15 @@ mod tests {
         assert_eq!(here.as_bytes(), &cached.as_bytes()[..precision as usize]);
     }
 
-    /// The whole advertised-position lifecycle, in one test on purpose:
-    /// it is the only one that touches the module's statics, and two of
-    /// them would race each other for the same globals.
+    /// Which fixes are worth offering to the identity, in one test on
+    /// purpose: it is the only one that touches the module's statics, and
+    /// two of them would race each other for the same globals.
+    ///
+    /// What *becomes* of an offer is the session's business — it holds
+    /// `PROP_IDENT_LOCATION` and has its own tests. All this module
+    /// decides is whether waking the driver is warranted.
     #[test]
-    fn the_advertised_position_follows_the_switch_that_governs_it() {
-        let profile = || {
-            umsh_node::NodeIdentityProfile::new(
-                umsh_core::PublicKey([7; 32]),
-                umsh_node::NodeRole::Tracker,
-                umsh_node::NodeCapabilities::empty(),
-            )
-        };
+    fn a_fix_is_offered_only_when_the_advertised_cell_moves() {
         // Undated fixes throughout: what the clock does with a fix is a
         // separate decision with its own tests, and letting these set it
         // would leave a wall clock behind for whatever runs next.
@@ -596,47 +555,31 @@ mod tests {
             ..policy()
         };
 
-        // Nothing advertised until a fix arrives under the switch.
+        // The first fix under the switch is offered; a second in the same
+        // cell is not.
         configure(true, updating);
-        assert_eq!(advertised_location(), None);
-        let mut blank = profile();
-        stamp_identity(&mut blank);
-        assert_eq!(blank.location, None);
-        assert_eq!(blank.altitude_m, None, "an altitude with no position");
-
-        // The first fix moves it; a second in the same cell does not.
         let here = untimed(481_173_000, 115_166_666);
         assert!(absorb(&here, updating).identity_moved);
         assert!(!absorb(&here, updating).identity_moved);
-        let advertised = advertised_location().expect("a fix went unadvertised");
-        assert_eq!(advertised.precision(), updating.identity_precision);
-
-        let mut located = profile();
-        stamp_identity(&mut located);
-        assert_eq!(located.location, Some(advertised));
-        assert_eq!(located.altitude_m, Some(31));
 
         // Far enough to leave the cell.
         assert!(absorb(&untimed(490_000_000, 120_000_000), updating).identity_moved);
 
-        // Turning the switch off retracts what it advertised, rather than
-        // leaving a position nothing is refreshing any more.
+        // A fix arriving while the switch is off is not offered at all.
         configure(true, policy());
-        assert_eq!(advertised_location(), None);
-        let mut retracted = profile();
-        stamp_identity(&mut retracted);
-        assert_eq!(retracted.location, None);
-        assert_eq!(retracted.altitude_m, None);
-
-        // And a fix arriving while it is off changes nothing.
         assert!(!absorb(&here, policy()).identity_moved);
-        assert_eq!(advertised_location(), None);
 
-        // Switching the receiver off retracts it too: the last position
-        // is a place the device may have left.
+        // Switching back on re-arms it: the operator may have edited the
+        // advertised position while the device was not maintaining it,
+        // and the same cell is now worth offering again.
         configure(true, updating);
         assert!(absorb(&here, updating).identity_moved);
+
+        // So does switching the receiver off and back on — the position
+        // it comes back with has to reach the identity even if the
+        // device never left.
         configure(false, updating);
-        assert_eq!(advertised_location(), None);
+        configure(true, updating);
+        assert!(absorb(&here, updating).identity_moved);
     }
 }

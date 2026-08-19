@@ -39,6 +39,10 @@ actor FakeRadioConnection: RadioConnection {
     private var lastYieldedChatBatchID: UInt64?
     private var lastChatBatchYield: ContinuousClock.Instant?
     private var chatRedelivery: Task<Void, Never>?
+    /// The device the remote-management screens manage. Writes land on it,
+    /// so a preview can change a setting and see the change stick.
+    private var managedDevice = FakeManagedDevice()
+    private var remoteDeviceReachable = true
 
     init(snapshot: RadioSnapshot = .previewReady, air: (any FakeRadioAir)? = nil) {
         self.snapshot = snapshot
@@ -340,29 +344,62 @@ actor FakeRadioConnection: RadioConnection {
         )
     }
 
-    /// No mesh administration against a fake radio: the exchange is a real
-    /// authenticated conversation with a device that is not there, and
-    /// there is no honest stand-in for one. Every operation reports what a
-    /// device out of reach reports, which is the state the screen is built
-    /// to survive.
-    func nodePublicKey() async -> Data? { nil }
+    /// The phone's own node key, fabricated so the management screens can
+    /// tell "this phone" apart from any other administrator.
+    func nodePublicKey() async -> Data? { FakeManagedDevice.phoneKey }
 
-    func readRemoteDevice(
+    /// Make every remote-management operation report a device out of
+    /// reach, which is the state these screens are built to survive.
+    ///
+    /// The canned device answers by default, because a preview of a
+    /// settings screen that can only show a timeout is a preview of
+    /// nothing.
+    func setRemoteDeviceReachable(_ reachable: Bool) {
+        remoteDeviceReachable = reachable
+    }
+
+    func fetchRemoteProperties(
         peerAddress: String,
+        propertyIDs: [UInt32],
+        multiHint: Bool,
         progress: (@Sendable (UInt32?) -> Void)?
-    ) async throws -> UlcpSyncRecord {
-        throw RemoteManagementError.noAnswer
+    ) async throws -> [MobileMeshManagementAnswerRecord] {
+        try await answerAsIfOverTheAir()
+        progress?(0)
+        return propertyIDs.map { property in
+            MobileMeshManagementAnswerRecord(
+                propertyId: property,
+                value: managedDevice.values[property],
+                // A property the canned device holds no value for is one
+                // it does not implement, which is a refusal rather than
+                // silence.
+                statusCode: managedDevice.values[property] == nil ? Self.propertyNotFound : nil
+            )
+        }
     }
 
     func writeRemoteProperties(
         peerAddress: String,
         writes: [MobileMeshPropertyWriteRecord]
     ) async throws -> [MobileMeshManagementAnswerRecord] {
-        throw RemoteManagementError.noAnswer
+        try await answerAsIfOverTheAir()
+        // Echoed back verbatim, as a device that accepted them would. The
+        // one thing a real device does that this cannot is clamp a value
+        // it holds differently — previews of that path want a real radio.
+        for write in writes {
+            managedDevice.values[write.propertyId] = write.value
+        }
+        return writes.map {
+            MobileMeshManagementAnswerRecord(
+                propertyId: $0.propertyId,
+                value: $0.value,
+                statusCode: nil
+            )
+        }
     }
 
     func saveRemoteDevice(peerAddress: String) async throws {
-        throw RemoteManagementError.noAnswer
+        try await answerAsIfOverTheAir()
     }
 
     func setRemoteDeviceAdmin(
@@ -370,14 +407,37 @@ actor FakeRadioConnection: RadioConnection {
         publicKey: Data,
         present: Bool
     ) async throws {
-        throw RemoteManagementError.noAnswer
+        try await answerAsIfOverTheAir()
+        managedDevice.setKey(publicKey, present: present, in: ulcpProperties.devAdmins)
+    }
+
+    func setRemoteDevicePeer(
+        peerAddress: String,
+        publicKey: Data,
+        present: Bool
+    ) async throws {
+        try await answerAsIfOverTheAir()
+        managedDevice.setKey(publicKey, present: present, in: ulcpProperties.devPeers)
     }
 
     func setRemoteAlert(
         peerAddress: String,
         state: RadioAlertState
     ) async throws -> RadioAlertState {
-        throw RemoteManagementError.noAnswer
+        try await answerAsIfOverTheAir()
+        return state
+    }
+
+    /// `STATUS_PROP_NOT_FOUND`: how a device says it does not hold a
+    /// property it was asked for.
+    private static let propertyNotFound: UInt32 = 13
+
+    /// Refuse when the canned device is switched out of reach, and
+    /// otherwise take long enough that a screen's in-flight state is
+    /// visible rather than a flicker.
+    private func answerAsIfOverTheAir() async throws {
+        guard remoteDeviceReachable else { throw RemoteManagementError.noAnswer }
+        try? await Task.sleep(for: .milliseconds(400))
     }
 
     /// Mirrors the fake ping: one router on the way to the peer, so the route
@@ -685,5 +745,108 @@ private final class FakeMeshSessionWakeListener: MobileMeshWakeListener, @unchec
     func onUpdatePending() {
         guard let connection else { return }
         Task { await connection.pump() }
+    }
+}
+
+/// A plausible tracker for the remote-management screens to manage.
+///
+/// Everything here is the octets a real device would put on the air,
+/// decoded by the same Rust reducers the real path uses — so a preview
+/// exercises the actual decode rather than a hand-built record that could
+/// be shaped however the screen happens to want.
+struct FakeManagedDevice: Sendable {
+    /// What this phone's own node key is, so an administrators list can
+    /// show one row as "this phone".
+    /// Distinct leading octets rather than one byte repeated: a node's hint
+    /// is the front of its key, and the avatar's color comes from the hint —
+    /// so keys of all 0x11 render a row of near-black circles that look like
+    /// a bug in the avatar.
+    static let phoneKey = Data([0x3C, 0x8E, 0xD1]) + Data(repeating: 0x11, count: 29)
+    private static let otherAdminKey = Data([0xC7, 0x52, 0x9A]) + Data(repeating: 0x22, count: 29)
+    private static let peerKey = Data([0x6B, 0xD4, 0x38]) + Data(repeating: 0x33, count: 29)
+
+    /// Everything the device would answer, keyed by property.
+    var values: [UInt32: Data]
+
+    init() {
+        let id = ulcpProperties
+        values = [
+            id.caps: Self.capabilities,
+            id.deviceVersion: Data("fw-2026.08.11".utf8),
+            id.deviceModel: Data("T1000-E".utf8),
+            id.deviceName: Data("Ridgeline".utf8),
+            // Flags, then 4.11 V, 78%, charging.
+            id.battery: Data([0b111, 0x0F, 0x10, 78, 1]),
+            id.phyEnabled: Data([1]),
+            id.frequency: UInt32(906_875).littleEndianData,
+            id.transmitPower: Data([22]),
+            id.loraBandwidth: UInt32(250_000).littleEndianData,
+            id.loraSpreadingFactor: Data([11]),
+            id.loraCodingRate: Data([5]),
+            // Fractions of UInt16.max: 1% used against a 10% limit.
+            id.dutyCycleNow: UInt16(655).littleEndianData,
+            id.dutyCycleLimit: UInt16(6_553).littleEndianData,
+            id.identRole: Data([1]),
+            id.identMobile: Data([0]),
+            // Four octets of cell — about 600 m across — over Mount Tallac,
+            // where the staging mesh puts this repeater. Altitude is two
+            // octets because 2967 does not fit in one.
+            id.identLocation: Data([0xB2, 0x7A, 0x59, 0x58]),
+            id.identAltitude: Data([0x97, 0x0B]),
+            id.devDiscoverable: Data([1]),
+            id.gnssIdentUpdate: Data([0]),
+            id.gnssIdentPrecision: Data([4]),
+            // Twelve hours and one hour.
+            id.advertInterval: UInt32(43_200).littleEndianData,
+            id.beaconInterval: UInt32(3_600).littleEndianData,
+            id.startupBeacon: Data([1]),
+            id.gnssEnabled: Data([1]),
+            id.gnssTimeTrust: Data([1]),
+            // The receiver's own view, by property number: these five are
+            // read through the decoded fix rather than named individually
+            // by any screen, so there is nothing to borrow the numbers
+            // from. A 3D fix on the same summit, held finer than the
+            // identity advertises it.
+            89: Data([0xB2, 0x7A, 0x59, 0x58, 0x8C, 0x1B]),
+            90: Int32(2_967).littleEndianData,
+            91: Data([2]),
+            92: UInt16(41).littleEndianData,
+            93: Data([9, 14]),
+            id.repeaterEnabled: Data([1]),
+            id.repeaterRegions: Data([3]) + Data("SJC".utf8),
+            // Empty: this device never tags what arrives untagged.
+            id.repeaterDefaultRegion: Data(),
+            id.repeaterMinRssi: Int16(-115).littleEndianData,
+            id.repeaterMinSnr: Data(),
+            id.devPeers: Self.peerKey,
+            id.devAdmins: Self.phoneKey + Self.otherAdminKey,
+        ]
+    }
+
+    /// Add or drop one key in a fixed-width key table.
+    mutating func setKey(_ key: Data, present: Bool, in property: UInt32) {
+        var keys = stride(from: 0, to: values[property]?.count ?? 0, by: 32).map { offset in
+            values[property]!.subdata(in: offset ..< offset + 32)
+        }
+        keys.removeAll { $0 == key }
+        if present { keys.append(key) }
+        values[property] = keys.reduce(into: Data()) { $0 += $1 }
+    }
+
+    /// `PROP_CAPS` for a fully-featured tracker: duty limit (16), save
+    /// (36), device identity (37), device name (38), battery (39),
+    /// repeater (40), identity (41), alert (42), administrators (43),
+    /// clock (44), receiver (45), advertisement (46), batched commands
+    /// (49), and the LoRa modem (515, which needs two PUI octets).
+    private static let capabilities = Data([
+        0x10, 0x24, 0x25, 0x26, 0x27, 0x28, 0x29, 0x2A, 0x2B, 0x2C, 0x2D, 0x2E, 0x31,
+        0x83, 0x04,
+    ])
+}
+
+private extension FixedWidthInteger {
+    /// The octets ULCP puts this on the air as.
+    var littleEndianData: Data {
+        withUnsafeBytes(of: littleEndian) { Data($0) }
     }
 }

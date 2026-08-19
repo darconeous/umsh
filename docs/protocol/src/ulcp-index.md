@@ -72,6 +72,8 @@ Id   | Mnemonic                                                                 
 80   | [`PROP_ADVERT_INTERVAL`](ulcp-device.md#prop-advert-interval)              | Get, Set                 | `CAP_ADVERT`
 81   | [`PROP_BEACON_INTERVAL`](ulcp-device.md#prop-beacon-interval)              | Get, Set                 | `CAP_ADVERT`
 82   | [`PROP_STARTUP_BEACON`](ulcp-device.md#prop-startup-beacon)                | Get, Set                 | `CAP_ADVERT`
+83   | [`PROP_IDENT_LOCATION`](ulcp-device.md#prop-ident-location)                | Get, Set                 | `CAP_IDENT`
+84   | [`PROP_IDENT_ALTITUDE`](ulcp-device.md#prop-ident-altitude)                | Get, Set                 | `CAP_IDENT`
 88   | [`PROP_GNSS_ENABLED`](ulcp-device.md#prop-gnss-enabled)                    | Get, Set                 | `CAP_GNSS`
 89   | [`PROP_GNSS_LOCATION`](ulcp-device.md#prop-gnss-location)                  | Get, Is                  | `CAP_GNSS`
 90   | [`PROP_GNSS_ALTITUDE`](ulcp-device.md#prop-gnss-altitude)                  | Get                      | `CAP_GNSS`

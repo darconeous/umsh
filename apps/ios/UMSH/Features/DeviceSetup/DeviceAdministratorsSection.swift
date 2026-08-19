@@ -55,11 +55,6 @@ struct DeviceAdministratorsSection: View {
     /// False on a phone whose own node key is unknown, which leaves the
     /// switch off and unusable rather than lying about what it would do.
     let phoneKeyKnown: Bool
-    /// False while the device is being reached across the mesh, where this
-    /// phone's own listing is the thing carrying the conversation: taking
-    /// it off is the last request the device would answer, and the save
-    /// behind it would arrive from a stranger.
-    let allowsPhoneRemoval: Bool
     let isFull: Bool
     /// Nodes this phone has saved, to name entries and to add from.
     let knownPeers: [PeerSummary]
@@ -69,11 +64,7 @@ struct DeviceAdministratorsSection: View {
     var body: some View {
         Section {
             Toggle("This phone", isOn: $phoneAdministers)
-                .disabled(
-                    !phoneKeyKnown
-                        || (isFull && !phoneAdministers)
-                        || (phoneAdministers && !allowsPhoneRemoval)
-                )
+                .disabled(!phoneKeyKnown || (isFull && !phoneAdministers))
 
             ForEach(administrators.filter { !$0.isThisPhone }) { administrator in
                 LabeledContent(administrator.label(among: knownPeers)) {
@@ -124,8 +115,6 @@ struct DeviceAdministratorsSection: View {
             """
         if !phoneKeyKnown {
             footer += " This phone's own node identity is not available, so it cannot list itself."
-        } else if phoneAdministers, !allowsPhoneRemoval {
-            footer += " This phone cannot take itself off the list of a device it is managing over the mesh — connect to the device over Bluetooth to do that."
         } else if !phoneAdministers {
             footer += " Without this phone on the list, its settings can only be changed from here, over Bluetooth."
         }

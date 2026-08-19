@@ -140,17 +140,27 @@ protocol RadioConnection: AnyObject, Sendable {
     /// This phone's own node public key — what a device lists to let this
     /// phone manage it from a distance. Nil before a mesh session exists.
     func nodePublicKey() async -> Data?
-    /// Read a device on the mesh whole — every property its capabilities
-    /// imply, in as few exchanges as the device will take — and reduce it
-    /// to the record the settings form is built from.
+    /// Read named properties from a device on the mesh, in as few
+    /// exchanges as the device will take, and answer with what it said
+    /// about each — values and refusals alike.
+    ///
+    /// Only what was asked for. A device several flood hops away answers
+    /// slowly and at everyone's expense, so a screen asks for its own
+    /// handful of properties rather than the device whole.
+    ///
+    /// `multiHint` says whether batching is worth trying; a device that
+    /// declines is asked again a property at a time regardless, so it
+    /// costs one exchange to be wrong.
     ///
     /// `progress` reports how many properties the read has yet to ask for,
     /// which is the only honest measure of how long this takes: the number
     /// of exchanges depends on what the device agrees to answer at once.
-    func readRemoteDevice(
+    func fetchRemoteProperties(
         peerAddress: String,
+        propertyIDs: [UInt32],
+        multiHint: Bool,
         progress: (@Sendable (UInt32?) -> Void)?
-    ) async throws -> UlcpSyncRecord
+    ) async throws -> [MobileMeshManagementAnswerRecord]
     /// Write properties to a device on the mesh, and answer with what it
     /// says each is now worth.
     ///
@@ -167,6 +177,14 @@ protocol RadioConnection: AnyObject, Sendable {
     /// Add or remove one administrator on a device across the mesh. Live
     /// until a save, like every other remote write.
     func setRemoteDeviceAdmin(
+        peerAddress: String,
+        publicKey: Data,
+        present: Bool
+    ) async throws
+    /// Add or remove one peer on a device's identity across the mesh, so
+    /// it can hold a secure session with that node on its own. Live until
+    /// a save.
+    func setRemoteDevicePeer(
         peerAddress: String,
         publicKey: Data,
         present: Bool

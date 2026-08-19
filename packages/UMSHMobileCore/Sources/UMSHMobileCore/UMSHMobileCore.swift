@@ -1158,6 +1158,24 @@ public protocol MobileMeshSessionProtocol: AnyObject, Sendable {
     func applyChatArchiveResult(requestId: UInt32, kind: MobileChatArchiveResultKind, payload: Data) throws
 
     /**
+     * Read a named set of properties across the mesh.
+     *
+     * The caller names what it wants, in as many exchanges as the
+     * answers need — a screenful of settings is normally one. Every
+     * property comes back answered, refusals included, so a caller can
+     * tell "the device would not say" from "nobody asked".
+     *
+     * `multi_hint` says whether to open with a batched request. A device
+     * that declines one is asked again a property at a time, so the hint
+     * costs a round trip when wrong rather than an answer. Pass what
+     * `CAP_CMD_MULTI` last said, or true before anything has.
+     *
+     * Every exchange is airtime over a link that may be several hops
+     * deep. Ask for what a screen needs and no more.
+     */
+    func beginManagementFetch(peerAddress: String, propertyIds: [UInt32], multiHint: Bool) throws  -> UInt64
+
+    /**
      * Read one property from a device across the mesh.
      *
      * Every `begin_management_*` call returns immediately with an
@@ -1197,6 +1215,17 @@ public protocol MobileMeshSessionProtocol: AnyObject, Sendable {
     func beginManagementInsertAdmin(peerAddress: String, publicKey: Data) throws  -> UInt64
 
     /**
+     * Store one more peer public key on a device's identity
+     * (`PROP_DEV_PEERS`), so it can hold a secure session with that node
+     * on its own.
+     *
+     * Named for the same reason the administrator pair is: the caller is
+     * deciding who a device talks to, not writing to a numbered property.
+     * Live until a save.
+     */
+    func beginManagementInsertPeer(peerAddress: String, publicKey: Data) throws  -> UInt64
+
+    /**
      * Take one item out of a multiple-value property on a device across
      * the mesh.
      */
@@ -1210,6 +1239,11 @@ public protocol MobileMeshSessionProtocol: AnyObject, Sendable {
      * refuses the next one.
      */
     func beginManagementRemoveAdmin(peerAddress: String, publicKey: Data) throws  -> UInt64
+
+    /**
+     * Drop a peer public key from a device's identity.
+     */
+    func beginManagementRemovePeer(peerAddress: String, publicKey: Data) throws  -> UInt64
 
     /**
      * Reset a device across the mesh.
@@ -1256,22 +1290,6 @@ public protocol MobileMeshSessionProtocol: AnyObject, Sendable {
      * Each position echoes what that property is now worth.
      */
     func beginManagementSetMany(peerAddress: String, writes: [MobileMeshPropertyWriteRecord]) throws  -> UInt64
-
-    /**
-     * Read a device whole across the mesh, reducing what comes back into
-     * the same `UlcpSyncRecord` an attached radio produces.
-     *
-     * The crawl asks what the device can do, then asks for everything
-     * those capabilities imply and an administrator is allowed to see,
-     * in as many exchanges as the answers need. A property the device
-     * declines lands in `unreadable_properties` rather than ending the
-     * read — the same tolerance a bench attach has.
-     *
-     * Expensive over LoRa: tens of properties, several round trips. It is
-     * the "open this device's settings" operation, not something to run
-     * on a timer.
-     */
-    func beginRemoteSync(peerAddress: String) throws  -> UInt64
 
     /**
      * Forget the route cached for `peer`, returning whether one was held.
@@ -1655,6 +1673,34 @@ open func applyChatArchiveResult(requestId: UInt32, kind: MobileChatArchiveResul
 }
 
     /**
+     * Read a named set of properties across the mesh.
+     *
+     * The caller names what it wants, in as many exchanges as the
+     * answers need — a screenful of settings is normally one. Every
+     * property comes back answered, refusals included, so a caller can
+     * tell "the device would not say" from "nobody asked".
+     *
+     * `multi_hint` says whether to open with a batched request. A device
+     * that declines one is asked again a property at a time, so the hint
+     * costs a round trip when wrong rather than an answer. Pass what
+     * `CAP_CMD_MULTI` last said, or true before anything has.
+     *
+     * Every exchange is airtime over a link that may be several hops
+     * deep. Ask for what a screen needs and no more.
+     */
+open func beginManagementFetch(peerAddress: String, propertyIds: [UInt32], multiHint: Bool)throws  -> UInt64  {
+    return try  FfiConverterUInt64.lift(try rustCallWithError(FfiConverterTypeMobileMeshError_lift) {
+        uniffiCallStatus in
+    uniffi_umsh_mobile_core_fn_method_mobilemeshsession_begin_management_fetch(
+            self.uniffiCloneHandle(),
+        FfiConverterString.lower(peerAddress),
+        FfiConverterSequenceUInt32.lower(propertyIds),
+        FfiConverterBool.lower(multiHint),uniffiCallStatus
+    )
+})
+}
+
+    /**
      * Read one property from a device across the mesh.
      *
      * Every `begin_management_*` call returns immediately with an
@@ -1731,6 +1777,26 @@ open func beginManagementInsertAdmin(peerAddress: String, publicKey: Data)throws
 }
 
     /**
+     * Store one more peer public key on a device's identity
+     * (`PROP_DEV_PEERS`), so it can hold a secure session with that node
+     * on its own.
+     *
+     * Named for the same reason the administrator pair is: the caller is
+     * deciding who a device talks to, not writing to a numbered property.
+     * Live until a save.
+     */
+open func beginManagementInsertPeer(peerAddress: String, publicKey: Data)throws  -> UInt64  {
+    return try  FfiConverterUInt64.lift(try rustCallWithError(FfiConverterTypeMobileMeshError_lift) {
+        uniffiCallStatus in
+    uniffi_umsh_mobile_core_fn_method_mobilemeshsession_begin_management_insert_peer(
+            self.uniffiCloneHandle(),
+        FfiConverterString.lower(peerAddress),
+        FfiConverterData.lower(publicKey),uniffiCallStatus
+    )
+})
+}
+
+    /**
      * Take one item out of a multiple-value property on a device across
      * the mesh.
      */
@@ -1757,6 +1823,20 @@ open func beginManagementRemoveAdmin(peerAddress: String, publicKey: Data)throws
     return try  FfiConverterUInt64.lift(try rustCallWithError(FfiConverterTypeMobileMeshError_lift) {
         uniffiCallStatus in
     uniffi_umsh_mobile_core_fn_method_mobilemeshsession_begin_management_remove_admin(
+            self.uniffiCloneHandle(),
+        FfiConverterString.lower(peerAddress),
+        FfiConverterData.lower(publicKey),uniffiCallStatus
+    )
+})
+}
+
+    /**
+     * Drop a peer public key from a device's identity.
+     */
+open func beginManagementRemovePeer(peerAddress: String, publicKey: Data)throws  -> UInt64  {
+    return try  FfiConverterUInt64.lift(try rustCallWithError(FfiConverterTypeMobileMeshError_lift) {
+        uniffiCallStatus in
+    uniffi_umsh_mobile_core_fn_method_mobilemeshsession_begin_management_remove_peer(
             self.uniffiCloneHandle(),
         FfiConverterString.lower(peerAddress),
         FfiConverterData.lower(publicKey),uniffiCallStatus
@@ -1851,30 +1931,6 @@ open func beginManagementSetMany(peerAddress: String, writes: [MobileMeshPropert
             self.uniffiCloneHandle(),
         FfiConverterString.lower(peerAddress),
         FfiConverterSequenceTypeMobileMeshPropertyWriteRecord.lower(writes),uniffiCallStatus
-    )
-})
-}
-
-    /**
-     * Read a device whole across the mesh, reducing what comes back into
-     * the same `UlcpSyncRecord` an attached radio produces.
-     *
-     * The crawl asks what the device can do, then asks for everything
-     * those capabilities imply and an administrator is allowed to see,
-     * in as many exchanges as the answers need. A property the device
-     * declines lands in `unreadable_properties` rather than ending the
-     * read — the same tolerance a bench attach has.
-     *
-     * Expensive over LoRa: tens of properties, several round trips. It is
-     * the "open this device's settings" operation, not something to run
-     * on a timer.
-     */
-open func beginRemoteSync(peerAddress: String)throws  -> UInt64  {
-    return try  FfiConverterUInt64.lift(try rustCallWithError(FfiConverterTypeMobileMeshError_lift) {
-        uniffiCallStatus in
-    uniffi_umsh_mobile_core_fn_method_mobilemeshsession_begin_remote_sync(
-            self.uniffiCloneHandle(),
-        FfiConverterString.lower(peerAddress),uniffiCallStatus
     )
 })
 }
@@ -3637,7 +3693,7 @@ public struct ChannelPreviewRecord: Equatable, Hashable {
      */
     public var channelId: Data
     /**
-     * Three octets for presentation — a deterministic colour for the
+     * Three octets for presentation — a deterministic color for the
      * channel. The first two are the identifier above.
      */
     public var tint: Data
@@ -3672,7 +3728,7 @@ public struct ChannelPreviewRecord: Equatable, Hashable {
          * resolve collisions by trial decryption.
          */channelId: Data,
         /**
-         * Three octets for presentation — a deterministic colour for the
+         * Three octets for presentation — a deterministic color for the
          * channel. The first two are the identifier above.
          */tint: Data,
         /**
@@ -4984,14 +5040,10 @@ public struct MobileMeshManagementEventRecord: Equatable, Hashable {
      */
     public var remainingOctets: UInt32?
     /**
-     * Properties a whole-device read has yet to ask for. Only
-     * `begin_remote_sync` reports it, and only while it is running.
+     * Properties a read has yet to ask for. Only `begin_management_fetch`
+     * reports it, and only while it is running.
      */
     public var propertiesRemaining: UInt32?
-    /**
-     * The device read whole, on a completed `begin_remote_sync`.
-     */
-    public var sync: UlcpSyncRecord?
 
     // Default memberwise initializers are never public by default, so we
     // declare one manually.
@@ -5011,12 +5063,9 @@ public struct MobileMeshManagementEventRecord: Equatable, Hashable {
          * through, as of the last frame it sent.
          */remainingOctets: UInt32?,
         /**
-         * Properties a whole-device read has yet to ask for. Only
-         * `begin_remote_sync` reports it, and only while it is running.
-         */propertiesRemaining: UInt32?,
-        /**
-         * The device read whole, on a completed `begin_remote_sync`.
-         */sync: UlcpSyncRecord?) {
+         * Properties a read has yet to ask for. Only `begin_management_fetch`
+         * reports it, and only while it is running.
+         */propertiesRemaining: UInt32?) {
         self.operationId = operationId
         self.peerAddress = peerAddress
         self.outcome = outcome
@@ -5024,7 +5073,6 @@ public struct MobileMeshManagementEventRecord: Equatable, Hashable {
         self.statusCode = statusCode
         self.remainingOctets = remainingOctets
         self.propertiesRemaining = propertiesRemaining
-        self.sync = sync
     }
 
 
@@ -5049,8 +5097,7 @@ public struct FfiConverterTypeMobileMeshManagementEventRecord: FfiConverterRustB
                 answers: FfiConverterSequenceTypeMobileMeshManagementAnswerRecord.read(from: &buf),
                 statusCode: FfiConverterOptionUInt32.read(from: &buf),
                 remainingOctets: FfiConverterOptionUInt32.read(from: &buf),
-                propertiesRemaining: FfiConverterOptionUInt32.read(from: &buf),
-                sync: FfiConverterOptionTypeUlcpSyncRecord.read(from: &buf)
+                propertiesRemaining: FfiConverterOptionUInt32.read(from: &buf)
         )
     }
 
@@ -5062,7 +5109,6 @@ public struct FfiConverterTypeMobileMeshManagementEventRecord: FfiConverterRustB
         FfiConverterOptionUInt32.write(value.statusCode, into: &buf)
         FfiConverterOptionUInt32.write(value.remainingOctets, into: &buf)
         FfiConverterOptionUInt32.write(value.propertiesRemaining, into: &buf)
-        FfiConverterOptionTypeUlcpSyncRecord.write(value.sync, into: &buf)
     }
 }
 
@@ -5961,7 +6007,7 @@ public struct NodeIdentityProfileRecord: Equatable, Hashable {
     public var capabilityBits: UInt8
     public var name: String?
     /**
-     * Centre of the disclosed cell. Reduced to `location_precision` during
+     * Center of the disclosed cell. Reduced to `location_precision` during
      * encoding, so nothing finer than the stated cell reaches the bundle.
      * Latitude and longitude are only carried when both are present
      * alongside a precision.
@@ -5979,7 +6025,7 @@ public struct NodeIdentityProfileRecord: Equatable, Hashable {
     // declare one manually.
     public init(roleCode: UInt8, capabilityBits: UInt8, name: String?,
         /**
-         * Centre of the disclosed cell. Reduced to `location_precision` during
+         * Center of the disclosed cell. Reduced to `location_precision` during
          * encoding, so nothing finer than the stated cell reaches the bundle.
          * Latitude and longitude are only carried when both are present
          * alongside a precision.
@@ -6571,6 +6617,162 @@ public func FfiConverterTypeUlcpBatteryRecord_lower(_ value: UlcpBatteryRecord) 
 
 
 /**
+ * What a device is, as opposed to how it is configured.
+ *
+ * The four properties worth learning once and keeping: capabilities and
+ * firmware version change only when the firmware does, the model never,
+ * and the name rarely. Cached against the version, this is what lets
+ * opening a device's settings cost nothing at all.
+ */
+public struct UlcpDeviceCardRecord: Equatable, Hashable {
+    /**
+     * `PROP_CAPS` verbatim, to plan later reads against without asking
+     * the device again.
+     */
+    public var capabilities: Data
+    /**
+     * `PROP_DEV_VERSION`: what firmware it is running. The natural key
+     * for everything cached about it — capabilities cannot change
+     * without this changing too.
+     */
+    public var deviceVersion: String?
+    /**
+     * `PROP_DEV_MODEL`: the hardware, when the device names it.
+     */
+    public var deviceModel: String?
+    public var deviceName: String?
+    public var supportsDeviceName: Bool
+    public var supportsBattery: Bool
+    public var supportsLora: Bool
+    public var supportsDutyCycleLimit: Bool
+    public var supportsRepeater: Bool
+    public var supportsIdent: Bool
+    public var supportsDeviceIdentity: Bool
+    public var supportsGnss: Bool
+    public var supportsAdvert: Bool
+    public var supportsAdmin: Bool
+    public var supportsAlert: Bool
+    public var supportsSave: Bool
+    /**
+     * Whether batched property reads are worth trying. A device that
+     * declines one is asked again a property at a time, so this is a
+     * hint rather than a contract.
+     */
+    public var supportsMulti: Bool
+
+    // Default memberwise initializers are never public by default, so we
+    // declare one manually.
+    public init(
+        /**
+         * `PROP_CAPS` verbatim, to plan later reads against without asking
+         * the device again.
+         */capabilities: Data,
+        /**
+         * `PROP_DEV_VERSION`: what firmware it is running. The natural key
+         * for everything cached about it — capabilities cannot change
+         * without this changing too.
+         */deviceVersion: String?,
+        /**
+         * `PROP_DEV_MODEL`: the hardware, when the device names it.
+         */deviceModel: String?, deviceName: String?, supportsDeviceName: Bool, supportsBattery: Bool, supportsLora: Bool, supportsDutyCycleLimit: Bool, supportsRepeater: Bool, supportsIdent: Bool, supportsDeviceIdentity: Bool, supportsGnss: Bool, supportsAdvert: Bool, supportsAdmin: Bool, supportsAlert: Bool, supportsSave: Bool,
+        /**
+         * Whether batched property reads are worth trying. A device that
+         * declines one is asked again a property at a time, so this is a
+         * hint rather than a contract.
+         */supportsMulti: Bool) {
+        self.capabilities = capabilities
+        self.deviceVersion = deviceVersion
+        self.deviceModel = deviceModel
+        self.deviceName = deviceName
+        self.supportsDeviceName = supportsDeviceName
+        self.supportsBattery = supportsBattery
+        self.supportsLora = supportsLora
+        self.supportsDutyCycleLimit = supportsDutyCycleLimit
+        self.supportsRepeater = supportsRepeater
+        self.supportsIdent = supportsIdent
+        self.supportsDeviceIdentity = supportsDeviceIdentity
+        self.supportsGnss = supportsGnss
+        self.supportsAdvert = supportsAdvert
+        self.supportsAdmin = supportsAdmin
+        self.supportsAlert = supportsAlert
+        self.supportsSave = supportsSave
+        self.supportsMulti = supportsMulti
+    }
+
+
+
+
+}
+
+#if compiler(>=6)
+extension UlcpDeviceCardRecord: Sendable {}
+#endif
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public struct FfiConverterTypeUlcpDeviceCardRecord: FfiConverterRustBuffer {
+    public static func read(from buf: inout (data: Data, offset: Data.Index)) throws -> UlcpDeviceCardRecord {
+        return
+            try UlcpDeviceCardRecord(
+                capabilities: FfiConverterData.read(from: &buf),
+                deviceVersion: FfiConverterOptionString.read(from: &buf),
+                deviceModel: FfiConverterOptionString.read(from: &buf),
+                deviceName: FfiConverterOptionString.read(from: &buf),
+                supportsDeviceName: FfiConverterBool.read(from: &buf),
+                supportsBattery: FfiConverterBool.read(from: &buf),
+                supportsLora: FfiConverterBool.read(from: &buf),
+                supportsDutyCycleLimit: FfiConverterBool.read(from: &buf),
+                supportsRepeater: FfiConverterBool.read(from: &buf),
+                supportsIdent: FfiConverterBool.read(from: &buf),
+                supportsDeviceIdentity: FfiConverterBool.read(from: &buf),
+                supportsGnss: FfiConverterBool.read(from: &buf),
+                supportsAdvert: FfiConverterBool.read(from: &buf),
+                supportsAdmin: FfiConverterBool.read(from: &buf),
+                supportsAlert: FfiConverterBool.read(from: &buf),
+                supportsSave: FfiConverterBool.read(from: &buf),
+                supportsMulti: FfiConverterBool.read(from: &buf)
+        )
+    }
+
+    public static func write(_ value: UlcpDeviceCardRecord, into buf: inout [UInt8]) {
+        FfiConverterData.write(value.capabilities, into: &buf)
+        FfiConverterOptionString.write(value.deviceVersion, into: &buf)
+        FfiConverterOptionString.write(value.deviceModel, into: &buf)
+        FfiConverterOptionString.write(value.deviceName, into: &buf)
+        FfiConverterBool.write(value.supportsDeviceName, into: &buf)
+        FfiConverterBool.write(value.supportsBattery, into: &buf)
+        FfiConverterBool.write(value.supportsLora, into: &buf)
+        FfiConverterBool.write(value.supportsDutyCycleLimit, into: &buf)
+        FfiConverterBool.write(value.supportsRepeater, into: &buf)
+        FfiConverterBool.write(value.supportsIdent, into: &buf)
+        FfiConverterBool.write(value.supportsDeviceIdentity, into: &buf)
+        FfiConverterBool.write(value.supportsGnss, into: &buf)
+        FfiConverterBool.write(value.supportsAdvert, into: &buf)
+        FfiConverterBool.write(value.supportsAdmin, into: &buf)
+        FfiConverterBool.write(value.supportsAlert, into: &buf)
+        FfiConverterBool.write(value.supportsSave, into: &buf)
+        FfiConverterBool.write(value.supportsMulti, into: &buf)
+    }
+}
+
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public func FfiConverterTypeUlcpDeviceCardRecord_lift(_ buf: RustBuffer) throws -> UlcpDeviceCardRecord {
+    return try FfiConverterTypeUlcpDeviceCardRecord.lift(buf)
+}
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public func FfiConverterTypeUlcpDeviceCardRecord_lower(_ value: UlcpDeviceCardRecord) -> RustBuffer {
+    return FfiConverterTypeUlcpDeviceCardRecord.lower(value)
+}
+
+
+/**
  * Complete desired configuration of a device's *own* domain: what it is
  * and what it does when no phone is attached.
  *
@@ -6731,6 +6933,235 @@ public func FfiConverterTypeUlcpDeviceConfigRecord_lift(_ buf: RustBuffer) throw
 #endif
 public func FfiConverterTypeUlcpDeviceConfigRecord_lower(_ value: UlcpDeviceConfigRecord) -> RustBuffer {
     return FfiConverterTypeUlcpDeviceConfigRecord.lower(value)
+}
+
+
+/**
+ * Everything the six management screens show, all of it optional.
+ *
+ * A category read answers a handful of properties, so anything outside
+ * it is simply absent — this record says what the last read of *some*
+ * category found, and a screen fills in from it whatever it recognizes.
+ * The counterpart to [`UlcpSyncRecord`], which describes a whole device
+ * and can insist on the properties every device must answer.
+ */
+public struct UlcpDevicePropertiesRecord: Equatable, Hashable {
+    public var battery: UlcpBatteryRecord?
+    public var phyEnabled: Bool?
+    public var frequencyKhz: UInt32?
+    public var transmitPowerDbm: Int8?
+    public var bandwidthHz: UInt32?
+    public var spreadingFactor: UInt8?
+    public var codingRateDenom: UInt8?
+    public var dutyCycleNow: UInt16?
+    public var dutyCycleLimit: UInt16?
+    public var deviceName: String?
+    /**
+     * `None` is the device deriving its own role, which reads the same
+     * as never having been told.
+     */
+    public var identRole: UInt8?
+    public var identMobile: Bool?
+    /**
+     * `PROP_IDENT_LOCATION` verbatim. Empty is a device advertising no
+     * position, which is different from not having been asked.
+     */
+    public var identLocation: Data?
+    public var identLatitudeDeg: Double?
+    public var identLongitudeDeg: Double?
+    /**
+     * Width of the advertised cell at the equator, in meters — what the
+     * length of the location actually discloses.
+     */
+    public var identLocationCellMeters: Double?
+    public var identAltitudeM: Int32?
+    public var devDiscoverable: Bool?
+    /**
+     * Whether the device maintains its own advertised position. Set,
+     * the location and altitude above are the device's to write and a
+     * host's write is refused.
+     */
+    public var gnssIdentUpdate: Bool?
+    public var gnssIdentPrecision: UInt8?
+    public var advertIntervalSeconds: UInt32?
+    public var beaconIntervalSeconds: UInt32?
+    public var startupBeacon: Bool?
+    public var gnssEnabled: Bool?
+    /**
+     * What the receiver currently sees. Read-only, and absent on a
+     * device with no receiver.
+     */
+    public var gnss: UlcpGnssRecord?
+    public var gnssTimeTrust: Bool?
+    public var repeaterEnabled: Bool?
+    public var repeaterRegions: [String]?
+    public var repeaterDefaultRegion: Data?
+    public var repeaterMinRssiDbm: Int16?
+    public var repeaterMinSnrDb: Int8?
+    public var devPeerKeys: [Data]?
+    public var devAdminKeys: [Data]?
+
+    // Default memberwise initializers are never public by default, so we
+    // declare one manually.
+    public init(battery: UlcpBatteryRecord?, phyEnabled: Bool?, frequencyKhz: UInt32?, transmitPowerDbm: Int8?, bandwidthHz: UInt32?, spreadingFactor: UInt8?, codingRateDenom: UInt8?, dutyCycleNow: UInt16?, dutyCycleLimit: UInt16?, deviceName: String?,
+        /**
+         * `None` is the device deriving its own role, which reads the same
+         * as never having been told.
+         */identRole: UInt8?, identMobile: Bool?,
+        /**
+         * `PROP_IDENT_LOCATION` verbatim. Empty is a device advertising no
+         * position, which is different from not having been asked.
+         */identLocation: Data?, identLatitudeDeg: Double?, identLongitudeDeg: Double?,
+        /**
+         * Width of the advertised cell at the equator, in meters — what the
+         * length of the location actually discloses.
+         */identLocationCellMeters: Double?, identAltitudeM: Int32?, devDiscoverable: Bool?,
+        /**
+         * Whether the device maintains its own advertised position. Set,
+         * the location and altitude above are the device's to write and a
+         * host's write is refused.
+         */gnssIdentUpdate: Bool?, gnssIdentPrecision: UInt8?, advertIntervalSeconds: UInt32?, beaconIntervalSeconds: UInt32?, startupBeacon: Bool?, gnssEnabled: Bool?,
+        /**
+         * What the receiver currently sees. Read-only, and absent on a
+         * device with no receiver.
+         */gnss: UlcpGnssRecord?, gnssTimeTrust: Bool?, repeaterEnabled: Bool?, repeaterRegions: [String]?, repeaterDefaultRegion: Data?, repeaterMinRssiDbm: Int16?, repeaterMinSnrDb: Int8?, devPeerKeys: [Data]?, devAdminKeys: [Data]?) {
+        self.battery = battery
+        self.phyEnabled = phyEnabled
+        self.frequencyKhz = frequencyKhz
+        self.transmitPowerDbm = transmitPowerDbm
+        self.bandwidthHz = bandwidthHz
+        self.spreadingFactor = spreadingFactor
+        self.codingRateDenom = codingRateDenom
+        self.dutyCycleNow = dutyCycleNow
+        self.dutyCycleLimit = dutyCycleLimit
+        self.deviceName = deviceName
+        self.identRole = identRole
+        self.identMobile = identMobile
+        self.identLocation = identLocation
+        self.identLatitudeDeg = identLatitudeDeg
+        self.identLongitudeDeg = identLongitudeDeg
+        self.identLocationCellMeters = identLocationCellMeters
+        self.identAltitudeM = identAltitudeM
+        self.devDiscoverable = devDiscoverable
+        self.gnssIdentUpdate = gnssIdentUpdate
+        self.gnssIdentPrecision = gnssIdentPrecision
+        self.advertIntervalSeconds = advertIntervalSeconds
+        self.beaconIntervalSeconds = beaconIntervalSeconds
+        self.startupBeacon = startupBeacon
+        self.gnssEnabled = gnssEnabled
+        self.gnss = gnss
+        self.gnssTimeTrust = gnssTimeTrust
+        self.repeaterEnabled = repeaterEnabled
+        self.repeaterRegions = repeaterRegions
+        self.repeaterDefaultRegion = repeaterDefaultRegion
+        self.repeaterMinRssiDbm = repeaterMinRssiDbm
+        self.repeaterMinSnrDb = repeaterMinSnrDb
+        self.devPeerKeys = devPeerKeys
+        self.devAdminKeys = devAdminKeys
+    }
+
+
+
+
+}
+
+#if compiler(>=6)
+extension UlcpDevicePropertiesRecord: Sendable {}
+#endif
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public struct FfiConverterTypeUlcpDevicePropertiesRecord: FfiConverterRustBuffer {
+    public static func read(from buf: inout (data: Data, offset: Data.Index)) throws -> UlcpDevicePropertiesRecord {
+        return
+            try UlcpDevicePropertiesRecord(
+                battery: FfiConverterOptionTypeUlcpBatteryRecord.read(from: &buf),
+                phyEnabled: FfiConverterOptionBool.read(from: &buf),
+                frequencyKhz: FfiConverterOptionUInt32.read(from: &buf),
+                transmitPowerDbm: FfiConverterOptionInt8.read(from: &buf),
+                bandwidthHz: FfiConverterOptionUInt32.read(from: &buf),
+                spreadingFactor: FfiConverterOptionUInt8.read(from: &buf),
+                codingRateDenom: FfiConverterOptionUInt8.read(from: &buf),
+                dutyCycleNow: FfiConverterOptionUInt16.read(from: &buf),
+                dutyCycleLimit: FfiConverterOptionUInt16.read(from: &buf),
+                deviceName: FfiConverterOptionString.read(from: &buf),
+                identRole: FfiConverterOptionUInt8.read(from: &buf),
+                identMobile: FfiConverterOptionBool.read(from: &buf),
+                identLocation: FfiConverterOptionData.read(from: &buf),
+                identLatitudeDeg: FfiConverterOptionDouble.read(from: &buf),
+                identLongitudeDeg: FfiConverterOptionDouble.read(from: &buf),
+                identLocationCellMeters: FfiConverterOptionDouble.read(from: &buf),
+                identAltitudeM: FfiConverterOptionInt32.read(from: &buf),
+                devDiscoverable: FfiConverterOptionBool.read(from: &buf),
+                gnssIdentUpdate: FfiConverterOptionBool.read(from: &buf),
+                gnssIdentPrecision: FfiConverterOptionUInt8.read(from: &buf),
+                advertIntervalSeconds: FfiConverterOptionUInt32.read(from: &buf),
+                beaconIntervalSeconds: FfiConverterOptionUInt32.read(from: &buf),
+                startupBeacon: FfiConverterOptionBool.read(from: &buf),
+                gnssEnabled: FfiConverterOptionBool.read(from: &buf),
+                gnss: FfiConverterOptionTypeUlcpGnssRecord.read(from: &buf),
+                gnssTimeTrust: FfiConverterOptionBool.read(from: &buf),
+                repeaterEnabled: FfiConverterOptionBool.read(from: &buf),
+                repeaterRegions: FfiConverterOptionSequenceString.read(from: &buf),
+                repeaterDefaultRegion: FfiConverterOptionData.read(from: &buf),
+                repeaterMinRssiDbm: FfiConverterOptionInt16.read(from: &buf),
+                repeaterMinSnrDb: FfiConverterOptionInt8.read(from: &buf),
+                devPeerKeys: FfiConverterOptionSequenceData.read(from: &buf),
+                devAdminKeys: FfiConverterOptionSequenceData.read(from: &buf)
+        )
+    }
+
+    public static func write(_ value: UlcpDevicePropertiesRecord, into buf: inout [UInt8]) {
+        FfiConverterOptionTypeUlcpBatteryRecord.write(value.battery, into: &buf)
+        FfiConverterOptionBool.write(value.phyEnabled, into: &buf)
+        FfiConverterOptionUInt32.write(value.frequencyKhz, into: &buf)
+        FfiConverterOptionInt8.write(value.transmitPowerDbm, into: &buf)
+        FfiConverterOptionUInt32.write(value.bandwidthHz, into: &buf)
+        FfiConverterOptionUInt8.write(value.spreadingFactor, into: &buf)
+        FfiConverterOptionUInt8.write(value.codingRateDenom, into: &buf)
+        FfiConverterOptionUInt16.write(value.dutyCycleNow, into: &buf)
+        FfiConverterOptionUInt16.write(value.dutyCycleLimit, into: &buf)
+        FfiConverterOptionString.write(value.deviceName, into: &buf)
+        FfiConverterOptionUInt8.write(value.identRole, into: &buf)
+        FfiConverterOptionBool.write(value.identMobile, into: &buf)
+        FfiConverterOptionData.write(value.identLocation, into: &buf)
+        FfiConverterOptionDouble.write(value.identLatitudeDeg, into: &buf)
+        FfiConverterOptionDouble.write(value.identLongitudeDeg, into: &buf)
+        FfiConverterOptionDouble.write(value.identLocationCellMeters, into: &buf)
+        FfiConverterOptionInt32.write(value.identAltitudeM, into: &buf)
+        FfiConverterOptionBool.write(value.devDiscoverable, into: &buf)
+        FfiConverterOptionBool.write(value.gnssIdentUpdate, into: &buf)
+        FfiConverterOptionUInt8.write(value.gnssIdentPrecision, into: &buf)
+        FfiConverterOptionUInt32.write(value.advertIntervalSeconds, into: &buf)
+        FfiConverterOptionUInt32.write(value.beaconIntervalSeconds, into: &buf)
+        FfiConverterOptionBool.write(value.startupBeacon, into: &buf)
+        FfiConverterOptionBool.write(value.gnssEnabled, into: &buf)
+        FfiConverterOptionTypeUlcpGnssRecord.write(value.gnss, into: &buf)
+        FfiConverterOptionBool.write(value.gnssTimeTrust, into: &buf)
+        FfiConverterOptionBool.write(value.repeaterEnabled, into: &buf)
+        FfiConverterOptionSequenceString.write(value.repeaterRegions, into: &buf)
+        FfiConverterOptionData.write(value.repeaterDefaultRegion, into: &buf)
+        FfiConverterOptionInt16.write(value.repeaterMinRssiDbm, into: &buf)
+        FfiConverterOptionInt8.write(value.repeaterMinSnrDb, into: &buf)
+        FfiConverterOptionSequenceData.write(value.devPeerKeys, into: &buf)
+        FfiConverterOptionSequenceData.write(value.devAdminKeys, into: &buf)
+    }
+}
+
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public func FfiConverterTypeUlcpDevicePropertiesRecord_lift(_ buf: RustBuffer) throws -> UlcpDevicePropertiesRecord {
+    return try FfiConverterTypeUlcpDevicePropertiesRecord.lift(buf)
+}
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public func FfiConverterTypeUlcpDevicePropertiesRecord_lower(_ value: UlcpDevicePropertiesRecord) -> RustBuffer {
+    return FfiConverterTypeUlcpDevicePropertiesRecord.lower(value)
 }
 
 
@@ -6997,6 +7428,189 @@ public func FfiConverterTypeUlcpGnssSettingsRecord_lift(_ buf: RustBuffer) throw
 #endif
 public func FfiConverterTypeUlcpGnssSettingsRecord_lower(_ value: UlcpGnssSettingsRecord) -> RustBuffer {
     return FfiConverterTypeUlcpGnssSettingsRecord.lower(value)
+}
+
+
+/**
+ * The property numbers the management screens name.
+ *
+ * A screen has to say which fields the operator edited, and it caches
+ * values under the number the device answered for, so the numbers cross
+ * the boundary whether or not anyone likes it. Handing them over once,
+ * from the same constants everything else here is built on, is what
+ * keeps a second copy from being written down somewhere in Swift.
+ */
+public struct UlcpManagedPropertyIds: Equatable, Hashable {
+    public var caps: UInt32
+    public var deviceVersion: UInt32
+    public var deviceModel: UInt32
+    public var deviceName: UInt32
+    public var battery: UInt32
+    public var phyEnabled: UInt32
+    public var frequency: UInt32
+    public var transmitPower: UInt32
+    public var loraBandwidth: UInt32
+    public var loraSpreadingFactor: UInt32
+    public var loraCodingRate: UInt32
+    public var dutyCycleNow: UInt32
+    public var dutyCycleLimit: UInt32
+    public var identRole: UInt32
+    public var identMobile: UInt32
+    public var identLocation: UInt32
+    public var identAltitude: UInt32
+    public var devDiscoverable: UInt32
+    public var gnssIdentUpdate: UInt32
+    public var gnssIdentPrecision: UInt32
+    public var advertInterval: UInt32
+    public var beaconInterval: UInt32
+    public var startupBeacon: UInt32
+    public var gnssEnabled: UInt32
+    public var gnssTimeTrust: UInt32
+    public var repeaterEnabled: UInt32
+    public var repeaterRegions: UInt32
+    public var repeaterDefaultRegion: UInt32
+    public var repeaterMinRssi: UInt32
+    public var repeaterMinSnr: UInt32
+    public var devPeers: UInt32
+    public var devAdmins: UInt32
+
+    // Default memberwise initializers are never public by default, so we
+    // declare one manually.
+    public init(caps: UInt32, deviceVersion: UInt32, deviceModel: UInt32, deviceName: UInt32, battery: UInt32, phyEnabled: UInt32, frequency: UInt32, transmitPower: UInt32, loraBandwidth: UInt32, loraSpreadingFactor: UInt32, loraCodingRate: UInt32, dutyCycleNow: UInt32, dutyCycleLimit: UInt32, identRole: UInt32, identMobile: UInt32, identLocation: UInt32, identAltitude: UInt32, devDiscoverable: UInt32, gnssIdentUpdate: UInt32, gnssIdentPrecision: UInt32, advertInterval: UInt32, beaconInterval: UInt32, startupBeacon: UInt32, gnssEnabled: UInt32, gnssTimeTrust: UInt32, repeaterEnabled: UInt32, repeaterRegions: UInt32, repeaterDefaultRegion: UInt32, repeaterMinRssi: UInt32, repeaterMinSnr: UInt32, devPeers: UInt32, devAdmins: UInt32) {
+        self.caps = caps
+        self.deviceVersion = deviceVersion
+        self.deviceModel = deviceModel
+        self.deviceName = deviceName
+        self.battery = battery
+        self.phyEnabled = phyEnabled
+        self.frequency = frequency
+        self.transmitPower = transmitPower
+        self.loraBandwidth = loraBandwidth
+        self.loraSpreadingFactor = loraSpreadingFactor
+        self.loraCodingRate = loraCodingRate
+        self.dutyCycleNow = dutyCycleNow
+        self.dutyCycleLimit = dutyCycleLimit
+        self.identRole = identRole
+        self.identMobile = identMobile
+        self.identLocation = identLocation
+        self.identAltitude = identAltitude
+        self.devDiscoverable = devDiscoverable
+        self.gnssIdentUpdate = gnssIdentUpdate
+        self.gnssIdentPrecision = gnssIdentPrecision
+        self.advertInterval = advertInterval
+        self.beaconInterval = beaconInterval
+        self.startupBeacon = startupBeacon
+        self.gnssEnabled = gnssEnabled
+        self.gnssTimeTrust = gnssTimeTrust
+        self.repeaterEnabled = repeaterEnabled
+        self.repeaterRegions = repeaterRegions
+        self.repeaterDefaultRegion = repeaterDefaultRegion
+        self.repeaterMinRssi = repeaterMinRssi
+        self.repeaterMinSnr = repeaterMinSnr
+        self.devPeers = devPeers
+        self.devAdmins = devAdmins
+    }
+
+
+
+
+}
+
+#if compiler(>=6)
+extension UlcpManagedPropertyIds: Sendable {}
+#endif
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public struct FfiConverterTypeUlcpManagedPropertyIds: FfiConverterRustBuffer {
+    public static func read(from buf: inout (data: Data, offset: Data.Index)) throws -> UlcpManagedPropertyIds {
+        return
+            try UlcpManagedPropertyIds(
+                caps: FfiConverterUInt32.read(from: &buf),
+                deviceVersion: FfiConverterUInt32.read(from: &buf),
+                deviceModel: FfiConverterUInt32.read(from: &buf),
+                deviceName: FfiConverterUInt32.read(from: &buf),
+                battery: FfiConverterUInt32.read(from: &buf),
+                phyEnabled: FfiConverterUInt32.read(from: &buf),
+                frequency: FfiConverterUInt32.read(from: &buf),
+                transmitPower: FfiConverterUInt32.read(from: &buf),
+                loraBandwidth: FfiConverterUInt32.read(from: &buf),
+                loraSpreadingFactor: FfiConverterUInt32.read(from: &buf),
+                loraCodingRate: FfiConverterUInt32.read(from: &buf),
+                dutyCycleNow: FfiConverterUInt32.read(from: &buf),
+                dutyCycleLimit: FfiConverterUInt32.read(from: &buf),
+                identRole: FfiConverterUInt32.read(from: &buf),
+                identMobile: FfiConverterUInt32.read(from: &buf),
+                identLocation: FfiConverterUInt32.read(from: &buf),
+                identAltitude: FfiConverterUInt32.read(from: &buf),
+                devDiscoverable: FfiConverterUInt32.read(from: &buf),
+                gnssIdentUpdate: FfiConverterUInt32.read(from: &buf),
+                gnssIdentPrecision: FfiConverterUInt32.read(from: &buf),
+                advertInterval: FfiConverterUInt32.read(from: &buf),
+                beaconInterval: FfiConverterUInt32.read(from: &buf),
+                startupBeacon: FfiConverterUInt32.read(from: &buf),
+                gnssEnabled: FfiConverterUInt32.read(from: &buf),
+                gnssTimeTrust: FfiConverterUInt32.read(from: &buf),
+                repeaterEnabled: FfiConverterUInt32.read(from: &buf),
+                repeaterRegions: FfiConverterUInt32.read(from: &buf),
+                repeaterDefaultRegion: FfiConverterUInt32.read(from: &buf),
+                repeaterMinRssi: FfiConverterUInt32.read(from: &buf),
+                repeaterMinSnr: FfiConverterUInt32.read(from: &buf),
+                devPeers: FfiConverterUInt32.read(from: &buf),
+                devAdmins: FfiConverterUInt32.read(from: &buf)
+        )
+    }
+
+    public static func write(_ value: UlcpManagedPropertyIds, into buf: inout [UInt8]) {
+        FfiConverterUInt32.write(value.caps, into: &buf)
+        FfiConverterUInt32.write(value.deviceVersion, into: &buf)
+        FfiConverterUInt32.write(value.deviceModel, into: &buf)
+        FfiConverterUInt32.write(value.deviceName, into: &buf)
+        FfiConverterUInt32.write(value.battery, into: &buf)
+        FfiConverterUInt32.write(value.phyEnabled, into: &buf)
+        FfiConverterUInt32.write(value.frequency, into: &buf)
+        FfiConverterUInt32.write(value.transmitPower, into: &buf)
+        FfiConverterUInt32.write(value.loraBandwidth, into: &buf)
+        FfiConverterUInt32.write(value.loraSpreadingFactor, into: &buf)
+        FfiConverterUInt32.write(value.loraCodingRate, into: &buf)
+        FfiConverterUInt32.write(value.dutyCycleNow, into: &buf)
+        FfiConverterUInt32.write(value.dutyCycleLimit, into: &buf)
+        FfiConverterUInt32.write(value.identRole, into: &buf)
+        FfiConverterUInt32.write(value.identMobile, into: &buf)
+        FfiConverterUInt32.write(value.identLocation, into: &buf)
+        FfiConverterUInt32.write(value.identAltitude, into: &buf)
+        FfiConverterUInt32.write(value.devDiscoverable, into: &buf)
+        FfiConverterUInt32.write(value.gnssIdentUpdate, into: &buf)
+        FfiConverterUInt32.write(value.gnssIdentPrecision, into: &buf)
+        FfiConverterUInt32.write(value.advertInterval, into: &buf)
+        FfiConverterUInt32.write(value.beaconInterval, into: &buf)
+        FfiConverterUInt32.write(value.startupBeacon, into: &buf)
+        FfiConverterUInt32.write(value.gnssEnabled, into: &buf)
+        FfiConverterUInt32.write(value.gnssTimeTrust, into: &buf)
+        FfiConverterUInt32.write(value.repeaterEnabled, into: &buf)
+        FfiConverterUInt32.write(value.repeaterRegions, into: &buf)
+        FfiConverterUInt32.write(value.repeaterDefaultRegion, into: &buf)
+        FfiConverterUInt32.write(value.repeaterMinRssi, into: &buf)
+        FfiConverterUInt32.write(value.repeaterMinSnr, into: &buf)
+        FfiConverterUInt32.write(value.devPeers, into: &buf)
+        FfiConverterUInt32.write(value.devAdmins, into: &buf)
+    }
+}
+
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public func FfiConverterTypeUlcpManagedPropertyIds_lift(_ buf: RustBuffer) throws -> UlcpManagedPropertyIds {
+    return try FfiConverterTypeUlcpManagedPropertyIds.lift(buf)
+}
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public func FfiConverterTypeUlcpManagedPropertyIds_lower(_ value: UlcpManagedPropertyIds) -> RustBuffer {
+    return FfiConverterTypeUlcpManagedPropertyIds.lower(value)
 }
 
 
@@ -10112,6 +10726,126 @@ public func FfiConverterTypeUlcpHostOwnership_lower(_ value: UlcpHostOwnership) 
 
 
 /**
+ * One screenful of a device's settings.
+ *
+ * Reading a device whole costs tens of properties and several round
+ * trips, which over a link a few hops deep is the difference between a
+ * screen that opens and one that is waited on. A category is what one
+ * screen shows, and asking for exactly that is normally one exchange.
+ */
+
+public enum UlcpManageCategory: Equatable, Hashable {
+
+    /**
+     * What the battery reports. Read-only.
+     */
+    case power
+    /**
+     * The radio: frequency, power, the modem profile, the duty ledger.
+     */
+    case radio
+    /**
+     * What the device advertises about itself, including where it is.
+     */
+    case identity
+    /**
+     * The receiver, and what it currently sees. The fix is read-only.
+     */
+    case gnss
+    /**
+     * The forwarding policy.
+     */
+    case repeater
+    /**
+     * Who this device talks to, and who may manage it.
+     */
+    case peerNodes
+
+
+
+
+
+}
+
+#if compiler(>=6)
+extension UlcpManageCategory: Sendable {}
+#endif
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public struct FfiConverterTypeUlcpManageCategory: FfiConverterRustBuffer {
+    typealias SwiftType = UlcpManageCategory
+
+    public static func read(from buf: inout (data: Data, offset: Data.Index)) throws -> UlcpManageCategory {
+        let variant: Int32 = try readInt(&buf)
+        switch variant {
+
+        case 1: return .power
+
+        case 2: return .radio
+
+        case 3: return .identity
+
+        case 4: return .gnss
+
+        case 5: return .repeater
+
+        case 6: return .peerNodes
+
+        default: throw UniffiInternalError.unexpectedEnumCase
+        }
+    }
+
+    public static func write(_ value: UlcpManageCategory, into buf: inout [UInt8]) {
+        switch value {
+
+
+        case .power:
+            writeInt(&buf, Int32(1))
+
+
+        case .radio:
+            writeInt(&buf, Int32(2))
+
+
+        case .identity:
+            writeInt(&buf, Int32(3))
+
+
+        case .gnss:
+            writeInt(&buf, Int32(4))
+
+
+        case .repeater:
+            writeInt(&buf, Int32(5))
+
+
+        case .peerNodes:
+            writeInt(&buf, Int32(6))
+
+        }
+    }
+}
+
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public func FfiConverterTypeUlcpManageCategory_lift(_ buf: RustBuffer) throws -> UlcpManageCategory {
+    return try FfiConverterTypeUlcpManageCategory.lift(buf)
+}
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public func FfiConverterTypeUlcpManageCategory_lower(_ value: UlcpManageCategory) -> RustBuffer {
+    return FfiConverterTypeUlcpManageCategory.lower(value)
+}
+
+
+
+/**
  * What the platform adapter should do after a completed raw PHY request.
  */
 
@@ -10935,6 +11669,30 @@ fileprivate struct FfiConverterOptionTypeUlcpChargeState: FfiConverterRustBuffer
 #if swift(>=5.8)
 @_documentation(visibility: private)
 #endif
+fileprivate struct FfiConverterOptionSequenceString: FfiConverterRustBuffer {
+    typealias SwiftType = [String]?
+
+    public static func write(_ value: SwiftType, into buf: inout [UInt8]) {
+        guard let value = value else {
+            writeInt(&buf, Int8(0))
+            return
+        }
+        writeInt(&buf, Int8(1))
+        FfiConverterSequenceString.write(value, into: &buf)
+    }
+
+    public static func read(from buf: inout (data: Data, offset: Data.Index)) throws -> SwiftType {
+        switch try readInt(&buf) as Int8 {
+        case 0: return nil
+        case 1: return try FfiConverterSequenceString.read(from: &buf)
+        default: throw UniffiInternalError.unexpectedOptionalTag
+        }
+    }
+}
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
 fileprivate struct FfiConverterOptionSequenceData: FfiConverterRustBuffer {
     typealias SwiftType = [Data]?
 
@@ -11573,7 +12331,7 @@ public func deriveChannelId(key: Data)throws  -> Data  {
 }
 /**
  * Derive the three presentation octets for a key — the identifier extended by
- * one byte, so a channel's colour is stable wherever it is shown.
+ * one byte, so a channel's color is stable wherever it is shown.
  */
 public func deriveChannelTint(key: Data)throws  -> Data  {
     return try  FfiConverterData.lift(try rustCallWithError(FfiConverterTypeMobileError_lift) {
@@ -11823,6 +12581,24 @@ public func ulcpDeviceConfigWrites(configuration: UlcpDeviceConfigRecord, report
 })
 }
 /**
+ * Present the answers to a management read as the property frames the
+ * ULCP inspectors read.
+ *
+ * A mesh answer and a GATT property frame carry the same thing — a
+ * property and what the device said it is worth — so the decoders are
+ * the same decoders. Refusals drop out here: they are answers *about* a
+ * property rather than values of one, and the event still carries them
+ * for a caller that needs to know which.
+ */
+public func ulcpRecordsFromAnswers(answers: [MobileMeshManagementAnswerRecord]) -> [UlcpPropertyFrameRecord]  {
+    return try!  FfiConverterSequenceTypeUlcpPropertyFrameRecord.lift(try! rustCall() {
+        uniffiCallStatus in
+    uniffi_umsh_mobile_core_fn_func_ulcp_records_from_answers(
+        FfiConverterSequenceTypeMobileMeshManagementAnswerRecord.lower(answers),uniffiCallStatus
+    )
+})
+}
+/**
  * Validate and reduce a `PROP_ALERT` value.
  */
 public func inspectUlcpAlert(value: Data)throws  -> UlcpAlertState  {
@@ -11841,6 +12617,38 @@ public func inspectUlcpBattery(value: Data)throws  -> UlcpBatteryRecord  {
         uniffiCallStatus in
     uniffi_umsh_mobile_core_fn_func_inspect_ulcp_battery(
         FfiConverterData.lower(value),uniffiCallStatus
+    )
+})
+}
+/**
+ * Reduce the answers to a card read into what a device is.
+ *
+ * Capabilities are required — without them there is nothing to plan the
+ * rest against. Everything else is absent rather than fatal: a device
+ * that will not name its hardware is a device that does not name its
+ * hardware.
+ */
+public func inspectUlcpDeviceCard(responses: [UlcpPropertyFrameRecord])throws  -> UlcpDeviceCardRecord  {
+    return try  FfiConverterTypeUlcpDeviceCardRecord_lift(try rustCallWithError(FfiConverterTypeMobileError_lift) {
+        uniffiCallStatus in
+    uniffi_umsh_mobile_core_fn_func_inspect_ulcp_device_card(
+        FfiConverterSequenceTypeUlcpPropertyFrameRecord.lower(responses),uniffiCallStatus
+    )
+})
+}
+/**
+ * Decode whatever a category read answered.
+ *
+ * Nothing is required and nothing fails: a property that did not come
+ * back, or came back undecodable, is left absent. Which properties were
+ * *refused* is a separate question, and the answers to the read say so
+ * directly.
+ */
+public func inspectUlcpProperties(responses: [UlcpPropertyFrameRecord]) -> UlcpDevicePropertiesRecord  {
+    return try!  FfiConverterTypeUlcpDevicePropertiesRecord_lift(try! rustCall() {
+        uniffiCallStatus in
+    uniffi_umsh_mobile_core_fn_func_inspect_ulcp_properties(
+        FfiConverterSequenceTypeUlcpPropertyFrameRecord.lower(responses),uniffiCallStatus
     )
 })
 }
@@ -11917,6 +12725,84 @@ public func regionCodeFromString(text: String)throws  -> Data  {
 })
 }
 /**
+ * The four properties a device is identified by, asked for together.
+ *
+ * Capabilities first, so a device that declines the batch teaches the
+ * crawl to ask one at a time before the rest.
+ */
+public func ulcpCardProperties() -> [UInt32]  {
+    return try!  FfiConverterSequenceUInt32.lift(try! rustCall() {
+        uniffiCallStatus in
+    uniffi_umsh_mobile_core_fn_func_ulcp_card_properties(uniffiCallStatus
+    )
+})
+}
+/**
+ * What one category asks for, given what the device says it can do.
+ *
+ * Capability-gated so a screen never spends airtime on a property the
+ * device does not have, and filtered to what an administrator may
+ * reach.
+ */
+public func ulcpCategoryProperties(category: UlcpManageCategory, capabilities: Data)throws  -> [UInt32]  {
+    return try  FfiConverterSequenceUInt32.lift(try rustCallWithError(FfiConverterTypeMobileError_lift) {
+        uniffiCallStatus in
+    uniffi_umsh_mobile_core_fn_func_ulcp_category_properties(
+        FfiConverterTypeUlcpManageCategory_lower(category),
+        FfiConverterData.lower(capabilities),uniffiCallStatus
+    )
+})
+}
+/**
+ * Encode only the properties the operator actually changed.
+ *
+ * The whole point of the category screens: a device several hops away
+ * takes one write for one edit, rather than a restatement of its entire
+ * configuration. `dirty_property_ids` names what was edited; anything
+ * else in `desired` is ignored, so a record filled in from a stale
+ * cache cannot write stale values back.
+ *
+ * Members of a whole-write group come along with any one of them —
+ * writing half a modem profile leaves the device running a
+ * configuration nobody asked for.
+ *
+ * The radio is bracketed when any of its parameters move: the PHY goes
+ * down first and comes back up last, so a device is never asked to
+ * change the frequency it is transmitting on.
+ */
+public func ulcpDirtyWrites(desired: UlcpDevicePropertiesRecord, dirtyPropertyIds: [UInt32])throws  -> [MobileMeshPropertyWriteRecord]  {
+    return try  FfiConverterSequenceTypeMobileMeshPropertyWriteRecord.lift(try rustCallWithError(FfiConverterTypeMobileError_lift) {
+        uniffiCallStatus in
+    uniffi_umsh_mobile_core_fn_func_ulcp_dirty_writes(
+        FfiConverterTypeUlcpDevicePropertiesRecord_lower(desired),
+        FfiConverterSequenceUInt32.lower(dirtyPropertyIds),uniffiCallStatus
+    )
+})
+}
+/**
+ * Encode a place as the cell a device advertises it from.
+ *
+ * The counterpart to the latitude and longitude an inspection reports:
+ * what goes on the air is a cell rather than a point, and how large that
+ * cell is — the precision, which is also the value's length — is what the
+ * device discloses. See [`ulcp_location_cell_meters`] for what each
+ * precision is worth in meters.
+ *
+ * Precision must be 1 through 7. A coordinate outside its own range is
+ * refused rather than wrapped: a longitude of 200° is a typo, not a
+ * place.
+ */
+public func ulcpEncodeLocation(latitudeDeg: Double, longitudeDeg: Double, precision: UInt8)throws  -> Data  {
+    return try  FfiConverterData.lift(try rustCallWithError(FfiConverterTypeMobileError_lift) {
+        uniffiCallStatus in
+    uniffi_umsh_mobile_core_fn_func_ulcp_encode_location(
+        FfiConverterDouble.lower(latitudeDeg),
+        FfiConverterDouble.lower(longitudeDeg),
+        FfiConverterUInt8.lower(precision),uniffiCallStatus
+    )
+})
+}
+/**
  * Encode a `CMD_FACTORY_RESET` request with the shared ULCP codec.
  */
 public func ulcpFactoryReset(transactionId: UInt8)throws  -> Data  {
@@ -11967,6 +12853,16 @@ public func ulcpLocationCellMeters(precisionBytes: UInt8) -> Double?  {
         uniffiCallStatus in
     uniffi_umsh_mobile_core_fn_func_ulcp_location_cell_meters(
         FfiConverterUInt8.lower(precisionBytes),uniffiCallStatus
+    )
+})
+}
+/**
+ * The property numbers, from the constants themselves.
+ */
+public func ulcpManagedPropertyIds() -> UlcpManagedPropertyIds  {
+    return try!  FfiConverterTypeUlcpManagedPropertyIds_lift(try! rustCall() {
+        uniffiCallStatus in
+    uniffi_umsh_mobile_core_fn_func_ulcp_managed_property_ids(uniffiCallStatus
     )
 })
 }
@@ -12034,6 +12930,23 @@ public func ulcpPropSet(transactionId: UInt8, propertyId: UInt32, value: Data)th
 })
 }
 /**
+ * Present one remembered value as the property frame the inspectors read.
+ *
+ * What [`ulcp_records_from_answers`] does for a fresh answer, for a value
+ * that came out of a cache instead. Cached octets and answered octets are
+ * the same octets, so they decode through the same path — and a caller
+ * never has to know which command byte a reported value wears.
+ */
+public func ulcpPropertyRecord(propertyId: UInt32, value: Data) -> UlcpPropertyFrameRecord  {
+    return try!  FfiConverterTypeUlcpPropertyFrameRecord_lift(try! rustCall() {
+        uniffiCallStatus in
+    uniffi_umsh_mobile_core_fn_func_ulcp_property_record(
+        FfiConverterUInt32.lower(propertyId),
+        FfiConverterData.lower(value),uniffiCallStatus
+    )
+})
+}
+/**
  * Encode a `CMD_SAVE` request with the shared ULCP codec.
  */
 public func ulcpSave(transactionId: UInt8)throws  -> Data  {
@@ -12086,7 +12999,7 @@ private let initializationResult: InitializationResult = {
     if (uniffi_umsh_mobile_core_checksum_func_derive_channel_id() != 22191) {
         return InitializationResult.apiChecksumMismatch
     }
-    if (uniffi_umsh_mobile_core_checksum_func_derive_channel_tint() != 23874) {
+    if (uniffi_umsh_mobile_core_checksum_func_derive_channel_tint() != 13219) {
         return InitializationResult.apiChecksumMismatch
     }
     if (uniffi_umsh_mobile_core_checksum_func_format_channel_invitation() != 49080) {
@@ -12137,10 +13050,19 @@ private let initializationResult: InitializationResult = {
     if (uniffi_umsh_mobile_core_checksum_func_ulcp_device_config_writes() != 29397) {
         return InitializationResult.apiChecksumMismatch
     }
+    if (uniffi_umsh_mobile_core_checksum_func_ulcp_records_from_answers() != 41634) {
+        return InitializationResult.apiChecksumMismatch
+    }
     if (uniffi_umsh_mobile_core_checksum_func_inspect_ulcp_alert() != 25982) {
         return InitializationResult.apiChecksumMismatch
     }
     if (uniffi_umsh_mobile_core_checksum_func_inspect_ulcp_battery() != 22194) {
+        return InitializationResult.apiChecksumMismatch
+    }
+    if (uniffi_umsh_mobile_core_checksum_func_inspect_ulcp_device_card() != 37138) {
+        return InitializationResult.apiChecksumMismatch
+    }
+    if (uniffi_umsh_mobile_core_checksum_func_inspect_ulcp_properties() != 60051) {
         return InitializationResult.apiChecksumMismatch
     }
     if (uniffi_umsh_mobile_core_checksum_func_inspect_ulcp_property_frame() != 62110) {
@@ -12158,6 +13080,18 @@ private let initializationResult: InitializationResult = {
     if (uniffi_umsh_mobile_core_checksum_func_region_code_from_string() != 15378) {
         return InitializationResult.apiChecksumMismatch
     }
+    if (uniffi_umsh_mobile_core_checksum_func_ulcp_card_properties() != 10189) {
+        return InitializationResult.apiChecksumMismatch
+    }
+    if (uniffi_umsh_mobile_core_checksum_func_ulcp_category_properties() != 65528) {
+        return InitializationResult.apiChecksumMismatch
+    }
+    if (uniffi_umsh_mobile_core_checksum_func_ulcp_dirty_writes() != 10269) {
+        return InitializationResult.apiChecksumMismatch
+    }
+    if (uniffi_umsh_mobile_core_checksum_func_ulcp_encode_location() != 15462) {
+        return InitializationResult.apiChecksumMismatch
+    }
     if (uniffi_umsh_mobile_core_checksum_func_ulcp_factory_reset() != 65397) {
         return InitializationResult.apiChecksumMismatch
     }
@@ -12168,6 +13102,9 @@ private let initializationResult: InitializationResult = {
         return InitializationResult.apiChecksumMismatch
     }
     if (uniffi_umsh_mobile_core_checksum_func_ulcp_location_cell_meters() != 468) {
+        return InitializationResult.apiChecksumMismatch
+    }
+    if (uniffi_umsh_mobile_core_checksum_func_ulcp_managed_property_ids() != 4167) {
         return InitializationResult.apiChecksumMismatch
     }
     if (uniffi_umsh_mobile_core_checksum_func_ulcp_max_dev_admins() != 2628) {
@@ -12183,6 +13120,9 @@ private let initializationResult: InitializationResult = {
         return InitializationResult.apiChecksumMismatch
     }
     if (uniffi_umsh_mobile_core_checksum_func_ulcp_prop_set() != 24638) {
+        return InitializationResult.apiChecksumMismatch
+    }
+    if (uniffi_umsh_mobile_core_checksum_func_ulcp_property_record() != 38489) {
         return InitializationResult.apiChecksumMismatch
     }
     if (uniffi_umsh_mobile_core_checksum_func_ulcp_save() != 15143) {
@@ -12212,6 +13152,9 @@ private let initializationResult: InitializationResult = {
     if (uniffi_umsh_mobile_core_checksum_method_mobilemeshsession_apply_chat_archive_result() != 29458) {
         return InitializationResult.apiChecksumMismatch
     }
+    if (uniffi_umsh_mobile_core_checksum_method_mobilemeshsession_begin_management_fetch() != 30118) {
+        return InitializationResult.apiChecksumMismatch
+    }
     if (uniffi_umsh_mobile_core_checksum_method_mobilemeshsession_begin_management_get() != 32041) {
         return InitializationResult.apiChecksumMismatch
     }
@@ -12224,10 +13167,16 @@ private let initializationResult: InitializationResult = {
     if (uniffi_umsh_mobile_core_checksum_method_mobilemeshsession_begin_management_insert_admin() != 57151) {
         return InitializationResult.apiChecksumMismatch
     }
+    if (uniffi_umsh_mobile_core_checksum_method_mobilemeshsession_begin_management_insert_peer() != 26376) {
+        return InitializationResult.apiChecksumMismatch
+    }
     if (uniffi_umsh_mobile_core_checksum_method_mobilemeshsession_begin_management_remove() != 52092) {
         return InitializationResult.apiChecksumMismatch
     }
     if (uniffi_umsh_mobile_core_checksum_method_mobilemeshsession_begin_management_remove_admin() != 27122) {
+        return InitializationResult.apiChecksumMismatch
+    }
+    if (uniffi_umsh_mobile_core_checksum_method_mobilemeshsession_begin_management_remove_peer() != 6429) {
         return InitializationResult.apiChecksumMismatch
     }
     if (uniffi_umsh_mobile_core_checksum_method_mobilemeshsession_begin_management_reset() != 26570) {
@@ -12243,9 +13192,6 @@ private let initializationResult: InitializationResult = {
         return InitializationResult.apiChecksumMismatch
     }
     if (uniffi_umsh_mobile_core_checksum_method_mobilemeshsession_begin_management_set_many() != 36846) {
-        return InitializationResult.apiChecksumMismatch
-    }
-    if (uniffi_umsh_mobile_core_checksum_method_mobilemeshsession_begin_remote_sync() != 12243) {
         return InitializationResult.apiChecksumMismatch
     }
     if (uniffi_umsh_mobile_core_checksum_method_mobilemeshsession_clear_peer_route() != 59203) {
