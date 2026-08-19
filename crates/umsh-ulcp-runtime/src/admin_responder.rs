@@ -23,10 +23,10 @@ use embassy_sync::blocking_mutex::raw::{CriticalSectionRawMutex, RawMutex};
 use embassy_sync::channel::Channel;
 use embassy_time::Instant;
 
-use umsh_core::{PayloadType, PublicKey};
+use umsh_core::{ChannelId, PayloadType, PublicKey};
 use umsh_hal::CounterStore;
 use umsh_mac::SendOptions;
-use umsh_node::{PacketFamily, ReceivedPacketRef, Transport};
+use umsh_node::{PacketFamily, ReceivedPacketRef};
 use umsh_node_mgmt::device::{DeviceEngine, Dispatch, Ingress};
 use umsh_node_mgmt::fragment::{continuable, produce};
 use umsh_ulcp_device::{MAX_DEV_ADMINS, MULTI_MAX};
@@ -88,6 +88,10 @@ const _: () = assert!(
 /// One admitted request on its way to the responder.
 struct Request {
     from: [u8; 32],
+    /// The channel the request arrived on, when it came as a blind unicast.
+    /// The response follows it back rather than naming both parties in the
+    /// clear.
+    channel: Option<ChannelId>,
     payload: heapless::Vec<u8, ADMIN_PAYLOAD_MAX>,
 }
 
@@ -218,6 +222,7 @@ pub fn admit(packet: &ReceivedPacketRef<'_>) {
     if REQUESTS
         .try_send(Request {
             from: from.0,
+            channel: packet.channel().map(|c| c.id()),
             payload,
         })
         .is_err()
@@ -273,7 +278,7 @@ pub async fn responder_loop<CS: CounterStore + 'static, M: RawMutex + 'static>(
         // A reset-class command is answered by no payload at all; its
         // delivery was confirmed by the MAC acknowledgment of the request.
         let Some(len) = len else { continue };
-        respond(&node, &request.from, &out[..len]).await;
+        respond(&node, &request.from, request.channel, &out[..len]).await;
     }
 }
 
@@ -319,7 +324,12 @@ async fn serve<M: RawMutex + 'static>(
 /// reliability layer for this binding, and it covers a lost response and
 /// a lost request alike — an ack would only tell the device something it
 /// has no use for.
-async fn respond<CS: CounterStore + 'static>(node: &DeviceNode<CS>, to: &[u8; 32], payload: &[u8]) {
+async fn respond<CS: CounterStore + 'static>(
+    node: &DeviceNode<CS>,
+    to: &[u8; 32],
+    channel: Option<ChannelId>,
+    payload: &[u8],
+) {
     let mut wire = heapless::Vec::<u8, { ADMIN_PAYLOAD_MAX + 1 }>::new();
     if wire
         .push(PayloadType::NodeManagementResponse as u8)
@@ -330,7 +340,7 @@ async fn respond<CS: CounterStore + 'static>(node: &DeviceNode<CS>, to: &[u8; 32
         return;
     }
     if node
-        .send(&PublicKey(*to), &wire, &SendOptions::default())
+        .send_response(&PublicKey(*to), channel, &wire, &SendOptions::default())
         .await
         .is_err()
     {

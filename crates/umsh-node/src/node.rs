@@ -4,7 +4,7 @@ use alloc::vec::Vec;
 use core::cell::RefCell;
 use core::num::NonZeroU32;
 
-use umsh_core::{NodeHint, PublicKey, RouterHint};
+use umsh_core::{ChannelId, NodeHint, PublicKey, RouterHint};
 use umsh_mac::{CachedRoute, LocalIdentityId, SendOptions};
 
 #[cfg(feature = "software-crypto")]
@@ -688,6 +688,35 @@ impl<M: MacBackend> LocalNode<M> {
             .evaluate(&ctx, now_ms)
     }
 
+    /// Send a response over the carriage its request arrived on.
+    ///
+    /// A blind unicast conceals both endpoints from anyone without the channel
+    /// key, so an answer sent off the channel would name the pair the request
+    /// took care to hide. `channel` is `Some` only when the request was itself
+    /// a blind unicast—take it from the received packet's
+    /// [`channel`](crate::ReceivedPacketRef::channel).
+    pub async fn send_response(
+        &self,
+        to: &PublicKey,
+        channel: Option<ChannelId>,
+        payload: &[u8],
+        options: &SendOptions,
+    ) -> Result<Option<umsh_mac::SendReceipt>, crate::MacBackendError<M::SendError, M::CapacityError>>
+    {
+        match channel {
+            Some(channel) => {
+                self.mac
+                    .send_blind_unicast(self.identity_id, to, &channel, payload, options)
+                    .await
+            }
+            None => {
+                self.mac
+                    .send_unicast(self.identity_id, to, payload, options)
+                    .await
+            }
+        }
+    }
+
     /// Send a resolved Identity Request reply as an authenticated unicast.
     ///
     /// Uses the node's long-term identity (not a PFS ephemeral). Relies on the
@@ -745,8 +774,7 @@ impl<M: MacBackend> LocalNode<M> {
         // below has somewhere to go.
         let _ = self.mac.ensure_transient_peer(&plan.to).await;
         let _ = self
-            .mac
-            .send_unicast(self.identity_id, &plan.to, &plan.framed, &options)
+            .send_response(&plan.to, plan.channel, &plan.framed, &options)
             .await;
     }
 
@@ -800,7 +828,12 @@ impl<M: MacBackend> LocalNode<M> {
     /// Evaluated here rather than in the synchronous receive dispatch because
     /// the answer needs the MAC's observations, which only an async borrow
     /// reaches.
-    pub(crate) async fn answer_peer_repeaters_request(&self, to: PublicKey, request: &[u8]) {
+    pub(crate) async fn answer_peer_repeaters_request(
+        &self,
+        to: PublicKey,
+        channel: Option<ChannelId>,
+        request: &[u8],
+    ) {
         if !self.peer_repeaters_responder_enabled() {
             return;
         }
@@ -869,13 +902,7 @@ impl<M: MacBackend> LocalNode<M> {
         };
         let _ = self.mac.ensure_transient_peer(&to).await;
         let _ = self
-            .mac
-            .send_unicast(
-                self.identity_id,
-                &to,
-                &framed[..len + 1],
-                &SendOptions::default(),
-            )
+            .send_response(&to, channel, &framed[..len + 1], &SendOptions::default())
             .await;
     }
 
@@ -1343,6 +1370,7 @@ impl<M: MacBackend> LocalNode<M> {
     pub(crate) async fn handle_pfs_command(
         &self,
         from: &PublicKey,
+        channel: Option<ChannelId>,
         command: &OwnedMacCommand,
         options: &SendOptions,
     ) -> Result<Option<PfsLifecycle>, NodeError<M>> {
@@ -1360,6 +1388,7 @@ impl<M: MacBackend> LocalNode<M> {
                         *from,
                         ephemeral_key,
                         duration_minutes,
+                        channel,
                         options,
                     )
                     .await?;

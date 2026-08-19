@@ -2,6 +2,8 @@
 use alloc::vec::Vec;
 
 #[cfg(feature = "software-crypto")]
+use umsh_core::ChannelId;
+#[cfg(feature = "software-crypto")]
 use umsh_core::PayloadType;
 #[cfg(feature = "software-crypto")]
 use umsh_core::PublicKey;
@@ -137,6 +139,7 @@ impl PfsSessionManager {
             mac,
             parent,
             peer,
+            None,
             &MacCommand::PfsSessionRequest {
                 ephemeral_key: *local_ephemeral.public_key(),
                 duration_minutes,
@@ -157,6 +160,9 @@ impl PfsSessionManager {
     }
 
     /// Accept an inbound PFS request.
+    ///
+    /// `channel` is the carriage the request arrived on; the response follows
+    /// it back.
     pub(crate) async fn accept_request<M: MacBackend>(
         &mut self,
         mac: &M,
@@ -164,6 +170,7 @@ impl PfsSessionManager {
         peer_long_term: PublicKey,
         peer_ephemeral: PublicKey,
         duration_minutes: u16,
+        channel: Option<ChannelId>,
         options: &SendOptions,
     ) -> Result<(), NodeError<M>> {
         self.remove_existing(mac, &peer_long_term).await?;
@@ -184,6 +191,7 @@ impl PfsSessionManager {
             mac,
             parent,
             &peer_long_term,
+            channel,
             &MacCommand::PfsSessionResponse {
                 ephemeral_key: active.peer_local_public,
                 duration_minutes,
@@ -261,7 +269,7 @@ impl PfsSessionManager {
             let _ = mac.remove_ephemeral(session.local_ephemeral_id).await;
         }
         if notify_peer {
-            send_pfs_command(mac, parent, peer, &MacCommand::EndPfsSession, options).await?;
+            send_pfs_command(mac, parent, peer, None, &MacCommand::EndPfsSession, options).await?;
         }
         Ok(true)
     }
@@ -359,10 +367,16 @@ async fn activate_identity<M: MacBackend>(
 }
 
 #[cfg(feature = "software-crypto")]
+/// Send one PFS control command.
+///
+/// `channel` carries the response-carriage rule: it is `Some` when this
+/// command answers a request that arrived as a blind unicast, and the answer
+/// stays on that channel rather than naming both parties in the clear.
 async fn send_pfs_command<M: MacBackend>(
     mac: &M,
     from: LocalIdentityId,
     peer: &PublicKey,
+    channel: Option<ChannelId>,
     command: &MacCommand<'_>,
     options: &SendOptions,
 ) -> Result<Option<SendReceipt>, NodeError<M>> {
@@ -371,7 +385,14 @@ async fn send_pfs_command<M: MacBackend>(
     let mut payload = Vec::with_capacity(len + 1);
     payload.push(PayloadType::MacCommand as u8);
     payload.extend_from_slice(&body[..len]);
-    mac.send_unicast(from, peer, &payload, options)
-        .await
-        .map_err(Into::into)
+    match channel {
+        Some(channel) => mac
+            .send_blind_unicast(from, peer, &channel, &payload, options)
+            .await
+            .map_err(Into::into),
+        None => mac
+            .send_unicast(from, peer, &payload, options)
+            .await
+            .map_err(Into::into),
+    }
 }

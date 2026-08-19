@@ -294,6 +294,14 @@ pub(crate) struct IdentityResponsePlan {
     /// reception left the MAC with no cached route to them. The trace the
     /// request accumulated on the way in is the path home.
     pub(crate) route: Vec<RouterHint>,
+    /// The channel to answer on, set when the request arrived as a blind
+    /// unicast; `None` sends a plain unicast.
+    ///
+    /// A blind request hid both endpoints behind the channel, and a reply sent
+    /// in the clear would name them. A multicast or broadcast solicitation
+    /// carries a channel too but is answered by targeted unicast, which is what
+    /// keeps one solicitation from drawing a crowd of channel-wide replies.
+    pub(crate) channel: Option<ChannelId>,
     /// The framed reply payload: `PayloadType::NodeIdentity` + encoded identity.
     pub(crate) framed: Vec<u8>,
 }
@@ -360,6 +368,10 @@ impl IdentityResponder {
             delayed: solicitation && !ctx.filters.hint_names_one_node(),
             no_flood: solicitation && !ctx.filters.hint_filtered(),
             route,
+            channel: match ctx.family {
+                PacketFamily::BlindUnicast => ctx.channel,
+                _ => None,
+            },
             framed: Vec::from(&buf[..len]),
         })
     }

@@ -64,10 +64,11 @@ with accounting.
 
 Node Management payloads travel only in unicast and blind unicast packets:
 Requests are addressed to the device identity, and Responses return to the
-requesting node as ordinary unicast replies, using whatever routing state
-the exchange has supplied (see [Route Learning](beacons.md#route-learning)).
-A device drops a Node Management payload arriving by multicast or
-broadcast, with accounting.
+requesting node on the carriage the Request arrived on (see
+[Response Carriage](payload-format.md#response-carriage)), using whatever
+routing state the exchange has supplied (see
+[Route Learning](beacons.md#route-learning)). A device drops a Node
+Management payload arriving by multicast or broadcast, with accounting.
 
 ### Token
 

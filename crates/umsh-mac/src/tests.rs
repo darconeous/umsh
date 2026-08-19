@@ -478,6 +478,119 @@ fn receive_one_auto_replies_to_echo_request() {
     );
 }
 
+/// A blind unicast hides both endpoints from anyone without the channel key.
+/// Answering it as a plain unicast would name the pair the request concealed,
+/// so the response stays on the channel it arrived on.
+#[test]
+fn receive_one_answers_a_blind_echo_request_on_the_same_channel() {
+    let mut mac = make_mac();
+    let local_id = mac.add_identity(DummyIdentity::new([0x10; 32])).unwrap();
+    let remote = DummyIdentity::new([0xAB; 32]);
+    let peer_id = mac.add_peer(*remote.public_key()).unwrap();
+    let pairwise = PairwiseKeys {
+        k_enc: [1; 32],
+        k_mic: [2; 32],
+    };
+    let channel_key = ChannelKey([0x5A; 32]);
+    let channel_id = mac.crypto().derive_channel_id(&channel_key);
+    let channel_keys = mac.crypto().derive_channel_keys(&channel_key);
+    mac.install_pairwise_keys(local_id, peer_id, pairwise.clone())
+        .unwrap();
+    mac.add_channel(channel_key).unwrap();
+    let dst_hint = mac
+        .identity(local_id)
+        .unwrap()
+        .identity()
+        .public_key()
+        .hint();
+
+    mac.radio_mut().queue_received_blind_unicast(
+        &remote,
+        &pairwise,
+        &channel_keys,
+        &dst_hint,
+        encode_echo_command_payload(4, &[9, 8, 7, 6]).as_slice(),
+        false,
+    );
+
+    let handled = block_on(mac.receive_one(|_, _| {})).unwrap();
+
+    assert!(handled);
+    let response = mac.tx_queue_mut().pop_next().expect("echo response queued");
+    let header = PacketHeader::parse(response.frame.as_slice()).unwrap();
+    assert_eq!(
+        header.fcf.packet_type(),
+        PacketType::BlindUnicast,
+        "a blind echo request must not be answered off the channel"
+    );
+    assert_eq!(header.channel, Some(channel_id));
+    let payload = decrypt_blind_payload(response.frame.as_slice(), &pairwise, &channel_keys);
+    assert_eq!(
+        payload.as_slice(),
+        encode_echo_command_payload(5, &[9, 8, 7, 6]).as_slice()
+    );
+}
+
+/// A desynchronized peer heard only through a channel is probed only through
+/// that channel: the resync exchange is provoked by the channel's traffic and
+/// owes it the same concealment.
+#[test]
+fn counter_resync_probes_a_blind_peer_on_the_same_channel() {
+    let mut mac = make_mac();
+    let local_id = mac.add_identity(DummyIdentity::new([0x10; 32])).unwrap();
+    let remote = DummyIdentity::new([0xAB; 32]);
+    let peer_id = mac.add_peer(*remote.public_key()).unwrap();
+    let pairwise = PairwiseKeys {
+        k_enc: [1; 32],
+        k_mic: [2; 32],
+    };
+    let channel_key = ChannelKey([0x5A; 32]);
+    let channel_id = mac.crypto().derive_channel_id(&channel_key);
+    let channel_keys = mac.crypto().derive_channel_keys(&channel_key);
+    mac.install_pairwise_keys(local_id, peer_id, pairwise.clone())
+        .unwrap();
+    mac.add_channel(channel_key).unwrap();
+    let dst_hint = mac
+        .identity(local_id)
+        .unwrap()
+        .identity()
+        .public_key()
+        .hint();
+
+    mac.identity_mut(local_id)
+        .unwrap()
+        .peer_crypto_mut()
+        .get_mut(&peer_id)
+        .unwrap()
+        .replay_window
+        .reset(10_000, 1);
+
+    mac.radio_mut().queue_received_blind_unicast(
+        &remote,
+        &pairwise,
+        &channel_keys,
+        &dst_hint,
+        b"hello after reboot",
+        false,
+    );
+
+    assert!(!block_on(mac.receive_one(|_, _| {})).unwrap());
+
+    let queued = mac
+        .tx_queue_mut()
+        .pop_next()
+        .expect("counter resync should queue an echo request");
+    let header = PacketHeader::parse(queued.frame.as_slice()).unwrap();
+    assert_eq!(header.fcf.packet_type(), PacketType::BlindUnicast);
+    assert_eq!(header.channel, Some(channel_id));
+    let payload = decrypt_blind_payload(queued.frame.as_slice(), &pairwise, &channel_keys);
+    assert!(
+        matches!(payload.as_slice(), [payload_type, 4, ..] if *payload_type == PayloadType::MacCommand as u8),
+        "unexpected resync probe payload: {:?}",
+        payload.as_slice()
+    );
+}
+
 /// A ping measures a link, and the signal entries are what make that
 /// measurement per-hop. A response that mirrors only the route reports where
 /// the frame went without reporting what any of it cost.
@@ -9532,6 +9645,27 @@ fn decrypt_unicast_payload(frame: &[u8], keys: &PairwiseKeys) -> heapless::Vec<u
     let header = PacketHeader::parse(&buf[..frame.len()]).unwrap();
     let body = engine
         .open_packet(&mut buf[..frame.len()], &header, keys)
+        .unwrap();
+    let mut payload = heapless::Vec::new();
+    payload.extend_from_slice(&buf[body]).unwrap();
+    payload
+}
+
+fn decrypt_blind_payload(
+    frame: &[u8],
+    pairwise: &PairwiseKeys,
+    channel_keys: &DerivedChannelKeys,
+) -> heapless::Vec<u8, 256> {
+    let engine = CryptoEngine::new(DummyAes, DummySha);
+    let blind_keys = engine.derive_blind_keys(pairwise, channel_keys);
+    let mut buf = [0u8; 256];
+    buf[..frame.len()].copy_from_slice(frame);
+    let header = PacketHeader::parse(&buf[..frame.len()]).unwrap();
+    engine
+        .decrypt_blind_addr(&mut buf[..frame.len()], &header, channel_keys)
+        .unwrap();
+    let body = engine
+        .open_packet(&mut buf[..frame.len()], &header, &blind_keys)
         .unwrap();
     let mut payload = heapless::Vec::new();
     payload.extend_from_slice(&buf[body]).unwrap();

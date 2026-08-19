@@ -9,6 +9,8 @@ Support for MAC commands is optional.
 
 MAC commands are addressed to a single node. Unless a command's definition provides rules for multicast or broadcast use, as [Identity Request](#identity-request-1) does, a node ignores a command that arrives by multicast or broadcast.
 
+A node answering a command carries its response the way the request was carried, as [Response Carriage](payload-format.md#response-carriage) defines.
+
 ## Command Registry
 
 | Value | Command | Direction |

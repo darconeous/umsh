@@ -529,6 +529,7 @@ mod tests {
 
         block_on_ready(node.handle_pfs_command(
             &peer,
+            None,
             &OwnedMacCommand::PfsSessionResponse {
                 ephemeral_key: PublicKey([0x44; 32]),
                 duration_minutes: 60,
@@ -673,6 +674,45 @@ mod tests {
         )
     }
 
+    /// A received frame that arrived inside a channel—a blind unicast, or
+    /// the multicast a solicitation can ride.
+    #[cfg(all(feature = "software-crypto", feature = "unsafe-advanced"))]
+    fn test_channel_packet<'a>(
+        from: PublicKey,
+        packet_type: umsh_core::PacketType,
+        channel_key: &'a umsh_core::ChannelKey,
+        channel_id: umsh_core::ChannelId,
+        payload: &'a [u8],
+    ) -> ReceivedPacketRef<'a> {
+        let wire = Box::leak(payload.to_vec().into_boxed_slice());
+        let header = umsh_core::PacketHeader {
+            fcf: umsh_core::Fcf::new(packet_type, false, false),
+            options_range: 0..0,
+            flood_hops: None,
+            dst: None,
+            channel: Some(channel_id),
+            source: umsh_core::SourceAddrRef::Hint(from.hint()),
+            sec_info: None,
+            body_range: 0..wire.len(),
+            mic_range: wire.len()..wire.len(),
+            total_len: wire.len(),
+        };
+        ReceivedPacketRef::new(
+            wire,
+            wire,
+            header,
+            umsh_core::ParsedOptions::default(),
+            Some(from),
+            Some(from.hint()),
+            true,
+            Some(crate::ChannelInfoRef {
+                id: channel_id,
+                key: channel_key,
+            }),
+            umsh_mac::RxMetadata::default(),
+        )
+    }
+
     /// A received broadcast frame, as a solicitation would arrive: optionally
     /// carrying an FHOPS byte and a Route option. Only the ranges matter, so
     /// the wire is just the route bytes.
@@ -758,6 +798,8 @@ mod tests {
         to: PublicKey,
         payload: Vec<u8>,
         options: SendOptions,
+        /// The channel a blind unicast went out on; `None` for plain unicast.
+        channel: Option<ChannelId>,
     }
 
     #[cfg(all(feature = "software-crypto", feature = "unsafe-advanced"))]
@@ -884,6 +926,7 @@ mod tests {
                 to: *dst,
                 payload: payload.to_vec(),
                 options: options.clone(),
+                channel: None,
             });
             Ok(Some(SendReceipt(42)))
         }
@@ -892,12 +935,19 @@ mod tests {
             &self,
             from: LocalIdentityId,
             dst: &PublicKey,
-            _channel: &ChannelId,
+            channel: &ChannelId,
             payload: &[u8],
             options: &SendOptions,
         ) -> Result<Option<SendReceipt>, MacBackendError<Self::SendError, Self::CapacityError>>
         {
-            self.send_unicast(from, dst, payload, options).await
+            self.state.borrow_mut().unicasts.push(SentUnicast {
+                from,
+                to: *dst,
+                payload: payload.to_vec(),
+                options: options.clone(),
+                channel: Some(*channel),
+            });
+            Ok(Some(SendReceipt(42)))
         }
 
         async fn fill_random(&self, dest: &mut [u8]) {
@@ -1037,6 +1087,82 @@ mod tests {
         assert_eq!(identity.name.as_deref(), Some("repeater-1"));
         assert_eq!(identity.nonce, Some(0xCAFE_F00D), "request nonce echoed");
         assert!(identity.signature.is_none(), "responses are unsigned");
+    }
+
+    /// A blind request concealed both endpoints behind the channel key. The
+    /// identity reply follows it back onto that channel rather than naming the
+    /// pair in the clear.
+    #[cfg(all(feature = "software-crypto", feature = "unsafe-advanced"))]
+    #[test]
+    fn identity_response_follows_a_blind_request_onto_its_channel() {
+        let mac = FakeMac::new(Vec::new());
+        let node = responder_node(&mac);
+        let our_key = PublicKey([0x11; 32]);
+        let requester = PublicKey([0x41; 32]);
+        node.enable_identity_responder_default(test_profile(our_key));
+
+        let channel_key = umsh_core::ChannelKey([0x5A; 32]);
+        let channel_id = umsh_core::ChannelId([0xC1, 0xD2]);
+        let options = crate::mac_command::IdentityRequestBuilder::new()
+            .filter_hint(&our_key.hint())
+            .unwrap()
+            .build();
+        let packet = test_channel_packet(
+            requester,
+            umsh_core::PacketType::BlindUnicast,
+            &channel_key,
+            channel_id,
+            &[],
+        );
+
+        let plan = node
+            .evaluate_identity_request(&packet, requester, &options, 0)
+            .expect("responder should produce a reply plan");
+        block_on_ready(node.send_identity_response(plan));
+
+        let sent = mac.take_unicasts();
+        assert_eq!(sent.len(), 1);
+        assert_eq!(
+            sent[0].channel,
+            Some(channel_id),
+            "a blind request must not be answered off its channel"
+        );
+    }
+
+    /// A multicast solicitation carries a channel too, but every node it
+    /// selects answers the same frame; targeted unicast replies are what keep
+    /// one solicitation from filling the channel with them.
+    #[cfg(all(feature = "software-crypto", feature = "unsafe-advanced"))]
+    #[test]
+    fn identity_response_to_a_multicast_solicitation_stays_unicast() {
+        let mac = FakeMac::new(vec![[0x12; 32]]);
+        let node = responder_node(&mac);
+        let our_key = PublicKey([0x11; 32]);
+        let requester = PublicKey([0x41; 32]);
+        node.enable_identity_responder_default(test_profile(our_key));
+
+        let channel_key = umsh_core::ChannelKey([0x5A; 32]);
+        let channel_id = umsh_core::ChannelId([0xC1, 0xD2]);
+        let options = crate::mac_command::IdentityRequestBuilder::new()
+            .filter_hint(&our_key.hint())
+            .unwrap()
+            .build();
+        let packet = test_channel_packet(
+            requester,
+            umsh_core::PacketType::Multicast,
+            &channel_key,
+            channel_id,
+            &[],
+        );
+
+        let plan = node
+            .evaluate_identity_request(&packet, requester, &options, 0)
+            .expect("responder should produce a reply plan");
+        block_on_ready(node.send_identity_response(plan));
+
+        let sent = mac.take_unicasts();
+        assert_eq!(sent.len(), 1);
+        assert_eq!(sent[0].channel, None);
     }
 
     #[cfg(all(feature = "software-crypto", feature = "unsafe-advanced"))]
@@ -1560,6 +1686,31 @@ mod tests {
     /// Pull the one response the responder sent back off the fake MAC and
     /// reparse it exactly as a receiver would.
     #[cfg(all(feature = "software-crypto", feature = "unsafe-advanced"))]
+    /// The peer-repeater listing names the neighborhood around this node. A
+    /// request that arrived concealed on a channel is answered there, not in
+    /// the open.
+    #[cfg(all(feature = "software-crypto", feature = "unsafe-advanced"))]
+    #[test]
+    fn peer_repeaters_response_follows_a_blind_request_onto_its_channel() {
+        let mac = FakeMac::new(Vec::new());
+        let node = responder_node(&mac);
+        node.enable_peer_repeaters_responder();
+        let channel_id = umsh_core::ChannelId([0xC1, 0xD2]);
+
+        block_on_ready(node.answer_peer_repeaters_request(
+            PublicKey([0x41; 32]),
+            Some(channel_id),
+            &peer_repeaters_request(Some(7), None),
+        ));
+
+        let sent = mac.take_unicasts();
+        assert_eq!(sent.len(), 1);
+        assert_eq!(sent[0].channel, Some(channel_id));
+    }
+
+    /// Pull the one response the responder sent back off the fake MAC and
+    /// reparse it exactly as a receiver would.
+    #[cfg(all(feature = "software-crypto", feature = "unsafe-advanced"))]
     fn sent_response(mac: &FakeMac) -> (PublicKey, Vec<u8>) {
         let mut unicasts = mac.take_unicasts();
         assert_eq!(unicasts.len(), 1, "exactly one response frame");
@@ -1585,6 +1736,7 @@ mod tests {
 
         block_on_ready(node.answer_peer_repeaters_request(
             PublicKey([0x41; 32]),
+            None,
             &peer_repeaters_request(None, None),
         ));
         assert!(mac.take_unicasts().is_empty());
@@ -1613,12 +1765,11 @@ mod tests {
         );
 
         let requester = PublicKey([0x41; 32]);
-        block_on_ready(
-            node.answer_peer_repeaters_request(
-                requester,
-                &peer_repeaters_request(Some(0xBEEF), None),
-            ),
-        );
+        block_on_ready(node.answer_peer_repeaters_request(
+            requester,
+            None,
+            &peer_repeaters_request(Some(0xBEEF), None),
+        ));
 
         let (to, body) = sent_response(&mac);
         assert_eq!(to, requester);
@@ -1675,6 +1826,7 @@ mod tests {
         loop {
             block_on_ready(node.answer_peer_repeaters_request(
                 requester,
+                None,
                 &peer_repeaters_request(Some(1), cursor.as_deref()),
             ));
             let (_, body) = sent_response(&mac);
@@ -1730,6 +1882,7 @@ mod tests {
         let generation = 3u16.to_be_bytes();
         block_on_ready(node.answer_peer_repeaters_request(
             PublicKey([0x41; 32]),
+            None,
             &peer_repeaters_request(None, Some(&[generation[0], generation[1], 2])),
         ));
         let (_, body) = sent_response(&mac);
@@ -1741,6 +1894,7 @@ mod tests {
         node.observe_peer_identity(PublicKey([0x77; 32]), &peer_identity("Newcomer", &[]), 0);
         block_on_ready(node.answer_peer_repeaters_request(
             PublicKey([0x41; 32]),
+            None,
             &peer_repeaters_request(None, Some(&[generation[0], generation[1], 2])),
         ));
         let (_, body) = sent_response(&mac);
@@ -1763,6 +1917,7 @@ mod tests {
 
         block_on_ready(node.answer_peer_repeaters_request(
             PublicKey([0x41; 32]),
+            None,
             &peer_repeaters_request(None, None),
         ));
         let (_, body) = sent_response(&mac);

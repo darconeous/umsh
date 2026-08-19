@@ -56,6 +56,18 @@ const COUNTER_RESYNC_REQUEST_RETRY_MS: u64 = 5_000;
 /// jump much larger than this.
 const COUNTER_RESYNC_GAP_THRESHOLD: u32 = 1024;
 
+/// The carriage a request arrived on, and so the carriage its response owes
+/// it back.
+///
+/// A blind unicast hides both endpoints from anyone without the channel key.
+/// A response that left the channel would name the pair the request took care
+/// to conceal, so a responder mirrors the carriage rather than choosing one.
+#[derive(Clone, Copy)]
+pub(crate) enum ReplyCarriage<'a> {
+    Unicast,
+    Blind(&'a DerivedChannelKeys),
+}
+
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 struct PendingCounterResync {
     nonce: u32,
@@ -1897,7 +1909,33 @@ impl<
         payload: &[u8],
         options: &SendOptions,
     ) -> Result<Option<SendReceipt>, SendError> {
-        self.enforce_send_policy(Some(*channel_id), options, true)?;
+        let channel_keys = self
+            .channels
+            .lookup_by_id(channel_id)
+            .next()
+            .ok_or(SendError::ChannelMissing)?
+            .derived
+            .clone();
+        self.queue_blind_unicast_with_keys(from, peer, &channel_keys, payload, options)
+    }
+
+    /// Enqueues a blind-unicast frame sealed under channel keys the caller
+    /// already holds.
+    ///
+    /// A reply takes this path rather than [`Self::queue_blind_unicast`]:
+    /// looking the channel up again by its two-byte identifier would pick the
+    /// first key that derives to it, which need not be the key that opened the
+    /// frame being answered.
+    fn queue_blind_unicast_with_keys(
+        &mut self,
+        from: LocalIdentityId,
+        peer: &PublicKey,
+        channel_keys: &DerivedChannelKeys,
+        payload: &[u8],
+        options: &SendOptions,
+    ) -> Result<Option<SendReceipt>, SendError> {
+        let channel_id = channel_keys.channel_id;
+        self.enforce_send_policy(Some(channel_id), options, true)?;
         let (peer_id, _) = self
             .peer_registry
             .lookup_by_key(peer)
@@ -1910,14 +1948,7 @@ impl<
             .ok_or(SendError::PairwiseKeysMissing)?
             .pairwise_keys
             .clone();
-        let channel_keys = self
-            .channels
-            .lookup_by_id(channel_id)
-            .next()
-            .ok_or(SendError::ChannelMissing)?
-            .derived
-            .clone();
-        let blind_keys = self.crypto.derive_blind_keys(&pairwise_keys, &channel_keys);
+        let blind_keys = self.crypto.derive_blind_keys(&pairwise_keys, channel_keys);
         let effective_source_route = self.effective_source_route(peer_id, options);
         let effective_flood_hops =
             self.effective_flood_hops(peer_id, options, effective_source_route.as_ref());
@@ -1925,7 +1956,7 @@ impl<
         let (source_key, frame_counter) = self.identity_and_advance(from)?;
         let salt = self.take_salt(options);
         let mut buf = [0u8; FRAME];
-        let builder = PacketBuilder::new(&mut buf).blind_unicast(*channel_id, peer.hint());
+        let builder = PacketBuilder::new(&mut buf).blind_unicast(channel_id, peer.hint());
         let builder = if options.full_source {
             builder.source_full(&source_key)
         } else {
@@ -1976,7 +2007,7 @@ impl<
         };
 
         self.crypto
-            .seal_blind_packet(&mut packet, &blind_keys, &channel_keys)
+            .seal_blind_packet(&mut packet, &blind_keys, channel_keys)
             .map_err(SendError::Crypto)?;
         if let Some(receipt) = receipt {
             self.refresh_pending_resend(
@@ -2032,6 +2063,31 @@ impl<
             .ok_or(SendError::PeerMissing)?;
         let _ = self.ensure_peer_crypto(from, peer_id).await?;
         self.queue_blind_unicast(from, peer, channel_id, payload, options)
+    }
+
+    /// Send a response over the carriage its request arrived on.
+    ///
+    /// The one place the MAC decides how an answer travels, so that answering
+    /// never widens the audience the question had.
+    async fn send_response(
+        &mut self,
+        from: LocalIdentityId,
+        peer: &PublicKey,
+        carriage: ReplyCarriage<'_>,
+        payload: &[u8],
+        options: &SendOptions,
+    ) -> Result<Option<SendReceipt>, SendError> {
+        match carriage {
+            ReplyCarriage::Unicast => self.send_unicast(from, peer, payload, options).await,
+            ReplyCarriage::Blind(channel_keys) => {
+                let (peer_id, _) = self
+                    .peer_registry
+                    .lookup_by_key(peer)
+                    .ok_or(SendError::PeerMissing)?;
+                let _ = self.ensure_peer_crypto(from, peer_id).await?;
+                self.queue_blind_unicast_with_keys(from, peer, channel_keys, payload, options)
+            }
+        }
     }
 
     /// Transmit the next eligible queued frame, if any.
@@ -2804,8 +2860,13 @@ impl<
                                     rx,
                                     received_at_ms,
                                 );
-                                self.maybe_request_counter_resync(local_id, peer_id, peer_key)
-                                    .await;
+                                self.maybe_request_counter_resync(
+                                    local_id,
+                                    peer_id,
+                                    peer_key,
+                                    ReplyCarriage::Unicast,
+                                )
+                                .await;
                             }
                             continue;
                         }
@@ -2833,7 +2894,13 @@ impl<
                         Self::build_echo_command_payload(MAC_COMMAND_ECHO_RESPONSE_ID, data);
                     let options = Self::echo_response_options(&original[..frame_len], header);
                     let _ = self
-                        .send_unicast(local_id, &peer_key, response.as_slice(), &options)
+                        .send_response(
+                            local_id,
+                            &peer_key,
+                            ReplyCarriage::Unicast,
+                            response.as_slice(),
+                            &options,
+                        )
                         .await;
                 }
 
@@ -3085,8 +3152,13 @@ impl<
                                         rx,
                                         received_at_ms,
                                     );
-                                    self.maybe_request_counter_resync(local_id, peer_id, peer_key)
-                                        .await;
+                                    self.maybe_request_counter_resync(
+                                        local_id,
+                                        peer_id,
+                                        peer_key,
+                                        ReplyCarriage::Blind(&channel_keys),
+                                    )
+                                    .await;
                                     continue;
                                 }
                             }
@@ -3122,7 +3194,13 @@ impl<
                             let options =
                                 Self::echo_response_options(&original[..frame_len], header);
                             let _ = self
-                                .send_unicast(local_id, &peer_key, response.as_slice(), &options)
+                                .send_response(
+                                    local_id,
+                                    &peer_key,
+                                    ReplyCarriage::Blind(&channel_keys),
+                                    response.as_slice(),
+                                    &options,
+                                )
                                 .await;
                         }
 
@@ -4089,11 +4167,16 @@ impl<
         true
     }
 
+    /// Probe a desynchronized peer with an echo request.
+    ///
+    /// The probe rides the same carriage as the frame that provoked it: a peer
+    /// heard only through a channel is answered only through that channel.
     async fn maybe_request_counter_resync(
         &mut self,
         local_id: LocalIdentityId,
         peer_id: PeerId,
         peer_key: PublicKey,
+        carriage: ReplyCarriage<'_>,
     ) {
         let now_ms = self.clock.now_ms();
         let should_send = {
@@ -4116,7 +4199,7 @@ impl<
             Self::build_echo_command_payload(MAC_COMMAND_ECHO_REQUEST_ID, &nonce.to_be_bytes());
         let options = SendOptions::default();
         if self
-            .send_unicast(local_id, &peer_key, payload.as_slice(), &options)
+            .send_response(local_id, &peer_key, carriage, payload.as_slice(), &options)
             .await
             .is_ok()
         {
