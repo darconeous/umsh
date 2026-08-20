@@ -329,17 +329,18 @@ local function route_path(val, arrow)
   return table.concat(out, arrow)
 end
 
--- A region code is two bytes of ARNCE/HAM-16. Anything that decodes to three
--- letters is an IATA code and is shown as one; everything else is derived
--- from a hash of a region name and has no reading beyond its value, so it is
--- shown as hex. The two spaces cannot collide: the spec transforms any hash
--- prefix that would have decoded to three letters out of the letter range,
--- which is what makes the three-letter test sufficient on its own.
+-- A region code is two bytes of ARNCE/HAM-16. Anything that decodes to one to
+-- three letters is a short code and is shown as one; everything else is shown
+-- as hex. The two spaces cannot collide: the spec transforms any hash prefix
+-- that would have decoded to nothing but letters out of the letter range,
+-- which is what makes the all-letter test sufficient on its own. A short code
+-- bearing a digit is deliberately not read back — it is not vacated, so the
+-- code may equally have come from a hashed name.
 local function region_label(val)
   if #val == 0 then return "(no value)" end
   if #val == 2 then
-    local iata = options.decode_arnce(val)
-    if iata:match("^%u%u%u$") then return iata end
+    local short = options.decode_arnce(val)
+    if short:match("^%u%u?%u?$") then return short end
   end
   return "0x" .. bytes_to_hex(val)
 end

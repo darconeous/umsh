@@ -56,10 +56,12 @@ KEY values are 44-character base58 or 64-character hex. Secrets are
 never echoed in output or traces — though shell history keeps whatever
 was typed, the same as any shell.
 
-CODE values are a 3-letter IATA airport code (SJC), a raw 2-byte code
+CODE values are a short code of one to three letters or digits — an IATA
+airport code (SJC) or a country or state (US, WA) — a raw 2-byte code
 (0x7853), or any other text, which is hashed as a region name
-(\"Rogue Valley\"). Region codes are routing-domain tags, not RF band
-plans, so every repeater in an area must agree on the same spelling."
+(\"Rogue Valley\"). Only an all-letter short code reads back as itself.
+Region codes are routing-domain tags, not RF band plans, so every
+repeater in an area must agree on the same spelling."
 )]
 pub struct ToolArgs {
     /// Serial port to attach to.

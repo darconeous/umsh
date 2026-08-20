@@ -352,7 +352,7 @@ pub struct RepeaterPolicy {
     /// all. The remaining fields are inert while this is false.
     pub enabled: bool,
     /// `PROP_MAC_REPEATER_REGIONS`: which region-tagged floods to forward,
-    /// as the strings an operator wrote — an airport code, a name, or a
+    /// as the strings an operator wrote — a short code, a name, or a
     /// literal `0x1234`. Empty imposes no regional restriction. The
     /// device derives the 2-octet codes the filter actually compares;
     /// pass a name through [`RegionCode::from_str`] to see them.

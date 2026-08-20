@@ -267,7 +267,7 @@ async fn a_repeater_names_the_repeaters_it_knows_of() {
     );
     assert_eq!(
         entry.regions().collect::<Vec<_>>(),
-        vec![[0x78, 0x53], [0xDF, 0x6F]],
+        vec![[0x78, 0x53], [0xC0, 0xF9]],
         "region strings reach the asker as derived codes"
     );
     assert!(

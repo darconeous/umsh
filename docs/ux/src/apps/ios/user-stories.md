@@ -226,8 +226,10 @@ Acceptance criteria:
   device does in each state.
 - Routing regions are labeled as a routing domain and are never presented as a
   frequency, band, or radio preset.
-- A region is entered as an airport code, a region name, or a raw code, and is
+- A region is entered as a short code, a region name, or a raw code, and is
   displayed with its code in every list and picker.
+- A region typed again in a different capitalization respells the entry it
+  matches; it never appears twice.
 - An empty region list is described as forwarding traffic from every region, not
   as forwarding nothing.
 - Tagging untagged traffic is opt-in and offers an explicit "don't tag" choice;

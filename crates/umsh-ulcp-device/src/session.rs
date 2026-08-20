@@ -1209,27 +1209,39 @@ impl RepeaterRegions {
         self.entries[..self.len].iter().filter_map(Option::as_ref)
     }
 
-    fn contains(&self, text: &[u8]) -> bool {
-        self.iter().any(|entry| entry.text() == text)
+    /// Where the region `text` denotes is held, if it is held at all.
+    ///
+    /// Regions compare without ASCII case, because that is how their codes
+    /// derive: two spellings that differ only in case are one region
+    /// (packet-options.md § Region Code Encoding).
+    fn position(&self, text: &[u8]) -> Option<usize> {
+        self.iter()
+            .position(|entry| entry.text().eq_ignore_ascii_case(text))
     }
 
+    /// Add a region, or respell one already held.
     fn push(&mut self, entry: RegionEntry) -> Result<(), Status> {
-        if self.contains(entry.text()) {
+        let Some(index) = self.position(entry.text()) else {
+            if self.len == MAX_REPEATER_REGIONS {
+                return Err(Status::NOMEM);
+            }
+            self.entries[self.len] = Some(entry);
+            self.len += 1;
+            return Ok(());
+        };
+        // The region is already held. The same string changes nothing; a
+        // different capitalization of it respells the entry, which is the
+        // only way to correct a spelling in place. The derived code is the
+        // same either way, so the forwarding filter does not move.
+        if self.entries[index].is_some_and(|held| held.text() == entry.text()) {
             return Err(Status::ALREADY);
         }
-        if self.len == MAX_REPEATER_REGIONS {
-            return Err(Status::NOMEM);
-        }
-        self.entries[self.len] = Some(entry);
-        self.len += 1;
+        self.entries[index] = Some(entry);
         Ok(())
     }
 
     fn remove(&mut self, text: &[u8]) -> Result<(), Status> {
-        let index = self
-            .iter()
-            .position(|entry| entry.text() == text)
-            .ok_or(Status::ITEM_NOT_FOUND)?;
+        let index = self.position(text).ok_or(Status::ITEM_NOT_FOUND)?;
         // Order is not meaningful, so the tail fills the hole.
         self.len -= 1;
         self.entries[index] = self.entries[self.len];
@@ -1241,7 +1253,8 @@ impl RepeaterRegions {
     ///
     /// The whole value is validated before anything is committed, so a
     /// rejected write leaves the previous table exactly as it was. A
-    /// repeated item collapses, matching the property's set semantics.
+    /// repeated region collapses, matching the property's set semantics,
+    /// and the last spelling written is the one kept.
     fn parse_table(value: &[u8]) -> Result<Self, Status> {
         let mut regions = Self::default();
         for item in items::prefixed_items(value) {
@@ -1257,8 +1270,8 @@ impl RepeaterRegions {
 
 /// Validate one region item and derive its forwarding code.
 ///
-/// The derivation itself is total over every string this accepts — an
-/// airport code, a name, or a literal `0x` code — so the only failures are
+/// The derivation itself is total over every string this accepts — a
+/// short code, a name, or a literal `0x` code — so the only failures are
 /// the bounds the property sets: 1 to 24 octets of UTF-8
 /// (ulcp-device.md § PROP_MAC_REPEATER_REGIONS).
 fn region_entry(item: &[u8]) -> Result<RegionEntry, Status> {
@@ -6979,7 +6992,7 @@ mod tests {
         assert_eq!(region_names(&session), ["SJC", "Rogue Valley"]);
         assert_eq!(
             region_codes(&session),
-            [[0x78, 0x53], [0xDF, 0x6F]],
+            [[0x78, 0x53], [0xC0, 0xF9]],
             "an airport code and a hashed name, derived once at the write"
         );
         assert_eq!(session.repeater_default_region(), Some([0x78, 0x53]));
@@ -6996,7 +7009,7 @@ mod tests {
         assert_eq!(region_names(&booted), ["SJC", "Rogue Valley"]);
         assert_eq!(
             region_codes(&booted),
-            [[0x78, 0x53], [0xDF, 0x6F]],
+            [[0x78, 0x53], [0xC0, 0xF9]],
             "the snapshot carries the strings; the codes re-derive on restore"
         );
         assert_eq!(booted.repeater_default_region(), Some([0x78, 0x53]));
@@ -7126,7 +7139,7 @@ mod tests {
             prop::MAC_REPEATER_REGIONS,
             &region_table(&["SF Bay Area"]),
         );
-        assert_eq!(region_codes(&session), [[0x31, 0xD9]]);
+        assert_eq!(region_codes(&session), [[0xD8, 0xB7]]);
         assert_eq!(
             session.repeater_default_region(),
             Some([0x78, 0x53]),
@@ -7159,7 +7172,7 @@ mod tests {
         assert_eq!(digest, b"SJC", "the inserted item is echoed as written");
         insert_item(&mut session, prop::MAC_REPEATER_REGIONS, b"Rogue Valley");
         assert_eq!(region_names(&session), ["SJC", "Rogue Valley"]);
-        assert_eq!(region_codes(&session), [[0x78, 0x53], [0xDF, 0x6F]]);
+        assert_eq!(region_codes(&session), [[0x78, 0x53], [0xC0, 0xF9]]);
         assert_eq!(
             get(&mut session, prop::MAC_REPEATER_REGIONS),
             region_table(&["SJC", "Rogue Valley"])
@@ -7196,6 +7209,48 @@ mod tests {
         }
         let (emitted, _) = insert_item(&mut session, prop::MAC_REPEATER_REGIONS, b"One too many");
         expect_status(&emitted[0], 5, Status::NOMEM);
+    }
+
+    /// A region is one region however it was capitalized. Holding two
+    /// spellings of it would spend two of eight slots on entries that
+    /// filter identically and read alike, so a new spelling replaces the
+    /// held one instead.
+    #[test]
+    fn repeater_regions_hold_one_entry_per_region_whatever_its_case() {
+        let mut session = test_session();
+
+        insert_item(&mut session, prop::MAC_REPEATER_REGIONS, b"MFD");
+        let (emitted, _) = insert_item(&mut session, prop::MAC_REPEATER_REGIONS, b"mfd");
+        let (_, digest) = parse_table_notice(&emitted[0], Cmd::PropInserted, 5);
+        assert_eq!(digest, b"mfd", "the respelling is what the host is told");
+        assert_eq!(region_names(&session), ["mfd"]);
+        assert_eq!(
+            region_codes(&session),
+            [[0x52, 0x34]],
+            "the code never moved: it derives from the folded string"
+        );
+
+        // The same string twice is still the idempotent case.
+        let (emitted, _) = insert_item(&mut session, prop::MAC_REPEATER_REGIONS, b"mfd");
+        expect_status(&emitted[0], 5, Status::ALREADY);
+
+        // Names fold too, and removal selects a region rather than a
+        // spelling of one.
+        insert_item(&mut session, prop::MAC_REPEATER_REGIONS, b"Rogue Valley");
+        insert_item(&mut session, prop::MAC_REPEATER_REGIONS, b"ROGUE VALLEY");
+        assert_eq!(region_names(&session), ["mfd", "ROGUE VALLEY"]);
+        remove_item(&mut session, prop::MAC_REPEATER_REGIONS, b"rogue valley");
+        assert_eq!(region_names(&session), ["mfd"]);
+
+        // A whole-table write collapses the same way, keeping the last
+        // spelling it carried.
+        set(
+            &mut session,
+            prop::MAC_REPEATER_REGIONS,
+            &region_table(&["SJC", "sjc", "Sjc"]),
+        );
+        assert_eq!(region_names(&session), ["Sjc"]);
+        assert_eq!(region_codes(&session), [[0x78, 0x53]]);
     }
 
     #[test]

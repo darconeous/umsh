@@ -85,6 +85,15 @@ check("ARNCE 0x0000 = ''",   options.decode_arnce(from_hex("0000")), "")
 -- Single letter A: c0=1, val = 1*1600+0*40+0 = 1600 = 0x0640
 check("ARNCE 0x0640 = A",    options.decode_arnce(from_hex("0640")), "A")
 
+-- Two-letter short codes pad with NUL, which terminates the reading:
+-- "US" = 21*1600 + 19*40 = 0x8638, "WA" = 23*1600 + 1*40 = 0x8FE8.
+check("ARNCE 0x8638 = US",   options.decode_arnce(from_hex("8638")), "US")
+check("ARNCE 0x8FE8 = WA",   options.decode_arnce(from_hex("8FE8")), "WA")
+
+-- A short code may bear digits; it simply has no reading the dissector will
+-- show. "W7" = 23*1600 + 34*40 = 0x9510, digits starting at index 27.
+check("ARNCE 0x9510 = W7",   options.decode_arnce(from_hex("9510")), "W7")
+
 -- ─────────────────────────────────────────────────────────────────────────────
 -- Options codec tests
 -- ─────────────────────────────────────────────────────────────────────────────

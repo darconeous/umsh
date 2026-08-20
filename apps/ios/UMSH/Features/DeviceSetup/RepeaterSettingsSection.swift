@@ -3,10 +3,11 @@ import UMSHMobileCore
 
 /// Presentation for a 2-byte routing-domain region code.
 ///
-/// A code that decodes to three letters came from an airport code and is
-/// shown as such; anything else has no recoverable text form and is shown
-/// as its raw hex. Both forms carry the hex, because the hex is what the
-/// operator will see in a packet capture or on another node.
+/// A code that decodes to letters came from a short code — an airport, a
+/// country, a state — and is shown as such; anything else has no
+/// recoverable text form and is shown as its raw hex. Both forms carry the
+/// hex, because the hex is what the operator will see in a packet capture
+/// or on another node.
 enum RegionCodeText {
     /// `SJC (0x7853)`, or `0xDF6F` for a derived code.
     static func label(_ code: Data) -> String {
@@ -23,16 +24,44 @@ enum RegionCodeText {
     /// `SJC (0x7853)` for a region as the operator wrote it. The code is
     /// what a capture shows, and a hashed name cannot be read back out of
     /// it, so the string alone would leave the two unconnectable.
+    ///
+    /// A short code is shown uppercase whatever case it was typed in,
+    /// which is how airport and country codes are written everywhere else.
+    /// A name is the operator's to capitalize and is shown as written.
     static func label(region: String) -> String {
         guard let code = try? regionCodeFromString(text: region) else { return region }
         let hex = self.hex(code)
-        return region.caseInsensitiveCompare(hex) == .orderedSame ? hex : "\(region) (\(hex))"
+        guard region.caseInsensitiveCompare(hex) != .orderedSame else { return hex }
+        return "\(isShortCode(region) ? region.uppercased() : region) (\(hex))"
+    }
+
+    /// Whether the string is a short code: one to three ASCII letters or
+    /// digits, which encode directly rather than hashing
+    /// (packet-options.md § Region Code Encoding).
+    static func isShortCode(_ region: String) -> Bool {
+        (1...3).contains(region.count)
+            && region.allSatisfy { $0.isASCII && ($0.isLetter || $0.isNumber) }
     }
 
     /// The code a region string derives to, which is what travels on the
     /// air and what the default-region tag is chosen from.
     static func code(of region: String) -> Data? {
         try? regionCodeFromString(text: region)
+    }
+
+    /// The form a region's code derives from: ASCII `A`–`Z` folded to
+    /// lowercase, every other character left alone. Folding no further
+    /// than the derivation does is what keeps this screen's idea of "the
+    /// same region" identical to the device's.
+    static func folded(_ region: String) -> String {
+        String(region.map { $0.isASCII ? Character($0.lowercased()) : $0 })
+    }
+
+    /// Where `region` sits in `regions`, comparing as the derivation does:
+    /// two spellings that differ only in ASCII case are one region.
+    static func index(of region: String, in regions: [String]) -> Int? {
+        let target = folded(region)
+        return regions.firstIndex { folded($0) == target }
     }
 }
 
@@ -78,7 +107,7 @@ struct RepeaterSettingsSection: View {
                     }
                 }
                 HStack {
-                    TextField("Airport code, name, or 0x1234", text: $regionInput)
+                    TextField("Short code, name, or 0x1234", text: $regionInput)
                         .textInputAutocapitalization(.never)
                         .autocorrectionDisabled()
                         .onSubmit { addRegion() }
@@ -91,7 +120,7 @@ struct RepeaterSettingsSection: View {
                 if let regionProblem {
                     Text(regionProblem).foregroundStyle(.red)
                 } else if regions.isEmpty {
-                    Text("With no regions listed, this device forwards traffic from every region. Add regions to relay only for a named area — a three-letter airport code such as SJC, a region name your mesh has agreed on, or a raw code. This is a routing domain, not a radio band.")
+                    Text("With no regions listed, this device forwards traffic from every region. Add regions to relay only for a named area — a short code such as SJC or WA, a region name your mesh has agreed on, or a raw code. This is a routing domain, not a radio band.")
                 } else {
                     Text("Only floods tagged with one of these regions, or carrying no region at all, are relayed. This is a routing domain, not a radio band.")
                 }
@@ -172,16 +201,22 @@ struct RepeaterSettingsSection: View {
     private func addRegion() {
         let text = regionInput.trimmingCharacters(in: .whitespaces)
         guard !text.isEmpty else { return }
-        // Any string within the length bound is a region — an airport
-        // code, a name, or a literal code — so the only rejection left is
-        // one the device would refuse to store.
+        // Any string within the length bound is a region — a short code, a
+        // name, or a literal code — so the only rejection left is one the
+        // device would refuse to store.
         guard RegionCodeText.code(of: text) != nil else {
-            regionProblem = "That region name is too long. Use up to 24 characters — a three-letter airport code, a region name, or 0x followed by four hex digits."
+            regionProblem = "That region name is too long. Use up to 24 characters — a short code like SJC or WA, a region name, or 0x followed by four hex digits."
             return
         }
         regionProblem = nil
         regionInput = ""
-        guard !regions.contains(text) else { return }
-        regions.append(text)
+        // A region already listed is not added twice. A different
+        // capitalization of one is the same region — it derives the same
+        // code — so it respells the entry rather than joining it.
+        if let index = RegionCodeText.index(of: text, in: regions) {
+            regions[index] = text
+        } else {
+            regions.append(text)
+        }
     }
 }

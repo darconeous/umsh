@@ -264,7 +264,7 @@ struct ChannelDetailView: View {
         var regionCode: Data?
         if !trimmedRegion.isEmpty {
             guard let parsed = await actions.parseRegion?(trimmedRegion) else {
-                regionProblem = "That is not a region. Use an airport code, a name your mesh has agreed on, or a raw 0xXXXX code."
+                regionProblem = "That is not a region. Use a short code like SJC or WA, a name your mesh has agreed on, or a raw 0xXXXX code."
                 return
             }
             regionCode = parsed

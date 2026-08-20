@@ -840,10 +840,13 @@ Repeater settings appear only for a device that can forward:
 A routing region is a routing domain, not an RF band plan, and the interface
 must never present the two as one choice: a region scopes how far a flood
 travels, while frequency and modulation live in the radio profile. Regions are
-entered as a three-letter airport code, a region name the local mesh has agreed
-on, or a raw code, and are always displayed with that
-code—`SJC (0x7853)`—because the code is what appears in a capture or on
-another node. An empty region list forwards traffic from every region, which
+entered as a short code, a region name the local mesh has agreed on, or a raw
+code, and are always displayed with that code—`SJC (0x7853)`—because the code
+is what appears in a capture or on another node. A short code is displayed
+uppercase whatever case it was typed in; a name keeps the capitalization the
+operator gave it. Case is not part of a region's identity, so a region typed
+again in a different capitalization respells the entry it matches rather than
+joining the list twice. An empty region list forwards traffic from every region, which
 is a different statement from forwarding nothing; the interface says which one
 is in effect.
 

@@ -83,7 +83,7 @@ pub struct UlcpRepeaterSettingsRecord {
     /// this is false, but are still read and written.
     pub enabled: bool,
     /// `PROP_MAC_REPEATER_REGIONS`: which region-tagged floods to
-    /// forward, as region strings of 1 to 24 octets — an airport code, a
+    /// forward, as region strings of 1 to 24 octets — a short code, a
     /// name, or a literal `0x1234`. Empty imposes no regional
     /// restriction rather than blocking every flood.
     pub regions: Vec<String>,
@@ -4204,11 +4204,11 @@ pub fn inspect_ulcp_alert(value: Vec<u8>) -> Result<UlcpAlertState, MobileError>
 /// Read a region code from what someone typed, yielding the two wire
 /// octets used everywhere else in the ULCP and mesh surfaces.
 ///
-/// Three ASCII letters are a nearest-airport IATA code, `0xXXXX` is a
-/// literal code, and anything else is a region *name* hashed into a
-/// disjoint part of the code space — so "SJC" and "San Jose" are
-/// deliberately different regions, and no name can ever collide with an
-/// airport.
+/// One to three ASCII letters or digits are a short code — an airport,
+/// a country, a state — `0xXXXX` is a literal code, and anything else is a
+/// region *name* hashed into a part of the code space disjoint from the
+/// all-letter short codes. So "SJC" and "San Jose" are deliberately
+/// different regions, and no name can ever collide with a letter code.
 #[uniffi::export]
 pub fn region_code_from_string(text: String) -> Result<Vec<u8>, MobileError> {
     text.parse::<RegionCode>()
@@ -4216,9 +4216,9 @@ pub fn region_code_from_string(text: String) -> Result<Vec<u8>, MobileError> {
         .map_err(|_| MobileError::InvalidRegionCode)
 }
 
-/// Render a region code for display. Codes derived from an airport come
-/// back as their three letters; everything else as `0xXXXX`, which
-/// [`region_code_from_string`] reads back.
+/// Render a region code for display. Codes derived from an all-letter
+/// short code come back as those letters; everything else as `0xXXXX`,
+/// which [`region_code_from_string`] reads back.
 #[uniffi::export]
 pub fn region_code_description(code: Vec<u8>) -> Result<String, MobileError> {
     let bytes: [u8; items::REGION_CODE_LEN] = code
@@ -5385,13 +5385,23 @@ mod tests {
     fn region_codes_convert_between_text_and_wire_octets() {
         assert_eq!(region_code_from_string("SJC".into()).unwrap(), [0x78, 0x53]);
         assert_eq!(region_code_description(vec![0x78, 0x53]).unwrap(), "SJC");
-        // A name lands outside the airport letter space, so it never
-        // renders as three letters and round-trips through hex.
+        // A two-letter short code is a region in its own right.
+        assert_eq!(region_code_from_string("WA".into()).unwrap(), [0x8F, 0xE8]);
+        assert_eq!(region_code_description(vec![0x8F, 0xE8]).unwrap(), "WA");
+        // A name lands outside the letter space, so it never renders as
+        // letters and round-trips through hex.
         let named = region_code_from_string("Rogue Valley".into()).unwrap();
-        assert_eq!(named, [0xDF, 0x6F]);
+        assert_eq!(named, [0xC0, 0xF9]);
         let described = region_code_description(named.clone()).unwrap();
-        assert_eq!(described, "0xDF6F");
+        assert_eq!(described, "0xC0F9");
         assert_eq!(region_code_from_string(described).unwrap(), named);
+
+        // Case is not part of a region's identity, on either derivation.
+        assert_eq!(region_code_from_string("sjc".into()).unwrap(), [0x78, 0x53]);
+        assert_eq!(
+            region_code_from_string("rogue valley".into()).unwrap(),
+            named
+        );
 
         assert_eq!(
             region_code_from_string("  ".into()),

@@ -200,7 +200,7 @@ struct ChannelActions {
     /// Open this channel's group conversation, creating it the first time.
     /// Joining a channel does not start a chat; this is what does.
     var enterConversation: ((ChannelSummary) async -> Void)? = nil
-    /// Read a routing region written as an airport code, an agreed name, or a
+    /// Read a routing region written as a short code, an agreed name, or a
     /// raw code. Returns nil when the text names no region.
     var parseRegion: ((String) async -> Data?)? = nil
     /// Render a region code the way it is written and the way it appears in a

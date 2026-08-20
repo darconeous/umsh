@@ -8167,7 +8167,7 @@ public struct UlcpRepeaterSettingsRecord: Equatable, Hashable {
     public var enabled: Bool
     /**
      * `PROP_MAC_REPEATER_REGIONS`: which region-tagged floods to
-     * forward, as region strings of 1 to 24 octets — an airport code, a
+     * forward, as region strings of 1 to 24 octets — a short code, a
      * name, or a literal `0x1234`. Empty imposes no regional
      * restriction rather than blocking every flood.
      */
@@ -8195,7 +8195,7 @@ public struct UlcpRepeaterSettingsRecord: Equatable, Hashable {
          */enabled: Bool,
         /**
          * `PROP_MAC_REPEATER_REGIONS`: which region-tagged floods to
-         * forward, as region strings of 1 to 24 octets — an airport code, a
+         * forward, as region strings of 1 to 24 octets — a short code, a
          * name, or a literal `0x1234`. Empty imposes no regional
          * restriction rather than blocking every flood.
          */regions: [String],
@@ -12878,9 +12878,9 @@ public func inspectUlcpSync(responses: [UlcpPropertyFrameRecord])throws  -> Ulcp
 })
 }
 /**
- * Render a region code for display. Codes derived from an airport come
- * back as their three letters; everything else as `0xXXXX`, which
- * [`region_code_from_string`] reads back.
+ * Render a region code for display. Codes derived from an all-letter
+ * short code come back as those letters; everything else as `0xXXXX`,
+ * which [`region_code_from_string`] reads back.
  */
 public func regionCodeDescription(code: Data)throws  -> String  {
     return try  FfiConverterString.lift(try rustCallWithError(FfiConverterTypeMobileError_lift) {
@@ -12894,11 +12894,11 @@ public func regionCodeDescription(code: Data)throws  -> String  {
  * Read a region code from what someone typed, yielding the two wire
  * octets used everywhere else in the ULCP and mesh surfaces.
  *
- * Three ASCII letters are a nearest-airport IATA code, `0xXXXX` is a
- * literal code, and anything else is a region *name* hashed into a
- * disjoint part of the code space — so "SJC" and "San Jose" are
- * deliberately different regions, and no name can ever collide with an
- * airport.
+ * One to three ASCII letters or digits are a short code — an airport,
+ * a country, a state — `0xXXXX` is a literal code, and anything else is a
+ * region *name* hashed into a part of the code space disjoint from the
+ * all-letter short codes. So "SJC" and "San Jose" are deliberately
+ * different regions, and no name can ever collide with a letter code.
  */
 public func regionCodeFromString(text: String)throws  -> Data  {
     return try  FfiConverterData.lift(try rustCallWithError(FfiConverterTypeMobileError_lift) {
@@ -13269,10 +13269,10 @@ private let initializationResult: InitializationResult = {
     if (uniffi_umsh_mobile_core_checksum_func_inspect_ulcp_sync() != 54563) {
         return InitializationResult.apiChecksumMismatch
     }
-    if (uniffi_umsh_mobile_core_checksum_func_region_code_description() != 17603) {
+    if (uniffi_umsh_mobile_core_checksum_func_region_code_description() != 11282) {
         return InitializationResult.apiChecksumMismatch
     }
-    if (uniffi_umsh_mobile_core_checksum_func_region_code_from_string() != 15378) {
+    if (uniffi_umsh_mobile_core_checksum_func_region_code_from_string() != 49569) {
         return InitializationResult.apiChecksumMismatch
     }
     if (uniffi_umsh_mobile_core_checksum_func_ulcp_card_properties() != 10189) {

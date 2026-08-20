@@ -151,61 +151,82 @@ A hop that measured neither field—one whose radio reports no signal quality, o
 
 #### Region Code Encoding
 
-Region codes are 2-byte identifiers derived by one of two methods, depending on the type of region:
+Region codes are 2-byte identifiers derived by one of two methods, depending on the type of region. Both ignore ASCII case—ARNCE/HAM-16 encodes `A`–`Z` and `a`–`z` alike, and the hash folds `A`–`Z` to lowercase `a`–`z` before it is taken, altering no other character. Strings that differ only in ASCII case therefore derive the same code and name the same region.
 
-**IATA-based regions.** For regions defined by proximity to an airport or a metro area with its own IATA code, encode the 3-letter IATA code into a 16-bit value using ARNCE/HAM-16. Examples:
+> As with [channel names](multicast-channels.md#named-channels), folding is restricted to ASCII: correct case-folding of the full Unicode range is locale-dependent, and a name that folded under one implementation and not another would be two regions on one mesh.
 
-| IATA Code | Region Code |
+**Short codes.** A region named by one to three ASCII letters or digits encodes directly into a 16-bit value with ARNCE/HAM-16, the unused trailing characters left as `NUL`. Three letters are conventionally the IATA code of the nearest airport or of a metro area that has one; two are conventionally an [ISO 3166-1 alpha-2](https://www.iso.org/iso-3166-country-codes.html) country code or a bare subdivision code, for a region that spans one. Examples:
+
+| Short Code | Region Code |
 |---|---|
 | SJC | `0x7853` |
 | MFR | `0x5242` |
+| US | `0x8638` |
+| WA | `0x8FE8` |
 
-**Named regions.** For regions that are not associated with a single airport (super-regions, cities without a nearby airport, geographic areas, etc.), the region code is the first two bytes of the SHA-256 hash of the region name (UTF-8 encoded), EXCEPT when performing ARNCE/HAM-16 decoding
-on the resulting value would yield three letters. In that case, you
+An all-letter short code is *exclusive*: the transform below vacates every one of them, so no named region can ever derive one. A short code bearing a digit—`W7`, `5X2`—encodes just as faithfully and no two short codes ever share a code, but it is not vacated, so it shares its space with the hashes. Such a code is worth using when a mnemonic is wanted in place of a hash, and it is nothing more than that: an implementation MUST NOT display a region code as a digit-bearing short code, because the code it is reading may equally have come from a name.
+
+`/`, `-`, and `^`, though ARNCE spells them, MUST NOT appear in a short code. The transformed codes are led by `/` and `-`, and a short code able to reach that space would read back as a region it is not.
+
+**Named regions.** For regions that a short code does not suit (super-regions, cities without a nearby airport, geographic areas, etc.), the region code is the first two bytes of the SHA-256 hash of the folded region name (UTF-8 encoded), EXCEPT when performing ARNCE/HAM-16 decoding
+on the resulting value would yield nothing but letters—one, two, or three of them. In that case, you
 additionally perform the following transform:
 
 ```python
 def transform_letter_chunk(encoded: int) -> int:
-    """Transform a three-letter ARNCE chunk into a non-letter ARNCE chunk."""
+    """Transform an all-letter ARNCE chunk into a non-letter ARNCE chunk."""
 
     LETTER_MIN = 1
     LETTER_MAX = 26
 
-    TRANSFORM_BASE = 27 * 1600       # 0xA8C0
-    TRANSFORM_COUNT = 26 ** 3        # 17,576
+    TRANSFORM_BASE = 27 * 1600                    # 0xA8C0
+    TWO_LETTER_BASE = TRANSFORM_BASE + 26 ** 3    # 0xED68
+    ONE_LETTER_BASE = TWO_LETTER_BASE + 26 ** 2   # 0xF00C
 
     a = encoded // 1600
     b = (encoded // 40) % 40
     c = encoded % 40
 
-    if not all(LETTER_MIN <= x <= LETTER_MAX for x in (a, b, c)):
+    def is_letter(x: int) -> bool:
+        return LETTER_MIN <= x <= LETTER_MAX
+
+    if not is_letter(a):
         return encoded
 
-    rank = (a - 1) * 26 * 26 + (b - 1) * 26 + (c - 1)
-    return TRANSFORM_BASE + rank
+    if is_letter(b) and is_letter(c):
+        return TRANSFORM_BASE + (a - 1) * 26 * 26 + (b - 1) * 26 + (c - 1)
+    if is_letter(b) and c == 0:
+        return TWO_LETTER_BASE + (a - 1) * 26 + (b - 1)
+    if b == 0 and c == 0:
+        return ONE_LETTER_BASE + (a - 1)
+    return encoded
 ```
 
-Examples:
+The three lengths occupy three consecutive blocks, longest first, and together vacate 18,278 of the 64,000 encodable chunks. The highest code the transform yields is `0xF025`; every one of them decodes to a string led by `/` or `-`, and so to nothing that reads as a region.
 
-| Region Name | SHA-256 prefix | Region Code |
-|---|---|---|
-| Rogue Valley | `0xdf6f...` | `0xdf6f` |
-| SF Bay Area | `0x31d9...` | `0x31d9` |
-| Southern Oregon | `0x6af2...` | `0xD35F` |
+Examples, with the folded name each hash is taken over:
 
-Note that the first two bytes of the SHA256 of "Southern Oregon" is 0x6AF2, which would decode to `QDR`, so it is transformed to 0xD35F (which would decode as 654).
+| Region Name | Folded | SHA-256 prefix | Region Code |
+|---|---|---|---|
+| Willamette Valley | `willamette valley` | `0xb02d...` | `0xB02D` |
+| East Bay | `east bay` | `0x36e2...` | `0x36E2` |
+| Rogue Valley | `rogue valley` | `0x3f56...` | `0xC0F9` |
+| Wasatch Front | `wasatch front` | `0x5fa0...` | `0xEEDF` |
 
-Thus, non-IATA-based region codes will never collide with IATA-based
-region codes. This allows all region codes which decode to three letters to be assumed to be an IATA region code and can be used/displayed unambiguously without additional context.
+Note that the first two bytes of the SHA256 of "rogue valley" is 0x3F56, which would decode to `JEN`, so it is transformed to 0xC0F9, which decodes to no letters. "wasatch front" hashes to 0x5FA0, which would decode to the two letters `OL`, and is transformed to 0xEEDF for the same reason.
 
-However, collisions can still happen between hash-originated region codes.
+Thus, a hash-derived region code will never collide with an all-letter short code. This allows all region codes which decode to nothing but letters to be assumed to be short codes and to be used/displayed unambiguously without additional context.
+
+However, collisions can still happen between hash-originated region codes, and between one of those and a digit-bearing short code.
 These collisions are rarely of practical concern. If a region code in one part of the world collides with a region code in a different part of the world, there is no actual ambiguity because flood repeating is an inherently local event. In the rare case of a collision within a geographic area, it can be resolved by adjusting the named region slightly (for example, making it more specific).
 
-The assignment and scope of non-IATA-based region codes—and resolution of any collisions—are generally handled locally.
+The assignment and scope of hash-derived region codes—and resolution of any collisions—are generally handled locally.
 
-**Literal codes.** In any context that takes a region's string form, a string of `0x` followed by four hexadecimal digits (e.g. `0x31d9`) denotes the two-byte code it spells. Strings of this shape are by definition excluded from the hash derivation—there is no named region `0x31d9`, only the code. This is also the display form for a code that decodes to no three-letter IATA code and whose name is unknown, so a region list read off the air can be fed back in unchanged.
+**Literal codes.** In any context that takes a region's string form, a string of `0x` followed by four hexadecimal digits (e.g. `0x31d9`) denotes the two-byte code it spells. Strings of this shape are by definition excluded from the other two derivations—there is no named region `0x31d9`, only the code. This is also the display form for a code that reads as no short code and whose name is unknown, so a region list read off the air can be fed back in unchanged. Note that a string of one to three characters is a short code before it is anything else: `0x1` encodes as the three characters `0`, `x`, `1`, and only `0x` followed by four hexadecimal digits is a literal.
 
 A region name MUST NOT exceed 24 bytes of UTF-8. Names travel on the wire in [identity payloads](node-identity.md#supported-regions-option-4), and the bound is what lets a list of them fit there.
+
+**Capitalization.** Folding applies to derivation and comparison, not to storage: wherever a region is held or carried in its string form—a repeater's configured list, the Supported Regions identity option—it keeps the capitalization it was written with. A set of regions holds at most one entry per folded string; writing a region already present in a different capitalization respells the entry rather than adding a second one. A short code is displayed uppercase whatever case it was written in.
 
 ## Routing Option Layouts
 

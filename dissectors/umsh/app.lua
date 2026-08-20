@@ -391,13 +391,13 @@ local function minimal_uint(val)
   return v
 end
 
--- The reading of a 2-byte region code: an IATA airport code where one
+-- The reading of a 2-byte region code: an all-letter short code where one
 -- decodes, hex otherwise. Mirrors the packet-option rendering in umsh.lua.
 local function region_code_label(opts_module, code)
   if opts_module and opts_module.decode_arnce then
-    local iata
-    pcall(function() iata = opts_module.decode_arnce(code) end)
-    if iata and iata:match("^%u%u%u$") then return iata end
+    local short
+    pcall(function() short = opts_module.decode_arnce(code) end)
+    if short and short:match("^%u%u?%u?$") then return short end
   end
   return "0x" .. base58.hex_bytes(code)
 end

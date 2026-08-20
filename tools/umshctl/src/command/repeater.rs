@@ -47,7 +47,7 @@ pub enum RepeaterOp {
     },
 }
 
-/// A region is written as an airport code, a name, or a literal
+/// A region is written as a short code, a name, or a literal
 /// `0x1234`; the device stores the string and derives the 2-octet code
 /// its forwarding filter compares.
 #[derive(Debug, clap::Subcommand)]
@@ -187,13 +187,20 @@ fn region_codes(regions: &[String]) -> Vec<RegionCode> {
 /// Render one region as the operator wrote it, with the code the
 /// forwarding filter actually compares — a hashed name is otherwise
 /// unrecognizable in a packet capture.
+///
+/// A short code is shown uppercase whatever case it was written in, which
+/// is how airport and country codes are written everywhere else. A name is
+/// the operator's to capitalize and is left alone.
 pub fn format_region(region: &str) -> String {
     let Ok(code) = region.parse::<RegionCode>() else {
         return region.to_string();
     };
     let hex = format!("0x{:04X}", code.as_u16());
-    match region.eq_ignore_ascii_case(&hex) {
-        true => hex,
+    if region.eq_ignore_ascii_case(&hex) {
+        return hex;
+    }
+    match RegionCode::from_short_code(region).is_ok() {
+        true => format!("{} ({hex})", region.to_uppercase()),
         false => format!("{region} ({hex})"),
     }
 }
@@ -223,8 +230,24 @@ mod tests {
     #[test]
     fn a_region_prints_the_code_its_string_derives_to() {
         assert_eq!(format_region("SJC"), "SJC (0x7853)");
-        assert_eq!(format_region("Rogue Valley"), "Rogue Valley (0xDF6F)");
+        assert_eq!(format_region("Rogue Valley"), "Rogue Valley (0xC0F9)");
         // A literal already is its code; quoting it twice says nothing.
         assert_eq!(format_region("0x1234"), "0x1234");
+    }
+
+    #[test]
+    fn a_short_code_prints_uppercase_however_it_was_written() {
+        assert_eq!(format_region("sjc"), "SJC (0x7853)");
+        assert_eq!(format_region("Sjc"), "SJC (0x7853)");
+        assert_eq!(format_region("wa"), "WA (0x8FE8)");
+        // A digit-bearing short code has no reading, but it is still a
+        // code and is written like one.
+        assert_eq!(format_region("w7"), format!("W7 (0x{:04X})", short("w7")));
+        // A name keeps the operator's capitalization.
+        assert_eq!(format_region("rogue valley"), "rogue valley (0xC0F9)");
+    }
+
+    fn short(code: &str) -> u16 {
+        RegionCode::from_short_code(code).unwrap().as_u16()
     }
 }

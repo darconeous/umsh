@@ -713,6 +713,7 @@ struct RemoteRepeaterEditor: View {
     let model: ManageDeviceModel
     @State private var edits = Edits()
     @State private var newRegion = ""
+    @State private var regionProblem: String?
 
     private var reading: RemoteCategoryReading? { model.readings[.repeater] }
     private var problems: [UInt32: String] { model.writeRefusals[.repeater] ?? [:] }
@@ -738,7 +739,8 @@ struct RemoteRepeaterEditor: View {
 
             Section {
                 ForEach(edits.regions.edited ?? [], id: \.self) { region in
-                    Text(region)
+                    Text(RegionCodeText.label(region: region))
+                        .font(.body.monospaced())
                 }
                 .onDelete { offsets in
                     var regions = edits.regions.edited ?? []
@@ -747,19 +749,12 @@ struct RemoteRepeaterEditor: View {
                 }
                 if edits.regions.isKnown {
                     HStack {
-                        TextField("Add a region", text: $newRegion)
+                        TextField("Airport code, name, or 0x1234", text: $newRegion)
                             .autocorrectionDisabled()
-                            .textInputAutocapitalization(.characters)
-                        Button("Add") {
-                            var regions = edits.regions.edited ?? []
-                            regions.append(newRegion)
-                            edits.regions.edited = regions
-                            newRegion = ""
-                        }
-                        .disabled(
-                            newRegion.isEmpty
-                                || (edits.regions.edited ?? []).contains(newRegion)
-                        )
+                            .textInputAutocapitalization(.never)
+                            .onSubmit { addRegion() }
+                        Button("Add", action: addRegion)
+                            .disabled(newRegion.trimmingCharacters(in: .whitespaces).isEmpty)
                     }
                 } else {
                     LabeledContent("Regions", value: "Not read")
@@ -770,6 +765,9 @@ struct RemoteRepeaterEditor: View {
                 VStack(alignment: .leading, spacing: 4) {
                     if let problem = problems[edits.regions.property] {
                         Text(problem).foregroundStyle(.red)
+                    }
+                    if let regionProblem {
+                        Text(regionProblem).foregroundStyle(.red)
                     }
                     // An empty list meaning "everything" is the one thing
                     // here nobody would guess.
@@ -792,7 +790,7 @@ struct RemoteRepeaterEditor: View {
                     // nothing to show for what the device actually holds.
                     ForEach(edits.taggableRegions, id: \.self) { region in
                         if let code = try? regionCodeFromString(text: region) {
-                            Text(region).tag(Data?.some(code))
+                            Text(RegionCodeText.label(region: region)).tag(Data?.some(code))
                         }
                     }
                 }
@@ -831,6 +829,29 @@ struct RemoteRepeaterEditor: View {
         )
         .onChange(of: reading?.asOf) { edits = Edits(reading) }
         .onAppear { if edits.isEmpty { edits = Edits(reading) } }
+    }
+
+    /// Add the typed region, or respell one the list already holds.
+    ///
+    /// The device keeps one entry per region however it is capitalized, so
+    /// the list follows the same rule rather than sending a write the
+    /// device would collapse under us.
+    private func addRegion() {
+        let text = newRegion.trimmingCharacters(in: .whitespaces)
+        guard !text.isEmpty else { return }
+        guard RegionCodeText.code(of: text) != nil else {
+            regionProblem = "That region name is too long. Use up to 24 characters — a short code like SJC or WA, a region name, or 0x followed by four hex digits."
+            return
+        }
+        regionProblem = nil
+        newRegion = ""
+        var regions = edits.regions.edited ?? []
+        if let index = RegionCodeText.index(of: text, in: regions) {
+            regions[index] = text
+        } else {
+            regions.append(text)
+        }
+        edits.regions.edited = regions
     }
 
     private func apply() async {

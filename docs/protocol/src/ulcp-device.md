@@ -495,7 +495,7 @@ pole-mounted sensor are both ordinary configurations.
 * Post-Reset Value: Empty, or restored from saved state
 
 The set of regions the device flood-forwards for, each held in its string
-form—the three-letter IATA code for an IATA-based region, the region name
+form—the short code for a region that has one, the region name
 otherwise—the same form the
 [Supported Regions](node-identity.md#supported-regions-option-4) identity
 option carries. From each string the device derives the 2-octet
@@ -509,6 +509,13 @@ a tagged packet is forwarded whatever its region.
 A device **MUST** reject an item that is empty or longer than 24 octets
 with `STATUS_INVALID_ARGUMENT`, and **MAY** reject a write that exceeds
 the number of entries it can hold.
+
+Items compare without ASCII case, as their codes derive, so the set holds
+at most one entry per region. An insert whose item differs from a held
+one only in case respells that entry in place and reports the item as
+inserted; an item identical to a held one reports `STATUS_ALREADY`. The
+remove selector matches the same way, and a whole-value write keeps the
+last spelling it carried. Stored items keep the capitalization written.
 
 A device with forwarding enabled and a non-empty set **SHOULD** advertise
 the same strings in its node identity, subject to that option's count and

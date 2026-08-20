@@ -221,7 +221,7 @@ impl FromStr for DutyLimitArg {
     }
 }
 
-/// Parse one region string — an airport code, a name, or a `0x` literal.
+/// Parse one region string — a short code, a name, or a `0x` literal.
 /// The string is what the device stores; deriving it here only proves it
 /// is within the bounds a device will accept, which rejects the empty
 /// element a stray comma leaves behind and anything past 24 octets.

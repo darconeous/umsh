@@ -158,11 +158,11 @@ protocol MeshEngine: Actor {
         maxFloodHops: UInt8?,
         regionCode: Data?
     ) throws -> String
-    /// Read a routing region written as a three-letter airport code, an agreed
-    /// name, or a raw `0xXXXX` code.
+    /// Read a routing region written as a short code, an agreed name, or a
+    /// raw `0xXXXX` code.
     func regionCode(from text: String) throws -> Data
     /// Render a region code the way it is entered and the way it appears in a
-    /// capture: its letters when it came from an airport code, `0xXXXX`
-    /// otherwise.
+    /// capture: its letters when it came from an all-letter short code,
+    /// `0xXXXX` otherwise.
     func regionDescription(_ code: Data) throws -> String
 }
