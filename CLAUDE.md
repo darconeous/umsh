@@ -74,3 +74,4 @@ schema, and the hardware checklist: `docs/firmware-releases.md`.
 - **Don't take credit for stuff you aren't sure you wrote**: Unless you are absolutely certain the changes are yours, DO NOT add a "LLM: ..." line in the git commit log.
 - **Use tools to make edits instead of writing inline python scripts**: Unless it is for an unusually large edit, prefer using the normal file editing tools instead of writing in-line python scripts.
 - **Avoid quick, non-ideomatic fixes that don't address real underlying problems**: If you are trying to fix a bug that was reported by the user, once you have identified the root cause think carefully about if there is an underlying structural issue that should be addressed rather than just directly addressing the symptom.
+- **Do not blindly run the full test suite**: The full test suite takes too long. Only run the tests relevant to what you have changed. Leave it to CI to run the full test suite.
