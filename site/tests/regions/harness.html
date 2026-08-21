@@ -1,0 +1,37 @@
+<!doctype html>
+<!--
+  A bare host page for the region viewer, carrying the same element ids the
+  Zola template does. It exists so the viewer can be driven headlessly
+  without a Zola build, and so a change to main.mjs that breaks page startup
+  fails a test rather than a deploy. Keep the ids here in step with
+  site/templates/regions-map.html.
+-->
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <title>Region map harness</title>
+    <link rel="stylesheet" href="/regions/map/vendor/maplibre-gl/maplibre-gl.css" />
+    <link rel="stylesheet" href="/regions/map/map.css" />
+    <script type="module" src="/regions/map/main.mjs"></script>
+  </head>
+  <body>
+    <div class="region-viewer">
+      <div class="region-map-pane">
+        <div id="map" class="region-map" style="height: 400px"></div>
+        <p id="map-status" class="map-status" hidden></p>
+      </div>
+      <aside class="region-side">
+        <form id="coordinate-form">
+          <label>Latitude <input name="lat" /></label>
+          <label>Longitude <input name="lon" /></label>
+          <button type="submit">Look up</button>
+        </form>
+        <div><input id="region-search" type="search" /><ul id="search-results" hidden></ul></div>
+        <div id="layer-toggles"></div>
+        <div id="lookup-result" hidden></div>
+        <div id="database-meta"></div>
+        <div><input id="database-file" type="file" /></div>
+      </aside>
+    </div>
+  </body>
+</html>

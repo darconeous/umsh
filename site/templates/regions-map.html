@@ -1,0 +1,79 @@
+{% extends "base.html" %}
+
+{% block title %}{{ page.title }} — UMSH{% endblock title %}
+{% block description %}{{ page.description }}{% endblock description %}
+{% block og_title %}{{ page.title }} — UMSH{% endblock og_title %}
+{% block og_description %}{{ page.description }}{% endblock og_description %}
+
+{# The map needs more than the flasher's policy and gets its own rather than
+   loosening the site's. `wasm-unsafe-eval` is what instantiating WebAssembly
+   costs; it does not permit eval of JavaScript. MapLibre starts its worker
+   from a blob and draws into canvases backed by blob URLs. Nothing reaches
+   another origin: the basemap, the database, and the WASM payload are all
+   served from here, so opening the map tells no one where you are looking.
+   See static/regions/map/vendor/VENDOR.md. #}
+{% block head_extra %}
+  <meta http-equiv="Content-Security-Policy"
+    content="default-src 'self'; script-src 'self' 'wasm-unsafe-eval'; worker-src 'self' blob:; child-src 'self' blob:; connect-src 'self'; img-src 'self' data: blob:; style-src 'self' 'unsafe-inline'; object-src 'none'; base-uri 'none'; form-action 'none'" />
+  <link rel="stylesheet" href="{{ get_url(path='regions/map/vendor/maplibre-gl/maplibre-gl.css', trailing_slash=false) }}" />
+  <link rel="stylesheet" href="{{ get_url(path='regions/map/map.css', trailing_slash=false) }}" />
+  <script type="module" src="{{ get_url(path='regions/map/main.mjs', trailing_slash=false) }}"></script>
+{% endblock head_extra %}
+
+{% block content %}
+  <div class="page-head page-head--center">
+    <div class="container">
+      <h1>{{ page.title }}</h1>
+      <p>{{ page.description }}</p>
+    </div>
+  </div>
+
+  <section class="section">
+    <div class="container">
+      <noscript>
+        <div class="notice">
+          <p>The map needs JavaScript. The region database itself is an
+          ordinary SQLite file and can be inspected with any SQLite client, or
+          with <code>regiondb-build lookup</code> from the repository.</p>
+        </div>
+      </noscript>
+
+      <div class="region-viewer">
+        <div class="region-map-pane">
+          <div id="map" class="region-map"></div>
+          <p id="map-status" class="map-status" hidden></p>
+        </div>
+
+        <aside class="region-side">
+          <form id="coordinate-form" class="coordinate-form">
+            <label>Latitude <input name="lat" inputmode="decimal" placeholder="37.5119" /></label>
+            <label>Longitude <input name="lon" inputmode="decimal" placeholder="-122.2495" /></label>
+            <button type="submit">Look up</button>
+          </form>
+
+          <div class="region-search">
+            <label for="region-search">Find a region</label>
+            <input id="region-search" type="search" placeholder="SFO, country:US, Rogue Valley" />
+            <ul id="search-results" class="search-results" hidden></ul>
+          </div>
+
+          <div id="layer-toggles" class="layer-toggles"></div>
+
+          <div id="lookup-result" class="lookup-result" hidden></div>
+          <div id="database-meta" class="database-meta"></div>
+
+          <div class="database-picker">
+            <label for="database-file">Open a local <code>.regiondb</code></label>
+            <input id="database-file" type="file" accept=".regiondb,.sqlite,.db" />
+          </div>
+        </aside>
+      </div>
+    </div>
+  </section>
+
+  <section class="section">
+    <div class="container prose">
+      {{ page.content | safe }}
+    </div>
+  </section>
+{% endblock content %}
