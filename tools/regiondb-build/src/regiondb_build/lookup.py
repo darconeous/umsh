@@ -89,8 +89,7 @@ class RegionDb:
         self.format_version = version
         self.metadata = dict(self._connection.execute("SELECT key, value FROM metadata"))
         self._has_lookup_ranges = (
-            self._connection.execute("SELECT 1 FROM lookup_ranges LIMIT 1").fetchone()
-            is not None
+            self._connection.execute("SELECT 1 FROM lookup_ranges LIMIT 1").fetchone() is not None
         )
         self._has_core_parts = {
             row[0]
@@ -202,7 +201,7 @@ class RegionDb:
         lon = blob.from_e6(lon_e6)
         lat = blob.from_e6(lat_e6)
         members: set[int] = set()
-        for (region_id, payload) in self._connection.execute(
+        for region_id, payload in self._connection.execute(
             "SELECT p.region_id, p.geometry FROM effective_rtree r "
             "JOIN geometry_parts p ON p.id = r.part_id "
             "WHERE r.min_lon <= ? AND r.max_lon >= ? AND r.min_lat <= ? AND r.max_lat >= ?",
