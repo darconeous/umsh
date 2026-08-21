@@ -1,1 +1,1 @@
-window.SIDEBAR_ITEMS = {"constant":["DEFAULT_PORT","RADIO_INTERFACE"],"enum":["RadioConfig"],"struct":["ClientConfig","ClientEntry","Config","IdentityConfig","LimitsConfig","ServerConfig","TunnelConfig"]};
+window.SIDEBAR_ITEMS = {"constant":["DEFAULT_HOST_PORT","DEFAULT_PORT","RADIO_INTERFACE"],"enum":["RadioConfig"],"struct":["ClientConfig","ClientEntry","Config","HostEntry","IdentityConfig","LimitsConfig","ServerConfig","TunnelConfig"]};

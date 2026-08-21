@@ -11,7 +11,7 @@ write shows exactly what the device holds.</p>
 </div></details><h2 id="fields" class="fields section-header">Fields<a href="#fields" class="anchor">§</a></h2><span id="structfield.enabled" class="structfield section-header"><a href="#structfield.enabled" class="anchor field">§</a><code>enabled: <a class="primitive" href="https://doc.rust-lang.org/nightly/std/primitive.bool.html">bool</a></code></span><div class="docblock"><p><code>PROP_MAC_REPEATER_ENABLED</code>: whether the on-board node forwards at
 all. The remaining fields are inert while this is false.</p>
 </div><span id="structfield.regions" class="structfield section-header"><a href="#structfield.regions" class="anchor field">§</a><code>regions: <a class="struct" href="https://doc.rust-lang.org/nightly/alloc/vec/struct.Vec.html" title="struct alloc::vec::Vec">Vec</a>&lt;<a class="struct" href="https://doc.rust-lang.org/nightly/alloc/string/struct.String.html" title="struct alloc::string::String">String</a>&gt;</code></span><div class="docblock"><p><code>PROP_MAC_REPEATER_REGIONS</code>: which region-tagged floods to forward,
-as the strings an operator wrote — an airport code, a name, or a
+as the strings an operator wrote — a short code, a name, or a
 literal <code>0x1234</code>. Empty imposes no regional restriction. The
 device derives the 2-octet codes the filter actually compares;
 pass a name through [<code>RegionCode::from_str</code>] to see them.</p>

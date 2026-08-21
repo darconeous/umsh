@@ -1,0 +1,1 @@
+window.SIDEBAR_ITEMS = {"constant":["EARTH_RADIUS_M","FULL_RING_BEARINGS","HALF_RING_BEARINGS"],"fn":["destination","sample_positions"]};

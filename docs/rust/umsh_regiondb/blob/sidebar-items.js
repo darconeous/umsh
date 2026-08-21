@@ -1,0 +1,1 @@
+window.SIDEBAR_ITEMS = {"constant":["COORD_SCALE","GEOMETRY_FORMAT_VERSION","RING_EXTERIOR","RING_HOLE"],"enum":["GeometryError"],"fn":["decode","from_e6","point_in_rings","to_e6"],"struct":["Ring"]};

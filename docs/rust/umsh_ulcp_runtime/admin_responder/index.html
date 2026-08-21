@@ -3,7 +3,7 @@
 receive path taps arriving Node Management Request payloads,
 <a href="fn.admit.html" title="fn umsh_ulcp_runtime::admin_responder::admit"><code>admit</code></a> decides whether the sender is entitled to be heard at all,
 and <a href="fn.responder_loop.html" title="fn umsh_ulcp_runtime::admin_responder::responder_loop"><code>responder_loop</code></a> runs each admitted exchange: the
-<a href="../../umsh_node_mgmt/device/struct.DeviceEngine.html" title="struct umsh_node_mgmt::device::DeviceEngine"><code>DeviceEngine</code></a> reads the envelope, the session — reached through the
+[<code>DeviceEngine</code>] reads the envelope, the session — reached through the
 driver’s event loop, since it belongs to that task — serves the frame
 inside, and the engine wraps the answer and retains it against a
 retransmission.</p>

@@ -1,1 +1,1 @@
-window.SIDEBAR_ITEMS = {"enum":["ReplCommand"],"fn":["banner","connect","possible_values","process_line","run","takes_value"],"struct":["ReplCommandLine","ReplHelper"]};
+window.SIDEBAR_ITEMS = {"constant":["TCP_SCHEME"],"enum":["ReplCommand"],"fn":["banner","connect","named_target","possible_values","process_line","run","takes_value"],"struct":["ReplCommandLine","ReplHelper"]};

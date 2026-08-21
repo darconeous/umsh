@@ -35,7 +35,7 @@
             const path_to_root = "";
             const default_light_theme = "light";
             const default_dark_theme = "ayu";
-            window.path_to_searchindex_js = "searchindex-c81560d3.js";
+            window.path_to_searchindex_js = "searchindex-666b1035.js";
         </script>
         <!-- Start loading toc.js asap -->
         <script src="toc-438957a9.js"></script>
@@ -247,7 +247,7 @@
 <h3 id="unix-timestamp-option-3"><a class="header" href="#unix-timestamp-option-3">Unix Timestamp (option 3)</a></h3>
 <p>Seconds since the Unix epoch indicating when this identity payload was generated. Lets a consumer judge how fresh the identity is — most useful when the identity stands alone (e.g. in a QR code), where a stale capture could otherwise be presented indefinitely. Not used by the MAC layer. Encoded as a minimal big-endian unsigned integer (leading zero bytes omitted). Max length: 4 bytes.</p>
 <h3 id="supported-regions-option-4"><a class="header" href="#supported-regions-option-4">Supported Regions (option 4)</a></h3>
-<p>For repeaters, the regions the node will flood-forward for, one option per region. Each entry carries the region’s string form—the three-letter IATA code for an IATA-based region, the region name otherwise—rather than its two-byte <a href="packet-options.html#region-code-encoding">region code</a>: the code is always derivable from the string, while a hash-derived code cannot be turned back into a name. A sender lists at most 10 regions, and the identity payload must still fit its enclosing packet, so a node whose full list does not fit omits regions; the option names regions the node forwards for without promising to name every one. A node that omits the option entirely makes no claim about its regional forwarding policy. Max length: 24 bytes per entry, the <a href="packet-options.html#region-code-encoding">bound on region names</a>.</p>
+<p>For repeaters, the regions the node will flood-forward for, one option per region. Each entry carries the region’s string form—the short code for a region that has one, the region name otherwise—rather than its two-byte <a href="packet-options.html#region-code-encoding">region code</a>: the code is always derivable from the string, while a hash-derived code cannot be turned back into a name. A sender lists at most 10 regions, and the identity payload must still fit its enclosing packet, so a node whose full list does not fit omits regions; the option names regions the node forwards for without promising to name every one. A node that omits the option entirely makes no claim about its regional forwarding policy. Entries carry the capitalization the region was written with, and a receiver comparing them derives their codes, which ignores ASCII case. Max length: 24 bytes per entry, the <a href="packet-options.html#region-code-encoding">bound on region names</a>.</p>
 <h3 id="nonce-option-5"><a class="header" href="#nonce-option-5">Nonce (option 5)</a></h3>
 <p>Copied verbatim from the <a href="mac-commands.html#identity-request-1">Identity Request</a> that solicited this identity payload, letting the requester correlate the response to its request. Present only in responses whose request carried a NONCE option. Length: 4 bytes.</p>
 <h3 id="variable-precision-location-format"><a class="header" href="#variable-precision-location-format">Variable-Precision Location Format</a></h3>

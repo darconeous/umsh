@@ -1,1 +1,1 @@
-window.SIDEBAR_ITEMS = {"enum":["Direction","Event","Transport"],"fn":["property_specs"],"struct":["Capability","DebuggerEngine","DecodedValue","PacketOptionsSummary","PacketSummary","PropertyChoice","PropertySpec","RxMetadata","SimulatedDevice"]};
+window.SIDEBAR_ITEMS = {"enum":["Direction","Event","Transport"],"fn":["property_specs","web_sim_config"],"struct":["Capability","DebuggerEngine","DecodedValue","PacketOptionsSummary","PacketSummary","PropertyChoice","PropertySpec","RxMetadata","SimulatedDevice"]};

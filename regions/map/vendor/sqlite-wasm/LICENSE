@@ -1,0 +1,10 @@
+SQLite is in the Public Domain.
+
+The SQLite source code, from which this WebAssembly build is produced, is
+dedicated to the public domain by its authors:
+
+    https://sqlite.org/copyright.html
+
+The npm packaging of this build (@sqlite.org/sqlite-wasm) declares Apache-2.0
+in its package metadata. Either way the terms are compatible with UMSH's own
+Apache-2.0 / MIT dual license.

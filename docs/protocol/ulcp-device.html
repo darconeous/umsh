@@ -35,7 +35,7 @@
             const path_to_root = "";
             const default_light_theme = "light";
             const default_dark_theme = "ayu";
-            window.path_to_searchindex_js = "searchindex-c81560d3.js";
+            window.path_to_searchindex_js = "searchindex-666b1035.js";
         </script>
         <!-- Start loading toc.js asap -->
         <script src="toc-438957a9.js"></script>
@@ -636,7 +636,7 @@ pole-mounted sensor are both ordinary configurations.</p>
 <li>Post-Reset Value: Empty, or restored from saved state</li>
 </ul>
 <p>The set of regions the device flood-forwards for, each held in its string
-form—the three-letter IATA code for an IATA-based region, the region name
+form—the short code for a region that has one, the region name
 otherwise—the same form the
 <a href="node-identity.html#supported-regions-option-4">Supported Regions</a> identity
 option carries. From each string the device derives the 2-octet
@@ -649,6 +649,12 @@ a tagged packet is forwarded whatever its region.</p>
 <p>A device <strong>MUST</strong> reject an item that is empty or longer than 24 octets
 with <code>STATUS_INVALID_ARGUMENT</code>, and <strong>MAY</strong> reject a write that exceeds
 the number of entries it can hold.</p>
+<p>Items compare without ASCII case, as their codes derive, so the set holds
+at most one entry per region. An insert whose item differs from a held
+one only in case respells that entry in place and reports the item as
+inserted; an item identical to a held one reports <code>STATUS_ALREADY</code>. The
+remove selector matches the same way, and a whole-value write keeps the
+last spelling it carried. Stored items keep the capitalization written.</p>
 <p>A device with forwarding enabled and a non-empty set <strong>SHOULD</strong> advertise
 the same strings in its node identity, subject to that option’s count and
 packet-fit limits, so that a peer choosing a route can see what a repeater

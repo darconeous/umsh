@@ -35,7 +35,7 @@
             const path_to_root = "";
             const default_light_theme = "light";
             const default_dark_theme = "ayu";
-            window.path_to_searchindex_js = "searchindex-c81560d3.js";
+            window.path_to_searchindex_js = "searchindex-666b1035.js";
         </script>
         <!-- Start loading toc.js asap -->
         <script src="toc-438957a9.js"></script>
@@ -191,6 +191,8 @@ flow control. The framing mechanism depends on the underlying transport:</p>
 exactly as used by Spinel.</li>
 <li>BLE uses the GATT frame transport defined in
 <a href="ulcp-ble.html">ULCP over BLE</a>.</li>
+<li>A reliable, in-order byte stream standing in for a serial link — a TCP
+connection to a bridged port, say — uses the same HDLC-Lite framing.</li>
 </ul>
 <p>In this chapter, the <strong>device</strong> is the side that owns the transceiver and
 the <strong>host</strong> is the side that attaches to it over the local link (see
@@ -850,6 +852,7 @@ use are listed in the
 <a href="ulcp-ble.html#attach-semantics">ULCP over BLE</a>.</li>
 <li><strong>USB-CDC</strong> — assertion and deassertion of DTR on the ULCP
 interface.</li>
+<li><strong>TCP</strong> — establishment and closure of the connection.</li>
 <li><strong>Bare UART</strong> — implementation-defined. A device with no way to detect
 host presence MAY treat the host as permanently attached, in which case
 it never enters detached operation and offline assistance

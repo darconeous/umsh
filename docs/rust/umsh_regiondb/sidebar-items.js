@@ -1,0 +1,1 @@
+window.SIDEBAR_ITEMS = {"constant":["FORMAT_VERSION"],"enum":["Membership","RegionDbError"],"mod":["blob","morton","sampling"],"struct":["RadioRegion","RegionDb","RegionLookup","RegionMatch"]};

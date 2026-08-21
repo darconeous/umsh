@@ -1,1 +1,1 @@
-window.SIDEBAR_ITEMS = {"struct":["Ingress","Interface","Interfaces"],"type":["InterfaceId"]};
+window.SIDEBAR_ITEMS = {"enum":["InterfaceKind"],"struct":["Ingress","Interface","Interfaces"],"type":["InterfaceId"]};

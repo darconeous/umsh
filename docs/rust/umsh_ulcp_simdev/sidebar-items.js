@@ -1,0 +1,1 @@
+window.SIDEBAR_ITEMS = {"struct":["AlertConfig","BatteryFields","DutyLedger","GnssConfig","RadioRxInfo","RadioSettings","SessionConfig","SimulatedDevice","TimeConfig"]};

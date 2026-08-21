@@ -10,7 +10,7 @@ contention) and forwarded to the real TX queue; the real <code>tx_done</code>
 result is routed to the granting client’s own <code>tx_done</code>, so each
 client sees exactly the completions for its own requests. Once the
 frame is on the air every <em>other</em> client receives a copy of it,
-marked [<code>RxOrigin::LocalTx</code>]. A radio cannot hear itself, but the
+marked <a href="../../umsh_hal/enum.RxOrigin.html#variant.LocalTx" title="variant umsh_hal::RxOrigin::LocalTx"><code>RxOrigin::LocalTx</code></a>. A radio cannot hear itself, but the
 clients share one antenna, and a client that never learns what the
 antenna beside it emitted cannot talk to it at all.</li>
 <li><strong>RX</strong>: every received frame is fanned out to every client. Dual
@@ -30,7 +30,7 @@ medium and onto a point-to-point link with the rest of the clients:</p>
 <ul>
 <li>Receptions off the air go to the medium clients only.</li>
 <li>A session transmit never reaches the radio. It is handed to the
-medium clients as [<code>RxOrigin::Backhaul</code>], which the MAC treats as a
+medium clients as <a href="../../umsh_hal/enum.RxOrigin.html#variant.Backhaul" title="variant umsh_hal::RxOrigin::Backhaul"><code>RxOrigin::Backhaul</code></a>, which the MAC treats as a
 frame heard from a neighbor and may therefore repeat.</li>
 <li>Medium transmits are unchanged, so the session still sees everything
 the device puts on the air.</li>
@@ -40,5 +40,5 @@ between the attached host and the mesh, which is what a bridge needs:
 its forwarding rules, duplicate suppression, and hop accounting all
 apply to the tunneled traffic instead of being reimplemented above it.</p>
 </div></details><h2 id="structs" class="section-header">Structs<a href="#structs" class="anchor">§</a></h2><dl class="item-table"><dt><a class="struct" href="struct.MuxMode.html" title="struct umsh_ulcp_runtime::radio_mux::MuxMode">MuxMode</a></dt><dd>How the mux is routing, written by whoever handles
-<a href="../../umsh_ulcp_device/session/enum.Effect.html" title="enum umsh_ulcp_device::session::Effect"><code>Effect::ApplyBackhaul</code></a> and read by the
+<a href="umsh_ulcp_device::Effect"><code>Effect::ApplyBackhaul</code></a> and read by the
 mux as each frame is routed.</dd></dl><h2 id="statics" class="section-header">Statics<a href="#statics" class="anchor">§</a></h2><dl class="item-table"><dt><a class="static" href="static.MUX_MODE.html" title="static umsh_ulcp_runtime::radio_mux::MUX_MODE">MUX_<wbr>MODE</a></dt><dd>The mode cell every board’s mux and session driver share.</dd></dl><h2 id="functions" class="section-header">Functions<a href="#functions" class="anchor">§</a></h2><dl class="item-table"><dt><a class="fn" href="fn.radio_mux.html" title="fn umsh_ulcp_runtime::radio_mux::radio_mux">radio_<wbr>mux</a></dt><dd>Run the multiplexer over the real radio <code>Channels</code> bundle.</dd></dl></section></div></main></body></html>

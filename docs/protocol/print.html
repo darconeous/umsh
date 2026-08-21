@@ -36,7 +36,7 @@
             const path_to_root = "";
             const default_light_theme = "light";
             const default_dark_theme = "ayu";
-            window.path_to_searchindex_js = "searchindex-c81560d3.js";
+            window.path_to_searchindex_js = "searchindex-666b1035.js";
         </script>
         <!-- Start loading toc.js asap -->
         <script src="toc-438957a9.js"></script>
@@ -388,7 +388,7 @@ The protocol differentiates between source-routed hops and flood-routed hops.</d
 <ul>
 <li><strong>Operator callsign</strong> (packet option 4) — identifies the originating operator under amateur radio rules</li>
 <li><strong>Station callsign</strong> (packet option 7) — identifies the transmitting station, updated by repeaters during forwarding</li>
-<li><strong>Region codes</strong> (packet option 11) — IATA airport codes encoded as 2-byte ARNCE values (e.g. SJC → <code>0x7853</code>)</li>
+<li><strong>Region codes</strong> (packet option 11) — short codes of one to three letters or digits encoded as 2-byte ARNCE values (e.g. SJC → <code>0x7853</code>)</li>
 </ul>
 <h2 id="utf-8-strings"><a class="header" href="#utf-8-strings">UTF-8 Strings</a></h2>
 <p>All human-readable text in UMSH — message bodies, node names, sender handles, room descriptions — is encoded as UTF-8. String length is determined by context:</p>
@@ -872,62 +872,80 @@ unicast semantics without encryption.</p>
 <li>Region insertion applies only during flood forwarding. An untagged source-routed packet is first tagged by the repeater that flood-forwards it — the one that receives it with an already-empty source route — not by the repeater that emptied the route.</li>
 </ul>
 <h4 id="region-code-encoding"><a class="header" href="#region-code-encoding">Region Code Encoding</a></h4>
-<p>Region codes are 2-byte identifiers derived by one of two methods, depending on the type of region:</p>
-<p><strong>IATA-based regions.</strong> For regions defined by proximity to an airport or a metro area with its own IATA code, encode the 3-letter IATA code into a 16-bit value using ARNCE/HAM-16. Examples:</p>
+<p>Region codes are 2-byte identifiers derived by one of two methods, depending on the type of region. Both ignore ASCII case—ARNCE/HAM-16 encodes <code>A</code>–<code>Z</code> and <code>a</code>–<code>z</code> alike, and the hash folds <code>A</code>–<code>Z</code> to lowercase <code>a</code>–<code>z</code> before it is taken, altering no other character. Strings that differ only in ASCII case therefore derive the same code and name the same region.</p>
+<blockquote>
+<p>As with <a href="#named-channels">channel names</a>, folding is restricted to ASCII: correct case-folding of the full Unicode range is locale-dependent, and a name that folded under one implementation and not another would be two regions on one mesh.</p>
+</blockquote>
+<p><strong>Short codes.</strong> A region named by one to three ASCII letters or digits encodes directly into a 16-bit value with ARNCE/HAM-16, the unused trailing characters left as <code>NUL</code>. Three letters are conventionally the IATA code of the nearest airport or of a metro area that has one; two are conventionally an <a href="https://www.iso.org/iso-3166-country-codes.html">ISO 3166-1 alpha-2</a> country code or a bare subdivision code, for a region that spans one. Examples:</p>
 <div class="table-wrapper">
 <table>
 <thead>
-<tr><th>IATA Code</th><th>Region Code</th></tr>
+<tr><th>Short Code</th><th>Region Code</th></tr>
 </thead>
 <tbody>
 <tr><td>SJC</td><td><code>0x7853</code></td></tr>
 <tr><td>MFR</td><td><code>0x5242</code></td></tr>
+<tr><td>US</td><td><code>0x8638</code></td></tr>
+<tr><td>WA</td><td><code>0x8FE8</code></td></tr>
 </tbody>
 </table>
 </div>
-<p><strong>Named regions.</strong> For regions that are not associated with a single airport (super-regions, cities without a nearby airport, geographic areas, etc.), the region code is the first two bytes of the SHA-256 hash of the region name (UTF-8 encoded), EXCEPT when performing ARNCE/HAM-16 decoding
-on the resulting value would yield three letters. In that case, you
+<p>An all-letter short code is <em>exclusive</em>: the transform below vacates every one of them, so no named region can ever derive one. A short code bearing a digit—<code>W7</code>, <code>5X2</code>—encodes just as faithfully and no two short codes ever share a code, but it is not vacated, so it shares its space with the hashes. Such a code is worth using when a mnemonic is wanted in place of a hash, and it is nothing more than that: an implementation MUST NOT display a region code as a digit-bearing short code, because the code it is reading may equally have come from a name.</p>
+<p><code>/</code>, <code>-</code>, and <code>^</code>, though ARNCE spells them, MUST NOT appear in a short code. The transformed codes are led by <code>/</code> and <code>-</code>, and a short code able to reach that space would read back as a region it is not.</p>
+<p><strong>Named regions.</strong> For regions that a short code does not suit (super-regions, cities without a nearby airport, geographic areas, etc.), the region code is the first two bytes of the SHA-256 hash of the folded region name (UTF-8 encoded), EXCEPT when performing ARNCE/HAM-16 decoding
+on the resulting value would yield nothing but letters—one, two, or three of them. In that case, you
 additionally perform the following transform:</p>
 <pre><code class="language-python">def transform_letter_chunk(encoded: int) -&gt; int:
-    """Transform a three-letter ARNCE chunk into a non-letter ARNCE chunk."""
+    """Transform an all-letter ARNCE chunk into a non-letter ARNCE chunk."""
 
     LETTER_MIN = 1
     LETTER_MAX = 26
 
-    TRANSFORM_BASE = 27 * 1600       # 0xA8C0
-    TRANSFORM_COUNT = 26 ** 3        # 17,576
+    TRANSFORM_BASE = 27 * 1600                    # 0xA8C0
+    TWO_LETTER_BASE = TRANSFORM_BASE + 26 ** 3    # 0xED68
+    ONE_LETTER_BASE = TWO_LETTER_BASE + 26 ** 2   # 0xF00C
 
     a = encoded // 1600
     b = (encoded // 40) % 40
     c = encoded % 40
 
-    if not all(LETTER_MIN &lt;= x &lt;= LETTER_MAX for x in (a, b, c)):
+    def is_letter(x: int) -&gt; bool:
+        return LETTER_MIN &lt;= x &lt;= LETTER_MAX
+
+    if not is_letter(a):
         return encoded
 
-    rank = (a - 1) * 26 * 26 + (b - 1) * 26 + (c - 1)
-    return TRANSFORM_BASE + rank
+    if is_letter(b) and is_letter(c):
+        return TRANSFORM_BASE + (a - 1) * 26 * 26 + (b - 1) * 26 + (c - 1)
+    if is_letter(b) and c == 0:
+        return TWO_LETTER_BASE + (a - 1) * 26 + (b - 1)
+    if b == 0 and c == 0:
+        return ONE_LETTER_BASE + (a - 1)
+    return encoded
 </code></pre>
-<p>Examples:</p>
+<p>The three lengths occupy three consecutive blocks, longest first, and together vacate 18,278 of the 64,000 encodable chunks. The highest code the transform yields is <code>0xF025</code>; every one of them decodes to a string led by <code>/</code> or <code>-</code>, and so to nothing that reads as a region.</p>
+<p>Examples, with the folded name each hash is taken over:</p>
 <div class="table-wrapper">
 <table>
 <thead>
-<tr><th>Region Name</th><th>SHA-256 prefix</th><th>Region Code</th></tr>
+<tr><th>Region Name</th><th>Folded</th><th>SHA-256 prefix</th><th>Region Code</th></tr>
 </thead>
 <tbody>
-<tr><td>Rogue Valley</td><td><code>0xdf6f...</code></td><td><code>0xdf6f</code></td></tr>
-<tr><td>SF Bay Area</td><td><code>0x31d9...</code></td><td><code>0x31d9</code></td></tr>
-<tr><td>Southern Oregon</td><td><code>0x6af2...</code></td><td><code>0xD35F</code></td></tr>
+<tr><td>Willamette Valley</td><td><code>willamette valley</code></td><td><code>0xb02d...</code></td><td><code>0xB02D</code></td></tr>
+<tr><td>East Bay</td><td><code>east bay</code></td><td><code>0x36e2...</code></td><td><code>0x36E2</code></td></tr>
+<tr><td>Rogue Valley</td><td><code>rogue valley</code></td><td><code>0x3f56...</code></td><td><code>0xC0F9</code></td></tr>
+<tr><td>Wasatch Front</td><td><code>wasatch front</code></td><td><code>0x5fa0...</code></td><td><code>0xEEDF</code></td></tr>
 </tbody>
 </table>
 </div>
-<p>Note that the first two bytes of the SHA256 of “Southern Oregon” is 0x6AF2, which would decode to <code>QDR</code>, so it is transformed to 0xD35F (which would decode as 654).</p>
-<p>Thus, non-IATA-based region codes will never collide with IATA-based
-region codes. This allows all region codes which decode to three letters to be assumed to be an IATA region code and can be used/displayed unambiguously without additional context.</p>
-<p>However, collisions can still happen between hash-originated region codes.
+<p>Note that the first two bytes of the SHA256 of “rogue valley” is 0x3F56, which would decode to <code>JEN</code>, so it is transformed to 0xC0F9, which decodes to no letters. “wasatch front” hashes to 0x5FA0, which would decode to the two letters <code>OL</code>, and is transformed to 0xEEDF for the same reason.</p>
+<p>Thus, a hash-derived region code will never collide with an all-letter short code. This allows all region codes which decode to nothing but letters to be assumed to be short codes and to be used/displayed unambiguously without additional context.</p>
+<p>However, collisions can still happen between hash-originated region codes, and between one of those and a digit-bearing short code.
 These collisions are rarely of practical concern. If a region code in one part of the world collides with a region code in a different part of the world, there is no actual ambiguity because flood repeating is an inherently local event. In the rare case of a collision within a geographic area, it can be resolved by adjusting the named region slightly (for example, making it more specific).</p>
-<p>The assignment and scope of non-IATA-based region codes—and resolution of any collisions—are generally handled locally.</p>
-<p><strong>Literal codes.</strong> In any context that takes a region’s string form, a string of <code>0x</code> followed by four hexadecimal digits (e.g. <code>0x31d9</code>) denotes the two-byte code it spells. Strings of this shape are by definition excluded from the hash derivation—there is no named region <code>0x31d9</code>, only the code. This is also the display form for a code that decodes to no three-letter IATA code and whose name is unknown, so a region list read off the air can be fed back in unchanged.</p>
+<p>The assignment and scope of hash-derived region codes—and resolution of any collisions—are generally handled locally.</p>
+<p><strong>Literal codes.</strong> In any context that takes a region’s string form, a string of <code>0x</code> followed by four hexadecimal digits (e.g. <code>0x31d9</code>) denotes the two-byte code it spells. Strings of this shape are by definition excluded from the other two derivations—there is no named region <code>0x31d9</code>, only the code. This is also the display form for a code that reads as no short code and whose name is unknown, so a region list read off the air can be fed back in unchanged. Note that a string of one to three characters is a short code before it is anything else: <code>0x1</code> encodes as the three characters <code>0</code>, <code>x</code>, <code>1</code>, and only <code>0x</code> followed by four hexadecimal digits is a literal.</p>
 <p>A region name MUST NOT exceed 24 bytes of UTF-8. Names travel on the wire in <a href="#supported-regions-option-4">identity payloads</a>, and the bound is what lets a list of them fit there.</p>
+<p><strong>Capitalization.</strong> Folding applies to derivation and comparison, not to storage: wherever a region is held or carried in its string form—a repeater’s configured list, the Supported Regions identity option—it keeps the capitalization it was written with. A set of regions holds at most one entry per folded string; writing a region already present in a different capitalization respells the entry rather than adding a second one. A short code is displayed uppercase whatever case it was written in.</p>
 <h2 id="routing-option-layouts"><a class="header" href="#routing-option-layouts">Routing Option Layouts</a></h2>
 <h3 id="source-route-option-value"><a class="header" href="#source-route-option-value">Source Route Option Value</a></h3>
 <p>A source-route option contains zero or more router hints:</p>
@@ -2091,7 +2109,7 @@ these periods are the advertisement-policy properties.</p>
 <h3 id="unix-timestamp-option-3"><a class="header" href="#unix-timestamp-option-3">Unix Timestamp (option 3)</a></h3>
 <p>Seconds since the Unix epoch indicating when this identity payload was generated. Lets a consumer judge how fresh the identity is — most useful when the identity stands alone (e.g. in a QR code), where a stale capture could otherwise be presented indefinitely. Not used by the MAC layer. Encoded as a minimal big-endian unsigned integer (leading zero bytes omitted). Max length: 4 bytes.</p>
 <h3 id="supported-regions-option-4"><a class="header" href="#supported-regions-option-4">Supported Regions (option 4)</a></h3>
-<p>For repeaters, the regions the node will flood-forward for, one option per region. Each entry carries the region’s string form—the three-letter IATA code for an IATA-based region, the region name otherwise—rather than its two-byte <a href="#region-code-encoding">region code</a>: the code is always derivable from the string, while a hash-derived code cannot be turned back into a name. A sender lists at most 10 regions, and the identity payload must still fit its enclosing packet, so a node whose full list does not fit omits regions; the option names regions the node forwards for without promising to name every one. A node that omits the option entirely makes no claim about its regional forwarding policy. Max length: 24 bytes per entry, the <a href="#region-code-encoding">bound on region names</a>.</p>
+<p>For repeaters, the regions the node will flood-forward for, one option per region. Each entry carries the region’s string form—the short code for a region that has one, the region name otherwise—rather than its two-byte <a href="#region-code-encoding">region code</a>: the code is always derivable from the string, while a hash-derived code cannot be turned back into a name. A sender lists at most 10 regions, and the identity payload must still fit its enclosing packet, so a node whose full list does not fit omits regions; the option names regions the node forwards for without promising to name every one. A node that omits the option entirely makes no claim about its regional forwarding policy. Entries carry the capitalization the region was written with, and a receiver comparing them derives their codes, which ignores ASCII case. Max length: 24 bytes per entry, the <a href="#region-code-encoding">bound on region names</a>.</p>
 <h3 id="nonce-option-5"><a class="header" href="#nonce-option-5">Nonce (option 5)</a></h3>
 <p>Copied verbatim from the <a href="#identity-request-1">Identity Request</a> that solicited this identity payload, letting the requester correlate the response to its request. Present only in responses whose request carried a NONCE option. Length: 4 bytes.</p>
 <h3 id="variable-precision-location-format"><a class="header" href="#variable-precision-location-format">Variable-Precision Location Format</a></h3>
@@ -3548,6 +3566,8 @@ flow control. The framing mechanism depends on the underlying transport:</p>
 exactly as used by Spinel.</li>
 <li>BLE uses the GATT frame transport defined in
 <a href="#ulcp-over-ble">ULCP over BLE</a>.</li>
+<li>A reliable, in-order byte stream standing in for a serial link — a TCP
+connection to a bridged port, say — uses the same HDLC-Lite framing.</li>
 </ul>
 <p>In this chapter, the <strong>device</strong> is the side that owns the transceiver and
 the <strong>host</strong> is the side that attaches to it over the local link (see
@@ -4207,6 +4227,7 @@ use are listed in the
 <a href="#attach-semantics">ULCP over BLE</a>.</li>
 <li><strong>USB-CDC</strong> — assertion and deassertion of DTR on the ULCP
 interface.</li>
+<li><strong>TCP</strong> — establishment and closure of the connection.</li>
 <li><strong>Bare UART</strong> — implementation-defined. A device with no way to detect
 host presence MAY treat the host as permanently attached, in which case
 it never enters detached operation and offline assistance
@@ -5333,7 +5354,7 @@ pole-mounted sensor are both ordinary configurations.</p>
 <li>Post-Reset Value: Empty, or restored from saved state</li>
 </ul>
 <p>The set of regions the device flood-forwards for, each held in its string
-form—the three-letter IATA code for an IATA-based region, the region name
+form—the short code for a region that has one, the region name
 otherwise—the same form the
 <a href="#supported-regions-option-4">Supported Regions</a> identity
 option carries. From each string the device derives the 2-octet
@@ -5346,6 +5367,12 @@ a tagged packet is forwarded whatever its region.</p>
 <p>A device <strong>MUST</strong> reject an item that is empty or longer than 24 octets
 with <code>STATUS_INVALID_ARGUMENT</code>, and <strong>MAY</strong> reject a write that exceeds
 the number of entries it can hold.</p>
+<p>Items compare without ASCII case, as their codes derive, so the set holds
+at most one entry per region. An insert whose item differs from a held
+one only in case respells that entry in place and reports the item as
+inserted; an item identical to a held one reports <code>STATUS_ALREADY</code>. The
+remove selector matches the same way, and a whole-value write keeps the
+last spelling it carried. Stored items keep the capitalization written.</p>
 <p>A device with forwarding enabled and a non-empty set <strong>SHOULD</strong> advertise
 the same strings in its node identity, subject to that option’s count and
 packet-fit limits, so that a peer choosing a route can see what a repeater
@@ -10294,7 +10321,8 @@ tethered host in <a href="#radio-attachment">backhaul mode</a>. The host is
 therefore not on the shared medium at all — it is a point-to-point
 neighbor of the device’s own node.</li>
 <li>The server’s <strong>interfaces</strong> are its own radio, when it has one, plus
-one interface per connected client. The server’s radio is a
+one interface per connected client, plus any
+<a href="#host-interfaces">host interfaces</a> it offers. The server’s radio is a
 participant like any other; nothing distinguishes it but the absence
 of a tunnel.</li>
 <li>The server copies each frame it receives to its other interfaces. It
@@ -10302,8 +10330,9 @@ makes no forwarding decisions and holds no mesh state.</li>
 </ul>
 <p>The bridge has no identity on the mesh. It appears in no route, answers
 to no address, and originates no traffic. The nodes that carry bridged
-traffic are the ones behind the participants’ radios, and each holds its
-own identity.</p>
+traffic are the ones behind the participants’ radios — and, where a
+<a href="#host-interfaces">host interface</a> is offered, the host on the far side
+of it — each holding its own identity.</p>
 <h3 id="a-crossing-is-two-repeater-hops"><a class="header" href="#a-crossing-is-two-repeater-hops">A Crossing Is Two Repeater Hops</a></h3>
 <p>Because every participant is a point-to-point neighbor of its device’s
 node, the node’s <a href="#repeater-operation">repeater</a> is the bridge’s
@@ -10479,6 +10508,47 @@ participant <strong>MUST NOT</strong> treat it as a failed hand-off or retry it.
 <p>No participant provisions node logic for the bridge: there is no bridge
 identity to provision. A participant’s device is configured as whatever
 node its owner intends it to be.</p>
+<h2 id="host-interfaces"><a class="header" href="#host-interfaces">Host Interfaces</a></h2>
+<p>A server <strong>MAY</strong> offer <strong>host interfaces</strong>: interfaces whose far end is
+not a participant fronting a segment but a single host, attached
+directly to the bridge’s hidden medium. The host runs its own MAC and
+holds its own identity, exactly as it would behind a radio; what it
+lacks is a radio, and therefore a node of its own standing between it
+and the medium.</p>
+<p>The server presents a ULCP device on such an interface. That device’s
+radio is the bridge: what the host transmits is relayed by the
+<a href="#relay-procedure">relay procedure</a> like anything else, and what the
+relay copies to the interface is delivered to the host as a reception.
+The device <strong>MUST NOT</strong> advertise <code>CAP_MAC_BACKHAUL</code>, because there is
+no node for a backhaul to connect the host to, and a participant
+<strong>MUST NOT</strong> attach to one: a bridge’s forwarding policy is its
+participants’ repeaters, and a host interface has none to offer.</p>
+<p>A crossing to or from a host spends <strong>one</strong> flood hop rather than the
+two of <a href="#a-crossing-is-two-repeater-hops">§ A Crossing Is Two Repeater Hops</a>,
+since no repeater stands between the host and the medium. What makes
+this safe is unchanged: a host’s frames reach the air only where a
+participant’s node transmits them, and that node applies the whole
+forwarding procedure — duplicate suppression, hop accounting, region and
+signal policy, duty enforcement — to them as to anything else it hears.</p>
+<p>Frames delivered to a host <strong>MUST</strong> carry no signal measurements. The
+measurement that accompanied such a frame across the tunnel describes a
+reception on another segment by another radio, and reporting it here
+would attribute it to a reception that did not happen. This is the same
+fact the crossing model already records as a trace signal entry saying
+nothing was measured.</p>
+<p>The server <strong>MUST</strong> rate-limit each host interface. A host spends no
+airtime of its own, which removes the natural bound a radio imposes,
+while every frame it injects is transmitted by every participant’s node.</p>
+<p>The transport carrying ULCP to a host is a local binding and is outside
+this appendix. Whatever it is, it is a ULCP transport like any other and
+its <a href="#attach-sync">attach and detach</a> are the establishment
+and closure of the underlying connection. A deployment <strong>MUST NOT</strong>
+expose that binding beyond a host it trusts as it would trust a device
+on the end of a cable: reaching it is an RF presence on every segment
+the bridge touches, and a binding that meets
+<a href="#provisioning-security">Provisioning Security</a> by physical
+possession also carries whatever key provisioning and administrative
+authority the device offers.</p>
 <h2 id="relay-procedure"><a class="header" href="#relay-procedure">Relay Procedure</a></h2>
 <p>For a frame arriving on interface <em>I</em>, the server:</p>
 <ol>

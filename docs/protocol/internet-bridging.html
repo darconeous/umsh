@@ -35,7 +35,7 @@
             const path_to_root = "";
             const default_light_theme = "light";
             const default_dark_theme = "ayu";
-            window.path_to_searchindex_js = "searchindex-c81560d3.js";
+            window.path_to_searchindex_js = "searchindex-666b1035.js";
         </script>
         <!-- Start loading toc.js asap -->
         <script src="toc-438957a9.js"></script>
@@ -202,7 +202,8 @@ tethered host in <a href="#radio-attachment">backhaul mode</a>. The host is
 therefore not on the shared medium at all — it is a point-to-point
 neighbor of the device’s own node.</li>
 <li>The server’s <strong>interfaces</strong> are its own radio, when it has one, plus
-one interface per connected client. The server’s radio is a
+one interface per connected client, plus any
+<a href="#host-interfaces">host interfaces</a> it offers. The server’s radio is a
 participant like any other; nothing distinguishes it but the absence
 of a tunnel.</li>
 <li>The server copies each frame it receives to its other interfaces. It
@@ -210,8 +211,9 @@ makes no forwarding decisions and holds no mesh state.</li>
 </ul>
 <p>The bridge has no identity on the mesh. It appears in no route, answers
 to no address, and originates no traffic. The nodes that carry bridged
-traffic are the ones behind the participants’ radios, and each holds its
-own identity.</p>
+traffic are the ones behind the participants’ radios — and, where a
+<a href="#host-interfaces">host interface</a> is offered, the host on the far side
+of it — each holding its own identity.</p>
 <h3 id="a-crossing-is-two-repeater-hops"><a class="header" href="#a-crossing-is-two-repeater-hops">A Crossing Is Two Repeater Hops</a></h3>
 <p>Because every participant is a point-to-point neighbor of its device’s
 node, the node’s <a href="repeater-operation.html">repeater</a> is the bridge’s
@@ -387,6 +389,47 @@ participant <strong>MUST NOT</strong> treat it as a failed hand-off or retry it.
 <p>No participant provisions node logic for the bridge: there is no bridge
 identity to provision. A participant’s device is configured as whatever
 node its owner intends it to be.</p>
+<h2 id="host-interfaces"><a class="header" href="#host-interfaces">Host Interfaces</a></h2>
+<p>A server <strong>MAY</strong> offer <strong>host interfaces</strong>: interfaces whose far end is
+not a participant fronting a segment but a single host, attached
+directly to the bridge’s hidden medium. The host runs its own MAC and
+holds its own identity, exactly as it would behind a radio; what it
+lacks is a radio, and therefore a node of its own standing between it
+and the medium.</p>
+<p>The server presents a ULCP device on such an interface. That device’s
+radio is the bridge: what the host transmits is relayed by the
+<a href="#relay-procedure">relay procedure</a> like anything else, and what the
+relay copies to the interface is delivered to the host as a reception.
+The device <strong>MUST NOT</strong> advertise <code>CAP_MAC_BACKHAUL</code>, because there is
+no node for a backhaul to connect the host to, and a participant
+<strong>MUST NOT</strong> attach to one: a bridge’s forwarding policy is its
+participants’ repeaters, and a host interface has none to offer.</p>
+<p>A crossing to or from a host spends <strong>one</strong> flood hop rather than the
+two of <a href="#a-crossing-is-two-repeater-hops">§ A Crossing Is Two Repeater Hops</a>,
+since no repeater stands between the host and the medium. What makes
+this safe is unchanged: a host’s frames reach the air only where a
+participant’s node transmits them, and that node applies the whole
+forwarding procedure — duplicate suppression, hop accounting, region and
+signal policy, duty enforcement — to them as to anything else it hears.</p>
+<p>Frames delivered to a host <strong>MUST</strong> carry no signal measurements. The
+measurement that accompanied such a frame across the tunnel describes a
+reception on another segment by another radio, and reporting it here
+would attribute it to a reception that did not happen. This is the same
+fact the crossing model already records as a trace signal entry saying
+nothing was measured.</p>
+<p>The server <strong>MUST</strong> rate-limit each host interface. A host spends no
+airtime of its own, which removes the natural bound a radio imposes,
+while every frame it injects is transmitted by every participant’s node.</p>
+<p>The transport carrying ULCP to a host is a local binding and is outside
+this appendix. Whatever it is, it is a ULCP transport like any other and
+its <a href="ulcp-core.html#attach-sync">attach and detach</a> are the establishment
+and closure of the underlying connection. A deployment <strong>MUST NOT</strong>
+expose that binding beyond a host it trusts as it would trust a device
+on the end of a cable: reaching it is an RF presence on every segment
+the bridge touches, and a binding that meets
+<a href="ulcp-core.html#provisioning-security">Provisioning Security</a> by physical
+possession also carries whatever key provisioning and administrative
+authority the device offers.</p>
 <h2 id="relay-procedure"><a class="header" href="#relay-procedure">Relay Procedure</a></h2>
 <p>For a frame arriving on interface <em>I</em>, the server:</p>
 <ol>

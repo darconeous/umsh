@@ -47,7 +47,7 @@
 <a href=#47 id=47 data-nosnippet>47</a>    },
 <a href=#48 id=48 data-nosnippet>48</a>}
 <a href=#49 id=49 data-nosnippet>49</a>
-<a href=#50 id=50 data-nosnippet>50</a><span class="doccomment">/// A region is written as an airport code, a name, or a literal
+<a href=#50 id=50 data-nosnippet>50</a><span class="doccomment">/// A region is written as a short code, a name, or a literal
 <a href=#51 id=51 data-nosnippet>51</a>/// `0x1234`; the device stores the string and derives the 2-octet code
 <a href=#52 id=52 data-nosnippet>52</a>/// its forwarding filter compares.
 <a href=#53 id=53 data-nosnippet>53</a></span><span class="attr">#[derive(Debug, clap::Subcommand)]
@@ -187,45 +187,68 @@
 <a href=#187 id=187 data-nosnippet>187</a><span class="doccomment">/// Render one region as the operator wrote it, with the code the
 <a href=#188 id=188 data-nosnippet>188</a>/// forwarding filter actually compares — a hashed name is otherwise
 <a href=#189 id=189 data-nosnippet>189</a>/// unrecognizable in a packet capture.
-<a href=#190 id=190 data-nosnippet>190</a></span><span class="kw">pub fn </span>format_region(region: <span class="kw-2">&amp;</span>str) -&gt; String {
-<a href=#191 id=191 data-nosnippet>191</a>    <span class="kw">let </span><span class="prelude-val">Ok</span>(code) = region.parse::&lt;RegionCode&gt;() <span class="kw">else </span>{
-<a href=#192 id=192 data-nosnippet>192</a>        <span class="kw">return </span>region.to_string();
-<a href=#193 id=193 data-nosnippet>193</a>    };
-<a href=#194 id=194 data-nosnippet>194</a>    <span class="kw">let </span>hex = <span class="macro">format!</span>(<span class="string">"0x{:04X}"</span>, code.as_u16());
-<a href=#195 id=195 data-nosnippet>195</a>    <span class="kw">match </span>region.eq_ignore_ascii_case(<span class="kw-2">&amp;</span>hex) {
-<a href=#196 id=196 data-nosnippet>196</a>        <span class="bool-val">true </span>=&gt; hex,
-<a href=#197 id=197 data-nosnippet>197</a>        <span class="bool-val">false </span>=&gt; <span class="macro">format!</span>(<span class="string">"{region} ({hex})"</span>),
-<a href=#198 id=198 data-nosnippet>198</a>    }
-<a href=#199 id=199 data-nosnippet>199</a>}
-<a href=#200 id=200 data-nosnippet>200</a>
-<a href=#201 id=201 data-nosnippet>201</a><span class="doccomment">/// Render a region list for display, naming the empty list as what it
-<a href=#202 id=202 data-nosnippet>202</a>/// means rather than printing nothing.
-<a href=#203 id=203 data-nosnippet>203</a></span><span class="kw">pub fn </span>format_regions(regions: <span class="kw-2">&amp;</span>[String]) -&gt; String {
-<a href=#204 id=204 data-nosnippet>204</a>    <span class="kw">if </span>regions.is_empty() {
-<a href=#205 id=205 data-nosnippet>205</a>        <span class="kw">return </span><span class="string">"any (no regional restriction)"</span>.to_string();
-<a href=#206 id=206 data-nosnippet>206</a>    }
-<a href=#207 id=207 data-nosnippet>207</a>    regions
-<a href=#208 id=208 data-nosnippet>208</a>        .iter()
-<a href=#209 id=209 data-nosnippet>209</a>        .map(|region| format_region(region))
-<a href=#210 id=210 data-nosnippet>210</a>        .collect::&lt;Vec&lt;<span class="kw">_</span>&gt;&gt;()
-<a href=#211 id=211 data-nosnippet>211</a>        .join(<span class="string">", "</span>)
-<a href=#212 id=212 data-nosnippet>212</a>}
-<a href=#213 id=213 data-nosnippet>213</a>
-<a href=#214 id=214 data-nosnippet>214</a><span class="attr">#[cfg(test)]
-<a href=#215 id=215 data-nosnippet>215</a></span><span class="kw">mod </span>tests {
-<a href=#216 id=216 data-nosnippet>216</a>    <span class="kw">use </span>super::<span class="kw-2">*</span>;
-<a href=#217 id=217 data-nosnippet>217</a>
-<a href=#218 id=218 data-nosnippet>218</a>    <span class="attr">#[test]
-<a href=#219 id=219 data-nosnippet>219</a>    </span><span class="kw">fn </span>the_empty_region_list_says_what_it_means() {
-<a href=#220 id=220 data-nosnippet>220</a>        <span class="macro">assert_eq!</span>(format_regions(<span class="kw-2">&amp;</span>[]), <span class="string">"any (no regional restriction)"</span>);
-<a href=#221 id=221 data-nosnippet>221</a>    }
-<a href=#222 id=222 data-nosnippet>222</a>
-<a href=#223 id=223 data-nosnippet>223</a>    <span class="attr">#[test]
-<a href=#224 id=224 data-nosnippet>224</a>    </span><span class="kw">fn </span>a_region_prints_the_code_its_string_derives_to() {
-<a href=#225 id=225 data-nosnippet>225</a>        <span class="macro">assert_eq!</span>(format_region(<span class="string">"SJC"</span>), <span class="string">"SJC (0x7853)"</span>);
-<a href=#226 id=226 data-nosnippet>226</a>        <span class="macro">assert_eq!</span>(format_region(<span class="string">"Rogue Valley"</span>), <span class="string">"Rogue Valley (0xDF6F)"</span>);
-<a href=#227 id=227 data-nosnippet>227</a>        <span class="comment">// A literal already is its code; quoting it twice says nothing.
-<a href=#228 id=228 data-nosnippet>228</a>        </span><span class="macro">assert_eq!</span>(format_region(<span class="string">"0x1234"</span>), <span class="string">"0x1234"</span>);
-<a href=#229 id=229 data-nosnippet>229</a>    }
-<a href=#230 id=230 data-nosnippet>230</a>}
+<a href=#190 id=190 data-nosnippet>190</a>///
+<a href=#191 id=191 data-nosnippet>191</a>/// A short code is shown uppercase whatever case it was written in, which
+<a href=#192 id=192 data-nosnippet>192</a>/// is how airport and country codes are written everywhere else. A name is
+<a href=#193 id=193 data-nosnippet>193</a>/// the operator's to capitalize and is left alone.
+<a href=#194 id=194 data-nosnippet>194</a></span><span class="kw">pub fn </span>format_region(region: <span class="kw-2">&amp;</span>str) -&gt; String {
+<a href=#195 id=195 data-nosnippet>195</a>    <span class="kw">let </span><span class="prelude-val">Ok</span>(code) = region.parse::&lt;RegionCode&gt;() <span class="kw">else </span>{
+<a href=#196 id=196 data-nosnippet>196</a>        <span class="kw">return </span>region.to_string();
+<a href=#197 id=197 data-nosnippet>197</a>    };
+<a href=#198 id=198 data-nosnippet>198</a>    <span class="kw">let </span>hex = <span class="macro">format!</span>(<span class="string">"0x{:04X}"</span>, code.as_u16());
+<a href=#199 id=199 data-nosnippet>199</a>    <span class="kw">if </span>region.eq_ignore_ascii_case(<span class="kw-2">&amp;</span>hex) {
+<a href=#200 id=200 data-nosnippet>200</a>        <span class="kw">return </span>hex;
+<a href=#201 id=201 data-nosnippet>201</a>    }
+<a href=#202 id=202 data-nosnippet>202</a>    <span class="kw">match </span>RegionCode::from_short_code(region).is_ok() {
+<a href=#203 id=203 data-nosnippet>203</a>        <span class="bool-val">true </span>=&gt; <span class="macro">format!</span>(<span class="string">"{} ({hex})"</span>, region.to_uppercase()),
+<a href=#204 id=204 data-nosnippet>204</a>        <span class="bool-val">false </span>=&gt; <span class="macro">format!</span>(<span class="string">"{region} ({hex})"</span>),
+<a href=#205 id=205 data-nosnippet>205</a>    }
+<a href=#206 id=206 data-nosnippet>206</a>}
+<a href=#207 id=207 data-nosnippet>207</a>
+<a href=#208 id=208 data-nosnippet>208</a><span class="doccomment">/// Render a region list for display, naming the empty list as what it
+<a href=#209 id=209 data-nosnippet>209</a>/// means rather than printing nothing.
+<a href=#210 id=210 data-nosnippet>210</a></span><span class="kw">pub fn </span>format_regions(regions: <span class="kw-2">&amp;</span>[String]) -&gt; String {
+<a href=#211 id=211 data-nosnippet>211</a>    <span class="kw">if </span>regions.is_empty() {
+<a href=#212 id=212 data-nosnippet>212</a>        <span class="kw">return </span><span class="string">"any (no regional restriction)"</span>.to_string();
+<a href=#213 id=213 data-nosnippet>213</a>    }
+<a href=#214 id=214 data-nosnippet>214</a>    regions
+<a href=#215 id=215 data-nosnippet>215</a>        .iter()
+<a href=#216 id=216 data-nosnippet>216</a>        .map(|region| format_region(region))
+<a href=#217 id=217 data-nosnippet>217</a>        .collect::&lt;Vec&lt;<span class="kw">_</span>&gt;&gt;()
+<a href=#218 id=218 data-nosnippet>218</a>        .join(<span class="string">", "</span>)
+<a href=#219 id=219 data-nosnippet>219</a>}
+<a href=#220 id=220 data-nosnippet>220</a>
+<a href=#221 id=221 data-nosnippet>221</a><span class="attr">#[cfg(test)]
+<a href=#222 id=222 data-nosnippet>222</a></span><span class="kw">mod </span>tests {
+<a href=#223 id=223 data-nosnippet>223</a>    <span class="kw">use </span>super::<span class="kw-2">*</span>;
+<a href=#224 id=224 data-nosnippet>224</a>
+<a href=#225 id=225 data-nosnippet>225</a>    <span class="attr">#[test]
+<a href=#226 id=226 data-nosnippet>226</a>    </span><span class="kw">fn </span>the_empty_region_list_says_what_it_means() {
+<a href=#227 id=227 data-nosnippet>227</a>        <span class="macro">assert_eq!</span>(format_regions(<span class="kw-2">&amp;</span>[]), <span class="string">"any (no regional restriction)"</span>);
+<a href=#228 id=228 data-nosnippet>228</a>    }
+<a href=#229 id=229 data-nosnippet>229</a>
+<a href=#230 id=230 data-nosnippet>230</a>    <span class="attr">#[test]
+<a href=#231 id=231 data-nosnippet>231</a>    </span><span class="kw">fn </span>a_region_prints_the_code_its_string_derives_to() {
+<a href=#232 id=232 data-nosnippet>232</a>        <span class="macro">assert_eq!</span>(format_region(<span class="string">"SJC"</span>), <span class="string">"SJC (0x7853)"</span>);
+<a href=#233 id=233 data-nosnippet>233</a>        <span class="macro">assert_eq!</span>(format_region(<span class="string">"Rogue Valley"</span>), <span class="string">"Rogue Valley (0xC0F9)"</span>);
+<a href=#234 id=234 data-nosnippet>234</a>        <span class="comment">// A literal already is its code; quoting it twice says nothing.
+<a href=#235 id=235 data-nosnippet>235</a>        </span><span class="macro">assert_eq!</span>(format_region(<span class="string">"0x1234"</span>), <span class="string">"0x1234"</span>);
+<a href=#236 id=236 data-nosnippet>236</a>    }
+<a href=#237 id=237 data-nosnippet>237</a>
+<a href=#238 id=238 data-nosnippet>238</a>    <span class="attr">#[test]
+<a href=#239 id=239 data-nosnippet>239</a>    </span><span class="kw">fn </span>a_short_code_prints_uppercase_however_it_was_written() {
+<a href=#240 id=240 data-nosnippet>240</a>        <span class="macro">assert_eq!</span>(format_region(<span class="string">"sjc"</span>), <span class="string">"SJC (0x7853)"</span>);
+<a href=#241 id=241 data-nosnippet>241</a>        <span class="macro">assert_eq!</span>(format_region(<span class="string">"Sjc"</span>), <span class="string">"SJC (0x7853)"</span>);
+<a href=#242 id=242 data-nosnippet>242</a>        <span class="macro">assert_eq!</span>(format_region(<span class="string">"wa"</span>), <span class="string">"WA (0x8FE8)"</span>);
+<a href=#243 id=243 data-nosnippet>243</a>        <span class="comment">// A digit-bearing short code has no reading, but it is still a
+<a href=#244 id=244 data-nosnippet>244</a>        // code and is written like one.
+<a href=#245 id=245 data-nosnippet>245</a>        </span><span class="macro">assert_eq!</span>(format_region(<span class="string">"w7"</span>), <span class="macro">format!</span>(<span class="string">"W7 (0x{:04X})"</span>, short(<span class="string">"w7"</span>)));
+<a href=#246 id=246 data-nosnippet>246</a>        <span class="comment">// A name keeps the operator's capitalization.
+<a href=#247 id=247 data-nosnippet>247</a>        </span><span class="macro">assert_eq!</span>(format_region(<span class="string">"rogue valley"</span>), <span class="string">"rogue valley (0xC0F9)"</span>);
+<a href=#248 id=248 data-nosnippet>248</a>    }
+<a href=#249 id=249 data-nosnippet>249</a>
+<a href=#250 id=250 data-nosnippet>250</a>    <span class="kw">fn </span>short(code: <span class="kw-2">&amp;</span>str) -&gt; u16 {
+<a href=#251 id=251 data-nosnippet>251</a>        RegionCode::from_short_code(code).unwrap().as_u16()
+<a href=#252 id=252 data-nosnippet>252</a>    }
+<a href=#253 id=253 data-nosnippet>253</a>}
 </code></pre></div></section></main></body></html>

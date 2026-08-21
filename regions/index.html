@@ -1,0 +1,209 @@
+<!DOCTYPE html>
+<html lang="en">
+
+<head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>Regions — UMSH</title>
+    <meta name="description" content="Inspect the compiled UMSH region database on a map: what covers a position, and why." />
+    <meta name="theme-color" content="#FA5000" />
+
+    <link rel="stylesheet" href="https://umsh.dev/site.css" />
+    <link rel="icon" href="https://umsh.dev/favicon.ico" sizes="any" />
+    <link rel="icon" type="image/png" href="https://umsh.dev/favicon-32.png" sizes="32x32" />
+    <link rel="apple-touch-icon" href="https://umsh.dev/apple-touch-icon.png" />
+
+    <meta property="og:site_name" content="UMSH" />
+    <meta property="og:type" content="website" />
+    <meta property="og:title" content="Regions — UMSH" />
+    <meta property="og:description"
+        content="Inspect the compiled UMSH region database on a map: what covers a position, and why." />
+    <meta property="og:image"
+        content="https://umsh.dev/og-card.png" />
+    <meta property="og:url" content="https://umsh.dev/regions/" />
+    <meta name="twitter:card" content="summary_large_image" />
+    
+  <meta http-equiv="Content-Security-Policy"
+    content="default-src 'self'; script-src 'self' 'wasm-unsafe-eval'; worker-src 'self' blob:; child-src 'self' blob:; connect-src 'self'; img-src 'self' data: blob:; style-src 'self' 'unsafe-inline'; object-src 'none'; base-uri 'none'; form-action 'none'" />
+  <link rel="stylesheet" href="https://umsh.dev/regions/map/vendor/maplibre-gl/maplibre-gl.css" />
+  <link rel="stylesheet" href="https://umsh.dev/regions/map/map.css" />
+  <script type="module" src="https://umsh.dev/regions/map/main.mjs"></script>
+
+</head>
+
+<body>
+    <a class="skip-link" href="#main">Skip to content</a>
+
+    <header class="site-header">
+        <div class="container">
+            <a class="site-header__logo" href="https://umsh.dev/">
+                <img src="https://umsh.dev/images/logo/umsh-logo-white.svg" alt="UMSH"
+                    width="1209" height="283" />
+            </a>
+
+            <button class="nav-burger" type="button" aria-expanded="false" aria-controls="site-nav" aria-label="Menu">
+                <svg class="nav-burger__open" viewBox="0 0 24 24" aria-hidden="true">
+                    <path d="M3 6h18M3 12h18M3 18h18" />
+                </svg>
+                <svg class="nav-burger__close" viewBox="0 0 24 24" aria-hidden="true">
+                    <path d="M5 5l14 14M19 5L5 19" />
+                </svg>
+            </button>
+
+            <nav class="site-nav" id="site-nav" aria-label="Main">
+                <a href="/docs/protocol/">Protocol</a>
+                <a href="/hardware/">Hardware</a>
+                <a href="/app/">App</a>
+                <a href="/faq/">FAQ</a>
+                <a href="/flasher/">Flasher</a>
+                <a href="/regions/" aria-current="page" >Regions</a>
+                <a href="/blog/">Blog</a>
+
+                <span class="site-nav__actions">
+                    <a class="pill" href="https://github.com/sponsors/darconeous">Donate</a>
+                    <a class="pill" href="https://github.com/darconeous/umsh">
+                        <svg viewBox="0 0 16 16" aria-hidden="true">
+                            <path
+                                d="M8 0C3.58 0 0 3.58 0 8c0 3.54 2.29 6.53 5.47 7.59.4.07.55-.17.55-.38 0-.19-.01-.82-.01-1.49-2.01.37-2.53-.49-2.69-.94-.09-.23-.48-.94-.82-1.13-.28-.15-.68-.52-.01-.53.63-.01 1.08.58 1.23.82.72 1.21 1.87.87 2.33.66.07-.52.28-.87.51-1.07-1.78-.2-3.64-.89-3.64-3.95 0-.87.31-1.59.82-2.15-.08-.2-.36-1.02.08-2.12 0 0 .67-.21 2.2.82.64-.18 1.32-.27 2-.27s1.36.09 2 .27c1.53-1.04 2.2-.82 2.2-.82.44 1.1.16 1.92.08 2.12.51.56.82 1.27.82 2.15 0 3.07-1.87 3.75-3.65 3.95.29.25.54.73.54 1.48 0 1.07-.01 1.93-.01 2.2 0 .21.15.46.55.38A8.01 8.01 0 0 0 16 8c0-4.42-3.58-8-8-8Z" />
+                        </svg>
+                        GitHub
+                    </a>
+                </span>
+            </nav>
+        </div>
+    </header>
+
+    <main id="main">
+        
+  <div class="page-head page-head--center">
+    <div class="container">
+      <h1>Regions</h1>
+      <p>Inspect the compiled UMSH region database on a map: what covers a position, and why.</p>
+    </div>
+  </div>
+
+  <section class="section">
+    <div class="container">
+      <noscript>
+        <div class="notice">
+          <p>The map needs JavaScript. The region database itself is an
+          ordinary SQLite file and can be inspected with any SQLite client, or
+          with <code>regiondb-build lookup</code> from the repository.</p>
+        </div>
+      </noscript>
+
+      <div class="region-viewer">
+        <div class="region-map-pane">
+          <div id="map" class="region-map"></div>
+          <p id="map-status" class="map-status" hidden></p>
+        </div>
+
+        <aside class="region-side">
+          <form id="coordinate-form" class="coordinate-form">
+            <label>Latitude <input name="lat" inputmode="decimal" placeholder="37.5119" /></label>
+            <label>Longitude <input name="lon" inputmode="decimal" placeholder="-122.2495" /></label>
+            <button type="submit">Look up</button>
+          </form>
+
+          <div class="region-search">
+            <label for="region-search">Find a region</label>
+            <input id="region-search" type="search" placeholder="SFO, country:US, Rogue Valley" />
+            <ul id="search-results" class="search-results" hidden></ul>
+          </div>
+
+          <div id="layer-toggles" class="layer-toggles"></div>
+
+          <div id="lookup-result" class="lookup-result" hidden></div>
+          <div id="database-meta" class="database-meta"></div>
+
+          <div class="database-picker">
+            <label for="database-file">Open a local <code>.regiondb</code></label>
+            <input id="database-file" type="file" accept=".regiondb,.sqlite,.db" />
+          </div>
+        </aside>
+      </div>
+    </div>
+  </section>
+
+  <section class="section">
+    <div class="container prose">
+      <h2 id="what-this-shows">What this shows</h2>
+<p>A UMSH repeater can be told which regions it should accept traffic for. The
+region database turns a position into that list, and this page is how the
+database gets checked: click anywhere and it answers with every region
+covering that point, the radio strings a repeater would be configured with,
+the 16-bit codes those encode to, and which region it suggests as the packet
+default.</p>
+<p>The answer comes from the same code the phone runs, reading the same file it
+downloads. Both are held to a shared set of conformance fixtures, so a
+disagreement between this map and a radio is a test failure rather than a
+surprise.</p>
+<h2 id="reading-the-result">Reading the result</h2>
+<p>A region is <strong>core</strong> when the position is inside it, and <strong>expanded</strong> when
+only its margin reaches — every generated region carries a small outward
+margin so a repeater near a border learns about both sides. The map draws
+each layer in its own color; a position commonly sits in several at once,
+because an airport region, a metro area, a state, and a country are
+independent questions with independent answers.</p>
+<p>Codes are deduplicated on the way to the radio. Where an airport and a metro
+area share an IATA code, both appear as semantic matches and the radio is
+given one entry.</p>
+<h2 id="where-the-data-comes-from">Where the data comes from</h2>
+<p>Airport and location data is OurAirports; country regions are jurisdiction
+areas — land plus exclusive economic zone — from Marine Regions; US states
+are Census TIGER/Line; the coastlines and borders drawn underneath are
+Natural Earth. Every source, with its license, is listed in the panel beside
+the map. The full pipeline and its policy choices live in <code>regions/</code> in the
+repository.</p>
+
+    </div>
+  </section>
+
+    </main>
+
+    <footer class="site-footer">
+        <div class="container">
+            <div class="site-footer__brand">
+                <img src="https://umsh.dev/images/logo/umsh-logo-orange.svg" alt="UMSH"
+                    width="1209" height="283" />
+                <p>An experimental LoRa mesh protocol with strong cryptography, clean layer separation, and strict
+                    bandwidth discipline.</p>
+            </div>
+
+            <div>
+                <h2>Project</h2>
+                <ul>
+                    <li><a href="/docs/protocol/">Protocol specification</a></li>
+                    <li><a href="/docs/rust/">Rust API docs</a></li>
+                    <li><a href="https://github.com/darconeous/umsh">Source on GitHub</a></li>
+                    <li><a href="https://umsh.dev/blog/">Blog</a></li>
+                    <li><a href="https://github.com/sponsors/darconeous">Donate</a></li>
+                </ul>
+            </div>
+
+            <div>
+                <h2>Get started</h2>
+                <ul>
+                    <li><a href="https://umsh.dev/hardware/">Supported hardware</a></li>
+                    <li><a href="https://umsh.dev/flasher/">Flash a device</a></li>
+                    <li><a href="https://umsh.dev/app/">iOS app</a></li>
+                    <li><a href="https://umsh.dev/faq/">FAQ</a></li>
+                </ul>
+            </div>
+        </div>
+
+        <div class="container">
+            <div class="site-footer__legal">
+                <span>
+                    <a href="https://umsh.dev/privacy/">Privacy</a> ·
+                    <a href="https://umsh.dev/terms/">Terms</a>
+                </span>
+                <span>A <a href="https://voria.com/">Voria Labs</a> project</span>
+            </div>
+        </div>
+    </footer>
+
+    <script src="https://umsh.dev/js/nav.js" defer></script>
+</body>
+
+</html>

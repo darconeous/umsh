@@ -1,1 +1,1 @@
-window.SIDEBAR_ITEMS = {"fn":["run"],"mod":["check","cli","client","config","device","hub","identity","iface","keygen","policy","server","tls","tunnel","udp_radio"]};
+window.SIDEBAR_ITEMS = {"fn":["run"],"mod":["check","cli","client","config","device","host","hub","identity","iface","keygen","policy","server","tls","tunnel","udp_radio"]};
