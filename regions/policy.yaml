@@ -17,13 +17,19 @@ distance:
 geometry:
   # Maximum deviation a densified great-circle arc may have from the true arc.
   # Voronoi edges are great circles; GeoJSON edges are straight in lon/lat.
-  curve_error_m: 50
+  # Also the tolerance expanded geometry is simplified to. 100 m on a 100 km
+  # partition boundary is invisible to routing and costs a third fewer
+  # vertices than 50 m.
+  curve_error_m: 100
   # Topology-preserving simplification, per layer. Administrative coastlines
   # carry far more detail than routing needs; hand-authored local regions are
   # already drawn at the scale they mean. Country tolerance is the main size
-  # lever: 100 m compiles to roughly 10 MB of country geometry alone, 300 m to
-  # about half that, and nothing about "which country am I in" needs 100 m.
-  country_simplify_m: 300
+  # lever: 100 m compiles to roughly 10 MB of country geometry alone, 500 m to
+  # a third of that. Nothing about "which country am I in" needs 100 m — the
+  # source boundaries carry no legal-precision promise to begin with — but a
+  # future policy dispute about border-strip accuracy is settled here, not in
+  # code.
+  country_simplify_m: 500
   state_simplify_m: 50
   metro_simplify_m: 25
   custom_simplify_m: 0
