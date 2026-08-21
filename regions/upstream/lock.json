@@ -8,14 +8,6 @@
       "size": 9954307,
       "url": "https://www2.census.gov/geo/tiger/TIGER2024/STATE/tl_2024_us_state.zip"
     },
-    "geoboundaries-cgaz-adm0": {
-      "attribution": "geoBoundaries (https://www.geoboundaries.org/)",
-      "license": "CC BY 4.0",
-      "retrieved_at": "2026-08-21T03:15:52Z",
-      "sha256": "e58255e02b3e52a83b76a02c3c375cd206b9e0bbfedb4f787d110bd34c72a729",
-      "size": 162144256,
-      "url": "https://media.githubusercontent.com/media/wmgeolab/geoBoundaries/9469f09/releaseData/CGAZ/geoBoundariesCGAZ_ADM0.gpkg"
-    },
     "iata-city-codes": {
       "attribution": "lxndrblz/Airports (https://github.com/lxndrblz/Airports)",
       "license": "CC BY-SA 4.0",
@@ -31,6 +23,14 @@
       "sha256": "67b009b529330b0a6043551189f43faa785c9c3cc0011ad2bdb4eac876356c43",
       "size": 134003,
       "url": "https://raw.githubusercontent.com/datasets/country-codes/6a595f1a6f10b3d00175fe67375da88f64f7f76b/data/country-codes.csv"
+    },
+    "marineregions-eez-land": {
+      "attribution": "Flanders Marine Institute (VLIZ), Marine Regions (https://www.marineregions.org/)",
+      "license": "CC BY 4.0",
+      "retrieved_at": "2026-08-21T05:30:19Z",
+      "sha256": "e1e7bf3c7afbad124e52e84499f6581907fc66c2b5f2b8e7967ed1a41883ca05",
+      "size": 19559352,
+      "url": "https://geo.vliz.be/geoserver/MarineRegions/ows?service=WFS&version=2.0.0&request=GetFeature&typeName=MarineRegions:eez_land&outputFormat=SHAPE-ZIP"
     },
     "ourairports-airports": {
       "attribution": "OurAirports (https://ourairports.com/data/)",

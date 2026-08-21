@@ -1,10 +1,17 @@
 """Reading a compiled `.regiondb`.
 
 This is the Python side of the runtime contract. It exists for two reasons: the
-builder's own validation compares the compiled cache against an exhaustive scan
-of the same file, and the cross-implementation conformance fixture is generated
-from here and replayed by the Rust reader. The two must agree exactly, so the
-algorithm is written to be transcribed rather than to be clever.
+builder's own validation compares the compiled lookup paths against an
+exhaustive scan of the same file, and the cross-implementation conformance
+fixture is generated from here and replayed by the Rust reader. The two must
+agree exactly, so the algorithm is written to be transcribed rather than to be
+clever.
+
+Only core geometry is stored. Effective membership — core plus the expansion
+margin — is decided by the sampled-dilation rule in `sampling.py`: test the
+position itself, then a fixed pattern of points around it, against the core
+polygons. A hit on the position itself is a core match; a hit on any other
+sample is an expanded match.
 """
 
 from __future__ import annotations
@@ -14,9 +21,9 @@ import sqlite3
 from dataclasses import dataclass
 from pathlib import Path
 
-from . import blob, morton
+from . import blob, morton, sampling
 from .emit import FORMAT_VERSION, decode_region_ids
-from .model import MEMBERSHIP_CORE, MEMBERSHIP_EXPANDED, ROLE_CORE, ROLE_EFFECTIVE
+from .model import MEMBERSHIP_CORE, MEMBERSHIP_EXPANDED
 
 
 class RegionDbError(RuntimeError):
@@ -29,10 +36,8 @@ class RegionMatch:
     region_key: str
     namespace: str
     code: str
-    display_name: str
     radio_name: str
     wire_code: int
-    kind: str
     layer: str
     priority: int
     default_rank: int | None
@@ -59,17 +64,19 @@ class Lookup:
 @dataclass(frozen=True)
 class _RegionRow:
     region_id: int
-    region_key: str
     namespace: str
     code: str
-    display_name: str
     radio_name: str
     wire_code: int
-    kind: str
     layer: str
     priority: int
     default_rank: int | None
+    expansion_m: int
     site: tuple[float, float] | None
+
+    @property
+    def region_key(self) -> str:
+        return f"{self.namespace}:{self.code}"
 
 
 class RegionDb:
@@ -91,30 +98,25 @@ class RegionDb:
         self._has_lookup_ranges = (
             self._connection.execute("SELECT 1 FROM lookup_ranges LIMIT 1").fetchone() is not None
         )
-        self._has_core_parts = {
-            row[0]
-            for row in self._connection.execute(
-                "SELECT DISTINCT region_id FROM geometry_parts WHERE role = ?", (ROLE_CORE,)
-            )
-        }
         self._regions = {
             row[0]: _RegionRow(
                 region_id=row[0],
-                region_key=row[1],
-                namespace=row[2],
-                code=row[3],
-                display_name=row[4],
-                radio_name=row[5],
-                wire_code=row[6],
-                kind=row[7],
-                layer=row[8],
-                priority=row[9],
-                default_rank=row[10],
-                site=(row[11], row[12]) if row[11] is not None else None,
+                namespace=row[1],
+                code=row[2],
+                # A stored radio name is the exception: it exists only where
+                # the wire string differs from the code, which today means
+                # custom regions.
+                radio_name=row[3] if row[3] is not None else row[2],
+                wire_code=row[4],
+                layer=row[5],
+                priority=row[6],
+                default_rank=row[7],
+                expansion_m=row[8],
+                site=(row[9], row[10]) if row[9] is not None else None,
             )
             for row in self._connection.execute(
-                "SELECT id, region_key, namespace, code, display_name, radio_name, wire_code, "
-                "kind, layer, priority, default_rank, site_lon, site_lat FROM regions"
+                "SELECT id, namespace, code, radio_name, wire_code, layer, priority, "
+                "default_rank, expansion_m, site_lon, site_lat FROM regions"
             )
         }
 
@@ -134,20 +136,22 @@ class RegionDb:
     def region_keys(self) -> list[str]:
         return sorted(row.region_key for row in self._regions.values())
 
-    def _parts(self, region_id: int, role: int) -> list[list[blob.Ring]]:
+    def _parts(self, region_id: int) -> list[list[blob.Ring]]:
         return [
             blob.decode(row[0])
             for row in self._connection.execute(
-                "SELECT geometry FROM geometry_parts WHERE region_id = ? AND role = ? ORDER BY id",
-                (region_id, role),
+                "SELECT geometry FROM geometry_parts WHERE region_id = ? ORDER BY id",
+                (region_id,),
             )
         ]
 
-    def _covers(self, region_id: int, role: int, lon_e6: int, lat_e6: int) -> bool:
+    def _core_hit(self, region_id: int, latitude: float, longitude: float) -> bool:
+        """Whether one position lands in a region's core geometry."""
+        lon_e6, lat_e6 = self._quantize(latitude, longitude)
         for row in self._connection.execute(
             "SELECT geometry, min_lon, min_lat, max_lon, max_lat FROM geometry_parts "
-            "WHERE region_id = ? AND role = ? ORDER BY id",
-            (region_id, role),
+            "WHERE region_id = ? ORDER BY id",
+            (region_id,),
         ):
             payload, min_lon, min_lat, max_lon, max_lat = row
             # The stored bounds are the part's own quantized extent, so a point
@@ -161,66 +165,85 @@ class RegionDb:
                 return True
         return False
 
-    def _effective_members(self, latitude: float, longitude: float) -> list[int]:
-        """The cached path: one range query plus whatever it could not decide.
+    def _membership(self, region_id: int, latitude: float, longitude: float) -> int | None:
+        """Sampled-dilation membership: core, expanded, or not a member."""
+        expansion = self._regions[region_id].expansion_m
+        for index, (sample_lat, sample_lon) in enumerate(
+            sampling.sample_positions(latitude, longitude, expansion)
+        ):
+            if self._core_hit(region_id, sample_lat, sample_lon):
+                return MEMBERSHIP_CORE if index == 0 else MEMBERSHIP_EXPANDED
+        return None
 
-        A database built without the cache has an empty lookup_ranges table,
-        and the answer comes from the R-tree over the same effective polygons.
-        A database built with it covers the whole key space, so a missing
-        range means no coverage.
-        """
+    def _memberships(self, latitude: float, longitude: float) -> dict[int, int]:
+        """The fast path: cached ranges when present, the R-tree otherwise."""
         key = morton.key(latitude, longitude)
+        if not self._has_lookup_ranges:
+            return self._rtree_memberships(latitude, longitude)
+
         row = self._connection.execute(
             "SELECT start_key, end_key, base_set_id, candidate_region_ids FROM lookup_ranges "
             "WHERE start_key <= ? ORDER BY start_key DESC LIMIT 1",
             (key,),
         ).fetchone()
         if row is None:
-            if self._has_lookup_ranges:
-                return []
-            return self._rtree_members(latitude, longitude)
+            return {}
         _, end_key, base_set_id, candidates = row
         if key > end_key:
-            return []
+            return {}
 
         payload = self._connection.execute(
             "SELECT region_ids FROM region_sets WHERE id = ?", (base_set_id,)
         ).fetchone()
-        members = set(decode_region_ids(payload[0])) if payload else set()
-
+        memberships: dict[int, int] = {}
+        # Base-set regions are known members of the whole cell, but core versus
+        # expanded is still a property of the exact position.
+        for region_id in decode_region_ids(payload[0]) if payload else []:
+            membership = self._membership(region_id, latitude, longitude)
+            memberships[region_id] = membership if membership is not None else MEMBERSHIP_EXPANDED
         if candidates:
-            lon_e6, lat_e6 = self._quantize(latitude, longitude)
             for region_id in decode_region_ids(candidates):
-                if self._covers(region_id, ROLE_EFFECTIVE, lon_e6, lat_e6):
-                    members.add(region_id)
-        return sorted(members)
+                membership = self._membership(region_id, latitude, longitude)
+                if membership is not None:
+                    memberships[region_id] = membership
+        return memberships
 
-    def _rtree_members(self, latitude: float, longitude: float) -> list[int]:
-        """Candidate regions whose effective bounding boxes cover the position."""
+    def _rtree_memberships(self, latitude: float, longitude: float) -> dict[int, int]:
+        """Candidates from the padded R-tree boxes, then the sampled test.
+
+        Boxes are stored padded by each region's expansion distance and may
+        extend past ±180; querying the longitude at all three wrappings is what
+        keeps a position on one side of the antimeridian able to see a region
+        whose padded box hangs over from the other side.
+        """
         lon_e6, lat_e6 = self._quantize(latitude, longitude)
         lon = blob.from_e6(lon_e6)
         lat = blob.from_e6(lat_e6)
-        members: set[int] = set()
-        for region_id, payload in self._connection.execute(
-            "SELECT p.region_id, p.geometry FROM effective_rtree r "
-            "JOIN geometry_parts p ON p.id = r.part_id "
-            "WHERE r.min_lon <= ? AND r.max_lon >= ? AND r.min_lat <= ? AND r.max_lat >= ?",
-            (lon, lon, lat, lat),
-        ):
-            if region_id in members:
-                continue
-            if blob.point_in_rings(blob.decode(payload), lon_e6, lat_e6):
-                members.add(region_id)
-        return sorted(members)
+        candidates: set[int] = set()
+        for wrapped in (lon - 360.0, lon, lon + 360.0):
+            for (region_id,) in self._connection.execute(
+                "SELECT DISTINCT p.region_id FROM effective_rtree r "
+                "JOIN geometry_parts p ON p.id = r.part_id "
+                "WHERE r.min_lon <= ? AND r.max_lon >= ? AND r.min_lat <= ? AND r.max_lat >= ?",
+                (wrapped, wrapped, lat, lat),
+            ):
+                candidates.add(region_id)
 
-    def _exhaustive_members(self, latitude: float, longitude: float) -> list[int]:
-        """The correctness path: test every region's effective geometry."""
-        lon_e6, lat_e6 = self._quantize(latitude, longitude)
-        return sorted(
-            region_id
-            for region_id in self._regions
-            if self._covers(region_id, ROLE_EFFECTIVE, lon_e6, lat_e6)
-        )
+        memberships: dict[int, int] = {}
+        for region_id in candidates:
+            membership = self._membership(region_id, latitude, longitude)
+            if membership is not None:
+                memberships[region_id] = membership
+        return memberships
+
+    def _exhaustive_memberships(self, latitude: float, longitude: float) -> dict[int, int]:
+        """The correctness path: the sampled test against every region."""
+        memberships: dict[int, int] = {}
+        for region_id in self._regions:
+            membership = self._membership(region_id, latitude, longitude)
+            if membership is not None:
+                memberships[region_id] = membership
+        return memberships
 
     @staticmethod
     def _quantize(latitude: float, longitude: float) -> tuple[int, int]:
@@ -230,39 +253,29 @@ class RegionDb:
         )
 
     def lookup(self, latitude: float, longitude: float, *, exhaustive: bool = False) -> Lookup:
-        members = (
-            self._exhaustive_members(latitude, longitude)
+        # Validate the position before any path can silently accept it.
+        self._quantize(latitude, longitude)
+        memberships = (
+            self._exhaustive_memberships(latitude, longitude)
             if exhaustive
-            else self._effective_members(latitude, longitude)
+            else self._memberships(latitude, longitude)
         )
-        lon_e6, lat_e6 = self._quantize(latitude, longitude)
 
         matches: list[RegionMatch] = []
-        for region_id in members:
+        for region_id in sorted(memberships):
             row = self._regions[region_id]
-            # No stored core parts means the region was never expanded, so
-            # its effective geometry is its core and membership here is
-            # already established.
-            membership = (
-                MEMBERSHIP_CORE
-                if region_id not in self._has_core_parts
-                or self._covers(region_id, ROLE_CORE, lon_e6, lat_e6)
-                else MEMBERSHIP_EXPANDED
-            )
             matches.append(
                 RegionMatch(
                     region_id=row.region_id,
                     region_key=row.region_key,
                     namespace=row.namespace,
                     code=row.code,
-                    display_name=row.display_name,
                     radio_name=row.radio_name,
                     wire_code=row.wire_code,
-                    kind=row.kind,
                     layer=row.layer,
                     priority=row.priority,
                     default_rank=row.default_rank,
-                    membership=membership,
+                    membership=memberships[region_id],
                     site=row.site,
                 )
             )
@@ -303,12 +316,12 @@ def site_distance(match: RegionMatch, latitude: float, longitude: float) -> floa
     """Great-circle distance from a position to a match's generating site.
 
     Deliberately spherical, and deliberately not the WGS84 model the build
-    measures radius caps and buffers with. This distance is never a
-    measurement — it only orders two candidates that are both already within a
-    hundred kilometers — and making it spherical means a browser or a phone can
-    reproduce the ordering with arithmetic instead of a geodesic library.
+    measures radius caps with. This distance is never a measurement — it only
+    orders two candidates that are both already within a hundred kilometers —
+    and making it spherical means a browser or a phone can reproduce the
+    ordering with arithmetic instead of a geodesic library.
 
-    The distinction matters more than it looks. Where two expansion buffers
+    The distinction matters more than it looks. Where two expansion margins
     overlap, the two sites can be equidistant to within tens of meters, and
     there the ellipsoidal correction is large enough to pick the other winner.
     Two runtimes disagreeing about which region to suggest is exactly the kind
@@ -334,7 +347,7 @@ def _suggested_default(
 
     Only the IATA-derived layers are eligible, and a core match beats an
     expanded one from the same layer. Ties among expanded matches — which
-    happen wherever two expansion buffers overlap — go to the nearest site.
+    happen wherever two expansion margins overlap — go to the nearest site.
     """
     eligible = [match for match in matches if match.default_rank is not None]
     if not eligible:

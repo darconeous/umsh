@@ -31,8 +31,7 @@ def summarize(report: dict[str, Any]) -> str:
         "  regions: "
         + ", ".join(f"{name} {count}" for name, count in sorted(counts.items()) if count),
         f"  geometry: {geometry.get('parts', 0)} parts, "
-        f"{geometry.get('core_vertices', 0)} core and "
-        f"{geometry.get('effective_vertices', 0)} effective vertices",
+        f"{geometry.get('vertices', 0)} vertices",
         f"  cache: {cache.get('ranges', 0)} ranges from {cache.get('leaves', 0)} leaves, "
         f"{cache.get('boundary_leaves', 0)} needing fallback, "
         f"at most {cache.get('max_candidates', 0)} candidates",

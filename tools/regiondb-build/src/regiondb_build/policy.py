@@ -40,6 +40,7 @@ class Policy:
     format_version: int
     distance_model: str
     curve_error_m: float
+    cap_error_m: float
     simplify_m: dict[str, float]
     cache_enabled: bool
     cache_max_depth: int
@@ -113,6 +114,7 @@ def load(path: Path) -> Policy:
         format_version=format_version,
         distance_model=str(raw.get("distance", {}).get("model", "WGS84")),
         curve_error_m=float(geometry.get("curve_error_m", 50)),
+        cap_error_m=float(geometry.get("cap_error_m", 1000)),
         simplify_m={
             "country": float(geometry.get("country_simplify_m", 0)),
             "us_state": float(geometry.get("state_simplify_m", 0)),

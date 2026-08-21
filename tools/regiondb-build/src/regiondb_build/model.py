@@ -38,8 +38,6 @@ LAYER_NAMESPACE = {
 MEMBERSHIP_CORE = 0
 MEMBERSHIP_EXPANDED = 1
 
-ROLE_CORE = 0
-ROLE_EFFECTIVE = 1
 
 
 @dataclass
@@ -76,7 +74,6 @@ class Region:
     priority: int
     expansion_m: int
     core: BaseGeometry
-    effective: BaseGeometry | None = None
     default_rank: int | None = None
     source_key: str | None = None
     source_feature_id: str | None = None

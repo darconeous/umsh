@@ -29,6 +29,7 @@ from pathlib import Path
 
 from pyogrio.raw import read as read_ogr
 from shapely import from_wkb
+from shapely.geometry import MultiPolygon
 
 from . import geom
 from .fetch import load_lock
@@ -43,6 +44,12 @@ from .sourcetree import (
 # here rather than read from policy so that changing a build tolerance never
 # requires vendor data to regenerate an extract.
 BOUNDARY_EXTRACT_TOLERANCE_M = 50.0
+
+# Country regions are jurisdiction areas — land plus EEZ — whose edges are
+# either legal constructs or 200-nautical-mile arcs. Nothing about them needs
+# fifty-meter fidelity, and one kilometer keeps the whole committed layer
+# under four megabytes.
+COUNTRY_EXTRACT_TOLERANCE_M = 1000.0
 BOUNDARY_COORDINATE_DIGITS = 6
 
 # Facility types that never carry a meaningful position for routing.
@@ -218,8 +225,10 @@ def iso3_to_iso2(vendor: Path) -> dict[str, str]:
     return mapping
 
 
-def _boundary_document(geometry, name: str, feature_id: str) -> str:
-    simplified = geom.simplify_m(geom.normalize(geometry, name=name), BOUNDARY_EXTRACT_TOLERANCE_M)
+def _boundary_document(
+    geometry, name: str, feature_id: str, tolerance_m: float = BOUNDARY_EXTRACT_TOLERANCE_M
+) -> str:
+    simplified = geom.simplify_m(geom.normalize(geometry, name=name), tolerance_m)
     mapping = simplified.__geo_interface__
     rounded = json.loads(
         json.dumps(mapping),
@@ -233,26 +242,78 @@ def _boundary_document(geometry, name: str, feature_id: str) -> str:
     return json.dumps(document, sort_keys=True, separators=(",", ":")) + "\n"
 
 
-def countries(vendor: Path, destination: Path, mapping: dict[str, str]) -> list[str]:
-    """Write country boundaries, keyed by ISO 3166-1 alpha-2."""
-    notes: list[str] = []
-    meta, _, geometry, fields = read_ogr(str(vendor / "geoBoundariesCGAZ_ADM0.gpkg"))
-    names = list(meta["fields"])
-    groups = fields[names.index("shapeGroup")]
-    labels = fields[names.index("shapeName")]
+def countries(
+    vendor: Path,
+    destination: Path,
+    mapping: dict[str, str],
+    result: UpdateResult,
+    check: bool,
+) -> list[str]:
+    """Write country regions from the Marine Regions EEZ + land union.
 
-    destination.mkdir(parents=True, exist_ok=True)
-    written = 0
-    for wkb, alpha3, label in zip(geometry, groups, labels, strict=True):
-        code = mapping.get(str(alpha3).upper())
-        if not code:
-            notes.append(f"{alpha3} ({label}) has no ISO 3166-1 alpha-2 code and was skipped")
+    A country region is the area where the country asserts jurisdiction — its
+    land together with its exclusive economic zone, conventionally 200
+    nautical miles offshore — not its coastline. That is deliberately the
+    cheaper representation as well as the truer one for routing: the fractal
+    coastline lies strictly inside the region and vanishes, leaving land
+    borders and smooth maritime arcs.
+
+    Contested areas are omitted entirely. A feature marked as an overlapping
+    claim or a joint regime is skipped and named in the report, so the
+    database takes no position on any dispute. If a community in a contested
+    area ever wants coverage, that is a decision to make then, on its own
+    terms.
+
+    Outlying territories are keyed by their own ISO code where they have one
+    (French Polynesia is PF) and by their sovereign's where they do not
+    (Hawaii is US).
+    """
+    notes: list[str] = []
+    meta, _, geometry, fields = read_ogr(f"/vsizip/{vendor / 'eez_land.shp.zip'}")
+    names = list(meta["fields"])
+    territory = fields[names.index("iso_ter1")]
+    sovereign = fields[names.index("iso_sov1")]
+    pol_types = fields[names.index("pol_type")]
+    labels = fields[names.index("union")]
+
+    kept: dict[str, list] = {}
+    display: dict[str, str] = {}
+    skipped: list[str] = []
+    for index, wkb in enumerate(geometry):
+        pol_type = str(pol_types[index])
+        if pol_type not in ("Union EEZ and country", "Landlocked country"):
+            skipped.append(f"{labels[index]} ({pol_type})")
             continue
-        (destination / f"{code}.geojson").write_text(
-            _boundary_document(from_wkb(wkb), str(label), str(alpha3))
+        iso3 = str(territory[index] or sovereign[index] or "").upper()
+        code = mapping.get(iso3)
+        if not code:
+            notes.append(f"{labels[index]}: no ISO 3166-1 alpha-2 for {iso3 or 'unset'}, skipped")
+            continue
+        kept.setdefault(code, []).append(from_wkb(wkb))
+        display.setdefault(code, str(labels[index]))
+
+    for code in sorted(kept):
+        parts = []
+        for shape in kept[code]:
+            parts.extend(geom.polygonal(shape).geoms)
+        _write(
+            destination / f"{code}.geojson",
+            _boundary_document(
+                MultiPolygon(parts),
+                display[code],
+                f"marineregions:{code}",
+                tolerance_m=COUNTRY_EXTRACT_TOLERANCE_M,
+            ),
+            result,
+            check,
         )
-        written += 1
-    notes.append(f"{written} country boundaries written to {destination}")
+
+    notes.append(
+        f"{len(kept)} country regions from EEZ + land union; "
+        f"{len(skipped)} contested or joint features omitted by policy"
+    )
+    for entry in sorted(skipped):
+        notes.append(f"  omitted: {entry}")
     return notes
 
 
@@ -323,13 +384,9 @@ def update(root: Path, *, check: bool = False) -> UpdateResult:
 
     result.report.extend(us_states(vendor, extracts / "boundaries" / "us-state", result, check))
 
-    if not check:
-        mapping = iso3_to_iso2(vendor)
-        result.report.extend(countries(vendor, root / "build" / "boundaries" / "country", mapping))
-        result.report.append(
-            "country boundaries are not committed: even simplified they are tens of "
-            "megabytes per release. They are written under regions/build/, which is "
-            "ignored, and a world build needs `regiondb-build fetch` and `update` first."
-        )
+    mapping = iso3_to_iso2(vendor)
+    result.report.extend(
+        countries(vendor, extracts / "boundaries" / "country", mapping, result, check)
+    )
 
     return result

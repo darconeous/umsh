@@ -136,7 +136,9 @@ def _generated_regions(
     if settings.max_radius_m is None:
         raise CompileError(f"layer {layer!r} is generated and needs a max_radius_m")
 
-    cells = voronoi.build_cells(sites, settings.max_radius_m, policy.curve_error_m)
+    cells = voronoi.build_cells(
+        sites, settings.max_radius_m, policy.curve_error_m, policy.cap_error_m
+    )
     warnings.extend(voronoi.validate_cells(cells, settings.max_radius_m))
 
     namespace = LAYER_NAMESPACE[layer]
@@ -198,17 +200,9 @@ def compile_tree(tree: SourceTree, policy: Policy) -> CompileResult:
 
     regions = [region for region in regions if not region.core.is_empty]
 
-    for region in regions:
-        if region.expansion_m > 0:
-            expanded = geom.buffer_m(region.core, region.expansion_m)
-            # The buffer's arc fillets carry far more vertices than a routing
-            # margin needs. Simplify to the curve tolerance, then union the
-            # core back in so simplification can never pull the effective
-            # boundary inside it.
-            simplified = geom.simplify_m(expanded, policy.curve_error_m)
-            region.effective = geom.polygonal(simplified.union(region.core))
-        else:
-            region.effective = geom.polygonal(region.core)
+    # Expansion is not compiled into geometry. Each region carries its
+    # expansion distance, and the lookup's sampled-dilation rule resolves it
+    # at query time against the core polygons; see sampling.py.
 
     warnings.extend(validate(regions))
 
@@ -260,7 +254,7 @@ def _boundary_regions(tree: SourceTree, policy: Policy, layer: str) -> list[Regi
         return []
     features = tree.countries if layer == LAYER_COUNTRY else tree.states
     namespace = LAYER_NAMESPACE[layer]
-    source_key = "geoboundaries-cgaz-adm0" if layer == LAYER_COUNTRY else "census-tiger-states"
+    source_key = "marineregions-eez-land" if layer == LAYER_COUNTRY else "census-tiger-states"
     regions = []
     for feature in features:
         core = geom.simplify_m(
@@ -336,11 +330,11 @@ def _sources(tree: SourceTree) -> list[SourceRecord]:
             attribution="OurAirports",
         ),
         SourceRecord(
-            source_key="geoboundaries-cgaz-adm0",
-            name="geoBoundaries CGAZ ADM0",
-            url="https://www.geoboundaries.org/",
+            source_key="marineregions-eez-land",
+            name="Marine Regions EEZ and land union",
+            url="https://www.marineregions.org/",
             license="CC BY 4.0",
-            attribution="geoBoundaries (Runfola et al.)",
+            attribution="Flanders Marine Institute (VLIZ)",
         ),
         SourceRecord(
             source_key="census-tiger-states",
@@ -364,6 +358,19 @@ def _sources(tree: SourceTree) -> list[SourceRecord]:
     ]
 
 
+def _dilated(region: Region):
+    """A conservative superset of a region's sampled-dilation coverage.
+
+    Used only to decide whether two same-code regions could cover one
+    position. The sampled member set is contained in the true geodesic
+    dilation, which the AEQD buffer approximates from inside by well under a
+    percent; the two-percent margin keeps this a superset.
+    """
+    if region.expansion_m <= 0:
+        return region.core
+    return geom.buffer_m(region.core, region.expansion_m * 1.02 + 100)
+
+
 def validate(regions: list[Region]) -> list[str]:
     """Checks that run on every build, whatever the source tree."""
     warnings: list[str] = []
@@ -378,9 +385,7 @@ def validate(regions: list[Region]) -> list[str]:
         names = {region.radio_name.casefold() for region in sharing}
         for index, first in enumerate(sharing):
             for second in sharing[index + 1 :]:
-                if first.effective is None or second.effective is None:
-                    continue
-                if first.effective.intersects(second.effective):
+                if _dilated(first).intersects(_dilated(second)):
                     if len(names) == 1:
                         # Same radio name from different layers, e.g. the metro
                         # and airport senses of one IATA code. The final list
@@ -398,18 +403,6 @@ def validate(regions: list[Region]) -> list[str]:
             )
 
     for region in regions:
-        if region.effective is None:
-            continue
-        if region.expansion_m > 0:
-            # An area check rather than `contains`: a shared boundary vertex
-            # is enough to make strict containment false while the coverage is
-            # exactly right, and coverage is what expansion promises.
-            missing = region.core.difference(region.effective)
-            if not missing.is_empty and missing.area > 1e-12:
-                warnings.append(
-                    f"{region.region_key}: expansion lost core coverage "
-                    f"({missing.area:.2e} square degrees)"
-                )
         if region.core.is_empty:
             warnings.append(f"{region.region_key}: core geometry is empty")
 

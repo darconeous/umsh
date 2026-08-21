@@ -57,7 +57,7 @@ def test_one_radio_region_per_wire_code(database):
 
 def test_forced_override_wins_its_polygon(database):
     result = database.lookup(37.58, -122.15)
-    commercial = [match for match in result.matches if match.kind == "commercial_airport"]
+    commercial = [match for match in result.matches if match.layer == "commercial_airport"]
     core = [match for match in commercial if match.membership == 0]
     assert [match.code for match in core] == ["SJC"]
 
@@ -84,19 +84,28 @@ def test_expansion_produces_overlapping_neighbors(database):
     assert any(value == 1 for value in memberships.values()), memberships
 
 
-def test_core_parts_are_stored_only_where_expansion_moved_the_boundary(fixture_db):
+def test_only_core_geometry_is_stored_and_rtree_boxes_are_padded(fixture_db):
     connection = sqlite3.connect(f"file:{fixture_db}?mode=ro", uri=True)
-    rows = connection.execute(
-        "SELECT r.layer, r.expansion_m, COUNT(p.id) FROM regions r "
-        "LEFT JOIN geometry_parts p ON p.region_id = r.id AND p.role = 0 "
-        "GROUP BY r.id"
-    ).fetchall()
-    connection.close()
-    for layer, expansion, core_parts in rows:
-        if expansion == 0:
-            assert core_parts == 0, layer
+    # Every region stores at least one core part; expansion is a number, not
+    # stored geometry.
+    for layer, count in connection.execute(
+        "SELECT r.layer, COUNT(p.id) FROM regions r "
+        "LEFT JOIN geometry_parts p ON p.region_id = r.id GROUP BY r.id"
+    ):
+        assert count > 0, layer
+    # The R-tree box of an expanded region's part is strictly larger than the
+    # part's own bounds; an unexpanded region's matches them exactly.
+    for expansion, min_lon, rt_min_lon in connection.execute(
+        "SELECT reg.expansion_m, p.min_lon, r.min_lon FROM geometry_parts p "
+        "JOIN effective_rtree r ON r.part_id = p.id "
+        "JOIN regions reg ON reg.id = p.region_id"
+    ):
+        if expansion > 0:
+            assert rt_min_lon < min_lon - 0.01
         else:
-            assert core_parts > 0, layer
+            # The rtree stores 32-bit floats, rounded outward by SQLite.
+            assert abs(rt_min_lon - min_lon) < 1e-3
+    connection.close()
 
 
 def test_conformance_cases_replay(database):

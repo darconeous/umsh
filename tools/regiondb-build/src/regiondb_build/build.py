@@ -88,8 +88,7 @@ def build(
         },
         "geometry": {
             "parts": stats.parts,
-            "core_vertices": stats.core_vertices,
-            "effective_vertices": stats.effective_vertices,
+            "vertices": stats.vertices,
         },
         "cache": {
             "enabled": settings.cache_enabled,
@@ -122,10 +121,19 @@ def _build_cache(regions, settings) -> tuple[list[cells.Leaf], cells.CacheStats]
         return [], cells.CacheStats(0, 0, 0, 0, 0)
     identifiers = list(range(1, len(regions) + 1))
     ordered = sorted(regions, key=lambda item: (item.priority, item.region_key))
-    geometries = [
-        region.effective if region.effective is not None else region.core for region in ordered
+    # Classification needs two shapes per region: the core (a cell inside it is
+    # guaranteed member territory) and a superset of the sampled-dilation
+    # coverage (a cell outside it is guaranteed non-member territory). The
+    # margin on the buffer keeps it a superset of the sample reach; anything
+    # between the two becomes a candidate the reader tests exactly.
+    cores = [region.core for region in ordered]
+    reaches = [
+        region.core
+        if region.expansion_m <= 0
+        else geom.buffer_m(region.core, region.expansion_m * 1.02 + 100)
+        for region in ordered
     ]
-    return cells.build(identifiers, geometries, settings.cache_max_depth)
+    return cells.build(identifiers, cores, reaches, settings.cache_max_depth)
 
 
 __all__ = ["BuildError", "BuildOutcome", "build", "geom"]

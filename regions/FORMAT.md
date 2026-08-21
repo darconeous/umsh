@@ -39,13 +39,10 @@ CREATE TABLE sources (
 
 CREATE TABLE regions (
     id INTEGER PRIMARY KEY,
-    region_key TEXT NOT NULL UNIQUE,   -- "iata-airport:SFO"
     namespace TEXT NOT NULL,           -- tooling only, never transmitted
-    code TEXT NOT NULL,
-    display_name TEXT NOT NULL,
-    radio_name TEXT NOT NULL,          -- what a repeater is configured with
+    code TEXT NOT NULL,                -- namespace-local code
+    radio_name TEXT,                   -- only when it differs from code
     wire_code INTEGER NOT NULL,        -- canonical umsh_core::RegionCode
-    kind TEXT NOT NULL,
     layer TEXT NOT NULL,
     priority INTEGER NOT NULL,         -- presentation order
     default_rank INTEGER,              -- eligibility for the packet default
@@ -53,14 +50,13 @@ CREATE TABLE regions (
     site_lon REAL, site_lat REAL,      -- generating site, for nearest tie-breaks
     source_id INTEGER,
     flags INTEGER NOT NULL DEFAULT 0,
-    notes TEXT,
-    FOREIGN KEY(source_id) REFERENCES sources(id)
+    FOREIGN KEY(source_id) REFERENCES sources(id),
+    UNIQUE(namespace, code)
 );
 
 CREATE TABLE geometry_parts (
     id INTEGER PRIMARY KEY,
     region_id INTEGER NOT NULL,
-    role INTEGER NOT NULL,             -- 0 = core, 1 = effective
     min_lon REAL NOT NULL, min_lat REAL NOT NULL,
     max_lon REAL NOT NULL, max_lat REAL NOT NULL,
     geometry BLOB NOT NULL,
@@ -90,13 +86,21 @@ CREATE TABLE provenance (
 );
 ```
 
-### Core geometry is stored only where it differs
+The table holds what lookup needs and nothing else. A region's key is
+`namespace || ':' || code`, composed by readers rather than stored. Display
+names, municipalities, and other prose stay in the committed extracts;
+`radio_name` is NULL wherever the wire string is simply the code, which is
+every region except the custom ones.
 
-A region with `expansion_m = 0` has identical core and effective geometry, and
-the build writes it once. **A region with no `role = 0` rows has its effective
-geometry as its core**, and a position inside it is a core match. Readers must
-implement this; treating a missing core as an empty one would report every
-country and state match as merely expanded.
+### Only core geometry is stored
+
+`geometry_parts` holds each region's core polygons and nothing else. The
+expansion margin — the overlap that lets a repeater near a border serve both
+sides — is the `expansion_m` number, resolved at lookup time by the sampled
+rule below. The R-tree box of each part is the part's bounds grown by its
+region's expansion distance (latitude clamped at the poles, longitude allowed
+to run past ±180), so the candidate filter still finds a region from inside
+its margin.
 
 ## Geometry blobs
 
@@ -155,44 +159,49 @@ three implementations to agree about than this needs to be.
 Each axis is quantized to 16 bits and interleaved, longitude into the even
 bits, giving a 32-bit Z-order key.
 
+## The sampled expansion rule
+
+Effective membership is *defined* by sampling, not approximated by it:
+
+> A position is a member of a region if any of the following positions lies
+> inside the region's core geometry (boundary inclusive): the position itself;
+> six points at half the region's expansion distance, at bearings 0°, 60°,
+> 120°, 180°, 240°, 300°; and twelve points at the full distance, at bearings
+> every 30° from 0°. A hit on the position itself is a **core** match; a hit
+> on any other sample is an **expanded** match. A region whose expansion is
+> zero is tested at the position alone.
+
+Destinations are computed on the mean-radius sphere (R = 6 371 008.8 m) with
+the standard direct formulas — the same model as the tie-break below, chosen
+because every platform reproduces it with plain arithmetic. Since the pattern
+is the semantics, implementations agree exactly; against true geodesic
+dilation the outer edge scallops by a few hundred meters between samples,
+which is well inside what an expansion margin means.
+
 ## Lookup
-
-Two paths, chosen by whether the database was built with the range cache. An
-**empty `lookup_ranges` table** is the signal that it was not.
-
-**With the cache:**
 
 ```sql
 SELECT start_key, end_key, base_set_id, candidate_region_ids
 FROM lookup_ranges WHERE start_key <= ?1 ORDER BY start_key DESC LIMIT 1;
 ```
 
-Verify `?1 <= end_key`; a cache-built database covers the whole key space, so a
-missing or overshot range genuinely means no coverage. The base set is the
-answer for every position in the range. If `candidate_region_ids` is empty, it
-is the whole answer; otherwise those few regions — and only those — are tested
-against their exact effective geometry and unioned in.
+Verify `?1 <= end_key`; a key past the range's end has no coverage. The base
+set lists regions that are members everywhere in the range (their core or
+expanded status still depends on the exact position). If
+`candidate_region_ids` is non-empty, those few regions — and only those — are
+resolved with the sampled rule and unioned in.
 
-**Without the cache**, candidates come from the R-tree instead:
-
-```sql
-SELECT p.region_id, p.geometry FROM effective_rtree r
-JOIN geometry_parts p ON p.id = r.part_id
-WHERE r.min_lon <= ?1 AND r.max_lon >= ?1
-  AND r.min_lat <= ?2 AND r.max_lat >= ?2;
-```
-
-and each candidate part is resolved by the same exact point-in-polygon test.
+A database built without the cache has an empty `lookup_ranges` table. There
+the reader collects candidates from `effective_rtree` instead — querying the
+longitude at all three wrappings (λ−360, λ, λ+360), because padded boxes may
+hang past the antimeridian — and resolves each with the same sampled rule.
 
 `region_ids` blobs are sorted region ids stored as varint gaps.
 
-Both paths are optimizations over the exact polygons in the same file; neither
-is a second source of truth. The build proves it by comparing whichever path a
-database carries against an exhaustive scan over thousands of positions
-weighted toward boundaries. The global database currently ships without the
-cache — at its region count the range table costs more space than it saves
-time — while the committed test fixture keeps the cache on, so both paths stay
-conformance-tested.
+The cache and the R-tree are optimizations over the same core polygons; they
+are never a second source of truth. The build proves it by comparing the fast
+paths against an exhaustive scan over thousands of positions weighted toward
+boundaries.
 
 ## Result policy
 

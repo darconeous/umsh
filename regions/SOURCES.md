@@ -56,24 +56,34 @@ so in its own record.
 
 See `LICENSES.md` — this source is share-alike.
 
-## Country boundaries — geoBoundaries CGAZ ADM0
+## Country regions — Marine Regions EEZ + land union
 
-`https://www.geoboundaries.org/`, **CC BY 4.0**, the globally dissolved ADM0
-layer pinned to a commit.
+`https://www.marineregions.org/`, Flanders Marine Institute (VLIZ),
+**CC BY 4.0**, retrieved from the public WFS endpoint at `geo.vliz.be`
+(`MarineRegions:eez_land`).
 
-The dissolved global layer is used rather than per-country downloads so that
-coverage comes from one internally consistent release with no seams between
-neighbors. geoBoundaries stores release data in Git LFS, so the pinned URL is
-on `media.githubusercontent.com`, which serves the content rather than a
-pointer file.
+A country region is the area where the country asserts jurisdiction: its land
+together with its exclusive economic zone, conventionally 200 nautical miles
+offshore. That definition is both truer to what a repeater operator wants —
+a boat in coastal waters is in its country's region — and far cheaper than a
+coastline dataset, because the fractal coastline lies strictly inside the
+union and is never stored. What remains is land borders and smooth maritime
+arcs, distilled at one kilometer.
+
+Contested areas are omitted entirely. Features the source marks as
+overlapping claims or joint regimes are skipped by the update pass and named
+in its report, so the database takes no position on any dispute. If a
+community in a contested area wants coverage some day, that bridge gets
+crossed then, deliberately.
 
 Features are keyed by ISO 3166-1 alpha-3 and UMSH region codes are the
-two-letter form, so a crosswalk source is pinned alongside. Features with no
-alpha-2 code — disputed areas and a handful of unassigned territories — are
-skipped, and the update pass names each one.
+two-letter form, so a crosswalk source is pinned alongside. Outlying
+territories keep their own ISO code where one exists (French Polynesia is
+`PF`) and fall back to their sovereign's where none does (Hawaii is `US`).
 
-Country regions are land containment. Territorial waters are not inferred; a
-maritime policy can be added later as its own layer.
+The WFS response is not a versioned archive; the lock records the SHA-256 of
+what was retrieved, and `update --check` proves the committed extracts match
+it.
 
 ## US state boundaries — Census TIGER/Line 2024
 

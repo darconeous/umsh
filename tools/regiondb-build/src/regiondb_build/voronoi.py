@@ -40,21 +40,23 @@ from .model import Site
 # clip itself is scale-free, and real distances go through pyproj.
 EARTH_RADIUS_M = 6_371_008.8
 
-# Bounds on the capping disk's vertex count, whatever the curve tolerance
-# works out to.
-DISK_SEGMENTS_MIN = 36
+# Bounds on the capping disk's vertex count, whatever the cap tolerance works
+# out to. The cap is where a generated region fades out at maximum radius, not
+# a border anyone contests, so it carries its own, much looser tolerance than
+# the bisector edges that actually decide between neighboring regions.
+DISK_SEGMENTS_MIN = 24
 DISK_SEGMENTS_MAX = 360
 
 
-def _disk_segments(radius_m: float, curve_error_m: float) -> int:
-    """Vertices needed so the disk polygon stays within the curve tolerance.
+def _disk_segments(radius_m: float, cap_error_m: float) -> int:
+    """Vertices needed so the disk polygon stays within the cap tolerance.
 
     Chord sagitta on a circle of radius r with n segments is roughly
     r * (pi/n)^2 / 2; inverting gives the n that keeps it under the error.
     """
-    if curve_error_m <= 0:
+    if cap_error_m <= 0:
         return DISK_SEGMENTS_MAX
-    needed = math.pi / math.sqrt(2.0 * curve_error_m / radius_m)
+    needed = math.pi / math.sqrt(2.0 * cap_error_m / radius_m)
     return max(DISK_SEGMENTS_MIN, min(DISK_SEGMENTS_MAX, math.ceil(needed)))
 
 
@@ -142,7 +144,7 @@ def _disk_polygon(
     center: np.ndarray,
     east: np.ndarray,
     north: np.ndarray,
-    curve_error_m: float,
+    cap_error_m: float,
 ) -> np.ndarray:
     """The capping disk, as a true geodesic disk projected into the plane.
 
@@ -152,7 +154,7 @@ def _disk_polygon(
     distance — harmless for routing, but it would make the radius check
     disagree with the radius policy asked for.
     """
-    segments = _disk_segments(radius_m, curve_error_m)
+    segments = _disk_segments(radius_m, cap_error_m)
     angles = [index * 360.0 / segments for index in range(segments)]
     longitudes, latitudes, _ = geom.GEOD.fwd(
         [site.longitude] * segments,
@@ -187,7 +189,9 @@ def _unproject(
     return list(zip(longitudes.tolist(), latitudes.tolist(), strict=True))
 
 
-def build_cells(sites: list[Site], max_radius_m: float, curve_error_m: float) -> list[Cell]:
+def build_cells(
+    sites: list[Site], max_radius_m: float, curve_error_m: float, cap_error_m: float = 1000.0
+) -> list[Cell]:
     """Build the capped nearest-site core geometry for every site."""
     if not sites:
         return []
@@ -218,7 +222,7 @@ def build_cells(sites: list[Site], max_radius_m: float, curve_error_m: float) ->
 
         center = vectors[index]
         east, north = _local_basis(center)
-        polygon = _disk_polygon(site, max_radius_m, center, east, north, curve_error_m)
+        polygon = _disk_polygon(site, max_radius_m, center, east, north, cap_error_m)
 
         for neighbor in tree.query_ball_point(center, influence_chord):
             if neighbor == index:

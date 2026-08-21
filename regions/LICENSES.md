@@ -8,7 +8,7 @@ separately rather than assuming the source license carries over.
 |---|---|---|
 | OurAirports | Public Domain | none |
 | `datasets/country-codes` | PDDL 1.0 | attribution requested |
-| geoBoundaries gbOpen / CGAZ | CC BY 4.0 | attribution required |
+| Marine Regions EEZ + land union (VLIZ) | CC BY 4.0 | attribution required |
 | US Census TIGER/Line | US Government work | none; record vintage |
 | `lxndrblz/Airports` `citycodes.csv` | **CC BY-SA 4.0** | attribution **and share-alike** |
 | UMSH metros, custom regions, overrides | MIT OR Apache-2.0 | none |

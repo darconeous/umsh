@@ -6,6 +6,14 @@ standard tools. Geometry is stored in the project's own blob encoding rather
 than as SpatiaLite geometry, because requiring a native SQLite extension on
 iOS is exactly the dependency this design is avoiding.
 
+Only core geometry is stored. A region's expansion margin is carried as its
+`expansion_m` number and resolved at lookup time by the sampled-dilation rule
+(`sampling.py`); the R-tree boxes are padded by that distance so the candidate
+filter still finds a region from inside its margin. The table keeps only what
+lookup needs: display names, municipalities, and other prose stay in the
+committed extracts, and the radio-facing name is stored only where it differs
+from the code — which today means custom regions.
+
 Reproducibility is a content guarantee rather than a byte guarantee. Rows go in
 in a fixed order, the page size is pinned, nothing carries a wall-clock
 timestamp that was not supplied as a build input, and the file is vacuumed the
@@ -18,16 +26,23 @@ tables.
 from __future__ import annotations
 
 import hashlib
+import math
 import sqlite3
 from dataclasses import dataclass
 from pathlib import Path
 
 from . import blob, geom
 from .cells import Leaf
-from .model import ROLE_CORE, ROLE_EFFECTIVE, Region, SourceRecord
+from .model import Region, SourceRecord
 
 FORMAT_VERSION = 1
 PAGE_SIZE = 4096
+
+# Meters per degree of latitude, and of longitude at the equator, for padding
+# R-tree boxes. Slightly small denominators make the padding slightly generous,
+# which is the safe direction for a candidate filter.
+_METERS_PER_DEGREE_LAT = 110_574.0
+_METERS_PER_DEGREE_LON = 111_320.0
 
 SCHEMA = """
 CREATE TABLE metadata (
@@ -48,13 +63,10 @@ CREATE TABLE sources (
 
 CREATE TABLE regions (
     id INTEGER PRIMARY KEY,
-    region_key TEXT NOT NULL UNIQUE,
     namespace TEXT NOT NULL,
     code TEXT NOT NULL,
-    display_name TEXT NOT NULL,
-    radio_name TEXT NOT NULL,
+    radio_name TEXT,
     wire_code INTEGER NOT NULL,
-    kind TEXT NOT NULL,
     layer TEXT NOT NULL,
     priority INTEGER NOT NULL,
     default_rank INTEGER,
@@ -63,14 +75,13 @@ CREATE TABLE regions (
     site_lat REAL,
     source_id INTEGER,
     flags INTEGER NOT NULL DEFAULT 0,
-    notes TEXT,
-    FOREIGN KEY(source_id) REFERENCES sources(id)
+    FOREIGN KEY(source_id) REFERENCES sources(id),
+    UNIQUE(namespace, code)
 );
 
 CREATE TABLE geometry_parts (
     id INTEGER PRIMARY KEY,
     region_id INTEGER NOT NULL,
-    role INTEGER NOT NULL,
     min_lon REAL NOT NULL,
     min_lat REAL NOT NULL,
     max_lon REAL NOT NULL,
@@ -79,7 +90,7 @@ CREATE TABLE geometry_parts (
     FOREIGN KEY(region_id) REFERENCES regions(id)
 );
 
-CREATE INDEX geometry_parts_region ON geometry_parts(region_id, role);
+CREATE INDEX geometry_parts_region ON geometry_parts(region_id);
 
 CREATE VIRTUAL TABLE effective_rtree USING rtree(
     part_id,
@@ -114,8 +125,7 @@ CREATE TABLE provenance (
 class EmitStats:
     regions: int
     parts: int
-    core_vertices: int
-    effective_vertices: int
+    vertices: int
     region_sets: int
     lookup_ranges: int
     size_bytes: int
@@ -164,6 +174,29 @@ def decode_region_ids(data: bytes) -> list[int]:
     return identifiers
 
 
+def padded_bounds(
+    min_lon: float, min_lat: float, max_lon: float, max_lat: float, expansion_m: int
+) -> tuple[float, float, float, float]:
+    """Grow a part's bounds by its region's expansion distance.
+
+    Latitude pads are clamped to the poles. Longitude pads deliberately are
+    not clamped to ±180: a box hanging past the antimeridian stays where it
+    is, and the reader queries all three wrappings of a longitude, which is
+    simpler and cheaper than splitting boxes at the seam.
+    """
+    if expansion_m <= 0:
+        return min_lon, min_lat, max_lon, max_lat
+    pad_lat = expansion_m / _METERS_PER_DEGREE_LAT
+    extreme = min(89.9, max(abs(min_lat), abs(max_lat)) + pad_lat)
+    pad_lon = expansion_m / (_METERS_PER_DEGREE_LON * math.cos(math.radians(extreme)))
+    return (
+        min_lon - pad_lon,
+        max(-90.0, min_lat - pad_lat),
+        max_lon + pad_lon,
+        min(90.0, max_lat + pad_lat),
+    )
+
+
 def write(
     path: Path,
     *,
@@ -206,24 +239,19 @@ def write(
         region_ids = {region.region_key: index for index, region in enumerate(ordered, start=1)}
 
         part_id = 0
-        core_vertices = 0
-        effective_vertices = 0
+        vertices = 0
         for region in ordered:
             identifier = region_ids[region.region_key]
             connection.execute(
-                "INSERT INTO regions (id, region_key, namespace, code, display_name, radio_name, "
-                "wire_code, kind, layer, priority, default_rank, expansion_m, site_lon, site_lat, "
-                "source_id, flags, notes) "
-                "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+                "INSERT INTO regions (id, namespace, code, radio_name, wire_code, layer, "
+                "priority, default_rank, expansion_m, site_lon, site_lat, source_id, flags) "
+                "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
                 (
                     identifier,
-                    region.region_key,
                     region.namespace,
                     region.code,
-                    region.display_name,
-                    region.radio_name,
+                    region.radio_name if region.radio_name != region.code else None,
                     region.wire_code,
-                    region.kind,
                     region.layer,
                     region.priority,
                     region.default_rank,
@@ -232,7 +260,6 @@ def write(
                     region.site.latitude if region.site else None,
                     source_ids.get(region.source_key) if region.source_key else None,
                     region.flags,
-                    region.notes,
                 ),
             )
 
@@ -248,43 +275,29 @@ def write(
                     ),
                 )
 
-            # A region with no expansion has identical core and effective
-            # geometry, and storing both would double the administrative
-            # layers for nothing. Core parts are written only when expansion
-            # actually moved the boundary; a reader that finds no core parts
-            # for a region takes its effective geometry as the core.
-            effective = region.effective if region.effective is not None else region.core
-            roles = [(ROLE_EFFECTIVE, effective)]
-            if region.expansion_m > 0:
-                roles.insert(0, (ROLE_CORE, region.core))
-            for role, geometry in roles:
-                for rings in geom.to_parts(geometry):
-                    payload = blob.encode(rings)
-                    longitudes = [point[0] for ring in rings for point in ring.points]
-                    latitudes = [point[1] for ring in rings for point in ring.points]
-                    vertex_count = len(longitudes)
-                    if role == ROLE_CORE:
-                        core_vertices += vertex_count
-                    else:
-                        effective_vertices += vertex_count
-                    part_id += 1
-                    bounds = (
-                        blob.from_e6(min(longitudes)),
-                        blob.from_e6(min(latitudes)),
-                        blob.from_e6(max(longitudes)),
-                        blob.from_e6(max(latitudes)),
-                    )
-                    connection.execute(
-                        "INSERT INTO geometry_parts (id, region_id, role, min_lon, min_lat, "
-                        "max_lon, max_lat, geometry) VALUES (?, ?, ?, ?, ?, ?, ?, ?)",
-                        (part_id, identifier, role, *bounds, payload),
-                    )
-                    if role == ROLE_EFFECTIVE:
-                        connection.execute(
-                            "INSERT INTO effective_rtree (part_id, min_lon, max_lon, min_lat, "
-                            "max_lat) VALUES (?, ?, ?, ?, ?)",
-                            (part_id, bounds[0], bounds[2], bounds[1], bounds[3]),
-                        )
+            for rings in geom.to_parts(region.core):
+                payload = blob.encode(rings)
+                longitudes = [point[0] for ring in rings for point in ring.points]
+                latitudes = [point[1] for ring in rings for point in ring.points]
+                vertices += len(longitudes)
+                part_id += 1
+                bounds = (
+                    blob.from_e6(min(longitudes)),
+                    blob.from_e6(min(latitudes)),
+                    blob.from_e6(max(longitudes)),
+                    blob.from_e6(max(latitudes)),
+                )
+                connection.execute(
+                    "INSERT INTO geometry_parts (id, region_id, min_lon, min_lat, "
+                    "max_lon, max_lat, geometry) VALUES (?, ?, ?, ?, ?, ?, ?)",
+                    (part_id, identifier, *bounds, payload),
+                )
+                padded = padded_bounds(*bounds, region.expansion_m)
+                connection.execute(
+                    "INSERT INTO effective_rtree (part_id, min_lon, max_lon, min_lat, "
+                    "max_lat) VALUES (?, ?, ?, ?, ?)",
+                    (part_id, padded[0], padded[2], padded[1], padded[3]),
+                )
 
         set_ids: dict[bytes, int] = {}
         for leaf in leaves:
@@ -318,8 +331,7 @@ def write(
     return EmitStats(
         regions=len(regions),
         parts=part_id,
-        core_vertices=core_vertices,
-        effective_vertices=effective_vertices,
+        vertices=vertices,
         region_sets=len(set_ids),
         lookup_ranges=len(leaves),
         size_bytes=path.stat().st_size,
@@ -343,15 +355,14 @@ def compute_content_hash(connection: sqlite3.Connection) -> str:
         ),
         (
             "regions",
-            "SELECT region_key, namespace, code, display_name, radio_name, wire_code, "
-            "kind, layer, priority, default_rank, expansion_m, site_lon, site_lat, flags, "
-            "notes FROM regions ORDER BY region_key",
+            "SELECT namespace, code, radio_name, wire_code, layer, priority, default_rank, "
+            "expansion_m, site_lon, site_lat, flags FROM regions ORDER BY namespace, code",
         ),
         (
             "parts",
-            "SELECT r.region_key, p.role, p.geometry FROM geometry_parts p "
+            "SELECT r.namespace, r.code, p.geometry FROM geometry_parts p "
             "JOIN regions r ON r.id = p.region_id "
-            "ORDER BY r.region_key, p.role, p.id",
+            "ORDER BY r.namespace, r.code, p.id",
         ),
         (
             "ranges",
@@ -361,9 +372,9 @@ def compute_content_hash(connection: sqlite3.Connection) -> str:
         ("sets", "SELECT id, region_ids FROM region_sets ORDER BY id"),
         (
             "provenance",
-            "SELECT r.region_key, p.source_feature_id, p.detail FROM provenance p "
+            "SELECT r.namespace, r.code, p.source_feature_id, p.detail FROM provenance p "
             "JOIN regions r ON r.id = p.region_id "
-            "ORDER BY r.region_key, p.source_feature_id, p.detail",
+            "ORDER BY r.namespace, r.code, p.source_feature_id, p.detail",
         ),
         ("metadata", "SELECT key, value FROM metadata WHERE key <> 'content_hash' ORDER BY key"),
     )

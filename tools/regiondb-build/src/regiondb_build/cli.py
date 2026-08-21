@@ -67,7 +67,6 @@ def main(argv: list[str] | None = None) -> int:
     export_command.add_argument("--db", type=Path, required=True)
     export_command.add_argument("--region", help="a single region key")
     export_command.add_argument("--layer", help="every region in a layer")
-    export_command.add_argument("--role", choices=("core", "effective"), default="effective")
     export_command.add_argument("--output", type=Path)
 
     diff_command = commands.add_parser("diff", help="compare two build reports")
@@ -171,7 +170,7 @@ def _lookup(args) -> int:
             membership = "core" if match.membership == 0 else "expanded"
             print(
                 f"  {match.region_key:<28} {match.radio_name:<24} 0x{match.wire_code:04X}  "
-                f"{match.kind} ({membership})"
+                f"{match.layer} ({membership})"
             )
     print("  radio regions: " + (", ".join(item.name for item in result.radio_regions) or "none"))
     default = result.suggested_default_region
@@ -186,10 +185,9 @@ def _lookup_json(result) -> dict:
         "matches": [
             {
                 "key": match.region_key,
-                "display_name": match.display_name,
                 "radio_name": match.radio_name,
                 "wire_code": f"0x{match.wire_code:04X}",
-                "kind": match.kind,
+                "kind": match.layer,
                 "membership": "core" if match.membership == 0 else "expanded",
             }
             for match in result.matches
@@ -205,33 +203,33 @@ def _inspect(args) -> int:
     import sqlite3
 
     connection = sqlite3.connect(f"file:{args.db}?mode=ro", uri=True)
+    namespace, _, code = args.code.partition(":")
+    if code:
+        where, parameters = "namespace = ? AND code = ? COLLATE NOCASE", (namespace, code)
+    else:
+        where, parameters = "code = ? COLLATE NOCASE", (args.code,)
     rows = connection.execute(
-        "SELECT region_key, namespace, code, display_name, radio_name, wire_code, layer, "
-        "priority, default_rank, expansion_m, site_lon, site_lat, notes FROM regions "
-        "WHERE region_key = ? OR code = ? COLLATE NOCASE ORDER BY priority",
-        (args.code, args.code),
+        f"SELECT id, namespace, code, radio_name, wire_code, layer, "
+        f"priority, default_rank, expansion_m, site_lon, site_lat FROM regions "
+        f"WHERE {where} ORDER BY priority",
+        parameters,
     ).fetchall()
     if not rows:
         print(f"no region matches {args.code!r}", file=sys.stderr)
         return 1
     for row in rows:
-        print(f"{row[0]}")
-        print(f"  display name    {row[3]}")
-        print(f"  radio name      {row[4]}  0x{row[5]:04X}")
-        print(f"  layer           {row[6]} (priority {row[7]}, default rank {row[8]})")
-        print(f"  expansion       {row[9]} m")
-        if row[10] is not None:
-            print(f"  site            {row[11]}, {row[10]}")
-        parts = connection.execute(
-            "SELECT role, COUNT(*) FROM geometry_parts p JOIN regions r ON r.id = p.region_id "
-            "WHERE r.region_key = ? GROUP BY role ORDER BY role",
-            (row[0],),
-        ).fetchall()
-        for role, count in parts:
-            print(f"  {'core' if role == 0 else 'effective'} parts   {count}")
+        print(f"{row[1]}:{row[2]}")
+        print(f"  radio name      {row[3] if row[3] is not None else row[2]}  0x{row[4]:04X}")
+        print(f"  layer           {row[5]} (priority {row[6]}, default rank {row[7]})")
+        print(f"  expansion       {row[8]} m")
+        if row[9] is not None:
+            print(f"  site            {row[10]}, {row[9]}")
+        count = connection.execute(
+            "SELECT COUNT(*) FROM geometry_parts WHERE region_id = ?", (row[0],)
+        ).fetchone()[0]
+        print(f"  core parts      {count}")
         for detail in connection.execute(
-            "SELECT detail FROM provenance p JOIN regions r ON r.id = p.region_id "
-            "WHERE r.region_key = ? ORDER BY detail",
+            "SELECT detail FROM provenance WHERE region_id = ? ORDER BY detail",
             (row[0],),
         ):
             print(f"  provenance      {detail[0]}")
@@ -243,23 +241,25 @@ def _export(args) -> int:
     import sqlite3
 
     from . import blob
-    from .model import ROLE_CORE, ROLE_EFFECTIVE
 
-    role = ROLE_CORE if args.role == "core" else ROLE_EFFECTIVE
     connection = sqlite3.connect(f"file:{args.db}?mode=ro", uri=True)
     if args.region:
-        where, parameters = "r.region_key = ?", (args.region, role)
+        namespace, _, code = args.region.partition(":")
+        if not code:
+            print("region takes a namespaced key, as in iata-airport:MFR", file=sys.stderr)
+            return 1
+        where, parameters = "r.namespace = ? AND r.code = ?", (namespace, code)
     elif args.layer:
-        where, parameters = "r.layer = ?", (args.layer, role)
+        where, parameters = "r.layer = ?", (args.layer,)
     else:
         print("give --region or --layer", file=sys.stderr)
         return 1
 
     features = []
-    for region_key, display_name, payload in connection.execute(
-        f"SELECT r.region_key, r.display_name, p.geometry FROM geometry_parts p "
-        f"JOIN regions r ON r.id = p.region_id WHERE {where} AND p.role = ? "
-        "ORDER BY r.region_key, p.id",
+    for namespace, code, expansion_m, payload in connection.execute(
+        f"SELECT r.namespace, r.code, r.expansion_m, p.geometry FROM geometry_parts p "
+        f"JOIN regions r ON r.id = p.region_id WHERE {where} "
+        "ORDER BY r.namespace, r.code, p.id",
         parameters,
     ):
         rings = blob.decode(payload)
@@ -272,9 +272,11 @@ def _export(args) -> int:
             {
                 "type": "Feature",
                 "properties": {
-                    "region_key": region_key,
-                    "display_name": display_name,
-                    "role": args.role,
+                    "region_key": f"{namespace}:{code}",
+                    # Only core geometry exists; the expansion margin is a
+                    # number resolved at lookup time, exported here so a
+                    # viewer can draw the fuzzy edge itself if it wants to.
+                    "expansion_m": expansion_m,
                 },
                 "geometry": {"type": "Polygon", "coordinates": coordinates},
             }

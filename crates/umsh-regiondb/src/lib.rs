@@ -3,11 +3,18 @@
 //! A `.regiondb` answers one question: given a position, which UMSH regions
 //! should a repeater there normally be configured to accept? All of the hard
 //! geography — nearest-airport partitions, commercial-service classification,
-//! metropolitan boundaries, administrative boundaries, border expansion,
-//! manual corrections — happens in the build, in
-//! `tools/regiondb-build/`. Nothing in this crate knows how any of it was
-//! derived, and the radio knows even less: it is handed ordinary region
-//! strings through the existing repeater configuration path.
+//! metropolitan boundaries, jurisdiction boundaries, manual corrections —
+//! happens in the build, in `tools/regiondb-build/`. Nothing in this crate
+//! knows how any of it was derived, and the radio knows even less: it is
+//! handed ordinary region strings through the existing repeater configuration
+//! path.
+//!
+//! Only core geometry is stored. A region's expansion margin — the overlap
+//! that lets a repeater near a border serve both sides — is a distance
+//! resolved at lookup time by the sampled-dilation rule in [`sampling`]: the
+//! position itself and a fixed pattern of points around it are tested against
+//! the core polygons, and a hit on any of them is membership. A hit on the
+//! position itself is a core match; on any other sample, an expanded match.
 //!
 //! ```no_run
 //! # fn main() -> Result<(), umsh_regiondb::RegionDbError> {
@@ -23,16 +30,18 @@
 //! ```
 //!
 //! The file itself is an ordinary SQLite database, and every implementation
-//! that reads one — this crate, the Python builder, and the browser viewer —
-//! must return identical results for identical positions. That is not left to
-//! good intentions: `regions/tests/conformance.json` is replayed by all of
-//! them, and the geometry codec and grid arithmetic here are written to match
-//! their Python counterparts operation for operation.
+//! that reads one — this crate, the Python builder, and eventually the
+//! browser — must return identical results for identical positions. That is
+//! not left to good intentions: `regions/tests/conformance.json` is replayed
+//! by all of them, and the geometry codec, grid arithmetic, and sample
+//! pattern here are written to match their Python counterparts operation for
+//! operation.
 
 #![deny(missing_docs)]
 
 pub mod blob;
 pub mod morton;
+pub mod sampling;
 
 use std::collections::{HashMap, HashSet};
 use std::path::Path;
@@ -45,11 +54,6 @@ pub use morton::MortonError;
 
 /// The database format this crate implements.
 pub const FORMAT_VERSION: i64 = 1;
-
-/// Geometry role: the region before expansion.
-const ROLE_CORE: i64 = 0;
-/// Geometry role: the region a lookup actually matches against.
-const ROLE_EFFECTIVE: i64 = 1;
 
 /// Anything that can go wrong opening or querying a region database.
 #[derive(Debug)]
@@ -107,13 +111,14 @@ impl From<MortonError> for RegionDbError {
     }
 }
 
-/// Whether a position falls in a region's own area or only in its expansion.
+/// Whether a position falls in a region's own area or only in its expansion
+/// margin.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord)]
 pub enum Membership {
-    /// Inside the region proper.
+    /// The position itself is inside the region.
     Core,
-    /// Inside only the outward buffer that lets a repeater near a border serve
-    /// both sides.
+    /// Only the sampled margin reaches the region — the position is near it,
+    /// within the region's expansion distance.
     Expanded,
 }
 
@@ -128,14 +133,12 @@ pub struct RegionMatch {
     pub namespace: String,
     /// Code within the namespace.
     pub code: String,
-    /// Human-readable name.
-    pub display_name: String,
     /// The string a radio is configured with.
     pub radio_name: String,
     /// Canonical UMSH region code for [`Self::radio_name`].
     pub wire_code: RegionCode,
     /// Which layer produced this region.
-    pub kind: String,
+    pub layer: String,
     /// Presentation order relative to other matches.
     pub priority: i64,
     /// Core or expanded.
@@ -176,23 +179,27 @@ pub struct RegionLookup {
 #[derive(Clone, Debug)]
 struct RegionRow {
     region_id: u32,
-    region_key: String,
     namespace: String,
     code: String,
-    display_name: String,
     radio_name: String,
     wire_code: RegionCode,
-    kind: String,
+    layer: String,
     priority: i64,
     default_rank: Option<i64>,
+    expansion_m: i64,
     site: Option<(f64, f64)>,
+}
+
+impl RegionRow {
+    fn region_key(&self) -> String {
+        format!("{}:{}", self.namespace, self.code)
+    }
 }
 
 /// An opened region database.
 pub struct RegionDb {
     connection: Connection,
     regions: HashMap<u32, RegionRow>,
-    with_core_parts: HashSet<u32>,
     metadata: HashMap<String, String>,
     format_version: i64,
     has_lookup_ranges: bool,
@@ -230,44 +237,44 @@ impl RegionDb {
 
         let regions = connection
             .prepare(
-                "SELECT id, region_key, namespace, code, display_name, radio_name, wire_code, \
-                 kind, priority, default_rank, site_lon, site_lat FROM regions",
+                "SELECT id, namespace, code, radio_name, wire_code, layer, priority, \
+                 default_rank, expansion_m, site_lon, site_lat FROM regions",
             )?
             .query_map([], |row| {
-                let longitude: Option<f64> = row.get(10)?;
-                let latitude: Option<f64> = row.get(11)?;
+                let code: String = row.get(2)?;
+                // A stored radio name is the exception: it exists only where
+                // the wire string differs from the code, which today means
+                // custom regions.
+                let radio_name: Option<String> = row.get(3)?;
+                let longitude: Option<f64> = row.get(9)?;
+                let latitude: Option<f64> = row.get(10)?;
                 Ok(RegionRow {
                     region_id: row.get::<_, i64>(0)? as u32,
-                    region_key: row.get(1)?,
-                    namespace: row.get(2)?,
-                    code: row.get(3)?,
-                    display_name: row.get(4)?,
-                    radio_name: row.get(5)?,
-                    wire_code: RegionCode::from_u16(row.get::<_, i64>(6)? as u16),
-                    kind: row.get(7)?,
-                    priority: row.get(8)?,
-                    default_rank: row.get(9)?,
+                    namespace: row.get(1)?,
+                    radio_name: radio_name.unwrap_or_else(|| code.clone()),
+                    code,
+                    wire_code: RegionCode::from_u16(row.get::<_, i64>(4)? as u16),
+                    layer: row.get(5)?,
+                    priority: row.get(6)?,
+                    default_rank: row.get(7)?,
+                    expansion_m: row.get(8)?,
                     site: longitude.zip(latitude),
                 })
             })?
             .map(|row| row.map(|row| (row.region_id, row)))
             .collect::<Result<HashMap<_, _>, _>>()?;
 
-        // A region with no stored core parts was never expanded, so its
-        // effective geometry is its core and the build did not write it twice.
-        let with_core_parts = connection
-            .prepare("SELECT DISTINCT region_id FROM geometry_parts WHERE role = ?1")?
-            .query_map([ROLE_CORE], |row| Ok(row.get::<_, i64>(0)? as u32))?
-            .collect::<Result<HashSet<_>, _>>()?;
-
-        let has_lookup_ranges = connection
+        let has_lookup_ranges: bool = connection
             .query_row("SELECT 1 FROM lookup_ranges LIMIT 1", [], |_| Ok(()))
-            .is_ok();
+            .map(|_| true)
+            .or_else(|error| match error {
+                rusqlite::Error::QueryReturnedNoRows => Ok(false),
+                other => Err(other),
+            })?;
 
         Ok(Self {
             connection,
             regions,
-            with_core_parts,
             metadata,
             format_version,
             has_lookup_ranges,
@@ -321,8 +328,10 @@ impl RegionDb {
         longitude: f64,
         detailed: bool,
     ) -> Result<RegionLookup, RegionDbError> {
-        let members = self.effective_members(latitude, longitude)?;
-        let matches = self.build_matches(&members, latitude, longitude)?;
+        // Validate the position before any path can silently accept it.
+        self.quantize(latitude, longitude)?;
+        let memberships = self.memberships(latitude, longitude)?;
+        let matches = self.build_matches(memberships);
 
         let radio_regions = radio_regions(&matches);
         let suggested = suggested_default(&matches, latitude, longitude);
@@ -336,25 +345,25 @@ impl RegionDb {
         })
     }
 
-    /// Answer using the exact polygons alone, ignoring the lookup cache.
+    /// Answer with the sampled test against every region, ignoring both the
+    /// lookup cache and the R-tree.
     ///
-    /// The cache is an optimization over the same geometry, never a second
-    /// source of truth, and this is how the build proves it.
+    /// The cache and the candidate filter are optimizations over the same
+    /// core polygons, never a second source of truth, and this is how the
+    /// build proves it.
     pub fn lookup_exhaustive(
         &self,
         latitude: f64,
         longitude: f64,
     ) -> Result<RegionLookup, RegionDbError> {
-        let (longitude_e6, latitude_e6) = self.quantize(latitude, longitude)?;
-        let mut members: Vec<u32> = Vec::new();
+        self.quantize(latitude, longitude)?;
+        let mut memberships: HashMap<u32, Membership> = HashMap::new();
         for region_id in self.regions.keys().copied() {
-            if self.covers(region_id, ROLE_EFFECTIVE, longitude_e6, latitude_e6)? {
-                members.push(region_id);
+            if let Some(membership) = self.membership(region_id, latitude, longitude)? {
+                memberships.insert(region_id, membership);
             }
         }
-        members.sort_unstable();
-
-        let matches = self.build_matches(&members, latitude, longitude)?;
+        let matches = self.build_matches(memberships);
         let radio_regions = radio_regions(&matches);
         let suggested = suggested_default(&matches, latitude, longitude);
         Ok(RegionLookup {
@@ -367,34 +376,20 @@ impl RegionDb {
         })
     }
 
-    fn build_matches(
-        &self,
-        members: &[u32],
-        latitude: f64,
-        longitude: f64,
-    ) -> Result<Vec<RegionMatch>, RegionDbError> {
-        let (longitude_e6, latitude_e6) = self.quantize(latitude, longitude)?;
-        let mut matches = Vec::with_capacity(members.len());
-        for region_id in members {
-            let Some(row) = self.regions.get(region_id) else {
+    fn build_matches(&self, memberships: HashMap<u32, Membership>) -> Vec<RegionMatch> {
+        let mut matches = Vec::with_capacity(memberships.len());
+        for (region_id, membership) in memberships {
+            let Some(row) = self.regions.get(&region_id) else {
                 continue;
-            };
-            let membership = if !self.with_core_parts.contains(region_id)
-                || self.covers(*region_id, ROLE_CORE, longitude_e6, latitude_e6)?
-            {
-                Membership::Core
-            } else {
-                Membership::Expanded
             };
             matches.push(RegionMatch {
                 region_id: row.region_id,
-                region_key: row.region_key.clone(),
+                region_key: row.region_key(),
                 namespace: row.namespace.clone(),
                 code: row.code.clone(),
-                display_name: row.display_name.clone(),
                 radio_name: row.radio_name.clone(),
                 wire_code: row.wire_code,
-                kind: row.kind.clone(),
+                layer: row.layer.clone(),
                 priority: row.priority,
                 membership,
                 site: row.site,
@@ -408,7 +403,7 @@ impl RegionDb {
                 .then(first.membership.cmp(&second.membership))
                 .then_with(|| first.region_key.cmp(&second.region_key))
         });
-        Ok(matches)
+        matches
     }
 
     fn quantize(&self, latitude: f64, longitude: f64) -> Result<(i32, i32), RegionDbError> {
@@ -418,9 +413,80 @@ impl RegionDb {
         ))
     }
 
-    /// The cached path: one indexed range query, then whichever few regions the
-    /// build could not decide for that cell.
-    fn effective_members(&self, latitude: f64, longitude: f64) -> Result<Vec<u32>, RegionDbError> {
+    /// Whether one position lands in a region's core geometry.
+    fn core_hit(
+        &self,
+        region_id: u32,
+        latitude: f64,
+        longitude: f64,
+    ) -> Result<bool, RegionDbError> {
+        let (longitude_e6, latitude_e6) = self.quantize(latitude, longitude)?;
+        let mut statement = self.connection.prepare_cached(
+            "SELECT geometry, min_lon, min_lat, max_lon, max_lat FROM geometry_parts \
+             WHERE region_id = ?1 ORDER BY id",
+        )?;
+        let mut rows = statement.query([i64::from(region_id)])?;
+        while let Some(row) = rows.next()? {
+            let min_lon: f64 = row.get(1)?;
+            let min_lat: f64 = row.get(2)?;
+            let max_lon: f64 = row.get(3)?;
+            let max_lat: f64 = row.get(4)?;
+            // The stored bounds are the part's own quantized extent, so a
+            // point outside them cannot lie on its boundary either.
+            if longitude_e6 < blob::to_e6(min_lon)
+                || longitude_e6 > blob::to_e6(max_lon)
+                || latitude_e6 < blob::to_e6(min_lat)
+                || latitude_e6 > blob::to_e6(max_lat)
+            {
+                continue;
+            }
+            let payload: Vec<u8> = row.get(0)?;
+            if blob::point_in_rings(&blob::decode(&payload)?, longitude_e6, latitude_e6) {
+                return Ok(true);
+            }
+        }
+        Ok(false)
+    }
+
+    /// Sampled-dilation membership: core, expanded, or not a member.
+    fn membership(
+        &self,
+        region_id: u32,
+        latitude: f64,
+        longitude: f64,
+    ) -> Result<Option<Membership>, RegionDbError> {
+        let expansion = self
+            .regions
+            .get(&region_id)
+            .map(|row| row.expansion_m)
+            .unwrap_or(0);
+        for (index, (sample_lat, sample_lon)) in sampling::sample_positions(
+            latitude, longitude, expansion,
+        )
+        .into_iter()
+        .enumerate()
+        {
+            if self.core_hit(region_id, sample_lat, sample_lon)? {
+                return Ok(Some(if index == 0 {
+                    Membership::Core
+                } else {
+                    Membership::Expanded
+                }));
+            }
+        }
+        Ok(None)
+    }
+
+    /// The fast path: cached ranges when present, the R-tree otherwise.
+    fn memberships(
+        &self,
+        latitude: f64,
+        longitude: f64,
+    ) -> Result<HashMap<u32, Membership>, RegionDbError> {
+        if !self.has_lookup_ranges {
+            return self.rtree_memberships(latitude, longitude);
+        }
+
         let key = morton::key(latitude, longitude)?;
         let mut statement = self.connection.prepare_cached(
             "SELECT end_key, base_set_id, candidate_region_ids FROM lookup_ranges \
@@ -436,18 +502,12 @@ impl RegionDb {
             })
             .ok();
 
-        // A database built without the cache has an empty lookup_ranges table
-        // and is answered from the R-tree over the same effective polygons. A
-        // database built with it covers the whole key space, so a missing or
-        // overshot range genuinely means no coverage.
+        let mut memberships = HashMap::new();
         let Some((end_key, base_set_id, candidates)) = row else {
-            if self.has_lookup_ranges {
-                return Ok(Vec::new());
-            }
-            return self.rtree_members(latitude, longitude);
+            return Ok(memberships);
         };
         if i64::from(key) > end_key {
-            return Ok(Vec::new());
+            return Ok(memberships);
         }
 
         let payload: Option<Vec<u8>> = self
@@ -455,83 +515,60 @@ impl RegionDb {
             .prepare_cached("SELECT region_ids FROM region_sets WHERE id = ?1")?
             .query_row([base_set_id], |row| row.get(0))
             .ok();
-        let mut members: Vec<u32> = payload
-            .map(|data| decode_region_ids(&data))
-            .unwrap_or_default();
-
+        // Base-set regions are known members of the whole cell, but core
+        // versus expanded is still a property of the exact position.
+        for region_id in payload.as_deref().map(decode_region_ids).unwrap_or_default() {
+            let membership = self
+                .membership(region_id, latitude, longitude)?
+                .unwrap_or(Membership::Expanded);
+            memberships.insert(region_id, membership);
+        }
         if let Some(candidates) = candidates {
-            let (longitude_e6, latitude_e6) = self.quantize(latitude, longitude)?;
             for region_id in decode_region_ids(&candidates) {
-                if self.covers(region_id, ROLE_EFFECTIVE, longitude_e6, latitude_e6)? {
-                    members.push(region_id);
+                if let Some(membership) = self.membership(region_id, latitude, longitude)? {
+                    memberships.insert(region_id, membership);
                 }
             }
         }
-        members.sort_unstable();
-        members.dedup();
-        Ok(members)
+        Ok(memberships)
     }
 
-    /// Candidate regions whose effective bounding boxes cover the position,
-    /// resolved to members by exact point-in-polygon tests.
-    fn rtree_members(&self, latitude: f64, longitude: f64) -> Result<Vec<u32>, RegionDbError> {
+    /// Candidates from the padded R-tree boxes, then the sampled test.
+    ///
+    /// Boxes are stored padded by each region's expansion distance and may
+    /// extend past ±180; querying the longitude at all three wrappings is
+    /// what keeps a position on one side of the antimeridian able to see a
+    /// region whose padded box hangs over from the other side.
+    fn rtree_memberships(
+        &self,
+        latitude: f64,
+        longitude: f64,
+    ) -> Result<HashMap<u32, Membership>, RegionDbError> {
         let (longitude_e6, latitude_e6) = self.quantize(latitude, longitude)?;
         let lon = blob::from_e6(longitude_e6);
         let lat = blob::from_e6(latitude_e6);
-        let mut members = HashSet::new();
-        let mut statement = self.connection.prepare_cached(
-            "SELECT p.region_id, p.geometry FROM effective_rtree r \
-             JOIN geometry_parts p ON p.id = r.part_id \
-             WHERE r.min_lon <= ?1 AND r.max_lon >= ?1 AND r.min_lat <= ?2 AND r.max_lat >= ?2",
-        )?;
-        let mut rows = statement.query((lon, lat))?;
-        while let Some(row) = rows.next()? {
-            let region_id = row.get::<_, i64>(0)? as u32;
-            if members.contains(&region_id) {
-                continue;
-            }
-            let payload: Vec<u8> = row.get(1)?;
-            if blob::point_in_rings(&blob::decode(&payload)?, longitude_e6, latitude_e6) {
-                members.insert(region_id);
-            }
-        }
-        let mut members: Vec<u32> = members.into_iter().collect();
-        members.sort_unstable();
-        Ok(members)
-    }
 
-    fn covers(
-        &self,
-        region_id: u32,
-        role: i64,
-        longitude_e6: i32,
-        latitude_e6: i32,
-    ) -> Result<bool, RegionDbError> {
+        let mut candidates: HashSet<u32> = HashSet::new();
         let mut statement = self.connection.prepare_cached(
-            "SELECT geometry, min_lon, min_lat, max_lon, max_lat FROM geometry_parts \
-             WHERE region_id = ?1 AND role = ?2 ORDER BY id",
+            "SELECT DISTINCT p.region_id FROM effective_rtree r \
+             JOIN geometry_parts p ON p.id = r.part_id \
+             WHERE r.min_lon <= ?1 AND r.max_lon >= ?1 \
+               AND r.min_lat <= ?2 AND r.max_lat >= ?2",
         )?;
-        let mut rows = statement.query((i64::from(region_id), role))?;
-        while let Some(row) = rows.next()? {
-            let min_lon: f64 = row.get(1)?;
-            let min_lat: f64 = row.get(2)?;
-            let max_lon: f64 = row.get(3)?;
-            let max_lat: f64 = row.get(4)?;
-            // The stored bounds are the part's own quantized extent, so a point
-            // outside them cannot lie on its boundary either.
-            if longitude_e6 < blob::to_e6(min_lon)
-                || longitude_e6 > blob::to_e6(max_lon)
-                || latitude_e6 < blob::to_e6(min_lat)
-                || latitude_e6 > blob::to_e6(max_lat)
-            {
-                continue;
-            }
-            let payload: Vec<u8> = row.get(0)?;
-            if blob::point_in_rings(&blob::decode(&payload)?, longitude_e6, latitude_e6) {
-                return Ok(true);
+        for wrapped in [lon - 360.0, lon, lon + 360.0] {
+            let mut rows = statement.query((wrapped, lat))?;
+            while let Some(row) = rows.next()? {
+                candidates.insert(row.get::<_, i64>(0)? as u32);
             }
         }
-        Ok(false)
+
+        let mut memberships = HashMap::new();
+        for region_id in candidates {
+            if let Some(membership) = self.membership(region_id, latitude, longitude)? {
+                memberships.insert(region_id, membership);
+            }
+        }
+        Ok(memberships)
     }
 }
 
@@ -577,9 +614,10 @@ fn radio_regions(matches: &[RegionMatch]) -> Vec<RadioRegion> {
 /// Choose the region to suggest as the packet default.
 ///
 /// Only the IATA-derived layers are eligible, and a core match beats an
-/// expanded one from the same layer. Country and state regions are deliberately
-/// never chosen: they are large enough that tagging a flood with one would
-/// broaden its scope far past what an operator setting up a repeater intends.
+/// expanded one from the same layer. Country and state regions are
+/// deliberately never chosen: they are large enough that tagging a flood with
+/// one would broaden its scope far past what an operator setting up a
+/// repeater intends.
 fn suggested_default(
     matches: &[RegionMatch],
     latitude: f64,
@@ -606,11 +644,12 @@ fn suggested_default(
 }
 
 /// Great-circle distance to a match's generating site, for breaking ties among
-/// overlapping expansion buffers.
+/// overlapping expansion margins.
 ///
 /// A sphere is enough here: this only ever orders two candidates that are both
 /// within a hundred kilometers, and the ellipsoidal correction is far too small
-/// to change which is nearer.
+/// to change which is nearer — and, unlike a geodesic, every implementation
+/// reproduces it with plain arithmetic.
 fn site_distance(entry: &RegionMatch, latitude: f64, longitude: f64) -> f64 {
     let Some((site_longitude, site_latitude)) = entry.site else {
         return f64::INFINITY;
@@ -618,7 +657,7 @@ fn site_distance(entry: &RegionMatch, latitude: f64, longitude: f64) -> f64 {
     let (lat1, lat2) = (latitude.to_radians(), site_latitude.to_radians());
     let delta_lat = lat2 - lat1;
     let delta_lon = (site_longitude - longitude).to_radians();
-    let haversine =
-        (delta_lat / 2.0).sin().powi(2) + lat1.cos() * lat2.cos() * (delta_lon / 2.0).sin().powi(2);
-    2.0 * haversine.sqrt().asin() * 6_371_008.8
+    let haversine = (delta_lat / 2.0).sin().powi(2)
+        + lat1.cos() * lat2.cos() * (delta_lon / 2.0).sin().powi(2);
+    2.0 * haversine.sqrt().asin() * sampling::EARTH_RADIUS_M
 }

@@ -1,20 +1,22 @@
 """The adaptive lookup cache.
 
-The compiled database always carries exact effective polygons, so a lookup can
-always be answered exactly. The cache exists so that the overwhelming majority
-of lookups — positions nowhere near any boundary — are answered by one indexed
+A lookup can always be answered exactly from the core polygons and the
+sampled-dilation rule. The cache exists so that the overwhelming majority of
+lookups — positions nowhere near any boundary — are answered by one indexed
 range query and no geometry at all.
 
-The world is subdivided as a quadtree. For each cell, every region is one of
-three things: it covers the whole cell, it misses the cell entirely, or its
-boundary runs through the cell. A cell with no boundaries through it is emitted
-immediately with the complete answer for every position inside it. Otherwise it
-is subdivided, and at the depth limit it is emitted with the regions known to
-cover it plus the short list of regions that must actually be tested.
+The world is subdivided as a quadtree. Each region is classified against a
+cell with two shapes: its core, and a superset of its sampled-dilation reach.
+A cell inside the core is guaranteed member territory — the position sample
+alone hits. A cell disjoint from the reach is guaranteed non-member territory,
+because the sample pattern never lands in core from outside it. Everything in
+between becomes a candidate the reader resolves with the real sampled test, so
+the classification bounds the answer from both sides without ever having to
+reproduce the sample pattern geometrically.
 
-The classification uses real geometric relations rather than sampled points.
-Sampling would miss a region small enough to sit wholly inside a cell without
-containing the sample.
+The classification uses real geometric relations rather than sampled probe
+points. Probing would miss a region small enough to sit wholly inside a cell
+without containing the probe.
 """
 
 from __future__ import annotations
@@ -48,16 +50,19 @@ class CacheStats:
 
 def build(
     region_ids: list[int],
-    geometries: list,
+    cores: list,
+    reaches: list,
     max_depth: int,
 ) -> tuple[list[Leaf], CacheStats]:
-    """Build merged lookup ranges over `geometries`, parallel to `region_ids`."""
+    """Build merged lookup ranges; `cores` and `reaches` parallel `region_ids`."""
     if max_depth < 0 or max_depth > MAX_DEPTH:
         raise ValueError(f"cache depth {max_depth} outside 0..{MAX_DEPTH}")
 
-    prepared = {
-        identifier: prep(geometry)
-        for identifier, geometry in zip(region_ids, geometries, strict=True)
+    prepared_cores = {
+        identifier: prep(geometry) for identifier, geometry in zip(region_ids, cores, strict=True)
+    }
+    prepared_reaches = {
+        identifier: prep(geometry) for identifier, geometry in zip(region_ids, reaches, strict=True)
     }
     leaves: list[Leaf] = []
     stats = {"boundary": 0, "max_candidates": 0, "max_depth": 0}
@@ -70,15 +75,14 @@ def build(
         covering: list[int] = []
         mixed: list[int] = []
         for identifier in candidates:
-            shape = prepared[identifier]
-            if not shape.intersects(cell):
+            if not prepared_reaches[identifier].intersects(cell):
                 continue
-            if shape.contains(cell):
+            if prepared_cores[identifier].contains(cell):
                 covering.append(identifier)
             else:
-                # Includes a region that merely touches the cell's edge: a
-                # position on that edge is inside the region, so the cell
-                # cannot answer without testing it.
+                # Includes a region whose reach merely touches the cell's
+                # edge: a position on that edge may sample into the core, so
+                # the cell cannot answer without testing it.
                 mixed.append(identifier)
 
         resolved = tuple(sorted(set(base) | set(covering)))

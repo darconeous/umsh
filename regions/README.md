@@ -46,15 +46,11 @@ because the next update pass overwrites it. Corrections go in
 `regions-update --check` re-derives the extracts from the pinned vendor files
 and fails if the committed ones differ, so they cannot drift.
 
-### One layer is not committed
-
-The global country boundary layer is written to `regions/build/`, not to
-`regions/extracts/`. Even simplified to the tolerance the build actually uses,
-it is tens of megabytes of GeoJSON per release — a diff nobody reads and a
-history nobody wants. A world build therefore needs `regions-fetch` and
-`regions-update` first. Every other layer, including US states, is committed,
-so the test fixture and every check around it build offline from a clean
-checkout.
+Every layer's extract is committed, including the country layer, so a clean
+checkout builds the whole world offline. The country layer stays small enough
+to commit because it is not a coastline dataset: a country region is the area
+of asserted jurisdiction — land plus exclusive economic zone — so the fractal
+coastline is interior to the region and never stored.
 
 ## Layers
 
@@ -69,7 +65,12 @@ overlap, and a lookup returns all of them.
 - **Metro** (`iata-metro:`) — containment only. A metropolitan code applies
   inside its reviewed polygon and nowhere else; the nearest metro area to a
   position outside every polygon is not that position's metro area.
-- **Country** (`country:`) — ISO 3166-1 alpha-2, land containment.
+- **Country** (`country:`) — ISO 3166-1 alpha-2, over the area where the
+  country asserts jurisdiction: its land together with its exclusive economic
+  zone, conventionally 200 nautical miles offshore. A boat in coastal waters
+  is in its country's region. Contested areas — overlapping claims and joint
+  regimes — are omitted entirely; the database takes no position on any
+  dispute.
 - **US state** (`us-state:`) — the 50 states plus the District of Columbia.
   Territories are excluded in V1; see `policy.yaml`.
 - **Custom** (`custom:`) — anything a person wants to define.
@@ -79,15 +80,18 @@ produce the radio-facing region `SFO`, and the final list carries it once.
 
 ## Expansion
 
-Every region may be buffered outward. This exists so a repeater near a border
-can be configured for both sides: without it, an operator a kilometer from a
-boundary would be told about exactly one of the two regions their radio can
-plainly hear. Expansion is applied after overrides, so a hand-corrected
-boundary is expanded the same way a generated one is.
+Every region may carry an outward expansion distance. This exists so a
+repeater near a border can be configured for both sides: without it, an
+operator a kilometer from a boundary would be told about exactly one of the
+two regions their radio can plainly hear. Expansion is applied after
+overrides, so a hand-corrected boundary widens the same way a generated one
+does.
 
-The compiled database keeps both the core and the effective geometry. Routing
-membership uses the effective geometry; the distinction is what lets a lookup
-say whether a position is really in a region or only in its margin.
+Expansion is a number, not stored geometry. The compiled database keeps core
+polygons only, and a lookup resolves the margin with a fixed sample pattern
+around the queried position — see `FORMAT.md`. A match is therefore either
+core (the position itself is inside) or expanded (only the margin reaches
+it).
 
 ## Editing
 

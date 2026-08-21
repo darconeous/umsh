@@ -258,21 +258,13 @@ def load(root: Path) -> SourceTree:
             )
         )
 
-    # Boundary layers small enough to commit live under extracts/. The global
-    # country layer is not one of them — see the note in extract.py — so it is
-    # written to build/ by the update pass and picked up from there.
-    tree.countries = _load_boundaries(
-        extracts / "boundaries" / "country", root / "build" / "boundaries" / "country"
-    )
-    tree.states = _load_boundaries(
-        extracts / "boundaries" / "us-state", root / "build" / "boundaries" / "us-state"
-    )
+    tree.countries = _load_boundaries(extracts / "boundaries" / "country")
+    tree.states = _load_boundaries(extracts / "boundaries" / "us-state")
     return tree
 
 
-def _load_boundaries(*candidates: Path) -> list[BoundaryFeature]:
-    directory = next((path for path in candidates if path.is_dir()), None)
-    if directory is None:
+def _load_boundaries(directory: Path) -> list[BoundaryFeature]:
+    if not directory.is_dir():
         return []
     features: list[BoundaryFeature] = []
     for path in sorted(directory.glob("*.geojson")):
