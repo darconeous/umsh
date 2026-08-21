@@ -41,7 +41,11 @@ layers:
   commercial_airport:
     enabled: true
     max_radius_m: 100000
-    expansion_m: 10000
+    # Tuned down from an initial 10 km after looking at the Bay Area, where
+    # that margin offered a San Carlos repeater three commercial airports.
+    # Two kilometers is enough to keep a repeater sitting on a cell border
+    # honest about both sides without spilling regions across whole towns.
+    expansion_m: 2000
     exclusive_core: true
     order: 100
     default_eligible: true
@@ -49,7 +53,7 @@ layers:
   positioned_iata:
     enabled: true
     max_radius_m: 100000
-    expansion_m: 5000
+    expansion_m: 2000
     exclusive_core: true
     order: 200
     default_eligible: true

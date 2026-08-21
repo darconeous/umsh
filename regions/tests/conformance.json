@@ -8,7 +8,6 @@
       "lon": -122.2495,
       "region_keys": [
         "iata-airport:SFO",
-        "iata-airport:SJC",
         "iata-location:SQL",
         "iata-metro:XSF",
         "country:US",
@@ -17,7 +16,6 @@
       ],
       "memberships": [
         "core",
-        "expanded",
         "core",
         "core",
         "core",
@@ -26,7 +24,6 @@
       ],
       "radio_names": [
         "SFO",
-        "SJC",
         "SQL",
         "XSF",
         "US",
@@ -35,7 +32,6 @@
       ],
       "wire_codes": [
         30655,
-        30803,
         31092,
         39166,
         34360,
@@ -49,7 +45,6 @@
       "lon": -122.375,
       "region_keys": [
         "iata-airport:SFO",
-        "iata-airport:OAK",
         "iata-location:SFO",
         "iata-metro:XSF",
         "country:US",
@@ -58,7 +53,6 @@
       ],
       "memberships": [
         "core",
-        "expanded",
         "core",
         "core",
         "core",
@@ -67,7 +61,6 @@
       ],
       "radio_names": [
         "SFO",
-        "OAK",
         "XSF",
         "US",
         "CA",
@@ -75,7 +68,6 @@
       ],
       "wire_codes": [
         30655,
-        24051,
         39166,
         34360,
         4840,
@@ -123,10 +115,7 @@
       "lon": -122.15,
       "region_keys": [
         "iata-airport:SJC",
-        "iata-airport:OAK",
-        "iata-airport:SFO",
         "iata-location:SQL",
-        "iata-location:OAK",
         "iata-location:PAO",
         "iata-metro:XSF",
         "country:US",
@@ -135,10 +124,7 @@
       ],
       "memberships": [
         "core",
-        "expanded",
-        "expanded",
         "core",
-        "expanded",
         "expanded",
         "core",
         "core",
@@ -147,8 +133,6 @@
       ],
       "radio_names": [
         "SJC",
-        "OAK",
-        "SFO",
         "SQL",
         "PAO",
         "XSF",
@@ -158,8 +142,6 @@
       ],
       "wire_codes": [
         30803,
-        24051,
-        30655,
         31092,
         25655,
         39166,
@@ -174,7 +156,6 @@
       "lon": -122.115,
       "region_keys": [
         "iata-airport:SJC",
-        "iata-airport:SFO",
         "iata-location:PAO",
         "iata-metro:XSF",
         "country:US",
@@ -183,7 +164,6 @@
       ],
       "memberships": [
         "core",
-        "expanded",
         "core",
         "core",
         "core",
@@ -192,7 +172,6 @@
       ],
       "radio_names": [
         "SJC",
-        "SFO",
         "PAO",
         "XSF",
         "US",
@@ -201,7 +180,6 @@
       ],
       "wire_codes": [
         30803,
-        30655,
         25655,
         39166,
         34360,
@@ -3992,7 +3970,6 @@
       "region_keys": [
         "iata-airport:SJC",
         "iata-airport:OAK",
-        "iata-airport:SFO",
         "iata-location:OAK",
         "iata-location:PAO",
         "iata-location:SQL",
@@ -4003,7 +3980,6 @@
       ],
       "memberships": [
         "core",
-        "expanded",
         "expanded",
         "core",
         "expanded",
@@ -4016,7 +3992,6 @@
       "radio_names": [
         "SJC",
         "OAK",
-        "SFO",
         "PAO",
         "SQL",
         "XSF",
@@ -4027,7 +4002,6 @@
       "wire_codes": [
         30803,
         24051,
-        30655,
         25655,
         31092,
         39166,
@@ -4172,30 +4146,26 @@
       "lat": 36.872087197,
       "lon": -123.042564701,
       "region_keys": [
-        "iata-airport:SFO",
         "iata-location:SQL",
         "country:US",
         "us-state:CA"
       ],
       "memberships": [
         "expanded",
-        "expanded",
         "core",
         "core"
       ],
       "radio_names": [
-        "SFO",
         "SQL",
         "US",
         "CA"
       ],
       "wire_codes": [
-        30655,
         31092,
         34360,
         4840
       ],
-      "default_wire_code": 30655
+      "default_wire_code": 31092
     },
     {
       "lat": 37.177543829,
@@ -4236,7 +4206,6 @@
         "iata-airport:OAK",
         "iata-airport:SFO",
         "iata-location:SQL",
-        "iata-location:PAO",
         "iata-metro:XSF",
         "country:US",
         "us-state:CA",
@@ -4247,7 +4216,6 @@
         "expanded",
         "expanded",
         "core",
-        "expanded",
         "core",
         "core",
         "core",
@@ -4258,7 +4226,6 @@
         "OAK",
         "SFO",
         "SQL",
-        "PAO",
         "XSF",
         "US",
         "CA",
@@ -4269,7 +4236,6 @@
         24051,
         30655,
         31092,
-        25655,
         39166,
         34360,
         4840,
@@ -4285,7 +4251,6 @@
         "iata-airport:SFO",
         "iata-airport:SJC",
         "iata-location:PAO",
-        "iata-location:SQL",
         "iata-metro:XSF",
         "country:US",
         "us-state:CA",
@@ -4296,7 +4261,6 @@
         "core",
         "core",
         "core",
-        "expanded",
         "core",
         "core",
         "core",
@@ -4307,7 +4271,6 @@
         "SFO",
         "SJC",
         "PAO",
-        "SQL",
         "XSF",
         "US",
         "CA",
@@ -4318,7 +4281,6 @@
         30655,
         30803,
         25655,
-        31092,
         39166,
         34360,
         4840,
@@ -4359,7 +4321,6 @@
       "region_keys": [
         "iata-airport:SJC",
         "iata-airport:OAK",
-        "iata-airport:SFO",
         "iata-location:OAK",
         "iata-location:PAO",
         "iata-location:SQL",
@@ -4370,7 +4331,6 @@
       ],
       "memberships": [
         "core",
-        "expanded",
         "expanded",
         "core",
         "expanded",
@@ -4383,7 +4343,6 @@
       "radio_names": [
         "SJC",
         "OAK",
-        "SFO",
         "PAO",
         "SQL",
         "XSF",
@@ -4394,7 +4353,6 @@
       "wire_codes": [
         30803,
         24051,
-        30655,
         25655,
         31092,
         39166,
@@ -4639,10 +4597,8 @@
       "lon": -122.199039588,
       "region_keys": [
         "iata-airport:OAK",
-        "iata-airport:SFO",
         "iata-airport:SJC",
         "iata-location:OAK",
-        "iata-location:SFO",
         "iata-location:SQL",
         "iata-metro:XSF",
         "country:US",
@@ -4652,9 +4608,7 @@
       "memberships": [
         "core",
         "expanded",
-        "expanded",
         "core",
-        "expanded",
         "expanded",
         "core",
         "core",
@@ -4663,7 +4617,6 @@
       ],
       "radio_names": [
         "OAK",
-        "SFO",
         "SJC",
         "SQL",
         "XSF",
@@ -4673,7 +4626,6 @@
       ],
       "wire_codes": [
         24051,
-        30655,
         30803,
         31092,
         39166,
@@ -4747,7 +4699,6 @@
       "region_keys": [
         "iata-airport:SJC",
         "iata-airport:OAK",
-        "iata-airport:SFO",
         "iata-location:SQL",
         "iata-location:OAK",
         "iata-location:PAO",
@@ -4758,7 +4709,6 @@
       ],
       "memberships": [
         "core",
-        "expanded",
         "expanded",
         "core",
         "expanded",
@@ -4771,7 +4721,6 @@
       "radio_names": [
         "SJC",
         "OAK",
-        "SFO",
         "SQL",
         "PAO",
         "XSF",
@@ -4782,7 +4731,6 @@
       "wire_codes": [
         30803,
         24051,
-        30655,
         31092,
         25655,
         39166,
@@ -5148,10 +5096,8 @@
       "lon": -122.200334779,
       "region_keys": [
         "iata-airport:OAK",
-        "iata-airport:SFO",
         "iata-airport:SJC",
         "iata-location:OAK",
-        "iata-location:SFO",
         "iata-location:SQL",
         "iata-metro:XSF",
         "country:US",
@@ -5161,9 +5107,7 @@
       "memberships": [
         "core",
         "expanded",
-        "expanded",
         "core",
-        "expanded",
         "expanded",
         "core",
         "core",
@@ -5172,7 +5116,6 @@
       ],
       "radio_names": [
         "OAK",
-        "SFO",
         "SJC",
         "SQL",
         "XSF",
@@ -5182,7 +5125,6 @@
       ],
       "wire_codes": [
         24051,
-        30655,
         30803,
         31092,
         39166,
@@ -5306,7 +5248,6 @@
         "iata-airport:OAK",
         "iata-airport:SFO",
         "iata-location:PAO",
-        "iata-location:SQL",
         "iata-metro:XSF",
         "country:US",
         "us-state:CA",
@@ -5317,7 +5258,6 @@
         "expanded",
         "expanded",
         "core",
-        "expanded",
         "core",
         "core",
         "core",
@@ -5328,7 +5268,6 @@
         "OAK",
         "SFO",
         "PAO",
-        "SQL",
         "XSF",
         "US",
         "CA",
@@ -5339,7 +5278,6 @@
         24051,
         30655,
         25655,
-        31092,
         39166,
         34360,
         4840,
@@ -5433,7 +5371,6 @@
       "region_keys": [
         "iata-airport:OAK",
         "iata-airport:SFO",
-        "iata-airport:SJC",
         "iata-location:SFO",
         "iata-location:OAK",
         "iata-location:SQL",
@@ -5444,7 +5381,6 @@
       ],
       "memberships": [
         "core",
-        "expanded",
         "expanded",
         "core",
         "expanded",
@@ -5457,7 +5393,6 @@
       "radio_names": [
         "OAK",
         "SFO",
-        "SJC",
         "SQL",
         "XSF",
         "US",
@@ -5467,7 +5402,6 @@
       "wire_codes": [
         24051,
         30655,
-        30803,
         31092,
         39166,
         34360,
@@ -5777,9 +5711,7 @@
       "region_keys": [
         "iata-airport:OAK",
         "iata-airport:SJC",
-        "iata-airport:SFO",
         "iata-location:OAK",
-        "iata-location:SFO",
         "iata-location:SQL",
         "iata-metro:XSF",
         "country:US",
@@ -5789,9 +5721,7 @@
       "memberships": [
         "core",
         "core",
-        "expanded",
         "core",
-        "expanded",
         "expanded",
         "core",
         "core",
@@ -5801,7 +5731,6 @@
       "radio_names": [
         "OAK",
         "SJC",
-        "SFO",
         "SQL",
         "XSF",
         "US",
@@ -5811,7 +5740,6 @@
       "wire_codes": [
         24051,
         30803,
-        30655,
         31092,
         39166,
         34360,
@@ -5886,9 +5814,7 @@
       "region_keys": [
         "iata-airport:SJC",
         "iata-airport:OAK",
-        "iata-airport:SFO",
         "iata-location:PAO",
-        "iata-location:SQL",
         "iata-metro:XSF",
         "country:US",
         "us-state:CA",
@@ -5897,9 +5823,7 @@
       "memberships": [
         "core",
         "expanded",
-        "expanded",
         "core",
-        "expanded",
         "core",
         "core",
         "core",
@@ -5908,9 +5832,7 @@
       "radio_names": [
         "SJC",
         "OAK",
-        "SFO",
         "PAO",
-        "SQL",
         "XSF",
         "US",
         "CA",
@@ -5919,9 +5841,7 @@
       "wire_codes": [
         30803,
         24051,
-        30655,
         25655,
-        31092,
         39166,
         34360,
         4840,
@@ -5967,29 +5887,23 @@
       "lon": -121.12407753,
       "region_keys": [
         "iata-airport:SJC",
-        "iata-airport:OAK",
         "iata-location:SJC",
-        "iata-location:OAK",
         "country:US",
         "us-state:CA"
       ],
       "memberships": [
         "core",
-        "expanded",
         "core",
-        "expanded",
         "core",
         "core"
       ],
       "radio_names": [
         "SJC",
-        "OAK",
         "US",
         "CA"
       ],
       "wire_codes": [
         30803,
-        24051,
         34360,
         4840
       ],
@@ -6003,7 +5917,6 @@
         "iata-airport:OAK",
         "iata-airport:SJC",
         "iata-location:PAO",
-        "iata-location:SQL",
         "iata-metro:XSF",
         "country:US",
         "us-state:CA",
@@ -6014,7 +5927,6 @@
         "expanded",
         "expanded",
         "core",
-        "expanded",
         "core",
         "core",
         "core",
@@ -6025,7 +5937,6 @@
         "OAK",
         "SJC",
         "PAO",
-        "SQL",
         "XSF",
         "US",
         "CA",
@@ -6036,7 +5947,6 @@
         24051,
         30803,
         25655,
-        31092,
         39166,
         34360,
         4840,
@@ -6237,7 +6147,6 @@
         "iata-airport:SJC",
         "iata-location:PAO",
         "iata-location:SJC",
-        "iata-location:SQL",
         "country:US",
         "us-state:CA"
       ],
@@ -6245,21 +6154,18 @@
         "expanded",
         "core",
         "expanded",
-        "expanded",
         "core",
         "core"
       ],
       "radio_names": [
         "SJC",
         "PAO",
-        "SQL",
         "US",
         "CA"
       ],
       "wire_codes": [
         30803,
         25655,
-        31092,
         34360,
         4840
       ],
@@ -6306,7 +6212,6 @@
         "iata-airport:OAK",
         "iata-airport:SFO",
         "iata-location:SQL",
-        "iata-location:OAK",
         "iata-metro:XSF",
         "country:US",
         "us-state:CA",
@@ -6317,7 +6222,6 @@
         "expanded",
         "expanded",
         "core",
-        "expanded",
         "core",
         "core",
         "core",
@@ -6397,7 +6301,6 @@
         "iata-airport:OAK",
         "iata-airport:SFO",
         "iata-location:SQL",
-        "iata-location:PAO",
         "iata-metro:XSF",
         "country:US",
         "us-state:CA",
@@ -6408,7 +6311,6 @@
         "expanded",
         "expanded",
         "core",
-        "expanded",
         "core",
         "core",
         "core",
@@ -6419,7 +6321,6 @@
         "OAK",
         "SFO",
         "SQL",
-        "PAO",
         "XSF",
         "US",
         "CA",
@@ -6430,7 +6331,6 @@
         24051,
         30655,
         31092,
-        25655,
         39166,
         34360,
         4840,
@@ -6479,7 +6379,6 @@
         "iata-airport:OAK",
         "iata-airport:SJC",
         "iata-location:SQL",
-        "iata-location:PAO",
         "iata-metro:XSF",
         "country:US",
         "us-state:CA",
@@ -6490,7 +6389,6 @@
         "expanded",
         "expanded",
         "core",
-        "expanded",
         "core",
         "core",
         "core",
@@ -6501,7 +6399,6 @@
         "OAK",
         "SJC",
         "SQL",
-        "PAO",
         "XSF",
         "US",
         "CA",
@@ -6512,7 +6409,6 @@
         24051,
         30803,
         31092,
-        25655,
         39166,
         34360,
         4840,
@@ -6619,12 +6515,10 @@
       "region_keys": [
         "iata-airport:SFO",
         "iata-location:SFO",
-        "iata-location:SQL",
         "country:US",
         "us-state:CA"
       ],
       "memberships": [
-        "expanded",
         "expanded",
         "expanded",
         "core",
@@ -6632,13 +6526,11 @@
       ],
       "radio_names": [
         "SFO",
-        "SQL",
         "US",
         "CA"
       ],
       "wire_codes": [
         30655,
-        31092,
         34360,
         4840
       ],
@@ -6703,7 +6595,6 @@
       "lon": -122.480264,
       "region_keys": [
         "iata-airport:SJC",
-        "iata-airport:SFO",
         "iata-location:PAO",
         "iata-location:SQL",
         "country:US",
@@ -6711,7 +6602,6 @@
       ],
       "memberships": [
         "core",
-        "expanded",
         "core",
         "core",
         "core",
@@ -6719,7 +6609,6 @@
       ],
       "radio_names": [
         "SJC",
-        "SFO",
         "PAO",
         "SQL",
         "US",
@@ -6727,7 +6616,6 @@
       ],
       "wire_codes": [
         30803,
-        30655,
         25655,
         31092,
         34360,
@@ -6767,7 +6655,6 @@
       "lon": -122.599999726,
       "region_keys": [
         "iata-airport:OAK",
-        "iata-airport:SFO",
         "iata-location:OAK",
         "iata-metro:XSF",
         "country:US",
@@ -6775,7 +6662,6 @@
       ],
       "memberships": [
         "core",
-        "expanded",
         "core",
         "core",
         "core",
@@ -6783,14 +6669,12 @@
       ],
       "radio_names": [
         "OAK",
-        "SFO",
         "XSF",
         "US",
         "CA"
       ],
       "wire_codes": [
         24051,
-        30655,
         39166,
         34360,
         4840
@@ -6805,7 +6689,6 @@
         "iata-airport:OAK",
         "iata-airport:SFO",
         "iata-location:SQL",
-        "iata-location:OAK",
         "iata-metro:XSF",
         "country:US",
         "us-state:CA",
@@ -6816,7 +6699,6 @@
         "expanded",
         "expanded",
         "core",
-        "expanded",
         "core",
         "core",
         "core",
@@ -6849,7 +6731,6 @@
       "lon": -122.295094035,
       "region_keys": [
         "iata-airport:SJC",
-        "iata-airport:SFO",
         "iata-location:SQL",
         "iata-location:PAO",
         "iata-metro:XSF",
@@ -6859,7 +6740,6 @@
       ],
       "memberships": [
         "core",
-        "expanded",
         "core",
         "expanded",
         "core",
@@ -6869,7 +6749,6 @@
       ],
       "radio_names": [
         "SJC",
-        "SFO",
         "SQL",
         "PAO",
         "XSF",
@@ -6879,7 +6758,6 @@
       ],
       "wire_codes": [
         30803,
-        30655,
         31092,
         25655,
         39166,
@@ -6896,7 +6774,6 @@
         "iata-airport:SJC",
         "iata-location:PAO",
         "iata-location:SJC",
-        "iata-location:SQL",
         "country:US",
         "us-state:CA"
       ],
@@ -6904,21 +6781,18 @@
         "core",
         "core",
         "expanded",
-        "expanded",
         "core",
         "core"
       ],
       "radio_names": [
         "SJC",
         "PAO",
-        "SQL",
         "US",
         "CA"
       ],
       "wire_codes": [
         30803,
         25655,
-        31092,
         34360,
         4840
       ],
@@ -6970,7 +6844,6 @@
       "lon": -122.296169,
       "region_keys": [
         "iata-airport:SJC",
-        "iata-airport:SFO",
         "iata-location:PAO",
         "iata-location:SQL",
         "iata-metro:XSF",
@@ -6980,7 +6853,6 @@
       ],
       "memberships": [
         "core",
-        "expanded",
         "core",
         "core",
         "core",
@@ -6990,7 +6862,6 @@
       ],
       "radio_names": [
         "SJC",
-        "SFO",
         "PAO",
         "SQL",
         "XSF",
@@ -7000,7 +6871,6 @@
       ],
       "wire_codes": [
         30803,
-        30655,
         25655,
         31092,
         39166,
@@ -7042,10 +6912,8 @@
       "lon": -122.200004964,
       "region_keys": [
         "iata-airport:SFO",
-        "iata-airport:OAK",
         "iata-airport:SJC",
         "iata-location:SQL",
-        "iata-location:PAO",
         "iata-metro:XSF",
         "country:US",
         "us-state:CA",
@@ -7054,9 +6922,7 @@
       "memberships": [
         "core",
         "expanded",
-        "expanded",
         "core",
-        "expanded",
         "core",
         "core",
         "core",
@@ -7064,10 +6930,8 @@
       ],
       "radio_names": [
         "SFO",
-        "OAK",
         "SJC",
         "SQL",
-        "PAO",
         "XSF",
         "US",
         "CA",
@@ -7075,10 +6939,8 @@
       ],
       "wire_codes": [
         30655,
-        24051,
         30803,
         31092,
-        25655,
         39166,
         34360,
         4840,
@@ -7092,7 +6954,6 @@
       "region_keys": [
         "iata-airport:OAK",
         "iata-airport:SFO",
-        "iata-airport:SJC",
         "iata-location:SQL",
         "iata-location:OAK",
         "iata-location:SFO",
@@ -7103,7 +6964,6 @@
       ],
       "memberships": [
         "core",
-        "expanded",
         "expanded",
         "core",
         "expanded",
@@ -7116,7 +6976,6 @@
       "radio_names": [
         "OAK",
         "SFO",
-        "SJC",
         "SQL",
         "XSF",
         "US",
@@ -7126,7 +6985,6 @@
       "wire_codes": [
         24051,
         30655,
-        30803,
         31092,
         39166,
         34360,
@@ -7220,29 +7078,23 @@
       "lon": -121.124076885,
       "region_keys": [
         "iata-airport:SJC",
-        "iata-airport:OAK",
         "iata-location:SJC",
-        "iata-location:OAK",
         "country:US",
         "us-state:CA"
       ],
       "memberships": [
         "core",
-        "expanded",
         "core",
-        "expanded",
         "core",
         "core"
       ],
       "radio_names": [
         "SJC",
-        "OAK",
         "US",
         "CA"
       ],
       "wire_codes": [
         30803,
-        24051,
         34360,
         4840
       ],
@@ -7336,12 +7188,10 @@
         "iata-airport:SJC",
         "iata-location:PAO",
         "iata-location:SJC",
-        "iata-location:SQL",
         "country:US",
         "us-state:CA"
       ],
       "memberships": [
-        "expanded",
         "expanded",
         "expanded",
         "expanded",
@@ -7351,14 +7201,12 @@
       "radio_names": [
         "SJC",
         "PAO",
-        "SQL",
         "US",
         "CA"
       ],
       "wire_codes": [
         30803,
         25655,
-        31092,
         34360,
         4840
       ],
@@ -7369,7 +7217,6 @@
       "lon": -122.478044602,
       "region_keys": [
         "iata-airport:SJC",
-        "iata-airport:SFO",
         "iata-location:PAO",
         "iata-location:SQL",
         "country:US",
@@ -7377,7 +7224,6 @@
       ],
       "memberships": [
         "core",
-        "expanded",
         "core",
         "expanded",
         "core",
@@ -7385,7 +7231,6 @@
       ],
       "radio_names": [
         "SJC",
-        "SFO",
         "PAO",
         "SQL",
         "US",
@@ -7393,7 +7238,6 @@
       ],
       "wire_codes": [
         30803,
-        30655,
         25655,
         31092,
         34360,
@@ -7594,29 +7438,23 @@
       "lon": -121.124077,
       "region_keys": [
         "iata-airport:SJC",
-        "iata-airport:OAK",
         "iata-location:SJC",
-        "iata-location:OAK",
         "country:US",
         "us-state:CA"
       ],
       "memberships": [
         "core",
-        "expanded",
         "core",
-        "expanded",
         "core",
         "core"
       ],
       "radio_names": [
         "SJC",
-        "OAK",
         "US",
         "CA"
       ],
       "wire_codes": [
         30803,
-        24051,
         34360,
         4840
       ],
@@ -7657,7 +7495,6 @@
         "iata-airport:SFO",
         "iata-airport:SJC",
         "iata-location:SQL",
-        "iata-location:OAK",
         "iata-metro:XSF",
         "country:US",
         "us-state:CA",
@@ -7668,7 +7505,6 @@
         "expanded",
         "expanded",
         "core",
-        "expanded",
         "core",
         "core",
         "core",
@@ -7862,7 +7698,6 @@
       "lon": -122.296166625,
       "region_keys": [
         "iata-airport:SJC",
-        "iata-airport:SFO",
         "iata-location:PAO",
         "iata-location:SQL",
         "iata-metro:XSF",
@@ -7872,7 +7707,6 @@
       ],
       "memberships": [
         "core",
-        "expanded",
         "core",
         "core",
         "core",
@@ -7882,7 +7716,6 @@
       ],
       "radio_names": [
         "SJC",
-        "SFO",
         "PAO",
         "SQL",
         "XSF",
@@ -7892,7 +7725,6 @@
       ],
       "wire_codes": [
         30803,
-        30655,
         25655,
         31092,
         39166,
@@ -8028,26 +7860,22 @@
       "region_keys": [
         "iata-airport:SFO",
         "iata-location:SFO",
-        "iata-location:SQL",
         "country:US",
         "us-state:CA"
       ],
       "memberships": [
         "core",
         "core",
-        "expanded",
         "core",
         "core"
       ],
       "radio_names": [
         "SFO",
-        "SQL",
         "US",
         "CA"
       ],
       "wire_codes": [
         30655,
-        31092,
         34360,
         4840
       ],
@@ -8057,63 +7885,51 @@
       "lat": 36.872093357,
       "lon": -123.042555634,
       "region_keys": [
-        "iata-airport:SFO",
         "iata-location:SQL",
         "country:US",
         "us-state:CA"
       ],
       "memberships": [
-        "expanded",
         "core",
         "core",
         "core"
       ],
       "radio_names": [
-        "SFO",
         "SQL",
         "US",
         "CA"
       ],
       "wire_codes": [
-        30655,
         31092,
         34360,
         4840
       ],
-      "default_wire_code": 30655
+      "default_wire_code": 31092
     },
     {
       "lat": 36.730221919,
       "lon": -122.809230209,
       "region_keys": [
-        "iata-airport:SFO",
-        "iata-airport:SJC",
         "iata-location:SQL",
         "country:US",
         "us-state:CA"
       ],
       "memberships": [
-        "expanded",
-        "expanded",
         "core",
         "core",
         "core"
       ],
       "radio_names": [
-        "SFO",
-        "SJC",
         "SQL",
         "US",
         "CA"
       ],
       "wire_codes": [
-        30655,
-        30803,
         31092,
         34360,
         4840
       ],
-      "default_wire_code": 30803
+      "default_wire_code": 31092
     },
     {
       "lat": 37.678583695,
@@ -8234,7 +8050,6 @@
         "iata-airport:SJC",
         "iata-location:OAK",
         "iata-location:PAO",
-        "iata-location:SQL",
         "iata-metro:XSF",
         "country:US",
         "us-state:CA",
@@ -8245,7 +8060,6 @@
         "expanded",
         "core",
         "expanded",
-        "expanded",
         "core",
         "core",
         "core",
@@ -8255,7 +8069,6 @@
         "OAK",
         "SJC",
         "PAO",
-        "SQL",
         "XSF",
         "US",
         "CA",
@@ -8265,7 +8078,6 @@
         24051,
         30803,
         25655,
-        31092,
         39166,
         34360,
         4840,
@@ -8366,7 +8178,6 @@
       "region_keys": [
         "iata-airport:SJC",
         "iata-airport:OAK",
-        "iata-airport:SFO",
         "iata-location:PAO",
         "iata-location:OAK",
         "iata-location:SQL",
@@ -8377,7 +8188,6 @@
       ],
       "memberships": [
         "core",
-        "expanded",
         "expanded",
         "core",
         "expanded",
@@ -8390,7 +8200,6 @@
       "radio_names": [
         "SJC",
         "OAK",
-        "SFO",
         "PAO",
         "SQL",
         "XSF",
@@ -8401,7 +8210,6 @@
       "wire_codes": [
         30803,
         24051,
-        30655,
         25655,
         31092,
         39166,
@@ -8450,7 +8258,6 @@
       "region_keys": [
         "iata-airport:SJC",
         "iata-airport:OAK",
-        "iata-airport:SFO",
         "iata-location:OAK",
         "iata-location:PAO",
         "iata-location:SQL",
@@ -8461,7 +8268,6 @@
       ],
       "memberships": [
         "core",
-        "expanded",
         "expanded",
         "core",
         "expanded",
@@ -8474,7 +8280,6 @@
       "radio_names": [
         "SJC",
         "OAK",
-        "SFO",
         "PAO",
         "SQL",
         "XSF",
@@ -8485,7 +8290,6 @@
       "wire_codes": [
         30803,
         24051,
-        30655,
         25655,
         31092,
         39166,
@@ -8530,7 +8334,6 @@
         "iata-airport:OAK",
         "iata-airport:SFO",
         "iata-location:PAO",
-        "iata-location:SQL",
         "iata-metro:XSF",
         "country:US",
         "us-state:CA",
@@ -8541,7 +8344,6 @@
         "expanded",
         "expanded",
         "core",
-        "expanded",
         "core",
         "core",
         "core",
@@ -8552,7 +8354,6 @@
         "OAK",
         "SFO",
         "PAO",
-        "SQL",
         "XSF",
         "US",
         "CA",
@@ -8563,7 +8364,6 @@
         24051,
         30655,
         25655,
-        31092,
         39166,
         34360,
         4840,
@@ -8606,7 +8406,6 @@
         "iata-airport:SJC",
         "iata-location:OAK",
         "iata-location:PAO",
-        "iata-location:SQL",
         "iata-metro:XSF",
         "country:US",
         "us-state:CA",
@@ -8617,7 +8416,6 @@
         "core",
         "core",
         "expanded",
-        "expanded",
         "core",
         "core",
         "core",
@@ -8627,7 +8425,6 @@
         "OAK",
         "SJC",
         "PAO",
-        "SQL",
         "XSF",
         "US",
         "CA",
@@ -8637,7 +8434,6 @@
         24051,
         30803,
         25655,
-        31092,
         39166,
         34360,
         4840,
@@ -8884,7 +8680,6 @@
         "iata-airport:SJC",
         "iata-location:OAK",
         "iata-location:PAO",
-        "iata-location:SQL",
         "iata-metro:XSF",
         "country:US",
         "us-state:CA",
@@ -8895,7 +8690,6 @@
         "expanded",
         "core",
         "expanded",
-        "expanded",
         "core",
         "core",
         "core",
@@ -8905,7 +8699,6 @@
         "OAK",
         "SJC",
         "PAO",
-        "SQL",
         "XSF",
         "US",
         "CA",
@@ -8915,7 +8708,6 @@
         24051,
         30803,
         25655,
-        31092,
         39166,
         34360,
         4840,
@@ -9097,7 +8889,6 @@
       "lon": -122.6,
       "region_keys": [
         "iata-airport:OAK",
-        "iata-airport:SFO",
         "iata-location:OAK",
         "iata-metro:XSF",
         "country:US",
@@ -9105,7 +8896,6 @@
       ],
       "memberships": [
         "core",
-        "expanded",
         "core",
         "core",
         "core",
@@ -9113,14 +8903,12 @@
       ],
       "radio_names": [
         "OAK",
-        "SFO",
         "XSF",
         "US",
         "CA"
       ],
       "wire_codes": [
         24051,
-        30655,
         39166,
         34360,
         4840
@@ -9628,7 +9416,6 @@
       "region_keys": [
         "iata-airport:OAK",
         "iata-airport:SFO",
-        "iata-airport:SJC",
         "iata-location:OAK",
         "iata-location:SFO",
         "iata-location:SQL",
@@ -9639,7 +9426,6 @@
       ],
       "memberships": [
         "core",
-        "expanded",
         "expanded",
         "core",
         "core",
@@ -9652,7 +9438,6 @@
       "radio_names": [
         "OAK",
         "SFO",
-        "SJC",
         "SQL",
         "XSF",
         "US",
@@ -9662,7 +9447,6 @@
       "wire_codes": [
         24051,
         30655,
-        30803,
         31092,
         39166,
         34360,
@@ -9771,7 +9555,6 @@
         "iata-airport:SJC",
         "iata-location:PAO",
         "iata-location:SJC",
-        "iata-location:SQL",
         "country:US",
         "us-state:CA"
       ],
@@ -9779,21 +9562,18 @@
         "core",
         "core",
         "expanded",
-        "expanded",
         "core",
         "core"
       ],
       "radio_names": [
         "SJC",
         "PAO",
-        "SQL",
         "US",
         "CA"
       ],
       "wire_codes": [
         30803,
         25655,
-        31092,
         34360,
         4840
       ],
@@ -9897,7 +9677,6 @@
       "lon": -122.480264873,
       "region_keys": [
         "iata-airport:SJC",
-        "iata-airport:SFO",
         "iata-location:SQL",
         "iata-location:PAO",
         "country:US",
@@ -9905,7 +9684,6 @@
       ],
       "memberships": [
         "core",
-        "expanded",
         "core",
         "expanded",
         "core",
@@ -9913,7 +9691,6 @@
       ],
       "radio_names": [
         "SJC",
-        "SFO",
         "SQL",
         "PAO",
         "US",
@@ -9921,7 +9698,6 @@
       ],
       "wire_codes": [
         30803,
-        30655,
         31092,
         25655,
         34360,
@@ -10309,34 +10085,26 @@
       "lat": 36.730224,
       "lon": -122.809239,
       "region_keys": [
-        "iata-airport:SFO",
-        "iata-airport:SJC",
         "iata-location:SQL",
         "country:US",
         "us-state:CA"
       ],
       "memberships": [
-        "expanded",
-        "expanded",
         "core",
         "core",
         "core"
       ],
       "radio_names": [
-        "SFO",
-        "SJC",
         "SQL",
         "US",
         "CA"
       ],
       "wire_codes": [
-        30655,
-        30803,
         31092,
         34360,
         4840
       ],
-      "default_wire_code": 30803
+      "default_wire_code": 31092
     },
     {
       "lat": 36.788113671,
@@ -10445,7 +10213,6 @@
       "region_keys": [
         "iata-airport:SJC",
         "iata-airport:OAK",
-        "iata-airport:SFO",
         "iata-location:OAK",
         "iata-location:PAO",
         "iata-location:SQL",
@@ -10456,7 +10223,6 @@
       ],
       "memberships": [
         "core",
-        "expanded",
         "expanded",
         "core",
         "core",
@@ -10469,7 +10235,6 @@
       "radio_names": [
         "SJC",
         "OAK",
-        "SFO",
         "PAO",
         "SQL",
         "XSF",
@@ -10480,7 +10245,6 @@
       "wire_codes": [
         30803,
         24051,
-        30655,
         25655,
         31092,
         39166,
@@ -10698,44 +10462,34 @@
       "lat": 36.730224281,
       "lon": -122.809239499,
       "region_keys": [
-        "iata-airport:SFO",
-        "iata-airport:SJC",
         "iata-location:SQL",
         "country:US",
         "us-state:CA"
       ],
       "memberships": [
-        "expanded",
-        "expanded",
         "core",
         "core",
         "core"
       ],
       "radio_names": [
-        "SFO",
-        "SJC",
         "SQL",
         "US",
         "CA"
       ],
       "wire_codes": [
-        30655,
-        30803,
         31092,
         34360,
         4840
       ],
-      "default_wire_code": 30803
+      "default_wire_code": 31092
     },
     {
       "lat": 37.549999111,
       "lon": -122.099992934,
       "region_keys": [
         "iata-airport:OAK",
-        "iata-airport:SFO",
         "iata-airport:SJC",
         "iata-location:PAO",
-        "iata-location:SQL",
         "iata-metro:XSF",
         "country:US",
         "us-state:CA",
@@ -10744,9 +10498,7 @@
       "memberships": [
         "core",
         "expanded",
-        "expanded",
         "core",
-        "expanded",
         "core",
         "core",
         "core",
@@ -10754,10 +10506,8 @@
       ],
       "radio_names": [
         "OAK",
-        "SFO",
         "SJC",
         "PAO",
-        "SQL",
         "XSF",
         "US",
         "CA",
@@ -10765,10 +10515,8 @@
       ],
       "wire_codes": [
         24051,
-        30655,
         30803,
         25655,
-        31092,
         39166,
         34360,
         4840,
@@ -10832,7 +10580,6 @@
         "iata-airport:OAK",
         "iata-airport:SFO",
         "iata-location:SQL",
-        "iata-location:OAK",
         "iata-metro:XSF",
         "country:US",
         "us-state:CA",
@@ -10843,7 +10590,6 @@
         "expanded",
         "expanded",
         "core",
-        "expanded",
         "core",
         "core",
         "core",
@@ -10906,9 +10652,7 @@
       "lat": 37.996959538,
       "lon": -121.124077155,
       "region_keys": [
-        "iata-airport:OAK",
         "iata-airport:SJC",
-        "iata-location:OAK",
         "iata-location:SJC",
         "country:US",
         "us-state:CA"
@@ -10916,19 +10660,15 @@
       "memberships": [
         "expanded",
         "expanded",
-        "expanded",
-        "expanded",
         "core",
         "core"
       ],
       "radio_names": [
-        "OAK",
         "SJC",
         "US",
         "CA"
       ],
       "wire_codes": [
-        24051,
         30803,
         34360,
         4840
@@ -11033,7 +10773,6 @@
       "region_keys": [
         "iata-airport:SJC",
         "iata-airport:OAK",
-        "iata-airport:SFO",
         "iata-location:OAK",
         "iata-location:PAO",
         "iata-location:SQL",
@@ -11044,7 +10783,6 @@
       ],
       "memberships": [
         "core",
-        "expanded",
         "expanded",
         "core",
         "core",
@@ -11057,7 +10795,6 @@
       "radio_names": [
         "SJC",
         "OAK",
-        "SFO",
         "PAO",
         "SQL",
         "XSF",
@@ -11068,7 +10805,6 @@
       "wire_codes": [
         30803,
         24051,
-        30655,
         25655,
         31092,
         39166,
@@ -11175,7 +10911,6 @@
       "lat": 36.722728714,
       "lon": -122.721378422,
       "region_keys": [
-        "iata-airport:SFO",
         "iata-airport:SJC",
         "iata-location:SQL",
         "country:US",
@@ -11183,20 +10918,17 @@
       ],
       "memberships": [
         "expanded",
-        "expanded",
         "core",
         "core",
         "core"
       ],
       "radio_names": [
-        "SFO",
         "SJC",
         "SQL",
         "US",
         "CA"
       ],
       "wire_codes": [
-        30655,
         30803,
         31092,
         34360,
@@ -11210,7 +10942,6 @@
       "region_keys": [
         "iata-airport:OAK",
         "iata-airport:SFO",
-        "iata-airport:SJC",
         "iata-location:OAK",
         "iata-location:SFO",
         "iata-location:SQL",
@@ -11221,7 +10952,6 @@
       ],
       "memberships": [
         "core",
-        "expanded",
         "expanded",
         "core",
         "expanded",
@@ -11234,7 +10964,6 @@
       "radio_names": [
         "OAK",
         "SFO",
-        "SJC",
         "SQL",
         "XSF",
         "US",
@@ -11244,7 +10973,6 @@
       "wire_codes": [
         24051,
         30655,
-        30803,
         31092,
         39166,
         34360,
@@ -11317,7 +11045,6 @@
       "region_keys": [
         "iata-airport:SJC",
         "iata-airport:OAK",
-        "iata-airport:SFO",
         "iata-location:OAK",
         "iata-location:PAO",
         "iata-location:SQL",
@@ -11328,7 +11055,6 @@
       ],
       "memberships": [
         "core",
-        "expanded",
         "expanded",
         "core",
         "expanded",
@@ -11341,7 +11067,6 @@
       "radio_names": [
         "SJC",
         "OAK",
-        "SFO",
         "PAO",
         "SQL",
         "XSF",
@@ -11352,7 +11077,6 @@
       "wire_codes": [
         30803,
         24051,
-        30655,
         25655,
         31092,
         39166,
@@ -11600,7 +11324,6 @@
       "lon": -122.478129042,
       "region_keys": [
         "iata-airport:SJC",
-        "iata-airport:SFO",
         "iata-location:PAO",
         "iata-location:SQL",
         "country:US",
@@ -11610,13 +11333,11 @@
         "core",
         "expanded",
         "expanded",
-        "expanded",
         "core",
         "core"
       ],
       "radio_names": [
         "SJC",
-        "SFO",
         "PAO",
         "SQL",
         "US",
@@ -11624,7 +11345,6 @@
       ],
       "wire_codes": [
         30803,
-        30655,
         25655,
         31092,
         34360,
@@ -11757,7 +11477,6 @@
       "lon": -122.296162817,
       "region_keys": [
         "iata-airport:SJC",
-        "iata-airport:SFO",
         "iata-location:PAO",
         "iata-location:SQL",
         "iata-metro:XSF",
@@ -11767,7 +11486,6 @@
       ],
       "memberships": [
         "core",
-        "expanded",
         "core",
         "expanded",
         "core",
@@ -11777,7 +11495,6 @@
       ],
       "radio_names": [
         "SJC",
-        "SFO",
         "PAO",
         "SQL",
         "XSF",
@@ -11787,7 +11504,6 @@
       ],
       "wire_codes": [
         30803,
-        30655,
         25655,
         31092,
         39166,
@@ -11927,7 +11643,6 @@
         "iata-airport:SJC",
         "iata-airport:OAK",
         "iata-location:SQL",
-        "iata-location:PAO",
         "iata-metro:XSF",
         "country:US",
         "us-state:CA",
@@ -11938,7 +11653,6 @@
         "core",
         "expanded",
         "core",
-        "expanded",
         "core",
         "core",
         "core",
@@ -11949,7 +11663,6 @@
         "SJC",
         "OAK",
         "SQL",
-        "PAO",
         "XSF",
         "US",
         "CA",
@@ -11960,7 +11673,6 @@
         30803,
         24051,
         31092,
-        25655,
         39166,
         34360,
         4840,
@@ -11973,10 +11685,8 @@
       "lon": -122.09959101,
       "region_keys": [
         "iata-airport:OAK",
-        "iata-airport:SFO",
         "iata-airport:SJC",
         "iata-location:PAO",
-        "iata-location:SQL",
         "iata-metro:XSF",
         "country:US",
         "us-state:CA",
@@ -11985,9 +11695,7 @@
       "memberships": [
         "core",
         "expanded",
-        "expanded",
         "core",
-        "expanded",
         "core",
         "core",
         "core",
@@ -11995,10 +11703,8 @@
       ],
       "radio_names": [
         "OAK",
-        "SFO",
         "SJC",
         "PAO",
-        "SQL",
         "XSF",
         "US",
         "CA",
@@ -12006,10 +11712,8 @@
       ],
       "wire_codes": [
         24051,
-        30655,
         30803,
         25655,
-        31092,
         39166,
         34360,
         4840,
@@ -12160,7 +11864,6 @@
         "iata-airport:OAK",
         "iata-airport:SFO",
         "iata-location:SQL",
-        "iata-location:OAK",
         "iata-metro:XSF",
         "country:US",
         "us-state:CA",
@@ -12171,7 +11874,6 @@
         "expanded",
         "expanded",
         "core",
-        "expanded",
         "core",
         "core",
         "core",
@@ -12207,7 +11909,6 @@
         "iata-airport:SFO",
         "iata-airport:SJC",
         "iata-location:PAO",
-        "iata-location:SQL",
         "iata-metro:XSF",
         "country:US",
         "us-state:CA",
@@ -12218,7 +11919,6 @@
         "core",
         "core",
         "core",
-        "expanded",
         "core",
         "core",
         "core",
@@ -12229,7 +11929,6 @@
         "SFO",
         "SJC",
         "PAO",
-        "SQL",
         "XSF",
         "US",
         "CA",
@@ -12240,7 +11939,6 @@
         30655,
         30803,
         25655,
-        31092,
         39166,
         34360,
         4840,
@@ -12308,7 +12006,6 @@
       "region_keys": [
         "iata-airport:SJC",
         "iata-location:PAO",
-        "iata-location:SJC",
         "iata-location:SQL",
         "country:US",
         "us-state:CA"
@@ -12316,7 +12013,6 @@
       "memberships": [
         "expanded",
         "core",
-        "expanded",
         "expanded",
         "core",
         "core"
@@ -12399,30 +12095,26 @@
       "lat": 36.872024006,
       "lon": -123.042464439,
       "region_keys": [
-        "iata-airport:SFO",
         "iata-location:SQL",
         "country:US",
         "us-state:CA"
       ],
       "memberships": [
         "expanded",
-        "expanded",
         "core",
         "core"
       ],
       "radio_names": [
-        "SFO",
         "SQL",
         "US",
         "CA"
       ],
       "wire_codes": [
-        30655,
         31092,
         34360,
         4840
       ],
-      "default_wire_code": 30655
+      "default_wire_code": 31092
     },
     {
       "lat": 36.979095805,
@@ -12430,26 +12122,22 @@
       "region_keys": [
         "iata-airport:SFO",
         "iata-location:SFO",
-        "iata-location:SQL",
         "country:US",
         "us-state:CA"
       ],
       "memberships": [
         "core",
         "core",
-        "expanded",
         "core",
         "core"
       ],
       "radio_names": [
         "SFO",
-        "SQL",
         "US",
         "CA"
       ],
       "wire_codes": [
         30655,
-        31092,
         34360,
         4840
       ],
@@ -12500,7 +12188,6 @@
       "region_keys": [
         "iata-airport:SJC",
         "iata-airport:OAK",
-        "iata-airport:SFO",
         "iata-location:OAK",
         "iata-location:PAO",
         "iata-location:SQL",
@@ -12511,7 +12198,6 @@
       ],
       "memberships": [
         "core",
-        "expanded",
         "expanded",
         "core",
         "core",
@@ -12524,7 +12210,6 @@
       "radio_names": [
         "SJC",
         "OAK",
-        "SFO",
         "PAO",
         "SQL",
         "XSF",
@@ -12535,7 +12220,6 @@
       "wire_codes": [
         30803,
         24051,
-        30655,
         25655,
         31092,
         39166,
@@ -12668,28 +12352,24 @@
       "lon": -122.720626278,
       "region_keys": [
         "iata-airport:SJC",
-        "iata-airport:SFO",
         "iata-location:SQL",
         "country:US",
         "us-state:CA"
       ],
       "memberships": [
         "core",
-        "expanded",
         "core",
         "core",
         "core"
       ],
       "radio_names": [
         "SJC",
-        "SFO",
         "SQL",
         "US",
         "CA"
       ],
       "wire_codes": [
         30803,
-        30655,
         31092,
         34360,
         4840
@@ -12755,7 +12435,6 @@
       "lon": -122.295098082,
       "region_keys": [
         "iata-airport:SJC",
-        "iata-airport:SFO",
         "iata-location:SQL",
         "iata-location:PAO",
         "iata-metro:XSF",
@@ -12765,7 +12444,6 @@
       ],
       "memberships": [
         "core",
-        "expanded",
         "core",
         "expanded",
         "core",
@@ -12775,7 +12453,6 @@
       ],
       "radio_names": [
         "SJC",
-        "SFO",
         "SQL",
         "PAO",
         "XSF",
@@ -12785,7 +12462,6 @@
       ],
       "wire_codes": [
         30803,
-        30655,
         31092,
         25655,
         39166,
@@ -12964,7 +12640,6 @@
         "iata-airport:SJC",
         "iata-location:OAK",
         "iata-location:PAO",
-        "iata-location:SQL",
         "iata-metro:XSF",
         "country:US",
         "us-state:CA",
@@ -12975,7 +12650,6 @@
         "core",
         "core",
         "expanded",
-        "expanded",
         "core",
         "core",
         "core",
@@ -12985,7 +12659,6 @@
         "OAK",
         "SJC",
         "PAO",
-        "SQL",
         "XSF",
         "US",
         "CA",
@@ -12995,7 +12668,6 @@
         24051,
         30803,
         25655,
-        31092,
         39166,
         34360,
         4840,
@@ -13082,7 +12754,6 @@
         "iata-airport:OAK",
         "iata-airport:SJC",
         "iata-location:SQL",
-        "iata-location:PAO",
         "iata-metro:XSF",
         "country:US",
         "us-state:CA",
@@ -13093,7 +12764,6 @@
         "expanded",
         "expanded",
         "core",
-        "expanded",
         "core",
         "core",
         "core",
@@ -13104,7 +12774,6 @@
         "OAK",
         "SJC",
         "SQL",
-        "PAO",
         "XSF",
         "US",
         "CA",
@@ -13115,7 +12784,6 @@
         24051,
         30803,
         31092,
-        25655,
         39166,
         34360,
         4840,
@@ -13129,12 +12797,10 @@
       "region_keys": [
         "iata-airport:SFO",
         "iata-location:SFO",
-        "iata-location:SQL",
         "country:US",
         "us-state:CA"
       ],
       "memberships": [
-        "expanded",
         "expanded",
         "expanded",
         "core",
@@ -13142,13 +12808,11 @@
       ],
       "radio_names": [
         "SFO",
-        "SQL",
         "US",
         "CA"
       ],
       "wire_codes": [
         30655,
-        31092,
         34360,
         4840
       ],
@@ -13280,7 +12944,6 @@
       "region_keys": [
         "iata-airport:OAK",
         "iata-airport:SFO",
-        "iata-airport:SJC",
         "iata-location:OAK",
         "iata-location:SFO",
         "iata-location:SQL",
@@ -13291,7 +12954,6 @@
       ],
       "memberships": [
         "core",
-        "expanded",
         "expanded",
         "core",
         "expanded",
@@ -13304,7 +12966,6 @@
       "radio_names": [
         "OAK",
         "SFO",
-        "SJC",
         "SQL",
         "XSF",
         "US",
@@ -13314,7 +12975,6 @@
       "wire_codes": [
         24051,
         30655,
-        30803,
         31092,
         39166,
         34360,
@@ -13490,7 +13150,6 @@
         "iata-airport:SFO",
         "iata-airport:SJC",
         "iata-location:PAO",
-        "iata-location:SQL",
         "iata-metro:XSF",
         "country:US",
         "us-state:CA",
@@ -13501,7 +13160,6 @@
         "expanded",
         "expanded",
         "core",
-        "expanded",
         "core",
         "core",
         "core",
@@ -13512,7 +13170,6 @@
         "SFO",
         "SJC",
         "PAO",
-        "SQL",
         "XSF",
         "US",
         "CA",
@@ -13523,7 +13180,6 @@
         30655,
         30803,
         25655,
-        31092,
         39166,
         34360,
         4840,
@@ -13677,10 +13333,8 @@
       "lon": -122.199999056,
       "region_keys": [
         "iata-airport:SJC",
-        "iata-airport:OAK",
         "iata-airport:SFO",
         "iata-location:SQL",
-        "iata-location:PAO",
         "iata-metro:XSF",
         "country:US",
         "us-state:CA",
@@ -13689,9 +13343,7 @@
       "memberships": [
         "core",
         "expanded",
-        "expanded",
         "core",
-        "expanded",
         "core",
         "core",
         "core",
@@ -13699,10 +13351,8 @@
       ],
       "radio_names": [
         "SJC",
-        "OAK",
         "SFO",
         "SQL",
-        "PAO",
         "XSF",
         "US",
         "CA",
@@ -13710,10 +13360,8 @@
       ],
       "wire_codes": [
         30803,
-        24051,
         30655,
         31092,
-        25655,
         39166,
         34360,
         4840,
@@ -13865,7 +13513,6 @@
         "iata-airport:SFO",
         "iata-airport:SJC",
         "iata-location:SQL",
-        "iata-location:PAO",
         "iata-metro:XSF",
         "country:US",
         "us-state:CA",
@@ -13876,7 +13523,6 @@
         "core",
         "core",
         "core",
-        "expanded",
         "core",
         "core",
         "core",
@@ -13887,7 +13533,6 @@
         "SFO",
         "SJC",
         "SQL",
-        "PAO",
         "XSF",
         "US",
         "CA",
@@ -13898,7 +13543,6 @@
         30655,
         30803,
         31092,
-        25655,
         39166,
         34360,
         4840,
@@ -13998,7 +13642,6 @@
       "lon": -122.550000063,
       "region_keys": [
         "iata-airport:OAK",
-        "iata-airport:SFO",
         "iata-location:OAK",
         "iata-metro:XSF",
         "country:US",
@@ -14006,7 +13649,6 @@
       ],
       "memberships": [
         "core",
-        "expanded",
         "core",
         "core",
         "core",
@@ -14014,14 +13656,12 @@
       ],
       "radio_names": [
         "OAK",
-        "SFO",
         "XSF",
         "US",
         "CA"
       ],
       "wire_codes": [
         24051,
-        30655,
         39166,
         34360,
         4840
@@ -14255,7 +13895,6 @@
         "iata-airport:OAK",
         "iata-airport:SJC",
         "iata-location:SQL",
-        "iata-location:OAK",
         "iata-metro:XSF",
         "country:US",
         "us-state:CA",
@@ -14266,7 +13905,6 @@
         "expanded",
         "expanded",
         "core",
-        "expanded",
         "core",
         "core",
         "core",
@@ -14299,27 +13937,23 @@
       "lon": -122.600000628,
       "region_keys": [
         "iata-airport:OAK",
-        "iata-airport:SFO",
         "iata-location:OAK",
         "country:US",
         "us-state:CA"
       ],
       "memberships": [
         "core",
-        "expanded",
         "core",
         "core",
         "core"
       ],
       "radio_names": [
         "OAK",
-        "SFO",
         "US",
         "CA"
       ],
       "wire_codes": [
         24051,
-        30655,
         34360,
         4840
       ],
@@ -14358,7 +13992,6 @@
       "region_keys": [
         "iata-airport:OAK",
         "iata-airport:SFO",
-        "iata-airport:SJC",
         "iata-location:SQL",
         "iata-location:OAK",
         "iata-location:SFO",
@@ -14369,7 +14002,6 @@
       ],
       "memberships": [
         "core",
-        "expanded",
         "expanded",
         "core",
         "expanded",
@@ -14382,7 +14014,6 @@
       "radio_names": [
         "OAK",
         "SFO",
-        "SJC",
         "SQL",
         "XSF",
         "US",
@@ -14392,7 +14023,6 @@
       "wire_codes": [
         24051,
         30655,
-        30803,
         31092,
         39166,
         34360,
@@ -14407,9 +14037,7 @@
       "region_keys": [
         "iata-airport:SJC",
         "iata-airport:OAK",
-        "iata-airport:SFO",
         "iata-location:OAK",
-        "iata-location:SFO",
         "iata-location:SQL",
         "iata-metro:XSF",
         "country:US",
@@ -14419,9 +14047,7 @@
       "memberships": [
         "core",
         "expanded",
-        "expanded",
         "core",
-        "expanded",
         "expanded",
         "core",
         "core",
@@ -14431,7 +14057,6 @@
       "radio_names": [
         "SJC",
         "OAK",
-        "SFO",
         "SQL",
         "XSF",
         "US",
@@ -14441,7 +14066,6 @@
       "wire_codes": [
         30803,
         24051,
-        30655,
         31092,
         39166,
         34360,
@@ -14485,7 +14109,6 @@
         "iata-airport:SFO",
         "iata-airport:SJC",
         "iata-location:SQL",
-        "iata-location:OAK",
         "iata-metro:XSF",
         "country:US",
         "us-state:CA",
@@ -14496,7 +14119,6 @@
         "expanded",
         "expanded",
         "core",
-        "expanded",
         "core",
         "core",
         "core",
@@ -14556,7 +14178,6 @@
       "lon": -122.48026481,
       "region_keys": [
         "iata-airport:SJC",
-        "iata-airport:SFO",
         "iata-location:SQL",
         "iata-location:PAO",
         "country:US",
@@ -14564,7 +14185,6 @@
       ],
       "memberships": [
         "core",
-        "expanded",
         "core",
         "expanded",
         "core",
@@ -14572,7 +14192,6 @@
       ],
       "radio_names": [
         "SJC",
-        "SFO",
         "SQL",
         "PAO",
         "US",
@@ -14580,7 +14199,6 @@
       ],
       "wire_codes": [
         30803,
-        30655,
         31092,
         25655,
         34360,
@@ -14690,10 +14308,8 @@
       "lon": -122.200231283,
       "region_keys": [
         "iata-airport:OAK",
-        "iata-airport:SFO",
         "iata-airport:SJC",
         "iata-location:OAK",
-        "iata-location:SFO",
         "iata-location:SQL",
         "iata-metro:XSF",
         "country:US",
@@ -14703,9 +14319,7 @@
       "memberships": [
         "core",
         "expanded",
-        "expanded",
         "core",
-        "expanded",
         "expanded",
         "core",
         "core",
@@ -14714,7 +14328,6 @@
       ],
       "radio_names": [
         "OAK",
-        "SFO",
         "SJC",
         "SQL",
         "XSF",
@@ -14724,7 +14337,6 @@
       ],
       "wire_codes": [
         24051,
-        30655,
         30803,
         31092,
         39166,
@@ -14765,30 +14377,26 @@
       "lat": 36.872145205,
       "lon": -123.042544916,
       "region_keys": [
-        "iata-airport:SFO",
         "iata-location:SQL",
         "country:US",
         "us-state:CA"
       ],
       "memberships": [
-        "expanded",
         "core",
         "core",
         "core"
       ],
       "radio_names": [
-        "SFO",
         "SQL",
         "US",
         "CA"
       ],
       "wire_codes": [
-        30655,
         31092,
         34360,
         4840
       ],
-      "default_wire_code": 30655
+      "default_wire_code": 31092
     },
     {
       "lat": 38.349337975,
@@ -14872,7 +14480,6 @@
         "iata-airport:SFO",
         "iata-airport:SJC",
         "iata-location:SQL",
-        "iata-location:PAO",
         "iata-metro:XSF",
         "country:US",
         "us-state:CA",
@@ -14883,7 +14490,6 @@
         "core",
         "expanded",
         "core",
-        "expanded",
         "core",
         "core",
         "core",
@@ -14894,7 +14500,6 @@
         "SFO",
         "SJC",
         "SQL",
-        "PAO",
         "XSF",
         "US",
         "CA",
@@ -14905,7 +14510,6 @@
         30655,
         30803,
         31092,
-        25655,
         39166,
         34360,
         4840,
@@ -14918,10 +14522,8 @@
       "lon": -122.200010305,
       "region_keys": [
         "iata-airport:OAK",
-        "iata-airport:SFO",
         "iata-airport:SJC",
         "iata-location:OAK",
-        "iata-location:SFO",
         "iata-location:SQL",
         "iata-metro:XSF",
         "country:US",
@@ -14931,9 +14533,7 @@
       "memberships": [
         "core",
         "expanded",
-        "expanded",
         "core",
-        "expanded",
         "expanded",
         "core",
         "core",
@@ -14942,7 +14542,6 @@
       ],
       "radio_names": [
         "OAK",
-        "SFO",
         "SJC",
         "SQL",
         "XSF",
@@ -14952,7 +14551,6 @@
       ],
       "wire_codes": [
         24051,
-        30655,
         30803,
         31092,
         39166,
@@ -15111,7 +14709,6 @@
       "region_keys": [
         "iata-airport:SJC",
         "iata-airport:OAK",
-        "iata-airport:SFO",
         "iata-location:PAO",
         "iata-location:OAK",
         "iata-location:SQL",
@@ -15122,7 +14719,6 @@
       ],
       "memberships": [
         "core",
-        "expanded",
         "expanded",
         "core",
         "expanded",
@@ -15135,7 +14731,6 @@
       "radio_names": [
         "SJC",
         "OAK",
-        "SFO",
         "PAO",
         "SQL",
         "XSF",
@@ -15146,7 +14741,6 @@
       "wire_codes": [
         30803,
         24051,
-        30655,
         25655,
         31092,
         39166,
@@ -15257,7 +14851,6 @@
       "region_keys": [
         "iata-airport:OAK",
         "iata-airport:SFO",
-        "iata-airport:SJC",
         "iata-location:OAK",
         "iata-location:SFO",
         "iata-location:SQL",
@@ -15268,7 +14861,6 @@
       ],
       "memberships": [
         "core",
-        "expanded",
         "expanded",
         "core",
         "core",
@@ -15281,7 +14873,6 @@
       "radio_names": [
         "OAK",
         "SFO",
-        "SJC",
         "SQL",
         "XSF",
         "US",
@@ -15291,7 +14882,6 @@
       "wire_codes": [
         24051,
         30655,
-        30803,
         31092,
         39166,
         34360,
@@ -15305,10 +14895,8 @@
       "lon": -122.100000329,
       "region_keys": [
         "iata-airport:OAK",
-        "iata-airport:SFO",
         "iata-airport:SJC",
         "iata-location:PAO",
-        "iata-location:SQL",
         "iata-metro:XSF",
         "country:US",
         "us-state:CA",
@@ -15317,9 +14905,7 @@
       "memberships": [
         "core",
         "expanded",
-        "expanded",
         "core",
-        "expanded",
         "core",
         "core",
         "core",
@@ -15327,10 +14913,8 @@
       ],
       "radio_names": [
         "OAK",
-        "SFO",
         "SJC",
         "PAO",
-        "SQL",
         "XSF",
         "US",
         "CA",
@@ -15338,10 +14922,8 @@
       ],
       "wire_codes": [
         24051,
-        30655,
         30803,
         25655,
-        31092,
         39166,
         34360,
         4840,
@@ -15689,7 +15271,6 @@
         "iata-airport:OAK",
         "iata-airport:SFO",
         "iata-location:SQL",
-        "iata-location:OAK",
         "iata-metro:XSF",
         "country:US",
         "us-state:CA",
@@ -15700,7 +15281,6 @@
         "expanded",
         "expanded",
         "core",
-        "expanded",
         "core",
         "core",
         "core",
@@ -15735,7 +15315,6 @@
         "iata-airport:SJC",
         "iata-location:PAO",
         "iata-location:SJC",
-        "iata-location:SQL",
         "country:US",
         "us-state:CA"
       ],
@@ -15743,21 +15322,18 @@
         "core",
         "core",
         "expanded",
-        "expanded",
         "core",
         "core"
       ],
       "radio_names": [
         "SJC",
         "PAO",
-        "SQL",
         "US",
         "CA"
       ],
       "wire_codes": [
         30803,
         25655,
-        31092,
         34360,
         4840
       ],
@@ -15776,34 +15352,26 @@
       "lat": 36.730217533,
       "lon": -122.809247907,
       "region_keys": [
-        "iata-airport:SFO",
-        "iata-airport:SJC",
         "iata-location:SQL",
         "country:US",
         "us-state:CA"
       ],
       "memberships": [
         "expanded",
-        "expanded",
-        "expanded",
         "core",
         "core"
       ],
       "radio_names": [
-        "SFO",
-        "SJC",
         "SQL",
         "US",
         "CA"
       ],
       "wire_codes": [
-        30655,
-        30803,
         31092,
         34360,
         4840
       ],
-      "default_wire_code": 30803
+      "default_wire_code": 31092
     },
     {
       "lat": 38.499286259,
@@ -15838,7 +15406,6 @@
       "region_keys": [
         "iata-airport:SJC",
         "iata-airport:OAK",
-        "iata-airport:SFO",
         "iata-location:OAK",
         "iata-location:PAO",
         "iata-location:SQL",
@@ -15849,7 +15416,6 @@
       ],
       "memberships": [
         "core",
-        "expanded",
         "expanded",
         "core",
         "core",
@@ -15862,7 +15428,6 @@
       "radio_names": [
         "SJC",
         "OAK",
-        "SFO",
         "PAO",
         "SQL",
         "XSF",
@@ -15873,7 +15438,6 @@
       "wire_codes": [
         30803,
         24051,
-        30655,
         25655,
         31092,
         39166,
@@ -15915,10 +15479,8 @@
       "lon": -122.200001848,
       "region_keys": [
         "iata-airport:SFO",
-        "iata-airport:OAK",
         "iata-airport:SJC",
         "iata-location:SQL",
-        "iata-location:PAO",
         "iata-metro:XSF",
         "country:US",
         "us-state:CA",
@@ -15927,9 +15489,7 @@
       "memberships": [
         "core",
         "expanded",
-        "expanded",
         "core",
-        "expanded",
         "core",
         "core",
         "core",
@@ -15937,10 +15497,8 @@
       ],
       "radio_names": [
         "SFO",
-        "OAK",
         "SJC",
         "SQL",
-        "PAO",
         "XSF",
         "US",
         "CA",
@@ -15948,10 +15506,8 @@
       ],
       "wire_codes": [
         30655,
-        24051,
         30803,
         31092,
-        25655,
         39166,
         34360,
         4840,
@@ -16027,7 +15583,6 @@
         "iata-airport:SJC",
         "iata-location:OAK",
         "iata-location:PAO",
-        "iata-location:SQL",
         "iata-metro:XSF",
         "country:US",
         "us-state:CA",
@@ -16038,7 +15593,6 @@
         "expanded",
         "core",
         "expanded",
-        "expanded",
         "core",
         "core",
         "core",
@@ -16048,7 +15602,6 @@
         "OAK",
         "SJC",
         "PAO",
-        "SQL",
         "XSF",
         "US",
         "CA",
@@ -16058,7 +15611,6 @@
         24051,
         30803,
         25655,
-        31092,
         39166,
         34360,
         4840,
@@ -16182,26 +15734,22 @@
       "region_keys": [
         "iata-airport:SFO",
         "iata-location:SFO",
-        "iata-location:SQL",
         "country:US",
         "us-state:CA"
       ],
       "memberships": [
         "core",
         "core",
-        "expanded",
         "core",
         "core"
       ],
       "radio_names": [
         "SFO",
-        "SQL",
         "US",
         "CA"
       ],
       "wire_codes": [
         30655,
-        31092,
         34360,
         4840
       ],
@@ -16658,7 +16206,6 @@
         "iata-airport:SJC",
         "iata-location:PAO",
         "iata-location:SJC",
-        "iata-location:SQL",
         "country:US",
         "us-state:CA"
       ],
@@ -16666,21 +16213,18 @@
         "core",
         "core",
         "core",
-        "expanded",
         "core",
         "core"
       ],
       "radio_names": [
         "SJC",
         "PAO",
-        "SQL",
         "US",
         "CA"
       ],
       "wire_codes": [
         30803,
         25655,
-        31092,
         34360,
         4840
       ],
@@ -16773,7 +16317,6 @@
       "region_keys": [
         "iata-airport:SJC",
         "iata-airport:OAK",
-        "iata-airport:SFO",
         "iata-location:SQL",
         "iata-location:OAK",
         "iata-location:PAO",
@@ -16784,7 +16327,6 @@
       ],
       "memberships": [
         "core",
-        "expanded",
         "expanded",
         "core",
         "expanded",
@@ -16797,7 +16339,6 @@
       "radio_names": [
         "SJC",
         "OAK",
-        "SFO",
         "SQL",
         "PAO",
         "XSF",
@@ -16808,7 +16349,6 @@
       "wire_codes": [
         30803,
         24051,
-        30655,
         31092,
         25655,
         39166,
@@ -16823,7 +16363,6 @@
       "lon": -122.480345688,
       "region_keys": [
         "iata-airport:SJC",
-        "iata-airport:SFO",
         "iata-location:SQL",
         "iata-location:PAO",
         "country:US",
@@ -16831,7 +16370,6 @@
       ],
       "memberships": [
         "core",
-        "expanded",
         "core",
         "expanded",
         "core",
@@ -16839,7 +16377,6 @@
       ],
       "radio_names": [
         "SJC",
-        "SFO",
         "SQL",
         "PAO",
         "US",
@@ -16847,7 +16384,6 @@
       ],
       "wire_codes": [
         30803,
-        30655,
         31092,
         25655,
         34360,
@@ -17004,7 +16540,6 @@
         "iata-airport:SFO",
         "iata-airport:SJC",
         "iata-location:PAO",
-        "iata-location:SQL",
         "iata-metro:XSF",
         "country:US",
         "us-state:CA",
@@ -17015,7 +16550,6 @@
         "core",
         "core",
         "core",
-        "expanded",
         "core",
         "core",
         "core",
@@ -17026,7 +16560,6 @@
         "SFO",
         "SJC",
         "PAO",
-        "SQL",
         "XSF",
         "US",
         "CA",
@@ -17037,7 +16570,6 @@
         30655,
         30803,
         25655,
-        31092,
         39166,
         34360,
         4840,
@@ -17053,7 +16585,6 @@
         "iata-airport:OAK",
         "iata-airport:SFO",
         "iata-location:SQL",
-        "iata-location:OAK",
         "iata-metro:XSF",
         "country:US",
         "us-state:CA",
@@ -17064,7 +16595,6 @@
         "expanded",
         "expanded",
         "core",
-        "expanded",
         "core",
         "core",
         "core",
@@ -17100,7 +16630,6 @@
         "iata-airport:SJC",
         "iata-location:OAK",
         "iata-location:PAO",
-        "iata-location:SQL",
         "iata-metro:XSF",
         "country:US",
         "us-state:CA",
@@ -17111,7 +16640,6 @@
         "expanded",
         "core",
         "expanded",
-        "expanded",
         "core",
         "core",
         "core",
@@ -17121,7 +16649,6 @@
         "OAK",
         "SJC",
         "PAO",
-        "SQL",
         "XSF",
         "US",
         "CA",
@@ -17131,7 +16658,6 @@
         24051,
         30803,
         25655,
-        31092,
         39166,
         34360,
         4840,
@@ -17226,9 +16752,7 @@
       "region_keys": [
         "iata-airport:OAK",
         "iata-airport:SJC",
-        "iata-airport:SFO",
         "iata-location:PAO",
-        "iata-location:SQL",
         "iata-metro:XSF",
         "country:US",
         "us-state:CA",
@@ -17237,9 +16761,7 @@
       "memberships": [
         "core",
         "core",
-        "expanded",
         "core",
-        "expanded",
         "core",
         "core",
         "core",
@@ -17248,9 +16770,7 @@
       "radio_names": [
         "OAK",
         "SJC",
-        "SFO",
         "PAO",
-        "SQL",
         "XSF",
         "US",
         "CA",
@@ -17259,9 +16779,7 @@
       "wire_codes": [
         24051,
         30803,
-        30655,
         25655,
-        31092,
         39166,
         34360,
         4840,
