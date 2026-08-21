@@ -17,9 +17,13 @@ Two versions, answering two different questions.
   that finds a version it does not implement must refuse the file. Reading a
   newer database on a best-effort basis would produce a plausible-looking but
   wrong region list, which is worse than an error.
-- `metadata.dataset_version` is the **data release**, such as `2026.08.1`. It
-  is independent of the wire protocol, the mobile API, and firmware versions. A
-  newer application reads older format-compatible databases.
+- `metadata.dataset_version` is the **data release**: ISO year, ISO week, and
+  the build within that week, such as `2026.34.2`. Upstream boundary and
+  airport data moves on no calendar of its own, so the version says when a
+  build was cut rather than claiming to describe what changed; the week is a
+  finer grain than a month without inviting a daily cadence. It is independent
+  of the wire protocol, the mobile API, and firmware versions. A newer
+  application reads older format-compatible databases.
 
 `metadata.content_hash` is a SHA-256 over the normalized logical tables. It is
 the reproducibility guarantee: two builds of the same inputs agree here even

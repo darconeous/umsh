@@ -110,5 +110,44 @@ it).
   publishes no land boundary for these codes, so each one is a UMSH routing
   definition rather than an official boundary, and should say so.
 
+## Looking at it
+
+The map at `/regions/` loads a database and answers clicks with the same
+lookup the radio-facing tooling uses.
+
+```
+make regions-map-serve      # http://127.0.0.1:1111/regions/
+```
+
+That stages `regions/dist/world.regiondb` where Zola serves it, or falls back
+to the committed Bay Area fixture when no world build exists. The page also
+has a file picker, so any `.regiondb` can be opened without staging anything.
+
+For the same answers without a browser:
+
+```
+uv run --project tools/regiondb-build regiondb-build lookup \
+    --db regions/dist/world.regiondb --lat 42.1946 --lon -122.7095 --detailed
+```
+
+## Publishing it
+
+The published site can carry the database so a browser opens the map with
+nothing to upload:
+
+```
+make regions-build            # if there is no dist/world.regiondb yet
+make gh-pages-with-regions
+git push origin gh-pages
+```
+
+`gh-pages-with-regions` stages the database into `site/static/regions/` and
+then builds the pages tree, in that order — Zola has to see the file before
+it copies `static/`. Each publish adds a fresh ~5 MB blob to the `gh-pages`
+branch, which is affordable occasionally and not as a habit.
+
+This is a way to show people the map, not a release: there is no manifest, no
+checksum, and no archived history. Those arrive with the release pipeline.
+
 See `FORMAT.md` for the compiled format and `SOURCES.md` for where the data
 comes from.

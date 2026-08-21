@@ -2,7 +2,8 @@
 	site site-serve site-check site-test site-preview \
 	regions-fetch regions-update regions-update-check regions-build \
 	regions-build-fixture regions-check regions-test regions-diff \
-	regions-map regions-map-check \
+	regions-map regions-map-check regions-stage regions-map-serve \
+	gh-pages-with-regions \
 	build-techo-console flash-techo-console \
 	build-wio-tracker-l1-console flash-wio-tracker-l1-console \
 	build-wio-tracker-l1 flash-wio-tracker-l1 \
@@ -680,7 +681,10 @@ docs-serve:
 REGIONDB_BUILD := uv run --quiet --project tools/regiondb-build regiondb-build
 REGIONS_ROOT ?= regions
 REGIONS_FIXTURE := $(REGIONS_ROOT)/tests/fixture
-DATASET_VERSION ?= $(shell date -u +%Y.%m).1
+# ISO year, ISO week, then the build within that week. %G rather than %Y
+# because %V is an ISO week number and the two disagree in the days either
+# side of New Year.
+DATASET_VERSION ?= $(shell date -u +%G.%V).1
 
 regions-fetch:
 	@command -v uv >/dev/null 2>&1 || 		{ echo "uv not found. Install it from https://docs.astral.sh/uv/"; exit 1; }
@@ -731,6 +735,42 @@ regions-test: regions-check
 regions-map:
 	$(REGIONDB_BUILD) --root $(REGIONS_ROOT) basemap \
 		--output site/static/regions/map/basemap
+
+# Put a built world database where Zola will publish it. /regions is served
+# straight out of site/static, so the map finds the database at the relative
+# path it already asks for and nothing else changes. The copy is a build
+# artifact living in an otherwise all-source directory; .gitignore keeps it
+# from being committed by accident.
+regions-stage:
+	@test -f $(REGIONS_ROOT)/dist/world.regiondb || \
+		{ echo "No world database yet. Build one with: make regions-build"; exit 1; }
+	@mkdir -p site/static/regions
+	cp $(REGIONS_ROOT)/dist/world.regiondb site/static/regions/world.regiondb
+	@echo "Staged $$(du -h site/static/regions/world.regiondb | cut -f1) into site/static/regions/."
+
+# Serve the map locally against whichever database is around: the staged world
+# build when there is one, the committed fixture otherwise. The fixture is Bay
+# Area only, with placeholder rectangles for US and CA.
+regions-map-serve:
+	@if [ -f $(REGIONS_ROOT)/dist/world.regiondb ]; then \
+		$(MAKE) --no-print-directory regions-stage; \
+	else \
+		mkdir -p site/static/regions; \
+		cp $(REGIONS_FIXTURE)/fixture.regiondb site/static/regions/world.regiondb; \
+		echo "No world build — serving the Bay Area fixture. Build the real one with: make regions-build"; \
+	fi
+	$(MAKE) --no-print-directory site-serve
+
+# Publish the site with the region database in it. Two passes rather than a
+# prerequisite list, because the database has to be staged before Zola reads
+# site/static and make is free to order prerequisites however it likes.
+#
+# Each published database is a new ~5 MB blob on the gh-pages branch. That is
+# the cost of letting a browser open the map with no upload, and it is worth
+# watching if this becomes a habit rather than a look-at-this.
+gh-pages-with-regions:
+	$(MAKE) regions-stage
+	$(MAKE) gh-pages
 
 regions-diff:
 	@test -n "$(OLD)" || { echo "usage: make regions-diff OLD=old-build-report.json"; exit 1; }
@@ -853,10 +893,12 @@ endef
 
 # /regions is deliberately absent from the preserve list below: the region
 # map arrives through site/static/, so Zola owns it and rewriting it every
-# deploy is correct. Publishing a released .regiondb into that same tree from
-# outside Zola — the way release-mirror writes /firmware — would need
-# /regions preserved here, or the next `make gh-pages` would delete the
-# database out from under the map.
+# deploy is correct. The published database goes the same way — regions-stage
+# copies it into site/static/regions/ before Zola runs — which is what keeps
+# this list short. Writing a .regiondb into the published tree from outside
+# Zola, the way release-mirror writes /firmware, would instead need /regions
+# preserved here, or the next `make gh-pages` would delete the database out
+# from under the map.
 gh-pages: site docs rust-docs-nightly
 	$(gh-pages-open)
 	find $(GH_PAGES_WT) -mindepth 1 -maxdepth 1 \
