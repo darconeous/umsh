@@ -37,7 +37,7 @@ sources:
     pin: commit
 
   - id: marineregions-eez-land
-    url: "https://geo.vliz.be/geoserver/MarineRegions/ows?service=WFS&version=2.0.0&request=GetFeature&typeName=MarineRegions:eez_land&outputFormat=SHAPE-ZIP"
+    url: "https://geo.vliz.be/geoserver/MarineRegions/ows?service=WFS&version=2.0.0&request=GetFeature&typeName=MarineRegions:eez_land&outputFormat=SHAPE-ZIP&srsName=urn:ogc:def:crs:OGC:1.3:CRS84"
     filename: eez_land.shp.zip
     license: CC BY 4.0
     attribution: Flanders Marine Institute (VLIZ), Marine Regions (https://www.marineregions.org/)
@@ -47,9 +47,10 @@ sources:
       coastline — which also makes it far cheaper to store, since the fractal
       coastline is interior to the region and disappears. Features marked as
       overlapping claims or joint regimes are omitted by the update pass so
-      the database takes no position on any dispute. A WFS response rather
-      than a versioned archive; the lock records the hash of what was
-      retrieved.
+      the database takes no position on any dispute. The srsName pins CRS84
+      explicitly: WFS 2.0 serves EPSG:4326 latitude-first, and a shapefile
+      written that way swaps every axis. A WFS response rather than a
+      versioned archive; the lock records the hash of what was retrieved.
     pin: none
 
   - id: census-tiger-states

@@ -285,11 +285,23 @@ def countries(
             skipped.append(f"{labels[index]} ({pol_type})")
             continue
         iso3 = str(territory[index] or sovereign[index] or "").upper()
+        shape = from_wkb(wkb)
+        # WFS axis-order sanity: EPSG:4326 over WFS 2.0 is latitude-first,
+        # and a shapefile written that way has every coordinate swapped. The
+        # fetch URL pins CRS84 to prevent it; this check makes sure a future
+        # server or URL change fails the update instead of shipping a
+        # database whose Somalia contains Geneva.
+        min_lon, min_lat, max_lon, max_lat = shape.bounds
+        if min_lat < -90.0 or max_lat > 90.0:
+            raise ExtractError(
+                f"{labels[index]}: latitude range [{min_lat:.1f}, {max_lat:.1f}] is "
+                "impossible; the source geometry looks axis-swapped (WFS lat/lon order)"
+            )
         code = mapping.get(iso3)
         if not code:
             notes.append(f"{labels[index]}: no ISO 3166-1 alpha-2 for {iso3 or 'unset'}, skipped")
             continue
-        kept.setdefault(code, []).append(from_wkb(wkb))
+        kept.setdefault(code, []).append(shape)
         display.setdefault(code, str(labels[index]))
 
     for code in sorted(kept):
