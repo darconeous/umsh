@@ -62,6 +62,17 @@ class Lookup:
 
 
 @dataclass(frozen=True)
+class _SampleSet:
+    """Sample positions for one expansion distance, and their grid extent."""
+
+    positions: list[tuple[float, float]]
+    min_lon: int
+    min_lat: int
+    max_lon: int
+    max_lat: int
+
+
+@dataclass(frozen=True)
 class _RegionRow:
     region_id: int
     namespace: str
@@ -98,6 +109,16 @@ class RegionDb:
         self._has_lookup_ranges = (
             self._connection.execute("SELECT 1 FROM lookup_ranges LIMIT 1").fetchone() is not None
         )
+        # Aggregate bounds per region, read from geometry_parts rather than
+        # from the R-tree, so the exhaustive path can reject a region without
+        # touching the index it exists to cross-check.
+        self._region_bounds = {
+            row[0]: (row[1], row[2], row[3], row[4])
+            for row in self._connection.execute(
+                "SELECT region_id, MIN(min_lon), MIN(min_lat), MAX(max_lon), MAX(max_lat) "
+                "FROM geometry_parts GROUP BY region_id"
+            )
+        }
         self._regions = {
             row[0]: _RegionRow(
                 region_id=row[0],
@@ -165,15 +186,69 @@ class RegionDb:
                 return True
         return False
 
+    def _sample_set(self, latitude: float, longitude: float, expansion_m: int) -> _SampleSet:
+        """The sample positions for one expansion distance, with their extent.
+
+        Every region sharing an expansion distance shares its sample set, and
+        a database has only a handful of distinct distances. Computing this
+        once per distance rather than once per region is the difference
+        between a world-scale exhaustive scan being usable and not: the
+        nineteen spherical destinations are trigonometry, and there are
+        thirteen thousand regions to ask about.
+        """
+        samples = list(sampling.sample_positions(latitude, longitude, expansion_m))
+        quantized = [self._quantize(point[0], point[1]) for point in samples]
+        longitudes = [point[0] for point in quantized]
+        latitudes = [point[1] for point in quantized]
+        return _SampleSet(
+            positions=samples,
+            min_lon=min(longitudes),
+            min_lat=min(latitudes),
+            max_lon=max(longitudes),
+            max_lat=max(latitudes),
+        )
+
     def _membership(self, region_id: int, latitude: float, longitude: float) -> int | None:
         """Sampled-dilation membership: core, expanded, or not a member."""
         expansion = self._regions[region_id].expansion_m
-        for index, (sample_lat, sample_lon) in enumerate(
-            sampling.sample_positions(latitude, longitude, expansion)
-        ):
+        return self._membership_of(region_id, self._sample_set(latitude, longitude, expansion))
+
+    def _membership_of(self, region_id: int, samples: _SampleSet) -> int | None:
+        if not self._samples_could_reach(region_id, samples):
+            return None
+        for index, (sample_lat, sample_lon) in enumerate(samples.positions):
             if self._core_hit(region_id, sample_lat, sample_lon):
                 return MEMBERSHIP_CORE if index == 0 else MEMBERSHIP_EXPANDED
         return None
+
+    def _samples_could_reach(self, region_id: int, samples: _SampleSet) -> bool:
+        """Whether any sample can possibly fall inside a region's geometry.
+
+        A pure bounding-box rejection, and only a rejection: a point outside a
+        region's aggregate bounds cannot be inside any of its parts, so
+        skipping is exact. This is what makes the exhaustive path usable on a
+        world database — without it, resolving one position means a query per
+        region per sample, which is a quarter of a million queries against
+        thirteen thousand regions.
+        """
+        bounds = self._region_bounds.get(region_id)
+        if bounds is None:
+            return False
+        # Compare on the storage grid, exactly as the hit test does. Both
+        # steps matter: normalizing, because a sample stepped off the
+        # antimeridian comes back as 180.05 and means -179.95 everywhere
+        # else; and quantizing, because a position a ten-millionth of a
+        # degree outside a bound rounds onto it, and a point on a boundary
+        # is inside.
+        if samples.max_lat < blob.to_e6(bounds[1]) or samples.min_lat > blob.to_e6(bounds[3]):
+            return False
+        # Near the antimeridian a sample set straddles the wrap and its
+        # longitude span stops being meaningful; there, decline to reject.
+        if samples.max_lon - samples.min_lon > 180_000_000:
+            return True
+        return not (
+            samples.max_lon < blob.to_e6(bounds[0]) or samples.min_lon > blob.to_e6(bounds[2])
+        )
 
     def _memberships(self, latitude: float, longitude: float) -> dict[int, int]:
         """The fast path: cached ranges when present, the R-tree otherwise."""
@@ -239,8 +314,13 @@ class RegionDb:
     def _exhaustive_memberships(self, latitude: float, longitude: float) -> dict[int, int]:
         """The correctness path: the sampled test against every region."""
         memberships: dict[int, int] = {}
-        for region_id in self._regions:
-            membership = self._membership(region_id, latitude, longitude)
+        by_expansion: dict[int, _SampleSet] = {}
+        for region_id, row in self._regions.items():
+            samples = by_expansion.get(row.expansion_m)
+            if samples is None:
+                samples = self._sample_set(latitude, longitude, row.expansion_m)
+                by_expansion[row.expansion_m] = samples
+            membership = self._membership_of(region_id, samples)
             if membership is not None:
                 memberships[region_id] = membership
         return memberships
