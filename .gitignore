@@ -19,3 +19,6 @@ __pycache__/
 /regions/vendor
 /regions/dist
 /tools/regiondb-build/.venv
+# The fixture's build report is a build output whose timings change on every
+# run; the database's content hash is what the tests actually assert.
+/regions/tests/fixture/build-report.json

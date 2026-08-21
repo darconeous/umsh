@@ -27,7 +27,16 @@ costs of migration before considering implementing it.
 - `tools/` — host binaries and dev tooling (`crates/` is reserved for library crates):
   - `umshctl` — the radio tool (clap + rustyline; capture is a subcommand)
   - `umsh-bridge` — the internet bridge daemon (`docs/protocol/src/internet-bridging.md`); lib+bin split so the integration tests can stand a whole bridge up in one process. TOML config + `tracing`, its own dependency table
+  - `regiondb-build` — the region-database compiler. **Python, not Rust**, and the repo's only
+    packaged Python (`pyproject.toml` + `uv.lock`, run through `uv`); `scripts/` stays
+    stdlib-only because building firmware must need nothing but a Rust toolchain
   - `ulcp-web-debugger`, `uniffi-bindgen`
+- `regions/` — source data and manifests for the geographic region database, plus the
+  committed test fixture. Three stages with distinct commit policies: `regions-fetch`
+  (network → gitignored `vendor/`), `regions-update` (→ **committed** `extracts/`), and
+  `regions-build` (committed tree → `dist/`). The global country boundary layer is the one
+  layer too large to commit and stays on the fetch path. See `regions/README.md` and
+  `regions/FORMAT.md`.
 - `docs/` — protocol spec (`protocol/`), per-board hardware docs, firmware/feature plans, UX.
 - `dissectors/umsh/` — Wireshark Lua dissector. `diag/`, `contrib/systemd/`, `scripts/` (`mkuf2.py` builds the UF2, `flash.py` only flashes one, board table in `firmware_image.py`).
 
@@ -39,6 +48,11 @@ costs of migration before considering implementing it.
 - Firmware crates are **excluded from default builds** and must be built from inside their own directory so the per-firmware `.cargo/config.toml` (target triple + linker flags) is picked up. Building with `--manifest-path`/`-p` from root silently drops those flags and yields a broken ELF.
 - nRF52840 firmware **only links in `--release`** (dev overflows flash). `cargo check` is fine at any profile.
 - No bindgen env vars needed — plain `cargo build --release` works (do NOT set LIBCLANG_PATH/BINDGEN_EXTRA_CLANG_ARGS).
+- Region database: `make regions-test` (ruff + pytest + `cargo test -p umsh-regiondb`) and
+  `make regions-check` both run offline against the **committed** `regions/tests/fixture/`
+  database. `cargo test` never builds one — regenerate it with `make regions-build-fixture`
+  after changing the fixture tree or the compiled format, and regenerate
+  `regions/tests/conformance.json` with it.
 
 ## Flashing
 
