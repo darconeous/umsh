@@ -157,23 +157,42 @@ bits, giving a 32-bit Z-order key.
 
 ## Lookup
 
+Two paths, chosen by whether the database was built with the range cache. An
+**empty `lookup_ranges` table** is the signal that it was not.
+
+**With the cache:**
+
 ```sql
 SELECT start_key, end_key, base_set_id, candidate_region_ids
 FROM lookup_ranges WHERE start_key <= ?1 ORDER BY start_key DESC LIMIT 1;
 ```
 
-Verify `?1 <= end_key`; a key past the range's end has no coverage. The base
-set is the answer for every position in the range. If `candidate_region_ids` is
-empty, it is the whole answer. Otherwise those few regions — and only those —
-are tested against their exact effective geometry and unioned in.
+Verify `?1 <= end_key`; a cache-built database covers the whole key space, so a
+missing or overshot range genuinely means no coverage. The base set is the
+answer for every position in the range. If `candidate_region_ids` is empty, it
+is the whole answer; otherwise those few regions — and only those — are tested
+against their exact effective geometry and unioned in.
+
+**Without the cache**, candidates come from the R-tree instead:
+
+```sql
+SELECT p.region_id, p.geometry FROM effective_rtree r
+JOIN geometry_parts p ON p.id = r.part_id
+WHERE r.min_lon <= ?1 AND r.max_lon >= ?1
+  AND r.min_lat <= ?2 AND r.max_lat >= ?2;
+```
+
+and each candidate part is resolved by the same exact point-in-polygon test.
 
 `region_ids` blobs are sorted region ids stored as varint gaps.
 
-The cache is an optimization over the exact polygons in the same file. It is
-never a second source of truth, and the build proves that by comparing the
-cached path against an exhaustive scan over thousands of positions weighted
-toward boundaries. A database whose cache is disabled is still correct, only
-slower.
+Both paths are optimizations over the exact polygons in the same file; neither
+is a second source of truth. The build proves it by comparing whichever path a
+database carries against an exhaustive scan over thousands of positions
+weighted toward boundaries. The global database currently ships without the
+cache — at its region count the range table costs more space than it saves
+time — while the committed test fixture keeps the cache on, so both paths stay
+conformance-tested.
 
 ## Result policy
 

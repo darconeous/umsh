@@ -1,0 +1,25 @@
+# Manual commercial-airport classification.
+#
+# The candidate list is bootstrapped from OurAirports' scheduled_service flag,
+# which answers "does some scheduled flight exist" and not the question this
+# layer asks — whether a person nearby would call this their airport. Entries
+# here have the final say in both directions, and each carries a reason so the
+# next reviewer knows what was decided rather than just what.
+version: 1
+
+overrides:
+  SQL:
+    commercial: false
+    reason: >
+      General-aviation reliever airport. Upstream marks it
+      scheduled_service=yes, but it is not a scheduled passenger gateway, and
+      no one in San Carlos would name it as their airport.
+    evidence:
+      - "https://www.smcgov.org/publicworks/san-carlos-airport"
+
+  MFR:
+    commercial: true
+    reason: >
+      Regional scheduled passenger airport for the Rogue Valley. Affirmed here
+      as the standing positive example, so the override mechanism is exercised
+      in both directions even when upstream already agrees.

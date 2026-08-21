@@ -9,7 +9,6 @@ from pathlib import Path
 from . import cells, emit, geom, sourcetree
 from . import compile as compile_module
 from . import policy as policy_module
-from .model import Region
 
 
 class BuildError(RuntimeError):
@@ -104,45 +103,29 @@ def build(
         "database": {"path": str(output), "size_bytes": stats.size_bytes},
         "applied_overrides": result.applied_overrides,
         "region_keys": sorted(region.region_key for region in result.regions),
-        "max_radio_regions_observed": _max_radio_regions(result.regions),
         "warnings": warnings,
         "duration_s": round(time.monotonic() - started, 2),
     }
     return BuildOutcome(database=output, report=report, stats=stats)
 
 
-def _build_cache(regions: list[Region], settings) -> tuple[list[cells.Leaf], cells.CacheStats]:
-    """Build the lookup ranges, or one whole-world range if the cache is off."""
+def _build_cache(regions, settings) -> tuple[list[cells.Leaf], cells.CacheStats]:
+    """Build the lookup ranges, or none at all when the cache is off.
+
+    An empty lookup_ranges table is the documented signal that a database has
+    no cache: readers fall back to the R-tree candidate path over the same
+    effective polygons. Emitting one whole-world range instead would be
+    catastrophically worse than no cache — every lookup would test every
+    region.
+    """
+    if not settings.cache_enabled:
+        return [], cells.CacheStats(0, 0, 0, 0, 0)
     identifiers = list(range(1, len(regions) + 1))
     ordered = sorted(regions, key=lambda item: (item.priority, item.region_key))
     geometries = [
         region.effective if region.effective is not None else region.core for region in ordered
     ]
-    if not settings.cache_enabled:
-        from .morton import MAX_DEPTH, cell_range
-
-        start, end = cell_range(0, 0, 0)
-        leaf = cells.Leaf(start, end, (), tuple(identifiers))
-        return [leaf], cells.CacheStats(1, 1, 1, len(identifiers), MAX_DEPTH)
     return cells.build(identifiers, geometries, settings.cache_max_depth)
-
-
-def _max_radio_regions(regions: list[Region]) -> int:
-    """An upper bound on how many distinct codes one position can produce.
-
-    Computed from overlapping bounding boxes rather than exactly: this is a
-    sanity number for the report, and an exact answer would cost another full
-    geometric pass for no decision it would change.
-    """
-    from shapely.strtree import STRtree
-
-    geometries = [
-        region.effective if region.effective is not None else region.core for region in regions
-    ]
-    if not geometries:
-        return 0
-    tree = STRtree(geometries)
-    return max(len(tree.query(geometry)) for geometry in geometries)
 
 
 __all__ = ["BuildError", "BuildOutcome", "build", "geom"]

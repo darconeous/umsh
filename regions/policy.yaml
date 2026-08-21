@@ -20,8 +20,10 @@ geometry:
   curve_error_m: 50
   # Topology-preserving simplification, per layer. Administrative coastlines
   # carry far more detail than routing needs; hand-authored local regions are
-  # already drawn at the scale they mean.
-  country_simplify_m: 100
+  # already drawn at the scale they mean. Country tolerance is the main size
+  # lever: 100 m compiles to roughly 10 MB of country geometry alone, 300 m to
+  # about half that, and nothing about "which country am I in" needs 100 m.
+  country_simplify_m: 300
   state_simplify_m: 50
   metro_simplify_m: 25
   custom_simplify_m: 0

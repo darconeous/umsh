@@ -1,0 +1,11 @@
+# Hand-authored regions.
+#
+# Anything an operator community wants to name: a valley, a metro area with no
+# IATA code, a coverage footprint. The radio-facing name is normally the
+# human-readable one, hashed under the existing named-region rules; a name of
+# one to three ASCII alphanumerics would be read as a short code instead, and
+# the build refuses one unless the record sets `allow_short_code: true` to say
+# that identity grab is deliberate.
+version: 1
+
+regions: []

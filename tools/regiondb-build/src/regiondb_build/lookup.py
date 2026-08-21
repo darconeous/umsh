@@ -88,6 +88,10 @@ class RegionDb:
             raise RegionDbError(f"{self.path} is not a region database")
         self.format_version = version
         self.metadata = dict(self._connection.execute("SELECT key, value FROM metadata"))
+        self._has_lookup_ranges = (
+            self._connection.execute("SELECT 1 FROM lookup_ranges LIMIT 1").fetchone()
+            is not None
+        )
         self._has_core_parts = {
             row[0]
             for row in self._connection.execute(
@@ -159,7 +163,13 @@ class RegionDb:
         return False
 
     def _effective_members(self, latitude: float, longitude: float) -> list[int]:
-        """The cached path: one range query plus whatever it could not decide."""
+        """The cached path: one range query plus whatever it could not decide.
+
+        A database built without the cache has an empty lookup_ranges table,
+        and the answer comes from the R-tree over the same effective polygons.
+        A database built with it covers the whole key space, so a missing
+        range means no coverage.
+        """
         key = morton.key(latitude, longitude)
         row = self._connection.execute(
             "SELECT start_key, end_key, base_set_id, candidate_region_ids FROM lookup_ranges "
@@ -167,7 +177,9 @@ class RegionDb:
             (key,),
         ).fetchone()
         if row is None:
-            return []
+            if self._has_lookup_ranges:
+                return []
+            return self._rtree_members(latitude, longitude)
         _, end_key, base_set_id, candidates = row
         if key > end_key:
             return []
@@ -182,6 +194,24 @@ class RegionDb:
             for region_id in decode_region_ids(candidates):
                 if self._covers(region_id, ROLE_EFFECTIVE, lon_e6, lat_e6):
                     members.add(region_id)
+        return sorted(members)
+
+    def _rtree_members(self, latitude: float, longitude: float) -> list[int]:
+        """Candidate regions whose effective bounding boxes cover the position."""
+        lon_e6, lat_e6 = self._quantize(latitude, longitude)
+        lon = blob.from_e6(lon_e6)
+        lat = blob.from_e6(lat_e6)
+        members: set[int] = set()
+        for (region_id, payload) in self._connection.execute(
+            "SELECT p.region_id, p.geometry FROM effective_rtree r "
+            "JOIN geometry_parts p ON p.id = r.part_id "
+            "WHERE r.min_lon <= ? AND r.max_lon >= ? AND r.min_lat <= ? AND r.max_lat >= ?",
+            (lon, lon, lat, lat),
+        ):
+            if region_id in members:
+                continue
+            if blob.point_in_rings(blob.decode(payload), lon_e6, lat_e6):
+                members.add(region_id)
         return sorted(members)
 
     def _exhaustive_members(self, latitude: float, longitude: float) -> list[int]:

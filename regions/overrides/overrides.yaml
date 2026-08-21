@@ -1,0 +1,12 @@
+# Manual corrections to generated and sourced boundaries.
+#
+# Operations: `force` (an exclusive layer's core assignment inside a polygon),
+# `include` and `exclude` (union into / subtract from one region), `replace`
+# (swap an authored region's core wholesale). Overrides apply to core geometry
+# before expansion, and equal-priority force operations that overlap are an
+# error rather than an ordering accident. Prefer `force` for the generated
+# layers: editing one Voronoi cell in isolation leaves a hole or an overlap in
+# its neighbors.
+version: 1
+
+overrides: []

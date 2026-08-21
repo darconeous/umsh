@@ -40,10 +40,22 @@ from .model import Site
 # clip itself is scale-free, and real distances go through pyproj.
 EARTH_RADIUS_M = 6_371_008.8
 
-# Vertices around the capping disk. At a 100 km cap this puts successive
-# vertices about 3.5 km apart, whose sagitta against the true circle is well
-# under a meter.
-DISK_SEGMENTS = 180
+# Bounds on the capping disk's vertex count, whatever the curve tolerance
+# works out to.
+DISK_SEGMENTS_MIN = 36
+DISK_SEGMENTS_MAX = 360
+
+
+def _disk_segments(radius_m: float, curve_error_m: float) -> int:
+    """Vertices needed so the disk polygon stays within the curve tolerance.
+
+    Chord sagitta on a circle of radius r with n segments is roughly
+    r * (pi/n)^2 / 2; inverting gives the n that keeps it under the error.
+    """
+    if curve_error_m <= 0:
+        return DISK_SEGMENTS_MAX
+    needed = math.pi / math.sqrt(2.0 * curve_error_m / radius_m)
+    return max(DISK_SEGMENTS_MIN, min(DISK_SEGMENTS_MAX, math.ceil(needed)))
 
 
 class VoronoiError(ValueError):
@@ -125,7 +137,12 @@ def _project(
 
 
 def _disk_polygon(
-    site: Site, radius_m: float, center: np.ndarray, east: np.ndarray, north: np.ndarray
+    site: Site,
+    radius_m: float,
+    center: np.ndarray,
+    east: np.ndarray,
+    north: np.ndarray,
+    curve_error_m: float,
 ) -> np.ndarray:
     """The capping disk, as a true geodesic disk projected into the plane.
 
@@ -135,12 +152,13 @@ def _disk_polygon(
     distance — harmless for routing, but it would make the radius check
     disagree with the radius policy asked for.
     """
-    angles = [index * 360.0 / DISK_SEGMENTS for index in range(DISK_SEGMENTS)]
+    segments = _disk_segments(radius_m, curve_error_m)
+    angles = [index * 360.0 / segments for index in range(segments)]
     longitudes, latitudes, _ = geom.GEOD.fwd(
-        [site.longitude] * DISK_SEGMENTS,
-        [site.latitude] * DISK_SEGMENTS,
+        [site.longitude] * segments,
+        [site.latitude] * segments,
         angles,
-        [radius_m] * DISK_SEGMENTS,
+        [radius_m] * segments,
     )
     return _project(longitudes, latitudes, center, east, north)
 
@@ -200,7 +218,7 @@ def build_cells(sites: list[Site], max_radius_m: float, curve_error_m: float) ->
 
         center = vectors[index]
         east, north = _local_basis(center)
-        polygon = _disk_polygon(site, max_radius_m, center, east, north)
+        polygon = _disk_polygon(site, max_radius_m, center, east, north, curve_error_m)
 
         for neighbor in tree.query_ball_point(center, influence_chord):
             if neighbor == index:
@@ -231,6 +249,18 @@ def build_cells(sites: list[Site], max_radius_m: float, curve_error_m: float) ->
         for position, start in enumerate(ring):
             end = ring[(position + 1) % len(ring)]
             densified.extend(geom.densify_great_circle(start, end, curve_error_m))
+
+        # Densification returns longitudes wrapped into [-180, 180]. A cell
+        # near the antimeridian needs its ring continuous around the site
+        # instead — a jump from +179.9 to -179.9 mid-ring reads as a trip
+        # around the world, and repair slices the result into garbage slabs.
+        densified = [
+            (
+                site.longitude + ((lon - site.longitude + 180.0) % 360.0) - 180.0,
+                lat,
+            )
+            for lon, lat in densified
+        ]
 
         cell = geom.normalize(Polygon(densified), name=f"{site.iata} core cell")
         cells.append(Cell(site=site, geometry=cell))

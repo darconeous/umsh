@@ -1,0 +1,15 @@
+# Metropolitan region definitions.
+#
+# A metro code is a containment region: it applies inside its polygon and
+# nowhere else. IATA publishes no land boundary for these codes, so every
+# polygon here is a UMSH routing definition, drawn and reviewed by a person,
+# with its provenance and interpretation stated in its own record.
+#
+# None are defined yet. The candidate codes are in
+# ../extracts/metro-codes.csv, seeded from the lxndrblz/Airports city-code
+# list; a metro joins the database when someone draws and reviews its polygon,
+# not before. The compiled metadata records how many metros a build carried, so
+# a database without them says so rather than implying the layer is complete.
+version: 1
+
+metros: []

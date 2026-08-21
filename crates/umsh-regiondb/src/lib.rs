@@ -195,6 +195,7 @@ pub struct RegionDb {
     with_core_parts: HashSet<u32>,
     metadata: HashMap<String, String>,
     format_version: i64,
+    has_lookup_ranges: bool,
 }
 
 impl RegionDb {
@@ -259,12 +260,17 @@ impl RegionDb {
             .query_map([ROLE_CORE], |row| Ok(row.get::<_, i64>(0)? as u32))?
             .collect::<Result<HashSet<_>, _>>()?;
 
+        let has_lookup_ranges = connection
+            .query_row("SELECT 1 FROM lookup_ranges LIMIT 1", [], |_| Ok(()))
+            .is_ok();
+
         Ok(Self {
             connection,
             regions,
             with_core_parts,
             metadata,
             format_version,
+            has_lookup_ranges,
         })
     }
 
@@ -430,8 +436,15 @@ impl RegionDb {
             })
             .ok();
 
+        // A database built without the cache has an empty lookup_ranges table
+        // and is answered from the R-tree over the same effective polygons. A
+        // database built with it covers the whole key space, so a missing or
+        // overshot range genuinely means no coverage.
         let Some((end_key, base_set_id, candidates)) = row else {
-            return Ok(Vec::new());
+            if self.has_lookup_ranges {
+                return Ok(Vec::new());
+            }
+            return self.rtree_members(latitude, longitude);
         };
         if i64::from(key) > end_key {
             return Ok(Vec::new());
@@ -456,6 +469,34 @@ impl RegionDb {
         }
         members.sort_unstable();
         members.dedup();
+        Ok(members)
+    }
+
+    /// Candidate regions whose effective bounding boxes cover the position,
+    /// resolved to members by exact point-in-polygon tests.
+    fn rtree_members(&self, latitude: f64, longitude: f64) -> Result<Vec<u32>, RegionDbError> {
+        let (longitude_e6, latitude_e6) = self.quantize(latitude, longitude)?;
+        let lon = blob::from_e6(longitude_e6);
+        let lat = blob::from_e6(latitude_e6);
+        let mut members = HashSet::new();
+        let mut statement = self.connection.prepare_cached(
+            "SELECT p.region_id, p.geometry FROM effective_rtree r \
+             JOIN geometry_parts p ON p.id = r.part_id \
+             WHERE r.min_lon <= ?1 AND r.max_lon >= ?1 AND r.min_lat <= ?2 AND r.max_lat >= ?2",
+        )?;
+        let mut rows = statement.query((lon, lat))?;
+        while let Some(row) = rows.next()? {
+            let region_id = row.get::<_, i64>(0)? as u32;
+            if members.contains(&region_id) {
+                continue;
+            }
+            let payload: Vec<u8> = row.get(1)?;
+            if blob::point_in_rings(&blob::decode(&payload)?, longitude_e6, latitude_e6) {
+                members.insert(region_id);
+            }
+        }
+        let mut members: Vec<u32> = members.into_iter().collect();
+        members.sort_unstable();
         Ok(members)
     }
 

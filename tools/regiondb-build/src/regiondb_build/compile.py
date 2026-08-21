@@ -199,11 +199,16 @@ def compile_tree(tree: SourceTree, policy: Policy) -> CompileResult:
     regions = [region for region in regions if not region.core.is_empty]
 
     for region in regions:
-        region.effective = (
-            geom.buffer_m(region.core, region.expansion_m)
-            if region.expansion_m > 0
-            else geom.polygonal(region.core)
-        )
+        if region.expansion_m > 0:
+            expanded = geom.buffer_m(region.core, region.expansion_m)
+            # The buffer's arc fillets carry far more vertices than a routing
+            # margin needs. Simplify to the curve tolerance, then union the
+            # core back in so simplification can never pull the effective
+            # boundary inside it.
+            simplified = geom.simplify_m(expanded, policy.curve_error_m)
+            region.effective = geom.polygonal(simplified.union(region.core))
+        else:
+            region.effective = geom.polygonal(region.core)
 
     warnings.extend(validate(regions))
 
@@ -395,8 +400,16 @@ def validate(regions: list[Region]) -> list[str]:
     for region in regions:
         if region.effective is None:
             continue
-        if region.expansion_m > 0 and not region.effective.contains(region.core.buffer(-1e-9)):
-            warnings.append(f"{region.region_key}: effective geometry does not contain its core")
+        if region.expansion_m > 0:
+            # An area check rather than `contains`: a shared boundary vertex
+            # is enough to make strict containment false while the coverage is
+            # exactly right, and coverage is what expansion promises.
+            missing = region.core.difference(region.effective)
+            if not missing.is_empty and missing.area > 1e-12:
+                warnings.append(
+                    f"{region.region_key}: expansion lost core coverage "
+                    f"({missing.area:.2e} square degrees)"
+                )
         if region.core.is_empty:
             warnings.append(f"{region.region_key}: core geometry is empty")
 
