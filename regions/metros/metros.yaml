@@ -1,15 +1,496 @@
-# Metropolitan region definitions.
+# Metropolitan IATA regions.
 #
 # A metro code is a containment region: it applies inside its polygon and
-# nowhere else. IATA publishes no land boundary for these codes, so every
-# polygon here is a UMSH routing definition, drawn and reviewed by a person,
-# with its provenance and interpretation stated in its own record.
+# nowhere else. IATA publishes no boundaries for these codes, so every
+# geometry here is a UMSH routing definition. The current polygons are all
+# generated circular placeholders — good enough for "am I in the Tokyo area",
+# sized generously, and individually replaceable with reviewed boundaries by
+# editing the file a record points at.
 #
-# None are defined yet. The candidate codes are in
-# ../extracts/metro-codes.csv, seeded from the lxndrblz/Airports city-code
-# list; a metro joins the database when someone draws and reviews its polygon,
-# not before. The compiled metadata records how many metros a build carried, so
-# a database without them says so rather than implying the layer is complete.
+# Metro regions are default-eligible and rank first: inside a metro polygon
+# the metro code is the suggested packet default, above the commercial
+# airport. A metro-tagged flood covers the whole area, which is the point —
+# the tag matches how people name where they are.
 version: 1
 
-metros: []
+metros:
+  - id: iata-metro:BAK
+    iata: BAK
+    name: Baku metropolitan area
+    geometry: geometry/BAK.geojson
+    expansion_m: 0
+    source:
+      name: Generated placeholder
+      notes: >
+        Geodesic disk of 45 km about 40.395278, 49.882222 (Azerbaijan);
+        center from the citycodes seed list.
+    interpretation: >
+      A circular placeholder covering the commonly understood Baku metropolitan area, sized by
+      eye rather than by survey. This is a UMSH routing definition, not an
+      official boundary published by IATA or anyone else. Replace this file
+      with a reviewed polygon whenever someone cares about the edge.
+    confidence: low
+  - id: iata-metro:BHZ
+    iata: BHZ
+    name: Belo Horizonte metropolitan area
+    geometry: geometry/BHZ.geojson
+    expansion_m: 0
+    source:
+      name: Generated placeholder
+      notes: >
+        Geodesic disk of 45 km about -19.916667, -43.933333 (Brazil);
+        center from the citycodes seed list.
+    interpretation: >
+      A circular placeholder covering the commonly understood Belo Horizonte metropolitan area, sized by
+      eye rather than by survey. This is a UMSH routing definition, not an
+      official boundary published by IATA or anyone else. Replace this file
+      with a reviewed polygon whenever someone cares about the edge.
+    confidence: low
+  - id: iata-metro:BJS
+    iata: BJS
+    name: Beijing metropolitan area
+    geometry: geometry/BJS.geojson
+    expansion_m: 0
+    source:
+      name: Generated placeholder
+      notes: >
+        Geodesic disk of 80 km about 39.933333, 116.383333 (China);
+        center from the citycodes seed list.
+    interpretation: >
+      A circular placeholder covering the commonly understood Beijing metropolitan area, sized by
+      eye rather than by survey. This is a UMSH routing definition, not an
+      official boundary published by IATA or anyone else. Replace this file
+      with a reviewed polygon whenever someone cares about the edge.
+    confidence: low
+  - id: iata-metro:BUE
+    iata: BUE
+    name: Buenos Aires metropolitan area
+    geometry: geometry/BUE.geojson
+    expansion_m: 0
+    source:
+      name: Generated placeholder
+      notes: >
+        Geodesic disk of 60 km about -34.6, -58.38 (Argentina);
+        center from the citycodes seed list.
+    interpretation: >
+      A circular placeholder covering the commonly understood Buenos Aires metropolitan area, sized by
+      eye rather than by survey. This is a UMSH routing definition, not an
+      official boundary published by IATA or anyone else. Replace this file
+      with a reviewed polygon whenever someone cares about the edge.
+    confidence: low
+  - id: iata-metro:BUH
+    iata: BUH
+    name: Bucharest metropolitan area
+    geometry: geometry/BUH.geojson
+    expansion_m: 0
+    source:
+      name: Generated placeholder
+      notes: >
+        Geodesic disk of 35 km about 44.4325, 26.103889 (Romania);
+        center from the citycodes seed list.
+    interpretation: >
+      A circular placeholder covering the commonly understood Bucharest metropolitan area, sized by
+      eye rather than by survey. This is a UMSH routing definition, not an
+      official boundary published by IATA or anyone else. Replace this file
+      with a reviewed polygon whenever someone cares about the edge.
+    confidence: low
+  - id: iata-metro:CHI
+    iata: CHI
+    name: Chicago metropolitan area
+    geometry: geometry/CHI.geojson
+    expansion_m: 0
+    source:
+      name: Generated placeholder
+      notes: >
+        Geodesic disk of 70 km about 41.8781, -87.6298 (United States);
+        center set by hand (absent or wrong in the seed list).
+    interpretation: >
+      A circular placeholder covering the commonly understood Chicago metropolitan area, sized by
+      eye rather than by survey. This is a UMSH routing definition, not an
+      official boundary published by IATA or anyone else. Replace this file
+      with a reviewed polygon whenever someone cares about the edge.
+    confidence: low
+  - id: iata-metro:DTT
+    iata: DTT
+    name: Detroit metropolitan area
+    geometry: geometry/DTT.geojson
+    expansion_m: 0
+    source:
+      name: Generated placeholder
+      notes: >
+        Geodesic disk of 55 km about 42.333, -83.05 (United States);
+        center from the citycodes seed list.
+    interpretation: >
+      A circular placeholder covering the commonly understood Detroit metropolitan area, sized by
+      eye rather than by survey. This is a UMSH routing definition, not an
+      official boundary published by IATA or anyone else. Replace this file
+      with a reviewed polygon whenever someone cares about the edge.
+    confidence: low
+  - id: iata-metro:IZM
+    iata: IZM
+    name: Izmir metropolitan area
+    geometry: geometry/IZM.geojson
+    expansion_m: 0
+    source:
+      name: Generated placeholder
+      notes: >
+        Geodesic disk of 45 km about 38.42, 27.14 (Turkiye);
+        center from the citycodes seed list.
+    interpretation: >
+      A circular placeholder covering the commonly understood Izmir metropolitan area, sized by
+      eye rather than by survey. This is a UMSH routing definition, not an
+      official boundary published by IATA or anyone else. Replace this file
+      with a reviewed polygon whenever someone cares about the edge.
+    confidence: low
+  - id: iata-metro:JKT
+    iata: JKT
+    name: Jakarta metropolitan area
+    geometry: geometry/JKT.geojson
+    expansion_m: 0
+    source:
+      name: Generated placeholder
+      notes: >
+        Geodesic disk of 60 km about -6.2, 106.816667 (Indonesia);
+        center from the citycodes seed list.
+    interpretation: >
+      A circular placeholder covering the commonly understood Jakarta metropolitan area, sized by
+      eye rather than by survey. This is a UMSH routing definition, not an
+      official boundary published by IATA or anyone else. Replace this file
+      with a reviewed polygon whenever someone cares about the edge.
+    confidence: low
+  - id: iata-metro:LON
+    iata: LON
+    name: London metropolitan area
+    geometry: geometry/LON.geojson
+    expansion_m: 0
+    source:
+      name: Generated placeholder
+      notes: >
+        Geodesic disk of 60 km about 51.50939, -0.11832 (United Kingdom);
+        center from the citycodes seed list.
+    interpretation: >
+      A circular placeholder covering the commonly understood London metropolitan area, sized by
+      eye rather than by survey. This is a UMSH routing definition, not an
+      official boundary published by IATA or anyone else. Replace this file
+      with a reviewed polygon whenever someone cares about the edge.
+    confidence: low
+  - id: iata-metro:MIL
+    iata: MIL
+    name: Milan metropolitan area
+    geometry: geometry/MIL.geojson
+    expansion_m: 0
+    source:
+      name: Generated placeholder
+      notes: >
+        Geodesic disk of 50 km about 45.4625, 9.186389 (Italy);
+        center from the citycodes seed list.
+    interpretation: >
+      A circular placeholder covering the commonly understood Milan metropolitan area, sized by
+      eye rather than by survey. This is a UMSH routing definition, not an
+      official boundary published by IATA or anyone else. Replace this file
+      with a reviewed polygon whenever someone cares about the edge.
+    confidence: low
+  - id: iata-metro:MOW
+    iata: MOW
+    name: Moscow metropolitan area
+    geometry: geometry/MOW.geojson
+    expansion_m: 0
+    source:
+      name: Generated placeholder
+      notes: >
+        Geodesic disk of 70 km about 55.751244, 37.618423 (Russia);
+        center from the citycodes seed list.
+    interpretation: >
+      A circular placeholder covering the commonly understood Moscow metropolitan area, sized by
+      eye rather than by survey. This is a UMSH routing definition, not an
+      official boundary published by IATA or anyone else. Replace this file
+      with a reviewed polygon whenever someone cares about the edge.
+    confidence: low
+  - id: iata-metro:NCP
+    iata: NCP
+    name: Luzon
+    geometry: geometry/NCP.geojson
+    expansion_m: 0
+    source:
+      name: Generated placeholder
+      notes: >
+        Geodesic disk of 350 km about 16.0, 121.0 (Philippines);
+        center from the citycodes seed list.
+    interpretation: >
+      A circular placeholder covering the commonly understood Luzon, sized by
+      eye rather than by survey. This is a UMSH routing definition, not an
+      official boundary published by IATA or anyone else. Replace this file
+      with a reviewed polygon whenever someone cares about the edge.
+    confidence: low
+  - id: iata-metro:NYC
+    iata: NYC
+    name: New York metropolitan area
+    geometry: geometry/NYC.geojson
+    expansion_m: 0
+    source:
+      name: Generated placeholder
+      notes: >
+        Geodesic disk of 70 km about 40.712778, -74.005833 (United States);
+        center from the citycodes seed list.
+    interpretation: >
+      A circular placeholder covering the commonly understood New York metropolitan area, sized by
+      eye rather than by survey. This is a UMSH routing definition, not an
+      official boundary published by IATA or anyone else. Replace this file
+      with a reviewed polygon whenever someone cares about the edge.
+    confidence: low
+  - id: iata-metro:OSA
+    iata: OSA
+    name: Osaka metropolitan area
+    geometry: geometry/OSA.geojson
+    expansion_m: 0
+    source:
+      name: Generated placeholder
+      notes: >
+        Geodesic disk of 60 km about 34.693889, 135.502222 (Japan);
+        center from the citycodes seed list.
+    interpretation: >
+      A circular placeholder covering the commonly understood Osaka metropolitan area, sized by
+      eye rather than by survey. This is a UMSH routing definition, not an
+      official boundary published by IATA or anyone else. Replace this file
+      with a reviewed polygon whenever someone cares about the edge.
+    confidence: low
+  - id: iata-metro:PAR
+    iata: PAR
+    name: Paris metropolitan area
+    geometry: geometry/PAR.geojson
+    expansion_m: 0
+    source:
+      name: Generated placeholder
+      notes: >
+        Geodesic disk of 60 km about 48.856667, 2.351667 (France);
+        center from the citycodes seed list.
+    interpretation: >
+      A circular placeholder covering the commonly understood Paris metropolitan area, sized by
+      eye rather than by survey. This is a UMSH routing definition, not an
+      official boundary published by IATA or anyone else. Replace this file
+      with a reviewed polygon whenever someone cares about the edge.
+    confidence: low
+  - id: iata-metro:REK
+    iata: REK
+    name: Reykjavik metropolitan area
+    geometry: geometry/REK.geojson
+    expansion_m: 0
+    source:
+      name: Generated placeholder
+      notes: >
+        Geodesic disk of 40 km about 64.133333, -21.933333 (Iceland);
+        center from the citycodes seed list.
+    interpretation: >
+      A circular placeholder covering the commonly understood Reykjavik metropolitan area, sized by
+      eye rather than by survey. This is a UMSH routing definition, not an
+      official boundary published by IATA or anyone else. Replace this file
+      with a reviewed polygon whenever someone cares about the edge.
+    confidence: low
+  - id: iata-metro:RIO
+    iata: RIO
+    name: Rio de Janeiro metropolitan area
+    geometry: geometry/RIO.geojson
+    expansion_m: 0
+    source:
+      name: Generated placeholder
+      notes: >
+        Geodesic disk of 55 km about -22.908333, -43.196389 (Brazil);
+        center from the citycodes seed list.
+    interpretation: >
+      A circular placeholder covering the commonly understood Rio de Janeiro metropolitan area, sized by
+      eye rather than by survey. This is a UMSH routing definition, not an
+      official boundary published by IATA or anyone else. Replace this file
+      with a reviewed polygon whenever someone cares about the edge.
+    confidence: low
+  - id: iata-metro:ROM
+    iata: ROM
+    name: Rome metropolitan area
+    geometry: geometry/ROM.geojson
+    expansion_m: 0
+    source:
+      name: Generated placeholder
+      notes: >
+        Geodesic disk of 45 km about 41.883333, 12.483333 (Italy);
+        center from the citycodes seed list.
+    interpretation: >
+      A circular placeholder covering the commonly understood Rome metropolitan area, sized by
+      eye rather than by survey. This is a UMSH routing definition, not an
+      official boundary published by IATA or anyone else. Replace this file
+      with a reviewed polygon whenever someone cares about the edge.
+    confidence: low
+  - id: iata-metro:SAO
+    iata: SAO
+    name: Sao Paulo metropolitan area
+    geometry: geometry/SAO.geojson
+    expansion_m: 0
+    source:
+      name: Generated placeholder
+      notes: >
+        Geodesic disk of 65 km about -23.55, -46.633333 (Brazil);
+        center from the citycodes seed list.
+    interpretation: >
+      A circular placeholder covering the commonly understood Sao Paulo metropolitan area, sized by
+      eye rather than by survey. This is a UMSH routing definition, not an
+      official boundary published by IATA or anyone else. Replace this file
+      with a reviewed polygon whenever someone cares about the edge.
+    confidence: low
+  - id: iata-metro:SDZ
+    iata: SDZ
+    name: Shetland Islands
+    geometry: geometry/SDZ.geojson
+    expansion_m: 0
+    source:
+      name: Generated placeholder
+      notes: >
+        Geodesic disk of 90 km about 60.317243, -1.261694 (United Kingdom);
+        center from the citycodes seed list.
+    interpretation: >
+      A circular placeholder covering the commonly understood Shetland Islands, sized by
+      eye rather than by survey. This is a UMSH routing definition, not an
+      official boundary published by IATA or anyone else. Replace this file
+      with a reviewed polygon whenever someone cares about the edge.
+    confidence: low
+  - id: iata-metro:SEL
+    iata: SEL
+    name: Seoul metropolitan area
+    geometry: geometry/SEL.geojson
+    expansion_m: 0
+    source:
+      name: Generated placeholder
+      notes: >
+        Geodesic disk of 55 km about 37.566667, 126.966667 (South Korea);
+        center from the citycodes seed list.
+    interpretation: >
+      A circular placeholder covering the commonly understood Seoul metropolitan area, sized by
+      eye rather than by survey. This is a UMSH routing definition, not an
+      official boundary published by IATA or anyone else. Replace this file
+      with a reviewed polygon whenever someone cares about the edge.
+    confidence: low
+  - id: iata-metro:SPK
+    iata: SPK
+    name: Sapporo metropolitan area
+    geometry: geometry/SPK.geojson
+    expansion_m: 0
+    source:
+      name: Generated placeholder
+      notes: >
+        Geodesic disk of 50 km about 43.0618, 141.3545 (Japan);
+        center set by hand (absent or wrong in the seed list).
+    interpretation: >
+      A circular placeholder covering the commonly understood Sapporo metropolitan area, sized by
+      eye rather than by survey. This is a UMSH routing definition, not an
+      official boundary published by IATA or anyone else. Replace this file
+      with a reviewed polygon whenever someone cares about the edge.
+    confidence: low
+  - id: iata-metro:STO
+    iata: STO
+    name: Stockholm metropolitan area
+    geometry: geometry/STO.geojson
+    expansion_m: 0
+    source:
+      name: Generated placeholder
+      notes: >
+        Geodesic disk of 55 km about 59.325, 18.05 (Sweden);
+        center from the citycodes seed list.
+    interpretation: >
+      A circular placeholder covering the commonly understood Stockholm metropolitan area, sized by
+      eye rather than by survey. This is a UMSH routing definition, not an
+      official boundary published by IATA or anyone else. Replace this file
+      with a reviewed polygon whenever someone cares about the edge.
+    confidence: low
+  - id: iata-metro:TCI
+    iata: TCI
+    name: Tenerife
+    geometry: geometry/TCI.geojson
+    expansion_m: 0
+    source:
+      name: Generated placeholder
+      notes: >
+        Geodesic disk of 55 km about 28.2916, -16.6291 (Spain);
+        center set by hand (absent or wrong in the seed list).
+    interpretation: >
+      A circular placeholder covering the commonly understood Tenerife, sized by
+      eye rather than by survey. This is a UMSH routing definition, not an
+      official boundary published by IATA or anyone else. Replace this file
+      with a reviewed polygon whenever someone cares about the edge.
+    confidence: low
+  - id: iata-metro:TYO
+    iata: TYO
+    name: Tokyo metropolitan area
+    geometry: geometry/TYO.geojson
+    expansion_m: 0
+    source:
+      name: Generated placeholder
+      notes: >
+        Geodesic disk of 80 km about 35.6762, 139.6503 (Japan);
+        center set by hand (absent or wrong in the seed list).
+    interpretation: >
+      A circular placeholder covering the commonly understood Tokyo metropolitan area, sized by
+      eye rather than by survey. This is a UMSH routing definition, not an
+      official boundary published by IATA or anyone else. Replace this file
+      with a reviewed polygon whenever someone cares about the edge.
+    confidence: low
+  - id: iata-metro:WAS
+    iata: WAS
+    name: Washington metropolitan area
+    geometry: geometry/WAS.geojson
+    expansion_m: 0
+    source:
+      name: Generated placeholder
+      notes: >
+        Geodesic disk of 55 km about 38.895, -77.036667 (United States);
+        center from the citycodes seed list.
+    interpretation: >
+      A circular placeholder covering the commonly understood Washington metropolitan area, sized by
+      eye rather than by survey. This is a UMSH routing definition, not an
+      official boundary published by IATA or anyone else. Replace this file
+      with a reviewed polygon whenever someone cares about the edge.
+    confidence: low
+  - id: iata-metro:YEA
+    iata: YEA
+    name: Edmonton metropolitan area
+    geometry: geometry/YEA.geojson
+    expansion_m: 0
+    source:
+      name: Generated placeholder
+      notes: >
+        Geodesic disk of 45 km about 53.533333, -113.553 (Canada);
+        center from the citycodes seed list.
+    interpretation: >
+      A circular placeholder covering the commonly understood Edmonton metropolitan area, sized by
+      eye rather than by survey. This is a UMSH routing definition, not an
+      official boundary published by IATA or anyone else. Replace this file
+      with a reviewed polygon whenever someone cares about the edge.
+    confidence: low
+  - id: iata-metro:YMQ
+    iata: YMQ
+    name: Montreal metropolitan area
+    geometry: geometry/YMQ.geojson
+    expansion_m: 0
+    source:
+      name: Generated placeholder
+      notes: >
+        Geodesic disk of 55 km about 45.5077, -73.5626 (Canada);
+        center from the citycodes seed list.
+    interpretation: >
+      A circular placeholder covering the commonly understood Montreal metropolitan area, sized by
+      eye rather than by survey. This is a UMSH routing definition, not an
+      official boundary published by IATA or anyone else. Replace this file
+      with a reviewed polygon whenever someone cares about the edge.
+    confidence: low
+  - id: iata-metro:YTO
+    iata: YTO
+    name: Toronto metropolitan area
+    geometry: geometry/YTO.geojson
+    expansion_m: 0
+    source:
+      name: Generated placeholder
+      notes: >
+        Geodesic disk of 60 km about 43.66135, -79.383087 (Canada);
+        center from the citycodes seed list.
+    interpretation: >
+      A circular placeholder covering the commonly understood Toronto metropolitan area, sized by
+      eye rather than by survey. This is a UMSH routing definition, not an
+      official boundary published by IATA or anyone else. Replace this file
+      with a reviewed polygon whenever someone cares about the edge.
+    confidence: low

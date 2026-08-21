@@ -49,10 +49,18 @@ IATA codes. Its coordinates are city center points and are never used as
 geometry: a metro region is a containment polygon, and assigning one by nearest
 center would give a metro code to positions well outside the metro area.
 
-Every supported metro needs a reviewed polygon with provenance in
+Every supported metro carries a polygon with provenance in
 `metros/metros.yaml`. IATA publishes no land boundary for these codes, so each
 polygon is a UMSH routing definition rather than an official boundary and says
-so in its own record.
+so in its own record. The initial thirty are generated circular placeholders,
+sized by eye and marked as such; any one of them can be replaced with a
+reviewed boundary by editing the file its record points at, without touching
+the others.
+
+Heliports are excluded from the database across the board for the time being —
+not only from the commercial layer. A helipad's IATA code names a rooftop, and
+Manhattan alone has three with scheduled service upstream. Seaplane bases
+remain positioned locations but never commercial candidates.
 
 See `LICENSES.md` — this source is share-alike.
 

@@ -73,8 +73,6 @@ AGE,Wangerooge Airport,53.782544,7.919584,DE,Wangerooge,small_airport,yes
 AGH,Ängelholm-Helsingborg Airport,56.296101,12.847100,SE,Ängelholm,medium_airport,yes
 AGI,Wageningen Airstrip,5.841252,-56.673247,SR,Wageningen,small_airport,yes
 AGJ,Aguni Airport,26.592755,127.240335,JP,Aguni,small_airport,yes
-AGM,Tasiilaq Heliport,65.612296,-37.618335,GL,Tasiilaq,heliport,yes
-AGN,Angoon Seaplane Base,57.497097,-134.567220,US,Angoon,seaplane_base,yes
 AGP,Málaga-Costa del Sol Airport,36.674900,-4.499110,ES,Málaga,large_airport,yes
 AGR,Agra Airport / Agra Air Force Station,27.157975,77.961025,IN,Agra,medium_airport,yes
 AGS,Augusta Regional At Bush Field,33.369900,-81.964500,US,Augusta,medium_airport,yes
@@ -123,7 +121,6 @@ ALO,Waterloo Regional Airport,42.557098,-92.400299,US,Waterloo,medium_airport,ye
 ALP,Aleppo International Airport,36.181262,37.226869,SY,Aleppo,large_airport,yes
 ALS,San Luis Valley Regional Airport/Bergman Field,37.434898,-105.866997,US,Alamosa,medium_airport,yes
 ALW,Walla Walla Regional Airport,46.094898,-118.288002,US,Walla Walla,medium_airport,yes
-ALZ,Alitak Seaplane Base,56.897294,-154.249692,US,Lazy Bay,seaplane_base,yes
 AMA,Rick Husband Amarillo International Airport,35.217857,-101.706444,US,Amarillo,medium_airport,yes
 AMD,Sardar Vallabh Patel International Airport,23.077200,72.634697,IN,Ahmedabad,large_airport,yes
 AMH,Arba Minch Airport,6.039390,37.590500,ET,Arba Minch,medium_airport,yes
@@ -145,9 +142,7 @@ AOI,Marche Airport,43.616299,13.362300,IT,Falconara Marittima (AN),medium_airpor
 AOJ,Aomori Airport,40.733777,140.689477,JP,Aomori,large_airport,yes
 AOK,Karpathos Airport,35.421398,27.146000,GR,Karpathos Island,medium_airport,yes
 AOO,Altoona Blair County Airport,40.296398,-78.320000,US,Altoona,medium_airport,yes
-AOQ,Aappilattoq Heliport,72.887030,-55.596287,GL,Aappilattoq,heliport,yes
 AOR,Sultan Abdul Halim Airport,6.189670,100.398003,MY,Alor Satar,medium_airport,yes
-AOS,Amook Bay Seaplane Base,57.471500,-153.815002,US,Amook Bay,seaplane_base,yes
 APK,Apataki Airport,-15.573600,-146.414993,PF,Apataki,small_airport,yes
 APL,Nampula Airport,-15.105600,39.281799,MZ,Nampula,large_airport,yes
 APN,Alpena County Regional Airport,45.078098,-83.560303,US,Alpena,medium_airport,yes
@@ -339,12 +334,10 @@ BJF,Båtsfjord Airport,70.600250,29.692612,NO,Båtsfjord,medium_airport,yes
 BJL,Banjul International Airport,13.338000,-16.652201,GM,Banjul (Yundum),large_airport,yes
 BJM,Bujumbura Melchior Ndadaye International Airport,-3.324020,29.318501,BI,Bujumbura,large_airport,yes
 BJR,Bahir Dar Airport,11.608100,37.321602,ET,Bahir Dar,medium_airport,yes
-BJT,Bentota River Waterdrome,6.431000,79.996000,LK,Bentota,seaplane_base,yes
 BJV,Milas Bodrum International Airport,37.249314,27.664010,TR,Bodrum,large_airport,yes
 BJX,Guanajuato International Airport,20.992695,-101.480284,MX,Silao,large_airport,yes
 BJZ,Badajoz Airport,38.891300,-6.821330,ES,Badajoz,medium_airport,yes
 BKC,Buckland Airport,65.981598,-161.149002,US,Buckland,small_airport,yes
-BKF,Lake Brooks Seaplane Base,58.554798,-155.776993,US,Katmai National Park,seaplane_base,yes
 BKG,Branson Airport,36.532082,-93.200544,US,Branson,medium_airport,yes
 BKI,Kota Kinabalu International Airport,5.932743,116.049324,MY,Kota Kinabalu,large_airport,yes
 BKK,Suvarnabhumi Airport,13.681100,100.747002,TH,Bangkok,large_airport,yes
@@ -567,7 +560,6 @@ CFN,Donegal Airport,55.044201,-8.341000,IE,Donegal,medium_airport,yes
 CFR,Caen Carpiquet airport,49.176780,-0.454883,FR,Caen,medium_airport,yes
 CFS,Coffs Harbour Airport,-30.320601,153.115997,AU,Coffs Harbour,medium_airport,yes
 CFU,Corfu Ioannis Kapodistrias International Airport,39.601450,19.912179,GR,Kerkyra (Corfu),large_airport,yes
-CGA,Craig Seaplane Base,55.478802,-133.147995,US,Craig,seaplane_base,yes
 CGB,Várzea Grande–Marechal Rondon International Airport,-15.652900,-56.116699,BR,Cuiabá,large_airport,yes
 CGD,Changde Taohuayuan Airport,28.918900,111.639999,CN,Changde (Dingcheng),medium_airport,yes
 CGH,Congonhas–Deputado Freitas Nobre Airport,-23.627657,-46.654601,BR,São Paulo,large_airport,yes
@@ -582,7 +574,6 @@ CGR,Campo Grande Airport,-20.469998,-54.673988,BR,Campo Grande,medium_airport,ye
 CGY,Laguindingan International Airport,8.612203,124.456496,PH,Laguindingan,large_airport,yes
 CHA,Chattanooga Metropolitan Airport (Lovell Field),35.035301,-85.203796,US,Chattanooga,medium_airport,yes
 CHC,Christchurch International Airport,-43.489029,172.532065,NZ,Christchurch,large_airport,yes
-CHE,Tallinn Linnahall Heliport,59.448015,24.753313,EE,Tallinn,heliport,yes
 CHG,Chaoyang Airport,41.538101,120.434998,CN,"Shuangta, Chaoyang",medium_airport,yes
 CHH,Chachapoyas Airport,-6.201911,-77.856195,PE,Chachapoyas,medium_airport,yes
 CHM,FAP Lieutenant Jaime Andres de Montreuil Morales Airport,-9.149610,-78.523804,PE,Chimbote,medium_airport,yes
@@ -727,7 +718,6 @@ CWJ,Cangyuan Washan Airport,23.276331,99.373169,CN,Lincang (Cangyuan),medium_air
 CWL,Cardiff International Airport,51.396702,-3.343330,GB,Cardiff,large_airport,yes
 CWS,Center Island Airport,48.490046,-122.831612,US,Center Island,small_airport,yes
 CXB,Cox's Bazar Airport,21.457517,91.963263,BD,Cox's Bazar,medium_airport,yes
-CXH,Vancouver Harbour Water Aerodrome,49.290739,-123.118541,CA,Vancouver,seaplane_base,yes
 CXI,Cassidy International Airport,1.986278,-157.350011,KI,Kiritimati,large_airport,yes
 CXJ,Hugo Cantergiani Regional Airport,-29.197183,-51.187647,BR,Caxias Do Sul,medium_airport,yes
 CXP,Tunggul Wulung Airport,-7.645060,109.033997,ID,Cilacap,medium_airport,yes
@@ -737,7 +727,6 @@ CYB,Charles Kirkconnell International Airport,19.687000,-79.882797,KY,West End,m
 CYC,Caye Chapel Airport,17.683792,-88.044985,BZ,Caye Chapel,medium_airport,yes
 CYF,Chefornak Airport,60.136667,-164.279167,US,Chefornak,small_airport,yes
 CYI,Chiayi Airport,23.462577,120.390544,TW,Shuishang,medium_airport,yes
-CYM,Chatham Seaplane Base,57.514900,-134.945999,US,Chatham,seaplane_base,yes
 CYO,Vilo Acuña International Airport,21.616501,-81.545998,CU,Cayo Largo del Sur,medium_airport,yes
 CYP,Calbayog Airport,12.072574,124.545080,PH,Calbayog City,medium_airport,yes
 CYS,Cheyenne Regional Jerry Olson Field,41.155701,-104.811997,US,Cheyenne,medium_airport,yes
@@ -793,7 +782,6 @@ DGA,Dangriga Airport,16.982510,-88.230988,BZ,Dangriga,medium_airport,yes
 DGH,Deoghar Airport,24.446842,86.704955,IN,Deoghar,small_airport,yes
 DGO,General Guadalupe Victoria International Airport,24.125468,-104.527938,MX,Durango,medium_airport,yes
 DGT,Sibulan Airport,9.334183,123.301910,PH,Dumaguete City,medium_airport,yes
-DHB,Deer Harbor SPB,48.616667,-123.002778,US,Deer Harbor,seaplane_base,yes
 DHM,Kangra Airport,32.164902,76.263018,IN,Kangra,medium_airport,yes
 DHN,Dothan Regional Airport,31.321301,-85.449600,US,Dothan,medium_airport,yes
 DHX,Dhoho International Airport,-7.749527,111.946831,ID,Kediri,medium_airport,yes
@@ -805,7 +793,6 @@ DIJ,Dijon Longvic airport,47.268902,5.090000,FR,Dijon,medium_airport,yes
 DIK,Dickinson Theodore Roosevelt Regional Airport,46.797533,-102.801905,US,Dickinson,medium_airport,yes
 DIL,Presidente Nicolau Lobato International Airport,-8.546562,125.524507,TL,Dili,large_airport,yes
 DIN,Dien Bien Phu Airport,21.397499,103.008003,VN,Dien Bien Phu,medium_airport,yes
-DIO,Diomede Heliport,65.758367,-168.953676,US,Diomede,heliport,yes
 DIR,Aba Tenna Dejazmach Yilma International Airport,9.623549,41.855027,ET,Dire Dawa,large_airport,yes
 DIU,Diu Airport,20.714185,70.921855,IN,Diu,small_airport,yes
 DIY,Diyarbakır Airport,37.893902,40.201000,TR,Diyarbakır,medium_airport,yes
@@ -884,7 +871,6 @@ DVO,Francisco Bangoy International Airport,7.125520,125.646004,PH,Davao,large_ai
 DWB,Soalala Airport,-16.101690,45.358837,MG,Soalala,small_airport,yes
 DWC,Al Maktoum International Airport,24.896171,55.162350,AE,Dubai(Jebel Ali),large_airport,yes
 DWD,Dawadmi Domestic Airport,24.449900,44.121201,SA,Dawadmi,medium_airport,yes
-DWO,Diyawanna Oya Seaplane Base,6.906585,79.909000,LK,Sri Jayawardenepura Kotte,seaplane_base,yes
 DXB,Dubai International Airport,25.249790,55.370992,AE,Dubai,large_airport,yes
 DXJ,Xiangxi Biancheng Airport,28.497200,109.521800,CN,Xiangxi,small_airport,yes
 DXN,Noida International Airport,28.179868,77.611843,IN,Gautam Buddha Nagar,large_airport,yes
@@ -909,7 +895,6 @@ EBJ,Esbjerg Airport,55.525902,8.553400,DK,Esbjerg,medium_airport,yes
 EBL,Erbil International Airport,36.236047,43.946615,IQ,Arbil,large_airport,yes
 ECN,Ercan International Airport,35.153064,33.507352,CY,Tymbou (Kirklar),large_airport,yes
 ECP,Northwest Florida Beaches International Airport,30.357106,-85.795414,US,Panama City Beach,medium_airport,yes
-EDA,Edna Bay Seaplane Base,55.949653,-133.661012,US,Edna Bay,seaplane_base,yes
 EDI,Edinburgh Airport,55.950145,-3.372288,GB,"Ingliston, Edinburgh",large_airport,yes
 EDL,Eldoret International Airport,0.404458,35.238899,KE,Eldoret,large_airport,yes
 EDO,Balıkesir Koca Seyit Airport,39.552533,27.010192,TR,Edremit,large_airport,yes
@@ -940,7 +925,6 @@ ELP,El Paso International Airport,31.809908,-106.375607,US,El Paso,large_airport
 ELQ,Prince Naif bin Abdulaziz International Airport,26.302799,43.774399,SA,Qassim,large_airport,yes
 ELS,King Phalo Airport,-33.035599,27.825899,ZA,East London,large_airport,yes
 ELU,Guemar Airport - مطار قمار بالوادي,33.511398,6.776790,DZ,Guemar,medium_airport,yes
-ELV,Elfin Cove Seaplane Base,58.195202,-136.347000,US,Elfin Cove,seaplane_base,yes
 EMA,East Midlands Airport,52.831100,-1.328060,GB,"Nottingham, Leicestershire",large_airport,yes
 EMD,Emerald Airport,-23.567499,148.179001,AU,Emerald,medium_airport,yes
 EME,Emden Airport,53.391109,7.227500,DE,Emden,small_airport,yes
@@ -987,7 +971,6 @@ EVV,Evansville Regional Airport,38.036999,-87.532402,US,Evansville,medium_airpor
 EWB,New Bedford Regional Airport,41.676102,-70.956902,US,New Bedford,medium_airport,yes
 EWN,Coastal Carolina Regional Airport,35.073002,-77.042900,US,New Bern,medium_airport,yes
 EWR,Newark Liberty International Airport,40.689400,-74.170545,US,Newark,large_airport,yes
-EXI,Excursion Inlet Seaplane Base,58.420502,-135.449005,US,Excursion Inlet,seaplane_base,yes
 EXT,Exeter International Airport,50.734261,-3.413984,GB,"Exeter, Devon",medium_airport,yes
 EYK,Beloyarskiy Airport,63.686901,66.698601,RU,,medium_airport,yes
 EYP,El Alcaravan - Yopal Airport,5.319110,-72.384000,CO,Yopal,medium_airport,yes
@@ -1004,7 +987,6 @@ FAY,Fayetteville Regional Airport - Grannis Field,34.991199,-78.880302,US,Fayett
 FBD,Fayzabad Airport,37.122148,70.520100,AF,Fayzabad,small_airport,yes
 FBE,Paulo Abdala Airport,-26.059380,-53.063827,BR,Francisco Beltrão,small_airport,yes
 FBM,Lubumbashi International Airport,-11.591494,27.530753,CD,Lubumbashi,large_airport,yes
-FBS,Friday Harbor Seaplane Base,48.537300,-123.010002,US,Friday Harbor,seaplane_base,yes
 FCA,Glacier Park International Airport,48.310501,-114.255997,US,Kalispell,medium_airport,yes
 FCN,Sea-Airport Cuxhaven/Nordholz / Nordholz Naval Airbase,53.767689,8.659201,DE,Wurster Nordseeküste,medium_airport,yes
 FCO,Rome–Fiumicino Leonardo da Vinci International Airport,41.804532,12.251998,IT,Rome,large_airport,yes
@@ -1044,7 +1026,6 @@ FNC,Cristiano Ronaldo International Airport,32.697812,-16.774613,PT,Funchal,larg
 FND,Funadhoo Airport,6.162443,73.287520,MV,Funadhoo,small_airport,yes
 FNI,Nîmes-Arles-Camargue Airport,43.757401,4.416350,FR,Nîmes/Garons,medium_airport,yes
 FNJ,Pyongyang Sunan International Airport,39.224098,125.669998,KP,Pyongyang,large_airport,yes
-FNR,Funter Bay Seaplane Base,58.254398,-134.897995,US,Funter Bay,seaplane_base,yes
 FNT,Bishop International Airport,42.969294,-83.743355,US,Flint,medium_airport,yes
 FOA,Foula Airfield,60.121916,-2.053439,GB,Foula,small_airport,yes
 FOC,Fuzhou Changle International Airport,25.929254,119.672524,CN,Fuzhou (Changle),large_airport,yes
@@ -1231,7 +1212,6 @@ GYU,Guyuan Liupanshan Airport,36.078889,106.216944,CN,Guyuan (Yuanzhou),medium_a
 GYY,Gary/Chicago International Airport,41.617087,-87.413206,US,Gary,medium_airport,yes
 GYZ,Gruyere Airport,-28.034548,123.815060,AU,Cosmo Newbery,small_airport,yes
 GZG,Garze Gesar Airport,31.757500,99.554167,CN,Garzê (Garzê),small_airport,yes
-GZM,Xewkija Heliport,36.027199,14.272800,MT,Gozo,heliport,yes
 GZO,Nusatupe Airport,-8.097780,156.863998,SB,Gizo,small_airport,yes
 GZP,Gazipaşa-Alanya Airport,36.298832,32.297017,TR,Gazipaşa,medium_airport,yes
 GZT,Gaziantep Oğuzeli International Airport,36.947201,37.478699,TR,Gaziantep,large_airport,yes
@@ -1251,7 +1231,6 @@ HAV,José Martí International Airport,22.989201,-82.409103,CU,Havana,large_airp
 HBA,Hobart International Airport,-42.837032,147.513022,AU,Hobart (Cambridge),large_airport,yes
 HBE,Alexandria International Airport,30.932490,29.696437,EG,Alexandria,large_airport,yes
 HBQ,Haibei Qilian Airport,38.008068,100.645065,CN,Haibei (Qilian),small_airport,yes
-HBT,Hambantota Seaplane Base,6.124043,81.103000,LK,Hambantota,seaplane_base,yes
 HBX,Hubballi Airport,15.361084,75.082096,IN,Hubballi,medium_airport,yes
 HCJ,Hechi Jinchengjiang Airport,24.804344,107.710819,CN,Hechi (Jinchengjiang),medium_airport,yes
 HCR,Holy Cross Airport,62.188301,-159.774994,US,Holy Cross,medium_airport,yes
@@ -1288,7 +1267,6 @@ HGR,Hagerstown Regional Richard A Henson Field,39.708771,-77.728014,US,Hagerstow
 HGU,Mount Hagen Kagamuga Airport,-5.828212,144.299412,PG,Mount Hagen,medium_airport,yes
 HHH,Hilton Head Airport,32.224400,-80.697502,US,Hilton Head Island,medium_airport,yes
 HHN,Frankfurt-Hahn Airport,49.946353,7.261734,DE,Frankfurt am Main (Lautzenhausen),large_airport,yes
-HHP,Shun Tak Heliport,22.288868,114.152369,HK,Central and Western,heliport,yes
 HHQ,Hua Hin Airport,12.636200,99.951500,TH,Hua Hin,medium_airport,yes
 HHR,Jack Northrop Field Hawthorne Municipal Airport,33.922798,-118.334999,US,Hawthorne,medium_airport,yes
 HHZ,Hikueru Airport,-17.548297,-142.612037,PF,Hikueru,small_airport,yes
@@ -1300,7 +1278,6 @@ HIJ,Hiroshima Airport,34.436100,132.919006,JP,Hiroshima,large_airport,yes
 HIL,Shilavo Airport,6.077545,44.763736,ET,Shilavo,small_airport,yes
 HIN,Sacheon Airport / Sacheon Air Base,35.088591,128.071747,KR,Sacheon,medium_airport,yes
 HIR,Honiara International Airport,-9.428000,160.054993,SB,Honiara,large_airport,yes
-HIS,Hayman Island Resort Seaplane Base,-20.059999,148.880997,AU,Hayman Island,seaplane_base,yes
 HJB,Hejing Bayinbuluke Airport,42.976395,83.995543,CN,Hejing,small_airport,yes
 HJJ,Huaihua Zhijiang Airport,27.443087,109.704666,CN,Huaihua,medium_airport,yes
 HJR,Khajuraho Airport,24.817200,79.918602,IN,Khajuraho,medium_airport,yes
@@ -1389,8 +1366,6 @@ HWR,Halwara International Airport,30.748501,75.629799,IN,Halwara,large_airport,y
 HXD,Haixi Delingha Airport,37.125286,97.268658,CN,Delingha,medium_airport,yes
 HYA,Cape Cod Gateway Airport,41.669300,-70.280403,US,Hyannis,medium_airport,yes
 HYD,Rajiv Gandhi International Airport,17.231318,78.429855,IN,Hyderabad,large_airport,yes
-HYG,Hydaburg Seaplane Base,55.205227,-132.830286,US,Hydaburg,seaplane_base,yes
-HYL,Hollis Clark Bay Seaplane Base,55.481529,-132.646008,US,Hollis,seaplane_base,yes
 HYN,Taizhou Luqiao Airport,28.562201,121.429001,CN,Taizhou (Luqiao),medium_airport,yes
 HYS,Hays Regional Airport,38.844521,-99.273148,US,Hays,medium_airport,yes
 HZA,Heze Mudan Airport,35.212972,115.736748,CN,Heze (Dingtao),medium_airport,yes
@@ -1428,7 +1403,6 @@ IGU,Cataratas International Airport,-25.594167,-54.489444,BR,Foz do Iguaçu,larg
 IIA,Inishmaan Aerodrome,53.092999,-9.568060,IE,Inis Meáin,small_airport,yes
 IJK,Izhevsk Airport,56.834524,53.462172,RU,Izhevsk,medium_airport,yes
 IKA,Imam Khomeini International Airport,35.416100,51.152199,IR,Tehran,large_airport,yes
-IKE,Ikerasak Heliport,70.498145,-51.303084,GL,Ikerasak,heliport,yes
 IKG,Karakol International Airport,42.508099,78.407799,KG,Karakol,medium_airport,yes
 IKI,Iki Airport,33.749001,129.785004,JP,Iki,medium_airport,yes
 IKO,Nikolski Air Station,52.941552,-168.849478,US,Nikolski,small_airport,yes
@@ -1464,10 +1438,8 @@ INV,Inverness Airport,57.542500,-4.047500,GB,Inverness,medium_airport,yes
 INZ,In Salah Airport,27.250999,2.512020,DZ,In Salah,medium_airport,yes
 IOA,Ioannina King Pyrrhus National Airport,39.696400,20.822500,GR,Ioannina,medium_airport,yes
 IOM,Isle of Man Airport,54.083081,-4.623871,IM,Castletown,large_airport,yes
-IOQ,Isortoq Heliport,65.547792,-38.976552,GL,Isortoq,heliport,yes
 IOR,Inishmore Aerodrome,53.106701,-9.653610,IE,Inis Mór,small_airport,yes
 IOS,Bahia - Jorge Amado Airport,-14.815929,-39.033458,BR,Ilhéus,medium_airport,yes
-IOT,Illorsuit Heliport,71.241944,-53.562877,GL,Illorsuit,heliport,yes
 IPC,Mataveri International Airport,-27.165411,-109.421027,CL,Isla De Pascua,large_airport,yes
 IPH,Sultan Azlan Shah Airport,4.567330,101.091643,MY,Ipoh,large_airport,yes
 IPI,San Luis Airport,0.861946,-77.671783,CO,Ipiales,medium_airport,yes
@@ -1500,7 +1472,6 @@ ITM,Osaka Itami International Airport,34.780853,135.440829,JP,Osaka,large_airpor
 ITO,Hilo International Airport,19.721350,-155.045428,US,Hilo,medium_airport,yes
 ITU,Iturup Airport,45.256389,147.955490,RU,Kurilsk,small_airport,yes
 IUE,Niue International Airport,-19.080109,-169.923493,NU,Alofi,medium_airport,yes
-IUI,Innarsuit Heliport,73.199895,-56.010817,GL,Innarsuit,heliport,yes
 IVC,Invercargill Airport,-46.412399,168.313004,NZ,Invercargill,medium_airport,yes
 IVL,Ivalo Airport,68.607300,27.405300,FI,Ivalo,large_airport,yes
 IWA,Ivanovo South Airport,56.939400,40.940800,RU,Ivanovo,medium_airport,yes
@@ -1539,10 +1510,8 @@ JBB,Notohadinegoro Airport,-8.242494,113.693476,ID,Jember,small_airport,yes
 JBK,Qitai Jiangbulake Airport,44.166086,89.550140,CN,Qitai,small_airport,yes
 JBQ,La Isabela International Airport,18.572500,-69.985603,DO,La Isabela,medium_airport,yes
 JBR,Jonesboro Municipal Airport,35.831699,-90.646400,US,Jonesboro,medium_airport,yes
-JCH,Qasigiannguit Heliport,68.822816,-51.173447,GL,Qasigiannguit,heliport,yes
 JCK,Julia Creek Airport,-20.668301,141.723007,AU,,small_airport,yes
 JCL,České Budějovice South Bohemian Airport,48.948171,14.428320,CZ,České Budějovice,large_airport,yes
-JCU,Ceuta Heliport,35.892657,-5.306321,ES,Ceuta,heliport,yes
 JDF,Francisco de Assis Airport,-21.791482,-43.386072,BR,Juiz de Fora,medium_airport,yes
 JDH,Jodhpur Airport,26.251101,73.048897,IN,Jodhpur,medium_airport,yes
 JDO,Orlando Bezerra de Menezes Airport,-7.219320,-39.269096,BR,Juazeiro do Norte,small_airport,yes
@@ -1558,8 +1527,6 @@ JGA,Jamnagar Airport,22.465500,70.012604,IN,Jamnagar,medium_airport,yes
 JGB,Jagdalpur Airport,19.074301,82.036797,IN,Jagdalpur,small_airport,yes
 JGD,Daxing'anling Elunchun Airport,50.371389,124.117500,CN,Jiagedaqi,medium_airport,yes
 JGN,Jiayuguan International Airport,39.859052,98.339344,CN,Jiayuguan,large_airport,yes
-JGO,Qeqertarsuaq Heliport,69.251182,-53.514876,GL,Qeqertarsuaq,heliport,yes
-JGR,Kangilinnguit Heliport,61.228960,-48.096980,GL,Kangilinnguit,heliport,yes
 JGS,Jinggangshan Airport,26.856899,114.737000,CN,Ji'an,medium_airport,yes
 JHB,Senai International Airport,1.641310,103.669998,MY,Johor Bahru,large_airport,yes
 JHG,Xishuangbanna Gasa International Airport,21.974648,100.762224,CN,Jinghong (Gasa),large_airport,yes
@@ -1593,8 +1560,6 @@ JMU,Jiamusi Songjiang International Airport,46.842793,130.464260,CN,Jiamusi,medi
 JNB,O.R. Tambo International Airport,-26.140081,28.246801,ZA,Johannesburg,large_airport,yes
 JNG,Jining Da'an Airport,35.647358,116.743269,CN,Jining,medium_airport,yes
 JNH,Jiaxing Nanhu Airport,30.698056,120.663056,CN,"Xiuzhou, Hangzhou",medium_airport,yes
-JNN,Nanortalik Heliport,60.141884,-45.232977,GL,Nanortalik,heliport,yes
-JNS,Narsaq Heliport,60.917283,-46.059923,GL,Narsaq,heliport,yes
 JNU,Juneau International Airport,58.354935,-134.574416,US,Juneau,medium_airport,yes
 JNX,Naxos Island National Airport,37.081100,25.368099,GR,Naxos,small_airport,yes
 JNZ,Jinzhou Bay Airport,40.936032,121.277114,CN,Jinzhou (Linghai),medium_airport,yes
@@ -1607,7 +1572,6 @@ JPA,Presidente Castro Pinto International Airport,-7.148691,-34.950554,BR,João 
 JPE,Nagib Demachki Airport,-3.019798,-47.316474,BR,Paragominas,small_airport,yes
 JPR,Ji-Paraná Airport,-10.870743,-61.846675,BR,Ji-Paraná,small_airport,yes
 JQA,Qaarsut Airport,70.734200,-52.696201,GL,Uummannaq,small_airport,yes
-JRA,West 30th Street Heliport,40.755107,-74.006896,US,New York,heliport,yes
 JRG,Jharsuguda Airport,21.913500,84.050400,IN,,small_airport,yes
 JRH,Jorhat Airport,26.730456,94.175416,IN,Jorhat,medium_airport,yes
 JRO,Kilimanjaro International Airport,-3.427049,37.073530,TZ,Arusha,large_airport,yes
@@ -1627,10 +1591,8 @@ JUB,Juba International Airport,4.872010,31.601101,SS,Juba,large_airport,yes
 JUH,Chizhou Jiuhuashan Airport,30.740300,117.685600,CN,Chizhou,small_airport,yes
 JUI,Juist Airport,53.681421,7.056398,DE,Juist,small_airport,yes
 JUJ,Gobernador Horacio Guzman International Airport,-24.392799,-65.097801,AR,San Salvador de Jujuy,large_airport,yes
-JUK,Ukkusissat Heliport,71.049438,-51.890016,GL,Ukkusissat,heliport,yes
 JUL,Inca Manco Capac International Airport,-15.467689,-70.156530,PE,Juliaca,large_airport,yes
 JUM,Jumla Airport,29.274200,82.193298,NP,Jumla,small_airport,yes
-JUU,Nuugaatsiaq Heliport,71.538769,-53.205038,GL,Nuugaatsiaq,heliport,yes
 JUV,Upernavik Airport,72.790199,-56.130600,GL,Upernavik,small_airport,yes
 JUZ,Quzhou Airport,28.966130,118.898793,CN,Quzhou (Kezheng),medium_airport,yes
 JXA,Jixi Xingkaihu Airport,45.293000,131.193000,CN,Jixi,medium_airport,yes
@@ -1640,7 +1602,6 @@ KAA,Kasama Airport,-10.210169,31.123045,ZM,Kasama,small_airport,yes
 KAB,Kariba Airport,-16.519800,28.885000,ZW,Kariba,medium_airport,yes
 KAC,Qamishli International Airport,37.020599,41.191399,SY,Qamishli,medium_airport,yes
 KAD,Kaduna International Airport,10.696000,7.320110,NG,Kaduna,large_airport,yes
-KAE,Kake Seaplane Base,56.973000,-133.945999,US,Kake,seaplane_base,yes
 KAI,Kaieteur Airport,5.177349,-59.488980,GY,Kaieteur Falls,medium_airport,yes
 KAJ,Kajaani Airport,64.285500,27.692400,FI,Kajaani,medium_airport,yes
 KAL,Kaltag Airport,64.318640,-158.741970,US,Kaltag,small_airport,yes
@@ -1655,7 +1616,6 @@ KBR,Sultan Ismail Petra Airport,6.166850,102.292999,MY,Kota Baharu,medium_airpor
 KBU,Gusti Syamsir Alam Airport,-3.294796,116.163815,ID,Stagen,small_airport,yes
 KBV,Krabi International Airport,8.095591,98.988955,TH,Krabi,large_airport,yes
 KCA,Kuqa Qiuci Airport,41.677856,82.872917,CN,Kuqa,small_airport,yes
-KCC,Coffman Cove Seaplane Base,56.012586,-132.835093,US,Coffman Cove,seaplane_base,yes
 KCG,Chignik Airport,56.311501,-158.373001,US,Chignik,small_airport,yes
 KCH,Kuching International Airport,1.487364,110.352859,MY,Kuching,large_airport,yes
 KCM,Kahramanmaraş Airport,37.538826,36.953522,TR,Kahramanmaraş,medium_airport,yes
@@ -1671,10 +1631,8 @@ KDM,Kaadedhdhoo Airport,0.488131,72.996902,MV,Huvadhu Atoll,medium_airport,yes
 KDO,Kadhdhoo Airport,1.859170,73.521896,MV,Kadhdhoo,medium_airport,yes
 KDU,Skardu International Airport,35.338660,75.538648,PK,Skardu,large_airport,yes
 KDV,Vunisea Airport,-19.058100,178.156998,FJ,Vunisea,small_airport,yes
-KDZ,Polgolla Reservoir Seaplane Base,7.325100,80.642200,LK,Kandy,seaplane_base,yes
 KEB,Nanwalek Airport,59.352100,-151.925003,US,Nanwalek,small_airport,yes
 KEF,Keflavik International Airport,63.985001,-22.605600,IS,Reykjavík,large_airport,yes
-KEH,Kenmore Air Harbor LLC Seaplane Base,47.754799,-122.259003,US,Kenmore,seaplane_base,yes
 KEJ,Alexei Leonov Kemerovo International Airport,55.270100,86.107201,RU,Kemerovo,large_airport,yes
 KEM,Kemi-Tornio Airport,65.778702,24.582100,FI,Kemi / Tornio,medium_airport,yes
 KEP,Nepalgunj Airport,28.103600,81.667000,NP,Nepalgunj,medium_airport,yes
@@ -1693,7 +1651,6 @@ KGI,Kalgoorlie Boulder Airport,-30.791543,121.464586,AU,Broadwood,medium_airport
 KGK,Koliganek Airport,59.726601,-157.259003,US,Koliganek,small_airport,yes
 KGL,Kigali International Airport,-1.968630,30.139500,RW,Kigali,large_airport,yes
 KGP,Kogalym International Airport,62.190399,74.533798,RU,Kogalym,medium_airport,yes
-KGQ,Kangersuatsiaq Heliport,72.381092,-55.536586,GL,Kangersuatsiaq,heliport,yes
 KGS,"Kos International Airport ""Ippokratis""",36.794523,27.091150,GR,Kos Island,large_airport,yes
 KGT,Kangding Airport,30.142464,101.738720,CN,Garzê (Kangding),medium_airport,yes
 KGX,Grayling Airport,62.895187,-160.066289,US,Grayling,small_airport,yes
@@ -1727,7 +1684,6 @@ KJH,Kaili Huangping Airport,26.972000,107.988000,CN,Kaili (Huangping),medium_air
 KJI,Burqin Kanas Airport,48.222300,86.995900,CN,Burqin,medium_airport,yes
 KJT,Kertajati International Airport,-6.647384,108.165561,ID,Kertajati,medium_airport,yes
 KKA,Koyuk Alfred Adams Airport,64.939499,-161.154007,US,Koyuk,small_airport,yes
-KKB,Kitoi Bay Seaplane Base,58.190899,-152.369995,US,Kitoi Bay,seaplane_base,yes
 KKC,Khon Kaen Airport,16.466600,102.783997,TH,Khon Kaen,medium_airport,yes
 KKE,Kerikeri Airport,-35.259148,173.913317,NZ,Kerikeri,medium_airport,yes
 KKH,Kongiganak Airport,59.960800,-162.880997,US,Kongiganak,small_airport,yes
@@ -1759,7 +1715,6 @@ KMO,Manokotak Airport,58.932056,-158.901886,US,Manokotak,small_airport,yes
 KMQ,Komatsu Airport / JASDF Komatsu Air Base,36.393407,136.406895,JP,Kanazawa,large_airport,yes
 KMS,Prempeh I International Airport,6.714560,-1.590820,GH,Kumasi,large_airport,yes
 KMW,Kostroma Sokerkino Airport,57.796902,41.019402,RU,Kostroma,medium_airport,yes
-KMY,Moser Bay Seaplane Base,57.025600,-154.145996,US,Moser Bay,seaplane_base,yes
 KND,Kindu Airport,-2.919180,25.915400,CD,Kindu,medium_airport,yes
 KNG,Utarom Airport,-3.644600,133.695116,ID,Kaimana,medium_airport,yes
 KNH,Kinmen Airport,24.427900,118.359001,TW,Shang-I,medium_airport,yes
@@ -1781,15 +1736,11 @@ KOS,Sihanouk International Airport,10.570557,103.632067,KH,Preah Sihanouk,large_
 KOT,Kotlik Airport,63.030602,-163.533005,US,Kotlik,small_airport,yes
 KOV,Kokshetau International Airport,53.329102,69.594597,KZ,Kokshetau,large_airport,yes
 KOW,Ganzhou Huangjin Airport,25.853333,114.778889,CN,Ganzhou,small_airport,yes
-KOY,Olga Bay Seaplane Base,57.161499,-154.229996,US,Olga Bay,seaplane_base,yes
 KOZ,Ouzinkie Airport,57.942094,-152.464314,US,Ouzinkie,small_airport,yes
-KPB,Point Baker Seaplane Base,56.351898,-133.623001,US,Point Baker,seaplane_base,yes
 KPN,Kipnuk Airport,59.931796,-164.028196,US,Kipnuk,small_airport,yes
 KPO,Pohang Airport (G-815/K-3),35.987955,129.420383,KR,Pohang,medium_airport,yes
-KPR,Port Williams Seaplane Base,58.490101,-152.582001,US,Port Williams,seaplane_base,yes
 KPV,Perryville Airport,55.906500,-159.160910,US,Perryville,small_airport,yes
 KPW,Keperveem Airport,67.845001,166.139999,RU,Keperveem,medium_airport,yes
-KPY,Port Bailey Seaplane Base,57.931257,-153.040838,US,Port Bailey,seaplane_base,yes
 KQA,Akutan Airport,54.144590,-165.604332,US,Akutan,small_airport,yes
 KQH,Kishangarh Airport Ajmer,26.591007,74.812956,IN,Ajmer (Kishangarh),medium_airport,yes
 KQR,Karara Airport,-29.217223,116.687154,AU,Karara,small_airport,yes
@@ -1825,7 +1776,6 @@ KSU,"Kristiansund Airport, Kvernberget",63.111801,7.824520,NO,Kvernberget,medium
 KSY,Kars Airport,40.562199,43.115002,TR,Kars,medium_airport,yes
 KSZ,Kotlas Airport,61.235802,46.697498,RU,Kotlas,medium_airport,yes
 KTA,Karratha Airport,-20.712200,116.773003,AU,Karratha,medium_airport,yes
-KTB,Thorne Bay Seaplane Base,55.682762,-132.532883,US,Thorne Bay,seaplane_base,yes
 KTD,Kitadaito Airport,25.944700,131.326996,JP,Kitadaitōjima,medium_airport,yes
 KTG,Rahadi Osman Airport,-1.817165,109.963469,ID,Ketapang,medium_airport,yes
 KTI,Techo International Airport,11.359987,104.921272,KH,Phnom Penh (Boeng Khyang),large_airport,yes
@@ -1849,7 +1799,6 @@ KUS,Kulusuk Airport,65.573601,-37.123600,GL,Kulusuk,medium_airport,yes
 KUT,David the Builder Kutaisi International Airport,42.177448,42.485353,GE,Kopitnari,large_airport,yes
 KUU,Kullu Manali Airport,31.876699,77.154404,IN,Bhuntar,medium_airport,yes
 KUV,Gunsan Airport / Gunsan Air Base,35.903801,126.615997,KR,Gunsan,medium_airport,yes
-KUZ,Kuummiut Heliport,65.863935,-36.997919,GL,Kuummiut,heliport,yes
 KVA,Kavala Alexander the Great International Airport,40.913300,24.619200,GR,Kavala,large_airport,yes
 KVC,King Cove Airport,55.116299,-162.266006,US,King Cove,small_airport,yes
 KVG,Kavieng Airport,-2.579400,150.807999,PG,Kavieng,medium_airport,yes
@@ -1867,10 +1816,8 @@ KWK,Kwigillingok Airport,59.876499,-163.169005,US,Kwigillingok,small_airport,yes
 KWL,Guilin Liangjiang International Airport,25.219828,110.039553,CN,Guilin (Lingui),large_airport,yes
 KWM,Kowanyama Airport,-15.485369,141.752572,AU,Kowanyama,medium_airport,yes
 KWN,Quinhagak Airport,59.755100,-161.845000,US,Quinhagak,small_airport,yes
-KWP,West Point Village Seaplane Base,57.770100,-153.548996,US,West Point,seaplane_base,yes
 KWT,Kwethluk Airport,60.790298,-161.444000,US,Kwethluk,small_airport,yes
 KWZ,Kolwezi Airport,-10.765900,25.505699,CD,Kolwezi,medium_airport,yes
-KXA,Kasaan Seaplane Base,55.537399,-132.397995,US,Kasaan,seaplane_base,yes
 KXB,Sangia Nibandera Airport,-4.338158,121.524047,ID,Kolaka,medium_airport,yes
 KXF,Koro Island Airport,-17.345800,179.421997,FJ,Koro Island,small_airport,yes
 KXK,Komsomolsk-on-Amur Airport,50.409000,136.934006,RU,Komsomolsk-on-Amur,medium_airport,yes
@@ -1882,7 +1829,6 @@ KYP,Kyaukpyu Airport,19.426399,93.534798,MM,Kyaukpyu,medium_airport,yes
 KYS,Kayes Dag Dag Airport,14.482521,-11.399335,ML,Kayes,medium_airport,yes
 KYU,Koyukuk Airport,64.876099,-157.727005,US,Koyukuk,small_airport,yes
 KYZ,Kyzyl Airport,51.669399,94.400597,RU,Kyzyl,medium_airport,yes
-KZB,Zachar Bay Seaplane Base,57.553001,-153.746052,US,Zachar Bay,seaplane_base,yes
 KZI,Kozani National Airport Filippos,40.286098,21.840799,GR,Kozani,medium_airport,yes
 KZN,Kazan International Airport,55.606201,49.278702,RU,Kazan,large_airport,yes
 KZO,Korkyt Ata International Airport,44.706902,65.592499,KZ,Kyzylorda,large_airport,yes
@@ -1910,7 +1856,6 @@ LBD,Khujand International Airport,40.215401,69.694702,TJ,Khujand,large_airport,y
 LBE,Arnold Palmer Regional Airport,40.275902,-79.404800,US,Latrobe,medium_airport,yes
 LBF,North Platte Regional Airport Lee Bird Field,41.126202,-100.683998,US,North Platte,medium_airport,yes
 LBG,Paris-Le Bourget International Airport,48.962276,2.436539,FR,Paris,large_airport,yes
-LBH,Palm Beach Seaplane Base,-33.587100,151.323400,AU,Sydney,seaplane_base,yes
 LBJ,Komodo Airport,-8.480694,119.888306,ID,"Labuan Bajo, Manggarai Barat",small_airport,yes
 LBL,Liberal Mid-America Regional Airport,37.044201,-100.959999,US,Liberal,medium_airport,yes
 LBP,Long Banga Airport,3.202138,115.401811,MY,Long Banga,small_airport,yes
@@ -1984,7 +1929,6 @@ LJG,Lijiang Sanyi International Airport,26.677483,100.244944,CN,Lijiang,large_ai
 LJU,Ljubljana Jože Pučnik Airport,46.223701,14.457600,SI,Zgornji Brnik,large_airport,yes
 LKA,Larantuka Gewayentana Airport,-8.274424,123.002000,ID,Tiwatobi,small_airport,yes
 LKB,Lakeba Island Airport,-18.199200,-178.817001,FJ,Lakeba Island,small_airport,yes
-LKE,Kenmore Air Harbor Seaplane Base,47.629002,-122.338997,US,Seattle,seaplane_base,yes
 LKI,Lasikin Airport,2.411328,96.327722,ID,Lubang,small_airport,yes
 LKL,"Lakselv Airport, Banak",70.068802,24.973499,NO,Lakselv,medium_airport,yes
 LKM,Bolaang Mongondow Airport,0.888550,124.033634,ID,Lolak,small_airport,yes
@@ -1995,7 +1939,6 @@ LLB,Libo Airport,25.452500,107.961667,CN,Qiannan (Libo),small_airport,yes
 LLF,Yongzhou Lingling Airport,26.338661,111.610043,CN,Yongzhou,medium_airport,yes
 LLK,Lankaran International Airport,38.757919,48.807042,AZ,Lankaran,small_airport,yes
 LLO,Bua - Palopo Lagaligo Airport,-3.082270,120.244823,ID,Palopo,small_airport,yes
-LLU,Alluitsup Paa Heliport,60.464450,-45.569170,GL,Alluitsup Paa,heliport,yes
 LLV,Lüliang Dawu Airport,37.683333,111.142778,CN,Lüliang,medium_airport,yes
 LLW,Kamuzu International Airport,-13.789400,33.780998,MW,Lumbadzi,large_airport,yes
 LMA,Minchumina Airport,63.886002,-152.302002,US,Minchumina,small_airport,yes
@@ -2131,7 +2074,6 @@ MCE,Merced Regional Macready Field,37.284698,-120.514000,US,Merced,medium_airpor
 MCG,McGrath Airport,62.952900,-155.606003,US,McGrath,medium_airport,yes
 MCI,Kansas City International Airport,39.301699,-94.713893,US,Kansas City,large_airport,yes
 MCK,McCook Ben Nelson Regional Airport,40.207787,-100.592794,US,McCook,medium_airport,yes
-MCM,Monaco Heliport,43.725798,7.419673,MC,Fontvieille,heliport,yes
 MCN,Middle Georgia Regional Airport,32.692799,-83.649200,US,Macon,medium_airport,yes
 MCO,Orlando International Airport,28.429399,-81.308998,US,Orlando,large_airport,yes
 MCP,Macapá - Alberto Alcolumbre International Airport,0.050664,-51.072201,BR,Macapá,medium_airport,yes
@@ -2308,7 +2250,6 @@ MSY,Louis Armstrong New Orleans International Airport,29.993401,-90.264673,US,Ne
 MSZ,Welwitschia Mirabilis International Airport,-15.261200,12.146800,AO,Moçâmedes,medium_airport,yes
 MTF,Mizan Teferi Airport,6.957100,35.554700,ET,Mizan Teferi,small_airport,yes
 MTJ,Montrose Regional Airport,38.509800,-107.893997,US,Montrose,medium_airport,yes
-MTM,Metlakatla Seaplane Base,55.131001,-131.578003,US,Metlakatla,seaplane_base,yes
 MTP,Montauk Airport,41.076500,-71.920797,US,Montauk,small_airport,yes
 MTR,Los Garzones Airport,8.823740,-75.825800,CO,Montería,medium_airport,yes
 MTT,Minatitlán/Coatzacoalcos International Airport,18.103399,-94.580704,MX,Cosoleacaque,medium_airport,yes
@@ -2416,13 +2357,11 @@ NGS,Nagasaki Airport,32.916901,129.914001,JP,Nagasaki,large_airport,yes
 NHV,Nuku Hiva Airport,-8.795600,-140.229004,PF,Nuku Hiva,medium_airport,yes
 NIB,Nikolai Airport,63.017949,-154.360399,US,Nikolai,small_airport,yes
 NIM,Diori Hamani International Airport,13.481500,2.183610,NE,Niamey,large_airport,yes
-NIQ,Niaqornat Heliport,70.789385,-53.662945,GL,Niaqornat,heliport,yes
 NIU,Naiu Airport,-16.119296,-146.368768,PF,Naiu Atoll,small_airport,yes
 NJC,Nizhnevartovsk Airport,60.949299,76.483597,RU,Nizhnevartovsk,large_airport,yes
 NJF,Al Najaf International Airport,31.991116,44.405019,IQ,Najaf,large_airport,yes
 NKC,Nouakchott–Oumtounsy International Airport,18.310000,-15.969722,MR,Nouakchott,large_airport,yes
 NKG,Nanjing Lukou International Airport,31.735032,118.865949,CN,Nanjing,large_airport,yes
-NKI,Naukati Bay Seaplane Base,55.849602,-133.227994,US,Tuxekan Island,seaplane_base,yes
 NKM,Nagoya Airport / JASDF Komaki Air Base,35.255759,136.924095,JP,Nagoya,medium_airport,yes
 NKT,Şırnak Şerafettin Elçi Airport,37.364700,42.058200,TR,Şırnak,medium_airport,yes
 NLA,Simon Mwansa Kapwepwe International Airport,-12.965130,28.515624,ZM,Ndola,large_airport,yes
@@ -2468,7 +2407,6 @@ NRL,North Ronaldsay Airport,59.367500,-2.434440,GB,North Ronaldsay,small_airport
 NRN,Weeze (Niederrhein) Airport,51.601362,6.141228,DE,Weeze,large_airport,yes
 NRR,José Aponte de la Torre Airport,18.247262,-65.639790,PR,Ceiba,medium_airport,yes
 NRT,Narita International Airport,35.768580,140.388714,JP,Narita,large_airport,yes
-NSB,Bimini North Seaplane Base,25.767000,-79.250000,BS,Bimini,seaplane_base,yes
 NSH,Nowshahr Airport,36.664286,51.462730,IR,Nowshahr,medium_airport,yes
 NSI,Yaoundé Nsimalen International Airport,3.722560,11.553300,CM,Yaoundé,large_airport,yes
 NSK,Alykel International Airport,69.307951,87.325906,RU,Norilsk,large_airport,yes
@@ -2497,7 +2435,6 @@ NYI,Sunyani Airport,7.361830,-2.328760,GH,Sunyani,medium_airport,yes
 NYK,Nanyuki Civil Airport,-0.062352,37.041296,KE,Gathiuru,medium_airport,yes
 NYM,Nadym Airport,65.480904,72.698898,RU,Nadym,medium_airport,yes
 NYO,Stockholm Skavsta Airport,58.789656,16.911479,SE,Nyköping,large_airport,yes
-NYS,New York Skyports Inc Seaplane Base,40.735061,-73.972814,US,New York,seaplane_base,yes
 NYT,Nay Pyi Taw International Airport,19.623501,96.200996,MM,Naypyitaw,large_airport,yes
 NYU,Bagan Airport,21.178801,94.930199,MM,Nyaung U,small_airport,yes
 NZC,Maria Reiche Neuman Airport,-14.854000,-74.961502,PE,Nazca,medium_airport,yes
@@ -2512,7 +2449,6 @@ OBN,Oban Airport,56.463501,-5.399670,GB,North Connel,small_airport,yes
 OBO,Tokachi-Obihiro Airport,42.733299,143.216995,JP,Obihiro,medium_airport,yes
 OBU,Kobuk Airport,66.912300,-156.897003,US,Kobuk,small_airport,yes
 OBX,Obo Airport,-7.590622,141.324263,PG,Obo,small_airport,yes
-OBY,Ittoqqortoormiit Heliport,70.488229,-21.971680,GL,Ittoqqortoormiit,heliport,yes
 OCC,Francisco De Orellana Airport,-0.462886,-76.986801,EC,Coca,medium_airport,yes
 OCE,Ocean City Municipal Airport,38.310398,-75.124001,US,Ocean City,medium_airport,yes
 OCJ,Ian Fleming International Airport,18.404079,-76.969754,JM,Boscobel,medium_airport,yes
@@ -2658,7 +2594,6 @@ PDS,Piedras Negras International Airport,28.627873,-100.535240,MX,Piedras Negras
 PDT,Eastern Oregon Regional Airport at Pendleton,45.695099,-118.841003,US,Pendleton,medium_airport,yes
 PDV,Plovdiv International Airport,42.067799,24.850800,BG,Plovdiv,large_airport,yes
 PDX,Portland International Airport,45.588699,-122.598000,US,Portland,large_airport,yes
-PEC,Pelican Seaplane Base,57.955200,-136.235992,US,Pelican,seaplane_base,yes
 PED,Pardubice Airport,50.015049,15.739810,CZ,Pardubice,large_airport,yes
 PEE,Perm International Airport,57.914501,56.021198,RU,Perm,large_airport,yes
 PEG,Perugia San Francesco d'Assisi – Umbria International Airport,43.095901,12.513200,IT,Perugia (PG),large_airport,yes
@@ -2774,13 +2709,11 @@ PPN,Guillermo León Valencia Airport,2.454359,-76.609253,CO,Popayán,medium_airp
 PPP,Proserpine Whitsunday Coast Airport,-20.494416,148.553583,AU,Proserpine,medium_airport,yes
 PPS,Puerto Princesa International Airport / PAF Antonio Bautista Air Base,9.742044,118.759110,PH,Puerto Princesa,large_airport,yes
 PPT,Fa'a'ā International Airport,-17.553472,-149.606936,PF,Papeete,large_airport,yes
-PPV,Port Protection Seaplane Base,56.328800,-133.610001,US,Port Protection,seaplane_base,yes
 PPW,Papa Westray Airport,59.351012,-2.900353,GB,"Papa Westray, Orkney Islands",small_airport,yes
 PQC,Phú Quốc International Airport,10.169783,103.993530,VN,Phu Quoc Island,large_airport,yes
 PQI,Presque Isle International Airport,46.688999,-68.044800,US,Presque Isle,medium_airport,yes
 PQQ,Port Macquarie Airport,-31.435801,152.863007,AU,Port Macquarie,medium_airport,yes
 PQS,Pilot Station Airport,61.961690,-162.941944,US,Pilot Station,small_airport,yes
-PQT,Qeqertaq Heliport,69.995861,-51.300917,GL,Qeqertaq,heliport,yes
 PRA,General Urquiza Airport,-31.794800,-60.480400,AR,Parana,medium_airport,yes
 PRC,Prescott Regional Airport - Ernest A. Love Field,34.653502,-112.419883,US,Prescott,medium_airport,yes
 PRG,Václav Havel Airport Prague,50.100874,14.259911,CZ,Prague,large_airport,yes
@@ -2801,7 +2734,6 @@ PSU,Pangsuma Airport,0.834579,112.940217,ID,Putussibau-Borneo Island,medium_airp
 PSY,Port Stanley Airport,-51.685699,-57.777599,FK,Stanley,small_airport,yes
 PSZ,Capitán Av. Salvador Ogaya G. airport,-18.975301,-57.820599,BO,Puerto Suárez,medium_airport,yes
 PTA,Port Alsworth Airport,60.201681,-154.325863,US,Port Alsworth,small_airport,yes
-PTD,Port Alexander Seaplane Base,56.246799,-134.647995,US,Port Alexander,seaplane_base,yes
 PTF,Malolo Lailai Island Airport,-17.778448,177.196996,FJ,Malolo Lailai Island,small_airport,yes
 PTG,Polokwane International Airport,-23.845269,29.458615,ZA,Polokwane,large_airport,yes
 PTH,Port Heiden Airport,56.957893,-158.630219,US,Port Heiden,medium_airport,yes
@@ -2841,33 +2773,18 @@ PYJ,Polyarny Airport,66.400398,112.029999,RU,Yakutia,medium_airport,yes
 PYK,Payam International Airport,35.776100,50.826698,IR,Karaj,large_airport,yes
 PYT,Pedro Rabelo de Souza Airport,-17.242599,-46.883099,BR,Paracatu,small_airport,yes
 PZB,Pietermaritzburg Airport,-29.649000,30.398701,ZA,Pietermaritzburg,medium_airport,yes
-PZE,Penzance Heliport,50.130376,-5.513946,GB,"Penzance, Cornwall",heliport,yes
 PZH,Zhob Airport,31.358400,69.463600,PK,Fort Sandeman,medium_airport,yes
 PZI,Panzhihua Bao'anying Airport,26.540000,101.798520,CN,Panzhihua (Renhe),medium_airport,yes
 PZO,General Manuel Carlos Piar International Airport,8.288530,-62.760399,VE,Guyana City,large_airport,yes
 PZU,Port Sudan New International Airport,19.434558,37.234125,SD,Port Sudan,large_airport,yes
 QBC,Bella Coola Airport,52.387501,-126.596001,CA,Bella Coola,medium_airport,yes
-QCU,Akunnaaq Heliport,68.744273,-52.340369,GL,Akunnaaq,heliport,yes
-QFG,Eqalugaarsuit Heliport,60.619720,-45.914062,GL,Eqalugaarsuit,heliport,yes
-QFI,Iginniarfik Heliport,68.145830,-53.169160,GL,Iginniarfik,heliport,yes
-QFN,Narsarmijit Heliport,60.004694,-44.656935,GL,Narsarmijit,heliport,yes
-QFX,Igaliku Heliport,60.992290,-45.431428,GL,Igaliku,heliport,yes
-QGQ,Attu Heliport,67.940663,-53.621870,GL,Attu,heliport,yes
-QJE,Kitsissuarsuit Heliport,68.857926,-53.123295,GL,Kitsissuarsuit,heliport,yes
-QJH,Qassimiut Heliport,60.780959,-47.156249,GL,Qassimiut,heliport,yes
-QJI,Ikamiut Heliport,68.634253,-51.832262,GL,Ikamiut,heliport,yes
-QOQ,Saarloq Heliport,60.537778,-46.024722,GL,Saarloq,heliport,yes
 QOW,Sam Mbakwe International Cargo Airport,5.427060,7.206030,NG,Owerri,medium_airport,yes
-QPW,Kangaatsiaq Heliport,68.312657,-53.460208,GL,Kangaatsiaq,heliport,yes
 QRO,Querétaro Intercontinental Airport,20.618779,-100.186449,MX,Querétaro,large_airport,yes
 QRW,Warri Airport,5.598210,5.818700,NG,Okpe,medium_airport,yes
-QRY,Ikerassaarsuk Heliport,68.140881,-53.441459,GL,Ikerassaarsuk,heliport,yes
 QSF,Ain Arnat Airport,36.178488,5.329909,DZ,Sétif,medium_airport,yes
 QSR,Salerno Costa d'Amalfi Airport,40.620399,14.911300,IT,Salerno,medium_airport,yes
 QSZ,Shache Airport,38.245420,77.056149,CN,Shache,medium_airport,yes
 QUO,Akwa Ibom International Airport,4.872500,8.093000,NG,Uyo,medium_airport,yes
-QUV,Aappilattoq Heliport,60.148357,-44.286916,GL,Aappilattoq,heliport,yes
-QUW,Ammassivik Heliport,60.597376,-45.382445,GL,Ammassivik,heliport,yes
 RAB,Tokua Airport,-4.340460,152.380005,PG,Kokopo,medium_airport,yes
 RAE,Arar Domestic Airport,30.906601,41.138199,SA,Arar,medium_airport,yes
 RAH,Rafha Domestic Airport,29.626400,43.490601,SA,Rafha,medium_airport,yes
@@ -2978,7 +2895,6 @@ RSA,Santa Rosa Airport,-36.588299,-64.275703,AR,Santa Rosa,medium_airport,yes
 RSD,Rock Sound International Airport,24.891650,-76.177602,BS,Rock Sound,medium_airport,yes
 RSH,Russian Mission Airport,61.775071,-161.319466,US,Russian Mission,small_airport,yes
 RSI,Red Sea International Airport,25.627975,37.088914,SA,Hanak,large_airport,yes
-RSJ,Rosario Seaplane Base,48.645699,-122.867996,US,Rosario,seaplane_base,yes
 RST,Rochester International Airport,43.908298,-92.500000,US,Rochester,medium_airport,yes
 RSU,Yeosu Airport,34.842300,127.616997,KR,Yeosu,medium_airport,yes
 RSW,Southwest Florida International Airport,26.534685,-81.752816,US,Fort Myers,large_airport,yes
@@ -3006,7 +2922,6 @@ RZE,Rzeszów-Jasionka Airport,50.109791,22.024155,PL,Jasionka,large_airport,yes
 RZR,Ramsar Airport,36.907010,50.687316,IR,Ramsar,medium_airport,yes
 RZV,Rize–Artvin Airport,41.179766,40.848802,TR,Rize,large_airport,yes
 SAB,Juancho E. Yrausquin Airport,17.645330,-63.220514,BQ,Zion's Hill,medium_airport,yes
-SAE,Saattut Heliport,70.811172,-51.631290,GL,Saattut,heliport,yes
 SAF,Santa Fe Municipal Airport,35.617100,-106.088997,US,Santa Fe,medium_airport,yes
 SAG,Shirdi International Airport,19.689211,74.373655,IN,Kakadi,large_airport,yes
 SAH,Sanaa International Airport,15.476300,44.219700,YE,Sanaa,large_airport,yes
@@ -3078,7 +2993,6 @@ SFT,Skellefteå Airport,64.624802,21.076900,SE,Skellefteå,medium_airport,yes
 SGC,Surgut International Airport,61.340501,73.405782,RU,Surgut,large_airport,yes
 SGD,Sønderborg Airport,54.964401,9.791730,DK,Sønderborg,medium_airport,yes
 SGF,Springfield Branson National Airport,37.245047,-93.388596,US,Springfield,medium_airport,yes
-SGG,Sermiligaaq Heliport,65.905920,-36.378254,GL,Sermiligaaq,heliport,yes
 SGN,Tan Son Nhat International Airport,10.818800,106.652000,VN,Ho Chi Minh City,large_airport,yes
 SGO,St George Airport,-28.049700,148.595001,AU,,small_airport,yes
 SGU,St George Regional Airport,37.036389,-113.510306,US,St George,medium_airport,yes
@@ -3187,7 +3101,6 @@ SOU,Southampton Airport,50.950298,-1.356800,GB,Southampton,medium_airport,yes
 SOV,Seldovia Airport,59.442981,-151.705227,US,Seldovia,small_airport,yes
 SOW,Show Low Regional Airport,34.264062,-110.007091,US,Show Low,medium_airport,yes
 SOY,Stronsay Airport,59.155300,-2.641390,GB,Stronsay,small_airport,yes
-SPB,Charlotte Amalie Harbor Seaplane Base,18.338204,-64.939675,VI,Charlotte Amalie,seaplane_base,yes
 SPC,La Palma Airport,28.626499,-17.755600,ES,"Sta Cruz de la Palma, La Palma Island",medium_airport,yes
 SPD,Saidpur Airport,25.759199,88.908897,BD,Saidpur,medium_airport,yes
 SPI,Abraham Lincoln Capital Airport,39.844101,-89.677902,US,Springfield,medium_airport,yes
@@ -3205,7 +3118,6 @@ SQL,San Carlos Airport,37.513130,-122.250838,US,San Carlos,medium_airport,yes
 SRA,Luis Alberto Lehr Airport,-27.906580,-54.520628,BR,Santa Rosa,small_airport,yes
 SRE,Alcantarí International Airport,-19.246835,-65.149611,BO,Sucre,large_airport,yes
 SRG,Jenderal Ahmad Yani Airport,-6.970732,110.373244,ID,Semarang,large_airport,yes
-SRK,Siorapaluk Heliport,77.786517,-70.638657,GL,Siorapaluk,heliport,yes
 SRL,Palo Verde Airport,27.092700,-112.098500,MX,Mulegé,small_airport,yes
 SRP,"Stord Airport, Sørstokken",59.791901,5.340850,NO,Leirvik,medium_airport,yes
 SRQ,Sarasota Bradenton International Airport,27.394631,-82.554359,US,Sarasota/Bradenton,large_airport,yes
@@ -3214,7 +3126,6 @@ SRV,Stony River 2 Airport,61.789700,-156.589005,US,Stony River,small_airport,yes
 SRY,Sari Dasht-e Naz International Airport,36.644408,53.188761,IR,Sari,medium_airport,yes
 SRZ,El Trompillo Airport,-17.811600,-63.171501,BO,Santa Cruz,medium_airport,yes
 SSA,Deputado Luiz Eduardo Magalhães International Airport,-12.908611,-38.322498,BR,Salvador,large_airport,yes
-SSB,Christiansted Harbor Seaplane Base,17.747908,-64.707928,VI,Christiansted,seaplane_base,yes
 SSG,Malabo International Airport,3.755270,8.708720,GQ,Malabo,large_airport,yes
 SSH,Sharm El Sheikh International Airport,27.977272,34.394717,EG,Sharm El Sheikh,large_airport,yes
 SSJ,"Sandnessjøen Airport, Stokka",65.956802,12.468900,NO,Alstahaug,medium_airport,yes
@@ -3256,7 +3167,6 @@ SVJ,"Svolvær Airport, Helle",68.243301,14.669200,NO,Svolvær,medium_airport,yes
 SVL,Savonlinna Airport,61.943100,28.945101,FI,Savonlinna,medium_airport,yes
 SVO,Sheremetyevo International Airport,55.976858,37.411210,RU,Moscow,large_airport,yes
 SVQ,Seville Airport,37.417999,-5.893110,ES,Seville,large_airport,yes
-SVR,Savissivik Heliport,76.018613,-65.117683,GL,Savissivik,heliport,yes
 SVS,Stevens Village Airport,66.016727,-149.056835,US,Stevens Village,small_airport,yes
 SVU,Savusavu Airport,-16.803394,179.340587,FJ,Savusavu,small_airport,yes
 SVX,Koltsovo Airport,56.743099,60.802700,RU,Yekaterinburg,large_airport,yes
@@ -3272,9 +3182,7 @@ SXK,Mathilda Batlayeri Airport,-7.848354,131.337068,ID,Saumlaki-Yamdena Island,s
 SXM,Princess Juliana International Airport,18.041000,-63.108898,SX,Sint Maarten,large_airport,yes
 SXP,Nunam Iqua Airport,62.520599,-164.848006,US,Nunam Iqua,small_airport,yes
 SXR,Srinagar International Airport,33.987099,74.774200,IN,Srinagar,large_airport,yes
-SYB,Seal Bay Seaplane Base,58.373291,-152.201797,US,Seal Bay,seaplane_base,yes
 SYD,Sydney Kingsford Smith International Airport,-33.946098,151.177002,AU,Sydney (Mascot),large_airport,yes
-SYF,Silva Bay Seaplane Base,49.151000,-123.698000,CA,Gabriola Island,seaplane_base,yes
 SYM,Pu'er Simao Airport,22.793301,100.959000,CN,Pu'er,small_airport,yes
 SYO,Shonai Airport,38.812199,139.787003,JP,Shonai,medium_airport,yes
 SYQ,Tobías Bolaños International Airport,9.957050,-84.139801,CR,San Jose,medium_airport,yes
@@ -3396,7 +3304,6 @@ TJQ,H A S Hanandjoeddin International Airport,-2.744109,107.754535,ID,Tanjung Pa
 TJS,Tanjung Harapan Airport,2.838139,117.374584,ID,Tanjung Selor-Borneo Island,small_airport,yes
 TJU,Kulob International Airport,37.988098,69.805000,TJ,Kulob,large_airport,yes
 TKD,Takoradi Airport,4.896060,-1.774760,GH,Sekondi-Takoradi,medium_airport,yes
-TKE,Tenakee Seaplane Base,57.779701,-135.218002,US,Tenakee Springs,seaplane_base,yes
 TKF,Truckee Tahoe Airport,39.318628,-120.140562,US,Truckee,medium_airport,yes
 TKG,Radin Inten II International Airport,-5.246803,105.182531,ID,Bandar Lampung,medium_airport,yes
 TKJ,Tok Junction Airport,63.329498,-142.953995,US,Tok,small_airport,yes
@@ -3465,10 +3372,7 @@ TPJ,Taplejung Airport,27.350900,87.695250,NP,Taplejung,medium_airport,yes
 TPP,Cadete FAP Guillermo Del Castillo Paredes Airport,-6.508740,-76.373199,PE,Tarapoto,medium_airport,yes
 TPQ,Amado Nervo National Airport,21.419833,-104.842472,MX,Tepic,medium_airport,yes
 TPS,Vincenzo Florio Airport Trapani-Birgi,37.911400,12.488000,IT,Trapani (TP),medium_airport,yes
-TQA,Tasiusaq Heliport,73.373055,-56.060280,GL,Tasiusaq,heliport,yes
-TQI,Tiniteqilaaq Heliport,65.892027,-37.783409,GL,Tiniteqilaaq,heliport,yes
 TQO,Felipe Carrillo Puerto International Airport Tulum,20.172098,-87.660272,MX,Tulum,large_airport,yes
-TQR,San Domino Island Heliport,42.117775,15.490655,IT,Tremiti Islands,heliport,yes
 TRA,Tarama Airport,24.653793,124.675453,JP,Tarama,medium_airport,yes
 TRC,Francisco Sarabia Tinoco International Airport,25.562265,-103.404608,MX,Torreón,medium_airport,yes
 TRD,"Trondheim Airport, Værnes",63.457802,10.924000,NO,Trondheim,large_airport,yes
@@ -3491,7 +3395,6 @@ TSJ,Tsushima Airport,34.284901,129.330994,JP,Tsushima,medium_airport,yes
 TSM,Taos Regional Airport,36.452494,-105.677490,US,Taos,medium_airport,yes
 TSN,Tianjin Binhai International Airport,39.124401,117.346001,CN,Tianjin,large_airport,yes
 TSR,Timișoara Traian Vuia International Airport,45.809898,21.337900,RO,Timişoara,large_airport,yes
-TSS,East 34th Street Heliport,40.742372,-73.972074,US,New York,heliport,yes
 TST,Trang Airport,7.508740,99.616600,TH,Trang,medium_airport,yes
 TSV,Townsville Airport / RAAF Base Townsville,-19.252904,146.766512,AU,Townsville,medium_airport,yes
 TTA,Tan Tan Airport,28.447563,-11.161749,MA,Tan Tan,medium_airport,yes
@@ -3501,7 +3404,6 @@ TTN,Trenton Mercer Airport,40.276699,-74.813499,US,Ewing Township,medium_airport
 TTS,Tsaratanana Airport,-16.751064,47.619016,MG,Tsaratanana,small_airport,yes
 TTT,Taitung Airport,22.754856,121.101794,TW,Taitung City,medium_airport,yes
 TTU,Sania Ramel Airport,35.594299,-5.320020,MA,Tétouan,large_airport,yes
-TTW,Tissa Tank Waterdrome,6.287600,81.290600,LK,Tissamaharama,seaplane_base,yes
 TUA,Lieutenant Colonel Luis A. Mantilla International Airport,0.809506,-77.708099,EC,Tulcán,medium_airport,yes
 TUB,Tubuai Airport,-23.365400,-149.524002,PF,,medium_airport,yes
 TUC,Teniente Benjamín Matienzo International Airport,-26.837397,-65.104195,AR,San Miguel de Tucumán,large_airport,yes
@@ -3541,7 +3443,6 @@ TZN,Congo Town Airport,24.158701,-77.589798,BS,Andros,medium_airport,yes
 TZX,Trabzon International Airport,40.995098,39.789700,TR,Trabzon,medium_airport,yes
 UAH,Ua Huka Airport,-8.936228,-139.554062,PF,Ua Huka,small_airport,yes
 UAI,"Commander in Chief of FALINTIL, Kay Rala Xanana Gusmão, International Airport",-9.301856,125.286302,TL,Suai,medium_airport,yes
-UAK,Narsarsuaq Airport,61.159580,-45.424690,GL,Narsarsuaq,heliport,yes
 UAP,Ua Pou Airport,-9.351670,-140.078003,PF,Ua Pou,small_airport,yes
 UAQ,Domingo Faustino Sarmiento Airport,-31.571501,-68.418198,AR,San Juan,medium_airport,yes
 UAR,Bouarfa Airport,32.514306,-1.983056,MA,Bouarfa,medium_airport,yes
@@ -3560,7 +3461,6 @@ UET,Quetta International Airport,30.251400,66.937798,PK,Quetta,large_airport,yes
 UFA,Ufa International Airport,54.557499,55.874401,RU,Ufa,large_airport,yes
 UGA,Bulgan Airport,48.855000,103.475998,MN,Bulgan,medium_airport,yes
 UGC,Urgench International Airport,41.582740,60.643380,UZ,Urgench,large_airport,yes
-UGI,San Juan /Uganik/ Seaplane Base,57.730400,-153.320999,US,San Juan,seaplane_base,yes
 UGU,Bilorai Airport,-3.739503,137.031183,ID,Bilogai,medium_airport,yes
 UIB,El Caraño Airport,5.690760,-76.641200,CO,Quibdó,medium_airport,yes
 UIH,Phu Cat Airport,13.955000,109.042000,VN,Quy Nohn,medium_airport,yes
@@ -3583,7 +3483,6 @@ ULU,Gulu Airport,2.805560,32.271801,UG,Gulu,medium_airport,yes
 ULV,Ulyanovsk Baratayevka Airport,54.270160,48.225569,RU,Ulyanovsk,medium_airport,yes
 ULY,Ulyanovsk Vostochny Airport,54.401001,48.802700,RU,Cherdakly,medium_airport,yes
 ULZ,Donoi Airport,47.709300,96.525800,MN,Uliastai,small_airport,yes
-UMD,Uummannaq Heliport,70.680428,-52.111630,GL,Uummannaq,heliport,yes
 UME,Umeå Airport,63.791801,20.282801,SE,Umeå,large_airport,yes
 UMS,Ust-Maya Airport,60.357437,134.437310,RU,Ust-Maya,small_airport,yes
 UMU,Orlando de Carvalho Airport,-23.798700,-53.313801,BR,Umuarama,small_airport,yes
@@ -3699,7 +3598,6 @@ VRB,Vero Beach Regional Airport,27.655600,-80.417901,US,Vero Beach,medium_airpor
 VRC,Virac Airport,13.576400,124.206001,PH,Virac,medium_airport,yes
 VRL,Vila Real Airport,41.274300,-7.720470,PT,Vila Real,medium_airport,yes
 VRN,Verona Villafranca Valerio Catullo Airport,45.394955,10.887303,IT,Caselle (VR),large_airport,yes
-VRY,Værøy Heliport,67.654555,12.727257,NO,Værøy,heliport,yes
 VSA,Carlos Rovirosa Pérez International Airport,17.994283,-92.818199,MX,Villahermosa,large_airport,yes
 VSE,Aerodromo Goncalves Lobato (Viseu Airport),40.725498,-7.888990,PT,Viseu,medium_airport,yes
 VST,Stockholm Västerås Airport,59.589401,16.633600,SE,Stockholm / Västerås,large_airport,yes
@@ -3730,13 +3628,11 @@ WDS,Shiyan Wudangshan Airport,32.592889,110.906296,CN,Shiyan (Maojian),medium_ai
 WEF,Weifang Nanyuan Airport,36.646702,119.119003,CN,Weifang (Kuiwen),medium_airport,yes
 WEH,Weihai Dashuibo Airport,37.187099,122.228996,CN,Weihai,medium_airport,yes
 WEI,Weipa Airport,-12.677493,141.922618,AU,Weipa,medium_airport,yes
-WFB,Ketchikan Harbor Seaplane Base,55.349899,-131.677002,US,Ketchikan,seaplane_base,yes
 WGA,Wagga Wagga Airport,-35.163484,147.468320,AU,Forest Hill,medium_airport,yes
 WGE,Walgett Airport,-30.032801,148.126007,AU,,medium_airport,yes
 WGN,Shaoyang Wugang Airport,26.806123,110.641042,CN,Shaoyang (Wugang),medium_airport,yes
 WGP,Umbu Mehang Kunda Airport,-9.669220,120.302002,ID,Waingapu-Sumba Island,small_airport,yes
 WHA,Wuhu Xuanzhou Airport,31.104500,118.666870,CN,Wuhu,medium_airport,yes
-WHD,Hyder Seaplane Base,55.903324,-130.009975,US,Hyder,seaplane_base,yes
 WHK,Whakatāne Airport,-37.922224,176.916960,NZ,Whakatāne,medium_airport,yes
 WIC,Wick John O'Groats Airport,58.458900,-3.093060,GB,Wick,medium_airport,yes
 WIL,Nairobi Wilson Airport,-1.321720,36.814800,KE,Nairobi,medium_airport,yes
@@ -3764,7 +3660,6 @@ WNR,Windorah Airport,-25.410641,142.668428,AU,Windorah,medium_airport,yes
 WNS,Shaheed Benazirabad Airport,26.219400,68.390099,PK,Nawabashah,medium_airport,yes
 WNZ,Wenzhou Longwan International Airport,27.910572,120.853465,CN,Wenzhou (Longwan),large_airport,yes
 WOS,Wonsan Kalma Airport,39.165219,127.487931,KP,Wonsan,medium_airport,yes
-WPL,Powell Lake Seaplane Base,49.887335,-124.533720,CA,Powell River,seaplane_base,yes
 WRE,Whangarei Airport,-35.769253,174.363713,NZ,Whangarei,medium_airport,yes
 WRG,Wrangell Airport,56.484299,-132.369995,US,Wrangell,medium_airport,yes
 WRO,Copernicus Wrocław Airport,51.103719,16.882096,PL,Wrocław,large_airport,yes
@@ -3772,7 +3667,6 @@ WRY,Westray Airport,59.350475,-2.950062,GB,"Westray, Orkney Islands",small_airpo
 WSK,Chongqing Wushan Airport,31.068960,109.708958,CN,Wushan,small_airport,yes
 WSN,South Naknek Number 2 Airport,58.702362,-157.005444,US,South Naknek,small_airport,yes
 WST,Westerly State Airport,41.349602,-71.803398,US,Westerly,medium_airport,yes
-WSX,Westsound/WSX Seaplane Base,48.617901,-122.956903,US,West Sound,seaplane_base,yes
 WSZ,Westport Airport,-41.737111,171.579033,NZ,Westport,medium_airport,yes
 WTA,Tambohorano Airport,-17.476101,43.972801,MG,Tambohorano,small_airport,yes
 WTB,Toowoomba Wellcamp Airport,-27.558332,151.793335,AU,Toowoomba,large_airport,yes
@@ -3790,7 +3684,6 @@ WUX,Sunan Shuofang International Airport,31.496952,120.430380,CN,Wuxi,large_airp
 WUZ,Wuzhou Xijiang Airport,23.403160,111.093310,CN,Tangbu,medium_airport,yes
 WVB,Walvis Bay International Airport,-22.979332,14.647102,NA,Walvis Bay(Rooikop),large_airport,yes
 WWK,Wewak International Airport,-3.583830,143.669006,PG,Wewak,medium_airport,yes
-WWP,Whale Pass Seaplane Float Harbor Facility,56.116299,-133.121994,US,Whale Pass,seaplane_base,yes
 WWT,Mertarvik Airport,60.810370,-164.499511,US,Mertarvik,small_airport,yes
 WXN,Wanzhou Wuqiao Airport,30.801700,108.433000,CN,Wanzhou,small_airport,yes
 WYA,Whyalla Airport,-33.058899,137.514008,AU,Whyalla,medium_airport,yes
@@ -3801,12 +3694,10 @@ XBE,Bearskin Lake Airport,53.965599,-91.027199,CA,Bearskin Lake,small_airport,ye
 XBJ,Birjand International Airport,32.896525,59.281258,IR,Birjand,large_airport,yes
 XCH,Christmas Island International Airport,-10.450387,105.691100,CX,Flying Fish Cove,medium_airport,yes
 XCR,Chalons Vatry airport,48.773330,4.206110,FR,Chalons en Champagne,medium_airport,yes
-XEQ,Tasiusaq Heliport,60.194305,-44.813447,GL,Tasiusak,heliport,yes
 XFN,Xiangyang Liuji Airport,32.152222,112.291666,CN,Xiangyang (Xiangzhou),medium_airport,yes
 XGR,Kangiqsualujjuaq (Georges River) Airport,58.711399,-65.992798,CA,Kangiqsualujjuaq,small_airport,yes
 XIC,Xichang Qingshan Airport,27.989100,102.183998,CN,Liangshan (Xichang),medium_airport,yes
 XIL,Xilinhot Airport,43.915600,115.963997,CN,Xilinhot,medium_airport,yes
-XIQ,Ilimanaq Heliport,69.080915,-51.114315,GL,Ilimanaq,heliport,yes
 XIY,Xi'an Xianyang International Airport,34.442207,108.762385,CN,Xi'an,large_airport,yes
 XKH,Xieng Khouang Airport,19.450001,103.157997,LA,Xieng Khouang,small_airport,yes
 XKS,Kasabonika Airport,53.524700,-88.642799,CA,Kasabonika,medium_airport,yes
@@ -3834,32 +3725,26 @@ YAA,Anahim Lake Airport,52.451501,-125.303776,CA,Anahim Lake,medium_airport,yes
 YAB,Arctic Bay Airport,73.006101,-85.046160,CA,Arctic Bay,small_airport,yes
 YAC,Cat Lake Airport,51.727200,-91.824402,CA,Cat Lake,small_airport,yes
 YAG,Fort Frances Municipal Airport,48.655749,-93.443490,CA,Fort Frances,medium_airport,yes
-YAJ,Lyall Harbour Seaplane Base,48.795274,-123.181801,CA,Saturna Island,seaplane_base,yes
 YAK,Yakutat Airport,59.508717,-139.660435,US,Yakutat,medium_airport,yes
 YAL,Alert Bay Airport,50.582199,-126.916000,CA,Alert Bay,small_airport,yes
 YAM,Sault Ste Marie Airport,46.483216,-84.508467,CA,Sault Ste Marie,medium_airport,yes
 YAP,Yap International Airport,9.498910,138.082993,FM,Yap Island,large_airport,yes
-YAQ,Maple Bay Seaplane Base,48.816700,-123.608400,CA,Maple Bay,seaplane_base,yes
 YAS,Yasawa Island Airport,-16.758900,177.544998,FJ,Yasawa Island,small_airport,yes
 YAT,Attawapiskat Airport,52.927502,-82.431900,CA,Attawapiskat,small_airport,yes
-YAV,Mayne Island Seaplane Base,48.852241,-123.301982,CA,Miners Bay,seaplane_base,yes
 YAX,Wapekeka Airport,53.849201,-89.579399,CA,Angling Lake,small_airport,yes
 YAY,St. Anthony Airport,51.391909,-56.083210,CA,St. Anthony,medium_airport,yes
 YAZ,Tofino / Long Beach Airport,49.079833,-125.775583,CA,Tofino,medium_airport,yes
 YBB,Kugaaruk Airport,68.535711,-89.805508,CA,Kugaaruk,small_airport,yes
 YBC,Baie-Comeau Airport,49.132500,-68.204399,CA,Baie-Comeau,medium_airport,yes
 YBE,Uranium City Airport,59.561401,-108.481003,CA,Uranium City,small_airport,yes
-YBF,Bamfield Seaplane Base,48.835967,-125.137453,CA,Bamfield,seaplane_base,yes
 YBG,Saguenay-Bagotville Airport,48.330123,-70.992012,CA,Saguenay,medium_airport,yes
 YBI,Black Tickle Airport,53.469836,-55.787501,CA,Black Tickle,small_airport,yes
 YBK,Baker Lake Airport,64.298897,-96.077797,CA,Baker Lake,medium_airport,yes
 YBL,Campbell River Airport,49.950802,-125.271004,CA,Campbell River,medium_airport,yes
 YBP,Yibin Wuliangye Airport,28.858431,104.526157,CN,Yibin (Cuiping),medium_airport,yes
-YBQ,Telegraph Harbour Seaplane Base,48.970000,-123.664000,CA,Thetis Island,seaplane_base,yes
 YBR,Brandon Municipal Airport,49.910000,-99.951897,CA,Brandon,medium_airport,yes
 YBT,Brochet Airport,57.889400,-101.679001,CA,Brochet,small_airport,yes
 YBV,Berens River Airport,52.358898,-97.018303,CA,Berens River,small_airport,yes
-YBW,Bedwell Harbour Seaplane Base,48.750000,-123.233002,CA,Bedwell Harbour,seaplane_base,yes
 YBX,Lourdes-de-Blanc-Sablon Airport,51.443600,-57.185299,CA,Blanc-Sablon,medium_airport,yes
 YBY,Bonnyville Airport,54.304199,-110.744003,CA,Bonnyville,medium_airport,yes
 YCB,Cambridge Bay Airport,69.108101,-105.138000,CA,Cambridge Bay,medium_airport,yes
@@ -3892,11 +3777,9 @@ YFJ,Wekweètì Airport,64.190804,-114.077002,CA,Wekweètì,small_airport,yes
 YFO,Flin Flon Airport,54.678101,-101.681999,CA,Flin Flon,small_airport,yes
 YFS,Fort Simpson Airport,61.760201,-121.237000,CA,Fort Simpson,medium_airport,yes
 YFX,St. Lewis (Fox Harbour) Airport,52.372799,-55.673901,CA,St. Lewis,small_airport,yes
-YGG,Ganges Seaplane Base,48.854500,-123.496900,CA,Salt Spring Island,seaplane_base,yes
 YGH,Fort Good Hope Airport,66.240658,-128.647757,CA,Fort Good Hope,small_airport,yes
 YGJ,Yonago Kitaro Airport / JASDF Miho Air Base,35.492199,133.235992,JP,Yonago,medium_airport,yes
 YGL,La Grande Rivière Airport,53.625301,-77.704201,CA,La Grande Rivière,medium_airport,yes
-YGN,Greenway Sound Seaplane Base,50.839000,-126.775000,CA,Broughton Island,seaplane_base,yes
 YGO,Gods Lake Narrows Airport,54.557680,-94.490061,CA,Gods Lake Narrows,small_airport,yes
 YGP,Michel-Pouliot Gaspé Airport,48.774915,-64.481893,CA,Gaspé,medium_airport,yes
 YGR,Îles-de-la-Madeleine Airport,47.425242,-61.778612,CA,Les Îles-de-la-Madeleine,medium_airport,yes
@@ -3907,7 +3790,6 @@ YGX,Gillam Airport,56.357120,-94.711504,CA,Gillam,small_airport,yes
 YGZ,Grise Fiord Airport,76.425823,-82.908583,CA,Grise Fiord,small_airport,yes
 YHA,Port Hope Simpson Airport,52.528099,-56.286098,CA,Port Hope Simpson,small_airport,yes
 YHG,Charlottetown Airport,52.765774,-56.112370,CA,Charlottetown,small_airport,yes
-YHH,Campbell River Seaplane Base,50.049999,-125.250000,CA,Campbell River,seaplane_base,yes
 YHI,Ulukhaktok Holman Airport,70.762802,-117.806000,CA,Ulukhaktok,small_airport,yes
 YHK,Gjoa Haven Airport,68.635597,-95.849701,CA,Gjoa Haven,small_airport,yes
 YHM,John C. Munro Hamilton International Airport,43.173480,-79.931185,CA,Hamilton,medium_airport,yes
@@ -3921,7 +3803,6 @@ YIA,Yogyakarta International Airport,-7.905338,110.057264,ID,Yogyakarta,large_ai
 YIC,Yichun Mingyueshan Airport,27.802500,114.306200,CN,Yichun,medium_airport,yes
 YIE,Arxan Yi'ershi Airport,47.310600,119.911700,CN,Arxan,medium_airport,yes
 YIF,St Augustin Airport,51.211700,-58.658298,CA,St-Augustin,medium_airport,yes
-YIG,Big Bay Seaplane Base,50.392300,-125.137200,CA,Stuart Island,seaplane_base,yes
 YIH,Yichang Sanxia Airport,30.554132,111.482563,CN,Yichang (Xiaoting),medium_airport,yes
 YIK,Ivujivik Airport,62.417301,-77.925301,CA,Ivujivik,small_airport,yes
 YIN,Ili Yining International Airport,43.955799,81.330299,CN,Ili (Yining / Ghulja),medium_airport,yes
@@ -3946,7 +3827,6 @@ YLK,Barrie-Lake Simcoe Regional Airport,44.485056,-79.554663,CA,Barrie,medium_ai
 YLL,Lloydminster Airport,53.309200,-110.072998,CA,Lloydminster,medium_airport,yes
 YLW,Kelowna International Airport,49.956100,-119.377998,CA,Kelowna,large_airport,yes
 YLX,Yulin Fumian Airport,22.433042,110.119996,CN,Yulin,medium_airport,yes
-YMF,Montague Harbour Seaplane Base,48.892250,-123.392150,CA,Galiano Island,seaplane_base,yes
 YMH,Mary's Harbour Airport,52.302837,-55.847433,CA,Mary's Harbour,small_airport,yes
 YMM,Fort McMurray International Airport,56.653301,-111.222000,CA,Fort McMurray,medium_airport,yes
 YMN,Makkovik Airport,55.077335,-59.187942,CA,Makkovik,small_airport,yes
@@ -4028,10 +3908,8 @@ YSQ,Songyuan Chaganhu Airport,44.931143,124.552121,CN,Qian Gorlos Mongol Autonom
 YST,St. Theresa Point Airport,53.845261,-94.851966,CA,St. Theresa Point,small_airport,yes
 YSY,Sachs Harbour (David Nasogaluak Jr. Saaryuaq) Airport,71.993896,-125.242996,CA,Sachs Harbour,small_airport,yes
 YTE,Cape Dorset Airport,64.230003,-76.526703,CA,Kinngait,small_airport,yes
-YTG,Sullivan Bay Seaplane Base,50.885359,-126.831069,CA,Sullivan Bay,seaplane_base,yes
 YTH,Thompson Airport,55.801102,-97.864197,CA,Thompson,medium_airport,yes
 YTL,Big Trout Lake Airport,53.817799,-89.896896,CA,Big Trout Lake,small_airport,yes
-YTP,Tofino Harbour Seaplane Base,49.155000,-125.910000,CA,Tofino,seaplane_base,yes
 YTQ,Tasiujaq Airport,58.667801,-69.955803,CA,Tasiujaq,small_airport,yes
 YTS,Timmins/Victor M. Power,48.569698,-81.376701,CA,Timmins,medium_airport,yes
 YTW,Yutian Wanfang Airport,36.808500,81.782700,CN,Hotan (Yutian),small_airport,yes
@@ -4055,13 +3933,11 @@ YVV,Wiarton Airport,44.745800,-81.107201,CA,Wiarton,medium_airport,yes
 YVZ,Deer Lake Airport,52.655613,-94.061208,CA,Deer Lake,small_airport,yes
 YWB,Kangiqsujuaq (Wakeham Bay) Airport,61.588600,-71.929398,CA,Kangiqsujuaq,small_airport,yes
 YWG,Winnipeg / James Armstrong Richardson International Airport,49.910000,-97.239899,CA,Winnipeg,large_airport,yes
-YWH,Victoria Harbour Seaplane Base,48.423782,-123.371980,CA,Victoria,seaplane_base,yes
 YWJ,Déline Airport,65.211098,-123.435997,CA,Déline,small_airport,yes
 YWK,Wabush Airport,52.921902,-66.864403,CA,Wabush,medium_airport,yes
 YWL,Williams Lake Airport,52.183102,-122.054001,CA,Williams Lake,medium_airport,yes
 YWM,Williams Harbour Airport,52.567377,-55.784883,CA,Williams Harbour,small_airport,yes
 YWP,Webequie Airport,52.959393,-87.374868,CA,Webequie,small_airport,yes
-YWS,Whistler/Green Lake Water Aerodrome,50.143600,-122.948997,CA,Whistler,seaplane_base,yes
 YXC,Cranbrook/Canadian Rockies International Airport,49.610802,-115.781998,CA,Cranbrook,medium_airport,yes
 YXE,Saskatoon John G. Diefenbaker International Airport,52.170723,-106.700793,CA,Saskatoon,large_airport,yes
 YXH,Medicine Hat Regional Airport,50.018902,-110.721001,CA,Medicine Hat,medium_airport,yes
@@ -4130,7 +4006,6 @@ ZKP,Zyryanka Airport,65.748500,150.888900,RU,Zyryanka,medium_airport,yes
 ZLO,Playa de Oro International Airport,19.144800,-104.558998,MX,Manzanillo,medium_airport,yes
 ZLT,La Tabatière Airport,50.830799,-58.975601,CA,La Tabatière,small_airport,yes
 ZMT,Masset Airport,54.027500,-132.125000,CA,Masset,medium_airport,yes
-ZNA,Nanaimo Harbour Water Aerodrome,49.169813,-123.933845,CA,Nanaimo,seaplane_base,yes
 ZND,Zinder Airport,13.779000,8.983760,NE,Zinder,medium_airport,yes
 ZNE,Newman Airport,-23.417801,119.803001,AU,Newman,medium_airport,yes
 ZNZ,Abeid Amani Karume International Airport,-6.222020,39.224899,TZ,Zanzibar,large_airport,yes

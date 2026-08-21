@@ -52,8 +52,11 @@ BOUNDARY_EXTRACT_TOLERANCE_M = 50.0
 COUNTRY_EXTRACT_TOLERANCE_M = 1000.0
 BOUNDARY_COORDINATE_DIGITS = 6
 
-# Facility types that never carry a meaningful position for routing.
-EXCLUDED_AIRPORT_TYPES = {"closed"}
+# Facility types dropped from the database entirely. Closed facilities are
+# gone from the world; heliports are excluded across the board for the time
+# being — a helipad's IATA code names a rooftop, not an area anyone would
+# configure a repeater for, and Manhattan alone carries three of them.
+EXCLUDED_AIRPORT_TYPES = {"closed", "heliport", "balloonport"}
 
 # Facility types eligible to be commercial-airport candidates. The commercial
 # layer answers "which airport would a person here say they fly from", and a

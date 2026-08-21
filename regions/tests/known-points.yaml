@@ -48,17 +48,23 @@ points:
         - iata-airport:SJC
         - iata-location:SJC
         - us-state:CA
-      suggested_default_region: SJC
+      # Inside the fixture metro rectangle, so the metro outranks even the
+      # airport someone is standing on.
+      suggested_default_region: SFO
 
   - name: Forced override strip
     lat: 37.58
     lon: -122.15
     expect:
       # Far closer to SFO and OAK than to SJC. A core SJC match here can only
-      # be the force override in overrides/overrides.yaml.
+      # be the force override in overrides/overrides.yaml. The suggested
+      # default is the metro, which ranks above every airport where one
+      # exists — the override's effect shows in the commercial core match,
+      # not in the default.
       include_semantic:
         - iata-airport:SJC
-      suggested_default_region: SJC
+        - iata-metro:SFO
+      suggested_default_region: SFO
 
   - name: Palo Alto general aviation
     lat: 37.4611

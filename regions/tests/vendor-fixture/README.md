@@ -14,10 +14,9 @@ describe the world. Every row here is deliberate:
   collapses silently; move either coordinate and the update pass must refuse to
   guess.
 - `WRP` — longitude 190, which normalizes into `[-180, 180)`.
-- `HLP` — a heliport with `scheduled_service=yes`. It stays a positioned IATA
-  location but must never become a commercial candidate: the commercial layer
-  answers "which airport would a person here say they fly from", and a
-  helipad is not an answer to that question.
+- `HLP` — a heliport with `scheduled_service=yes`. Heliports are excluded
+  across the board for now: this row must appear nowhere, neither as a
+  positioned IATA location nor as a commercial candidate.
 
 `citycodes.csv` carries two real metro codes and one too-short code that the
 metro seed pass must ignore.

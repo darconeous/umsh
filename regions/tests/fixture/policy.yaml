@@ -59,7 +59,7 @@ layers:
     expansion_m: 0
     exclusive_core: false
     order: 300
-    default_eligible: false
+    default_eligible: true
 
   country:
     enabled: true
@@ -83,10 +83,14 @@ layers:
     default_eligible: false
 
 default_region:
-  # Ordered preference for the suggested packet default region. Country and
-  # state regions are deliberately absent: they are large enough that using one
-  # as a flood tag would broaden scope far past what the operator intends.
+  # Ordered preference for the suggested packet default region. Metro regions
+  # rank first where one exists: inside the Tokyo area the tag people mean is
+  # TYO, and the broader flood that follows is the deliberate cost of that.
+  # Country and state regions are deliberately absent: they are large enough
+  # that using one as a flood tag would broaden scope far past what the
+  # operator intends.
   preference:
+    - metro_core
     - commercial_airport_core
     - commercial_airport_expanded
     - positioned_iata_core

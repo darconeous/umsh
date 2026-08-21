@@ -63,8 +63,12 @@ overlap, and a lookup returns all of them.
 - **Positioned IATA** (`iata-location:`) — the nearest IATA-coded location of
   any kind within 100 km, including general aviation fields and heliports.
 - **Metro** (`iata-metro:`) — containment only. A metropolitan code applies
-  inside its reviewed polygon and nowhere else; the nearest metro area to a
-  position outside every polygon is not that position's metro area.
+  inside its polygon and nowhere else; the nearest metro area to a position
+  outside every polygon is not that position's metro area. The current
+  polygons are generated circular placeholders (see `metros/metros.yaml`),
+  individually replaceable with reviewed boundaries. Metro regions rank first
+  for the suggested packet default: inside the Tokyo area the tag people mean
+  is `TYO`, and the broader flood that follows is a deliberate trade.
 - **Country** (`country:`) — ISO 3166-1 alpha-2, over the area where the
   country asserts jurisdiction: its land together with its exclusive economic
   zone, conventionally 200 nautical miles offshore. A boat in coastal waters

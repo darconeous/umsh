@@ -1,1 +1,1 @@
-{"geometry":{"coordinates":[[[[41.899796,12.456465],[41.90651,12.450964],[41.901644,12.445863],[41.899796,12.456465]]]],"type":"MultiPolygon"},"properties":{"name":"Vatican City","source_feature_id":"marineregions:VA"},"type":"Feature"}
+{"geometry":{"coordinates":[[[[12.450964,41.90651],[12.456465,41.899796],[12.445863,41.901644],[12.450964,41.90651]]]],"type":"MultiPolygon"},"properties":{"name":"Vatican City","source_feature_id":"marineregions:VA"},"type":"Feature"}
