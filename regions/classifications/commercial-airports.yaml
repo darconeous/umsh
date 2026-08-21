@@ -34,3 +34,162 @@ overrides:
       Regional scheduled passenger airport for the Rogue Valley. Affirmed here
       as the standing positive example, so the override mechanism is exercised
       in both directions even when upstream already agrees.
+
+  # Reviewed sweep: candidates within 30 km of a large-airport candidate,
+  # where a general-aviation field wrongly marked scheduled_service takes
+  # routing territory from the gateway everyone actually names. Airports
+  # further out were left alone — out there a small field may genuinely be
+  # the airport its area means.
+
+  BED:
+    commercial: false
+    reason: >
+      Hanscom Field is Boston's corporate and general-aviation reliever.
+      No scheduled passenger service; Logan is what someone in Bedford
+      names.
+
+  BFI:
+    commercial: false
+    reason: >
+      Boeing Field is King County's general-aviation, cargo, and Boeing
+      test field. Seattle-Tacoma is the passenger gateway.
+
+  CAT:
+    commercial: false
+    reason: >
+      Cascais is a business-aviation and flight-training field outside
+      Lisbon, not a scheduled passenger gateway.
+
+  HHR:
+    commercial: false
+    reason: >
+      Hawthorne Municipal is a corporate and general-aviation reliever
+      seven kilometers from Los Angeles International.
+
+  ILS:
+    commercial: false
+    reason: >
+      Ilopango is a military and general-aviation field; San Salvador's
+      passenger gateway is Comalapa.
+
+  KTP:
+    commercial: false
+    reason: >
+      Tinson Pen is Kingston's in-city general-aviation strip. Norman
+      Manley is the airport Kingston means.
+
+  LCK:
+    commercial: false
+    reason: >
+      Rickenbacker is a cargo and charter field. Columbus's scheduled
+      passenger gateway is John Glenn.
+
+  LUK:
+    commercial: false
+    reason: >
+      Lunken Field is Cincinnati's municipal general-aviation and
+      corporate field.
+
+  MEB:
+    commercial: false
+    reason: >
+      Essendon Fields is Melbourne's corporate and general-aviation
+      reliever.
+
+  MRI:
+    commercial: false
+    reason: >
+      Merrill Field is Anchorage's general-aviation field, one of the
+      busiest in the country by movements and not a passenger gateway.
+
+  NPT:
+    commercial: false
+    reason: >
+      Newport State is a general-aviation field; Providence is Rhode
+      Island's passenger gateway.
+
+  OKY:
+    commercial: false
+    reason: >
+      Oakey is an Army Aviation Centre. Military fields are not
+      passenger gateways whatever the schedule flag says.
+
+  OPF:
+    commercial: false
+    reason: >
+      Opa Locka Executive is Miami's corporate reliever.
+
+  PDK:
+    commercial: false
+    reason: >
+      DeKalb Peachtree is Atlanta's corporate and general-aviation
+      reliever.
+
+  PKR:
+    commercial: false
+    reason: >
+      Pokhara's old domestic field, superseded by the adjacent Pokhara
+      Regional International, which now carries the scheduled traffic.
+
+  RCE:
+    commercial: false
+    reason: >
+      Roche Harbor is a small resort and general-aviation strip in the
+      San Juan Islands.
+
+  RRJ:
+    commercial: false
+    reason: >
+      Jacarepagua is Rio's executive and general-aviation field; Santos
+      Dumont and Galeao carry the scheduled traffic.
+
+  SIG:
+    commercial: false
+    reason: >
+      Isla Grande is San Juan's secondary general-aviation and commuter
+      field. Luis Munoz Marin is the gateway.
+
+  SRZ:
+    commercial: false
+    reason: >
+      El Trompillo is Santa Cruz's in-city secondary field; Viru Viru is
+      the passenger gateway.
+
+  SSW:
+    commercial: false
+    reason: >
+      Stuart Island Airpark is a private residential airstrip.
+
+  SYQ:
+    commercial: false
+    reason: >
+      Tobias Bolanos is San Jose's general-aviation and light-domestic
+      field; Juan Santamaria is the gateway.
+
+  TIW:
+    commercial: false
+    reason: >
+      Tacoma Narrows is a general-aviation field within Seattle-Tacoma's
+      catchment.
+
+  TZA:
+    commercial: false
+    reason: >
+      Belize City Municipal is the in-town domestic strip; Philip
+      Goldson International is the gateway.
+
+  XSP:
+    commercial: false
+    reason: >
+      Seletar is Singapore's business-aviation field. Changi is what
+      Singapore means.
+
+  YND:
+    commercial: false
+    reason: >
+      Gatineau is Ottawa's general-aviation and executive field.
+
+  YRO:
+    commercial: false
+    reason: >
+      Rockcliffe is Ottawa's general-aviation field.
