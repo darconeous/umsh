@@ -42,7 +42,6 @@ nav = [
     { name = "App", url = "/app/", match = "/app/" },
     { name = "FAQ", url = "/faq/", match = "/faq/" },
     { name = "Flasher", url = "/flasher/", match = "/flasher/" },
-    { name = "Regions", url = "/regions/", match = "/regions/" },
     { name = "Blog", url = "/blog/", match = "/blog/" },
 ]
 
