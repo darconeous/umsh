@@ -186,7 +186,7 @@ def compile_tree(tree: SourceTree, policy: Policy) -> CompileResult:
     counts["commercial_airport"] = len(commercial)
     counts["positioned_iata"] = len(positioned)
 
-    regions.extend(_metro_regions(tree, policy))
+    regions.extend(_metro_regions(tree, policy, {site.iata for site in tree.sites}, warnings))
     regions.extend(_boundary_regions(tree, policy, LAYER_COUNTRY))
     regions.extend(_boundary_regions(tree, policy, LAYER_US_STATE))
     regions.extend(_custom_regions(tree, policy))
@@ -215,13 +215,24 @@ def compile_tree(tree: SourceTree, policy: Policy) -> CompileResult:
     )
 
 
-def _metro_regions(tree: SourceTree, policy: Policy) -> list[Region]:
+def _metro_regions(
+    tree: SourceTree, policy: Policy, site_codes: set[str], warnings: list[str]
+) -> list[Region]:
     settings = policy.layer(LAYER_METRO)
     if not settings.enabled:
         return []
     namespace = LAYER_NAMESPACE[LAYER_METRO]
     regions = []
     for metro in tree.metros:
+        if metro.iata in site_codes:
+            # A code that names both a metro area and a physical site is the
+            # site: the airport sense wins and the metro region is dropped,
+            # so one radio code never means two different shapes.
+            warnings.append(
+                f"iata-metro:{metro.iata} shares its code with a positioned site; "
+                "the airport sense wins and this metro region is not compiled"
+            )
+            continue
         core = geom.simplify_m(
             geom.normalize(metro.geometry, name=metro.region_id),
             policy.simplify_m["metro"],

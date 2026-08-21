@@ -19,11 +19,11 @@ points:
         - iata-airport:SFO
         - country:US
         - us-state:CA
-        - iata-metro:SFO
+        - iata-metro:XSF
         - custom:sf-bay-area
       exclude_semantic:
         - iata-airport:SQL
-      suggested_default_region: SFO
+      suggested_default_region: XSF
 
   - name: SFO terminal area
     lat: 37.6189
@@ -32,13 +32,16 @@ points:
       include_semantic:
         - iata-airport:SFO
         - iata-location:SFO
+        - iata-metro:XSF
         - country:US
         - us-state:CA
-      # The airport and metro senses of SFO are separate semantic matches but
-      # one radio region.
+      # The airport and location senses of SFO are separate semantic matches
+      # but one radio region; the metro is a second radio region and, ranking
+      # first, the suggested default.
       radio_regions:
         - SFO
-      suggested_default_region: SFO
+        - XSF
+      suggested_default_region: XSF
 
   - name: San Jose airport
     lat: 37.3626
@@ -50,7 +53,7 @@ points:
         - us-state:CA
       # Inside the fixture metro rectangle, so the metro outranks even the
       # airport someone is standing on.
-      suggested_default_region: SFO
+      suggested_default_region: XSF
 
   - name: Forced override strip
     lat: 37.58
@@ -63,8 +66,8 @@ points:
       # not in the default.
       include_semantic:
         - iata-airport:SJC
-        - iata-metro:SFO
-      suggested_default_region: SFO
+        - iata-metro:XSF
+      suggested_default_region: XSF
 
   - name: Palo Alto general aviation
     lat: 37.4611
@@ -85,7 +88,7 @@ points:
         - us-state:CA
       # Metro codes are containment regions. Being near one is not being in it.
       exclude_semantic:
-        - iata-metro:SFO
+        - iata-metro:XSF
 
   - name: North of the fixture state rectangle, inside the country one
     lat: 42.30
@@ -95,6 +98,19 @@ points:
         - country:US
       exclude_semantic:
         - us-state:CA
+
+  - name: Gilroy, outside the fixture metro
+    lat: 36.90
+    lon: -121.60
+    expect:
+      # South of the metro rectangle but inside SJC's commercial cell: with no
+      # metro covering the position, the default falls back to the nearest
+      # commercial airport.
+      include_semantic:
+        - iata-airport:SJC
+      exclude_semantic:
+        - iata-metro:XSF
+      suggested_default_region: SJC
 
   - name: Remote Pacific
     lat: 10.0

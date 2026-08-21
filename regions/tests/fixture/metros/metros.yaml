@@ -1,10 +1,15 @@
 version: 1
 
 metros:
-  - id: iata-metro:SFO
-    iata: SFO
+  # XSF rather than SFO on purpose, twice over: a metro code that collides
+  # with a positioned site's code is dropped by the compiler (the airport
+  # sense wins), and this fixture needs a metro that survives — while a real
+  # metro code would misleadingly suggest real-world data. XSF is assigned to
+  # nothing.
+  - id: iata-metro:XSF
+    iata: XSF
     name: San Francisco Bay metropolitan area
-    geometry: geometry/SFO.geojson
+    geometry: geometry/XSF.geojson
     expansion_m: 0
     source:
       name: Fixture rectangle, not a reviewed boundary

@@ -10,7 +10,7 @@
         "iata-airport:SFO",
         "iata-airport:SJC",
         "iata-location:SQL",
-        "iata-metro:SFO",
+        "iata-metro:XSF",
         "country:US",
         "us-state:CA",
         "custom:sf-bay-area"
@@ -28,6 +28,7 @@
         "SFO",
         "SJC",
         "SQL",
+        "XSF",
         "US",
         "CA",
         "SF Bay Area"
@@ -36,11 +37,12 @@
         30655,
         30803,
         31092,
+        39166,
         34360,
         4840,
         55479
       ],
-      "default_wire_code": 30655
+      "default_wire_code": 39166
     },
     {
       "lat": 37.6189,
@@ -49,7 +51,7 @@
         "iata-airport:SFO",
         "iata-airport:OAK",
         "iata-location:SFO",
-        "iata-metro:SFO",
+        "iata-metro:XSF",
         "country:US",
         "us-state:CA",
         "custom:sf-bay-area"
@@ -66,6 +68,7 @@
       "radio_names": [
         "SFO",
         "OAK",
+        "XSF",
         "US",
         "CA",
         "SF Bay Area"
@@ -73,11 +76,12 @@
       "wire_codes": [
         30655,
         24051,
+        39166,
         34360,
         4840,
         55479
       ],
-      "default_wire_code": 30655
+      "default_wire_code": 39166
     },
     {
       "lat": 37.3626,
@@ -85,7 +89,7 @@
       "region_keys": [
         "iata-airport:SJC",
         "iata-location:SJC",
-        "iata-metro:SFO",
+        "iata-metro:XSF",
         "country:US",
         "us-state:CA",
         "custom:sf-bay-area"
@@ -100,19 +104,19 @@
       ],
       "radio_names": [
         "SJC",
-        "SFO",
+        "XSF",
         "US",
         "CA",
         "SF Bay Area"
       ],
       "wire_codes": [
         30803,
-        30655,
+        39166,
         34360,
         4840,
         55479
       ],
-      "default_wire_code": 30655
+      "default_wire_code": 39166
     },
     {
       "lat": 37.58,
@@ -124,7 +128,7 @@
         "iata-location:SQL",
         "iata-location:OAK",
         "iata-location:PAO",
-        "iata-metro:SFO",
+        "iata-metro:XSF",
         "country:US",
         "us-state:CA",
         "custom:sf-bay-area"
@@ -147,6 +151,7 @@
         "SFO",
         "SQL",
         "PAO",
+        "XSF",
         "US",
         "CA",
         "SF Bay Area"
@@ -157,11 +162,12 @@
         30655,
         31092,
         25655,
+        39166,
         34360,
         4840,
         55479
       ],
-      "default_wire_code": 30655
+      "default_wire_code": 39166
     },
     {
       "lat": 37.4611,
@@ -170,7 +176,7 @@
         "iata-airport:SJC",
         "iata-airport:SFO",
         "iata-location:PAO",
-        "iata-metro:SFO",
+        "iata-metro:XSF",
         "country:US",
         "us-state:CA",
         "custom:sf-bay-area"
@@ -188,6 +194,7 @@
         "SJC",
         "SFO",
         "PAO",
+        "XSF",
         "US",
         "CA",
         "SF Bay Area"
@@ -196,11 +203,12 @@
         30803,
         30655,
         25655,
+        39166,
         34360,
         4840,
         55479
       ],
-      "default_wire_code": 30655
+      "default_wire_code": 39166
     },
     {
       "lat": 38.3,
@@ -245,6 +253,33 @@
         34360
       ],
       "default_wire_code": null
+    },
+    {
+      "lat": 36.9,
+      "lon": -121.6,
+      "region_keys": [
+        "iata-airport:SJC",
+        "iata-location:SJC",
+        "country:US",
+        "us-state:CA"
+      ],
+      "memberships": [
+        "core",
+        "core",
+        "core",
+        "core"
+      ],
+      "radio_names": [
+        "SJC",
+        "US",
+        "CA"
+      ],
+      "wire_codes": [
+        30803,
+        34360,
+        4840
+      ],
+      "default_wire_code": 30803
     },
     {
       "lat": 10.0,
@@ -3961,7 +3996,7 @@
         "iata-location:OAK",
         "iata-location:PAO",
         "iata-location:SQL",
-        "iata-metro:SFO",
+        "iata-metro:XSF",
         "country:US",
         "us-state:CA",
         "custom:sf-bay-area"
@@ -3984,6 +4019,7 @@
         "SFO",
         "PAO",
         "SQL",
+        "XSF",
         "US",
         "CA",
         "SF Bay Area"
@@ -3994,11 +4030,12 @@
         30655,
         25655,
         31092,
+        39166,
         34360,
         4840,
         55479
       ],
-      "default_wire_code": 30655
+      "default_wire_code": 39166
     },
     {
       "lat": 38.621786312,
@@ -4200,7 +4237,7 @@
         "iata-airport:SFO",
         "iata-location:SQL",
         "iata-location:PAO",
-        "iata-metro:SFO",
+        "iata-metro:XSF",
         "country:US",
         "us-state:CA",
         "custom:sf-bay-area"
@@ -4222,6 +4259,7 @@
         "SFO",
         "SQL",
         "PAO",
+        "XSF",
         "US",
         "CA",
         "SF Bay Area"
@@ -4232,11 +4270,12 @@
         30655,
         31092,
         25655,
+        39166,
         34360,
         4840,
         55479
       ],
-      "default_wire_code": 30655
+      "default_wire_code": 39166
     },
     {
       "lat": 37.512791,
@@ -4247,7 +4286,7 @@
         "iata-airport:SJC",
         "iata-location:PAO",
         "iata-location:SQL",
-        "iata-metro:SFO",
+        "iata-metro:XSF",
         "country:US",
         "us-state:CA",
         "custom:sf-bay-area"
@@ -4269,6 +4308,7 @@
         "SJC",
         "PAO",
         "SQL",
+        "XSF",
         "US",
         "CA",
         "SF Bay Area"
@@ -4279,11 +4319,12 @@
         30803,
         25655,
         31092,
+        39166,
         34360,
         4840,
         55479
       ],
-      "default_wire_code": 30655
+      "default_wire_code": 39166
     },
     {
       "lat": 37.846997704,
@@ -4322,7 +4363,7 @@
         "iata-location:OAK",
         "iata-location:PAO",
         "iata-location:SQL",
-        "iata-metro:SFO",
+        "iata-metro:XSF",
         "country:US",
         "us-state:CA",
         "custom:sf-bay-area"
@@ -4345,6 +4386,7 @@
         "SFO",
         "PAO",
         "SQL",
+        "XSF",
         "US",
         "CA",
         "SF Bay Area"
@@ -4355,11 +4397,12 @@
         30655,
         25655,
         31092,
+        39166,
         34360,
         4840,
         55479
       ],
-      "default_wire_code": 30655
+      "default_wire_code": 39166
     },
     {
       "lat": 37.613611453,
@@ -4559,7 +4602,7 @@
         "iata-airport:SJC",
         "iata-location:PAO",
         "iata-location:SJC",
-        "iata-metro:SFO",
+        "iata-metro:XSF",
         "country:US",
         "us-state:CA",
         "custom:sf-bay-area"
@@ -4576,7 +4619,7 @@
       "radio_names": [
         "SJC",
         "PAO",
-        "SFO",
+        "XSF",
         "US",
         "CA",
         "SF Bay Area"
@@ -4584,12 +4627,12 @@
       "wire_codes": [
         30803,
         25655,
-        30655,
+        39166,
         34360,
         4840,
         55479
       ],
-      "default_wire_code": 30655
+      "default_wire_code": 39166
     },
     {
       "lat": 37.620556683,
@@ -4601,7 +4644,7 @@
         "iata-location:OAK",
         "iata-location:SFO",
         "iata-location:SQL",
-        "iata-metro:SFO",
+        "iata-metro:XSF",
         "country:US",
         "us-state:CA",
         "custom:sf-bay-area"
@@ -4623,6 +4666,7 @@
         "SFO",
         "SJC",
         "SQL",
+        "XSF",
         "US",
         "CA",
         "SF Bay Area"
@@ -4632,11 +4676,12 @@
         30655,
         30803,
         31092,
+        39166,
         34360,
         4840,
         55479
       ],
-      "default_wire_code": 30655
+      "default_wire_code": 39166
     },
     {
       "lat": 37.793924394,
@@ -4646,7 +4691,7 @@
         "iata-airport:SFO",
         "iata-location:OAK",
         "iata-location:SFO",
-        "iata-metro:SFO",
+        "iata-metro:XSF",
         "country:US",
         "us-state:CA",
         "custom:sf-bay-area"
@@ -4664,6 +4709,7 @@
       "radio_names": [
         "OAK",
         "SFO",
+        "XSF",
         "US",
         "CA",
         "SF Bay Area"
@@ -4671,11 +4717,12 @@
       "wire_codes": [
         24051,
         30655,
+        39166,
         34360,
         4840,
         55479
       ],
-      "default_wire_code": 30655
+      "default_wire_code": 39166
     },
     {
       "lat": 32.500007982,
@@ -4704,7 +4751,7 @@
         "iata-location:SQL",
         "iata-location:OAK",
         "iata-location:PAO",
-        "iata-metro:SFO",
+        "iata-metro:XSF",
         "country:US",
         "us-state:CA",
         "custom:sf-bay-area"
@@ -4727,6 +4774,7 @@
         "SFO",
         "SQL",
         "PAO",
+        "XSF",
         "US",
         "CA",
         "SF Bay Area"
@@ -4737,11 +4785,12 @@
         30655,
         31092,
         25655,
+        39166,
         34360,
         4840,
         55479
       ],
-      "default_wire_code": 30655
+      "default_wire_code": 39166
     },
     {
       "lat": 37.2,
@@ -4749,7 +4798,7 @@
       "region_keys": [
         "iata-airport:SFO",
         "iata-location:SQL",
-        "iata-metro:SFO",
+        "iata-metro:XSF",
         "country:US",
         "us-state:CA"
       ],
@@ -4763,16 +4812,18 @@
       "radio_names": [
         "SFO",
         "SQL",
+        "XSF",
         "US",
         "CA"
       ],
       "wire_codes": [
         30655,
         31092,
+        39166,
         34360,
         4840
       ],
-      "default_wire_code": 30655
+      "default_wire_code": 39166
     },
     {
       "lat": 36.461504,
@@ -4959,7 +5010,7 @@
         "iata-airport:SFO",
         "iata-location:SQL",
         "iata-location:SFO",
-        "iata-metro:SFO",
+        "iata-metro:XSF",
         "country:US",
         "us-state:CA",
         "custom:sf-bay-area"
@@ -4976,6 +5027,7 @@
       "radio_names": [
         "SFO",
         "SQL",
+        "XSF",
         "US",
         "CA",
         "SF Bay Area"
@@ -4983,11 +5035,12 @@
       "wire_codes": [
         30655,
         31092,
+        39166,
         34360,
         4840,
         55479
       ],
-      "default_wire_code": 30655
+      "default_wire_code": 39166
     },
     {
       "lat": 37.613530424,
@@ -5024,7 +5077,7 @@
         "iata-airport:SFO",
         "iata-location:OAK",
         "iata-location:SFO",
-        "iata-metro:SFO",
+        "iata-metro:XSF",
         "country:US",
         "us-state:CA",
         "custom:sf-bay-area"
@@ -5042,6 +5095,7 @@
       "radio_names": [
         "OAK",
         "SFO",
+        "XSF",
         "US",
         "CA",
         "SF Bay Area"
@@ -5049,11 +5103,12 @@
       "wire_codes": [
         24051,
         30655,
+        39166,
         34360,
         4840,
         55479
       ],
-      "default_wire_code": 30655
+      "default_wire_code": 39166
     },
     {
       "lat": 38.349656995,
@@ -5098,7 +5153,7 @@
         "iata-location:OAK",
         "iata-location:SFO",
         "iata-location:SQL",
-        "iata-metro:SFO",
+        "iata-metro:XSF",
         "country:US",
         "us-state:CA",
         "custom:sf-bay-area"
@@ -5120,6 +5175,7 @@
         "SFO",
         "SJC",
         "SQL",
+        "XSF",
         "US",
         "CA",
         "SF Bay Area"
@@ -5129,11 +5185,12 @@
         30655,
         30803,
         31092,
+        39166,
         34360,
         4840,
         55479
       ],
-      "default_wire_code": 30655
+      "default_wire_code": 39166
     },
     {
       "lat": 32.500000335,
@@ -5164,7 +5221,7 @@
         "iata-airport:SFO",
         "iata-location:OAK",
         "iata-location:SFO",
-        "iata-metro:SFO",
+        "iata-metro:XSF",
         "country:US",
         "us-state:CA",
         "custom:sf-bay-area"
@@ -5182,6 +5239,7 @@
       "radio_names": [
         "OAK",
         "SFO",
+        "XSF",
         "US",
         "CA",
         "SF Bay Area"
@@ -5189,11 +5247,12 @@
       "wire_codes": [
         24051,
         30655,
+        39166,
         34360,
         4840,
         55479
       ],
-      "default_wire_code": 30655
+      "default_wire_code": 39166
     },
     {
       "lat": 36.461504,
@@ -5248,7 +5307,7 @@
         "iata-airport:SFO",
         "iata-location:PAO",
         "iata-location:SQL",
-        "iata-metro:SFO",
+        "iata-metro:XSF",
         "country:US",
         "us-state:CA",
         "custom:sf-bay-area"
@@ -5270,6 +5329,7 @@
         "SFO",
         "PAO",
         "SQL",
+        "XSF",
         "US",
         "CA",
         "SF Bay Area"
@@ -5280,11 +5340,12 @@
         30655,
         25655,
         31092,
+        39166,
         34360,
         4840,
         55479
       ],
-      "default_wire_code": 30655
+      "default_wire_code": 39166
     },
     {
       "lat": 37.793915771,
@@ -5294,7 +5355,7 @@
         "iata-airport:OAK",
         "iata-location:OAK",
         "iata-location:SFO",
-        "iata-metro:SFO",
+        "iata-metro:XSF",
         "country:US",
         "us-state:CA",
         "custom:sf-bay-area"
@@ -5312,6 +5373,7 @@
       "radio_names": [
         "SFO",
         "OAK",
+        "XSF",
         "US",
         "CA",
         "SF Bay Area"
@@ -5319,11 +5381,12 @@
       "wire_codes": [
         30655,
         24051,
+        39166,
         34360,
         4840,
         55479
       ],
-      "default_wire_code": 30655
+      "default_wire_code": 39166
     },
     {
       "lat": 37.34789038,
@@ -5332,7 +5395,7 @@
         "iata-airport:SJC",
         "iata-location:PAO",
         "iata-location:SJC",
-        "iata-metro:SFO",
+        "iata-metro:XSF",
         "country:US",
         "us-state:CA",
         "custom:sf-bay-area"
@@ -5349,7 +5412,7 @@
       "radio_names": [
         "SJC",
         "PAO",
-        "SFO",
+        "XSF",
         "US",
         "CA",
         "SF Bay Area"
@@ -5357,12 +5420,12 @@
       "wire_codes": [
         30803,
         25655,
-        30655,
+        39166,
         34360,
         4840,
         55479
       ],
-      "default_wire_code": 30655
+      "default_wire_code": 39166
     },
     {
       "lat": 37.617186581,
@@ -5374,7 +5437,7 @@
         "iata-location:SFO",
         "iata-location:OAK",
         "iata-location:SQL",
-        "iata-metro:SFO",
+        "iata-metro:XSF",
         "country:US",
         "us-state:CA",
         "custom:sf-bay-area"
@@ -5396,6 +5459,7 @@
         "SFO",
         "SJC",
         "SQL",
+        "XSF",
         "US",
         "CA",
         "SF Bay Area"
@@ -5405,11 +5469,12 @@
         30655,
         30803,
         31092,
+        39166,
         34360,
         4840,
         55479
       ],
-      "default_wire_code": 30655
+      "default_wire_code": 39166
     },
     {
       "lat": 38.591064394,
@@ -5444,7 +5509,7 @@
       "region_keys": [
         "iata-airport:SFO",
         "iata-location:SQL",
-        "iata-metro:SFO",
+        "iata-metro:XSF",
         "country:US",
         "us-state:CA",
         "custom:sf-bay-area"
@@ -5460,6 +5525,7 @@
       "radio_names": [
         "SFO",
         "SQL",
+        "XSF",
         "US",
         "CA",
         "SF Bay Area"
@@ -5467,11 +5533,12 @@
       "wire_codes": [
         30655,
         31092,
+        39166,
         34360,
         4840,
         55479
       ],
-      "default_wire_code": 30655
+      "default_wire_code": 39166
     },
     {
       "lat": 37.686826,
@@ -5482,7 +5549,7 @@
         "iata-location:OAK",
         "iata-location:PAO",
         "iata-location:SJC",
-        "iata-metro:SFO",
+        "iata-metro:XSF",
         "country:US",
         "us-state:CA"
       ],
@@ -5500,7 +5567,7 @@
         "OAK",
         "SJC",
         "PAO",
-        "SFO",
+        "XSF",
         "US",
         "CA"
       ],
@@ -5508,11 +5575,11 @@
         24051,
         30803,
         25655,
-        30655,
+        39166,
         34360,
         4840
       ],
-      "default_wire_code": 30655
+      "default_wire_code": 39166
     },
     {
       "lat": 38.252605034,
@@ -5585,7 +5652,7 @@
         "iata-airport:SFO",
         "iata-location:OAK",
         "iata-location:SFO",
-        "iata-metro:SFO",
+        "iata-metro:XSF",
         "country:US",
         "us-state:CA",
         "custom:sf-bay-area"
@@ -5603,6 +5670,7 @@
       "radio_names": [
         "OAK",
         "SFO",
+        "XSF",
         "US",
         "CA",
         "SF Bay Area"
@@ -5610,11 +5678,12 @@
       "wire_codes": [
         24051,
         30655,
+        39166,
         34360,
         4840,
         55479
       ],
-      "default_wire_code": 30655
+      "default_wire_code": 39166
     },
     {
       "lat": 37.863391721,
@@ -5624,7 +5693,7 @@
         "iata-airport:SFO",
         "iata-location:SFO",
         "iata-location:OAK",
-        "iata-metro:SFO",
+        "iata-metro:XSF",
         "country:US",
         "us-state:CA",
         "custom:sf-bay-area"
@@ -5642,6 +5711,7 @@
       "radio_names": [
         "OAK",
         "SFO",
+        "XSF",
         "US",
         "CA",
         "SF Bay Area"
@@ -5649,11 +5719,12 @@
       "wire_codes": [
         24051,
         30655,
+        39166,
         34360,
         4840,
         55479
       ],
-      "default_wire_code": 30655
+      "default_wire_code": 39166
     },
     {
       "lat": 37.678671748,
@@ -5664,7 +5735,7 @@
         "iata-location:PAO",
         "iata-location:OAK",
         "iata-location:SJC",
-        "iata-metro:SFO",
+        "iata-metro:XSF",
         "country:US",
         "us-state:CA",
         "custom:sf-bay-area"
@@ -5684,7 +5755,7 @@
         "OAK",
         "SJC",
         "PAO",
-        "SFO",
+        "XSF",
         "US",
         "CA",
         "SF Bay Area"
@@ -5693,12 +5764,12 @@
         24051,
         30803,
         25655,
-        30655,
+        39166,
         34360,
         4840,
         55479
       ],
-      "default_wire_code": 30655
+      "default_wire_code": 39166
     },
     {
       "lat": 37.62,
@@ -5710,7 +5781,7 @@
         "iata-location:OAK",
         "iata-location:SFO",
         "iata-location:SQL",
-        "iata-metro:SFO",
+        "iata-metro:XSF",
         "country:US",
         "us-state:CA",
         "custom:sf-bay-area"
@@ -5732,6 +5803,7 @@
         "SJC",
         "SFO",
         "SQL",
+        "XSF",
         "US",
         "CA",
         "SF Bay Area"
@@ -5741,11 +5813,12 @@
         30803,
         30655,
         31092,
+        39166,
         34360,
         4840,
         55479
       ],
-      "default_wire_code": 30655
+      "default_wire_code": 39166
     },
     {
       "lat": 37.590749,
@@ -5816,7 +5889,7 @@
         "iata-airport:SFO",
         "iata-location:PAO",
         "iata-location:SQL",
-        "iata-metro:SFO",
+        "iata-metro:XSF",
         "country:US",
         "us-state:CA",
         "custom:sf-bay-area"
@@ -5838,6 +5911,7 @@
         "SFO",
         "PAO",
         "SQL",
+        "XSF",
         "US",
         "CA",
         "SF Bay Area"
@@ -5848,11 +5922,12 @@
         30655,
         25655,
         31092,
+        39166,
         34360,
         4840,
         55479
       ],
-      "default_wire_code": 30655
+      "default_wire_code": 39166
     },
     {
       "lat": 37.249925157,
@@ -5860,7 +5935,7 @@
       "region_keys": [
         "iata-airport:SFO",
         "iata-location:SQL",
-        "iata-metro:SFO",
+        "iata-metro:XSF",
         "country:US",
         "us-state:CA"
       ],
@@ -5874,16 +5949,18 @@
       "radio_names": [
         "SFO",
         "SQL",
+        "XSF",
         "US",
         "CA"
       ],
       "wire_codes": [
         30655,
         31092,
+        39166,
         34360,
         4840
       ],
-      "default_wire_code": 30655
+      "default_wire_code": 39166
     },
     {
       "lat": 37.996958897,
@@ -5927,7 +6004,7 @@
         "iata-airport:SJC",
         "iata-location:PAO",
         "iata-location:SQL",
-        "iata-metro:SFO",
+        "iata-metro:XSF",
         "country:US",
         "us-state:CA",
         "custom:sf-bay-area"
@@ -5949,6 +6026,7 @@
         "SJC",
         "PAO",
         "SQL",
+        "XSF",
         "US",
         "CA",
         "SF Bay Area"
@@ -5959,11 +6037,12 @@
         30803,
         25655,
         31092,
+        39166,
         34360,
         4840,
         55479
       ],
-      "default_wire_code": 30655
+      "default_wire_code": 39166
     },
     {
       "lat": 37.200000429,
@@ -5971,7 +6050,7 @@
       "region_keys": [
         "iata-airport:SJC",
         "iata-location:SJC",
-        "iata-metro:SFO",
+        "iata-metro:XSF",
         "country:US",
         "us-state:CA"
       ],
@@ -5984,17 +6063,17 @@
       ],
       "radio_names": [
         "SJC",
-        "SFO",
+        "XSF",
         "US",
         "CA"
       ],
       "wire_codes": [
         30803,
-        30655,
+        39166,
         34360,
         4840
       ],
-      "default_wire_code": 30655
+      "default_wire_code": 39166
     },
     {
       "lat": 37.613466759,
@@ -6059,7 +6138,7 @@
         "iata-location:PAO",
         "iata-location:OAK",
         "iata-location:SJC",
-        "iata-metro:SFO",
+        "iata-metro:XSF",
         "country:US",
         "us-state:CA",
         "custom:sf-bay-area"
@@ -6079,7 +6158,7 @@
         "SJC",
         "OAK",
         "PAO",
-        "SFO",
+        "XSF",
         "US",
         "CA",
         "SF Bay Area"
@@ -6088,12 +6167,12 @@
         30803,
         24051,
         25655,
-        30655,
+        39166,
         34360,
         4840,
         55479
       ],
-      "default_wire_code": 30655
+      "default_wire_code": 39166
     },
     {
       "lat": 37.199494786,
@@ -6228,7 +6307,7 @@
         "iata-airport:SFO",
         "iata-location:SQL",
         "iata-location:OAK",
-        "iata-metro:SFO",
+        "iata-metro:XSF",
         "country:US",
         "us-state:CA",
         "custom:sf-bay-area"
@@ -6249,6 +6328,7 @@
         "OAK",
         "SFO",
         "SQL",
+        "XSF",
         "US",
         "CA",
         "SF Bay Area"
@@ -6258,11 +6338,12 @@
         24051,
         30655,
         31092,
+        39166,
         34360,
         4840,
         55479
       ],
-      "default_wire_code": 30655
+      "default_wire_code": 39166
     },
     {
       "lat": 37.846991526,
@@ -6317,7 +6398,7 @@
         "iata-airport:SFO",
         "iata-location:SQL",
         "iata-location:PAO",
-        "iata-metro:SFO",
+        "iata-metro:XSF",
         "country:US",
         "us-state:CA",
         "custom:sf-bay-area"
@@ -6339,6 +6420,7 @@
         "SFO",
         "SQL",
         "PAO",
+        "XSF",
         "US",
         "CA",
         "SF Bay Area"
@@ -6349,11 +6431,12 @@
         30655,
         31092,
         25655,
+        39166,
         34360,
         4840,
         55479
       ],
-      "default_wire_code": 30655
+      "default_wire_code": 39166
     },
     {
       "lat": 37.847576,
@@ -6397,7 +6480,7 @@
         "iata-airport:SJC",
         "iata-location:SQL",
         "iata-location:PAO",
-        "iata-metro:SFO",
+        "iata-metro:XSF",
         "country:US",
         "us-state:CA",
         "custom:sf-bay-area"
@@ -6419,6 +6502,7 @@
         "SJC",
         "SQL",
         "PAO",
+        "XSF",
         "US",
         "CA",
         "SF Bay Area"
@@ -6429,11 +6513,12 @@
         30803,
         31092,
         25655,
+        39166,
         34360,
         4840,
         55479
       ],
-      "default_wire_code": 30655
+      "default_wire_code": 39166
     },
     {
       "lat": 38.253275718,
@@ -6501,7 +6586,7 @@
       "region_keys": [
         "iata-airport:SFO",
         "iata-location:SQL",
-        "iata-metro:SFO",
+        "iata-metro:XSF",
         "country:US",
         "us-state:CA"
       ],
@@ -6515,16 +6600,18 @@
       "radio_names": [
         "SFO",
         "SQL",
+        "XSF",
         "US",
         "CA"
       ],
       "wire_codes": [
         30655,
         31092,
+        39166,
         34360,
         4840
       ],
-      "default_wire_code": 30655
+      "default_wire_code": 39166
     },
     {
       "lat": 36.979398417,
@@ -6682,7 +6769,7 @@
         "iata-airport:OAK",
         "iata-airport:SFO",
         "iata-location:OAK",
-        "iata-metro:SFO",
+        "iata-metro:XSF",
         "country:US",
         "us-state:CA"
       ],
@@ -6697,16 +6784,18 @@
       "radio_names": [
         "OAK",
         "SFO",
+        "XSF",
         "US",
         "CA"
       ],
       "wire_codes": [
         24051,
         30655,
+        39166,
         34360,
         4840
       ],
-      "default_wire_code": 30655
+      "default_wire_code": 39166
     },
     {
       "lat": 37.577198373,
@@ -6717,7 +6806,7 @@
         "iata-airport:SFO",
         "iata-location:SQL",
         "iata-location:OAK",
-        "iata-metro:SFO",
+        "iata-metro:XSF",
         "country:US",
         "us-state:CA",
         "custom:sf-bay-area"
@@ -6738,6 +6827,7 @@
         "OAK",
         "SFO",
         "SQL",
+        "XSF",
         "US",
         "CA",
         "SF Bay Area"
@@ -6747,11 +6837,12 @@
         24051,
         30655,
         31092,
+        39166,
         34360,
         4840,
         55479
       ],
-      "default_wire_code": 30655
+      "default_wire_code": 39166
     },
     {
       "lat": 37.297842529,
@@ -6761,7 +6852,7 @@
         "iata-airport:SFO",
         "iata-location:SQL",
         "iata-location:PAO",
-        "iata-metro:SFO",
+        "iata-metro:XSF",
         "country:US",
         "us-state:CA",
         "custom:sf-bay-area"
@@ -6781,6 +6872,7 @@
         "SFO",
         "SQL",
         "PAO",
+        "XSF",
         "US",
         "CA",
         "SF Bay Area"
@@ -6790,11 +6882,12 @@
         30655,
         31092,
         25655,
+        39166,
         34360,
         4840,
         55479
       ],
-      "default_wire_code": 30655
+      "default_wire_code": 39166
     },
     {
       "lat": 36.671572219,
@@ -6839,7 +6932,7 @@
         "iata-airport:SFO",
         "iata-location:OAK",
         "iata-location:SFO",
-        "iata-metro:SFO",
+        "iata-metro:XSF",
         "country:US",
         "us-state:CA",
         "custom:sf-bay-area"
@@ -6857,6 +6950,7 @@
       "radio_names": [
         "OAK",
         "SFO",
+        "XSF",
         "US",
         "CA",
         "SF Bay Area"
@@ -6864,11 +6958,12 @@
       "wire_codes": [
         24051,
         30655,
+        39166,
         34360,
         4840,
         55479
       ],
-      "default_wire_code": 30655
+      "default_wire_code": 39166
     },
     {
       "lat": 37.296041,
@@ -6878,7 +6973,7 @@
         "iata-airport:SFO",
         "iata-location:PAO",
         "iata-location:SQL",
-        "iata-metro:SFO",
+        "iata-metro:XSF",
         "country:US",
         "us-state:CA",
         "custom:sf-bay-area"
@@ -6898,6 +6993,7 @@
         "SFO",
         "PAO",
         "SQL",
+        "XSF",
         "US",
         "CA",
         "SF Bay Area"
@@ -6907,11 +7003,12 @@
         30655,
         25655,
         31092,
+        39166,
         34360,
         4840,
         55479
       ],
-      "default_wire_code": 30655
+      "default_wire_code": 39166
     },
     {
       "lat": 38.253206,
@@ -6949,7 +7046,7 @@
         "iata-airport:SJC",
         "iata-location:SQL",
         "iata-location:PAO",
-        "iata-metro:SFO",
+        "iata-metro:XSF",
         "country:US",
         "us-state:CA",
         "custom:sf-bay-area"
@@ -6971,6 +7068,7 @@
         "SJC",
         "SQL",
         "PAO",
+        "XSF",
         "US",
         "CA",
         "SF Bay Area"
@@ -6981,11 +7079,12 @@
         30803,
         31092,
         25655,
+        39166,
         34360,
         4840,
         55479
       ],
-      "default_wire_code": 30655
+      "default_wire_code": 39166
     },
     {
       "lat": 37.617183118,
@@ -6997,7 +7096,7 @@
         "iata-location:SQL",
         "iata-location:OAK",
         "iata-location:SFO",
-        "iata-metro:SFO",
+        "iata-metro:XSF",
         "country:US",
         "us-state:CA",
         "custom:sf-bay-area"
@@ -7019,6 +7118,7 @@
         "SFO",
         "SJC",
         "SQL",
+        "XSF",
         "US",
         "CA",
         "SF Bay Area"
@@ -7028,11 +7128,12 @@
         30655,
         30803,
         31092,
+        39166,
         34360,
         4840,
         55479
       ],
-      "default_wire_code": 30655
+      "default_wire_code": 39166
     },
     {
       "lat": 37.347890775,
@@ -7041,7 +7142,7 @@
         "iata-airport:SJC",
         "iata-location:PAO",
         "iata-location:SJC",
-        "iata-metro:SFO",
+        "iata-metro:XSF",
         "country:US",
         "us-state:CA",
         "custom:sf-bay-area"
@@ -7058,7 +7159,7 @@
       "radio_names": [
         "SJC",
         "PAO",
-        "SFO",
+        "XSF",
         "US",
         "CA",
         "SF Bay Area"
@@ -7066,12 +7167,12 @@
       "wire_codes": [
         30803,
         25655,
-        30655,
+        39166,
         34360,
         4840,
         55479
       ],
-      "default_wire_code": 30655
+      "default_wire_code": 39166
     },
     {
       "lat": 37.686871179,
@@ -7082,7 +7183,7 @@
         "iata-location:OAK",
         "iata-location:PAO",
         "iata-location:SJC",
-        "iata-metro:SFO",
+        "iata-metro:XSF",
         "country:US",
         "us-state:CA"
       ],
@@ -7100,7 +7201,7 @@
         "OAK",
         "SJC",
         "PAO",
-        "SFO",
+        "XSF",
         "US",
         "CA"
       ],
@@ -7108,11 +7209,11 @@
         24051,
         30803,
         25655,
-        30655,
+        39166,
         34360,
         4840
       ],
-      "default_wire_code": 30655
+      "default_wire_code": 39166
     },
     {
       "lat": 37.996954967,
@@ -7341,7 +7442,7 @@
         "iata-airport:OAK",
         "iata-location:OAK",
         "iata-location:SFO",
-        "iata-metro:SFO",
+        "iata-metro:XSF",
         "country:US",
         "us-state:CA",
         "custom:sf-bay-area"
@@ -7359,6 +7460,7 @@
       "radio_names": [
         "SFO",
         "OAK",
+        "XSF",
         "US",
         "CA",
         "SF Bay Area"
@@ -7366,11 +7468,12 @@
       "wire_codes": [
         30655,
         24051,
+        39166,
         34360,
         4840,
         55479
       ],
-      "default_wire_code": 30655
+      "default_wire_code": 39166
     },
     {
       "lat": 36.722769282,
@@ -7555,7 +7658,7 @@
         "iata-airport:SJC",
         "iata-location:SQL",
         "iata-location:OAK",
-        "iata-metro:SFO",
+        "iata-metro:XSF",
         "country:US",
         "us-state:CA",
         "custom:sf-bay-area"
@@ -7576,6 +7679,7 @@
         "SFO",
         "SJC",
         "SQL",
+        "XSF",
         "US",
         "CA",
         "SF Bay Area"
@@ -7585,11 +7689,12 @@
         30655,
         30803,
         31092,
+        39166,
         34360,
         4840,
         55479
       ],
-      "default_wire_code": 30655
+      "default_wire_code": 39166
     },
     {
       "lat": 38.349338,
@@ -7631,7 +7736,7 @@
         "iata-airport:SFO",
         "iata-location:SQL",
         "iata-location:SFO",
-        "iata-metro:SFO",
+        "iata-metro:XSF",
         "country:US",
         "us-state:CA",
         "custom:sf-bay-area"
@@ -7648,6 +7753,7 @@
       "radio_names": [
         "SFO",
         "SQL",
+        "XSF",
         "US",
         "CA",
         "SF Bay Area"
@@ -7655,11 +7761,12 @@
       "wire_codes": [
         30655,
         31092,
+        39166,
         34360,
         4840,
         55479
       ],
-      "default_wire_code": 30655
+      "default_wire_code": 39166
     },
     {
       "lat": 38.500135886,
@@ -7718,7 +7825,7 @@
         "iata-location:SJC",
         "iata-location:OAK",
         "iata-location:PAO",
-        "iata-metro:SFO",
+        "iata-metro:XSF",
         "country:US",
         "us-state:CA"
       ],
@@ -7736,7 +7843,7 @@
         "OAK",
         "SJC",
         "PAO",
-        "SFO",
+        "XSF",
         "US",
         "CA"
       ],
@@ -7744,11 +7851,11 @@
         24051,
         30803,
         25655,
-        30655,
+        39166,
         34360,
         4840
       ],
-      "default_wire_code": 30655
+      "default_wire_code": 39166
     },
     {
       "lat": 37.296042971,
@@ -7758,7 +7865,7 @@
         "iata-airport:SFO",
         "iata-location:PAO",
         "iata-location:SQL",
-        "iata-metro:SFO",
+        "iata-metro:XSF",
         "country:US",
         "us-state:CA",
         "custom:sf-bay-area"
@@ -7778,6 +7885,7 @@
         "SFO",
         "PAO",
         "SQL",
+        "XSF",
         "US",
         "CA",
         "SF Bay Area"
@@ -7787,11 +7895,12 @@
         30655,
         25655,
         31092,
+        39166,
         34360,
         4840,
         55479
       ],
-      "default_wire_code": 30655
+      "default_wire_code": 39166
     },
     {
       "lat": 36.7891,
@@ -8015,7 +8124,7 @@
         "iata-location:PAO",
         "iata-location:OAK",
         "iata-location:SJC",
-        "iata-metro:SFO",
+        "iata-metro:XSF",
         "country:US",
         "us-state:CA",
         "custom:sf-bay-area"
@@ -8035,7 +8144,7 @@
         "OAK",
         "SJC",
         "PAO",
-        "SFO",
+        "XSF",
         "US",
         "CA",
         "SF Bay Area"
@@ -8044,12 +8153,12 @@
         24051,
         30803,
         25655,
-        30655,
+        39166,
         34360,
         4840,
         55479
       ],
-      "default_wire_code": 30655
+      "default_wire_code": 39166
     },
     {
       "lat": 37.398176939,
@@ -8058,7 +8167,7 @@
         "iata-airport:SFO",
         "iata-location:SFO",
         "iata-location:SQL",
-        "iata-metro:SFO",
+        "iata-metro:XSF",
         "country:US",
         "us-state:CA",
         "custom:sf-bay-area"
@@ -8075,6 +8184,7 @@
       "radio_names": [
         "SFO",
         "SQL",
+        "XSF",
         "US",
         "CA",
         "SF Bay Area"
@@ -8082,11 +8192,12 @@
       "wire_codes": [
         30655,
         31092,
+        39166,
         34360,
         4840,
         55479
       ],
-      "default_wire_code": 30655
+      "default_wire_code": 39166
     },
     {
       "lat": 38.253178358,
@@ -8124,7 +8235,7 @@
         "iata-location:OAK",
         "iata-location:PAO",
         "iata-location:SQL",
-        "iata-metro:SFO",
+        "iata-metro:XSF",
         "country:US",
         "us-state:CA",
         "custom:sf-bay-area"
@@ -8145,7 +8256,7 @@
         "SJC",
         "PAO",
         "SQL",
-        "SFO",
+        "XSF",
         "US",
         "CA",
         "SF Bay Area"
@@ -8155,12 +8266,12 @@
         30803,
         25655,
         31092,
-        30655,
+        39166,
         34360,
         4840,
         55479
       ],
-      "default_wire_code": 30655
+      "default_wire_code": 39166
     },
     {
       "lat": 37.356919195,
@@ -8259,7 +8370,7 @@
         "iata-location:PAO",
         "iata-location:OAK",
         "iata-location:SQL",
-        "iata-metro:SFO",
+        "iata-metro:XSF",
         "country:US",
         "us-state:CA",
         "custom:sf-bay-area"
@@ -8282,6 +8393,7 @@
         "SFO",
         "PAO",
         "SQL",
+        "XSF",
         "US",
         "CA",
         "SF Bay Area"
@@ -8292,11 +8404,12 @@
         30655,
         25655,
         31092,
+        39166,
         34360,
         4840,
         55479
       ],
-      "default_wire_code": 30655
+      "default_wire_code": 39166
     },
     {
       "lat": 38.108904781,
@@ -8341,7 +8454,7 @@
         "iata-location:OAK",
         "iata-location:PAO",
         "iata-location:SQL",
-        "iata-metro:SFO",
+        "iata-metro:XSF",
         "country:US",
         "us-state:CA",
         "custom:sf-bay-area"
@@ -8364,6 +8477,7 @@
         "SFO",
         "PAO",
         "SQL",
+        "XSF",
         "US",
         "CA",
         "SF Bay Area"
@@ -8374,11 +8488,12 @@
         30655,
         25655,
         31092,
+        39166,
         34360,
         4840,
         55479
       ],
-      "default_wire_code": 30655
+      "default_wire_code": 39166
     },
     {
       "lat": 36.722785,
@@ -8416,7 +8531,7 @@
         "iata-airport:SFO",
         "iata-location:PAO",
         "iata-location:SQL",
-        "iata-metro:SFO",
+        "iata-metro:XSF",
         "country:US",
         "us-state:CA",
         "custom:sf-bay-area"
@@ -8438,6 +8553,7 @@
         "SFO",
         "PAO",
         "SQL",
+        "XSF",
         "US",
         "CA",
         "SF Bay Area"
@@ -8448,11 +8564,12 @@
         30655,
         25655,
         31092,
+        39166,
         34360,
         4840,
         55479
       ],
-      "default_wire_code": 30655
+      "default_wire_code": 39166
     },
     {
       "lat": 36.491855699,
@@ -8490,7 +8607,7 @@
         "iata-location:OAK",
         "iata-location:PAO",
         "iata-location:SQL",
-        "iata-metro:SFO",
+        "iata-metro:XSF",
         "country:US",
         "us-state:CA",
         "custom:sf-bay-area"
@@ -8511,7 +8628,7 @@
         "SJC",
         "PAO",
         "SQL",
-        "SFO",
+        "XSF",
         "US",
         "CA",
         "SF Bay Area"
@@ -8521,12 +8638,12 @@
         30803,
         25655,
         31092,
-        30655,
+        39166,
         34360,
         4840,
         55479
       ],
-      "default_wire_code": 30655
+      "default_wire_code": 39166
     },
     {
       "lat": 37.163980158,
@@ -8589,7 +8706,7 @@
         "iata-airport:SJC",
         "iata-location:PAO",
         "iata-location:SJC",
-        "iata-metro:SFO",
+        "iata-metro:XSF",
         "country:US",
         "us-state:CA",
         "custom:sf-bay-area"
@@ -8606,7 +8723,7 @@
       "radio_names": [
         "SJC",
         "PAO",
-        "SFO",
+        "XSF",
         "US",
         "CA",
         "SF Bay Area"
@@ -8614,12 +8731,12 @@
       "wire_codes": [
         30803,
         25655,
-        30655,
+        39166,
         34360,
         4840,
         55479
       ],
-      "default_wire_code": 30655
+      "default_wire_code": 39166
     },
     {
       "lat": 38.59162514,
@@ -8657,7 +8774,7 @@
         "iata-location:PAO",
         "iata-location:OAK",
         "iata-location:SJC",
-        "iata-metro:SFO",
+        "iata-metro:XSF",
         "country:US",
         "us-state:CA",
         "custom:sf-bay-area"
@@ -8677,7 +8794,7 @@
         "OAK",
         "SJC",
         "PAO",
-        "SFO",
+        "XSF",
         "US",
         "CA",
         "SF Bay Area"
@@ -8686,12 +8803,12 @@
         24051,
         30803,
         25655,
-        30655,
+        39166,
         34360,
         4840,
         55479
       ],
-      "default_wire_code": 30655
+      "default_wire_code": 39166
     },
     {
       "lat": 37.164417617,
@@ -8727,7 +8844,7 @@
         "iata-airport:SJC",
         "iata-location:PAO",
         "iata-location:SJC",
-        "iata-metro:SFO",
+        "iata-metro:XSF",
         "country:US",
         "us-state:CA",
         "custom:sf-bay-area"
@@ -8744,7 +8861,7 @@
       "radio_names": [
         "SJC",
         "PAO",
-        "SFO",
+        "XSF",
         "US",
         "CA",
         "SF Bay Area"
@@ -8752,12 +8869,12 @@
       "wire_codes": [
         30803,
         25655,
-        30655,
+        39166,
         34360,
         4840,
         55479
       ],
-      "default_wire_code": 30655
+      "default_wire_code": 39166
     },
     {
       "lat": 37.620098267,
@@ -8768,7 +8885,7 @@
         "iata-location:OAK",
         "iata-location:PAO",
         "iata-location:SQL",
-        "iata-metro:SFO",
+        "iata-metro:XSF",
         "country:US",
         "us-state:CA",
         "custom:sf-bay-area"
@@ -8789,7 +8906,7 @@
         "SJC",
         "PAO",
         "SQL",
-        "SFO",
+        "XSF",
         "US",
         "CA",
         "SF Bay Area"
@@ -8799,12 +8916,12 @@
         30803,
         25655,
         31092,
-        30655,
+        39166,
         34360,
         4840,
         55479
       ],
-      "default_wire_code": 30655
+      "default_wire_code": 39166
     },
     {
       "lat": 38.591136542,
@@ -8873,7 +8990,7 @@
         "iata-location:SJC",
         "iata-location:OAK",
         "iata-location:PAO",
-        "iata-metro:SFO",
+        "iata-metro:XSF",
         "country:US",
         "us-state:CA"
       ],
@@ -8891,7 +9008,7 @@
         "SJC",
         "OAK",
         "PAO",
-        "SFO",
+        "XSF",
         "US",
         "CA"
       ],
@@ -8899,11 +9016,11 @@
         30803,
         24051,
         25655,
-        30655,
+        39166,
         34360,
         4840
       ],
-      "default_wire_code": 30655
+      "default_wire_code": 39166
     },
     {
       "lat": 37.34848393,
@@ -8912,7 +9029,7 @@
         "iata-airport:SJC",
         "iata-location:SJC",
         "iata-location:PAO",
-        "iata-metro:SFO",
+        "iata-metro:XSF",
         "country:US",
         "us-state:CA",
         "custom:sf-bay-area"
@@ -8929,7 +9046,7 @@
       "radio_names": [
         "SJC",
         "PAO",
-        "SFO",
+        "XSF",
         "US",
         "CA",
         "SF Bay Area"
@@ -8937,12 +9054,12 @@
       "wire_codes": [
         30803,
         25655,
-        30655,
+        39166,
         34360,
         4840,
         55479
       ],
-      "default_wire_code": 30655
+      "default_wire_code": 39166
     },
     {
       "lat": 36.955299105,
@@ -8982,7 +9099,7 @@
         "iata-airport:OAK",
         "iata-airport:SFO",
         "iata-location:OAK",
-        "iata-metro:SFO",
+        "iata-metro:XSF",
         "country:US",
         "us-state:CA"
       ],
@@ -8997,16 +9114,18 @@
       "radio_names": [
         "OAK",
         "SFO",
+        "XSF",
         "US",
         "CA"
       ],
       "wire_codes": [
         24051,
         30655,
+        39166,
         34360,
         4840
       ],
-      "default_wire_code": 30655
+      "default_wire_code": 39166
     },
     {
       "lat": 36.957945184,
@@ -9320,7 +9439,7 @@
         "iata-airport:SFO",
         "iata-location:SFO",
         "iata-location:SQL",
-        "iata-metro:SFO",
+        "iata-metro:XSF",
         "country:US",
         "us-state:CA",
         "custom:sf-bay-area"
@@ -9337,6 +9456,7 @@
       "radio_names": [
         "SFO",
         "SQL",
+        "XSF",
         "US",
         "CA",
         "SF Bay Area"
@@ -9344,11 +9464,12 @@
       "wire_codes": [
         30655,
         31092,
+        39166,
         34360,
         4840,
         55479
       ],
-      "default_wire_code": 30655
+      "default_wire_code": 39166
     },
     {
       "lat": 37.590748787,
@@ -9511,7 +9632,7 @@
         "iata-location:OAK",
         "iata-location:SFO",
         "iata-location:SQL",
-        "iata-metro:SFO",
+        "iata-metro:XSF",
         "country:US",
         "us-state:CA",
         "custom:sf-bay-area"
@@ -9533,6 +9654,7 @@
         "SFO",
         "SJC",
         "SQL",
+        "XSF",
         "US",
         "CA",
         "SF Bay Area"
@@ -9542,11 +9664,12 @@
         30655,
         30803,
         31092,
+        39166,
         34360,
         4840,
         55479
       ],
-      "default_wire_code": 30655
+      "default_wire_code": 39166
     },
     {
       "lat": 37.249997411,
@@ -9554,7 +9677,7 @@
       "region_keys": [
         "iata-airport:SFO",
         "iata-location:SQL",
-        "iata-metro:SFO",
+        "iata-metro:XSF",
         "country:US",
         "us-state:CA"
       ],
@@ -9568,16 +9691,18 @@
       "radio_names": [
         "SFO",
         "SQL",
+        "XSF",
         "US",
         "CA"
       ],
       "wire_codes": [
         30655,
         31092,
+        39166,
         34360,
         4840
       ],
-      "default_wire_code": 30655
+      "default_wire_code": 39166
     },
     {
       "lat": 38.499380827,
@@ -9735,7 +9860,7 @@
         "iata-airport:SFO",
         "iata-location:SQL",
         "iata-location:SFO",
-        "iata-metro:SFO",
+        "iata-metro:XSF",
         "country:US",
         "us-state:CA",
         "custom:sf-bay-area"
@@ -9752,6 +9877,7 @@
       "radio_names": [
         "SFO",
         "SQL",
+        "XSF",
         "US",
         "CA",
         "SF Bay Area"
@@ -9759,11 +9885,12 @@
       "wire_codes": [
         30655,
         31092,
+        39166,
         34360,
         4840,
         55479
       ],
-      "default_wire_code": 30655
+      "default_wire_code": 39166
     },
     {
       "lat": 36.985993921,
@@ -9894,7 +10021,7 @@
         "iata-airport:SJC",
         "iata-location:PAO",
         "iata-location:SJC",
-        "iata-metro:SFO",
+        "iata-metro:XSF",
         "country:US",
         "us-state:CA",
         "custom:sf-bay-area"
@@ -9911,7 +10038,7 @@
       "radio_names": [
         "SJC",
         "PAO",
-        "SFO",
+        "XSF",
         "US",
         "CA",
         "SF Bay Area"
@@ -9919,12 +10046,12 @@
       "wire_codes": [
         30803,
         25655,
-        30655,
+        39166,
         34360,
         4840,
         55479
       ],
-      "default_wire_code": 30655
+      "default_wire_code": 39166
     },
     {
       "lat": 38.168198421,
@@ -9989,7 +10116,7 @@
         "iata-location:PAO",
         "iata-location:OAK",
         "iata-location:SJC",
-        "iata-metro:SFO",
+        "iata-metro:XSF",
         "country:US",
         "us-state:CA",
         "custom:sf-bay-area"
@@ -10009,7 +10136,7 @@
         "SJC",
         "OAK",
         "PAO",
-        "SFO",
+        "XSF",
         "US",
         "CA",
         "SF Bay Area"
@@ -10018,12 +10145,12 @@
         30803,
         24051,
         25655,
-        30655,
+        39166,
         34360,
         4840,
         55479
       ],
-      "default_wire_code": 30655
+      "default_wire_code": 39166
     },
     {
       "lat": 38.0077105,
@@ -10252,7 +10379,7 @@
         "iata-airport:SFO",
         "iata-location:OAK",
         "iata-location:SFO",
-        "iata-metro:SFO",
+        "iata-metro:XSF",
         "country:US",
         "us-state:CA",
         "custom:sf-bay-area"
@@ -10270,6 +10397,7 @@
       "radio_names": [
         "OAK",
         "SFO",
+        "XSF",
         "US",
         "CA",
         "SF Bay Area"
@@ -10277,11 +10405,12 @@
       "wire_codes": [
         24051,
         30655,
+        39166,
         34360,
         4840,
         55479
       ],
-      "default_wire_code": 30655
+      "default_wire_code": 39166
     },
     {
       "lat": 38.065261,
@@ -10320,7 +10449,7 @@
         "iata-location:OAK",
         "iata-location:PAO",
         "iata-location:SQL",
-        "iata-metro:SFO",
+        "iata-metro:XSF",
         "country:US",
         "us-state:CA",
         "custom:sf-bay-area"
@@ -10343,6 +10472,7 @@
         "SFO",
         "PAO",
         "SQL",
+        "XSF",
         "US",
         "CA",
         "SF Bay Area"
@@ -10353,11 +10483,12 @@
         30655,
         25655,
         31092,
+        39166,
         34360,
         4840,
         55479
       ],
-      "default_wire_code": 30655
+      "default_wire_code": 39166
     },
     {
       "lat": 37.687187909,
@@ -10368,7 +10499,7 @@
         "iata-location:OAK",
         "iata-location:PAO",
         "iata-location:SJC",
-        "iata-metro:SFO",
+        "iata-metro:XSF",
         "country:US",
         "us-state:CA"
       ],
@@ -10386,7 +10517,7 @@
         "OAK",
         "SJC",
         "PAO",
-        "SFO",
+        "XSF",
         "US",
         "CA"
       ],
@@ -10394,11 +10525,11 @@
         24051,
         30803,
         25655,
-        30655,
+        39166,
         34360,
         4840
       ],
-      "default_wire_code": 30655
+      "default_wire_code": 39166
     },
     {
       "lat": 38.500085154,
@@ -10436,7 +10567,7 @@
         "iata-location:PAO",
         "iata-location:OAK",
         "iata-location:SJC",
-        "iata-metro:SFO",
+        "iata-metro:XSF",
         "country:US",
         "us-state:CA"
       ],
@@ -10454,7 +10585,7 @@
         "OAK",
         "SJC",
         "PAO",
-        "SFO",
+        "XSF",
         "US",
         "CA"
       ],
@@ -10462,11 +10593,11 @@
         24051,
         30803,
         25655,
-        30655,
+        39166,
         34360,
         4840
       ],
-      "default_wire_code": 30655
+      "default_wire_code": 39166
     },
     {
       "lat": 38.167647703,
@@ -10530,7 +10661,7 @@
         "iata-airport:SFO",
         "iata-location:OAK",
         "iata-location:SFO",
-        "iata-metro:SFO",
+        "iata-metro:XSF",
         "country:US",
         "us-state:CA",
         "custom:sf-bay-area"
@@ -10548,6 +10679,7 @@
       "radio_names": [
         "OAK",
         "SFO",
+        "XSF",
         "US",
         "CA",
         "SF Bay Area"
@@ -10555,11 +10687,12 @@
       "wire_codes": [
         24051,
         30655,
+        39166,
         34360,
         4840,
         55479
       ],
-      "default_wire_code": 30655
+      "default_wire_code": 39166
     },
     {
       "lat": 36.730224281,
@@ -10603,7 +10736,7 @@
         "iata-airport:SJC",
         "iata-location:PAO",
         "iata-location:SQL",
-        "iata-metro:SFO",
+        "iata-metro:XSF",
         "country:US",
         "us-state:CA",
         "custom:sf-bay-area"
@@ -10625,6 +10758,7 @@
         "SJC",
         "PAO",
         "SQL",
+        "XSF",
         "US",
         "CA",
         "SF Bay Area"
@@ -10635,11 +10769,12 @@
         30803,
         25655,
         31092,
+        39166,
         34360,
         4840,
         55479
       ],
-      "default_wire_code": 30655
+      "default_wire_code": 39166
     },
     {
       "lat": 38.05,
@@ -10647,7 +10782,7 @@
       "region_keys": [
         "iata-airport:OAK",
         "iata-location:OAK",
-        "iata-metro:SFO",
+        "iata-metro:XSF",
         "country:US",
         "us-state:CA"
       ],
@@ -10660,17 +10795,17 @@
       ],
       "radio_names": [
         "OAK",
-        "SFO",
+        "XSF",
         "US",
         "CA"
       ],
       "wire_codes": [
         24051,
-        30655,
+        39166,
         34360,
         4840
       ],
-      "default_wire_code": 30655
+      "default_wire_code": 39166
     },
     {
       "lat": 41.999918185,
@@ -10698,7 +10833,7 @@
         "iata-airport:SFO",
         "iata-location:SQL",
         "iata-location:OAK",
-        "iata-metro:SFO",
+        "iata-metro:XSF",
         "country:US",
         "us-state:CA",
         "custom:sf-bay-area"
@@ -10719,6 +10854,7 @@
         "OAK",
         "SFO",
         "SQL",
+        "XSF",
         "US",
         "CA",
         "SF Bay Area"
@@ -10728,11 +10864,12 @@
         24051,
         30655,
         31092,
+        39166,
         34360,
         4840,
         55479
       ],
-      "default_wire_code": 30655
+      "default_wire_code": 39166
     },
     {
       "lat": 37.176628693,
@@ -10861,7 +10998,7 @@
       "region_keys": [
         "iata-airport:SJC",
         "iata-location:SJC",
-        "iata-metro:SFO",
+        "iata-metro:XSF",
         "country:US",
         "us-state:CA",
         "custom:sf-bay-area"
@@ -10876,19 +11013,19 @@
       ],
       "radio_names": [
         "SJC",
-        "SFO",
+        "XSF",
         "US",
         "CA",
         "SF Bay Area"
       ],
       "wire_codes": [
         30803,
-        30655,
+        39166,
         34360,
         4840,
         55479
       ],
-      "default_wire_code": 30655
+      "default_wire_code": 39166
     },
     {
       "lat": 37.605785,
@@ -10900,7 +11037,7 @@
         "iata-location:OAK",
         "iata-location:PAO",
         "iata-location:SQL",
-        "iata-metro:SFO",
+        "iata-metro:XSF",
         "country:US",
         "us-state:CA",
         "custom:sf-bay-area"
@@ -10923,6 +11060,7 @@
         "SFO",
         "PAO",
         "SQL",
+        "XSF",
         "US",
         "CA",
         "SF Bay Area"
@@ -10933,11 +11071,12 @@
         30655,
         25655,
         31092,
+        39166,
         34360,
         4840,
         55479
       ],
-      "default_wire_code": 30655
+      "default_wire_code": 39166
     },
     {
       "lat": 37.809018882,
@@ -11000,7 +11139,7 @@
         "iata-airport:SFO",
         "iata-location:SQL",
         "iata-location:SFO",
-        "iata-metro:SFO",
+        "iata-metro:XSF",
         "country:US",
         "us-state:CA",
         "custom:sf-bay-area"
@@ -11017,6 +11156,7 @@
       "radio_names": [
         "SFO",
         "SQL",
+        "XSF",
         "US",
         "CA",
         "SF Bay Area"
@@ -11024,11 +11164,12 @@
       "wire_codes": [
         30655,
         31092,
+        39166,
         34360,
         4840,
         55479
       ],
-      "default_wire_code": 30655
+      "default_wire_code": 39166
     },
     {
       "lat": 36.722728714,
@@ -11073,7 +11214,7 @@
         "iata-location:OAK",
         "iata-location:SFO",
         "iata-location:SQL",
-        "iata-metro:SFO",
+        "iata-metro:XSF",
         "country:US",
         "us-state:CA",
         "custom:sf-bay-area"
@@ -11095,6 +11236,7 @@
         "SFO",
         "SJC",
         "SQL",
+        "XSF",
         "US",
         "CA",
         "SF Bay Area"
@@ -11104,11 +11246,12 @@
         30655,
         30803,
         31092,
+        39166,
         34360,
         4840,
         55479
       ],
-      "default_wire_code": 30655
+      "default_wire_code": 39166
     },
     {
       "lat": 36.580862267,
@@ -11178,7 +11321,7 @@
         "iata-location:OAK",
         "iata-location:PAO",
         "iata-location:SQL",
-        "iata-metro:SFO",
+        "iata-metro:XSF",
         "country:US",
         "us-state:CA",
         "custom:sf-bay-area"
@@ -11201,6 +11344,7 @@
         "SFO",
         "PAO",
         "SQL",
+        "XSF",
         "US",
         "CA",
         "SF Bay Area"
@@ -11211,11 +11355,12 @@
         30655,
         25655,
         31092,
+        39166,
         34360,
         4840,
         55479
       ],
-      "default_wire_code": 30655
+      "default_wire_code": 39166
     },
     {
       "lat": 38.007455,
@@ -11312,7 +11457,7 @@
         "iata-airport:SFO",
         "iata-location:OAK",
         "iata-location:SFO",
-        "iata-metro:SFO",
+        "iata-metro:XSF",
         "country:US",
         "us-state:CA",
         "custom:sf-bay-area"
@@ -11330,6 +11475,7 @@
       "radio_names": [
         "OAK",
         "SFO",
+        "XSF",
         "US",
         "CA",
         "SF Bay Area"
@@ -11337,11 +11483,12 @@
       "wire_codes": [
         24051,
         30655,
+        39166,
         34360,
         4840,
         55479
       ],
-      "default_wire_code": 30655
+      "default_wire_code": 39166
     },
     {
       "lat": 37.150992803,
@@ -11385,7 +11532,7 @@
         "iata-location:PAO",
         "iata-location:OAK",
         "iata-location:SJC",
-        "iata-metro:SFO",
+        "iata-metro:XSF",
         "country:US",
         "us-state:CA",
         "custom:sf-bay-area"
@@ -11405,7 +11552,7 @@
         "SJC",
         "OAK",
         "PAO",
-        "SFO",
+        "XSF",
         "US",
         "CA",
         "SF Bay Area"
@@ -11414,12 +11561,12 @@
         30803,
         24051,
         25655,
-        30655,
+        39166,
         34360,
         4840,
         55479
       ],
-      "default_wire_code": 30655
+      "default_wire_code": 39166
     },
     {
       "lat": 37.809019084,
@@ -11613,7 +11760,7 @@
         "iata-airport:SFO",
         "iata-location:PAO",
         "iata-location:SQL",
-        "iata-metro:SFO",
+        "iata-metro:XSF",
         "country:US",
         "us-state:CA",
         "custom:sf-bay-area"
@@ -11633,6 +11780,7 @@
         "SFO",
         "PAO",
         "SQL",
+        "XSF",
         "US",
         "CA",
         "SF Bay Area"
@@ -11642,11 +11790,12 @@
         30655,
         25655,
         31092,
+        39166,
         34360,
         4840,
         55479
       ],
-      "default_wire_code": 30655
+      "default_wire_code": 39166
     },
     {
       "lat": 37.380650706,
@@ -11710,7 +11859,7 @@
         "iata-airport:SFO",
         "iata-location:OAK",
         "iata-location:SFO",
-        "iata-metro:SFO",
+        "iata-metro:XSF",
         "country:US",
         "us-state:CA",
         "custom:sf-bay-area"
@@ -11728,6 +11877,7 @@
       "radio_names": [
         "OAK",
         "SFO",
+        "XSF",
         "US",
         "CA",
         "SF Bay Area"
@@ -11735,11 +11885,12 @@
       "wire_codes": [
         24051,
         30655,
+        39166,
         34360,
         4840,
         55479
       ],
-      "default_wire_code": 30655
+      "default_wire_code": 39166
     },
     {
       "lat": 37.124391,
@@ -11777,7 +11928,7 @@
         "iata-airport:OAK",
         "iata-location:SQL",
         "iata-location:PAO",
-        "iata-metro:SFO",
+        "iata-metro:XSF",
         "country:US",
         "us-state:CA",
         "custom:sf-bay-area"
@@ -11799,6 +11950,7 @@
         "OAK",
         "SQL",
         "PAO",
+        "XSF",
         "US",
         "CA",
         "SF Bay Area"
@@ -11809,11 +11961,12 @@
         24051,
         31092,
         25655,
+        39166,
         34360,
         4840,
         55479
       ],
-      "default_wire_code": 30655
+      "default_wire_code": 39166
     },
     {
       "lat": 37.550177064,
@@ -11824,7 +11977,7 @@
         "iata-airport:SJC",
         "iata-location:PAO",
         "iata-location:SQL",
-        "iata-metro:SFO",
+        "iata-metro:XSF",
         "country:US",
         "us-state:CA",
         "custom:sf-bay-area"
@@ -11846,6 +11999,7 @@
         "SJC",
         "PAO",
         "SQL",
+        "XSF",
         "US",
         "CA",
         "SF Bay Area"
@@ -11856,11 +12010,12 @@
         30803,
         25655,
         31092,
+        39166,
         34360,
         4840,
         55479
       ],
-      "default_wire_code": 30655
+      "default_wire_code": 39166
     },
     {
       "lat": 38.167644066,
@@ -12006,7 +12161,7 @@
         "iata-airport:SFO",
         "iata-location:SQL",
         "iata-location:OAK",
-        "iata-metro:SFO",
+        "iata-metro:XSF",
         "country:US",
         "us-state:CA",
         "custom:sf-bay-area"
@@ -12027,6 +12182,7 @@
         "OAK",
         "SFO",
         "SQL",
+        "XSF",
         "US",
         "CA",
         "SF Bay Area"
@@ -12036,11 +12192,12 @@
         24051,
         30655,
         31092,
+        39166,
         34360,
         4840,
         55479
       ],
-      "default_wire_code": 30655
+      "default_wire_code": 39166
     },
     {
       "lat": 37.512791,
@@ -12051,7 +12208,7 @@
         "iata-airport:SJC",
         "iata-location:PAO",
         "iata-location:SQL",
-        "iata-metro:SFO",
+        "iata-metro:XSF",
         "country:US",
         "us-state:CA",
         "custom:sf-bay-area"
@@ -12073,6 +12230,7 @@
         "SJC",
         "PAO",
         "SQL",
+        "XSF",
         "US",
         "CA",
         "SF Bay Area"
@@ -12083,11 +12241,12 @@
         30803,
         25655,
         31092,
+        39166,
         34360,
         4840,
         55479
       ],
-      "default_wire_code": 30655
+      "default_wire_code": 39166
     },
     {
       "lat": 37.380654252,
@@ -12303,7 +12462,7 @@
         "iata-airport:SFO",
         "iata-location:SFO",
         "iata-location:SQL",
-        "iata-metro:SFO",
+        "iata-metro:XSF",
         "country:US",
         "us-state:CA",
         "custom:sf-bay-area"
@@ -12320,6 +12479,7 @@
       "radio_names": [
         "SFO",
         "SQL",
+        "XSF",
         "US",
         "CA",
         "SF Bay Area"
@@ -12327,11 +12487,12 @@
       "wire_codes": [
         30655,
         31092,
+        39166,
         34360,
         4840,
         55479
       ],
-      "default_wire_code": 30655
+      "default_wire_code": 39166
     },
     {
       "lat": 37.605785,
@@ -12343,7 +12504,7 @@
         "iata-location:OAK",
         "iata-location:PAO",
         "iata-location:SQL",
-        "iata-metro:SFO",
+        "iata-metro:XSF",
         "country:US",
         "us-state:CA",
         "custom:sf-bay-area"
@@ -12366,6 +12527,7 @@
         "SFO",
         "PAO",
         "SQL",
+        "XSF",
         "US",
         "CA",
         "SF Bay Area"
@@ -12376,11 +12538,12 @@
         30655,
         25655,
         31092,
+        39166,
         34360,
         4840,
         55479
       ],
-      "default_wire_code": 30655
+      "default_wire_code": 39166
     },
     {
       "lat": 38.167658294,
@@ -12595,7 +12758,7 @@
         "iata-airport:SFO",
         "iata-location:SQL",
         "iata-location:PAO",
-        "iata-metro:SFO",
+        "iata-metro:XSF",
         "country:US",
         "us-state:CA",
         "custom:sf-bay-area"
@@ -12615,6 +12778,7 @@
         "SFO",
         "SQL",
         "PAO",
+        "XSF",
         "US",
         "CA",
         "SF Bay Area"
@@ -12624,11 +12788,12 @@
         30655,
         31092,
         25655,
+        39166,
         34360,
         4840,
         55479
       ],
-      "default_wire_code": 30655
+      "default_wire_code": 39166
     },
     {
       "lat": 37.590791184,
@@ -12666,7 +12831,7 @@
         "iata-location:PAO",
         "iata-location:OAK",
         "iata-location:SJC",
-        "iata-metro:SFO",
+        "iata-metro:XSF",
         "country:US",
         "us-state:CA",
         "custom:sf-bay-area"
@@ -12686,7 +12851,7 @@
         "OAK",
         "SJC",
         "PAO",
-        "SFO",
+        "XSF",
         "US",
         "CA",
         "SF Bay Area"
@@ -12695,12 +12860,12 @@
         24051,
         30803,
         25655,
-        30655,
+        39166,
         34360,
         4840,
         55479
       ],
-      "default_wire_code": 30655
+      "default_wire_code": 39166
     },
     {
       "lat": 32.499937263,
@@ -12726,7 +12891,7 @@
         "iata-airport:SJC",
         "iata-location:PAO",
         "iata-location:SJC",
-        "iata-metro:SFO",
+        "iata-metro:XSF",
         "country:US",
         "us-state:CA",
         "custom:sf-bay-area"
@@ -12743,7 +12908,7 @@
       "radio_names": [
         "SJC",
         "PAO",
-        "SFO",
+        "XSF",
         "US",
         "CA",
         "SF Bay Area"
@@ -12751,12 +12916,12 @@
       "wire_codes": [
         30803,
         25655,
-        30655,
+        39166,
         34360,
         4840,
         55479
       ],
-      "default_wire_code": 30655
+      "default_wire_code": 39166
     },
     {
       "lat": 37.845336214,
@@ -12800,7 +12965,7 @@
         "iata-location:OAK",
         "iata-location:PAO",
         "iata-location:SQL",
-        "iata-metro:SFO",
+        "iata-metro:XSF",
         "country:US",
         "us-state:CA",
         "custom:sf-bay-area"
@@ -12821,7 +12986,7 @@
         "SJC",
         "PAO",
         "SQL",
-        "SFO",
+        "XSF",
         "US",
         "CA",
         "SF Bay Area"
@@ -12831,12 +12996,12 @@
         30803,
         25655,
         31092,
-        30655,
+        39166,
         34360,
         4840,
         55479
       ],
-      "default_wire_code": 30655
+      "default_wire_code": 39166
     },
     {
       "lat": 32.0,
@@ -12918,7 +13083,7 @@
         "iata-airport:SJC",
         "iata-location:SQL",
         "iata-location:PAO",
-        "iata-metro:SFO",
+        "iata-metro:XSF",
         "country:US",
         "us-state:CA",
         "custom:sf-bay-area"
@@ -12940,6 +13105,7 @@
         "SJC",
         "SQL",
         "PAO",
+        "XSF",
         "US",
         "CA",
         "SF Bay Area"
@@ -12950,11 +13116,12 @@
         30803,
         31092,
         25655,
+        39166,
         34360,
         4840,
         55479
       ],
-      "default_wire_code": 30655
+      "default_wire_code": 39166
     },
     {
       "lat": 36.979026339,
@@ -13075,7 +13242,7 @@
         "iata-airport:SFO",
         "iata-location:SFO",
         "iata-location:SQL",
-        "iata-metro:SFO",
+        "iata-metro:XSF",
         "country:US",
         "us-state:CA",
         "custom:sf-bay-area"
@@ -13092,6 +13259,7 @@
       "radio_names": [
         "SFO",
         "SQL",
+        "XSF",
         "US",
         "CA",
         "SF Bay Area"
@@ -13099,11 +13267,12 @@
       "wire_codes": [
         30655,
         31092,
+        39166,
         34360,
         4840,
         55479
       ],
-      "default_wire_code": 30655
+      "default_wire_code": 39166
     },
     {
       "lat": 37.617663349,
@@ -13115,7 +13284,7 @@
         "iata-location:OAK",
         "iata-location:SFO",
         "iata-location:SQL",
-        "iata-metro:SFO",
+        "iata-metro:XSF",
         "country:US",
         "us-state:CA",
         "custom:sf-bay-area"
@@ -13137,6 +13306,7 @@
         "SFO",
         "SJC",
         "SQL",
+        "XSF",
         "US",
         "CA",
         "SF Bay Area"
@@ -13146,11 +13316,12 @@
         30655,
         30803,
         31092,
+        39166,
         34360,
         4840,
         55479
       ],
-      "default_wire_code": 30655
+      "default_wire_code": 39166
     },
     {
       "lat": 31.999999102,
@@ -13168,7 +13339,7 @@
         "iata-airport:SJC",
         "iata-location:PAO",
         "iata-location:SJC",
-        "iata-metro:SFO",
+        "iata-metro:XSF",
         "country:US",
         "us-state:CA",
         "custom:sf-bay-area"
@@ -13185,7 +13356,7 @@
       "radio_names": [
         "SJC",
         "PAO",
-        "SFO",
+        "XSF",
         "US",
         "CA",
         "SF Bay Area"
@@ -13193,12 +13364,12 @@
       "wire_codes": [
         30803,
         25655,
-        30655,
+        39166,
         34360,
         4840,
         55479
       ],
-      "default_wire_code": 30655
+      "default_wire_code": 39166
     },
     {
       "lat": 36.460853977,
@@ -13236,7 +13407,7 @@
         "iata-location:PAO",
         "iata-location:OAK",
         "iata-location:SJC",
-        "iata-metro:SFO",
+        "iata-metro:XSF",
         "country:US",
         "us-state:CA",
         "custom:sf-bay-area"
@@ -13256,7 +13427,7 @@
         "SJC",
         "OAK",
         "PAO",
-        "SFO",
+        "XSF",
         "US",
         "CA",
         "SF Bay Area"
@@ -13265,12 +13436,12 @@
         30803,
         24051,
         25655,
-        30655,
+        39166,
         34360,
         4840,
         55479
       ],
-      "default_wire_code": 30655
+      "default_wire_code": 39166
     },
     {
       "lat": 37.349099,
@@ -13279,7 +13450,7 @@
         "iata-airport:SJC",
         "iata-location:PAO",
         "iata-location:SJC",
-        "iata-metro:SFO",
+        "iata-metro:XSF",
         "country:US",
         "us-state:CA",
         "custom:sf-bay-area"
@@ -13296,7 +13467,7 @@
       "radio_names": [
         "SJC",
         "PAO",
-        "SFO",
+        "XSF",
         "US",
         "CA",
         "SF Bay Area"
@@ -13304,12 +13475,12 @@
       "wire_codes": [
         30803,
         25655,
-        30655,
+        39166,
         34360,
         4840,
         55479
       ],
-      "default_wire_code": 30655
+      "default_wire_code": 39166
     },
     {
       "lat": 37.512796191,
@@ -13320,7 +13491,7 @@
         "iata-airport:SJC",
         "iata-location:PAO",
         "iata-location:SQL",
-        "iata-metro:SFO",
+        "iata-metro:XSF",
         "country:US",
         "us-state:CA",
         "custom:sf-bay-area"
@@ -13342,6 +13513,7 @@
         "SJC",
         "PAO",
         "SQL",
+        "XSF",
         "US",
         "CA",
         "SF Bay Area"
@@ -13352,11 +13524,12 @@
         30803,
         25655,
         31092,
+        39166,
         34360,
         4840,
         55479
       ],
-      "default_wire_code": 30655
+      "default_wire_code": 39166
     },
     {
       "lat": 38.591144457,
@@ -13508,7 +13681,7 @@
         "iata-airport:SFO",
         "iata-location:SQL",
         "iata-location:PAO",
-        "iata-metro:SFO",
+        "iata-metro:XSF",
         "country:US",
         "us-state:CA",
         "custom:sf-bay-area"
@@ -13530,6 +13703,7 @@
         "SFO",
         "SQL",
         "PAO",
+        "XSF",
         "US",
         "CA",
         "SF Bay Area"
@@ -13540,11 +13714,12 @@
         30655,
         31092,
         25655,
+        39166,
         34360,
         4840,
         55479
       ],
-      "default_wire_code": 30655
+      "default_wire_code": 39166
     },
     {
       "lat": 37.861818808,
@@ -13554,7 +13729,7 @@
         "iata-airport:SFO",
         "iata-location:SFO",
         "iata-location:OAK",
-        "iata-metro:SFO",
+        "iata-metro:XSF",
         "country:US",
         "us-state:CA",
         "custom:sf-bay-area"
@@ -13572,6 +13747,7 @@
       "radio_names": [
         "OAK",
         "SFO",
+        "XSF",
         "US",
         "CA",
         "SF Bay Area"
@@ -13579,11 +13755,12 @@
       "wire_codes": [
         24051,
         30655,
+        39166,
         34360,
         4840,
         55479
       ],
-      "default_wire_code": 30655
+      "default_wire_code": 39166
     },
     {
       "lat": 37.793917634,
@@ -13593,7 +13770,7 @@
         "iata-airport:SFO",
         "iata-location:OAK",
         "iata-location:SFO",
-        "iata-metro:SFO",
+        "iata-metro:XSF",
         "country:US",
         "us-state:CA",
         "custom:sf-bay-area"
@@ -13611,6 +13788,7 @@
       "radio_names": [
         "OAK",
         "SFO",
+        "XSF",
         "US",
         "CA",
         "SF Bay Area"
@@ -13618,11 +13796,12 @@
       "wire_codes": [
         24051,
         30655,
+        39166,
         34360,
         4840,
         55479
       ],
-      "default_wire_code": 30655
+      "default_wire_code": 39166
     },
     {
       "lat": 36.580139897,
@@ -13687,7 +13866,7 @@
         "iata-airport:SJC",
         "iata-location:SQL",
         "iata-location:PAO",
-        "iata-metro:SFO",
+        "iata-metro:XSF",
         "country:US",
         "us-state:CA",
         "custom:sf-bay-area"
@@ -13709,6 +13888,7 @@
         "SJC",
         "SQL",
         "PAO",
+        "XSF",
         "US",
         "CA",
         "SF Bay Area"
@@ -13719,11 +13899,12 @@
         30803,
         31092,
         25655,
+        39166,
         34360,
         4840,
         55479
       ],
-      "default_wire_code": 30655
+      "default_wire_code": 39166
     },
     {
       "lat": 38.050002037,
@@ -13819,7 +14000,7 @@
         "iata-airport:OAK",
         "iata-airport:SFO",
         "iata-location:OAK",
-        "iata-metro:SFO",
+        "iata-metro:XSF",
         "country:US",
         "us-state:CA"
       ],
@@ -13834,16 +14015,18 @@
       "radio_names": [
         "OAK",
         "SFO",
+        "XSF",
         "US",
         "CA"
       ],
       "wire_codes": [
         24051,
         30655,
+        39166,
         34360,
         4840
       ],
-      "default_wire_code": 30655
+      "default_wire_code": 39166
     },
     {
       "lat": 37.176617889,
@@ -13970,7 +14153,7 @@
         "iata-airport:SJC",
         "iata-location:PAO",
         "iata-location:SJC",
-        "iata-metro:SFO",
+        "iata-metro:XSF",
         "country:US",
         "us-state:CA",
         "custom:sf-bay-area"
@@ -13987,7 +14170,7 @@
       "radio_names": [
         "SJC",
         "PAO",
-        "SFO",
+        "XSF",
         "US",
         "CA",
         "SF Bay Area"
@@ -13995,12 +14178,12 @@
       "wire_codes": [
         30803,
         25655,
-        30655,
+        39166,
         34360,
         4840,
         55479
       ],
-      "default_wire_code": 30655
+      "default_wire_code": 39166
     },
     {
       "lat": 38.500125613,
@@ -14035,7 +14218,7 @@
       "region_keys": [
         "iata-airport:OAK",
         "iata-location:OAK",
-        "iata-metro:SFO",
+        "iata-metro:XSF",
         "country:US",
         "us-state:CA",
         "custom:sf-bay-area"
@@ -14050,19 +14233,19 @@
       ],
       "radio_names": [
         "OAK",
-        "SFO",
+        "XSF",
         "US",
         "CA",
         "SF Bay Area"
       ],
       "wire_codes": [
         24051,
-        30655,
+        39166,
         34360,
         4840,
         55479
       ],
-      "default_wire_code": 30655
+      "default_wire_code": 39166
     },
     {
       "lat": 37.577221146,
@@ -14073,7 +14256,7 @@
         "iata-airport:SJC",
         "iata-location:SQL",
         "iata-location:OAK",
-        "iata-metro:SFO",
+        "iata-metro:XSF",
         "country:US",
         "us-state:CA",
         "custom:sf-bay-area"
@@ -14094,6 +14277,7 @@
         "OAK",
         "SJC",
         "SQL",
+        "XSF",
         "US",
         "CA",
         "SF Bay Area"
@@ -14103,11 +14287,12 @@
         24051,
         30803,
         31092,
+        39166,
         34360,
         4840,
         55479
       ],
-      "default_wire_code": 30655
+      "default_wire_code": 39166
     },
     {
       "lat": 38.050000413,
@@ -14177,7 +14362,7 @@
         "iata-location:SQL",
         "iata-location:OAK",
         "iata-location:SFO",
-        "iata-metro:SFO",
+        "iata-metro:XSF",
         "country:US",
         "us-state:CA",
         "custom:sf-bay-area"
@@ -14199,6 +14384,7 @@
         "SFO",
         "SJC",
         "SQL",
+        "XSF",
         "US",
         "CA",
         "SF Bay Area"
@@ -14208,11 +14394,12 @@
         30655,
         30803,
         31092,
+        39166,
         34360,
         4840,
         55479
       ],
-      "default_wire_code": 30655
+      "default_wire_code": 39166
     },
     {
       "lat": 37.619963107,
@@ -14224,7 +14411,7 @@
         "iata-location:OAK",
         "iata-location:SFO",
         "iata-location:SQL",
-        "iata-metro:SFO",
+        "iata-metro:XSF",
         "country:US",
         "us-state:CA",
         "custom:sf-bay-area"
@@ -14246,6 +14433,7 @@
         "OAK",
         "SFO",
         "SQL",
+        "XSF",
         "US",
         "CA",
         "SF Bay Area"
@@ -14255,11 +14443,12 @@
         24051,
         30655,
         31092,
+        39166,
         34360,
         4840,
         55479
       ],
-      "default_wire_code": 30655
+      "default_wire_code": 39166
     },
     {
       "lat": 36.908107878,
@@ -14297,7 +14486,7 @@
         "iata-airport:SJC",
         "iata-location:SQL",
         "iata-location:OAK",
-        "iata-metro:SFO",
+        "iata-metro:XSF",
         "country:US",
         "us-state:CA",
         "custom:sf-bay-area"
@@ -14318,6 +14507,7 @@
         "SFO",
         "SJC",
         "SQL",
+        "XSF",
         "US",
         "CA",
         "SF Bay Area"
@@ -14327,11 +14517,12 @@
         30655,
         30803,
         31092,
+        39166,
         34360,
         4840,
         55479
       ],
-      "default_wire_code": 30655
+      "default_wire_code": 39166
     },
     {
       "lat": 36.491856206,
@@ -14462,7 +14653,7 @@
         "iata-airport:SFO",
         "iata-location:SFO",
         "iata-location:SQL",
-        "iata-metro:SFO",
+        "iata-metro:XSF",
         "country:US",
         "us-state:CA",
         "custom:sf-bay-area"
@@ -14479,6 +14670,7 @@
       "radio_names": [
         "SFO",
         "SQL",
+        "XSF",
         "US",
         "CA",
         "SF Bay Area"
@@ -14486,11 +14678,12 @@
       "wire_codes": [
         30655,
         31092,
+        39166,
         34360,
         4840,
         55479
       ],
-      "default_wire_code": 30655
+      "default_wire_code": 39166
     },
     {
       "lat": 37.620357727,
@@ -14502,7 +14695,7 @@
         "iata-location:OAK",
         "iata-location:SFO",
         "iata-location:SQL",
-        "iata-metro:SFO",
+        "iata-metro:XSF",
         "country:US",
         "us-state:CA",
         "custom:sf-bay-area"
@@ -14524,6 +14717,7 @@
         "SFO",
         "SJC",
         "SQL",
+        "XSF",
         "US",
         "CA",
         "SF Bay Area"
@@ -14533,11 +14727,12 @@
         30655,
         30803,
         31092,
+        39166,
         34360,
         4840,
         55479
       ],
-      "default_wire_code": 30655
+      "default_wire_code": 39166
     },
     {
       "lat": 38.500126,
@@ -14636,7 +14831,7 @@
         "iata-airport:SFO",
         "iata-location:OAK",
         "iata-location:SFO",
-        "iata-metro:SFO",
+        "iata-metro:XSF",
         "country:US",
         "us-state:CA",
         "custom:sf-bay-area"
@@ -14654,6 +14849,7 @@
       "radio_names": [
         "OAK",
         "SFO",
+        "XSF",
         "US",
         "CA",
         "SF Bay Area"
@@ -14661,11 +14857,12 @@
       "wire_codes": [
         24051,
         30655,
+        39166,
         34360,
         4840,
         55479
       ],
-      "default_wire_code": 30655
+      "default_wire_code": 39166
     },
     {
       "lat": 37.549934759,
@@ -14676,7 +14873,7 @@
         "iata-airport:SJC",
         "iata-location:SQL",
         "iata-location:PAO",
-        "iata-metro:SFO",
+        "iata-metro:XSF",
         "country:US",
         "us-state:CA",
         "custom:sf-bay-area"
@@ -14698,6 +14895,7 @@
         "SJC",
         "SQL",
         "PAO",
+        "XSF",
         "US",
         "CA",
         "SF Bay Area"
@@ -14708,11 +14906,12 @@
         30803,
         31092,
         25655,
+        39166,
         34360,
         4840,
         55479
       ],
-      "default_wire_code": 30655
+      "default_wire_code": 39166
     },
     {
       "lat": 37.620092389,
@@ -14724,7 +14923,7 @@
         "iata-location:OAK",
         "iata-location:SFO",
         "iata-location:SQL",
-        "iata-metro:SFO",
+        "iata-metro:XSF",
         "country:US",
         "us-state:CA",
         "custom:sf-bay-area"
@@ -14746,6 +14945,7 @@
         "SFO",
         "SJC",
         "SQL",
+        "XSF",
         "US",
         "CA",
         "SF Bay Area"
@@ -14755,11 +14955,12 @@
         30655,
         30803,
         31092,
+        39166,
         34360,
         4840,
         55479
       ],
-      "default_wire_code": 30655
+      "default_wire_code": 39166
     },
     {
       "lat": 36.491856708,
@@ -14868,7 +15069,7 @@
         "iata-location:PAO",
         "iata-location:OAK",
         "iata-location:SJC",
-        "iata-metro:SFO",
+        "iata-metro:XSF",
         "country:US",
         "us-state:CA",
         "custom:sf-bay-area"
@@ -14888,7 +15089,7 @@
         "SJC",
         "OAK",
         "PAO",
-        "SFO",
+        "XSF",
         "US",
         "CA",
         "SF Bay Area"
@@ -14897,12 +15098,12 @@
         30803,
         24051,
         25655,
-        30655,
+        39166,
         34360,
         4840,
         55479
       ],
-      "default_wire_code": 30655
+      "default_wire_code": 39166
     },
     {
       "lat": 37.605785318,
@@ -14914,7 +15115,7 @@
         "iata-location:PAO",
         "iata-location:OAK",
         "iata-location:SQL",
-        "iata-metro:SFO",
+        "iata-metro:XSF",
         "country:US",
         "us-state:CA",
         "custom:sf-bay-area"
@@ -14937,6 +15138,7 @@
         "SFO",
         "PAO",
         "SQL",
+        "XSF",
         "US",
         "CA",
         "SF Bay Area"
@@ -14947,11 +15149,12 @@
         30655,
         25655,
         31092,
+        39166,
         34360,
         4840,
         55479
       ],
-      "default_wire_code": 30655
+      "default_wire_code": 39166
     },
     {
       "lat": 37.163394296,
@@ -15015,7 +15218,7 @@
         "iata-airport:SFO",
         "iata-location:OAK",
         "iata-location:SFO",
-        "iata-metro:SFO",
+        "iata-metro:XSF",
         "country:US",
         "us-state:CA",
         "custom:sf-bay-area"
@@ -15033,6 +15236,7 @@
       "radio_names": [
         "OAK",
         "SFO",
+        "XSF",
         "US",
         "CA",
         "SF Bay Area"
@@ -15040,11 +15244,12 @@
       "wire_codes": [
         24051,
         30655,
+        39166,
         34360,
         4840,
         55479
       ],
-      "default_wire_code": 30655
+      "default_wire_code": 39166
     },
     {
       "lat": 37.61718422,
@@ -15056,7 +15261,7 @@
         "iata-location:OAK",
         "iata-location:SFO",
         "iata-location:SQL",
-        "iata-metro:SFO",
+        "iata-metro:XSF",
         "country:US",
         "us-state:CA",
         "custom:sf-bay-area"
@@ -15078,6 +15283,7 @@
         "SFO",
         "SJC",
         "SQL",
+        "XSF",
         "US",
         "CA",
         "SF Bay Area"
@@ -15087,11 +15293,12 @@
         30655,
         30803,
         31092,
+        39166,
         34360,
         4840,
         55479
       ],
-      "default_wire_code": 30655
+      "default_wire_code": 39166
     },
     {
       "lat": 37.549999218,
@@ -15102,7 +15309,7 @@
         "iata-airport:SJC",
         "iata-location:PAO",
         "iata-location:SQL",
-        "iata-metro:SFO",
+        "iata-metro:XSF",
         "country:US",
         "us-state:CA",
         "custom:sf-bay-area"
@@ -15124,6 +15331,7 @@
         "SJC",
         "PAO",
         "SQL",
+        "XSF",
         "US",
         "CA",
         "SF Bay Area"
@@ -15134,11 +15342,12 @@
         30803,
         25655,
         31092,
+        39166,
         34360,
         4840,
         55479
       ],
-      "default_wire_code": 30655
+      "default_wire_code": 39166
     },
     {
       "lat": 38.591128208,
@@ -15174,7 +15383,7 @@
         "iata-airport:SFO",
         "iata-location:SFO",
         "iata-location:SQL",
-        "iata-metro:SFO",
+        "iata-metro:XSF",
         "country:US",
         "us-state:CA",
         "custom:sf-bay-area"
@@ -15191,6 +15400,7 @@
       "radio_names": [
         "SFO",
         "SQL",
+        "XSF",
         "US",
         "CA",
         "SF Bay Area"
@@ -15198,11 +15408,12 @@
       "wire_codes": [
         30655,
         31092,
+        39166,
         34360,
         4840,
         55479
       ],
-      "default_wire_code": 30655
+      "default_wire_code": 39166
     },
     {
       "lat": 38.500118845,
@@ -15315,7 +15526,7 @@
         "iata-airport:SFO",
         "iata-location:SFO",
         "iata-location:SQL",
-        "iata-metro:SFO",
+        "iata-metro:XSF",
         "country:US",
         "us-state:CA",
         "custom:sf-bay-area"
@@ -15332,6 +15543,7 @@
       "radio_names": [
         "SFO",
         "SQL",
+        "XSF",
         "US",
         "CA",
         "SF Bay Area"
@@ -15339,11 +15551,12 @@
       "wire_codes": [
         30655,
         31092,
+        39166,
         34360,
         4840,
         55479
       ],
-      "default_wire_code": 30655
+      "default_wire_code": 39166
     },
     {
       "lat": 32.5,
@@ -15477,7 +15690,7 @@
         "iata-airport:SFO",
         "iata-location:SQL",
         "iata-location:OAK",
-        "iata-metro:SFO",
+        "iata-metro:XSF",
         "country:US",
         "us-state:CA",
         "custom:sf-bay-area"
@@ -15498,6 +15711,7 @@
         "OAK",
         "SFO",
         "SQL",
+        "XSF",
         "US",
         "CA",
         "SF Bay Area"
@@ -15507,11 +15721,12 @@
         24051,
         30655,
         31092,
+        39166,
         34360,
         4840,
         55479
       ],
-      "default_wire_code": 30655
+      "default_wire_code": 39166
     },
     {
       "lat": 36.671565308,
@@ -15627,7 +15842,7 @@
         "iata-location:OAK",
         "iata-location:PAO",
         "iata-location:SQL",
-        "iata-metro:SFO",
+        "iata-metro:XSF",
         "country:US",
         "us-state:CA",
         "custom:sf-bay-area"
@@ -15650,6 +15865,7 @@
         "SFO",
         "PAO",
         "SQL",
+        "XSF",
         "US",
         "CA",
         "SF Bay Area"
@@ -15660,11 +15876,12 @@
         30655,
         25655,
         31092,
+        39166,
         34360,
         4840,
         55479
       ],
-      "default_wire_code": 30655
+      "default_wire_code": 39166
     },
     {
       "lat": 36.461511951,
@@ -15702,7 +15919,7 @@
         "iata-airport:SJC",
         "iata-location:SQL",
         "iata-location:PAO",
-        "iata-metro:SFO",
+        "iata-metro:XSF",
         "country:US",
         "us-state:CA",
         "custom:sf-bay-area"
@@ -15724,6 +15941,7 @@
         "SJC",
         "SQL",
         "PAO",
+        "XSF",
         "US",
         "CA",
         "SF Bay Area"
@@ -15734,11 +15952,12 @@
         30803,
         31092,
         25655,
+        39166,
         34360,
         4840,
         55479
       ],
-      "default_wire_code": 30655
+      "default_wire_code": 39166
     },
     {
       "lat": 36.788199777,
@@ -15809,7 +16028,7 @@
         "iata-location:OAK",
         "iata-location:PAO",
         "iata-location:SQL",
-        "iata-metro:SFO",
+        "iata-metro:XSF",
         "country:US",
         "us-state:CA",
         "custom:sf-bay-area"
@@ -15830,7 +16049,7 @@
         "SJC",
         "PAO",
         "SQL",
-        "SFO",
+        "XSF",
         "US",
         "CA",
         "SF Bay Area"
@@ -15840,12 +16059,12 @@
         30803,
         25655,
         31092,
-        30655,
+        39166,
         34360,
         4840,
         55479
       ],
-      "default_wire_code": 30655
+      "default_wire_code": 39166
     },
     {
       "lat": 37.199777774,
@@ -15994,7 +16213,7 @@
       "region_keys": [
         "iata-airport:OAK",
         "iata-location:OAK",
-        "iata-metro:SFO",
+        "iata-metro:XSF",
         "country:US",
         "us-state:CA"
       ],
@@ -16007,17 +16226,17 @@
       ],
       "radio_names": [
         "OAK",
-        "SFO",
+        "XSF",
         "US",
         "CA"
       ],
       "wire_codes": [
         24051,
-        30655,
+        39166,
         34360,
         4840
       ],
-      "default_wire_code": 30655
+      "default_wire_code": 39166
     },
     {
       "lat": 38.353772902,
@@ -16059,7 +16278,7 @@
         "iata-airport:SFO",
         "iata-location:SQL",
         "iata-location:SFO",
-        "iata-metro:SFO",
+        "iata-metro:XSF",
         "country:US",
         "us-state:CA",
         "custom:sf-bay-area"
@@ -16076,6 +16295,7 @@
       "radio_names": [
         "SFO",
         "SQL",
+        "XSF",
         "US",
         "CA",
         "SF Bay Area"
@@ -16083,11 +16303,12 @@
       "wire_codes": [
         30655,
         31092,
+        39166,
         34360,
         4840,
         55479
       ],
-      "default_wire_code": 30655
+      "default_wire_code": 39166
     },
     {
       "lat": 37.863340801,
@@ -16097,7 +16318,7 @@
         "iata-airport:SFO",
         "iata-location:OAK",
         "iata-location:SFO",
-        "iata-metro:SFO",
+        "iata-metro:XSF",
         "country:US",
         "us-state:CA",
         "custom:sf-bay-area"
@@ -16115,6 +16336,7 @@
       "radio_names": [
         "OAK",
         "SFO",
+        "XSF",
         "US",
         "CA",
         "SF Bay Area"
@@ -16122,11 +16344,12 @@
       "wire_codes": [
         24051,
         30655,
+        39166,
         34360,
         4840,
         55479
       ],
-      "default_wire_code": 30655
+      "default_wire_code": 39166
     },
     {
       "lat": 38.591861222,
@@ -16255,7 +16478,7 @@
         "iata-location:OAK",
         "iata-location:PAO",
         "iata-location:SQL",
-        "iata-metro:SFO",
+        "iata-metro:XSF",
         "country:US",
         "us-state:CA",
         "custom:sf-bay-area"
@@ -16276,7 +16499,7 @@
         "OAK",
         "PAO",
         "SQL",
-        "SFO",
+        "XSF",
         "US",
         "CA",
         "SF Bay Area"
@@ -16286,12 +16509,12 @@
         24051,
         25655,
         31092,
-        30655,
+        39166,
         34360,
         4840,
         55479
       ],
-      "default_wire_code": 30655
+      "default_wire_code": 39166
     },
     {
       "lat": 37.349099,
@@ -16300,7 +16523,7 @@
         "iata-airport:SJC",
         "iata-location:PAO",
         "iata-location:SJC",
-        "iata-metro:SFO",
+        "iata-metro:XSF",
         "country:US",
         "us-state:CA",
         "custom:sf-bay-area"
@@ -16317,7 +16540,7 @@
       "radio_names": [
         "SJC",
         "PAO",
-        "SFO",
+        "XSF",
         "US",
         "CA",
         "SF Bay Area"
@@ -16325,12 +16548,12 @@
       "wire_codes": [
         30803,
         25655,
-        30655,
+        39166,
         34360,
         4840,
         55479
       ],
-      "default_wire_code": 30655
+      "default_wire_code": 39166
     },
     {
       "lat": 41.999713671,
@@ -16554,7 +16777,7 @@
         "iata-location:SQL",
         "iata-location:OAK",
         "iata-location:PAO",
-        "iata-metro:SFO",
+        "iata-metro:XSF",
         "country:US",
         "us-state:CA",
         "custom:sf-bay-area"
@@ -16577,6 +16800,7 @@
         "SFO",
         "SQL",
         "PAO",
+        "XSF",
         "US",
         "CA",
         "SF Bay Area"
@@ -16587,11 +16811,12 @@
         30655,
         31092,
         25655,
+        39166,
         34360,
         4840,
         55479
       ],
-      "default_wire_code": 30655
+      "default_wire_code": 39166
     },
     {
       "lat": 36.985907046,
@@ -16780,7 +17005,7 @@
         "iata-airport:SJC",
         "iata-location:PAO",
         "iata-location:SQL",
-        "iata-metro:SFO",
+        "iata-metro:XSF",
         "country:US",
         "us-state:CA",
         "custom:sf-bay-area"
@@ -16802,6 +17027,7 @@
         "SJC",
         "PAO",
         "SQL",
+        "XSF",
         "US",
         "CA",
         "SF Bay Area"
@@ -16812,11 +17038,12 @@
         30803,
         25655,
         31092,
+        39166,
         34360,
         4840,
         55479
       ],
-      "default_wire_code": 30655
+      "default_wire_code": 39166
     },
     {
       "lat": 37.576395631,
@@ -16827,7 +17054,7 @@
         "iata-airport:SFO",
         "iata-location:SQL",
         "iata-location:OAK",
-        "iata-metro:SFO",
+        "iata-metro:XSF",
         "country:US",
         "us-state:CA",
         "custom:sf-bay-area"
@@ -16848,6 +17075,7 @@
         "OAK",
         "SFO",
         "SQL",
+        "XSF",
         "US",
         "CA",
         "SF Bay Area"
@@ -16857,11 +17085,12 @@
         24051,
         30655,
         31092,
+        39166,
         34360,
         4840,
         55479
       ],
-      "default_wire_code": 30655
+      "default_wire_code": 39166
     },
     {
       "lat": 37.619926238,
@@ -16872,7 +17101,7 @@
         "iata-location:OAK",
         "iata-location:PAO",
         "iata-location:SQL",
-        "iata-metro:SFO",
+        "iata-metro:XSF",
         "country:US",
         "us-state:CA",
         "custom:sf-bay-area"
@@ -16893,7 +17122,7 @@
         "SJC",
         "PAO",
         "SQL",
-        "SFO",
+        "XSF",
         "US",
         "CA",
         "SF Bay Area"
@@ -16903,12 +17132,12 @@
         30803,
         25655,
         31092,
-        30655,
+        39166,
         34360,
         4840,
         55479
       ],
-      "default_wire_code": 30655
+      "default_wire_code": 39166
     },
     {
       "lat": 36.580911956,
@@ -17000,7 +17229,7 @@
         "iata-airport:SFO",
         "iata-location:PAO",
         "iata-location:SQL",
-        "iata-metro:SFO",
+        "iata-metro:XSF",
         "country:US",
         "us-state:CA",
         "custom:sf-bay-area"
@@ -17022,6 +17251,7 @@
         "SFO",
         "PAO",
         "SQL",
+        "XSF",
         "US",
         "CA",
         "SF Bay Area"
@@ -17032,11 +17262,12 @@
         30655,
         25655,
         31092,
+        39166,
         34360,
         4840,
         55479
       ],
-      "default_wire_code": 30655
+      "default_wire_code": 39166
     },
     {
       "lat": 37.678121677,
@@ -17047,7 +17278,7 @@
         "iata-location:PAO",
         "iata-location:OAK",
         "iata-location:SJC",
-        "iata-metro:SFO",
+        "iata-metro:XSF",
         "country:US",
         "us-state:CA",
         "custom:sf-bay-area"
@@ -17067,7 +17298,7 @@
         "SJC",
         "OAK",
         "PAO",
-        "SFO",
+        "XSF",
         "US",
         "CA",
         "SF Bay Area"
@@ -17076,12 +17307,12 @@
         30803,
         24051,
         25655,
-        30655,
+        39166,
         34360,
         4840,
         55479
       ],
-      "default_wire_code": 30655
+      "default_wire_code": 39166
     },
     {
       "lat": 38.353862995,

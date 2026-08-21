@@ -273,9 +273,11 @@ fn san_carlos_is_a_location_but_not_a_commercial_airport() {
         .collect();
     assert!(keys.contains(&"iata-location:SQL"), "{keys:?}");
     assert!(!keys.contains(&"iata-airport:SQL"), "{keys:?}");
+    // The metro outranks the airport for the suggested default wherever a
+    // metro polygon covers the position.
     assert_eq!(
         result.suggested_default_region.map(|region| region.name),
-        Some("SFO".to_owned())
+        Some("XSF".to_owned())
     );
 }
 

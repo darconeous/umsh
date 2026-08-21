@@ -42,7 +42,9 @@ def test_san_carlos_is_a_location_but_not_a_commercial_airport(database):
     keys = {match.region_key for match in result.matches}
     assert "iata-location:SQL" in keys
     assert "iata-airport:SQL" not in keys
-    assert result.suggested_default_region.name == "SFO"
+    # The metro outranks the airport for the suggested default wherever a
+    # metro polygon covers the position.
+    assert result.suggested_default_region.name == "XSF"
 
 
 def test_one_radio_region_per_wire_code(database):
@@ -65,8 +67,8 @@ def test_forced_override_wins_its_polygon(database):
 def test_metro_is_containment_not_nearest(database):
     inside = {match.region_key for match in database.lookup(37.6, -122.2).matches}
     outside = {match.region_key for match in database.lookup(38.30, -122.00).matches}
-    assert "iata-metro:SFO" in inside
-    assert "iata-metro:SFO" not in outside
+    assert "iata-metro:XSF" in inside
+    assert "iata-metro:XSF" not in outside
 
 
 def test_custom_region_uses_a_hashed_name(database):
