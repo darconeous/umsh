@@ -1,0 +1,4 @@
+code,icao,name,latitude,longitude,elevation,url,time_zone,city_code,country,city,state,county,type
+NYC,,New York Metropolitan Area,40.7128,-74.0060,10,,America/New_York,NYC,US,,,,CC
+LON,,London Metropolitan Area,51.5074,-0.1278,11,,Europe/London,LON,GB,,,,CC
+X1,,Too Short,0.0,0.0,0,,UTC,X1,US,,,,CC

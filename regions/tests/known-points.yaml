@@ -1,0 +1,109 @@
+# Known-point expectations for the test fixture database.
+#
+# These are written against regions/tests/fixture, whose administrative
+# geometry is deliberately coarse rectangles. They assert geographic policy —
+# which semantic regions a position is in and out of — not boundary precision.
+version: 1
+
+points:
+  - name: San Carlos Airport
+    lat: 37.5119
+    lon: -122.2495
+    expect:
+      # The regression this whole fixture exists for. San Carlos is a real
+      # IATA location and must appear as one; it is not a commercial passenger
+      # gateway and must not appear as one, however upstream marks its
+      # scheduled_service flag.
+      include_semantic:
+        - iata-location:SQL
+        - iata-airport:SFO
+        - country:US
+        - us-state:CA
+        - iata-metro:SFO
+        - custom:sf-bay-area
+      exclude_semantic:
+        - iata-airport:SQL
+      suggested_default_region: SFO
+
+  - name: SFO terminal area
+    lat: 37.6189
+    lon: -122.3750
+    expect:
+      include_semantic:
+        - iata-airport:SFO
+        - iata-location:SFO
+        - country:US
+        - us-state:CA
+      # The airport and metro senses of SFO are separate semantic matches but
+      # one radio region.
+      radio_regions:
+        - SFO
+      suggested_default_region: SFO
+
+  - name: San Jose airport
+    lat: 37.3626
+    lon: -121.9291
+    expect:
+      include_semantic:
+        - iata-airport:SJC
+        - iata-location:SJC
+        - us-state:CA
+      suggested_default_region: SJC
+
+  - name: Forced override strip
+    lat: 37.58
+    lon: -122.15
+    expect:
+      # Far closer to SFO and OAK than to SJC. A core SJC match here can only
+      # be the force override in overrides/overrides.yaml.
+      include_semantic:
+        - iata-airport:SJC
+      suggested_default_region: SJC
+
+  - name: Palo Alto general aviation
+    lat: 37.4611
+    lon: -122.1150
+    expect:
+      include_semantic:
+        - iata-location:PAO
+        - country:US
+      exclude_semantic:
+        - iata-airport:PAO
+
+  - name: Just outside the fixture metro polygon
+    lat: 38.30
+    lon: -122.00
+    expect:
+      include_semantic:
+        - country:US
+        - us-state:CA
+      # Metro codes are containment regions. Being near one is not being in it.
+      exclude_semantic:
+        - iata-metro:SFO
+
+  - name: North of the fixture state rectangle, inside the country one
+    lat: 42.30
+    lon: -120.00
+    expect:
+      include_semantic:
+        - country:US
+      exclude_semantic:
+        - us-state:CA
+
+  - name: Remote Pacific
+    lat: 10.0
+    lon: -150.0
+    expect:
+      no_regions: true
+
+  - name: Antimeridian
+    lat: 0.0
+    lon: 180.0
+    expect:
+      no_regions: true
+
+  - name: High latitude
+    lat: 82.5
+    lon: -62.0
+    expect:
+      no_regions: true

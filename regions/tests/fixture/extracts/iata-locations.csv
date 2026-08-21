@@ -1,0 +1,9 @@
+# Hand-authored fixture data, not produced by `regiondb-build update`.
+# Coordinates are the real published positions for these five Bay Area
+# facilities; everything else in this tree is deliberately synthetic.
+iata,ident,type,name,latitude_deg,longitude_deg,iso_country,iso_region,municipality,scheduled_service
+OAK,KOAK,large_airport,Metropolitan Oakland International Airport,37.721300,-122.220700,US,US-CA,Oakland,yes
+PAO,KPAO,small_airport,Palo Alto Airport of Santa Clara County,37.461100,-122.115000,US,US-CA,Palo Alto,no
+SFO,KSFO,large_airport,San Francisco International Airport,37.618900,-122.375000,US,US-CA,San Francisco,yes
+SJC,KSJC,large_airport,Norman Y. Mineta San Jose International Airport,37.362600,-121.929100,US,US-CA,San Jose,yes
+SQL,KSQL,small_airport,San Carlos Airport,37.511900,-122.249500,US,US-CA,San Carlos,yes

@@ -1,0 +1,8 @@
+# Hand-authored fixture data. SQL appears here because upstream marks it
+# scheduled_service=yes; the committed classification excludes it, which is the
+# regression this fixture exists to hold.
+iata,name,latitude_deg,longitude_deg,iso_country,municipality,type,scheduled_service
+OAK,Metropolitan Oakland International Airport,37.721300,-122.220700,US,Oakland,large_airport,yes
+SFO,San Francisco International Airport,37.618900,-122.375000,US,San Francisco,large_airport,yes
+SJC,Norman Y. Mineta San Jose International Airport,37.362600,-121.929100,US,San Jose,large_airport,yes
+SQL,San Carlos Airport,37.511900,-122.249500,US,San Carlos,small_airport,yes

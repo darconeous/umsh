@@ -1,0 +1,11 @@
+version: 1
+
+overrides:
+  SQL:
+    commercial: false
+    reason: >
+      General-aviation reliever airport. Upstream marks it scheduled_service=yes,
+      but no one in San Carlos would call it their airport, and the commercial
+      layer is meant to answer that question rather than the schedule question.
+    evidence:
+      - "https://www.smcgov.org/publicworks/san-carlos-airport"

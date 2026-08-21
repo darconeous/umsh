@@ -1,0 +1,14 @@
+version: 1
+
+metros:
+  - id: iata-metro:SFO
+    iata: SFO
+    name: San Francisco Bay metropolitan area
+    geometry: geometry/SFO.geojson
+    expansion_m: 0
+    source:
+      name: Fixture rectangle, not a reviewed boundary
+    interpretation: >
+      A rectangle drawn for the test fixture. It is not a metropolitan boundary
+      and must never be mistaken for one.
+    confidence: fixture

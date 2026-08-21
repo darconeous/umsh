@@ -1,0 +1,12 @@
+version: 1
+
+regions:
+  - id: custom:sf-bay-area
+    name: SF Bay Area
+    radio_name: SF Bay Area
+    geometry: geometry/sf-bay-area.geojson
+    expansion_m: 0
+    priority: 100
+    source:
+      type: manual
+      notes: Fixture custom region, exercising the hashed-name path.

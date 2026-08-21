@@ -13,3 +13,9 @@ __pycache__/
 /.claude/settings.json
 /.vscode/settings.json
 /*.code-workspace
+
+# Region database working directories. `build` above already covers
+# regions/build/; these are the download and release trees.
+/regions/vendor
+/regions/dist
+/tools/regiondb-build/.venv

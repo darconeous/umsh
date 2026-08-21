@@ -1,0 +1,32 @@
+[package]
+name = "umsh-regiondb"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+repository.workspace = true
+documentation = "https://darconeous.github.io/umsh/docs/rust/umsh_regiondb/"
+
+[features]
+default = []
+# Compile SQLite into the binary instead of linking the system library. The
+# host and CI both have a usable libsqlite3, so this stays off by default;
+# it exists for iOS/Android artifacts where the platform library is either
+# absent or too old, and it costs several hundred kilobytes.
+bundled-sqlite = ["rusqlite/bundled"]
+
+[dependencies]
+# Not a workspace dependency: the shared table is built for `no_std` firmware
+# crates, and nothing on the radio reads a region database.
+rusqlite = { version = "0.32", default-features = false }
+umsh-core = { path = "../umsh-core", default-features = false, features = [
+    "std",
+    "region-codec",
+] }
+
+[dev-dependencies]
+serde_json = "1"
+sha2.workspace = true
+
+# The conformance suite writes a copy of the fixture with a bumped format
+# version, which needs a writable connection.
+rusqlite = { version = "0.32", default-features = false }

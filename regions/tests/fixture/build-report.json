@@ -1,0 +1,58 @@
+{
+  "applied_overrides": [
+    "override:sjc-north-bay-strip: force on iata-airport:SJC (commercial_airport)"
+  ],
+  "cache": {
+    "boundary_leaves": 2023,
+    "enabled": true,
+    "leaves": 4699,
+    "max_candidates": 4,
+    "max_depth": 12,
+    "ranges": 3221,
+    "region_sets": 49
+  },
+  "content_hash": "6dbb2491f0775d74dbc5e65438a7dff503fbdfefd10af07041770df959ecb4b0",
+  "counts": {
+    "classification_overrides": 1,
+    "commercial_airport": 3,
+    "commercial_candidates": 4,
+    "country": 1,
+    "custom": 1,
+    "metro": 1,
+    "overrides": 1,
+    "positioned_iata": 5,
+    "positioned_iata_sites": 5,
+    "regions": 12,
+    "us_state": 1
+  },
+  "database": {
+    "path": "../../regions/tests/fixture/fixture.regiondb",
+    "size_bytes": 143360
+  },
+  "dataset_version": "fixture-1",
+  "duration_s": 0.54,
+  "format_version": 1,
+  "geometry": {
+    "core_vertices": 494,
+    "effective_vertices": 1326,
+    "parts": 21
+  },
+  "max_radio_regions_observed": 12,
+  "policy_digest": "eabafdee8bb1d09eff33a26badf878533d8077e6d8b641370880563180c25edc",
+  "region_keys": [
+    "country:US",
+    "custom:sf-bay-area",
+    "iata-airport:OAK",
+    "iata-airport:SFO",
+    "iata-airport:SJC",
+    "iata-location:OAK",
+    "iata-location:PAO",
+    "iata-location:SFO",
+    "iata-location:SJC",
+    "iata-location:SQL",
+    "iata-metro:SFO",
+    "us-state:CA"
+  ],
+  "source_root": "../../regions/tests/fixture",
+  "warnings": []
+}

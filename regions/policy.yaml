@@ -1,0 +1,102 @@
+# Compilation policy for the UMSH region database.
+#
+# Every value here that can change a lookup result is folded into the build
+# metadata and the database content hash, so a policy edit is as visible in a
+# release diff as a boundary edit. Nothing in this file is a protocol constant:
+# the radio never sees any of it, and the expansion distances in particular are
+# meant to be re-tuned after looking at the map.
+format_version: 1
+
+distance:
+  # Distances, radius caps, and buffers are geodesic on the WGS84 ellipsoid
+  # (pyproj.Geod). Voronoi topology is computed on the unit sphere; the
+  # difference is far below the meter-scale tolerances used here, but the model
+  # is recorded so a rebuild is reproducible.
+  model: WGS84
+
+geometry:
+  # Maximum deviation a densified great-circle arc may have from the true arc.
+  # Voronoi edges are great circles; GeoJSON edges are straight in lon/lat.
+  curve_error_m: 50
+  # Topology-preserving simplification, per layer. Administrative coastlines
+  # carry far more detail than routing needs; hand-authored local regions are
+  # already drawn at the scale they mean.
+  country_simplify_m: 100
+  state_simplify_m: 50
+  metro_simplify_m: 25
+  custom_simplify_m: 0
+
+lookup_cache:
+  # Adaptive Morton-range cache over the effective geometry. Depth 16 gives
+  # roughly 600 m equatorial cells; boundary cells fall back to exact
+  # point-in-polygon, so depth bounds cache size, never accuracy.
+  enabled: false
+  max_depth: 16
+
+layers:
+  commercial_airport:
+    enabled: true
+    max_radius_m: 100000
+    expansion_m: 10000
+    exclusive_core: true
+    order: 100
+    default_eligible: true
+
+  positioned_iata:
+    enabled: true
+    max_radius_m: 100000
+    expansion_m: 5000
+    exclusive_core: true
+    order: 200
+    default_eligible: true
+
+  metro:
+    enabled: true
+    expansion_m: 0
+    exclusive_core: false
+    order: 300
+    default_eligible: false
+
+  country:
+    enabled: true
+    expansion_m: 0
+    exclusive_core: true
+    order: 400
+    default_eligible: false
+
+  us_state:
+    enabled: true
+    expansion_m: 0
+    exclusive_core: true
+    order: 500
+    default_eligible: false
+
+  custom:
+    enabled: true
+    expansion_m: 0
+    exclusive_core: false
+    order: 600
+    default_eligible: false
+
+default_region:
+  # Ordered preference for the suggested packet default region. Country and
+  # state regions are deliberately absent: they are large enough that using one
+  # as a flood tag would broaden scope far past what the operator intends.
+  preference:
+    - commercial_airport_core
+    - commercial_airport_expanded
+    - positioned_iata_core
+    - positioned_iata_expanded
+
+us_state:
+  # The 50 states plus the District of Columbia. Territories are excluded from
+  # V1: several have no USPS-style two-letter code that reads as a region to
+  # anyone living there, and the ones that do would need a policy decision
+  # about how they interact with the country layer.
+  include_territories: false
+
+size:
+  # A build over this size warns. It fails only past the hard limit, so that
+  # measuring a large candidate release is possible without editing policy.
+  warn_bytes: 10485760
+  fail_bytes: 33554432

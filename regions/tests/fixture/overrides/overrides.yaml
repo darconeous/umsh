@@ -1,0 +1,12 @@
+version: 1
+
+overrides:
+  - id: override:sjc-north-bay-strip
+    layer: commercial_airport
+    operation: force
+    target: iata-airport:SJC
+    geometry: geometry/sjc-north-bay-strip.geojson
+    priority: 10
+    reason: >
+      Fixture override. This strip sits far closer to SFO and OAK than to SJC,
+      so a lookup inside it returning SJC can only be the override working.

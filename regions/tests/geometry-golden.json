@@ -1,0 +1,283 @@
+{
+  "comment": "Golden vectors for the geometry blob codec. Every implementation must encode to these bytes, decode them back, and answer the probes identically.",
+  "geometry_format_version": 1,
+  "cases": [
+    {
+      "name": "unit square at the origin",
+      "rings": [
+        {
+          "role": 0,
+          "points": [
+            [
+              0,
+              0
+            ],
+            [
+              1000000,
+              0
+            ],
+            [
+              1000000,
+              1000000
+            ],
+            [
+              0,
+              1000000
+            ]
+          ]
+        }
+      ],
+      "blob_hex": "01010004000080897a000080897aff887a00",
+      "probes": [
+        {
+          "lon_e6": 500000,
+          "lat_e6": 500000,
+          "inside": true
+        },
+        {
+          "lon_e6": 0,
+          "lat_e6": 0,
+          "inside": true
+        },
+        {
+          "lon_e6": 1000000,
+          "lat_e6": 500000,
+          "inside": true
+        },
+        {
+          "lon_e6": 500000,
+          "lat_e6": 0,
+          "inside": true
+        },
+        {
+          "lon_e6": -1,
+          "lat_e6": 500000,
+          "inside": false
+        },
+        {
+          "lon_e6": 1000001,
+          "lat_e6": 500000,
+          "inside": false
+        },
+        {
+          "lon_e6": 0,
+          "lat_e6": 1000000,
+          "inside": true
+        }
+      ]
+    },
+    {
+      "name": "square with a central hole",
+      "rings": [
+        {
+          "role": 0,
+          "points": [
+            [
+              0,
+              0
+            ],
+            [
+              1000000,
+              0
+            ],
+            [
+              1000000,
+              1000000
+            ],
+            [
+              0,
+              1000000
+            ]
+          ]
+        },
+        {
+          "role": 1,
+          "points": [
+            [
+              250000,
+              250000
+            ],
+            [
+              750000,
+              250000
+            ],
+            [
+              750000,
+              750000
+            ],
+            [
+              250000,
+              750000
+            ]
+          ]
+        }
+      ],
+      "blob_hex": "01020004000080897a000080897aff887a000104a0c21ea0c21ec0843d0000c0843dbf843d00",
+      "probes": [
+        {
+          "lon_e6": 500000,
+          "lat_e6": 500000,
+          "inside": false
+        },
+        {
+          "lon_e6": 250000,
+          "lat_e6": 500000,
+          "inside": true
+        },
+        {
+          "lon_e6": 100000,
+          "lat_e6": 500000,
+          "inside": true
+        },
+        {
+          "lon_e6": 750000,
+          "lat_e6": 750000,
+          "inside": true
+        }
+      ]
+    },
+    {
+      "name": "triangle with negative longitudes",
+      "rings": [
+        {
+          "role": 0,
+          "points": [
+            [
+              -122500000,
+              37000000
+            ],
+            [
+              -122000000,
+              37000000
+            ],
+            [
+              -122250000,
+              37500000
+            ]
+          ]
+        }
+      ],
+      "blob_hex": "01010003bfcee97480cda423c0843d009fc21ec0843d",
+      "probes": [
+        {
+          "lon_e6": -122250000,
+          "lat_e6": 37100000,
+          "inside": true
+        },
+        {
+          "lon_e6": -122250000,
+          "lat_e6": 37500000,
+          "inside": true
+        },
+        {
+          "lon_e6": -122499999,
+          "lat_e6": 37000001,
+          "inside": true
+        },
+        {
+          "lon_e6": -122250000,
+          "lat_e6": 36999999,
+          "inside": false
+        }
+      ]
+    },
+    {
+      "name": "degenerate sliver at grid resolution",
+      "rings": [
+        {
+          "role": 0,
+          "points": [
+            [
+              0,
+              0
+            ],
+            [
+              10,
+              0
+            ],
+            [
+              10,
+              1
+            ],
+            [
+              0,
+              1
+            ]
+          ]
+        }
+      ],
+      "blob_hex": "010100040000140000021300",
+      "probes": [
+        {
+          "lon_e6": 5,
+          "lat_e6": 0,
+          "inside": true
+        },
+        {
+          "lon_e6": 5,
+          "lat_e6": 1,
+          "inside": true
+        },
+        {
+          "lon_e6": 5,
+          "lat_e6": 2,
+          "inside": false
+        },
+        {
+          "lon_e6": -1,
+          "lat_e6": 0,
+          "inside": false
+        },
+        {
+          "lon_e6": 10,
+          "lat_e6": 1,
+          "inside": true
+        }
+      ]
+    },
+    {
+      "name": "touching the antimeridian",
+      "rings": [
+        {
+          "role": 0,
+          "points": [
+            [
+              179000000,
+              -1000000
+            ],
+            [
+              180000000,
+              -1000000
+            ],
+            [
+              180000000,
+              1000000
+            ],
+            [
+              179000000,
+              1000000
+            ]
+          ]
+        }
+      ],
+      "blob_hex": "0101000480cbdaaa01ff887a80897a00008092f401ff887a00",
+      "probes": [
+        {
+          "lon_e6": 179500000,
+          "lat_e6": 0,
+          "inside": true
+        },
+        {
+          "lon_e6": 180000000,
+          "lat_e6": 0,
+          "inside": true
+        },
+        {
+          "lon_e6": 178999999,
+          "lat_e6": 0,
+          "inside": false
+        }
+      ]
+    }
+  ]
+}

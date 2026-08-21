@@ -1,0 +1,71 @@
+# Pinned upstream data sources.
+#
+# `regiondb-build fetch` is the only command that reads this file and the only
+# one that touches the network. It writes the downloaded bytes to
+# regions/vendor/ (gitignored) and records what it got in lock.json. The build
+# never reads either one: it consumes the committed extracts under
+# regions/extracts/, so a clean checkout compiles offline.
+#
+# URLs deliberately avoid github.com redirect endpoints. geoBoundaries stores
+# its release data in Git LFS, so raw.githubusercontent.com serves a pointer
+# file rather than the geometry; media.githubusercontent.com serves the real
+# bytes. Both are pinned to a commit rather than a branch.
+version: 1
+
+sources:
+  - id: ourairports-airports
+    url: https://davidmegginson.github.io/ourairports-data/airports.csv
+    filename: airports.csv
+    license: Public Domain
+    attribution: OurAirports (https://ourairports.com/data/)
+    notes: >
+      The raw OurAirports export rather than the processed datasets/airport-codes
+      CSV, because that project strips scheduled_service, which is the bootstrap
+      signal for the commercial-airport layer.
+    # Published from a nightly job, so the content hash moves on its own
+    # schedule. `fetch` records whatever it retrieves; `update` then decides
+    # whether the distilled extracts actually changed.
+    pin: none
+
+  - id: iata-city-codes
+    url: https://raw.githubusercontent.com/lxndrblz/Airports/d1907e811e38a141a3ccace73527248a19ba11af/citycodes.csv
+    filename: citycodes.csv
+    license: CC BY-SA 4.0
+    attribution: lxndrblz/Airports (https://github.com/lxndrblz/Airports)
+    notes: >
+      Seed list of metropolitan IATA codes only. The coordinates in this file
+      are city center points, not metro boundaries, and are not used as
+      geometry. See LICENSES.md — this source is share-alike.
+    pin: commit
+
+  - id: geoboundaries-cgaz-adm0
+    url: https://media.githubusercontent.com/media/wmgeolab/geoBoundaries/9469f09/releaseData/CGAZ/geoBoundariesCGAZ_ADM0.gpkg
+    filename: geoBoundariesCGAZ_ADM0.gpkg
+    license: CC BY 4.0
+    attribution: geoBoundaries (https://www.geoboundaries.org/)
+    notes: >
+      The globally dissolved ADM0 layer, already simplified upstream. Chosen
+      over per-country downloads so that country coverage comes from one
+      internally consistent release with no seams between neighbors.
+    pin: commit
+
+  - id: census-tiger-states
+    url: https://www2.census.gov/geo/tiger/TIGER2024/STATE/tl_2024_us_state.zip
+    filename: tl_2024_us_state.zip
+    license: US Government work, no copyright
+    attribution: US Census Bureau TIGER/Line 2024
+    notes: >
+      GEOID (state FIPS) is the source key; STUSPS supplies the radio-facing
+      two-letter code. Display names are never used as keys.
+    pin: url
+
+  - id: iso-country-codes
+    url: https://raw.githubusercontent.com/datasets/country-codes/6a595f1a6f10b3d00175fe67375da88f64f7f76b/data/country-codes.csv
+    filename: country-codes.csv
+    license: PDDL 1.0
+    attribution: Open Knowledge Foundation, datasets/country-codes
+    notes: >
+      ISO 3166-1 alpha-3 to alpha-2 crosswalk. geoBoundaries keys its features
+      by alpha-3, while UMSH region codes are the two-letter form, and no
+      two-letter code is derivable from a three-letter one by rule.
+    pin: commit

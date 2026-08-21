@@ -107,6 +107,50 @@ jobs:
             exit 1
           fi
 
+  # The region database's Python compiler and its cross-implementation
+  # conformance. Everything here runs on the committed tree: the fixture
+  # database is a build output that lives in the repository, so CI checks that
+  # it still matches its source rather than compiling a global database on
+  # every push.
+  regions:
+    name: region database
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: dtolnay/rust-toolchain@stable
+
+      - uses: Swatinem/rust-cache@v2
+
+      - uses: astral-sh/setup-uv@v5
+        with:
+          enable-cache: true
+          cache-dependency-glob: tools/regiondb-build/uv.lock
+
+      - name: Install builder dependencies
+        run: cd tools/regiondb-build && uv sync --locked
+
+      - name: ruff format --check
+        run: cd tools/regiondb-build && uv run ruff format --check .
+
+      - name: ruff check
+        run: cd tools/regiondb-build && uv run ruff check .
+
+      # Covers the Python port of the region-code derivation against a digest
+      # of all 47,988 short codes generated from umsh-core, the geometry codec
+      # against its golden vectors, and a rebuild of the fixture database whose
+      # content hash must match the committed one.
+      - name: pytest
+        run: cd tools/regiondb-build && uv run pytest -q
+
+      # Proves the compiled lookup cache agrees with an exhaustive scan of the
+      # same geometry, densely around boundaries.
+      - name: fixture validation
+        run: make regions-check
+
+      - name: Rust runtime and conformance
+        run: cargo test --locked -p umsh-regiondb
+
   firmware-nrf52840:
     name: firmware (nRF52840) / ${{ matrix.board }}
     runs-on: ubuntu-latest

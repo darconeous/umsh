@@ -1,5 +1,7 @@
 .PHONY: docs rust-docs rust-docs-nightly docs-serve gh-pages web-debugger \
 	site site-serve site-check site-test site-preview \
+	regions-fetch regions-update regions-update-check regions-build \
+	regions-build-fixture regions-check regions-test regions-diff \
 	build-techo-console flash-techo-console \
 	build-wio-tracker-l1-console flash-wio-tracker-l1-console \
 	build-wio-tracker-l1 flash-wio-tracker-l1 \
@@ -661,6 +663,68 @@ rust-docs-nightly:
 
 docs-serve:
 	mdbook serve docs/protocol/
+
+# ─── Region database ─────────────────────────────────────────────────────────
+#
+# The compiler is a packaged Python project under tools/regiondb-build, managed
+# with uv. It is the repository's only Python with third-party dependencies:
+# scripts/ stays stdlib-only because building firmware must need nothing but a
+# Rust toolchain, and none of this is on that path.
+#
+# Only regions-fetch touches the network, and only regions-update reads
+# regions/vendor/. Everything else runs on the committed tree.
+
+REGIONDB_BUILD := cd tools/regiondb-build && uv run --quiet regiondb-build
+REGIONS_ROOT ?= regions
+REGIONS_FIXTURE := $(REGIONS_ROOT)/tests/fixture
+DATASET_VERSION ?= $(shell date -u +%Y.%m).1
+
+regions-fetch:
+	@command -v uv >/dev/null 2>&1 || 		{ echo "uv not found. Install it from https://docs.astral.sh/uv/"; exit 1; }
+	$(REGIONDB_BUILD) --root ../../$(REGIONS_ROOT) fetch
+
+regions-update:
+	$(REGIONDB_BUILD) --root ../../$(REGIONS_ROOT) update
+
+# Re-derives every extract from the pinned vendor files and fails if what is
+# committed differs, so an extract cannot drift from its source or be edited by
+# hand without the check noticing. Needs regions-fetch first.
+regions-update-check:
+	$(REGIONDB_BUILD) --root ../../$(REGIONS_ROOT) update --check
+
+# The global build. Needs the country boundary layer from regions-update, which
+# is too large to commit; see regions/README.md.
+regions-build:
+	$(REGIONDB_BUILD) --root ../../$(REGIONS_ROOT) build \
+		--dataset-version $(DATASET_VERSION) \
+		--output ../../$(REGIONS_ROOT)/dist/world.regiondb
+
+# The fixture database is a committed build output. Regenerate it whenever the
+# fixture source tree or the compiled format changes; the test suites compare
+# against it and never build one themselves.
+regions-build-fixture:
+	$(REGIONDB_BUILD) --root ../../$(REGIONS_FIXTURE) build \
+		--dataset-version fixture-1 \
+		--output ../../$(REGIONS_FIXTURE)/fixture.regiondb \
+		--report ../../$(REGIONS_FIXTURE)/build-report.json
+
+# Offline. Checks the committed fixture against its known points and proves the
+# lookup cache agrees with an exhaustive scan of the same geometry.
+regions-check:
+	$(REGIONDB_BUILD) --root ../../$(REGIONS_ROOT) validate \
+		--db ../../$(REGIONS_FIXTURE)/fixture.regiondb \
+		--points ../../$(REGIONS_ROOT)/tests/known-points.yaml \
+		--sample 5000
+
+regions-test: regions-check
+	cd tools/regiondb-build && uv run --quiet ruff format --check .
+	cd tools/regiondb-build && uv run --quiet ruff check .
+	cd tools/regiondb-build && uv run --quiet pytest -q
+	cargo test --locked -p umsh-regiondb
+
+regions-diff:
+	@test -n "$(OLD)" || { echo "usage: make regions-diff OLD=old-build-report.json"; exit 1; }
+	$(REGIONDB_BUILD) diff $(OLD) $(REGIONS_ROOT)/dist/build-report.json
 
 # ─── Website (umsh.dev) ──────────────────────────────────────────────────────
 #
