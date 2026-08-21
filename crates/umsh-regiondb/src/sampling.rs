@@ -28,8 +28,7 @@ pub fn destination(latitude: f64, longitude: f64, bearing_deg: f64, distance_m: 
     let angular = distance_m / EARTH_RADIUS_M;
     let bearing = bearing_deg.to_radians();
     let lat1 = latitude.to_radians();
-    let sin_lat2 =
-        lat1.sin() * angular.cos() + lat1.cos() * angular.sin() * bearing.cos();
+    let sin_lat2 = lat1.sin() * angular.cos() + lat1.cos() * angular.sin() * bearing.cos();
     let lat2 = sin_lat2.clamp(-1.0, 1.0).asin();
     let lon2 = longitude.to_radians()
         + (bearing.sin() * angular.sin() * lat1.cos()).atan2(angular.cos() - lat1.sin() * sin_lat2);

@@ -2,6 +2,7 @@
 	site site-serve site-check site-test site-preview \
 	regions-fetch regions-update regions-update-check regions-build \
 	regions-build-fixture regions-check regions-test regions-diff \
+	regions-map regions-map-check \
 	build-techo-console flash-techo-console \
 	build-wio-tracker-l1-console flash-wio-tracker-l1-console \
 	build-wio-tracker-l1 flash-wio-tracker-l1 \
@@ -724,6 +725,13 @@ regions-test: regions-check
 	cd tools/regiondb-build && uv run --quiet pytest -q
 	cargo test --locked -p umsh-regiondb
 
+# Regenerates the map's Natural Earth basemap from the pinned downloads.
+# Committed output: the viewer is a static app with no build step, and the
+# basemap is not a database input.
+regions-map:
+	$(REGIONDB_BUILD) --root $(REGIONS_ROOT) basemap \
+		--output site/static/regions/map/basemap
+
 regions-diff:
 	@test -n "$(OLD)" || { echo "usage: make regions-diff OLD=old-build-report.json"; exit 1; }
 	$(REGIONDB_BUILD) diff $(OLD) $(REGIONS_ROOT)/dist/build-report.json
@@ -753,6 +761,14 @@ site-check:
 # from an independent transcription of the protocol. No board required.
 site-test:
 	node --test "site/tests/flasher/*.test.mjs"
+	node --test "site/tests/regions/*.test.mjs"
+
+# Drives the region map in a real browser: boots the page, opens a database,
+# runs a lookup, and fails on any console error. Separate from site-test
+# because it needs Chromium and a Playwright install, which CI does not carry;
+# the conformance tests above cover the lookup logic without a browser.
+regions-map-check:
+	uv run --project tools/regiondb-build python tools/regiondb-build/smoke_map.py
 
 # The published tree as it will actually look, including the books. Serve it
 # with: python3 -m http.server 8000 -d target/site-preview
@@ -835,6 +851,12 @@ define gh-pages-commit
 	@echo "gh-pages branch updated. Push with: git push origin gh-pages"
 endef
 
+# /regions is deliberately absent from the preserve list below: the region
+# map arrives through site/static/, so Zola owns it and rewriting it every
+# deploy is correct. Publishing a released .regiondb into that same tree from
+# outside Zola — the way release-mirror writes /firmware — would need
+# /regions preserved here, or the next `make gh-pages` would delete the
+# database out from under the map.
 gh-pages: site docs rust-docs-nightly
 	$(gh-pages-open)
 	find $(GH_PAGES_WT) -mindepth 1 -maxdepth 1 \

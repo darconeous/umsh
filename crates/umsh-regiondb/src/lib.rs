@@ -460,11 +460,10 @@ impl RegionDb {
             .get(&region_id)
             .map(|row| row.expansion_m)
             .unwrap_or(0);
-        for (index, (sample_lat, sample_lon)) in sampling::sample_positions(
-            latitude, longitude, expansion,
-        )
-        .into_iter()
-        .enumerate()
+        for (index, (sample_lat, sample_lon)) in
+            sampling::sample_positions(latitude, longitude, expansion)
+                .into_iter()
+                .enumerate()
         {
             if self.core_hit(region_id, sample_lat, sample_lon)? {
                 return Ok(Some(if index == 0 {
@@ -517,7 +516,11 @@ impl RegionDb {
             .ok();
         // Base-set regions are known members of the whole cell, but core
         // versus expanded is still a property of the exact position.
-        for region_id in payload.as_deref().map(decode_region_ids).unwrap_or_default() {
+        for region_id in payload
+            .as_deref()
+            .map(decode_region_ids)
+            .unwrap_or_default()
+        {
             let membership = self
                 .membership(region_id, latitude, longitude)?
                 .unwrap_or(Membership::Expanded);
@@ -657,7 +660,7 @@ fn site_distance(entry: &RegionMatch, latitude: f64, longitude: f64) -> f64 {
     let (lat1, lat2) = (latitude.to_radians(), site_latitude.to_radians());
     let delta_lat = lat2 - lat1;
     let delta_lon = (site_longitude - longitude).to_radians();
-    let haversine = (delta_lat / 2.0).sin().powi(2)
-        + lat1.cos() * lat2.cos() * (delta_lon / 2.0).sin().powi(2);
+    let haversine =
+        (delta_lat / 2.0).sin().powi(2) + lat1.cos() * lat2.cos() * (delta_lon / 2.0).sin().powi(2);
     2.0 * haversine.sqrt().asin() * sampling::EARTH_RADIUS_M
 }

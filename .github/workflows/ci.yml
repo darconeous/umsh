@@ -151,6 +151,13 @@ jobs:
       - name: Rust runtime and conformance
         run: cargo test --locked -p umsh-regiondb
 
+      # The browser lookup engine, replaying the same fixtures. No browser
+      # involved: what is under test is the lookup logic, and it is written to
+      # be driven by any SQLite binding, so node's built-in one does. Booting
+      # the actual page needs Chromium and is `make regions-map-check`.
+      - name: Browser lookup conformance
+        run: node --test "site/tests/regions/*.test.mjs"
+
   firmware-nrf52840:
     name: firmware (nRF52840) / ${{ matrix.board }}
     runs-on: ubuntu-latest
