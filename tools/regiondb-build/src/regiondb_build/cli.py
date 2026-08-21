@@ -73,6 +73,11 @@ def main(argv: list[str] | None = None) -> int:
     diff_command.add_argument("old", type=Path)
     diff_command.add_argument("new", type=Path)
 
+    basemap_command = commands.add_parser(
+        "basemap", help="build the map viewer's Natural Earth basemap"
+    )
+    basemap_command.add_argument("--output", type=Path, required=True)
+
     conformance_command = commands.add_parser(
         "gen-conformance", help="regenerate the cross-implementation fixture"
     )
@@ -92,6 +97,7 @@ def main(argv: list[str] | None = None) -> int:
         "inspect": _inspect,
         "export-geojson": _export,
         "diff": _diff,
+        "basemap": _basemap,
         "gen-conformance": _gen_conformance,
     }[args.command]
     return handler(args)
@@ -300,6 +306,14 @@ def _diff(args) -> int:
     old = json.loads(args.old.read_text())
     new = json.loads(args.new.read_text())
     print(json.dumps(report_module.diff(old, new), indent=2))
+    return 0
+
+
+def _basemap(args) -> int:
+    from . import basemap
+
+    for line in basemap.build(args.root / "vendor", args.root / "build" / "basemap", args.output):
+        print(line)
     return 0
 
 

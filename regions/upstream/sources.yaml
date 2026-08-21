@@ -73,3 +73,42 @@ sources:
       features by alpha-3, while UMSH region codes are the two-letter form,
       and no two-letter code is derivable from a three-letter one by rule.
     pin: commit
+
+  # Basemap layers for the region map viewer. Not database inputs: nothing in
+  # a .regiondb comes from these. They give the viewer real coastlines and
+  # borders to draw regions against, self-hosted so the page makes no
+  # third-party request and works offline.
+  - id: naturalearth-land
+    url: https://naciscdn.org/naturalearth/50m/physical/ne_50m_land.zip
+    filename: ne_50m_land.zip
+    license: Public Domain
+    attribution: Natural Earth (https://www.naturalearthdata.com/)
+    notes: Coastlines and land polygons at 1:50m.
+    pin: url
+
+  - id: naturalearth-admin0-lines
+    url: https://naciscdn.org/naturalearth/50m/cultural/ne_50m_admin_0_boundary_lines_land.zip
+    filename: ne_50m_admin_0_boundary_lines_land.zip
+    license: Public Domain
+    attribution: Natural Earth (https://www.naturalearthdata.com/)
+    notes: International boundaries on land at 1:50m.
+    pin: url
+
+  - id: naturalearth-admin1-lines
+    url: https://naciscdn.org/naturalearth/50m/cultural/ne_50m_admin_1_states_provinces_lines.zip
+    filename: ne_50m_admin_1_states_provinces_lines.zip
+    license: Public Domain
+    attribution: Natural Earth (https://www.naturalearthdata.com/)
+    notes: >
+      State and province boundaries at 1:50m. Worth the bytes because the
+      database has a US state layer, and a state region is hard to check
+      against a map with no state lines on it.
+    pin: url
+
+  - id: naturalearth-places
+    url: https://naciscdn.org/naturalearth/50m/cultural/ne_50m_populated_places_simple.zip
+    filename: ne_50m_populated_places_simple.zip
+    license: Public Domain
+    attribution: Natural Earth (https://www.naturalearthdata.com/)
+    notes: City points for orientation; the viewer draws only the largest.
+    pin: url

@@ -32,6 +32,38 @@
       "size": 19564073,
       "url": "https://geo.vliz.be/geoserver/MarineRegions/ows?service=WFS&version=2.0.0&request=GetFeature&typeName=MarineRegions:eez_land&outputFormat=SHAPE-ZIP&srsName=urn:ogc:def:crs:OGC:1.3:CRS84"
     },
+    "naturalearth-admin0-lines": {
+      "attribution": "Natural Earth (https://www.naturalearthdata.com/)",
+      "license": "Public Domain",
+      "retrieved_at": "2026-08-21T07:20:27Z",
+      "sha256": "02f369ae10578c4ce33fc4a08f8cdd69ea11eb39b44d7923e88eb7199aaff8ea",
+      "size": 309389,
+      "url": "https://naciscdn.org/naturalearth/50m/cultural/ne_50m_admin_0_boundary_lines_land.zip"
+    },
+    "naturalearth-admin1-lines": {
+      "attribution": "Natural Earth (https://www.naturalearthdata.com/)",
+      "license": "Public Domain",
+      "retrieved_at": "2026-08-21T07:20:28Z",
+      "sha256": "464e762020d198257a07f5f62eb7cbfc287fccbc0a6db788d8068b49844d951e",
+      "size": 261730,
+      "url": "https://naciscdn.org/naturalearth/50m/cultural/ne_50m_admin_1_states_provinces_lines.zip"
+    },
+    "naturalearth-land": {
+      "attribution": "Natural Earth (https://www.naturalearthdata.com/)",
+      "license": "Public Domain",
+      "retrieved_at": "2026-08-21T07:20:26Z",
+      "sha256": "0b8e670cf80dce9cbebe2a193bc44ba5602758c22e1fa603980553646d7ff162",
+      "size": 457183,
+      "url": "https://naciscdn.org/naturalearth/50m/physical/ne_50m_land.zip"
+    },
+    "naturalearth-places": {
+      "attribution": "Natural Earth (https://www.naturalearthdata.com/)",
+      "license": "Public Domain",
+      "retrieved_at": "2026-08-21T07:20:30Z",
+      "sha256": "a6ebb4be4672de4cd2b94b04cdc9a1bd5a5cb684d28c0e75f535152e5f07a296",
+      "size": 133631,
+      "url": "https://naciscdn.org/naturalearth/50m/cultural/ne_50m_populated_places_simple.zip"
+    },
     "ourairports-airports": {
       "attribution": "OurAirports (https://ourairports.com/data/)",
       "license": "Public Domain",
