@@ -60,10 +60,13 @@ def test_normalizes_longitude_into_range(vendor_tree):
 
 
 def test_commercial_candidates_come_from_scheduled_service(vendor_tree):
-    _, candidates = _sites(vendor_tree)
+    sites, candidates = _sites(vendor_tree)
     # SQL is a candidate here precisely so the committed classification has
-    # something to exclude; PAO never claims scheduled service.
+    # something to exclude; PAO never claims scheduled service; and the
+    # heliport carries scheduled service but is not an airport, so it stays a
+    # positioned location without ever becoming a candidate.
     assert candidates == {"SFO", "SQL", "SJC"}
+    assert "HLP" in sites
 
 
 def test_refuses_to_guess_between_conflicting_duplicates(vendor_tree):

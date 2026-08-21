@@ -55,6 +55,16 @@ BOUNDARY_COORDINATE_DIGITS = 6
 # Facility types that never carry a meaningful position for routing.
 EXCLUDED_AIRPORT_TYPES = {"closed"}
 
+# Facility types eligible to be commercial-airport candidates. The commercial
+# layer answers "which airport would a person here say they fly from", and a
+# heliport or seaplane base is not an answer to that question even when a
+# scheduled shuttle technically serves it — Manhattan's helipads all carry
+# scheduled_service=yes upstream, and a database suggesting a helipad as the
+# region default has misunderstood the question. Such facilities remain
+# positioned IATA locations, which is the layer that means "nearby IATA-coded
+# place".
+COMMERCIAL_CANDIDATE_TYPES = {"small_airport", "medium_airport", "large_airport"}
+
 # State FIPS codes at or above this are territories rather than states. Policy
 # excludes them from V1; see `regions/policy.yaml`.
 TERRITORY_FIPS_FLOOR = 60
@@ -187,7 +197,7 @@ def airports(
     candidates = [
         {column: site[column] for column in COMMERCIAL_CANDIDATE_COLUMNS}
         for site in sites
-        if site["scheduled_service"] == "yes"
+        if site["scheduled_service"] == "yes" and site["type"] in COMMERCIAL_CANDIDATE_TYPES
     ]
     notes.append(f"{len(sites)} positioned IATA sites, {len(candidates)} commercial candidates")
     return sites, candidates, notes

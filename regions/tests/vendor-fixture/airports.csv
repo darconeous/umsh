@@ -9,3 +9,4 @@
 8,"DUPEB","small_airport","Duplicate B",30.0,40.0,0,"AS","IN","IN-DL","Somewhere","no","","DUP","","","","",""
 9,"WRAPLON","small_airport","Wrapped Longitude",5.0,190.0,0,"OC","FJ","FJ-C","Elsewhere","no","","WRP","","","","",""
 10,"KSJC","large_airport","Norman Y. Mineta San Jose International Airport",37.3626,-121.9291,62,"NA","US","US-CA","San Jose","yes","KSJC","SJC","KSJC","SJC","","",""
+11,"NYHEL","heliport","Fixture Heliport",40.75,-74.00,10,"NA","US","US-NY","New York","yes","","HLP","","","","",""
