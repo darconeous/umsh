@@ -17,6 +17,17 @@ overrides:
     evidence:
       - "https://www.smcgov.org/publicworks/san-carlos-airport"
 
+  TEB:
+    commercial: false
+    reason: >
+      Teterboro is a general-aviation reliever for corporate and charter
+      traffic, with no scheduled passenger service anyone books. Upstream
+      marks it scheduled_service=yes, which put it in the commercial layer
+      competing with LaGuardia for northern Manhattan — the San Carlos case
+      again, in the densest airport cluster in the country.
+    evidence:
+      - "https://www.panynj.gov/airports/en/teterboro.html"
+
   MFR:
     commercial: true
     reason: >
