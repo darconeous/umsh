@@ -545,6 +545,9 @@ ios-mobile-core:
 	scripts/ios/build-mobile-core.sh
 
 ios-archive: ios-mobile-core
+	@test -f regions/dist/world.regiondb || \
+		{ echo "No regions/dist/world.regiondb — an archive must bundle the real"; \
+		  echo "world database. Run: make regions-build"; exit 1; }
 	xcodebuild -project $(IOS_PROJECT) -scheme UMSH \
 		-destination 'generic/platform=iOS' \
 		-archivePath "$(IOS_ARCHIVE)" \
@@ -714,6 +717,8 @@ regions-build-fixture:
 		--dataset-version fixture-1 \
 		--output $(REGIONS_FIXTURE)/fixture.regiondb \
 		--report $(REGIONS_FIXTURE)/build-report.json
+	cp $(REGIONS_FIXTURE)/fixture.regiondb \
+		packages/UMSHMobileCore/Tests/UMSHMobileCoreTests/Resources/fixture.regiondb
 
 # Offline. Checks the committed fixture against its known points and proves the
 # lookup cache agrees with an exhaustive scan of the same geometry.

@@ -2062,6 +2062,15 @@ Acceptance:
 
 ### Phase 4 — mobile integration
 
+The Rust half is delivered: `umsh-regiondb` is a dependency of
+`umsh-mobile-core`, the `MobileRegionDatabase` object and its records are
+across the UniFFI boundary, `MOBILE_API_VERSION` is 40, and
+`scripts/ios/stage-regiondb.sh` bundles the database. The SwiftUI half is
+specified in `docs/regiondb-mobile-ui.md` and not yet built. The download and
+update path is deliberately deferred until Phase 6 publishes a manifest to
+compare against; the bundled database is the released database, not a
+degraded fallback, so nothing is missing without it.
+
 Deliver:
 
 - `umsh-regiondb` integration into `umsh-mobile-core`;

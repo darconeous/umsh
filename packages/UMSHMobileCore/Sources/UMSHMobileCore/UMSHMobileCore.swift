@@ -2998,6 +2998,248 @@ public func FfiConverterTypeMobileMeshWakeListener_lower(_ value: MobileMeshWake
 
 
 /**
+ * An opened region database.
+ *
+ * Read-only, and cheap to hold open for the life of the app. The lock
+ * exists because the underlying SQLite connection is single-threaded,
+ * not because anything here blocks for long: a worst-case lookup is
+ * about a millisecond.
+ */
+public protocol MobileRegionDatabaseProtocol: AnyObject, Sendable {
+
+    /**
+     * The data release this database carries, such as `2026.34.1`.
+     */
+    func datasetVersion()  -> String
+
+    /**
+     * The database format version.
+     */
+    func formatVersion()  -> UInt32
+
+    /**
+     * Every region covering one exact position, with semantic detail.
+     */
+    func lookup(latitude: Double, longitude: Double) throws  -> MobileRegionLookupRecord
+
+    /**
+     * Propose a region configuration for a position, against what the
+     * device currently holds.
+     *
+     * The proposal samples the position's uncertainty — an identity
+     * cell's center and four corners, or a measured fix's center and
+     * the four cardinal points of its accuracy circle — and suggests
+     * every region any sample hit. A node whose position straddles a
+     * boundary should usually forward both sides, the same reasoning
+     * that gives the database its expansion margins; the non-unanimous
+     * regions are named so the operator can judge.
+     */
+    func propose(position: MobileRegionPositionRecord, currentRegions: [String], currentDefaultRegion: Data?) throws  -> MobileRegionProposalRecord
+
+    /**
+     * How many regions the database holds.
+     */
+    func regionCount()  -> UInt32
+
+}
+/**
+ * An opened region database.
+ *
+ * Read-only, and cheap to hold open for the life of the app. The lock
+ * exists because the underlying SQLite connection is single-threaded,
+ * not because anything here blocks for long: a worst-case lookup is
+ * about a millisecond.
+ */
+open class MobileRegionDatabase: MobileRegionDatabaseProtocol, @unchecked Sendable {
+    fileprivate let handle: UInt64
+
+    /// Used to instantiate a [FFIObject] without an actual handle, for fakes in tests, mostly.
+#if swift(>=5.8)
+    @_documentation(visibility: private)
+#endif
+    public struct NoHandle {
+        public init() {}
+    }
+
+    // TODO: We'd like this to be `private` but for Swifty reasons,
+    // we can't implement `FfiConverter` without making this `required` and we can't
+    // make it `required` without making it `public`.
+#if swift(>=5.8)
+    @_documentation(visibility: private)
+#endif
+    required public init(unsafeFromHandle handle: UInt64) {
+        self.handle = handle
+    }
+
+    // This constructor can be used to instantiate a fake object.
+    // - Parameter noHandle: Placeholder value so we can have a constructor separate from the default empty one that may be implemented for classes extending [FFIObject].
+    //
+    // - Warning:
+    //     Any object instantiated with this constructor cannot be passed to an actual Rust-backed object. Since there isn't a backing handle the FFI lower functions will crash.
+#if swift(>=5.8)
+    @_documentation(visibility: private)
+#endif
+    public init(noHandle: NoHandle) {
+        self.handle = 0
+    }
+
+#if swift(>=5.8)
+    @_documentation(visibility: private)
+#endif
+    public func uniffiCloneHandle() -> UInt64 {
+        return try! rustCall { uniffi_umsh_mobile_core_fn_clone_mobileregiondatabase(self.handle, $0) }
+    }
+    // No primary constructor declared for this class.
+
+    deinit {
+        if handle == 0 {
+            // Mock objects have handle=0 don't try to free them
+            return
+        }
+
+        try! rustCall { uniffi_umsh_mobile_core_fn_free_mobileregiondatabase(handle, $0) }
+    }
+
+
+    /**
+     * Open the database at an absolute filesystem path, read-only.
+     */
+public static func `open`(path: String)throws  -> MobileRegionDatabase  {
+    return try  FfiConverterTypeMobileRegionDatabase_lift(try rustCallWithError(FfiConverterTypeMobileRegionError_lift) {
+        uniffiCallStatus in
+    uniffi_umsh_mobile_core_fn_constructor_mobileregiondatabase_open(
+        FfiConverterString.lower(path),uniffiCallStatus
+    )
+})
+}
+
+
+
+    /**
+     * The data release this database carries, such as `2026.34.1`.
+     */
+open func datasetVersion() -> String  {
+    return try!  FfiConverterString.lift(try! rustCall() {
+        uniffiCallStatus in
+    uniffi_umsh_mobile_core_fn_method_mobileregiondatabase_dataset_version(
+            self.uniffiCloneHandle(),uniffiCallStatus
+    )
+})
+}
+
+    /**
+     * The database format version.
+     */
+open func formatVersion() -> UInt32  {
+    return try!  FfiConverterUInt32.lift(try! rustCall() {
+        uniffiCallStatus in
+    uniffi_umsh_mobile_core_fn_method_mobileregiondatabase_format_version(
+            self.uniffiCloneHandle(),uniffiCallStatus
+    )
+})
+}
+
+    /**
+     * Every region covering one exact position, with semantic detail.
+     */
+open func lookup(latitude: Double, longitude: Double)throws  -> MobileRegionLookupRecord  {
+    return try  FfiConverterTypeMobileRegionLookupRecord_lift(try rustCallWithError(FfiConverterTypeMobileRegionError_lift) {
+        uniffiCallStatus in
+    uniffi_umsh_mobile_core_fn_method_mobileregiondatabase_lookup(
+            self.uniffiCloneHandle(),
+        FfiConverterDouble.lower(latitude),
+        FfiConverterDouble.lower(longitude),uniffiCallStatus
+    )
+})
+}
+
+    /**
+     * Propose a region configuration for a position, against what the
+     * device currently holds.
+     *
+     * The proposal samples the position's uncertainty — an identity
+     * cell's center and four corners, or a measured fix's center and
+     * the four cardinal points of its accuracy circle — and suggests
+     * every region any sample hit. A node whose position straddles a
+     * boundary should usually forward both sides, the same reasoning
+     * that gives the database its expansion margins; the non-unanimous
+     * regions are named so the operator can judge.
+     */
+open func propose(position: MobileRegionPositionRecord, currentRegions: [String], currentDefaultRegion: Data?)throws  -> MobileRegionProposalRecord  {
+    return try  FfiConverterTypeMobileRegionProposalRecord_lift(try rustCallWithError(FfiConverterTypeMobileRegionError_lift) {
+        uniffiCallStatus in
+    uniffi_umsh_mobile_core_fn_method_mobileregiondatabase_propose(
+            self.uniffiCloneHandle(),
+        FfiConverterTypeMobileRegionPositionRecord_lower(position),
+        FfiConverterSequenceString.lower(currentRegions),
+        FfiConverterOptionData.lower(currentDefaultRegion),uniffiCallStatus
+    )
+})
+}
+
+    /**
+     * How many regions the database holds.
+     */
+open func regionCount() -> UInt32  {
+    return try!  FfiConverterUInt32.lift(try! rustCall() {
+        uniffiCallStatus in
+    uniffi_umsh_mobile_core_fn_method_mobileregiondatabase_region_count(
+            self.uniffiCloneHandle(),uniffiCallStatus
+    )
+})
+}
+
+
+
+}
+
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public struct FfiConverterTypeMobileRegionDatabase: FfiConverter {
+    typealias FfiType = UInt64
+    typealias SwiftType = MobileRegionDatabase
+
+    public static func lift(_ handle: UInt64) throws -> MobileRegionDatabase {
+        return MobileRegionDatabase(unsafeFromHandle: handle)
+    }
+
+    public static func lower(_ value: MobileRegionDatabase) -> UInt64 {
+        return value.uniffiCloneHandle()
+    }
+
+    public static func read(from buf: inout (data: Data, offset: Data.Index)) throws -> MobileRegionDatabase {
+        let handle: UInt64 = try readInt(&buf)
+        return try lift(handle)
+    }
+
+    public static func write(_ value: MobileRegionDatabase, into buf: inout [UInt8]) {
+        writeInt(&buf, lower(value))
+    }
+}
+
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public func FfiConverterTypeMobileRegionDatabase_lift(_ handle: UInt64) throws -> MobileRegionDatabase {
+    return try FfiConverterTypeMobileRegionDatabase.lift(handle)
+}
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public func FfiConverterTypeMobileRegionDatabase_lower(_ value: MobileRegionDatabase) -> UInt64 {
+    return FfiConverterTypeMobileRegionDatabase.lower(value)
+}
+
+
+
+
+
+
+/**
  * Stateful mobile host session for the ULCP.
  *
  * This is the protocol boundary: it consumes complete reassembled ULCP
@@ -6107,6 +6349,637 @@ public func FfiConverterTypeMobileMeshSharedLocationRecord_lift(_ buf: RustBuffe
 #endif
 public func FfiConverterTypeMobileMeshSharedLocationRecord_lower(_ value: MobileMeshSharedLocationRecord) -> RustBuffer {
     return FfiConverterTypeMobileMeshSharedLocationRecord.lower(value)
+}
+
+
+/**
+ * What the database says covers a position.
+ */
+public struct MobileRegionLookupRecord: Equatable, Hashable {
+    /**
+     * The queried latitude, degrees.
+     */
+    public var latitude: Double
+    /**
+     * The queried longitude, degrees.
+     */
+    public var longitude: Double
+    /**
+     * Every semantic match, ordered by layer priority.
+     */
+    public var matches: [MobileRegionMatchRecord]
+    /**
+     * The deduplicated radio-facing list the matches produce.
+     */
+    public var radioRegions: [MobileRegionRecord]
+    /**
+     * The best default-tag candidate, when any layer offers one.
+     */
+    public var suggestedDefaultRegion: MobileRegionRecord?
+    /**
+     * The data release the answers came from, such as `2026.34.1`.
+     */
+    public var datasetVersion: String
+
+    // Default memberwise initializers are never public by default, so we
+    // declare one manually.
+    public init(
+        /**
+         * The queried latitude, degrees.
+         */latitude: Double,
+        /**
+         * The queried longitude, degrees.
+         */longitude: Double,
+        /**
+         * Every semantic match, ordered by layer priority.
+         */matches: [MobileRegionMatchRecord],
+        /**
+         * The deduplicated radio-facing list the matches produce.
+         */radioRegions: [MobileRegionRecord],
+        /**
+         * The best default-tag candidate, when any layer offers one.
+         */suggestedDefaultRegion: MobileRegionRecord?,
+        /**
+         * The data release the answers came from, such as `2026.34.1`.
+         */datasetVersion: String) {
+        self.latitude = latitude
+        self.longitude = longitude
+        self.matches = matches
+        self.radioRegions = radioRegions
+        self.suggestedDefaultRegion = suggestedDefaultRegion
+        self.datasetVersion = datasetVersion
+    }
+
+
+
+
+}
+
+#if compiler(>=6)
+extension MobileRegionLookupRecord: Sendable {}
+#endif
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public struct FfiConverterTypeMobileRegionLookupRecord: FfiConverterRustBuffer {
+    public static func read(from buf: inout (data: Data, offset: Data.Index)) throws -> MobileRegionLookupRecord {
+        return
+            try MobileRegionLookupRecord(
+                latitude: FfiConverterDouble.read(from: &buf),
+                longitude: FfiConverterDouble.read(from: &buf),
+                matches: FfiConverterSequenceTypeMobileRegionMatchRecord.read(from: &buf),
+                radioRegions: FfiConverterSequenceTypeMobileRegionRecord.read(from: &buf),
+                suggestedDefaultRegion: FfiConverterOptionTypeMobileRegionRecord.read(from: &buf),
+                datasetVersion: FfiConverterString.read(from: &buf)
+        )
+    }
+
+    public static func write(_ value: MobileRegionLookupRecord, into buf: inout [UInt8]) {
+        FfiConverterDouble.write(value.latitude, into: &buf)
+        FfiConverterDouble.write(value.longitude, into: &buf)
+        FfiConverterSequenceTypeMobileRegionMatchRecord.write(value.matches, into: &buf)
+        FfiConverterSequenceTypeMobileRegionRecord.write(value.radioRegions, into: &buf)
+        FfiConverterOptionTypeMobileRegionRecord.write(value.suggestedDefaultRegion, into: &buf)
+        FfiConverterString.write(value.datasetVersion, into: &buf)
+    }
+}
+
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public func FfiConverterTypeMobileRegionLookupRecord_lift(_ buf: RustBuffer) throws -> MobileRegionLookupRecord {
+    return try FfiConverterTypeMobileRegionLookupRecord.lift(buf)
+}
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public func FfiConverterTypeMobileRegionLookupRecord_lower(_ value: MobileRegionLookupRecord) -> RustBuffer {
+    return FfiConverterTypeMobileRegionLookupRecord.lower(value)
+}
+
+
+/**
+ * One semantic match from a lookup, mirroring the reader's
+ * `RegionMatch`.
+ */
+public struct MobileRegionMatchRecord: Equatable, Hashable {
+    /**
+     * Namespaced identity, such as `iata-airport:SFO`.
+     */
+    public var regionKey: String
+    /**
+     * The namespace half of the key.
+     */
+    public var namespace: String
+    /**
+     * The string a radio is configured with.
+     */
+    public var radioName: String
+    /**
+     * The derived 2-octet wire code.
+     */
+    public var wireCode: Data
+    /**
+     * The layer that produced the match, such as `commercial_airport`.
+     */
+    public var layer: String
+    /**
+     * Core geometry or expansion margin.
+     */
+    public var membership: MobileRegionMembership
+    /**
+     * The region's site, for nearest-site layers.
+     */
+    public var siteLatitude: Double?
+    /**
+     * See `site_latitude`.
+     */
+    public var siteLongitude: Double?
+
+    // Default memberwise initializers are never public by default, so we
+    // declare one manually.
+    public init(
+        /**
+         * Namespaced identity, such as `iata-airport:SFO`.
+         */regionKey: String,
+        /**
+         * The namespace half of the key.
+         */namespace: String,
+        /**
+         * The string a radio is configured with.
+         */radioName: String,
+        /**
+         * The derived 2-octet wire code.
+         */wireCode: Data,
+        /**
+         * The layer that produced the match, such as `commercial_airport`.
+         */layer: String,
+        /**
+         * Core geometry or expansion margin.
+         */membership: MobileRegionMembership,
+        /**
+         * The region's site, for nearest-site layers.
+         */siteLatitude: Double?,
+        /**
+         * See `site_latitude`.
+         */siteLongitude: Double?) {
+        self.regionKey = regionKey
+        self.namespace = namespace
+        self.radioName = radioName
+        self.wireCode = wireCode
+        self.layer = layer
+        self.membership = membership
+        self.siteLatitude = siteLatitude
+        self.siteLongitude = siteLongitude
+    }
+
+
+
+
+}
+
+#if compiler(>=6)
+extension MobileRegionMatchRecord: Sendable {}
+#endif
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public struct FfiConverterTypeMobileRegionMatchRecord: FfiConverterRustBuffer {
+    public static func read(from buf: inout (data: Data, offset: Data.Index)) throws -> MobileRegionMatchRecord {
+        return
+            try MobileRegionMatchRecord(
+                regionKey: FfiConverterString.read(from: &buf),
+                namespace: FfiConverterString.read(from: &buf),
+                radioName: FfiConverterString.read(from: &buf),
+                wireCode: FfiConverterData.read(from: &buf),
+                layer: FfiConverterString.read(from: &buf),
+                membership: FfiConverterTypeMobileRegionMembership.read(from: &buf),
+                siteLatitude: FfiConverterOptionDouble.read(from: &buf),
+                siteLongitude: FfiConverterOptionDouble.read(from: &buf)
+        )
+    }
+
+    public static func write(_ value: MobileRegionMatchRecord, into buf: inout [UInt8]) {
+        FfiConverterString.write(value.regionKey, into: &buf)
+        FfiConverterString.write(value.namespace, into: &buf)
+        FfiConverterString.write(value.radioName, into: &buf)
+        FfiConverterData.write(value.wireCode, into: &buf)
+        FfiConverterString.write(value.layer, into: &buf)
+        FfiConverterTypeMobileRegionMembership.write(value.membership, into: &buf)
+        FfiConverterOptionDouble.write(value.siteLatitude, into: &buf)
+        FfiConverterOptionDouble.write(value.siteLongitude, into: &buf)
+    }
+}
+
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public func FfiConverterTypeMobileRegionMatchRecord_lift(_ buf: RustBuffer) throws -> MobileRegionMatchRecord {
+    return try FfiConverterTypeMobileRegionMatchRecord.lift(buf)
+}
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public func FfiConverterTypeMobileRegionMatchRecord_lower(_ value: MobileRegionMatchRecord) -> RustBuffer {
+    return FfiConverterTypeMobileRegionMatchRecord.lower(value)
+}
+
+
+/**
+ * One way of applying a proposal: the complete resulting settings, not
+ * a delta. The caller assigns both fields into the editor and thinks no
+ * further.
+ */
+public struct MobileRegionOutcomeRecord: Equatable, Hashable {
+    /**
+     * The resulting forwarding list, as region strings.
+     */
+    public var regions: [String]
+    /**
+     * The resulting default tag, as a 2-octet code.
+     */
+    public var defaultRegion: Data?
+    /**
+     * Whether applying this outcome changes the device at all. When
+     * false, the UI can say "already matches" instead of offering a
+     * write that does nothing.
+     */
+    public var changesAnything: Bool
+
+    // Default memberwise initializers are never public by default, so we
+    // declare one manually.
+    public init(
+        /**
+         * The resulting forwarding list, as region strings.
+         */regions: [String],
+        /**
+         * The resulting default tag, as a 2-octet code.
+         */defaultRegion: Data?,
+        /**
+         * Whether applying this outcome changes the device at all. When
+         * false, the UI can say "already matches" instead of offering a
+         * write that does nothing.
+         */changesAnything: Bool) {
+        self.regions = regions
+        self.defaultRegion = defaultRegion
+        self.changesAnything = changesAnything
+    }
+
+
+
+
+}
+
+#if compiler(>=6)
+extension MobileRegionOutcomeRecord: Sendable {}
+#endif
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public struct FfiConverterTypeMobileRegionOutcomeRecord: FfiConverterRustBuffer {
+    public static func read(from buf: inout (data: Data, offset: Data.Index)) throws -> MobileRegionOutcomeRecord {
+        return
+            try MobileRegionOutcomeRecord(
+                regions: FfiConverterSequenceString.read(from: &buf),
+                defaultRegion: FfiConverterOptionData.read(from: &buf),
+                changesAnything: FfiConverterBool.read(from: &buf)
+        )
+    }
+
+    public static func write(_ value: MobileRegionOutcomeRecord, into buf: inout [UInt8]) {
+        FfiConverterSequenceString.write(value.regions, into: &buf)
+        FfiConverterOptionData.write(value.defaultRegion, into: &buf)
+        FfiConverterBool.write(value.changesAnything, into: &buf)
+    }
+}
+
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public func FfiConverterTypeMobileRegionOutcomeRecord_lift(_ buf: RustBuffer) throws -> MobileRegionOutcomeRecord {
+    return try FfiConverterTypeMobileRegionOutcomeRecord.lift(buf)
+}
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public func FfiConverterTypeMobileRegionOutcomeRecord_lower(_ value: MobileRegionOutcomeRecord) -> RustBuffer {
+    return FfiConverterTypeMobileRegionOutcomeRecord.lower(value)
+}
+
+
+/**
+ * A place to propose regions for, with its honest uncertainty.
+ *
+ * Positions come from sources of very different quality — a node's
+ * advertised identity cell, a live GNSS fix, hand-entered coordinates —
+ * and the proposal widens itself to match. At most one of
+ * `location_bytes` and `accuracy_m` should be set; the cell wins when
+ * both are.
+ */
+public struct MobileRegionPositionRecord: Equatable, Hashable {
+    /**
+     * Latitude in degrees.
+     */
+    public var latitude: Double
+    /**
+     * Longitude in degrees.
+     */
+    public var longitude: Double
+    /**
+     * The encoded identity cell this position came from, verbatim. Its
+     * bounds are the uncertainty, and supersede `accuracy_m`.
+     */
+    public var locationBytes: Data?
+    /**
+     * Horizontal uncertainty of a measured fix, in meters.
+     */
+    public var accuracyM: Double?
+
+    // Default memberwise initializers are never public by default, so we
+    // declare one manually.
+    public init(
+        /**
+         * Latitude in degrees.
+         */latitude: Double,
+        /**
+         * Longitude in degrees.
+         */longitude: Double,
+        /**
+         * The encoded identity cell this position came from, verbatim. Its
+         * bounds are the uncertainty, and supersede `accuracy_m`.
+         */locationBytes: Data?,
+        /**
+         * Horizontal uncertainty of a measured fix, in meters.
+         */accuracyM: Double?) {
+        self.latitude = latitude
+        self.longitude = longitude
+        self.locationBytes = locationBytes
+        self.accuracyM = accuracyM
+    }
+
+
+
+
+}
+
+#if compiler(>=6)
+extension MobileRegionPositionRecord: Sendable {}
+#endif
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public struct FfiConverterTypeMobileRegionPositionRecord: FfiConverterRustBuffer {
+    public static func read(from buf: inout (data: Data, offset: Data.Index)) throws -> MobileRegionPositionRecord {
+        return
+            try MobileRegionPositionRecord(
+                latitude: FfiConverterDouble.read(from: &buf),
+                longitude: FfiConverterDouble.read(from: &buf),
+                locationBytes: FfiConverterOptionData.read(from: &buf),
+                accuracyM: FfiConverterOptionDouble.read(from: &buf)
+        )
+    }
+
+    public static func write(_ value: MobileRegionPositionRecord, into buf: inout [UInt8]) {
+        FfiConverterDouble.write(value.latitude, into: &buf)
+        FfiConverterDouble.write(value.longitude, into: &buf)
+        FfiConverterOptionData.write(value.locationBytes, into: &buf)
+        FfiConverterOptionDouble.write(value.accuracyM, into: &buf)
+    }
+}
+
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public func FfiConverterTypeMobileRegionPositionRecord_lift(_ buf: RustBuffer) throws -> MobileRegionPositionRecord {
+    return try FfiConverterTypeMobileRegionPositionRecord.lift(buf)
+}
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public func FfiConverterTypeMobileRegionPositionRecord_lower(_ value: MobileRegionPositionRecord) -> RustBuffer {
+    return FfiConverterTypeMobileRegionPositionRecord.lower(value)
+}
+
+
+/**
+ * A location-derived region proposal, ready for the operator to accept
+ * wholesale, take additively, or dismiss.
+ */
+public struct MobileRegionProposalRecord: Equatable, Hashable {
+    /**
+     * The merged view across the position's uncertainty: every region
+     * any sample point hit, each match reported once with its best
+     * membership. `radio_regions` here is the suggested list both
+     * outcomes are built from.
+     */
+    public var lookup: MobileRegionLookupRecord
+    /**
+     * Accept wholesale: regions and default tag become the suggestion,
+     * including a `None` default when the lookup suggests nothing.
+     */
+    public var replace: MobileRegionOutcomeRecord
+    /**
+     * Accept additively: missing suggestions are appended, nothing is
+     * removed, and the suggested default tag is adopted only when the
+     * device has none.
+     */
+    public var addMissing: MobileRegionOutcomeRecord
+    /**
+     * Suggested regions the device already forwards, by derived code.
+     */
+    public var alreadyPresent: [String]
+    /**
+     * Configured regions this position does not account for. Kept by
+     * `add_missing`, dropped by `replace`.
+     */
+    public var notSuggested: [String]
+    /**
+     * Suggested regions the position's samples do not agree on, as
+     * radio names matching entries in `lookup.radio_regions`. The
+     * position's uncertainty straddles these regions' boundaries.
+     */
+    public var uncertainRegions: [String]
+    /**
+     * Width of the position's uncertainty, in meters, for the UI to
+     * state. `None` for an exact position.
+     */
+    public var cellMeters: Double?
+
+    // Default memberwise initializers are never public by default, so we
+    // declare one manually.
+    public init(
+        /**
+         * The merged view across the position's uncertainty: every region
+         * any sample point hit, each match reported once with its best
+         * membership. `radio_regions` here is the suggested list both
+         * outcomes are built from.
+         */lookup: MobileRegionLookupRecord,
+        /**
+         * Accept wholesale: regions and default tag become the suggestion,
+         * including a `None` default when the lookup suggests nothing.
+         */replace: MobileRegionOutcomeRecord,
+        /**
+         * Accept additively: missing suggestions are appended, nothing is
+         * removed, and the suggested default tag is adopted only when the
+         * device has none.
+         */addMissing: MobileRegionOutcomeRecord,
+        /**
+         * Suggested regions the device already forwards, by derived code.
+         */alreadyPresent: [String],
+        /**
+         * Configured regions this position does not account for. Kept by
+         * `add_missing`, dropped by `replace`.
+         */notSuggested: [String],
+        /**
+         * Suggested regions the position's samples do not agree on, as
+         * radio names matching entries in `lookup.radio_regions`. The
+         * position's uncertainty straddles these regions' boundaries.
+         */uncertainRegions: [String],
+        /**
+         * Width of the position's uncertainty, in meters, for the UI to
+         * state. `None` for an exact position.
+         */cellMeters: Double?) {
+        self.lookup = lookup
+        self.replace = replace
+        self.addMissing = addMissing
+        self.alreadyPresent = alreadyPresent
+        self.notSuggested = notSuggested
+        self.uncertainRegions = uncertainRegions
+        self.cellMeters = cellMeters
+    }
+
+
+
+
+}
+
+#if compiler(>=6)
+extension MobileRegionProposalRecord: Sendable {}
+#endif
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public struct FfiConverterTypeMobileRegionProposalRecord: FfiConverterRustBuffer {
+    public static func read(from buf: inout (data: Data, offset: Data.Index)) throws -> MobileRegionProposalRecord {
+        return
+            try MobileRegionProposalRecord(
+                lookup: FfiConverterTypeMobileRegionLookupRecord.read(from: &buf),
+                replace: FfiConverterTypeMobileRegionOutcomeRecord.read(from: &buf),
+                addMissing: FfiConverterTypeMobileRegionOutcomeRecord.read(from: &buf),
+                alreadyPresent: FfiConverterSequenceString.read(from: &buf),
+                notSuggested: FfiConverterSequenceString.read(from: &buf),
+                uncertainRegions: FfiConverterSequenceString.read(from: &buf),
+                cellMeters: FfiConverterOptionDouble.read(from: &buf)
+        )
+    }
+
+    public static func write(_ value: MobileRegionProposalRecord, into buf: inout [UInt8]) {
+        FfiConverterTypeMobileRegionLookupRecord.write(value.lookup, into: &buf)
+        FfiConverterTypeMobileRegionOutcomeRecord.write(value.replace, into: &buf)
+        FfiConverterTypeMobileRegionOutcomeRecord.write(value.addMissing, into: &buf)
+        FfiConverterSequenceString.write(value.alreadyPresent, into: &buf)
+        FfiConverterSequenceString.write(value.notSuggested, into: &buf)
+        FfiConverterSequenceString.write(value.uncertainRegions, into: &buf)
+        FfiConverterOptionDouble.write(value.cellMeters, into: &buf)
+    }
+}
+
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public func FfiConverterTypeMobileRegionProposalRecord_lift(_ buf: RustBuffer) throws -> MobileRegionProposalRecord {
+    return try FfiConverterTypeMobileRegionProposalRecord.lift(buf)
+}
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public func FfiConverterTypeMobileRegionProposalRecord_lower(_ value: MobileRegionProposalRecord) -> RustBuffer {
+    return FfiConverterTypeMobileRegionProposalRecord.lower(value)
+}
+
+
+/**
+ * A region as a radio is configured with it: the string form and the
+ * 2-octet code the string derives to.
+ */
+public struct MobileRegionRecord: Equatable, Hashable {
+    /**
+     * The configuration string, such as `SFO` or `SF Bay Area`.
+     */
+    public var name: String
+    /**
+     * The derived wire code, always two octets.
+     */
+    public var code: Data
+
+    // Default memberwise initializers are never public by default, so we
+    // declare one manually.
+    public init(
+        /**
+         * The configuration string, such as `SFO` or `SF Bay Area`.
+         */name: String,
+        /**
+         * The derived wire code, always two octets.
+         */code: Data) {
+        self.name = name
+        self.code = code
+    }
+
+
+
+
+}
+
+#if compiler(>=6)
+extension MobileRegionRecord: Sendable {}
+#endif
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public struct FfiConverterTypeMobileRegionRecord: FfiConverterRustBuffer {
+    public static func read(from buf: inout (data: Data, offset: Data.Index)) throws -> MobileRegionRecord {
+        return
+            try MobileRegionRecord(
+                name: FfiConverterString.read(from: &buf),
+                code: FfiConverterData.read(from: &buf)
+        )
+    }
+
+    public static func write(_ value: MobileRegionRecord, into buf: inout [UInt8]) {
+        FfiConverterString.write(value.name, into: &buf)
+        FfiConverterData.write(value.code, into: &buf)
+    }
+}
+
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public func FfiConverterTypeMobileRegionRecord_lift(_ buf: RustBuffer) throws -> MobileRegionRecord {
+    return try FfiConverterTypeMobileRegionRecord.lift(buf)
+}
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public func FfiConverterTypeMobileRegionRecord_lower(_ value: MobileRegionRecord) -> RustBuffer {
+    return FfiConverterTypeMobileRegionRecord.lower(value)
 }
 
 
@@ -10383,6 +11256,225 @@ public func FfiConverterTypeMobileMeshRouteKind_lower(_ value: MobileMeshRouteKi
 
 
 /**
+ * Anything that can go wrong opening or consulting a region database.
+ */
+public
+enum MobileRegionError: Swift.Error, Equatable, Hashable, Foundation.LocalizedError {
+
+
+
+    /**
+     * The database file could not be opened or read.
+     */
+    case DatabaseUnavailable
+    /**
+     * The file is not a region database at all.
+     */
+    case NotARegionDatabase
+    /**
+     * The file declares a format version this build does not implement.
+     */
+    case UnsupportedFormat
+    /**
+     * The database needs SQLite's R-tree module and this build has none.
+     */
+    case MissingSpatialIndex
+    /**
+     * The database opened but its contents could not be decoded.
+     */
+    case Corrupt
+    /**
+     * The position is not a place: a non-finite or out-of-range
+     * coordinate, or an undecodable location cell.
+     */
+    case InvalidPosition
+    /**
+     * The position is real but too uncertain to propose from. The
+     * answer is a better source, not a wider guess.
+     */
+    case PositionTooCoarse
+    /**
+     * A configured region string or default-region code could not be
+     * read.
+     */
+    case InvalidRegionCode
+
+
+
+
+
+
+    public var errorDescription: String? {
+        String(reflecting: self)
+    }
+
+}
+
+#if compiler(>=6)
+extension MobileRegionError: Sendable {}
+#endif
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public struct FfiConverterTypeMobileRegionError: FfiConverterRustBuffer {
+    typealias SwiftType = MobileRegionError
+
+    public static func read(from buf: inout (data: Data, offset: Data.Index)) throws -> MobileRegionError {
+        let variant: Int32 = try readInt(&buf)
+        switch variant {
+
+
+
+
+        case 1: return .DatabaseUnavailable
+        case 2: return .NotARegionDatabase
+        case 3: return .UnsupportedFormat
+        case 4: return .MissingSpatialIndex
+        case 5: return .Corrupt
+        case 6: return .InvalidPosition
+        case 7: return .PositionTooCoarse
+        case 8: return .InvalidRegionCode
+
+         default: throw UniffiInternalError.unexpectedEnumCase
+        }
+    }
+
+    public static func write(_ value: MobileRegionError, into buf: inout [UInt8]) {
+        switch value {
+
+
+
+
+
+        case .DatabaseUnavailable:
+            writeInt(&buf, Int32(1))
+
+
+        case .NotARegionDatabase:
+            writeInt(&buf, Int32(2))
+
+
+        case .UnsupportedFormat:
+            writeInt(&buf, Int32(3))
+
+
+        case .MissingSpatialIndex:
+            writeInt(&buf, Int32(4))
+
+
+        case .Corrupt:
+            writeInt(&buf, Int32(5))
+
+
+        case .InvalidPosition:
+            writeInt(&buf, Int32(6))
+
+
+        case .PositionTooCoarse:
+            writeInt(&buf, Int32(7))
+
+
+        case .InvalidRegionCode:
+            writeInt(&buf, Int32(8))
+
+        }
+    }
+}
+
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public func FfiConverterTypeMobileRegionError_lift(_ buf: RustBuffer) throws -> MobileRegionError {
+    return try FfiConverterTypeMobileRegionError.lift(buf)
+}
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public func FfiConverterTypeMobileRegionError_lower(_ value: MobileRegionError) -> RustBuffer {
+    return FfiConverterTypeMobileRegionError.lower(value)
+}
+
+
+/**
+ * Whether a position falls in a region's own area or only in its
+ * expansion margin.
+ */
+
+public enum MobileRegionMembership: Equatable, Hashable {
+
+    /**
+     * The position is inside the region's core geometry.
+     */
+    case core
+    /**
+     * Only the sampled expansion margin reaches the position.
+     */
+    case expanded
+
+
+
+
+
+}
+
+#if compiler(>=6)
+extension MobileRegionMembership: Sendable {}
+#endif
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public struct FfiConverterTypeMobileRegionMembership: FfiConverterRustBuffer {
+    typealias SwiftType = MobileRegionMembership
+
+    public static func read(from buf: inout (data: Data, offset: Data.Index)) throws -> MobileRegionMembership {
+        let variant: Int32 = try readInt(&buf)
+        switch variant {
+
+        case 1: return .core
+
+        case 2: return .expanded
+
+        default: throw UniffiInternalError.unexpectedEnumCase
+        }
+    }
+
+    public static func write(_ value: MobileRegionMembership, into buf: inout [UInt8]) {
+        switch value {
+
+
+        case .core:
+            writeInt(&buf, Int32(1))
+
+
+        case .expanded:
+            writeInt(&buf, Int32(2))
+
+        }
+    }
+}
+
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public func FfiConverterTypeMobileRegionMembership_lift(_ buf: RustBuffer) throws -> MobileRegionMembership {
+    return try FfiConverterTypeMobileRegionMembership.lift(buf)
+}
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public func FfiConverterTypeMobileRegionMembership_lower(_ value: MobileRegionMembership) -> RustBuffer {
+    return FfiConverterTypeMobileRegionMembership.lower(value)
+}
+
+
+
+/**
  * `PROP_SAVED`: what the radio reports about its stored snapshot.
  *
  * `Fallback` and `Unreadable` are the values worth surfacing: the radio
@@ -11517,6 +12609,30 @@ fileprivate struct FfiConverterOptionTypeMobileMeshSharedLocationRecord: FfiConv
 #if swift(>=5.8)
 @_documentation(visibility: private)
 #endif
+fileprivate struct FfiConverterOptionTypeMobileRegionRecord: FfiConverterRustBuffer {
+    typealias SwiftType = MobileRegionRecord?
+
+    public static func write(_ value: SwiftType, into buf: inout [UInt8]) {
+        guard let value = value else {
+            writeInt(&buf, Int8(0))
+            return
+        }
+        writeInt(&buf, Int8(1))
+        FfiConverterTypeMobileRegionRecord.write(value, into: &buf)
+    }
+
+    public static func read(from buf: inout (data: Data, offset: Data.Index)) throws -> SwiftType {
+        switch try readInt(&buf) as Int8 {
+        case 0: return nil
+        case 1: return try FfiConverterTypeMobileRegionRecord.read(from: &buf)
+        default: throw UniffiInternalError.unexpectedOptionalTag
+        }
+    }
+}
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
 fileprivate struct FfiConverterOptionTypeNodeIdentityRecord: FfiConverterRustBuffer {
     typealias SwiftType = NodeIdentityRecord?
 
@@ -12368,6 +13484,56 @@ fileprivate struct FfiConverterSequenceTypeMobileMeshPropertyWriteRecord: FfiCon
         seq.reserveCapacity(Int(len))
         for _ in 0 ..< len {
             seq.append(try FfiConverterTypeMobileMeshPropertyWriteRecord.read(from: &buf))
+        }
+        return seq
+    }
+}
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+fileprivate struct FfiConverterSequenceTypeMobileRegionMatchRecord: FfiConverterRustBuffer {
+    typealias SwiftType = [MobileRegionMatchRecord]
+
+    public static func write(_ value: [MobileRegionMatchRecord], into buf: inout [UInt8]) {
+        let len = Int32(value.count)
+        writeInt(&buf, len)
+        for item in value {
+            FfiConverterTypeMobileRegionMatchRecord.write(item, into: &buf)
+        }
+    }
+
+    public static func read(from buf: inout (data: Data, offset: Data.Index)) throws -> [MobileRegionMatchRecord] {
+        let len: Int32 = try readInt(&buf)
+        var seq = [MobileRegionMatchRecord]()
+        seq.reserveCapacity(Int(len))
+        for _ in 0 ..< len {
+            seq.append(try FfiConverterTypeMobileRegionMatchRecord.read(from: &buf))
+        }
+        return seq
+    }
+}
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+fileprivate struct FfiConverterSequenceTypeMobileRegionRecord: FfiConverterRustBuffer {
+    typealias SwiftType = [MobileRegionRecord]
+
+    public static func write(_ value: [MobileRegionRecord], into buf: inout [UInt8]) {
+        let len = Int32(value.count)
+        writeInt(&buf, len)
+        for item in value {
+            FfiConverterTypeMobileRegionRecord.write(item, into: &buf)
+        }
+    }
+
+    public static func read(from buf: inout (data: Data, offset: Data.Index)) throws -> [MobileRegionRecord] {
+        let len: Int32 = try readInt(&buf)
+        var seq = [MobileRegionRecord]()
+        seq.reserveCapacity(Int(len))
+        for _ in 0 ..< len {
+            seq.append(try FfiConverterTypeMobileRegionRecord.read(from: &buf))
         }
         return seq
     }
@@ -13488,6 +14654,21 @@ private let initializationResult: InitializationResult = {
     if (uniffi_umsh_mobile_core_checksum_method_mobilemeshwakelistener_on_update_pending() != 41919) {
         return InitializationResult.apiChecksumMismatch
     }
+    if (uniffi_umsh_mobile_core_checksum_method_mobileregiondatabase_dataset_version() != 20011) {
+        return InitializationResult.apiChecksumMismatch
+    }
+    if (uniffi_umsh_mobile_core_checksum_method_mobileregiondatabase_format_version() != 16241) {
+        return InitializationResult.apiChecksumMismatch
+    }
+    if (uniffi_umsh_mobile_core_checksum_method_mobileregiondatabase_lookup() != 22167) {
+        return InitializationResult.apiChecksumMismatch
+    }
+    if (uniffi_umsh_mobile_core_checksum_method_mobileregiondatabase_propose() != 8942) {
+        return InitializationResult.apiChecksumMismatch
+    }
+    if (uniffi_umsh_mobile_core_checksum_method_mobileregiondatabase_region_count() != 10598) {
+        return InitializationResult.apiChecksumMismatch
+    }
     if (uniffi_umsh_mobile_core_checksum_method_mobilegattreassembler_push() != 45673) {
         return InitializationResult.apiChecksumMismatch
     }
@@ -13576,6 +14757,9 @@ private let initializationResult: InitializationResult = {
         return InitializationResult.apiChecksumMismatch
     }
     if (uniffi_umsh_mobile_core_checksum_constructor_mobilemeshsession_new() != 47949) {
+        return InitializationResult.apiChecksumMismatch
+    }
+    if (uniffi_umsh_mobile_core_checksum_constructor_mobileregiondatabase_open() != 34206) {
         return InitializationResult.apiChecksumMismatch
     }
     if (uniffi_umsh_mobile_core_checksum_constructor_mobilegattreassembler_new() != 56519) {

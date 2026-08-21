@@ -69,6 +69,9 @@ pub enum RegionDbError {
     },
     /// The file is not a region database at all.
     NotARegionDatabase,
+    /// The database needs the R-tree candidate path and this SQLite build
+    /// has no R-tree module.
+    MissingSpatialIndex,
     /// A geometry blob could not be decoded.
     Geometry(GeometryError),
     /// A position could not be placed on the lookup grid.
@@ -85,6 +88,10 @@ impl core::fmt::Display for RegionDbError {
                  up to {supported}"
             ),
             Self::NotARegionDatabase => write!(formatter, "file is not a region database"),
+            Self::MissingSpatialIndex => write!(
+                formatter,
+                "database has no lookup cache and this SQLite build has no R-tree module"
+            ),
             Self::Geometry(error) => write!(formatter, "region geometry: {error}"),
             Self::Position(error) => write!(formatter, "lookup position: {error}"),
         }
@@ -271,6 +278,24 @@ impl RegionDb {
                 rusqlite::Error::QueryReturnedNoRows => Ok(false),
                 other => Err(other),
             })?;
+
+        // Without the cache every lookup goes through the R-tree, and a
+        // SQLite built without that module fails only then, as an opaque
+        // "no such module: rtree" from deep inside a query. Probing here
+        // turns that into a named error at the one moment a caller is
+        // prepared to handle one. An empty table is fine — it is the
+        // module that is being tested, not the data.
+        if !has_lookup_ranges {
+            match connection.query_row("SELECT 1 FROM effective_rtree LIMIT 1", [], |_| Ok(())) {
+                Ok(()) | Err(rusqlite::Error::QueryReturnedNoRows) => {}
+                Err(rusqlite::Error::SqliteFailure(_, Some(message)))
+                    if message.contains("no such module") =>
+                {
+                    return Err(RegionDbError::MissingSpatialIndex);
+                }
+                Err(other) => return Err(other.into()),
+            }
+        }
 
         Ok(Self {
             connection,

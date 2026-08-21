@@ -4206,6 +4206,7 @@ dependencies = [
  "umsh-mac",
  "umsh-node",
  "umsh-node-mgmt",
+ "umsh-regiondb",
  "umsh-sync",
  "umsh-text",
  "umsh-ulcp",

@@ -18,6 +18,7 @@ use zeroize::Zeroize;
 mod counter_store;
 mod mobile_chat;
 mod mobile_mesh;
+mod regions;
 mod ulcp;
 
 pub use counter_store::{CounterStoreError, MobileCounterStore};
@@ -32,6 +33,11 @@ pub use mobile_mesh::{
     MobileMeshPeerHeardRecord, MobileMeshPingEventRecord, MobileMeshPingOutcome,
     MobileMeshRouteKind, MobileMeshRouteRecord, MobileMeshRxRecord, MobileMeshSession,
     MobileMeshSessionUpdateRecord,
+};
+pub use regions::{
+    MobileRegionDatabase, MobileRegionError, MobileRegionLookupRecord, MobileRegionMatchRecord,
+    MobileRegionMembership, MobileRegionOutcomeRecord, MobileRegionPositionRecord,
+    MobileRegionProposalRecord, MobileRegionRecord,
 };
 pub use ulcp::{
     GattSegmentRecord, MobileGattReassembler, MobileUlcpSession, UlcpAlertState, UlcpAttachMode,
@@ -51,7 +57,7 @@ uniffi::setup_scaffolding!();
 ///
 /// Increment this when a binding-visible operation, record, or error contract
 /// changes incompatibly. It is independent of the UMSH wire version.
-pub const MOBILE_API_VERSION: u16 = 39;
+pub const MOBILE_API_VERSION: u16 = 40;
 
 /// Stable error categories consumed by platform adapters.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, uniffi::Error)]

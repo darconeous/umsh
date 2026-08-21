@@ -24,4 +24,66 @@ final class UMSHMobileCoreTests: XCTestCase {
         XCTAssertEqual(identity.canonicalAddress.count, 44)
         XCTAssertEqual(try inspectPublicIdentity(address: identity.canonicalAddress), identity)
     }
+
+    private func fixtureDatabase() throws -> MobileRegionDatabase {
+        let url = try XCTUnwrap(
+            Bundle.module.url(forResource: "fixture", withExtension: "regiondb")
+        )
+        return try MobileRegionDatabase.open(path: url.path)
+    }
+
+    // San Carlos, the regression the fixture exists for: a real IATA
+    // location that must never be reported as a commercial airport. The
+    // expectations mirror regions/tests/known-points.yaml, proving the
+    // iOS lookup path agrees with the Rust and Python references.
+    func testRegionLookupMatchesTheFixtureReference() throws {
+        let db = try fixtureDatabase()
+        XCTAssertEqual(db.datasetVersion(), "fixture-1")
+        let lookup = try db.lookup(latitude: 37.5119, longitude: -122.2495)
+        let keys = lookup.matches.map(\.regionKey)
+        XCTAssertTrue(keys.contains("iata-location:SQL"))
+        XCTAssertTrue(keys.contains("iata-airport:SFO"))
+        XCTAssertFalse(keys.contains("iata-airport:SQL"))
+        XCTAssertEqual(lookup.suggestedDefaultRegion?.name, "XSF")
+    }
+
+    func testRegionProposalComparesByDerivedCode() throws {
+        // "sfo" and the hex spelling of XSF already name two of the
+        // suggestions, however they are written; add-missing keeps the
+        // operator's spellings and appends only what is absent.
+        let proposal = try fixtureDatabase().propose(
+            position: MobileRegionPositionRecord(
+                latitude: 37.6189,
+                longitude: -122.3750,
+                locationBytes: nil,
+                accuracyM: nil
+            ),
+            currentRegions: ["sfo", "0x98FE"],
+            currentDefaultRegion: nil
+        )
+        XCTAssertEqual(proposal.alreadyPresent, ["SFO", "XSF"])
+        XCTAssertEqual(Array(proposal.addMissing.regions.prefix(2)), ["sfo", "0x98FE"])
+        XCTAssertTrue(proposal.addMissing.regions.contains("US"))
+        XCTAssertEqual(proposal.addMissing.defaultRegion, Data([0x98, 0xFE]))
+        XCTAssertTrue(proposal.addMissing.changesAnything)
+    }
+
+    func testCoarsePositionsAreRefused() throws {
+        XCTAssertThrowsError(
+            try fixtureDatabase().propose(
+                position: MobileRegionPositionRecord(
+                    latitude: 37.5119,
+                    longitude: -122.2495,
+                    locationBytes: nil,
+                    accuracyM: 30_000
+                ),
+                currentRegions: [],
+                currentDefaultRegion: nil
+            )
+        ) { error in
+            guard case MobileRegionError.PositionTooCoarse = error else {
+                return XCTFail("Unexpected error: \(error)")
+            }
+        }
+    }
 }

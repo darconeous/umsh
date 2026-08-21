@@ -18,6 +18,7 @@ swiftc \
     -I "$build_root/headers" \
     -L "$build_root/host/release" \
     -lumsh_mobile_core \
+    -lsqlite3 \
     -o "$smoke_binary"
 
 DYLD_LIBRARY_PATH="$build_root/host/release" "$smoke_binary"
