@@ -178,6 +178,15 @@ overrides:
       Belize City Municipal is the in-town domestic strip; Philip
       Goldson International is the gateway.
 
+  WIL:
+    commercial: false
+    reason: >
+      Nairobi Wilson is the hub for Kenyan light-aircraft domestic flying, and
+      the busiest airport in East Africa by movements — which is why this one
+      was close. But the layer asks which airport a person here would call
+      theirs, not which handles the most departures, and for Nairobi that is
+      Jomo Kenyatta. Wilson keeps its positioned-location identity.
+
   XSP:
     commercial: false
     reason: >
