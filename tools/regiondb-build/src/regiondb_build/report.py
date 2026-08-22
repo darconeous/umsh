@@ -30,8 +30,7 @@ def summarize(report: dict[str, Any]) -> str:
         f"(format {report.get('format_version')}, content {report.get('content_hash', '')[:12]})",
         "  regions: "
         + ", ".join(f"{name} {count}" for name, count in sorted(counts.items()) if count),
-        f"  geometry: {geometry.get('parts', 0)} parts, "
-        f"{geometry.get('vertices', 0)} vertices",
+        f"  geometry: {geometry.get('parts', 0)} parts, {geometry.get('vertices', 0)} vertices",
         f"  cache: {cache.get('ranges', 0)} ranges from {cache.get('leaves', 0)} leaves, "
         f"{cache.get('boundary_leaves', 0)} needing fallback, "
         f"at most {cache.get('max_candidates', 0)} candidates",

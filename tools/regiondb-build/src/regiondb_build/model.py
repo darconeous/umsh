@@ -39,7 +39,6 @@ MEMBERSHIP_CORE = 0
 MEMBERSHIP_EXPANDED = 1
 
 
-
 @dataclass
 class Site:
     """A positioned IATA location: an airport today, possibly a rail station later."""
