@@ -68,6 +68,9 @@ struct AppRootView: View {
     /// The one CoreLocation seam; a reference in `@State`, never
     /// reassigned, like the bookkeeping below.
     @State private var locationService = PhoneLocationService()
+    /// The one region database, beside the location seam because the two
+    /// are asked together: a place, and what covers it.
+    @State private var regionService = RegionService()
     /// The last cell pushed into the mesh session, kept so a session
     /// reinstall — which starts with none — can resume with it rather
     /// than waiting for the phone to move.
@@ -694,6 +697,13 @@ struct AppRootView: View {
                 }
             )
         )
+        // Any region editor below this — the setup sheet, the remote
+        // repeater screen — can ask what covers a place, and read where
+        // this phone is to ask about. Both are seams rather than data: the
+        // database answers, and nothing it is asked about is stored.
+        .environment(\.regionService, regionService)
+        .environment(\.readPhonePosition) { await locationService.readOnce() }
+        .task { await regionService.load() }
         // A composer with no radio behind it offers the way to attach one, and
         // the sheet that does it lives here.
         .environment(\.openRadioDetail) { showsRadioDetail = true }

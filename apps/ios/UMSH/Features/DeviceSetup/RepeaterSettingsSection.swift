@@ -9,7 +9,7 @@ import UMSHMobileCore
 /// hex, because the hex is what the operator will see in a packet capture
 /// or on another node.
 enum RegionCodeText {
-    /// `SJC (0x7853)`, or `0xDF6F` for a derived code.
+    /// `SJC (0x7853)`, or `0xC0F9` for a derived code.
     static func label(_ code: Data) -> String {
         let hex = self.hex(code)
         guard let description = try? regionCodeDescription(code: code),
@@ -78,9 +78,30 @@ struct RepeaterSettingsSection: View {
     @Binding var defaultRegion: Data?
     @Binding var minRssiDBm: Int16?
     @Binding var minSnrDB: Int8?
+    /// Where the device says it is, as it reported at attach.
+    var advertisedPosition: UlcpIdentPositionRecord?
+    /// What the device's receiver reports, when it has one.
+    var devicePosition: RadioPosition?
+    /// Whether this form should fill the region list in from where the
+    /// phone is, without being asked.
+    ///
+    /// Only the repeater setup sheet does. A repeater is being commissioned
+    /// at the place it will serve, so the regions covering that place are
+    /// the answer far more often than an empty list is — and everything the
+    /// suggestion did is on screen, undoable, and editable before anything
+    /// is written.
+    var suggestsFromPhone = false
+
+    @Environment(\.regionService) private var regionService
+    @Environment(\.readPhonePosition) private var readPhonePosition
 
     @State private var regionInput = ""
     @State private var regionProblem: String?
+    @State private var showsSuggestion = false
+    /// What the automatic suggestion did, and what it displaced. Nil until
+    /// one lands, which is also what keeps it to one per form.
+    @State private var suggested: AutomaticSuggestion?
+    @State private var isSuggesting = false
 
     var body: some View {
         Section {
@@ -92,6 +113,21 @@ struct RepeaterSettingsSection: View {
                  ? "This device relays floods it hears, subject to the limits below."
                  : "This device carries only its own traffic and advertises no forwarding role.")
         }
+        // Carried on the first section because this view is a run of
+        // sections rather than one container: it is always present, and a
+        // sheet has to hang off something that is.
+        .sheet(isPresented: $showsSuggestion) {
+            RegionSuggestionSheet(
+                currentRegions: regions,
+                currentDefaultRegion: defaultRegion,
+                sources: positionSources,
+                // Over Bluetooth the phone is within a few meters of the
+                // device, so where it is stands for where the device is.
+                offersPhone: true,
+                accept: adopt
+            )
+        }
+        .task(id: suggestsFromPhone) { await suggestFromPhone() }
 
         if enabled {
             Section {
@@ -114,11 +150,29 @@ struct RepeaterSettingsSection: View {
                     Button("Add", action: addRegion)
                         .disabled(regionInput.trimmingCharacters(in: .whitespaces).isEmpty)
                 }
+                if regionService?.isReady == true {
+                    Button {
+                        showsSuggestion = true
+                    } label: {
+                        Label("Update based on location", systemImage: "location.magnifyingglass")
+                    }
+                    .disabled(isSuggesting)
+                }
+                if let suggested, displaces(suggested) {
+                    Button("Undo", role: .destructive) {
+                        regions = suggested.displacedRegions
+                        defaultRegion = suggested.displacedDefaultRegion
+                    }
+                }
             } header: {
                 Text("Routing regions")
             } footer: {
                 if let regionProblem {
                     Text(regionProblem).foregroundStyle(.red)
+                } else if let suggested {
+                    Text(suggestionNote(suggested))
+                } else if isSuggesting {
+                    Text("Looking up the regions around this phone…")
                 } else if regions.isEmpty {
                     Text("With no regions listed, this device forwards traffic from every region. Add regions to relay only for a named area — a short code such as SJC or WA, a region name your mesh has agreed on, or a raw code. This is a routing domain, not a radio band.")
                 } else {
@@ -163,6 +217,100 @@ struct RepeaterSettingsSection: View {
                 Text("Frames heard below a threshold are not relayed. Raising them keeps a repeater from amplifying signals too weak to be worth repeating; leaving them off relays everything it can decode.")
             }
         }
+    }
+
+    // MARK: - Regions from a place
+
+    /// What the automatic suggestion did, kept so it can be said and undone.
+    private struct AutomaticSuggestion {
+        let datasetVersion: String
+        let cellMeters: Double?
+        /// The forwarding list and tag the device reported, restored whole
+        /// by Undo — the suggestion replaced both, so half of it back would
+        /// be a third configuration nobody chose.
+        let displacedRegions: [String]
+        let displacedDefaultRegion: Data?
+    }
+
+    /// The places this device's regions could be proposed from.
+    ///
+    /// The node's own fix appears only when it disagrees with what the node
+    /// advertises; the sheet adds this phone and typed coordinates itself.
+    private var positionSources: [RegionPositionSource] {
+        let advertised = RegionPositionSource.advertised(
+            location: advertisedPosition?.location,
+            latitude: advertisedPosition?.latitudeDeg,
+            longitude: advertisedPosition?.longitudeDeg
+        )
+        let fix = RegionPositionSource.gnss(
+            latitude: devicePosition?.latitude,
+            longitude: devicePosition?.longitude,
+            accuracyDecimeters: devicePosition?.accuracyDecimeters,
+            outside: advertised
+        )
+        return [advertised, fix].compactMap { $0 }
+    }
+
+    /// Fill the region list in from where this phone is, once.
+    ///
+    /// The whole suggested list, not the missing part of it: a repeater
+    /// being commissioned is being placed, and the regions covering the
+    /// place it is being put are the answer. What was displaced is kept so
+    /// the footer can offer it back.
+    private func suggestFromPhone() async {
+        guard suggestsFromPhone, suggested == nil, !isSuggesting else { return }
+        guard let regionService, regionService.isReady, let readPhonePosition else { return }
+        isSuggesting = true
+        defer { isSuggesting = false }
+        guard let reading = await readPhonePosition() else { return }
+        let position = MobileRegionPositionRecord(
+            latitude: reading.coordinate.latitude,
+            longitude: reading.coordinate.longitude,
+            locationBytes: nil,
+            accuracyM: reading.horizontalAccuracy > 0 ? reading.horizontalAccuracy : nil
+        )
+        guard let proposal = try? await regionService.propose(
+            position: position,
+            currentRegions: regions,
+            currentDefaultRegion: defaultRegion
+        ) else { return }
+        suggested = AutomaticSuggestion(
+            datasetVersion: proposal.lookup.datasetVersion,
+            cellMeters: proposal.cellMeters,
+            displacedRegions: regions,
+            displacedDefaultRegion: defaultRegion
+        )
+        adopt(proposal.replace)
+    }
+
+    private func adopt(_ outcome: MobileRegionOutcomeRecord) {
+        regions = outcome.regions
+        defaultRegion = outcome.defaultRegion
+    }
+
+    /// Whether the suggestion is still standing over something else, which
+    /// is the only state Undo means anything in.
+    private func displaces(_ suggestion: AutomaticSuggestion) -> Bool {
+        suggestion.displacedRegions != regions
+            || suggestion.displacedDefaultRegion != defaultRegion
+    }
+
+    private func suggestionNote(_ suggestion: AutomaticSuggestion) -> String {
+        guard !regions.isEmpty else {
+            return """
+                The region database knows of no regions around this phone, so \
+                this device forwards traffic from everywhere.
+                """
+        }
+        var note = """
+            Filled in from where this phone is, using region data \
+            \(suggestion.datasetVersion). Edit them freely — nothing is sent \
+            until you apply.
+            """
+        if !suggestion.displacedRegions.isEmpty, displaces(suggestion) {
+            note += " Undo puts back what the device was already holding."
+        }
+        return note
     }
 
     /// The regions offered as a tag.

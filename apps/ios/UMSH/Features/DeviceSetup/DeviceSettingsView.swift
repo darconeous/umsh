@@ -260,7 +260,15 @@ struct DeviceSettingsView: View {
                     regions: $draft.regions,
                     defaultRegion: $draft.defaultRegion,
                     minRssiDBm: $draft.minRssiDBm,
-                    minSnrDB: $draft.minSnrDB
+                    minSnrDB: $draft.minSnrDB,
+                    // Read live rather than off the draft: the device's
+                    // position is a reading, not a setting this form edits.
+                    advertisedPosition: draft.reported.identPosition,
+                    devicePosition: snapshot.position,
+                    // A repeater being commissioned is being placed, so it
+                    // is offered the regions covering where the phone
+                    // placing it is standing.
+                    suggestsFromPhone: draft.plan.goal == .repeaterNode
                 )
             }
 

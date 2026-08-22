@@ -141,6 +141,28 @@ pub struct UlcpAdvertSettingsRecord {
     pub startup_beacon: bool,
 }
 
+/// Where the device says it is: the claim it advertises, not a
+/// measurement.
+///
+/// A position names a cell rather than a point, so the encoded cell is
+/// carried verbatim alongside what it decodes to — the bytes are what a
+/// region proposal needs, because the cell's bounds *are* the
+/// uncertainty, and the degrees are what a readout shows.
+#[derive(Clone, Debug, PartialEq, uniffi::Record)]
+pub struct UlcpIdentPositionRecord {
+    /// `PROP_IDENT_LOCATION` verbatim. Empty is a device advertising no
+    /// position, which is a value rather than an absence.
+    pub location: Vec<u8>,
+    /// The center of the advertised cell, absent when there is none.
+    pub latitude_deg: Option<f64>,
+    /// See `latitude_deg`.
+    pub longitude_deg: Option<f64>,
+    /// How wide the advertised cell is at the equator, in meters.
+    pub cell_meters: Option<f64>,
+    /// `PROP_IDENT_ALTITUDE` in whole meters, absent at no stated height.
+    pub altitude_m: Option<i32>,
+}
+
 /// `PROP_GNSS_FIX`: what kind of position solution the receiver has.
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq, uniffi::Enum)]
 pub enum UlcpFixKind {
@@ -219,7 +241,10 @@ pub struct UlcpTimeRecord {
 
 /// Read-only, capability-gated device state gathered after host ownership
 /// has been resolved. Counts describe digest forms and contain no key material.
-#[derive(Clone, Debug, PartialEq, Eq, uniffi::Record)]
+// Not `Eq`: the advertised position carries decoded degrees, and a
+// coordinate is a measurement rather than an identity. Nothing compares
+// snapshots for anything but equality.
+#[derive(Clone, Debug, PartialEq, uniffi::Record)]
 pub struct UlcpSyncRecord {
     pub capability_count: u32,
     pub has_host_filtering: bool,
@@ -310,6 +335,10 @@ pub struct UlcpSyncRecord {
     /// `PROP_IDENT_MOBILE`. Present when `supports_ident` and the device
     /// reported it.
     pub ident_mobile: Option<bool>,
+    /// Where the device says it is. Present when `supports_ident` and the
+    /// device reported its position; a device that advertises none reports
+    /// an empty cell rather than nothing.
+    pub ident_position: Option<UlcpIdentPositionRecord>,
     /// `PROP_DEV_DISCOVERABLE`: whether the device identity answers
     /// Identity Requests. Present when `supports_device_identity` and the
     /// device reported it.
@@ -2354,7 +2383,16 @@ pub fn ulcp_inspection_properties(capabilities: Vec<u8>) -> Result<Vec<u32>, Mob
         ]);
     }
     if has(cap::IDENT) {
-        properties.extend([prop::IDENT_ROLE, prop::IDENT_MOBILE]);
+        properties.extend([
+            prop::IDENT_ROLE,
+            prop::IDENT_MOBILE,
+            // Where the device says it is. Read at attach because it is
+            // the position a region proposal starts from, and a phone at
+            // a bench cannot ask for it separately: the local link's
+            // snapshot is the whole of what a setup sheet knows.
+            prop::IDENT_LOCATION,
+            prop::IDENT_ALTITUDE,
+        ]);
     }
     if has(cap::DEV_IDENTITY) {
         properties.extend([
@@ -2552,6 +2590,26 @@ pub fn inspect_ulcp_sync(
         })
         .flatten();
     let ident_mobile = expected.read(ident, prop::IDENT_MOBILE, decode_bool);
+    // Read as a pair, like the policies above: the cell and the height
+    // are one statement of where the device is, and a device keeping its
+    // own position refuses both together.
+    let ident_location = expected.read(ident, prop::IDENT_LOCATION, |value| {
+        Ok::<Vec<u8>, MobileError>(value.to_vec())
+    });
+    let ident_altitude = expected.read(ident, prop::IDENT_ALTITUDE, decode_optional_altitude);
+    let ident_position = (|| {
+        let location = ident_location?;
+        let placed = (!location.is_empty()).then(|| NodeLocation::from_bytes(&location).center());
+        Some(UlcpIdentPositionRecord {
+            latitude_deg: placed.map(|(latitude, _)| latitude.into()),
+            longitude_deg: placed.map(|(_, longitude)| longitude.into()),
+            cell_meters: (!location.is_empty())
+                .then(|| ulcp_location_cell_meters(location.len() as u8))
+                .flatten(),
+            altitude_m: ident_altitude?,
+            location,
+        })
+    })();
     let dev_discoverable = expected.read(dev_identity, prop::DEV_DISCOVERABLE, decode_bool);
 
     let tz_offset_min = expected.read(has(cap::TIME), prop::TZ_OFFSET, decode_i16);
@@ -2633,6 +2691,7 @@ pub fn inspect_ulcp_sync(
         dev_channel_ids,
         ident_role,
         ident_mobile,
+        ident_position,
         dev_discoverable,
         tz_offset_min,
         gnss,
@@ -4406,6 +4465,9 @@ mod tests {
             | prop::MAC_REPEATER_MIN_RSSI
             | prop::MAC_REPEATER_MIN_SNR
             | prop::IDENT_ROLE
+            // A factory-default device states no position and no height.
+            | prop::IDENT_LOCATION
+            | prop::IDENT_ALTITUDE
             | prop::DEV_PEERS
             | prop::DEV_ADMINS
             | prop::DEV_CHANNEL_KEYS => Vec::new(),
@@ -6737,6 +6799,50 @@ mod tests {
                 startup_beacon: true,
             })
         );
+    }
+
+    /// A commissioning phone has no way to ask for one property on its
+    /// own, so the position the device advertises has to arrive with the
+    /// attach snapshot — it is where a region proposal starts from.
+    #[test]
+    fn the_advertised_position_folds_into_the_sync_record() {
+        let cell = NodeLocation::from_lat_lon(37.5119, -122.2495, 4);
+        let session = MobileUlcpSession::administrative();
+        let begin = session.begin(Some(vec![0xAA; 32])).unwrap();
+        let bytes = cell.as_bytes().to_vec();
+        let update = drive_reads(
+            &session,
+            begin.outbound_frames,
+            move |property| match property {
+                prop::HOST_KEY => (property, vec![0xAA; 32]),
+                prop::IDENT_LOCATION => (property, bytes.clone()),
+                prop::IDENT_ALTITUDE => (property, vec![0x64]),
+                _ => commissionable_value(property),
+            },
+        );
+        let sync = update.snapshot.provisioning.expect("device described");
+        let position = sync.ident_position.expect("position reported");
+
+        assert_eq!(position.location, cell.as_bytes());
+        assert!((position.latitude_deg.unwrap() - 37.5119).abs() < 0.01);
+        assert!((position.longitude_deg.unwrap() + 122.2495).abs() < 0.01);
+        assert!((610.0..613.0).contains(&position.cell_meters.unwrap()));
+        assert_eq!(position.altitude_m, Some(100));
+    }
+
+    /// A device that states no position reports an empty cell, which is a
+    /// value: it is placed nowhere, not unread.
+    #[test]
+    fn an_unplaced_device_reports_an_empty_cell() {
+        let session = MobileUlcpSession::administrative();
+        let update = attach_commissionable(&session, Some(vec![0xAA; 32]), vec![0xAA; 32]);
+        let sync = update.snapshot.provisioning.expect("device described");
+        let position = sync.ident_position.expect("position reported");
+
+        assert!(position.location.is_empty());
+        assert_eq!(position.latitude_deg, None);
+        assert_eq!(position.cell_meters, None);
+        assert_eq!(position.altitude_m, None);
     }
 
     /// A device that never claimed `CAP_ADVERT` has no schedule to report,

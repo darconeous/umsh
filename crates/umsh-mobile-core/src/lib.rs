@@ -42,11 +42,12 @@ pub use regions::{
 pub use ulcp::{
     GattSegmentRecord, MobileGattReassembler, MobileUlcpSession, UlcpAlertState, UlcpAttachMode,
     UlcpBatteryRecord, UlcpChargeState, UlcpDeviceConfigRecord, UlcpFixKind, UlcpGnssRecord,
-    UlcpGnssSettingsRecord, UlcpHostOwnership, UlcpOperationErrorRecord, UlcpPropertyFrameRecord,
-    UlcpRadioSettingsRecord, UlcpReceivedFrameRecord, UlcpRepeaterSettingsRecord, UlcpSessionPhase,
-    UlcpSessionSnapshotRecord, UlcpSessionUpdateRecord, UlcpSyncRecord, UlcpTimeRecord,
-    inspect_ulcp_alert, inspect_ulcp_battery, inspect_ulcp_property_frame, inspect_ulcp_status,
-    inspect_ulcp_sync, region_code_description, region_code_from_string, ulcp_gatt_segments,
+    UlcpGnssSettingsRecord, UlcpHostOwnership, UlcpIdentPositionRecord, UlcpOperationErrorRecord,
+    UlcpPropertyFrameRecord, UlcpRadioSettingsRecord, UlcpReceivedFrameRecord,
+    UlcpRepeaterSettingsRecord, UlcpSessionPhase, UlcpSessionSnapshotRecord,
+    UlcpSessionUpdateRecord, UlcpSyncRecord, UlcpTimeRecord, inspect_ulcp_alert,
+    inspect_ulcp_battery, inspect_ulcp_property_frame, inspect_ulcp_status, inspect_ulcp_sync,
+    region_code_description, region_code_from_string, ulcp_gatt_segments,
     ulcp_inspection_properties, ulcp_location_cell_meters, ulcp_max_dev_channels,
     ulcp_max_dev_peers, ulcp_prop_get, ulcp_prop_set, ulcp_save,
 };
@@ -57,7 +58,7 @@ uniffi::setup_scaffolding!();
 ///
 /// Increment this when a binding-visible operation, record, or error contract
 /// changes incompatibly. It is independent of the UMSH wire version.
-pub const MOBILE_API_VERSION: u16 = 40;
+pub const MOBILE_API_VERSION: u16 = 41;
 
 /// Stable error categories consumed by platform adapters.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, uniffi::Error)]

@@ -55,6 +55,20 @@ final class PhoneLocationService: NSObject {
         onAuthorizationLost = nil
     }
 
+    /// One reading, for a screen that needs to know where the phone is
+    /// rather than to disclose it — the region lookup behind "Update based
+    /// on location".
+    ///
+    /// Nothing is stored and nothing is shared: the answer goes to the
+    /// screen that asked, is turned into a list of regions, and is gone.
+    /// It runs on its own manager so that asking cannot displace the
+    /// sharing schedule's callbacks, which want a different accuracy and
+    /// have a different lifetime. Nil means access was refused, or no fix
+    /// arrived in time.
+    func readOnce() async -> CLLocation? {
+        await OneShotLocationReader().read()
+    }
+
     private func deliver(_ reading: CLLocation) {
         onReading?(reading)
     }
@@ -75,6 +89,90 @@ final class PhoneLocationService: NSObject {
         default:
             break
         }
+    }
+}
+
+/// A single fix, asked for and answered once.
+///
+/// `requestLocation` delivers exactly one reading or one failure, so this is
+/// a continuation with a manager attached rather than a stream. It holds
+/// itself alive until it answers, because the caller holds only the task —
+/// and it answers exactly once however the attempt ends, including the case
+/// nobody covers otherwise: a permission sheet left standing.
+@MainActor
+private final class OneShotLocationReader: NSObject, CLLocationManagerDelegate {
+    /// How long to wait before giving up. Long enough for a cold start
+    /// indoors, short enough that a sheet is not stuck behind it.
+    private static let limit = Duration.seconds(20)
+
+    private let manager = CLLocationManager()
+    private var answer: CheckedContinuation<CLLocation?, Never>?
+    private var expiry: Task<Void, Never>?
+    /// Kept alive by itself until it answers. Nothing else has a reason to
+    /// hold it, and a reader deallocated mid-request would strand the
+    /// continuation.
+    private var retained: OneShotLocationReader?
+
+    func read() async -> CLLocation? {
+        await withCheckedContinuation { (continuation: CheckedContinuation<CLLocation?, Never>) in
+            answer = continuation
+            retained = self
+            manager.delegate = self
+            // A region is a routing domain tens of kilometers across, so a
+            // coarse fix answers the question this is asked for and costs
+            // the least battery and the least time to acquire.
+            manager.desiredAccuracy = kCLLocationAccuracyHundredMeters
+            expiry = Task { [weak self] in
+                try? await Task.sleep(for: Self.limit)
+                self?.finish(nil)
+            }
+            switch manager.authorizationStatus {
+            case .notDetermined:
+                // Asking for a location before the grant lands fails
+                // outright, so the request waits for the answer.
+                manager.requestWhenInUseAuthorization()
+            case .denied, .restricted:
+                finish(nil)
+            default:
+                manager.requestLocation()
+            }
+        }
+    }
+
+    private func finish(_ reading: CLLocation?) {
+        guard let answer else { return }
+        self.answer = nil
+        expiry?.cancel()
+        expiry = nil
+        retained = nil
+        answer.resume(returning: reading)
+    }
+
+    private func authorizationSettled() {
+        guard answer != nil else { return }
+        switch manager.authorizationStatus {
+        case .authorizedWhenInUse, .authorizedAlways: manager.requestLocation()
+        case .denied, .restricted: finish(nil)
+        default: break
+        }
+    }
+
+    nonisolated func locationManager(
+        _ manager: CLLocationManager,
+        didUpdateLocations locations: [CLLocation]
+    ) {
+        Task { @MainActor in self.finish(locations.last) }
+    }
+
+    nonisolated func locationManager(
+        _ manager: CLLocationManager,
+        didFailWithError error: Error
+    ) {
+        Task { @MainActor in self.finish(nil) }
+    }
+
+    nonisolated func locationManagerDidChangeAuthorization(_ manager: CLLocationManager) {
+        Task { @MainActor in self.authorizationSettled() }
     }
 }
 

@@ -51,6 +51,7 @@ struct SettingsView: View {
     /// debug builds; the control that calls it only exists there too.
     var seedMessages: ((String, Int) async -> Void)? = nil
 
+    @Environment(\.regionService) private var regionService
     @State private var showsDeviceSetup = false
     @State private var isSeeding = false
     #if DEBUG
@@ -62,6 +63,32 @@ struct SettingsView: View {
     @AppStorage("debug.radioTcp.enabled") private var tcpRadioEnabled = false
     @AppStorage("debug.radioTcp.endpoint") private var tcpRadioEndpoint = "127.0.0.1:9000"
     #endif
+
+    /// What this build knows about the world's routing regions.
+    ///
+    /// Read-only, and stated rather than acted on: the database ships with
+    /// the app, is never consulted over the network, and the only thing an
+    /// operator can do about it is know which release they are suggesting
+    /// regions from.
+    @ViewBuilder
+    private var regionDatabaseSection: some View {
+        Section {
+            if let version = regionService?.datasetVersion {
+                LabeledContent("Data release", value: version)
+                if let count = regionService?.regionCount {
+                    LabeledContent("Regions", value: count.formatted())
+                }
+            } else if let problem = regionService?.unavailableMessage {
+                Text(problem).foregroundStyle(.secondary)
+            } else {
+                Text("Opening…").foregroundStyle(.secondary)
+            }
+        } header: {
+            Text("Region database")
+        } footer: {
+            Text("Used to suggest routing regions for a device from where it is. Lookups run on this phone and are never sent anywhere.")
+        }
+    }
 
     private func seedConversation(_ count: Int) async {
         guard let seedMessages, let first = conversations.wrappedValue.first else { return }
@@ -165,6 +192,8 @@ struct SettingsView: View {
             } footer: {
                 Text("Configure any nearby UMSH device — a repeater or a tracker — without disturbing this phone's own connection.")
             }
+
+            regionDatabaseSection
 
             #if DEBUG
             Section {

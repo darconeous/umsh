@@ -3,7 +3,7 @@ import Foundation
 @main
 struct MobileCoreSmokeTest {
     static func main() throws {
-        precondition(mobileApiVersion() == 40)
+        precondition(mobileApiVersion() == 41)
         precondition(ulcpMaxDevPeers() == 8)
 
         let hint = try renderNodeHint(bytes: Data([0xA1, 0xB2, 0x03]))
@@ -111,7 +111,7 @@ struct MobileCoreSmokeTest {
         precondition(sjc == Data([0x78, 0x53]))
         precondition(try! regionCodeDescription(code: sjc) == "SJC")
         let named = try regionCodeFromString(text: "Rogue Valley")
-        precondition(try! regionCodeDescription(code: named) == "0xDF6F")
+        precondition(try! regionCodeDescription(code: named) == "0xC0F9")
 
         let administrative = MobileUlcpSession.administrative()
         precondition(administrative.attachMode() == .administrative)
@@ -146,7 +146,8 @@ struct MobileCoreSmokeTest {
                         minSnrDb: -7
                     ),
                     tzOffsetMin: nil,
-                    gnss: nil
+                    gnss: nil,
+                    advert: nil
                 )
             )
             preconditionFailure("Configuration unexpectedly succeeded before attaching")

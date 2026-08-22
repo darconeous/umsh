@@ -8489,6 +8489,113 @@ public func FfiConverterTypeUlcpGnssSettingsRecord_lower(_ value: UlcpGnssSettin
 
 
 /**
+ * Where the device says it is: the claim it advertises, not a
+ * measurement.
+ *
+ * A position names a cell rather than a point, so the encoded cell is
+ * carried verbatim alongside what it decodes to — the bytes are what a
+ * region proposal needs, because the cell's bounds *are* the
+ * uncertainty, and the degrees are what a readout shows.
+ */
+public struct UlcpIdentPositionRecord: Equatable, Hashable {
+    /**
+     * `PROP_IDENT_LOCATION` verbatim. Empty is a device advertising no
+     * position, which is a value rather than an absence.
+     */
+    public var location: Data
+    /**
+     * The center of the advertised cell, absent when there is none.
+     */
+    public var latitudeDeg: Double?
+    /**
+     * See `latitude_deg`.
+     */
+    public var longitudeDeg: Double?
+    /**
+     * How wide the advertised cell is at the equator, in meters.
+     */
+    public var cellMeters: Double?
+    /**
+     * `PROP_IDENT_ALTITUDE` in whole meters, absent at no stated height.
+     */
+    public var altitudeM: Int32?
+
+    // Default memberwise initializers are never public by default, so we
+    // declare one manually.
+    public init(
+        /**
+         * `PROP_IDENT_LOCATION` verbatim. Empty is a device advertising no
+         * position, which is a value rather than an absence.
+         */location: Data,
+        /**
+         * The center of the advertised cell, absent when there is none.
+         */latitudeDeg: Double?,
+        /**
+         * See `latitude_deg`.
+         */longitudeDeg: Double?,
+        /**
+         * How wide the advertised cell is at the equator, in meters.
+         */cellMeters: Double?,
+        /**
+         * `PROP_IDENT_ALTITUDE` in whole meters, absent at no stated height.
+         */altitudeM: Int32?) {
+        self.location = location
+        self.latitudeDeg = latitudeDeg
+        self.longitudeDeg = longitudeDeg
+        self.cellMeters = cellMeters
+        self.altitudeM = altitudeM
+    }
+
+
+
+
+}
+
+#if compiler(>=6)
+extension UlcpIdentPositionRecord: Sendable {}
+#endif
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public struct FfiConverterTypeUlcpIdentPositionRecord: FfiConverterRustBuffer {
+    public static func read(from buf: inout (data: Data, offset: Data.Index)) throws -> UlcpIdentPositionRecord {
+        return
+            try UlcpIdentPositionRecord(
+                location: FfiConverterData.read(from: &buf),
+                latitudeDeg: FfiConverterOptionDouble.read(from: &buf),
+                longitudeDeg: FfiConverterOptionDouble.read(from: &buf),
+                cellMeters: FfiConverterOptionDouble.read(from: &buf),
+                altitudeM: FfiConverterOptionInt32.read(from: &buf)
+        )
+    }
+
+    public static func write(_ value: UlcpIdentPositionRecord, into buf: inout [UInt8]) {
+        FfiConverterData.write(value.location, into: &buf)
+        FfiConverterOptionDouble.write(value.latitudeDeg, into: &buf)
+        FfiConverterOptionDouble.write(value.longitudeDeg, into: &buf)
+        FfiConverterOptionDouble.write(value.cellMeters, into: &buf)
+        FfiConverterOptionInt32.write(value.altitudeM, into: &buf)
+    }
+}
+
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public func FfiConverterTypeUlcpIdentPositionRecord_lift(_ buf: RustBuffer) throws -> UlcpIdentPositionRecord {
+    return try FfiConverterTypeUlcpIdentPositionRecord.lift(buf)
+}
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public func FfiConverterTypeUlcpIdentPositionRecord_lower(_ value: UlcpIdentPositionRecord) -> RustBuffer {
+    return FfiConverterTypeUlcpIdentPositionRecord.lower(value)
+}
+
+
+/**
  * The property numbers the management screens name.
  *
  * A screen has to say which fields the operator edited, and it caches
@@ -9510,6 +9617,12 @@ public struct UlcpSyncRecord: Equatable, Hashable {
      */
     public var identMobile: Bool?
     /**
+     * Where the device says it is. Present when `supports_ident` and the
+     * device reported its position; a device that advertises none reports
+     * an empty cell rather than nothing.
+     */
+    public var identPosition: UlcpIdentPositionRecord?
+    /**
      * `PROP_DEV_DISCOVERABLE`: whether the device identity answers
      * Identity Requests. Present when `supports_device_identity` and the
      * device reported it.
@@ -9635,6 +9748,11 @@ public struct UlcpSyncRecord: Equatable, Hashable {
          * reported it.
          */identMobile: Bool?,
         /**
+         * Where the device says it is. Present when `supports_ident` and the
+         * device reported its position; a device that advertises none reports
+         * an empty cell rather than nothing.
+         */identPosition: UlcpIdentPositionRecord?,
+        /**
          * `PROP_DEV_DISCOVERABLE`: whether the device identity answers
          * Identity Requests. Present when `supports_device_identity` and the
          * device reported it.
@@ -9705,6 +9823,7 @@ public struct UlcpSyncRecord: Equatable, Hashable {
         self.devChannelIds = devChannelIds
         self.identRole = identRole
         self.identMobile = identMobile
+        self.identPosition = identPosition
         self.devDiscoverable = devDiscoverable
         self.tzOffsetMin = tzOffsetMin
         self.gnss = gnss
@@ -9768,6 +9887,7 @@ public struct FfiConverterTypeUlcpSyncRecord: FfiConverterRustBuffer {
                 devChannelIds: FfiConverterOptionSequenceData.read(from: &buf),
                 identRole: FfiConverterOptionUInt8.read(from: &buf),
                 identMobile: FfiConverterOptionBool.read(from: &buf),
+                identPosition: FfiConverterOptionTypeUlcpIdentPositionRecord.read(from: &buf),
                 devDiscoverable: FfiConverterOptionBool.read(from: &buf),
                 tzOffsetMin: FfiConverterOptionInt16.read(from: &buf),
                 gnss: FfiConverterOptionTypeUlcpGnssSettingsRecord.read(from: &buf),
@@ -9817,6 +9937,7 @@ public struct FfiConverterTypeUlcpSyncRecord: FfiConverterRustBuffer {
         FfiConverterOptionSequenceData.write(value.devChannelIds, into: &buf)
         FfiConverterOptionUInt8.write(value.identRole, into: &buf)
         FfiConverterOptionBool.write(value.identMobile, into: &buf)
+        FfiConverterOptionTypeUlcpIdentPositionRecord.write(value.identPosition, into: &buf)
         FfiConverterOptionBool.write(value.devDiscoverable, into: &buf)
         FfiConverterOptionInt16.write(value.tzOffsetMin, into: &buf)
         FfiConverterOptionTypeUlcpGnssSettingsRecord.write(value.gnss, into: &buf)
@@ -12745,6 +12866,30 @@ fileprivate struct FfiConverterOptionTypeUlcpGnssSettingsRecord: FfiConverterRus
         switch try readInt(&buf) as Int8 {
         case 0: return nil
         case 1: return try FfiConverterTypeUlcpGnssSettingsRecord.read(from: &buf)
+        default: throw UniffiInternalError.unexpectedOptionalTag
+        }
+    }
+}
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+fileprivate struct FfiConverterOptionTypeUlcpIdentPositionRecord: FfiConverterRustBuffer {
+    typealias SwiftType = UlcpIdentPositionRecord?
+
+    public static func write(_ value: SwiftType, into buf: inout [UInt8]) {
+        guard let value = value else {
+            writeInt(&buf, Int8(0))
+            return
+        }
+        writeInt(&buf, Int8(1))
+        FfiConverterTypeUlcpIdentPositionRecord.write(value, into: &buf)
+    }
+
+    public static func read(from buf: inout (data: Data, offset: Data.Index)) throws -> SwiftType {
+        switch try readInt(&buf) as Int8 {
+        case 0: return nil
+        case 1: return try FfiConverterTypeUlcpIdentPositionRecord.read(from: &buf)
         default: throw UniffiInternalError.unexpectedOptionalTag
         }
     }

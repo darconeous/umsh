@@ -1,4 +1,5 @@
 import Foundation
+import SQLite3
 import XCTest
 @testable import UMSHMobileCore
 
@@ -66,6 +67,36 @@ final class UMSHMobileCoreTests: XCTestCase {
         XCTAssertTrue(proposal.addMissing.regions.contains("US"))
         XCTAssertEqual(proposal.addMissing.defaultRegion, Data([0x98, 0xFE]))
         XCTAssertTrue(proposal.addMissing.changesAnything)
+    }
+
+    /// The shipped world database has no lookup cache, so every lookup on
+    /// a real build goes through SQLite's R-tree — a module Apple's SQLite
+    /// is not contractually required to carry, and whose absence surfaces
+    /// only as a failed lookup. The fixture *does* have a cache, so a test
+    /// against it as-built proves nothing about that path; this one empties
+    /// the cache to take it.
+    func testLookupsWorkWithoutTheCache() throws {
+        let source = try XCTUnwrap(
+            Bundle.module.url(forResource: "fixture", withExtension: "regiondb")
+        )
+        let uncached = FileManager.default.temporaryDirectory
+            .appendingPathComponent("uncached-\(UUID().uuidString).regiondb")
+        try FileManager.default.copyItem(at: source, to: uncached)
+        defer { try? FileManager.default.removeItem(at: uncached) }
+
+        var handle: OpaquePointer?
+        XCTAssertEqual(sqlite3_open(uncached.path, &handle), SQLITE_OK)
+        defer { sqlite3_close(handle) }
+        XCTAssertEqual(
+            sqlite3_exec(handle, "DELETE FROM lookup_ranges", nil, nil, nil),
+            SQLITE_OK
+        )
+        sqlite3_close(handle)
+        handle = nil
+
+        let db = try MobileRegionDatabase.open(path: uncached.path)
+        let lookup = try db.lookup(latitude: 37.5119, longitude: -122.2495)
+        XCTAssertTrue(lookup.matches.map(\.regionKey).contains("iata-location:SQL"))
     }
 
     func testCoarsePositionsAreRefused() throws {

@@ -85,6 +85,8 @@
 		100000000000000000000043 /* UMSH/DesignSystem/LocationPresentation.swift in Sources */ = {isa = PBXBuildFile; fileRef = 200000000000000000000043 /* UMSH/DesignSystem/LocationPresentation.swift */; };
 		100000000000000000000044 /* UMSH/DesignSystem/RadioPositionPoll.swift in Sources */ = {isa = PBXBuildFile; fileRef = 200000000000000000000044 /* UMSH/DesignSystem/RadioPositionPoll.swift */; };
 		100000000000000000000045 /* UMSH/Services/PhoneLocationService.swift in Sources */ = {isa = PBXBuildFile; fileRef = 200000000000000000000045 /* UMSH/Services/PhoneLocationService.swift */; };
+		100000000000000000000055 /* UMSH/Services/Regions/RegionService.swift in Sources */ = {isa = PBXBuildFile; fileRef = 200000000000000000000055 /* UMSH/Services/Regions/RegionService.swift */; };
+		100000000000000000000056 /* UMSH/Features/Regions/RegionSuggestionSheet.swift in Sources */ = {isa = PBXBuildFile; fileRef = 200000000000000000000056 /* UMSH/Features/Regions/RegionSuggestionSheet.swift */; };
 		100000000000000000000050 /* UMSH/PrivacyInfo.xcprivacy in Resources */ = {isa = PBXBuildFile; fileRef = 200000000000000000000050 /* UMSH/PrivacyInfo.xcprivacy */; };
 /* End PBXBuildFile section */
 
@@ -167,6 +169,8 @@
 		200000000000000000000043 /* UMSH/DesignSystem/LocationPresentation.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = UMSH/DesignSystem/LocationPresentation.swift; sourceTree = "<group>"; };
 		200000000000000000000044 /* UMSH/DesignSystem/RadioPositionPoll.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = UMSH/DesignSystem/RadioPositionPoll.swift; sourceTree = "<group>"; };
 		200000000000000000000045 /* UMSH/Services/PhoneLocationService.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = UMSH/Services/PhoneLocationService.swift; sourceTree = "<group>"; };
+		200000000000000000000055 /* UMSH/Services/Regions/RegionService.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = UMSH/Services/Regions/RegionService.swift; sourceTree = "<group>"; };
+		200000000000000000000056 /* UMSH/Features/Regions/RegionSuggestionSheet.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = UMSH/Features/Regions/RegionSuggestionSheet.swift; sourceTree = "<group>"; };
 		200000000000000000000050 /* UMSH/PrivacyInfo.xcprivacy */ = {isa = PBXFileReference; lastKnownFileType = text.plist.xml; path = UMSH/PrivacyInfo.xcprivacy; sourceTree = "<group>"; };
 /* End PBXFileReference section */
 
@@ -239,6 +243,8 @@
 				200000000000000000000015 /* UMSH/DesignSystem/IdentityQRCodeView.swift */,
 				200000000000000000000016 /* UMSH/Services/Notifications/ChatNotificationService.swift */,
 				200000000000000000000045 /* UMSH/Services/PhoneLocationService.swift */,
+				200000000000000000000055 /* UMSH/Services/Regions/RegionService.swift */,
+				200000000000000000000056 /* UMSH/Features/Regions/RegionSuggestionSheet.swift */,
 				200000000000000000000010 /* UMSH/Services/Identity/IdentityVault.swift */,
 				200000000000000000000030 /* UMSH/Services/Identity/ChannelKeyVault.swift */,
 				200000000000000000000011 /* UMSH/Services/Identity/FrameCounterReservationStore.swift */,
@@ -293,6 +299,7 @@
 				600000000000000000000001 /* Sources */,
 				300000000000000000000001 /* Frameworks */,
 				600000000000000000000002 /* Resources */,
+				600000000000000000000003 /* Stage the region database */,
 			);
 			buildRules = (
 			);
@@ -354,6 +361,26 @@
 		};
 /* End PBXResourcesBuildPhase section */
 
+/* Begin PBXShellScriptBuildPhase section */
+		600000000000000000000003 /* Stage the region database */ = {
+			isa = PBXShellScriptBuildPhase;
+			alwaysOutOfDate = 0;
+			buildActionMask = 2147483647;
+			files = (
+			);
+			inputPaths = (
+				"$(SRCROOT)/../../regions/dist/world.regiondb",
+			);
+			name = "Stage the region database";
+			outputPaths = (
+				"$(BUILT_PRODUCTS_DIR)/$(UNLOCALIZED_RESOURCES_FOLDER_PATH)/world.regiondb",
+			);
+			runOnlyForDeploymentPostprocessing = 0;
+			shellPath = /bin/sh;
+			shellScript = "\"$SRCROOT\"/../../scripts/ios/stage-regiondb.sh\n";
+		};
+/* End PBXShellScriptBuildPhase section */
+
 /* Begin PBXSourcesBuildPhase section */
 		600000000000000000000001 /* Sources */ = {
 			isa = PBXSourcesBuildPhase;
@@ -403,6 +430,8 @@
 				100000000000000000000043 /* UMSH/DesignSystem/LocationPresentation.swift in Sources */,
 				100000000000000000000044 /* UMSH/DesignSystem/RadioPositionPoll.swift in Sources */,
 				100000000000000000000045 /* UMSH/Services/PhoneLocationService.swift in Sources */,
+				100000000000000000000055 /* UMSH/Services/Regions/RegionService.swift in Sources */,
+				100000000000000000000056 /* UMSH/Features/Regions/RegionSuggestionSheet.swift in Sources */,
 				100000000000000000000015 /* UMSH/DesignSystem/IdentityQRCodeView.swift in Sources */,
 				100000000000000000000016 /* UMSH/Services/Notifications/ChatNotificationService.swift in Sources */,
 				100000000000000000000010 /* UMSH/Services/Identity/IdentityVault.swift in Sources */,
@@ -476,7 +505,7 @@
 				INFOPLIST_KEY_ITSAppUsesNonExemptEncryption = NO;
 				INFOPLIST_KEY_LSApplicationCategoryType = "public.app-category.social-networking";
 				INFOPLIST_KEY_NSBluetoothAlwaysUsageDescription = "UMSH uses Bluetooth to connect to your companion radio.";
-				INFOPLIST_KEY_NSLocationWhenInUseUsageDescription = "UMSH reads your location only when you choose to include it in the identity your phone announces to the mesh, reduced to the area size you pick.";
+				INFOPLIST_KEY_NSLocationWhenInUseUsageDescription = "UMSH reads your location only when you choose to include it in the identity your phone announces to the mesh, or to look up the mesh regions around you on this device; lookups never leave your phone.";
 				INFOPLIST_KEY_UIApplicationSceneManifest_Generation = YES;
 				INFOPLIST_KEY_UIApplicationSupportsIndirectInputEvents = YES;
 				INFOPLIST_KEY_UISupportedInterfaceOrientations = UIInterfaceOrientationPortrait;
@@ -509,7 +538,7 @@
 				INFOPLIST_KEY_ITSAppUsesNonExemptEncryption = NO;
 				INFOPLIST_KEY_LSApplicationCategoryType = "public.app-category.social-networking";
 				INFOPLIST_KEY_NSBluetoothAlwaysUsageDescription = "UMSH uses Bluetooth to connect to your companion radio.";
-				INFOPLIST_KEY_NSLocationWhenInUseUsageDescription = "UMSH reads your location only when you choose to include it in the identity your phone announces to the mesh, reduced to the area size you pick.";
+				INFOPLIST_KEY_NSLocationWhenInUseUsageDescription = "UMSH reads your location only when you choose to include it in the identity your phone announces to the mesh, or to look up the mesh regions around you on this device; lookups never leave your phone.";
 				INFOPLIST_KEY_UIApplicationSceneManifest_Generation = YES;
 				INFOPLIST_KEY_UIApplicationSupportsIndirectInputEvents = YES;
 				INFOPLIST_KEY_UISupportedInterfaceOrientations = UIInterfaceOrientationPortrait;

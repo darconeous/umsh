@@ -711,9 +711,11 @@ struct RemoteIdentityEditor: View {
 /// Whether and what this device forwards for the rest of the mesh.
 struct RemoteRepeaterEditor: View {
     let model: ManageDeviceModel
+    @Environment(\.regionService) private var regionService
     @State private var edits = Edits()
     @State private var newRegion = ""
     @State private var regionProblem: String?
+    @State private var showsSuggestion = false
 
     private var reading: RemoteCategoryReading? { model.readings[.repeater] }
     private var problems: [UInt32: String] { model.writeRefusals[.repeater] ?? [:] }
@@ -755,6 +757,19 @@ struct RemoteRepeaterEditor: View {
                             .onSubmit { addRegion() }
                         Button("Add", action: addRegion)
                             .disabled(newRegion.trimmingCharacters(in: .whitespaces).isEmpty)
+                    }
+                    // Only once the device has said what it forwards: the
+                    // current list is what a suggestion is a diff against,
+                    // and against nothing it would be a blind overwrite.
+                    if regionService?.isReady == true {
+                        Button {
+                            showsSuggestion = true
+                        } label: {
+                            Label(
+                                "Update based on location",
+                                systemImage: "location.magnifyingglass"
+                            )
+                        }
                     }
                 } else {
                     LabeledContent("Regions", value: "Not read")
@@ -829,6 +844,61 @@ struct RemoteRepeaterEditor: View {
         )
         .onChange(of: reading?.asOf) { edits = Edits(reading) }
         .onAppear { if edits.isEmpty { edits = Edits(reading) } }
+        // Where the device says it is, and what its receiver sees, are what
+        // a region suggestion starts from. Both come out of the cache and
+        // cost nothing on the air; the sheet offers a real read when the
+        // cache has nothing.
+        .task {
+            await model.loadCategory(.identity)
+            await model.loadCategory(.gnss)
+        }
+        .sheet(isPresented: $showsSuggestion) {
+            RegionSuggestionSheet(
+                currentRegions: edits.regions.value ?? [],
+                currentDefaultRegion: edits.defaultRegion.value ?? nil,
+                sources: positionSources,
+                refreshAdvertised: { await model.refreshCategory(.identity) },
+                accept: adopt
+            )
+        }
+    }
+
+    /// The places this device's regions could be proposed from.
+    ///
+    /// The device's own fix appears only when it disagrees with what the
+    /// device advertises; the sheet adds typed coordinates itself. This
+    /// phone is not offered — a device managed across the mesh is by
+    /// definition not where the phone is.
+    private var positionSources: [RegionPositionSource] {
+        let identity = model.readings[.identity]?.properties
+        let advertised = RegionPositionSource.advertised(
+            location: identity?.identLocation,
+            latitude: identity?.identLatitudeDeg,
+            longitude: identity?.identLongitudeDeg
+        )
+        let fix = model.readings[.gnss]?.properties.gnss
+        return [
+            advertised,
+            RegionPositionSource.gnss(
+                latitude: fix?.latitudeDeg,
+                longitude: fix?.longitudeDeg,
+                accuracyDecimeters: fix?.accuracyDm,
+                outside: advertised
+            ),
+        ].compactMap { $0 }
+    }
+
+    /// Take a suggestion into the fields, marking dirty only what actually
+    /// moved — so an outcome that changes the list but not the tag puts one
+    /// property on the air, not two.
+    private func adopt(_ outcome: MobileRegionOutcomeRecord) {
+        edits.regions.edited = outcome.regions
+        // A tag the device never reported takes nothing: with no baseline
+        // to compare against it would stand permanently dirty, and Apply
+        // would offer to write a value nobody entered.
+        if edits.defaultRegion.isKnown {
+            edits.defaultRegion.edited = .some(outcome.defaultRegion)
+        }
     }
 
     /// Add the typed region, or respell one the list already holds.
