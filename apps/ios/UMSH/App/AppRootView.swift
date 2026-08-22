@@ -90,7 +90,7 @@ struct AppRootView: View {
     /// data loss. Keeping the reason lets the UI say what actually happened.
     private let applicationStoreError: (any Error)?
     private let radioConnection: any RadioConnection
-    private let notificationService = ChatNotificationService()
+    private let notificationService = ChatNotificationService.shared
     /// Whether this root is running against fabricated content in the staging
     /// store, in which case bootstrap reseeds it. Always false outside debug
     /// builds, where nothing can set it.
@@ -678,7 +678,7 @@ struct AppRootView: View {
             }
         }
         .task {
-            for await address in notificationService.conversationOpens {
+            for await address in notificationService.conversationOpens() {
                 await openConversationFromNotification(conversationAddress: address)
             }
         }

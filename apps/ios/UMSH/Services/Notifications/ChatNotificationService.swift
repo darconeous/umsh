@@ -1,6 +1,7 @@
 import Foundation
 import os
-import UserNotifications
+import UIKit
+@preconcurrency import UserNotifications
 
 /// Local notifications for inbound chat messages.
 ///
@@ -12,6 +13,13 @@ import UserNotifications
 /// transcript is open in the foreground shows nothing, while the same
 /// message with the app backgrounded banners normally.
 final class ChatNotificationService: NSObject, UNUserNotificationCenterDelegate, @unchecked Sendable {
+    /// One instance for the process, matching the one delegate slot on
+    /// `UNUserNotificationCenter`. The root view is a value SwiftUI rebuilds
+    /// freely; constructing a service per rebuild handed the delegate to a
+    /// fresh instance that had never been told which transcript is open, so
+    /// the visible conversation bannered itself.
+    static let shared = ChatNotificationService()
+
     private static let logger = Logger(subsystem: "com.umsh.ios", category: "Notifications")
     private static let conversationAddressKey = "umsh.conversationAddress"
 
@@ -19,23 +27,73 @@ final class ChatNotificationService: NSObject, UNUserNotificationCenterDelegate,
     /// Read from the delegate callbacks; written by the UI on navigation.
     private let visibleConversation = OSAllocatedUnfairLock<String?>(initialState: nil)
 
-    /// Peer addresses of tapped message notifications, newest-wins. The UI
-    /// consumes this stream and routes to the conversation.
-    let conversationOpens: AsyncStream<String>
-    private let conversationOpenContinuation: AsyncStream<String>.Continuation
+    /// The live subscriber's continuation, if any. See `conversationOpens()`.
+    private let conversationOpenContinuation =
+        OSAllocatedUnfairLock<AsyncStream<String>.Continuation?>(initialState: nil)
 
     private let authorizationRequested = OSAllocatedUnfairLock(initialState: false)
 
-    override init() {
-        (conversationOpens, conversationOpenContinuation) = AsyncStream.makeStream(
-            bufferingPolicy: .bufferingNewest(1)
-        )
+    private override init() {
         super.init()
         UNUserNotificationCenter.current().delegate = self
+        // A transcript left open while the app was backgrounded banners its
+        // arrivals (correctly — nobody was looking), but coming back through
+        // the app icon re-reveals it without an appearance event. Foreground
+        // entry is that missing moment: whatever is visible is now seen.
+        NotificationCenter.default.addObserver(
+            self,
+            selector: #selector(applicationWillEnterForeground),
+            name: UIApplication.willEnterForegroundNotification,
+            object: nil
+        )
+    }
+
+    @objc private func applicationWillEnterForeground() {
+        if let visible = visibleConversation.withLock({ $0 }) {
+            removeDeliveredNotifications(conversationAddress: visible)
+        }
+    }
+
+    /// Peer addresses of tapped message notifications. The UI consumes this
+    /// stream and routes to the conversation. Each call starts a fresh
+    /// subscription and ends any previous one: the consuming task lives in the
+    /// root view and restarts when the root's identity changes, and a stream
+    /// its cancelled predecessor had terminated would swallow every later tap.
+    func conversationOpens() -> AsyncStream<String> {
+        AsyncStream(bufferingPolicy: .bufferingNewest(1)) { continuation in
+            conversationOpenContinuation.withLock { current in
+                current?.finish()
+                current = continuation
+            }
+        }
     }
 
     func setVisibleConversation(conversationAddress: String?) {
         visibleConversation.withLock { $0 = conversationAddress }
+        // Opening the transcript is also the moment its delivered
+        // notifications go stale: everything they announce is now on screen,
+        // and they should not linger in Notification Center as unread bait.
+        if let conversationAddress {
+            removeDeliveredNotifications(conversationAddress: conversationAddress)
+        }
+    }
+
+    /// Withdraw delivered notifications for a conversation the user is now
+    /// reading. Identifiers are random, so membership is decided by the
+    /// conversation address each notification carries in its `userInfo`.
+    private func removeDeliveredNotifications(conversationAddress: String) {
+        let center = UNUserNotificationCenter.current()
+        center.getDeliveredNotifications { delivered in
+            let stale = delivered
+                .filter {
+                    $0.request.content.userInfo[Self.conversationAddressKey] as? String
+                        == conversationAddress
+                }
+                .map(\.request.identifier)
+            if !stale.isEmpty {
+                center.removeDeliveredNotifications(withIdentifiers: stale)
+            }
+        }
     }
 
     /// Clear only if this conversation is still the visible one. When the
@@ -128,7 +186,7 @@ final class ChatNotificationService: NSObject, UNUserNotificationCenterDelegate,
         let conversationAddress = response.notification.request.content
             .userInfo[Self.conversationAddressKey] as? String
         if let conversationAddress {
-            conversationOpenContinuation.yield(conversationAddress)
+            conversationOpenContinuation.withLock { $0 }?.yield(conversationAddress)
         }
         completionHandler()
     }
