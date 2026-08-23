@@ -1,5 +1,6 @@
 #if DEBUG
 import Foundation
+import os
 import UMSHMobileCore
 
 /// The air around the staged mesh.
@@ -86,6 +87,42 @@ actor StagingMeshAir: FakeRadioAir {
     }
 
     fileprivate func peerAnnouncedUpdate(_ index: Int) {
+        pumpPeer(index)
+    }
+
+    /// Have a staged peer message the phone, as if its person typed it.
+    ///
+    /// The full inbound pipeline runs — the peer's real session encrypts and
+    /// frames the text, the air carries it, and the phone's core decrypts,
+    /// persists, acks, and notifies. Exists to exercise exactly that tail:
+    /// notifications, their styling, and the notification reply path, with
+    /// no hardware in the room.
+    func sendFromPeer(body: String) async {
+        let logger = Logger(subsystem: "com.umsh.ios", category: "Staging")
+        guard let phoneAddress else {
+            logger.warning("Staged send dropped: the phone never registered its address")
+            return
+        }
+        let peers = await ensurePeers()
+        guard let index = peers.indices.first else {
+            logger.warning("Staged send dropped: no staged peers stood up")
+            return
+        }
+        do {
+            // Compose only stages the batch; the commit is what releases it
+            // to the session for transmission, same as the app's send path.
+            let batch = try await peers[index].session.composeText(
+                conversationAddress: phoneAddress,
+                clientToken: UInt32.random(in: 1...UInt32.max),
+                body: body
+            )
+            try await peers[index].session.commitChatBatch(batchId: batch.batchId)
+            logger.notice("Staged peer \(peers[index].name, privacy: .public) sent a message")
+        } catch {
+            logger.warning(
+                "Staged send failed: \(error.localizedDescription, privacy: .public)"
+            )
+        }
         pumpPeer(index)
     }
 

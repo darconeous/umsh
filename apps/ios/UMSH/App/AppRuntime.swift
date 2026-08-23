@@ -130,6 +130,16 @@ final class AppRuntime {
     /// says on attach arrives at a stream no one is reading yet.
     func start() {
         guard tasks.isEmpty else { return }
+        // Installed before anything async: a notification reply action can
+        // be the very reason this process exists, delivered the moment
+        // didFinishLaunching returns.
+        notificationService.installReplyHandler { [weak self] conversationAddress, text in
+            guard let self else { return false }
+            return await self.deliverNotificationReply(
+                conversationAddress: conversationAddress,
+                text: text
+            )
+        }
         tasks.append(Task { await self.consumeSnapshots() })
         tasks.append(Task { await self.consumeChatUpdates() })
         tasks.append(Task { await self.consumeAdvertisementEvents() })
@@ -148,6 +158,7 @@ final class AppRuntime {
     /// torn down. Cancelling the tasks is also what releases this object,
     /// which they hold while they run.
     func stop() {
+        notificationService.clearReplyHandler()
         for task in tasks { task.cancel() }
         tasks.removeAll()
         for observer in observers { NotificationCenter.default.removeObserver(observer) }
@@ -1753,6 +1764,91 @@ final class AppRuntime {
         }
     }
 
+    /// Send a reply typed into a notification, on the phone or a paired
+    /// watch.
+    ///
+    /// Runs with no scene, often in a process the reply action itself just
+    /// launched: bootstrap and the radio link are awaited, briefly, rather
+    /// than assumed. A reply that cannot go out is never queued for later —
+    /// a compose that fails after persisting shows as the transcript's
+    /// `.failed` state as always, and one the radio guard refuses outright
+    /// lands in the conversation's draft with a failure notification saying
+    /// so. Either way the text is somewhere the user can see and act on.
+    func deliverNotificationReply(conversationAddress: String, text: String) async -> Bool {
+        // A cold launch is still opening the store and reading the identity.
+        await waitUntil(timeout: .seconds(10)) {
+            self.applicationStore != nil && self.localIdentity != nil
+        }
+        var item = conversationItem(for: conversationAddress)
+        if item == nil {
+            await reloadApplicationState()
+            item = conversationItem(for: conversationAddress)
+        }
+        guard let item else {
+            notificationService.postReplyFailure(
+                conversationAddress: conversationAddress,
+                displayName: "UMSH"
+            )
+            return false
+        }
+        // A radio behind a background wake can still be dialing; give the
+        // link the launch it is already making before giving up on it.
+        await waitUntil(timeout: .seconds(15)) {
+            (self.radioSnapshot.linkState == .attached || self.radioSnapshot.linkState == .ready)
+                && self.radioSnapshot.hostState == .matchesCurrentIdentity
+        }
+        switch await sendMessage(item, text) {
+        case .sent:
+            return true
+        case let .failed(reason):
+            Self.chatLogger.warning(
+                "Notification reply not sent: \(reason, privacy: .public)"
+            )
+            await preserveUndeliveredReply(item, text)
+            notificationService.postReplyFailure(
+                conversationAddress: conversationAddress,
+                displayName: item.title
+            )
+            return false
+        }
+    }
+
+    /// Keep the text of a reply that never reached the compose pipeline.
+    /// Appended under any draft already sitting there rather than replacing
+    /// it — both are words the user typed and has not sent.
+    private func preserveUndeliveredReply(_ item: ConversationListItem, _ text: String) async {
+        let existing = item.draftText
+        let combined = existing.isEmpty ? text : existing + "\n" + text
+        switch item {
+        case let .direct(conversation):
+            await updateDraft(conversation.id, combined)
+        case let .channel(conversation):
+            await updateChannelDraft(conversation.id, combined)
+        }
+    }
+
+    private func conversationItem(for conversationAddress: String) -> ConversationListItem? {
+        if Self.isChannelAddress(conversationAddress) {
+            return channelConversations
+                .first { $0.conversationAddress == conversationAddress }
+                .map(ConversationListItem.channel)
+        }
+        return conversations
+            .first { $0.peer.identity.canonicalAddress == conversationAddress }
+            .map(ConversationListItem.direct)
+    }
+
+    /// Wait for a main-actor condition to hold, or for the deadline. The
+    /// states involved — bootstrap fields, the radio snapshot — publish no
+    /// completion signal to await, and a coarse poll is enough for the two
+    /// launch-scale waits a notification reply performs.
+    private func waitUntil(timeout: Duration, _ condition: () -> Bool) async {
+        let deadline = ContinuousClock.now + timeout
+        while !condition(), ContinuousClock.now < deadline {
+            try? await Task.sleep(for: .milliseconds(200))
+        }
+    }
+
     func editMessage(
         _ conversation: ConversationListItem,
         _ message: ChatMessageSummary,
@@ -2248,6 +2344,43 @@ final class AppRuntime {
     var seedGeneratedMessages: ((String, Int) async -> Void)? { nil }
     #endif
 
+    #if DEBUG
+    /// What a staged peer says when asked to speak, cycled so repeated tests
+    /// stay tellable apart.
+    private static let stagedPeerLines = [
+        "Radio check — you copy?",
+        "Heading up the ridge now.",
+        "Found the cache, all good.",
+        "Back at basecamp before dark.",
+    ]
+
+    /// Staging only: have a staged peer message this phone after a short
+    /// delay — long enough to background the app or lock the screen, which
+    /// is the point of testing a notification. A no-op on a real radio.
+    func stagedPeerSendsMessage() {
+        guard let staging = radioConnection as? FakeRadioConnection else { return }
+        let line = Self.stagedPeerLines[
+            Int.random(in: 0..<Self.stagedPeerLines.count)
+        ]
+        Task {
+            // The whole point is pressing this and leaving the app, and a
+            // backgrounded process suspends before a bare sleep expires.
+            // The assertion keeps it running through the delay and the
+            // staged peer's in-process send.
+            let assertion = UIApplication.shared.beginBackgroundTask(
+                withName: "umsh.staging.delayed-send"
+            )
+            try? await Task.sleep(for: .seconds(5))
+            await staging.stagedPeerSendsMessage(body: line)
+            if assertion != .invalid {
+                UIApplication.shared.endBackgroundTask(assertion)
+            }
+        }
+    }
+    #else
+    var stagedPeerSendsMessage: (() -> Void)? { nil }
+    #endif
+
     /// How many messages a conversation holds, for the info sheet. The only
     /// aggregate that walks a whole transcript, so it is answered here rather
     /// than carried on every summary through every reload.
@@ -2634,6 +2767,11 @@ final class AppRuntime {
                 // Muting a channel silences its banners. The messages still
                 // arrive and still count as unread.
                 guard channel.notificationsEnabled else { continue }
+                // The sender's saved avatar rides along when the member is a
+                // peer this phone knows; an unknown member styles without one.
+                let senderPeer = target.senderAddress.flatMap { address in
+                    peers.first { $0.identity.canonicalAddress == address }
+                }
                 notificationService.postInboundMessage(
                     conversationAddress: target.conversationAddress,
                     displayName: channel.title,
@@ -2644,16 +2782,22 @@ final class AppRuntime {
                         handle: target.senderHandle,
                         hint: target.senderHint
                     ),
+                    senderAddress: target.senderAddress,
+                    senderHint: senderPeer?.identity.hint,
+                    isGroup: true,
                     body: target.body
                 )
             } else {
-                let displayName = peers.first {
+                let peer = peers.first {
                     $0.identity.canonicalAddress == target.conversationAddress
-                }?.displayName ?? String(target.conversationAddress.prefix(10))
+                }
                 notificationService.postInboundMessage(
                     conversationAddress: target.conversationAddress,
-                    displayName: displayName,
+                    displayName: peer?.displayName ?? String(target.conversationAddress.prefix(10)),
                     sender: nil,
+                    senderAddress: target.conversationAddress,
+                    senderHint: peer?.identity.hint,
+                    isGroup: false,
                     body: target.body
                 )
             }

@@ -50,6 +50,11 @@ struct SettingsView: View {
     /// debug builds; the control that calls it only exists there too.
     var seedMessages: ((String, Int) async -> Void)? = nil
 
+    /// Has a staged peer message this phone after a short delay, to exercise
+    /// notifications end to end — arrival, styling, and the inline reply.
+    /// Debug builds only, and meaningful only in staging mode.
+    var stagedPeerSendsMessage: (() -> Void)? = nil
+
     @Environment(\.regionService) private var regionService
     @State private var showsDeviceSetup = false
     @State private var isSeeding = false
@@ -229,6 +234,11 @@ struct SettingsView: View {
 
             Section {
                 Toggle("Staging mode", isOn: $stagingEnabled)
+                if stagingEnabled, let stagedPeerSendsMessage {
+                    Button("Staged Message in 5 Seconds") {
+                        stagedPeerSendsMessage()
+                    }
+                }
                 Button("Reset staged data", role: .destructive) {
                     // Leaving staging hands the app back to the real store, so
                     // the emptied database is one nothing is about to write to
