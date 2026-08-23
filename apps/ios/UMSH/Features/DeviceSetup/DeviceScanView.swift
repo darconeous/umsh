@@ -48,6 +48,11 @@ struct DeviceScanView: View {
                 footer
             }
         }
+        // Devices arrive and drop out on their own while this is open, and the
+        // scan replaces the whole list to say so. Keyed on the identities
+        // alone: a row whose signal strength is ticking should not restate
+        // itself as a movement.
+        .animation(UMSHAnimation.list, value: controller.devices.map(\.id))
         .navigationTitle("Choose a Device")
         .onAppear {
             // Arriving here with a connect still in flight means the operator

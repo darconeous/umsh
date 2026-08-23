@@ -83,8 +83,15 @@ struct ReactionBadgeView: View {
                 )
                 // Frontmost at the corner, receding away from it.
                 .zIndex(Double(isOutbound ? ordered.count - index : index))
+                .transition(.scale.combined(with: .opacity))
             }
         }
+        // A chip joining or leaving a cluster that is already there pops in
+        // place. The first chip on a bubble and the departure of the last one
+        // cannot: those change the row's size, and the bubble changes identity
+        // on exactly that toggle to rebuild its context-menu interaction at
+        // the new size—see the note on `.id` in ChatMessageBubble.
+        .animation(UMSHAnimation.accessory, value: ordered.map(\.id))
         .accessibilityElement(children: .ignore)
         .accessibilityLabel(accessibilityLabel)
     }

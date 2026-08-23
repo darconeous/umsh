@@ -47,11 +47,11 @@ struct DeviceSettingsView: View {
         // added row itself is exempted (its transition is .identity in
         // RepeaterSettingsSection) — the typed text is already on screen
         // where the row lands.
-        .animation(.default, value: draft.regions)
+        .animation(UMSHAnimation.list, value: draft.regions)
         // Administrators are different: an entry comes out of a menu, not
         // out of text already sitting where the row lands, so here the new
         // row itself animates in (and out, on Remove).
-        .animation(.default, value: draft.adminKeys)
+        .animation(UMSHAnimation.list, value: draft.adminKeys)
         .navigationTitle(title)
         .navigationBarTitleDisplayMode(.inline)
         .toolbar {

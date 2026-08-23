@@ -312,6 +312,13 @@ struct ChatMessageBubble: View, @MainActor Equatable {
                             .fontWeight(isFailed ? .semibold : .regular)
                             .foregroundStyle(isFailed ? AnyShapeStyle(.red) : AnyShapeStyle(.secondary))
                             .padding(.horizontal, 4)
+                            // Sent becoming Delivered crossfades the words in
+                            // place. Only the text: the caption's own arrival
+                            // and departure change the row's height, and this
+                            // row sits at the live edge where the scroll is
+                            // being held.
+                            .contentTransition(.opacity)
+                            .animation(UMSHAnimation.accessory, value: caption)
                     }
                 }
                 if !message.isOutbound { Spacer(minLength: Self.oppositeMargin) }

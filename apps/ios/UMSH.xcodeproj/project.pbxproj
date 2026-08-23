@@ -85,6 +85,7 @@
 		100000000000000000000042 /* UMSH/Features/Map/MapNodeListCard.swift in Sources */ = {isa = PBXBuildFile; fileRef = 200000000000000000000042 /* UMSH/Features/Map/MapNodeListCard.swift */; };
 		100000000000000000000043 /* UMSH/DesignSystem/LocationPresentation.swift in Sources */ = {isa = PBXBuildFile; fileRef = 200000000000000000000043 /* UMSH/DesignSystem/LocationPresentation.swift */; };
 		100000000000000000000044 /* UMSH/DesignSystem/RadioPositionPoll.swift in Sources */ = {isa = PBXBuildFile; fileRef = 200000000000000000000044 /* UMSH/DesignSystem/RadioPositionPoll.swift */; };
+		100000000000000000000057 /* UMSH/DesignSystem/UMSHAnimation.swift in Sources */ = {isa = PBXBuildFile; fileRef = 200000000000000000000057 /* UMSH/DesignSystem/UMSHAnimation.swift */; };
 		100000000000000000000045 /* UMSH/Services/PhoneLocationService.swift in Sources */ = {isa = PBXBuildFile; fileRef = 200000000000000000000045 /* UMSH/Services/PhoneLocationService.swift */; };
 		100000000000000000000055 /* UMSH/Services/Regions/RegionService.swift in Sources */ = {isa = PBXBuildFile; fileRef = 200000000000000000000055 /* UMSH/Services/Regions/RegionService.swift */; };
 		100000000000000000000056 /* UMSH/Features/Regions/RegionSuggestionSheet.swift in Sources */ = {isa = PBXBuildFile; fileRef = 200000000000000000000056 /* UMSH/Features/Regions/RegionSuggestionSheet.swift */; };
@@ -170,6 +171,7 @@
 		200000000000000000000042 /* UMSH/Features/Map/MapNodeListCard.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = UMSH/Features/Map/MapNodeListCard.swift; sourceTree = "<group>"; };
 		200000000000000000000043 /* UMSH/DesignSystem/LocationPresentation.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = UMSH/DesignSystem/LocationPresentation.swift; sourceTree = "<group>"; };
 		200000000000000000000044 /* UMSH/DesignSystem/RadioPositionPoll.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = UMSH/DesignSystem/RadioPositionPoll.swift; sourceTree = "<group>"; };
+		200000000000000000000057 /* UMSH/DesignSystem/UMSHAnimation.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = UMSH/DesignSystem/UMSHAnimation.swift; sourceTree = "<group>"; };
 		200000000000000000000045 /* UMSH/Services/PhoneLocationService.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = UMSH/Services/PhoneLocationService.swift; sourceTree = "<group>"; };
 		200000000000000000000055 /* UMSH/Services/Regions/RegionService.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = UMSH/Services/Regions/RegionService.swift; sourceTree = "<group>"; };
 		200000000000000000000056 /* UMSH/Features/Regions/RegionSuggestionSheet.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = UMSH/Features/Regions/RegionSuggestionSheet.swift; sourceTree = "<group>"; };
@@ -243,6 +245,7 @@
 				20000000000000000000000F /* UMSH/DesignSystem/CanonicalAddressView.swift */,
 				200000000000000000000043 /* UMSH/DesignSystem/LocationPresentation.swift */,
 				200000000000000000000044 /* UMSH/DesignSystem/RadioPositionPoll.swift */,
+				200000000000000000000057 /* UMSH/DesignSystem/UMSHAnimation.swift */,
 				200000000000000000000015 /* UMSH/DesignSystem/IdentityQRCodeView.swift */,
 				200000000000000000000016 /* UMSH/Services/Notifications/ChatNotificationService.swift */,
 				200000000000000000000045 /* UMSH/Services/PhoneLocationService.swift */,
@@ -433,6 +436,7 @@
 				10000000000000000000000F /* UMSH/DesignSystem/CanonicalAddressView.swift in Sources */,
 				100000000000000000000043 /* UMSH/DesignSystem/LocationPresentation.swift in Sources */,
 				100000000000000000000044 /* UMSH/DesignSystem/RadioPositionPoll.swift in Sources */,
+				100000000000000000000057 /* UMSH/DesignSystem/UMSHAnimation.swift in Sources */,
 				100000000000000000000045 /* UMSH/Services/PhoneLocationService.swift in Sources */,
 				100000000000000000000055 /* UMSH/Services/Regions/RegionService.swift in Sources */,
 				100000000000000000000056 /* UMSH/Features/Regions/RegionSuggestionSheet.swift in Sources */,

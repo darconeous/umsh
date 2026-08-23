@@ -909,7 +909,7 @@ struct RemoteRepeaterEditor: View {
         // With the rows' insertion transition set to .identity above, what
         // this actually animates is the reflow: the blank input row and
         // everything under it sliding down to make room.
-        .animation(.default, value: edits.regions.edited)
+        .animation(UMSHAnimation.list, value: edits.regions.edited)
         .remoteCategoryChrome(
             model: model,
             category: .repeater,

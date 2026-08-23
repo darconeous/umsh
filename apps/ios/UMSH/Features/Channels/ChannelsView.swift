@@ -73,7 +73,7 @@ struct ChannelsView: View {
         // See the note in PeersView: leaving a channel changes storage, and
         // the published reload needs an animated transaction to slide the
         // row out rather than blink it away.
-        .animation(.default, value: channels)
+        .animation(UMSHAnimation.list, value: channels)
         .navigationTitle("Channels")
         .toolbar {
             ToolbarItem(placement: .primaryAction) {

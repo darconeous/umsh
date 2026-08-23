@@ -96,6 +96,10 @@ struct TranscriptEdgeSpinner: View {
     var body: some View {
         ProgressView()
             .opacity(isLoading ? 1 : 0)
+            // Only the opacity animates, and the height is fixed above and
+            // below it, so nothing here moves the content the scroll restore
+            // is holding still.
+            .animation(UMSHAnimation.accessory, value: isLoading)
             .frame(height: 28)
             .frame(maxWidth: .infinity)
     }

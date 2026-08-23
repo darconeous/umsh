@@ -93,7 +93,7 @@ struct ConversationsView: View {
         // message, delivery receipt and draft keystroke, and animating the
         // list for those would put the rows in motion while the user types.
         // What is worth animating is a row arriving or leaving.
-        .animation(.default, value: items.map(\.id))
+        .animation(UMSHAnimation.list, value: items.map(\.id))
         .navigationTitle("Conversations")
         // Hidden until the list is dragged down, which is where a reader
         // looking for someone reaches for it. Conversations, peers, and joined

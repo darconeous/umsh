@@ -78,12 +78,14 @@ struct RadioScanList: View {
                 }
             }
         }
+        // Radios arrive and drop out on their own while this is open, and the
+        // scan replaces the whole list to say so. Keyed on the identities
+        // alone: a row whose signal strength is ticking should not restate
+        // itself as a movement.
+        .animation(UMSHAnimation.list, value: radios.map(\.id))
         .task {
             for await list in await discoverRadios() {
-                // The list arrives wholesale-replaced, so the animation has
-                // to ride on the assignment; there is no change for the view
-                // to notice on its own.
-                withAnimation(.easeInOut(duration: 0.2)) { radios = list }
+                radios = list
             }
         }
         .task {

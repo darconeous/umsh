@@ -111,7 +111,7 @@ struct MessageComposer: View {
                 .accessibilityLabel(canSend ? "Send" : "Send unavailable while the radio connects")
             }
         }
-        .animation(.spring(duration: 0.2), value: hasDraft)
+        .animation(UMSHAnimation.accessory, value: hasDraft)
     }
 
     private func unavailable(_ blocked: ComposerBlock) -> some View {

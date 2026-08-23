@@ -341,9 +341,21 @@ struct ConversationThreadView: View {
                 }
                 .frame(maxHeight: .infinity)
                 .overlay(alignment: .bottom) {
-                    if transcript.hasNewer {
-                        JumpToLatestButton { Task { await jumpToLatest() } }
+                    // The animation is installed inside the overlay, over the
+                    // button alone. `hasNewer` flips inside the window edits
+                    // that suppress animation, and those edits move transcript
+                    // rows in the same update: an `.animation` wrapping the
+                    // scroll view would animate that movement too, which is
+                    // the correction the suppression exists to hide. Up here
+                    // it reaches nothing but the button, which moves no rows
+                    // and feeds nothing to the scroll restore.
+                    Group {
+                        if transcript.hasNewer {
+                            JumpToLatestButton { Task { await jumpToLatest() } }
+                                .transition(.move(edge: .bottom).combined(with: .opacity))
+                        }
                     }
+                    .animation(UMSHAnimation.accessory, value: transcript.hasNewer)
                 }
             }
         }

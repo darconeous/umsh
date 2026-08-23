@@ -183,10 +183,7 @@ final class AdminFlowController {
         let companion = companionIdentifier
         discoveryTask = Task { @MainActor [weak self] in
             for await list in await session.discover(companionIdentifier: companion) {
-                // Animated here rather than in the view: the list arrives
-                // wholesale-replaced, so the view has no change to animate
-                // unless the assignment itself carries a transaction.
-                withAnimation(.easeInOut(duration: 0.2)) { self?.devices = list }
+                self?.devices = list
             }
         }
     }

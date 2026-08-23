@@ -33,8 +33,8 @@ struct RemotePeerNodesScreen: View {
         // out of a menu, not out of text already sitting where the row
         // lands, so the new row itself is what should animate in. Keyed on
         // the two key lists so a refresh that changes nothing moves nothing.
-        .animation(.default, value: reading?.properties.devPeerKeys)
-        .animation(.default, value: reading?.properties.devAdminKeys)
+        .animation(UMSHAnimation.list, value: reading?.properties.devPeerKeys)
+        .animation(UMSHAnimation.list, value: reading?.properties.devAdminKeys)
         .remoteCategoryChrome(model: model, category: .peerNodes, title: "Peer Nodes")
     }
 

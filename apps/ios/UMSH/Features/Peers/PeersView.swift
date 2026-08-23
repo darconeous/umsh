@@ -65,7 +65,7 @@ struct PeersView: View {
         // rather than blinking it away. It has to live here rather than on
         // the destructive button: by the time the store has answered, the
         // swipe action's own transaction is long over.
-        .animation(.default, value: peers)
+        .animation(UMSHAnimation.list, value: peers)
         .navigationTitle("Peers")
         .searchable(text: $searchText, prompt: "Name, alias, address, or hint")
         .toolbar {

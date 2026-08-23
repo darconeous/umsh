@@ -469,9 +469,21 @@ private extension View {
             }
         }
         .safeAreaInset(edge: .top, spacing: 0) {
-            if snapshot.problemDescription != nil {
-                RadioProblemBanner(snapshot: snapshot, action: action)
+            // Animated inside the inset, over the banner alone: an
+            // `.animation` on the outside would reach the whole tab tree and
+            // animate whatever else changed in the same update.
+            //
+            // Keyed on whether there is a problem at all, not on the snapshot:
+            // snapshots republish many times a second while the link is busy,
+            // and the banner's text changing under a steady problem is not an
+            // arrival.
+            Group {
+                if snapshot.problemDescription != nil {
+                    RadioProblemBanner(snapshot: snapshot, action: action)
+                        .transition(.move(edge: .top).combined(with: .opacity))
+                }
             }
+            .animation(UMSHAnimation.accessory, value: snapshot.problemDescription != nil)
         }
     }
 }
