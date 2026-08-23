@@ -23,6 +23,7 @@ struct PeersView: View {
     /// Open the Discover Peers sheet, which the app root owns and presents.
     var discoverPeers: () -> Void = {}
     @State private var showsAddPeer = false
+    @State private var pendingImport: PendingPeerImport?
     @AppStorage("peers.sort") private var sortOrder: PeersSortOrder = .alphabetic
     @State private var roleFilter: PeersRoleFilter = .all
     @State private var searchText = ""
@@ -57,6 +58,14 @@ struct PeersView: View {
             }
         }
         .listStyle(.insetGrouped)
+        // Rows arrive and leave because storage changed and the reload
+        // published a new list, which is a plain assignment and animates
+        // nothing on its own. This is what puts that assignment in an
+        // animated transaction, so a confirmed removal slides the row out
+        // rather than blinking it away. It has to live here rather than on
+        // the destructive button: by the time the store has answered, the
+        // swipe action's own transaction is long over.
+        .animation(.default, value: peers)
         .navigationTitle("Peers")
         .searchable(text: $searchText, prompt: "Name, alias, address, or hint")
         .toolbar {
@@ -67,16 +76,18 @@ struct PeersView: View {
                 Button("Add peer", systemImage: "person.badge.plus") { showsAddPeer = true }
             }
         }
-        .sheet(isPresented: $showsAddPeer) {
+        .sheet(isPresented: $showsAddPeer, onDismiss: completePendingImport) {
             NavigationStack {
                 NodeImportView(
                     inspectPeerIdentity: inspectPeerIdentity,
                     save: { preview, details, startConversation in
-                        let conversation = await savePeer(preview, details, startConversation)
+                        // Held until onDismiss: see PendingPeerImport.
+                        pendingImport = PendingPeerImport(
+                            preview: preview,
+                            details: details,
+                            startConversation: startConversation
+                        )
                         showsAddPeer = false
-                        if startConversation, let conversation {
-                            openConversation(conversation)
-                        }
                     }
                 )
             }
@@ -111,6 +122,21 @@ struct PeersView: View {
             Text(hasConversation(peer)
                  ? "Removing the peer keeps its conversation and message history, and the node stays findable through search. Deleting the peer and conversation erases the message history too."
                  : "The node's record is deleted from this phone. Nothing is sent to the node.")
+        }
+    }
+
+    /// Run the import the Add-peer sheet accepted, now that its dismissal
+    /// has revealed the list the new row animates into.
+    private func completePendingImport() {
+        guard let pending = pendingImport else { return }
+        pendingImport = nil
+        Task {
+            let conversation = await savePeer(
+                pending.preview, pending.details, pending.startConversation
+            )
+            if pending.startConversation, let conversation {
+                openConversation(conversation)
+            }
         }
     }
 
@@ -229,11 +255,16 @@ struct PeersView: View {
         }
         .swipeActions(edge: .trailing, allowsFullSwipe: false) {
             if isRemovable(peer) {
-                Button(role: .destructive) {
+                // Deliberately not role: .destructive — that role makes the
+                // list animate the row away on the tap, and this button only
+                // asks. The row must stand still behind the confirmation
+                // dialog; the role belongs to the dialog's delete buttons.
+                Button {
                     peerPendingRemoval = peer
                 } label: {
                     Label("Remove", systemImage: "trash")
                 }
+                .tint(.red)
             }
         }
     }

@@ -40,6 +40,18 @@ struct DeviceSettingsView: View {
                 view(for: section)
             }
         }
+        // Adding a routing region reflows the repeater section: the blank
+        // input row and everything below it slide down to make room. The
+        // mutation is a plain draft assignment that animates nothing on its
+        // own, so the reflow is animated here, keyed on the list alone. The
+        // added row itself is exempted (its transition is .identity in
+        // RepeaterSettingsSection) — the typed text is already on screen
+        // where the row lands.
+        .animation(.default, value: draft.regions)
+        // Administrators are different: an entry comes out of a menu, not
+        // out of text already sitting where the row lands, so here the new
+        // row itself animates in (and out, on Remove).
+        .animation(.default, value: draft.adminKeys)
         .navigationTitle(title)
         .navigationBarTitleDisplayMode(.inline)
         .toolbar {

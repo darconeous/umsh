@@ -117,3 +117,16 @@ struct NodeImportView: View {
             : "Public key only"
     }
 }
+
+/// An import accepted in the sheet but not yet performed.
+///
+/// The presenting view stores one of these, dismisses the sheet, and runs
+/// the save from the sheet's `onDismiss`. Saving immediately would land the
+/// new row while the sheet still covers the list, spending its insertion
+/// animation out of sight; by `onDismiss` the list is back on screen to
+/// show the arrival.
+struct PendingPeerImport {
+    let preview: MeshNodeURIPreview
+    let details: PeerImportDetails
+    let startConversation: Bool
+}

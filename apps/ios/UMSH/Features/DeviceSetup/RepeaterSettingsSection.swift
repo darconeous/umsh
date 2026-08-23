@@ -102,6 +102,8 @@ struct RepeaterSettingsSection: View {
     /// one lands, which is also what keeps it to one per form.
     @State private var suggested: AutomaticSuggestion?
     @State private var isSuggesting = false
+    /// Accepted in the suggestion sheet, adopted from its onDismiss.
+    @State private var pendingSuggestion: MobileRegionOutcomeRecord?
 
     var body: some View {
         Section {
@@ -116,7 +118,7 @@ struct RepeaterSettingsSection: View {
         // Carried on the first section because this view is a run of
         // sections rather than one container: it is always present, and a
         // sheet has to hang off something that is.
-        .sheet(isPresented: $showsSuggestion) {
+        .sheet(isPresented: $showsSuggestion, onDismiss: adoptPendingSuggestion) {
             RegionSuggestionSheet(
                 currentRegions: regions,
                 currentDefaultRegion: defaultRegion,
@@ -124,7 +126,7 @@ struct RepeaterSettingsSection: View {
                 // Over Bluetooth the phone is within a few meters of the
                 // device, so where it is stands for where the device is.
                 offersPhone: true,
-                accept: adopt
+                accept: { pendingSuggestion = $0 }
             )
         }
         .task(id: suggestsFromPhone) { await suggestFromPhone() }
@@ -134,6 +136,14 @@ struct RepeaterSettingsSection: View {
                 ForEach(regions, id: \.self) { region in
                     Text(RegionCodeText.label(region: region))
                         .font(.body.monospaced())
+                        // Adding animates the *blank input row* sliding down
+                        // to its new slot, not the added row: the typed text
+                        // is already sitting exactly where the new row lands,
+                        // so fading the row in would flicker text the user
+                        // just wrote. Insertion is therefore instant; the
+                        // owning Form animates the reflow (DeviceSettingsView
+                        // keys an animation on this list).
+                        .transition(.asymmetric(insertion: .identity, removal: .opacity))
                 }
                 .onDelete { offsets in
                     let removed = offsets.compactMap { RegionCodeText.code(of: regions[$0]) }
@@ -286,6 +296,14 @@ struct RepeaterSettingsSection: View {
     private func adopt(_ outcome: MobileRegionOutcomeRecord) {
         regions = outcome.regions
         defaultRegion = outcome.defaultRegion
+    }
+
+    /// Adopt what the suggestion sheet accepted, deferred to its dismissal
+    /// so the rows arrive in an on-screen list instead of behind the sheet.
+    private func adoptPendingSuggestion() {
+        guard let outcome = pendingSuggestion else { return }
+        pendingSuggestion = nil
+        adopt(outcome)
     }
 
     /// Whether the suggestion is still standing over something else, which

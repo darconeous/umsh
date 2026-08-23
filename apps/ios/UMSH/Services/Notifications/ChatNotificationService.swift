@@ -27,9 +27,16 @@ final class ChatNotificationService: NSObject, UNUserNotificationCenterDelegate,
     /// Read from the delegate callbacks; written by the UI on navigation.
     private let visibleConversation = OSAllocatedUnfairLock<String?>(initialState: nil)
 
-    /// The live subscriber's continuation, if any. See `conversationOpens()`.
-    private let conversationOpenContinuation =
-        OSAllocatedUnfairLock<AsyncStream<String>.Continuation?>(initialState: nil)
+    /// The live subscriber's continuation, if any, and the conversation a
+    /// tap asked for while there was none. See `conversationOpens()`.
+    private let conversationOpenState = OSAllocatedUnfairLock<ConversationOpenState>(
+        initialState: ConversationOpenState()
+    )
+
+    private struct ConversationOpenState {
+        var continuation: AsyncStream<String>.Continuation?
+        var pending: String?
+    }
 
     private let authorizationRequested = OSAllocatedUnfairLock(initialState: false)
 
@@ -57,13 +64,22 @@ final class ChatNotificationService: NSObject, UNUserNotificationCenterDelegate,
     /// Peer addresses of tapped message notifications. The UI consumes this
     /// stream and routes to the conversation. Each call starts a fresh
     /// subscription and ends any previous one: the consuming task lives in the
-    /// root view and restarts when the root's identity changes, and a stream
-    /// its cancelled predecessor had terminated would swallow every later tap.
+    /// interface and restarts when the interface is rebuilt, and a stream its
+    /// cancelled predecessor had terminated would swallow every later tap.
+    ///
+    /// A tap that arrives before anyone is subscribed is held rather than
+    /// dropped. Tapping a notification is exactly what launches a terminated
+    /// app, and this delegate is answering while the interface it routes
+    /// through is still being built.
     func conversationOpens() -> AsyncStream<String> {
         AsyncStream(bufferingPolicy: .bufferingNewest(1)) { continuation in
-            conversationOpenContinuation.withLock { current in
-                current?.finish()
-                current = continuation
+            conversationOpenState.withLock { state in
+                state.continuation?.finish()
+                state.continuation = continuation
+                if let pending = state.pending {
+                    state.pending = nil
+                    continuation.yield(pending)
+                }
             }
         }
     }
@@ -186,7 +202,13 @@ final class ChatNotificationService: NSObject, UNUserNotificationCenterDelegate,
         let conversationAddress = response.notification.request.content
             .userInfo[Self.conversationAddressKey] as? String
         if let conversationAddress {
-            conversationOpenContinuation.withLock { $0 }?.yield(conversationAddress)
+            conversationOpenState.withLock { state in
+                if let continuation = state.continuation {
+                    continuation.yield(conversationAddress)
+                } else {
+                    state.pending = conversationAddress
+                }
+            }
         }
         completionHandler()
     }

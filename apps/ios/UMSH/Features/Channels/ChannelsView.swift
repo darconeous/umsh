@@ -37,11 +37,16 @@ struct ChannelsView: View {
                             ChannelRow(channel: channel)
                         }
                         .swipeActions(edge: .trailing) {
-                            Button(role: .destructive) {
+                            // Not role: .destructive — that role animates the
+                            // row away on the tap, and this button only asks.
+                            // The row must stand still behind the
+                            // confirmation.
+                            Button {
                                 pendingLeave = channel
                             } label: {
                                 Label("Leave", systemImage: "trash")
                             }
+                            .tint(.red)
                         }
                     }
                 }
@@ -65,6 +70,10 @@ struct ChannelsView: View {
                 }
             }
         }
+        // See the note in PeersView: leaving a channel changes storage, and
+        // the published reload needs an animated transaction to slide the
+        // row out rather than blink it away.
+        .animation(.default, value: channels)
         .navigationTitle("Channels")
         .toolbar {
             ToolbarItem(placement: .primaryAction) {

@@ -195,6 +195,21 @@ struct SettingsView: View {
 
             #if DEBUG
             Section {
+                Button("Terminate this app", role: .destructive) {
+                    // SIGKILL rather than exit(0): the app stays eligible for
+                    // CoreBluetooth to relaunch it, which a force-quit from
+                    // the app switcher deliberately does not. That makes this
+                    // the only way to watch a background relaunch stand the
+                    // pipeline up without a scene.
+                    kill(getpid(), SIGKILL)
+                }
+            } header: {
+                Text("Background relaunch")
+            } footer: {
+                Text("Kills the app the way the system does when it reclaims memory, leaving the saved radio's connection armed. Power the radio on, or have another node send a message, and iOS should relaunch this app with no screen at all — far enough to store the message and raise a notification. Debug builds only.")
+            }
+
+            Section {
                 Toggle("Radio over TCP", isOn: $tcpRadioEnabled)
                 TextField("127.0.0.1:9000", text: $tcpRadioEndpoint)
                     .textInputAutocapitalization(.never)

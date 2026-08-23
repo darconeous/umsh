@@ -775,6 +775,8 @@ struct RemoteRepeaterEditor: View {
     @State private var newRegion = ""
     @State private var regionProblem: String?
     @State private var showsSuggestion = false
+    /// Accepted in the suggestion sheet, adopted from its onDismiss.
+    @State private var pendingSuggestion: MobileRegionOutcomeRecord?
 
     private var reading: RemoteCategoryReading? { model.readings[.repeater] }
     private var problems: [UInt32: String] { model.writeRefusals[.repeater] ?? [:] }
@@ -802,6 +804,13 @@ struct RemoteRepeaterEditor: View {
                 ForEach(edits.regions.edited ?? [], id: \.self) { region in
                     Text(RegionCodeText.label(region: region))
                         .font(.body.monospaced())
+                        // Adding animates the *blank input row* sliding down
+                        // to its new slot, not the added row: the typed text
+                        // is already sitting exactly where the new row lands,
+                        // so fading the row in would flicker text the user
+                        // just wrote. Insertion is therefore instant and the
+                        // Form-level animation below moves everything else.
+                        .transition(.asymmetric(insertion: .identity, removal: .opacity))
                 }
                 .onDelete { offsets in
                     var regions = edits.regions.edited ?? []
@@ -894,6 +903,13 @@ struct RemoteRepeaterEditor: View {
             }
             RemoteProblemSection(model: model)
         }
+        // A mutation of plain draft state animates nothing on its own (and a
+        // withAnimation around it is lost to the same update's text-field
+        // reset), so the Form animates whenever the region list changes.
+        // With the rows' insertion transition set to .identity above, what
+        // this actually animates is the reflow: the blank input row and
+        // everything under it sliding down to make room.
+        .animation(.default, value: edits.regions.edited)
         .remoteCategoryChrome(
             model: model,
             category: .repeater,
@@ -911,13 +927,13 @@ struct RemoteRepeaterEditor: View {
             await model.loadCategory(.identity)
             await model.loadCategory(.gnss)
         }
-        .sheet(isPresented: $showsSuggestion) {
+        .sheet(isPresented: $showsSuggestion, onDismiss: adoptPendingSuggestion) {
             RegionSuggestionSheet(
                 currentRegions: edits.regions.value ?? [],
                 currentDefaultRegion: edits.defaultRegion.value ?? nil,
                 sources: positionSources,
                 refreshAdvertised: { await model.refreshCategory(.identity) },
-                accept: adopt
+                accept: { pendingSuggestion = $0 }
             )
         }
     }
@@ -958,6 +974,14 @@ struct RemoteRepeaterEditor: View {
         if edits.defaultRegion.isKnown {
             edits.defaultRegion.edited = .some(outcome.defaultRegion)
         }
+    }
+
+    /// Adopt what the suggestion sheet accepted, deferred to its dismissal
+    /// so the rows arrive in an on-screen list instead of behind the sheet.
+    private func adoptPendingSuggestion() {
+        guard let outcome = pendingSuggestion else { return }
+        pendingSuggestion = nil
+        adopt(outcome)
     }
 
     /// Add the typed region, or respell one the list already holds.

@@ -230,7 +230,16 @@ final class TcpRadioConnection: UlcpRadioSession, RadioConnection, UlcpFrameLink
             using: NWParameters(tls: nil, tcp: options)
         )
         self.connection = connection
-        publish(state: .connecting, name: endpoint.text, localIdentifier: endpoint.identifier)
+        // Publishes over the standing snapshot rather than a fresh one, so a
+        // failure stays on screen through the retry. Clearing it for the dial
+        // and re-publishing it on the failure two seconds later made the
+        // whole interface pulse with the banner. The message stands until a
+        // session update — which only a live connection produces — clears it,
+        // or a new failure replaces it.
+        snapshot.linkState = .connecting
+        snapshot.name = endpoint.text
+        snapshot.localIdentifier = endpoint.identifier
+        publish(snapshot)
 
         connection.stateUpdateHandler = { [weak self] state in
             guard let self else { return }
@@ -301,7 +310,24 @@ final class TcpRadioConnection: UlcpRadioSession, RadioConnection, UlcpFrameLink
             // ordinary disconnect notice would overwrite it.
             sessionDidLoseLink()
         } else if hadConnection {
-            linkDidClose(problem: problem)
+            if wantsConnection {
+                // The dial two seconds out is part of the same standing
+                // attempt, so this publishes one steady state — connecting,
+                // and here is why it has not worked — rather than flapping
+                // through disconnected and back on every retry. With the
+                // message unchanged the snapshot is unchanged, and the
+                // interface holds perfectly still.
+                sessionDidLoseLink()
+                snapshot.linkState = .connecting
+                snapshot.name = endpoint.text
+                snapshot.localIdentifier = endpoint.identifier
+                if let problem {
+                    snapshot.problemDescription = problem
+                }
+                publish(snapshot)
+            } else {
+                linkDidClose(problem: problem)
+            }
         }
 
         guard wantsConnection else { return }

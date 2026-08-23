@@ -27,6 +27,14 @@ struct RemotePeerNodesScreen: View {
             }
             RemoteProblemSection(model: model)
         }
+        // Rows arrive and leave because the device answered a write and the
+        // reading republished — a plain model update that animates nothing
+        // on its own. Unlike the region editors, an entry added here comes
+        // out of a menu, not out of text already sitting where the row
+        // lands, so the new row itself is what should animate in. Keyed on
+        // the two key lists so a refresh that changes nothing moves nothing.
+        .animation(.default, value: reading?.properties.devPeerKeys)
+        .animation(.default, value: reading?.properties.devAdminKeys)
         .remoteCategoryChrome(model: model, category: .peerNodes, title: "Peer Nodes")
     }
 

@@ -72,7 +72,10 @@ struct ConversationsView: View {
                         ConversationRow(item: item)
                     }
                     .swipeActions(edge: .trailing) {
-                        Button("Delete", systemImage: "trash", role: .destructive) {
+                        // Not role: .destructive — that role animates the row
+                        // away on the tap, and this button only asks. The row
+                        // must stand still behind the confirmation dialog.
+                        Button("Delete", systemImage: "trash") {
                             switch item {
                             case let .direct(conversation):
                                 conversationPendingDeletion = conversation
@@ -80,10 +83,17 @@ struct ConversationsView: View {
                                 channelConversationPendingDeletion = conversation
                             }
                         }
+                        .tint(.red)
                     }
                 }
             }
         }
+        // See the note in PeersView. Keyed on the identities alone, not the
+        // whole items array: a conversation's summary changes on every
+        // message, delivery receipt and draft keystroke, and animating the
+        // list for those would put the rows in motion while the user types.
+        // What is worth animating is a row arriving or leaving.
+        .animation(.default, value: items.map(\.id))
         .navigationTitle("Conversations")
         // Hidden until the list is dragged down, which is where a reader
         // looking for someone reaches for it. Conversations, peers, and joined
