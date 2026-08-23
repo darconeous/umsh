@@ -30,7 +30,6 @@ final class DeviceConfigDraft {
     /// and whether the result is reported in a modal or on the form.
     let plan: DeviceSetupPlan
     /// Where the PHY on this draft came from, on a sheet that decided it.
-    /// Nil in the editor, which asks about every radio parameter directly.
     let resolvedProfile: ResolvedRadioProfile?
     /// Whether the profile is settled. False only while a sheet is waiting for
     /// a choice it could not make on the operator's behalf.
@@ -109,7 +108,7 @@ final class DeviceConfigDraft {
         case applying
         case succeeded
         /// Configured, but the device would not take the clock. It is set up;
-        /// the editor's clock button is one tap away.
+        /// the Time screen is one tap away.
         case succeededWithoutClock
         /// Saved, and then reported something back differently. Not a
         /// congratulation — the field is named so it can be looked at.
@@ -309,16 +308,6 @@ final class DeviceConfigDraft {
 
     // MARK: - Derived state
 
-    /// What the device will tell the mesh it is, which is derived when no role
-    /// is configured: a forwarding node is a repeater, anything else is a
-    /// tracker.
-    var advertisedRole: String {
-        guard let identRole else {
-            return repeaterEnabled && sync.supportsRepeater ? "Repeater" : "Tracker"
-        }
-        return PeerRole.label(forCode: identRole)
-    }
-
     /// What the device advertises *today*, from its reported settings rather
     /// than the unsaved draft — a peer record must not be filed under a role
     /// the device has not been given yet.
@@ -327,20 +316,6 @@ final class DeviceConfigDraft {
             return reported.repeater?.enabled == true ? .repeater : .unknown
         }
         return PeerRole(roleCode: role)
-    }
-
-    /// The device presented as an ordinary node, so it can be shown through
-    /// the shared peer screen. There is no stored row behind it — that is
-    /// precisely what the save action on that screen is for.
-    func administeredPeer(_ identity: MeshPublicIdentity, name: String?) -> PeerSummary {
-        PeerSummary(
-            id: 0,
-            identity: identity,
-            alias: nil,
-            advertisedName: name,
-            systemRole: nil,
-            storedRole: advertisedPeerRole
-        )
     }
 
     var configuration: UlcpDeviceConfigRecord? {
@@ -474,37 +449,29 @@ final class DeviceConfigDraft {
             && (!sync.supportsDutyCycleLimit || dutyCycleLimit == preset.dutyCycleLimit)
     }
 
+    /// The offered limits, plus whatever this device is already holding when
+    /// that is not one of them — a picker missing its own current value
+    /// silently rewrites the setting on the next apply.
     var dutyCycleOptions: [(value: UInt16, label: String)] {
-        var options: [(UInt16, String)] = [
-            (UInt16.max, "Disabled"),
-            (13_107, "20%"),
-            (6_553, "10%"),
-            (655, "1%"),
-            (65, "0.1%"),
-        ]
+        var options = dutyCycleLimitChoices.map { limit in
+            (limit, limit == UInt16.max ? "Disabled" : formattedDutyCycle(limit))
+        }
         if !options.contains(where: { $0.0 == dutyCycleLimit }) {
-            let percent = Double(dutyCycleLimit) * 100 / Double(UInt16.max)
-            let text = percent.formatted(.number.precision(.fractionLength(percent < 1 ? 2 : 1)))
-            options.append((dutyCycleLimit, "Custom (\(text)%)"))
+            options.append((dutyCycleLimit, "Custom (\(formattedDutyCycle(dutyCycleLimit)))"))
         }
         return options
     }
 
     // MARK: - Applying
 
-    /// Write the draft to the device.
-    ///
-    /// `commissioning` is the setup sheet's apply rather than the editor's:
-    /// it also sets the clock the goal decided on, and it reports the whole
-    /// thing as one result instead of leaving it on the form. The editor is
-    /// reachable from a finished setup over this same draft, and applying from
-    /// there is an edit, not a commissioning — so it is the screen that says
-    /// which this is, not the plan.
-    func apply(commissioning: Bool) async {
+    /// Write the draft to the device: the configuration, then the
+    /// administrator list, then the clock the goal decided on, reported as
+    /// one result rather than left on the form.
+    func apply() async {
         guard let configuration else { return }
         isSaving = true
         verificationProblem = nil
-        if commissioning { applyPhase = .applying }
+        applyPhase = .applying
         defer { isSaving = false }
         guard let readback = await writer.configure(configuration) else {
             // The controller has the reason; the form is already showing it,
@@ -545,7 +512,7 @@ final class DeviceConfigDraft {
         // does so as a second, live write, strictly after the first: the
         // session runs one exchange at a time and rejects a second outright.
         var clockFailed = false
-        if commissioning, plan.setsClockOnApply, sync.supportsTime {
+        if plan.setsClockOnApply, sync.supportsTime {
             do {
                 try await writer.setTime(
                     epochSeconds: UInt32(Date.now.timeIntervalSince1970)
@@ -562,13 +529,11 @@ final class DeviceConfigDraft {
                 The device saved its settings but reported \(mismatch) back \
                 differently. Read it again before relying on this configuration.
                 """
-            if commissioning { applyPhase = .reportedDifferently(field: mismatch) }
+            applyPhase = .reportedDifferently(field: mismatch)
             return
         }
         appliedConfiguration = self.configuration
-        if commissioning {
-            applyPhase = clockFailed ? .succeededWithoutClock : .succeeded
-        }
+        applyPhase = clockFailed ? .succeededWithoutClock : .succeeded
     }
 
     func dismissResult() { applyPhase = nil }
@@ -665,23 +630,21 @@ protocol DeviceConfigurationWriting: AnyObject {
     func setAdministrators(_ keys: [Data]) async throws
 }
 
-/// The session behind the settings form, as that form needs it.
+/// The session behind the commissioning sheet, as that sheet needs it.
 ///
-/// `DeviceSettingsView` renders one device's settings whether the device
-/// is on the other end of a Bluetooth link or several hops away on the
-/// mesh. The two sessions have almost nothing in common — one owns a
-/// peripheral and a scan list, the other an operation on a worker thread —
-/// but the form asks the same handful of questions of both, and this is
-/// that handful.
+/// `DeviceSettingsView` commissions a device whether it is on the other end
+/// of a Bluetooth link or several hops away on the mesh. The two sessions
+/// have almost nothing in common — one owns a peripheral and a scan list,
+/// the other an operation on a worker thread — but the sheet asks the same
+/// handful of questions of both, and this is that handful.
 ///
-/// The live controls have default implementations that decline, because
-/// they are the things only a device in hand can do: a locate alert, a
-/// clock, a position sampled on a timer. Their sections are absent from a
-/// remote plan, so declining is a statement about reachability rather than
-/// something a screen has to handle.
+/// Setting the clock has a default implementation that declines, because it
+/// is a thing only a device in hand can do. A remote goal never assumes a
+/// clock from the phone, so declining is a statement about reachability
+/// rather than something a screen has to handle.
 @MainActor
 protocol DeviceAdministering: AnyObject, DeviceConfigurationWriting {
-    /// The device as it stands, for the parts of the form that report
+    /// The device as it stands, for the parts of the sheet that report
     /// rather than edit.
     var snapshot: AdministeredDeviceSnapshot { get }
     /// Why the last write did not land, if it did not.
@@ -689,10 +652,8 @@ protocol DeviceAdministering: AnyObject, DeviceConfigurationWriting {
     /// Whether this session can record the device in Peers.
     var canSavePeer: Bool { get }
     func savePeer(role: PeerRole) async -> Bool
-    func setAlert(_ state: RadioAlertState) async throws
-    func refreshPositioning() async
-    /// Open the full editor over the device just set up, and start again on
-    /// another one: both are steps of the setup sheet's navigation.
+    /// Open the management screens over the device just set up, and start
+    /// again on another one: both are steps of the setup sheet's navigation.
     func reviewAllSettings()
     func startOver() async
 }
@@ -700,10 +661,6 @@ protocol DeviceAdministering: AnyObject, DeviceConfigurationWriting {
 extension DeviceAdministering {
     var canSavePeer: Bool { false }
     func savePeer(role: PeerRole) async -> Bool { false }
-    func setAlert(_ state: RadioAlertState) async throws {
-        throw RadioConnectionError.radioNotFound
-    }
-    func refreshPositioning() async {}
     func setTime(epochSeconds: UInt32?) async throws {
         throw RadioConnectionError.radioNotFound
     }

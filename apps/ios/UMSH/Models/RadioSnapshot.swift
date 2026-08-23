@@ -517,6 +517,17 @@ func formattedAnnouncementInterval(_ seconds: UInt32) -> String {
     return "Every \(spelled)"
 }
 
+/// The transmit-duty limits the settings UI offers, as fractions of
+/// `UInt16.max`, with the maximum meaning no limit at all.
+let dutyCycleLimitChoices: [UInt16] = [UInt16.max, 13_107, 6_553, 655, 65]
+
+/// A duty limit or usage figure as a percentage, carrying enough digits to
+/// tell the small limits apart.
+func formattedDutyCycle(_ value: UInt16) -> String {
+    let percent = Double(value) * 100 / Double(UInt16.max)
+    return percent.formatted(.number.precision(.fractionLength(percent < 1 ? 2 : 1))) + "%"
+}
+
 /// The UTC offsets a device can be given, at the quarter-hour steps the
 /// world's zones actually use.
 ///

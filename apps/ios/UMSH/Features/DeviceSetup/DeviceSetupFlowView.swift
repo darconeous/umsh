@@ -18,13 +18,15 @@ final class AdminFlowController {
         case scan
         /// The goal's short sheet.
         case commission
-        /// Every setting the device supports.
+        /// The management screens every device gets, over this session.
         case editor
     }
 
     private(set) var goal: DeviceSetupGoal = .revisit
     var plan: DeviceSetupPlan { goal.plan }
-    var path: [Step] = []
+    var path: [Step] = [] {
+        didSet { releaseDeviceLeftBehind(oldValue) }
+    }
     private(set) var snapshot = AdministeredDeviceSnapshot.idle
     private(set) var devices: [DiscoveredRadio] = []
     /// The configuration being edited, for as long as a device is attached.
@@ -125,19 +127,15 @@ final class AdminFlowController {
         }
     }
 
-    /// Build the draft from what the device reported as it attached.
+    /// Build the draft from what the device reported as it attached. Only a
+    /// commissioning goal has one — changing a device's settings edits the
+    /// device itself, a screen at a time, rather than a draft of it.
     private func makeDraft(_ sync: UlcpSyncRecord) -> DeviceConfigDraft {
-        let plan = plan
-        return DeviceConfigDraft(
+        DeviceConfigDraft(
             sync: sync,
             reportedName: snapshot.name,
             plan: plan,
-            // The editor asks about every radio parameter directly, so it
-            // opens on what the device already holds. Only a sheet that
-            // decided the profile has one to explain.
-            resolvedProfile: plan.isAbbreviated
-                ? .resolve(companion: companionProfile, target: sync)
-                : nil,
+            resolvedProfile: .resolve(companion: companionProfile, target: sync),
             phoneNodeKey: phoneNodeKey,
             writer: self
         )
@@ -160,8 +158,9 @@ final class AdminFlowController {
         path = [.scan]
     }
 
-    /// Open the full editor over the device that was just set up, on the same
-    /// draft — which is the whole reason the draft is owned here.
+    /// Open the management screens over the device that was just set up, on
+    /// the same session — so a commissioned device is inspected and adjusted
+    /// through the screens every device gets, not a second form.
     func reviewAllSettings() {
         guard path.last != .editor else { return }
         path.append(.editor)
@@ -221,11 +220,23 @@ final class AdminFlowController {
             // `connect` resolves with what the device reported rather than
             // leaving this to read `snapshot`, which is mirrored by another
             // task and may still be carrying the pre-attach state.
-            let sync = try await session.connect(device.id)
+            //
+            // A revisit attaches lazily: the management screens read the
+            // device a screenful at a time, so an attach that read it
+            // whole would spend exactly the time the lazy design exists
+            // to save.
+            let sync = try await session.connect(device.id, lazyAttach: goal == .revisit)
             // The operator may have left while this was in flight. A device
             // they walked away from has to be let go, not pushed at them.
             guard path.last == step else {
                 await abandonSelection()
+                return
+            }
+            if goal == .revisit {
+                // No draft: the unified sheet keys everything on the
+                // device's identity, which the attach preamble read and
+                // the snapshot mirror is about to carry. The editor step
+                // renders once it lands, and says so if it never does.
                 return
             }
             guard let sync else {
@@ -312,28 +323,103 @@ final class AdminFlowController {
         await session.disconnect()
     }
 
+    /// Release a device the operator walked back from.
+    ///
+    /// Every forward transition manages the session itself, but the system
+    /// Back button only moves `path` — and a device left attached holds the
+    /// BLE link, stops advertising, and can never be offered by the scan
+    /// list again, which is exactly where the operator lands next. A
+    /// mid-connect back-out is not this: `select` observes the pop itself
+    /// and unwinds through `abandonSelection`, which is what the busy
+    /// guard leaves to it.
+    private func releaseDeviceLeftBehind(_ oldValue: [Step]) {
+        let settings: (Step) -> Bool = { $0 == .commission || $0 == .editor }
+        guard oldValue.contains(where: settings),
+              !path.contains(where: settings),
+              busyDevice == nil,
+              draft != nil || snapshot.identifier != nil
+        else { return }
+        draft = nil
+        Task { [weak self] in
+            guard let self else { return }
+            await session.disconnect()
+            if path.last == .scan { await resumeDiscovery() }
+        }
+    }
+
+    // MARK: - The unified management sheet's backend
+
+    /// The attached device as a peer row, which is what the unified
+    /// management sheet keys its screens on. `nil` until the attach and
+    /// the snapshot mirror have both landed.
+    var managedPeer: PeerSummary? {
+        guard snapshot.linkState == .attached, let identity = snapshot.deviceIdentity
+        else { return nil }
+        return PeerSummary(
+            id: 0,
+            identity: identity,
+            alias: nil,
+            advertisedName: snapshot.name,
+            systemRole: nil,
+            storedRole: .unknown
+        )
+    }
+
+    /// The unified sheet's backend over this flow's own BLE session.
+    ///
+    /// Deliberately storeless: an administrative link refreshes every
+    /// screen on sight, so a cache would only ever be one screen behind —
+    /// and a bench flow that remembers nothing leaves nothing to go stale.
+    var deviceManagement: DeviceManagementBackend {
+        let session = session
+        return DeviceManagementBackend(
+            link: .administrative,
+            fetch: { _, properties, _, _ in
+                try await session.fetchProperties(properties)
+            },
+            write: { _, writes in
+                try await session.writeProperties(writes)
+            },
+            save: { _ in try await session.saveDevice() },
+            setAdministrator: { _, key, present in
+                try await session.setAdministrator(key, present: present)
+            },
+            setPeer: { _, key, present in
+                try await session.setPeer(key, present: present)
+            },
+            setAlert: { _, state in
+                // The device answers on the session snapshot; what was
+                // asked for stands until its own announcement corrects it.
+                try await session.setAlert(state)
+                return state
+            },
+            phoneNodeKey: { [key = phoneNodeKey] in key },
+            loadCard: { _ in nil },
+            saveCard: { _, _ in },
+            forgetCache: { _ in },
+            loadValues: { _, _ in [:] },
+            saveValues: { _, _ in },
+            propertyPushes: {
+                AsyncStream { continuation in
+                    let task = Task {
+                        for await push in await session.propertyPushes() {
+                            continuation.yield(push)
+                        }
+                        continuation.finish()
+                    }
+                    continuation.onTermination = { _ in task.cancel() }
+                }
+            }
+        )
+    }
+
     // MARK: - Live device controls
 
-    /// Start or stop the device's locate alert. Nothing about it is part of
-    /// the configuration write, so it takes effect the moment it is tapped
-    /// and is unaffected by applying or abandoning the form.
-    func setAlert(_ state: RadioAlertState) async throws {
-        try await session.setAlert(state)
-    }
-
-    /// Set the device's wall clock, or clear it. Like the alert this is
-    /// live rather than configured: it takes effect on tap and is
-    /// unaffected by applying or abandoning the form.
+    /// Set the device's wall clock, or clear it. Live rather than
+    /// configured: it takes effect on the spot and is unaffected by
+    /// applying or abandoning the sheet.
     func setTime(epochSeconds: UInt32?) async throws {
         try await session.setTime(epochSeconds: epochSeconds)
-    }
-
-    /// Sample where the device is, for the positioning section.
-    ///
-    /// Silent on failure: it runs on a timer behind a view, and a device
-    /// that dropped out mid-poll is already reported by the link state.
-    func refreshPositioning() async {
-        _ = try? await session.refreshPositioning()
     }
 
     // MARK: - Configuration
@@ -454,17 +540,10 @@ struct DeviceSetupFlowView: View {
                             applyTitle: controller.plan.applyTitle,
                             note: controller.draft.flatMap {
                                 controller.plan.note(for: $0.sync)
-                            },
-                            isCommissioning: true
+                            }
                         )
                     case .editor:
-                        settings(
-                            sections: DeviceSetupPlan.revisit.sections,
-                            title: controller.snapshot.name ?? "Device",
-                            applyTitle: "Apply",
-                            note: nil,
-                            isCommissioning: false
-                        )
+                        managedDeviceScreen
                     }
                 }
         }
@@ -474,15 +553,77 @@ struct DeviceSetupFlowView: View {
         }
     }
 
-    /// The settings form over the live draft, or an explanation when the
-    /// device never reported enough to build one.
+    /// The unified management sheet over this flow's own session — the
+    /// same screens a device gets over the mesh or on the companion link,
+    /// reading the device a screenful at a time.
+    @ViewBuilder
+    private var managedDeviceScreen: some View {
+        if let peer = controller.managedPeer {
+            ManageDeviceScreen(
+                peer: peer,
+                management: controller.deviceManagement,
+                browsing: setupBrowsing
+            )
+            .safeAreaInset(edge: .bottom) { savePeerBar(peer) }
+        } else if controller.snapshot.linkState == .attached
+            || controller.snapshot.linkState == .failed
+            || controller.snapshot.linkState == .idle {
+            ContentUnavailableView(
+                "Configuration unavailable",
+                systemImage: "antenna.radiowaves.left.and.right.slash",
+                description: Text(
+                    "The device did not finish reporting its settings. Go back and connect to it again."
+                )
+            )
+        } else {
+            DeviceConnectingView(
+                name: controller.connectingName,
+                cancel: { controller.path = [.scan] }
+            )
+        }
+    }
+
+    /// The one thing the setup flow offers around the sheet: recording the
+    /// device in Peers, so the operator can find it again — and manage it
+    /// over the mesh — after this session ends.
+    @ViewBuilder
+    private func savePeerBar(_ peer: PeerSummary) -> some View {
+        if controller.canSavePeer, !isPeerSaved(peer.identity.canonicalAddress) {
+            Button {
+                Task { _ = await controller.savePeer(role: .unknown) }
+            } label: {
+                Label("Record in Peers", systemImage: "person.crop.circle.badge.plus")
+                    .frame(maxWidth: .infinity)
+            }
+            .buttonStyle(.borderedProminent)
+            .padding()
+            .background(.bar)
+        }
+    }
+
+    /// How the sheet's peer lists open a node from here: the same peer
+    /// page they open anywhere else, minus the live radio and messaging
+    /// context this sheet does not hold.
+    private var setupBrowsing: RemotePeerBrowsing {
+        RemotePeerBrowsing(knownPeers: peerActions.knownPeers) { peer in
+            AnyView(
+                PeerDetailView(
+                    peer: peer,
+                    radioSnapshot: .constant(.idle),
+                    actions: peerActions
+                )
+            )
+        }
+    }
+
+    /// The commissioning sheet over the live draft, or an explanation when
+    /// the device never reported enough to build one.
     @ViewBuilder
     private func settings(
         sections: [DeviceSetupSection],
         title: String,
         applyTitle: String,
-        note: String?,
-        isCommissioning: Bool
+        note: String?
     ) -> some View {
         if let draft = controller.draft {
             DeviceSettingsView(
@@ -492,7 +633,6 @@ struct DeviceSetupFlowView: View {
                 title: title,
                 applyTitle: applyTitle,
                 note: note,
-                isCommissioning: isCommissioning,
                 isPeerSaved: isPeerSaved,
                 peerActions: peerActions,
                 finish: { dismiss() }

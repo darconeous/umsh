@@ -34,6 +34,21 @@ struct RemoteField<Value: Equatable & Sendable>: Sendable {
         guard isKnown else { return }
         edited = parsed ?? reported
     }
+
+    /// This field — freshly built on a new baseline — keeping the
+    /// operator's edit where one stands.
+    ///
+    /// The non-intrusive rule for a reading that moves under an open
+    /// editor, from a push or a refresh: a clean field follows the
+    /// device, a dirty one keeps the operator's value against the new
+    /// baseline. A value that lands exactly on the edit cleans the field,
+    /// which is the operator's ask arriving from elsewhere, not a
+    /// conflict.
+    func preserving(_ old: RemoteField<Value>) -> RemoteField<Value> {
+        var merged = self
+        if old.isDirty, isKnown { merged.edited = old.edited }
+        return merged
+    }
 }
 
 extension Binding {
@@ -188,7 +203,7 @@ struct RemoteRadioEditor: View {
                 )
                 : nil
         )
-        .onChange(of: reading?.asOf) { edits = Edits(reading) }
+        .onChange(of: reading?.asOf) { edits = Edits(reading, preserving: edits) }
         .onAppear { if edits.isEmpty { edits = Edits(reading) } }
     }
 
@@ -238,6 +253,30 @@ struct RemoteRadioEditor: View {
             frequency = held.frequencyKhz.map(String.init) ?? ""
             transmitPower = held.transmitPowerDbm.map(String.init) ?? ""
             isEmpty = reading == nil
+        }
+
+        /// The new reading as the baseline, with the operator's standing
+        /// edits carried over field by field — see
+        /// ``RemoteField/preserving(_:)``.
+        init(_ reading: RemoteCategoryReading?, preserving old: Edits) {
+            self.init(reading)
+            guard !old.isEmpty else { return }
+            let typed = old.typed
+            enabled = enabled.preserving(typed.enabled)
+            frequencyField = frequencyField.preserving(typed.frequencyField)
+            transmitPowerField = transmitPowerField.preserving(typed.transmitPowerField)
+            bandwidth = bandwidth.preserving(typed.bandwidth)
+            spreadingFactor = spreadingFactor.preserving(typed.spreadingFactor)
+            codingRate = codingRate.preserving(typed.codingRate)
+            dutyLimit = dutyLimit.preserving(typed.dutyLimit)
+            // The text forms follow their fields: kept while the operator's
+            // edit stands, re-derived from the device otherwise.
+            if typed.frequencyField.isDirty, frequencyField.isKnown {
+                frequency = old.frequency
+            }
+            if typed.transmitPowerField.isDirty, transmitPowerField.isKnown {
+                transmitPower = old.transmitPower
+            }
         }
 
         /// The typed fields folded back in, so both kinds of edit are
@@ -339,8 +378,7 @@ struct RemoteRadioEditor: View {
     private static let bandwidths: [UInt32] = [
         7_810, 10_420, 15_630, 20_830, 31_250, 41_670, 62_500, 125_000, 250_000, 500_000,
     ]
-    /// The same fractions of `UInt16.max` the local editor offers.
-    private static let dutyLimits: [UInt16] = [UInt16.max, 13_107, 6_553, 655, 65]
+    private static let dutyLimits = dutyCycleLimitChoices
 
     private static func bandwidthLabel(_ hertz: UInt32) -> String {
         (Double(hertz) / 1000).formatted(.number.precision(.fractionLength(hertz < 100_000 ? 2 : 0)))
@@ -348,8 +386,7 @@ struct RemoteRadioEditor: View {
     }
 
     private static func dutyLabel(_ value: UInt16) -> String {
-        let percent = Double(value) * 100 / Double(UInt16.max)
-        return percent.formatted(.number.precision(.fractionLength(percent < 1 ? 2 : 1))) + "%"
+        formattedDutyCycle(value)
     }
 }
 
@@ -472,7 +509,7 @@ struct RemoteIdentityEditor: View {
             apply: { await apply() },
             hasEdits: !edits.dirty.isEmpty
         )
-        .onChange(of: reading?.asOf) { edits = Edits(reading) }
+        .onChange(of: reading?.asOf) { edits = Edits(reading, preserving: edits) }
         .onAppear { if edits.isEmpty { edits = Edits(reading) } }
     }
 
@@ -605,6 +642,36 @@ struct RemoteIdentityEditor: View {
             isEmpty = reading == nil
         }
 
+        /// The new reading as the baseline, with the operator's standing
+        /// edits carried over field by field — see
+        /// ``RemoteField/preserving(_:)``.
+        init(_ reading: RemoteCategoryReading?, preserving old: Edits) {
+            self.init(reading)
+            guard !old.isEmpty else { return }
+            let typed = old.typed
+            name = name.preserving(typed.name)
+            role = role.preserving(typed.role)
+            mobile = mobile.preserving(typed.mobile)
+            discoverable = discoverable.preserving(typed.discoverable)
+            location = location.preserving(typed.location)
+            altitude = altitude.preserving(typed.altitude)
+            selfPositions = selfPositions.preserving(typed.selfPositions)
+            precision = precision.preserving(typed.precision)
+            advertInterval = advertInterval.preserving(typed.advertInterval)
+            beaconInterval = beaconInterval.preserving(typed.beaconInterval)
+            startupBeacon = startupBeacon.preserving(typed.startupBeacon)
+            // The text forms follow their fields: kept while the operator's
+            // edit stands, re-derived from the device otherwise.
+            if typed.name.isDirty, name.isKnown { nameText = old.nameText }
+            if typed.location.isDirty, location.isKnown {
+                latitude = old.latitude
+                longitude = old.longitude
+            }
+            if typed.altitude.isDirty, altitude.isKnown {
+                altitudeText = old.altitudeText
+            }
+        }
+
         /// Whether the device is keeping its own advertised position, in
         /// which case a write here would be refused.
         var isSelfPositioning: Bool { selfPositions.value == true }
@@ -693,16 +760,8 @@ struct RemoteIdentityEditor: View {
         }
     }
 
-    /// A precision named by the area it discloses, which is the only thing
-    /// about it a person can weigh.
     static func precisionLabel(_ precision: UInt8) -> String {
-        guard let meters = ulcpLocationCellMeters(precisionBytes: precision) else {
-            return "\(precision) bytes"
-        }
-        if meters >= 1_000 {
-            return "\((meters / 1_000).formatted(.number.precision(.fractionLength(0)))) km"
-        }
-        return "\(meters.formatted(.number.precision(.fractionLength(meters < 10 ? 1 : 0)))) m"
+        LocationPresentation.precisionLabel(precisionBytes: precision)
     }
 }
 
@@ -842,7 +901,7 @@ struct RemoteRepeaterEditor: View {
             apply: { await apply() },
             hasEdits: !edits.dirty.isEmpty
         )
-        .onChange(of: reading?.asOf) { edits = Edits(reading) }
+        .onChange(of: reading?.asOf) { edits = Edits(reading, preserving: edits) }
         .onAppear { if edits.isEmpty { edits = Edits(reading) } }
         // Where the device says it is, and what its receiver sees, are what
         // a region suggestion starts from. Both come out of the cache and
@@ -972,6 +1031,24 @@ struct RemoteRepeaterEditor: View {
             minRssiText = held.repeaterMinRssiDbm.map(String.init) ?? ""
             minSnrText = held.repeaterMinSnrDb.map(String.init) ?? ""
             isEmpty = reading == nil
+        }
+
+        /// The new reading as the baseline, with the operator's standing
+        /// edits carried over field by field — see
+        /// ``RemoteField/preserving(_:)``.
+        init(_ reading: RemoteCategoryReading?, preserving old: Edits) {
+            self.init(reading)
+            guard !old.isEmpty else { return }
+            let typed = old.typed
+            enabled = enabled.preserving(typed.enabled)
+            regions = regions.preserving(typed.regions)
+            defaultRegion = defaultRegion.preserving(typed.defaultRegion)
+            minRssi = minRssi.preserving(typed.minRssi)
+            minSnr = minSnr.preserving(typed.minSnr)
+            // The text forms follow their fields: kept while the operator's
+            // edit stands, re-derived from the device otherwise.
+            if typed.minRssi.isDirty, minRssi.isKnown { minRssiText = old.minRssiText }
+            if typed.minSnr.isDirty, minSnr.isKnown { minSnrText = old.minSnrText }
         }
 
         /// The regions the default-tag picker can offer: those listed, plus
@@ -1123,4 +1200,43 @@ struct RemotePicker<Value: Hashable & Sendable, Content: View>: View {
             LabeledContent(title, value: "Not read")
         }
     }
+}
+
+/// A vetted PHY configuration a whole mesh can agree on.
+///
+/// Shared with device setup: a repeater the operator commissions has to end
+/// up on the same profile as the phone's own radio, and two lists would
+/// eventually disagree.
+struct RadioPreset: Identifiable {
+    let id: String
+    let name: String
+    let frequencyKHz: UInt32
+    let transmitPowerDBm: Int8
+    let bandwidthHz: UInt32
+    let spreadingFactor: UInt8
+    let codingRate: UInt8
+    let dutyCycleLimit: UInt16
+
+    static let vetted = [
+        RadioPreset(
+            id: "meshcore-us-canada",
+            name: "MeshCore USA/Canada (recommended)",
+            frequencyKHz: 910_525,
+            transmitPowerDBm: 20,
+            bandwidthHz: 62_500,
+            spreadingFactor: 7,
+            codingRate: 5,
+            dutyCycleLimit: UInt16.max
+        ),
+        RadioPreset(
+            id: "umsh-us-general",
+            name: "UMSH US general testing",
+            frequencyKHz: 915_000,
+            transmitPowerDBm: 14,
+            bandwidthHz: 125_000,
+            spreadingFactor: 7,
+            codingRate: 5,
+            dutyCycleLimit: UInt16.max
+        ),
+    ]
 }

@@ -20,7 +20,10 @@ use umsh_ulcp::{
     pui,
 };
 
-use crate::{MobileError, mobile_mesh::MobileMeshPropertyWriteRecord};
+use crate::{
+    MobileError,
+    mobile_mesh::{MobileMeshManagementAnswerRecord, MobileMeshPropertyWriteRecord},
+};
 
 /// One header-prefixed ATT value produced by ULCP GATT segmentation.
 #[derive(Clone, Debug, PartialEq, Eq, uniffi::Record)]
@@ -582,6 +585,32 @@ pub struct UlcpOperationErrorRecord {
     pub status_name: String,
 }
 
+/// One property value the device announced on its own — `CMD_PROP_IS`
+/// with the unsolicited transaction — as opposed to the answer to
+/// anything this session asked.
+#[derive(Clone, Debug, PartialEq, Eq, uniffi::Record)]
+pub struct UlcpPropertyPushRecord {
+    pub property_id: u32,
+    pub value: Vec<u8>,
+}
+
+/// The completion of one local management operation started with
+/// [`MobileUlcpSession::begin_property_fetch`],
+/// [`begin_property_writes`](MobileUlcpSession::begin_property_writes), or
+/// [`begin_save`](MobileUlcpSession::begin_save).
+///
+/// Answers wear the same record the mesh management path reports, and mean
+/// the same things: a value is what the device holds, a status in its
+/// place is a refusal of that one property. What differs is the carrier —
+/// here the completion rides the session update instead of a mesh event.
+#[derive(Clone, Debug, PartialEq, Eq, uniffi::Record)]
+pub struct UlcpLocalManagementEventRecord {
+    pub answers: Vec<MobileMeshManagementAnswerRecord>,
+    /// The `CMD_SAVE` outcome, on a save. `None` on fetches, on writes,
+    /// and on a save the device has no `CAP_SAVE` to answer.
+    pub status_code: Option<u32>,
+}
+
 /// Work produced by the Rust ULCP session. Frames are complete ULCP
 /// frames; the platform adapter remains responsible for GATT segmentation and
 /// write backpressure.
@@ -603,6 +632,13 @@ pub struct UlcpSessionUpdateRecord {
     /// Non-transmit operation error consumed by this update. The ULCP
     /// session has already recovered to a stable stage and remains usable.
     pub operation_error: Option<UlcpOperationErrorRecord>,
+    /// Completion of the local management operation, when this update
+    /// carries one.
+    pub management_event: Option<UlcpLocalManagementEventRecord>,
+    /// Values the device announced unsolicited with this update, verbatim.
+    /// The snapshot has already absorbed what it recognizes; these carry
+    /// the raw octets to whoever caches values by property number.
+    pub pushed_properties: Vec<UlcpPropertyPushRecord>,
 }
 
 /// One validated raw mesh frame delivered by the companion radio.
@@ -675,6 +711,41 @@ enum ExpectedResponse {
     /// The whole-table `CMD_PROP_SET` used when the device holds a channel
     /// this phone cannot name, and so cannot select for removal.
     HostChannelReplace,
+    /// A `CMD_PROP_GET` issued by a local management fetch. Unlike
+    /// `Property`, a refusal is an answer to record, never a stage
+    /// failure: the caller asked an open question about one property.
+    ManagementGet(u32),
+    /// A `CMD_PROP_SET` issued by a local management write, answered by
+    /// the device's echo or a per-property refusal.
+    ManagementSet(u32),
+    /// The `CMD_SAVE` issued by a local management save.
+    ManagementSave,
+}
+
+impl ExpectedResponse {
+    /// Whether this response belongs to the local management operation,
+    /// which is what decides when that operation continues or completes.
+    fn is_management(&self) -> bool {
+        matches!(
+            self,
+            Self::ManagementGet(_) | Self::ManagementSet(_) | Self::ManagementSave
+        )
+    }
+}
+
+/// One local management operation in flight: what is still to ask, what
+/// is still to write, and what the device has answered so far.
+///
+/// The local counterpart of a mesh management exchange, kept to the same
+/// shape deliberately — one operation at a time, answers accumulated
+/// until everything is answered, refusals recorded per property rather
+/// than failing the run.
+#[derive(Debug, Default)]
+struct LocalManagement {
+    fetch_queue: VecDeque<u32>,
+    write_queue: VecDeque<(u32, Vec<u8>)>,
+    answers: Vec<MobileMeshManagementAnswerRecord>,
+    save_status: Option<u32>,
 }
 
 struct UlcpSessionState {
@@ -684,6 +755,9 @@ struct UlcpSessionState {
     /// administrative session reports foreign ownership truthfully but
     /// never waits for a host decision it will not make.
     mode: UlcpAttachMode,
+    /// Whether post-attach inspection reads only what attaching itself
+    /// requires, leaving everything else to be asked for on demand.
+    lazy_inspection: bool,
     stage: SessionStage,
     tids: TidAllocator,
     expected: HashMap<u8, ExpectedResponse>,
@@ -718,6 +792,13 @@ struct UlcpSessionState {
     gnss: Option<GnssSnapshot>,
     provisioning: Option<UlcpSyncRecord>,
     stage_failure_pending: bool,
+    /// The local management operation in flight, if any.
+    management: Option<LocalManagement>,
+    /// A completed management operation not yet reported. Taken by the
+    /// next update, like a battery reading.
+    management_event: Option<UlcpLocalManagementEventRecord>,
+    /// Values announced unsolicited and not yet reported, verbatim.
+    pushed_properties: Vec<UlcpPropertyPushRecord>,
 }
 
 impl Default for UlcpSessionState {
@@ -725,6 +806,7 @@ impl Default for UlcpSessionState {
         Self {
             generation: 0,
             mode: UlcpAttachMode::Tethered,
+            lazy_inspection: false,
             stage: SessionStage::Idle,
             tids: TidAllocator::new(),
             expected: HashMap::new(),
@@ -742,6 +824,9 @@ impl Default for UlcpSessionState {
             gnss: None,
             provisioning: None,
             stage_failure_pending: false,
+            management: None,
+            management_event: None,
+            pushed_properties: Vec::new(),
         }
     }
 }
@@ -774,6 +859,7 @@ pub enum UlcpAttachMode {
 pub struct MobileUlcpSession {
     inner: Mutex<UlcpSessionState>,
     mode: UlcpAttachMode,
+    lazy_inspection: bool,
 }
 
 #[uniffi::export]
@@ -789,6 +875,29 @@ impl MobileUlcpSession {
     #[uniffi::constructor]
     pub fn administrative() -> Arc<Self> {
         Arc::new(Self::with_mode(UlcpAttachMode::Administrative))
+    }
+
+    /// An administrative session that attaches without reading the device
+    /// whole.
+    ///
+    /// Post-attach inspection is cut to what attaching itself requires —
+    /// the interface check and the always-present radio basics — so the
+    /// link is usable in a couple of exchanges instead of tens. Everything
+    /// else is read on demand through
+    /// [`Self::begin_property_fetch`], which is the point: a settings
+    /// screen that reads lazily has no use for an attach that reads
+    /// everything first.
+    ///
+    /// The provisioning snapshot such a session reports lists every
+    /// unread capability-gated property as unreadable, so the
+    /// whole-record configure calls — which withdraw writes to unreadable
+    /// properties — are not meaningful here. A lazy session writes
+    /// through [`Self::begin_property_writes`].
+    #[uniffi::constructor]
+    pub fn administrative_lazy() -> Arc<Self> {
+        let mut session = Self::with_mode(UlcpAttachMode::Administrative);
+        session.lazy_inspection = true;
+        Arc::new(session)
     }
 
     /// Which relationship this session represents.
@@ -812,6 +921,7 @@ impl MobileUlcpSession {
         *state = UlcpSessionState {
             generation,
             mode: self.mode,
+            lazy_inspection: self.lazy_inspection,
             stage: SessionStage::Initial,
             selected_host_key,
             ..UlcpSessionState::default()
@@ -1115,6 +1225,85 @@ impl MobileUlcpSession {
         Ok(state.update(outbound))
     }
 
+    /// Read the named properties, whatever they are, and answer with what
+    /// the device said about each.
+    ///
+    /// The local counterpart of a mesh management fetch, and it reports
+    /// the same way: one answer per property, a refusal recorded as that
+    /// property's status rather than failing the run. The completion
+    /// arrives as [`UlcpSessionUpdateRecord::management_event`] once every
+    /// answer is in. One operation may run at a time.
+    ///
+    /// Values read fold into the session's own snapshot as well, so a
+    /// settings screen reading a property does not leave the attached
+    /// provisioning stale.
+    pub fn begin_property_fetch(
+        &self,
+        property_ids: Vec<u32>,
+    ) -> Result<UlcpSessionUpdateRecord, MobileError> {
+        let mut state = self.inner.lock().expect("ULCP session mutex poisoned");
+        state.begin_local_management()?;
+        state.management = Some(LocalManagement {
+            fetch_queue: property_ids.into(),
+            ..LocalManagement::default()
+        });
+        let mut outbound = Vec::new();
+        state.continue_local_management(&mut outbound)?;
+        Ok(state.update(outbound))
+    }
+
+    /// Write the given properties, in the given order, and answer with
+    /// what the device says each is now worth.
+    ///
+    /// The order is the caller's to state and is preserved — a dirty-write
+    /// plan brackets the radio with `PROP_PHY_ENABLED`, and reordering it
+    /// would ask the device to retune mid-transmission. Writes go out one
+    /// at a time for the same reason. A refusal is recorded as that
+    /// property's answer and the run continues, matching the mesh path.
+    ///
+    /// Nothing is saved: persistence is a separate, explicit
+    /// [`Self::begin_save`], again matching the mesh path.
+    pub fn begin_property_writes(
+        &self,
+        writes: Vec<MobileMeshPropertyWriteRecord>,
+    ) -> Result<UlcpSessionUpdateRecord, MobileError> {
+        let mut state = self.inner.lock().expect("ULCP session mutex poisoned");
+        state.begin_local_management()?;
+        state.management = Some(LocalManagement {
+            write_queue: writes
+                .into_iter()
+                .map(|write| (write.property_id, write.value))
+                .collect(),
+            ..LocalManagement::default()
+        });
+        let mut outbound = Vec::new();
+        state.continue_local_management(&mut outbound)?;
+        Ok(state.update(outbound))
+    }
+
+    /// Persist whatever the device is holding, reporting the `CMD_SAVE`
+    /// status on the completion event.
+    ///
+    /// On a device without `CAP_SAVE` there is nothing to ask, and the
+    /// operation completes immediately with no status — running
+    /// configuration is all such a device has.
+    pub fn begin_save(&self) -> Result<UlcpSessionUpdateRecord, MobileError> {
+        let mut state = self.inner.lock().expect("ULCP session mutex poisoned");
+        state.begin_local_management()?;
+        if !state.has_capability(cap::SAVE)? {
+            state.management_event = Some(UlcpLocalManagementEventRecord {
+                answers: Vec::new(),
+                status_code: None,
+            });
+            return Ok(state.update(Vec::new()));
+        }
+        state.management = Some(LocalManagement::default());
+        let tid = state.allocate_tid();
+        state.expected.insert(tid, ExpectedResponse::ManagementSave);
+        let frame = ulcp_save(tid)?;
+        Ok(state.update(vec![frame]))
+    }
+
     /// Store one channel key on the radio's device identity
     /// (`PROP_DEV_CHANNEL_KEYS`), then persist with a chained `CMD_SAVE` when
     /// the device can.
@@ -1402,6 +1591,13 @@ impl MobileUlcpSession {
                 state
                     .responses
                     .insert(response.property_id, response.clone());
+                // Carried out verbatim as well as folded into the
+                // snapshot, so a consumer caching values by property
+                // number hears about it without knowing the property.
+                state.pushed_properties.push(UlcpPropertyPushRecord {
+                    property_id: response.property_id,
+                    value: response.value.clone(),
+                });
             }
             state.apply_property(&response)?;
             state.refresh_attached_snapshot(Some(response.property_id))?;
@@ -1755,6 +1951,72 @@ impl MobileUlcpSession {
                     )?);
                 }
             }
+            ExpectedResponse::ManagementGet(property) => {
+                if response.property_id == prop::LAST_STATUS && property != prop::LAST_STATUS {
+                    // A refusal is the device's whole answer about this
+                    // property. Drop any stale cached value so the session
+                    // snapshot agrees with what was just reported.
+                    let status_code = inspect_ulcp_status(response.value.clone())?;
+                    state.responses.remove(&property);
+                    state.record_management_answer(MobileMeshManagementAnswerRecord {
+                        property_id: property,
+                        value: None,
+                        status_code: Some(status_code),
+                    });
+                } else if response.property_id != property || response.command != Cmd::PropIs as u8
+                {
+                    return Err(MobileError::InvalidUlcpFrame);
+                } else {
+                    state.responses.insert(property, response.clone());
+                    state.apply_property(&response)?;
+                    state.record_management_answer(MobileMeshManagementAnswerRecord {
+                        property_id: property,
+                        value: Some(response.value.clone()),
+                        status_code: None,
+                    });
+                }
+                state.continue_local_management(&mut outbound)?;
+            }
+            ExpectedResponse::ManagementSet(property) => {
+                if response.property_id == prop::LAST_STATUS && property != prop::LAST_STATUS {
+                    // A refused write leaves the device holding whatever it
+                    // held. The answer records the refusal and the run
+                    // continues — the caller decides per property, like the
+                    // mesh path.
+                    let status_code = inspect_ulcp_status(response.value.clone())?;
+                    state.record_management_answer(MobileMeshManagementAnswerRecord {
+                        property_id: property,
+                        value: None,
+                        status_code: Some(status_code),
+                    });
+                } else if response.property_id != property || response.command != Cmd::PropIs as u8
+                {
+                    return Err(MobileError::InvalidUlcpFrame);
+                } else {
+                    // The echo is the device's authoritative value, whatever
+                    // was written — see the ConfigurationProperty arm.
+                    state.responses.insert(property, response.clone());
+                    state.apply_property(&response)?;
+                    state.record_management_answer(MobileMeshManagementAnswerRecord {
+                        property_id: property,
+                        value: Some(response.value.clone()),
+                        status_code: None,
+                    });
+                }
+                state.continue_local_management(&mut outbound)?;
+            }
+            ExpectedResponse::ManagementSave => {
+                if response.property_id != prop::LAST_STATUS
+                    || response.command != Cmd::PropIs as u8
+                {
+                    return Err(MobileError::InvalidUlcpFrame);
+                }
+                let status_code = inspect_ulcp_status(response.value.clone())?;
+                if let Some(op) = state.management.as_mut() {
+                    op.save_status = Some(status_code);
+                }
+                state.continue_local_management(&mut outbound)?;
+            }
         }
 
         if state.expected.is_empty() {
@@ -1775,6 +2037,7 @@ impl MobileUlcpSession {
         *state = UlcpSessionState {
             generation,
             mode: self.mode,
+            lazy_inspection: self.lazy_inspection,
             ..UlcpSessionState::default()
         };
         state.update(Vec::new())
@@ -1805,6 +2068,7 @@ impl MobileUlcpSession {
                 ..UlcpSessionState::default()
             }),
             mode,
+            lazy_inspection: false,
         }
     }
 
@@ -1957,6 +2221,10 @@ impl UlcpSessionState {
             raw_transmit_started_transaction_id: None,
             raw_transmit_result,
             operation_error,
+            // Taken, like the battery: a completion is reported on the
+            // one update that carries it.
+            management_event: self.management_event.take(),
+            pushed_properties: std::mem::take(&mut self.pushed_properties),
         }
     }
 
@@ -2045,6 +2313,96 @@ impl UlcpSessionState {
         }
         if !self.has_capability(capability)? {
             return Err(MobileError::InvalidUlcpFrame);
+        }
+        Ok(())
+    }
+
+    /// Gate a local management operation: attached, nothing else in
+    /// flight. One operation at a time is the same discipline the mesh
+    /// path enforces, and what lets a completion be attributed to the one
+    /// operation that could have produced it.
+    ///
+    /// Raw PHY transmissions are not "something else": a tethered radio
+    /// carries mesh traffic continuously, each exchange is matched by its
+    /// own transaction, and a settings screen that could only work on a
+    /// quiet mesh would rarely work at all.
+    fn begin_local_management(&mut self) -> Result<(), MobileError> {
+        if self.stage != SessionStage::Attached || self.management.is_some() {
+            return Err(MobileError::InvalidUlcpFrame);
+        }
+        let busy = self
+            .expected
+            .values()
+            .any(|expected| !matches!(expected, ExpectedResponse::RawTransmit));
+        if busy {
+            return Err(MobileError::InvalidUlcpFrame);
+        }
+        Ok(())
+    }
+
+    /// A transaction identifier no outstanding exchange is using.
+    ///
+    /// The allocator cycles blindly, which is safe for the staged bulk
+    /// reads — they only run with nothing outstanding — but a management
+    /// round can coexist with a live one-off like an alert write, and
+    /// must not reuse its identifier.
+    fn allocate_management_tid(&mut self) -> Result<u8, MobileError> {
+        for _ in 0..usize::from(frame::TID_MAX) {
+            let tid = self.tids.allocate();
+            if !self.expected.contains_key(&tid) {
+                return Ok(tid);
+            }
+        }
+        Err(MobileError::InvalidUlcpFrame)
+    }
+
+    /// Record one answer for the local management operation in flight.
+    fn record_management_answer(&mut self, answer: MobileMeshManagementAnswerRecord) {
+        if let Some(op) = self.management.as_mut() {
+            op.answers.push(answer);
+        }
+    }
+
+    /// Issue the next round of the local management operation, or complete
+    /// it. Called at the start of the operation and each time one of its
+    /// answers arrives; does nothing while any of them remain outstanding.
+    fn continue_local_management(
+        &mut self,
+        outbound: &mut Vec<Vec<u8>>,
+    ) -> Result<(), MobileError> {
+        if self.expected.values().any(ExpectedResponse::is_management) {
+            return Ok(());
+        }
+        let Some(mut op) = self.management.take() else {
+            return Ok(());
+        };
+        if let Some((property, value)) = op.write_queue.pop_front() {
+            // One write at a time: the plan's order is load-bearing (the
+            // PHY bracket), and a device applies what it is asked in the
+            // order asked only if it is asked in that order.
+            let tid = self.allocate_management_tid()?;
+            self.expected
+                .insert(tid, ExpectedResponse::ManagementSet(property));
+            outbound.push(ulcp_prop_set(tid, property, value)?);
+            self.management = Some(op);
+        } else if !op.fetch_queue.is_empty() {
+            let budget = usize::from(frame::TID_MAX).saturating_sub(self.expected.len());
+            for _ in 0..budget {
+                let Some(property) = op.fetch_queue.pop_front() else {
+                    break;
+                };
+                let tid = self.allocate_management_tid()?;
+                self.expected
+                    .insert(tid, ExpectedResponse::ManagementGet(property));
+                outbound.push(ulcp_prop_get(tid, property)?);
+            }
+            self.management = Some(op);
+        } else {
+            self.management_event = Some(UlcpLocalManagementEventRecord {
+                answers: op.answers,
+                status_code: op.save_status,
+            });
+            self.refresh_attached_snapshot(None)?;
         }
         Ok(())
     }
@@ -2177,8 +2535,20 @@ impl UlcpSessionState {
                     .responses
                     .get(&prop::CAPS)
                     .ok_or(MobileError::InvalidUlcpFrame)?;
-                self.inspection_queue =
-                    ulcp_inspection_properties(capabilities.value.clone())?.into();
+                self.inspection_queue = if self.lazy_inspection {
+                    // Only what the sync reduction insists on: the
+                    // interface check and the radio basics every device
+                    // has. The rest is read on demand, which is the whole
+                    // point of a lazy session.
+                    VecDeque::from(vec![
+                        prop::INTERFACE_TYPE,
+                        prop::PHY_ENABLED,
+                        prop::PHY_FREQ,
+                        prop::PHY_TX_POWER,
+                    ])
+                } else {
+                    ulcp_inspection_properties(capabilities.value.clone())?.into()
+                };
                 let advertises_host_filter = self.has_capability(cap::HOST_FILTER)?;
                 if advertises_host_filter == self.host_key_unsupported {
                     return Err(MobileError::InvalidUlcpFrame);
@@ -2718,6 +3088,9 @@ pub enum UlcpManageCategory {
     Identity,
     /// The receiver, and what it currently sees. The fix is read-only.
     Gnss,
+    /// The wall clock: what time the device holds, where it is meant to
+    /// be, and whether the receiver may set the clock.
+    Time,
     /// The forwarding policy.
     Repeater,
     /// Who this device talks to, and who may manage it.
@@ -2758,6 +3131,9 @@ pub struct UlcpManagedPropertyIds {
     pub startup_beacon: u32,
     pub gnss_enabled: u32,
     pub gnss_time_trust: u32,
+    pub time: u32,
+    pub tz_offset: u32,
+    pub alert: u32,
     pub repeater_enabled: u32,
     pub repeater_regions: u32,
     pub repeater_default_region: u32,
@@ -2796,6 +3172,9 @@ pub fn ulcp_managed_property_ids() -> UlcpManagedPropertyIds {
         startup_beacon: prop::STARTUP_BEACON,
         gnss_enabled: prop::GNSS_ENABLED,
         gnss_time_trust: prop::GNSS_TIME_TRUST,
+        time: prop::TIME,
+        tz_offset: prop::TZ_OFFSET,
+        alert: prop::ALERT,
         repeater_enabled: prop::MAC_REPEATER_ENABLED,
         repeater_regions: prop::MAC_REPEATER_REGIONS,
         repeater_default_region: prop::MAC_REPEATER_DEFAULT_REGION,
@@ -2894,9 +3273,14 @@ pub fn ulcp_category_properties(
                 prop::GNSS_FIX,
                 prop::GNSS_PRECISION,
                 prop::GNSS_SATELLITES,
-                prop::GNSS_TIME_TRUST,
             ],
         ),
+        UlcpManageCategory::Time => {
+            when(has(cap::TIME), &[prop::TIME, prop::TZ_OFFSET]);
+            // Whether the receiver may set the clock is the clock's
+            // business, so it lives here rather than with the receiver.
+            when(has(cap::GNSS), &[prop::GNSS_TIME_TRUST]);
+        }
         UlcpManageCategory::Repeater => when(
             has(cap::REPEATER),
             &[
@@ -3040,6 +3424,11 @@ pub struct UlcpDevicePropertiesRecord {
     /// device with no receiver.
     pub gnss: Option<UlcpGnssRecord>,
     pub gnss_time_trust: Option<bool>,
+    /// What the device's clock read when it answered. Present when the
+    /// clock was asked about; the inner epoch is absent on a device that
+    /// has not found the time.
+    pub time: Option<UlcpTimeRecord>,
+    pub tz_offset_min: Option<i16>,
     pub repeater_enabled: Option<bool>,
     pub repeater_regions: Option<Vec<String>>,
     pub repeater_default_region: Option<Vec<u8>>,
@@ -3156,6 +3545,12 @@ pub fn inspect_ulcp_properties(
         gnss_enabled: optional_value(at, prop::GNSS_ENABLED, decode_bool),
         gnss: gnss_readout(at),
         gnss_time_trust: optional_value(at, prop::GNSS_TIME_TRUST, decode_bool),
+        time: optional_value(at, prop::TIME, |value| {
+            Ok::<UlcpTimeRecord, MobileError>(UlcpTimeRecord {
+                epoch_seconds: decode_optional(value, decode_u32)?,
+            })
+        }),
+        tz_offset_min: optional_value(at, prop::TZ_OFFSET, decode_i16),
         repeater_enabled: optional_value(at, prop::MAC_REPEATER_ENABLED, decode_bool),
         repeater_regions: optional_value(at, prop::MAC_REPEATER_REGIONS, decode_region_list),
         repeater_default_region: optional_value(
@@ -3302,6 +3697,19 @@ pub fn ulcp_dirty_writes(
                 vec![precision]
             }
             prop::GNSS_TIME_TRUST => vec![desired.gnss_time_trust.ok_or_else(missing)? as u8],
+            // Empty clears the clock back to unknown, which is what a
+            // device reports before its first fix.
+            prop::TIME => desired
+                .time
+                .ok_or_else(missing)?
+                .epoch_seconds
+                .map(|epoch| epoch.to_le_bytes().to_vec())
+                .unwrap_or_default(),
+            prop::TZ_OFFSET => desired
+                .tz_offset_min
+                .ok_or_else(missing)?
+                .to_le_bytes()
+                .to_vec(),
             prop::ADVERT_INTERVAL => desired
                 .advert_interval_seconds
                 .ok_or_else(missing)?
@@ -8076,5 +8484,298 @@ mod tests {
             vec![3, b'S', b'J', b'C'],
             "regions pack the same way they do over the local link"
         );
+    }
+
+    // ─── Local management operations ─────────────────────────────────
+
+    /// A `CMD_PROP_SET` request, decoded.
+    fn set_request(bytes: &[u8]) -> (u8, u32, Vec<u8>) {
+        let parsed = Frame::parse(bytes).unwrap();
+        assert_eq!(parsed.command(), Some(Cmd::PropSet));
+        let payload = PropPayload::parse(parsed.payload).unwrap();
+        (parsed.header.tid(), payload.key, payload.value.to_vec())
+    }
+
+    #[test]
+    fn local_fetch_reports_values_and_refusals_alike() {
+        let session = MobileUlcpSession::new();
+        attach_commissionable(&session, Some(vec![0xAA; 32]), vec![0xAA; 32]);
+
+        let update = session
+            .begin_property_fetch(vec![prop::DEV_NAME, prop::GNSS_ENABLED])
+            .unwrap();
+        assert_eq!(update.outbound_frames.len(), 2);
+
+        let (name_tid, name_prop) = property_request(&update.outbound_frames[0]);
+        assert_eq!(name_prop, prop::DEV_NAME);
+        let (gnss_tid, gnss_prop) = property_request(&update.outbound_frames[1]);
+        assert_eq!(gnss_prop, prop::GNSS_ENABLED);
+
+        let mid = session
+            .consume(property_response(name_tid, prop::DEV_NAME, b"Ridge"))
+            .unwrap();
+        assert!(
+            mid.management_event.is_none(),
+            "half-answered is not answered"
+        );
+        // The device has no receiver, so it refuses the second property.
+        let done = session
+            .consume(property_response(
+                gnss_tid,
+                prop::LAST_STATUS,
+                &[umsh_ulcp::Status::PROP_NOT_FOUND.0 as u8],
+            ))
+            .unwrap();
+        let event = done.management_event.expect("both answers are in");
+        assert_eq!(
+            event.answers,
+            vec![
+                MobileMeshManagementAnswerRecord {
+                    property_id: prop::DEV_NAME,
+                    value: Some(b"Ridge".to_vec()),
+                    status_code: None,
+                },
+                MobileMeshManagementAnswerRecord {
+                    property_id: prop::GNSS_ENABLED,
+                    value: None,
+                    status_code: Some(umsh_ulcp::Status::PROP_NOT_FOUND.0),
+                },
+            ],
+            "a refusal is that property's answer, not the operation's failure"
+        );
+        assert_eq!(event.status_code, None);
+        assert_eq!(
+            done.snapshot.device_name.as_deref(),
+            Some("Ridge"),
+            "what a fetch learns, the session snapshot learns too"
+        );
+    }
+
+    #[test]
+    fn local_fetch_asks_in_bounded_batches() {
+        let session = MobileUlcpSession::new();
+        attach_commissionable(&session, Some(vec![0xAA; 32]), vec![0xAA; 32]);
+
+        // Nine properties: seven in the first round, two in the second.
+        let properties: Vec<u32> = vec![
+            prop::DEV_NAME,
+            prop::PHY_ENABLED,
+            prop::PHY_FREQ,
+            prop::PHY_TX_POWER,
+            prop::IDENT_MOBILE,
+            prop::DEV_DISCOVERABLE,
+            prop::MAC_REPEATER_ENABLED,
+            prop::DEV_PEERS,
+            prop::DEV_ADMINS,
+        ];
+        let update = session.begin_property_fetch(properties.clone()).unwrap();
+        assert_eq!(
+            update.outbound_frames.len(),
+            usize::from(frame::TID_MAX),
+            "a round asks for no more than the transaction space holds"
+        );
+        let second = answer_requests(&session, update.outbound_frames, commissionable_value);
+        assert_eq!(second.outbound_frames.len(), 2);
+        assert!(second.management_event.is_none());
+        let done = answer_requests(&session, second.outbound_frames, commissionable_value);
+        let event = done.management_event.expect("all nine answered");
+        assert_eq!(event.answers.len(), properties.len());
+    }
+
+    #[test]
+    fn local_writes_go_out_one_at_a_time_and_survive_a_refusal() {
+        let session = MobileUlcpSession::new();
+        attach_commissionable(&session, Some(vec![0xAA; 32]), vec![0xAA; 32]);
+
+        let update = session
+            .begin_property_writes(vec![
+                MobileMeshPropertyWriteRecord {
+                    property_id: prop::DEV_NAME,
+                    value: b"Saddle".to_vec(),
+                },
+                MobileMeshPropertyWriteRecord {
+                    property_id: prop::IDENT_MOBILE,
+                    value: vec![1],
+                },
+            ])
+            .unwrap();
+        assert_eq!(
+            update.outbound_frames.len(),
+            1,
+            "order is load-bearing, so nothing is pipelined"
+        );
+        let (tid, property, value) = set_request(&update.outbound_frames[0]);
+        assert_eq!(
+            (property, value.as_slice()),
+            (prop::DEV_NAME, &b"Saddle"[..])
+        );
+
+        // The device refuses the name; the run continues to the next write.
+        let mid = session
+            .consume(property_response(
+                tid,
+                prop::LAST_STATUS,
+                &[umsh_ulcp::Status::INVALID_ARGUMENT.0 as u8],
+            ))
+            .unwrap();
+        assert!(mid.management_event.is_none());
+        assert_eq!(mid.outbound_frames.len(), 1);
+        let (tid, property, value) = set_request(&mid.outbound_frames[0]);
+        assert_eq!((property, value), (prop::IDENT_MOBILE, vec![1]));
+
+        let done = session
+            .consume(property_response(tid, prop::IDENT_MOBILE, &[1]))
+            .unwrap();
+        let event = done.management_event.expect("both writes answered");
+        assert_eq!(
+            event.answers,
+            vec![
+                MobileMeshManagementAnswerRecord {
+                    property_id: prop::DEV_NAME,
+                    value: None,
+                    status_code: Some(umsh_ulcp::Status::INVALID_ARGUMENT.0),
+                },
+                MobileMeshManagementAnswerRecord {
+                    property_id: prop::IDENT_MOBILE,
+                    value: Some(vec![1]),
+                    status_code: None,
+                },
+            ],
+        );
+    }
+
+    #[test]
+    fn local_save_reports_the_device_status() {
+        let session = MobileUlcpSession::new();
+        attach_commissionable(&session, Some(vec![0xAA; 32]), vec![0xAA; 32]);
+
+        let update = session.begin_save().unwrap();
+        assert_eq!(update.outbound_frames.len(), 1);
+        let parsed = Frame::parse(&update.outbound_frames[0]).unwrap();
+        assert_eq!(parsed.command(), Some(Cmd::Save));
+        let done = session
+            .consume(property_response(
+                parsed.header.tid(),
+                prop::LAST_STATUS,
+                &[0],
+            ))
+            .unwrap();
+        let event = done.management_event.expect("the save answered");
+        assert!(event.answers.is_empty());
+        assert_eq!(event.status_code, Some(0));
+    }
+
+    #[test]
+    fn local_save_without_the_capability_is_already_done() {
+        let session = MobileUlcpSession::new();
+        let capabilities: Vec<u32> = commissionable_capabilities()
+            .into_iter()
+            .filter(|&capability| capability != cap::SAVE)
+            .collect();
+        let begin = session.begin(Some(vec![0xAA; 32])).unwrap();
+        drive_reads(
+            &session,
+            begin.outbound_frames,
+            move |property| match property {
+                prop::CAPS => (property, encoded_capabilities(&capabilities)),
+                prop::HOST_KEY => (property, vec![0xAA; 32]),
+                _ => commissionable_value(property),
+            },
+        );
+
+        let update = session.begin_save().unwrap();
+        assert!(update.outbound_frames.is_empty());
+        let event = update
+            .management_event
+            .expect("nothing to ask, so the operation is already complete");
+        assert_eq!(event.status_code, None);
+    }
+
+    #[test]
+    fn one_local_operation_at_a_time() {
+        let session = MobileUlcpSession::new();
+        attach_commissionable(&session, Some(vec![0xAA; 32]), vec![0xAA; 32]);
+
+        let update = session.begin_property_fetch(vec![prop::DEV_NAME]).unwrap();
+        assert!(
+            session.begin_property_fetch(vec![prop::DEV_NAME]).is_err(),
+            "a second operation must wait for the first"
+        );
+        assert!(session.refresh().is_err(), "so must a refresh");
+
+        let (tid, _) = property_request(&update.outbound_frames[0]);
+        let done = session
+            .consume(property_response(tid, prop::DEV_NAME, b"Ridge"))
+            .unwrap();
+        assert!(done.management_event.is_some());
+        assert!(
+            session.begin_property_fetch(vec![prop::DEV_NAME]).is_ok(),
+            "and once it completes, the next may run"
+        );
+    }
+
+    #[test]
+    fn an_unsolicited_value_is_carried_out_verbatim() {
+        let session = MobileUlcpSession::new();
+        attach_commissionable(&session, Some(vec![0xAA; 32]), vec![0xAA; 32]);
+
+        let update = session
+            .consume(property_response(
+                frame::TID_UNSOLICITED,
+                prop::IDENT_MOBILE,
+                &[1],
+            ))
+            .unwrap();
+        assert_eq!(
+            update.pushed_properties,
+            vec![UlcpPropertyPushRecord {
+                property_id: prop::IDENT_MOBILE,
+                value: vec![1],
+            }],
+            "a push reaches whoever caches values by number, not just the snapshot"
+        );
+    }
+
+    #[test]
+    fn a_lazy_administrative_attach_reads_only_what_attaching_requires() {
+        let session = MobileUlcpSession::administrative_lazy();
+        let begin = session.begin(None).unwrap();
+        let mut asked = Vec::new();
+        let mut pending = begin.outbound_frames;
+        let mut last = None;
+        while !pending.is_empty() {
+            let update = answer_requests(&session, pending.clone(), |property| match property {
+                // Someone else's radio, which an administrative session
+                // attaches to anyway.
+                prop::HOST_KEY => (property, vec![0xBB; 32]),
+                _ => commissionable_value(property),
+            });
+            for request in &pending {
+                asked.push(property_request(request).1);
+            }
+            pending = update.outbound_frames.clone();
+            last = Some(update);
+        }
+        let update = last.unwrap();
+        assert_eq!(update.snapshot.phase, UlcpSessionPhase::Attached);
+        assert_eq!(
+            asked.len(),
+            11,
+            "the seven-property preamble and the four the sync reduction insists on"
+        );
+        assert!(
+            !asked.contains(&prop::MAC_REPEATER_ENABLED),
+            "the device domain is left to be read on demand"
+        );
+
+        // And reading on demand works.
+        let fetch = session
+            .begin_property_fetch(vec![prop::MAC_REPEATER_ENABLED])
+            .unwrap();
+        let (tid, _) = property_request(&fetch.outbound_frames[0]);
+        let done = session
+            .consume(property_response(tid, prop::MAC_REPEATER_ENABLED, &[0]))
+            .unwrap();
+        assert!(done.management_event.is_some());
     }
 }

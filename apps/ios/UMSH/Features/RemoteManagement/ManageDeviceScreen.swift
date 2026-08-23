@@ -19,7 +19,7 @@ struct ManageDeviceScreen: View {
     let browsing: RemotePeerBrowsing
     @State private var model: ManageDeviceModel
 
-    init(peer: PeerSummary, management: RemoteDeviceManagement, browsing: RemotePeerBrowsing) {
+    init(peer: PeerSummary, management: DeviceManagementBackend, browsing: RemotePeerBrowsing) {
         self.browsing = browsing
         _model = State(initialValue: ManageDeviceModel(peer: peer, management: management))
     }
@@ -53,6 +53,10 @@ struct ManageDeviceScreen: View {
             }
         }
         .task { await model.loadCard() }
+        // Held by this screen for the whole visit: category screens push
+        // on top of it, so their readings follow the device's own
+        // announcements for as long as any of them is up.
+        .task { await model.observePushes() }
     }
 
     @ViewBuilder
@@ -161,6 +165,11 @@ struct ManageDeviceCategory: Identifiable {
             title: "GNSS",
             symbol: "location"
         ) { model, _ in AnyView(RemoteGnssScreen(model: model)) },
+        ManageDeviceCategory(
+            category: .time,
+            title: "Time",
+            symbol: "clock"
+        ) { model, _ in AnyView(RemoteTimeScreen(model: model)) },
         ManageDeviceCategory(
             category: .repeater,
             title: "Repeater",

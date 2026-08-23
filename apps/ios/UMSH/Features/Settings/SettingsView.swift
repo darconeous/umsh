@@ -20,7 +20,6 @@ struct SettingsView: View {
     let reconnectRadio: () async -> Void
     let claimRadio: () async -> Void
     let refreshRadio: () async -> Void
-    let configureRadio: (RadioSettings) async throws -> Void
     let disconnectRadio: () async -> Void
     var forgetRadio: () async -> Void = {}
     var factoryResetRadio: () async throws -> Void = {}
@@ -165,7 +164,6 @@ struct SettingsView: View {
                         reconnect: reconnectRadio,
                         claim: claimRadio,
                         refresh: refreshRadio,
-                        configure: configureRadio,
                         disconnect: disconnectRadio,
                         forget: forgetRadio,
                         factoryReset: factoryResetRadio,
@@ -441,14 +439,8 @@ struct IdentityDetailView: View {
         return status == .denied || status == .restricted
     }
 
-    /// A precision named by the area it discloses, which is the only
-    /// thing about it a person can weigh. Bare sizes, matching the
-    /// radio's precision picker.
     private func precisionLabel(_ precision: UInt8) -> String {
-        guard let meters = LocationPresentation.cellMeters(precisionBytes: precision) else {
-            return "\(precision) bytes"
-        }
-        return LocationPresentation.cellSizeText(meters: meters)
+        LocationPresentation.precisionLabel(precisionBytes: precision)
     }
 
     private func commitName() async {
@@ -495,17 +487,9 @@ struct RadioDetailView: View {
     let reconnect: () async -> Void
     let claim: () async -> Void
     let refresh: () async -> Void
-    /// Ask the radio where it is, for the position section. The radio
-    /// never volunteers this — see ``RadioPositionPoll``.
-    var refreshPosition: (() async -> Void)? = nil
-    let configure: (RadioSettings) async throws -> Void
     let disconnect: () async -> Void
     var forget: () async -> Void = {}
     var factoryReset: () async throws -> Void = {}
-    var setAlert: (RadioAlertState) async throws -> Void = { _ in }
-    var setTime: (UInt32?) async throws -> Void = { _ in }
-    var configurePositioning: (UlcpGnssSettingsRecord?, Int16?) async throws -> Void = { _, _ in }
-    var configureAdvertising: (UlcpAdvertSettingsRecord?) async throws -> Void = { _ in }
     let discoverRadios: () async -> AsyncStream<[DiscoveredRadio]>
     let selectRadio: (UUID) async throws -> Void
     let stopDiscovery: () async -> Void
@@ -524,25 +508,6 @@ struct RadioDetailView: View {
     @State private var confirmsFactoryReset = false
     @State private var factoryResetProblem: String?
     @State private var showsRadioPicker = false
-    @State private var alertProblem: String?
-    @State private var alertRequestInFlight = false
-    @State private var clockProblem: String?
-    @State private var clockRequestInFlight = false
-    @State private var positioningProblem: String?
-    @State private var positioningRequestInFlight = false
-    /// What was asked for while a positioning write is in flight.
-    ///
-    /// Without it a toggle would show the tapped position, snap back to
-    /// the radio's old value on the next render, and only reach the new
-    /// one when the radio answers — a visible flip-flop for the length of
-    /// a write and a save. Cleared on completion, at which point the
-    /// radio's own answer is what shows, whether the write took or not.
-    @State private var pendingPositioning: UlcpGnssSettingsRecord?
-    @State private var advertProblem: String?
-    @State private var advertRequestInFlight = false
-    /// The same optimistic hold as `pendingPositioning`, for the same
-    /// reason: the schedule is written as a group and saved.
-    @State private var pendingAdvert: UlcpAdvertSettingsRecord?
 
     var body: some View {
         List {
@@ -601,58 +566,30 @@ struct RadioDetailView: View {
                         .foregroundStyle(.secondary)
                 }
             }
-            if let alert = snapshot.alert {
-                findSection(alert)
-            }
             Section("Configuration") {
-                if let provisioning = snapshot.provisioning, canEditConfiguration {
+                // The same management sheet every device gets, over this
+                // radio's own link: reads refresh on sight, and the radio's
+                // unsolicited announcements keep the screens current.
+                if let deviceIdentity = snapshot.deviceIdentity,
+                   let manageDevice = peerActions.manageDevice,
+                   snapshot.provisioning != nil, canEditConfiguration {
+                    let peer = companionPeer(deviceIdentity)
                     NavigationLink {
-                        RadioSettingsEditor(
-                            snapshot: $snapshot,
-                            radioName: snapshot.name,
-                            provisioning: provisioning,
-                            refresh: refresh,
-                            configure: configure
+                        ManageDeviceScreen(
+                            peer: peer,
+                            management: manageDevice(peer),
+                            browsing: companionBrowsing
                         )
                     } label: {
-                        Label("Edit Device & PHY Settings", systemImage: "slider.horizontal.3")
+                        Label("Manage Device", systemImage: "slider.horizontal.3")
                     }
-                    Text("Device name, frequency, transmit power, bandwidth, spreading factor, and coding rate are shown when supported by this radio.")
+                    Text("Radio, identity, position, time, forwarding, and peer settings, grouped a screen at a time.")
                         .font(.caption)
                         .foregroundStyle(.secondary)
                 } else {
                     Label(configurationUnavailableReason, systemImage: "lock")
                         .foregroundStyle(.secondary)
                 }
-            }
-            // Hidden outright on a radio without CAP_BATTERY: it has no
-            // power state to measure, so there is nothing to report as
-            // unavailable.
-            if snapshot.reportsBattery {
-                Section("Power") {
-                    // A radio that cannot estimate a level while charging
-                    // still reports the rest of its power state, so this
-                    // says what is missing rather than "unavailable".
-                    LabeledContent(
-                        "Battery",
-                        value: snapshot.batteryPercentage.map { "\($0)%" } ?? "Level unavailable"
-                    )
-                    if let millivolts = snapshot.batteryVoltageMillivolts {
-                        LabeledContent("Voltage", value: formattedVolts(millivolts))
-                    }
-                    if let chargeState = snapshot.chargeState {
-                        LabeledContent("Charge state", value: chargeState.label)
-                    }
-                }
-            }
-            if snapshot.provisioning?.supportsGnss == true {
-                positionSection
-            }
-            if snapshot.provisioning?.supportsAdvert == true {
-                announcementsSection
-            }
-            if snapshot.provisioning?.supportsTime == true {
-                clockSection
             }
             if let provisioning = snapshot.provisioning {
                 Section("Radio state") {
@@ -682,12 +619,12 @@ struct RadioDetailView: View {
                         }
                     }
                     if let dutyNow = provisioning.dutyCycleNow {
-                        LabeledContent("Past-hour duty usage", value: dutyPercentage(dutyNow))
+                        LabeledContent("Past-hour duty usage", value: formattedDutyCycle(dutyNow))
                     }
                     if let dutyLimit = provisioning.dutyCycleLimit {
                         LabeledContent(
                             "Duty-cycle limit",
-                            value: dutyLimit == UInt16.max ? "Disabled" : dutyPercentage(dutyLimit)
+                            value: dutyLimit == UInt16.max ? "Disabled" : formattedDutyCycle(dutyLimit)
                         )
                     }
                 }
@@ -741,19 +678,12 @@ struct RadioDetailView: View {
                         .font(.caption)
                         .foregroundStyle(.secondary)
                 }
-                devicePeersSection
             }
         }
         .navigationTitle("Radio")
         .task {
             await refresh()
         }
-        // The position section is live while this sheet is open; the full
-        // refresh above happens once, on appear.
-        .radioPositionPoll(
-            isNeeded: snapshot.provisioning?.supportsGnss == true,
-            sample: refreshPosition
-        )
         .refreshable {
             await refresh()
         }
@@ -830,71 +760,41 @@ struct RadioDetailView: View {
         }
     }
 
-    private func dutyPercentage(_ value: UInt16) -> String {
-        let percent = Double(value) * 100 / Double(UInt16.max)
-        return percent.formatted(.number.precision(.fractionLength(percent < 1 ? 2 : 1))) + "%"
-    }
-
-    /// The peers stored on the radio's device identity, read back from the
-    /// radio itself. Rows are named through this phone's records when the
-    /// key is one it knows; managing membership happens on each peer's own
-    /// sheet, plus swipe-remove here.
-    @ViewBuilder
-    private var devicePeersSection: some View {
-        if let provisioning = snapshot.provisioning, provisioning.supportsDeviceIdentity,
-           let addresses = provisioning.devPeerAddresses {
-            Section {
-                if addresses.isEmpty {
-                    Text("No peers stored on the radio")
-                        .foregroundStyle(.secondary)
-                } else {
-                    ForEach(addresses, id: \.self) { address in
-                        devicePeerRow(address)
-                    }
-                }
-            } header: {
-                Text("Device identity peers (\(addresses.count) of \(devicePeerCapacity))")
-            } footer: {
-                Text("The radio's own node identity can only communicate with peers whose public keys it holds. Add peers from their pages in Peers.")
-            }
-        }
-    }
-
-    @ViewBuilder
-    private func devicePeerRow(_ address: String) -> some View {
-        let known = peerActions.knownPeers.first { $0.identity.canonicalAddress == address }
-        HStack(spacing: 12) {
-            if let known {
-                PeerAvatar(hint: known.identity.hint, diameter: 32)
-                VStack(alignment: .leading, spacing: 2) {
-                    Text(known.displayName)
-                    Text(known.identity.hint.text)
-                        .font(.caption)
-                        .foregroundStyle(.secondary)
-                }
-            } else {
-                Image(systemName: "person.crop.circle.badge.questionmark")
-                    .foregroundStyle(.secondary)
-                Text(address)
-                    .font(.caption.monospaced())
-                    .lineLimit(1)
-                    .truncationMode(.middle)
-            }
-        }
-        .swipeActions(edge: .trailing, allowsFullSwipe: false) {
-            if let known, peerActions.removeFromDeviceIdentity != nil {
-                Button(role: .destructive) {
-                    Task { _ = await peerActions.removeFromDeviceIdentity?(known) }
-                } label: {
-                    Label("Remove", systemImage: "trash")
-                }
-            }
-        }
-    }
-
     private var canEditConfiguration: Bool {
         (snapshot.linkState == .attached || snapshot.linkState == .ready)
             && (snapshot.hostState == .matchesCurrentIdentity || snapshot.hostState == .unsupported)
+    }
+
+    /// The radio's own device identity as a peer row, which is what the
+    /// unified management sheet keys its cache and screens on. The same
+    /// construction the Radio identity section makes.
+    private func companionPeer(_ identity: MeshPublicIdentity) -> PeerSummary {
+        PeerSummary(
+            id: 0,
+            identity: identity,
+            alias: nil,
+            advertisedName: snapshot.name,
+            systemRole: "companion_radio",
+            storedRole: .unknown
+        )
+    }
+
+    /// How the management sheet's peer lists open a node from here: the
+    /// same peer page they open anywhere else.
+    private var companionBrowsing: RemotePeerBrowsing {
+        RemotePeerBrowsing(knownPeers: peerActions.knownPeers) { peer in
+            AnyView(
+                PeerDetailView(
+                    peer: peer,
+                    radioSnapshot: $snapshot,
+                    conversations: conversations,
+                    actions: peerActions,
+                    updateDraft: updateDraft,
+                    sendMessage: sendMessage,
+                    messageActions: messageActions
+                )
+            )
+        }
     }
 
     private var configurationUnavailableReason: String {
@@ -907,333 +807,10 @@ struct RadioDetailView: View {
         if snapshot.provisioning == nil {
             return "Finish connecting and reading the radio's current settings first"
         }
+        if snapshot.deviceIdentity == nil {
+            return "This radio has no device identity to manage settings under"
+        }
         return "Connect the companion radio to edit its settings"
-    }
-
-    /// "Find This Radio": make a misplaced radio announce itself.
-    ///
-    /// Shown only when the radio advertises `CAP_ALERT`, and reflects
-    /// `PROP_ALERT` rather than what was last asked for — the radio ends
-    /// an alert on its own when someone presses its button or its
-    /// deadline runs out, and the button follows.
-    @ViewBuilder
-    private func findSection(_ alert: RadioAlertState) -> some View {
-        Section("Find") {
-            Button {
-                let desired: RadioAlertState = alert.isLocating ? .none : .locating
-                alertProblem = nil
-                alertRequestInFlight = true
-                Task {
-                    do {
-                        try await setAlert(desired)
-                    } catch {
-                        alertProblem = "The radio did not answer. It may be out of range."
-                    }
-                    alertRequestInFlight = false
-                }
-            } label: {
-                Label(
-                    alert.isLocating ? "Stop Alert" : "Find This Radio",
-                    systemImage: alert.isLocating ? "bell.slash" : "bell.and.waves.left.and.right"
-                )
-            }
-            .disabled(alertRequestInFlight || !canUseRadio)
-
-            if alert.isLocating {
-                Text("The radio is announcing itself. It stops when you tap Stop Alert, when someone presses the button on the radio, or after a few minutes — tap Find again to keep it going.")
-                    .font(.caption)
-                    .foregroundStyle(.secondary)
-            } else {
-                Text("Makes the radio beep or flash — whichever its hardware can do — even if its buzzer is silenced. Keeps going if you walk out of Bluetooth range.")
-                    .font(.caption)
-                    .foregroundStyle(.secondary)
-            }
-            if let alertProblem {
-                Label(alertProblem, systemImage: "exclamationmark.circle")
-                    .font(.caption)
-                    .foregroundStyle(.secondary)
-            }
-        }
-    }
-
-    /// Where the radio thinks it is, and the policy governing it
-    /// (`CAP_GNSS`).
-    ///
-    /// The policy is editable here rather than only through device setup:
-    /// commissioning is for a radio this phone is *not* tethered to, and
-    /// switching your own radio's receiver on should not require walking
-    /// through a setup flow that also wants to restate its role and
-    /// forwarding policy. Each change writes the whole four-property
-    /// group and saves, because a receiver running under half a policy is
-    /// the thing worth avoiding.
-    @ViewBuilder
-    private var positionSection: some View {
-        Section("Position") {
-            let policy = pendingPositioning ?? snapshot.provisioning?.gnss
-            let enabled = snapshot.provisioning?.gnss?.enabled
-            if let policy {
-                Toggle(
-                    "GNSS receiver",
-                    isOn: positioningBinding(policy, \.enabled)
-                )
-                Toggle(
-                    "Share location in identity",
-                    isOn: positioningBinding(policy, \.identUpdate)
-                )
-                if policy.identUpdate {
-                    Picker(
-                        "Shared precision",
-                        selection: positioningBinding(policy, \.identPrecision)
-                    ) {
-                        ForEach(UInt8(1)...UInt8(7), id: \.self) { precision in
-                            Text(locationCellLabel(precision)).tag(precision)
-                        }
-                    }
-                }
-                Toggle(
-                    "Trust receiver time",
-                    isOn: positioningBinding(policy, \.timeTrust)
-                )
-            }
-            if let position = snapshot.position {
-                LabeledContent("Receiver") {
-                    Label(
-                        position.fixLabel(receiverEnabled: enabled),
-                        systemImage: position.fix.symbolName
-                    )
-                    .labelStyle(.titleAndIcon)
-                }
-                LabeledContent("Satellites", value: position.satellitesText)
-                if let coordinates = position.coordinateText,
-                   let latitude = position.latitude,
-                   let longitude = position.longitude {
-                    LabeledContent("Coordinates") {
-                        Text(coordinates)
-                            .font(.caption.monospaced())
-                    }
-                    .coordinateActions(
-                        latitude: latitude,
-                        longitude: longitude,
-                        fractionDigits: position.coordinateDecimals,
-                        pinName: snapshot.name
-                    )
-                    if let cell = position.cellText {
-                        LabeledContent("Reported area", value: cell)
-                    }
-                }
-                if let altitude = position.altitudeMeters {
-                    LabeledContent("Altitude", value: "\(altitude) m")
-                }
-                if let accuracy = position.accuracyText {
-                    LabeledContent("Accuracy", value: accuracy)
-                }
-            } else {
-                LabeledContent("Receiver", value: enabled == false ? "Off" : "No report yet")
-            }
-            Text(enabled == false
-                 ? "The receiver is powered down to the lowest state this board can reach. On most of them it is the largest continuous load there is."
-                 : "A position names a grid cell rather than a point, and the accuracy figure is the receiver's own estimate rather than a measured error.")
-                .font(.caption)
-                .foregroundStyle(.secondary)
-            if let positioningProblem {
-                Label(positioningProblem, systemImage: "exclamationmark.circle")
-                    .font(.caption)
-                    .foregroundStyle(.secondary)
-            }
-        }
-        .disabled(positioningRequestInFlight || !canUseRadio)
-    }
-
-    /// What the radio says about itself unasked (`CAP_ADVERT`).
-    ///
-    /// Two schedules rather than one, because the two announcements cost
-    /// very different amounts of airtime and say different things: a
-    /// beacon is an empty broadcast that collects the path back to this
-    /// radio as it travels, while an advertisement carries the signed
-    /// identity and reaches only the radio's own neighbours.
-    @ViewBuilder
-    private var announcementsSection: some View {
-        Section("Announcements") {
-            if let policy = pendingAdvert ?? snapshot.provisioning?.advert {
-                Picker("Beacon", selection: advertBinding(policy, \.beaconIntervalSeconds)) {
-                    ForEach(beaconIntervalChoices, id: \.self) { seconds in
-                        Text(formattedAnnouncementInterval(seconds)).tag(seconds)
-                    }
-                }
-                Picker("Identity", selection: advertBinding(policy, \.advertIntervalSeconds)) {
-                    ForEach(advertisementIntervalChoices, id: \.self) { seconds in
-                        Text(formattedAnnouncementInterval(seconds)).tag(seconds)
-                    }
-                }
-                Toggle("Beacon at startup", isOn: advertBinding(policy, \.startupBeacon))
-                Text("A beacon publishes the path back to this radio and costs very little. An identity announcement carries this radio's name and role, and only reaches nodes that can hear it directly. Each interval is a minimum: periods run a little longer at random, so radios on the same schedule do not all transmit at once.")
-                    .font(.caption)
-                    .foregroundStyle(.secondary)
-            }
-            if let advertProblem {
-                Label(advertProblem, systemImage: "exclamationmark.circle")
-                    .font(.caption)
-                    .foregroundStyle(.secondary)
-            }
-        }
-        .disabled(advertRequestInFlight || !canUseRadio)
-    }
-
-    /// A binding over one field of the advertisement policy that writes
-    /// the whole policy back, for the reason `positioningBinding` gives.
-    private func advertBinding<Value>(
-        _ policy: UlcpAdvertSettingsRecord,
-        _ field: WritableKeyPath<UlcpAdvertSettingsRecord, Value>
-    ) -> Binding<Value> {
-        Binding(
-            get: { policy[keyPath: field] },
-            set: { newValue in
-                var desired = policy
-                desired[keyPath: field] = newValue
-                advertProblem = nil
-                advertRequestInFlight = true
-                pendingAdvert = desired
-                Task {
-                    do {
-                        try await configureAdvertising(desired)
-                    } catch {
-                        advertProblem = "The radio did not take that schedule. It still holds the one shown."
-                    }
-                    pendingAdvert = nil
-                    advertRequestInFlight = false
-                }
-            }
-        )
-    }
-
-    /// A binding over one field of the positioning policy that writes the
-    /// whole policy back to the radio.
-    ///
-    /// The four properties are written as a set — the radio's own rule,
-    /// not this screen's — so a single toggle still sends all of them.
-    /// Once the write settles, what shows is the radio's own answer: a
-    /// setting it refused springs back to what it actually holds.
-    private func positioningBinding<Value>(
-        _ policy: UlcpGnssSettingsRecord,
-        _ field: WritableKeyPath<UlcpGnssSettingsRecord, Value>
-    ) -> Binding<Value> {
-        Binding(
-            get: { policy[keyPath: field] },
-            set: { newValue in
-                var desired = policy
-                desired[keyPath: field] = newValue
-                writePositioning(desired)
-            }
-        )
-    }
-
-    private func writePositioning(_ desired: UlcpGnssSettingsRecord) {
-        positioningProblem = nil
-        positioningRequestInFlight = true
-        pendingPositioning = desired
-        Task {
-            do {
-                try await configurePositioning(
-                    desired,
-                    snapshot.provisioning?.timeZoneOffsetMinutes
-                )
-            } catch {
-                positioningProblem = "The radio did not take that setting. It still holds the one shown."
-            }
-            pendingPositioning = nil
-            positioningRequestInFlight = false
-        }
-    }
-
-    /// The zone travels with the positioning policy, since both are saved
-    /// device-domain settings written by the same call.
-    private func timeZoneBinding(_ offset: Int16) -> Binding<Int16> {
-        Binding(
-            get: { offset },
-            set: { minutes in
-                clockProblem = nil
-                positioningRequestInFlight = true
-                Task {
-                    do {
-                        try await configurePositioning(
-                            snapshot.provisioning?.gnss,
-                            minutes
-                        )
-                    } catch {
-                        clockProblem = "The radio did not take that time zone. It still holds the one shown."
-                    }
-                    positioningRequestInFlight = false
-                }
-            }
-        )
-    }
-
-    /// A location precision named by the area it discloses, which is the
-    /// only thing about it a person can weigh.
-    private func locationCellLabel(_ precision: UInt8) -> String {
-        guard let meters = ulcpLocationCellMeters(precisionBytes: precision) else {
-            return "\(precision) bytes"
-        }
-        if meters >= 1_000 {
-            return "\((meters / 1_000).formatted(.number.precision(.fractionLength(0)))) km"
-        }
-        return "\(meters.formatted(.number.precision(.fractionLength(meters < 10 ? 1 : 0)))) m"
-    }
-
-    /// The radio's wall clock (`PROP_TIME`), and the one action that
-    /// changes it.
-    ///
-    /// Setting the clock is live and never saved — an epoch stored in
-    /// flash comes back arbitrarily wrong, because nothing bounds how long
-    /// a radio spends powered off. The time *zone* is saved configuration
-    /// and belongs with the rest of the radio's own domain.
-    @ViewBuilder
-    private var clockSection: some View {
-        Section("Time") {
-            if let clock = snapshot.clock {
-                if let date = clock.date {
-                    LabeledContent("Radio clock", value: date.formatted(date: .abbreviated, time: .standard))
-                    if let drift = clock.driftSummary() {
-                        LabeledContent("Difference", value: drift)
-                    }
-                } else {
-                    LabeledContent("Radio clock", value: "Not set")
-                }
-            } else {
-                LabeledContent("Radio clock", value: "Not read yet")
-            }
-            if let offset = snapshot.provisioning?.timeZoneOffsetMinutes {
-                Picker("Time zone", selection: timeZoneBinding(offset)) {
-                    ForEach(deviceTimeZoneOffsets, id: \.self) { candidate in
-                        Text(formattedUTCOffset(candidate)).tag(candidate)
-                    }
-                }
-                .disabled(positioningRequestInFlight || !canUseRadio)
-            }
-            Button {
-                clockProblem = nil
-                clockRequestInFlight = true
-                Task {
-                    do {
-                        try await setTime(UInt32(Date.now.timeIntervalSince1970))
-                    } catch {
-                        clockProblem = "The radio did not answer. It may be out of range."
-                    }
-                    clockRequestInFlight = false
-                }
-            } label: {
-                Label("Set From iPhone", systemImage: "clock.arrow.trianglehead.counterclockwise.rotate.90")
-            }
-            .disabled(clockRequestInFlight || !canUseRadio)
-            Text("The clock is not saved on the radio: a radio that finds its own time from GNSS keeps it, and one that does not starts each power-up not knowing. The zone is saved, and is an offset rather than a place — the radio has no zone database, so it will not follow daylight saving on its own.")
-                .font(.caption)
-                .foregroundStyle(.secondary)
-            if let clockProblem {
-                Label(clockProblem, systemImage: "exclamationmark.circle")
-                    .font(.caption)
-                    .foregroundStyle(.secondary)
-            }
-        }
     }
 
     /// What stopping means for the step currently in flight: before the link
@@ -1244,14 +821,6 @@ struct RadioDetailView: View {
         case .scanning: "Stop Looking"
         case .connecting, .reconnecting, .pairing: "Cancel"
         default: "Disconnect"
-        }
-    }
-
-    /// Whether the link is far enough along to carry a command.
-    private var canUseRadio: Bool {
-        switch snapshot.linkState {
-        case .attached, .ready: true
-        default: false
         }
     }
 
@@ -1333,380 +902,4 @@ struct RadioDetailView: View {
             confirmsFactoryReset = true
         }
     }
-}
-
-private struct RadioSettingsEditor: View {
-    @Binding var snapshot: RadioSnapshot
-    let provisioning: RadioProvisioningSummary
-    let refresh: () async -> Void
-    let configure: (RadioSettings) async throws -> Void
-
-    @Environment(\.dismiss) private var dismiss
-    @State private var deviceName: String
-    @State private var radioEnabled: Bool
-    @State private var frequencyKHz: String
-    @State private var transmitPowerDBm: String
-    @State private var bandwidthHz: UInt32
-    @State private var spreadingFactor: UInt8
-    @State private var codingRate: UInt8
-    @State private var dutyCycleLimit: UInt16
-    @State private var isSaving = false
-    @State private var isRefreshing = false
-    @State private var problem: String?
-    @State private var lastAuthoritativeName: String?
-    @State private var lastAuthoritativeProvisioning: RadioProvisioningSummary
-
-    init(
-        snapshot: Binding<RadioSnapshot>,
-        radioName: String?,
-        provisioning: RadioProvisioningSummary,
-        refresh: @escaping () async -> Void,
-        configure: @escaping (RadioSettings) async throws -> Void
-    ) {
-        _snapshot = snapshot
-        self.provisioning = provisioning
-        self.refresh = refresh
-        self.configure = configure
-        _deviceName = State(initialValue: radioName ?? "")
-        _radioEnabled = State(initialValue: provisioning.phyEnabled)
-        _frequencyKHz = State(initialValue: String(provisioning.frequencyKHz))
-        _transmitPowerDBm = State(initialValue: String(provisioning.transmitPowerDBm))
-        _bandwidthHz = State(initialValue: provisioning.bandwidthHz ?? 125_000)
-        _spreadingFactor = State(initialValue: provisioning.spreadingFactor ?? 9)
-        _codingRate = State(initialValue: provisioning.codingRateDenominator ?? 5)
-        _dutyCycleLimit = State(initialValue: provisioning.dutyCycleLimit ?? UInt16.max)
-        _lastAuthoritativeName = State(initialValue: radioName)
-        _lastAuthoritativeProvisioning = State(initialValue: provisioning)
-    }
-
-    var body: some View {
-        Form {
-            if !unreadableSettings.isEmpty {
-                Section {
-                    Label("Some settings could not be read", systemImage: "exclamationmark.triangle")
-                        .foregroundStyle(.orange)
-                } footer: {
-                    Text("This radio did not report \(unreadableSettings.formatted(.list(type: .and))). Those settings are not shown here and are left exactly as they are when you save.")
-                }
-            }
-
-            if provisioning.supportsDeviceName {
-                Section("Device") {
-                    TextField("Device name", text: $deviceName)
-                    Text("The device name is public and may be visible in Bluetooth discovery.")
-                        .font(.caption)
-                        .foregroundStyle(.secondary)
-                }
-            }
-
-            if showsPresets {
-                Section("Preset") {
-                    Picker("Radio profile", selection: presetSelection) {
-                        Text("Custom / manual").tag("custom")
-                        ForEach(RadioPreset.vetted) { preset in
-                            Text(preset.name).tag(preset.id)
-                        }
-                    }
-                    Text("A preset changes all radio parameters below. Choose one used by your local mesh; every node must use matching PHY settings.")
-                        .font(.caption)
-                        .foregroundStyle(.secondary)
-                }
-            }
-
-            Section {
-                Toggle("Radio enabled", isOn: $radioEnabled)
-                LabeledContent("Frequency") {
-                    HStack(spacing: 5) {
-                        TextField("Frequency", text: $frequencyKHz)
-                            .keyboardType(.numberPad)
-                            .multilineTextAlignment(.trailing)
-                            .accessibilityLabel("Frequency in kilohertz")
-                        Text("kHz").foregroundStyle(.secondary)
-                    }
-                }
-                LabeledContent("Transmit power") {
-                    HStack(spacing: 5) {
-                        TextField("Transmit power", text: $transmitPowerDBm)
-                            .keyboardType(.numbersAndPunctuation)
-                            .multilineTextAlignment(.trailing)
-                            .accessibilityLabel("Transmit power in dBm")
-                        Text("dBm").foregroundStyle(.secondary)
-                    }
-                }
-                if showsLoRa {
-                    Picker("Bandwidth", selection: $bandwidthHz) {
-                        Text("7.81 kHz").tag(UInt32(7_810))
-                        Text("10.42 kHz").tag(UInt32(10_420))
-                        Text("15.63 kHz").tag(UInt32(15_630))
-                        Text("20.83 kHz").tag(UInt32(20_830))
-                        Text("31.25 kHz").tag(UInt32(31_250))
-                        Text("41.67 kHz").tag(UInt32(41_670))
-                        Text("62.5 kHz").tag(UInt32(62_500))
-                        Text("125 kHz").tag(UInt32(125_000))
-                        Text("250 kHz").tag(UInt32(250_000))
-                        Text("500 kHz").tag(UInt32(500_000))
-                    }
-                    Picker("Spreading factor", selection: $spreadingFactor) {
-                        ForEach(UInt8(5)...UInt8(12), id: \.self) { value in
-                            Text("SF\(value)").tag(value)
-                        }
-                    }
-                    Picker("Coding rate", selection: $codingRate) {
-                        ForEach(UInt8(5)...UInt8(8), id: \.self) { value in
-                            Text("4/\(value)").tag(value)
-                        }
-                    }
-                }
-            } header: {
-                Text("Radio")
-            } footer: {
-                Text("Changing PHY settings can make this radio unable to communicate with peers using a different configuration.")
-            }
-
-            if provisioning.supportsDutyCycleLimit, provisioning.dutyCycleLimit != nil {
-                Section {
-                    if let usage = snapshot.provisioning?.dutyCycleNow {
-                        LabeledContent("Past-hour usage", value: dutyPercentage(usage))
-                    }
-                    Picker("Transmit limit", selection: $dutyCycleLimit) {
-                        ForEach(dutyCycleOptions, id: \.value) { option in
-                            Text(option.label).tag(option.value)
-                        }
-                    }
-                } header: {
-                    Text("Duty cycle")
-                } footer: {
-                    Text("The radio drops new transmissions that would exceed this rolling one-hour airtime limit. Disabling the limit does not disable usage measurement.")
-                }
-            }
-
-            if let problem {
-                Section { Text(problem).foregroundStyle(.red) }
-            }
-        }
-        .navigationTitle("Radio settings")
-        .task {
-            await refreshAndApply()
-        }
-        .refreshable {
-            await refreshAndApply()
-        }
-        .onChange(of: snapshot) { _, newSnapshot in
-            guard !isSaving else { return }
-            applyAuthoritativeSnapshot(newSnapshot, force: false)
-        }
-        .toolbar {
-            ToolbarItem(placement: .confirmationAction) {
-                Button("Save") { Task { await save() } }
-                    .disabled(settings == nil || isSaving || isRefreshing)
-            }
-        }
-    }
-
-    // A radio can advertise a capability and still refuse the properties
-    // behind it. Rust leaves those settings out of the snapshot and out of
-    // the write, so the form hides them rather than showing a default that
-    // reads as the radio's own value.
-
-    /// The modem profile is one setting in three properties: a radio that
-    /// reported only part of it has not reported it.
-    private var showsLoRa: Bool {
-        provisioning.supportsLoRa
-            && provisioning.bandwidthHz != nil
-            && provisioning.spreadingFactor != nil
-            && provisioning.codingRateDenominator != nil
-    }
-
-    /// A preset sets every radio parameter at once, so it is only offered
-    /// when every parameter it sets is one this radio will accept.
-    private var showsPresets: Bool {
-        (showsLoRa || !provisioning.supportsLoRa)
-            && (provisioning.dutyCycleLimit != nil || !provisioning.supportsDutyCycleLimit)
-    }
-
-    private var unreadableSettings: [String] {
-        var settings: [String] = []
-        if provisioning.supportsLoRa, !showsLoRa { settings.append("its modem settings") }
-        if provisioning.supportsDutyCycleLimit, provisioning.dutyCycleLimit == nil {
-            settings.append("its transmit limit")
-        }
-        return settings
-    }
-
-    private var settings: RadioSettings? {
-        guard let frequency = UInt32(frequencyKHz), frequency > 0,
-              let power = Int8(transmitPowerDBm)
-        else { return nil }
-        let trimmedName = deviceName.trimmingCharacters(in: .whitespacesAndNewlines)
-        if provisioning.supportsDeviceName,
-           trimmedName.isEmpty || trimmedName.utf8.count > 64 || trimmedName.contains("\0") {
-            return nil
-        }
-        return RadioSettings(
-            deviceName: provisioning.supportsDeviceName ? trimmedName : nil,
-            phyEnabled: radioEnabled,
-            frequencyKHz: frequency,
-            transmitPowerDBm: power,
-            bandwidthHz: provisioning.supportsLoRa ? bandwidthHz : nil,
-            spreadingFactor: provisioning.supportsLoRa ? spreadingFactor : nil,
-            codingRateDenominator: provisioning.supportsLoRa ? codingRate : nil,
-            dutyCycleLimit: provisioning.supportsDutyCycleLimit ? dutyCycleLimit : nil
-        )
-    }
-
-    private var presetSelection: Binding<String> {
-        Binding(
-            get: {
-                RadioPreset.vetted.first(where: matches)?.id ?? "custom"
-            },
-            set: { identifier in
-                guard let preset = RadioPreset.vetted.first(where: { $0.id == identifier }) else {
-                    return
-                }
-                radioEnabled = true
-                frequencyKHz = String(preset.frequencyKHz)
-                transmitPowerDBm = String(preset.transmitPowerDBm)
-                bandwidthHz = preset.bandwidthHz
-                spreadingFactor = preset.spreadingFactor
-                codingRate = preset.codingRate
-                dutyCycleLimit = preset.dutyCycleLimit
-            }
-        )
-    }
-
-    private func matches(_ preset: RadioPreset) -> Bool {
-        frequencyKHz == String(preset.frequencyKHz)
-            && transmitPowerDBm == String(preset.transmitPowerDBm)
-            && (!provisioning.supportsLoRa || (
-                bandwidthHz == preset.bandwidthHz
-                    && spreadingFactor == preset.spreadingFactor
-                    && codingRate == preset.codingRate
-            ))
-            && (!provisioning.supportsDutyCycleLimit || dutyCycleLimit == preset.dutyCycleLimit)
-    }
-
-    private var dutyCycleOptions: [(value: UInt16, label: String)] {
-        var options: [(UInt16, String)] = [
-            (UInt16.max, "Disabled"),
-            (13_107, "20%"),
-            (6_553, "10%"),
-            (655, "1%"),
-            (65, "0.1%"),
-        ]
-        if !options.contains(where: { $0.0 == dutyCycleLimit }) {
-            options.append((dutyCycleLimit, "Custom (\(dutyPercentage(dutyCycleLimit)))"))
-        }
-        return options
-    }
-
-    private func dutyPercentage(_ value: UInt16) -> String {
-        let percent = Double(value) * 100 / Double(UInt16.max)
-        return percent.formatted(.number.precision(.fractionLength(percent < 1 ? 2 : 1))) + "%"
-    }
-
-    private func refreshAndApply() async {
-        guard !isRefreshing else { return }
-        isRefreshing = true
-        defer { isRefreshing = false }
-        await refresh()
-        applyAuthoritativeSnapshot(snapshot, force: true)
-    }
-
-    private func applyAuthoritativeSnapshot(_ authoritative: RadioSnapshot, force: Bool) {
-        guard let latest = authoritative.provisioning else { return }
-        if provisioning.supportsDeviceName,
-           force || authoritative.name != lastAuthoritativeName {
-            deviceName = authoritative.name ?? ""
-        }
-        if force || latest.frequencyKHz != lastAuthoritativeProvisioning.frequencyKHz {
-            frequencyKHz = String(latest.frequencyKHz)
-        }
-        if force || latest.phyEnabled != lastAuthoritativeProvisioning.phyEnabled {
-            radioEnabled = latest.phyEnabled
-        }
-        if force || latest.transmitPowerDBm != lastAuthoritativeProvisioning.transmitPowerDBm {
-            transmitPowerDBm = String(latest.transmitPowerDBm)
-        }
-        if let bandwidth = latest.bandwidthHz,
-           force || bandwidth != lastAuthoritativeProvisioning.bandwidthHz {
-            bandwidthHz = bandwidth
-        }
-        if let sf = latest.spreadingFactor,
-           force || sf != lastAuthoritativeProvisioning.spreadingFactor {
-            spreadingFactor = sf
-        }
-        if let cr = latest.codingRateDenominator,
-           force || cr != lastAuthoritativeProvisioning.codingRateDenominator {
-            codingRate = cr
-        }
-        if let limit = latest.dutyCycleLimit,
-           force || limit != lastAuthoritativeProvisioning.dutyCycleLimit {
-            dutyCycleLimit = limit
-        }
-        lastAuthoritativeName = authoritative.name
-        lastAuthoritativeProvisioning = latest
-    }
-
-    private func save() async {
-        guard let settings else { return }
-        isSaving = true
-        defer { isSaving = false }
-        let outcome: String?
-        do {
-            try await configure(settings)
-            outcome = nil
-        } catch {
-            outcome = "The radio rejected these settings. Its previous configuration remains authoritative."
-        }
-        // What the radio reports back is what the radio is set to, whatever
-        // was written — a power clamped to what the hardware can reach, a
-        // setting it declined to take. Snapshot updates are ignored while a
-        // write is in flight, so the form adopts the result unconditionally
-        // here rather than waiting for a later change to differ from it.
-        applyAuthoritativeSnapshot(snapshot, force: true)
-        guard let outcome else {
-            dismiss()
-            return
-        }
-        problem = outcome
-    }
-}
-
-/// A vetted PHY configuration a whole mesh can agree on.
-///
-/// Shared with device setup: a repeater the operator commissions has to end
-/// up on the same profile as the phone's own radio, and two lists would
-/// eventually disagree.
-struct RadioPreset: Identifiable {
-    let id: String
-    let name: String
-    let frequencyKHz: UInt32
-    let transmitPowerDBm: Int8
-    let bandwidthHz: UInt32
-    let spreadingFactor: UInt8
-    let codingRate: UInt8
-    let dutyCycleLimit: UInt16
-
-    static let vetted = [
-        RadioPreset(
-            id: "meshcore-us-canada",
-            name: "MeshCore USA/Canada (recommended)",
-            frequencyKHz: 910_525,
-            transmitPowerDBm: 20,
-            bandwidthHz: 62_500,
-            spreadingFactor: 7,
-            codingRate: 5,
-            dutyCycleLimit: UInt16.max
-        ),
-        RadioPreset(
-            id: "umsh-us-general",
-            name: "UMSH US general testing",
-            frequencyKHz: 915_000,
-            transmitPowerDBm: 14,
-            bandwidthHz: 125_000,
-            spreadingFactor: 7,
-            codingRate: 5,
-            dutyCycleLimit: UInt16.max
-        ),
-    ]
 }

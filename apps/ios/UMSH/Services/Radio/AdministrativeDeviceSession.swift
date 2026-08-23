@@ -11,9 +11,9 @@ import UMSHMobileCore
 /// that exists to read a configuration and write one back.
 ///
 /// `sync` is carried as the Rust record rather than remapped into an app
-/// model on purpose — the editor reads `UlcpSyncRecord` and writes
-/// `UlcpDeviceConfigRecord`, so read and write speak one vocabulary and no
-/// field can be lost in a translation layer.
+/// model on purpose — the commissioning sheet reads `UlcpSyncRecord` and
+/// writes `UlcpDeviceConfigRecord`, so read and write speak one vocabulary
+/// and no field can be lost in a translation layer.
 struct AdministeredDeviceSnapshot: Equatable, Sendable {
     var linkState: RadioLinkState
     var identifier: UUID?
@@ -116,7 +116,9 @@ final class AdministrativeDeviceSession: NSObject, @unchecked Sendable {
     private var frameOut: CBCharacteristic?
 
     private let reassembler = MobileGattReassembler()
-    private let ulcpSession = MobileUlcpSession.administrative()
+    /// Recreated per connect, in the attach mode that connect asks for —
+    /// see `connect(_:lazyAttach:)`.
+    private var ulcpSession = MobileUlcpSession.administrative()
     private var selectedHostKey: Data?
 
     private var snapshot = AdministeredDeviceSnapshot.idle
@@ -151,6 +153,15 @@ final class AdministrativeDeviceSession: NSObject, @unchecked Sendable {
     /// the previous one.
     private var operationWaiter: CheckedContinuation<UlcpSyncRecord?, any Error>?
     private var operationGeneration = UUID()
+    /// The caller awaiting a local management exchange — a property fetch,
+    /// write pass, or save — resolved by the session update carrying its
+    /// completion rather than by the attached-and-idle condition, because
+    /// its result is the event, not the sync record.
+    private var managementWaiter:
+        CheckedContinuation<UlcpLocalManagementEventRecord, any Error>?
+    private var managementGeneration = UUID()
+    private var propertyPushContinuations:
+        [UUID: AsyncStream<UlcpPropertyPushRecord>.Continuation] = [:]
 
     /// A flow abandoned without calling `disconnect()` — the sheet is
     /// dismissed, the controller goes away — must not leave the device
@@ -358,13 +369,20 @@ final class AdministrativeDeviceSession: NSObject, @unchecked Sendable {
     /// configuration once the ULCP session is attached and that configuration
     /// has been read.
     ///
+    /// `lazyAttach` cuts the post-attach inspection to what attaching
+    /// itself requires, leaving the device to be read a screenful at a
+    /// time through `fetchProperties` — the sync it resolves with is
+    /// card-grade, not the device whole. The full attach is what
+    /// commissioning's whole-configuration draft needs, and a lazy
+    /// settings screen must never pay for.
+    ///
     /// Throws if the device cannot be reached, refuses the protocol, or the
     /// whole exchange overruns its budget. A drop *after* this resolves is
     /// not thrown anywhere — it arrives on `snapshots()` as a failed link,
     /// because by then the caller is a UI showing an editor, not an
     /// `await`.
     @discardableResult
-    func connect(_ id: UUID) async throws -> UlcpSyncRecord? {
+    func connect(_ id: UUID, lazyAttach: Bool = false) async throws -> UlcpSyncRecord? {
         try await withCheckedThrowingContinuation {
             (result: CheckedContinuation<UlcpSyncRecord?, any Error>) in
             queue.async { [self] in
@@ -376,6 +394,11 @@ final class AdministrativeDeviceSession: NSObject, @unchecked Sendable {
                     result.resume(throwing: RadioConnectionError.operationInProgress)
                     return
                 }
+                // A fresh Rust session in the requested attach mode; the
+                // teardown below releases whatever the previous one held.
+                ulcpSession = lazyAttach
+                    ? MobileUlcpSession.administrativeLazy()
+                    : MobileUlcpSession.administrative()
                 // The advertised name is live; `CBPeripheral.name` is a cache
                 // iOS does not refresh when a device is renamed.
                 let advertisedName = discovered[id]?.name
@@ -478,6 +501,21 @@ final class AdministrativeDeviceSession: NSObject, @unchecked Sendable {
         }
     }
 
+    /// Store a node on the device's identity, or take it off, so it can
+    /// hold a secure session with that node on its own. Persisted by a
+    /// save the Rust session chains behind the write, like the
+    /// administrator table.
+    func setPeer(_ publicKey: Data, present: Bool) async throws {
+        Self.logger.notice(
+            "action: user \(present ? "added" : "removed", privacy: .public) a device peer"
+        )
+        _ = try await perform { session in
+            present
+                ? try session.insertDevicePeer(publicKey: publicKey)
+                : try session.removeDevicePeer(publicKey: publicKey)
+        }
+    }
+
     /// Start or stop the device's locate alert (`PROP_ALERT`).
     ///
     /// Live behavior rather than configuration: it is never part of a
@@ -522,6 +560,118 @@ final class AdministrativeDeviceSession: NSObject, @unchecked Sendable {
         try await perform { session in try session.refreshPositioning() }
     }
 
+    // MARK: - Local management
+
+    /// Read named properties from the attached device, answering with what
+    /// it said about each — values and refusals alike. The administrative
+    /// counterpart of the companion session's `fetchCompanionProperties`,
+    /// with the same shape of answer.
+    func fetchProperties(
+        _ propertyIDs: [UInt32]
+    ) async throws -> [MobileMeshManagementAnswerRecord] {
+        guard !propertyIDs.isEmpty else { return [] }
+        let event = try await performManagement { session in
+            try session.beginPropertyFetch(propertyIds: propertyIDs)
+        }
+        return event.answers
+    }
+
+    /// Write properties to the attached device, in the given order, and
+    /// answer with what it says each is now worth.
+    func writeProperties(
+        _ writes: [MobileMeshPropertyWriteRecord]
+    ) async throws -> [MobileMeshManagementAnswerRecord] {
+        guard !writes.isEmpty else { return [] }
+        let event = try await performManagement { session in
+            try session.beginPropertyWrites(writes: writes)
+        }
+        return event.answers
+    }
+
+    /// Persist the attached device's live configuration.
+    func saveDevice() async throws {
+        let event = try await performManagement { session in
+            try session.beginSave()
+        }
+        if let status = event.statusCode, status != 0 {
+            throw RemoteManagementError.refused(status: status)
+        }
+    }
+
+    /// Values the attached device announces on its own, verbatim.
+    func propertyPushes() async -> AsyncStream<UlcpPropertyPushRecord> {
+        await withCheckedContinuation { result in
+            queue.async { [self] in
+                let stream = AsyncStream(bufferingPolicy: .bufferingNewest(16)) { continuation in
+                    let id = UUID()
+                    propertyPushContinuations[id] = continuation
+                    continuation.onTermination = { [weak self] _ in
+                        self?.queue.async { [weak self] in
+                            self?.propertyPushContinuations[id] = nil
+                        }
+                    }
+                }
+                result.resume(returning: stream)
+            }
+        }
+    }
+
+    /// Run one local management exchange to completion, under the same
+    /// per-operation deadline as everything else here. Errors wear
+    /// `RemoteManagementError` so the management screens read this
+    /// session and the mesh with the same copy.
+    private func performManagement(
+        _ start: @escaping @Sendable (MobileUlcpSession) throws -> UlcpSessionUpdateRecord
+    ) async throws -> UlcpLocalManagementEventRecord {
+        try await withCheckedThrowingContinuation {
+            (result: CheckedContinuation<UlcpLocalManagementEventRecord, any Error>) in
+            queue.async { [self] in
+                guard let peripheral, peripheral.state == .connected else {
+                    result.resume(throwing: RemoteManagementError.unavailable)
+                    return
+                }
+                guard managementWaiter == nil, operationWaiter == nil, attachWaiter == nil
+                else {
+                    result.resume(throwing: RemoteManagementError.unavailable)
+                    return
+                }
+                managementWaiter = result
+                managementGeneration = UUID()
+                scheduleManagementTimeout(generation: managementGeneration)
+                do {
+                    // An immediate completion — a save with nothing to ask —
+                    // resolves the waiter inside this call.
+                    try applySessionUpdate(start(ulcpSession), from: peripheral)
+                } catch {
+                    finishManagement(throwing: RemoteManagementError.unavailable)
+                }
+            }
+        }
+    }
+
+    private func scheduleManagementTimeout(generation: UUID) {
+        queue.asyncAfter(deadline: .now() + Self.operationTimeoutSeconds) { [weak self] in
+            guard let self, self.managementGeneration == generation,
+                  self.managementWaiter != nil else { return }
+            Self.logger.error("administrative management exchange timed out")
+            self.finishManagement(throwing: RemoteManagementError.noAnswer)
+        }
+    }
+
+    private func finishManagement(with event: UlcpLocalManagementEventRecord) {
+        guard let waiter = managementWaiter else { return }
+        managementWaiter = nil
+        managementGeneration = UUID()
+        waiter.resume(returning: event)
+    }
+
+    private func finishManagement(throwing error: any Error) {
+        guard let waiter = managementWaiter else { return }
+        managementWaiter = nil
+        managementGeneration = UUID()
+        waiter.resume(throwing: error)
+    }
+
     /// Run one post-attach exchange to completion, answering with the device
     /// state as of that completion.
     private func perform(
@@ -534,7 +684,8 @@ final class AdministrativeDeviceSession: NSObject, @unchecked Sendable {
                     result.resume(throwing: RadioConnectionError.radioNotFound)
                     return
                 }
-                guard operationWaiter == nil, attachWaiter == nil else {
+                guard operationWaiter == nil, attachWaiter == nil, managementWaiter == nil
+                else {
                     result.resume(throwing: RadioConnectionError.operationInProgress)
                     return
                 }
@@ -655,6 +806,15 @@ final class AdministrativeDeviceSession: NSObject, @unchecked Sendable {
             snapshot.problemDescription = operationErrorMessage
         }
 
+        if let event = update.managementEvent {
+            finishManagement(with: event)
+        }
+        for push in update.pushedProperties {
+            for continuation in propertyPushContinuations.values {
+                continuation.yield(push)
+            }
+        }
+
         for frame in update.outboundFrames {
             try enqueue(frame: frame, on: peripheral)
         }
@@ -663,8 +823,8 @@ final class AdministrativeDeviceSession: NSObject, @unchecked Sendable {
 
         guard !update.waitingForResponses, update.snapshot.phase == .attached else { return }
         let rejection = operationErrorMessage.map(RadioConnectionError.operationRejected)
-        // The attach is only complete once the whole capability-gated read
-        // has landed: the editor needs a configuration, not a link.
+        // The attach is only complete once whatever this session's inspection
+        // asks for has landed: a caller needs a device, not a link.
         finishAttach(throwing: rejection)
         finishOperation(throwing: rejection)
     }
@@ -748,6 +908,7 @@ final class AdministrativeDeviceSession: NSObject, @unchecked Sendable {
     private func finishPendingOperations(throwing error: any Error) {
         finishAttach(throwing: error)
         finishOperation(throwing: error)
+        finishManagement(throwing: RemoteManagementError.unavailable)
     }
 
     /// Why a CoreBluetooth failure happened, in the terms callers act on.

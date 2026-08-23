@@ -65,16 +65,6 @@ struct RemoteGnssScreen: View {
                 } else {
                     RemoteReadOnlyToggle("Receiver enabled", isOn: nil)
                 }
-                if edits.timeTrust.isKnown {
-                    Toggle(isOn: $edits.timeTrust.edited.replacingNil(with: false)) {
-                        RemoteFieldTitle(
-                            "Trust the receiver's clock",
-                            problem: problems[edits.timeTrust.property]
-                        )
-                    }
-                } else {
-                    RemoteReadOnlyToggle("Trust the receiver's clock", isOn: nil)
-                }
             }
 
             Section {
@@ -110,7 +100,7 @@ struct RemoteGnssScreen: View {
             apply: { await apply() },
             hasEdits: !edits.dirty.isEmpty
         )
-        .onChange(of: reading?.asOf) { edits = Edits(reading) }
+        .onChange(of: reading?.asOf) { edits = Edits(reading, preserving: edits) }
         .onAppear { if edits.isEmpty { edits = Edits(reading) } }
     }
 
@@ -123,11 +113,11 @@ struct RemoteGnssScreen: View {
         }
     }
 
-    /// The two settings on this screen. The fix is not among them: it is
-    /// what the receiver reports, not something to ask it for.
+    /// The one setting on this screen. The fix is not among them: it is
+    /// what the receiver reports, not something to ask it for. Whether the
+    /// receiver may set the clock lives on the Time screen, with the clock.
     private struct Edits {
         var enabled = RemoteField<Bool>(0, nil)
-        var timeTrust = RemoteField<Bool>(0, nil)
         var isEmpty = true
         /// What the device last said, in full.
         var held = UlcpDevicePropertiesRecord.empty
@@ -138,14 +128,20 @@ struct RemoteGnssScreen: View {
             let id = ulcpProperties
             held = reading?.properties ?? UlcpDevicePropertiesRecord.empty
             enabled = RemoteField(id.gnssEnabled, held.gnssEnabled)
-            timeTrust = RemoteField(id.gnssTimeTrust, held.gnssTimeTrust)
             isEmpty = reading == nil
+        }
+
+        /// The new reading as the baseline, with the operator's standing
+        /// edit carried over — see ``RemoteField/preserving(_:)``.
+        init(_ reading: RemoteCategoryReading?, preserving old: Edits) {
+            self.init(reading)
+            guard !old.isEmpty else { return }
+            enabled = enabled.preserving(old.enabled)
         }
 
         var dirty: Set<UInt32> {
             var dirty: Set<UInt32> = []
             if enabled.isDirty { dirty.insert(enabled.property) }
-            if timeTrust.isDirty { dirty.insert(timeTrust.property) }
             return dirty
         }
 
@@ -154,7 +150,6 @@ struct RemoteGnssScreen: View {
             // carried for completeness and never reaches the air.
             var desired = held
             desired.gnssEnabled = enabled.value
-            desired.gnssTimeTrust = timeTrust.value
             return desired
         }
     }
@@ -169,6 +164,182 @@ struct RemoteGnssScreen: View {
 
     private func coordinate(_ degrees: Double) -> String {
         degrees.formatted(.number.precision(.fractionLength(5))) + "°"
+    }
+}
+
+/// The device's wall clock: what time it holds, where it is meant to be,
+/// and whether the receiver may set the clock.
+///
+/// The clock itself is live state — set from this phone the moment the
+/// button is tapped, never part of Apply, and never persisted by the
+/// device, which has no bound on how long it spends powered off. The time
+/// zone and the receiver's say over the clock are settings, and go through
+/// Apply like any other.
+struct RemoteTimeScreen: View {
+    let model: ManageDeviceModel
+    @State private var edits = Edits()
+
+    private var reading: RemoteCategoryReading? { model.readings[.time] }
+    private var problems: [UInt32: String] { model.writeRefusals[.time] ?? [:] }
+
+    var body: some View {
+        Form {
+            Section {
+                if let clock {
+                    if let date = clock.date {
+                        // Re-render each second so the clock reads as one,
+                        // not as a stopped reading from whenever the screen
+                        // was refreshed.
+                        TimelineView(.periodic(from: .now, by: 1)) { context in
+                            LabeledContent(
+                                "Device time",
+                                value: date.addingTimeInterval(
+                                    context.date.timeIntervalSince(clock.readAt)
+                                )
+                                .formatted(date: .abbreviated, time: .standard)
+                            )
+                        }
+                        if let drift = clock.driftSummary() {
+                            LabeledContent("Drift", value: drift)
+                        }
+                    } else {
+                        LabeledContent("Device time", value: "Not set")
+                    }
+                    Button("Set From iPhone") {
+                        Task { await setFromPhone() }
+                    }
+                } else {
+                    RemoteEmptyReading()
+                }
+            } header: {
+                Text("Clock")
+            } footer: {
+                RemoteReadingFooter(reading: reading, isBusy: model.isBusy)
+            }
+
+            Section {
+                RemotePicker(
+                    "Time zone",
+                    selection: $edits.tzOffset.edited,
+                    problem: problems[edits.tzOffset.property]
+                ) {
+                    ForEach(deviceTimeZoneOffsets, id: \.self) { minutes in
+                        Text(formattedUTCOffset(minutes)).tag(minutes)
+                    }
+                }
+                if edits.tzOffset.isKnown, edits.tzOffset.value != phoneUTCOffsetMinutes {
+                    Button("Use This iPhone's Time Zone") {
+                        edits.tzOffset.edited = phoneUTCOffsetMinutes
+                    }
+                }
+            } header: {
+                Text("Time zone")
+            } footer: {
+                Text("Where the device is meant to be, for anything it dates locally.")
+            }
+
+            if model.card?.supportsGnss == true {
+                Section {
+                    if edits.timeTrust.isKnown {
+                        Toggle(isOn: $edits.timeTrust.edited.replacingNil(with: false)) {
+                            RemoteFieldTitle(
+                                "Trust the receiver's clock",
+                                problem: problems[edits.timeTrust.property]
+                            )
+                        }
+                    } else {
+                        RemoteReadOnlyToggle("Trust the receiver's clock", isOn: nil)
+                    }
+                } footer: {
+                    Text("On, a GNSS fix sets the device's clock by itself.")
+                }
+            }
+            RemoteProblemSection(model: model)
+        }
+        .remoteCategoryChrome(
+            model: model,
+            category: .time,
+            title: "Time",
+            apply: { await apply() },
+            hasEdits: !edits.dirty.isEmpty
+        )
+        .onChange(of: reading?.asOf) { edits = Edits(reading, preserving: edits) }
+        .onAppear { if edits.isEmpty { edits = Edits(reading) } }
+    }
+
+    /// The clock as of the last read, in the shape the companion screen
+    /// already presents one.
+    private var clock: RadioClock? {
+        guard let reading, let time = reading.properties.time, let asOf = reading.asOf
+        else { return nil }
+        return RadioClock(
+            date: time.epochSeconds.map { Date(timeIntervalSince1970: TimeInterval($0)) },
+            readAt: asOf
+        )
+    }
+
+    /// Write the phone's own clock to the device, immediately.
+    ///
+    /// Not an edit awaiting Apply: a clock staged in a form is wrong by
+    /// the time it is applied, by however long the operator took.
+    private func setFromPhone() async {
+        var desired = reading?.properties ?? .empty
+        desired.time = UlcpTimeRecord(
+            epochSeconds: UInt32(clamping: Int(Date.now.timeIntervalSince1970))
+        )
+        await model.apply(.time, desired: desired, dirty: [ulcpProperties.time])
+    }
+
+    private func apply() async {
+        // Only rebuilt when the device answered: see RemoteGnssScreen.
+        if await model.apply(.time, desired: edits.desired, dirty: edits.dirty) {
+            edits = Edits(model.readings[.time])
+        }
+    }
+
+    /// The two settings here. The clock is deliberately not among them —
+    /// see the screen comment.
+    private struct Edits {
+        var tzOffset = RemoteField<Int16>(0, nil)
+        var timeTrust = RemoteField<Bool>(0, nil)
+        var isEmpty = true
+        /// What the device last said, in full.
+        var held = UlcpDevicePropertiesRecord.empty
+
+        init() {}
+
+        init(_ reading: RemoteCategoryReading?) {
+            let id = ulcpProperties
+            held = reading?.properties ?? UlcpDevicePropertiesRecord.empty
+            tzOffset = RemoteField(id.tzOffset, held.tzOffsetMin)
+            timeTrust = RemoteField(id.gnssTimeTrust, held.gnssTimeTrust)
+            isEmpty = reading == nil
+        }
+
+        /// The new reading as the baseline, with the operator's standing
+        /// edits carried over — see ``RemoteField/preserving(_:)``.
+        init(_ reading: RemoteCategoryReading?, preserving old: Edits) {
+            self.init(reading)
+            guard !old.isEmpty else { return }
+            tzOffset = tzOffset.preserving(old.tzOffset)
+            timeTrust = timeTrust.preserving(old.timeTrust)
+        }
+
+        var dirty: Set<UInt32> {
+            var dirty: Set<UInt32> = []
+            if tzOffset.isDirty { dirty.insert(tzOffset.property) }
+            if timeTrust.isDirty { dirty.insert(timeTrust.property) }
+            return dirty
+        }
+
+        var desired: UlcpDevicePropertiesRecord {
+            // Only the dirty set is written; the rest of the record is
+            // carried for completeness and never reaches the air.
+            var desired = held
+            desired.tzOffsetMin = tzOffset.value
+            desired.gnssTimeTrust = timeTrust.value
+            return desired
+        }
     }
 }
 

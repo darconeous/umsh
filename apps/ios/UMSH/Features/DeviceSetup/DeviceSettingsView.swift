@@ -1,13 +1,13 @@
 import SwiftUI
 import UMSHMobileCore
 
-/// The settings form for one administered device, rendered from a list of
-/// sections.
+/// The commissioning sheet for one device, rendered from a list of sections.
 ///
-/// A setup sheet and the full editor are this same view: the goal's plan
-/// decides which sections appear, and nothing else about them differs. Two
-/// views over the same settings would be two things to keep in step, and the
-/// short one would be the one that fell behind.
+/// Every goal's sheet is this same view: the goal's plan decides which
+/// sections appear, and nothing else about them differs. Two views over the
+/// same settings would be two things to keep in step, and the short one would
+/// be the one that fell behind. Changing a device's settings afterward is not
+/// this screen — it is the management screens every device gets.
 ///
 /// The draft is owned by the flow rather than by this screen, so what is
 /// edited here is the same configuration another screen may have started —
@@ -20,10 +20,6 @@ struct DeviceSettingsView: View {
     let applyTitle: String
     /// What the goal will not manage on this device, if anything.
     let note: String?
-    /// Whether this screen is the goal's setup sheet, as opposed to the editor
-    /// reached from it. Decides whether applying also sets the clock and
-    /// reports itself in a modal.
-    let isCommissioning: Bool
     let isPeerSaved: (String) -> Bool
     let peerActions: PeerActions
     let finish: () -> Void
@@ -46,24 +42,13 @@ struct DeviceSettingsView: View {
         }
         .navigationTitle(title)
         .navigationBarTitleDisplayMode(.inline)
-        // Switching a receiver on and watching it find itself is what the
-        // positioning section is for, and a device never announces a position.
-        // A sheet showing only the policy has nothing to watch, so it does not
-        // poll — and neither does anything while a write is in flight, or the
-        // poll and the write race for the session's one exchange slot.
-        .radioPositionPoll(
-            isNeeded: sections.contains(.positioning)
-                && draft.showsPositioning
-                && !draft.isSaving,
-            sample: controller.refreshPositioning
-        )
         .toolbar {
             ToolbarItem(placement: .confirmationAction) {
                 if draft.applied {
                     Button("Done") { finish() }
                 } else {
                     Button(applyTitle) {
-                        Task { await draft.apply(commissioning: isCommissioning) }
+                        Task { await draft.apply() }
                     }
                     .disabled(!canApply)
                 }
@@ -128,40 +113,8 @@ struct DeviceSettingsView: View {
                 SetupNoteSection(note: note)
             }
 
-        case .ownership:
-            DeviceOwnershipSection(
-                hostState: snapshot.hostState,
-                peer: snapshot.deviceIdentity.map {
-                    draft.administeredPeer($0, name: snapshot.name)
-                },
-                peerActions: peerActions,
-                savePeer: controller.canSavePeer
-                    ? { await controller.savePeer(role: draft.advertisedPeerRole) }
-                    : nil,
-                isPeerSaved: isPeerSaved
-            )
-
         case .ownershipWarning:
             ForeignRadioSection(hostState: snapshot.hostState)
-
-        case .find:
-            if let alert = snapshot.alert {
-                DeviceFindSection(
-                    alert: alert,
-                    isBusy: isBusy,
-                    failureText: "The device did not answer. It may have moved out of range.",
-                    setAlert: controller.setAlert
-                )
-            }
-
-        case .power:
-            if sync.supportsBattery {
-                DevicePowerSection(
-                    percentage: snapshot.batteryPercentage,
-                    voltageMillivolts: snapshot.batteryVoltageMillivolts,
-                    chargeState: snapshot.chargeState
-                )
-            }
 
         case .name:
             if sync.supportsDeviceName {
@@ -179,57 +132,18 @@ struct DeviceSettingsView: View {
                 )
             }
 
-        case .presets:
-            if draft.showsPresets {
-                RadioPresetSection(presetIdentifier: $draft.presetIdentifier)
-            }
-
-        case .radio:
-            RadioSection(
-                enabled: $draft.radioEnabled,
-                frequencyKHz: $draft.frequencyKHz,
-                transmitPowerDBm: $draft.transmitPowerDBm,
-                showsLoRa: draft.showsLoRa,
-                bandwidthHz: $draft.bandwidthHz,
-                spreadingFactor: $draft.spreadingFactor,
-                codingRate: $draft.codingRate,
-                showsDutyCycleLimit: draft.showsDutyCycleLimit,
-                dutyCycleOptions: draft.dutyCycleOptions,
-                dutyCycleLimit: $draft.dutyCycleLimit
-            )
-
-        case .identity:
-            if draft.showsIdentity {
-                AdvertisedIdentitySection(
-                    role: $draft.identRole,
-                    mobile: $draft.identMobile,
-                    showsDiscoverable: draft.showsDiscoverable,
-                    discoverable: $draft.devDiscoverable,
-                    advertisedRole: draft.advertisedRole
-                )
-            }
-
         case .discoverability:
             if draft.showsDiscoverable {
                 DiscoverabilitySection(discoverable: $draft.devDiscoverable)
             }
 
-        case .positioning, .positioningPolicy:
+        case .positioningPolicy:
             if draft.showsPositioning {
                 PositioningSection(
                     enabled: $draft.gnssEnabled,
                     identUpdate: $draft.gnssIdentUpdate,
                     identPrecision: $draft.gnssIdentPrecision,
-                    timeTrust: $draft.gnssTimeTrust,
-                    readout: section == .positioning
-                        ? snapshot.position.map {
-                            PositioningReadout(
-                                position: $0,
-                                receiverEnabled: draft.reported.gnss?.enabled,
-                                pinName: snapshot.name
-                            )
-                        }
-                        : nil
+                    timeTrust: $draft.gnssTimeTrust
                 )
             }
 
@@ -239,17 +153,6 @@ struct DeviceSettingsView: View {
                     beaconIntervalSeconds: $draft.beaconIntervalSeconds,
                     advertIntervalSeconds: $draft.advertIntervalSeconds,
                     startupBeacon: $draft.startupBeacon
-                )
-            }
-
-        case .time:
-            if sync.supportsTime {
-                DeviceTimeSection(
-                    showsTimeZone: draft.showsTimeZone,
-                    timeZoneOffsetMinutes: $draft.timeZoneOffsetMinutes,
-                    clock: snapshot.clock,
-                    isBusy: isBusy,
-                    setTime: { try await controller.setTime(epochSeconds: $0) }
                 )
             }
 
@@ -301,10 +204,4 @@ struct DeviceSettingsView: View {
     private var isLinkDown: Bool {
         snapshot.linkState == .failed || snapshot.linkState == .idle
     }
-
-    /// Nothing else may talk to the device right now. A session runs one
-    /// exchange at a time and refuses a second outright, so a live control
-    /// left enabled during a save turns into a failure that reads as the
-    /// device's fault.
-    private var isBusy: Bool { isLinkDown || draft.isSaving }
 }

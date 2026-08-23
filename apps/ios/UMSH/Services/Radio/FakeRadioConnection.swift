@@ -428,6 +428,46 @@ actor FakeRadioConnection: RadioConnection {
         return state
     }
 
+    // MARK: - Managing the staging companion itself
+
+    /// The staging companion answers the local management path from the
+    /// same canned device the mesh path serves, minus the on-air delay:
+    /// a local link answering instantly is the behavior being staged.
+    func fetchCompanionProperties(
+        _ propertyIDs: [UInt32]
+    ) async throws -> [MobileMeshManagementAnswerRecord] {
+        propertyIDs.map { property in
+            MobileMeshManagementAnswerRecord(
+                propertyId: property,
+                value: managedDevice.values[property],
+                statusCode: managedDevice.values[property] == nil ? Self.propertyNotFound : nil
+            )
+        }
+    }
+
+    func writeCompanionProperties(
+        _ writes: [MobileMeshPropertyWriteRecord]
+    ) async throws -> [MobileMeshManagementAnswerRecord] {
+        for write in writes {
+            managedDevice.values[write.propertyId] = write.value
+        }
+        return writes.map {
+            MobileMeshManagementAnswerRecord(
+                propertyId: $0.propertyId,
+                value: $0.value,
+                statusCode: nil
+            )
+        }
+    }
+
+    func saveCompanionDevice() async throws {}
+
+    /// The staging companion never volunteers anything; the stream exists
+    /// so screens that subscribe have something to hold open.
+    func companionPropertyPushes() async -> AsyncStream<UlcpPropertyPushRecord> {
+        AsyncStream { _ in }
+    }
+
     /// `STATUS_PROP_NOT_FOUND`: how a device says it does not hold a
     /// property it was asked for.
     private static let propertyNotFound: UInt32 = 13
@@ -802,6 +842,10 @@ struct FakeManagedDevice: Sendable {
             id.startupBeacon: Data([1]),
             id.gnssEnabled: Data([1]),
             id.gnssTimeTrust: Data([1]),
+            // A clock a few seconds behind the phone's, so the Time screen
+            // has a drift to state, and Pacific daylight time to state it in.
+            id.time: UInt32(Date.now.timeIntervalSince1970 - 4).littleEndianData,
+            id.tzOffset: Int16(-420).littleEndianData,
             // The receiver's own view, by property number: these five are
             // read through the decoded fix rather than named individually
             // by any screen, so there is nothing to borrow the numbers

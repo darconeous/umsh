@@ -148,6 +148,14 @@ class UlcpRadioSession: NSObject, @unchecked Sendable {
     /// — with one addition: a whole-device read reports its progress along
     /// the way, and the handler for that has to outlive each report.
     var managementWaiters: [UInt64: ManagementWaiter] = [:]
+    /// The one outstanding local management exchange — a property fetch,
+    /// write pass, or save against the companion radio itself — resolved
+    /// by the session update that carries its completion. One at a time
+    /// because the Rust session runs one at a time.
+    var localManagementWaiter:
+        CheckedContinuation<UlcpLocalManagementEventRecord, any Error>?
+    var propertyPushContinuations:
+        [UUID: AsyncStream<UlcpPropertyPushRecord>.Continuation] = [:]
     var meshPumpGeneration = UUID()
     var meshPumpScheduled = false
     /// The last logged reason the mesh pump declined to run, so a wake storm
@@ -921,6 +929,107 @@ class UlcpRadioSession: NSObject, @unchecked Sendable {
         throw RemoteManagementError.refused(status: status)
     }
 
+    // MARK: - Managing the companion radio itself
+
+    /// Read named properties from the companion radio over the local link.
+    ///
+    /// The local counterpart of `fetchRemoteProperties`: same answers,
+    /// same refusal semantics, no mesh in between. `multiHint` has no
+    /// local meaning — single reads already pipeline on a fast link.
+    func fetchCompanionProperties(
+        _ propertyIDs: [UInt32]
+    ) async throws -> [MobileMeshManagementAnswerRecord] {
+        guard !propertyIDs.isEmpty else { return [] }
+        let event = try await performLocalManagement { session in
+            try session.beginPropertyFetch(propertyIds: propertyIDs)
+        }
+        return event.answers
+    }
+
+    /// Write properties to the companion radio, in the given order.
+    func writeCompanionProperties(
+        _ writes: [MobileMeshPropertyWriteRecord]
+    ) async throws -> [MobileMeshManagementAnswerRecord] {
+        guard !writes.isEmpty else { return [] }
+        let event = try await performLocalManagement { session in
+            try session.beginPropertyWrites(writes: writes)
+        }
+        return event.answers
+    }
+
+    /// Persist the companion radio's live configuration.
+    func saveCompanionDevice() async throws {
+        let event = try await performLocalManagement { session in
+            try session.beginSave()
+        }
+        try Self.requireSuccess(event.statusCode)
+    }
+
+    /// Values the companion radio announces on its own, verbatim.
+    func companionPropertyPushes() async -> AsyncStream<UlcpPropertyPushRecord> {
+        await withCheckedContinuation { result in
+            sessionQueue.async { [self] in
+                // Pushes are sparse — battery, alert, the occasional fix —
+                // and each merges independently, so a small bounded buffer
+                // rides out a busy consumer without unbounded growth.
+                let stream = AsyncStream(bufferingPolicy: .bufferingNewest(16)) { continuation in
+                    let id = UUID()
+                    propertyPushContinuations[id] = continuation
+                    continuation.onTermination = { [weak self] _ in
+                        self?.sessionQueue.async { [weak self] in
+                            self?.propertyPushContinuations[id] = nil
+                        }
+                    }
+                }
+                result.resume(returning: stream)
+            }
+        }
+    }
+
+    /// Run one local management exchange to completion.
+    ///
+    /// Errors wear `RemoteManagementError` so the management screens read
+    /// this path and the mesh path with the same copy. The stranded and
+    /// link-down paths release the waiter the same way they release
+    /// everything else.
+    func performLocalManagement(
+        _ start: @escaping (MobileUlcpSession) throws -> UlcpSessionUpdateRecord
+    ) async throws -> UlcpLocalManagementEventRecord {
+        try await withCheckedThrowingContinuation {
+            (result: CheckedContinuation<UlcpLocalManagementEventRecord, any Error>) in
+            sessionQueue.async { [self] in
+                guard link?.linkIsReady == true, snapshot.linkState == .attached else {
+                    result.resume(throwing: RemoteManagementError.unavailable)
+                    return
+                }
+                guard localManagementWaiter == nil else {
+                    result.resume(throwing: RemoteManagementError.unavailable)
+                    return
+                }
+                localManagementWaiter = result
+                do {
+                    // An immediate completion — a save with nothing to ask —
+                    // resolves the waiter inside this call.
+                    try applySessionUpdate(start(ulcpSession))
+                } catch {
+                    finishLocalManagement(throwing: RemoteManagementError.unavailable)
+                }
+            }
+        }
+    }
+
+    func finishLocalManagement(with event: UlcpLocalManagementEventRecord) {
+        guard let waiter = localManagementWaiter else { return }
+        localManagementWaiter = nil
+        waiter.resume(returning: event)
+    }
+
+    func finishLocalManagement(throwing error: any Error) {
+        guard let waiter = localManagementWaiter else { return }
+        localManagementWaiter = nil
+        waiter.resume(throwing: error)
+    }
+
     /// Run one node-management exchange to completion.
     ///
     /// Unlike a ULCP operation over the local link, several of these can be
@@ -1510,6 +1619,15 @@ class UlcpRadioSession: NSObject, @unchecked Sendable {
             }
         }
 
+        if let event = update.managementEvent {
+            finishLocalManagement(with: event)
+        }
+        for push in update.pushedProperties {
+            for continuation in propertyPushContinuations.values {
+                continuation.yield(push)
+            }
+        }
+
         for frame in update.outboundFrames {
             link?.linkSend(
                 frame: frame,
@@ -1645,6 +1763,10 @@ class UlcpRadioSession: NSObject, @unchecked Sendable {
             finishDevicePeerOperation(
                 throwing: DevicePeerError.failed("The radio did not answer")
             )
+        }
+        if localManagementWaiter != nil {
+            Self.logger.error("local management stranded by a silent radio; failing it")
+            finishLocalManagement(throwing: RemoteManagementError.noAnswer)
         }
     }
 
@@ -2062,6 +2184,7 @@ class UlcpRadioSession: NSObject, @unchecked Sendable {
             waiter.continuation.resume(throwing: RemoteManagementError.unavailable)
         }
         managementWaiters.removeAll()
+        finishLocalManagement(throwing: RemoteManagementError.unavailable)
         meshPumpGeneration = UUID()
     }
 

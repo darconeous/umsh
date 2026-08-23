@@ -199,6 +199,27 @@ protocol RadioConnection: AnyObject, Sendable {
         peerAddress: String,
         state: RadioAlertState
     ) async throws -> RadioAlertState
+    /// Read named properties from the companion radio itself, over the
+    /// local link, and answer with what it said about each — values and
+    /// refusals alike. The local counterpart of `fetchRemoteProperties`,
+    /// with the same shape of answer, so the same screens read both.
+    func fetchCompanionProperties(
+        _ propertyIDs: [UInt32]
+    ) async throws -> [MobileMeshManagementAnswerRecord]
+    /// Write properties to the companion radio, in the given order, and
+    /// answer with what it says each is now worth. The order is the
+    /// caller's plan — a radio-parameter write brackets the PHY — and is
+    /// preserved on the air.
+    func writeCompanionProperties(
+        _ writes: [MobileMeshPropertyWriteRecord]
+    ) async throws -> [MobileMeshManagementAnswerRecord]
+    /// Persist the companion radio's live configuration.
+    func saveCompanionDevice() async throws
+    /// Values the companion radio announces on its own over the local
+    /// link — the battery moving, an alert ending, a fix arriving —
+    /// verbatim, by property number. What the mesh path can never offer:
+    /// a device pushes only to the host it is attached to.
+    func companionPropertyPushes() async -> AsyncStream<UlcpPropertyPushRecord>
     /// Solicit a peer's current node identity by sending a targeted MAC
     /// Identity Request. Resolves once the request is handed to the radio;
     /// the peer's response arrives asynchronously on `advertisementEvents()`.

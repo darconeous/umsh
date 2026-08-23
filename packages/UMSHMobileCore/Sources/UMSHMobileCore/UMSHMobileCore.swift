@@ -3267,6 +3267,47 @@ public protocol MobileUlcpSessionProtocol: AnyObject, Sendable {
     func begin(selectedHostKey: Data?) throws  -> UlcpSessionUpdateRecord
 
     /**
+     * Read the named properties, whatever they are, and answer with what
+     * the device said about each.
+     *
+     * The local counterpart of a mesh management fetch, and it reports
+     * the same way: one answer per property, a refusal recorded as that
+     * property's status rather than failing the run. The completion
+     * arrives as [`UlcpSessionUpdateRecord::management_event`] once every
+     * answer is in. One operation may run at a time.
+     *
+     * Values read fold into the session's own snapshot as well, so a
+     * settings screen reading a property does not leave the attached
+     * provisioning stale.
+     */
+    func beginPropertyFetch(propertyIds: [UInt32]) throws  -> UlcpSessionUpdateRecord
+
+    /**
+     * Write the given properties, in the given order, and answer with
+     * what the device says each is now worth.
+     *
+     * The order is the caller's to state and is preserved — a dirty-write
+     * plan brackets the radio with `PROP_PHY_ENABLED`, and reordering it
+     * would ask the device to retune mid-transmission. Writes go out one
+     * at a time for the same reason. A refusal is recorded as that
+     * property's answer and the run continues, matching the mesh path.
+     *
+     * Nothing is saved: persistence is a separate, explicit
+     * [`Self::begin_save`], again matching the mesh path.
+     */
+    func beginPropertyWrites(writes: [MobileMeshPropertyWriteRecord]) throws  -> UlcpSessionUpdateRecord
+
+    /**
+     * Persist whatever the device is holding, reporting the `CMD_SAVE`
+     * status on the completion event.
+     *
+     * On a device without `CAP_SAVE` there is nothing to ask, and the
+     * operation completes immediately with no status — running
+     * configuration is all such a device has.
+     */
+    func beginSave() throws  -> UlcpSessionUpdateRecord
+
+    /**
      * Replace an unclaimed or other-host configuration with this phone's key.
      */
     func claim(hostKey: Data) throws  -> UlcpSessionUpdateRecord
@@ -3597,6 +3638,32 @@ public static func administrative() -> MobileUlcpSession  {
 })
 }
 
+    /**
+     * An administrative session that attaches without reading the device
+     * whole.
+     *
+     * Post-attach inspection is cut to what attaching itself requires —
+     * the interface check and the always-present radio basics — so the
+     * link is usable in a couple of exchanges instead of tens. Everything
+     * else is read on demand through
+     * [`Self::begin_property_fetch`], which is the point: a settings
+     * screen that reads lazily has no use for an attach that reads
+     * everything first.
+     *
+     * The provisioning snapshot such a session reports lists every
+     * unread capability-gated property as unreadable, so the
+     * whole-record configure calls — which withdraw writes to unreadable
+     * properties — are not meaningful here. A lazy session writes
+     * through [`Self::begin_property_writes`].
+     */
+public static func administrativeLazy() -> MobileUlcpSession  {
+    return try!  FfiConverterTypeMobileUlcpSession_lift(try! rustCall() {
+        uniffiCallStatus in
+    uniffi_umsh_mobile_core_fn_constructor_mobileulcpsession_administrative_lazy(uniffiCallStatus
+    )
+})
+}
+
 
 
     /**
@@ -3635,6 +3702,70 @@ open func begin(selectedHostKey: Data?)throws  -> UlcpSessionUpdateRecord  {
     uniffi_umsh_mobile_core_fn_method_mobileulcpsession_begin(
             self.uniffiCloneHandle(),
         FfiConverterOptionData.lower(selectedHostKey),uniffiCallStatus
+    )
+})
+}
+
+    /**
+     * Read the named properties, whatever they are, and answer with what
+     * the device said about each.
+     *
+     * The local counterpart of a mesh management fetch, and it reports
+     * the same way: one answer per property, a refusal recorded as that
+     * property's status rather than failing the run. The completion
+     * arrives as [`UlcpSessionUpdateRecord::management_event`] once every
+     * answer is in. One operation may run at a time.
+     *
+     * Values read fold into the session's own snapshot as well, so a
+     * settings screen reading a property does not leave the attached
+     * provisioning stale.
+     */
+open func beginPropertyFetch(propertyIds: [UInt32])throws  -> UlcpSessionUpdateRecord  {
+    return try  FfiConverterTypeUlcpSessionUpdateRecord_lift(try rustCallWithError(FfiConverterTypeMobileError_lift) {
+        uniffiCallStatus in
+    uniffi_umsh_mobile_core_fn_method_mobileulcpsession_begin_property_fetch(
+            self.uniffiCloneHandle(),
+        FfiConverterSequenceUInt32.lower(propertyIds),uniffiCallStatus
+    )
+})
+}
+
+    /**
+     * Write the given properties, in the given order, and answer with
+     * what the device says each is now worth.
+     *
+     * The order is the caller's to state and is preserved — a dirty-write
+     * plan brackets the radio with `PROP_PHY_ENABLED`, and reordering it
+     * would ask the device to retune mid-transmission. Writes go out one
+     * at a time for the same reason. A refusal is recorded as that
+     * property's answer and the run continues, matching the mesh path.
+     *
+     * Nothing is saved: persistence is a separate, explicit
+     * [`Self::begin_save`], again matching the mesh path.
+     */
+open func beginPropertyWrites(writes: [MobileMeshPropertyWriteRecord])throws  -> UlcpSessionUpdateRecord  {
+    return try  FfiConverterTypeUlcpSessionUpdateRecord_lift(try rustCallWithError(FfiConverterTypeMobileError_lift) {
+        uniffiCallStatus in
+    uniffi_umsh_mobile_core_fn_method_mobileulcpsession_begin_property_writes(
+            self.uniffiCloneHandle(),
+        FfiConverterSequenceTypeMobileMeshPropertyWriteRecord.lower(writes),uniffiCallStatus
+    )
+})
+}
+
+    /**
+     * Persist whatever the device is holding, reporting the `CMD_SAVE`
+     * status on the completion event.
+     *
+     * On a device without `CAP_SAVE` there is nothing to ask, and the
+     * operation completes immediately with no status — running
+     * configuration is all such a device has.
+     */
+open func beginSave()throws  -> UlcpSessionUpdateRecord  {
+    return try  FfiConverterTypeUlcpSessionUpdateRecord_lift(try rustCallWithError(FfiConverterTypeMobileError_lift) {
+        uniffiCallStatus in
+    uniffi_umsh_mobile_core_fn_method_mobileulcpsession_begin_save(
+            self.uniffiCloneHandle(),uniffiCallStatus
     )
 })
 }
@@ -8050,6 +8181,13 @@ public struct UlcpDevicePropertiesRecord: Equatable, Hashable {
      */
     public var gnss: UlcpGnssRecord?
     public var gnssTimeTrust: Bool?
+    /**
+     * What the device's clock read when it answered. Present when the
+     * clock was asked about; the inner epoch is absent on a device that
+     * has not found the time.
+     */
+    public var time: UlcpTimeRecord?
+    public var tzOffsetMin: Int16?
     public var repeaterEnabled: Bool?
     public var repeaterRegions: [String]?
     public var repeaterDefaultRegion: Data?
@@ -8081,7 +8219,12 @@ public struct UlcpDevicePropertiesRecord: Equatable, Hashable {
         /**
          * What the receiver currently sees. Read-only, and absent on a
          * device with no receiver.
-         */gnss: UlcpGnssRecord?, gnssTimeTrust: Bool?, repeaterEnabled: Bool?, repeaterRegions: [String]?, repeaterDefaultRegion: Data?, repeaterMinRssiDbm: Int16?, repeaterMinSnrDb: Int8?, devPeerKeys: [Data]?, devAdminKeys: [Data]?) {
+         */gnss: UlcpGnssRecord?, gnssTimeTrust: Bool?,
+        /**
+         * What the device's clock read when it answered. Present when the
+         * clock was asked about; the inner epoch is absent on a device that
+         * has not found the time.
+         */time: UlcpTimeRecord?, tzOffsetMin: Int16?, repeaterEnabled: Bool?, repeaterRegions: [String]?, repeaterDefaultRegion: Data?, repeaterMinRssiDbm: Int16?, repeaterMinSnrDb: Int8?, devPeerKeys: [Data]?, devAdminKeys: [Data]?) {
         self.battery = battery
         self.phyEnabled = phyEnabled
         self.frequencyKhz = frequencyKhz
@@ -8108,6 +8251,8 @@ public struct UlcpDevicePropertiesRecord: Equatable, Hashable {
         self.gnssEnabled = gnssEnabled
         self.gnss = gnss
         self.gnssTimeTrust = gnssTimeTrust
+        self.time = time
+        self.tzOffsetMin = tzOffsetMin
         self.repeaterEnabled = repeaterEnabled
         self.repeaterRegions = repeaterRegions
         self.repeaterDefaultRegion = repeaterDefaultRegion
@@ -8159,6 +8304,8 @@ public struct FfiConverterTypeUlcpDevicePropertiesRecord: FfiConverterRustBuffer
                 gnssEnabled: FfiConverterOptionBool.read(from: &buf),
                 gnss: FfiConverterOptionTypeUlcpGnssRecord.read(from: &buf),
                 gnssTimeTrust: FfiConverterOptionBool.read(from: &buf),
+                time: FfiConverterOptionTypeUlcpTimeRecord.read(from: &buf),
+                tzOffsetMin: FfiConverterOptionInt16.read(from: &buf),
                 repeaterEnabled: FfiConverterOptionBool.read(from: &buf),
                 repeaterRegions: FfiConverterOptionSequenceString.read(from: &buf),
                 repeaterDefaultRegion: FfiConverterOptionData.read(from: &buf),
@@ -8196,6 +8343,8 @@ public struct FfiConverterTypeUlcpDevicePropertiesRecord: FfiConverterRustBuffer
         FfiConverterOptionBool.write(value.gnssEnabled, into: &buf)
         FfiConverterOptionTypeUlcpGnssRecord.write(value.gnss, into: &buf)
         FfiConverterOptionBool.write(value.gnssTimeTrust, into: &buf)
+        FfiConverterOptionTypeUlcpTimeRecord.write(value.time, into: &buf)
+        FfiConverterOptionInt16.write(value.tzOffsetMin, into: &buf)
         FfiConverterOptionBool.write(value.repeaterEnabled, into: &buf)
         FfiConverterOptionSequenceString.write(value.repeaterRegions, into: &buf)
         FfiConverterOptionData.write(value.repeaterDefaultRegion, into: &buf)
@@ -8596,6 +8745,79 @@ public func FfiConverterTypeUlcpIdentPositionRecord_lower(_ value: UlcpIdentPosi
 
 
 /**
+ * The completion of one local management operation started with
+ * [`MobileUlcpSession::begin_property_fetch`],
+ * [`begin_property_writes`](MobileUlcpSession::begin_property_writes), or
+ * [`begin_save`](MobileUlcpSession::begin_save).
+ *
+ * Answers wear the same record the mesh management path reports, and mean
+ * the same things: a value is what the device holds, a status in its
+ * place is a refusal of that one property. What differs is the carrier —
+ * here the completion rides the session update instead of a mesh event.
+ */
+public struct UlcpLocalManagementEventRecord: Equatable, Hashable {
+    public var answers: [MobileMeshManagementAnswerRecord]
+    /**
+     * The `CMD_SAVE` outcome, on a save. `None` on fetches, on writes,
+     * and on a save the device has no `CAP_SAVE` to answer.
+     */
+    public var statusCode: UInt32?
+
+    // Default memberwise initializers are never public by default, so we
+    // declare one manually.
+    public init(answers: [MobileMeshManagementAnswerRecord],
+        /**
+         * The `CMD_SAVE` outcome, on a save. `None` on fetches, on writes,
+         * and on a save the device has no `CAP_SAVE` to answer.
+         */statusCode: UInt32?) {
+        self.answers = answers
+        self.statusCode = statusCode
+    }
+
+
+
+
+}
+
+#if compiler(>=6)
+extension UlcpLocalManagementEventRecord: Sendable {}
+#endif
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public struct FfiConverterTypeUlcpLocalManagementEventRecord: FfiConverterRustBuffer {
+    public static func read(from buf: inout (data: Data, offset: Data.Index)) throws -> UlcpLocalManagementEventRecord {
+        return
+            try UlcpLocalManagementEventRecord(
+                answers: FfiConverterSequenceTypeMobileMeshManagementAnswerRecord.read(from: &buf),
+                statusCode: FfiConverterOptionUInt32.read(from: &buf)
+        )
+    }
+
+    public static func write(_ value: UlcpLocalManagementEventRecord, into buf: inout [UInt8]) {
+        FfiConverterSequenceTypeMobileMeshManagementAnswerRecord.write(value.answers, into: &buf)
+        FfiConverterOptionUInt32.write(value.statusCode, into: &buf)
+    }
+}
+
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public func FfiConverterTypeUlcpLocalManagementEventRecord_lift(_ buf: RustBuffer) throws -> UlcpLocalManagementEventRecord {
+    return try FfiConverterTypeUlcpLocalManagementEventRecord.lift(buf)
+}
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public func FfiConverterTypeUlcpLocalManagementEventRecord_lower(_ value: UlcpLocalManagementEventRecord) -> RustBuffer {
+    return FfiConverterTypeUlcpLocalManagementEventRecord.lower(value)
+}
+
+
+/**
  * The property numbers the management screens name.
  *
  * A screen has to say which fields the operator edited, and it caches
@@ -8630,6 +8852,9 @@ public struct UlcpManagedPropertyIds: Equatable, Hashable {
     public var startupBeacon: UInt32
     public var gnssEnabled: UInt32
     public var gnssTimeTrust: UInt32
+    public var time: UInt32
+    public var tzOffset: UInt32
+    public var alert: UInt32
     public var repeaterEnabled: UInt32
     public var repeaterRegions: UInt32
     public var repeaterDefaultRegion: UInt32
@@ -8640,7 +8865,7 @@ public struct UlcpManagedPropertyIds: Equatable, Hashable {
 
     // Default memberwise initializers are never public by default, so we
     // declare one manually.
-    public init(caps: UInt32, deviceVersion: UInt32, deviceModel: UInt32, deviceName: UInt32, battery: UInt32, phyEnabled: UInt32, frequency: UInt32, transmitPower: UInt32, loraBandwidth: UInt32, loraSpreadingFactor: UInt32, loraCodingRate: UInt32, dutyCycleNow: UInt32, dutyCycleLimit: UInt32, identRole: UInt32, identMobile: UInt32, identLocation: UInt32, identAltitude: UInt32, devDiscoverable: UInt32, gnssIdentUpdate: UInt32, gnssIdentPrecision: UInt32, advertInterval: UInt32, beaconInterval: UInt32, startupBeacon: UInt32, gnssEnabled: UInt32, gnssTimeTrust: UInt32, repeaterEnabled: UInt32, repeaterRegions: UInt32, repeaterDefaultRegion: UInt32, repeaterMinRssi: UInt32, repeaterMinSnr: UInt32, devPeers: UInt32, devAdmins: UInt32) {
+    public init(caps: UInt32, deviceVersion: UInt32, deviceModel: UInt32, deviceName: UInt32, battery: UInt32, phyEnabled: UInt32, frequency: UInt32, transmitPower: UInt32, loraBandwidth: UInt32, loraSpreadingFactor: UInt32, loraCodingRate: UInt32, dutyCycleNow: UInt32, dutyCycleLimit: UInt32, identRole: UInt32, identMobile: UInt32, identLocation: UInt32, identAltitude: UInt32, devDiscoverable: UInt32, gnssIdentUpdate: UInt32, gnssIdentPrecision: UInt32, advertInterval: UInt32, beaconInterval: UInt32, startupBeacon: UInt32, gnssEnabled: UInt32, gnssTimeTrust: UInt32, time: UInt32, tzOffset: UInt32, alert: UInt32, repeaterEnabled: UInt32, repeaterRegions: UInt32, repeaterDefaultRegion: UInt32, repeaterMinRssi: UInt32, repeaterMinSnr: UInt32, devPeers: UInt32, devAdmins: UInt32) {
         self.caps = caps
         self.deviceVersion = deviceVersion
         self.deviceModel = deviceModel
@@ -8666,6 +8891,9 @@ public struct UlcpManagedPropertyIds: Equatable, Hashable {
         self.startupBeacon = startupBeacon
         self.gnssEnabled = gnssEnabled
         self.gnssTimeTrust = gnssTimeTrust
+        self.time = time
+        self.tzOffset = tzOffset
+        self.alert = alert
         self.repeaterEnabled = repeaterEnabled
         self.repeaterRegions = repeaterRegions
         self.repeaterDefaultRegion = repeaterDefaultRegion
@@ -8716,6 +8944,9 @@ public struct FfiConverterTypeUlcpManagedPropertyIds: FfiConverterRustBuffer {
                 startupBeacon: FfiConverterUInt32.read(from: &buf),
                 gnssEnabled: FfiConverterUInt32.read(from: &buf),
                 gnssTimeTrust: FfiConverterUInt32.read(from: &buf),
+                time: FfiConverterUInt32.read(from: &buf),
+                tzOffset: FfiConverterUInt32.read(from: &buf),
+                alert: FfiConverterUInt32.read(from: &buf),
                 repeaterEnabled: FfiConverterUInt32.read(from: &buf),
                 repeaterRegions: FfiConverterUInt32.read(from: &buf),
                 repeaterDefaultRegion: FfiConverterUInt32.read(from: &buf),
@@ -8752,6 +8983,9 @@ public struct FfiConverterTypeUlcpManagedPropertyIds: FfiConverterRustBuffer {
         FfiConverterUInt32.write(value.startupBeacon, into: &buf)
         FfiConverterUInt32.write(value.gnssEnabled, into: &buf)
         FfiConverterUInt32.write(value.gnssTimeTrust, into: &buf)
+        FfiConverterUInt32.write(value.time, into: &buf)
+        FfiConverterUInt32.write(value.tzOffset, into: &buf)
+        FfiConverterUInt32.write(value.alert, into: &buf)
         FfiConverterUInt32.write(value.repeaterEnabled, into: &buf)
         FfiConverterUInt32.write(value.repeaterRegions, into: &buf)
         FfiConverterUInt32.write(value.repeaterDefaultRegion, into: &buf)
@@ -8903,6 +9137,65 @@ public func FfiConverterTypeUlcpPropertyFrameRecord_lift(_ buf: RustBuffer) thro
 #endif
 public func FfiConverterTypeUlcpPropertyFrameRecord_lower(_ value: UlcpPropertyFrameRecord) -> RustBuffer {
     return FfiConverterTypeUlcpPropertyFrameRecord.lower(value)
+}
+
+
+/**
+ * One property value the device announced on its own — `CMD_PROP_IS`
+ * with the unsolicited transaction — as opposed to the answer to
+ * anything this session asked.
+ */
+public struct UlcpPropertyPushRecord: Equatable, Hashable {
+    public var propertyId: UInt32
+    public var value: Data
+
+    // Default memberwise initializers are never public by default, so we
+    // declare one manually.
+    public init(propertyId: UInt32, value: Data) {
+        self.propertyId = propertyId
+        self.value = value
+    }
+
+
+
+
+}
+
+#if compiler(>=6)
+extension UlcpPropertyPushRecord: Sendable {}
+#endif
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public struct FfiConverterTypeUlcpPropertyPushRecord: FfiConverterRustBuffer {
+    public static func read(from buf: inout (data: Data, offset: Data.Index)) throws -> UlcpPropertyPushRecord {
+        return
+            try UlcpPropertyPushRecord(
+                propertyId: FfiConverterUInt32.read(from: &buf),
+                value: FfiConverterData.read(from: &buf)
+        )
+    }
+
+    public static func write(_ value: UlcpPropertyPushRecord, into buf: inout [UInt8]) {
+        FfiConverterUInt32.write(value.propertyId, into: &buf)
+        FfiConverterData.write(value.value, into: &buf)
+    }
+}
+
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public func FfiConverterTypeUlcpPropertyPushRecord_lift(_ buf: RustBuffer) throws -> UlcpPropertyPushRecord {
+    return try FfiConverterTypeUlcpPropertyPushRecord.lift(buf)
+}
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public func FfiConverterTypeUlcpPropertyPushRecord_lower(_ value: UlcpPropertyPushRecord) -> RustBuffer {
+    return FfiConverterTypeUlcpPropertyPushRecord.lower(value)
 }
 
 
@@ -9401,6 +9694,17 @@ public struct UlcpSessionUpdateRecord: Equatable, Hashable {
      * session has already recovered to a stable stage and remains usable.
      */
     public var operationError: UlcpOperationErrorRecord?
+    /**
+     * Completion of the local management operation, when this update
+     * carries one.
+     */
+    public var managementEvent: UlcpLocalManagementEventRecord?
+    /**
+     * Values the device announced unsolicited with this update, verbatim.
+     * The snapshot has already absorbed what it recognizes; these carry
+     * the raw octets to whoever caches values by property number.
+     */
+    public var pushedProperties: [UlcpPropertyPushRecord]
 
     // Default memberwise initializers are never public by default, so we
     // declare one manually.
@@ -9420,7 +9724,16 @@ public struct UlcpSessionUpdateRecord: Equatable, Hashable {
         /**
          * Non-transmit operation error consumed by this update. The ULCP
          * session has already recovered to a stable stage and remains usable.
-         */operationError: UlcpOperationErrorRecord?) {
+         */operationError: UlcpOperationErrorRecord?,
+        /**
+         * Completion of the local management operation, when this update
+         * carries one.
+         */managementEvent: UlcpLocalManagementEventRecord?,
+        /**
+         * Values the device announced unsolicited with this update, verbatim.
+         * The snapshot has already absorbed what it recognizes; these carry
+         * the raw octets to whoever caches values by property number.
+         */pushedProperties: [UlcpPropertyPushRecord]) {
         self.outboundFrames = outboundFrames
         self.receivedFrames = receivedFrames
         self.snapshot = snapshot
@@ -9429,6 +9742,8 @@ public struct UlcpSessionUpdateRecord: Equatable, Hashable {
         self.rawTransmitStartedTransactionId = rawTransmitStartedTransactionId
         self.rawTransmitResult = rawTransmitResult
         self.operationError = operationError
+        self.managementEvent = managementEvent
+        self.pushedProperties = pushedProperties
     }
 
 
@@ -9454,7 +9769,9 @@ public struct FfiConverterTypeUlcpSessionUpdateRecord: FfiConverterRustBuffer {
                 rawTransmitPending: FfiConverterBool.read(from: &buf),
                 rawTransmitStartedTransactionId: FfiConverterOptionUInt8.read(from: &buf),
                 rawTransmitResult: FfiConverterOptionTypeUlcpRawTransmitResultRecord.read(from: &buf),
-                operationError: FfiConverterOptionTypeUlcpOperationErrorRecord.read(from: &buf)
+                operationError: FfiConverterOptionTypeUlcpOperationErrorRecord.read(from: &buf),
+                managementEvent: FfiConverterOptionTypeUlcpLocalManagementEventRecord.read(from: &buf),
+                pushedProperties: FfiConverterSequenceTypeUlcpPropertyPushRecord.read(from: &buf)
         )
     }
 
@@ -9467,6 +9784,8 @@ public struct FfiConverterTypeUlcpSessionUpdateRecord: FfiConverterRustBuffer {
         FfiConverterOptionUInt8.write(value.rawTransmitStartedTransactionId, into: &buf)
         FfiConverterOptionTypeUlcpRawTransmitResultRecord.write(value.rawTransmitResult, into: &buf)
         FfiConverterOptionTypeUlcpOperationErrorRecord.write(value.operationError, into: &buf)
+        FfiConverterOptionTypeUlcpLocalManagementEventRecord.write(value.managementEvent, into: &buf)
+        FfiConverterSequenceTypeUlcpPropertyPushRecord.write(value.pushedProperties, into: &buf)
     }
 }
 
@@ -12150,6 +12469,11 @@ public enum UlcpManageCategory: Equatable, Hashable {
      */
     case gnss
     /**
+     * The wall clock: what time the device holds, where it is meant to
+     * be, and whether the receiver may set the clock.
+     */
+    case time
+    /**
      * The forwarding policy.
      */
     case repeater
@@ -12186,9 +12510,11 @@ public struct FfiConverterTypeUlcpManageCategory: FfiConverterRustBuffer {
 
         case 4: return .gnss
 
-        case 5: return .repeater
+        case 5: return .time
 
-        case 6: return .peerNodes
+        case 6: return .repeater
+
+        case 7: return .peerNodes
 
         default: throw UniffiInternalError.unexpectedEnumCase
         }
@@ -12214,12 +12540,16 @@ public struct FfiConverterTypeUlcpManageCategory: FfiConverterRustBuffer {
             writeInt(&buf, Int32(4))
 
 
-        case .repeater:
+        case .time:
             writeInt(&buf, Int32(5))
 
 
-        case .peerNodes:
+        case .repeater:
             writeInt(&buf, Int32(6))
+
+
+        case .peerNodes:
+            writeInt(&buf, Int32(7))
 
         }
     }
@@ -12890,6 +13220,30 @@ fileprivate struct FfiConverterOptionTypeUlcpIdentPositionRecord: FfiConverterRu
         switch try readInt(&buf) as Int8 {
         case 0: return nil
         case 1: return try FfiConverterTypeUlcpIdentPositionRecord.read(from: &buf)
+        default: throw UniffiInternalError.unexpectedOptionalTag
+        }
+    }
+}
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+fileprivate struct FfiConverterOptionTypeUlcpLocalManagementEventRecord: FfiConverterRustBuffer {
+    typealias SwiftType = UlcpLocalManagementEventRecord?
+
+    public static func write(_ value: SwiftType, into buf: inout [UInt8]) {
+        guard let value = value else {
+            writeInt(&buf, Int8(0))
+            return
+        }
+        writeInt(&buf, Int8(1))
+        FfiConverterTypeUlcpLocalManagementEventRecord.write(value, into: &buf)
+    }
+
+    public static func read(from buf: inout (data: Data, offset: Data.Index)) throws -> SwiftType {
+        switch try readInt(&buf) as Int8 {
+        case 0: return nil
+        case 1: return try FfiConverterTypeUlcpLocalManagementEventRecord.read(from: &buf)
         default: throw UniffiInternalError.unexpectedOptionalTag
         }
     }
@@ -13704,6 +14058,31 @@ fileprivate struct FfiConverterSequenceTypeUlcpPropertyFrameRecord: FfiConverter
         seq.reserveCapacity(Int(len))
         for _ in 0 ..< len {
             seq.append(try FfiConverterTypeUlcpPropertyFrameRecord.read(from: &buf))
+        }
+        return seq
+    }
+}
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+fileprivate struct FfiConverterSequenceTypeUlcpPropertyPushRecord: FfiConverterRustBuffer {
+    typealias SwiftType = [UlcpPropertyPushRecord]
+
+    public static func write(_ value: [UlcpPropertyPushRecord], into buf: inout [UInt8]) {
+        let len = Int32(value.count)
+        writeInt(&buf, len)
+        for item in value {
+            FfiConverterTypeUlcpPropertyPushRecord.write(item, into: &buf)
+        }
+    }
+
+    public static func read(from buf: inout (data: Data, offset: Data.Index)) throws -> [UlcpPropertyPushRecord] {
+        let len: Int32 = try readInt(&buf)
+        var seq = [UlcpPropertyPushRecord]()
+        seq.reserveCapacity(Int(len))
+        for _ in 0 ..< len {
+            seq.append(try FfiConverterTypeUlcpPropertyPushRecord.read(from: &buf))
         }
         return seq
     }
@@ -14835,6 +15214,15 @@ private let initializationResult: InitializationResult = {
     if (uniffi_umsh_mobile_core_checksum_method_mobileulcpsession_begin() != 7480) {
         return InitializationResult.apiChecksumMismatch
     }
+    if (uniffi_umsh_mobile_core_checksum_method_mobileulcpsession_begin_property_fetch() != 22103) {
+        return InitializationResult.apiChecksumMismatch
+    }
+    if (uniffi_umsh_mobile_core_checksum_method_mobileulcpsession_begin_property_writes() != 56120) {
+        return InitializationResult.apiChecksumMismatch
+    }
+    if (uniffi_umsh_mobile_core_checksum_method_mobileulcpsession_begin_save() != 40209) {
+        return InitializationResult.apiChecksumMismatch
+    }
     if (uniffi_umsh_mobile_core_checksum_method_mobileulcpsession_claim() != 28627) {
         return InitializationResult.apiChecksumMismatch
     }
@@ -14914,6 +15302,9 @@ private let initializationResult: InitializationResult = {
         return InitializationResult.apiChecksumMismatch
     }
     if (uniffi_umsh_mobile_core_checksum_constructor_mobileulcpsession_administrative() != 16912) {
+        return InitializationResult.apiChecksumMismatch
+    }
+    if (uniffi_umsh_mobile_core_checksum_constructor_mobileulcpsession_administrative_lazy() != 24644) {
         return InitializationResult.apiChecksumMismatch
     }
     if (uniffi_umsh_mobile_core_checksum_constructor_mobileulcpsession_new() != 48651) {

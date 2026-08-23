@@ -717,10 +717,10 @@ struct PeerActions {
     var addToDeviceIdentity: ((PeerSummary) async -> DevicePeerActionOutcome)? = nil
     /// Remove the node's public key from the radio's device identity.
     var removeFromDeviceIdentity: ((PeerSummary) async -> DevicePeerActionOutcome)? = nil
-    /// Read and change another node's settings across the mesh. Nil before
-    /// a mesh session exists, which is the one case where the screen has
-    /// nothing to send through.
-    var manageDevice: RemoteDeviceManagement? = nil
+    /// The way to read and change this node's settings, chosen per peer:
+    /// the companion radio is managed over its own link, everything else
+    /// across the mesh. Nil only where no backend could exist at all.
+    var manageDevice: ((PeerSummary) -> DeviceManagementBackend)? = nil
 
     /// No app services wired up — used by previews and by any sheet built
     /// before the mesh session exists.

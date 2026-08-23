@@ -23,6 +23,16 @@ enum LocationPresentation {
         cellMetersByPrecision[precisionBytes]
     }
 
+    /// A precision named by the area it discloses, which is the only thing
+    /// about it a person can weigh. Bare sizes, so a picker row reads as a
+    /// measurement rather than a sentence.
+    static func precisionLabel(precisionBytes: UInt8) -> String {
+        guard let meters = cellMeters(precisionBytes: precisionBytes) else {
+            return "\(precisionBytes) bytes"
+        }
+        return cellSizeText(meters: meters)
+    }
+
     /// How large the cell is, stated plainly: "about 611 m".
     static func cellLabel(precisionBytes: UInt8) -> String? {
         cellMeters(precisionBytes: precisionBytes).map(cellLabel(meters:))

@@ -12,7 +12,7 @@ enum DeviceSetupGoal: String, CaseIterable, Identifiable, Hashable {
     case tracker
     /// A node that forwards other people's traffic.
     case repeaterNode
-    /// Open the editor on whatever the device already is.
+    /// Open the management screens on whatever the device already is.
     case revisit
 
     var id: String { rawValue }
@@ -130,42 +130,31 @@ enum DeviceSetupAssumption: String, Hashable {
     }
 }
 
-/// One part of the device settings form.
+/// One part of a commissioning sheet.
 ///
-/// A setup sheet and the full editor are the same form rendered from different
-/// lists of these, which is what keeps them from becoming two forms that have
-/// to be kept in step.
+/// Each goal's sheet is this same form rendered from a different list of
+/// these, which is what keeps two goals from becoming two forms. Changing a
+/// device's settings is not a goal's sheet at all — it opens the management
+/// screens every device gets, over whichever link reaches it.
 enum DeviceSetupSection: String, Hashable {
     case link
     /// What this goal will not be able to do on this device, stated once at
     /// the top rather than left as a section that silently is not there.
     case note
-    /// Whose device this is and the identity it carries. What the editor shows.
-    case ownership
-    /// Only the part of that worth interrupting a setup for. What a sheet
-    /// shows: "not configured" is noise on a fresh board, and the device's
-    /// identity is offered after the write, when its role is finally known.
+    /// The part of ownership worth interrupting a setup for: "not configured"
+    /// is noise on a fresh board, and the device's identity is offered after
+    /// the write, when its role is finally known.
     case ownershipWarning
-    case find
-    case power
     case name
-    /// The whole PHY as one row, pushing an editor. What a setup sheet shows.
+    /// The whole PHY as one row, pushing an editor.
     case radioProfile
-    /// The preset picker, inline. What the editor shows.
-    case presets
-    /// Every radio parameter, inline. What the editor shows.
-    case radio
-    /// Role, mobility and discoverability together. What the editor shows.
-    case identity
-    /// Discoverability alone — on a setup sheet the role and mobility are the
-    /// goal's to decide, and only this one is the operator's.
+    /// Discoverability alone — the role and mobility are the goal's to decide,
+    /// and only this one is the operator's.
     case discoverability
-    /// The positioning policy plus the live readout and the poll behind it.
-    case positioning
-    /// The four policy controls alone — no fix, no satellites, no coordinates.
+    /// The four positioning policy controls — no fix, no satellites, no
+    /// coordinates.
     case positioningPolicy
     case announcements
-    case time
     case forwarding
     /// Who may configure this device from a distance.
     case administrators
@@ -296,14 +285,13 @@ struct DeviceSetupPlan {
         deviceNoun: "repeater"
     )
 
+    /// Changing a device's settings has no sheet of its own: the goal
+    /// connects, and the management screens take it from there, reading the
+    /// device one screenful at a time.
     static let revisit = Self(
         goal: .revisit,
         assumptions: [],
-        sections: [
-            .link, .ownership, .find, .power, .name, .presets, .radio,
-            .identity, .positioning, .announcements, .time, .forwarding,
-            .administrators, .applyStatus,
-        ],
+        sections: [],
         title: "Device",
         applyTitle: "Apply",
         deviceNoun: "device"

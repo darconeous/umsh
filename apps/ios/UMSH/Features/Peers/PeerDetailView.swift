@@ -266,12 +266,15 @@ struct PeerDetailView: View {
                     // administrators that it can be managed at all, so
                     // hiding this behind what the mesh has heard would hide
                     // it exactly where it works. Silence is the answer, and
-                    // the screen behind this says so in a sentence.
-                    if let management = actions.manageDevice, !peer.isUlcpDevice {
+                    // the screen behind this says so in a sentence. The
+                    // companion radio is offered too — its backend is its
+                    // own link rather than the mesh, and the factory makes
+                    // that call per peer.
+                    if let management = actions.manageDevice {
                         NavigationLink {
                             ManageDeviceScreen(
                                 peer: peer,
-                                management: management,
+                                management: management(peer),
                                 browsing: peerBrowsing
                             )
                         } label: {

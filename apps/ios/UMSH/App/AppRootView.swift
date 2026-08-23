@@ -144,7 +144,15 @@ struct AppRootView: View {
             removeFromDeviceIdentity: { peer in
                 await mutateDeviceIdentityPeer(peer, add: false)
             },
-            manageDevice: remoteDeviceManagement
+            manageDevice: { [companionAddress = radioSnapshot.deviceIdentity?.canonicalAddress]
+                peer in
+                // The attached companion is managed over its own link;
+                // everyone else — a stale "companion" row from a radio
+                // since replaced included — across the mesh.
+                peer.identity.canonicalAddress == companionAddress
+                    ? companionDeviceManagement
+                    : remoteDeviceManagement
+            }
         )
     }
 
@@ -154,10 +162,10 @@ struct AppRootView: View {
     /// reports its own unreachability, and a Manage Device that appears and
     /// disappears with the radio is one an operator cannot find when they
     /// need it.
-    private var remoteDeviceManagement: RemoteDeviceManagement {
+    private var remoteDeviceManagement: DeviceManagementBackend {
         let store = applicationStore
         let ownerIdentityID = localIdentity?.id
-        return RemoteDeviceManagement(
+        return DeviceManagementBackend(
             fetch: { address, properties, multiHint, progress in
                 try await radioConnection.fetchRemoteProperties(
                     peerAddress: address,
@@ -250,6 +258,56 @@ struct AppRootView: View {
                 )
             }
         )
+    }
+
+    /// Managing the companion radio itself, over its own link.
+    ///
+    /// The mesh backend with the transport swapped out: same store, same
+    /// cache rows — the radio is the same node by public address — but
+    /// every exchange goes over the local link, refreshes are cheap enough
+    /// to run on sight, and the radio's own announcements stream in as
+    /// pushes.
+    private var companionDeviceManagement: DeviceManagementBackend {
+        var management = remoteDeviceManagement
+        management.link = .companion
+        management.fetch = { _, properties, _, _ in
+            try await radioConnection.fetchCompanionProperties(properties)
+        }
+        management.write = { _, writes in
+            try await radioConnection.writeCompanionProperties(writes)
+        }
+        management.save = { _ in
+            try await radioConnection.saveCompanionDevice()
+        }
+        management.setAdministrator = { _, key, present in
+            present
+                ? try await radioConnection.addDeviceAdmin(key)
+                : try await radioConnection.removeDeviceAdmin(key)
+        }
+        management.setPeer = { _, key, present in
+            present
+                ? try await radioConnection.addDevicePeer(key)
+                : try await radioConnection.removeDevicePeer(key)
+        }
+        management.setAlert = { _, state in
+            // The local write answers on the session snapshot rather than
+            // inline; what was asked for stands until the radio's own
+            // announcement — which arrives as a push — corrects it.
+            try await radioConnection.setAlert(state)
+            return state
+        }
+        management.propertyPushes = {
+            AsyncStream { continuation in
+                let task = Task {
+                    for await push in await radioConnection.companionPropertyPushes() {
+                        continuation.yield(push)
+                    }
+                    continuation.finish()
+                }
+                continuation.onTermination = { _ in task.cancel() }
+            }
+        }
+        return management
     }
 
     /// The channel operations the Channels tab is built from, assembled here
@@ -434,7 +492,6 @@ struct AppRootView: View {
                     reconnectRadio: reconnectRadio,
                     claimRadio: claimRadio,
                     refreshRadio: refreshRadio,
-                    configureRadio: configureRadio,
                     disconnectRadio: disconnectRadio,
                     forgetRadio: forgetRadio,
                     factoryResetRadio: factoryResetRadio,
@@ -520,15 +577,9 @@ struct AppRootView: View {
                     reconnect: reconnectRadio,
                     claim: claimRadio,
                     refresh: refreshRadio,
-                    refreshPosition: refreshRadioPosition,
-                    configure: configureRadio,
                     disconnect: disconnectRadio,
                     forget: forgetRadio,
                     factoryReset: factoryResetRadio,
-                    setAlert: setRadioAlert,
-                    setTime: setRadioTime,
-                    configurePositioning: configureRadioPositioning,
-                    configureAdvertising: configureRadioAdvertising,
                     discoverRadios: discoverRadios,
                     selectRadio: selectRadio,
                     stopDiscovery: stopRadioDiscovery,
@@ -1078,28 +1129,6 @@ struct AppRootView: View {
         try await radioConnection.factoryReset()
     }
 
-    private func setRadioAlert(_ state: RadioAlertState) async throws {
-        try await radioConnection.setAlert(state)
-    }
-
-    private func setRadioTime(_ epochSeconds: UInt32?) async throws {
-        try await radioConnection.setTime(epochSeconds: epochSeconds)
-    }
-
-    private func configureRadioPositioning(
-        _ gnss: UlcpGnssSettingsRecord?,
-        _ timeZoneOffsetMinutes: Int16?
-    ) async throws {
-        try await radioConnection.configurePositioning(
-            gnss: gnss,
-            timeZoneOffsetMinutes: timeZoneOffsetMinutes
-        )
-    }
-
-    private func configureRadioAdvertising(_ advert: UlcpAdvertSettingsRecord?) async throws {
-        try await radioConnection.configureAdvertising(advert)
-    }
-
     private func claimRadio() async {
         do {
             try await radioConnection.claimForCurrentIdentity()
@@ -1107,10 +1136,6 @@ struct AppRootView: View {
             // The adapter publishes a shared failure snapshot when an active
             // claim fails. Preconditions leave the existing snapshot intact.
         }
-    }
-
-    private func configureRadio(_ settings: RadioSettings) async throws {
-        try await radioConnection.configure(settings)
     }
 
     private func refreshRadio() async {

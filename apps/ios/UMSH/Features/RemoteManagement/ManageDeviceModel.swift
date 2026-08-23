@@ -1,14 +1,31 @@
 import Foundation
 import UMSHMobileCore
 
-/// Everything managing a node over the mesh needs from the app: the radio
-/// to reach the device through, and the store to remember what it said.
+/// How a device being managed is reached, which decides what managing it
+/// may assume: a local link is fast enough to refresh on sight and pushes
+/// unsolicited values; the mesh is neither, and every read is the
+/// operator's to spend.
+enum DeviceManagementLink: Equatable {
+    /// Across the mesh, through the companion radio.
+    case mesh
+    /// The companion radio itself, over its own local link.
+    case companion
+    /// A bench device over a foreground administrative BLE session.
+    case administrative
+}
+
+/// Everything managing a device needs from the app: the way to reach it,
+/// and the store to remember what it said.
 ///
 /// A bundle of closures for the same reason `PeerActions` is one: the peer
 /// sheet is presented from several places, and threading these through each
 /// of them one parameter at a time is how the same screen ends up able to do
-/// different things depending on where it was opened.
-struct RemoteDeviceManagement {
+/// different things depending on where it was opened. It is also what makes
+/// the management screens transport-blind: a mesh exchange, the companion's
+/// own link, and a bench BLE session all fit behind the same handful of
+/// closures.
+struct DeviceManagementBackend {
+    var link: DeviceManagementLink = .mesh
     /// Read named properties, reporting how many the read has left to ask
     /// for, and answer with what the device said about each.
     var fetch: (String, [UInt32], Bool, @escaping @Sendable (UInt32?) -> Void) async throws
@@ -40,6 +57,19 @@ struct RemoteDeviceManagement {
     var forgetCache: (String) async -> Void
     var loadValues: (String, [UInt32]) async -> [UInt32: StoredCachedProperty]
     var saveValues: (String, [UInt32: Data]) async -> Void
+
+    /// Values the device announces on its own, for backends that have a
+    /// live link to hear them on. `nil` on the mesh: a device pushes only
+    /// to the host it is attached to, never across the network.
+    var propertyPushes: (() -> AsyncStream<UlcpPropertyPushRecord>)? = nil
+}
+
+extension DeviceManagementBackend {
+    /// Whether a screen that opens without fresh values should ask for
+    /// them on sight. On a local link the answer arrives in the time a
+    /// screen takes to settle; on the mesh it costs everyone airtime, so
+    /// asking stays the operator's decision.
+    var refreshesStaleReadings: Bool { link != .mesh }
 }
 
 /// The property numbers the management screens name, read once.
@@ -125,9 +155,9 @@ final class ManageDeviceModel {
     let address: String
     /// What to call the device before it has said. The peer's own name.
     let fallbackName: String
-    private let management: RemoteDeviceManagement
+    private let management: DeviceManagementBackend
 
-    init(peer: PeerSummary, management: RemoteDeviceManagement) {
+    init(peer: PeerSummary, management: DeviceManagementBackend) {
         address = peer.identity.canonicalAddress
         fallbackName = peer.displayName
         self.management = management
@@ -152,19 +182,28 @@ final class ManageDeviceModel {
 
     // MARK: - The card
 
+    /// Whether the card on screen came off the air during this model's
+    /// lifetime, as opposed to out of the cache.
+    private var cardIsFresh = false
+
     /// Fill the card in from the cache, and ask the device only if this
-    /// phone has never asked.
+    /// phone has never asked — or if the device is on a local link, where
+    /// asking costs nothing anyone else can hear.
     ///
-    /// The whole point of the design: the second and every later opening of
-    /// a device's settings puts nothing on the air.
+    /// The whole point of the design: over the mesh, the second and every
+    /// later opening of a device's settings puts nothing on the air. On a
+    /// local link the cached card still renders first, and the fresh read
+    /// also revalidates the firmware version, so a reflashed device sheds
+    /// its stale cache the moment its settings open.
     func loadCard() async {
         await learnPhoneNodeKey()
-        guard card == nil, !isBusy else { return }
-        if let stored = await management.loadCard(address) {
+        guard !isBusy else { return }
+        if card == nil, let stored = await management.loadCard(address) {
             adopt(stored)
-            return
         }
-        await refreshCard()
+        if card == nil || (management.refreshesStaleReadings && !cardIsFresh) {
+            await refreshCard()
+        }
     }
 
     /// Ask the device what it is, whether or not this phone already knows.
@@ -194,6 +233,7 @@ final class ManageDeviceModel {
             )
             card = fetched
             cardAsOf = now
+            cardIsFresh = true
         }
     }
 
@@ -247,27 +287,36 @@ final class ManageDeviceModel {
         return properties
     }
 
-    /// Fill a category in from the cache, without asking the device.
+    /// Fill a category in from the cache, and — on a local link — follow
+    /// with a fresh read when nothing has come off the air this session.
     ///
-    /// Every screen opens this way, read-only ones included: an operator who
-    /// wants a current reading asks for one, and one who is walking the
-    /// screens to see what is there does not spend a device's airtime doing
-    /// it.
+    /// Every screen opens from the cache first, read-only ones included.
+    /// Over the mesh it stays that way: an operator who wants a current
+    /// reading asks for one, and one who is walking the screens to see
+    /// what is there does not spend a device's airtime doing it. A local
+    /// link answers in the time the screen takes to settle, so there the
+    /// stale-or-empty case refreshes itself — but only that case: a
+    /// screen already refreshed this session is not re-asked on every
+    /// visit, and nothing ever reads a category no screen is showing.
     func loadCategory(_ category: UlcpManageCategory) async {
-        guard readings[category] == nil else { return }
-        let properties = properties(of: category)
-        guard !properties.isEmpty else { return }
-        let cached = await management.loadValues(address, properties)
-        var reading = RemoteCategoryReading()
-        reading.propertyIDs = properties
-        if let oldest = cached.values.map(\.fetchedAt).min() {
-            reading.absorb(
-                cached.mapValues(\.value),
-                at: oldest,
-                fromAir: false
-            )
+        if readings[category] == nil {
+            let properties = properties(of: category)
+            guard !properties.isEmpty else { return }
+            let cached = await management.loadValues(address, properties)
+            var reading = RemoteCategoryReading()
+            reading.propertyIDs = properties
+            if let oldest = cached.values.map(\.fetchedAt).min() {
+                reading.absorb(
+                    cached.mapValues(\.value),
+                    at: oldest,
+                    fromAir: false
+                )
+            }
+            readings[category] = reading
         }
-        readings[category] = reading
+        if management.refreshesStaleReadings, readings[category]?.isFresh == false {
+            await refreshCategory(category)
+        }
     }
 
     /// Ask the device for one category's properties.
@@ -395,6 +444,45 @@ final class ManageDeviceModel {
             var updated = readings[.peerNodes] ?? RemoteCategoryReading()
             updated.absorb([property: table], at: Date(), fromAir: true)
             readings[.peerNodes] = updated
+        }
+    }
+
+    // MARK: - Following the device's own announcements
+
+    /// Fold values the device announces on its own into whatever is on
+    /// screen, for as long as the caller keeps this running.
+    ///
+    /// Local links only — the backend says whether there is anything to
+    /// hear. A push merges like a write's echo: the affected readings
+    /// redecode around it, clean fields on an editor follow it, and a
+    /// field the operator is editing keeps the edit. It deliberately does
+    /// not care whether an operation is in flight; the device's latest
+    /// word wins whichever order the two land in.
+    func observePushes() async {
+        guard let pushes = management.propertyPushes else { return }
+        for await push in pushes() {
+            await absorb(push)
+        }
+    }
+
+    private func absorb(_ push: UlcpPropertyPushRecord) async {
+        if push.propertyId == ulcpProperties.alert,
+           let reported = try? inspectUlcpAlert(value: push.value)
+        {
+            alert = RadioAlertState(reported)
+        }
+        var affected = false
+        for (category, var reading) in readings
+        where reading.propertyIDs.contains(push.propertyId) {
+            reading.absorb([push.propertyId: push.value], at: Date(), fromAir: true)
+            readings[category] = reading
+            affected = true
+        }
+        // Remembered only when some screen holds it: a category never
+        // opened will read itself fresh on first sight, and pushes exist
+        // only on the links where that read is cheap.
+        if affected {
+            await management.saveValues(address, [push.propertyId: push.value])
         }
     }
 
