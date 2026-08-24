@@ -6,13 +6,13 @@
    grid child carries min-width: 0, tables wrap their content, and the panel
    scrolls vertically inside its own track. */
 
+/* One scroll container: the page. The map sticks beside the panel rather
+   than the panel scrolling inside a fixed frame, because two scrollbars
+   side by side leaves a reader guessing which one owns the wheel.
+   main.mjs measures the real site header and sets --site-header-h; the
+   value here is only the fallback. */
 .region-app-wrap {
-  display: flex;
-  flex-direction: column;
-  /* Fill the viewport below the sticky site header. main.mjs measures the
-     real header and sets --site-header-h; this is only the fallback. */
-  height: calc(100dvh - var(--site-header-h, 4.5rem));
-  min-height: 38rem;
+  --app-height: calc(100dvh - var(--site-header-h, 4.5rem));
 }
 
 .region-appbar {
@@ -42,14 +42,15 @@
 }
 
 .region-app {
-  flex: 1;
-  min-height: 0;
   display: grid;
   grid-template-columns: minmax(0, 1fr) clamp(20rem, 30vw, 24rem);
+  align-items: start;
 }
 
 .region-map-pane {
-  position: relative;
+  position: sticky;
+  top: var(--site-header-h, 4.5rem);
+  height: var(--app-height);
   min-width: 0;
 }
 
@@ -78,8 +79,9 @@
 
 .region-panel {
   min-width: 0;
-  overflow-y: auto;
-  overscroll-behavior: contain;
+  /* At least a screen tall so the sticky map has something to stick
+     against even when the panel holds nothing but its empty controls. */
+  min-height: var(--app-height);
   border-left: 1px solid var(--border);
   background: var(--surface);
   padding: 0.75rem;
@@ -314,17 +316,19 @@
 /* ── Narrow windows: stack, never squeeze ───────────────────────────── */
 
 @media (max-width: 56rem) {
-  .region-app-wrap {
-    height: auto;
-    min-height: 0;
-  }
-
   .region-app { display: block; }
 
-  .region-map-pane { height: 58dvh; min-height: 22rem; }
+  .region-map-pane {
+    /* Relative, not static: the map inside is absolutely positioned and
+       would otherwise escape its pane and cover the panel. */
+    position: relative;
+    top: auto;
+    height: 58dvh;
+    min-height: 22rem;
+  }
 
   .region-panel {
-    overflow-y: visible;
+    min-height: 0;
     border-left: 0;
     border-top: 1px solid var(--border);
   }
@@ -362,13 +366,6 @@
   font-size: 0.9rem;
   font-weight: 600;
   overflow-wrap: anywhere;
-}
-
-.match-code {
-  font-size: 0.75rem;
-  font-weight: 400;
-  color: var(--ink-muted);
-  margin-left: 0.15rem;
 }
 
 .match-namespace code {

@@ -240,10 +240,12 @@ function runLookup(latitude, longitude) {
     .addTo(state.map);
 
   // A four-column table cannot live honestly in a panel-width card — it
-  // wraps its own tokens. Each match is a two-line row instead, and the
-  // thing a person configures a radio with leads: the region string and
-  // its wire code, with the namespace beneath in small text as
-  // provenance. The full semantic key rides in the tooltip.
+  // wraps its own tokens. Each match is a two-line row instead, showing
+  // what a person actually configures a radio with: the region string,
+  // with the namespace beneath in small text as provenance. A region is
+  // a string; the two-octet code it derives to is an implementation
+  // detail of the air frame and is not shown. The full semantic key
+  // rides in the tooltip.
   const rows = result.matches
     .map((match) => {
       const core = match.membership === MEMBERSHIP_CORE;
@@ -252,8 +254,7 @@ function runLookup(latitude, longitude) {
       return `<li class="match-row" title="${escape(match.regionKey)}">
         <span class="swatch" style="background:${layer ? layer.color : "#888"}"></span>
         <span class="match-main">
-          <span class="match-primary">${escape(match.radioName)}
-            <code class="match-code">0x${match.wireCode.toString(16).toUpperCase().padStart(4, "0")}</code></span>
+          <span class="match-primary">${escape(match.radioName)}</span>
           <span class="match-namespace"><code>${escape(namespace)}</code></span>
         </span>
         <span class="match-membership${core ? "" : " match-membership--expanded"}"
