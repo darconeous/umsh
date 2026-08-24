@@ -13,6 +13,8 @@ simplified stand-in:
     <root>/classifications/commercial-airports.yaml
     <root>/metros/metros.yaml
     <root>/custom/regions.yaml
+    <root>/communities/<pack>/pack.yaml
+    <root>/communities/<pack>/regions.yaml
     <root>/overrides/overrides.yaml
 
 Nothing here reads `<root>/vendor/`: the build consumes committed files only.
@@ -168,6 +170,93 @@ def _load_manifest(path: Path) -> dict[str, Any]:
     return document if isinstance(document, dict) else {}
 
 
+# How far a pack region may poke past its declared area of influence before
+# the build refuses it. Generous enough for simplification wobble and a
+# hand-drawn edge, far too small to annex anywhere.
+COMMUNITY_CONTAINMENT_TOLERANCE_M = 250.0
+
+
+def _load_communities(communities: Path, tree: SourceTree) -> None:
+    """Load community region packs into the custom layer.
+
+    A pack is a directory a local group maintains: a manifest declaring the
+    pack and its area of influence, and regions defined against it. One
+    invariant makes the delegation safe — nothing a pack defines may escape
+    its declared area — so inside the fence the pack's file is authoritative
+    and outside it the pack cannot say anything. Everything a pack adds
+    compiles as an ordinary custom region; packs add regions, they never
+    reshape the global layers.
+    """
+    if not communities.is_dir():
+        return
+    for pack_dir in sorted(path for path in communities.iterdir() if path.is_dir()):
+        manifest = _load_manifest(pack_dir / "pack.yaml")
+        if not manifest:
+            raise SourceError(f"{pack_dir} has no pack.yaml")
+        pack_id = str(manifest.get("id") or "")
+        if pack_id != pack_dir.name:
+            raise SourceError(
+                f"{pack_dir / 'pack.yaml'} declares id {pack_id!r}; it must equal the "
+                f"directory name {pack_dir.name!r}"
+            )
+        influence_rel = manifest.get("influence")
+        if not influence_rel:
+            raise SourceError(f"{pack_dir / 'pack.yaml'} declares no area of influence")
+        influence = load_geojson((pack_dir / influence_rel).resolve())
+        # Containment is judged against a slightly grown influence area, so
+        # simplification wobble on a shared edge is not an offense.
+        fence = influence.buffer(COMMUNITY_CONTAINMENT_TOLERANCE_M / 111_320.0)
+        enabled = bool(manifest.get("enabled", True))
+
+        prefix = f"custom:{pack_id}/"
+        loaded: dict[str, BaseGeometry] = {}
+        for entry in _load_manifest(pack_dir / "regions.yaml").get("regions") or []:
+            region_id = str(entry["id"])
+            if not region_id.startswith(prefix):
+                raise SourceError(
+                    f"{pack_dir}: region id {region_id!r} must start with {prefix!r} — "
+                    "the prefix is what keeps packs from colliding with each other "
+                    "or with the root custom regions"
+                )
+            geometry = load_geojson((pack_dir / entry["geometry"]).resolve())
+            if not geometry.within(fence):
+                raise SourceError(
+                    f"{pack_dir}: region {region_id!r} escapes the pack's declared "
+                    "area of influence; a pack is authoritative inside its fence "
+                    "and silent outside it"
+                )
+            parent = entry.get("parent")
+            if parent is not None:
+                if str(parent) not in loaded:
+                    raise SourceError(
+                        f"{pack_dir}: region {region_id!r} names parent {parent!r}, "
+                        "which is not defined earlier in the same pack — order "
+                        "parents before children"
+                    )
+                fenced_parent = loaded[str(parent)].buffer(
+                    COMMUNITY_CONTAINMENT_TOLERANCE_M / 111_320.0
+                )
+                if not geometry.within(fenced_parent):
+                    raise SourceError(
+                        f"{pack_dir}: region {region_id!r} escapes its parent {parent!r}"
+                    )
+            loaded[region_id] = geometry
+            if not enabled:
+                continue
+            tree.customs.append(
+                CustomDefinition(
+                    region_id=region_id,
+                    name=entry["name"],
+                    radio_name=entry.get("radio_name", entry["name"]),
+                    geometry=geometry,
+                    expansion_m=entry.get("expansion_m"),
+                    priority=int(entry.get("priority", 0)),
+                    allow_short_code=bool(entry.get("allow_short_code", False)),
+                    notes=(entry.get("source") or {}).get("notes"),
+                )
+            )
+
+
 def load(root: Path) -> SourceTree:
     tree = SourceTree(root=root)
     extracts = root / "extracts"
@@ -242,6 +331,8 @@ def load(root: Path) -> SourceTree:
                 notes=(entry.get("source") or {}).get("notes"),
             )
         )
+
+    _load_communities(root / "communities", tree)
 
     overrides_path = root / "overrides" / "overrides.yaml"
     for entry in _load_manifest(overrides_path).get("overrides") or []:

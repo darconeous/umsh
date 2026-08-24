@@ -1,0 +1,21 @@
+# The Cascadia Mesh community pack.
+#
+# Disabled: the shapes in this pack are illustrative placeholders sketched to
+# make the pack format concrete, not boundaries the Cascadia Mesh community
+# has reviewed. Flipping `enabled` is the act of adoption, and belongs in a
+# pull request from that community with their own reviewed geometry. A
+# disabled pack is still fully validated on every build, so the skeleton
+# cannot rot.
+version: 1
+id: cascadia
+name: Cascadia Mesh
+maintainers:
+  # The people whose review makes a change to this directory authoritative.
+  # Wire the same list into CODEOWNERS when the pack goes live.
+  - placeholder@cascadiamesh.example
+# The fence. Nothing this pack defines may escape it — the build refuses the
+# tree if a region does. It bounds what the pack may define, not what it has
+# defined, so it is drawn generously around the whole area the community's
+# plan describes, future rows included.
+influence: geometry/influence.geojson
+enabled: false

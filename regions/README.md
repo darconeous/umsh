@@ -82,7 +82,10 @@ overlap, and a lookup returns all of them.
   Open water within reach of two states carries both, the same both-sides
   answer the expansion margins give on land. Territories are excluded in V1;
   see `policy.yaml`.
-- **Custom** (`custom:`) — anything a person wants to define.
+- **Custom** (`custom:`) — anything a person wants to define, either in
+  `custom/regions.yaml` or through a community pack under `communities/`: a
+  directory a local mesh group maintains, fenced to its declared area of
+  influence. See `docs/community-region-packs.md`.
 
 Namespaces are for tooling. Both `iata-airport:SFO` and `iata-metro:SFO`
 produce the radio-facing region `SFO`, and the final list carries it once.

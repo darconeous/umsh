@@ -1,0 +1,52 @@
+# Regions this pack defines. Same schema as regions/custom/regions.yaml, with
+# two additions: every id must begin with `custom:cascadia/`, and a region may
+# name a `parent` defined earlier in this file, which the build verifies
+# contains it.
+#
+# The two entries below are worked examples with placeholder geometry — the
+# hand-drawn kind of region a pack exists for. The community's full hierarchy
+# (west / pnw / wa / w-wa / sea, and so on) belongs here as reviewed shapes,
+# ordered parents-first; a repeater inside `sea` then receives the whole
+# chain from containment alone, with nothing else to configure.
+#
+# Radio naming: a name of one to three ASCII alphanumerics is read by the
+# runtime as a short code — `sea` IS the code SEA, the same wire code as the
+# airport, which for a Seattle metro region is exactly right. That identity
+# grab must be declared: set `allow_short_code: true` on such a region or the
+# build refuses it. Longer names (`palouse`, `salishmesh`) hash into the
+# non-code space under the ordinary named-region rules.
+version: 1
+
+regions:
+  - id: custom:cascadia/salishmesh
+    name: Salish Sea / Gulf Islands
+    radio_name: salishmesh
+    geometry: geometry/salishmesh.geojson
+    source:
+      type: manual
+      notes: >-
+        Placeholder sketch of the Salish Sea and Gulf Islands, pending a
+        boundary reviewed by the Cascadia Mesh community.
+
+  - id: custom:cascadia/palouse
+    name: Palouse
+    radio_name: palouse
+    geometry: geometry/palouse.geojson
+    source:
+      type: manual
+      notes: >-
+        Placeholder sketch of the Palouse — Pullman WA with Moscow, Lewiston
+        and the Clearwater in ID, deliberately cross-border. Pending a
+        boundary reviewed by the community.
+
+  # A short-code region would look like this. `sea` claims the same wire
+  # code as the SEA airport region on purpose: to a radio they are one
+  # region, and the map and lookups keep both spellings as separate
+  # semantic matches.
+  #
+  # - id: custom:cascadia/sea
+  #   name: Seattle / Tacoma / Bellevue
+  #   radio_name: sea
+  #   allow_short_code: true
+  #   geometry: geometry/sea.geojson
+  #   parent: custom:cascadia/w-wa
