@@ -18,6 +18,7 @@ import sqlite3InitModule from "./vendor/sqlite-wasm/sqlite3.mjs";
 import * as maplibregl from "./vendor/maplibre-gl/maplibre-gl.mjs";
 
 import { decode, fromE6 } from "./geometry.mjs";
+import { normalizeLongitude } from "./morton.mjs";
 import { RegionDb, MEMBERSHIP_CORE } from "./regiondb.mjs";
 
 const BASE = new URL(".", import.meta.url);
@@ -153,9 +154,14 @@ function refreshRegions() {
   const north = bounds.getNorth();
 
   const features = [];
-  // A viewport wider than the world, or one straddling the antimeridian,
-  // is asked for in pieces rather than as one impossible box.
-  const spans = east - west >= 360 ? [[-180, 180]] : splitAtAntimeridian(west, east);
+  // MapLibre reports unwrapped bounds across the antimeridian — panning
+  // west past Fiji yields west < -180, never west > east — so both edges
+  // are wrapped onto the storage domain first, and a viewport that
+  // straddles the seam becomes two query bands. Geometry is stored split
+  // at the antimeridian, and MapLibre renders each piece on every world
+  // copy, so fetching both bands is all it takes for the far side to
+  // exist.
+  const spans = viewSpans(west, east);
   for (const [left, right] of spans) {
     for (const [regionId, payload] of db.handle.exec(
       "SELECT p.region_id, p.geometry FROM effective_rtree r " +
@@ -195,8 +201,11 @@ function refreshRegions() {
   );
 }
 
-function splitAtAntimeridian(west, east) {
-  return west <= east ? [[west, east]] : [[west, 180], [-180, east]];
+function viewSpans(west, east) {
+  if (east - west >= 360) return [[-180, 180]];
+  const left = normalizeLongitude(west);
+  const right = normalizeLongitude(east);
+  return left <= right ? [[left, right]] : [[left, 180], [-180, right]];
 }
 
 function ringsToCoordinates(rings) {
