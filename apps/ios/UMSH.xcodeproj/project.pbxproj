@@ -45,6 +45,7 @@
 		10000000000000000000000C /* UMSH/Features/Settings/SettingsView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 20000000000000000000000C /* UMSH/Features/Settings/SettingsView.swift */; };
 		10000000000000000000000D /* UMSHMobileCore in Frameworks */ = {isa = PBXBuildFile; productRef = A00000000000000000000002 /* UMSHMobileCore */; };
 		10000000000000000000000E /* UMSH/DesignSystem/PeerAvatar.swift in Sources */ = {isa = PBXBuildFile; fileRef = 20000000000000000000000E /* UMSH/DesignSystem/PeerAvatar.swift */; };
+		10000000000000000000AA01 /* UMSH/DesignSystem/AvatarStyle.swift in Sources */ = {isa = PBXBuildFile; fileRef = 20000000000000000000AA01 /* UMSH/DesignSystem/AvatarStyle.swift */; };
 		1000000000000000000000E1 /* UMSH/DesignSystem/PeerRow.swift in Sources */ = {isa = PBXBuildFile; fileRef = 2000000000000000000000E1 /* UMSH/DesignSystem/PeerRow.swift */; };
 		10000000000000000000000F /* UMSH/DesignSystem/CanonicalAddressView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 20000000000000000000000F /* UMSH/DesignSystem/CanonicalAddressView.swift */; };
 		100000000000000000000010 /* UMSH/Services/Identity/IdentityVault.swift in Sources */ = {isa = PBXBuildFile; fileRef = 200000000000000000000010 /* UMSH/Services/Identity/IdentityVault.swift */; };
@@ -131,6 +132,7 @@
 		20000000000000000000000C /* UMSH/Features/Settings/SettingsView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = UMSH/Features/Settings/SettingsView.swift; sourceTree = "<group>"; };
 		20000000000000000000000D /* UMSH.app */ = {isa = PBXFileReference; explicitFileType = wrapper.application; includeInIndex = 0; path = UMSH.app; sourceTree = BUILT_PRODUCTS_DIR; };
 		20000000000000000000000E /* UMSH/DesignSystem/PeerAvatar.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = UMSH/DesignSystem/PeerAvatar.swift; sourceTree = "<group>"; };
+		20000000000000000000AA01 /* UMSH/DesignSystem/AvatarStyle.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = UMSH/DesignSystem/AvatarStyle.swift; sourceTree = "<group>"; };
 		2000000000000000000000E1 /* UMSH/DesignSystem/PeerRow.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = UMSH/DesignSystem/PeerRow.swift; sourceTree = "<group>"; };
 		20000000000000000000000F /* UMSH/DesignSystem/CanonicalAddressView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = UMSH/DesignSystem/CanonicalAddressView.swift; sourceTree = "<group>"; };
 		200000000000000000000010 /* UMSH/Services/Identity/IdentityVault.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = UMSH/Services/Identity/IdentityVault.swift; sourceTree = "<group>"; };
@@ -232,6 +234,7 @@
 				200000000000000000000035 /* UMSH/Features/Channels/ChannelDetailView.swift */,
 				20000000000000000000000C /* UMSH/Features/Settings/SettingsView.swift */,
 				20000000000000000000000E /* UMSH/DesignSystem/PeerAvatar.swift */,
+				20000000000000000000AA01 /* UMSH/DesignSystem/AvatarStyle.swift */,
 				2000000000000000000000E1 /* UMSH/DesignSystem/PeerRow.swift */,
 				200000000000000000000036 /* UMSH/DesignSystem/ChannelAvatar.swift */,
 				200000000000000000000037 /* UMSH/Features/Conversations/ChannelChatViews.swift */,
@@ -423,6 +426,7 @@
 				100000000000000000000035 /* UMSH/Features/Channels/ChannelDetailView.swift in Sources */,
 				10000000000000000000000C /* UMSH/Features/Settings/SettingsView.swift in Sources */,
 				10000000000000000000000E /* UMSH/DesignSystem/PeerAvatar.swift in Sources */,
+				10000000000000000000AA01 /* UMSH/DesignSystem/AvatarStyle.swift in Sources */,
 				1000000000000000000000E1 /* UMSH/DesignSystem/PeerRow.swift in Sources */,
 				100000000000000000000036 /* UMSH/DesignSystem/ChannelAvatar.swift in Sources */,
 				100000000000000000000037 /* UMSH/Features/Conversations/ChannelChatViews.swift in Sources */,

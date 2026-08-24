@@ -2357,7 +2357,12 @@ final class AppRuntime {
     /// Staging only: have a staged peer message this phone after a short
     /// delay — long enough to background the app or lock the screen, which
     /// is the point of testing a notification. A no-op on a real radio.
-    func stagedPeerSendsMessage() {
+    ///
+    /// `onChannel` sends to the staged group chat instead of this phone. The
+    /// two are worth testing separately: a group message names a channel and
+    /// a speaker where a direct one names only a peer, and that difference is
+    /// exactly what a notification has to carry.
+    func stagedPeerSendsMessage(onChannel: Bool) {
         guard let staging = radioConnection as? FakeRadioConnection else { return }
         let line = Self.stagedPeerLines[
             Int.random(in: 0..<Self.stagedPeerLines.count)
@@ -2371,14 +2376,14 @@ final class AppRuntime {
                 withName: "umsh.staging.delayed-send"
             )
             try? await Task.sleep(for: .seconds(5))
-            await staging.stagedPeerSendsMessage(body: line)
+            await staging.stagedPeerSendsMessage(body: line, onChannel: onChannel)
             if assertion != .invalid {
                 UIApplication.shared.endBackgroundTask(assertion)
             }
         }
     }
     #else
-    var stagedPeerSendsMessage: (() -> Void)? { nil }
+    var stagedPeerSendsMessage: ((Bool) -> Void)? { nil }
     #endif
 
     /// How many messages a conversation holds, for the info sheet. The only
@@ -2784,7 +2789,7 @@ final class AppRuntime {
                     ),
                     senderAddress: target.senderAddress,
                     senderHint: senderPeer?.identity.hint,
-                    isGroup: true,
+                    channel: channel.avatarStyle,
                     body: target.body
                 )
             } else {
@@ -2797,7 +2802,7 @@ final class AppRuntime {
                     sender: nil,
                     senderAddress: target.conversationAddress,
                     senderHint: peer?.identity.hint,
-                    isGroup: false,
+                    channel: nil,
                     body: target.body
                 )
             }

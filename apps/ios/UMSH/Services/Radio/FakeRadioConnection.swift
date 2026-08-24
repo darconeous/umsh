@@ -51,9 +51,9 @@ actor FakeRadioConnection: RadioConnection {
 
     /// Ask the staging air to have a staged peer message the phone. A no-op
     /// on any other air — previews have no peers to speak as.
-    func stagedPeerSendsMessage(body: String) async {
+    func stagedPeerSendsMessage(body: String, onChannel: Bool) async {
         #if DEBUG
-        await (air as? StagingMeshAir)?.sendFromPeer(body: body)
+        await (air as? StagingMeshAir)?.sendFromPeer(body: body, onChannel: onChannel)
         #endif
     }
 

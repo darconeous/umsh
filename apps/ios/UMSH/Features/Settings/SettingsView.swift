@@ -53,7 +53,7 @@ struct SettingsView: View {
     /// Has a staged peer message this phone after a short delay, to exercise
     /// notifications end to end — arrival, styling, and the inline reply.
     /// Debug builds only, and meaningful only in staging mode.
-    var stagedPeerSendsMessage: (() -> Void)? = nil
+    var stagedPeerSendsMessage: ((Bool) -> Void)? = nil
 
     @Environment(\.regionService) private var regionService
     @State private var showsDeviceSetup = false
@@ -236,7 +236,10 @@ struct SettingsView: View {
                 Toggle("Staging mode", isOn: $stagingEnabled)
                 if stagingEnabled, let stagedPeerSendsMessage {
                     Button("Staged Message in 5 Seconds") {
-                        stagedPeerSendsMessage()
+                        stagedPeerSendsMessage(false)
+                    }
+                    Button("Staged Channel Message in 5 Seconds") {
+                        stagedPeerSendsMessage(true)
                     }
                 }
                 Button("Reset staged data", role: .destructive) {

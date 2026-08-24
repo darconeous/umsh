@@ -202,13 +202,17 @@ final class ChatNotificationService: NSObject, UNUserNotificationCenterDelegate,
     /// identity parameters feed the communication styling — the sender's
     /// avatar and chat grouping — and the title/subtitle stay behind them as
     /// the fallback for anywhere that styling does not reach.
+    ///
+    /// `channel` is what makes this a group message: it names the room, and
+    /// its badge becomes the icon, so the notification says where as well as
+    /// who.
     func postInboundMessage(
         conversationAddress: String,
         displayName: String,
         sender: String?,
         senderAddress: String?,
         senderHint: MeshNodeHint?,
-        isGroup: Bool,
+        channel: AvatarStyle?,
         body: String
     ) {
         let content = UNMutableNotificationContent()
@@ -228,7 +232,7 @@ final class ChatNotificationService: NSObject, UNUserNotificationCenterDelegate,
             sender: sender,
             senderAddress: senderAddress,
             senderHint: senderHint,
-            isGroup: isGroup,
+            channel: channel,
             body: body
         )
         let request = UNNotificationRequest(
@@ -279,23 +283,34 @@ final class ChatNotificationService: NSObject, UNUserNotificationCenterDelegate,
         sender: String?,
         senderAddress: String?,
         senderHint: MeshNodeHint?,
-        isGroup: Bool,
+        channel: AvatarStyle?,
         body: String
     ) -> UNNotificationContent {
         let handle = senderAddress ?? conversationAddress
+        // A group message shows the room it came from, not the face that
+        // spoke: the speaker is already the title, and the channel is the
+        // one thing the phone's banner otherwise never says.
+        let image: INImage?
+        if let channel {
+            image = avatarImage(channel, design: .rounded)
+        } else {
+            image = senderHint.flatMap { avatarImage(.peer(hint: $0), design: .monospaced) }
+        }
         let person = INPerson(
             personHandle: INPersonHandle(value: handle, type: .unknown),
             nameComponents: nil,
             displayName: sender ?? displayName,
-            image: senderHint.flatMap { avatarImage($0) },
+            image: image,
             contactIdentifier: nil,
             customIdentifier: handle
         )
         let intent = INSendMessageIntent(
-            recipients: isGroup ? [Self.mePerson()] : nil,
+            recipients: channel == nil ? nil : [Self.mePerson()],
             outgoingMessageType: .outgoingMessageText,
             content: body,
-            speakableGroupName: isGroup ? INSpeakableString(spokenPhrase: displayName) : nil,
+            speakableGroupName: channel == nil
+                ? nil
+                : INSpeakableString(spokenPhrase: displayName),
             conversationIdentifier: conversationAddress,
             serviceName: nil,
             sender: person,
@@ -305,7 +320,17 @@ final class ChatNotificationService: NSObject, UNUserNotificationCenterDelegate,
         interaction.direction = .incoming
         interaction.donate(completion: nil)
         do {
-            return try content.updating(from: intent)
+            let styled = try content.updating(from: intent)
+            // Styling titles the notification with whoever is speaking, which
+            // is right, but it leaves the subtitle alone — and the subtitle
+            // was carrying the speaker's name as the unstyled fallback. Left
+            // as-is, a channel message names the sender twice and the channel
+            // not at all. The room belongs on that second line.
+            guard channel != nil,
+                  let mutable = styled.mutableCopy() as? UNMutableNotificationContent
+            else { return styled }
+            mutable.subtitle = displayName
+            return mutable
         } catch {
             Self.logger.error(
                 "Communication styling failed: \(error.localizedDescription, privacy: .public)"
@@ -330,23 +355,17 @@ final class ChatNotificationService: NSObject, UNUserNotificationCenterDelegate,
         )
     }
 
-    /// The sender's avatar as the app draws it: the hint's color, the hint's
-    /// four characters in two stacked pairs (PeerAvatar, in UIKit strokes —
-    /// notification content cannot host a SwiftUI view).
-    private func avatarImage(_ hint: MeshNodeHint) -> INImage? {
-        let bytes = Array(hint.bytes.prefix(3))
-        guard bytes.count == 3 else { return nil }
-        let red = CGFloat(bytes[0]) / 255
-        let green = CGFloat(bytes[1]) / 255
-        let blue = CGFloat(bytes[2]) / 255
-        func linear(_ component: CGFloat) -> CGFloat {
-            component <= 0.04045
-                ? component / 12.92
-                : pow((component + 0.055) / 1.055, 2.4)
-        }
-        let luminance = 0.2126 * linear(red) + 0.7152 * linear(green) + 0.0722 * linear(blue)
-        let textColor: UIColor = luminance < 0.179 ? .white : .black
-
+    /// One avatar, drawn the way the app draws it, in UIKit strokes —
+    /// notification content cannot host a SwiftUI view.
+    ///
+    /// Always a circle, including for a channel, whose badge is a rounded
+    /// square everywhere else in the app. The system masks this image to a
+    /// circle regardless, so drawing one is the difference between a shape
+    /// that was meant and a square with its corners cut off.
+    private func avatarImage(
+        _ style: AvatarStyle,
+        design: UIFontDescriptor.SystemDesign
+    ) -> INImage? {
         let diameter: CGFloat = 96
         let format = UIGraphicsImageRendererFormat()
         format.scale = 2
@@ -354,34 +373,47 @@ final class ChatNotificationService: NSObject, UNUserNotificationCenterDelegate,
             size: CGSize(width: diameter, height: diameter),
             format: format
         )
+        let frame = CGRect(x: 0, y: 0, width: diameter, height: diameter)
         let image = renderer.image { context in
-            UIColor(red: red, green: green, blue: blue, alpha: 1).setFill()
-            context.cgContext.fillEllipse(
-                in: CGRect(x: 0, y: 0, width: diameter, height: diameter)
-            )
-            let characters = Array(hint.text)
-            let lines = [String(characters.prefix(2)), String(characters.dropFirst(2))]
-            let font = UIFont.monospacedSystemFont(ofSize: diameter * 0.30, weight: .semibold)
-            let paragraph = NSMutableParagraphStyle()
-            paragraph.alignment = .center
-            let attributes: [NSAttributedString.Key: Any] = [
-                .font: font,
-                .foregroundColor: textColor,
-                .paragraphStyle: paragraph,
-            ]
-            let spacing = -diameter * 0.08
-            let totalHeight = font.lineHeight * 2 + spacing
-            var y = (diameter - totalHeight) / 2
-            for line in lines where !line.isEmpty {
-                (line as NSString).draw(
-                    in: CGRect(x: 0, y: y, width: diameter, height: font.lineHeight),
-                    withAttributes: attributes
-                )
-                y += font.lineHeight + spacing
-            }
+            style.fill.setFill()
+            context.cgContext.fillEllipse(in: frame)
+            draw(style, in: frame, design: design)
         }
         guard let data = image.pngData() else { return nil }
         return INImage(imageData: data)
+    }
+
+    /// Stack an avatar's glyph lines in its box, centered as a group.
+    private func draw(
+        _ style: AvatarStyle,
+        in frame: CGRect,
+        design: UIFontDescriptor.SystemDesign
+    ) {
+        let lines = style.lines.filter { !$0.isEmpty }
+        guard !lines.isEmpty else { return }
+        let size = frame.width
+        let base = UIFont.systemFont(ofSize: size * style.fontRatio, weight: .semibold)
+        let font = base.fontDescriptor.withDesign(design).map {
+            UIFont(descriptor: $0, size: size * style.fontRatio)
+        } ?? base
+        let paragraph = NSMutableParagraphStyle()
+        paragraph.alignment = .center
+        let attributes: [NSAttributedString.Key: Any] = [
+            .font: font,
+            .foregroundColor: style.text,
+            .paragraphStyle: paragraph,
+        ]
+        let spacing = size * style.lineSpacingRatio
+        let totalHeight = font.lineHeight * CGFloat(lines.count)
+            + spacing * CGFloat(lines.count - 1)
+        var y = frame.minY + (frame.height - totalHeight) / 2
+        for line in lines {
+            (line as NSString).draw(
+                in: CGRect(x: frame.minX, y: y, width: size, height: font.lineHeight),
+                withAttributes: attributes
+            )
+            y += font.lineHeight + spacing
+        }
     }
 
     func userNotificationCenter(

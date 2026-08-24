@@ -97,10 +97,14 @@ actor StagingMeshAir: FakeRadioAir {
     /// persists, acks, and notifies. Exists to exercise exactly that tail:
     /// notifications, their styling, and the notification reply path, with
     /// no hardware in the room.
-    func sendFromPeer(body: String) async {
+    ///
+    /// `onChannel` addresses the named staged channel instead of the phone,
+    /// which is the only way to raise a group notification here: the peer
+    /// speaks to the room, and the phone hears it as a channel member.
+    func sendFromPeer(body: String, onChannel: Bool) async {
         let logger = Logger(subsystem: "com.umsh.ios", category: "Staging")
-        guard let phoneAddress else {
-            logger.warning("Staged send dropped: the phone never registered its address")
+        guard let address = onChannel ? Self.channelAddress() : phoneAddress else {
+            logger.warning("Staged send dropped: no address to send to")
             return
         }
         let peers = await ensurePeers()
@@ -112,7 +116,7 @@ actor StagingMeshAir: FakeRadioAir {
             // Compose only stages the batch; the commit is what releases it
             // to the session for transmission, same as the app's send path.
             let batch = try await peers[index].session.composeText(
-                conversationAddress: phoneAddress,
+                conversationAddress: address,
                 clientToken: UInt32.random(in: 1...UInt32.max),
                 body: body
             )
@@ -187,6 +191,15 @@ actor StagingMeshAir: FakeRadioAir {
             keys.append(named.key)
         }
         return keys
+    }
+
+    /// The named staged channel's conversation address, derived from its
+    /// name exactly as joining it by name derives it.
+    private static func channelAddress() -> String? {
+        guard let named = try? inspectChannelName(name: StagingScenario.channelName) else {
+            return nil
+        }
+        return try? channelConversationAddress(key: named.key)
     }
 
     /// Frame counters must survive relaunches for replay protection to hold
