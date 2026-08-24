@@ -43,6 +43,20 @@ const state = {
   placeMarkers: [],
 };
 
+// The app fills the viewport below the sticky site header, whose height is
+// content-dependent; measure the real thing instead of guessing in CSS.
+// The test harness has no header, and the stylesheet's fallback covers it.
+const siteHeader = document.querySelector(".site-header");
+if (siteHeader !== null) {
+  const measure = () =>
+    document.documentElement.style.setProperty(
+      "--site-header-h",
+      `${siteHeader.offsetHeight}px`,
+    );
+  measure();
+  new ResizeObserver(measure).observe(siteHeader);
+}
+
 const ui = {
   status: document.getElementById("map-status"),
   result: document.getElementById("lookup-result"),
@@ -102,7 +116,6 @@ function renderMetadata() {
     .join("");
 
   ui.meta.innerHTML = `
-    <h3>Database</h3>
     <dl class="kv">
       <dt>Dataset</dt><dd>${escape(db.datasetVersion)}</dd>
       <dt>Format</dt><dd>${db.formatVersion}</dd>
@@ -217,17 +230,25 @@ function runLookup(latitude, longitude) {
     .setLngLat([longitude, latitude])
     .addTo(state.map);
 
+  // A four-column table cannot live honestly in a panel-width card — it
+  // wraps its own tokens. Each match is a two-line row instead: the
+  // semantic key with its membership, then the radio-facing string and
+  // wire code beneath.
   const rows = result.matches
     .map((match) => {
       const core = match.membership === MEMBERSHIP_CORE;
       const layer = LAYERS.find((entry) => entry.id === match.layer);
-      return `<tr>
-        <td><span class="swatch" style="background:${layer ? layer.color : "#888"}"></span>
-            <code>${escape(match.regionKey)}</code></td>
-        <td>${escape(match.radioName)}</td>
-        <td><code>0x${match.wireCode.toString(16).toUpperCase().padStart(4, "0")}</code></td>
-        <td>${core ? "core" : `expanded (${match.expansionM} m)`}</td>
-      </tr>`;
+      return `<li class="match-row">
+        <span class="swatch" style="background:${layer ? layer.color : "#888"}"></span>
+        <span class="match-main">
+          <span class="match-key"><code>${escape(match.regionKey)}</code></span>
+          <span class="match-detail">${escape(match.radioName)}
+            · <code>0x${match.wireCode.toString(16).toUpperCase().padStart(4, "0")}</code></span>
+        </span>
+        <span class="match-membership${core ? "" : " match-membership--expanded"}"
+          ${core ? "" : `title="Only the ${match.expansionM} m expansion margin reaches this position"`}
+        >${core ? "core" : "expanded"}</span>
+      </li>`;
     })
     .join("");
 
@@ -239,10 +260,7 @@ function runLookup(latitude, longitude) {
     ${
       result.matches.length === 0
         ? "<p>No region covers this position.</p>"
-        : `<table class="region-table">
-             <thead><tr><th>Region</th><th>Radio name</th><th>Code</th><th>Membership</th></tr></thead>
-             <tbody>${rows}</tbody>
-           </table>
+        : `<ul class="match-list">${rows}</ul>
            <dl class="kv">
              <dt>Radio regions</dt><dd>${radio}</dd>
              <dt>Suggested default</dt><dd>${suggested ? escape(suggested.name) : "none"}</dd>

@@ -21,55 +21,66 @@
 {% endblock head_extra %}
 
 {% block content %}
-  <div class="page-head page-head--center">
-    <div class="container">
+  <noscript>
+    <div class="section"><div class="container">
+      <div class="notice">
+        <p>The map needs JavaScript. The region database itself is an
+        ordinary SQLite file and can be inspected with any SQLite client, or
+        with <code>regiondb-build lookup</code> from the repository.</p>
+      </div>
+    </div></div>
+  </noscript>
+
+  {# The viewer is an app, not an article: it escapes the content column and
+     takes the viewport below the site header. Everything the page needs is
+     reachable without horizontal scroll at any width — the panel owns its
+     own vertical scroll, and below the breakpoint it stacks under the map. #}
+  <div class="region-app-wrap">
+    <div class="region-appbar">
       <h1>{{ page.title }}</h1>
       <p>{{ page.description }}</p>
     </div>
-  </div>
 
-  <section class="section">
-    <div class="container">
-      <noscript>
-        <div class="notice">
-          <p>The map needs JavaScript. The region database itself is an
-          ordinary SQLite file and can be inspected with any SQLite client, or
-          with <code>regiondb-build lookup</code> from the repository.</p>
-        </div>
-      </noscript>
+    <div class="region-app">
+      <div class="region-map-pane">
+        <div id="map" class="region-map"></div>
+        <p id="map-status" class="map-status" hidden></p>
+      </div>
 
-      <div class="region-viewer">
-        <div class="region-map-pane">
-          <div id="map" class="region-map"></div>
-          <p id="map-status" class="map-status" hidden></p>
-        </div>
-
-        <aside class="region-side">
+      <aside class="region-panel" aria-label="Region tools">
+        <section class="panel-card">
+          <h2>Look up</h2>
           <form id="coordinate-form" class="coordinate-form">
             <label>Latitude <input name="lat" inputmode="decimal" placeholder="37.5119" /></label>
             <label>Longitude <input name="lon" inputmode="decimal" placeholder="-122.2495" /></label>
             <button type="submit">Look up</button>
           </form>
-
-          <div class="region-search">
-            <label for="region-search">Find a region</label>
-            <input id="region-search" type="search" placeholder="SFO, country:US, Rogue Valley" />
-            <ul id="search-results" class="search-results" hidden></ul>
-          </div>
-
-          <div id="layer-toggles" class="layer-toggles"></div>
-
+          <p class="panel-hint">Or click anywhere on the map.</p>
           <div id="lookup-result" class="lookup-result" hidden></div>
-          <div id="database-meta" class="database-meta"></div>
+        </section>
 
+        <section class="panel-card">
+          <h2><label for="region-search">Find a region</label></h2>
+          <input id="region-search" type="search" placeholder="SFO, country:US, Rogue Valley" />
+          <ul id="search-results" class="search-results" hidden></ul>
+        </section>
+
+        <section class="panel-card">
+          <h2>Layers</h2>
+          <div id="layer-toggles" class="layer-toggles"></div>
+        </section>
+
+        <details class="panel-card panel-card--details" open>
+          <summary><h2>Database</h2></summary>
+          <div id="database-meta" class="database-meta"></div>
           <div class="database-picker">
             <label for="database-file">Open a local <code>.regiondb</code></label>
             <input id="database-file" type="file" accept=".regiondb,.sqlite,.db" />
           </div>
-        </aside>
-      </div>
+        </details>
+      </aside>
     </div>
-  </section>
+  </div>
 
   <section class="section">
     <div class="container prose">
