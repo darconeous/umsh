@@ -28,6 +28,9 @@ struct PeerSummary: Identifiable, Hashable, Sendable {
     /// Whether this node's public key is stored on the companion radio's
     /// device identity (PROP_DEV_PEERS). A cache; the device is the authority.
     var isOnDeviceIdentity: Bool = false
+    /// Whether a one-shot watch is armed: the next thing that moves
+    /// `lastHeard` also raises a notification and clears this.
+    var notifyWhenHeard: Bool = false
 
     var displayName: String {
         alias ?? advertisedName ?? (isUlcpDevice ? "Companion radio" : identity.hint.text)
@@ -703,6 +706,9 @@ struct PeerActions {
     var identifyRouter: ((MeshRouterHint, [MeshRouterHint]) async -> Bool)? = nil
     /// Mark or unmark the node as a favorite. Saved nodes only.
     var setFavorite: ((PeerSummary, Bool) async -> Bool)? = nil
+    /// Arm or disarm the one-shot watch on the node: notify once, the next
+    /// time anything is heard from it, then disarm itself.
+    var setNotifyWhenHeard: ((PeerSummary, Bool) async -> Bool)? = nil
     /// Save a transient node onto the local identity.
     var promoteToSaved: ((PeerSummary) async -> Bool)? = nil
     /// Take a saved node off the local identity, keeping its history and

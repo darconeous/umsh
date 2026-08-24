@@ -23,6 +23,9 @@ final class ChatNotificationService: NSObject, UNUserNotificationCenterDelegate,
 
     private static let logger = Logger(subsystem: "com.umsh.ios", category: "Notifications")
     private static let conversationAddressKey = "umsh.conversationAddress"
+    /// Marks a notification that must banner even while the conversation it
+    /// threads with is on screen. See `postNotice`.
+    private static let alwaysPresentKey = "umsh.alwaysPresent"
     private static let messageCategoryIdentifier = "umsh.chat.message"
     private static let replyActionIdentifier = "umsh.chat.reply"
 
@@ -256,7 +259,7 @@ final class ChatNotificationService: NSObject, UNUserNotificationCenterDelegate,
     /// the failure surfaces. Tapping it opens the transcript where the
     /// preserved draft is waiting.
     func postReplyFailure(conversationAddress: String, displayName: String) {
-        postFailure(
+        postNotice(
             conversationAddress: conversationAddress,
             title: displayName,
             body: "Your reply couldn't be sent. It's saved as a draft."
@@ -274,28 +277,56 @@ final class ChatNotificationService: NSObject, UNUserNotificationCenterDelegate,
         displayName: String,
         quotedBody: String
     ) {
-        postFailure(
+        postNotice(
             conversationAddress: conversationAddress,
             title: "Unable to deliver message to \(displayName)",
             body: quotedBody
         )
     }
 
-    /// A notice about the app's own trouble, deliberately unlike a message.
+    /// Tell the user a node they were watching for has turned up.
+    ///
+    /// The watch is one-shot and has already been disarmed by the time this
+    /// runs, so this notice is the whole of what the user asked for — which
+    /// is why it presents even with that node's transcript open. Nothing has
+    /// necessarily been said: what was heard may be a beacon, an
+    /// advertisement, or an ack, and none of those appear in a transcript.
+    func postPeerHeard(peerAddress: String, displayName: String) {
+        postNotice(
+            conversationAddress: peerAddress,
+            title: "\(displayName) is on the air",
+            body: "You asked to be told the next time this node was heard.",
+            alwaysPresent: true
+        )
+    }
+
+    /// A notice about something other than a message, deliberately unlike
+    /// one.
     ///
     /// No communication styling: nothing here was said by a person, and
     /// dressing it as a message would put a face and a name on the app's own
-    /// bad news. No reply action either — answering a failure notice with
-    /// more undeliverable text helps nobody. It threads with the
+    /// account of events. No reply action either — answering a failure notice
+    /// with more undeliverable text helps nobody. It threads with the
     /// conversation it concerns, so it groups where it belongs and a tap
     /// opens the transcript.
-    private func postFailure(conversationAddress: String, title: String, body: String) {
+    ///
+    /// `alwaysPresent` overrides the visible-transcript suppression, for a
+    /// notice whose subject is not the transcript's contents.
+    private func postNotice(
+        conversationAddress: String,
+        title: String,
+        body: String,
+        alwaysPresent: Bool = false
+    ) {
         let content = UNMutableNotificationContent()
         content.title = title
         content.body = body
         content.sound = .default
         content.threadIdentifier = conversationAddress
-        content.userInfo = [Self.conversationAddressKey: conversationAddress]
+        content.userInfo = [
+            Self.conversationAddressKey: conversationAddress,
+            Self.alwaysPresentKey: alwaysPresent,
+        ]
         let request = UNNotificationRequest(
             identifier: UUID().uuidString,
             content: content,
@@ -304,7 +335,7 @@ final class ChatNotificationService: NSObject, UNUserNotificationCenterDelegate,
         UNUserNotificationCenter.current().add(request) { error in
             if let error {
                 Self.logger.error(
-                    "Could not post failure notification: \(error.localizedDescription, privacy: .public)"
+                    "Could not post notice: \(error.localizedDescription, privacy: .public)"
                 )
             }
         }
@@ -459,10 +490,11 @@ final class ChatNotificationService: NSObject, UNUserNotificationCenterDelegate,
         willPresent notification: UNNotification,
         withCompletionHandler completionHandler: @escaping (UNNotificationPresentationOptions) -> Void
     ) {
-        let conversationAddress = notification.request.content
-            .userInfo[Self.conversationAddressKey] as? String
+        let userInfo = notification.request.content.userInfo
+        let conversationAddress = userInfo[Self.conversationAddressKey] as? String
+        let alwaysPresent = userInfo[Self.alwaysPresentKey] as? Bool ?? false
         let visible = visibleConversation.withLock { $0 }
-        if let conversationAddress, conversationAddress == visible {
+        if !alwaysPresent, let conversationAddress, conversationAddress == visible {
             // The transcript is on screen; the message is already visible.
             completionHandler([])
         } else {

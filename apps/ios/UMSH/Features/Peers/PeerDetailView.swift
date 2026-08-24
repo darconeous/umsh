@@ -70,6 +70,11 @@ struct PeerDetailView: View {
     // moment it is tapped, not when the parent's peer list refresh
     // eventually reaches this pushed view.
     @State private var currentFavorite: Bool
+    /// What the watch switch was just set to, held only until the stored row
+    /// catches up. Unlike the favorite flag, this one also clears itself —
+    /// the watch coming due disarms it — so the stored value wins the moment
+    /// it moves rather than the local copy standing in indefinitely.
+    @State private var pendingWatch: Bool?
     /// What is in the name field. Empty means the peer has no name of this
     /// phone's choosing and goes by whatever it advertises, which is what
     /// the field shows as its placeholder.
@@ -188,6 +193,29 @@ struct PeerDetailView: View {
                             }
                         }
                     ))
+                }
+                // A one-shot watch, offered wherever a row exists to hold it —
+                // transient nodes included, since a node heard once and not
+                // saved is exactly the kind one waits to hear again. Not the
+                // attached radio: it is not something this phone waits for.
+                if actions.setNotifyWhenHeard != nil, isStoredLocally, !peer.isUlcpDevice {
+                    Toggle("Notify next time seen", isOn: Binding(
+                        get: { pendingWatch ?? peer.notifyWhenHeard },
+                        set: { newValue in
+                            pendingWatch = newValue
+                            Task {
+                                if await actions.setNotifyWhenHeard?(peer, newValue) != true {
+                                    pendingWatch = nil
+                                }
+                            }
+                        }
+                    ))
+                    .onChange(of: peer.notifyWhenHeard) { _, _ in
+                        // The stored row moved: either the write landed, or
+                        // the watch came due and disarmed itself while this
+                        // page was open. Either way it is the truth now.
+                        pendingWatch = nil
+                    }
                 }
             }
 

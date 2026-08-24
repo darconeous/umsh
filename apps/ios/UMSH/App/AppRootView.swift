@@ -437,10 +437,21 @@ struct AppRootView: View {
         }) == nil {
             await runtime.reloadApplicationState()
         }
-        guard let conversation = runtime.conversations.first(where: {
+        if let conversation = runtime.conversations.first(where: {
             $0.peer.identity.canonicalAddress == conversationAddress
+        }) {
+            openedConversation = conversation
+            return
+        }
+        // Every other notification threads with a transcript that already
+        // exists, so reaching here means this one does not: a node the phone
+        // was watching for has turned up and has never been messaged. Opening
+        // an empty transcript is what the tap was for — the reason to arm a
+        // watch is to say something once the node is reachable.
+        guard let peer = runtime.peers.first(where: {
+            $0.identity.canonicalAddress == conversationAddress
         }) else { return }
-        openedConversation = conversation
+        openedConversation = await runtime.peerActions.startConversation?(peer)
     }
 
     private struct IncomingPeerImport: Identifiable {

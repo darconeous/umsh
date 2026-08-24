@@ -371,6 +371,7 @@ final class AppRuntime {
             resetRoute: clearPeerRoute,
             identifyRouter: identifyRouter(_:precededBy:),
             setFavorite: setPeerFavorite,
+            setNotifyWhenHeard: setPeerNotifyWhenHeard,
             promoteToSaved: promotePeerToSaved,
             demoteToTransient: demotePeerToTransient,
             deletePeer: deletePeer,
@@ -633,8 +634,12 @@ final class AppRuntime {
         guard let peer = heard.resolve(among: peers) else { return }
         // Reloading the whole application state for every accepted frame
         // would be a full transcript read per packet. Skip the write and the
-        // reload when the recorded instant would not visibly move.
-        if let lastHeard = peer.lastHeard, Date().timeIntervalSince(lastHeard) < 1 { return }
+        // reload when the recorded instant would not visibly move — unless a
+        // watch is armed, which is the one case where the write does
+        // something a second hand cannot show.
+        if !peer.notifyWhenHeard,
+           let lastHeard = peer.lastHeard,
+           Date().timeIntervalSince(lastHeard) < 1 { return }
         await touchLastHeard(peer.identity.canonicalAddress)
         await reloadApplicationState()
     }
@@ -1039,6 +1044,27 @@ final class AppRuntime {
                 publicAddress: peer.identity.canonicalAddress,
                 isFavorite: favorite
             )
+            await reloadApplicationState()
+            return true
+        } catch {
+            return false
+        }
+    }
+
+    /// Arm or disarm the one-shot watch on a node.
+    ///
+    /// Arming asks for a notification, so it is also the moment to make sure
+    /// the app can post one: a watch set on a phone that has never been asked
+    /// about notifications would come due and produce nothing.
+    private func setPeerNotifyWhenHeard(_ peer: PeerSummary, _ armed: Bool) async -> Bool {
+        guard let applicationStore, let localIdentity else { return false }
+        do {
+            try await applicationStore.setNotifyWhenHeard(
+                ownerIdentityID: localIdentity.id,
+                publicAddress: peer.identity.canonicalAddress,
+                enabled: armed
+            )
+            if armed { notificationService.requestAuthorizationIfNeeded() }
             await reloadApplicationState()
             return true
         } catch {
@@ -2560,12 +2586,26 @@ final class AppRuntime {
     /// Record that we just heard from a peer by any inbound evidence. Safe to
     /// call for peers not yet saved locally — the store no-ops on a missing
     /// row. Callers reload application state afterward to surface the change.
-    private func touchLastHeard(_ peerAddress: String) async {
+    ///
+    /// Every piece of evidence goes through here, which is what makes it the
+    /// place to answer a pending watch: "the next time this node is heard"
+    /// has to mean the same thing whether the node beaconed, advertised,
+    /// spoke, or merely acked, and that is exactly the set that moves
+    /// last-heard. The store disarms the watch in the same call that records
+    /// the hearing and reports whether this call was the one that did it, so
+    /// the notice cannot double-post.
+    private func touchLastHeard(_ peerAddress: String, at instant: Date = Date()) async {
         guard let applicationStore, let localIdentity else { return }
-        try? await applicationStore.touchLastHeard(
+        let firedWatch = (try? await applicationStore.touchLastHeard(
             ownerIdentityID: localIdentity.id,
             publicAddress: peerAddress,
-            at: Date()
+            at: instant
+        )) ?? false
+        guard firedWatch else { return }
+        let peer = peers.first { $0.identity.canonicalAddress == peerAddress }
+        notificationService.postPeerHeard(
+            peerAddress: peerAddress,
+            displayName: peer?.displayName ?? String(peerAddress.prefix(10))
         )
     }
 
@@ -2725,11 +2765,7 @@ final class AppRuntime {
             }
             let heardAt = Date()
             for peerAddress in heardFrom {
-                try? await applicationStore.touchLastHeard(
-                    ownerIdentityID: localIdentity.id,
-                    publicAddress: peerAddress,
-                    at: heardAt
-                )
+                await touchLastHeard(peerAddress, at: heardAt)
             }
             try await radioConnection.acknowledgeChatBatch(update.batchID)
             coordinator.chatBatchFailures = nil
@@ -3109,7 +3145,8 @@ final class AppRuntime {
                     lastHeard: stored.lastHeardAt,
                     isSaved: stored.isSaved,
                     isFavorite: stored.isFavorite,
-                    isOnDeviceIdentity: stored.onDeviceIdentity
+                    isOnDeviceIdentity: stored.onDeviceIdentity,
+                    notifyWhenHeard: stored.notifyWhenHeard
                 )
             }
             let storedChannels = try await applicationStore.channels(

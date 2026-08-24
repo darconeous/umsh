@@ -73,6 +73,10 @@ struct StoredNode: Equatable, Sendable {
     /// radio's device identity (`PROP_DEV_PEERS`). The device is the
     /// authority; this flag is reconciled from it on attach.
     let onDeviceIdentity: Bool
+    /// Whether a one-shot watch is armed on this node: tell the user the
+    /// next time anything is heard from it, then disarm. Cleared by the same
+    /// write that records the hearing, so the notice fires exactly once.
+    let notifyWhenHeard: Bool
 }
 
 /// What a remote device said it is, kept between openings of its settings.
@@ -407,7 +411,7 @@ actor SQLiteApplicationStore {
     /// store refuses to open any database above this constant, so a stale value
     /// lets the new schema apply once and then locks the user out of their own
     /// data on the next launch. ``migrate(_:)`` checks the two agree.
-    static let currentSchemaVersion: Int32 = 18
+    static let currentSchemaVersion: Int32 = 19
 
     nonisolated(unsafe) private let database: OpaquePointer
 
@@ -1035,14 +1039,14 @@ actor SQLiteApplicationStore {
     }
 
     /// Drop every transient row that nothing else depends on: saved peers,
-    /// the companion radio, rows on the device identity, and rows with a
-    /// conversation all stay.
+    /// the companion radio, rows on the device identity, rows with a
+    /// conversation, and rows carrying a pending watch all stay.
     func clearTransientPeers(ownerIdentityID: String) throws {
         let statement = try prepare(
             """
             DELETE FROM node
             WHERE owner_identity_id = ?1 AND is_saved = 0 AND on_dev_identity = 0
-                AND system_role IS NULL
+                AND system_role IS NULL AND notify_when_heard = 0
                 AND id NOT IN (
                     SELECT node_id FROM direct_conversation WHERE owner_identity_id = ?1
                 )
@@ -1055,14 +1059,16 @@ actor SQLiteApplicationStore {
 
     /// Keep the transient tier bounded: beyond `cap` rows, the oldest-heard
     /// evictable transients are dropped. Rows with a conversation, on the
-    /// device identity, or with a system role are never evicted.
+    /// device identity, with a system role, or carrying a pending watch are
+    /// never evicted — a watch that the cap quietly deleted would be a
+    /// promise the app stopped keeping without saying so.
     func enforceTransientRetention(ownerIdentityID: String, cap: Int = 256) throws {
         let statement = try prepare(
             """
             DELETE FROM node WHERE id IN (
                 SELECT id FROM node
                 WHERE owner_identity_id = ?1 AND is_saved = 0 AND on_dev_identity = 0
-                    AND system_role IS NULL
+                    AND system_role IS NULL AND notify_when_heard = 0
                     AND id NOT IN (
                         SELECT node_id FROM direct_conversation WHERE owner_identity_id = ?1
                     )
@@ -1137,14 +1143,54 @@ actor SQLiteApplicationStore {
         try stepDone(statement)
     }
 
+    /// Arm or disarm the one-shot "tell me the next time this node is heard"
+    /// watch. Unlike favoriting, this does not save a transient node: the
+    /// retention queries exempt armed rows instead, so asking to be told
+    /// about a node is not the same as deciding to keep it.
+    func setNotifyWhenHeard(
+        ownerIdentityID: String,
+        publicAddress: String,
+        enabled: Bool
+    ) throws {
+        let statement = try prepare(
+            """
+            UPDATE node SET notify_when_heard = ?
+            WHERE owner_identity_id = ? AND public_address = ?
+            """
+        )
+        defer { sqlite3_finalize(statement) }
+        try check(sqlite3_bind_int(statement, 1, enabled ? 1 : 0))
+        try bind(ownerIdentityID, to: statement, at: 2)
+        try bind(publicAddress, to: statement, at: 3)
+        try stepDone(statement)
+    }
+
     /// Record that we just heard from a peer by any means. No-ops when the
     /// peer is not yet saved locally — an unknown peer has no row to touch and
     /// needs no last-heard until it is added.
+    ///
+    /// Returns whether this call is the one that disarmed a pending watch,
+    /// which is the caller's cue to post the notice. The disarm is its own
+    /// conditional write, so two hearings racing through the store cannot
+    /// both come away believing they were first.
+    @discardableResult
     func touchLastHeard(
         ownerIdentityID: String,
         publicAddress: String,
         at instant: Date
-    ) throws {
+    ) throws -> Bool {
+        let disarm = try prepare(
+            """
+            UPDATE node SET notify_when_heard = 0
+            WHERE owner_identity_id = ? AND public_address = ? AND notify_when_heard = 1
+            """
+        )
+        defer { sqlite3_finalize(disarm) }
+        try bind(ownerIdentityID, to: disarm, at: 1)
+        try bind(publicAddress, to: disarm, at: 2)
+        try stepDone(disarm)
+        let firedWatch = sqlite3_changes(database) > 0
+
         let statement = try prepare(
             """
             UPDATE node SET last_heard_at = ?
@@ -1156,6 +1202,7 @@ actor SQLiteApplicationStore {
         try bind(ownerIdentityID, to: statement, at: 2)
         try bind(publicAddress, to: statement, at: 3)
         try stepDone(statement)
+        return firedWatch
     }
 
     /// Resolve the peer a locally-stored message belongs to, keyed by its
@@ -1492,7 +1539,7 @@ actor SQLiteApplicationStore {
             SELECT id, owner_identity_id, public_address, alias, advertised_name,
                    system_role, node_kind, advertisement,
                    advertisement_authenticated, last_heard_at,
-                   is_saved, is_favorite, on_dev_identity
+                   is_saved, is_favorite, on_dev_identity, notify_when_heard
             FROM node WHERE owner_identity_id = ?
             ORDER BY (system_role IS NOT NULL) DESC, alias_search, id
             """
@@ -1604,6 +1651,7 @@ actor SQLiteApplicationStore {
                    n.advertised_name, n.system_role, n.node_kind,
                    n.advertisement, n.advertisement_authenticated, n.last_heard_at,
                    n.is_saved, n.is_favorite, n.on_dev_identity,
+                   n.notify_when_heard,
                    c.draft_text, c.last_read_at_ms, c.created_at_ms,
                    \(Self.conversationTailColumns(
                         owner: "c.owner_identity_id",
@@ -1623,14 +1671,14 @@ actor SQLiteApplicationStore {
         while true {
             switch sqlite3_step(statement) {
             case SQLITE_ROW:
-                let tail = Self.conversationTail(statement, at: 17)
+                let tail = Self.conversationTail(statement, at: 18)
                 conversations.append(
                     StoredDirectConversation(
                         id: sqlite3_column_int64(statement, 0),
                         node: storedNode(statement, offset: 1),
-                        draftText: Self.stringColumn(statement, at: 14),
-                        lastReadAtMilliseconds: sqlite3_column_int64(statement, 15),
-                        createdAtMilliseconds: sqlite3_column_int64(statement, 16),
+                        draftText: Self.stringColumn(statement, at: 15),
+                        lastReadAtMilliseconds: sqlite3_column_int64(statement, 16),
+                        createdAtMilliseconds: sqlite3_column_int64(statement, 17),
                         lastMessage: tail.lastMessage,
                         unreadCount: tail.unreadCount
                     )
@@ -2869,7 +2917,8 @@ actor SQLiteApplicationStore {
             lastHeardAt: Self.optionalDateColumn(statement, at: offset + 9),
             isSaved: sqlite3_column_int(statement, offset + 10) != 0,
             isFavorite: sqlite3_column_int(statement, offset + 11) != 0,
-            onDeviceIdentity: sqlite3_column_int(statement, offset + 12) != 0
+            onDeviceIdentity: sqlite3_column_int(statement, offset + 12) != 0,
+            notifyWhenHeard: sqlite3_column_int(statement, offset + 13) != 0
         )
     }
 
@@ -3959,6 +4008,29 @@ actor SQLiteApplicationStore {
                     ) WITHOUT ROWID;
 
                     PRAGMA user_version = 18;
+                    """
+                )
+                try execute(database, sql: "COMMIT")
+            } catch {
+                try? execute(database, sql: "ROLLBACK")
+                throw error
+            }
+        }
+
+        if version < 19 {
+            try execute(database, sql: "BEGIN IMMEDIATE")
+            do {
+                // A one-shot watch: tell me the next time this node is heard
+                // from. Armed by hand, disarmed by the hearing itself, so it
+                // is state rather than a preference and belongs on the row it
+                // is about — a watch that did not survive relaunch would be
+                // useless for the thing it is for, which is a node that has
+                // gone quiet and may come back at any hour.
+                try execute(
+                    database,
+                    sql: """
+                    ALTER TABLE node ADD COLUMN notify_when_heard INTEGER NOT NULL DEFAULT 0;
+                    PRAGMA user_version = 19;
                     """
                 )
                 try execute(database, sql: "COMMIT")
