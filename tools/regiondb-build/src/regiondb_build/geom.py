@@ -154,6 +154,32 @@ def buffer_m(geometry: BaseGeometry, distance_m: float) -> MultiPolygon:
     return polygonal(split_antimeridian(_union(buffered)))
 
 
+def drop_dust(geometry: BaseGeometry, min_area_km2: float) -> MultiPolygon:
+    """Sweep sub-threshold components and holes out of a water-reach shape.
+
+    After a region is unioned with its maritime reach, every genuine land
+    component sits inside a water component at least two reaches across, so
+    a free-standing polygon or a hole smaller than the threshold can only be
+    an artifact: a sliver seam between a full-resolution edge and its
+    simplified mask, or precision noise where a buffer met a ceiling. Each
+    one renders as a dash of confetti on the map, and none of them changes
+    any lookup answer that the seam itself did not already get wrong.
+    """
+
+    def area_km2(ring_coords) -> float:
+        shell = Polygon(ring_coords)
+        latitude = shell.representative_point().y
+        return abs(shell.area) * (111.32**2) * abs(math.cos(math.radians(latitude)))
+
+    kept = []
+    for component in polygonal(geometry).geoms:
+        if area_km2(component.exterior.coords) < min_area_km2:
+            continue
+        holes = [hole for hole in component.interiors if area_km2(hole.coords) >= min_area_km2]
+        kept.append(Polygon(component.exterior, holes))
+    return MultiPolygon(kept)
+
+
 def _union(pieces: list[BaseGeometry]) -> BaseGeometry:
     """Combine buffered components, tolerating an overlay GEOS cannot resolve.
 

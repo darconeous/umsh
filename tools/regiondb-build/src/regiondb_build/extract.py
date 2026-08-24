@@ -276,7 +276,10 @@ def _water_reach(land_area, ceiling, reach_m: float) -> MultiPolygon:
     if slimmed.is_empty:
         slimmed = land_area
     grown = geom.buffer_m(slimmed, reach_m)
-    return geom.polygonal(unary_union([land_area, grown.intersection(ceiling)]))
+    merged = geom.polygonal(unary_union([land_area, grown.intersection(ceiling)]))
+    # Precision seams where the buffer met the ceiling, or where the two
+    # coastline datasets disagree by meters, leave rings of confetti.
+    return geom.drop_dust(merged, 1.0)
 
 
 def _boundary_document(
@@ -441,7 +444,14 @@ def us_states(
     labels = fields[names.index("NAME")]
 
     rows = [
-        (geom.polygonal(from_wkb(wkb)), str(code).upper(), str(geoid), str(label))
+        (
+            geom.polygonal(
+                geom.simplify_m(geom.polygonal(from_wkb(wkb)), BOUNDARY_EXTRACT_TOLERANCE_M)
+            ),
+            str(code).upper(),
+            str(geoid),
+            str(label),
+        )
         for wkb, code, geoid, label in zip(geometry, codes, fips, labels, strict=True)
         if int(geoid) < TERRITORY_FIPS_FLOOR
     ]
@@ -452,13 +462,12 @@ def us_states(
     )
 
     # The nation's water beyond every state: what a state's reach may claim.
-    # States are simplified to the extract tolerance first — the mask guards
-    # against annexing land, a question 50 m detail does not sharpen.
+    # The mask is built from the same simplified shapes the states are
+    # written from, so the seam between a state and its own water dissolves
+    # in the union rather than surviving as slivers of confetti.
     open_water = None
     if country is not None and reach_m > 0:
-        states_union = unary_union(
-            [geom.simplify_m(shape, BOUNDARY_EXTRACT_TOLERANCE_M) for shape, _, _, _ in rows]
-        )
+        states_union = unary_union([shape for shape, _, _, _ in rows])
         open_water = geom.polygonal(country.difference(states_union))
 
     for shape, code, geoid, label in rows:
@@ -466,7 +475,7 @@ def us_states(
             reached = geom.buffer_m(
                 geom.polygonal(geom.simplify_m(shape, 1000.0)), reach_m
             ).intersection(open_water)
-            shape = geom.polygonal(unary_union([shape, reached]))
+            shape = geom.drop_dust(geom.polygonal(unary_union([shape, reached])), 1.0)
         _write(
             destination / f"{code}.geojson",
             _boundary_document(shape, label, f"fips:{geoid}"),
