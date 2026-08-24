@@ -43,6 +43,8 @@ actor FakeRadioConnection: RadioConnection {
     /// so a preview can change a setting and see the change stick.
     private var managedDevice = FakeManagedDevice()
     private var remoteDeviceReachable = true
+    /// Staging only: swallow every outbound frame, as a dead link would.
+    private var transmissionsFail = false
 
     init(snapshot: RadioSnapshot = .previewReady, air: (any FakeRadioAir)? = nil) {
         self.snapshot = snapshot
@@ -55,6 +57,25 @@ actor FakeRadioConnection: RadioConnection {
         #if DEBUG
         await (air as? StagingMeshAir)?.sendFromPeer(body: body, onChannel: onChannel)
         #endif
+    }
+
+    /// Ask the staging air to have a staged peer react to the phone's last
+    /// message to it.
+    func stagedPeerReacts(body: String) async {
+        #if DEBUG
+        await (air as? StagingMeshAir)?.reactFromPeer(body: body)
+        #endif
+    }
+
+    /// Fail everything handed to this radio, as a link that has dropped
+    /// would. The session hears that the transmission did not happen and
+    /// gives up on the message, which is what a delivery failure is.
+    ///
+    /// A standing state rather than a one-shot: acknowledgements are frames
+    /// too, so a single-use switch would be spent on the ack for whatever
+    /// arrived next rather than on the message being tested.
+    func setTransmissionsFailing(_ failing: Bool) {
+        transmissionsFail = failing
     }
 
     func snapshots() -> AsyncStream<RadioSnapshot> {
@@ -681,10 +702,17 @@ actor FakeRadioConnection: RadioConnection {
         guard let meshSession else { return }
         let update = meshSession.pollUpdate()
         if !update.outboundFrames.isEmpty {
+            let transmitted = !transmissionsFail
             for frame in update.outboundFrames {
-                try? meshSession.completeOutboundFrame(frameId: frame.id, transmitted: true)
+                try? meshSession.completeOutboundFrame(
+                    frameId: frame.id,
+                    transmitted: transmitted
+                )
             }
-            queueForAir(update.outboundFrames.map(\.data))
+            // Frames that never went out never reach the air either.
+            if transmitted {
+                queueForAir(update.outboundFrames.map(\.data))
+            }
         }
         yieldChatUpdate(from: update)
     }

@@ -2362,6 +2362,30 @@ final class AppRuntime {
     /// two are worth testing separately: a group message names a channel and
     /// a speaker where a direct one names only a peer, and that difference is
     /// exactly what a notification has to carry.
+    /// Staging only: have a staged peer react to the phone's last message,
+    /// after the same delay and for the same reason as a staged message.
+    func stagedPeerReacts() {
+        guard let staging = radioConnection as? FakeRadioConnection else { return }
+        let glyph = ReactionEmoji.palette.randomElement()?.token ?? "+1"
+        Task {
+            let assertion = UIApplication.shared.beginBackgroundTask(
+                withName: "umsh.staging.delayed-reaction"
+            )
+            try? await Task.sleep(for: .seconds(5))
+            await staging.stagedPeerReacts(body: glyph)
+            if assertion != .invalid {
+                UIApplication.shared.endBackgroundTask(assertion)
+            }
+        }
+    }
+
+    /// Staging only: make the radio drop everything handed to it, so sends
+    /// fail the way they would over a link that has gone.
+    func stagedDropTransmissions(_ dropping: Bool) {
+        guard let staging = radioConnection as? FakeRadioConnection else { return }
+        Task { await staging.setTransmissionsFailing(dropping) }
+    }
+
     func stagedPeerSendsMessage(onChannel: Bool) {
         guard let staging = radioConnection as? FakeRadioConnection else { return }
         let line = Self.stagedPeerLines[
@@ -2384,6 +2408,8 @@ final class AppRuntime {
     }
     #else
     var stagedPeerSendsMessage: ((Bool) -> Void)? { nil }
+    var stagedPeerReacts: (() -> Void)? { nil }
+    var stagedDropTransmissions: ((Bool) -> Void)? { nil }
     #endif
 
     /// How many messages a conversation holds, for the info sheet. The only
@@ -2643,10 +2669,11 @@ final class AppRuntime {
                 )
             }
             if !update.deliveries.isEmpty {
-                try await applicationStore.applyChatDeliveries(
+                let failures = try await applicationStore.applyChatDeliveries(
                     ownerIdentityID: localIdentity.id,
                     deliveries: update.deliveries
                 )
+                postDeliveryFailureNotifications(failures)
             }
             await noteChatMessagesChanged(by: update)
             for lookup in update.archiveLookups {
@@ -2760,11 +2787,7 @@ final class AppRuntime {
     private func postNotifications(for mutations: [MobileChatMutationRecord]) async {
         guard let applicationStore, let localIdentity else { return }
         for mutation in mutations where mutation.notify {
-            guard let target = try? await applicationStore.chatNotificationTarget(
-                ownerIdentityID: localIdentity.id,
-                sessionID: mutation.sessionId,
-                handle: mutation.handle
-            ) else { continue }
+            guard let target = await notificationSubject(for: mutation) else { continue }
             if Self.isChannelAddress(target.conversationAddress) {
                 guard let channel = channels.first(where: {
                     coordinator.channelAddresses[$0.id] == target.conversationAddress
@@ -2809,6 +2832,103 @@ final class AppRuntime {
         }
     }
 
+    /// Say out loud that a message is not going to arrive.
+    ///
+    /// The transcript already marks it failed, and the delegate suppresses
+    /// the banner when that transcript is on screen — so this speaks up
+    /// exactly when nobody was watching it happen, which over a mesh is the
+    /// normal case. A muted channel stays muted: the user asked not to hear
+    /// from it, and that covers the app's own bad news about it.
+    private func postDeliveryFailureNotifications(_ failures: [ChatDeliveryFailure]) {
+        for failure in failures {
+            let name: String
+            if Self.isChannelAddress(failure.conversationAddress) {
+                guard let channel = channels.first(where: {
+                    coordinator.channelAddresses[$0.id] == failure.conversationAddress
+                }), channel.notificationsEnabled else { continue }
+                name = channel.title
+            } else {
+                name = peers.first {
+                    $0.identity.canonicalAddress == failure.conversationAddress
+                }?.displayName ?? String(failure.conversationAddress.prefix(10))
+            }
+            notificationService.postDeliveryFailure(
+                conversationAddress: failure.conversationAddress,
+                displayName: name,
+                quotedBody: Self.quotedBody(failure.body, limit: Self.failureQuoteLimit)
+            )
+        }
+    }
+
+    /// What a notifying mutation is about: a message, or a reaction to one of
+    /// this phone's own messages.
+    ///
+    /// The engine sets `notify` on any inbound message it completes, and a
+    /// reaction is a message like any other as far as the wire is concerned.
+    /// Which of the two it turns out to be is settled here, against durable
+    /// storage, because the flag can ride an `UpdateBody` that carries
+    /// neither peer nor body.
+    private func notificationSubject(
+        for mutation: MobileChatMutationRecord
+    ) async -> ChatNotificationSubject? {
+        guard let applicationStore, let localIdentity else { return nil }
+        if let text = try? await applicationStore.chatNotificationTarget(
+            ownerIdentityID: localIdentity.id,
+            sessionID: mutation.sessionId,
+            handle: mutation.handle
+        ) {
+            return ChatNotificationSubject(
+                conversationAddress: text.conversationAddress,
+                body: text.body,
+                senderAddress: text.senderAddress,
+                senderHint: text.senderHint,
+                senderHandle: text.senderHandle
+            )
+        }
+        guard let reaction = try? await applicationStore.chatReactionNotificationTarget(
+            ownerIdentityID: localIdentity.id,
+            sessionID: mutation.sessionId,
+            handle: mutation.handle
+        ) else { return nil }
+        return ChatNotificationSubject(
+            conversationAddress: reaction.conversationAddress,
+            body: Self.reactionLine(reaction.body, on: reaction.targetBody),
+            senderAddress: reaction.senderAddress,
+            senderHint: reaction.senderHint,
+            senderHandle: reaction.senderHandle
+        )
+    }
+
+    /// A reaction, said out loud: what was done, the glyph it renders as, and
+    /// the message it landed on.
+    private static func reactionLine(_ body: String, on target: String) -> String {
+        "Reacted \(ReactionEmoji.displayGlyph(for: body)) to "
+            + quotedBody(target, limit: reactionQuoteLimit)
+    }
+
+    /// A message as a notification *refers* to it, rather than shows it: one
+    /// line, in quotation marks, clipped to about what a banner holds before
+    /// it wraps. The quotation marks are what distinguish naming a message
+    /// from delivering one — a failure notice that simply printed the text
+    /// would read like the message arriving.
+    private static func quotedBody(_ body: String, limit: Int) -> String {
+        let flattened = body
+            .replacingOccurrences(of: "\n", with: " ")
+            .trimmingCharacters(in: .whitespacesAndNewlines)
+        let clipped = flattened.count > limit
+            ? flattened.prefix(limit - 1).trimmingCharacters(in: .whitespaces) + "…"
+            : flattened
+        return "“\(clipped)”"
+    }
+
+    /// Roughly what one line of a banner holds at the default text size,
+    /// once the quotation marks are paid for. A failure notice is a whole
+    /// line of its own, so it gets the budget; a reaction has already spent
+    /// a third of the line saying who did what, and wraps to a second line
+    /// rather than clipping the quote down to nothing.
+    private static let failureQuoteLimit = 36
+    private static let reactionQuoteLimit = 48
+
     /// What to call a channel member, in descending order of authority: the
     /// name we have given them or heard them advertise, then the name they
     /// attached to the message, then their address, then the bare hint.
@@ -2826,6 +2946,17 @@ final class AppRuntime {
         if let address { return String(address.prefix(10)) }
         guard let hint else { return "Unknown member" }
         return "Member \(hint.map { String(format: "%02x", $0) }.joined())"
+    }
+
+    /// Whatever a notifying mutation turned out to be, reduced to the four
+    /// things a notification needs: where it belongs, what it says, and who
+    /// said it.
+    private struct ChatNotificationSubject {
+        let conversationAddress: String
+        let body: String
+        let senderAddress: String?
+        let senderHint: Data?
+        let senderHandle: String?
     }
 
     /// Whether an address names a channel's group conversation rather than a

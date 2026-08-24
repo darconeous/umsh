@@ -225,7 +225,9 @@ struct AppRootView: View {
                     unknownDeviceChannels: runtime.unknownDeviceChannels,
                     channelActions: channelManagementActions,
                     seedMessages: runtime.seedGeneratedMessages,
-                    stagedPeerSendsMessage: runtime.stagedPeerSendsMessage
+                    stagedPeerSendsMessage: runtime.stagedPeerSendsMessage,
+                    stagedPeerReacts: runtime.stagedPeerReacts,
+                    stagedDropTransmissions: runtime.stagedDropTransmissions
                 )
                     .appRadioToolbar(runtime.radioSnapshot) {
                         showsRadioDetail = true

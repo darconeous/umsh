@@ -168,6 +168,27 @@ struct ChatNotificationTarget: Equatable, Sendable {
     let senderHandle: String?
 }
 
+/// An inbound reaction worth telling the user about: who put what on which
+/// message of theirs.
+struct ChatReactionNotificationTarget: Equatable, Sendable {
+    let conversationAddress: String
+    /// The reaction body as it arrived — a wire token like `<3`, rendered to
+    /// a glyph for display.
+    let body: String
+    /// What the reaction is on, so the notice can quote it the way a chat app
+    /// quotes the message a tapback landed on.
+    let targetBody: String
+    let senderAddress: String?
+    let senderHint: Data?
+    let senderHandle: String?
+}
+
+/// An outbound message whose delivery has just been given up on.
+struct ChatDeliveryFailure: Equatable, Sendable {
+    let conversationAddress: String
+    let body: String
+}
+
 /// How a channel's key was established, which decides what may be shared.
 enum StoredChannelKind: String, Equatable, Sendable {
     /// `public` or `EMERGENCY`: named channels the protocol fixes rules for.
@@ -1196,6 +1217,47 @@ actor SQLiteApplicationStore {
         )
     }
 
+    /// The reaction behind a notifying mutation, when it is one and when it
+    /// lands on a message this phone sent.
+    ///
+    /// Reactions to someone else's message are somebody else's business: in a
+    /// channel they would ping every member for every tapback. A withdrawal
+    /// carries an empty body and is not an event to announce.
+    func chatReactionNotificationTarget(
+        ownerIdentityID: String,
+        sessionID: UInt64,
+        handle: UInt32
+    ) throws -> ChatReactionNotificationTarget? {
+        let statement = try prepare(
+            """
+            SELECT r.conversation_address, r.body, target.body,
+                r.sender_address, r.sender_hint, r.sender_handle
+            FROM chat_message r
+            JOIN chat_message target
+                ON target.owner_identity_id = r.owner_identity_id
+                AND target.session_id = r.reaction_target_session_id
+                AND target.handle = r.reaction_target_handle
+            WHERE r.owner_identity_id = ? AND r.session_id = ? AND r.handle = ?
+                AND r.direction = 0 AND r.deleted = 0 AND r.is_reaction = 1
+                AND r.body <> ''
+                AND target.direction = 1 AND target.deleted = 0
+            """
+        )
+        defer { sqlite3_finalize(statement) }
+        try bind(ownerIdentityID, to: statement, at: 1)
+        try bind(String(sessionID), to: statement, at: 2)
+        try check(sqlite3_bind_int64(statement, 3, Int64(handle)))
+        guard sqlite3_step(statement) == SQLITE_ROW else { return nil }
+        return ChatReactionNotificationTarget(
+            conversationAddress: Self.stringColumn(statement, at: 0),
+            body: Self.stringColumn(statement, at: 1),
+            targetBody: Self.stringColumn(statement, at: 2),
+            senderAddress: Self.optionalStringColumn(statement, at: 3),
+            senderHint: Self.optionalDataColumn(statement, at: 4),
+            senderHandle: Self.optionalStringColumn(statement, at: 5)
+        )
+    }
+
     func upsertUlcpDevicePeer(
         ownerIdentityID: String,
         publicAddress: String,
@@ -1897,12 +1959,27 @@ actor SQLiteApplicationStore {
         }
     }
 
+    /// Apply delivery evidence, and report which messages this evidence just
+    /// gave up on.
+    ///
+    /// Only a crossing counts. `delivery_state` is recomputed from the whole
+    /// fragment table on every record, so a message already resolved to
+    /// 'failed' recomputes to 'failed' again on the next fragment, and a
+    /// redelivered batch replays the same records; announcing the state rather
+    /// than the transition would announce one failure many times.
+    @discardableResult
     func applyChatDeliveries(
         ownerIdentityID: String,
         deliveries: [MobileChatDeliveryRecord]
-    ) throws {
+    ) throws -> [ChatDeliveryFailure] {
+        var failures: [ChatDeliveryFailure] = []
         try transaction {
             for delivery in deliveries {
+                let before = try deliveryState(
+                    ownerIdentityID: ownerIdentityID,
+                    sessionID: delivery.sessionId,
+                    handle: delivery.handle
+                )
                 let fragmentStatement = try prepare(
                     """
                     INSERT INTO chat_delivery_fragment (
@@ -1988,8 +2065,68 @@ actor SQLiteApplicationStore {
                 try bind(String(delivery.sessionId), to: message, at: 2)
                 try check(sqlite3_bind_int64(message, 3, Int64(delivery.handle)))
                 try stepDone(message)
+
+                guard before != "failed",
+                      try deliveryState(
+                          ownerIdentityID: ownerIdentityID,
+                          sessionID: delivery.sessionId,
+                          handle: delivery.handle
+                      ) == "failed",
+                      let failure = try failedMessage(
+                          ownerIdentityID: ownerIdentityID,
+                          sessionID: delivery.sessionId,
+                          handle: delivery.handle
+                      )
+                else { continue }
+                failures.append(failure)
             }
         }
+        return failures
+    }
+
+    private func deliveryState(
+        ownerIdentityID: String,
+        sessionID: UInt64,
+        handle: UInt32
+    ) throws -> String? {
+        let statement = try prepare(
+            """
+            SELECT delivery_state FROM chat_message
+            WHERE owner_identity_id = ? AND session_id = ? AND handle = ?
+            """
+        )
+        defer { sqlite3_finalize(statement) }
+        try bind(ownerIdentityID, to: statement, at: 1)
+        try bind(String(sessionID), to: statement, at: 2)
+        try check(sqlite3_bind_int64(statement, 3, Int64(handle)))
+        guard sqlite3_step(statement) == SQLITE_ROW else { return nil }
+        return Self.optionalStringColumn(statement, at: 0)
+    }
+
+    /// What a just-failed message was, when it is one worth a notice. A
+    /// reaction that never landed is not: the user did not write it as a
+    /// message and cannot usefully resend it.
+    private func failedMessage(
+        ownerIdentityID: String,
+        sessionID: UInt64,
+        handle: UInt32
+    ) throws -> ChatDeliveryFailure? {
+        let statement = try prepare(
+            """
+            SELECT conversation_address, body FROM chat_message
+            WHERE owner_identity_id = ? AND session_id = ? AND handle = ?
+                AND direction = 1 AND deleted = 0 AND is_reaction = 0 AND body <> ''
+            """
+        )
+        defer { sqlite3_finalize(statement) }
+        try bind(ownerIdentityID, to: statement, at: 1)
+        try bind(String(sessionID), to: statement, at: 2)
+        try check(sqlite3_bind_int64(statement, 3, Int64(handle)))
+        guard sqlite3_step(statement) == SQLITE_ROW else { return nil }
+        return ChatDeliveryFailure(
+            conversationAddress: Self.stringColumn(statement, at: 0),
+            body: Self.stringColumn(statement, at: 1)
+        )
     }
 
     /// The compose transaction is already durable at this point, but Rust

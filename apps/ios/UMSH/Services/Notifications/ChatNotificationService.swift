@@ -253,14 +253,46 @@ final class ChatNotificationService: NSObject, UNUserNotificationCenterDelegate,
     ///
     /// Failed sends are never silently queued; from a notification or a
     /// watch there is no transcript on screen to say so, so this is where
-    /// the failure surfaces. Threaded with the conversation, and tapping it
-    /// opens the transcript where the preserved draft is waiting. No reply
-    /// category: answering a failure notice with more undeliverable text
-    /// helps nobody.
+    /// the failure surfaces. Tapping it opens the transcript where the
+    /// preserved draft is waiting.
     func postReplyFailure(conversationAddress: String, displayName: String) {
+        postFailure(
+            conversationAddress: conversationAddress,
+            title: displayName,
+            body: "Your reply couldn't be sent. It's saved as a draft."
+        )
+    }
+
+    /// Tell the user a message that had been sent is not going to arrive.
+    ///
+    /// The transcript marks it failed either way; this is for when nobody is
+    /// looking at the transcript, which over a mesh is most of the time.
+    /// `quotedBody` names the message rather than repeating it, so the
+    /// notice cannot be misread as the message itself having arrived.
+    func postDeliveryFailure(
+        conversationAddress: String,
+        displayName: String,
+        quotedBody: String
+    ) {
+        postFailure(
+            conversationAddress: conversationAddress,
+            title: "Unable to deliver message to \(displayName)",
+            body: quotedBody
+        )
+    }
+
+    /// A notice about the app's own trouble, deliberately unlike a message.
+    ///
+    /// No communication styling: nothing here was said by a person, and
+    /// dressing it as a message would put a face and a name on the app's own
+    /// bad news. No reply action either — answering a failure notice with
+    /// more undeliverable text helps nobody. It threads with the
+    /// conversation it concerns, so it groups where it belongs and a tap
+    /// opens the transcript.
+    private func postFailure(conversationAddress: String, title: String, body: String) {
         let content = UNMutableNotificationContent()
-        content.title = displayName
-        content.body = "Your reply couldn't be sent. It's saved as a draft."
+        content.title = title
+        content.body = body
         content.sound = .default
         content.threadIdentifier = conversationAddress
         content.userInfo = [Self.conversationAddressKey: conversationAddress]
@@ -269,7 +301,13 @@ final class ChatNotificationService: NSObject, UNUserNotificationCenterDelegate,
             content: content,
             trigger: nil
         )
-        UNUserNotificationCenter.current().add(request, withCompletionHandler: nil)
+        UNUserNotificationCenter.current().add(request) { error in
+            if let error {
+                Self.logger.error(
+                    "Could not post failure notification: \(error.localizedDescription, privacy: .public)"
+                )
+            }
+        }
     }
 
     /// Restyle a chat notification as a communication notification: the

@@ -26,6 +26,9 @@ actor StagingMeshAir: FakeRadioAir {
         let linkQuality: UInt8
     }
 
+    /// The most recent message the phone sent that a peer could react to,
+    /// as that peer's own session knows it.
+    private var lastHeard: [Int: MobileChatRegardingRef] = [:]
     private var peers: [Peer]?
     private var buildTask: Task<[Peer], Never>?
     private var phoneAddress: String?
@@ -67,6 +70,18 @@ actor StagingMeshAir: FakeRadioAir {
         guard let peers, peers.indices.contains(index) else { return }
         let peer = peers[index]
         let update = peer.session.pollUpdate()
+        for mutation in update.chatMutations
+        where mutation.kind == .insert && mutation.direction == .inbound
+            && mutation.messageType == 0 {
+            lastHeard[index] = MobileChatRegardingRef(
+                sessionId: mutation.sessionId,
+                handle: mutation.handle,
+                wireId: mutation.wireId,
+                direction: .inbound,
+                senderHint: mutation.senderHint.map { Data($0) },
+                epoch: mutation.epoch
+            )
+        }
         for frame in update.outboundFrames {
             try? peer.session.completeOutboundFrame(frameId: frame.id, transmitted: true)
         }
@@ -125,6 +140,37 @@ actor StagingMeshAir: FakeRadioAir {
         } catch {
             logger.warning(
                 "Staged send failed: \(error.localizedDescription, privacy: .public)"
+            )
+        }
+        pumpPeer(index)
+    }
+
+    /// Have a staged peer react to the last thing the phone said to it.
+    ///
+    /// Reactions are the other half of an inbound notification and travel the
+    /// same real path: a compose, a commit, a frame, and the phone's own core
+    /// resolving what the emote is about.
+    func reactFromPeer(body: String) async {
+        let logger = Logger(subsystem: "com.umsh.ios", category: "Staging")
+        let peers = await ensurePeers()
+        guard let index = peers.indices.first else { return }
+        guard let target = lastHeard[index] else {
+            logger.warning("Staged reaction dropped: the phone has not said anything yet")
+            return
+        }
+        guard let phoneAddress else { return }
+        do {
+            let batch = try await peers[index].session.composeReaction(
+                conversationAddress: phoneAddress,
+                clientToken: UInt32.random(in: 1...UInt32.max),
+                target: target,
+                body: body
+            )
+            try await peers[index].session.commitChatBatch(batchId: batch.batchId)
+            logger.notice("Staged peer \(peers[index].name, privacy: .public) reacted")
+        } catch {
+            logger.warning(
+                "Staged reaction failed: \(error.localizedDescription, privacy: .public)"
             )
         }
         pumpPeer(index)

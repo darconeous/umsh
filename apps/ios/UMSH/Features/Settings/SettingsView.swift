@@ -54,6 +54,8 @@ struct SettingsView: View {
     /// notifications end to end — arrival, styling, and the inline reply.
     /// Debug builds only, and meaningful only in staging mode.
     var stagedPeerSendsMessage: ((Bool) -> Void)? = nil
+    var stagedPeerReacts: (() -> Void)? = nil
+    var stagedDropTransmissions: ((Bool) -> Void)? = nil
 
     @Environment(\.regionService) private var regionService
     @State private var showsDeviceSetup = false
@@ -64,6 +66,8 @@ struct SettingsView: View {
     /// so a closure round trip would only add a way for the two to disagree.
     @AppStorage("staging.enabled") private var stagingEnabled = false
     @State private var stagingResetFailed = false
+    /// Staging only: whether the fake radio is currently dropping everything.
+    @State private var dropsTransmissions = false
     @AppStorage("debug.radioTcp.enabled") private var tcpRadioEnabled = false
     @AppStorage("debug.radioTcp.endpoint") private var tcpRadioEndpoint = "127.0.0.1:9000"
     #endif
@@ -241,6 +245,17 @@ struct SettingsView: View {
                     Button("Staged Channel Message in 5 Seconds") {
                         stagedPeerSendsMessage(true)
                     }
+                }
+                if stagingEnabled, let stagedPeerReacts {
+                    Button("Staged Reaction in 5 Seconds") {
+                        stagedPeerReacts()
+                    }
+                }
+                if stagingEnabled, let stagedDropTransmissions {
+                    Toggle("Drop everything sent", isOn: $dropsTransmissions)
+                        .onChange(of: dropsTransmissions) { _, dropping in
+                            stagedDropTransmissions(dropping)
+                        }
                 }
                 Button("Reset staged data", role: .destructive) {
                     // Leaving staging hands the app back to the real store, so
