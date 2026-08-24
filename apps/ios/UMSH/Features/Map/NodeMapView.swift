@@ -179,7 +179,7 @@ struct NodeMapView: View {
                         .foregroundStyle(Color.accentColor.opacity(0.12))
                         .stroke(Color.accentColor.opacity(0.45), lineWidth: 1)
                 }
-                Annotation(node.peer.displayName, coordinate: node.coordinate) {
+                Annotation(node.peer.displayName, coordinate: node.coordinate, anchor: .bottom) {
                     MapNodeMarker(node: node, isSelected: node.id == selectedNodeID)
                 }
                 .tag(node.id)
