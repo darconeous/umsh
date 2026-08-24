@@ -23,6 +23,16 @@ geometry:
   # region fades out at maximum distance from its site, not a border anyone
   # contests, so it is deliberately much looser than the bisectors.
   cap_error_m: 1000
+  # How far a country's or state's water extends from its charted land, in
+  # meters. The administrative layers are land buffered seaward by this
+  # reach — a country clipped to its EEZ, a US state clipped to its country —
+  # rather than the full 200-nautical-mile jurisdiction, which made a boat in
+  # the middle of the Pacific nominally American. 100 km matches how far the
+  # IATA layers project offshore, so no water has an airport region but no
+  # country, and it closes the channels between a state's islands and its
+  # mainland. Consumed at update time: changing it means `make regions-fetch`
+  # (once, for the vendor files) and `make regions-update`.
+  maritime_reach_m: 100000
   # Topology-preserving simplification, per layer. Administrative coastlines
   # carry far more detail than routing needs; hand-authored local regions are
   # already drawn at the scale they mean. Country tolerance is the main size

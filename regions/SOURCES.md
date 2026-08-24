@@ -70,13 +70,19 @@ See `LICENSES.md` — this source is share-alike.
 **CC BY 4.0**, retrieved from the public WFS endpoint at `geo.vliz.be`
 (`MarineRegions:eez_land`).
 
-A country region is the area where the country asserts jurisdiction: its land
-together with its exclusive economic zone, conventionally 200 nautical miles
-offshore. That definition is both truer to what a repeater operator wants —
-a boat in coastal waters is in its country's region — and far cheaper than a
-coastline dataset, because the fractal coastline lies strictly inside the
-union and is never stored. What remains is land borders and smooth maritime
-arcs, distilled at one kilometer.
+A country region is the country's charted land together with the water
+within the policy's maritime reach of it — 100 km by default — clipped to
+this EEZ + land union. The full 200-nautical-mile jurisdiction proved too
+generous (a boat mid-Pacific is not meaningfully in any country's mesh), but
+it stays as the ceiling: its bilateral maritime lines are what keep the
+buffer from ever claiming a neighbor's water, so the neutrality policy is
+unchanged. The land itself comes from Natural Earth's 50m physical layer
+(public domain), attributed to countries by intersection with this union;
+the handful of atoll territories below that chart's resolution keep their
+whole jurisdiction, named in the update report. The fractal coastline lies
+strictly inside the region and is never stored — what remains is smooth
+buffer arcs, land borders, and EEZ segments where neighbors are close,
+distilled at one kilometer.
 
 Contested areas are omitted entirely. Features the source marks as
 overlapping claims or joint regimes are skipped by the update pass and named
@@ -101,6 +107,19 @@ The 50 states plus the District of Columbia. State FIPS (`GEOID`) is the source
 key and `STUSPS` supplies the two-letter radio-facing code; display names are
 never keys. Territories are excluded in V1 — an explicit policy choice recorded
 in `policy.yaml`, not an accident of the source schema.
+
+The TIGER boundary is the legal state — islands, internal waters, a few miles
+of territorial sea — which strands the channels between a state's islands and
+its mainland. The extract therefore adds the water within the policy's
+maritime reach of the state, clipped to the country's own water so no state
+crosses the border and none annexes a neighbor's land. Where two states'
+reaches overlap, both cover the water.
+
+## World land — Natural Earth 50m physical
+
+`ne_50m_land.zip`, public domain. Pinned for the map viewer's basemap, and
+also the land the country extracts buffer from: physical land with no idea of
+countries, attributed by intersection with the EEZ + land union above.
 
 ## ISO 3166-1 crosswalk — `datasets/country-codes`
 

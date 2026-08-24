@@ -69,14 +69,19 @@ overlap, and a lookup returns all of them.
   individually replaceable with reviewed boundaries. Metro regions rank first
   for the suggested packet default: inside the Tokyo area the tag people mean
   is `TYO`, and the broader flood that follows is a deliberate trade.
-- **Country** (`country:`) — ISO 3166-1 alpha-2, over the area where the
-  country asserts jurisdiction: its land together with its exclusive economic
-  zone, conventionally 200 nautical miles offshore. A boat in coastal waters
-  is in its country's region. Contested areas — overlapping claims and joint
-  regimes — are omitted entirely; the database takes no position on any
-  dispute.
-- **US state** (`us-state:`) — the 50 states plus the District of Columbia.
-  Territories are excluded in V1; see `policy.yaml`.
+- **Country** (`country:`) — ISO 3166-1 alpha-2, over the country's land and
+  the water within `maritime_reach_m` of it (100 km by default, matching how
+  far the IATA layers project offshore), clipped to its EEZ + land union so
+  the reach never crosses a maritime boundary. A boat in coastal waters is in
+  its country's region; a boat mid-ocean is in nobody's. Contested areas —
+  overlapping claims and joint regimes — are omitted entirely; the database
+  takes no position on any dispute.
+- **US state** (`us-state:`) — the 50 states plus the District of Columbia,
+  each with the same water reach clipped to the nation's own water: the
+  channels between a state's islands and its mainland belong to the state.
+  Open water within reach of two states carries both, the same both-sides
+  answer the expansion margins give on land. Territories are excluded in V1;
+  see `policy.yaml`.
 - **Custom** (`custom:`) — anything a person wants to define.
 
 Namespaces are for tooling. Both `iata-airport:SFO` and `iata-metro:SFO`

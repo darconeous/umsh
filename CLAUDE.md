@@ -35,7 +35,7 @@ costs of migration before considering implementing it.
   committed test fixture. Three stages with distinct commit policies: `regions-fetch`
   (network → gitignored `vendor/`), `regions-update` (→ **committed** `extracts/`), and
   `regions-build` (committed tree → `dist/`). Every layer's extract is committed — the
-  country layer is EEZ+land jurisdiction areas, not coastlines, so it stays small — and a
+  country layer is land buffered ~100 km seaward and clipped to the EEZ ceiling, not coastlines, so it stays small — and a
   clean checkout builds the world offline. See `regions/README.md` and `regions/FORMAT.md`.
 - `docs/` — protocol spec (`protocol/`), per-board hardware docs, firmware/feature plans, UX.
 - `dissectors/umsh/` — Wireshark Lua dissector. `diag/`, `contrib/systemd/`, `scripts/` (`mkuf2.py` builds the UF2, `flash.py` only flashes one, board table in `firmware_image.py`).

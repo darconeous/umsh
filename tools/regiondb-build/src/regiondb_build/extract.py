@@ -28,10 +28,10 @@ from dataclasses import dataclass, field
 from pathlib import Path
 
 from pyogrio.raw import read as read_ogr
-from shapely import from_wkb
+from shapely import STRtree, from_wkb, unary_union
 from shapely.geometry import MultiPolygon
 
-from . import geom
+from . import geom, policy
 from .fetch import load_lock
 from .sourcetree import (
     COMMERCIAL_CANDIDATE_COLUMNS,
@@ -238,6 +238,47 @@ def iso3_to_iso2(vendor: Path) -> dict[str, str]:
     return mapping
 
 
+def _charted_land(vendor: Path) -> STRtree:
+    """The world's land at Natural Earth 50m scale, indexed for clipping.
+
+    This is the physical layer with no idea of countries; jurisdiction comes
+    from intersecting it with each country's EEZ + land union. 50m misses the
+    smallest islets, which costs those islets their water reach — the report
+    names any country left without charted land entirely, and that country
+    keeps its whole jurisdiction rather than vanishing.
+    """
+    _, _, geometry, _ = read_ogr(f"/vsizip/{vendor / 'ne_50m_land.zip'}")
+    parts = []
+    for wkb in geometry:
+        parts.extend(geom.polygonal(from_wkb(wkb)).geoms)
+    return STRtree(parts)
+
+
+def _land_within(land: STRtree, jurisdiction) -> MultiPolygon:
+    """The charted land inside one jurisdiction area."""
+    candidates = [land.geometries[i] for i in land.query(jurisdiction, predicate="intersects")]
+    if not candidates:
+        return MultiPolygon([])
+    return geom.polygonal(jurisdiction.intersection(unary_union(candidates)))
+
+
+def _water_reach(land_area, ceiling, reach_m: float) -> MultiPolygon:
+    """Land plus its water, out to `reach_m` but never past `ceiling`.
+
+    The ceiling is what keeps the buffer politically neutral: a country's is
+    its EEZ + land union, whose bilateral maritime lines already divide the
+    water between neighbors, so growing toward a neighbor stops exactly where
+    the law does. Buffering is done on land simplified to a kilometer — the
+    outline of a 100 km buffer cannot remember 50 m coastline detail anyway —
+    and the land itself is unioned back so the coastline stays interior.
+    """
+    slimmed = geom.polygonal(geom.simplify_m(land_area, 1000.0))
+    if slimmed.is_empty:
+        slimmed = land_area
+    grown = geom.buffer_m(slimmed, reach_m)
+    return geom.polygonal(unary_union([land_area, grown.intersection(ceiling)]))
+
+
 def _boundary_document(
     geometry, name: str, feature_id: str, tolerance_m: float = BOUNDARY_EXTRACT_TOLERANCE_M
 ) -> str:
@@ -259,17 +300,22 @@ def countries(
     vendor: Path,
     destination: Path,
     mapping: dict[str, str],
+    reach_m: float,
     result: UpdateResult,
     check: bool,
-) -> list[str]:
-    """Write country regions from the Marine Regions EEZ + land union.
+) -> tuple[list[str], dict[str, MultiPolygon]]:
+    """Write country regions: land buffered seaward, capped by the EEZ.
 
-    A country region is the area where the country asserts jurisdiction — its
-    land together with its exclusive economic zone, conventionally 200
-    nautical miles offshore — not its coastline. That is deliberately the
-    cheaper representation as well as the truer one for routing: the fractal
-    coastline lies strictly inside the region and vanishes, leaving land
-    borders and smooth maritime arcs.
+    A country region is its charted land together with the water within
+    `reach_m` of it — enough to close the channels between islands and their
+    mainland, and to match how far the IATA layers project offshore — clipped
+    to the Marine Regions EEZ + land union. The full 200-nautical-mile
+    jurisdiction proved too generous (a boat in the middle of the Pacific is
+    not meaningfully in any country's mesh), but it remains the ceiling: its
+    bilateral maritime lines are what keep a buffer from ever claiming a
+    neighbor's water. The fractal coastline lies strictly inside the region
+    and vanishes, leaving smooth buffer arcs, land borders, and EEZ segments
+    where neighbors are close.
 
     Contested areas are omitted entirely. A feature marked as an overlapping
     claim or a joint regime is skipped and named in the report, so the
@@ -291,7 +337,9 @@ def countries(
 
     kept: dict[str, list] = {}
     display: dict[str, str] = {}
+    landlocked: set[str] = set()
     skipped: list[str] = []
+    land = _charted_land(vendor)
     for index, wkb in enumerate(geometry):
         pol_type = str(pol_types[index])
         if pol_type not in ("Union EEZ and country", "Landlocked country"):
@@ -316,15 +364,33 @@ def countries(
             continue
         kept.setdefault(code, []).append(shape)
         display.setdefault(code, str(labels[index]))
+        if pol_type == "Landlocked country":
+            landlocked.add(code)
 
+    unlanded: list[str] = []
+    shapes: dict[str, MultiPolygon] = {}
     for code in sorted(kept):
         parts = []
         for shape in kept[code]:
             parts.extend(geom.polygonal(shape).geoms)
+        jurisdiction = MultiPolygon(parts)
+        if code in landlocked:
+            shape = jurisdiction
+        else:
+            charted = _land_within(land, jurisdiction)
+            if charted.is_empty:
+                # No land at 50m scale — an atoll nation below the chart's
+                # resolution. Keeping the whole jurisdiction is the safe
+                # failure: the country stays findable, merely generous.
+                unlanded.append(code)
+                shape = jurisdiction
+            else:
+                shape = _water_reach(charted, jurisdiction, reach_m)
+        shapes[code] = shape
         _write(
             destination / f"{code}.geojson",
             _boundary_document(
-                MultiPolygon(parts),
+                shape,
                 display[code],
                 f"marineregions:{code}",
                 tolerance_m=COUNTRY_EXTRACT_TOLERANCE_M,
@@ -334,16 +400,39 @@ def countries(
         )
 
     notes.append(
-        f"{len(kept)} country regions from EEZ + land union; "
+        f"{len(kept)} country regions: charted land reaching {reach_m / 1000:.0f} km "
+        f"seaward within the EEZ + land union; "
         f"{len(skipped)} contested or joint features omitted by policy"
     )
+    if unlanded:
+        notes.append(
+            "  no charted land at 50m, whole jurisdiction kept: " + ", ".join(sorted(unlanded))
+        )
     for entry in sorted(skipped):
         notes.append(f"  omitted: {entry}")
-    return notes
+    return notes, shapes
 
 
-def us_states(vendor: Path, destination: Path, result: UpdateResult, check: bool) -> list[str]:
-    """Write the 50 states plus the District of Columbia, keyed by USPS code."""
+def us_states(
+    vendor: Path,
+    destination: Path,
+    country: MultiPolygon | None,
+    reach_m: float,
+    result: UpdateResult,
+    check: bool,
+) -> list[str]:
+    """Write the 50 states plus the District of Columbia, keyed by USPS code.
+
+    The TIGER boundary is the legal state — its islands, its internal waters,
+    a few miles of territorial sea — which strands the channels between a
+    state's islands and its mainland as unclaimed water: the sea between the
+    Hawaiian islands is plainly Hawaiʻi. Each state therefore also gets the
+    water within `reach_m` of it, clipped to the country's own water so no
+    state reaches past the border, and clipped away from every state's land
+    so it can never annex a neighbor. Where two states' reaches overlap —
+    open water near a state line — both states cover it, the same both-sides
+    answer the expansion margins give on land.
+    """
     archive = vendor / "tl_2024_us_state.zip"
     meta, _, geometry, fields = read_ogr(f"/vsizip/{archive}")
     names = list(meta["fields"])
@@ -351,22 +440,47 @@ def us_states(vendor: Path, destination: Path, result: UpdateResult, check: bool
     fips = fields[names.index("GEOID")]
     labels = fields[names.index("NAME")]
 
-    kept = 0
-    skipped = []
-    for wkb, code, geoid, label in zip(geometry, codes, fips, labels, strict=True):
-        if int(geoid) >= TERRITORY_FIPS_FLOOR:
-            skipped.append(str(code))
-            continue
+    rows = [
+        (geom.polygonal(from_wkb(wkb)), str(code).upper(), str(geoid), str(label))
+        for wkb, code, geoid, label in zip(geometry, codes, fips, labels, strict=True)
+        if int(geoid) < TERRITORY_FIPS_FLOOR
+    ]
+    skipped = sorted(
+        str(code)
+        for geoid, code in zip(fips, codes, strict=True)
+        if int(geoid) >= TERRITORY_FIPS_FLOOR
+    )
+
+    # The nation's water beyond every state: what a state's reach may claim.
+    # States are simplified to the extract tolerance first — the mask guards
+    # against annexing land, a question 50 m detail does not sharpen.
+    open_water = None
+    if country is not None and reach_m > 0:
+        states_union = unary_union(
+            [geom.simplify_m(shape, BOUNDARY_EXTRACT_TOLERANCE_M) for shape, _, _, _ in rows]
+        )
+        open_water = geom.polygonal(country.difference(states_union))
+
+    for shape, code, geoid, label in rows:
+        if open_water is not None:
+            reached = geom.buffer_m(
+                geom.polygonal(geom.simplify_m(shape, 1000.0)), reach_m
+            ).intersection(open_water)
+            shape = geom.polygonal(unary_union([shape, reached]))
         _write(
-            destination / f"{str(code).upper()}.geojson",
-            _boundary_document(from_wkb(wkb), str(label), f"fips:{geoid}"),
+            destination / f"{code}.geojson",
+            _boundary_document(shape, label, f"fips:{geoid}"),
             result,
             check,
         )
-        kept += 1
+    reach_note = (
+        f"reaching {reach_m / 1000:.0f} km into national water"
+        if open_water is not None
+        else "land boundaries only (no country shape)"
+    )
     return [
-        f"{kept} US state boundaries; territories excluded by policy: "
-        + (", ".join(sorted(skipped)) or "none")
+        f"{len(rows)} US state boundaries, {reach_note}; territories excluded by policy: "
+        + (", ".join(skipped) or "none")
     ]
 
 
@@ -407,11 +521,23 @@ def update(root: Path, *, check: bool = False) -> UpdateResult:
     )
     result.report.append(f"{len(metros)} metropolitan IATA codes seeded")
 
-    result.report.extend(us_states(vendor, extracts / "boundaries" / "us-state", result, check))
+    reach_m = policy.load(root / "policy.yaml").maritime_reach_m
 
     mapping = iso3_to_iso2(vendor)
+    notes, country_shapes = countries(
+        vendor, extracts / "boundaries" / "country", mapping, reach_m, result, check
+    )
+    result.report.extend(notes)
+
     result.report.extend(
-        countries(vendor, extracts / "boundaries" / "country", mapping, result, check)
+        us_states(
+            vendor,
+            extracts / "boundaries" / "us-state",
+            country_shapes.get("US"),
+            reach_m,
+            result,
+            check,
+        )
     )
 
     return result
