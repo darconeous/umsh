@@ -244,6 +244,14 @@
 
 .search-results button:hover { background: var(--surface-2); }
 
+.search-results .search-name { font-weight: 600; }
+
+.search-results .search-namespace {
+  font-size: 0.7rem;
+  color: var(--ink-muted);
+  margin-left: 0.35rem;
+}
+
 /* ── Layers ─────────────────────────────────────────────────────────── */
 
 .layer-toggles { display: grid; gap: 0.35rem; }
@@ -350,13 +358,21 @@
   gap: 0.1rem;
 }
 
-.match-key code {
-  font-size: 0.82rem;
+.match-primary {
+  font-size: 0.9rem;
+  font-weight: 600;
   overflow-wrap: anywhere;
 }
 
-.match-detail {
+.match-code {
   font-size: 0.75rem;
+  font-weight: 400;
+  color: var(--ink-muted);
+  margin-left: 0.15rem;
+}
+
+.match-namespace code {
+  font-size: 0.7rem;
   color: var(--ink-muted);
 }
 

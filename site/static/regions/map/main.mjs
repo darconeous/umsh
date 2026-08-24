@@ -231,19 +231,21 @@ function runLookup(latitude, longitude) {
     .addTo(state.map);
 
   // A four-column table cannot live honestly in a panel-width card — it
-  // wraps its own tokens. Each match is a two-line row instead: the
-  // semantic key with its membership, then the radio-facing string and
-  // wire code beneath.
+  // wraps its own tokens. Each match is a two-line row instead, and the
+  // thing a person configures a radio with leads: the region string and
+  // its wire code, with the namespace beneath in small text as
+  // provenance. The full semantic key rides in the tooltip.
   const rows = result.matches
     .map((match) => {
       const core = match.membership === MEMBERSHIP_CORE;
       const layer = LAYERS.find((entry) => entry.id === match.layer);
-      return `<li class="match-row">
+      const namespace = match.regionKey.slice(0, match.regionKey.indexOf(":"));
+      return `<li class="match-row" title="${escape(match.regionKey)}">
         <span class="swatch" style="background:${layer ? layer.color : "#888"}"></span>
         <span class="match-main">
-          <span class="match-key"><code>${escape(match.regionKey)}</code></span>
-          <span class="match-detail">${escape(match.radioName)}
-            · <code>0x${match.wireCode.toString(16).toUpperCase().padStart(4, "0")}</code></span>
+          <span class="match-primary">${escape(match.radioName)}
+            <code class="match-code">0x${match.wireCode.toString(16).toUpperCase().padStart(4, "0")}</code></span>
+          <span class="match-namespace"><code>${escape(namespace)}</code></span>
         </span>
         <span class="match-membership${core ? "" : " match-membership--expanded"}"
           ${core ? "" : `title="Only the ${match.expansionM} m expansion margin reaches this position"`}
@@ -451,12 +453,14 @@ function wireControls() {
     const list = document.getElementById("search-results");
     const found = searchRegions(ui.search.value);
     list.innerHTML = found
-      .map(
-        (region) =>
-          `<li><button type="button" data-region="${escape(region.regionKey)}">
-             <code>${escape(region.regionKey)}</code> ${escape(region.radioName)}
-           </button></li>`,
-      )
+      .map((region) => {
+        const namespace = region.regionKey.slice(0, region.regionKey.indexOf(":"));
+        return `<li><button type="button" data-region="${escape(region.regionKey)}"
+             title="${escape(region.regionKey)}">
+             <span class="search-name">${escape(region.radioName)}</span>
+             <code class="search-namespace">${escape(namespace)}</code>
+           </button></li>`;
+      })
       .join("");
     list.hidden = found.length === 0;
   });

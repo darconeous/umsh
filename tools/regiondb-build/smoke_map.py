@@ -114,12 +114,17 @@ def _drive(sync_playwright, port: int) -> list[str]:
         page.fill("input[name=lon]", "-122.2495")
         page.click("#coordinate-form button")
         page.wait_for_function("!document.querySelector('#lookup-result').hidden", timeout=20_000)
-        result = page.inner_text("#lookup-result")
+        # The rows lead with radio strings; the full semantic key rides in
+        # each row's tooltip, which is where the airport-versus-location
+        # distinction this test guards is visible.
+        keys = page.eval_on_selector_all(
+            "#lookup-result .match-row", "rows => rows.map(row => row.title)"
+        )
 
         for expected in ("iata-location:SQL", "iata-airport:SFO", "country:US"):
-            if expected not in result:
+            if expected not in keys:
                 failures.append(f"lookup result is missing {expected}")
-        if "iata-airport:SQL" in result:
+        if "iata-airport:SQL" in keys:
             failures.append("lookup result claims San Carlos is a commercial airport")
 
         toggles = page.eval_on_selector_all("#layer-toggles input", "elements => elements.length")
