@@ -3,8 +3,8 @@
 # overrides/, which the build applies on top.
 # source: ourairports-airports
 # url: https://davidmegginson.github.io/ourairports-data/airports.csv
-# sha256: 2a5f05d4e2e9c6190ef6c6d28ff9f032d06d6e15c8d1d03d429d0cb72dda5140
-# retrieved: 2026-08-21T03:15:49Z
+# sha256: 6f53c942a634cd28729b86faad146a950ebd5d0fa6c6b28a45c3ede1acecb565
+# retrieved: 2026-08-24T22:47:57Z
 iata,name,latitude_deg,longitude_deg,iso_country,municipality,type,scheduled_service
 AAA,Anaa Airport,-17.352600,-145.509995,PF,Anaa,medium_airport,yes
 AAC,El Arish International Airport,31.055324,33.827964,EG,El Arish,large_airport,yes
@@ -789,7 +789,6 @@ DIA,Doha International Airport,25.259431,51.565528,QA,Doha,large_airport,yes
 DIB,Dibrugarh Airport,27.483900,95.016899,IN,Dibrugarh,medium_airport,yes
 DIE,Arrachart Airport,-12.349400,49.291698,MG,Antisiranana,medium_airport,yes
 DIG,Diqing Shangri-La Airport,27.793600,99.677200,CN,Diqing (Shangri-La),medium_airport,yes
-DIJ,Dijon Longvic airport,47.268902,5.090000,FR,Dijon,medium_airport,yes
 DIK,Dickinson Theodore Roosevelt Regional Airport,46.797533,-102.801905,US,Dickinson,medium_airport,yes
 DIL,Presidente Nicolau Lobato International Airport,-8.546562,125.524507,TL,Dili,large_airport,yes
 DIN,Dien Bien Phu Airport,21.397499,103.008003,VN,Dien Bien Phu,medium_airport,yes
@@ -802,7 +801,6 @@ DJG,Tiska Djanet Airport,24.285448,9.463652,DZ,Djanet,large_airport,yes
 DJJ,Dortheys Hiyo Eluay International Airport,-2.579627,140.519857,ID,Sentani,large_airport,yes
 DJT,President Donald J. Trump International Airport,26.683201,-80.095596,US,West Palm Beach,large_airport,yes
 DKA,Umaru Musa Yar'adua Airport,13.007800,7.660450,NG,Katsina,medium_airport,yes
-DKR,Léopold Sédar Senghor International Airport,14.742337,-17.479222,SN,Dakar,large_airport,yes
 DLA,Douala International Airport,4.006080,9.719480,CM,Douala,large_airport,yes
 DLC,Dalian Zhoushuizi International Airport,38.965719,121.538477,CN,Dalian (Ganjingzi),large_airport,yes
 DLE,Dole Tavaux Airport,47.038955,5.427589,FR,Dole,medium_airport,yes
@@ -821,7 +819,6 @@ DMM,King Fahd International Airport,26.469100,49.798209,SA,Ad Dammam,large_airpo
 DMU,Dimapur Airport,25.883900,93.771103,IN,Dimapur,medium_airport,yes
 DND,Dundee Airport,56.452499,-3.025830,GB,Dundee,medium_airport,yes
 DNH,Dunhuang Mogao International Airport,40.161953,94.812827,CN,Dunhuang,large_airport,yes
-DNR,Dinard Pleurtuit Saint-Malo airport,48.587700,-2.079960,FR,Dinard,medium_airport,yes
 DNZ,Çardak Airport,37.785599,29.701300,TR,Denizli,medium_airport,yes
 DOD,Dodoma Airport,-6.170559,35.756036,TZ,Dodoma,medium_airport,yes
 DOG,Dongola Airport,19.153666,30.430069,SD,Dongola,medium_airport,yes
@@ -1943,7 +1940,6 @@ LLV,Lüliang Dawu Airport,37.683333,111.142778,CN,Lüliang,medium_airport,yes
 LLW,Kamuzu International Airport,-13.789400,33.780998,MW,Lumbadzi,large_airport,yes
 LMA,Minchumina Airport,63.886002,-152.302002,US,Minchumina,small_airport,yes
 LMC,La Macarena Airport,2.175650,-73.786740,CO,La Macarena,small_airport,yes
-LME,Le Mans-Arnage Airport,47.948604,0.201702,FR,"Le Mans, Sarthe",medium_airport,yes
 LMM,Valle del Fuerte International Airport,25.685503,-109.081159,MX,Los Mochis,medium_airport,yes
 LMN,Limbang Airport,4.808300,115.010002,MY,Limbang,medium_airport,yes
 LMP,Lampedusa Airport,35.497898,12.618100,IT,Lampedusa,medium_airport,yes
@@ -1985,7 +1981,6 @@ LRH,La Rochelle Île de Ré Airport,46.179199,-1.195280,FR,La Rochelle,medium_ai
 LRM,Casa De Campo International Airport,18.452222,-68.911111,DO,La Romana,large_airport,yes
 LRR,Lar Airport,27.674700,54.383301,IR,Lar,medium_airport,yes
 LRS,Leros Airport,37.184898,26.800301,GR,Leros Island,small_airport,yes
-LRT,Lorient South Brittany (Bretagne Sud) Airport,47.760601,-3.440000,FR,Lorient/Lann/Bihoué,medium_airport,yes
 LRU,Las Cruces International Airport,32.289398,-106.921997,US,Las Cruces,medium_airport,yes
 LRV,Los Roques Airport,11.946935,-66.668333,VE,Gran Roque Island,small_airport,yes
 LSA,Losuia Airport,-8.505820,151.080994,PG,Losuia,small_airport,yes
@@ -2457,7 +2452,6 @@ ODB,Córdoba Airport,37.841999,-4.848880,ES,Córdoba,medium_airport,yes
 ODE,Odense Hans Christian Andersen Airport,55.475307,10.327206,DK,Odense,large_airport,yes
 ODN,Long Seridan Airport,3.976087,115.067303,MY,Long Seridan,small_airport,yes
 ODO,Bodaybo Airport,57.866100,114.242996,RU,Bodaybo,small_airport,yes
-ODS,Odesa International Airport,46.427196,30.672649,UA,Odesa,medium_airport,yes
 ODY,Oudomsay Airport,20.682699,101.994003,LA,Oudomsay,small_airport,yes
 OEC,Oecusse Route of the Sandalwood International Airport,-9.198419,124.337873,TL,Oecussi-Ambeno,large_airport,yes
 OER,Örnsköldsvik Airport,63.408298,18.990000,SE,Örnsköldsvik,medium_airport,yes
@@ -3083,7 +3077,6 @@ SNE,Preguiça Airport,16.588852,-24.284132,CV,Preguiça,medium_airport,yes
 SNN,Shannon Airport,52.702000,-8.924820,IE,Shannon,large_airport,yes
 SNO,Sakon Nakhon Airport,17.195101,104.119003,TH,,medium_airport,yes
 SNP,St Paul Island Airport,57.166311,-170.222555,US,St Paul Island,medium_airport,yes
-SNR,Saint-Nazaire-Montoir Airport,47.311420,-2.152634,FR,Saint-Nazaire/Montoir,medium_airport,yes
 SNU,Abel Santamaria International Airport,22.492215,-79.943119,CU,Santa Clara,large_airport,yes
 SNV,Santa Elena de Uairén Airport,4.554699,-61.145234,VE,Santa Elena de Uairén,medium_airport,yes
 SNW,Thandwe Airport,18.460699,94.300102,MM,Thandwe,medium_airport,yes
@@ -3279,7 +3272,6 @@ THO,Þórshöfn Airport,66.218459,-15.334739,IS,Þórshöfn,small_airport,yes
 THQ,Tianshui Maijishan Airport,34.560100,105.860343,CN,Tianshui (Maiji),medium_airport,yes
 THR,Mehrabad International Airport,35.689175,51.314392,IR,Tehran,large_airport,yes
 THS,Sukhothai Airport,17.238001,99.818199,TH,,medium_airport,yes
-THU,Pituffik Space Base,76.530630,-68.700541,GL,Pituffik,medium_airport,yes
 THX,Turukhansk Airport,65.797203,87.935303,RU,Turukhansk,small_airport,yes
 TIA,Tirana International Airport Mother Teresa,41.414700,19.720600,AL,Rinas,large_airport,yes
 TIE,Tippi Airport,7.202400,35.415000,ET,Tippi,small_airport,yes
@@ -3751,7 +3743,6 @@ YCB,Cambridge Bay Airport,69.108101,-105.138000,CA,Cambridge Bay,medium_airport,
 YCD,Nanaimo Airport,49.054970,-123.869863,CA,Nanaimo,medium_airport,yes
 YCG,Castlegar/West Kootenay Regional Airport,49.296398,-117.632004,CA,Castlegar,medium_airport,yes
 YCK,Tommy Kochon Airport,67.020150,-126.128364,CA,Colville Lake,small_airport,yes
-YCL,Charlo Airport,47.990799,-66.330299,CA,Charlo,medium_airport,yes
 YCM,Niagara District Airport,43.191598,-79.171686,CA,Niagara-on-the-Lake,medium_airport,yes
 YCO,Kugluktuk Airport,67.816408,-115.143070,CA,Kugluktuk,small_airport,yes
 YCR,Cross Lake (Charlie Sinclair Memorial) Airport,54.609758,-97.762442,CA,Cross Lake,small_airport,yes
@@ -3809,7 +3800,6 @@ YIN,Ili Yining International Airport,43.955799,81.330299,CN,Ili (Yining / Ghulja
 YIO,Pond Inlet Airport,72.689494,-77.968941,CA,Pond Inlet,small_airport,yes
 YIV,Island Lake Airport,53.857201,-94.653603,CA,Island Lake,medium_airport,yes
 YIW,Yiwu Airport,29.342095,120.031160,CN,Yiwu/Jinhua,large_airport,yes
-YJT,Stephenville Dymond International Airport,48.543390,-58.552892,CA,Stephenville,medium_airport,yes
 YKA,Kamloops John Moose Fulton Field Regional Airport,50.703038,-120.448641,CA,Kamloops,medium_airport,yes
 YKF,Region of Waterloo International Airport,43.460800,-80.378601,CA,Breslau,medium_airport,yes
 YKG,Kangirsuk Airport,60.027199,-69.999199,CA,Kangirsuk,small_airport,yes
@@ -3901,7 +3891,6 @@ YSF,Stony Rapids Airport,59.250301,-105.841003,CA,Stony Rapids,medium_airport,ye
 YSG,Lutselk'e Airport,62.417823,-110.682793,CA,Lutselk'e,small_airport,yes
 YSJ,Saint John Airport,45.316101,-65.890297,CA,Saint John,medium_airport,yes
 YSK,Sanikiluaq Airport,56.536891,-79.250221,CA,Sanikiluaq,small_airport,yes
-YSL,Saint-Léonard Airport,47.157097,-67.836242,CA,Saint-Léonard,medium_airport,yes
 YSM,Fort Smith Airport,60.020302,-111.961998,CA,Fort Smith,medium_airport,yes
 YSO,Postville Airport,54.910500,-59.785070,CA,Postville,small_airport,yes
 YSQ,Songyuan Chaganhu Airport,44.931143,124.552121,CN,Qian Gorlos Mongol Autonomous County,medium_airport,yes
@@ -3942,7 +3931,6 @@ YXC,Cranbrook/Canadian Rockies International Airport,49.610802,-115.781998,CA,Cr
 YXE,Saskatoon John G. Diefenbaker International Airport,52.170723,-106.700793,CA,Saskatoon,large_airport,yes
 YXH,Medicine Hat Regional Airport,50.018902,-110.721001,CA,Medicine Hat,medium_airport,yes
 YXJ,Fort St John / North Peace Regional Airport,56.238098,-120.739998,CA,Fort Saint John,medium_airport,yes
-YXK,Rimouski Airport,48.477644,-68.496323,CA,Rimouski,medium_airport,yes
 YXL,Sioux Lookout Airport,50.113899,-91.905296,CA,Sioux Lookout,medium_airport,yes
 YXN,Whale Cove Airport,62.240002,-92.598099,CA,Whale Cove,small_airport,yes
 YXP,Pangnirtung Airport,66.144878,-65.713606,CA,Pangnirtung,small_airport,yes

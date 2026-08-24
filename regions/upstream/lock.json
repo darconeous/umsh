@@ -27,8 +27,8 @@
     "marineregions-eez-land": {
       "attribution": "Flanders Marine Institute (VLIZ), Marine Regions (https://www.marineregions.org/)",
       "license": "CC BY 4.0",
-      "retrieved_at": "2026-08-21T05:36:50Z",
-      "sha256": "123a3d74a2dd5a116fff374e8e84785f3f4b16f9f660c1864295d1f4b4955ba2",
+      "retrieved_at": "2026-08-24T22:48:33Z",
+      "sha256": "ec8aadb86bee1dfb3c4d6ffc5992d8ccf462a7e47b801106f3ff3d0e0f3fec02",
       "size": 19564073,
       "url": "https://geo.vliz.be/geoserver/MarineRegions/ows?service=WFS&version=2.0.0&request=GetFeature&typeName=MarineRegions:eez_land&outputFormat=SHAPE-ZIP&srsName=urn:ogc:def:crs:OGC:1.3:CRS84"
     },
@@ -56,6 +56,14 @@
       "size": 457183,
       "url": "https://naciscdn.org/naturalearth/50m/physical/ne_50m_land.zip"
     },
+    "naturalearth-minor-islands": {
+      "attribution": "Natural Earth (https://www.naturalearthdata.com/)",
+      "license": "Public Domain",
+      "retrieved_at": "2026-08-24T22:48:37Z",
+      "sha256": "47c0b3ce26df7b4dbabdbb251023918cb2f5c83462a426288f1f253da7284db2",
+      "size": 314932,
+      "url": "https://naciscdn.org/naturalearth/10m/physical/ne_10m_minor_islands.zip"
+    },
     "naturalearth-places": {
       "attribution": "Natural Earth (https://www.naturalearthdata.com/)",
       "license": "Public Domain",
@@ -67,9 +75,9 @@
     "ourairports-airports": {
       "attribution": "OurAirports (https://ourairports.com/data/)",
       "license": "Public Domain",
-      "retrieved_at": "2026-08-21T03:15:49Z",
-      "sha256": "2a5f05d4e2e9c6190ef6c6d28ff9f032d06d6e15c8d1d03d429d0cb72dda5140",
-      "size": 12703998,
+      "retrieved_at": "2026-08-24T22:47:57Z",
+      "sha256": "6f53c942a634cd28729b86faad146a950ebd5d0fa6c6b28a45c3ede1acecb565",
+      "size": 12705124,
       "url": "https://davidmegginson.github.io/ourairports-data/airports.csv"
     }
   },

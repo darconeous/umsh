@@ -16,7 +16,10 @@
   </head>
   <body>
     <div class="region-viewer">
-      <div class="region-map-pane" style="height: 400px">
+      <!-- Relative, not the page's sticky: this harness exercises the
+           viewer's JavaScript, and the real page's layout is checked
+           against the rendered site instead. -->
+      <div class="region-map-pane" style="height: 400px; position: relative; top: auto">
         <div id="map" class="region-map"></div>
         <p id="map-status" class="map-status" hidden></p>
       </div>

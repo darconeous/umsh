@@ -28,7 +28,15 @@ from dataclasses import dataclass, field
 from pathlib import Path
 
 from pyogrio.raw import read as read_ogr
-from shapely import STRtree, from_wkb, unary_union
+from shapely import (
+    MultiPoint,
+    STRtree,
+    from_wkb,
+    segmentize,
+    unary_union,
+    voronoi_polygons,
+)
+from shapely import transform as shapely_transform
 from shapely.geometry import MultiPolygon
 
 from . import geom, policy
@@ -239,18 +247,22 @@ def iso3_to_iso2(vendor: Path) -> dict[str, str]:
 
 
 def _charted_land(vendor: Path) -> STRtree:
-    """The world's land at Natural Earth 50m scale, indexed for clipping.
+    """The world's land, indexed for clipping: Natural Earth's 50m land
+    plus its 10m minor islands.
 
     This is the physical layer with no idea of countries; jurisdiction comes
-    from intersecting it with each country's EEZ + land union. 50m misses the
-    smallest islets, which costs those islets their water reach — the report
+    from intersecting it with each country's EEZ + land union. The minor
+    islands matter more than their acreage: an atoll the 50m chart omits is
+    an atoll with no water reach, which is how the Northwestern Hawaiian
+    chain ended up in Hawaii but not in the United States. The report still
     names any country left without charted land entirely, and that country
     keeps its whole jurisdiction rather than vanishing.
     """
-    _, _, geometry, _ = read_ogr(f"/vsizip/{vendor / 'ne_50m_land.zip'}")
     parts = []
-    for wkb in geometry:
-        parts.extend(geom.polygonal(from_wkb(wkb)).geoms)
+    for archive in ("ne_50m_land.zip", "ne_10m_minor_islands.zip"):
+        _, _, geometry, _ = read_ogr(f"/vsizip/{vendor / archive}")
+        for wkb in geometry:
+            parts.extend(geom.polygonal(from_wkb(wkb)).geoms)
     return STRtree(parts)
 
 
@@ -277,9 +289,10 @@ def _water_reach(land_area, ceiling, reach_m: float) -> MultiPolygon:
         slimmed = land_area
     grown = geom.buffer_m(slimmed, reach_m)
     merged = geom.polygonal(unary_union([land_area, grown.intersection(ceiling)]))
-    # Precision seams where the buffer met the ceiling, or where the two
-    # coastline datasets disagree by meters, leave rings of confetti.
-    return geom.drop_dust(merged, 1.0)
+    # Enclosed seas beyond the reach fill in; precision seams where the
+    # buffer met the ceiling, or where the two coastline datasets disagree
+    # by meters, leave rings of confetti that the dust sweep removes.
+    return geom.drop_dust(geom.fill_holes(merged), 1.0)
 
 
 def _boundary_document(
@@ -304,6 +317,7 @@ def countries(
     destination: Path,
     mapping: dict[str, str],
     reach_m: float,
+    supplementary_land: dict[str, MultiPolygon],
     result: UpdateResult,
     check: bool,
 ) -> tuple[list[str], dict[str, MultiPolygon]]:
@@ -381,6 +395,14 @@ def countries(
             shape = jurisdiction
         else:
             charted = _land_within(land, jurisdiction)
+            # Sub-national boundaries are land too, and better surveyed than
+            # any global physical layer: Natural Earth has nothing within
+            # five hundred kilometers of Laysan at either scale, while
+            # TIGER's Hawaii covers the whole Northwestern chain. Without
+            # this those islands sit in a state but in no country.
+            extra = supplementary_land.get(code)
+            if extra is not None:
+                charted = geom.polygonal(unary_union([charted, extra.intersection(jurisdiction)]))
             if charted.is_empty:
                 # No land at 50m scale — an atoll nation below the chart's
                 # resolution. Keeping the whole jurisdiction is the safe
@@ -416,33 +438,84 @@ def countries(
     return notes, shapes
 
 
-def us_states(
-    vendor: Path,
-    destination: Path,
-    country: MultiPolygon | None,
-    reach_m: float,
-    result: UpdateResult,
-    check: bool,
-) -> list[str]:
-    """Write the 50 states plus the District of Columbia, keyed by USPS code.
+def _resolve_contested_water(
+    claims: dict[str, MultiPolygon], lands: dict[str, MultiPolygon], reach_m: float
+) -> None:
+    """Give water claimed by several states to the nearest one, in place.
 
-    The TIGER boundary is the legal state — its islands, its internal waters,
-    a few miles of territorial sea — which strands the channels between a
-    state's islands and its mainland as unclaimed water: the sea between the
-    Hawaiian islands is plainly Hawaiʻi. Each state therefore also gets the
-    water within `reach_m` of it, clipped to the country's own water so no
-    state reaches past the border, and clipped away from every state's land
-    so it can never annex a neighbor. Where two states' reaches overlap —
-    open water near a state line — both states cover it, the same both-sides
-    answer the expansion margins give on land.
+    Each contested piece is split along the Voronoi diagram of the
+    claimants' coastlines, sampled every couple of kilometers — the
+    equidistance construction maritime boundaries use. Longitude is scaled
+    by cos(latitude) around each piece so distance means roughly the same
+    thing in both axes; sea borders here need to be reasonable, not
+    survey-grade.
     """
-    archive = vendor / "tl_2024_us_state.zip"
-    meta, _, geometry, fields = read_ogr(f"/vsizip/{archive}")
+    codes = sorted(claims)
+    contested_parts = []
+    for index, first in enumerate(codes):
+        for second in codes[index + 1 :]:
+            piece = claims[first].intersection(claims[second])
+            if not piece.is_empty and piece.area > 1e-10:
+                contested_parts.append(piece)
+    if not contested_parts:
+        return
+
+    for component in geom.polygonal(unary_union(contested_parts)).geoms:
+        claimants = [code for code in codes if claims[code].intersection(component).area > 1e-10]
+        if len(claimants) < 2:
+            continue
+
+        k = math.cos(math.radians(component.representative_point().y))
+
+        def scale(shape, k=k):
+            return shapely_transform(shape, lambda pts: pts * [k, 1.0])
+
+        def unscale(shape, k=k):
+            return shapely_transform(shape, lambda pts: pts / [k, 1.0])
+
+        component_s = scale(component)
+        neighborhood = component_s.buffer(reach_m / 111_320.0 * 1.5)
+        seeds: list[tuple[float, float]] = []
+        owners: list[str] = []
+        seen: set[tuple[float, float]] = set()
+        for code in claimants:
+            coast = scale(lands[code]).boundary.intersection(neighborhood)
+            if coast.is_empty:
+                continue
+            sampled = segmentize(coast, 0.02)
+            for line in getattr(sampled, "geoms", [sampled]):
+                for lon, lat in line.coords:
+                    key = (round(lon, 6), round(lat, 6))
+                    if key in seen:
+                        continue
+                    seen.add(key)
+                    seeds.append((lon, lat))
+                    owners.append(code)
+        if len(set(owners)) < 2:
+            continue
+
+        cells = voronoi_polygons(MultiPoint(seeds), extend_to=component_s.buffer(1.0), ordered=True)
+        allocation: dict[str, list] = {}
+        for cell, owner in zip(cells.geoms, owners, strict=True):
+            allocation.setdefault(owner, []).append(cell)
+        for code in claimants:
+            kept = unary_union(allocation.get(code, []))
+            lost = unscale(component_s.difference(kept))
+            claims[code] = geom.polygonal(claims[code].difference(lost))
+
+
+def _state_rows(vendor: Path) -> tuple[list[tuple[MultiPolygon, str, str, str]], list[str]]:
+    """The TIGER states this build keeps, simplified, and the ones it skips.
+
+    Read once and shared: the country pass needs this land to know the
+    United States reaches the Northwestern Hawaiian Islands, and the state
+    pass needs the same shapes to write them.
+    """
+    meta, _, geometry, fields = read_ogr(f"/vsizip/{vendor / 'tl_2024_us_state.zip'}")
     names = list(meta["fields"])
     codes = fields[names.index("STUSPS")]
     fips = fields[names.index("GEOID")]
     labels = fields[names.index("NAME")]
-
     rows = [
         (
             geom.polygonal(
@@ -460,7 +533,33 @@ def us_states(
         for geoid, code in zip(fips, codes, strict=True)
         if int(geoid) >= TERRITORY_FIPS_FLOOR
     )
+    return rows, skipped
 
+
+def us_states(
+    rows: list[tuple[MultiPolygon, str, str, str]],
+    skipped: list[str],
+    destination: Path,
+    country: MultiPolygon | None,
+    reach_m: float,
+    result: UpdateResult,
+    check: bool,
+) -> list[str]:
+    """Write the 50 states plus the District of Columbia, keyed by USPS code.
+
+    The TIGER boundary is the legal state — its islands, its internal waters,
+    a few miles of territorial sea — which strands the channels between a
+    state's islands and its mainland as unclaimed water: the sea between the
+    Hawaiian islands is plainly Hawaiʻi. Each state therefore also gets the
+    water within `reach_m` of it, clipped to the country's own water so no
+    state reaches past the border, and clipped away from every state's land
+    so it can never annex a neighbor. Water within reach of more than one
+    state goes to the nearest one — a radial reach makes the naive overlap a
+    two-hundred-kilometer lens along the coast, which told repeaters far
+    down the California shore about Oregon — so the reaches meet along an
+    equidistance curve running seaward from the state line, the way maritime
+    boundaries actually behave.
+    """
     # The nation's water beyond every state: what a state's reach may claim.
     # The mask is built from the same simplified shapes the states are
     # written from, so the seam between a state and its own water dissolves
@@ -470,12 +569,21 @@ def us_states(
         states_union = unary_union([shape for shape, _, _, _ in rows])
         open_water = geom.polygonal(country.difference(states_union))
 
+    claims: dict[str, MultiPolygon] = {}
+    if open_water is not None:
+        for shape, code, _, _ in rows:
+            claims[code] = geom.polygonal(
+                geom.buffer_m(geom.polygonal(geom.simplify_m(shape, 1000.0)), reach_m).intersection(
+                    open_water
+                )
+            )
+        _resolve_contested_water(claims, {code: shape for shape, code, _, _ in rows}, reach_m)
+
     for shape, code, geoid, label in rows:
         if open_water is not None:
-            reached = geom.buffer_m(
-                geom.polygonal(geom.simplify_m(shape, 1000.0)), reach_m
-            ).intersection(open_water)
-            shape = geom.drop_dust(geom.polygonal(unary_union([shape, reached])), 1.0)
+            shape = geom.drop_dust(
+                geom.fill_holes(geom.polygonal(unary_union([shape, claims[code]]))), 1.0
+            )
         _write(
             destination / f"{code}.geojson",
             _boundary_document(shape, label, f"fips:{geoid}"),
@@ -532,15 +640,24 @@ def update(root: Path, *, check: bool = False) -> UpdateResult:
 
     reach_m = policy.load(root / "policy.yaml").maritime_reach_m
 
+    state_rows, state_skipped = _state_rows(vendor)
+
     mapping = iso3_to_iso2(vendor)
     notes, country_shapes = countries(
-        vendor, extracts / "boundaries" / "country", mapping, reach_m, result, check
+        vendor,
+        extracts / "boundaries" / "country",
+        mapping,
+        reach_m,
+        {"US": geom.polygonal(unary_union([shape for shape, _, _, _ in state_rows]))},
+        result,
+        check,
     )
     result.report.extend(notes)
 
     result.report.extend(
         us_states(
-            vendor,
+            state_rows,
+            state_skipped,
             extracts / "boundaries" / "us-state",
             country_shapes.get("US"),
             reach_m,

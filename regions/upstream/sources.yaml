@@ -86,6 +86,19 @@ sources:
     notes: Coastlines and land polygons at 1:50m.
     pin: url
 
+  # Small islands the 50m land layer omits — remote atolls, the
+  # Northwestern Hawaiian chain, minor outlying territories. Without them
+  # the country layer's water reach has nothing to grow from where a state
+  # or territory plainly has land, and an islet ends up in Hawaii but not
+  # in the United States.
+  - id: naturalearth-minor-islands
+    url: https://naciscdn.org/naturalearth/10m/physical/ne_10m_minor_islands.zip
+    filename: ne_10m_minor_islands.zip
+    license: Public Domain
+    attribution: Natural Earth (https://www.naturalearthdata.com/)
+    notes: Minor islands at 1:10m, supplementing the 50m land layer.
+    pin: url
+
   - id: naturalearth-admin0-lines
     url: https://naciscdn.org/naturalearth/50m/cultural/ne_50m_admin_0_boundary_lines_land.zip
     filename: ne_50m_admin_0_boundary_lines_land.zip

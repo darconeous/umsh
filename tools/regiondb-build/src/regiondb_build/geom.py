@@ -154,6 +154,20 @@ def buffer_m(geometry: BaseGeometry, distance_m: float) -> MultiPolygon:
     return polygonal(split_antimeridian(_union(buffered)))
 
 
+def fill_holes(geometry: BaseGeometry) -> MultiPolygon:
+    """Fill every hole in every component.
+
+    For a region unioned with its maritime reach, a hole is water enclosed
+    entirely by that one region's own water — the middle of the Sea of
+    Okhotsk, the center of Hudson Bay. Water bordered by anyone else is
+    outside the polygon, not a hole in it, so filling takes no position on
+    any boundary; it only stops an enclosed sea from rendering as a bite
+    out of its country, and gives the only sensible answer to the rare
+    node in the middle of one.
+    """
+    return MultiPolygon([Polygon(component.exterior) for component in polygonal(geometry).geoms])
+
+
 def drop_dust(geometry: BaseGeometry, min_area_km2: float) -> MultiPolygon:
     """Sweep sub-threshold components and holes out of a water-reach shape.
 
