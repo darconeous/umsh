@@ -18,6 +18,7 @@ import sqlite3InitModule from "./vendor/sqlite-wasm/sqlite3.mjs";
 import * as maplibregl from "./vendor/maplibre-gl/maplibre-gl.mjs";
 
 import { decode, fromE6 } from "./geometry.mjs";
+import { normalizeLongitude } from "./morton.mjs";
 import { RegionDb, MEMBERSHIP_CORE } from "./regiondb.mjs";
 
 const BASE = new URL(".", import.meta.url);
@@ -42,6 +43,20 @@ const state = {
   marker: null,
   placeMarkers: [],
 };
+
+// The app fills the viewport below the sticky site header, whose height is
+// content-dependent; measure the real thing instead of guessing in CSS.
+// The test harness has no header, and the stylesheet's fallback covers it.
+const siteHeader = document.querySelector(".site-header");
+if (siteHeader !== null) {
+  const measure = () =>
+    document.documentElement.style.setProperty(
+      "--site-header-h",
+      `${siteHeader.offsetHeight}px`,
+    );
+  measure();
+  new ResizeObserver(measure).observe(siteHeader);
+}
 
 const ui = {
   status: document.getElementById("map-status"),
@@ -102,7 +117,6 @@ function renderMetadata() {
     .join("");
 
   ui.meta.innerHTML = `
-    <h3>Database</h3>
     <dl class="kv">
       <dt>Dataset</dt><dd>${escape(db.datasetVersion)}</dd>
       <dt>Format</dt><dd>${db.formatVersion}</dd>
@@ -140,9 +154,14 @@ function refreshRegions() {
   const north = bounds.getNorth();
 
   const features = [];
-  // A viewport wider than the world, or one straddling the antimeridian,
-  // is asked for in pieces rather than as one impossible box.
-  const spans = east - west >= 360 ? [[-180, 180]] : splitAtAntimeridian(west, east);
+  // MapLibre reports unwrapped bounds across the antimeridian — panning
+  // west past Fiji yields west < -180, never west > east — so both edges
+  // are wrapped onto the storage domain first, and a viewport that
+  // straddles the seam becomes two query bands. Geometry is stored split
+  // at the antimeridian, and MapLibre renders each piece on every world
+  // copy, so fetching both bands is all it takes for the far side to
+  // exist.
+  const spans = viewSpans(west, east);
   for (const [left, right] of spans) {
     for (const [regionId, payload] of db.handle.exec(
       "SELECT p.region_id, p.geometry FROM effective_rtree r " +
@@ -182,8 +201,11 @@ function refreshRegions() {
   );
 }
 
-function splitAtAntimeridian(west, east) {
-  return west <= east ? [[west, east]] : [[west, 180], [-180, east]];
+function viewSpans(west, east) {
+  if (east - west >= 360) return [[-180, 180]];
+  const left = normalizeLongitude(west);
+  const right = normalizeLongitude(east);
+  return left <= right ? [[left, right]] : [[left, 180], [-180, right]];
 }
 
 function ringsToCoordinates(rings) {
@@ -217,17 +239,27 @@ function runLookup(latitude, longitude) {
     .setLngLat([longitude, latitude])
     .addTo(state.map);
 
+  // A four-column table cannot live honestly in a panel-width card — it
+  // wraps its own tokens. Each match is a two-line row instead, and the
+  // thing a person configures a radio with leads: the region string and
+  // its wire code, with the namespace beneath in small text as
+  // provenance. The full semantic key rides in the tooltip.
   const rows = result.matches
     .map((match) => {
       const core = match.membership === MEMBERSHIP_CORE;
       const layer = LAYERS.find((entry) => entry.id === match.layer);
-      return `<tr>
-        <td><span class="swatch" style="background:${layer ? layer.color : "#888"}"></span>
-            <code>${escape(match.regionKey)}</code></td>
-        <td>${escape(match.radioName)}</td>
-        <td><code>0x${match.wireCode.toString(16).toUpperCase().padStart(4, "0")}</code></td>
-        <td>${core ? "core" : `expanded (${match.expansionM} m)`}</td>
-      </tr>`;
+      const namespace = match.regionKey.slice(0, match.regionKey.indexOf(":"));
+      return `<li class="match-row" title="${escape(match.regionKey)}">
+        <span class="swatch" style="background:${layer ? layer.color : "#888"}"></span>
+        <span class="match-main">
+          <span class="match-primary">${escape(match.radioName)}
+            <code class="match-code">0x${match.wireCode.toString(16).toUpperCase().padStart(4, "0")}</code></span>
+          <span class="match-namespace"><code>${escape(namespace)}</code></span>
+        </span>
+        <span class="match-membership${core ? "" : " match-membership--expanded"}"
+          ${core ? "" : `title="Only the ${match.expansionM} m expansion margin reaches this position"`}
+        >${core ? "core" : "expanded"}</span>
+      </li>`;
     })
     .join("");
 
@@ -239,10 +271,7 @@ function runLookup(latitude, longitude) {
     ${
       result.matches.length === 0
         ? "<p>No region covers this position.</p>"
-        : `<table class="region-table">
-             <thead><tr><th>Region</th><th>Radio name</th><th>Code</th><th>Membership</th></tr></thead>
-             <tbody>${rows}</tbody>
-           </table>
+        : `<ul class="match-list">${rows}</ul>
            <dl class="kv">
              <dt>Radio regions</dt><dd>${radio}</dd>
              <dt>Suggested default</dt><dd>${suggested ? escape(suggested.name) : "none"}</dd>
@@ -433,12 +462,14 @@ function wireControls() {
     const list = document.getElementById("search-results");
     const found = searchRegions(ui.search.value);
     list.innerHTML = found
-      .map(
-        (region) =>
-          `<li><button type="button" data-region="${escape(region.regionKey)}">
-             <code>${escape(region.regionKey)}</code> ${escape(region.radioName)}
-           </button></li>`,
-      )
+      .map((region) => {
+        const namespace = region.regionKey.slice(0, region.regionKey.indexOf(":"));
+        return `<li><button type="button" data-region="${escape(region.regionKey)}"
+             title="${escape(region.regionKey)}">
+             <span class="search-name">${escape(region.radioName)}</span>
+             <code class="search-namespace">${escape(namespace)}</code>
+           </button></li>`;
+      })
       .join("");
     list.hidden = found.length === 0;
   });
