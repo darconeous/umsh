@@ -168,13 +168,16 @@ def buffer_m(geometry: BaseGeometry, distance_m: float) -> MultiPolygon:
 def fill_holes(geometry: BaseGeometry) -> MultiPolygon:
     """Fill every hole in every component.
 
-    For a region unioned with its maritime reach, a hole is water enclosed
-    entirely by that one region's own water — the middle of the Sea of
-    Okhotsk, the center of Hudson Bay. Water bordered by anyone else is
-    outside the polygon, not a hole in it, so filling takes no position on
-    any boundary; it only stops an enclosed sea from rendering as a bite
-    out of its country, and gives the only sensible answer to the rare
-    node in the middle of one.
+    For a region unioned with its maritime reach, a hole is usually water
+    enclosed entirely by that one region's own water — the middle of the
+    Sea of Okhotsk, the center of Hudson Bay — and filling it stops an
+    enclosed sea from rendering as a bite out of its country, giving the
+    only sensible answer to the rare node in the middle of one.
+
+    Not every hole is one of those, so this takes no view on which are:
+    a jurisdiction is also punched through wherever a neighbor's begins.
+    Callers that fill a region bounded by other regions must clip the
+    result back to that boundary, or filling annexes the neighbor.
     """
     return MultiPolygon([Polygon(component.exterior) for component in polygonal(geometry).geoms])
 

@@ -295,7 +295,16 @@ def _water_reach(land_area, ceiling, reach_m: float) -> MultiPolygon:
     # Enclosed seas beyond the reach fill in; precision seams where the
     # buffer met the ceiling, or where the two coastline datasets disagree
     # by meters, leave rings of confetti that the dust sweep removes.
-    return geom.drop_dust(geom.fill_holes(merged), 1.0)
+    #
+    # Filling is clipped back to the ceiling, because not every hole is an
+    # enclosed sea: a country's jurisdiction is punched through wherever a
+    # neighbor's begins, and filling those holes annexed the neighbor.
+    # Lesotho went to South Africa, and the Isle of Man, Jersey and
+    # Guernsey to the reach of the coasts across the water from them. An
+    # enclosed sea lies inside its own country's EEZ, so the clip keeps
+    # Hudson Bay and the Sea of Okhotsk exactly as before.
+    filled = geom.polygonal(geom.fill_holes(merged).intersection(ceiling))
+    return geom.drop_dust(filled, 1.0)
 
 
 def _boundary_document(

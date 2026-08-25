@@ -23,6 +23,7 @@ import math
 import numpy as np
 import pytest
 from shapely.geometry import Point, Polygon, shape
+from shapely.strtree import STRtree
 
 from paths import REGIONS
 
@@ -228,3 +229,44 @@ def test_survey_corners_stay_square(states, code, longitude, latitude, name):
         f"{name}: nearest vertex is {distance_km * DEGREE_KM:.1f} km away"
     )
     assert turn > 60.0, f"{name}: turns {turn:.1f} degrees, so the corner was rounded off"
+
+
+# How much of a country may fall inside another before it is being annexed
+# rather than meeting it. Real neighbors overlap by hairlines where the EEZ
+# ceiling and the buffer arcs disagree — the worst is Samoa and American
+# Samoa at two tenths of a percent, and most are hundredths. Lesotho was
+# inside South Africa by all of itself.
+SWALLOWED_FRACTION = 0.05
+
+
+def test_no_country_lies_inside_another(countries):
+    """A jurisdiction ends where its neighbor's begins.
+
+    Filling the holes in a country's maritime reach closes its enclosed
+    seas, and used to close the holes its neighbors punch in it too:
+    Lesotho went to South Africa, and Jersey, Guernsey and the Isle of Man
+    to the coasts across the water. A repeater in Maseru was told it floods
+    South Africa.
+
+    Measured as a fraction of the smaller region rather than as a width,
+    because that is what separates the two cases. A width threshold tight
+    enough to catch an annexation also catches eight real maritime borders
+    where two datasets meet, and one loose enough to spare them would have
+    let Guernsey be swallowed whole.
+    """
+    codes = sorted(countries)
+    tree = STRtree([countries[code] for code in codes])
+    swallowed = []
+    for first in codes:
+        for index in tree.query(countries[first], predicate="intersects"):
+            second = codes[index]
+            if second <= first:
+                continue
+            shared = countries[first].intersection(countries[second])
+            if shared.is_empty:
+                continue
+            smaller = min(_area_km2(countries[first]), _area_km2(countries[second]))
+            fraction = _area_km2(shared) / max(smaller, 1e-9)
+            if fraction > SWALLOWED_FRACTION:
+                swallowed.append((first, second, f"{fraction * 100:.0f}%"))
+    assert swallowed == []
