@@ -42,6 +42,7 @@ class Policy:
     curve_error_m: float
     cap_error_m: float
     maritime_reach_m: float
+    border_simplify_m: float
     simplify_m: dict[str, float]
     cache_enabled: bool
     cache_max_depth: int
@@ -117,6 +118,7 @@ def load(path: Path) -> Policy:
         curve_error_m=float(geometry.get("curve_error_m", 50)),
         cap_error_m=float(geometry.get("cap_error_m", 1000)),
         maritime_reach_m=float(geometry.get("maritime_reach_m", 100_000)),
+        border_simplify_m=float(geometry.get("border_simplify_m", 2_000)),
         simplify_m={
             "country": float(geometry.get("country_simplify_m", 0)),
             "us_state": float(geometry.get("state_simplify_m", 0)),

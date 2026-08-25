@@ -13,12 +13,12 @@ from __future__ import annotations
 import math
 
 from pyproj import Geod, Transformer
-from shapely import make_valid, set_precision
+from shapely import STRtree, make_valid, prepare, set_precision
 from shapely.errors import GEOSException
 from shapely.geometry import MultiPolygon, Polygon, box
 from shapely.geometry.base import BaseGeometry
+from shapely.ops import linemerge, polygonize, unary_union
 from shapely.ops import transform as shapely_transform
-from shapely.ops import unary_union
 
 from .blob import RING_EXTERIOR, RING_HOLE, Ring, to_e6
 
@@ -144,6 +144,16 @@ def buffer_m(geometry: BaseGeometry, distance_m: float) -> MultiPolygon:
         projected = shapely_transform(lambda x, y, t=forward: t.transform(x, y), component)
         grown = projected.buffer(distance_m, quad_segs=16)
         restored = shapely_transform(lambda x, y, t=inverse: t.transform(x, y), grown)
+        # pyproj wraps longitudes into [-180, 180], so a component near the
+        # dateline comes back with jumps of 360° that read as a chord across
+        # the whole world — make_valid then bakes that chord into the shape
+        # as horizontal spikes and eaten coverage. Unwrap around the
+        # component's own center; split_antimeridian below expects exactly
+        # this continuous past-±180 form.
+        restored = shapely_transform(
+            lambda x, y, c=center.x: (c + ((x - c + 180.0) % 360.0) - 180.0, y),
+            restored,
+        )
         # Snap each piece onto the storage grid before combining them. A region
         # already split at the antimeridian arrives here as two components whose
         # buffers meet along the seam, and overlaying two independently
@@ -194,6 +204,101 @@ def drop_dust(geometry: BaseGeometry, min_area_km2: float) -> MultiPolygon:
     return MultiPolygon(kept)
 
 
+def simplify_shared(shapes: dict[str, BaseGeometry], tolerance_m: float) -> dict[str, MultiPolygon]:
+    """Simplify neighboring regions without pulling their shared borders apart.
+
+    Simplifying each region on its own moves a shared border twice, once per
+    side, and the two results no longer meet: at any tolerance worth
+    applying, that opens gaps and overlaps along every land border. So the
+    borders are simplified once, not once per region.
+
+    All the boundaries are noded together, merged into maximal arcs between
+    junctions, and simplified as arcs — Douglas-Peucker keeps each arc's
+    endpoints, so junctions stay put and neighbors keep meeting exactly.
+    The simplified arcs are polygonized back into faces, and every face is
+    handed to the regions it belongs to.
+
+    One tolerance for every arc, deliberately. Scaling it per arc to what
+    the smaller of its two regions can afford is the obvious refinement and
+    does not work: arcs simplified at different tolerances sweep across each
+    other, and a polygonization built from crossing arcs hands whole
+    countries the wrong faces. The tolerance is therefore chosen to be one
+    every region can afford, and `max_area_change` reports what the worst
+    case actually paid.
+
+    Ownership is decided by the face, not by the region, because the border
+    has moved: a face along a simplified edge can sit just outside every
+    original that has a claim to it. Such a face goes to whichever region it
+    overlaps most. A face inside two originals — a state and its country —
+    belongs to both, which is what keeps the layers nested.
+
+    A component too small to survive its own simplification is restored
+    verbatim. Such a component is an island: it has no shared border to fit
+    against, which is why it simplified away and also why putting it back at
+    full detail costs the topology nothing.
+    """
+    if tolerance_m <= 0:
+        return {key: polygonal(shape) for key, shape in shapes.items()}
+
+    tolerance = tolerance_m / _METERS_PER_DEGREE
+    keys = list(shapes)
+    # Inputs snap to one shared grid first, well below the tolerance. The
+    # same grid on both sides of a shared border moves both sides
+    # identically, so this stays watertight while shedding vertices before
+    # the expensive noding.
+    grid = min(1e-3, tolerance / 16.0)
+    shapes = {
+        key: polygonal(set_precision(make_valid(shape), grid)) for key, shape in shapes.items()
+    }
+    arcs = linemerge(unary_union([shapes[key].boundary for key in keys]))
+    faces = list(polygonize(arcs.simplify(tolerance, preserve_topology=True)))
+
+    for shape in shapes.values():
+        prepare(shape)
+    index = STRtree([shapes[key] for key in keys])
+    assigned: dict[str, list[BaseGeometry]] = {key: [] for key in keys}
+    for face in faces:
+        candidates = [keys[position] for position in index.query(face, predicate="intersects")]
+        if not candidates:
+            continue
+        point = face.representative_point()
+        owners = [key for key in candidates if shapes[key].contains(point)]
+        if not owners:
+            best = max(candidates, key=lambda key: shapes[key].intersection(face).area)
+            if shapes[best].intersection(face).area <= 0.0:
+                continue
+            owners = [best]
+        for owner in owners:
+            assigned[owner].append(face)
+
+    simplified: dict[str, MultiPolygon] = {}
+    for key in keys:
+        kept = assigned[key]
+        rebuilt = polygonal(_union(kept)) if kept else MultiPolygon([])
+        restored = [
+            component
+            for component in polygonal(shapes[key]).geoms
+            if not rebuilt.intersects(component.representative_point())
+        ]
+        if restored:
+            rebuilt = polygonal(_union([rebuilt, *restored]))
+        simplified[key] = rebuilt
+    return simplified
+
+
+def max_area_change(
+    before: dict[str, BaseGeometry], after: dict[str, MultiPolygon]
+) -> tuple[str, float]:
+    """The region that `simplify_shared` moved most, as a fraction of its area."""
+    worst_key, worst = "", 0.0
+    for key, original in before.items():
+        area = max(original.area, 1e-12)
+        change = abs(after[key].area - original.area) / area
+        if change > worst:
+            worst_key, worst = key, change
+    return worst_key, worst
+
+
 def _union(pieces: list[BaseGeometry]) -> BaseGeometry:
     """Combine buffered components, tolerating an overlay GEOS cannot resolve.
 
@@ -222,11 +327,16 @@ def geodesic_disk(longitude: float, latitude: float, radius_m: float, *, segment
         azimuths,
         [radius_m] * segments,
     )
-    ring = list(zip(lons, lats, strict=True))
+    # GEOD.fwd wraps longitudes; a disk laid over the dateline needs its
+    # ring continuous around its own center, then splitting.
+    ring = [
+        (longitude + ((lon - longitude + 180.0) % 360.0) - 180.0, lat)
+        for lon, lat in zip(lons, lats, strict=True)
+    ]
     disk = Polygon(ring)
     if not disk.is_valid:
         disk = make_valid(disk)
-    return polygonal(disk)
+    return polygonal(split_antimeridian(disk))
 
 
 def densify_great_circle(

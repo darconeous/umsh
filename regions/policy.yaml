@@ -33,6 +33,21 @@ geometry:
   # mainland. Consumed at update time: changing it means `make regions-fetch`
   # (once, for the vendor files) and `make regions-update`.
   maritime_reach_m: 100000
+  # How coarsely the administrative borders are drawn, in meters. Routing
+  # does not care which side of a Mississippi meander a repeater sits on,
+  # and the detail is most of what the country and state layers cost. Both
+  # layers are simplified together, after the maritime reach, so that a
+  # border two regions share moves once rather than once per side; an
+  # island too small to survive is restored at full detail. Consumed at
+  # update time, like maritime_reach_m.
+  #
+  # 4 km puts the borders at the vertex density of the Natural Earth lines
+  # drawn under them, which is the reference for "broad strokes". It is also
+  # about as coarse as the smallest regions can afford: at 6 km Monaco loses
+  # half its area and San Marino a third, because one tolerance has to serve
+  # both a micro-state and Siberia. The update report names whichever region
+  # a change moves most, so raising this shows its own cost.
+  border_simplify_m: 4000
   # Topology-preserving simplification, per layer. Administrative coastlines
   # carry far more detail than routing needs; hand-authored local regions are
   # already drawn at the scale they mean. Country tolerance is the main size

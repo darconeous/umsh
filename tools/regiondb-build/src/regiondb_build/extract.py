@@ -314,13 +314,10 @@ def _boundary_document(
 
 def countries(
     vendor: Path,
-    destination: Path,
     mapping: dict[str, str],
     reach_m: float,
     supplementary_land: dict[str, MultiPolygon],
-    result: UpdateResult,
-    check: bool,
-) -> tuple[list[str], dict[str, MultiPolygon]]:
+) -> tuple[list[str], dict[str, MultiPolygon], dict[str, str]]:
     """Write country regions: land buffered seaward, capped by the EEZ.
 
     A country region is its charted land together with the water within
@@ -412,17 +409,6 @@ def countries(
             else:
                 shape = _water_reach(charted, jurisdiction, reach_m)
         shapes[code] = shape
-        _write(
-            destination / f"{code}.geojson",
-            _boundary_document(
-                shape,
-                display[code],
-                f"marineregions:{code}",
-                tolerance_m=COUNTRY_EXTRACT_TOLERANCE_M,
-            ),
-            result,
-            check,
-        )
 
     notes.append(
         f"{len(kept)} country regions: charted land reaching {reach_m / 1000:.0f} km "
@@ -435,7 +421,7 @@ def countries(
         )
     for entry in sorted(skipped):
         notes.append(f"  omitted: {entry}")
-    return notes, shapes
+    return notes, shapes, display
 
 
 def _resolve_contested_water(
@@ -516,11 +502,13 @@ def _state_rows(vendor: Path) -> tuple[list[tuple[MultiPolygon, str, str, str]],
     codes = fields[names.index("STUSPS")]
     fips = fields[names.index("GEOID")]
     labels = fields[names.index("NAME")]
+    # Full detail, deliberately: TIGER's states do not overlap, and
+    # simplifying them here — independently, before they are simplified
+    # together — is what would make them overlap, by cutting the corners of
+    # a shared meander differently on each side.
     rows = [
         (
-            geom.polygonal(
-                geom.simplify_m(geom.polygonal(from_wkb(wkb)), BOUNDARY_EXTRACT_TOLERANCE_M)
-            ),
+            geom.polygonal(from_wkb(wkb)),
             str(code).upper(),
             str(geoid),
             str(label),
@@ -539,12 +527,9 @@ def _state_rows(vendor: Path) -> tuple[list[tuple[MultiPolygon, str, str, str]],
 def us_states(
     rows: list[tuple[MultiPolygon, str, str, str]],
     skipped: list[str],
-    destination: Path,
     country: MultiPolygon | None,
     reach_m: float,
-    result: UpdateResult,
-    check: bool,
-) -> list[str]:
+) -> tuple[list[str], dict[str, MultiPolygon]]:
     """Write the 50 states plus the District of Columbia, keyed by USPS code.
 
     The TIGER boundary is the legal state — its islands, its internal waters,
@@ -566,7 +551,9 @@ def us_states(
     # in the union rather than surviving as slivers of confetti.
     open_water = None
     if country is not None and reach_m > 0:
-        states_union = unary_union([shape for shape, _, _, _ in rows])
+        states_union = unary_union(
+            [geom.simplify_m(shape, BOUNDARY_EXTRACT_TOLERANCE_M) for shape, _, _, _ in rows]
+        )
         open_water = geom.polygonal(country.difference(states_union))
 
     claims: dict[str, MultiPolygon] = {}
@@ -579,26 +566,25 @@ def us_states(
             )
         _resolve_contested_water(claims, {code: shape for shape, code, _, _ in rows}, reach_m)
 
-    for shape, code, geoid, label in rows:
+    shapes: dict[str, MultiPolygon] = {}
+    for shape, code, _, _ in rows:
         if open_water is not None:
             shape = geom.drop_dust(
                 geom.fill_holes(geom.polygonal(unary_union([shape, claims[code]]))), 1.0
             )
-        _write(
-            destination / f"{code}.geojson",
-            _boundary_document(shape, label, f"fips:{geoid}"),
-            result,
-            check,
-        )
+        shapes[code] = shape
     reach_note = (
         f"reaching {reach_m / 1000:.0f} km into national water"
         if open_water is not None
         else "land boundaries only (no country shape)"
     )
-    return [
-        f"{len(rows)} US state boundaries, {reach_note}; territories excluded by policy: "
-        + (", ".join(skipped) or "none")
-    ]
+    return (
+        [
+            f"{len(rows)} US state boundaries, {reach_note}; territories excluded by policy: "
+            + (", ".join(skipped) or "none")
+        ],
+        shapes,
+    )
 
 
 def update(root: Path, *, check: bool = False) -> UpdateResult:
@@ -643,27 +629,56 @@ def update(root: Path, *, check: bool = False) -> UpdateResult:
     state_rows, state_skipped = _state_rows(vendor)
 
     mapping = iso3_to_iso2(vendor)
-    notes, country_shapes = countries(
+    notes, country_shapes, country_names = countries(
         vendor,
-        extracts / "boundaries" / "country",
         mapping,
         reach_m,
         {"US": geom.polygonal(unary_union([shape for shape, _, _, _ in state_rows]))},
-        result,
-        check,
     )
     result.report.extend(notes)
 
-    result.report.extend(
-        us_states(
-            state_rows,
-            state_skipped,
-            extracts / "boundaries" / "us-state",
-            country_shapes.get("US"),
-            reach_m,
+    state_notes, state_shapes = us_states(
+        state_rows, state_skipped, country_shapes.get("US"), reach_m
+    )
+    result.report.extend(state_notes)
+
+    # Both administrative layers simplify together, after their water reach,
+    # so that a border two of them share moves once. Doing it here rather
+    # than per layer is what keeps a state's coastline on top of its
+    # country's instead of a hair inside or outside it.
+    simplify_m = policy.load(root / "policy.yaml").border_simplify_m
+    before = {f"country/{code}": shape for code, shape in country_shapes.items()} | {
+        f"us-state/{code}": shape for code, shape in state_shapes.items()
+    }
+    joint = geom.simplify_shared(before, simplify_m)
+    moved_key, moved = geom.max_area_change(before, joint)
+    result.report.append(
+        f"administrative borders simplified together at {simplify_m / 1000:.0f} km, "
+        f"shared edges once each; {moved_key} moved most, by {moved:.1%} of its area"
+    )
+
+    for code in sorted(country_shapes):
+        _write(
+            extracts / "boundaries" / "country" / f"{code}.geojson",
+            _boundary_document(
+                joint[f"country/{code}"],
+                country_names[code],
+                f"marineregions:{code}",
+                tolerance_m=0.0,
+            ),
             result,
             check,
         )
-    )
+    labels = {code: label for _, code, _, label in state_rows}
+    geoids = {code: geoid for _, code, geoid, _ in state_rows}
+    for code in sorted(state_shapes):
+        _write(
+            extracts / "boundaries" / "us-state" / f"{code}.geojson",
+            _boundary_document(
+                joint[f"us-state/{code}"], labels[code], f"fips:{geoids[code]}", tolerance_m=0.0
+            ),
+            result,
+            check,
+        )
 
     return result
