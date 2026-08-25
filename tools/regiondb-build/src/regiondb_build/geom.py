@@ -12,13 +12,14 @@ from __future__ import annotations
 
 import math
 
+import numpy as np
 from pyproj import Geod, Transformer
-from shapely import STRtree, make_valid, prepare, set_precision
+from shapely import coverage_simplify, make_valid, set_precision
 from shapely.errors import GEOSException
-from shapely.geometry import LineString, MultiPolygon, Polygon, box
+from shapely.geometry import MultiPolygon, Polygon, box
 from shapely.geometry.base import BaseGeometry
-from shapely.ops import linemerge, polygonize, unary_union
 from shapely.ops import transform as shapely_transform
+from shapely.ops import unary_union
 
 from .blob import RING_EXTERIOR, RING_HOLE, Ring, to_e6
 
@@ -204,271 +205,143 @@ def drop_dust(geometry: BaseGeometry, min_area_km2: float) -> MultiPolygon:
     return MultiPolygon(kept)
 
 
-# How far an arc may be smoothed relative to the equivalent radius of the
-# smallest region it bounds. Five percent keeps a region recognizable while
-# letting a long border between two large regions lose its meanders.
-_ARC_ALLOWANCE = 0.05
-
-# The averaging window, and the furthest a point may travel, both as
-# multiples of the tolerance. See `_smooth_line`.
 # How much a region may be distorted before the pass gives up on it and
-# keeps the original outline instead.
+# keeps the original outline. One tolerance cannot serve both Siberia and
+# Monaco: at fifteen kilometers Visvalingam-Whyatt takes half of Monaco
+# and all of Vatican City, and no choice of algorithm avoids that.
 _KEEP_ORIGINAL_ABOVE = 0.25
 
-_SMOOTH_SPAN = 4.0
-_SMOOTH_TRAVEL = 2.0
+# A speck or hole this size is the width of a snapping cell along a
+# border, not a place: every region here carries a hundred-kilometer
+# maritime reach, so its smallest real component is far larger.
+_SEAM_ARTIFACT_KM2 = 120.0
+
+# Detached fragments up to this size go too, but only when the region
+# they hang off is a hundred times bigger — Monaco is smaller than these
+# and must stay.
+_DETACHED_ARTIFACT_KM2 = 1000.0
 
 
-def _smooth_line(line, tolerance: float):
-    """Low-pass a polyline, keeping its endpoints and bounding its travel.
+def _sweep(geometry: MultiPolygon) -> MultiPolygon:
+    """Remove the seam artifacts, without ever emptying a region.
 
-    Douglas-Peucker only ever keeps vertices it was given, so on a
-    meandering river it selects the outermost point of each loop and joins
-    them: fewer vertices, and a zigzag rather than a smooth line. Averaging
-    over a window the width of the tolerance produces the line a person
-    means by "the broad strokes" — new vertices, on the centerline of the
-    meanders instead of their extremes.
-
-    Two things keep this safe among neighbors. Endpoints never move, so
-    junctions hold and adjacent arcs stay joined. And no point travels
-    further than the tolerance, which is the same bound Douglas-Peucker
-    respects, so a smoothed arc cannot wander across its neighbors.
+    Sweeping by size alone cannot be safe here: a threshold high enough
+    to catch a sliver along a border is higher than Bouvet Island's whole
+    region, and applying it deleted the country outright — which the
+    write step then refused, as it should. So components go only by the
+    detached rule, which needs a larger sibling to compare against, and
+    punctures are filled without touching components at all.
     """
-    import numpy as np
-
-    coordinates = np.asarray(line.coords, dtype=float)
-    if len(coordinates) < 5:
-        return line
-
-    closed = bool(np.allclose(coordinates[0], coordinates[-1]))
-    # Only a closed ring can be smoothed out of existence, and a small
-    # island is exactly that: a window wider than the feature collapses it.
-    # An open arc has both ends pinned to junctions and cannot collapse, so
-    # length is no reason to leave one alone — applying this guard to open
-    # arcs skipped 159 of the 174 arcs along the lower Mississippi and left
-    # the border as ragged as it was found.
-    if closed and line.length < tolerance * 6.0:
-        return line
-    step = tolerance / 3.0
-    # Evenly resampled, by arc length. `segmentize` looks like the tool for
-    # this and is not: it only ever adds points, so the original vertices
-    # survive at their original spacing and a window counted in points
-    # spans whatever distance those points happen to cover — on a detailed
-    # coastline, a small fraction of the intended one.
-    samples = max(4, int(round(line.length / step)))
-    resampled = np.array(
+    filled = MultiPolygon(
         [
-            line.interpolate(index / samples, normalized=True).coords[0]
-            for index in range(samples + 1)
+            Polygon(
+                component.exterior,
+                [
+                    ring
+                    for ring in component.interiors
+                    if _area_km2(Polygon(ring)) >= _SEAM_ARTIFACT_KM2
+                ],
+            )
+            for component in polygonal(geometry).geoms
         ]
     )
-    if len(resampled) < 5:
-        return line
+    return _drop_detached(filled, _DETACHED_ARTIFACT_KM2)
 
-    # The averaging window spans several tolerances, while the result is
-    # sampled at one. Smoothing and sampling at the same scale sits exactly
-    # on the aliasing edge: whatever wiggle survives has a wavelength near
-    # the sample spacing, and sampling it recreates the sawtooth. Removing
-    # everything below four tolerances first leaves a curve the sampling
-    # cannot misrepresent.
-    window = max(3, int(round(_SMOOTH_SPAN * tolerance / step)) | 1)
-    if closed:
-        # A ring has no ends to pin, so it wraps: smoothing it as an open
-        # line would flatten the seam wherever its coordinates happen to
-        # start.
-        padded = np.concatenate(
-            [resampled[-(window // 2 + 1) : -1], resampled, resampled[1 : window // 2 + 1]]
-        )
-    else:
-        padded = np.concatenate(
-            [
-                np.repeat(resampled[:1], window // 2, axis=0),
-                resampled,
-                np.repeat(resampled[-1:], window // 2, axis=0),
-            ]
-        )
 
-    kernel = np.ones(window) / window
-    smoothed = np.column_stack(
-        [np.convolve(padded[:, axis], kernel, mode="valid") for axis in (0, 1)]
-    )
+def _drop_detached(geometry: MultiPolygon, floor_km2: float) -> MultiPolygon:
+    """Drop specks that are tiny beside the rest of their own region.
 
-    # Travel is bounded, but by more than one tolerance: reaching the
-    # centerline of a meander wider than the tolerance is the whole point,
-    # and a bound of exactly one tolerance is what pinned the line to the
-    # meanders it was meant to leave.
-    limit = tolerance * _SMOOTH_TRAVEL
-    shift = smoothed - resampled
-    distance = np.hypot(shift[:, 0], shift[:, 1])
-    excessive = distance > limit
-    if excessive.any():
-        scale = np.where(excessive, limit / np.maximum(distance, 1e-15), 1.0)
-        smoothed = resampled + shift * scale[:, None]
+    A threshold on size alone cannot do this: Monaco, San Marino and the
+    District of Columbia are all smaller than the fragments this removes,
+    because a landlocked region never receives a maritime reach. What
+    marks an artifact is being minute *and* detached from something
+    enormous — a speck beside a continent, rather than a country that
+    happens to be small.
+    """
+    components = list(geometry.geoms)
+    if len(components) < 2:
+        return geometry
+    areas = [_area_km2(component) for component in components]
+    largest = max(areas)
+    kept = [
+        component
+        for component, area in zip(components, areas, strict=True)
+        if area >= floor_km2 or largest <= area * 100
+    ]
+    return MultiPolygon(kept) if kept else geometry
 
-    if closed:
-        smoothed[-1] = smoothed[0]
-    else:
-        smoothed[0], smoothed[-1] = resampled[0], resampled[-1]
 
-    # Thinned by even arc-length steps, not by Douglas-Peucker. Simplifying
-    # a smooth curve picks the extremes of whatever wiggle remains and
-    # aliases it straight back into a zigzag — the very thing the averaging
-    # just removed. Even sampling of a curve whose short wavelengths are
-    # gone cannot alias.
-    curve = LineString(smoothed)
-    count = max(2, int(round(curve.length / tolerance)))
-    thinned = [curve.interpolate(index / count, normalized=True) for index in range(count + 1)]
-    if closed:
-        thinned[-1] = thinned[0]
-    # A last pass at a quarter of the tolerance, to drop points even
-    # sampling put on stretches that were already straight. Douglas-Peucker
-    # is what made the borders a sawtooth when it ran at the full
-    # tolerance; at a quarter of it, well below the shortest wavelength the
-    # averaging left behind, it can only remove points that were saying
-    # nothing. Even sampling alone gave Greenland a thousand vertices it
-    # had no use for.
-    result = LineString(thinned).simplify(tolerance / 4.0, preserve_topology=True)
-    return result if result.is_valid and not result.is_empty else line
+def _area_km2(polygon) -> float:
+    latitude = polygon.representative_point().y
+    return abs(polygon.area) * _KM_PER_DEGREE**2 * math.cos(math.radians(latitude))
+
+
+_KM_PER_DEGREE = 111.32
 
 
 def simplify_shared(shapes: dict[str, BaseGeometry], tolerance_m: float) -> dict[str, MultiPolygon]:
-    """Simplify neighboring regions without pulling their shared borders apart.
+    """Simplify one layer of neighboring regions, keeping them a coverage.
 
-    Simplifying each region on its own moves a shared border twice, once per
-    side, and the two results no longer meet: at any tolerance worth
-    applying, that opens gaps and overlaps along every land border. So the
-    borders are simplified once, not once per region.
+    Simplifying each region on its own moves a shared border twice, once
+    per side, and the two halves stop meeting. GEOS solves this directly:
+    `coverage_simplify` runs Visvalingam-Whyatt over a polygonal coverage
+    and keeps shared edges identical by construction, so no border can
+    come apart, no sliver can appear between neighbors, and corners — a
+    triangle of large area, unlike a meander's — survive on their own
+    merit rather than by being detected.
 
-    All the boundaries are noded together, merged into maximal arcs between
-    junctions, and simplified as arcs — Douglas-Peucker keeps each arc's
-    endpoints, so junctions stay put and neighbors keep meeting exactly.
-    The simplified arcs are polygonized back into faces, and every face is
-    handed to the regions it belongs to.
+    The shapes must already be a coverage: non-overlapping, and matching
+    vertex-for-vertex along shared edges. Snapping the whole layer to one
+    grid first is what makes that true here, because the maritime reach
+    is built per region and its seams land a meter apart on either side.
 
-    One tolerance for every arc, deliberately. Scaling it per arc to what
-    the smaller of its two regions can afford is the obvious refinement and
-    does not work: arcs simplified at different tolerances sweep across each
-    other, and a polygonization built from crossing arcs hands whole
-    countries the wrong faces. The tolerance is therefore chosen to be one
-    every region can afford, and `max_area_change` reports what the worst
-    case actually paid.
-
-    Ownership is decided by the face, not by the region, because the border
-    has moved: a face along a simplified edge can sit just outside every
-    original that has a claim to it. Such a face goes to whichever region it
-    overlaps most. A face inside two originals — a state and its country —
-    belongs to both, which is what keeps the layers nested.
-
-    A component too small to survive its own simplification is restored
-    verbatim. Such a component is an island: it has no shared border to fit
-    against, which is why it simplified away and also why putting it back at
-    full detail costs the topology nothing.
+    One thing this does not fix, and nothing can: a single tolerance
+    cannot serve both Siberia and Monaco. A region the pass would leave
+    unrecognizable keeps the outline it came in with.
     """
     if tolerance_m <= 0:
         return {key: polygonal(shape) for key, shape in shapes.items()}
 
     tolerance = tolerance_m / _METERS_PER_DEGREE
     keys = list(shapes)
-    # Inputs snap to one shared grid first, well below the tolerance. The
-    # same grid on both sides of a shared border moves both sides
-    # identically, so this stays watertight while shedding vertices before
-    # the expensive noding.
-    # Coarse enough to make near-coincident borders actually coincident.
-    # Two neighbors whose shared edge differs by a meter — the water reach
-    # is built per region, so its Voronoi seam never lands identically on
-    # both sides — cross each other over and over, and noding shatters the
-    # linework into slivers: 2,513 arcs of median half a kilometer across
-    # the states, whose pinned endpoints then leave nothing to smooth. At a
-    # kilometer the same set is 265 arcs of median 117 km. Still far below
-    # the tolerance, so this is not what bounds the accuracy.
+    # Swept before anything else, so that the fallback below restores a
+    # cleaned outline rather than the raw one. A region kept at its
+    # original shape would otherwise keep the seam artifacts of the
+    # stages before this, having skipped the sweep applied to the rest.
+    given = {key: _sweep(polygonal(shapes[key])) for key in keys}
+    # Well below the tolerance, and enough to make near-coincident edges
+    # actually coincident — the coverage precondition.
     grid = tolerance / 8.0
-    given = {key: polygonal(shape) for key, shape in shapes.items()}
-    shapes = {
-        key: polygonal(set_precision(make_valid(shape), grid)) for key, shape in given.items()
-    }
-    merged = linemerge(unary_union([shapes[key].boundary for key in keys]))
-    arcs = list(getattr(merged, "geoms", [merged]))
+    snapped = [polygonal(set_precision(make_valid(given[key]), grid)) for key in keys]
 
-    # How hard each arc may be smoothed. A border is only as coarse as its
-    # smaller side can afford: the smoothing that turns the Mississippi
-    # into a line rather than a sawtooth would erase Monaco. Each arc still
-    # gets exactly one tolerance, so both its sides move together.
-    affordable = {
-        key: min(tolerance, math.sqrt(max(shapes[key].area, 1e-12) / math.pi) * _ARC_ALLOWANCE)
-        for key in keys
-    }
-    midpoints = [arc.interpolate(0.5, normalized=True) for arc in arcs]
-    midpoint_index = STRtree(midpoints)
-    arc_tolerance = [tolerance] * len(arcs)
-    for key in keys:
-        boundary = shapes[key].boundary
-        for position in midpoint_index.query(boundary.buffer(grid * 4), predicate="intersects"):
-            if boundary.distance(midpoints[position]) <= grid * 4:
-                arc_tolerance[position] = min(arc_tolerance[position], affordable[key])
+    simplified = coverage_simplify(np.array(snapped, dtype=object), tolerance)
 
-    # Re-noded after smoothing, not merely concatenated. Arcs smoothed by
-    # different amounts can be averaged into each other, and polygonize
-    # needs a noded planar graph: fed crossing lines it returns nonsense
-    # faces, which is how Indiana briefly doubled in size. Noding turns a
-    # crossing into an ordinary junction, and the majority rule below
-    # decides who owns the pieces.
-    smoothed = unary_union(
-        [_smooth_line(arc, arc_tolerance[position]) for position, arc in enumerate(arcs)]
-    )
-    faces = list(polygonize(smoothed))
-
-    for shape in shapes.values():
-        prepare(shape)
-    index = STRtree([shapes[key] for key in keys])
-    assigned: dict[str, list[BaseGeometry]] = {key: [] for key in keys}
-    for face in faces:
-        candidates = [keys[position] for position in index.query(face, predicate="intersects")]
-        if not candidates:
-            continue
-        point = face.representative_point()
-        owners = [key for key in candidates if shapes[key].contains(point)]
-        if not owners:
-            # The border moved out from under this face. It goes to
-            # whichever region actually holds most of it, and to nobody at
-            # all unless one holds the majority — polygonizing a ring of
-            # coastal regions also yields the sea they enclose, and a face
-            # like that belongs to none of them. Without the majority test
-            # the largest sliver of a claim wins an entire ocean: the
-            # Philippines grew by 156% of its own area.
-            best = max(candidates, key=lambda key: shapes[key].intersection(face).area)
-            if shapes[best].intersection(face).area <= face.area * 0.5:
-                continue
-            owners = [best]
-        for owner in owners:
-            assigned[owner].append(face)
-
-    simplified: dict[str, MultiPolygon] = {}
-    for key in keys:
-        kept = assigned[key]
-        rebuilt = polygonal(_union(kept)) if kept else MultiPolygon([])
-        restored = [
-            component
-            for component in polygonal(shapes[key]).geoms
-            if not rebuilt.intersects(component.representative_point())
-        ]
-        if restored:
-            rebuilt = polygonal(_union([rebuilt, *restored]))
-        # A region the pass would not leave recognizable keeps the outline
-        # it came in with. The grid that makes near-coincident borders
-        # coincide is a kilometer or two across, which is wider than the
-        # smallest regions are long — Vatican City is seven hundred meters
-        # end to end — and no amount of care in the smoothing saves a shape
-        # the snapping already flattened. Such a region's border with its
-        # neighbor no longer matches exactly, which is invisible at any
-        # scale where a region that small is visible at all.
-        # Measured against what the caller handed over, not against the
-        # snapped copy: the snapping is itself most of what flattens a
-        # region this small, so comparing with it would find nothing wrong.
+    # Snapping each region on its own does not quite produce a coverage:
+    # the maritime reach is built per region and its seams land a meter
+    # apart, so a shared edge can snap onto different cells on either
+    # side. `coverage_simplify` takes its precondition on trust and
+    # carries the difference through as a speck in one region and a hole
+    # the same size in its neighbor. Both are swept afterwards.
+    result: dict[str, MultiPolygon] = {}
+    untouched: list[str] = []
+    for key, value in zip(keys, simplified, strict=True):
+        rebuilt = _sweep(polygonal(make_valid(value)))
         original = given[key]
         if abs(rebuilt.area - original.area) > original.area * _KEEP_ORIGINAL_ABOVE:
             rebuilt = original
-        simplified[key] = rebuilt
-    return simplified
+            untouched.append(key)
+        result[key] = rebuilt
+
+    # A region kept at its original outline is authoritative there: its
+    # simplified neighbors yield, rather than overlapping it by up to a
+    # tolerance. The District of Columbia is the case that matters, being
+    # small enough to keep and surrounded by a Maryland that was not.
+    for key in untouched:
+        for other in keys:
+            if other == key or not result[other].intersects(result[key]):
+                continue
+            result[other] = polygonal(result[other].difference(result[key]))
+    return result
 
 
 def max_area_change(

@@ -677,10 +677,15 @@ def update(root: Path, *, check: bool = False) -> UpdateResult:
     # than per layer is what keeps a state's coastline on top of its
     # country's instead of a hair inside or outside it.
     simplify_m = policy.load(root / "policy.yaml").border_simplify_m
-    before = {f"country/{code}": shape for code, shape in country_shapes.items()} | {
-        f"us-state/{code}": shape for code, shape in state_shapes.items()
-    }
+    # One layer at a time: a coverage may not overlap itself, and a state
+    # sits inside its country by design. Both use the same tolerance and
+    # the same grid, so a coastline the two layers share still lands in
+    # very nearly the same place.
+    before = {f"country/{code}": shape for code, shape in country_shapes.items()}
     joint = geom.simplify_shared(before, simplify_m)
+    states_before = {f"us-state/{code}": shape for code, shape in state_shapes.items()}
+    joint |= geom.simplify_shared(states_before, simplify_m)
+    before |= states_before
     moved_key, moved = geom.max_area_change(before, joint)
     result.report.append(
         f"administrative borders simplified together at {simplify_m / 1000:.0f} km, "

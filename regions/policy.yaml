@@ -36,17 +36,22 @@ geometry:
   # How coarsely the administrative borders are drawn, in meters. Routing
   # does not care which side of a Mississippi meander a repeater sits on,
   # and the detail is most of what the country and state layers cost. Both
-  # layers are simplified together, after the maritime reach, so that a
-  # border two regions share moves once rather than once per side; an
-  # island too small to survive is restored at full detail. Consumed at
+  # layers are drawn together, after the maritime reach, so that a border
+  # two regions share moves once rather than once per side. Consumed at
   # update time, like maritime_reach_m.
   #
-  # 4 km puts the borders at the vertex density of the Natural Earth lines
-  # drawn under them, which is the reference for "broad strokes". It is also
-  # about as coarse as the smallest regions can afford: at 6 km Monaco loses
-  # half its area and San Marino a third, because one tolerance has to serve
-  # both a micro-state and Siberia. The update report names whichever region
-  # a change moves most, so raising this shows its own cost.
+  # This is a ceiling, not a uniform setting. Each border is smoothed by
+  # what its smaller side can afford — five percent of that region's
+  # equivalent radius — so a long border between two large states loses
+  # its meanders while Monaco's does not move. Corners that a boundary is
+  # defined to turn at, like the Oklahoma panhandle's, are held in place
+  # regardless: a moving average cannot tell a right angle from a meander
+  # and rounding one off is as wrong as leaving the other ragged.
+  #
+  # Raising it costs shape at the small end. The update report names
+  # whichever region a change moves most, and
+  # tools/regiondb-build/tests/test_boundary_quality.py fails on the
+  # defect classes this has produced before.
   border_simplify_m: 15000
   # Topology-preserving simplification, per layer. Administrative coastlines
   # carry far more detail than routing needs; hand-authored local regions are
