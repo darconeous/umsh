@@ -1,1 +1,1 @@
-{"geometry":{"coordinates":[[[[-63.05321,18.064528],[-62.958107,18.024998],[-63.106576,17.814949],[-63.286353,17.873698],[-63.145644,18.054392],[-63.08634,18.044014],[-63.05321,18.064528]]]],"type":"MultiPolygon"},"properties":{"name":"Sint-Maarten","source_feature_id":"marineregions:SX"},"type":"Feature"}
+{"geometry":{"coordinates":[[[[-63.098,18.047],[-63.089,18.044],[-62.958,18.025],[-63.107,17.815],[-63.286,17.874],[-63.109,18.049],[-63.098,18.047]]]],"type":"MultiPolygon"},"properties":{"name":"Sint-Maarten","source_feature_id":"marineregions:SX"},"type":"Feature"}

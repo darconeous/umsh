@@ -1,1 +1,1 @@
-{"geometry":{"coordinates":[[[[7.723889,42.946389],[7.408465,43.730006],[7.432056,43.75123],[7.4535,43.743194],[7.528333,43.5525],[7.756944,42.966389],[7.723889,42.946389]]]],"type":"MultiPolygon"},"properties":{"name":"Monaco","source_feature_id":"marineregions:MC"},"type":"Feature"}
+{"geometry":{"coordinates":[[[[7.454,43.743],[7.757,42.966],[7.724,42.946],[7.42,43.725],[7.454,43.743]]]],"type":"MultiPolygon"},"properties":{"name":"Monaco","source_feature_id":"marineregions:MC"},"type":"Feature"}

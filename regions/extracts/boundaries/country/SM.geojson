@@ -1,1 +1,1 @@
-{"geometry":{"coordinates":[[[[12.492373,43.909092],[12.456117,43.895531],[12.414642,43.903084],[12.411066,43.954239],[12.512856,43.986168],[12.516184,43.946342],[12.492373,43.909092]]]],"type":"MultiPolygon"},"properties":{"name":"San Marino","source_feature_id":"marineregions:SM"},"type":"Feature"}
+{"geometry":{"coordinates":[[[[12.415,43.903],[12.411,43.954],[12.513,43.986],[12.492,43.909],[12.415,43.903]]]],"type":"MultiPolygon"},"properties":{"name":"San Marino","source_feature_id":"marineregions:SM"},"type":"Feature"}
