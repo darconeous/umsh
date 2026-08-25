@@ -211,6 +211,10 @@ _ARC_ALLOWANCE = 0.05
 
 # The averaging window, and the furthest a point may travel, both as
 # multiples of the tolerance. See `_smooth_line`.
+# How much a region may be distorted before the pass gives up on it and
+# keeps the original outline instead.
+_KEEP_ORIGINAL_ABOVE = 0.25
+
 _SMOOTH_SPAN = 4.0
 _SMOOTH_TRAVEL = 2.0
 
@@ -233,13 +237,18 @@ def _smooth_line(line, tolerance: float):
     import numpy as np
 
     coordinates = np.asarray(line.coords, dtype=float)
-    # An arc shorter than a few tolerances has no meanders to average out
-    # and everything to lose: a window wider than the feature itself
-    # collapses it. Small islands keep the shape they were given.
-    if len(coordinates) < 5 or line.length < tolerance * 6.0:
+    if len(coordinates) < 5:
         return line
 
     closed = bool(np.allclose(coordinates[0], coordinates[-1]))
+    # Only a closed ring can be smoothed out of existence, and a small
+    # island is exactly that: a window wider than the feature collapses it.
+    # An open arc has both ends pinned to junctions and cannot collapse, so
+    # length is no reason to leave one alone — applying this guard to open
+    # arcs skipped 159 of the 174 arcs along the lower Mississippi and left
+    # the border as ragged as it was found.
+    if closed and line.length < tolerance * 6.0:
+        return line
     step = tolerance / 3.0
     # Evenly resampled, by arc length. `segmentize` looks like the tool for
     # this and is not: it only ever adds points, so the original vertices
@@ -357,9 +366,18 @@ def simplify_shared(shapes: dict[str, BaseGeometry], tolerance_m: float) -> dict
     # same grid on both sides of a shared border moves both sides
     # identically, so this stays watertight while shedding vertices before
     # the expensive noding.
-    grid = min(1e-3, tolerance / 16.0)
+    # Coarse enough to make near-coincident borders actually coincident.
+    # Two neighbors whose shared edge differs by a meter — the water reach
+    # is built per region, so its Voronoi seam never lands identically on
+    # both sides — cross each other over and over, and noding shatters the
+    # linework into slivers: 2,513 arcs of median half a kilometer across
+    # the states, whose pinned endpoints then leave nothing to smooth. At a
+    # kilometer the same set is 265 arcs of median 117 km. Still far below
+    # the tolerance, so this is not what bounds the accuracy.
+    grid = tolerance / 8.0
+    given = {key: polygonal(shape) for key, shape in shapes.items()}
     shapes = {
-        key: polygonal(set_precision(make_valid(shape), grid)) for key, shape in shapes.items()
+        key: polygonal(set_precision(make_valid(shape), grid)) for key, shape in given.items()
     }
     merged = linemerge(unary_union([shapes[key].boundary for key in keys]))
     arcs = list(getattr(merged, "geoms", [merged]))
@@ -428,6 +446,20 @@ def simplify_shared(shapes: dict[str, BaseGeometry], tolerance_m: float) -> dict
         ]
         if restored:
             rebuilt = polygonal(_union([rebuilt, *restored]))
+        # A region the pass would not leave recognizable keeps the outline
+        # it came in with. The grid that makes near-coincident borders
+        # coincide is a kilometer or two across, which is wider than the
+        # smallest regions are long — Vatican City is seven hundred meters
+        # end to end — and no amount of care in the smoothing saves a shape
+        # the snapping already flattened. Such a region's border with its
+        # neighbor no longer matches exactly, which is invisible at any
+        # scale where a region that small is visible at all.
+        # Measured against what the caller handed over, not against the
+        # snapped copy: the snapping is itself most of what flattens a
+        # region this small, so comparing with it would find nothing wrong.
+        original = given[key]
+        if abs(rebuilt.area - original.area) > original.area * _KEEP_ORIGINAL_ABOVE:
+            rebuilt = original
         simplified[key] = rebuilt
     return simplified
 
