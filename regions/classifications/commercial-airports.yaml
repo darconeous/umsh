@@ -202,3 +202,24 @@ overrides:
     commercial: false
     reason: >
       Rockcliffe is Ottawa's general-aviation field.
+
+  # Promotions. Upstream's scheduled_service says no, which keeps these out
+  # of the candidate list entirely, so the override is the only thing that
+  # puts them in the layer — the build says as much in a warning when it
+  # applies one. A small field earns this by being the airport its area
+  # actually means, with the nearest gateway far enough away that offering
+  # it instead would name somewhere nobody there is.
+
+  LMT:
+    commercial: true
+    reason: >
+      Crater Lake-Klamath Regional is the passenger airport for the Klamath
+      Basin, and the only medium-sized field in it. Scheduled service is thin
+      and has changed hands over the years — currently a single route to
+      Portland — which is why upstream carries scheduled_service=no; the flag
+      tracks whether a carrier is filed today, not whether a region has an
+      airport. Without this, the nearest commercial region is Medford at
+      97 km, just inside the layer's 100 km cap and on the far side of the
+      Cascades, so a repeater in Klamath Falls was tagged MFR.
+    evidence:
+      - "https://en.wikipedia.org/wiki/Klamath_Falls_Airport"
