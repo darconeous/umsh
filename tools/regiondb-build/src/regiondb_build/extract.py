@@ -564,7 +564,16 @@ def us_states(
                     open_water
                 )
             )
-        _resolve_contested_water(claims, {code: shape for shape, code, _, _ in rows}, reach_m)
+        # Simplified coastlines for the equidistance construction. The seeds
+        # are meant to be an even two kilometers apart, and `segmentize`
+        # only ever adds points: fed a full-resolution shoreline it keeps
+        # every original vertex too, turning a Voronoi diagram over a few
+        # thousand seeds into one over a few hundred thousand. A maritime
+        # boundary does not move for ten-meter coastline detail.
+        coasts = {
+            code: geom.polygonal(geom.simplify_m(shape, 1000.0)) for shape, code, _, _ in rows
+        }
+        _resolve_contested_water(claims, coasts, reach_m)
 
     shapes: dict[str, MultiPolygon] = {}
     for shape, code, _, _ in rows:
