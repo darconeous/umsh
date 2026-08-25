@@ -7,7 +7,7 @@ exists so that a host with no radio at all — an iOS simulator build,
 node, running its own MAC over a device that is real code and a
 fictional PHY.</p>
 <p>The device is the production <a href="umsh_ulcp_device::Session"><code>Session</code></a>, wrapped by
-[<code>SimulatedDevice</code>]. Two seams connect it to the bridge: what the
+<a href="../../umsh_ulcp_simdev/struct.SimulatedDevice.html" title="struct umsh_ulcp_simdev::SimulatedDevice"><code>SimulatedDevice</code></a>. Two seams connect it to the bridge: what the
 session transmits is drained into the hub, and what the hub delivers
 is fed through the session’s real receive path. Neither direction
 carries measurements, because nothing here measured anything — see

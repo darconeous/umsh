@@ -1,0 +1,43 @@
+<!DOCTYPE html><html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1.0"><meta name="generator" content="rustdoc"><meta name="description" content="ULCP carried over the Node Management binding."><title>umsh::ulcp_mesh - Rust</title><script>if(window.location.protocol!=="file:")document.head.insertAdjacentHTML("beforeend","SourceSerif4-Regular-6b053e98.ttf.woff2,FiraSans-Italic-81dc35de.woff2,FiraSans-Regular-0fe48ade.woff2,FiraSans-MediumItalic-ccf7e434.woff2,FiraSans-Medium-e1aa3f0a.woff2,SourceCodePro-Regular-8badfe75.ttf.woff2,SourceCodePro-Semibold-aa29a496.ttf.woff2".split(",").map(f=>`<link rel="preload" as="font" type="font/woff2"href="../../static.files/${f}">`).join(""))</script><link rel="stylesheet" href="../../static.files/normalize-9960930a.css"><link rel="stylesheet" href="../../static.files/rustdoc-80aa586b.css"><meta name="rustdoc-vars" data-root-path="../../" data-static-root-path="../../static.files/" data-current-crate="umsh" data-themes="" data-resource-suffix="" data-rustdoc-version="1.94.0-nightly (fcf67da03 2025-12-18)" data-channel="nightly" data-search-js="search-9e2438ea.js" data-stringdex-js="stringdex-a3946164.js" data-settings-js="settings-c38705f0.js" ><script src="../../static.files/storage-e2aeef58.js"></script><script defer src="../sidebar-items.js"></script><script defer src="../../static.files/main-3e30299d.js"></script><noscript><link rel="stylesheet" href="../../static.files/noscript-ffcac47a.css"></noscript><link rel="alternate icon" type="image/png" href="../../static.files/favicon-32x32-eab170b8.png"><link rel="icon" type="image/svg+xml" href="../../static.files/favicon-044be391.svg"></head><body class="rustdoc mod"><!--[if lte IE 11]><div class="warning">This old browser is unsupported and will most likely display funky things.</div><![endif]--><rustdoc-topbar><h2><a href="#">Module ulcp_mesh</a></h2></rustdoc-topbar><nav class="sidebar"><div class="sidebar-crate"><h2><a href="../../umsh/index.html">umsh</a><span class="version">0.1.0</span></h2></div><div class="sidebar-elems"><section id="rustdoc-toc"><h2 class="location"><a href="#">Module ulcp_<wbr>mesh</a></h2><h3><a href="#structs">Module Items</a></h3><ul class="block"><li><a href="#structs" title="Structs">Structs</a></li><li><a href="#enums" title="Enums">Enums</a></li><li><a href="#functions" title="Functions">Functions</a></li></ul></section><div id="rustdoc-modnav"><h2 class="in-crate"><a href="../index.html">In crate umsh</a></h2></div></div></nav><div class="sidebar-resizer" title="Drag to resize sidebar"></div><main><div class="width-limiter"><section id="main-content" class="content"><div class="main-heading"><div class="rustdoc-breadcrumbs"><a href="../index.html">umsh</a></div><h1>Module <span>ulcp_<wbr>mesh</span>&nbsp;<button id="copy-path" title="Copy item path to clipboard">Copy item path</button></h1><rustdoc-toolbar></rustdoc-toolbar><span class="sub-heading"><a class="src" href="../../src/umsh/ulcp_mesh.rs.html#1-477">Source</a> </span></div><details class="toggle top-doc" open><summary class="hideme"><span>Expand description</span></summary><div class="docblock"><p>ULCP carried over the Node Management binding.</p>
+<p><a href="../ulcp/struct.UlcpDevice.html" title="struct umsh::ulcp::UlcpDevice"><code>UlcpDevice</code></a> speaks to whatever satisfies
+<a href="../ulcp/trait.FrameLink.html" title="trait umsh::ulcp::FrameLink"><code>FrameLink</code></a>: send one frame, receive one frame. That is also the
+whole of what an administrative exchange does, so a link made of the
+two lets the ordinary host surface — properties, capabilities, the
+synchronization procedure, every category command built on them —
+reach a device across the mesh with nothing about it rewritten for
+the occasion.</p>
+<p>The adapter is split in half. <a href="struct.MeshFrameLink.html" title="struct umsh::ulcp_mesh::MeshFrameLink"><code>MeshFrameLink</code></a> is what the device
+handle holds; <a href="struct.MeshEndpoint.html" title="struct umsh::ulcp_mesh::MeshEndpoint"><code>MeshEndpoint</code></a> is what the driver that owns the radio
+holds. Between them they reconcile the two differences between a wire
+and the binding:</p>
+<ul>
+<li>
+<p><strong>Transaction identifiers.</strong> A wire correlates a response to its
+request by TID. The binding requires TID 0 on every frame and
+correlates by envelope token instead, so requests go out with their
+TID cleared and replies come back wearing the one their request
+carried.</p>
+</li>
+<li>
+<p><strong>Reset-class commands.</strong> <code>CMD_RST</code>, <code>CMD_RESTORE</code> and
+<code>CMD_FACTORY_RESET</code> are answered over the binding by no payload at
+all — delivery is the acknowledgment. A local device announces its
+new status instead, and callers wait for that announcement, so this
+synthesizes the announcement the device would have sent.</p>
+<p>One consequence is worth knowing about. The exchange engine decides
+a command is reset-class by reading the <em>request</em>, and settles it as
+soon as the acknowledgment lands — before any reply is drained. A
+<code>CMD_RESTORE</code> that the device refuses for want of a snapshot does
+answer, with <code>STATUS_INVALID_STATE</code>, and that answer loses the race:
+the caller is told the restore completed. Reading
+<code>PROP_LAST_STATUS</code> in a later exchange is how the spec says to find
+out what actually happened, and it remains the way to tell these two
+apart over the mesh.</p>
+</li>
+</ul>
+<p>Everything else the binding refuses — the host domain, session state,
+the private key — it refuses as <code>STATUS_PROP_NOT_FOUND</code>, which is an
+answer and needs no help from here.</p>
+</div></details><h2 id="structs" class="section-header">Structs<a href="#structs" class="anchor">§</a></h2><dl class="item-table"><dt><a class="struct" href="struct.MeshEndpoint.html" title="struct umsh::ulcp_mesh::MeshEndpoint">Mesh<wbr>Endpoint</a></dt><dd>The driver’s half: requests to carry, and outcomes to report.</dd><dt><a class="struct" href="struct.MeshFrameLink.html" title="struct umsh::ulcp_mesh::MeshFrameLink">Mesh<wbr>Frame<wbr>Link</a></dt><dd>The device handle’s half: a <a href="../ulcp/trait.FrameLink.html" title="trait umsh::ulcp::FrameLink"><code>FrameLink</code></a> whose wire is an
+administrative exchange.</dd><dt><a class="struct" href="struct.MeshRequest.html" title="struct umsh::ulcp_mesh::MeshRequest">Mesh<wbr>Request</a></dt><dd>One request the driver is to carry, and the bookkeeping needed to
+deliver its outcome.</dd></dl><h2 id="enums" class="section-header">Enums<a href="#enums" class="anchor">§</a></h2><dl class="item-table"><dt><a class="enum" href="enum.DeliveredOutcome.html" title="enum umsh::ulcp_mesh::DeliveredOutcome">Delivered<wbr>Outcome</a></dt><dd>How an exchange ended.</dd><dt><a class="enum" href="enum.MeshFault.html" title="enum umsh::ulcp_mesh::MeshFault">Mesh<wbr>Fault</a></dt><dd>Why an exchange produced no frame to hand back.</dd></dl><h2 id="functions" class="section-header">Functions<a href="#functions" class="anchor">§</a></h2><dl class="item-table"><dt><a class="fn" href="fn.describe.html" title="fn umsh::ulcp_mesh::describe">describe</a></dt><dd>What a failed exchange means to somebody holding the tool.</dd><dt><a class="fn" href="fn.mesh_link.html" title="fn umsh::ulcp_mesh::mesh_link">mesh_<wbr>link</a></dt><dd>Build a mesh link and the endpoint that serves it.</dd></dl></section></div></main></body></html>

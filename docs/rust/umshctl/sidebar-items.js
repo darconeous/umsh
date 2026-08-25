@@ -1,1 +1,1 @@
-window.SIDEBAR_ITEMS = {"fn":["announce_attached","main","resolve","run"],"mod":["command","connection","extcap","output","repl"],"struct":["App","ToolArgs"]};
+window.SIDEBAR_ITEMS = {"fn":["announce_attached","main","resolve","run"],"mod":["command","connection","extcap","mesh","output","repl"],"struct":["App","ToolArgs"]};

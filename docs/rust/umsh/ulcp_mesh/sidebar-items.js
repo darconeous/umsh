@@ -1,0 +1,1 @@
+window.SIDEBAR_ITEMS = {"enum":["DeliveredOutcome","MeshFault"],"fn":["describe","mesh_link"],"struct":["MeshEndpoint","MeshFrameLink","MeshRequest"]};
