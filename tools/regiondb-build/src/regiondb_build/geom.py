@@ -320,7 +320,14 @@ def _smooth_line(line, tolerance: float):
     thinned = [curve.interpolate(index / count, normalized=True) for index in range(count + 1)]
     if closed:
         thinned[-1] = thinned[0]
-    result = LineString(thinned)
+    # A last pass at a quarter of the tolerance, to drop points even
+    # sampling put on stretches that were already straight. Douglas-Peucker
+    # is what made the borders a sawtooth when it ran at the full
+    # tolerance; at a quarter of it, well below the shortest wavelength the
+    # averaging left behind, it can only remove points that were saying
+    # nothing. Even sampling alone gave Greenland a thousand vertices it
+    # had no use for.
+    result = LineString(thinned).simplify(tolerance / 4.0, preserve_topology=True)
     return result if result.is_valid and not result.is_empty else line
 
 
