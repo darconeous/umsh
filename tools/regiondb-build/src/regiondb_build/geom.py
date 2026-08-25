@@ -264,8 +264,15 @@ def simplify_shared(shapes: dict[str, BaseGeometry], tolerance_m: float) -> dict
         point = face.representative_point()
         owners = [key for key in candidates if shapes[key].contains(point)]
         if not owners:
+            # The border moved out from under this face. It goes to
+            # whichever region actually holds most of it, and to nobody at
+            # all unless one holds the majority — polygonizing a ring of
+            # coastal regions also yields the sea they enclose, and a face
+            # like that belongs to none of them. Without the majority test
+            # the largest sliver of a claim wins an entire ocean: the
+            # Philippines grew by 156% of its own area.
             best = max(candidates, key=lambda key: shapes[key].intersection(face).area)
-            if shapes[best].intersection(face).area <= 0.0:
+            if shapes[best].intersection(face).area <= face.area * 0.5:
                 continue
             owners = [best]
         for owner in owners:
