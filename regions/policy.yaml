@@ -47,7 +47,7 @@ geometry:
   # half its area and San Marino a third, because one tolerance has to serve
   # both a micro-state and Siberia. The update report names whichever region
   # a change moves most, so raising this shows its own cost.
-  border_simplify_m: 4000
+  border_simplify_m: 15000
   # Topology-preserving simplification, per layer. Administrative coastlines
   # carry far more detail than routing needs; hand-authored local regions are
   # already drawn at the scale they mean. Country tolerance is the main size

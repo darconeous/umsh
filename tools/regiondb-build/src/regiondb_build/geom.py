@@ -15,7 +15,7 @@ import math
 from pyproj import Geod, Transformer
 from shapely import STRtree, make_valid, prepare, set_precision
 from shapely.errors import GEOSException
-from shapely.geometry import MultiPolygon, Polygon, box
+from shapely.geometry import LineString, MultiPolygon, Polygon, box
 from shapely.geometry.base import BaseGeometry
 from shapely.ops import linemerge, polygonize, unary_union
 from shapely.ops import transform as shapely_transform
@@ -204,6 +204,117 @@ def drop_dust(geometry: BaseGeometry, min_area_km2: float) -> MultiPolygon:
     return MultiPolygon(kept)
 
 
+# How far an arc may be smoothed relative to the equivalent radius of the
+# smallest region it bounds. Five percent keeps a region recognizable while
+# letting a long border between two large regions lose its meanders.
+_ARC_ALLOWANCE = 0.05
+
+# The averaging window, and the furthest a point may travel, both as
+# multiples of the tolerance. See `_smooth_line`.
+_SMOOTH_SPAN = 4.0
+_SMOOTH_TRAVEL = 2.0
+
+
+def _smooth_line(line, tolerance: float):
+    """Low-pass a polyline, keeping its endpoints and bounding its travel.
+
+    Douglas-Peucker only ever keeps vertices it was given, so on a
+    meandering river it selects the outermost point of each loop and joins
+    them: fewer vertices, and a zigzag rather than a smooth line. Averaging
+    over a window the width of the tolerance produces the line a person
+    means by "the broad strokes" — new vertices, on the centerline of the
+    meanders instead of their extremes.
+
+    Two things keep this safe among neighbors. Endpoints never move, so
+    junctions hold and adjacent arcs stay joined. And no point travels
+    further than the tolerance, which is the same bound Douglas-Peucker
+    respects, so a smoothed arc cannot wander across its neighbors.
+    """
+    import numpy as np
+
+    coordinates = np.asarray(line.coords, dtype=float)
+    # An arc shorter than a few tolerances has no meanders to average out
+    # and everything to lose: a window wider than the feature itself
+    # collapses it. Small islands keep the shape they were given.
+    if len(coordinates) < 5 or line.length < tolerance * 6.0:
+        return line
+
+    closed = bool(np.allclose(coordinates[0], coordinates[-1]))
+    step = tolerance / 3.0
+    # Evenly resampled, by arc length. `segmentize` looks like the tool for
+    # this and is not: it only ever adds points, so the original vertices
+    # survive at their original spacing and a window counted in points
+    # spans whatever distance those points happen to cover — on a detailed
+    # coastline, a small fraction of the intended one.
+    samples = max(4, int(round(line.length / step)))
+    resampled = np.array(
+        [
+            line.interpolate(index / samples, normalized=True).coords[0]
+            for index in range(samples + 1)
+        ]
+    )
+    if len(resampled) < 5:
+        return line
+
+    # The averaging window spans several tolerances, while the result is
+    # sampled at one. Smoothing and sampling at the same scale sits exactly
+    # on the aliasing edge: whatever wiggle survives has a wavelength near
+    # the sample spacing, and sampling it recreates the sawtooth. Removing
+    # everything below four tolerances first leaves a curve the sampling
+    # cannot misrepresent.
+    window = max(3, int(round(_SMOOTH_SPAN * tolerance / step)) | 1)
+    if closed:
+        # A ring has no ends to pin, so it wraps: smoothing it as an open
+        # line would flatten the seam wherever its coordinates happen to
+        # start.
+        padded = np.concatenate(
+            [resampled[-(window // 2 + 1) : -1], resampled, resampled[1 : window // 2 + 1]]
+        )
+    else:
+        padded = np.concatenate(
+            [
+                np.repeat(resampled[:1], window // 2, axis=0),
+                resampled,
+                np.repeat(resampled[-1:], window // 2, axis=0),
+            ]
+        )
+
+    kernel = np.ones(window) / window
+    smoothed = np.column_stack(
+        [np.convolve(padded[:, axis], kernel, mode="valid") for axis in (0, 1)]
+    )
+
+    # Travel is bounded, but by more than one tolerance: reaching the
+    # centerline of a meander wider than the tolerance is the whole point,
+    # and a bound of exactly one tolerance is what pinned the line to the
+    # meanders it was meant to leave.
+    limit = tolerance * _SMOOTH_TRAVEL
+    shift = smoothed - resampled
+    distance = np.hypot(shift[:, 0], shift[:, 1])
+    excessive = distance > limit
+    if excessive.any():
+        scale = np.where(excessive, limit / np.maximum(distance, 1e-15), 1.0)
+        smoothed = resampled + shift * scale[:, None]
+
+    if closed:
+        smoothed[-1] = smoothed[0]
+    else:
+        smoothed[0], smoothed[-1] = resampled[0], resampled[-1]
+
+    # Thinned by even arc-length steps, not by Douglas-Peucker. Simplifying
+    # a smooth curve picks the extremes of whatever wiggle remains and
+    # aliases it straight back into a zigzag — the very thing the averaging
+    # just removed. Even sampling of a curve whose short wavelengths are
+    # gone cannot alias.
+    curve = LineString(smoothed)
+    count = max(2, int(round(curve.length / tolerance)))
+    thinned = [curve.interpolate(index / count, normalized=True) for index in range(count + 1)]
+    if closed:
+        thinned[-1] = thinned[0]
+    result = LineString(thinned)
+    return result if result.is_valid and not result.is_empty else line
+
+
 def simplify_shared(shapes: dict[str, BaseGeometry], tolerance_m: float) -> dict[str, MultiPolygon]:
     """Simplify neighboring regions without pulling their shared borders apart.
 
@@ -250,8 +361,36 @@ def simplify_shared(shapes: dict[str, BaseGeometry], tolerance_m: float) -> dict
     shapes = {
         key: polygonal(set_precision(make_valid(shape), grid)) for key, shape in shapes.items()
     }
-    arcs = linemerge(unary_union([shapes[key].boundary for key in keys]))
-    faces = list(polygonize(arcs.simplify(tolerance, preserve_topology=True)))
+    merged = linemerge(unary_union([shapes[key].boundary for key in keys]))
+    arcs = list(getattr(merged, "geoms", [merged]))
+
+    # How hard each arc may be smoothed. A border is only as coarse as its
+    # smaller side can afford: the smoothing that turns the Mississippi
+    # into a line rather than a sawtooth would erase Monaco. Each arc still
+    # gets exactly one tolerance, so both its sides move together.
+    affordable = {
+        key: min(tolerance, math.sqrt(max(shapes[key].area, 1e-12) / math.pi) * _ARC_ALLOWANCE)
+        for key in keys
+    }
+    midpoints = [arc.interpolate(0.5, normalized=True) for arc in arcs]
+    midpoint_index = STRtree(midpoints)
+    arc_tolerance = [tolerance] * len(arcs)
+    for key in keys:
+        boundary = shapes[key].boundary
+        for position in midpoint_index.query(boundary.buffer(grid * 4), predicate="intersects"):
+            if boundary.distance(midpoints[position]) <= grid * 4:
+                arc_tolerance[position] = min(arc_tolerance[position], affordable[key])
+
+    # Re-noded after smoothing, not merely concatenated. Arcs smoothed by
+    # different amounts can be averaged into each other, and polygonize
+    # needs a noded planar graph: fed crossing lines it returns nonsense
+    # faces, which is how Indiana briefly doubled in size. Noding turns a
+    # crossing into an ordinary junction, and the majority rule below
+    # decides who owns the pieces.
+    smoothed = unary_union(
+        [_smooth_line(arc, arc_tolerance[position]) for position, arc in enumerate(arcs)]
+    )
+    faces = list(polygonize(smoothed))
 
     for shape in shapes.values():
         prepare(shape)

@@ -37,7 +37,7 @@ from shapely import (
     voronoi_polygons,
 )
 from shapely import transform as shapely_transform
-from shapely.geometry import MultiPolygon
+from shapely.geometry import MultiPolygon, Point
 
 from . import geom, policy
 from .fetch import load_lock
@@ -79,6 +79,9 @@ COMMERCIAL_CANDIDATE_TYPES = {"small_airport", "medium_airport", "large_airport"
 # State FIPS codes at or above this are territories rather than states. Policy
 # excludes them from V1; see `regions/policy.yaml`.
 TERRITORY_FIPS_FLOOR = 60
+# Half a kilometer, in degrees: the notional island under an airfield. Only
+# its existence matters — the maritime reach supplies the size.
+AIRFIELD_LAND_RADIUS_DEG = 500.0 / 111_320.0
 
 
 class ExtractError(ValueError):
@@ -637,12 +640,30 @@ def update(root: Path, *, check: bool = False) -> UpdateResult:
 
     state_rows, state_skipped = _state_rows(vendor)
 
+    # An airfield is land, whatever the coastline datasets say. Remote
+    # atolls fall below the resolution of every global physical layer, and
+    # a runway on one is better evidence that something is there than any
+    # of them: without this an island airport is a region floating in the
+    # ocean with no country under it. Each site seeds a small disk, which
+    # the maritime reach then grows exactly as it grows a charted islet.
+    supplementary: dict[str, list] = {
+        "US": [geom.polygonal(unary_union([shape for shape, _, _, _ in state_rows]))]
+    }
+    for site in sites:
+        code = site["iso_country"]
+        if len(code) == 2:
+            supplementary.setdefault(code, []).append(
+                Point(float(site["longitude_deg"]), float(site["latitude_deg"])).buffer(
+                    AIRFIELD_LAND_RADIUS_DEG
+                )
+            )
+
     mapping = iso3_to_iso2(vendor)
     notes, country_shapes, country_names = countries(
         vendor,
         mapping,
         reach_m,
-        {"US": geom.polygonal(unary_union([shape for shape, _, _, _ in state_rows]))},
+        {code: geom.polygonal(unary_union(parts)) for code, parts in supplementary.items()},
     )
     result.report.extend(notes)
 
