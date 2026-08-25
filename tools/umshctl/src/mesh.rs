@@ -344,6 +344,18 @@ pub struct MeshHome {
     pub tap: connection::FrameTap,
 }
 
+/// Whether opening a session should say hello first.
+#[derive(Clone, Copy, PartialEq, Eq)]
+pub enum Greeting {
+    /// Ask the device its name, so the prompt is something a person
+    /// recognizes and an unreachable node is reported now rather than by
+    /// whatever they type first. One exchange.
+    Named,
+    /// Say nothing. The key is the label, and the command the caller
+    /// came for is the first thing on the air.
+    Silent,
+}
+
 /// Borrow the attached radio and open a ULCP session to `target` over the
 /// mesh.
 ///
@@ -351,7 +363,7 @@ pub struct MeshHome {
 /// [`MeshHome`] that ends the session. On failure the local attachment is
 /// restored, because a tool that loses your radio for mistyping a key is
 /// not one you would use twice.
-pub async fn open_remote(app: &mut App, target: PublicKey) -> Result<()> {
+pub async fn open_remote(app: &mut App, target: PublicKey, greeting: Greeting) -> Result<()> {
     if app.mesh.is_some() {
         bail!("already on a mesh session — `disconnect` returns to the radio");
     }
@@ -394,8 +406,7 @@ pub async fn open_remote(app: &mut App, target: PublicKey) -> Result<()> {
         local_label,
         tap,
     };
-    note("attaching over the mesh — the handshake is five exchanges and can take a minute");
-    match attach_remote(link, phy, target).await {
+    match open_session(link, phy, target, greeting).await {
         Ok(session) => {
             app.session = Some(session);
             app.mesh = Some(home);
@@ -410,22 +421,36 @@ pub async fn open_remote(app: &mut App, target: PublicKey) -> Result<()> {
     }
 }
 
-/// Attach the device handle at the far end of `link`.
-async fn attach_remote(
+/// Open the device handle at the far end of `link`.
+///
+/// Opening costs nothing on the air — the binding needs no session and
+/// the device is told nothing — so the only exchange here is the name,
+/// and only when one was asked for.
+async fn open_session(
     link: MeshFrameLink,
     phy: UlcpDeviceConfig,
     target: PublicKey,
+    greeting: Greeting,
 ) -> Result<connection::Session> {
     let tap = connection::new_tap();
     let session_link = SessionLink::new(connection::AnyLink::Mesh(link), tap.clone());
-    let mut device = UlcpDevice::attach_remote(session_link, connection::mesh_attach_config(phy))
-        .await
-        .context("attaching to the device over the mesh")?;
+    let mut device = UlcpDevice::open_remote(session_link, connection::mesh_attach_config(phy));
     // A device that will not say its name is still perfectly usable; the
     // key it answers to will do as a label.
-    let label = match device.device_name().await {
-        Ok(name) if !name.is_empty() => name,
-        _ => target.to_string(),
+    let label = match greeting {
+        Greeting::Silent => target.to_string(),
+        Greeting::Named => {
+            note("reaching the device over the mesh — an exchange can take a while");
+            match device.device_name().await {
+                Ok(name) if !name.is_empty() => name,
+                Ok(_) => target.to_string(),
+                Err(error) => {
+                    return Err(
+                        anyhow::Error::new(error).context("reaching the device over the mesh")
+                    );
+                }
+            }
+        }
     };
     Ok(connection::Session {
         device,

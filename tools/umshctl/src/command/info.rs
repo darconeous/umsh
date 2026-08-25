@@ -19,9 +19,32 @@ pub struct InfoArgs {
     /// Report ownership relative to this host identity public key.
     #[arg(long, value_name = "KEY")]
     pub expect_host_key: Option<KeyArg>,
+
+    #[command(subcommand)]
+    pub topic: Option<InfoTopic>,
+}
+
+/// One line of the report, asked for on its own.
+///
+/// The whole report is a dozen exchanges. Over the mesh that is minutes,
+/// and a script watching a deployed node's charge wants one number.
+#[derive(Debug, clap::Subcommand)]
+pub enum InfoTopic {
+    /// Charge, voltage, and which way it is going. One exchange.
+    Battery(BatteryArgs),
+}
+
+#[derive(Debug, clap::Args)]
+pub struct BatteryArgs {
+    /// Print `NAME=VALUE` lines a shell can `eval`, rather than prose.
+    #[arg(long)]
+    pub env: bool,
 }
 
 pub async fn run<L: FrameLink>(device: &mut UlcpDevice<L>, args: InfoArgs) -> Result<()> {
+    if let Some(InfoTopic::Battery(battery)) = args.topic {
+        return self::battery(device, battery).await;
+    }
     let expected = args.expect_host_key.map(|key| key.0);
     let sync = device.sync(expected.as_ref()).await?;
 
@@ -222,6 +245,52 @@ fn cap_name(code: u32) -> String {
     }
 }
 
+/// `info battery`: one battery reading, on its own.
+///
+/// One exchange, and none of the report around it — which is what makes
+/// this usable from cron against a device three hops away.
+async fn battery<L: FrameLink>(device: &mut UlcpDevice<L>, args: BatteryArgs) -> Result<()> {
+    let status = device.battery_status().await?;
+    if !args.env {
+        match status {
+            Some(status) => field("battery", battery_display(&status)),
+            None => field("battery", "not battery powered"),
+        }
+        return Ok(());
+    }
+    print!("{}", battery_env(status.as_ref()));
+    Ok(())
+}
+
+/// The battery reading as shell assignments.
+///
+/// A shell `eval`s this, so every line is an assignment and a component
+/// the device does not report is a *missing* variable rather than an
+/// empty or invented one — `${BATTERY_VOLTS:-}` is how a script asks
+/// whether there is a voltage. `BATTERY_PRESENT` is always there to be
+/// tested against, so "no battery" is an answer and not an empty file.
+fn battery_env(status: Option<&BatteryStatus>) -> String {
+    let Some(status) = status else {
+        return "BATTERY_PRESENT=0\n".to_string();
+    };
+    let mut out = "BATTERY_PRESENT=1\n".to_string();
+    if let Some(percent) = status.level_percent {
+        out += &format!("BATTERY_LEVEL={:.2}\n", f32::from(percent) / 100.0);
+    }
+    if let Some(mv) = status.voltage_mv {
+        out += &format!("BATTERY_VOLTS={:.3}\n", f32::from(mv) / 1000.0);
+    }
+    if let Some(state) = status.charge_state {
+        let state = match state {
+            BatteryChargeState::Discharging => "DISCHARGING",
+            BatteryChargeState::Charging => "CHARGING",
+            BatteryChargeState::Charged => "CHARGED",
+        };
+        out += &format!("BATTERY_STATE={state}\n");
+    }
+    out
+}
+
 fn battery_display(status: &BatteryStatus) -> String {
     if status.is_empty() {
         return "unsupported reporting".to_string();
@@ -332,5 +401,37 @@ mod tests {
             battery_display(&status),
             "4150 mV, level unsupported, charging"
         );
+    }
+
+    #[test]
+    fn the_battery_environment_is_something_a_shell_can_eval() {
+        let status = BatteryStatus {
+            voltage_mv: Some(4100),
+            level_percent: Some(95),
+            charge_state: Some(BatteryChargeState::Discharging),
+        };
+        assert_eq!(
+            battery_env(Some(&status)),
+            "BATTERY_PRESENT=1\n\
+             BATTERY_LEVEL=0.95\n\
+             BATTERY_VOLTS=4.100\n\
+             BATTERY_STATE=DISCHARGING\n"
+        );
+    }
+
+    #[test]
+    fn an_unreported_component_is_an_absent_variable_not_an_empty_one() {
+        let status = BatteryStatus {
+            voltage_mv: None,
+            level_percent: Some(7),
+            charge_state: None,
+        };
+        assert_eq!(
+            battery_env(Some(&status)),
+            "BATTERY_PRESENT=1\nBATTERY_LEVEL=0.07\n"
+        );
+        // A device with no battery still answers, so a script that
+        // `eval`s this always has something to test.
+        assert_eq!(battery_env(None), "BATTERY_PRESENT=0\n");
     }
 }

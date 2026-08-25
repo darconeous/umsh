@@ -999,7 +999,7 @@ pub struct UlcpDevice<L> {
     mode: AttachMode,
 }
 
-/// The two relationships a host can have with a device.
+/// The relationships a host can have with a device.
 ///
 /// They are different things, and conflating them is how one phone
 /// administering ten repeaters ends up claiming all of them. Tethering is
@@ -1149,19 +1149,39 @@ where
         Self::attach_with_mode(link, config, AttachMode::Administrative).await
     }
 
-    /// Attach to a device reached over the mesh, through the Node
+    /// Open a handle on a device reached over the mesh, through the Node
     /// Management binding.
     ///
-    /// The same five reads as [`Self::attach_administrative`] — this
-    /// attach is a handshake with nobody, so nothing about it needs a
-    /// wire — but each is an exchange over the air, and the handle that
-    /// comes back knows to treat the properties out of an
-    /// administrator's reach as absent rather than asking for them. Give
-    /// `config` a response timeout that outlasts the binding's own retry
-    /// budget, or a slow answer becomes a transport error here before the
-    /// exchange engine has finished trying.
-    pub async fn attach_remote(link: L, config: UlcpDeviceConfig) -> Result<Self, UlcpError> {
-        Self::attach_with_mode(link, config, AttachMode::Remote).await
+    /// Nothing goes on the air. An attach down a wire opens with a few
+    /// reads because the link has just come up and the host knows
+    /// nothing about what is on the other end; none of that is a
+    /// handshake in the sense of establishing anything, because the
+    /// device is told nothing and holds no state for it. Over the
+    /// binding those reads would be exchanges on the air, minutes of
+    /// them in bad conditions, spent before the command you actually
+    /// asked for. A command that wants the firmware version or the boot
+    /// status reads it, and pays for it then.
+    ///
+    /// So [`Self::dev_version`], [`Self::dev_model`], and
+    /// [`Self::boot_status`] are empty on this handle, and the frame
+    /// ceiling comes from the binding — [`umsh_node_mgmt::REQUEST_MAX`],
+    /// which bounds a request here more tightly than the device's own
+    /// PHY MTU does — rather than from asking. Give `config` the
+    /// device's PHY and a response timeout that outlasts the binding's
+    /// own retry budget, or a slow answer becomes a transport error here
+    /// before the exchange engine has finished trying.
+    pub fn open_remote(link: L, config: UlcpDeviceConfig) -> Self {
+        let mut radio = Self::bare(link, config);
+        radio.mode = AttachMode::Remote;
+        radio.max_frame_size = umsh_node_mgmt::REQUEST_MAX;
+        radio.t_frame_ms = lora_airtime_ms(
+            radio.config.spreading_factor,
+            radio.config.bandwidth_hz,
+            radio.config.coding_rate_denom,
+            radio.max_frame_size,
+        )
+        .max(1);
+        radio
     }
 
     async fn attach_with_mode(
@@ -1173,23 +1193,48 @@ where
         radio.mode = mode;
         // Reading LAST_STATUS does not overwrite it, so sync() still
         // sees a retained reset code after this handshake.
+        //
+        // It also cannot travel with the rest. A `CMD_PROP_ARE` reports a
+        // refused position by putting `PROP_LAST_STATUS` in it, so a
+        // status that *is* the answer and a status standing in for one
+        // are the same bytes. Asking for it alone is what tells them
+        // apart.
         let boot_status = radio.get_prop(prop::LAST_STATUS).await?;
         radio.boot_status = decode_status(&boot_status);
 
-        let version = radio.get_prop(prop::PROTOCOL_VERSION).await?;
+        // Everything else the handshake wants, in one exchange.
+        const REST: [u32; 4] = [
+            prop::PROTOCOL_VERSION,
+            prop::DEV_VERSION,
+            prop::DEV_MODEL,
+            prop::PHY_MTU,
+        ];
+        let answers = radio.read_each(&REST).await?;
+        let [version, dev_version, dev_model, mtu] = answers.as_slice() else {
+            return Err(UlcpError::Protocol("short answer to the attach handshake"));
+        };
+        let required = |answer: &Result<Vec<u8>, Status>| match answer {
+            Ok(value) => Ok(value.clone()),
+            Err(status) => Err(UlcpError::Status(*status)),
+        };
+
+        let version = required(version)?;
         if version.first().copied() != Some(ids::PROTOCOL_MAJOR_VERSION) {
             return Err(UlcpError::Protocol("protocol major version mismatch"));
         }
-        let dev_version = radio.get_prop(prop::DEV_VERSION).await?;
-        radio.dev_version = String::from_utf8_lossy(&dev_version)
+        radio.dev_version = String::from_utf8_lossy(&required(dev_version)?)
             .trim_end_matches('\0')
             .to_owned();
         // `PROP_DEV_MODEL` is OPTIONAL, so a refusal is an answer — it
         // means "this device does not name its hardware" — and must not
         // fail the attach the way a missing DEV_VERSION would.
-        radio.dev_model = radio.get_prop_string_opt(prop::DEV_MODEL).await;
+        radio.dev_model = dev_model.as_ref().ok().map(|value| {
+            String::from_utf8_lossy(value)
+                .trim_end_matches('\0')
+                .to_owned()
+        });
 
-        let mtu = radio.get_prop(prop::PHY_MTU).await?;
+        let mtu = required(mtu)?;
         let [mtu_lo, mtu_hi, ..] = mtu[..] else {
             return Err(UlcpError::Protocol("malformed PROP_PHY_MTU"));
         };
@@ -1273,17 +1318,22 @@ where
 
     /// Fetch a live battery status snapshot (`PROP_BATTERY`).
     ///
-    /// `Ok(None)` means the device does not advertise `CAP_BATTERY` (not
-    /// battery powered). `Ok(Some(status))` with every field `None` means
-    /// battery powered with unsupported reporting. A measurement the device
-    /// cannot currently obtain surfaces as a command failure, never as
-    /// `None` — battery is live telemetry, so this is deliberately not
-    /// part of [`UlcpDevice::sync`].
+    /// `Ok(None)` means the device is not battery powered.
+    /// `Ok(Some(status))` with every field `None` means battery powered
+    /// with unsupported reporting. A measurement the device cannot
+    /// currently obtain surfaces as a command failure, never as `None` —
+    /// battery is live telemetry, so this is deliberately not part of
+    /// [`UlcpDevice::sync`].
+    ///
+    /// One exchange: the property's own absence is the answer
+    /// `CAP_BATTERY` would have given, and over the mesh a capability
+    /// read to learn the same thing is a round trip on the air.
     pub async fn battery_status(&mut self) -> Result<Option<BatteryStatus>, UlcpError> {
-        if !self.capabilities().await?.contains(&cap::BATTERY) {
-            return Ok(None);
-        }
-        let value = self.get_prop(prop::BATTERY).await?;
+        let value = match self.get_prop(prop::BATTERY).await {
+            Ok(value) => value,
+            Err(UlcpError::Status(Status::PROP_NOT_FOUND)) => return Ok(None),
+            Err(error) => return Err(error),
+        };
         match BatteryStatus::decode(&value) {
             Ok(status) => Ok(Some(status)),
             Err(_) => Err(UlcpError::Protocol("malformed PROP_BATTERY")),
@@ -1753,6 +1803,49 @@ where
         self.send(&buf[..len]).await?;
         self.finish_prop_transaction(tid, key, PropResponsePolicy::Value)
             .await
+    }
+
+    /// Read several properties, in as few exchanges as the reply budget
+    /// allows.
+    ///
+    /// One `CMD_PROP_MULTI_GET`, continued where the reply ran out of
+    /// room. Every position comes back either as a value or as the
+    /// status standing in for one, so an OPTIONAL property's refusal
+    /// reads as the answer it is rather than ending the whole read.
+    ///
+    /// `PROP_LAST_STATUS` must not appear in `keys`: a refused position
+    /// is reported by putting that very property into it, so its value
+    /// and a refusal are indistinguishable. Read it on its own.
+    async fn read_each(&mut self, keys: &[u32]) -> Result<Vec<Result<Vec<u8>, Status>>, UlcpError> {
+        debug_assert!(
+            !keys.contains(&prop::LAST_STATUS),
+            "PROP_LAST_STATUS cannot share a multi-property read"
+        );
+        let mut answers: Vec<Result<Vec<u8>, Status>> = Vec::with_capacity(keys.len());
+        while answers.len() < keys.len() {
+            let remaining = &keys[answers.len()..];
+            let entries = self.get_props(remaining).await?;
+            if entries.is_empty() {
+                // Nothing answered and nothing refused; continuing would
+                // ask the same question forever.
+                return Err(UlcpError::Protocol("empty multi-property answer"));
+            }
+            for (offset, entry) in entries.into_iter().enumerate() {
+                answers.push(match entry {
+                    // Positional: the answer names its key, and it has to
+                    // be the one asked for at that position. `get` rather
+                    // than an index because a device answering more
+                    // entries than it was asked for is a wire fault, not
+                    // grounds for a panic here.
+                    Ok((key, value)) if remaining.get(offset) == Some(&key) => Ok(value),
+                    Ok(_) => {
+                        return Err(UlcpError::Protocol("multi-property answer out of order"));
+                    }
+                    Err(status) => Err(status),
+                });
+            }
+        }
+        Ok(answers)
     }
 
     /// Read several properties in one exchange via

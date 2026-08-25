@@ -384,9 +384,16 @@ async fn run(args: ToolArgs) -> Result<()> {
 
     // A one-shot against a remote node borrows the radio just attached,
     // runs the command over the mesh, and hands the radio back — so a
-    // script gets the same session the shell would have opened.
+    // script gets the same session the shell would have opened. Nothing
+    // goes on the air before the command itself: a script asking for the
+    // battery should pay for the battery and nothing else.
     if let Some(node) = args.node {
-        mesh::open_remote(&mut app, umsh::core::PublicKey(node.0)).await?;
+        mesh::open_remote(
+            &mut app,
+            umsh::core::PublicKey(node.0),
+            mesh::Greeting::Silent,
+        )
+        .await?;
         let command = args.command.expect("checked above");
         let result = command.run(&mut app).await;
         app.detach().await;

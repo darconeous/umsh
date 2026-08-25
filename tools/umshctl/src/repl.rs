@@ -261,7 +261,7 @@ async fn process_line(app: &mut App, line: &str) -> Result<bool> {
             return Ok(true);
         }
         ReplCommand::Remote { target } => {
-            mesh::open_remote(app, PublicKey(target.0)).await?;
+            mesh::open_remote(app, PublicKey(target.0), mesh::Greeting::Named).await?;
             if let Some(session) = &app.session {
                 println!("on {} over the mesh", session.label);
             }

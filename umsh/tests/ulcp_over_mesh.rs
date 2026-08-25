@@ -8,10 +8,11 @@
 //! wire.
 //!
 //! What that adds is everything the adapter is responsible for and the
-//! binding is not — that a reply files as a response despite the TID the
-//! binding insists on, that the properties out of an administrator's reach
-//! are absent rather than fatal, and that the commands the binding answers
-//! with silence still complete.
+//! binding is not — that opening a handle puts nothing on the air, that a
+//! reply files as a response despite the TID the binding insists on, that
+//! the properties out of an administrator's reach are absent rather than
+//! fatal, and that the commands the binding answers with silence still
+//! complete.
 
 #![cfg(feature = "tokio-support")]
 
@@ -87,44 +88,58 @@ where
     }
 }
 
-/// Attach a device handle over the mesh, as `umshctl remote` does.
-async fn attach<R: Radio>(
-    mesh: &mut Mesh<'_, R>,
-    endpoint: &mut MeshEndpoint,
-    link: MeshFrameLink,
-) -> UlcpDevice<MeshFrameLink>
-where
-    R::Error: core::fmt::Debug,
-{
-    with_mesh(
-        mesh,
-        endpoint,
-        UlcpDevice::attach_remote(link, mesh_config()),
-    )
-    .await
-    .expect("the attach handshake completes over the mesh")
+/// Open a device handle over the mesh, as `umshctl remote` does.
+fn open(link: MeshFrameLink) -> UlcpDevice<MeshFrameLink> {
+    UlcpDevice::open_remote(link, mesh_config())
 }
 
 #[tokio::test(flavor = "current_thread")]
-async fn the_attach_handshake_completes_over_the_air() {
-    mesh!("attach", mesh);
+async fn opening_a_handle_puts_nothing_on_the_air() {
+    mesh!("open", mesh);
     let (link, mut endpoint) = mesh_link();
-    let device = attach(&mut mesh, &mut endpoint, link).await;
+    let mut device = open(link);
 
-    // The same five reads as a wire attach, and they told the handle the
-    // same things.
     assert_eq!(device.attach_mode(), AttachMode::Remote);
     assert!(device.is_remote());
-    assert_eq!(device.dev_version(), "sim-dev/0.1");
-    assert_eq!(device.dev_model(), Some("Simulated Board"));
-    assert_eq!(device.boot_status(), Status::RESET_POWER_ON);
+    assert_eq!(
+        mesh.device.borrow().executed,
+        0,
+        "opening a remote handle is not a conversation"
+    );
+
+    // Which is not the same as being unusable: the first exchange is
+    // whatever the caller actually wanted.
+    let name = with_mesh(&mut mesh, &mut endpoint, device.device_name())
+        .await
+        .expect("the device answers its name");
+    assert_eq!(name, "Simulated Device");
+    assert_eq!(mesh.device.borrow().executed, 1);
+}
+
+#[tokio::test(flavor = "current_thread")]
+async fn the_frame_ceiling_comes_from_the_binding_not_a_read() {
+    mesh!("ceiling", mesh);
+    let (link, _endpoint) = mesh_link();
+    let device = open(link);
+
+    // The device's own PHY MTU is 255, but a request over the binding is
+    // bounded by what fits in an administrative payload, and nobody had
+    // to ask for either number.
+    assert_eq!(device.max_frame_size(), umsh::node_mgmt::REQUEST_MAX);
+    assert_eq!(mesh.device.borrow().executed, 0);
+
+    // Nothing was learned about the far end, and the handle does not
+    // pretend otherwise.
+    assert_eq!(device.dev_version(), "");
+    assert_eq!(device.dev_model(), None);
+    assert_eq!(device.boot_status(), Status::RESET_UNKNOWN);
 }
 
 #[tokio::test(flavor = "current_thread")]
 async fn a_property_read_comes_back_wearing_the_tid_it_asked_with() {
     mesh!("read", mesh);
     let (link, mut endpoint) = mesh_link();
-    let mut device = attach(&mut mesh, &mut endpoint, link).await;
+    let mut device = open(link);
 
     // Several in a row, because the allocator hands out a different TID
     // each time and every one of them has to survive the round trip.
@@ -140,7 +155,7 @@ async fn a_property_read_comes_back_wearing_the_tid_it_asked_with() {
 async fn a_write_round_trips_and_the_device_kept_it() {
     mesh!("write", mesh);
     let (link, mut endpoint) = mesh_link();
-    let mut device = attach(&mut mesh, &mut endpoint, link).await;
+    let mut device = open(link);
 
     with_mesh(
         &mut mesh,
@@ -163,7 +178,7 @@ async fn a_write_round_trips_and_the_device_kept_it() {
 async fn the_synchronization_procedure_leaves_the_host_domain_out() {
     mesh!("sync", mesh);
     let (link, mut endpoint) = mesh_link();
-    let mut device = attach(&mut mesh, &mut endpoint, link).await;
+    let mut device = open(link);
 
     let sync = with_mesh(&mut mesh, &mut endpoint, device.sync(None))
         .await
@@ -193,8 +208,8 @@ async fn the_synchronization_procedure_leaves_the_host_domain_out() {
 #[tokio::test(flavor = "current_thread")]
 async fn a_host_domain_write_is_refused_without_spending_an_exchange() {
     mesh!("hostwrite", mesh);
-    let (link, mut endpoint) = mesh_link();
-    let mut device = attach(&mut mesh, &mut endpoint, link).await;
+    let (link, _endpoint) = mesh_link();
+    let mut device = open(link);
 
     let before = mesh.device.borrow().executed;
     let refused = device.set_prop(prop::HOST_AUTO_ACK, &[1]).await;
@@ -210,7 +225,7 @@ async fn a_host_domain_write_is_refused_without_spending_an_exchange() {
 async fn a_reset_completes_on_the_silence_the_binding_answers_with() {
     mesh!("reset", mesh);
     let (link, mut endpoint) = mesh_link();
-    let mut device = attach(&mut mesh, &mut endpoint, link).await;
+    let mut device = open(link);
 
     // Over a wire the device would announce its new status; over the
     // binding, delivery is the whole of the answer. The caller waits for
@@ -225,7 +240,7 @@ async fn a_reset_completes_on_the_silence_the_binding_answers_with() {
 async fn a_restore_completes_on_silence_even_when_the_device_refused_it() {
     mesh!("restore", mesh);
     let (link, mut endpoint) = mesh_link();
-    let mut device = attach(&mut mesh, &mut endpoint, link).await;
+    let mut device = open(link);
 
     // Nothing has been saved, so the device refuses with
     // STATUS_INVALID_STATE — and the caller is told the restore
