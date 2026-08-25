@@ -35,24 +35,25 @@ geometry:
   maritime_reach_m: 100000
   # How coarsely the administrative borders are drawn, in meters. Routing
   # does not care which side of a Mississippi meander a repeater sits on,
-  # and the detail is most of what the country and state layers cost. Both
-  # layers are drawn together, after the maritime reach, so that a border
-  # two regions share moves once rather than once per side. Consumed at
-  # update time, like maritime_reach_m.
+  # and the detail is most of what the country and state layers cost. Each
+  # layer is simplified as one coverage, after the maritime reach, so that
+  # a border two regions share moves once rather than once per side.
+  # Consumed at update time, like maritime_reach_m.
   #
-  # This is a ceiling, not a uniform setting. Each border is smoothed by
-  # what its smaller side can afford — five percent of that region's
-  # equivalent radius — so a long border between two large states loses
-  # its meanders while Monaco's does not move. Corners that a boundary is
-  # defined to turn at, like the Oklahoma panhandle's, are held in place
-  # regardless: a moving average cannot tell a right angle from a meander
-  # and rounding one off is as wrong as leaving the other ragged.
+  # One tolerance covers the whole layer. Visvalingam-Whyatt drops the
+  # vertices that enclose the least area, so a meander goes and a corner
+  # the boundary is defined to turn at stays where it was surveyed — the
+  # Oklahoma panhandle keeps its right angles without being detected and
+  # protected. What one tolerance cannot do is serve both Siberia and
+  # Monaco, so a region whose area moves by more than a quarter keeps its
+  # original outline and its simplified neighbors are clipped against it.
   #
-  # Raising it costs shape at the small end. The update report names
-  # whichever region a change moves most, and
+  # Raising it costs shape at the small end, and past roughly ten
+  # kilometers the borders start reading as sketched rather than drawn.
+  # The update report names whichever region a change moves most, and
   # tools/regiondb-build/tests/test_boundary_quality.py fails on the
   # defect classes this has produced before.
-  border_simplify_m: 15000
+  border_simplify_m: 8000
   # Topology-preserving simplification, per layer. Administrative coastlines
   # carry far more detail than routing needs; hand-authored local regions are
   # already drawn at the scale they mean. Country tolerance is the main size
