@@ -247,6 +247,10 @@ pub enum HostOwnership {
     /// The device does not implement host filtering (minimal protocol
     /// only).
     Unsupported,
+    /// The host domain is out of reach: this handle administers the
+    /// device over the mesh, and whatever host the device serves is that
+    /// host's business, not an administrator's.
+    Unreachable,
 }
 
 /// `PROP_SAVED`: what the device reports about its stored snapshot.
@@ -1012,6 +1016,17 @@ pub enum AttachMode {
     /// This host is administering the device without tethering to it.
     /// Host-domain writes are refused.
     Administrative,
+    /// This host is administering the device over the mesh, through the
+    /// Node Management binding rather than a wire.
+    ///
+    /// Administrative in every respect, and additionally bounded by what
+    /// that binding carries: the properties outside
+    /// [`admin_reachable`](umsh_ulcp::ids::admin_reachable) are not
+    /// refused by this handle but simply absent, because the device
+    /// answers them `STATUS_PROP_NOT_FOUND` — an administrator learns the
+    /// property does not exist for it, not that it exists and was
+    /// withheld. Reading them would spend airtime to be told so.
+    Remote,
 }
 
 impl<L> UlcpDevice<L>
@@ -1042,6 +1057,23 @@ where
         self.mode
     }
 
+    /// Whether this handle reaches the device over the mesh rather than a
+    /// wire, and is therefore bounded by what the administrative binding
+    /// carries.
+    pub fn is_remote(&self) -> bool {
+        self.mode == AttachMode::Remote
+    }
+
+    /// Whether `key` is worth asking this device for at all.
+    ///
+    /// Over the mesh the unreachable half of the property space answers
+    /// `STATUS_PROP_NOT_FOUND`, so a caller assembling a report treats
+    /// those properties as absent rather than spending an exchange to be
+    /// told they are.
+    fn prop_reachable(&self, key: u32) -> bool {
+        !self.is_remote() || ids::admin_reachable(key)
+    }
+
     /// Refuse a host-domain write on an administrative handle.
     fn require_tethered(&self, key: u32) -> Result<(), UlcpError> {
         let host_domain = matches!(
@@ -1053,7 +1085,9 @@ where
                 | prop::HOST_AUTO_ACK
         );
         match self.mode {
-            AttachMode::Administrative if host_domain => Err(UlcpError::AdministrativeAttach),
+            AttachMode::Administrative | AttachMode::Remote if host_domain => {
+                Err(UlcpError::AdministrativeAttach)
+            }
             _ => Ok(()),
         }
     }
@@ -1113,6 +1147,21 @@ where
         config: UlcpDeviceConfig,
     ) -> Result<Self, UlcpError> {
         Self::attach_with_mode(link, config, AttachMode::Administrative).await
+    }
+
+    /// Attach to a device reached over the mesh, through the Node
+    /// Management binding.
+    ///
+    /// The same five reads as [`Self::attach_administrative`] — this
+    /// attach is a handshake with nobody, so nothing about it needs a
+    /// wire — but each is an exchange over the air, and the handle that
+    /// comes back knows to treat the properties out of an
+    /// administrator's reach as absent rather than asking for them. Give
+    /// `config` a response timeout that outlasts the binding's own retry
+    /// budget, or a slow answer becomes a transport error here before the
+    /// exchange engine has finished trying.
+    pub async fn attach_remote(link: L, config: UlcpDeviceConfig) -> Result<Self, UlcpError> {
+        Self::attach_with_mode(link, config, AttachMode::Remote).await
     }
 
     async fn attach_with_mode(
@@ -2031,9 +2080,15 @@ where
         let last_status = decode_status(&self.get_prop(prop::LAST_STATUS).await?);
         let capabilities = self.capabilities().await?;
         let has = |capability: u32| capabilities.contains(&capability);
+        // A capability says the device implements a property;
+        // reachability says this handle may ask for it. Over the mesh the
+        // host domain fails both tests, and the second one costs no
+        // airtime to check.
 
         // Step 2: ownership.
-        let (host_key, ownership) = if has(cap::HOST_FILTER) {
+        let (host_key, ownership) = if !self.prop_reachable(prop::HOST_KEY) {
+            (None, HostOwnership::Unreachable)
+        } else if has(cap::HOST_FILTER) {
             let value = self.get_prop(prop::HOST_KEY).await?;
             match <[u8; 32]>::try_from(value.as_slice()) {
                 Ok(key) => {
@@ -2066,41 +2121,43 @@ where
             )?),
             false => None,
         };
-        let (queue_count, queue_dropped) = if has(cap::HOST_RX_QUEUE) {
-            let count = self.get_prop(prop::HOST_RX_QUEUE_COUNT).await?;
-            let dropped = self.get_prop(prop::HOST_RX_QUEUE_DROPPED).await?;
-            (
-                Some(u16::from_le_bytes(count.as_slice().try_into().map_err(
-                    |_| UlcpError::Protocol("malformed PROP_HOST_RX_QUEUE_COUNT"),
-                )?)),
-                Some(u32::from_le_bytes(dropped.as_slice().try_into().map_err(
-                    |_| UlcpError::Protocol("malformed PROP_HOST_RX_QUEUE_DROPPED"),
-                )?)),
-            )
-        } else {
-            (None, None)
-        };
-        let filters = match has(cap::HOST_FILTER) {
+        let (queue_count, queue_dropped) =
+            if has(cap::HOST_RX_QUEUE) && self.prop_reachable(prop::HOST_RX_QUEUE_COUNT) {
+                let count = self.get_prop(prop::HOST_RX_QUEUE_COUNT).await?;
+                let dropped = self.get_prop(prop::HOST_RX_QUEUE_DROPPED).await?;
+                (
+                    Some(u16::from_le_bytes(count.as_slice().try_into().map_err(
+                        |_| UlcpError::Protocol("malformed PROP_HOST_RX_QUEUE_COUNT"),
+                    )?)),
+                    Some(u32::from_le_bytes(dropped.as_slice().try_into().map_err(
+                        |_| UlcpError::Protocol("malformed PROP_HOST_RX_QUEUE_DROPPED"),
+                    )?)),
+                )
+            } else {
+                (None, None)
+            };
+        let filters = match has(cap::HOST_FILTER) && self.prop_reachable(prop::HOST_RX_FILTERS) {
             true => Some(decode_filter_table(
                 &self.get_prop(prop::HOST_RX_FILTERS).await?,
             )?),
             false => None,
         };
-        let (host_channel_ids, host_peer_keys) = if has(cap::HOST_KEYS) {
-            (
-                Some(decode_fixed_list::<{ items::CHANNEL_ID_LEN }>(
-                    &self.get_prop(prop::HOST_CHANNEL_KEYS).await?,
-                    "malformed PROP_HOST_CHANNEL_KEYS digest",
-                )?),
-                Some(decode_fixed_list::<{ items::PUBLIC_KEY_LEN }>(
-                    &self.get_prop(prop::HOST_PEER_KEYS).await?,
-                    "malformed PROP_HOST_PEER_KEYS digest",
-                )?),
-            )
-        } else {
-            (None, None)
-        };
-        let auto_ack = match has(cap::HOST_AUTO_ACK) {
+        let (host_channel_ids, host_peer_keys) =
+            if has(cap::HOST_KEYS) && self.prop_reachable(prop::HOST_CHANNEL_KEYS) {
+                (
+                    Some(decode_fixed_list::<{ items::CHANNEL_ID_LEN }>(
+                        &self.get_prop(prop::HOST_CHANNEL_KEYS).await?,
+                        "malformed PROP_HOST_CHANNEL_KEYS digest",
+                    )?),
+                    Some(decode_fixed_list::<{ items::PUBLIC_KEY_LEN }>(
+                        &self.get_prop(prop::HOST_PEER_KEYS).await?,
+                        "malformed PROP_HOST_PEER_KEYS digest",
+                    )?),
+                )
+            } else {
+                (None, None)
+            };
+        let auto_ack = match has(cap::HOST_AUTO_ACK) && self.prop_reachable(prop::HOST_AUTO_ACK) {
             true => Some(self.get_prop(prop::HOST_AUTO_ACK).await? == [1]),
             false => None,
         };

@@ -1,20 +1,11 @@
 //! `manage`: administering another device over the mesh.
 //!
-//! Every other command in this tool speaks ULCP down the wire to the
-//! radio it is attached to. This one borrows that radio and becomes a
-//! node: it runs a host MAC over the attachment, and speaks the same ULCP
-//! grammar to a device across the room, carried by the Node Management
-//! binding (`docs/protocol/src/app-node-management.md`).
-//!
-//! Two identities are in play and it is worth keeping them apart. The
-//! attached radio has its own device identity, which `identity` shows.
-//! This tool has a separate, persistent administrator identity —
-//! `admin-key` prints it — and a device is managed from here only once
-//! that key is listed in its `PROP_DEV_ADMINS`, which `dev-admin add`
-//! does over a bench link.
+//! One Node Management exchange at a time against a device across the
+//! room, carried over the borrowed radio by the host stack in
+//! [`crate::mesh`] — which is also where the administrator identity these
+//! exchanges are signed with lives.
 
 use std::cell::RefCell;
-use std::path::Path;
 use std::rc::Rc;
 use std::time::Duration;
 
@@ -23,17 +14,11 @@ use rand::{Rng as _, rng};
 use tokio::time::Instant;
 
 use umsh::core::PublicKey;
-use umsh::crypto::{
-    CryptoEngine, NodeIdentity,
-    software::{SoftwareAes, SoftwareIdentity, SoftwareSha256},
-};
+use umsh::crypto::software::SoftwareIdentity;
 use umsh::hal::Radio;
-use umsh::mac::{Mac, MacHandle, OperatingPolicy, RepeaterConfig};
-use umsh::node::Host;
-use umsh::node_mgmt::admin::{Failure, Outcome};
-use umsh::node_mgmt::{NodeManager, Progress};
-use umsh::tokio_support::{StdClock, TokioFileCounterStore, TokioFileKeyValueStore, TokioPlatform};
-use umsh::ulcp::{UlcpDevice, UlcpDeviceConfig, UlcpError};
+use umsh::node_mgmt::NodeManager;
+use umsh::node_mgmt::admin::Outcome;
+use umsh::ulcp::UlcpDevice;
 use umsh::ulcp_wire::ids::prop;
 use umsh::ulcp_wire::{Status, capability_name, frame, property_name, reply};
 use umsh_sync::AsyncRefCell;
@@ -41,34 +26,9 @@ use umsh_sync::AsyncRefCell;
 use super::tables::TableOp;
 use super::values::{AssignArg, BytesArg, KeyArg};
 use crate::connection::{Session, SessionLink};
+use crate::mesh::{self, CtlHandle, CtlMac, NodeStack, OPERATION_TIMEOUT, describe};
 use crate::output::{field, hex, note, subfield};
 use crate::{App, connection};
-
-// ─── The host stack this tool becomes ────────────────────────────────────────
-
-/// One identity — the administrator's. Peers, channels, and queues are
-/// sized for a tool that talks to one device at a time and holds one
-/// exchange open while it does.
-const IDENTITIES: usize = 1;
-const PEERS: usize = 4;
-const CHANNELS: usize = 1;
-const ACKS: usize = 8;
-const TX: usize = 8;
-const FRAME: usize = 256;
-const DUP: usize = 32;
-
-type CtlPlatform<R> = TokioPlatform<R, TokioFileCounterStore, TokioFileKeyValueStore>;
-type CtlMac<R> = Mac<CtlPlatform<R>, IDENTITIES, PEERS, CHANNELS, ACKS, TX, FRAME, DUP>;
-pub type CtlHandle<'a, R> =
-    MacHandle<'a, CtlPlatform<R>, IDENTITIES, PEERS, CHANNELS, ACKS, TX, FRAME, DUP>;
-type CtlHost<'a, R> = Host<CtlHandle<'a, R>>;
-
-/// How long the whole operation may take before the tool gives up.
-///
-/// The exchange engine has its own attempt budget; this bounds the
-/// continuation loop of a large read, where each fragment restarts that
-/// budget.
-const OPERATION_TIMEOUT: Duration = Duration::from_secs(180);
 
 // ─── Command surface ─────────────────────────────────────────────────────────
 
@@ -134,56 +94,6 @@ pub enum ManageOp {
     },
 }
 
-// ─── The administrator identity ──────────────────────────────────────────────
-
-/// Load the administrator identity, generating one the first time.
-///
-/// The seed is a plain 32-byte file, written where the rest of this
-/// tool's state lives.
-pub fn admin_identity() -> Result<SoftwareIdentity> {
-    let path = connection::admin_identity_path()
-        .ok_or_else(|| anyhow!("no HOME directory to keep an administrator identity in"))?;
-    load_or_create_identity(&path)
-}
-
-fn load_or_create_identity(path: &Path) -> Result<SoftwareIdentity> {
-    match std::fs::read(path) {
-        Ok(bytes) => {
-            let secret: [u8; 32] = bytes.try_into().map_err(|_| {
-                anyhow!(
-                    "{} is not a 32-byte identity seed; move it aside to start over",
-                    path.display()
-                )
-            })?;
-            Ok(SoftwareIdentity::from_secret_bytes(&secret))
-        }
-        Err(error) if error.kind() == std::io::ErrorKind::NotFound => {
-            if let Some(parent) = path.parent() {
-                std::fs::create_dir_all(parent)
-                    .with_context(|| format!("creating {}", parent.display()))?;
-            }
-            let mut secret = [0u8; 32];
-            rng().fill_bytes(&mut secret);
-            std::fs::write(path, secret).with_context(|| format!("writing {}", path.display()))?;
-            note("generated a new administrator identity");
-            Ok(SoftwareIdentity::from_secret_bytes(&secret))
-        }
-        Err(error) => Err(error).with_context(|| format!("reading {}", path.display())),
-    }
-}
-
-/// `admin-key`: print the public key a device must list to be managed
-/// from here.
-pub fn show_admin_key() -> Result<()> {
-    let identity = admin_identity()?;
-    field("administrator", identity.public_key().to_string());
-    if let Some(path) = connection::admin_identity_path() {
-        field("identity", path.display());
-    }
-    note("a device lists this key under `dev-admin add` before it will answer");
-    Ok(())
-}
-
 // ─── Bring-up ────────────────────────────────────────────────────────────────
 
 /// What the borrowed radio is being lent out for.
@@ -205,14 +115,11 @@ pub enum Operation {
 /// Take the attachment over as this tool's radio, run `op` against
 /// `target`, and hand the attachment back.
 pub async fn run(app: &mut App, target: KeyArg, op: Operation) -> Result<()> {
-    let identity = admin_identity()?;
+    let identity = mesh::admin_identity()?;
     let no_save = app.no_save;
 
-    // Read the device's own PHY before taking the link over: the host MAC
-    // paces itself on modeled airtime, and the attach this tool uses
-    // deliberately leaves the radio's configuration alone, so the
-    // defaults it carries may describe some other radio entirely.
-    let config = adopt_phy(app.device()?).await?;
+    // Read the device's own PHY before taking the link over.
+    let config = mesh::adopt_phy(app.device()?).await?;
 
     let Some(session) = app.session.take() else {
         bail!("not attached — try `scan` or `connect`");
@@ -232,7 +139,7 @@ pub async fn run(app: &mut App, target: KeyArg, op: Operation) -> Result<()> {
     if app.trace {
         connection::install_trace(&mut device);
     }
-    prepare_radio(&mut device).await?;
+    mesh::prepare_radio(&mut device).await?;
 
     let (device, result) = manage(device, identity, PublicKey(target.0), op, no_save).await;
     app.session = Some(Session {
@@ -244,67 +151,6 @@ pub async fn run(app: &mut App, target: KeyArg, op: Operation) -> Result<()> {
     result
 }
 
-/// The device's live PHY, as a radio configuration.
-async fn adopt_phy(device: &mut UlcpDevice<SessionLink>) -> Result<UlcpDeviceConfig> {
-    let keys = [
-        prop::PHY_FREQ,
-        prop::PHY_LORA_BW,
-        prop::PHY_LORA_SF,
-        prop::PHY_LORA_CR,
-        prop::PHY_TX_POWER,
-    ];
-    let answers = device.get_props(&keys).await?;
-    let mut config = connection::attach_config();
-    for (requested, answer) in keys.iter().zip(&answers) {
-        let Ok((_, value)) = answer else { continue };
-        match *requested {
-            prop::PHY_FREQ => {
-                if let Ok(bytes) = <[u8; 4]>::try_from(&value[..]) {
-                    config.freq_khz = u32::from_le_bytes(bytes);
-                }
-            }
-            prop::PHY_LORA_BW => {
-                if let Ok(bytes) = <[u8; 4]>::try_from(&value[..]) {
-                    config.bandwidth_hz = u32::from_le_bytes(bytes);
-                }
-            }
-            prop::PHY_LORA_SF => {
-                if let Some(&sf) = value.first() {
-                    config.spreading_factor = sf;
-                }
-            }
-            prop::PHY_LORA_CR => {
-                if let Some(&cr) = value.first() {
-                    config.coding_rate_denom = cr;
-                }
-            }
-            prop::PHY_TX_POWER => {
-                if let Some(&power) = value.first() {
-                    config.tx_power_dbm = power as i8;
-                }
-            }
-            _ => {}
-        }
-    }
-    Ok(config)
-}
-
-/// This host owns the MAC and does its own filtering, so the radio's
-/// provisioned receive filters must not gate delivery. The mode is
-/// session-scoped and touches no provisioning.
-async fn prepare_radio(device: &mut UlcpDevice<SessionLink>) -> Result<()> {
-    match device.set_prop(prop::MAC_PROMISCUOUS, &[1]).await {
-        Ok(_) => Ok(()),
-        Err(UlcpError::Status(status)) => {
-            note(format!(
-                "radio refused promiscuous mode ({status:?}); reception follows its own filtering"
-            ));
-            Ok(())
-        }
-        Err(error) => Err(error.into()),
-    }
-}
-
 /// Run one operation with the radio borrowed, and give the radio back
 /// whether it succeeded or not.
 async fn manage(
@@ -314,29 +160,13 @@ async fn manage(
     op: Operation,
     no_save: bool,
 ) -> (UlcpDevice<SessionLink>, Result<()>) {
-    let counters = match connection::admin_counter_path() {
-        Some(path) => path,
-        None => {
-            return (
-                radio,
-                Err(anyhow!("no HOME directory to keep frame counters in")),
-            );
-        }
-    };
-    let store = match TokioFileCounterStore::new(counters) {
+    // Opening the counter store before the radio is consumed leaves the
+    // caller its attachment to hand back if it fails.
+    let store = match mesh::counter_store() {
         Ok(store) => store,
-        Err(error) => return (radio, Err(anyhow!("opening the counter store: {error:?}"))),
+        Err(error) => return (radio, Err(error)),
     };
-
-    let mac = AsyncRefCell::new(Mac::new(
-        radio,
-        CryptoEngine::new(SoftwareAes, SoftwareSha256),
-        StdClock::new(),
-        rng(),
-        store,
-        RepeaterConfig::default(),
-        OperatingPolicy::default(),
-    ));
+    let mac = mesh::build_mac(radio, store);
     let result = operate(&mac, identity, target, op, no_save).await;
     (mac.into_inner().into_radio(), result)
 }
@@ -351,22 +181,9 @@ async fn operate<R: Radio>(
 where
     R::Error: core::fmt::Debug,
 {
-    let handle = MacHandle::new(mac);
-    let local_key = *identity.public_key();
-    let identity_id = handle
-        .add_identity(identity)
-        .await
-        .map_err(|error| anyhow!("registering the administrator identity: {error:?}"))?;
-    // A frame counter that restarted at zero would be rejected as a
-    // replay by every device that has heard this identity before.
-    handle
-        .load_persisted_counter(identity_id)
-        .await
-        .map_err(|error| anyhow!("loading persisted frame counters: {error:?}"))?;
-
-    let mut host: CtlHost<'_, R> = Host::new(handle);
-    let node = host.add_node(identity_id);
-    let peer = node
+    let (stack, local_key) = NodeStack::build(mac, identity).await?;
+    let peer = stack
+        .node
         .peer(target)
         .await
         .map_err(|error| anyhow!("registering the device as a peer: {error:?}"))?;
@@ -389,66 +206,33 @@ where
     );
 
     let mut ctl = Ctl {
-        host,
-        node,
+        stack,
         target,
         manager,
-        handle: &handle,
-        started: Instant::now(),
     };
     let result = run_op(&mut ctl, op, no_save).await;
-    let _ = handle.service_counter_persistence().await;
+    let _ = ctl.stack.handle.service_counter_persistence().await;
     result
 }
 
 /// The tool as a node, for the duration of one operation.
 pub struct Ctl<'a, R: Radio> {
-    pub(super) host: CtlHost<'a, R>,
-    pub(super) node: umsh::node::LocalNode<CtlHandle<'a, R>>,
+    pub(super) stack: NodeStack<'a, R>,
     pub(super) target: PublicKey,
     manager: NodeManager<CtlHandle<'a, R>>,
-    pub(super) handle: &'a CtlHandle<'a, R>,
-    started: Instant,
 }
 
 impl<'a, R: Radio> Ctl<'a, R>
 where
     R::Error: core::fmt::Debug,
 {
-    fn now_ms(&self) -> u64 {
-        self.started.elapsed().as_millis() as u64
-    }
-
-    /// Carry one exchange to its end, pumping the host in between.
+    /// Carry one exchange to its end, within what is left of the
+    /// operation's budget.
     async fn exchange(&mut self, request: &[u8]) -> Result<Outcome> {
-        self.manager
-            .begin(request, self.now_ms())
-            .map_err(|error| anyhow!("{error:?}"))?;
-        loop {
-            if self.started.elapsed() > OPERATION_TIMEOUT {
-                bail!("gave up after {} s", OPERATION_TIMEOUT.as_secs());
-            }
-            let progress = self
-                .manager
-                .service(self.now_ms())
-                .await
-                .map_err(|error| anyhow!("sending to the device: {error:?}"))?;
-            let deadline_ms = match progress {
-                Progress::Done(outcome) => return Ok(outcome),
-                Progress::Waiting { deadline_ms } => deadline_ms,
-            };
-            let wait = Duration::from_millis(deadline_ms.saturating_sub(self.now_ms()));
-            tokio::select! {
-                result = self.host.pump_once() => {
-                    result.map_err(|error| anyhow!("the radio stopped answering: {error:?}"))?;
-                }
-                _ = tokio::time::sleep(wait) => {}
-            }
-            // A quiet radio produces no MAC wake, so the timeouts that
-            // retire an unanswered acknowledgment need their own nudge.
-            self.host.service_protocol_timeouts().await;
-            let _ = self.handle.service_counter_persistence().await;
-        }
+        let give_up = self.stack.started() + OPERATION_TIMEOUT;
+        self.stack
+            .exchange(&mut self.manager, request, give_up)
+            .await
     }
 
     /// Carry one exchange and insist on a reply frame.
@@ -457,24 +241,6 @@ where
             Outcome::Replied { .. } => Ok(self.manager.reply().to_vec()),
             Outcome::NoResponse => bail!("the device answered nothing where a reply was due"),
             Outcome::Failed(failure) => Err(describe(failure)),
-        }
-    }
-}
-
-/// What a failed exchange means to somebody holding the tool.
-fn describe(failure: Failure) -> anyhow::Error {
-    match failure {
-        Failure::TimedOut => anyhow!(
-            "no answer — the device may be out of range, or this tool may not be one of its \
-             administrators (`admin-key` prints the key it would have to list)"
-        ),
-        Failure::CursorInvalid => {
-            anyhow!("the device's state changed mid-read; run the command again")
-        }
-        Failure::TooLarge => anyhow!("the answer is larger than this tool reassembles"),
-        Failure::Malformed => anyhow!("the device's answer could not be read"),
-        Failure::UnknownCriticalOption(number) => {
-            anyhow!("the device's answer carries option {number}, which this tool does not know")
         }
     }
 }
@@ -581,7 +347,7 @@ where
     let pages: Rc<RefCell<Vec<Vec<u8>>>> = Rc::new(RefCell::new(Vec::new()));
     let sink = pages.clone();
     let target = ctl.target;
-    let _subscription = ctl.node.on_mac_command(move |from, command| {
+    let _subscription = ctl.stack.node.on_mac_command(move |from, command| {
         if from != target {
             return;
         }
@@ -591,6 +357,7 @@ where
     });
 
     let peer = ctl
+        .stack
         .node
         .peer(target)
         .await
@@ -622,14 +389,7 @@ where
             if Instant::now() >= deadline {
                 break None;
             }
-            tokio::select! {
-                result = ctl.host.pump_once() => {
-                    result.map_err(|error| anyhow!("the radio stopped answering: {error:?}"))?;
-                }
-                _ = tokio::time::sleep_until(deadline) => {}
-            }
-            ctl.host.service_protocol_timeouts().await;
-            let _ = ctl.handle.service_counter_persistence().await;
+            ctl.stack.pump_until(deadline).await?;
         };
 
         let Some(body) = body else {

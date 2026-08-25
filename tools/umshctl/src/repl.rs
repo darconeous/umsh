@@ -10,9 +10,13 @@ use rustyline::completion::{Completer, Pair};
 use rustyline::error::ReadlineError;
 use rustyline::{Context, Editor};
 
+use umsh::core::PublicKey;
+
 use crate::App;
 use crate::command::Command;
+use crate::command::values::KeyArg;
 use crate::connection::{self, Target};
+use crate::mesh;
 use crate::output::warn;
 
 /// What marks a `connect` selector as a TCP endpoint rather than a
@@ -39,7 +43,23 @@ pub enum ReplCommand {
         pick: bool,
     },
 
+    /// Open a session to a device across the mesh, using the attached
+    /// radio to reach it.
+    ///
+    /// The radio is borrowed for as long as the session lasts, and every
+    /// command that reads or writes the device works the same as it does
+    /// over a wire — slower, and without the host domain, which is not an
+    /// administrator's to see. `disconnect` gives the radio back.
+    Remote {
+        /// The device to manage, as its node public key.
+        #[arg(value_name = "KEY")]
+        target: KeyArg,
+    },
+
     /// Detach from the current radio without leaving the shell.
+    ///
+    /// On a mesh session this ends the session and returns to the radio
+    /// it borrowed; a second `disconnect` lets go of that too.
     Disconnect,
 
     /// Leave the shell.
@@ -225,9 +245,25 @@ async fn process_line(app: &mut App, line: &str) -> Result<bool> {
     match command {
         ReplCommand::Exit => return Ok(false),
         ReplCommand::Disconnect => {
-            match app.detach() {
+            let was_mesh = app.mesh.is_some();
+            match app.detach().await {
+                Some(label) if was_mesh => match &app.session {
+                    Some(session) => println!(
+                        "left {label}; back on {} ({})",
+                        session.label,
+                        session.target.transport()
+                    ),
+                    None => println!("left {label}"),
+                },
                 Some(label) => println!("detached from {label}"),
                 None => println!("not attached"),
+            }
+            return Ok(true);
+        }
+        ReplCommand::Remote { target } => {
+            mesh::open_remote(app, PublicKey(target.0)).await?;
+            if let Some(session) = &app.session {
+                println!("on {} over the mesh", session.label);
             }
             return Ok(true);
         }
@@ -274,8 +310,9 @@ async fn connect(app: &mut App, selector: Option<String>, pick: bool) -> Result<
         }
     };
     // Detaching first reverts session-scoped device state (promiscuous
-    // mode) on the radio being left behind.
-    app.detach();
+    // mode) on the radio being left behind, and ends a mesh session so
+    // its borrowed radio is not left in a task nobody holds.
+    app.detach().await;
     app.attach(target).await
 }
 
@@ -386,6 +423,26 @@ mod tests {
             panic!("expected name");
         };
         assert_eq!(name.as_deref(), Some("Rogue Valley"));
+    }
+
+    #[test]
+    fn remote_takes_a_key_in_either_written_form() {
+        let hex = "c4".repeat(32);
+        let ReplCommand::Remote { target } = parse(&format!("remote {hex}")).unwrap() else {
+            panic!("expected remote");
+        };
+        assert_eq!(target.0, [0xC4; 32]);
+
+        // The same key as the tool prints it.
+        let base58 = PublicKey(target.0).to_string();
+        let ReplCommand::Remote { target } = parse(&format!("remote {base58}")).unwrap() else {
+            panic!("expected remote");
+        };
+        assert_eq!(target.0, [0xC4; 32]);
+
+        // A node is named by its key, never discovered.
+        assert!(parse("remote").is_err());
+        assert!(parse("remote nonsense").is_err());
     }
 
     #[test]

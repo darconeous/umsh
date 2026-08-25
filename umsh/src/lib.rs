@@ -47,6 +47,9 @@ pub use umsh_uri as uri;
 #[cfg(feature = "tokio-support")]
 pub mod ulcp;
 
+#[cfg(feature = "tokio-support")]
+pub mod ulcp_mesh;
+
 #[cfg(feature = "embassy-support")]
 pub mod embassy_support;
 

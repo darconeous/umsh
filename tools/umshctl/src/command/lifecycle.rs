@@ -83,8 +83,9 @@ pub async fn factory_reset(app: &mut App, yes: bool) -> Result<()> {
          BLE bonds, pairing PIN) and rebooting. The link will drop; re-pair to use it again."
     );
     // The device is rebooting, so the handle is worthless. Say so once
-    // rather than letting the next command fail obscurely.
-    app.detach();
+    // rather than letting the next command fail obscurely. Over the mesh
+    // this also ends the session, which hands the borrowed radio back.
+    app.detach().await;
     Ok(())
 }
 

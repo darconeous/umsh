@@ -229,6 +229,40 @@ impl Command {
         matches!(self, Self::Provision(_))
     }
 
+    /// Why this command cannot run against a device reached over the
+    /// mesh, if it cannot.
+    ///
+    /// Most of the tool works unchanged over a mesh session: the handle
+    /// is an ordinary one and the properties behind it are the same. The
+    /// exceptions are the commands that need something the Node
+    /// Management binding does not carry, and the ones that would want
+    /// the radio this session has already borrowed. Refusing them here
+    /// beats letting each fail in its own way somewhere over the air.
+    pub fn mesh_refusal(&self) -> Option<&'static str> {
+        match self {
+            // Captured frames arrive as unsolicited stream traffic, and
+            // the binding carries nothing unsolicited — there is no
+            // remote form of this to reach for.
+            Self::Capture(_) => Some(
+                "capture listens on the attached radio's own receiver, which a mesh session \
+                 cannot reach; `disconnect` first",
+            ),
+            // Provisioning establishes a host domain, which is exactly
+            // what an administrator is not.
+            Self::Provision(_) => Some(
+                "provisioning claims a radio as your own, which needs a local attach; \
+                 `disconnect` first",
+            ),
+            // Each of these becomes a node on the mesh, and this session
+            // is already using the only radio there is.
+            Self::Manage { .. } | Self::PeerRepeaters { .. } | Self::Ping(_) => Some(
+                "this session has already borrowed the radio; `disconnect` first, then reach \
+                 the node from there",
+            ),
+            _ => None,
+        }
+    }
+
     /// Check whatever clap's grammar cannot — combinations of flags,
     /// and the provisioning file — *before* a device is opened.
     ///
@@ -244,6 +278,14 @@ impl Command {
     }
 
     pub async fn run(self, app: &mut App) -> Result<()> {
+        if app
+            .session
+            .as_ref()
+            .is_some_and(|session| session.is_mesh())
+            && let Some(refusal) = self.mesh_refusal()
+        {
+            bail!("{refusal}");
+        }
         match self {
             Self::Info(args) => info::run(app.device()?, args).await,
             Self::Provision(args) => provision::run(app, args).await,
@@ -276,7 +318,7 @@ impl Command {
                 let target = args.target;
                 manage::run(app, target, manage::Operation::Ping(args)).await
             }
-            Self::AdminKey => manage::show_admin_key(),
+            Self::AdminKey => crate::mesh::show_admin_key(),
             Self::Props { keys } => info::props(app.device()?, &keys).await,
             Self::Illuminance => info::illuminance(app.device()?).await,
             Self::Alert { op } => lifecycle::alert(app.device()?, op).await,
@@ -328,6 +370,10 @@ fn default(app: &mut App, op: DefaultOp) -> Result<()> {
                         Target::Tcp { .. } => bail!(
                             "the saved default is a BLE radio: a bridged radio is already named \
                              by its endpoint, so give it with --tcp or set UMSHCTL_TCP instead"
+                        ),
+                        Target::Mesh { .. } => bail!(
+                            "the saved default is a radio to attach to, not a node to manage: \
+                             `disconnect` first, then save the radio underneath"
                         ),
                     }
                 }

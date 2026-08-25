@@ -19,6 +19,7 @@
 mod command;
 mod connection;
 mod extcap;
+mod mesh;
 mod output;
 mod repl;
 
@@ -119,6 +120,16 @@ pub struct ToolArgs {
     #[arg(long, global = true)]
     no_save: bool,
 
+    /// Run the command against a device across the mesh, using the
+    /// attached radio to reach it.
+    ///
+    /// The one-shot form of the shell's `remote`: attach a radio as
+    /// usual, borrow it to open a session to KEY, run the command, and
+    /// give the radio back. The device must list this tool's
+    /// administrator key (`admin-key` prints it).
+    #[arg(long, value_name = "KEY", global = true)]
+    node: Option<command::values::KeyArg>,
+
     /// When to colorize output.
     #[arg(long, value_enum, default_value_t = ColorChoice::Auto, value_name = "WHEN", global = true)]
     color: ColorChoice,
@@ -154,6 +165,9 @@ pub struct App {
     pub discovery: Discovery,
     /// The last `scan` listing, so `connect <N>` can refer to it.
     pub last_scan: Vec<Found>,
+    /// What a mesh session borrowed, while one is open. Present exactly
+    /// when `session` reaches its device over the air.
+    pub mesh: Option<mesh::MeshHome>,
 }
 
 impl App {
@@ -177,8 +191,17 @@ impl App {
 
     /// Drop the attachment, returning what it was called. Dropping the
     /// link is what reverts session-scoped device state.
-    pub fn detach(&mut self) -> Option<String> {
-        self.session.take().map(|session| session.label)
+    ///
+    /// Ending a mesh session drops its device handle first, which is what
+    /// closes the link and lets the driver wind down and hand the
+    /// borrowed radio back — so the caller is left attached to the local
+    /// radio again rather than to nothing.
+    pub async fn detach(&mut self) -> Option<String> {
+        let label = self.session.take().map(|session| session.label);
+        if let Some(home) = self.mesh.take() {
+            mesh::restore_local(self, home).await;
+        }
+        label
     }
 
     pub fn rename(&mut self, label: String) {
@@ -204,6 +227,7 @@ impl App {
             baud,
             discovery: Discovery::Auto,
             last_scan: Vec::new(),
+            mesh: None,
         }
     }
 
@@ -318,12 +342,23 @@ async fn run(args: ToolArgs) -> Result<()> {
         baud: args.baud,
         discovery: args.discovery(),
         last_scan: Vec::new(),
+        mesh: None,
     };
 
     // Everything clap's grammar cannot express is checked before a
     // radio is opened.
     if let Some(command) = &args.command {
         command.validate()?;
+        // A command a mesh session cannot carry should say so now, not
+        // after a discovery pass and an attach handshake.
+        if args.node.is_some()
+            && let Some(refusal) = command.mesh_refusal()
+        {
+            bail!("{refusal}");
+        }
+    }
+    if args.node.is_some() && args.command.is_none() {
+        bail!("--node names a device for one command; the shell reaches one with `remote <KEY>`");
     }
 
     let needs_device = args
@@ -347,6 +382,17 @@ async fn run(args: ToolArgs) -> Result<()> {
         }
     }
 
+    // A one-shot against a remote node borrows the radio just attached,
+    // runs the command over the mesh, and hands the radio back — so a
+    // script gets the same session the shell would have opened.
+    if let Some(node) = args.node {
+        mesh::open_remote(&mut app, umsh::core::PublicKey(node.0)).await?;
+        let command = args.command.expect("checked above");
+        let result = command.run(&mut app).await;
+        app.detach().await;
+        return result;
+    }
+
     match args.command {
         Some(command) => command.run(&mut app).await,
         None => repl::run(&mut app).await,
@@ -358,11 +404,20 @@ async fn main() {
     // Wireshark drives this binary through its own argument vocabulary,
     // which is checked before the tool's parser so the two never have to
     // agree on a shared grammar.
-    let result = if extcap::is_extcap_invocation() {
-        extcap::run().await
-    } else {
-        run(ToolArgs::parse()).await
-    };
+    //
+    // Everything here is `!Send` — the node layer, the pcap tap, the
+    // whole session — so the one task a mesh session spawns to hold the
+    // borrowed radio needs a `LocalSet` to be spawned onto.
+    let local = tokio::task::LocalSet::new();
+    let result = local
+        .run_until(async {
+            if extcap::is_extcap_invocation() {
+                extcap::run().await
+            } else {
+                run(ToolArgs::parse()).await
+            }
+        })
+        .await;
     if let Err(error) = result {
         eprintln!("error: {error:#}");
         std::process::exit(1);
@@ -572,6 +627,66 @@ mod tests {
                 .needs_device()
         );
         assert!(parse(&["info"]).unwrap().command.unwrap().needs_device());
+    }
+
+    #[test]
+    fn a_mesh_session_refuses_only_what_it_cannot_carry() {
+        let refused = |argv: &[&str]| {
+            parse(argv)
+                .unwrap()
+                .command
+                .unwrap()
+                .mesh_refusal()
+                .is_some()
+        };
+        let key = "c4".repeat(32);
+
+        // Needs the attached radio's own receiver, or the radio itself.
+        assert!(refused(&["capture"]));
+        assert!(refused(&["provision"]));
+        assert!(refused(&["manage", &key, "info"]));
+        assert!(refused(&["peer-repeaters", &key]));
+        assert!(refused(&["ping", &key]));
+
+        // Everything else is an ordinary property conversation, and the
+        // binding carries it — including the reset-class commands and
+        // the write-only pairing PIN.
+        for argv in [
+            vec!["info"],
+            vec!["props", "69"],
+            vec!["name"],
+            vec!["save"],
+            vec!["reset"],
+            vec!["restore"],
+            vec!["factory-reset", "--yes"],
+            vec!["gnss"],
+            vec!["advert"],
+            vec!["repeater"],
+            vec!["time"],
+            vec!["phy"],
+            vec!["duty"],
+            vec!["dev-admin"],
+            vec!["dev-peer"],
+            vec!["alert"],
+            vec!["illuminance"],
+            vec!["pin", "123456"],
+            vec!["admin-key"],
+        ] {
+            assert!(!refused(&argv), "{argv:?} should work over the mesh");
+        }
+    }
+
+    #[test]
+    fn the_node_flag_names_a_device_for_one_command() {
+        let key = "c4".repeat(32);
+        let args = parse(&["--node", &key, "info"]).unwrap();
+        assert_eq!(args.node.unwrap().0, [0xC4; 32]);
+
+        // Global, so it reads the same before or after the command.
+        let args = parse(&["info", "--node", &key]).unwrap();
+        assert_eq!(args.node.unwrap().0, [0xC4; 32]);
+
+        assert!(parse(&["--node", "nonsense", "info"]).is_err());
     }
 
     #[test]

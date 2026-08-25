@@ -53,6 +53,7 @@ pub async fn run<L: FrameLink>(device: &mut UlcpDevice<L>, args: InfoArgs) -> Re
         (HostOwnership::Unsupported, _) => "unsupported (minimal protocol)".to_string(),
         (HostOwnership::OtherHost(key), true) => format!("ANOTHER HOST: {}", PublicKey(key)),
         (HostOwnership::OtherHost(key), false) => PublicKey(key).to_string(),
+        (HostOwnership::Unreachable, _) => "not visible over the mesh".to_string(),
     };
     field("host", ownership);
 

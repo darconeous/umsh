@@ -184,6 +184,7 @@ where
     // This is also what keeps a target whose firmware still answers off
     // the channel working: its plain unicast reply lands on a known peer.
     let peer = ctl
+        .stack
         .node
         .peer(target)
         .await
@@ -191,7 +192,8 @@ where
 
     let bound = match &args.channel {
         Some(channel) => Some(
-            ctl.node
+            ctl.stack
+                .node
                 .join(&channel.0)
                 .await
                 .map_err(|error| anyhow!("joining the channel: {error:?}"))?,
@@ -208,14 +210,14 @@ where
     // collects them and the loop below waits for one to land.
     let pong: Rc<RefCell<Option<PongMetadata>>> = Rc::new(RefCell::new(None));
     let sink = pong.clone();
-    let _pong_subscription = ctl.node.on_pong_with_metadata(move |from, metadata| {
+    let _pong_subscription = ctl.stack.node.on_pong_with_metadata(move |from, metadata| {
         if from == target {
             *sink.borrow_mut() = Some(metadata.clone());
         }
     });
     let expired = Rc::new(RefCell::new(false));
     let expiry = expired.clone();
-    let _timeout_subscription = ctl.node.on_ping_timeout(move |from| {
+    let _timeout_subscription = ctl.stack.node.on_ping_timeout(move |from| {
         if from == target {
             *expiry.borrow_mut() = true;
         }
@@ -254,7 +256,7 @@ where
     }
 
     if let Some(channel) = &args.channel {
-        let _ = ctl.node.leave(&channel.0).await;
+        let _ = ctl.stack.node.leave(&channel.0).await;
     }
     result?;
 
@@ -275,8 +277,8 @@ where
 #[allow(clippy::too_many_arguments)]
 async fn one_ping<R: Radio>(
     ctl: &mut Ctl<'_, R>,
-    peer: &umsh::node::PeerConnection<umsh::node::LocalNode<super::manage::CtlHandle<'_, R>>>,
-    bound: Option<&umsh::node::BoundChannel<super::manage::CtlHandle<'_, R>>>,
+    peer: &umsh::node::PeerConnection<umsh::node::LocalNode<crate::mesh::CtlHandle<'_, R>>>,
+    bound: Option<&umsh::node::BoundChannel<crate::mesh::CtlHandle<'_, R>>>,
     args: &PingArgs,
     options: &SendOptions,
     pong: &Rc<RefCell<Option<PongMetadata>>>,
@@ -351,16 +353,9 @@ where
     R::Error: core::fmt::Debug,
 {
     while !done() && Instant::now() < deadline {
-        tokio::select! {
-            result = ctl.host.pump_once() => {
-                result.map_err(|error| anyhow!("the radio stopped answering: {error:?}"))?;
-            }
-            _ = tokio::time::sleep_until(deadline) => {}
-        }
         // A quiet radio produces no MAC wake, so the deadlines that retire
-        // an unanswered ping need their own nudge.
-        ctl.host.service_protocol_timeouts().await;
-        let _ = ctl.handle.service_counter_persistence().await;
+        // an unanswered ping need their own nudge — which the pump does.
+        ctl.stack.pump_until(deadline).await?;
     }
     Ok(())
 }

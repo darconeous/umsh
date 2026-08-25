@@ -38,6 +38,26 @@ pub fn attach_config() -> UlcpDeviceConfig {
     UlcpDeviceConfig::new(910_525, 62_500, 7, 5)
 }
 
+/// How long a mesh session waits for one command to come back.
+///
+/// Strictly longer than the driver's own per-request budget, so a
+/// command that ran out of patience is reported by the driver — which
+/// knows whether the device was unreachable or this tool unlisted — and
+/// not by the handle, which would only know that nothing arrived.
+const MESH_RESPONSE_TIMEOUT: Duration = Duration::from_secs(200);
+
+/// The attach configuration for a device reached over the mesh.
+///
+/// `phy` describes the *local* radio, adopted from it before the link
+/// was borrowed; over a mesh session those numbers only size airtime
+/// estimates that nothing on this path consults.
+pub fn mesh_attach_config(phy: UlcpDeviceConfig) -> UlcpDeviceConfig {
+    UlcpDeviceConfig {
+        response_timeout: MESH_RESPONSE_TIMEOUT,
+        ..phy
+    }
+}
+
 /// A device this tool knows how to reach, in the form it would use to
 /// reach it again.
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -60,6 +80,13 @@ pub enum Target {
         host: String,
         port: u16,
     },
+    /// A device reached over the mesh rather than a wire, through the
+    /// Node Management binding. Opening one borrows whatever radio is
+    /// attached; the session that results is a device handle like any
+    /// other, and the local radio is not reachable again until it ends.
+    Mesh {
+        key: [u8; 32],
+    },
 }
 
 impl Target {
@@ -69,6 +96,7 @@ impl Target {
             Self::Serial { .. } => "serial",
             Self::Ble { .. } => "ble",
             Self::Tcp { .. } => "tcp",
+            Self::Mesh { .. } => "mesh",
         }
     }
 
@@ -80,6 +108,7 @@ impl Target {
             }
             Self::Ble { selector, name } => name.clone().unwrap_or_else(|| selector.clone()),
             Self::Tcp { host, port } => format_endpoint(host, *port),
+            Self::Mesh { key } => umsh::core::PublicKey(*key).to_string(),
         }
     }
 }
@@ -138,6 +167,9 @@ pub enum AnyLink {
     /// Ungated: a socket needs no driver crate, so every build can reach
     /// a bridged radio.
     Tcp(umsh::ulcp::SerialFrameLink<tokio::net::TcpStream>),
+    /// Ungated too: the mesh is reached through whatever radio is
+    /// already attached, so it needs no transport of its own.
+    Mesh(umsh::ulcp_mesh::MeshFrameLink),
     /// Keeps the type inhabited in a build with no transport feature.
     /// Never constructed.
     #[allow(dead_code)]
@@ -152,6 +184,7 @@ impl FrameLink for AnyLink {
             #[cfg(feature = "ble-radio")]
             Self::Ble(link) => link.send_frame(frame).await,
             Self::Tcp(link) => link.send_frame(frame).await,
+            Self::Mesh(link) => link.send_frame(frame).await,
             Self::Unavailable => Err(UlcpError::Disconnected),
         }
     }
@@ -166,6 +199,7 @@ impl FrameLink for AnyLink {
             #[cfg(feature = "ble-radio")]
             Self::Ble(link) => link.poll_recv_frame(cx),
             Self::Tcp(link) => link.poll_recv_frame(cx),
+            Self::Mesh(link) => link.poll_recv_frame(cx),
             Self::Unavailable => core::task::Poll::Ready(Err(UlcpError::Disconnected)),
         }
     }
@@ -243,8 +277,13 @@ impl Session {
     pub fn is_administrative(&self) -> bool {
         matches!(
             self.device.attach_mode(),
-            umsh::ulcp::AttachMode::Administrative
+            umsh::ulcp::AttachMode::Administrative | umsh::ulcp::AttachMode::Remote
         )
+    }
+
+    /// True while this session reaches its device over the mesh.
+    pub fn is_mesh(&self) -> bool {
+        matches!(self.target, Target::Mesh { .. })
     }
 
     /// Re-attach the open link in the other mode.
@@ -314,6 +353,9 @@ pub async fn open(target: &Target) -> Result<AnyLink> {
         Target::Serial { port, baud } => open_serial(port, *baud).await,
         Target::Ble { selector, .. } => open_ble(selector).await,
         Target::Tcp { host, port } => open_tcp(host, *port).await,
+        // A mesh session is not opened by naming a transport: it is
+        // built on the radio already attached, by `mesh::open_remote`.
+        Target::Mesh { .. } => bail!("a mesh session cannot be reopened on its own"),
     }
 }
 
@@ -771,6 +813,18 @@ mod tests {
             name: name.map(str::to_string),
             rssi,
         }
+    }
+
+    #[test]
+    fn a_mesh_target_names_itself_by_its_key() {
+        let target = Target::Mesh { key: [0xC4; 32] };
+        assert_eq!(target.transport(), "mesh");
+        // The label is the key as the rest of the tool writes one, so it
+        // can be pasted straight back into `remote`.
+        assert_eq!(
+            target.provisional_label(),
+            umsh::core::PublicKey([0xC4; 32]).to_string()
+        );
     }
 
     #[test]
