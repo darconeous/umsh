@@ -38,15 +38,26 @@ but they no longer name build targets.
 | T-Echo | nRF52840 | `techo` | BLE, USB-CDC | 478/145 KiB (756/256) | hardware-accepted |
 | SenseCAP Solar | nRF52840 | `sensecap-solar` | BLE, USB-CDC | 462/134 KiB (756/256) | hardware-accepted |
 | Wio Tracker L1 | nRF52840 | `wio-tracker-l1` | BLE, USB-CDC | 476/136 KiB (756/256) | bringup complete, hw validation open |
-| Heltec V3 | ESP32-S3 | `heltec-v3` | BLE, UART | 1129/462 KiB (3008/512) | hardware-accepted |
+| Heltec V3 | ESP32-S3 | `heltec-v3` | BLE, UART | 1289/251 KiB (3008/512) | hardware-accepted |
 | Heltec V2 | ESP32 | **none — parked** | — | — | suspected defective unit |
 
 Figures are `text+data` against the application flash window and
-`data+bss` against SRAM, from a release build — the two left-hand columns
-of `arm-none-eabi-size <elf>`. They are a snapshot, not a budget: the
-useful reading is the headroom, which is comfortable on every board that
-ships. The Heltec V3 row is carried over from its bringup and has not
-been re-measured with this command.
+`data+bss` against SRAM, from a release build—on the nRF52840 boards,
+the two left-hand columns of `arm-none-eabi-size <elf>`.
+
+`size` gets flash right on both families, but its **bss** column is
+meaningless on the ESP32-S3, where esp-hal's linker script emits two
+sections that do not cost what they claim: `.rotext_dummy`, a
+flash-address placeholder that occupies no RAM at all, and `.stack`,
+defined as *all remaining DRAM* and therefore reported at whatever is
+left over rather than what is used. Together they inflate the figure by
+about 210 KiB. Read that image's RAM out of `readelf -SW` instead, as
+`.data` + `.bss` + `.rwdata_dummy`—the last being the DRAM-side shadow
+of RAM-resident code, which is real SRAM because the S3 maps the same
+physical memory onto its data and instruction buses.
+
+The figures are a snapshot, not a budget: the useful reading is the
+headroom, which is comfortable on every board that ships.
 
 **The Wio Tracker L1 is the OLED variant.** The L1, L1 Pro, and L1 Lite
 share a pin map, so one image covers them; the L1 e-ink variant drives a
