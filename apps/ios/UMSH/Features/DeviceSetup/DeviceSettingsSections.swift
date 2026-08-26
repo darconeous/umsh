@@ -162,16 +162,9 @@ struct RadioSection: View {
             }
             if showsLoRa {
                 Picker("Bandwidth", selection: $bandwidthHz) {
-                    Text("7.81 kHz").tag(UInt32(7_810))
-                    Text("10.42 kHz").tag(UInt32(10_420))
-                    Text("15.63 kHz").tag(UInt32(15_630))
-                    Text("20.83 kHz").tag(UInt32(20_830))
-                    Text("31.25 kHz").tag(UInt32(31_250))
-                    Text("41.67 kHz").tag(UInt32(41_670))
-                    Text("62.5 kHz").tag(UInt32(62_500))
-                    Text("125 kHz").tag(UInt32(125_000))
-                    Text("250 kHz").tag(UInt32(250_000))
-                    Text("500 kHz").tag(UInt32(500_000))
+                    ForEach(ulcpSupportedBandwidthsHz(), id: \.self) { hertz in
+                        Text(Self.bandwidthLabel(hertz)).tag(hertz)
+                    }
                 }
                 Picker("Spreading factor", selection: $spreadingFactor) {
                     ForEach(UInt8(5)...UInt8(12), id: \.self) { value in
@@ -196,6 +189,11 @@ struct RadioSection: View {
         } footer: {
             Text("Changing PHY settings can leave this device unable to reach peers on a different configuration.")
         }
+    }
+
+    private static func bandwidthLabel(_ hertz: UInt32) -> String {
+        let kilohertz = Double(hertz) / 1_000
+        return "\(kilohertz.formatted(.number.precision(.fractionLength(0...2)))) kHz"
     }
 }
 

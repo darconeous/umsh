@@ -231,8 +231,8 @@ async fn main(spawner: Spawner) {
     let (lora, mdltn, rx_pkt, tx_pkt) = init_radio(radio_spi, radio_reset, radio_dio1, radio_busy)
         .await
         .unwrap_or_else(|e| panic!("radio init failed: {e:?}"));
-    // Worst-case airtime hint for the MAC scheduler. Stated in the same
-    // terms as `meshcore_us_params` builds them.
+    // Worst-case airtime hint for the MAC scheduler, in the same terms
+    // as the default profile's modulation.
     let t_frame_ms = umsh_radio_loraphy::airtime_ms(
         SpreadingFactor::_7,
         Bandwidth::_62KHz,
@@ -358,7 +358,8 @@ async fn init_radio(
 {
     let kind = radio::new_radio_kind(spi, reset, dio1, busy)?;
     let mut lora = LoRa::new(kind, false, Delay).await?;
-    let (mdltn, rx_pkt, tx_pkt) = umsh_radio_loraphy::meshcore_us_params(&mut lora)?;
+    let (mdltn, rx_pkt, tx_pkt) =
+        umsh_radio_loraphy::profile_params(&mut lora, umsh_radio_loraphy::profiles::DEFAULT, 8)?;
     Ok((lora, mdltn, rx_pkt, tx_pkt))
 }
 

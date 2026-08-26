@@ -53,6 +53,10 @@ use lora_phy::{
 };
 pub use umsh_hal::{CadPolicy, TxError};
 use umsh_hal::{RxInfo, RxOrigin, Snr, TxOptions};
+/// The vetted PHY profiles, re-exported so a board crate that depends
+/// only on this one can name a profile without a manifest entry.
+pub use umsh_ulcp::profiles;
+use umsh_ulcp::profiles::PhyProfile;
 
 /// Maximum SX1262 LoRa payload: 255 bytes.
 pub const MAX_PAYLOAD: usize = 255;
@@ -404,7 +408,7 @@ impl<M: RawMutex> DeviceControl<M> {
         self.shutdown.store(true, Ordering::Release);
         self.settings.signal(DeviceSettings {
             enabled: false,
-            freq_hz: UMSH_FREQUENCY_HZ,
+            freq_hz: profiles::DEFAULT.freq_khz * 1_000,
             sf: SpreadingFactor::_7,
             bw: Bandwidth::_125KHz,
             cr: CodingRate::_4_5,
@@ -664,59 +668,38 @@ where
 
 // ─── Parameter builders ───────────────────────────────────────────────────────
 
-/// Frequency used by default for UMSH in the 915 MHz ISM band.
-pub const UMSH_FREQUENCY_HZ: u32 = 915_000_000;
-
-/// Build the default modulation and packet parameters for UMSH bringup.
+/// Build modulation and packet parameters for a vetted PHY profile.
 ///
-/// SF7 / BW125 / CR4-5 at 915 MHz.
+/// The private sync word the profiles specify is not set here: it is
+/// fixed at `LoRa::new` time by `enable_public_network = false`. CRC is
+/// on and IQ normal, matching what MeshCore transmits.
+///
+/// `rx_preamble_symbols` stays a caller decision because it is a
+/// property of the receiving chip rather than the profile: 8 suffices on
+/// an SX126x, while the LR1110 needs the full transmitted length to
+/// detect reliably.
 ///
 /// Returns `(ModulationParams, rx_PacketParams, tx_PacketParams)`.
-pub fn default_params<RK, DLY>(
+pub fn profile_params<RK, DLY>(
     lora: &mut LoRa<RK, DLY>,
+    profile: &PhyProfile,
+    rx_preamble_symbols: u16,
 ) -> Result<(ModulationParams, PacketParams, PacketParams), RadioError>
 where
     RK: RadioKind,
     DLY: embedded_hal_async::delay::DelayNs,
 {
+    let sf = spreading_factor_from_u8(profile.sf).ok_or(RadioError::UnavailableSpreadingFactor)?;
+    let bw = bandwidth_from_hz(profile.bw_hz).ok_or(RadioError::UnavailableBandwidth)?;
+    let cr = coding_rate_from_denom(profile.cr_denom).ok_or(RadioError::InvalidConfiguration)?;
     build_params(
         lora,
-        SpreadingFactor::_7,
-        Bandwidth::_125KHz,
-        UMSH_FREQUENCY_HZ,
-        8,
-        8,
-    )
-}
-
-/// MeshCore US band frequency (confirmed from MeshCore source).
-pub const MESHCORE_US_FREQUENCY_HZ: u32 = 910_525_000;
-
-/// Build modulation + packet parameters matching MeshCore US (915 MHz band).
-///
-/// Sourced from MeshCore's RadioLib wrappers and `platformio.ini`:
-///   - 910.525 MHz / SF7 / BW62.5 kHz / CR4/5
-///   - 32-symbol TX preamble (MeshCore v1.16+ at SF7-SF8)
-///   - Private sync word 0x1424 (via `enable_public_network = false` in LoRa::new)
-///   - CRC enabled, IQ normal
-///
-/// Returns `(ModulationParams, rx_PacketParams, tx_PacketParams)`.
-pub fn meshcore_us_params<RK, DLY>(
-    lora: &mut LoRa<RK, DLY>,
-) -> Result<(ModulationParams, PacketParams, PacketParams), RadioError>
-where
-    RK: RadioKind,
-    DLY: embedded_hal_async::delay::DelayNs,
-{
-    // MeshCore transmits a 32-symbol LoRa packet preamble at SF7-SF8. Keep
-    // the existing SX126x RX acquisition setting unchanged at 8 symbols.
-    build_params(
-        lora,
-        SpreadingFactor::_7,
-        Bandwidth::_62KHz,
-        MESHCORE_US_FREQUENCY_HZ,
-        8,
-        32,
+        sf,
+        bw,
+        cr,
+        profile.freq_khz * 1_000,
+        rx_preamble_symbols,
+        profile.tx_preamble_symbols,
     )
 }
 
@@ -728,6 +711,7 @@ fn build_params<RK, DLY>(
     lora: &mut LoRa<RK, DLY>,
     sf: SpreadingFactor,
     bw: Bandwidth,
+    cr: CodingRate,
     frequency_hz: u32,
     rx_preamble: u16,
     tx_preamble: u16,
@@ -736,7 +720,7 @@ where
     RK: RadioKind,
     DLY: embedded_hal_async::delay::DelayNs,
 {
-    let mdltn = lora.create_modulation_params(sf, bw, CodingRate::_4_5, frequency_hz)?;
+    let mdltn = lora.create_modulation_params(sf, bw, cr, frequency_hz)?;
 
     let rx_pkt = lora.create_rx_packet_params(
         rx_preamble,

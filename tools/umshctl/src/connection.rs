@@ -35,7 +35,13 @@ const DISCOVERY_EXTENSION: Duration = Duration::from_secs(3);
 /// timeouts; an administrative or tethered attach never writes PHY
 /// configuration.
 pub fn attach_config() -> UlcpDeviceConfig {
-    UlcpDeviceConfig::new(910_525, 62_500, 7, 5)
+    let profile = umsh::ulcp_wire::profiles::DEFAULT;
+    UlcpDeviceConfig::new(
+        profile.freq_khz,
+        profile.bw_hz,
+        profile.sf,
+        profile.cr_denom,
+    )
 }
 
 /// How long a mesh session waits for one command to come back.

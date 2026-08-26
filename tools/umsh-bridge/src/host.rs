@@ -31,6 +31,7 @@ use tokio::io::{AsyncReadExt, AsyncWriteExt};
 use tokio::net::{TcpListener, TcpStream};
 use tokio::sync::mpsc;
 use umsh_ulcp::meta::RxMeta;
+use umsh_ulcp::profiles;
 use umsh_ulcp_simdev::{DutyLedger, RadioRxInfo, RadioSettings, SessionConfig, SimulatedDevice};
 
 use crate::config::HostEntry;
@@ -59,18 +60,18 @@ fn session_config() -> SessionConfig {
         dev_model: None,
         default_device_name: "Bridged host interface",
         mtu: 255,
-        sync_word: 0x1424,
+        sync_word: profiles::DEFAULT.sync_word,
         min_tx_power_dbm: -9,
         max_tx_power_dbm: 22,
         freq_khz_min: 150_000,
         freq_khz_max: 960_000,
         defaults: RadioSettings {
             enabled: false,
-            freq_khz: 910_525,
-            bw_hz: 62_500,
-            sf: 7,
-            cr_denom: 5,
-            tx_power_dbm: 14,
+            freq_khz: profiles::DEFAULT.freq_khz,
+            bw_hz: profiles::DEFAULT.bw_hz,
+            sf: profiles::DEFAULT.sf,
+            cr_denom: profiles::DEFAULT.cr_denom,
+            tx_power_dbm: profiles::DEFAULT_TX_POWER_DBM,
         },
         default_duty_limit: 0xFFFF,
         duty: Box::leak(Box::new(DutyLedger::new())),

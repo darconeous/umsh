@@ -7566,6 +7566,106 @@ public func FfiConverterTypePublicIdentityRecord_lower(_ value: PublicIdentityRe
 
 
 /**
+ * One vetted PHY profile, as a preset picker consumes it.
+ *
+ * A crossing of `umsh_ulcp::profiles::PhyProfile`. The bindings carry
+ * no constants, so the table travels as a function.
+ */
+public struct RadioPresetRecord: Equatable, Hashable {
+    public var id: String
+    public var name: String
+    public var frequencyKhz: UInt32
+    public var bandwidthHz: UInt32
+    public var spreadingFactor: UInt8
+    public var codingRateDenom: UInt8
+    /**
+     * Absent where the profile has no vetted power, in which case
+     * adopting it leaves a device's configured power alone.
+     */
+    public var transmitPowerDbm: Int8?
+    public var dutyCycleLimit: UInt16
+    public var syncWord: UInt16
+    public var txPreambleSymbols: UInt16
+
+    // Default memberwise initializers are never public by default, so we
+    // declare one manually.
+    public init(id: String, name: String, frequencyKhz: UInt32, bandwidthHz: UInt32, spreadingFactor: UInt8, codingRateDenom: UInt8,
+        /**
+         * Absent where the profile has no vetted power, in which case
+         * adopting it leaves a device's configured power alone.
+         */transmitPowerDbm: Int8?, dutyCycleLimit: UInt16, syncWord: UInt16, txPreambleSymbols: UInt16) {
+        self.id = id
+        self.name = name
+        self.frequencyKhz = frequencyKhz
+        self.bandwidthHz = bandwidthHz
+        self.spreadingFactor = spreadingFactor
+        self.codingRateDenom = codingRateDenom
+        self.transmitPowerDbm = transmitPowerDbm
+        self.dutyCycleLimit = dutyCycleLimit
+        self.syncWord = syncWord
+        self.txPreambleSymbols = txPreambleSymbols
+    }
+
+
+
+
+}
+
+#if compiler(>=6)
+extension RadioPresetRecord: Sendable {}
+#endif
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public struct FfiConverterTypeRadioPresetRecord: FfiConverterRustBuffer {
+    public static func read(from buf: inout (data: Data, offset: Data.Index)) throws -> RadioPresetRecord {
+        return
+            try RadioPresetRecord(
+                id: FfiConverterString.read(from: &buf),
+                name: FfiConverterString.read(from: &buf),
+                frequencyKhz: FfiConverterUInt32.read(from: &buf),
+                bandwidthHz: FfiConverterUInt32.read(from: &buf),
+                spreadingFactor: FfiConverterUInt8.read(from: &buf),
+                codingRateDenom: FfiConverterUInt8.read(from: &buf),
+                transmitPowerDbm: FfiConverterOptionInt8.read(from: &buf),
+                dutyCycleLimit: FfiConverterUInt16.read(from: &buf),
+                syncWord: FfiConverterUInt16.read(from: &buf),
+                txPreambleSymbols: FfiConverterUInt16.read(from: &buf)
+        )
+    }
+
+    public static func write(_ value: RadioPresetRecord, into buf: inout [UInt8]) {
+        FfiConverterString.write(value.id, into: &buf)
+        FfiConverterString.write(value.name, into: &buf)
+        FfiConverterUInt32.write(value.frequencyKhz, into: &buf)
+        FfiConverterUInt32.write(value.bandwidthHz, into: &buf)
+        FfiConverterUInt8.write(value.spreadingFactor, into: &buf)
+        FfiConverterUInt8.write(value.codingRateDenom, into: &buf)
+        FfiConverterOptionInt8.write(value.transmitPowerDbm, into: &buf)
+        FfiConverterUInt16.write(value.dutyCycleLimit, into: &buf)
+        FfiConverterUInt16.write(value.syncWord, into: &buf)
+        FfiConverterUInt16.write(value.txPreambleSymbols, into: &buf)
+    }
+}
+
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public func FfiConverterTypeRadioPresetRecord_lift(_ buf: RustBuffer) throws -> RadioPresetRecord {
+    return try FfiConverterTypeRadioPresetRecord.lift(buf)
+}
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public func FfiConverterTypeRadioPresetRecord_lower(_ value: RadioPresetRecord) -> RustBuffer {
+    return FfiConverterTypeRadioPresetRecord.lower(value)
+}
+
+
+/**
  * Canonical rendering information for a two-byte router hint.
  */
 public struct RouterHintRecord: Equatable, Hashable {
@@ -14057,6 +14157,31 @@ fileprivate struct FfiConverterSequenceTypeMobileRegionRecord: FfiConverterRustB
 #if swift(>=5.8)
 @_documentation(visibility: private)
 #endif
+fileprivate struct FfiConverterSequenceTypeRadioPresetRecord: FfiConverterRustBuffer {
+    typealias SwiftType = [RadioPresetRecord]
+
+    public static func write(_ value: [RadioPresetRecord], into buf: inout [UInt8]) {
+        let len = Int32(value.count)
+        writeInt(&buf, len)
+        for item in value {
+            FfiConverterTypeRadioPresetRecord.write(item, into: &buf)
+        }
+    }
+
+    public static func read(from buf: inout (data: Data, offset: Data.Index)) throws -> [RadioPresetRecord] {
+        let len: Int32 = try readInt(&buf)
+        var seq = [RadioPresetRecord]()
+        seq.reserveCapacity(Int(len))
+        for _ in 0 ..< len {
+            seq.append(try FfiConverterTypeRadioPresetRecord.read(from: &buf))
+        }
+        return seq
+    }
+}
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
 fileprivate struct FfiConverterSequenceTypeUlcpPropertyFrameRecord: FfiConverterRustBuffer {
     typealias SwiftType = [UlcpPropertyFrameRecord]
 
@@ -14848,6 +14973,17 @@ public func ulcpPropertyRecord(propertyId: UInt32, value: Data) -> UlcpPropertyF
 })
 }
 /**
+ * Every vetted radio profile, in the order to offer them: the profile
+ * a device ships on first.
+ */
+public func ulcpRadioPresets() -> [RadioPresetRecord]  {
+    return try!  FfiConverterSequenceTypeRadioPresetRecord.lift(try! rustCall() {
+        uniffiCallStatus in
+    uniffi_umsh_mobile_core_fn_func_ulcp_radio_presets(uniffiCallStatus
+    )
+})
+}
+/**
  * Encode a `CMD_SAVE` request with the shared ULCP codec.
  */
 public func ulcpSave(transactionId: UInt8)throws  -> Data  {
@@ -14872,6 +15008,16 @@ public func ulcpStatusName(status: UInt32) -> String  {
         uniffiCallStatus in
     uniffi_umsh_mobile_core_fn_func_ulcp_status_name(
         FfiConverterUInt32.lower(status),uniffiCallStatus
+    )
+})
+}
+/**
+ * The LoRa bandwidths a device accepts, in Hz, ascending.
+ */
+public func ulcpSupportedBandwidthsHz() -> [UInt32]  {
+    return try!  FfiConverterSequenceUInt32.lift(try! rustCall() {
+        uniffiCallStatus in
+    uniffi_umsh_mobile_core_fn_func_ulcp_supported_bandwidths_hz(uniffiCallStatus
     )
 })
 }
@@ -15029,10 +15175,16 @@ private let initializationResult: InitializationResult = {
     if (uniffi_umsh_mobile_core_checksum_func_ulcp_property_record() != 38489) {
         return InitializationResult.apiChecksumMismatch
     }
+    if (uniffi_umsh_mobile_core_checksum_func_ulcp_radio_presets() != 56599) {
+        return InitializationResult.apiChecksumMismatch
+    }
     if (uniffi_umsh_mobile_core_checksum_func_ulcp_save() != 15143) {
         return InitializationResult.apiChecksumMismatch
     }
     if (uniffi_umsh_mobile_core_checksum_func_ulcp_status_name() != 13803) {
+        return InitializationResult.apiChecksumMismatch
+    }
+    if (uniffi_umsh_mobile_core_checksum_func_ulcp_supported_bandwidths_hz() != 65256) {
         return InitializationResult.apiChecksumMismatch
     }
     if (uniffi_umsh_mobile_core_checksum_method_mobileidentity_public_identity() != 38823) {

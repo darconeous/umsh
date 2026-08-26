@@ -45,11 +45,6 @@ const SCRATCH: usize = MAX_MTU + 24;
 /// `PROP_HOST_PEER_KEYS`' digest form: one public key per entry).
 const PROP_BUF: usize = MAX_PEER_KEYS * items::PUBLIC_KEY_LEN + 16;
 
-/// LoRa bandwidths accepted for `PROP_PHY_LORA_BW`, in Hz.
-const SUPPORTED_BW_HZ: [u32; 10] = [
-    7_810, 10_420, 15_630, 20_830, 31_250, 41_670, 62_500, 125_000, 250_000, 500_000,
-];
-
 /// Radio configuration owned by the session and pushed to the radio
 /// via [`Effect::ApplyRadio`].
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -5546,7 +5541,7 @@ fn clamp_tx_power(config: &SessionConfig, value: &[u8]) -> Result<i8, Status> {
 
 fn validate_bw_hz(value: &[u8]) -> Result<u32, Status> {
     let bw_hz = parse_u32(value)?;
-    if !SUPPORTED_BW_HZ.contains(&bw_hz) {
+    if !umsh_ulcp::profiles::SUPPORTED_BANDWIDTHS_HZ.contains(&bw_hz) {
         return Err(Status::INVALID_ARGUMENT);
     }
     Ok(bw_hz)

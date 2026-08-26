@@ -116,9 +116,7 @@ mod firmware {
         Config as LoraConfig, Lr1110, TcxoCtrlVoltage, radio_kind_params::PaSelection,
         variant::Lr1110 as Lr1110Chip,
     };
-    use lora_phy::mod_params::{
-        Bandwidth, CodingRate, ModulationParams, PacketParams, SpreadingFactor,
-    };
+    use lora_phy::mod_params::{Bandwidth, ModulationParams, PacketParams, SpreadingFactor};
     use static_cell::StaticCell;
     use umsh_bsp_nrf52840::cdc_rescue::CdcAcmRescue;
     use umsh_bsp_nrf52840::flash_store;
@@ -672,39 +670,15 @@ mod firmware {
                 .await
                 .unwrap_or_else(|_| panic!("radio init"));
 
-            // MeshCore-US on-air parameters tuned for LR1110.
-            //
-            // Phase 2.5 RX bringup proved that preamble_length=16 (matching
-            // MeshCore at the time) reliably triggers SyncWordHeaderValid →
-            // RxDone on the LR1110. Preserve that RX setting. MeshCore v1.16+
-            // increased the transmitted SF7-SF8 preamble to 32 symbols.
-            let mdltn = lora
-                .create_modulation_params(
-                    SpreadingFactor::_7,
-                    Bandwidth::_62KHz,
-                    CodingRate::_4_5,
-                    910_525_000,
-                )
-                .unwrap_or_else(|_| panic!("modulation params"));
-            let rx_pkt = lora
-                .create_rx_packet_params(
-                    16,    // RX setting proven reliable on LR1110 hardware
-                    false, // explicit header
-                    255,   // max payload
-                    true,  // CRC on
-                    false, // IQ normal
-                    &mdltn,
-                )
-                .unwrap_or_else(|_| panic!("rx packet params"));
-            let tx_pkt = lora
-                .create_tx_packet_params(
-                    32,    // TX preamble: MeshCore v1.16+ at SF7-SF8
-                    false, // explicit header
-                    true,  // CRC on
-                    false, // IQ normal
-                    &mdltn,
-                )
-                .unwrap_or_else(|_| panic!("tx packet params"));
+            // Phase 2.5 RX bringup proved that a 16-symbol RX preamble
+            // reliably triggers SyncWordHeaderValid → RxDone on the
+            // LR1110, where the 8 an SX126x makes do with does not.
+            let (mdltn, rx_pkt, tx_pkt) = umsh_radio_loraphy::profile_params(
+                &mut lora,
+                umsh_radio_loraphy::profiles::DEFAULT,
+                16,
+            )
+            .unwrap_or_else(|_| panic!("radio params"));
 
             spawner.spawn(radio_runner_task(lora, mdltn, rx_pkt, tx_pkt).unwrap());
         }

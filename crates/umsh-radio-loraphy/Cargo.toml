@@ -26,6 +26,10 @@ default = []
 [dependencies]
 umsh-hal = { path = "../umsh-hal", default-features = false }
 
+# The vetted PHY profile table, re-exported so a board that depends only
+# on this crate can name a profile.
+umsh-ulcp = { path = "../umsh-ulcp" }
+
 lora-phy = { workspace = true }
 
 # Needed for the DelayNs bound on the runner's DLY type parameter.

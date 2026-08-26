@@ -322,7 +322,7 @@ struct RemoteRadioEditor: View {
         private mutating func adopt(_ preset: RadioPreset) {
             if enabled.isKnown { enabled.edited = true }
             frequency = String(preset.frequencyKHz)
-            transmitPower = String(preset.transmitPowerDBm)
+            if let power = preset.transmitPowerDBm { transmitPower = String(power) }
             if bandwidth.isKnown { bandwidth.edited = preset.bandwidthHz }
             if spreadingFactor.isKnown { spreadingFactor.edited = preset.spreadingFactor }
             if codingRate.isKnown { codingRate.edited = preset.codingRate }
@@ -375,9 +375,7 @@ struct RemoteRadioEditor: View {
         }
     }
 
-    private static let bandwidths: [UInt32] = [
-        7_810, 10_420, 15_630, 20_830, 31_250, 41_670, 62_500, 125_000, 250_000, 500_000,
-    ]
+    private static let bandwidths: [UInt32] = ulcpSupportedBandwidthsHz()
     private static let dutyLimits = dutyCycleLimitChoices
 
     private static func bandwidthLabel(_ hertz: UInt32) -> String {
@@ -1228,39 +1226,41 @@ struct RemotePicker<Value: Hashable & Sendable, Content: View>: View {
 
 /// A vetted PHY configuration a whole mesh can agree on.
 ///
-/// Shared with device setup: a repeater the operator commissions has to end
-/// up on the same profile as the phone's own radio, and two lists would
-/// eventually disagree.
+/// The list comes from the shared table the firmware ships its own
+/// defaults from, so a device commissioned here and the phone's own radio
+/// cannot end up describing the same profile differently.
 struct RadioPreset: Identifiable {
     let id: String
     let name: String
     let frequencyKHz: UInt32
-    let transmitPowerDBm: Int8
+    /// Nil where the profile has no vetted power, in which case adopting
+    /// it leaves whatever the device is set to alone.
+    let transmitPowerDBm: Int8?
     let bandwidthHz: UInt32
     let spreadingFactor: UInt8
     let codingRate: UInt8
     let dutyCycleLimit: UInt16
 
-    static let vetted = [
+    /// Whether a node on this preset and one on `profile` can hear each
+    /// other — the same exclusion of power and the transmit limit that
+    /// ``RadioProfile/interoperates(with:)`` makes.
+    func interoperates(with profile: RadioProfile) -> Bool {
+        profile.frequencyKHz == frequencyKHz
+            && profile.bandwidthHz == bandwidthHz
+            && profile.spreadingFactor == spreadingFactor
+            && profile.codingRateDenominator == codingRate
+    }
+
+    static let vetted: [RadioPreset] = ulcpRadioPresets().map { preset in
         RadioPreset(
-            id: "meshcore-us-canada",
-            name: "MeshCore USA/Canada (recommended)",
-            frequencyKHz: 910_525,
-            transmitPowerDBm: 20,
-            bandwidthHz: 62_500,
-            spreadingFactor: 7,
-            codingRate: 5,
-            dutyCycleLimit: UInt16.max
-        ),
-        RadioPreset(
-            id: "umsh-us-general",
-            name: "UMSH US general testing",
-            frequencyKHz: 915_000,
-            transmitPowerDBm: 14,
-            bandwidthHz: 125_000,
-            spreadingFactor: 7,
-            codingRate: 5,
-            dutyCycleLimit: UInt16.max
-        ),
-    ]
+            id: preset.id,
+            name: preset.name,
+            frequencyKHz: preset.frequencyKhz,
+            transmitPowerDBm: preset.transmitPowerDbm,
+            bandwidthHz: preset.bandwidthHz,
+            spreadingFactor: preset.spreadingFactor,
+            codingRate: preset.codingRateDenom,
+            dutyCycleLimit: preset.dutyCycleLimit
+        )
+    }
 }

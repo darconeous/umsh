@@ -2934,6 +2934,7 @@ dependencies = [
  "heapless 0.8.0",
  "lora-phy",
  "umsh-hal",
+ "umsh-ulcp",
 ]
 
 [[package]]

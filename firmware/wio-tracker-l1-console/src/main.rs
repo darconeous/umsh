@@ -425,8 +425,12 @@ mod firmware {
                 .await
                 .unwrap_or_else(|_| panic!("radio init"));
 
-            let (mdltn, rx_pkt, tx_pkt) = umsh_radio_loraphy::meshcore_us_params(&mut lora)
-                .unwrap_or_else(|_| panic!("radio params"));
+            let (mdltn, rx_pkt, tx_pkt) = umsh_radio_loraphy::profile_params(
+                &mut lora,
+                umsh_radio_loraphy::profiles::DEFAULT,
+                8,
+            )
+            .unwrap_or_else(|_| panic!("radio params"));
 
             spawner.spawn(radio_runner_task(lora, mdltn, rx_pkt, tx_pkt).unwrap());
         }

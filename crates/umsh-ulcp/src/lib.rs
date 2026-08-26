@@ -30,6 +30,7 @@ pub mod host;
 pub mod ids;
 pub mod items;
 pub mod meta;
+pub mod profiles;
 pub mod pui;
 pub mod reply;
 pub mod sint;

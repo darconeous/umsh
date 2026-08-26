@@ -26,6 +26,24 @@ final class UMSHMobileCoreTests: XCTestCase {
         XCTAssertEqual(try inspectPublicIdentity(address: identity.canonicalAddress), identity)
     }
 
+    func testRadioPresetsSurfaceTheVettedTable() throws {
+        let presets = ulcpRadioPresets()
+        XCTAssertEqual(presets.count, 21)
+        XCTAssertEqual(Set(presets.map(\.id)).count, presets.count)
+
+        let usCanada = try XCTUnwrap(presets.first)
+        XCTAssertEqual(usCanada.id, "meshcore-us-ca")
+        XCTAssertEqual(usCanada.frequencyKhz, 910_525)
+        XCTAssertEqual(usCanada.bandwidthHz, 62_500)
+        XCTAssertEqual(usCanada.spreadingFactor, 7)
+        XCTAssertEqual(usCanada.codingRateDenom, 5)
+        XCTAssertEqual(usCanada.transmitPowerDbm, 21)
+        XCTAssertEqual(usCanada.dutyCycleLimit, UInt16.max)
+
+        XCTAssertEqual(ulcpSupportedBandwidthsHz().count, 10)
+        XCTAssertTrue(ulcpSupportedBandwidthsHz().contains(usCanada.bandwidthHz))
+    }
+
     private func fixtureDatabase() throws -> MobileRegionDatabase {
         let url = try XCTUnwrap(
             Bundle.module.url(forResource: "fixture", withExtension: "regiondb")

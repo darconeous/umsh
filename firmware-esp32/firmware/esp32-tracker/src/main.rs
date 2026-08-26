@@ -295,7 +295,7 @@ fn session_config() -> SessionConfig {
         // private-network word 0x12. `PROP_PHY_LORA_SW` is defined as
         // the 16-bit SX126x-style word whatever the silicon, so both
         // radio families report the same 0x1424 here.
-        sync_word: 0x1424,
+        sync_word: umsh_ulcp::profiles::DEFAULT.sync_word,
         min_tx_power_dbm: MIN_TX_POWER_DBM,
         max_tx_power_dbm: MAX_TX_POWER_DBM,
         // Chip tunable range. Wider than any one module's matching
@@ -309,17 +309,17 @@ fn session_config() -> SessionConfig {
         freq_khz_min: 137_000,
         #[cfg(feature = "radio-sx127x")]
         freq_khz_max: 1_020_000,
-        // Post-reset defaults (PHY disabled until the host enables it);
-        // RF values match the MeshCore-US bringup profile.
+        // Post-reset defaults: the vetted default profile, with the PHY
+        // disabled until the host enables it.
         defaults: RadioSettings {
             enabled: false,
-            freq_khz: 910_525,
-            bw_hz: 62_500,
-            sf: 7,
-            cr_denom: 5,
-            tx_power_dbm: 14,
+            freq_khz: umsh_ulcp::profiles::DEFAULT.freq_khz,
+            bw_hz: umsh_ulcp::profiles::DEFAULT.bw_hz,
+            sf: umsh_ulcp::profiles::DEFAULT.sf,
+            cr_denom: umsh_ulcp::profiles::DEFAULT.cr_denom,
+            tx_power_dbm: umsh_ulcp::profiles::DEFAULT_TX_POWER_DBM,
         },
-        default_duty_limit: umsh_ulcp::ids::DUTY_LIMIT_DISABLED,
+        default_duty_limit: umsh_ulcp::profiles::DEFAULT.duty_limit,
         duty: &DUTY_LEDGER,
         // Battery-powered board with an ADC divider but no
         // charger-status signal (the charge LED is charger-driven), so

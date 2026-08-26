@@ -4568,6 +4568,53 @@ pub fn ulcp_max_dev_admins() -> u8 {
     8
 }
 
+/// One vetted PHY profile, as a preset picker consumes it.
+///
+/// A crossing of `umsh_ulcp::profiles::PhyProfile`. The bindings carry
+/// no constants, so the table travels as a function.
+#[derive(Clone, Debug, PartialEq, Eq, uniffi::Record)]
+pub struct RadioPresetRecord {
+    pub id: String,
+    pub name: String,
+    pub frequency_khz: u32,
+    pub bandwidth_hz: u32,
+    pub spreading_factor: u8,
+    pub coding_rate_denom: u8,
+    /// Absent where the profile has no vetted power, in which case
+    /// adopting it leaves a device's configured power alone.
+    pub transmit_power_dbm: Option<i8>,
+    pub duty_cycle_limit: u16,
+    pub sync_word: u16,
+    pub tx_preamble_symbols: u16,
+}
+
+/// Every vetted radio profile, in the order to offer them: the profile
+/// a device ships on first.
+#[uniffi::export]
+pub fn ulcp_radio_presets() -> Vec<RadioPresetRecord> {
+    umsh_ulcp::profiles::VETTED
+        .iter()
+        .map(|profile| RadioPresetRecord {
+            id: profile.id.to_string(),
+            name: profile.name.to_string(),
+            frequency_khz: profile.freq_khz,
+            bandwidth_hz: profile.bw_hz,
+            spreading_factor: profile.sf,
+            coding_rate_denom: profile.cr_denom,
+            transmit_power_dbm: profile.tx_power_dbm,
+            duty_cycle_limit: profile.duty_limit,
+            sync_word: profile.sync_word,
+            tx_preamble_symbols: profile.tx_preamble_symbols,
+        })
+        .collect()
+}
+
+/// The LoRa bandwidths a device accepts, in Hz, ascending.
+#[uniffi::export]
+pub fn ulcp_supported_bandwidths_hz() -> Vec<u32> {
+    umsh_ulcp::profiles::SUPPORTED_BANDWIDTHS_HZ.to_vec()
+}
+
 /// Derive the identifier a device will echo for a channel key.
 fn dev_channel_id(channel_key: &[u8]) -> Result<Vec<u8>, MobileError> {
     let bytes: [u8; items::CHANNEL_KEY_LEN] = channel_key
@@ -8786,5 +8833,30 @@ mod tests {
             .consume(property_response(tid, prop::MAC_REPEATER_ENABLED, &[0]))
             .unwrap();
         assert!(done.management_event.is_some());
+    }
+
+    #[test]
+    fn radio_presets_cross_the_bindings_whole() {
+        let presets = ulcp_radio_presets();
+        assert_eq!(presets.len(), umsh_ulcp::profiles::VETTED.len());
+        assert_eq!(presets[0].id, umsh_ulcp::profiles::DEFAULT.id);
+
+        let default = &presets[0];
+        assert_eq!(default.frequency_khz, 910_525);
+        assert_eq!(default.bandwidth_hz, 62_500);
+        assert_eq!(default.spreading_factor, 7);
+        assert_eq!(default.coding_rate_denom, 5);
+        assert_eq!(default.transmit_power_dbm, Some(21));
+        assert_eq!(default.duty_cycle_limit, u16::MAX);
+
+        // A profile with no vetted power crosses as an absent one
+        // rather than a zero.
+        assert!(
+            presets
+                .iter()
+                .any(|preset| preset.transmit_power_dbm.is_none()),
+            "the optional power is reachable from the app"
+        );
+        assert_eq!(ulcp_supported_bandwidths_hz().len(), 10);
     }
 }

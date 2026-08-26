@@ -422,23 +422,23 @@ mod firmware {
             mtu: MAX_PAYLOAD as u16,
             // Fixed at build time: LoRa::new(.., false, ..) below sets the
             // private-network word 0x12 → SX126x registers 0x1424.
-            sync_word: 0x1424,
+            sync_word: umsh_ulcp::profiles::DEFAULT.sync_word,
             min_tx_power_dbm: MIN_TX_POWER_DBM,
             max_tx_power_dbm: MAX_TX_POWER_DBM,
             // SX1262 tunable range.
             freq_khz_min: 150_000,
             freq_khz_max: 960_000,
-            // Post-reset defaults (PHY disabled until the host enables it);
-            // RF values match the MeshCore-US bringup profile.
+            // Post-reset defaults: the vetted default profile, with the
+            // PHY disabled until the host enables it.
             defaults: RadioSettings {
                 enabled: false,
-                freq_khz: 910_525,
-                bw_hz: 62_500,
-                sf: 7,
-                cr_denom: 5,
-                tx_power_dbm: 14,
+                freq_khz: umsh_ulcp::profiles::DEFAULT.freq_khz,
+                bw_hz: umsh_ulcp::profiles::DEFAULT.bw_hz,
+                sf: umsh_ulcp::profiles::DEFAULT.sf,
+                cr_denom: umsh_ulcp::profiles::DEFAULT.cr_denom,
+                tx_power_dbm: umsh_ulcp::profiles::DEFAULT_TX_POWER_DBM,
             },
-            default_duty_limit: umsh_ulcp::ids::DUTY_LIMIT_DISABLED,
+            default_duty_limit: umsh_ulcp::profiles::DEFAULT.duty_limit,
             duty: &DUTY_LEDGER,
             // Every board here is battery powered, and every one now has
             // a SAADC monitor reporting voltage, charge state, and the

@@ -59,7 +59,13 @@ const HANDOFF_RETRY_JITTER_MS: u64 = 80;
 /// exist because the constructor asks for them.
 #[cfg(any(feature = "serial-radio", feature = "ble-radio"))]
 fn attach_config() -> UlcpDeviceConfig {
-    UlcpDeviceConfig::new(910_525, 62_500, 7, 5)
+    let profile = umsh::ulcp_wire::profiles::DEFAULT;
+    UlcpDeviceConfig::new(
+        profile.freq_khz,
+        profile.bw_hz,
+        profile.sf,
+        profile.cr_denom,
+    )
 }
 
 /// What a `PROP_MAC_PROMISCUOUS` set means for the bridge.

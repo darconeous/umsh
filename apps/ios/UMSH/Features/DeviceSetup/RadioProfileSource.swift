@@ -30,19 +30,6 @@ struct RadioProfile: Equatable, Sendable {
     }
 }
 
-extension RadioPreset {
-    var profile: RadioProfile {
-        RadioProfile(
-            frequencyKHz: frequencyKHz,
-            transmitPowerDBm: transmitPowerDBm,
-            bandwidthHz: bandwidthHz,
-            spreadingFactor: spreadingFactor,
-            codingRateDenominator: codingRate,
-            dutyCycleLimit: dutyCycleLimit
-        )
-    }
-}
-
 /// Where a setup sheet gets a PHY profile it does not ask about.
 ///
 /// Putting a node on a mesh means putting it on the mesh's profile, and the
@@ -154,7 +141,7 @@ enum ResolvedRadioProfile: Equatable {
                 : nil
         )
         let preset = RadioPreset.vetted
-            .first { $0.profile.interoperates(with: copied) }?
+            .first { $0.interoperates(with: copied) }?
             .id
         return .copied(copied, source: companion.name, preset: preset)
     }

@@ -26,6 +26,7 @@ pub use umsh_ulcp_simdev::SimulatedDevice;
 /// see [`umsh_ulcp_simdev::SessionConfig::mac_node`].
 #[cfg(feature = "sim-device")]
 pub fn web_sim_config() -> umsh_ulcp_simdev::SessionConfig {
+    use umsh_ulcp::profiles;
     use umsh_ulcp_simdev::{
         AlertConfig, BatteryFields, DutyLedger, GnssConfig, RadioSettings, SessionConfig,
         TimeConfig,
@@ -37,18 +38,18 @@ pub fn web_sim_config() -> umsh_ulcp_simdev::SessionConfig {
         dev_model: None,
         default_device_name: "Browser simulated device",
         mtu: 255,
-        sync_word: 0x1424,
+        sync_word: profiles::DEFAULT.sync_word,
         min_tx_power_dbm: -9,
         max_tx_power_dbm: 22,
         freq_khz_min: 150_000,
         freq_khz_max: 960_000,
         defaults: RadioSettings {
             enabled: false,
-            freq_khz: 910_525,
-            bw_hz: 62_500,
-            sf: 7,
-            cr_denom: 5,
-            tx_power_dbm: 14,
+            freq_khz: profiles::DEFAULT.freq_khz,
+            bw_hz: profiles::DEFAULT.bw_hz,
+            sf: profiles::DEFAULT.sf,
+            cr_denom: profiles::DEFAULT.cr_denom,
+            tx_power_dbm: profiles::DEFAULT_TX_POWER_DBM,
         },
         default_duty_limit: 0xFFFF,
         duty: Box::leak(Box::new(DutyLedger::new())),
@@ -2064,6 +2065,18 @@ mod wasm {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// The editor's bandwidth choices carry display labels, so they are
+    /// spelled out rather than generated — but a device would refuse any
+    /// value outside the shared list, so the two must not drift.
+    #[test]
+    fn bandwidth_choices_match_the_shared_list() {
+        let offered: Vec<u32> = BW_CHOICES
+            .iter()
+            .map(|choice| choice.value.parse().unwrap())
+            .collect();
+        assert_eq!(offered, umsh_ulcp::profiles::SUPPORTED_BANDWIDTHS_HZ);
+    }
 
     fn drain_serial_frame(engine: &mut DebuggerEngine) -> Vec<u8> {
         let wire = engine.take_outbound().unwrap();

@@ -144,7 +144,7 @@ impl UlcpDeviceConfig {
             spreading_factor,
             coding_rate_denom,
             tx_power_dbm: 0,
-            sync_word: 0x1424,
+            sync_word: umsh_ulcp::profiles::DEFAULT_SYNC_WORD,
             response_timeout: Duration::from_secs(2),
         }
     }

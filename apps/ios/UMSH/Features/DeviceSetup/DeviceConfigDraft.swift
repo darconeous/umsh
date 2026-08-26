@@ -420,7 +420,7 @@ final class DeviceConfigDraft {
     func adopt(_ preset: RadioPreset) {
         radioEnabled = true
         frequencyKHz = String(preset.frequencyKHz)
-        transmitPowerDBm = String(preset.transmitPowerDBm)
+        if let power = preset.transmitPowerDBm { transmitPowerDBm = String(power) }
         bandwidthHz = preset.bandwidthHz
         spreadingFactor = preset.spreadingFactor
         codingRate = preset.codingRate
@@ -438,15 +438,17 @@ final class DeviceConfigDraft {
         if let limit = profile.dutyCycleLimit { dutyCycleLimit = limit }
     }
 
+    /// Which vetted profile these fields spell out is a question about the
+    /// mesh this device can talk to, so only the parameters that decide
+    /// that are compared — the same exclusion of power and the transmit
+    /// limit that ``RadioProfile/interoperates(with:)`` makes.
     private func matches(_ preset: RadioPreset) -> Bool {
         frequencyKHz == String(preset.frequencyKHz)
-            && transmitPowerDBm == String(preset.transmitPowerDBm)
             && (!sync.supportsLora || (
                 bandwidthHz == preset.bandwidthHz
                     && spreadingFactor == preset.spreadingFactor
                     && codingRate == preset.codingRate
             ))
-            && (!sync.supportsDutyCycleLimit || dutyCycleLimit == preset.dutyCycleLimit)
     }
 
     /// The offered limits, plus whatever this device is already holding when
