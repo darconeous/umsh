@@ -2082,6 +2082,26 @@ where
         Ok(())
     }
 
+    /// Restart the device (`CMD_REBOOT`; requires `CAP_REBOOT`): a power
+    /// cycle that keeps every persisted journal, so the device comes back
+    /// as itself with its saved configuration.
+    ///
+    /// `Ok(false)` means the device does not advertise `CAP_REBOOT` and
+    /// nothing was sent — asked rather than sent-and-timed-out, because a
+    /// device that *will* reboot answers nothing at all and waiting for
+    /// silence cannot tell the two apart. When it does reboot, the link
+    /// drops; treat the ensuing disconnect as completion.
+    pub async fn reboot(&mut self) -> Result<bool, UlcpError> {
+        if !self.capabilities().await?.contains(&cap::REBOOT) {
+            return Ok(false);
+        }
+        let mut buf = [0u8; 2];
+        let len = frame::reboot(&mut buf, TID_UNSOLICITED)
+            .map_err(|_| UlcpError::Protocol("frame encode"))?;
+        self.send(&buf[..len]).await?;
+        Ok(true)
+    }
+
     /// Revert the device to its saved snapshot (`CMD_RESTORE`; requires
     /// `CAP_SAVE`), accepting both spec-permitted completion forms.
     pub async fn restore(&mut self) -> Result<RestoreCompletion, UlcpError> {
@@ -3347,10 +3367,10 @@ mod tests {
                             replies.push(buf[..len].to_vec());
                         }
                     }
-                    // This device predates CAP_CMD_MULTI: it answers the
-                    // multi-property commands the way any device that
-                    // does not implement a command answers it.
-                    Cmd::PropMultiGet | Cmd::PropMultiSet => {
+                    // This device predates CAP_CMD_MULTI and CAP_REBOOT:
+                    // it answers commands it does not implement the way
+                    // any such device answers them.
+                    Cmd::PropMultiGet | Cmd::PropMultiSet | Cmd::Reboot => {
                         let len = frame::last_status(&mut buf, tid, Status::UNIMPLEMENTED).unwrap();
                         replies.push(buf[..len].to_vec());
                     }

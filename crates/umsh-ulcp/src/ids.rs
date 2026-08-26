@@ -346,6 +346,11 @@ pub mod cap {
     /// nothing about the stack underneath, and in particular does not
     /// promise that clearing the property powers a radio down.
     pub const BLE: u32 = 50;
+    /// `CAP_REBOOT` — the device can restart its hardware on command
+    /// (`CMD_REBOOT`). A device that cannot — one whose ULCP session is
+    /// a process rather than a board — leaves this out and answers the
+    /// command `STATUS_UNIMPLEMENTED`.
+    pub const REBOOT: u32 = 51;
 }
 
 /// Whether a property is reachable from a mesh administrator.

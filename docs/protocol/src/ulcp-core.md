@@ -173,12 +173,14 @@ Id | Mnemonic             | Dir          | Description
 6  | `CMD_PROP_IS`        | Device->Host | Property value notification
 7  | `CMD_PROP_INSERTED`  | Device->Host | Item-inserted notification
 8  | `CMD_PROP_REMOVED`   | Device->Host | Item-removed notification
+16 | `CMD_REBOOT`         | Host->Device | Restart the device's hardware
 21 | `CMD_PROP_MULTI_GET` | Host->Device | Get several property values
 22 | `CMD_PROP_MULTI_SET` | Host->Device | Set several property values in order
 23 | `CMD_PROP_ARE`       | Device->Host | Multiple property value notification
 
-The multi-property commands (21–23) are gated by `CAP_CMD_MULTI` (see
-[Capabilities](#capabilities)); everything else is unconditional.
+The multi-property commands (21–23) are gated by `CAP_CMD_MULTI` and
+`CMD_REBOOT` by `CAP_REBOOT` (see [Capabilities](#capabilities));
+everything else is unconditional.
 
 ### CMD 0: (Host -> Device) `CMD_NOP` {#cmd-noop}
 
@@ -396,6 +398,40 @@ own reasons.
 
 The payload is the property identifier followed by the removed item as the
 device reports it.
+
+### CMD 16: (Host -> Device) `CMD_REBOOT` {#cmd-reboot}
+
+~~~
+ 0                   1
+ 0 1 2 3 4 5 6 7 8 9 0 1 2 3 4 5
++-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+
+|1 0| RES | TID |  CMD_REBOOT   |
++-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+
+~~~
+Figure: Structure of `CMD_REBOOT`
+
+Restart the device. Commands the device to power-cycle its hardware,
+keeping every piece of state it has persisted: the saved snapshot, the
+device identity, the pairing PIN, and all bonds survive, and the device
+comes back configured as it was.
+
+This differs from [`CMD_RST`](#cmd-reset), which returns protocol state to
+its post-reset values with the device still running, and from
+[`CMD_FACTORY_RESET`](ulcp-saved-state.md#cmd-factory-reset), which erases
+that state before restarting. Between the three, this is the one that
+changes nothing — it is how a host clears a condition the protocol cannot
+name.
+
+The command payload SHOULD be empty and MUST be ignored. A device that
+restarts sends **no** response: the reboot drops the transport link, and
+the TID is therefore irrelevant. A host treats the ensuing disconnect (and
+the device's subsequent reappearance announcing `STATUS_RESET_POWER_ON`)
+as completion, and MUST NOT wait for a `PROP_LAST_STATUS`.
+
+This command is only available on devices advertising `CAP_REBOOT`.
+A device without it answers `STATUS_UNIMPLEMENTED` — which is the only
+response this command ever produces, and the only thing that distinguishes
+a device that declined from one that is already restarting.
 
 ### CMD 21: (Host -> Device) `CMD_PROP_MULTI_GET` {#cmd-prop-multi-get}
 
@@ -1126,11 +1162,13 @@ Code | Name                      | Requires                             | Define
 48   | `CAP_MAC_BACKHAUL`        | `CAP_REPEATER`                       | [Tethered Host Services](ulcp-host.md#capabilities)
 49   | `CAP_CMD_MULTI`           | —                                    | [Framing and Common Semantics](ulcp-core.md#cmd-prop-multi-get)
 50   | `CAP_BLE`                 | —                                    | [BLE Binding](ulcp-ble.md#capabilities)
+51   | `CAP_REBOOT`              | —                                    | [Framing and Common Semantics](ulcp-core.md#cmd-reboot)
 515  | `CAP_PHY_LORA`            | —                                    | [Radio Control](ulcp-radio.md#capabilities)
 
 A device **MUST NOT** advertise a capability without also advertising the
 capabilities it requires. Apart from the multi-property commands, which
-`CAP_CMD_MULTI` gates, the commands and status codes defined in this
-chapter are unconditional and need no capability; a device that defines no
+`CAP_CMD_MULTI` gates, and `CMD_REBOOT`, which `CAP_REBOOT` gates, the
+commands and status codes defined in this chapter are unconditional and
+need no capability; a device that defines no
 mutable multi-value properties simply has nothing to apply
 `CMD_PROP_INSERT`/`CMD_PROP_REMOVE` to.

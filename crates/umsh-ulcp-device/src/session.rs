@@ -235,6 +235,12 @@ pub struct SessionConfig {
     /// unreachable on demand. When set, `CAP_BLE` is advertised and
     /// `PROP_BLE_ENABLED` exists; otherwise the property is unknown.
     pub ble: bool,
+    /// Whether the platform can restart the hardware on command. When
+    /// set, `CAP_REBOOT` is advertised and `CMD_REBOOT` reaches
+    /// [`Effect::Reboot`]; otherwise the command answers
+    /// `STATUS_UNIMPLEMENTED`. Every firmware sets this; a session that
+    /// is a process rather than a board must not.
+    pub reboot: bool,
     /// Whether a mesh node runs behind this session — a MAC of the
     /// device's own that can repeat and that a backhauled host can sit
     /// point-to-point behind. Every firmware sets this; a simulated
@@ -359,6 +365,12 @@ pub enum Effect {
     /// completion follows, because the reboot drops the link. In-RAM
     /// session state is discarded by the reset itself.
     FactoryReset,
+    /// `CMD_REBOOT`: restart the hardware, keeping every persisted
+    /// journal. The platform performs the reset; nothing is emitted and
+    /// no `respond_*` completion follows, because the reboot drops the
+    /// link. What comes back is the same device with the same identity,
+    /// announcing its power-on reset.
+    Reboot,
 }
 
 /// A staged `PROP_DEV_PRIVATE_KEY` provisioning request (see
@@ -2835,6 +2847,18 @@ impl<A: AesProvider, S: Sha256Provider, const TX: usize> Session<A, S, TX> {
             // reply: the platform wipes storage and resets, so the link
             // drops. The TID is irrelevant (no response is sent).
             Some(Cmd::FactoryReset) => Some(Effect::FactoryReset),
+            // Restart the hardware, keeping everything persisted. Like
+            // CMD_FACTORY_RESET this does not reply — the reboot drops
+            // the link, and the TID is irrelevant. A board that cannot
+            // reset itself says so instead, which is the one answer this
+            // command ever produces.
+            Some(Cmd::Reboot) => {
+                if !self.config.reboot {
+                    self.complete(tid, Status::UNIMPLEMENTED, emit);
+                    return None;
+                }
+                Some(Effect::Reboot)
+            }
             // Several properties in one exchange. Both commands are
             // served entry by entry through the ordinary single-property
             // paths, so a value that needs a platform round trip defers
@@ -5095,6 +5119,9 @@ impl<A: AesProvider, S: Sha256Provider, const TX: usize> Session<A, S, TX> {
                 if self.config.ble {
                     len += pui::encode(cap::BLE, &mut out[len..]).unwrap_or(0);
                 }
+                if self.config.reboot {
+                    len += pui::encode(cap::REBOOT, &mut out[len..]).unwrap_or(0);
+                }
                 len
             }
             prop::PHY_ENABLED => {
@@ -5695,6 +5722,7 @@ mod tests {
             gnss: Some(GnssConfig::DEFAULT),
             illuminance: true,
             ble: true,
+            reboot: true,
             mac_node: true,
         }
     }
@@ -5745,6 +5773,19 @@ mod tests {
         let (_, response_key, value) = parse_prop_is(&emitted[0]);
         assert_eq!(response_key, key);
         value
+    }
+
+    /// `PROP_CAPS` decoded into the codes it lists.
+    fn capabilities(session: &mut TestSession) -> Vec<u32> {
+        let raw = get(session, prop::CAPS);
+        let mut caps = Vec::new();
+        let mut offset = 0;
+        while offset < raw.len() {
+            let (value, used) = pui::decode(&raw[offset..]).unwrap();
+            caps.push(value);
+            offset += used;
+        }
+        caps
     }
 
     fn set(session: &mut TestSession, key: u32, value: &[u8]) -> (Vec<Vec<u8>>, Option<Effect>) {
@@ -6076,16 +6117,8 @@ mod tests {
     #[test]
     fn caps_list_decodes() {
         let mut session = test_session();
-        let raw = get(&mut session, prop::CAPS);
-        let mut caps = Vec::new();
-        let mut offset = 0;
-        while offset < raw.len() {
-            let (value, used) = pui::decode(&raw[offset..]).unwrap();
-            caps.push(value);
-            offset += used;
-        }
         assert_eq!(
-            caps,
+            capabilities(&mut session),
             [
                 cap::WRITABLE_RAW_STREAM,
                 cap::PHY_DUTY_LIMIT,
@@ -6108,7 +6141,8 @@ mod tests {
                 cap::TIME,
                 cap::GNSS,
                 cap::ILLUMINANCE,
-                cap::BLE
+                cap::BLE,
+                cap::REBOOT
             ]
         );
     }
@@ -6171,14 +6205,7 @@ mod tests {
         };
         let mut session: TestSession = Session::new(config, Status::RESET_POWER_ON, test_engine());
         session.attach(true);
-        let raw = get(&mut session, prop::CAPS);
-        let mut caps = Vec::new();
-        let mut offset = 0;
-        while offset < raw.len() {
-            let (value, used) = pui::decode(&raw[offset..]).unwrap();
-            caps.push(value);
-            offset += used;
-        }
+        let caps = capabilities(&mut session);
         assert!(!caps.contains(&cap::REPEATER));
         assert!(!caps.contains(&cap::MAC_BACKHAUL));
 
@@ -6213,6 +6240,35 @@ mod tests {
                 "prop {key} is settable without a node"
             );
         }
+    }
+
+    /// `CMD_REBOOT` is the platform's to perform, and a platform that
+    /// cannot says so rather than staying silent — silence is how a
+    /// device that *is* rebooting answers, and a host has no other way
+    /// to tell the two apart.
+    #[test]
+    fn reboot_defers_to_the_platform_or_says_it_cannot() {
+        let mut buf = [0u8; 8];
+        let len = frame::reboot(&mut buf, 3).unwrap();
+
+        let mut session = test_session();
+        let (emitted, effect) = dispatch(&mut session, &buf[..len], 0);
+        assert_eq!(effect, Some(Effect::Reboot));
+        assert!(emitted.is_empty(), "a reboot answers nothing");
+        assert!(capabilities(&mut session).contains(&cap::REBOOT));
+
+        let config = SessionConfig {
+            reboot: false,
+            ..test_config()
+        };
+        let mut fixed: TestSession = Session::new(config, Status::RESET_POWER_ON, test_engine());
+        fixed.attach(true);
+        let (emitted, effect) = dispatch(&mut fixed, &buf[..len], 0);
+        assert_eq!(effect, None);
+        let (_, status_key, value) = parse_prop_is(&emitted[0]);
+        assert_eq!(status_key, prop::LAST_STATUS);
+        assert_eq!(pui::decode(&value).unwrap().0, Status::UNIMPLEMENTED.0);
+        assert!(!capabilities(&mut fixed).contains(&cap::REBOOT));
     }
 
     /// The clock is the platform's, not the session's: a get defers, a

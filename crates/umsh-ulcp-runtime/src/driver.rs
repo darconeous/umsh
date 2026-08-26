@@ -466,6 +466,11 @@ pub trait DeviceEnv {
     /// hook because a reboot reloads bonds from the (now-erased) journal,
     /// so the live BLE stack never has to be touched.
     async fn factory_reset(&mut self) -> !;
+    /// `CMD_REBOOT`: restart the hardware, keeping every persisted
+    /// journal intact. Never returns. Only reached on a board whose
+    /// `SessionConfig::reboot` advertises the capability, so there is no
+    /// default — a board that sets the flag owes an implementation.
+    async fn reboot(&mut self) -> !;
     /// Publish the transport-arbitration advertising policy (a wired
     /// attach suppresses BLE advertising). Diagnostic builds may
     /// deliberately ignore `allowed`.
@@ -750,6 +755,7 @@ async fn apply_effect<A, S, const TXQ: usize, M, const RX: usize, const TX: usiz
         | Some(Effect::ClearSaved { .. })
         | Some(Effect::ProvisionIdentity { .. })
         | Some(Effect::FactoryReset)
+        | Some(Effect::Reboot)
         | None => {}
     }
 }
@@ -1049,6 +1055,14 @@ async fn serve_frame<A, S, const TXQ: usize, M, const RX: usize, const TX: usize
                 // already staged were flushed above.
                 env.trace(format_args!("CMD_FACTORY_RESET: wiping all state + reboot"));
                 env.factory_reset().await
+            }
+            Some(Effect::Reboot) => {
+                // Same shape as the factory reset above and none of the
+                // erasing: the platform restarts and the device comes
+                // back as itself. Never returns, and answers nothing —
+                // the reboot drops the link.
+                env.trace(format_args!("CMD_REBOOT: restarting"));
+                env.reboot().await
             }
             other => apply_effect(session, other, rt, env).await,
         }

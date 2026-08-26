@@ -363,6 +363,8 @@ fn session_config() -> SessionConfig {
         // The ESP32-S3 radio is always up on this board, but the
         // peripheral can be made unfindable: see `advertising_permitted`.
         ble: true,
+        // The SoC restarts on command; see the `reboot` hook below.
+        reboot: true,
         // A real MAC runs behind this session.
         mac_node: true,
     }
@@ -1277,6 +1279,13 @@ impl DeviceEnv for BoardDeviceEnv {
         // is not currently held by `BoardDeviceEnv`, so this needs the
         // partition bounds threaded in first.
         todo!("Implement factory reset for esp32");
+    }
+
+    async fn reboot(&mut self) -> ! {
+        // A plain restart: every journal in the `umsh` partition stays
+        // where it is and the board remounts from it on the way back up.
+        debug_log(format_args!("REBOOT: restarting"));
+        esp_hal::system::software_reset()
     }
 
     fn set_ble_enabled(&mut self, enabled: bool) {

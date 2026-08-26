@@ -19,6 +19,7 @@ local COMMANDS = {
   [13] = "CMD_CLEAR",
   [14] = "CMD_RESTORE",
   [15] = "CMD_FACTORY_RESET",
+  [16] = "CMD_REBOOT",
   [21] = "CMD_PROP_MULTI_GET",
   [22] = "CMD_PROP_MULTI_SET",
   [23] = "CMD_PROP_ARE",
@@ -32,7 +33,7 @@ M.COMMANDS = COMMANDS
 M.COMMAND_TO_DEVICE = {
   [0] = true, [1] = true, [2] = true, [3] = true, [4] = true, [5] = true,
   [9] = true, [11] = true, [12] = true, [13] = true, [14] = true,
-  [15] = true, [21] = true, [22] = true,
+  [15] = true, [16] = true, [21] = true, [22] = true,
 }
 M.COMMAND_TO_HOST = {
   [6] = true, [7] = true, [8] = true, [10] = true, [23] = true,

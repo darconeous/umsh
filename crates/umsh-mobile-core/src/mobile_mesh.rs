@@ -202,6 +202,11 @@ pub enum MobileMeshResetScope {
     Protocol,
     /// `CMD_RESTORE`: the saved snapshot, discarding unsaved changes.
     Restore,
+    /// `CMD_REBOOT`: nothing. The device power-cycles and comes back as
+    /// itself, with everything it had persisted. A device without
+    /// `CAP_REBOOT` answers `STATUS_UNIMPLEMENTED` rather than silence,
+    /// which is the one reply this scope can produce.
+    Reboot,
     /// `CMD_FACTORY_RESET`: everything, including the device's identity.
     /// A device that has forgotten its identity is a different node, and
     /// no longer reachable at the address this operation was sent to.
@@ -1369,6 +1374,7 @@ impl MobileMeshSession {
         let frame = encode_management(|buf| match scope {
             MobileMeshResetScope::Protocol => frame::reset(buf, 0),
             MobileMeshResetScope::Restore => frame::restore(buf, 0),
+            MobileMeshResetScope::Reboot => frame::reboot(buf, 0),
             MobileMeshResetScope::Factory => frame::factory_reset(buf, 0),
         })?;
         self.begin_management(

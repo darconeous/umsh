@@ -116,6 +116,7 @@ impl DeviceSide {
             // `PROP_BLE_ENABLED` is one more property an administrator
             // can find over the mesh.
             ble: true,
+            reboot: true,
             mac_node: true,
         };
         let mut session = Session::new(

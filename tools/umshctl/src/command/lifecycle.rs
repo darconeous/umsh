@@ -62,6 +62,21 @@ pub async fn reset<L: FrameLink>(device: &mut UlcpDevice<L>) -> Result<()> {
     Ok(())
 }
 
+/// Restart the device, keeping everything it has persisted.
+///
+/// No confirmation: unlike a factory reset this destroys nothing, and the
+/// device comes back as itself. The handle is worthless afterward either
+/// way, so detach for the same reason `factory_reset` does.
+pub async fn reboot(app: &mut App) -> Result<()> {
+    let device = app.device()?;
+    if !device.reboot().await? {
+        bail!("this device does not advertise CAP_REBOOT; it cannot restart on command");
+    }
+    println!("reboot sent; the radio is restarting and the link will drop");
+    app.detach().await;
+    Ok(())
+}
+
 const FACTORY_RESET_WARNING: &str = "factory-reset erases ALL mutable state — persisted provisioning, the device identity, \
      BLE bonds, and the pairing PIN — then reboots";
 

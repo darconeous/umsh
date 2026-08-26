@@ -180,9 +180,14 @@ fn request_tag(frame: &[u8]) -> u16 {
 /// resets into it; one that has none answers normally, but the
 /// administrator cannot know which in advance, so the binding treats the
 /// command as reset-class either way and the administrator confirms
-/// delivery with a MAC acknowledgment.
+/// delivery with a MAC acknowledgment. `CMD_REBOOT` qualifies for the
+/// same reason: a board restarts and says nothing, while one that cannot
+/// answers `STATUS_UNIMPLEMENTED`.
 const fn reset_class(cmd: Cmd) -> bool {
-    matches!(cmd, Cmd::Reset | Cmd::Restore | Cmd::FactoryReset)
+    matches!(
+        cmd,
+        Cmd::Reset | Cmd::Restore | Cmd::FactoryReset | Cmd::Reboot
+    )
 }
 
 /// One administrator's most recent exchange.
@@ -996,6 +1001,7 @@ mod tests {
             frame::reset(&mut frame_buf, 0).unwrap(),
             frame::restore(&mut frame_buf, 0).unwrap(),
             frame::factory_reset(&mut frame_buf, 0).unwrap(),
+            frame::reboot(&mut frame_buf, 0).unwrap(),
         ] {
             let mut payload = [0u8; PAYLOAD];
             let len = request([2, 2], &frame_buf[..len], &mut payload);

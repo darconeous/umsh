@@ -87,6 +87,11 @@ pub enum ManageOp {
     /// acknowledgment.
     Reset,
 
+    /// Restart the device (CMD_REBOOT), keeping everything it has
+    /// persisted. Answered by no response: delivery is the
+    /// acknowledgment, and a device that cannot restart says so.
+    Reboot,
+
     /// Nodes authorized to manage the device — including this tool.
     Admins {
         #[command(subcommand)]
@@ -322,6 +327,18 @@ where
                 // `CMD_RESTORE` on a device with no snapshot resets
                 // nothing and answers like any other command, so a reply
                 // is not a protocol violation — it is an answer.
+                Outcome::Replied { .. } => report_value(prop::LAST_STATUS, ctl.manager.reply()),
+                Outcome::Failed(failure) => Err(describe(failure)),
+            }
+        }
+        ManageOp::Reboot => {
+            match ctl.exchange(&encode(|buf| frame::reboot(buf, 0))?).await? {
+                Outcome::NoResponse => {
+                    println!("reboot delivered; the device is restarting");
+                    Ok(())
+                }
+                // The one answer this command produces: a device without
+                // `CAP_REBOOT` saying it cannot restart itself.
                 Outcome::Replied { .. } => report_value(prop::LAST_STATUS, ctl.manager.reply()),
                 Outcome::Failed(failure) => Err(describe(failure)),
             }

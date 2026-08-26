@@ -82,6 +82,7 @@ fn session_config() -> SessionConfig {
         // against the real session too.
         illuminance: true,
         ble: true,
+        reboot: true,
         mac_node: true,
     }
 }
@@ -123,6 +124,20 @@ impl SimDevice {
         }))
     }
 
+    /// Come up from the durable journals the way the firmware does:
+    /// identity installed and the saved snapshot restored, before any
+    /// host command is served.
+    fn boot(&mut self) {
+        self.session = Session::new(session_config(), Status::RESET_POWER_ON, engine());
+        if let Some((_, public)) = self.identity {
+            self.session.set_boot_identity(public);
+        }
+        if let Some(snapshot) = self.snapshot.clone() {
+            let restored = self.session.restore_at_boot(&snapshot);
+            assert!(restored.is_ok(), "saved snapshot must restore at boot");
+        }
+    }
+
     /// The synthetic receiver's view: a three-dimensional fix while the
     /// receiver is enabled, and the searching state while it is not.
     fn gnss_sample(&self) -> umsh_ulcp::gnss::GnssSnapshot {
@@ -154,6 +169,12 @@ impl SimDevice {
             // The simulator has no platform to wipe and reboot; a
             // factory reset is exercised against real firmware.
             Some(Effect::FactoryReset) => panic!("simulator does not implement CMD_FACTORY_RESET"),
+            // A power cycle and nothing else: the journals survive, the
+            // session comes back announcing its power-on reset, and the
+            // saved snapshot is replayed the way a board replays it on
+            // the way up. Nothing is emitted — on hardware the reboot
+            // drops the link before anything could be.
+            Some(Effect::Reboot) => self.boot(),
             Some(Effect::StartTransmit) => {
                 self.air.push(self.session.tx_data().to_vec());
                 self.session
@@ -920,4 +941,42 @@ async fn an_ordered_write_sequence_stops_at_its_first_failure() {
             .unwrap(),
         vec![5]
     );
+}
+
+/// `CMD_REBOOT` is the one reset that puts nothing back: the device
+/// power-cycles, comes up announcing `STATUS_RESET_POWER_ON`, and finds
+/// its saved snapshot exactly where it left it.
+///
+/// The command answers nothing at all, so what proves it ran is the state
+/// on the far side of it — which is also why a device that *cannot*
+/// restart has to say so out loud rather than stay quiet.
+#[tokio::test]
+async fn a_reboot_restarts_the_device_and_keeps_what_was_saved() {
+    let sim = SimDevice::new();
+    let mut radio = attached_host(&sim).await;
+
+    configure_and_enable_phy(&mut radio).await;
+    radio
+        .set_device_name("named before the reboot")
+        .await
+        .unwrap();
+    radio.save().await.unwrap();
+
+    assert!(
+        radio.reboot().await.unwrap(),
+        "the simulator advertises CAP_REBOOT"
+    );
+    // Nothing came back, and the session on the other side is a new one:
+    // the handle the host is holding belongs to a device that no longer
+    // exists.
+    drop(radio);
+
+    let mut radio = attached_host(&sim).await;
+    let sync = radio.sync(None).await.unwrap();
+    assert!(sync.reset_since_last_contact);
+    assert_eq!(sync.last_status, Status::RESET_POWER_ON);
+    assert_eq!(sync.saved, Some(SavedSnapshot::Current));
+    assert_eq!(sync.device_name, "named before the reboot");
+    assert!(sync.phy_enabled, "the snapshot re-enabled the PHY at boot");
+    assert_eq!(sync.freq_khz, host_config().freq_khz);
 }

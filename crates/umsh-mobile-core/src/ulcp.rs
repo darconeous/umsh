@@ -294,6 +294,8 @@ pub struct UlcpSyncRecord {
     pub supports_admin: bool,
     /// The device can make itself conspicuous on request (`CAP_ALERT`).
     pub supports_alert: bool,
+    /// The device can restart its hardware on request (`CAP_REBOOT`).
+    pub supports_reboot: bool,
     /// `PROP_ALERT`: what the device is doing to make itself findable, when
     /// it has said. Live state like `battery`, and absent on the same terms.
     pub alert: Option<UlcpAlertState>,
@@ -984,6 +986,22 @@ impl MobileUlcpSession {
         // reboots without answering, so `update` reports
         // waiting_for_responses = false and the caller does not block.
         let frame = ulcp_factory_reset(tid)?;
+        Ok(state.update(vec![frame]))
+    }
+
+    /// Restart the radio (`CMD_REBOOT`), keeping everything it has
+    /// persisted. Fire-and-forget for the same reason
+    /// [`Self::factory_reset`] is: a radio that restarts answers nothing
+    /// and the reboot drops the link. A radio without `CAP_REBOOT`
+    /// answers `STATUS_UNIMPLEMENTED` instead, which arrives as an
+    /// ordinary unsolicited status.
+    ///
+    /// Permitted from any stage, again like the factory reset: a radio
+    /// worth restarting is often one that is not answering properly.
+    pub fn reboot(&self) -> Result<UlcpSessionUpdateRecord, MobileError> {
+        let mut state = self.inner.lock().expect("ULCP session mutex poisoned");
+        let tid = state.allocate_tid();
+        let frame = ulcp_reboot(tid)?;
         Ok(state.update(vec![frame]))
     }
 
@@ -3039,6 +3057,7 @@ pub fn inspect_ulcp_sync(
         supports_advert: announces,
         supports_admin: manageable,
         supports_alert: has(cap::ALERT),
+        supports_reboot: has(cap::REBOOT),
         alert,
         phy_enabled,
         frequency_khz,
@@ -3334,6 +3353,8 @@ pub struct UlcpDeviceCardRecord {
     pub supports_advert: bool,
     pub supports_admin: bool,
     pub supports_alert: bool,
+    /// Whether a Restart control is worth offering (`CAP_REBOOT`).
+    pub supports_reboot: bool,
     pub supports_save: bool,
     /// Whether batched property reads are worth trying. A device that
     /// declines one is asked again a property at a time, so this is a
@@ -3378,6 +3399,7 @@ pub fn inspect_ulcp_device_card(
         supports_advert: has(cap::ADVERT),
         supports_admin: has(cap::ADMIN),
         supports_alert: has(cap::ALERT),
+        supports_reboot: has(cap::REBOOT),
         supports_save: has(cap::SAVE),
         supports_multi: has(cap::CMD_MULTI),
     })
@@ -4638,6 +4660,15 @@ pub fn ulcp_factory_reset(transaction_id: u8) -> Result<Vec<u8>, MobileError> {
     let mut output = [0; 2];
     let length = frame::factory_reset(&mut output, transaction_id)
         .map_err(|_| MobileError::InvalidUlcpFrame)?;
+    Ok(output[..length].to_vec())
+}
+
+/// Encode a `CMD_REBOOT` request with the shared ULCP codec.
+#[uniffi::export]
+pub fn ulcp_reboot(transaction_id: u8) -> Result<Vec<u8>, MobileError> {
+    let mut output = [0; 2];
+    let length =
+        frame::reboot(&mut output, transaction_id).map_err(|_| MobileError::InvalidUlcpFrame)?;
     Ok(output[..length].to_vec())
 }
 

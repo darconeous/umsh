@@ -74,6 +74,9 @@ pub fn web_sim_config() -> umsh_ulcp_simdev::SessionConfig {
         // reachability switch the debugger can flip, which is the whole
         // of what the capability claims.
         ble: true,
+        // The simulator restarts by rebuilding its session, which is
+        // near enough a power cycle for the debugger to exercise.
+        reboot: true,
         // No node behind the session: `Effect::ApplyBackhaul` would
         // connect the host to nothing, so the device must not claim
         // `CAP_MAC_BACKHAUL` — that claim is exactly what a bridge

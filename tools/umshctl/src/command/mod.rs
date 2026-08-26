@@ -64,6 +64,10 @@ pub enum Command {
     /// restoring any saved snapshot. The MCU does not reboot.
     Reset,
 
+    /// Restart the device (CMD_REBOOT): a power cycle that keeps
+    /// everything the device has persisted.
+    Reboot,
+
     /// Erase ALL state including BLE bonds and the pairing PIN, then
     /// reboot into a blank factory state.
     FactoryReset {
@@ -295,6 +299,7 @@ impl Command {
             Self::Restore => lifecycle::restore(app.device()?).await,
             Self::Clear => lifecycle::clear(app.device()?).await,
             Self::Reset => lifecycle::reset(app.device()?).await,
+            Self::Reboot => lifecycle::reboot(app).await,
             Self::FactoryReset { yes } => lifecycle::factory_reset(app, yes).await,
             Self::Pin { value } => lifecycle::pin(app.device()?, value).await,
             Self::Phy { op } => phy::run(app, op).await,

@@ -3426,6 +3426,19 @@ public protocol MobileUlcpSessionProtocol: AnyObject, Sendable {
     func insertDevicePeer(publicKey: Data) throws  -> UlcpSessionUpdateRecord
 
     /**
+     * Restart the radio (`CMD_REBOOT`), keeping everything it has
+     * persisted. Fire-and-forget for the same reason
+     * [`Self::factory_reset`] is: a radio that restarts answers nothing
+     * and the reboot drops the link. A radio without `CAP_REBOOT`
+     * answers `STATUS_UNIMPLEMENTED` instead, which arrives as an
+     * ordinary unsolicited status.
+     *
+     * Permitted from any stage, again like the factory reset: a radio
+     * worth restarting is often one that is not answering properly.
+     */
+    func reboot() throws  -> UlcpSessionUpdateRecord
+
+    /**
      * Make the radio's host channel-key table (`PROP_HOST_CHANNEL_KEYS`)
      * match the phone identity's joined channels.
      *
@@ -3964,6 +3977,26 @@ open func insertDevicePeer(publicKey: Data)throws  -> UlcpSessionUpdateRecord  {
     uniffi_umsh_mobile_core_fn_method_mobileulcpsession_insert_device_peer(
             self.uniffiCloneHandle(),
         FfiConverterData.lower(publicKey),uniffiCallStatus
+    )
+})
+}
+
+    /**
+     * Restart the radio (`CMD_REBOOT`), keeping everything it has
+     * persisted. Fire-and-forget for the same reason
+     * [`Self::factory_reset`] is: a radio that restarts answers nothing
+     * and the reboot drops the link. A radio without `CAP_REBOOT`
+     * answers `STATUS_UNIMPLEMENTED` instead, which arrives as an
+     * ordinary unsolicited status.
+     *
+     * Permitted from any stage, again like the factory reset: a radio
+     * worth restarting is often one that is not answering properly.
+     */
+open func reboot()throws  -> UlcpSessionUpdateRecord  {
+    return try  FfiConverterTypeUlcpSessionUpdateRecord_lift(try rustCallWithError(FfiConverterTypeMobileError_lift) {
+        uniffiCallStatus in
+    uniffi_umsh_mobile_core_fn_method_mobileulcpsession_reboot(
+            self.uniffiCloneHandle(),uniffiCallStatus
     )
 })
 }
@@ -7940,6 +7973,10 @@ public struct UlcpDeviceCardRecord: Equatable, Hashable {
     public var supportsAdvert: Bool
     public var supportsAdmin: Bool
     public var supportsAlert: Bool
+    /**
+     * Whether a Restart control is worth offering (`CAP_REBOOT`).
+     */
+    public var supportsReboot: Bool
     public var supportsSave: Bool
     /**
      * Whether batched property reads are worth trying. A device that
@@ -7962,7 +7999,10 @@ public struct UlcpDeviceCardRecord: Equatable, Hashable {
          */deviceVersion: String?,
         /**
          * `PROP_DEV_MODEL`: the hardware, when the device names it.
-         */deviceModel: String?, deviceName: String?, supportsDeviceName: Bool, supportsBattery: Bool, supportsLora: Bool, supportsDutyCycleLimit: Bool, supportsRepeater: Bool, supportsIdent: Bool, supportsDeviceIdentity: Bool, supportsGnss: Bool, supportsAdvert: Bool, supportsAdmin: Bool, supportsAlert: Bool, supportsSave: Bool,
+         */deviceModel: String?, deviceName: String?, supportsDeviceName: Bool, supportsBattery: Bool, supportsLora: Bool, supportsDutyCycleLimit: Bool, supportsRepeater: Bool, supportsIdent: Bool, supportsDeviceIdentity: Bool, supportsGnss: Bool, supportsAdvert: Bool, supportsAdmin: Bool, supportsAlert: Bool,
+        /**
+         * Whether a Restart control is worth offering (`CAP_REBOOT`).
+         */supportsReboot: Bool, supportsSave: Bool,
         /**
          * Whether batched property reads are worth trying. A device that
          * declines one is asked again a property at a time, so this is a
@@ -7983,6 +8023,7 @@ public struct UlcpDeviceCardRecord: Equatable, Hashable {
         self.supportsAdvert = supportsAdvert
         self.supportsAdmin = supportsAdmin
         self.supportsAlert = supportsAlert
+        self.supportsReboot = supportsReboot
         self.supportsSave = supportsSave
         self.supportsMulti = supportsMulti
     }
@@ -8018,6 +8059,7 @@ public struct FfiConverterTypeUlcpDeviceCardRecord: FfiConverterRustBuffer {
                 supportsAdvert: FfiConverterBool.read(from: &buf),
                 supportsAdmin: FfiConverterBool.read(from: &buf),
                 supportsAlert: FfiConverterBool.read(from: &buf),
+                supportsReboot: FfiConverterBool.read(from: &buf),
                 supportsSave: FfiConverterBool.read(from: &buf),
                 supportsMulti: FfiConverterBool.read(from: &buf)
         )
@@ -8039,6 +8081,7 @@ public struct FfiConverterTypeUlcpDeviceCardRecord: FfiConverterRustBuffer {
         FfiConverterBool.write(value.supportsAdvert, into: &buf)
         FfiConverterBool.write(value.supportsAdmin, into: &buf)
         FfiConverterBool.write(value.supportsAlert, into: &buf)
+        FfiConverterBool.write(value.supportsReboot, into: &buf)
         FfiConverterBool.write(value.supportsSave, into: &buf)
         FfiConverterBool.write(value.supportsMulti, into: &buf)
     }
@@ -9994,6 +10037,10 @@ public struct UlcpSyncRecord: Equatable, Hashable {
      */
     public var supportsAlert: Bool
     /**
+     * The device can restart its hardware on request (`CAP_REBOOT`).
+     */
+    public var supportsReboot: Bool
+    /**
      * `PROP_ALERT`: what the device is doing to make itself findable, when
      * it has said. Live state like `battery`, and absent on the same terms.
      */
@@ -10147,6 +10194,9 @@ public struct UlcpSyncRecord: Equatable, Hashable {
          * The device can make itself conspicuous on request (`CAP_ALERT`).
          */supportsAlert: Bool,
         /**
+         * The device can restart its hardware on request (`CAP_REBOOT`).
+         */supportsReboot: Bool,
+        /**
          * `PROP_ALERT`: what the device is doing to make itself findable, when
          * it has said. Live state like `battery`, and absent on the same terms.
          */alert: UlcpAlertState?, phyEnabled: Bool, frequencyKhz: UInt32, transmitPowerDbm: Int8, bandwidthHz: UInt32?, spreadingFactor: UInt8?, codingRateDenom: UInt8?, dutyCycleNow: UInt16?, dutyCycleLimit: UInt16?, saved: SavedSnapshotRecord?, queuedFrames: UInt16?, droppedFrames: UInt32?, filterCount: UInt32?, hostChannelCount: UInt32?, hostPeerCount: UInt32?, autoAck: Bool?,
@@ -10236,6 +10286,7 @@ public struct UlcpSyncRecord: Equatable, Hashable {
         self.supportsAdvert = supportsAdvert
         self.supportsAdmin = supportsAdmin
         self.supportsAlert = supportsAlert
+        self.supportsReboot = supportsReboot
         self.alert = alert
         self.phyEnabled = phyEnabled
         self.frequencyKhz = frequencyKhz
@@ -10300,6 +10351,7 @@ public struct FfiConverterTypeUlcpSyncRecord: FfiConverterRustBuffer {
                 supportsAdvert: FfiConverterBool.read(from: &buf),
                 supportsAdmin: FfiConverterBool.read(from: &buf),
                 supportsAlert: FfiConverterBool.read(from: &buf),
+                supportsReboot: FfiConverterBool.read(from: &buf),
                 alert: FfiConverterOptionTypeUlcpAlertState.read(from: &buf),
                 phyEnabled: FfiConverterBool.read(from: &buf),
                 frequencyKhz: FfiConverterUInt32.read(from: &buf),
@@ -10350,6 +10402,7 @@ public struct FfiConverterTypeUlcpSyncRecord: FfiConverterRustBuffer {
         FfiConverterBool.write(value.supportsAdvert, into: &buf)
         FfiConverterBool.write(value.supportsAdmin, into: &buf)
         FfiConverterBool.write(value.supportsAlert, into: &buf)
+        FfiConverterBool.write(value.supportsReboot, into: &buf)
         FfiConverterOptionTypeUlcpAlertState.write(value.alert, into: &buf)
         FfiConverterBool.write(value.phyEnabled, into: &buf)
         FfiConverterUInt32.write(value.frequencyKhz, into: &buf)
@@ -11642,6 +11695,13 @@ public enum MobileMeshResetScope: Equatable, Hashable {
      */
     case restore
     /**
+     * `CMD_REBOOT`: nothing. The device power-cycles and comes back as
+     * itself, with everything it had persisted. A device without
+     * `CAP_REBOOT` answers `STATUS_UNIMPLEMENTED` rather than silence,
+     * which is the one reply this scope can produce.
+     */
+    case reboot
+    /**
      * `CMD_FACTORY_RESET`: everything, including the device's identity.
      * A device that has forgotten its identity is a different node, and
      * no longer reachable at the address this operation was sent to.
@@ -11672,7 +11732,9 @@ public struct FfiConverterTypeMobileMeshResetScope: FfiConverterRustBuffer {
 
         case 2: return .restore
 
-        case 3: return .factory
+        case 3: return .reboot
+
+        case 4: return .factory
 
         default: throw UniffiInternalError.unexpectedEnumCase
         }
@@ -11690,8 +11752,12 @@ public struct FfiConverterTypeMobileMeshResetScope: FfiConverterRustBuffer {
             writeInt(&buf, Int32(2))
 
 
-        case .factory:
+        case .reboot:
             writeInt(&buf, Int32(3))
+
+
+        case .factory:
+            writeInt(&buf, Int32(4))
 
         }
     }
@@ -14984,6 +15050,17 @@ public func ulcpRadioPresets() -> [RadioPresetRecord]  {
 })
 }
 /**
+ * Encode a `CMD_REBOOT` request with the shared ULCP codec.
+ */
+public func ulcpReboot(transactionId: UInt8)throws  -> Data  {
+    return try  FfiConverterData.lift(try rustCallWithError(FfiConverterTypeMobileError_lift) {
+        uniffiCallStatus in
+    uniffi_umsh_mobile_core_fn_func_ulcp_reboot(
+        FfiConverterUInt8.lower(transactionId),uniffiCallStatus
+    )
+})
+}
+/**
  * Encode a `CMD_SAVE` request with the shared ULCP codec.
  */
 public func ulcpSave(transactionId: UInt8)throws  -> Data  {
@@ -15176,6 +15253,9 @@ private let initializationResult: InitializationResult = {
         return InitializationResult.apiChecksumMismatch
     }
     if (uniffi_umsh_mobile_core_checksum_func_ulcp_radio_presets() != 56599) {
+        return InitializationResult.apiChecksumMismatch
+    }
+    if (uniffi_umsh_mobile_core_checksum_func_ulcp_reboot() != 31857) {
         return InitializationResult.apiChecksumMismatch
     }
     if (uniffi_umsh_mobile_core_checksum_func_ulcp_save() != 15143) {
@@ -15419,6 +15499,9 @@ private let initializationResult: InitializationResult = {
         return InitializationResult.apiChecksumMismatch
     }
     if (uniffi_umsh_mobile_core_checksum_method_mobileulcpsession_insert_device_peer() != 60874) {
+        return InitializationResult.apiChecksumMismatch
+    }
+    if (uniffi_umsh_mobile_core_checksum_method_mobileulcpsession_reboot() != 35097) {
         return InitializationResult.apiChecksumMismatch
     }
     if (uniffi_umsh_mobile_core_checksum_method_mobileulcpsession_reconcile_host_channel_keys() != 27528) {

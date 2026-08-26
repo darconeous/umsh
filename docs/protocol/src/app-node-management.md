@@ -158,10 +158,15 @@ administrator reissues the remainder as a new exchange.
 ### Resets {#resets}
 
 Commands that initiate a reset — `CMD_RST`, `CMD_RESTORE` in its reset
-form, and `CMD_FACTORY_RESET` — are answered by **no** response payload.
-Delivery of such a command is confirmed by requesting a MAC
-acknowledgment, and its completion by a later exchange reading
-`PROP_LAST_STATUS` for the reset code.
+form, [`CMD_REBOOT`](ulcp-core.md#cmd-reboot), and `CMD_FACTORY_RESET` —
+are answered by **no** response payload. Delivery of such a command is
+confirmed by requesting a MAC acknowledgment, and its completion by a
+later exchange reading `PROP_LAST_STATUS` for the reset code.
+
+A device that restarts is unreachable for as long as it takes to come
+back, and a repeater that restarts takes its stretch of the network with
+it. `CMD_REBOOT` is nonetheless within an administrator's reach, because
+the node it is most worth sending to is the one nobody can walk to.
 
 ### Retries and At-Most-Once Processing {#at-most-once}
 

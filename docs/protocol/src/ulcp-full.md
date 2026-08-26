@@ -680,9 +680,6 @@ should also discard its own pairing to the radio.
 
 This command is available regardless of capabilities.
 
-This command is only available on devices advertising `CAP_SAVE`; otherwise
-it fails with `STATUS_UNIMPLEMENTED`.
-
 ## Multi-Value Properties {#multi-value-properties}
 
 A **multi-value property** holds an unordered set of items rather than a

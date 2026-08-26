@@ -262,6 +262,26 @@ impl SimulatedDevice {
                     CryptoEngine::new(SoftwareAes, SoftwareSha256),
                 );
             }
+            Some(Effect::Reboot) => {
+                // A power cycle and nothing else: the persisted
+                // artifacts survive, the session comes back announcing
+                // its power-on reset, and uptime counts from here. No
+                // reply, as on hardware.
+                self.boot_ms = self.now_ms;
+                self.session = DeviceSession::new(
+                    self.config,
+                    Status::RESET_POWER_ON,
+                    CryptoEngine::new(SoftwareAes, SoftwareSha256),
+                );
+                // A board configures itself from the saved snapshot on
+                // the way up, so replay it here. The identity and the
+                // pairing PIN are this simulator's own fields and are
+                // answered from them, so only the snapshot has to go
+                // back into the session.
+                if let Some(saved) = self.snapshot.clone() {
+                    let _ = self.session.restore_at_boot(&saved);
+                }
+            }
             Some(Effect::ReadTime { tid }) => {
                 self.session.respond_time(tid, self.epoch, &mut emit);
             }
@@ -362,6 +382,9 @@ mod tests {
             gnss: Some(GnssConfig::DEFAULT),
             illuminance: true,
             ble: true,
+            // A simulated power cycle is a rebuilt session, which is
+            // exactly what a host watching this device would see.
+            reboot: true,
             mac_node: false,
         }
     }

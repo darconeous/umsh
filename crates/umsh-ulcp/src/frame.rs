@@ -100,6 +100,13 @@ pub enum Cmd {
     /// this returns the radio to a blank factory state and does not reply:
     /// the reboot drops the link.
     FactoryReset = 15,
+    /// Restart the hardware (host to device): the device reboots as if
+    /// power-cycled, keeping every piece of persisted state. Unlike
+    /// `CMD_RST` (which returns protocol state to its post-reset values
+    /// with the device still running), this drops the link, and like
+    /// `CMD_FACTORY_RESET` it does not reply. Requires `CAP_REBOOT`; a
+    /// device without it answers `STATUS_UNIMPLEMENTED` instead.
+    Reboot = 16,
     /// Get several property values (host to device). Requires
     /// `CAP_CMD_MULTI`.
     PropMultiGet = 21,
@@ -130,6 +137,7 @@ impl Cmd {
             13 => Some(Self::Clear),
             14 => Some(Self::Restore),
             15 => Some(Self::FactoryReset),
+            16 => Some(Self::Reboot),
             21 => Some(Self::PropMultiGet),
             22 => Some(Self::PropMultiSet),
             23 => Some(Self::PropAre),
@@ -548,6 +556,12 @@ pub fn factory_reset(buf: &mut [u8], tid: u8) -> Result<usize, WriteError> {
     Ok(FrameWriter::new(buf, tid, Cmd::FactoryReset)?.finish())
 }
 
+/// Encode a `CMD_REBOOT` frame (no payload). The device restarts without
+/// replying, keeping everything it has persisted.
+pub fn reboot(buf: &mut [u8], tid: u8) -> Result<usize, WriteError> {
+    Ok(FrameWriter::new(buf, tid, Cmd::Reboot)?.finish())
+}
+
 /// Encode a `CMD_RESTORE` frame (no payload).
 pub fn restore(buf: &mut [u8], tid: u8) -> Result<usize, WriteError> {
     Ok(FrameWriter::new(buf, tid, Cmd::Restore)?.finish())
@@ -771,18 +785,18 @@ mod tests {
 
     #[test]
     fn unknown_command_is_well_formed() {
-        let frame = Frame::parse(&[0x81, 0x10]).unwrap();
-        assert_eq!(frame.cmd, 16);
+        let frame = Frame::parse(&[0x81, 0x11]).unwrap();
+        assert_eq!(frame.cmd, 17);
         assert_eq!(frame.command(), None);
     }
 
     #[test]
     fn every_assigned_command_round_trips() {
-        for id in (0..=15u8).chain(21..=23) {
+        for id in (0..=16u8).chain(21..=23) {
             let cmd = Cmd::from_u8(id).unwrap_or_else(|| panic!("command {id} unassigned"));
             assert_eq!(cmd as u8, id);
         }
-        for id in (16..=20u8).chain(24..=127) {
+        for id in (17..=20u8).chain(24..=127) {
             assert_eq!(Cmd::from_u8(id), None, "command {id} should be unassigned");
         }
     }
@@ -843,6 +857,7 @@ mod tests {
             (clear, Cmd::Clear),
             (restore, Cmd::Restore),
             (factory_reset, Cmd::FactoryReset),
+            (reboot, Cmd::Reboot),
         ] {
             let len = encode(&mut buf, 2).unwrap();
             assert_eq!(len, 2);

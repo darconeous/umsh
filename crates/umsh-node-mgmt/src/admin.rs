@@ -178,7 +178,12 @@ impl<const REQUEST: usize> Exchange<REQUEST> {
         let resets = Frame::parse(frame)
             .ok()
             .and_then(|parsed| parsed.command())
-            .is_some_and(|cmd| matches!(cmd, Cmd::Reset | Cmd::Restore | Cmd::FactoryReset));
+            .is_some_and(|cmd| {
+                matches!(
+                    cmd,
+                    Cmd::Reset | Cmd::Restore | Cmd::FactoryReset | Cmd::Reboot
+                )
+            });
 
         let mut stored = [0u8; REQUEST];
         stored[..frame.len()].copy_from_slice(frame);
@@ -506,6 +511,7 @@ mod tests {
         for len in [
             frame::reset(&mut buf, 0).unwrap(),
             frame::factory_reset(&mut buf, 0).unwrap(),
+            frame::reboot(&mut buf, 0).unwrap(),
         ] {
             let mut exchange = Admin::new(&buf[..len], 1, 0).expect("begin");
             assert!(!exchange.expects_response());

@@ -108,6 +108,8 @@ pub const fn capability_name(code: u32) -> Option<&'static str> {
         cap::MAC_BACKHAUL => "MAC_BACKHAUL",
         cap::ADMIN => "ADMIN",
         cap::CMD_MULTI => "CMD_MULTI",
+        cap::BLE => "BLE",
+        cap::REBOOT => "REBOOT",
         _ => return None,
     })
 }
@@ -135,7 +137,8 @@ impl fmt::Display for FrameDescription<'_> {
             | Cmd::Save
             | Cmd::Clear
             | Cmd::Restore
-            | Cmd::FactoryReset => {
+            | Cmd::FactoryReset
+            | Cmd::Reboot => {
                 write!(out, "{command:?} tid={tid}")
             }
             Cmd::PropGet

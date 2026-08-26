@@ -480,6 +480,9 @@ mod firmware {
             // controller, and every one can be made unfindable: see
             // `advertising_permitted`.
             ble: true,
+            // Every nRF52 board can reset itself through the bootloader
+            // register; see the `reboot` hook below.
+            reboot: true,
             // A real MAC runs behind every session here.
             mac_node: true,
         }
@@ -1605,6 +1608,16 @@ mod firmware {
             }
             // Discards all in-RAM state and remounts factory-fresh.
             cortex_m::peripheral::SCB::sys_reset()
+        }
+
+        async fn reboot(&mut self) -> ! {
+            // Nothing is erased: every journal stays where it is and the
+            // board remounts from it. Through `reset_to_app` rather than
+            // a bare `sys_reset` so GPREGRET is cleared first — a stale
+            // DFU value there would land the reboot in the bootloader
+            // instead of the application.
+            debug_log(format_args!("REBOOT: restarting"));
+            umsh_bsp_nrf52840::gpregret::reset_to_app()
         }
 
         fn set_advertising_allowed(&mut self, allowed: bool) {
