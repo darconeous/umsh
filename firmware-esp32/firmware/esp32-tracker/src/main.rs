@@ -77,10 +77,23 @@ use trouble_host::prelude::*;
 
 use umsh_bsp_esp32::flash_store;
 use umsh_bsp_esp32::rng::EspCryptoRng;
-use umsh_bsp_heltec_lora32_v3::battery::BatterySampler;
-use umsh_bsp_heltec_lora32_v3::display::{self, Brightness, Display, DisplayConfigAsync as _};
-use umsh_bsp_heltec_lora32_v3::radio as board_radio;
-use umsh_bsp_heltec_lora32_v3::vext::Vext;
+// The board BSP, under one name whatever the board. Every board-specific
+// pin, peripheral, and radio type reaches this file through `board`.
+#[cfg(feature = "board-heltec-v2")]
+use umsh_bsp_heltec_lora32_v2 as board;
+#[cfg(feature = "board-heltec-v3")]
+use umsh_bsp_heltec_lora32_v3 as board;
+
+use board::battery::BatterySampler;
+use board::display::{self, Brightness, Display, DisplayConfigAsync as _};
+use board::radio as board_radio;
+// Boards whose `Vext` also gates the battery divider share one rail
+// between the display task and the sampler, so their handle is `Copy`
+// rather than an owned pin; the API surface is otherwise identical.
+#[cfg(not(feature = "vext-gates-battery"))]
+use board::vext::Vext;
+#[cfg(feature = "vext-gates-battery")]
+use board::vext::VextHandle as Vext;
 use umsh_crypto::CryptoEngine;
 use umsh_crypto::software::{SoftwareAes, SoftwareSha256};
 use umsh_radio_loraphy::{DeviceControl, MAX_PAYLOAD};
@@ -116,8 +129,20 @@ esp_bootloader_esp_idf::esp_app_desc!();
 const WDT_TIMEOUT: esp_hal::time::Duration = esp_hal::time::Duration::from_secs(8);
 
 /// SX1262 PA limits on this module.
+#[cfg(feature = "radio-sx126x")]
 const MIN_TX_POWER_DBM: i8 = -9;
+#[cfg(feature = "radio-sx126x")]
 const MAX_TX_POWER_DBM: i8 = 22;
+
+/// SX1276 PA limits. The antenna is on the PA_BOOST port and the BSP
+/// configures `tx_boost: true`, which is the [2, 20] dBm path in the
+/// driver — the RFO path's [-4, 14] range is unreachable on this board.
+/// Above 17 dBm the driver switches PA_DAC to its 20 dBm mode and raises
+/// OCP to 240 mA, so the top of this range is duty-limited in practice.
+#[cfg(feature = "radio-sx127x")]
+const MIN_TX_POWER_DBM: i8 = 2;
+#[cfg(feature = "radio-sx127x")]
+const MAX_TX_POWER_DBM: i8 = 20;
 
 const BLE_CONNECTIONS_MAX: usize = 1;
 const BLE_L2CAP_CHANNELS_MAX: usize = 2;
@@ -140,9 +165,9 @@ const DEFAULT_DEVICE_NAME: &str = "UMSH Heltec V3";
 const DEV_VERSION: &str = concat!("umsh/", env!("GIT_DESCRIBE"));
 
 /// `PROP_DEV_MODEL`: the hardware this image was built for, matching the
-/// board id `heltec-v3` used by the release manifest and
-/// `site/data/hardware.toml`.
-const DEV_MODEL: &str = "Heltec WiFi LoRa 32 V3";
+/// board id used by the release manifest and `site/data/hardware.toml`
+/// (`heltec-v2` / `heltec-v3`).
+const DEV_MODEL: &str = board::BOARD_NAME;
 
 /// The board default name plus a stable per-die suffix — the low 16
 /// bits of the factory eFuse MAC, the same die-unique value the BLE
@@ -207,13 +232,23 @@ fn session_config() -> SessionConfig {
         default_device_name: default_device_name(),
         mtu: MAX_PAYLOAD as u16,
         // Fixed at build time: LoRa::new(.., false, ..) below sets the
-        // private-network word 0x12 → SX126x registers 0x1424.
+        // private-network word 0x12. `PROP_PHY_LORA_SW` is defined as
+        // the 16-bit SX126x-style word whatever the silicon, so both
+        // radio families report the same 0x1424 here.
         sync_word: 0x1424,
         min_tx_power_dbm: MIN_TX_POWER_DBM,
         max_tx_power_dbm: MAX_TX_POWER_DBM,
-        // SX1262 tunable range.
+        // Chip tunable range. Wider than any one module's matching
+        // network — the operator is responsible for staying legal and
+        // for what the antenna path can actually radiate.
+        #[cfg(feature = "radio-sx126x")]
         freq_khz_min: 150_000,
+        #[cfg(feature = "radio-sx126x")]
         freq_khz_max: 960_000,
+        #[cfg(feature = "radio-sx127x")]
+        freq_khz_min: 137_000,
+        #[cfg(feature = "radio-sx127x")]
+        freq_khz_max: 1_020_000,
         // Post-reset defaults (PHY disabled until the host enables it);
         // RF values match the MeshCore-US bringup profile.
         defaults: RadioSettings {
@@ -269,7 +304,13 @@ pub(crate) static DUTY_LEDGER: umsh_ulcp_device::DutyLedger = umsh_ulcp_device::
 /// the physical radio remains single-flight, but the protocol session
 /// can retain several host frames so a LoRa completion round trip is
 /// not imposed between fragments.
+#[cfg(feature = "chip-esp32s3")]
 const ULCP_TX_QUEUE_CAPACITY: usize = 8;
+/// Halved on the classic ESP32: each staged frame is RAM the 128 KiB
+/// `dram_seg` cannot spare, and the CP2102 link this depth was sized for
+/// still gets four frames of pipelining.
+#[cfg(feature = "chip-esp32")]
+const ULCP_TX_QUEUE_CAPACITY: usize = 4;
 type Session = umsh_ulcp_device::Session<SoftwareAes, SoftwareSha256, ULCP_TX_QUEUE_CAPACITY>;
 
 /// Deterministic CSPRNG for device-identity generation, seeded from the
@@ -2176,22 +2217,50 @@ fn boot_reason(panicked: bool) -> Status {
     if panicked {
         return Status::RESET_CRASH;
     }
-    match esp_hal::system::reset_reason() {
+    let reason = esp_hal::system::reset_reason();
+
+    // The core and system timers are named the same on both parts. The
+    // per-CPU ones are not: the dual-core classic ESP32 numbers them by
+    // CPU (`Cpu0Sw`, `Cpu0RtcWdt`) and has no second CPU watchdog and no
+    // super-watchdog, both of which the S3 does have.
+    let watchdog = matches!(
+        reason,
         Some(
             SocResetReason::CoreMwdt0
-            | SocResetReason::CoreMwdt1
-            | SocResetReason::CoreRtcWdt
-            | SocResetReason::CpuMwdt0
-            | SocResetReason::CpuMwdt1
-            | SocResetReason::CpuRtcWdt
-            | SocResetReason::SysRtcWdt
-            | SocResetReason::SysSuperWdt,
-        ) => Status::RESET_WATCHDOG,
-        Some(SocResetReason::CoreSw | SocResetReason::CpuSw | SocResetReason::CoreDeepSleep) => {
-            Status::RESET_SOFTWARE
-        }
-        _ => Status::RESET_POWER_ON,
+                | SocResetReason::CoreMwdt1
+                | SocResetReason::CoreRtcWdt
+                | SocResetReason::CpuMwdt0
+                | SocResetReason::SysRtcWdt
+        )
+    );
+    #[cfg(feature = "chip-esp32")]
+    let watchdog = watchdog || matches!(reason, Some(SocResetReason::Cpu0RtcWdt));
+    #[cfg(feature = "chip-esp32s3")]
+    let watchdog = watchdog
+        || matches!(
+            reason,
+            Some(
+                SocResetReason::CpuMwdt1 | SocResetReason::CpuRtcWdt | SocResetReason::SysSuperWdt
+            )
+        );
+    if watchdog {
+        return Status::RESET_WATCHDOG;
     }
+
+    #[cfg(feature = "chip-esp32")]
+    let cpu_sw = matches!(reason, Some(SocResetReason::Cpu0Sw));
+    #[cfg(feature = "chip-esp32s3")]
+    let cpu_sw = matches!(reason, Some(SocResetReason::CpuSw));
+    if cpu_sw
+        || matches!(
+            reason,
+            Some(SocResetReason::CoreSw | SocResetReason::CoreDeepSleep)
+        )
+    {
+        return Status::RESET_SOFTWARE;
+    }
+
+    Status::RESET_POWER_ON
 }
 
 #[esp_rtos::main]
@@ -2202,8 +2271,24 @@ async fn main(spawner: Spawner) {
     umsh_ulcp_runtime::log::set_debug_log(debug_log);
     let config = esp_hal::Config::default().with_cpu_clock(CpuClock::max());
     let peripherals = esp_hal::init(config);
-    // umsh-node and umsh-sync use `alloc`.
+    // umsh-node and umsh-sync use `alloc`. The classic ESP32 has roughly
+    // half the S3's data RAM and the BT controller takes a fixed bite out
+    // of it before the application sees any, so its heap is smaller.
+    #[cfg(feature = "chip-esp32s3")]
     esp_alloc::heap_allocator!(size: 72 * 1024);
+    // The classic ESP32's `dram_seg` is only 128 KiB once esp-hal reserves
+    // the BT controller's 64 KiB, and the static side of this image does
+    // not fit alongside a heap of any useful size. `dram2_seg` is the
+    // ~96 KiB of DRAM past the ROM data and stack areas — unusable for
+    // zero-initialized statics (NOLOAD, nothing clears it) but fine for
+    // a heap arena, which is `MaybeUninit` by nature. Smaller than the
+    // S3's 72 KiB deliberately: on the S3 the BLE controller allocates
+    // from this heap, while here it lives in its own 64 KiB reservation,
+    // so this heap only carries umsh-node/umsh-sync (8 KiB on the nRF
+    // boards) plus esp-radio's residual allocations — and the device
+    // node's ~32 KiB Mac arena shares the same 96 KiB region.
+    #[cfg(feature = "chip-esp32")]
+    esp_alloc::heap_allocator!(#[esp_hal::ram(reclaimed)] size: 48 * 1024);
 
     let mut rtc = Rtc::new(peripherals.RTC_TIMER);
     rtc.rwdt.set_timeout(RwdtStage::Stage0, WDT_TIMEOUT);
@@ -2217,7 +2302,7 @@ async fn main(spawner: Spawner) {
         "{} {} on {}",
         env!("CARGO_PKG_NAME"),
         DEV_VERSION,
-        umsh_bsp_heltec_lora32_v3::BOARD_NAME,
+        board::BOARD_NAME,
     );
 
     let mut panic_buf = [0u8; umsh_bsp_esp32::panic_capture::MSG_CAPACITY];
@@ -2237,11 +2322,30 @@ async fn main(spawner: Spawner) {
         });
     let boot_reason = boot_reason(panic_report.is_some());
 
+    #[cfg(feature = "board-heltec-v3")]
     let led = Output::new(peripherals.GPIO35, Level::Low, OutputConfig::default());
+    #[cfg(feature = "board-heltec-v2")]
+    let led = Output::new(peripherals.GPIO25, Level::Low, OutputConfig::default());
     let low_power = LowPower::new(peripherals.LPWR);
     spawner.spawn(heartbeat_task(led, rtc, low_power).unwrap());
 
-    // ── BLE controller first: transport AND the RF entropy source ────────
+    // ── Vext rail and battery ADC, before the radio controller ───────────
+    // Claim order matters on the classic ESP32: the battery divider sits
+    // on an ADC2 channel, ADC2 is shared with the radio, and `Adc::new`
+    // panics once the esp-radio controller has taken it. Claiming here
+    // costs the boards with an independent ADC nothing — the rail starts
+    // off and no conversion runs until the battery task asks for one.
+    #[cfg(feature = "board-heltec-v3")]
+    let mut vext = Vext::new(peripherals.GPIO36);
+    #[cfg(feature = "board-heltec-v2")]
+    let mut vext = board::vext::init(peripherals.GPIO21);
+
+    #[cfg(feature = "board-heltec-v3")]
+    let sampler = BatterySampler::new(peripherals.ADC1, peripherals.GPIO1, peripherals.GPIO37);
+    #[cfg(feature = "board-heltec-v2")]
+    let sampler = BatterySampler::new(peripherals.ADC2, peripherals.GPIO13, vext);
+
+    // ── BLE controller: transport AND the RF entropy source ──────────────
     let connector = BleConnector::new(peripherals.BT, Default::default())
         .unwrap_or_else(|e| panic!("ble init failed ({e:?}) — no trustworthy RNG"));
     let mut rng = EspCryptoRng::new().unwrap_or_else(|e| panic!("crypto rng unavailable: {e:?}"));
@@ -2341,7 +2445,10 @@ async fn main(spawner: Spawner) {
 
     let boot_identity = boot_identity_keys.as_ref().map(|(_secret, public)| *public);
 
-    // ── SX1262 behind the device runner + mux ────────────────────────────
+    // ── The LoRa modem behind the device runner + mux ────────────────────
+    // SPI2 either way; the pins, the control lines, and the interface
+    // variant's arity are the board's.
+    #[cfg(feature = "radio-sx126x")]
     let spi = Spi::new(
         peripherals.SPI2,
         SpiConfig::default()
@@ -2353,19 +2460,56 @@ async fn main(spawner: Spawner) {
     .with_mosi(peripherals.GPIO10)
     .with_miso(peripherals.GPIO11)
     .into_async();
+    #[cfg(feature = "radio-sx127x")]
+    let spi = Spi::new(
+        peripherals.SPI2,
+        SpiConfig::default()
+            .with_frequency(Rate::from_mhz(16))
+            .with_mode(Mode::_0),
+    )
+    .unwrap()
+    .with_sck(peripherals.GPIO5)
+    .with_mosi(peripherals.GPIO27)
+    .with_miso(peripherals.GPIO19)
+    .into_async();
+
+    #[cfg(feature = "radio-sx126x")]
     let radio_cs = Output::new(peripherals.GPIO8, Level::High, OutputConfig::default());
+    #[cfg(feature = "radio-sx127x")]
+    let radio_cs = Output::new(peripherals.GPIO18, Level::High, OutputConfig::default());
     let radio_spi = ExclusiveDevice::new(spi, radio_cs, Delay).unwrap();
+
+    #[cfg(feature = "radio-sx126x")]
     let radio_reset = Output::new(peripherals.GPIO12, Level::High, OutputConfig::default());
-    let radio_dio1 = Input::new(
-        peripherals.GPIO14,
-        InputConfig::default().with_pull(Pull::None),
-    );
-    let radio_busy = Input::new(
-        peripherals.GPIO13,
-        InputConfig::default().with_pull(Pull::None),
-    );
-    let kind = board_radio::new_radio_kind(radio_spi, radio_reset, radio_dio1, radio_busy)
-        .unwrap_or_else(|e| panic!("radio init failed: {e:?}"));
+    #[cfg(feature = "radio-sx127x")]
+    let radio_reset = Output::new(peripherals.GPIO14, Level::High, OutputConfig::default());
+
+    // SX126x: DIO1 carries the IRQs and BUSY gates every command.
+    #[cfg(feature = "radio-sx126x")]
+    let kind = {
+        let radio_dio1 = Input::new(
+            peripherals.GPIO14,
+            InputConfig::default().with_pull(Pull::None),
+        );
+        let radio_busy = Input::new(
+            peripherals.GPIO13,
+            InputConfig::default().with_pull(Pull::None),
+        );
+        board_radio::new_radio_kind(radio_spi, radio_reset, radio_dio1, radio_busy)
+    }
+    .unwrap_or_else(|e| panic!("radio init failed: {e:?}"));
+
+    // SX127x: no BUSY line at all, and DIO0 alone carries every IRQ the
+    // driver needs. DIO1/DIO2 are wired to input-only pins and unused.
+    #[cfg(feature = "radio-sx127x")]
+    let kind = {
+        let radio_dio0 = Input::new(
+            peripherals.GPIO26,
+            InputConfig::default().with_pull(Pull::None),
+        );
+        board_radio::new_radio_kind(radio_spi, radio_reset, radio_dio0)
+    }
+    .unwrap_or_else(|e| panic!("radio init failed: {e:?}"));
     // `false` selects the private-network sync word (0x12 → 0x1424),
     // matching SessionConfig::sync_word above.
     let lora = LoRa::new(kind, false, Delay)
@@ -2380,10 +2524,17 @@ async fn main(spawner: Spawner) {
     // flight; drain by time (20 ms clears a 64-byte FIFO at 115200 baud
     // roughly four times over). The console goes quiet from here.
     Timer::after_millis(20).await;
+    #[cfg(feature = "board-heltec-v3")]
     let uart = Uart::new(peripherals.UART0, UartConfig::default())
         .unwrap()
         .with_rx(peripherals.GPIO44)
         .with_tx(peripherals.GPIO43)
+        .into_async();
+    #[cfg(feature = "board-heltec-v2")]
+    let uart = Uart::new(peripherals.UART0, UartConfig::default())
+        .unwrap()
+        .with_rx(peripherals.GPIO3)
+        .with_tx(peripherals.GPIO1)
         .into_async();
     let (uart_rx, uart_tx) = uart.split();
     spawner.spawn(output_task(uart_tx, panic_report.clone()).unwrap());
@@ -2431,7 +2582,7 @@ async fn main(spawner: Spawner) {
     }
 
     // ── Battery, button ──────────────────────────────────────────────────
-    let sampler = BatterySampler::new(peripherals.ADC1, peripherals.GPIO1, peripherals.GPIO37);
+    // The sampler was constructed above, before the radio controller.
     spawner.spawn(battery_task(sampler).unwrap());
     let button = Input::new(
         peripherals.GPIO0,
@@ -2443,8 +2594,12 @@ async fn main(spawner: Spawner) {
     // The panel and the rail that powers it move together: the display
     // task switches the panel off when attention lapses and drops the
     // rail entirely on the way into deep sleep.
-    let mut vext = Vext::new(peripherals.GPIO36);
+    #[cfg(feature = "board-heltec-v3")]
     let mut oled_reset = Output::new(peripherals.GPIO21, Level::High, OutputConfig::default());
+    #[cfg(feature = "board-heltec-v2")]
+    let mut oled_reset = Output::new(peripherals.GPIO16, Level::High, OutputConfig::default());
+
+    #[cfg(feature = "board-heltec-v3")]
     let i2c = I2c::new(
         peripherals.I2C0,
         I2cConfig::default().with_frequency(Rate::from_khz(400)),
@@ -2452,6 +2607,15 @@ async fn main(spawner: Spawner) {
     .unwrap()
     .with_sda(peripherals.GPIO17)
     .with_scl(peripherals.GPIO18)
+    .into_async();
+    #[cfg(feature = "board-heltec-v2")]
+    let i2c = I2c::new(
+        peripherals.I2C0,
+        I2cConfig::default().with_frequency(Rate::from_khz(400)),
+    )
+    .unwrap()
+    .with_sda(peripherals.GPIO4)
+    .with_scl(peripherals.GPIO15)
     .into_async();
     let mut oled = display::new_display(i2c);
     vext.enable().await;

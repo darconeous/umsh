@@ -1,22 +1,22 @@
 [package]
-name = "firmware-heltec-v3"
-description = "Heltec WiFi LoRa 32 V3 ULCP device firmware over UART0 and BLE GATT"
+name = "firmware-heltec-v2"
+description = "Heltec WiFi LoRa 32 V2 ULCP device firmware over UART0 and BLE GATT"
 version.workspace = true
 edition.workspace = true
 license.workspace = true
 repository.workspace = true
 
-# The full ULCP firmware on ESP32-S3 — the shared session driver from
-# `umsh-ulcp-runtime` behind this board's transports (HDLC on
-# UART0/CP2102, UlcpService GATT on the esp-radio controller),
-# with the SX1262 behind the radio mux and the on-board device node.
+# The full ULCP firmware on the classic ESP32 — the shared session
+# driver from `umsh-ulcp-runtime` behind this board's transports (HDLC on
+# UART0/CP2102, UlcpService GATT on the esp-radio controller), with the
+# SX1276 behind the radio mux and the on-board device node.
 
 [features]
 # Board identity. Exactly one is on; it selects the BSP module, the pin
 # and peripheral wiring, the radio's power and band limits, and the
 # static capacities the board's RAM budget allows. This block is kept
 # identical across the ESP32 device boards — only `default` differs.
-default = ["board-heltec-v3"]
+default = ["board-heltec-v2"]
 board-heltec-v2 = ["chip-esp32", "radio-sx127x", "vext-gates-battery"]
 board-heltec-v3 = ["chip-esp32s3", "radio-sx126x"]
 
@@ -48,15 +48,15 @@ vext-gates-battery = []
 ble-debug = ["trouble-host/security-debug"]
 
 [[bin]]
-name = "firmware-heltec-v3"
+name = "firmware-heltec-v2"
 # The protocol, security, transport-arbitration, and BLE implementation
 # live in the shared ESP32 tracker sources. Board differences are
-# selected by the capability + `board-heltec-v3` features above.
+# selected by the capability + `board-heltec-v2` features above.
 path = "../esp32-tracker/src/main.rs"
 
 [dependencies]
-umsh-bsp-esp32 = { path = "../../crates/umsh-bsp-esp32", features = ["esp32s3", "panic-handler"] }
-umsh-bsp-heltec-lora32-v3 = { path = "../../crates/umsh-bsp-heltec-lora32-v3" }
+umsh-bsp-esp32 = { path = "../../crates/umsh-bsp-esp32", features = ["esp32", "panic-handler"] }
+umsh-bsp-heltec-lora32-v2 = { path = "../../crates/umsh-bsp-heltec-lora32-v2" }
 umsh-ulcp = { path = "../../../crates/umsh-ulcp", default-features = false }
 umsh-ulcp-device = { path = "../../../crates/umsh-ulcp-device", default-features = false }
 # Board-agnostic device runtime shared with the T-Echo/T-1000E images:
@@ -93,11 +93,11 @@ embedded-hal-bus = { version = "0.3", default-features = false, features = ["asy
 esp-storage = { version = "0.9", default-features = false, features = ["critical-section", "embedded-storage"] }
 # umsh-node / umsh-sync use `alloc`.
 esp-alloc = { version = "0.10" }
-esp-bootloader-esp-idf = { version = "0.5", features = ["esp32s3"] }
-esp-hal = { version = "1.1", features = ["esp32s3", "unstable"] }
-esp-println = { version = "0.17", features = ["esp32s3"] }
-esp-radio = { version = "1.0.0-beta.0", features = ["esp32s3", "ble", "unstable"] }
-esp-rtos = { version = "0.3", features = ["esp32s3", "embassy", "esp-radio", "esp-alloc"] }
+esp-bootloader-esp-idf = { version = "0.5", features = ["esp32"] }
+esp-hal = { version = "1.1", features = ["esp32", "unstable"] }
+esp-println = { version = "0.17", features = ["esp32"] }
+esp-radio = { version = "1.0.0-beta.0", features = ["esp32", "ble", "unstable"] }
+esp-rtos = { version = "0.3", features = ["esp32", "embassy", "esp-radio", "esp-alloc"] }
 # Resolves to ../../lora-rs via the workspace [patch].
 lora-phy = { version = "3.0.2-alpha", default-features = false }
 # Device-identity generation and the device node's CSPRNG: ChaCha20

@@ -1,6 +1,6 @@
 ---
 name: flashing
-description: Flash UMSH firmware to a board. Per-board `make flash-*` targets, DFU entry, UF2 drive names and family IDs, app base addresses, and the flash-layout gotchas for T-Echo, T1000-E, Wio Tracker L1, SenseCAP Solar P1, XIAO nRF52840, and Heltec V3.
+description: Flash UMSH firmware to a board. Per-board `make flash-*` targets, DFU entry, UF2 drive names and family IDs, app base addresses, and the flash-layout gotchas for T-Echo, T1000-E, Wio Tracker L1, SenseCAP Solar P1, XIAO nRF52840, Heltec V3, and Heltec V2.
 ---
 
 # Flashing UMSH firmware
@@ -38,4 +38,5 @@ Build from `firmware-esp32/`; needs the espup toolchain
 cannot be bricked, stays attached as monitor.
 
 - `make flash-heltec-v3`, `make flash-heltec-v3-console` (override `ESPFLASH_PORT=...`)
+- `make flash-heltec-v2` (classic ESP32; same CP2102 flow, `--chip esp32`)
 - ESP32 flashes rewrite the partition table (`partitions-umsh.csv`, carries the 64 KB `umsh` data partition) — reflashing loses data past the old factory partition.

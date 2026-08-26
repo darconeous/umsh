@@ -16,6 +16,7 @@
 	build-techo flash-techo flash-techo-serial \
 	build-heltec-v3-console flash-heltec-v3-console \
 	build-heltec-v3 flash-heltec-v3 \
+	build-heltec-v2 flash-heltec-v2 \
 	esp-toolchain-check espflash-check \
 	dfu-zip-techo dfu-zip-t1000e dfu-zip-sensecap-solar \
 	dfu-zip-wio-tracker-l1 dfu-zip-xiao-nrf52 \
@@ -381,6 +382,13 @@ build-heltec-v3: esp-toolchain-check
 flash-heltec-v3: espflash-check build-heltec-v3
 	espflash flash --monitor $(ESPFLASH_PORT_ARG) $(ESPFLASH_PARTITIONS) \
 		$(ESP32S3_TARGET_DIR)/firmware-heltec-v3
+
+build-heltec-v2: esp-toolchain-check
+	$(ESP_ENV) cd firmware-esp32/firmware/heltec-v2 && cargo build --release
+
+flash-heltec-v2: espflash-check build-heltec-v2
+	espflash flash --monitor $(ESPFLASH_PORT_ARG) $(ESPFLASH_PARTITIONS) \
+		$(ESP32_TARGET_DIR)/firmware-heltec-v2
 
 # The single-file image the web flasher writes at offset 0: second-stage
 # bootloader, partition table, and application merged together.

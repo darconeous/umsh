@@ -15,6 +15,7 @@
 
 pub mod battery;
 pub mod display;
+pub mod platform;
 pub mod radio;
 pub mod vext;
 
@@ -55,3 +56,8 @@ pub const VEXT_ENABLE: u8 = 21;
 /// coexistence with the BLE controller is re-verified in Phase 4.
 pub const BATTERY_ADC: u8 = 13;
 pub const BATTERY_DIVIDER_RATIO_X10: u16 = 32;
+
+// CP2102 USB-UART bridge on UART0. This board has no native USB at all,
+// so this is the only wired host link.
+pub const UART0_TX: u8 = 1;
+pub const UART0_RX: u8 = 3;

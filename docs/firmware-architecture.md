@@ -38,15 +38,30 @@ but they no longer name build targets.
 | T-Echo | nRF52840 | `techo` | BLE, USB-CDC | 478/145 KiB (756/256) | hardware-accepted |
 | SenseCAP Solar | nRF52840 | `sensecap-solar` | BLE, USB-CDC | 462/134 KiB (756/256) | hardware-accepted |
 | Wio Tracker L1 | nRF52840 | `wio-tracker-l1` | BLE, USB-CDC | 476/136 KiB (756/256) | bringup complete, hw validation open |
-| Heltec V3 | ESP32-S3 | `heltec-v3` | BLE, UART | 1129/462 KiB (3008/512) | hardware-accepted |
-| Heltec V2 | ESP32 | **none — parked** | — | — | suspected defective unit |
+| Heltec V3 | ESP32-S3 | `heltec-v3` | BLE, UART | 1298/216 KiB (3008/512) | hardware-accepted |
+| Heltec V2 | ESP32 | `heltec-v2` | BLE, UART | 1260/191 KiB (3008/see below) | bringup complete, hw validation open |
 
-Figures are `text+data` against the application flash window and
-`data+bss` against SRAM, from a release build — the two left-hand columns
-of `arm-none-eabi-size <elf>`. They are a snapshot, not a budget: the
-useful reading is the headroom, which is comfortable on every board that
-ships. The Heltec V3 row is carried over from its bringup and has not
-been re-measured with this command.
+For the nRF52840 boards, figures are `text+data` against the application
+flash window and `data+bss` against SRAM, from a release build — the two
+left-hand columns of `arm-none-eabi-size <elf>`. On the Espressif boards
+`size` misleads: esp-hal's linker script fills the leftover DRAM with the
+`.stack` section and shadows flash-resident code into NOBITS placeholder
+sections, so `data+bss` always reads as roughly the whole DRAM window no
+matter what the image allocates. The honest RAM figure there is
+`readelf -S` over the real sections (`.data` + `.data.wifi` + `.bss`,
+plus `.rwdata_dummy` on the S3, where the D-bus shadows IRAM-resident
+code), and that is what the table carries.
+
+The Heltec V2's RAM budget is not one number: esp-hal gives the classic
+ESP32 a 128 KiB `dram_seg` for linker-placed statics (192 KiB minus the
+BT controller's 64 KiB reservation) plus the ~96 KiB `dram2_seg` past
+the ROM data and stack carve-outs, usable only for runtime-claimed
+memory. The image places 111.5 KiB of statics in `dram_seg` (16.5 KiB
+main-task stack remains) and its 48 KiB heap plus the ~32 KiB
+device-node Mac arena in `dram2_seg`. The board's prior on-air failure
+is documented in `docs/archive/firmware-plan-heltec-lora32-v2.md`; the
+reference unit is a suspected RF defect, so hardware validation starts
+from a second unit.
 
 **The Wio Tracker L1 is the OLED variant.** The L1, L1 Pro, and L1 Lite
 share a pin map, so one image covers them; the L1 e-ink variant drives a
@@ -109,10 +124,13 @@ firmware/
   exactly one `board-*` feature, owns `memory.x` and `build.rs`, and pins the
   target triple through its `.cargo/config.toml`. It contains no source.
 
-The ESP32-S3 image does not share the nRF52840 sources — `firmware-esp32/`
-carries its own `main.rs`. The two families share `umsh-ulcp-runtime`, the
-BSP/UX crates, and the protocol crates; the boot, transport, and peripheral
-wiring is necessarily per-family.
+The Espressif images do not share the nRF52840 sources — `firmware-esp32/`
+carries its own shipping sources in `firmware/esp32-tracker/src/`, shared
+by the Heltec V2 and V3 board packages the same way the nRF boards share
+`nrf52-tracker/src/` (thin manifests selecting a `board-*` feature). The
+two families share `umsh-ulcp-runtime`, the BSP/UX crates, and the
+protocol crates; the boot, transport, and peripheral wiring is
+necessarily per-family.
 
 Why a separate UX layer:
 

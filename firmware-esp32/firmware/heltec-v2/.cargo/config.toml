@@ -1,0 +1,15 @@
+# Classic ESP32 target selection. Build from inside this directory so this
+# file is picked up (the Makefile targets do); runner and rustflags come
+# from the workspace-level `.cargo/config.toml`.
+[build]
+target = "xtensa-esp32-none-elf"
+
+# esp-hal defaults this to 300 (revision v3.0) on the classic ESP32 alone —
+# every other chip defaults to 0 — and `esp_hal::init` asserts the running
+# silicon against it. Heltec V2 modules in the wild are frequently older
+# than v3.0, and the failure is a panic naming a revision rather than
+# anything pointing at this setting, so the floor is dropped to v1.0 here.
+# It lives at V2 firmware scope, not in the workspace config, because a
+# workspace-wide setting would relax the S3 image for no reason.
+[env]
+ESP_HAL_CONFIG_MIN_CHIP_REVISION = "100"
