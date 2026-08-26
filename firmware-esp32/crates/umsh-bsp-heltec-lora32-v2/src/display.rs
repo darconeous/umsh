@@ -21,8 +21,11 @@ use ssd1306::prelude::*;
 use ssd1306::{I2CDisplayInterface, Ssd1306Async};
 
 // The trait carrying `Display::init()`; re-exported so firmware doesn't
-// need its own ssd1306 dependency just to call it.
+// need its own ssd1306 dependency just to call it. `Brightness` rides
+// along for the same reason — the display-attention policy dims the
+// panel before switching it off.
 pub use ssd1306::mode::DisplayConfigAsync;
+pub use ssd1306::prelude::Brightness;
 
 /// The concrete driver type for this board's OLED.
 pub type Display = Ssd1306Async<

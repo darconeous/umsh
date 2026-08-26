@@ -69,7 +69,6 @@ device-node = [
     "dep:rand",
     "dep:rand_core",
     "dep:rand_chacha",
-    "dep:static_cell",
 ]
 # `ThreadModeRawMutex` for the device node's statics. For boards on a
 # single thread-mode executor whose BLE controller cannot tolerate the
@@ -98,7 +97,6 @@ umsh-sync = { path = "../umsh-sync", default-features = false, optional = true }
 rand = { workspace = true, optional = true }
 rand_core = { workspace = true, optional = true }
 rand_chacha = { version = "0.3", default-features = false, optional = true }
-static_cell = { version = "2", optional = true }
 
 [dev-dependencies]
 # Used only by the modules' host-run unit tests.

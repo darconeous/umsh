@@ -9,7 +9,6 @@
 //! cannot be generic.
 
 use embassy_executor::Spawner;
-use static_cell::StaticCell;
 
 use umsh_crypto::software::SoftwareIdentity;
 use umsh_ulcp_runtime::device_node as node;
@@ -34,7 +33,10 @@ type DeviceNodeHost = node::DeviceNodeHost<CounterStore>;
 type SessionInput =
     umsh_ulcp_runtime::driver::InputChannel<embassy_sync::blocking_mutex::raw::ThreadModeRawMutex>;
 
-static NODE_MAC_CELL: node::DeviceNodeMacCell<CounterStore> = StaticCell::new();
+// SAFETY of every `&mut` borrow below: `bring_up` runs at most once
+// (its documented contract), before any reference to the arena exists.
+static mut NODE_MAC_ARENA: node::DeviceNodeMacArena<CounterStore> =
+    core::mem::MaybeUninit::uninit();
 
 // ─── Task shims ──────────────────────────────────────────────────────────────
 
@@ -129,7 +131,8 @@ pub async fn bring_up(
     set_device_name(&crate::firmware::device_name_snapshot().await);
     let hooks = hooks();
     let parts = node::bring_up(
-        &NODE_MAC_CELL,
+        // SAFETY: sole borrow; `bring_up` is called at most once.
+        unsafe { &mut *&raw mut NODE_MAC_ARENA },
         identity_secret,
         node_seed,
         t_frame_ms,

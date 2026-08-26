@@ -7,8 +7,7 @@ name: CI
 # caught a flash-budget regression before it shipped. The Apple job runs on
 # every push/PR since this is a public repo (macOS runner minutes are free
 # here); ESP32 is pushed to main-only / manual-dispatch since it's the least
-# load-bearing target right now (Heltec V2 parked, only V3 active) and needs
-# a heavier toolchain bring-up.
+# load-bearing target right now and needs a heavier toolchain bring-up.
 
 on:
   push:
@@ -283,12 +282,12 @@ jobs:
     name: firmware (ESP32) / ${{ matrix.make_target }}
     runs-on: ubuntu-latest
     # Main-only / manual: heavier toolchain bring-up, and the least
-    # load-bearing target right now (Heltec V2 is parked, only V3 is active).
+    # load-bearing targets right now.
     if: github.event_name != 'pull_request'
     strategy:
       fail-fast: false
       matrix:
-        make_target: [build-heltec-v3, build-heltec-v3-console]
+        make_target: [build-heltec-v3, build-heltec-v3-console, build-heltec-v2]
     steps:
       - uses: actions/checkout@v4
 
@@ -301,7 +300,7 @@ jobs:
       - uses: esp-rs/xtensa-toolchain@v1.7.0
         with:
           ldproxy: false
-          buildtargets: esp32s3
+          buildtargets: esp32,esp32s3
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
 

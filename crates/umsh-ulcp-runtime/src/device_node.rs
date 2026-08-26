@@ -53,7 +53,6 @@ use embassy_sync::channel::Channel;
 use embassy_sync::signal::Signal;
 use embassy_sync::watch::Watch;
 use embassy_time::{Duration, Instant, Timer};
-use static_cell::StaticCell;
 
 use umsh_core::{ChannelKey, PublicKey};
 use umsh_crypto::CryptoEngine;
@@ -180,9 +179,14 @@ pub type DeviceNodeHandle<CS> = MacHandle<
 pub type DeviceNodeHost<CS> = Host<DeviceNodeHandle<CS>>;
 pub type DeviceNode<CS> = LocalNode<DeviceNodeHandle<CS>>;
 
-/// The `StaticCell` a board declares for its MAC. Board-side because its
-/// type depends on `CS`, and a `static` cannot be generic.
-pub type DeviceNodeMacCell<CS> = StaticCell<AsyncRefCell<DeviceNodeMac<CS>>>;
+/// The uninitialized arena a board declares for its MAC. Board-side
+/// because its type depends on `CS`, and a `static` cannot be generic.
+/// A `MaybeUninit` rather than a `StaticCell` so a board may place it in
+/// a NOLOAD region the runtime never zeroes (the Heltec V2 puts it in
+/// the classic ESP32's `dram2_seg`, where a `StaticCell`'s flag byte
+/// would come up as garbage); [`bring_up`]'s at-most-once contract is
+/// what the cell's flag used to enforce.
+pub type DeviceNodeMacArena<CS> = core::mem::MaybeUninit<AsyncRefCell<DeviceNodeMac<CS>>>;
 
 // ─── Statics ─────────────────────────────────────────────────────────────────
 
@@ -1069,7 +1073,7 @@ pub struct DeviceNodeParts<CS: CounterStore + 'static> {
 /// here, so a `PROP_IDENT` read arriving between this returning and the
 /// spawns would wait on the signal.
 pub async fn bring_up<CS: CounterStore + 'static>(
-    mac_cell: &'static DeviceNodeMacCell<CS>,
+    mac_arena: &'static mut DeviceNodeMacArena<CS>,
     identity_secret: &[u8; 32],
     node_seed: [u8; 32],
     t_frame_ms: u32,
@@ -1077,15 +1081,16 @@ pub async fn bring_up<CS: CounterStore + 'static>(
     duty: &'static umsh_ulcp_device::DutyLedger,
     hooks: NodeHooks,
 ) -> DeviceNodeParts<CS> {
-    // The Mac is ~37 KiB. `init_with` lets the compiler construct it in
-    // place inside the static cell; building it as a stack local (what
-    // `StaticCell::init` does) transits the stack once per move in the
-    // chain — hardware-diagnosed on the nRF images as boot HardFaults
-    // (INVSTATE jumps to 0) and a smashed allocator when the temporaries
-    // blew through the stack budget. Keep the construction a single
-    // in-place expression.
-    let mac_cell: &'static AsyncRefCell<DeviceNodeMac<CS>> = mac_cell.init_with(|| {
-        AsyncRefCell::new(DeviceNodeMac::new(
+    // The Mac is ~37 KiB. `MaybeUninit::write` lets the compiler
+    // construct it in place inside the arena, the same elision
+    // `StaticCell::init_with` leaned on before the arena became
+    // placeable; building it as a stack local transits the stack once
+    // per move in the chain — hardware-diagnosed on the nRF images as
+    // boot HardFaults (INVSTATE jumps to 0) and a smashed allocator when
+    // the temporaries blew through the stack budget. Keep the
+    // construction a single in-place expression.
+    let mac_cell: &'static AsyncRefCell<DeviceNodeMac<CS>> =
+        mac_arena.write(AsyncRefCell::new(DeviceNodeMac::new(
             DutyGatedRadio::with_load_hook(
                 umsh_radio_loraphy::LoraphyRadio::new(&NODE_CH, t_frame_ms),
                 duty,
@@ -1098,8 +1103,7 @@ pub async fn bring_up<CS: CounterStore + 'static>(
             counters,
             RepeaterConfig::default(),
             OperatingPolicy::default(),
-        ))
-    });
+        )));
     debug_log(format_args!("node bring-up: mac cell ready"));
     let identity = SoftwareIdentity::from_secret_bytes(identity_secret);
     // Retained for the device-domain sync gate, which compares the

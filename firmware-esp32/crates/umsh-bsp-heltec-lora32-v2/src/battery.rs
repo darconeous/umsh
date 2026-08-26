@@ -2,14 +2,15 @@
 //! divider whose ground leg is switched by `Vext`).
 //!
 //! The divider only reads truthfully while `Vext` is enabled (hardware
-//! doc §9.2), which is why [`BatterySampler::sample_mv`] demands the
-//! shared [`Vext`] handle — it powers the rail up and leaves it up, and
-//! the borrow proves nobody can switch it off mid-burst.
+//! doc §9.2), which is why [`BatterySampler`] holds the shared
+//! [`VextHandle`] — it raises the rail for the burst and puts it back
+//! the way it found it, so a reading taken while the panel is dark does
+//! not silently power the panel up behind the display task's back.
 //!
 //! GPIO13 is an ADC2 channel. On the classic ESP32, ADC2 is shared with
 //! the radio: `Adc::new` panics if the esp-radio controller has already
-//! claimed it, so construct the sampler (or at least take the boot
-//! sample) *before* radio init. Phase 4 re-verifies BLE coexistence.
+//! claimed it, so the sampler must be constructed *before* radio init.
+//! The firmware's boot order does this.
 //!
 //! The classic ESP32 ADC has no esp-hal calibration scheme; the
 //! raw→millivolt conversion below is the nominal 6 dB transfer function
@@ -21,7 +22,7 @@ use esp_hal::Blocking;
 use esp_hal::analog::adc::{Adc, AdcConfig, AdcPin, Attenuation};
 use esp_hal::peripherals::{ADC2, GPIO13};
 
-use crate::vext::Vext;
+use crate::vext::VextHandle;
 
 /// Samples per burst (after the discarded throwaway read).
 const BURST: usize = 8;
@@ -34,31 +35,36 @@ const DIVIDER_SETTLE_MS: u64 = 5;
 const FULL_SCALE_MV: u32 = 2_200;
 const FULL_SCALE_CODE: u32 = 4_095;
 
-/// Owned battery ADC: the ADC2 instance plus the configured GPIO13 pin.
+/// Owned battery ADC: the ADC2 instance, the configured GPIO13 pin, and
+/// the shared rail the divider hangs off.
 pub struct BatterySampler {
     adc: Adc<'static, ADC2<'static>, Blocking>,
     pin: AdcPin<GPIO13<'static>, ADC2<'static>>,
+    vext: VextHandle,
 }
 
 impl BatterySampler {
     /// Claim ADC2 and GPIO13. Panics if the radio already owns ADC2 —
     /// construct before radio init.
-    pub fn new(adc2: ADC2<'static>, gpio13: GPIO13<'static>) -> Self {
+    pub fn new(adc2: ADC2<'static>, gpio13: GPIO13<'static>, vext: VextHandle) -> Self {
         let mut config = AdcConfig::new();
         let pin = config.enable_pin(gpio13, Attenuation::_6dB);
         Self {
             adc: Adc::new(adc2, config),
             pin,
+            vext,
         }
     }
 
     /// Measure the battery terminal voltage in millivolts.
     ///
-    /// Ensures `Vext` is up (and leaves it up — the caller decides when
-    /// the domain powers down), settles the divider, discards one read,
-    /// then medians a burst and applies the ×3.2 divider ratio.
-    pub async fn sample_mv(&mut self, vext: &mut Vext) -> u16 {
-        vext.enable().await;
+    /// Raises `Vext` if it was down, settles the divider, discards one
+    /// read, then medians a burst and applies the ×3.2 divider ratio.
+    /// The rail is left as it was found: a sample taken with the panel
+    /// powered down does not leave it powered up and uninitialized.
+    pub async fn sample_mv(&mut self) -> u16 {
+        let was_on = self.vext.is_on();
+        self.vext.enable().await;
         Timer::after_millis(DIVIDER_SETTLE_MS).await;
 
         let _ = self.read_raw();
@@ -66,6 +72,11 @@ impl BatterySampler {
         for slot in &mut burst {
             *slot = self.read_raw();
         }
+
+        if !was_on {
+            self.vext.disable();
+        }
+
         burst.sort_unstable();
         let median = u32::from(burst[BURST / 2]);
 
