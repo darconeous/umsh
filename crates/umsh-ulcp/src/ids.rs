@@ -26,6 +26,11 @@ pub mod prop {
     pub const DEV_MODEL: u32 = 4;
     /// Supported capability list (`PROP_CAPS`).
     pub const CAPS: u32 = 5;
+    /// Seconds since the device booted (`PROP_UPTIME`). Optional and
+    /// ungated, like `DEV_MODEL`: a device with no monotonic clock to
+    /// answer from refuses the get. Reads next to `LAST_STATUS`, which
+    /// says why the device last reset — this says how long ago.
+    pub const UPTIME: u32 = 6;
     /// PHY enabled flag (`PROP_PHY_ENABLED`).
     pub const PHY_ENABLED: u32 = 32;
     /// Frequency in kHz (`PROP_PHY_FREQ`).

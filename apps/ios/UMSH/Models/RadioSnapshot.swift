@@ -517,6 +517,13 @@ func formattedAnnouncementInterval(_ seconds: UInt32) -> String {
     return "Every \(spelled)"
 }
 
+/// How long a device has been up, at the same two-unit scale the clock
+/// drift uses: "12 days, 6 hours".
+func formattedUptime(_ seconds: UInt32) -> String {
+    Duration.seconds(seconds)
+        .formatted(.units(allowed: [.days, .hours, .minutes, .seconds], maximumUnitCount: 2))
+}
+
 /// The transmit-duty limits the settings UI offers, as fractions of
 /// `UInt16.max`, with the maximum meaning no limit at all.
 let dutyCycleLimitChoices: [UInt16] = [UInt16.max, 13_107, 6_553, 655, 65]

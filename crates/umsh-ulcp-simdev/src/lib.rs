@@ -47,6 +47,12 @@ pub struct SimulatedDevice {
     pairing_pin: Option<u32>,
     air: Vec<Vec<u8>>,
     now_ms: u64,
+    /// The caller's clock reading when this device last came up.
+    /// `Clock::now_ms` is specified as milliseconds since boot, and a
+    /// factory reset reboots the hardware, so the simulated clock has to
+    /// restart with it — otherwise a freshly reset device would report the
+    /// uptime of the process driving it.
+    boot_ms: u64,
     /// The simulated wall clock, as a Unix second, or `None` for a device
     /// that has not been told and has never had a fix. Starts unset so the
     /// property's most interesting state is the one you see first.
@@ -74,9 +80,15 @@ impl SimulatedDevice {
             pairing_pin: None,
             air: Vec::new(),
             now_ms: 0,
+            boot_ms: 0,
             epoch: None,
             fix_step: 0,
         }
+    }
+
+    /// The caller's clock, rebased onto this device's boot.
+    fn device_ms(&self) -> u64 {
+        self.now_ms.saturating_sub(self.boot_ms)
     }
 
     /// Attach over the virtual equivalent of a physically secure serial link.
@@ -129,10 +141,13 @@ impl SimulatedDevice {
     /// crossed no air and was measured by nobody.
     pub fn inject_radio_rx_with_info(&mut self, bytes: &[u8], info: &RadioRxInfo, now_ms: u64) {
         self.now_ms = now_ms;
+        let device_ms = self.device_ms();
         let mut emitted = Vec::new();
-        let effect = self.session.on_radio_rx(bytes, info, now_ms, &mut |frame| {
-            emitted.push(frame.to_vec())
-        });
+        let effect = self
+            .session
+            .on_radio_rx(bytes, info, device_ms, &mut |frame| {
+                emitted.push(frame.to_vec())
+            });
         self.execute(effect, &mut emitted);
         self.queue_emitted(emitted);
     }
@@ -152,10 +167,11 @@ impl SimulatedDevice {
     }
 
     fn handle_frame(&mut self, frame: &[u8]) {
+        let device_ms = self.device_ms();
         let mut emitted = Vec::new();
-        let effect = self.session.handle_frame(frame, self.now_ms, &mut |bytes| {
-            emitted.push(bytes.to_vec())
-        });
+        let effect = self
+            .session
+            .handle_frame(frame, device_ms, &mut |bytes| emitted.push(bytes.to_vec()));
         self.execute(effect, &mut emitted);
         self.queue_emitted(emitted);
     }
@@ -173,9 +189,10 @@ impl SimulatedDevice {
             | Some(Effect::ApplyBackhaul { .. })
             | Some(Effect::ApplyAlert(_)) => {}
             Some(Effect::StartTransmit) => {
+                let device_ms = self.device_ms();
                 self.air.push(self.session.tx_data().to_vec());
                 self.session
-                    .on_tx_result(TxOutcome::Sent, self.now_ms, &mut emit);
+                    .on_tx_result(TxOutcome::Sent, device_ms, &mut emit);
             }
             Some(Effect::SampleRssi { tid }) => {
                 self.session.respond_rssi(tid, Ok(-77), &mut emit);
@@ -207,7 +224,10 @@ impl SimulatedDevice {
                 self.pairing_pin = pin;
                 self.session.respond_pin_set(tid, Ok(()), &mut emit);
             }
-            Some(Effect::DrainQueue) => while self.session.drain_step(self.now_ms, &mut emit) {},
+            Some(Effect::DrainQueue) => {
+                let device_ms = self.device_ms();
+                while self.session.drain_step(device_ms, &mut emit) {}
+            }
             Some(Effect::SaveSnapshot { tid }) => {
                 let mut buf = [0u8; SNAPSHOT_MAX];
                 let result = match self.session.encode_snapshot(&mut buf) {
@@ -233,6 +253,9 @@ impl SimulatedDevice {
                 self.identity = None;
                 self.identity_seed = 0;
                 self.pairing_pin = None;
+                // The reboot restarts the monotonic clock along with
+                // everything else, so uptime counts from here.
+                self.boot_ms = self.now_ms;
                 self.session = DeviceSession::new(
                     self.config,
                     Status::RESET_POWER_ON,
@@ -344,9 +367,13 @@ mod tests {
     }
 
     fn exchange(sim: &mut SimulatedDevice, request: &[u8]) -> Vec<Vec<u8>> {
+        exchange_at(sim, request, 100)
+    }
+
+    fn exchange_at(sim: &mut SimulatedDevice, request: &[u8], now_ms: u64) -> Vec<Vec<u8>> {
         let mut wire = vec![0; hdlc::max_encoded_len(request.len())];
         let len = hdlc::encode_frame(request, &mut wire).unwrap();
-        sim.ingest(&wire[..len], 100).unwrap();
+        sim.ingest(&wire[..len], now_ms).unwrap();
 
         let mut frames = Vec::new();
         while let Some(wire) = sim.take_outbound() {
@@ -372,6 +399,34 @@ mod tests {
         let payload = PropPayload::parse(response.payload).unwrap();
         assert_eq!(payload.key, prop::DEV_VERSION);
         assert_eq!(payload.value, b"umsh-simdev-test/0.1\0");
+    }
+
+    /// The simulated reboot has to restart the simulated clock, or a
+    /// factory-reset device would report the uptime of whatever process
+    /// happens to be driving it.
+    #[test]
+    fn a_factory_reset_restarts_the_uptime_clock() {
+        let mut sim = SimulatedDevice::new(test_config());
+        sim.attach();
+
+        let read_uptime = |sim: &mut SimulatedDevice, now_ms: u64| -> u32 {
+            let mut request = [0; 16];
+            let len = frame::prop_get(&mut request, 1, prop::UPTIME).unwrap();
+            let responses = exchange_at(sim, &request[..len], now_ms);
+            let response = Frame::parse(&responses[0]).unwrap();
+            let payload = PropPayload::parse(response.payload).unwrap();
+            assert_eq!(payload.key, prop::UPTIME);
+            u32::from_le_bytes(payload.value.try_into().expect("UINT32"))
+        };
+
+        assert_eq!(read_uptime(&mut sim, 5_000), 5);
+
+        let mut request = [0; 16];
+        let len = frame::factory_reset(&mut request, 2).unwrap();
+        exchange_at(&mut sim, &request[..len], 5_000);
+
+        // The caller's clock keeps running; the device's does not.
+        assert_eq!(read_uptime(&mut sim, 7_000), 2);
     }
 
     #[test]

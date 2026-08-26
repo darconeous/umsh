@@ -15,7 +15,7 @@ use anyhow::{Result, bail};
 use umsh::ulcp::AdvertPolicy;
 use umsh::ulcp_wire::ids::{MAX_AUTO_ANNOUNCE_INTERVAL_S, MIN_AUTO_ANNOUNCE_INTERVAL_S};
 
-use super::persist;
+use super::{format_duration, persist};
 use crate::App;
 use crate::output::{field, subfield};
 
@@ -135,16 +135,6 @@ fn format_interval(seconds: u32) -> String {
     format!("every {seconds} s ({})", format_duration(seconds))
 }
 
-fn format_duration(seconds: u32) -> String {
-    match seconds {
-        s if s >= 3600 && s % 3600 == 0 => format!("{}h", s / 3600),
-        s if s >= 3600 => format!("{}h{}m", s / 3600, (s % 3600) / 60),
-        s if s >= 60 && s % 60 == 0 => format!("{}m", s / 60),
-        s if s >= 60 => format!("{}m{}s", s / 60, s % 60),
-        s => format!("{s}s"),
-    }
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -165,7 +155,9 @@ mod tests {
         assert!(error.contains("off"), "{error}");
 
         let error = "90000".parse::<Period>().unwrap_err();
-        assert!(error.contains("24h"), "{error}");
+        // The shared formatter carries days, so the 24-hour ceiling
+        // states itself as one.
+        assert!(error.contains("1d"), "{error}");
 
         // Both ends themselves are reachable.
         assert_eq!(
@@ -185,5 +177,8 @@ mod tests {
         assert_eq!(format_interval(3600), "every 3600 s (1h)");
         assert_eq!(format_interval(1200), "every 1200 s (20m)");
         assert_eq!(format_interval(5400), "every 5400 s (1h30m)");
+        // The 24-hour maximum reads as a day, now that the shared
+        // formatter carries one.
+        assert_eq!(format_interval(86400), "every 86400 s (1d)");
     }
 }

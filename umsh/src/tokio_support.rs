@@ -69,6 +69,11 @@ impl Default for StdClock {
 
 impl StdClock {
     /// Create a clock whose epoch starts at construction time.
+    ///
+    /// [`Clock::now_ms`] is specified as milliseconds since boot, so a
+    /// host that answers `PROP_UPTIME` must construct this when the thing
+    /// it stands for comes up rather than lazily on first use. Cloning
+    /// preserves the origin, so handing copies around is safe.
     pub fn new() -> Self {
         Self::default()
     }

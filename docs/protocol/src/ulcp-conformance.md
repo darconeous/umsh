@@ -62,9 +62,11 @@ Id  | Mnemonic                | Required
 42  | `PROP_PHY_MTU`          | Always
 113 | `STR_PHY_RAW`           | Always
 
-`PROP_DEV_MODEL` (4) is the one property that is neither always required nor
-capability-gated: firmware built for a specific board **SHOULD** implement it,
-and anything else omits it. A host discovers it by asking.
+`PROP_DEV_MODEL` (4) and `PROP_UPTIME` (6) are the two properties that are
+neither always required nor capability-gated. Firmware built for a specific
+board **SHOULD** implement the first, and a device with a monotonic clock
+**SHOULD** implement the second; anything else omits them. A host discovers
+both by asking.
 
 Every other property is gated by a capability. A device that does not
 advertise the capability does not implement the property, and rejects it

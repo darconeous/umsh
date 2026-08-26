@@ -3126,6 +3126,7 @@ pub struct UlcpManagedPropertyIds {
     pub dev_discoverable: u32,
     pub gnss_ident_update: u32,
     pub gnss_ident_precision: u32,
+    pub uptime: u32,
     pub advert_interval: u32,
     pub beacon_interval: u32,
     pub startup_beacon: u32,
@@ -3167,6 +3168,7 @@ pub fn ulcp_managed_property_ids() -> UlcpManagedPropertyIds {
         dev_discoverable: prop::DEV_DISCOVERABLE,
         gnss_ident_update: prop::GNSS_IDENT_UPDATE,
         gnss_ident_precision: prop::GNSS_IDENT_PRECISION,
+        uptime: prop::UPTIME,
         advert_interval: prop::ADVERT_INTERVAL,
         beacon_interval: prop::BEACON_INTERVAL,
         startup_beacon: prop::STARTUP_BEACON,
@@ -3276,6 +3278,9 @@ pub fn ulcp_category_properties(
             ],
         ),
         UlcpManageCategory::Time => {
+            // Ungated: a device with no wall clock may still know how
+            // long it has been up, and a refusal costs one slot.
+            when(true, &[prop::UPTIME]);
             when(has(cap::TIME), &[prop::TIME, prop::TZ_OFFSET]);
             // Whether the receiver may set the clock is the clock's
             // business, so it lives here rather than with the receiver.
@@ -3416,6 +3421,9 @@ pub struct UlcpDevicePropertiesRecord {
     /// host's write is refused.
     pub gnss_ident_update: Option<bool>,
     pub gnss_ident_precision: Option<u8>,
+    /// `PROP_UPTIME`: seconds since the device booted. Absent on a
+    /// device that does not report it.
+    pub uptime_seconds: Option<u32>,
     pub advert_interval_seconds: Option<u32>,
     pub beacon_interval_seconds: Option<u32>,
     pub startup_beacon: Option<bool>,
@@ -3539,6 +3547,7 @@ pub fn inspect_ulcp_properties(
         dev_discoverable: optional_value(at, prop::DEV_DISCOVERABLE, decode_bool),
         gnss_ident_update: optional_value(at, prop::GNSS_IDENT_UPDATE, decode_bool),
         gnss_ident_precision: optional_value(at, prop::GNSS_IDENT_PRECISION, decode_precision),
+        uptime_seconds: optional_value(at, prop::UPTIME, decode_u32),
         advert_interval_seconds: optional_value(at, prop::ADVERT_INTERVAL, decode_u32),
         beacon_interval_seconds: optional_value(at, prop::BEACON_INTERVAL, decode_u32),
         startup_beacon: optional_value(at, prop::STARTUP_BEACON, decode_bool),

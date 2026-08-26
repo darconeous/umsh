@@ -4583,6 +4583,7 @@ impl<A: AesProvider, S: Sha256Provider, const TX: usize> Session<A, S, TX> {
             | prop::DEV_MODEL
             | prop::INTERFACE_TYPE
             | prop::CAPS
+            | prop::UPTIME
             | prop::PHY_RSSI
             | prop::PHY_MTU
             | prop::PHY_DUTY_NOW
@@ -4990,6 +4991,7 @@ impl<A: AesProvider, S: Sha256Provider, const TX: usize> Session<A, S, TX> {
                 | prop::DEV_VERSION
                 | prop::INTERFACE_TYPE
                 | prop::CAPS
+                | prop::UPTIME
                 | prop::PHY_ENABLED
                 | prop::PHY_FREQ
                 | prop::PHY_TX_POWER
@@ -5043,6 +5045,17 @@ impl<A: AesProvider, S: Sha256Provider, const TX: usize> Session<A, S, TX> {
             // `known_prop` refuses the get before reaching this.
             prop::DEV_MODEL => put_str(out, self.config.dev_model.unwrap_or_default()),
             prop::INTERFACE_TYPE => pui::encode(ids::INTERFACE_TYPE, out).unwrap_or(0),
+            // `now_ms` is milliseconds since boot by the `Clock` contract,
+            // so uptime is a read of the clock rather than a counter this
+            // session has to keep. Saturating instead of wrapping: a
+            // device that somehow outlives the u32 pins at the ceiling
+            // rather than appearing to have just rebooted.
+            prop::UPTIME => put(
+                out,
+                &u32::try_from(now_ms / 1000)
+                    .unwrap_or(u32::MAX)
+                    .to_le_bytes(),
+            ),
             prop::CAPS => {
                 let mut len = 0;
                 let mac_node = self.config.mac_node;
@@ -7531,6 +7544,39 @@ mod tests {
             assert!(effect.is_none(), "key {key} accepted {bad:?}");
             expect_status(&emitted[0], 2, Status::INVALID_ARGUMENT);
         }
+    }
+
+    #[test]
+    fn uptime_reads_the_callers_clock() {
+        let mut session = test_session();
+
+        // Seconds since boot, truncated, little-endian. The caller's
+        // clock is the only source: the session keeps no counter.
+        let read_at = |session: &mut TestSession, now_ms: u64| -> u32 {
+            let mut buf = [0u8; 16];
+            let len = frame::prop_get(&mut buf, 1, prop::UPTIME).unwrap();
+            let (emitted, effect) = dispatch(session, &buf[..len], now_ms);
+            assert!(effect.is_none());
+            let (_, key, value) = parse_prop_is(&emitted[0]);
+            assert_eq!(key, prop::UPTIME);
+            u32::from_le_bytes(value.try_into().expect("UINT32"))
+        };
+
+        assert_eq!(read_at(&mut session, 0), 0);
+        assert_eq!(read_at(&mut session, 999), 0);
+        assert_eq!(read_at(&mut session, 3_600_500), 3600);
+
+        // A protocol reset is not a reboot, so it must not disturb the
+        // reading — that is what makes uptime worth reading next to
+        // PROP_LAST_STATUS.
+        let mut buf = [0u8; 4];
+        let len = frame::reset(&mut buf, 0).unwrap();
+        dispatch(&mut session, &buf[..len], 3_600_500);
+        assert_eq!(read_at(&mut session, 3_601_500), 3601);
+
+        // Read-only, and ungated: refused as a write, not as a stranger.
+        let (emitted, _) = set(&mut session, prop::UPTIME, &7u32.to_le_bytes());
+        expect_status(&emitted[0], 2, Status::INVALID_ARGUMENT);
     }
 
     #[test]

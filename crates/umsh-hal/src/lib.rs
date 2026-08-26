@@ -186,7 +186,14 @@ pub trait Radio {
 
 /// Monotonic millisecond clock.
 pub trait Clock {
-    /// Return milliseconds since an arbitrary monotonic epoch.
+    /// Return milliseconds since the device booted.
+    ///
+    /// Most of the stack only ever takes differences and would be happy
+    /// with any monotonic epoch, but `PROP_UPTIME` reports this value
+    /// directly, so the epoch is part of the contract: an implementation
+    /// backed by a clock that starts somewhere else MUST subtract its own
+    /// origin. A simulated device that emulates a reboot has to restart
+    /// this along with the rest of the hardware.
     fn now_ms(&self) -> u64;
 
     /// Poll a delay that completes when the monotonic clock reaches `deadline_ms`.

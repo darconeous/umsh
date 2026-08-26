@@ -54,6 +54,7 @@ local PROPERTIES = {
   [4] = "PROP_DEV_MODEL",
   [3] = "PROP_INTERFACE_TYPE",
   [5] = "PROP_CAPS",
+  [6] = "PROP_UPTIME",
   [32] = "PROP_PHY_ENABLED",
   [35] = "PROP_PHY_FREQ",
   [37] = "PROP_PHY_TX_POWER",

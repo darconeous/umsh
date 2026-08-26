@@ -392,6 +392,15 @@ fn an_administrator_reads_and_writes_the_device_domain() {
     assert!(matches!(read.outcome, Outcome::Replied { .. }));
     assert_eq!(value_of(&read.reply), b"Simulated Board\0");
 
+    // Uptime is ungated and not on the admin deny-list, so a distant
+    // administrator can ask a repeater how long it has been up. The
+    // harness owns the clock, so this asserts reachability and width
+    // rather than a particular reading.
+    let len = frame::prop_get(&mut buf, 0, prop::UPTIME).unwrap();
+    let uptime = converse(&mut device, &buf[..len], 3);
+    assert!(matches!(uptime.outcome, Outcome::Replied { .. }));
+    assert_eq!(value_of(&uptime.reply).len(), 4);
+
     let len = frame::prop_set(&mut buf, 0, prop::DEV_NAME, b"Ridgeline Repeater").unwrap();
     let write = converse(&mut device, &buf[..len], 2);
     assert!(matches!(write.outcome, Outcome::Replied { .. }));

@@ -22,6 +22,7 @@ pub const fn property_name(key: u32) -> Option<&'static str> {
         prop::DEV_MODEL => "PROP_DEV_MODEL",
         prop::INTERFACE_TYPE => "PROP_INTERFACE_TYPE",
         prop::CAPS => "PROP_CAPS",
+        prop::UPTIME => "PROP_UPTIME",
         prop::PHY_ENABLED => "PROP_PHY_ENABLED",
         prop::PHY_FREQ => "PROP_PHY_FREQ",
         prop::PHY_TX_POWER => "PROP_PHY_TX_POWER",

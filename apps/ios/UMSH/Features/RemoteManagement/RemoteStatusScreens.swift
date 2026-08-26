@@ -184,6 +184,25 @@ struct RemoteTimeScreen: View {
 
     var body: some View {
         Form {
+            if let uptime {
+                Section {
+                    // Uptime advances at exactly a second per second, so
+                    // extrapolating from the read is as true as the read
+                    // was — and a stopped counter would read as a device
+                    // that had just rebooted.
+                    TimelineView(.periodic(from: .now, by: 1)) { context in
+                        LabeledContent(
+                            "Uptime",
+                            value: formattedUptime(elapsedUptime(uptime, asOf: context.date))
+                        )
+                    }
+                } header: {
+                    Text("Uptime")
+                } footer: {
+                    Text("How long since the device last restarted.")
+                }
+            }
+
             Section {
                 if let clock {
                     if let date = clock.date {
@@ -265,6 +284,23 @@ struct RemoteTimeScreen: View {
         )
         .onChange(of: reading?.asOf) { edits = Edits(reading, preserving: edits) }
         .onAppear { if edits.isEmpty { edits = Edits(reading) } }
+    }
+
+    /// Uptime as of the last read, carried with the instant it was
+    /// learned so the row can keep counting from there.
+    private var uptime: (read: UInt32, asOf: Date)? {
+        guard let reading, let seconds = reading.properties.uptimeSeconds, let asOf = reading.asOf
+        else { return nil }
+        return (seconds, asOf)
+    }
+
+    /// The reading carried forward to now. Clamped at both ends: a phone
+    /// clock that jumps backwards cannot push the count below what was
+    /// read, and the sum saturates rather than wrapping into a device
+    /// that looks freshly rebooted.
+    private func elapsedUptime(_ uptime: (read: UInt32, asOf: Date), asOf now: Date) -> UInt32 {
+        let since = max(0, now.timeIntervalSince(uptime.asOf))
+        return UInt32(clamping: UInt64(uptime.read) + UInt64(since))
     }
 
     /// The clock as of the last read, in the shape the companion screen

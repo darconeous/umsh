@@ -421,3 +421,45 @@ fn decode_u32(value: &[u8]) -> Option<u32> {
 fn duty_percent(raw: u16) -> f64 {
     f64::from(raw) * 100.0 / 65535.0
 }
+
+/// A span of seconds at human scale, to at most two units: `45s`, `20m`,
+/// `1h30m`, `12d6h`.
+///
+/// Two units is the point where more precision stops helping — nobody
+/// reading an uptime of `12d6h` wanted the seconds. Days matter because
+/// this also renders uptimes, where hour counts run into the hundreds.
+fn format_duration(seconds: u32) -> String {
+    const MINUTE: u32 = 60;
+    const HOUR: u32 = 60 * MINUTE;
+    const DAY: u32 = 24 * HOUR;
+    match seconds {
+        s if s >= DAY && s % DAY == 0 => format!("{}d", s / DAY),
+        s if s >= DAY => format!("{}d{}h", s / DAY, (s % DAY) / HOUR),
+        s if s >= HOUR && s % HOUR == 0 => format!("{}h", s / HOUR),
+        s if s >= HOUR => format!("{}h{}m", s / HOUR, (s % HOUR) / MINUTE),
+        s if s >= MINUTE && s % MINUTE == 0 => format!("{}m", s / MINUTE),
+        s if s >= MINUTE => format!("{}m{}s", s / MINUTE, s % MINUTE),
+        s => format!("{s}s"),
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::format_duration;
+
+    #[test]
+    fn a_duration_reads_at_human_scale_to_two_units() {
+        assert_eq!(format_duration(0), "0s");
+        assert_eq!(format_duration(45), "45s");
+        assert_eq!(format_duration(1200), "20m");
+        assert_eq!(format_duration(90), "1m30s");
+        assert_eq!(format_duration(3600), "1h");
+        assert_eq!(format_duration(5400), "1h30m");
+        assert_eq!(format_duration(14400), "4h");
+        // Days, which is where uptimes live and advert intervals do not.
+        assert_eq!(format_duration(86400), "1d");
+        assert_eq!(format_duration(1_058_400), "12d6h");
+        // A day boundary with no leftover hours still reads as whole days.
+        assert_eq!(format_duration(172_800), "2d");
+    }
+}

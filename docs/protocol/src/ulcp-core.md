@@ -712,6 +712,35 @@ make decisions based on what a device *can do* has
 Describes the supported capabilities of this device. Encoded as a list of packed
 unsigned integers. See [Capabilities](ulcp-core.md#capabilities) for a list of values.
 
+### PROP 6: `PROP_UPTIME` {#prop-uptime}
+
+* Type: Single-Value, Read-Only
+* Asynchronous Updates: No
+* Required: **OPTIONAL**
+* Scope: Device
+* Value Type: UINT32
+* Units: Seconds
+* Post-Reset Value: 0
+
+Seconds elapsed since the device last booted, truncated toward zero. A
+device that runs long enough to exhaust the range saturates rather than
+wrapping, so the value never falsely reports a recent restart.
+
+This dates what [`PROP_LAST_STATUS`](#prop-last-status) describes: the
+reset code says why the device last started, and this says how long ago.
+Read together they distinguish a node that came up cleanly weeks back
+from one that is restarting under a fault and reporting the same code
+each time.
+
+Only a power cycle or a genuine restart resets it. `CMD_RST` returns
+protocol state to its post-reset values without rebooting the device, and
+**MUST NOT** reset this property; neither does a host attaching or
+detaching.
+
+A device with no monotonic clock to answer from **SHOULD** omit the
+property rather than report a fabricated value. A host **MUST** treat a
+refused get as "this device does not report its uptime" and continue.
+
 ## State Classes {#state-classes}
 
 Every piece of device state belongs to exactly one of three classes. The

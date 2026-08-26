@@ -41,6 +41,7 @@ Id   | Mnemonic                                                                 
 3    | [`PROP_INTERFACE_TYPE`](ulcp-core.md#prop-interface-type)                  | Get                      | —
 4    | [`PROP_DEV_MODEL`](ulcp-core.md#prop-dev-model)                            | Get                      | —
 5    | [`PROP_CAPS`](ulcp-core.md#prop-caps)                                      | Get                      | —
+6    | [`PROP_UPTIME`](ulcp-core.md#prop-uptime)                                  | Get                      | —
 32   | [`PROP_PHY_ENABLED`](ulcp-radio.md#prop-phy-enabled)                       | Get, Set                 | —
 35   | [`PROP_PHY_FREQ`](ulcp-radio.md#prop-phy-freq)                             | Get, Set                 | —
 37   | [`PROP_PHY_TX_POWER`](ulcp-radio.md#prop-phy-tx-power)                     | Get, Set                 | —

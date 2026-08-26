@@ -8171,6 +8171,11 @@ public struct UlcpDevicePropertiesRecord: Equatable, Hashable {
      */
     public var gnssIdentUpdate: Bool?
     public var gnssIdentPrecision: UInt8?
+    /**
+     * `PROP_UPTIME`: seconds since the device booted. Absent on a
+     * device that does not report it.
+     */
+    public var uptimeSeconds: UInt32?
     public var advertIntervalSeconds: UInt32?
     public var beaconIntervalSeconds: UInt32?
     public var startupBeacon: Bool?
@@ -8215,7 +8220,11 @@ public struct UlcpDevicePropertiesRecord: Equatable, Hashable {
          * Whether the device maintains its own advertised position. Set,
          * the location and altitude above are the device's to write and a
          * host's write is refused.
-         */gnssIdentUpdate: Bool?, gnssIdentPrecision: UInt8?, advertIntervalSeconds: UInt32?, beaconIntervalSeconds: UInt32?, startupBeacon: Bool?, gnssEnabled: Bool?,
+         */gnssIdentUpdate: Bool?, gnssIdentPrecision: UInt8?,
+        /**
+         * `PROP_UPTIME`: seconds since the device booted. Absent on a
+         * device that does not report it.
+         */uptimeSeconds: UInt32?, advertIntervalSeconds: UInt32?, beaconIntervalSeconds: UInt32?, startupBeacon: Bool?, gnssEnabled: Bool?,
         /**
          * What the receiver currently sees. Read-only, and absent on a
          * device with no receiver.
@@ -8245,6 +8254,7 @@ public struct UlcpDevicePropertiesRecord: Equatable, Hashable {
         self.devDiscoverable = devDiscoverable
         self.gnssIdentUpdate = gnssIdentUpdate
         self.gnssIdentPrecision = gnssIdentPrecision
+        self.uptimeSeconds = uptimeSeconds
         self.advertIntervalSeconds = advertIntervalSeconds
         self.beaconIntervalSeconds = beaconIntervalSeconds
         self.startupBeacon = startupBeacon
@@ -8298,6 +8308,7 @@ public struct FfiConverterTypeUlcpDevicePropertiesRecord: FfiConverterRustBuffer
                 devDiscoverable: FfiConverterOptionBool.read(from: &buf),
                 gnssIdentUpdate: FfiConverterOptionBool.read(from: &buf),
                 gnssIdentPrecision: FfiConverterOptionUInt8.read(from: &buf),
+                uptimeSeconds: FfiConverterOptionUInt32.read(from: &buf),
                 advertIntervalSeconds: FfiConverterOptionUInt32.read(from: &buf),
                 beaconIntervalSeconds: FfiConverterOptionUInt32.read(from: &buf),
                 startupBeacon: FfiConverterOptionBool.read(from: &buf),
@@ -8337,6 +8348,7 @@ public struct FfiConverterTypeUlcpDevicePropertiesRecord: FfiConverterRustBuffer
         FfiConverterOptionBool.write(value.devDiscoverable, into: &buf)
         FfiConverterOptionBool.write(value.gnssIdentUpdate, into: &buf)
         FfiConverterOptionUInt8.write(value.gnssIdentPrecision, into: &buf)
+        FfiConverterOptionUInt32.write(value.uptimeSeconds, into: &buf)
         FfiConverterOptionUInt32.write(value.advertIntervalSeconds, into: &buf)
         FfiConverterOptionUInt32.write(value.beaconIntervalSeconds, into: &buf)
         FfiConverterOptionBool.write(value.startupBeacon, into: &buf)
@@ -8847,6 +8859,7 @@ public struct UlcpManagedPropertyIds: Equatable, Hashable {
     public var devDiscoverable: UInt32
     public var gnssIdentUpdate: UInt32
     public var gnssIdentPrecision: UInt32
+    public var uptime: UInt32
     public var advertInterval: UInt32
     public var beaconInterval: UInt32
     public var startupBeacon: UInt32
@@ -8865,7 +8878,7 @@ public struct UlcpManagedPropertyIds: Equatable, Hashable {
 
     // Default memberwise initializers are never public by default, so we
     // declare one manually.
-    public init(caps: UInt32, deviceVersion: UInt32, deviceModel: UInt32, deviceName: UInt32, battery: UInt32, phyEnabled: UInt32, frequency: UInt32, transmitPower: UInt32, loraBandwidth: UInt32, loraSpreadingFactor: UInt32, loraCodingRate: UInt32, dutyCycleNow: UInt32, dutyCycleLimit: UInt32, identRole: UInt32, identMobile: UInt32, identLocation: UInt32, identAltitude: UInt32, devDiscoverable: UInt32, gnssIdentUpdate: UInt32, gnssIdentPrecision: UInt32, advertInterval: UInt32, beaconInterval: UInt32, startupBeacon: UInt32, gnssEnabled: UInt32, gnssTimeTrust: UInt32, time: UInt32, tzOffset: UInt32, alert: UInt32, repeaterEnabled: UInt32, repeaterRegions: UInt32, repeaterDefaultRegion: UInt32, repeaterMinRssi: UInt32, repeaterMinSnr: UInt32, devPeers: UInt32, devAdmins: UInt32) {
+    public init(caps: UInt32, deviceVersion: UInt32, deviceModel: UInt32, deviceName: UInt32, battery: UInt32, phyEnabled: UInt32, frequency: UInt32, transmitPower: UInt32, loraBandwidth: UInt32, loraSpreadingFactor: UInt32, loraCodingRate: UInt32, dutyCycleNow: UInt32, dutyCycleLimit: UInt32, identRole: UInt32, identMobile: UInt32, identLocation: UInt32, identAltitude: UInt32, devDiscoverable: UInt32, gnssIdentUpdate: UInt32, gnssIdentPrecision: UInt32, uptime: UInt32, advertInterval: UInt32, beaconInterval: UInt32, startupBeacon: UInt32, gnssEnabled: UInt32, gnssTimeTrust: UInt32, time: UInt32, tzOffset: UInt32, alert: UInt32, repeaterEnabled: UInt32, repeaterRegions: UInt32, repeaterDefaultRegion: UInt32, repeaterMinRssi: UInt32, repeaterMinSnr: UInt32, devPeers: UInt32, devAdmins: UInt32) {
         self.caps = caps
         self.deviceVersion = deviceVersion
         self.deviceModel = deviceModel
@@ -8886,6 +8899,7 @@ public struct UlcpManagedPropertyIds: Equatable, Hashable {
         self.devDiscoverable = devDiscoverable
         self.gnssIdentUpdate = gnssIdentUpdate
         self.gnssIdentPrecision = gnssIdentPrecision
+        self.uptime = uptime
         self.advertInterval = advertInterval
         self.beaconInterval = beaconInterval
         self.startupBeacon = startupBeacon
@@ -8939,6 +8953,7 @@ public struct FfiConverterTypeUlcpManagedPropertyIds: FfiConverterRustBuffer {
                 devDiscoverable: FfiConverterUInt32.read(from: &buf),
                 gnssIdentUpdate: FfiConverterUInt32.read(from: &buf),
                 gnssIdentPrecision: FfiConverterUInt32.read(from: &buf),
+                uptime: FfiConverterUInt32.read(from: &buf),
                 advertInterval: FfiConverterUInt32.read(from: &buf),
                 beaconInterval: FfiConverterUInt32.read(from: &buf),
                 startupBeacon: FfiConverterUInt32.read(from: &buf),
@@ -8978,6 +8993,7 @@ public struct FfiConverterTypeUlcpManagedPropertyIds: FfiConverterRustBuffer {
         FfiConverterUInt32.write(value.devDiscoverable, into: &buf)
         FfiConverterUInt32.write(value.gnssIdentUpdate, into: &buf)
         FfiConverterUInt32.write(value.gnssIdentPrecision, into: &buf)
+        FfiConverterUInt32.write(value.uptime, into: &buf)
         FfiConverterUInt32.write(value.advertInterval, into: &buf)
         FfiConverterUInt32.write(value.beaconInterval, into: &buf)
         FfiConverterUInt32.write(value.startupBeacon, into: &buf)

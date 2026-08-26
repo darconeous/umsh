@@ -11,7 +11,7 @@ use umsh::ulcp_wire::items::Filter;
 use umsh::ulcp_wire::property_name;
 
 use super::values::{FilterArg, KeyArg};
-use super::{decode_u16, duty_percent, phy, repeater};
+use super::{decode_u16, decode_u32, duty_percent, format_duration, phy, repeater};
 use crate::output::{field, hex};
 
 #[derive(Debug, clap::Args)]
@@ -61,6 +61,20 @@ pub async fn run<L: FrameLink>(device: &mut UlcpDevice<L>, args: InfoArgs) -> Re
         );
     } else {
         field("status", format!("{:?}", sync.last_status));
+    }
+    // Optional and ungated: a device that does not keep one refuses the
+    // get, and the line goes away rather than reading "unknown". Sits
+    // under the reset reason, which is the thing it dates.
+    if let Some(seconds) = device
+        .get_prop(prop::UPTIME)
+        .await
+        .ok()
+        .and_then(|value| decode_u32(&value))
+    {
+        field(
+            "uptime",
+            format!("{} ({seconds} s)", format_duration(seconds)),
+        );
     }
     field(
         "capabilities",
