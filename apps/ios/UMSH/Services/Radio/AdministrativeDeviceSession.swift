@@ -598,6 +598,35 @@ final class AdministrativeDeviceSession: NSObject, @unchecked Sendable {
         }
     }
 
+    /// Restart the attached device, or return it to a blank factory state.
+    ///
+    /// Neither is answered: the device acts and the link drops, so there is
+    /// no exchange to run to completion and `performManagement` would only
+    /// wait out its deadline. The frame goes and the caller treats the
+    /// disconnect that follows as the confirmation.
+    func reset(scope: MobileMeshResetScope) async throws {
+        try await withCheckedThrowingContinuation { (result: CheckedContinuation<Void, any Error>) in
+            queue.async { [self] in
+                guard let peripheral, peripheral.state == .connected else {
+                    result.resume(throwing: RemoteManagementError.unavailable)
+                    return
+                }
+                do {
+                    let update: UlcpSessionUpdateRecord = switch scope {
+                    case .reboot: try ulcpSession.reboot()
+                    case .factory: try ulcpSession.factoryReset()
+                    case .protocol, .restore:
+                        throw RemoteManagementError.unavailable
+                    }
+                    try applySessionUpdate(update, from: peripheral)
+                    result.resume()
+                } catch {
+                    result.resume(throwing: RemoteManagementError.unavailable)
+                }
+            }
+        }
+    }
+
     /// Values the attached device announces on its own, verbatim.
     func propertyPushes() async -> AsyncStream<UlcpPropertyPushRecord> {
         await withCheckedContinuation { result in

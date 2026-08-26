@@ -561,6 +561,27 @@ actor SQLiteApplicationStore {
         try stepDone(statement)
     }
 
+    /// Whether this store already holds records for the given identity.
+    ///
+    /// Asked when a Keychain identity turns up with no anchor beside it: a
+    /// container that still has this identity's row is that identity's
+    /// container, anchor or no anchor, and there is nothing to ask about.
+    /// The legacy `'primary'` slot counts, since a store written before the
+    /// address became the key is still this identity's store.
+    func knowsIdentity(id: String, publicAddress: String) throws -> Bool {
+        let statement = try prepare(
+            """
+            SELECT 1 FROM local_identity
+            WHERE id = ? OR (id = 'primary' AND public_address = ?)
+            LIMIT 1
+            """
+        )
+        defer { sqlite3_finalize(statement) }
+        try bind(id, to: statement, at: 1)
+        try bind(publicAddress, to: statement, at: 2)
+        return sqlite3_step(statement) == SQLITE_ROW
+    }
+
     /// Move records created by early builds from the Keychain slot name to the
     /// identity's stable public address. Migration is deliberately refused if
     /// the legacy row belongs to a different public key or the destination

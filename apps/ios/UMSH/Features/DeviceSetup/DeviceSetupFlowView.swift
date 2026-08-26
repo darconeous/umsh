@@ -390,6 +390,7 @@ final class AdminFlowController {
                 try await session.setAlert(state)
                 return state
             },
+            reset: { _, scope in try await session.reset(scope: scope) },
             phoneNodeKey: { [key = phoneNodeKey] in key },
             loadCard: { _ in nil },
             saveCard: { _, _ in },

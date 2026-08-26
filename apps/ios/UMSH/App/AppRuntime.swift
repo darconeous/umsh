@@ -79,6 +79,15 @@ final class AppRuntime {
     /// from under the user mid-answer. On a scene-less background launch it
     /// sits inert until a scene appears to present it.
     var shouldPresentOnboarding = false
+    /// An identity left in the Keychain by an install that is gone, waiting
+    /// for someone to say whether this phone is still that node.
+    ///
+    /// Set only when the container holds nothing that belonged to it — a
+    /// key with an anchor, or a key the database still knows, is this
+    /// install's and is adopted without asking. Nothing is unlocked, no
+    /// session is installed, and no identity is minted while this stands:
+    /// answering it is what decides which of those happens.
+    var orphanedIdentity: LocalIdentitySnapshot?
 
     // MARK: - Dependencies
 
@@ -441,6 +450,12 @@ final class AppRuntime {
                     state: state
                 )
             },
+            reset: { address, scope in
+                try await self.radioConnection.resetRemoteDevice(
+                    peerAddress: address,
+                    scope: scope
+                )
+            },
             // The attached radio's own key, which is what a managed device
             // sees requests arrive from. The phone's stored identity is the
             // same bytes rendered, and stands in until a radio can say —
@@ -533,6 +548,21 @@ final class AppRuntime {
             // announcement — which arrives as a push — corrects it.
             try await self.radioConnection.setAlert(state)
             return state
+        }
+        // The radio itself, over its own link: both commands already have
+        // local paths, and neither goes near the mesh.
+        management.reset = { _, scope in
+            switch scope {
+            case .reboot:
+                try await self.radioConnection.reboot()
+            case .factory:
+                try await self.radioConnection.factoryReset()
+            case .protocol, .restore:
+                // Neither is offered by any screen this backend serves;
+                // the local link has `refreshRadio` for the first and no
+                // use for the second.
+                throw RemoteManagementError.unavailable
+            }
         }
         management.propertyPushes = {
             AsyncStream { continuation in
@@ -649,33 +679,80 @@ final class AppRuntime {
         isLoadingIdentity = true
         defer { isLoadingIdentity = false }
         do {
-            localIdentity = try await identityVault.loadIdentity()
-            // A phone with no identity has nothing to ask about: every peer,
-            // channel and message this app stores is keyed by one, and until it
-            // exists the whole UI is a set of controls that quietly do nothing.
-            // The vault reports a genuinely absent item as nil and a Keychain it
-            // could not read as a throw, so this only ever fills a vacancy — a
-            // locked phone leaves with an error instead and retries later.
-            let minted = localIdentity == nil
-            if minted {
+            var minted = false
+            switch try await identityVault.storedIdentity() {
+            case let .present(snapshot):
+                localIdentity = snapshot
+            case .none:
+                // A phone with no identity has nothing to ask about: every
+                // peer, channel and message this app stores is keyed by one,
+                // and until it exists the whole UI is a set of controls that
+                // quietly do nothing. The vault reports a genuinely absent
+                // item as none and a Keychain it could not read as a throw,
+                // so this only ever fills a vacancy — a locked phone leaves
+                // with an error instead and retries later.
+                minted = true
                 localIdentity = try await identityVault.createIdentity()
+            case let .orphaned(snapshot):
+                // A key with no anchor, from an install that is gone — or
+                // from a build that predates the anchor, which is the same
+                // key on the same phone with all its records intact. Ask the
+                // store which: a container that still knows this identity is
+                // its container, and adopting silently is the whole
+                // difference between a migration and an interrogation.
+                if await storeKnows(snapshot) {
+                    Self.logger.notice("Adopting an unanchored identity this store still holds records for")
+                    localIdentity = try await identityVault.adoptStoredIdentity()
+                } else {
+                    Self.logger.notice("Found an identity from an install that is gone; asking whether to keep it")
+                    orphanedIdentity = snapshot
+                    identityError = nil
+                    return
+                }
             }
-            try await radioConnection.useHostIdentity(localIdentity?.publicIdentity)
-            try await installMeshSession()
-            await prepareApplicationState()
-            await prepareChatState()
-            await loadAdvertisedName()
-            await pushPhoneDiscoverability()
+            try await bootstrapIdentity(minted: minted)
             if localIdentity != nil {
                 await radioConnection.autoConnect()
             }
-            identityError = nil
-            settleOnboarding(mintedIdentity: minted)
         } catch let error as IdentityVaultError {
+            Self.logger.error("Identity load failed: \(String(describing: error), privacy: .public)")
             identityError = error
         } catch {
+            Self.logger.error("Identity load failed outside the vault: \(String(describing: error), privacy: .public)")
             identityError = .keychainFailure
         }
+    }
+
+    /// Bring the app up on whatever ``localIdentity`` now holds: publish it
+    /// to the radio, install the mesh session, and rebuild every view of the
+    /// store from it.
+    ///
+    /// The one sequence that turns an identity into a running app, shared by
+    /// launch, by minting one by hand, and by the two erasures — a phone
+    /// that has just destroyed its key comes back exactly the way one that
+    /// never had a key comes up.
+    @MainActor
+    private func bootstrapIdentity(minted: Bool) async throws {
+        try await radioConnection.useHostIdentity(localIdentity?.publicIdentity)
+        try await installMeshSession()
+        await prepareApplicationState()
+        await prepareChatState()
+        await loadAdvertisedName()
+        await pushPhoneDiscoverability()
+        identityError = nil
+        settleOnboarding(mintedIdentity: minted)
+    }
+
+    /// Whether the store already holds records for this identity, which is
+    /// what tells a container that lost its anchor from one that never had
+    /// this identity's data in the first place.
+    @MainActor
+    private func storeKnows(_ snapshot: LocalIdentitySnapshot) async -> Bool {
+        guard let applicationStore else { return false }
+        return (try? await applicationStore.knowsIdentity(
+            id: snapshot.id,
+            publicAddress: snapshot.publicIdentity.canonicalAddress
+        )) ?? false
     }
 
     /// Decide whether this launch owes the user an introduction.
@@ -722,17 +799,143 @@ final class AppRuntime {
         defer { isLoadingIdentity = false }
         do {
             localIdentity = try await identityVault.createIdentity()
-            try await radioConnection.useHostIdentity(localIdentity?.publicIdentity)
-            try await installMeshSession()
-            await prepareApplicationState()
-            await prepareChatState()
-            await loadAdvertisedName()
-            await pushPhoneDiscoverability()
-            identityError = nil
+            orphanedIdentity = nil
+            try await bootstrapIdentity(minted: true)
         } catch let error as IdentityVaultError {
             identityError = error
         } catch {
             identityError = .keychainFailure
+        }
+    }
+
+    // MARK: - Destroying this phone's identity
+
+    /// Keep the identity a previous install left behind.
+    ///
+    /// The key is what peers recognize, so keeping it means the mesh sees
+    /// the same node it always did. Nothing recovers the records that were
+    /// keyed to it — those went with the container.
+    @MainActor
+    func adoptOrphanedIdentity() async {
+        guard orphanedIdentity != nil else { return }
+        isLoadingIdentity = true
+        defer { isLoadingIdentity = false }
+        do {
+            localIdentity = try await identityVault.adoptStoredIdentity()
+            orphanedIdentity = nil
+            try await bootstrapIdentity(minted: true)
+            await radioConnection.autoConnect()
+        } catch let error as IdentityVaultError {
+            identityError = error
+        } catch {
+            identityError = .keychainFailure
+        }
+    }
+
+    /// Destroy this phone's private key and every key held under it, then
+    /// come back as a new node.
+    ///
+    /// The narrow erasure: the key material goes and the database stays.
+    /// What stays is unreachable — every row is keyed by the identity that
+    /// owned it, and that identity no longer exists — so this is the choice
+    /// for someone who wants a different key rather than a clean phone.
+    /// ``startOver()`` is the other one.
+    @MainActor
+    func eraseIdentity() async {
+        await eraseIdentity(alsoErasingContent: false)
+    }
+
+    /// Erase everything this phone holds: the identity, the keys, the
+    /// messages, the peers, the channels, the paired radio, and the
+    /// preferences. What comes back is a first launch.
+    @MainActor
+    func startOver() async {
+        await eraseIdentity(alsoErasingContent: true)
+    }
+
+    @MainActor
+    private func eraseIdentity(alsoErasingContent: Bool) async {
+        isLoadingIdentity = true
+        defer { isLoadingIdentity = false }
+
+        // The radio holds this phone's public key as its host key, so a
+        // radio kept across the erasure would belong to a node that no
+        // longer exists. Let it go first, while the link is still ours.
+        await forgetRadio()
+        try? await radioConnection.useHostIdentity(nil)
+        await radioConnection.useMeshSession(nil)
+        // Only now: the engine must not be holding the key while the
+        // counter files that protect it are removed.
+        await meshEngine.lockIdentity()
+        localIdentity = nil
+        orphanedIdentity = nil
+
+        try? await identityVault.eraseIdentity()
+        try? await channelKeyVault.deleteAllKeys()
+        Self.eraseCounterReservations()
+        notificationService.withdrawAllDelivered()
+
+        if alsoErasingContent {
+            try? await applicationStore?.eraseAllContent()
+            Self.eraseStoredPreferences()
+        }
+        // Both erasures produce a node nobody has met, under a name nobody
+        // has chosen, so both owe the introduction a first launch owes.
+        onboardingCompleted = false
+
+        // Straight back up on a new key, the way a first launch comes up.
+        do {
+            localIdentity = try await identityVault.createIdentity()
+            try await bootstrapIdentity(minted: true)
+        } catch let error as IdentityVaultError {
+            identityError = error
+        } catch {
+            identityError = .keychainFailure
+        }
+    }
+
+    /// Remove the frame-counter reservations, which are per-identity files
+    /// naming an identity that is about to stop existing.
+    private static func eraseCounterReservations() {
+        guard let applicationSupport = FileManager.default.urls(
+            for: .applicationSupportDirectory,
+            in: .userDomainMask
+        ).first else { return }
+        let root = applicationSupport.appendingPathComponent("UMSH", isDirectory: true)
+        try? FileManager.default.removeItem(
+            at: root.appendingPathComponent("CounterReservations", isDirectory: true)
+        )
+        #if DEBUG
+        try? FileManager.default.removeItem(
+            at: root.appendingPathComponent("StagingAirCounters", isDirectory: true)
+        )
+        #endif
+    }
+
+    /// Forget every preference this phone has accumulated, so the next
+    /// launch reads the same defaults a fresh install reads.
+    ///
+    /// Named explicitly rather than swept by prefix: the list is what a
+    /// "start over" promises to reset, and a key added later should have to
+    /// be considered rather than caught.
+    private static func eraseStoredPreferences() {
+        let defaults = UserDefaults.standard
+        for key in [
+            "onboarding.completed",
+            "phone.discoverable",
+            "phone.shareLocation",
+            "phone.locationPrecision",
+            "phone.advertIntervalSeconds",
+            "phone.beaconIntervalSeconds",
+            "radio.connectedUUID",
+            "radio.shouldAutoConnect",
+            "radio.lastAttachedPeripheral",
+            "radio.deviceName",
+            "map.tier",
+            "map.capabilities",
+            "peers.sort",
+        ] {
+            defaults.removeObject(forKey: key)
         }
     }
 
@@ -918,6 +1121,10 @@ final class AppRuntime {
 
     func factoryResetRadio() async throws {
         try await radioConnection.factoryReset()
+    }
+
+    func rebootRadio() async throws {
+        try await radioConnection.reboot()
     }
 
     func claimRadio() async {

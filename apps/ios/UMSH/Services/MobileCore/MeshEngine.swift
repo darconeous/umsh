@@ -140,6 +140,12 @@ protocol MeshEngine: Actor {
     func inspectPeerIdentity(_ input: String) throws -> MeshNodeURIPreview
     func decodeNodeIdentity(address: String, payload: Data) throws -> MeshNodeIdentity
     func unlockIdentity(secretKey: Data) throws -> MeshPublicIdentity
+    /// Forget the unlocked identity and everything built on it.
+    ///
+    /// The counterpart to `unlockIdentity`, and the only way to end up
+    /// holding none: erasing a phone's identity has to leave the engine
+    /// with nothing rather than with the key it is about to destroy.
+    func lockIdentity()
     func inspectChannelURI(_ uri: String) throws -> MeshChannelPreview
     func inspectChannelName(_ name: String) throws -> MeshChannelPreview
     func generateChannelKey() -> Data

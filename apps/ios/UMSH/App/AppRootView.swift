@@ -61,6 +61,31 @@ struct AppRootView: View {
     /// has not been read yet, rather than having nothing in it.
     private var isBootstrapping: Bool { runtime.isLoadingIdentity }
 
+    /// The first-run screen this launch owes, if any.
+    ///
+    /// Read-derived rather than stored, so it cannot disagree with the two
+    /// runtime flags underneath it; writing through it dismisses whichever
+    /// screen is up by clearing the flag that raised it. An orphan outranks
+    /// onboarding — there is nothing to introduce until it is answered.
+    private var firstRunBinding: Binding<FirstRunScreen?> {
+        Binding(
+            get: {
+                if let orphan = runtime.orphanedIdentity {
+                    return .recoveredIdentity(orphan)
+                }
+                if runtime.shouldPresentOnboarding, let identity = runtime.localIdentity {
+                    return .onboarding(identity)
+                }
+                return nil
+            },
+            set: { screen in
+                guard screen == nil else { return }
+                runtime.orphanedIdentity = nil
+                runtime.shouldPresentOnboarding = false
+            }
+        )
+    }
+
     private var mainInterface: some View {
         TabView(selection: $selectedTab) {
             NavigationStack {
@@ -193,6 +218,8 @@ struct AppRootView: View {
                         phoneDiscoverable = enabled
                         await runtime.pushPhoneDiscoverability()
                     },
+                    eraseIdentity: runtime.eraseIdentity,
+                    startOver: runtime.startOver,
                     radioSnapshot: $runtime.radioSnapshot,
                     connectRadio: runtime.connectRadio,
                     reconnectRadio: runtime.reconnectRadio,
@@ -201,6 +228,7 @@ struct AppRootView: View {
                     disconnectRadio: runtime.disconnectRadio,
                     forgetRadio: runtime.forgetRadio,
                     factoryResetRadio: runtime.factoryResetRadio,
+                    rebootRadio: runtime.rebootRadio,
                     discoverRadios: runtime.discoverRadios,
                     selectRadio: runtime.selectRadio,
                     stopDiscovery: runtime.stopRadioDiscovery,
@@ -286,6 +314,7 @@ struct AppRootView: View {
                     disconnect: runtime.disconnectRadio,
                     forget: runtime.forgetRadio,
                     factoryReset: runtime.factoryResetRadio,
+                    reboot: runtime.rebootRadio,
                     discoverRadios: runtime.discoverRadios,
                     selectRadio: runtime.selectRadio,
                     stopDiscovery: runtime.stopRadioDiscovery,
@@ -337,10 +366,22 @@ struct AppRootView: View {
                 }
             )
         }
-        .fullScreenCover(isPresented: $runtime.shouldPresentOnboarding) {
-            if let localIdentity = runtime.localIdentity {
+        // One cover for both first-run screens rather than two stacked on
+        // the same view, which SwiftUI resolves by presenting whichever it
+        // likes. They are mutually exclusive anyway: the runtime mints
+        // nothing while an orphan is outstanding, so there is no identity
+        // for onboarding to introduce until that is answered.
+        .fullScreenCover(item: firstRunBinding) { screen in
+            switch screen {
+            case let .recoveredIdentity(identity):
+                RecoveredIdentityView(
+                    identity: identity,
+                    keep: runtime.adoptOrphanedIdentity,
+                    startFresh: runtime.eraseIdentity
+                )
+            case let .onboarding(identity):
                 OnboardingView(
-                    identity: localIdentity,
+                    identity: identity,
                     advertisedName: runtime.advertisedName,
                     saveAdvertisedName: runtime.saveAdvertisedName,
                     discoverRadios: runtime.discoverRadios,
@@ -506,4 +547,19 @@ private extension View {
     // Unstarted on purpose: a preview wants the interface, not a bootstrap
     // that opens the real store and asks the Keychain for an identity.
     AppRootView(runtime: AppRuntime(radioConnection: FakeRadioConnection()))
+}
+
+/// Which of the two full-screen first-run flows is up.
+private enum FirstRunScreen: Identifiable {
+    /// A key from an install that is gone, waiting to be kept or destroyed.
+    case recoveredIdentity(LocalIdentitySnapshot)
+    /// A fresh identity that has not been introduced yet.
+    case onboarding(LocalIdentitySnapshot)
+
+    var id: String {
+        switch self {
+        case let .recoveredIdentity(identity): "recovered:\(identity.id)"
+        case let .onboarding(identity): "onboarding:\(identity.id)"
+        }
+    }
 }

@@ -147,6 +147,16 @@ final class ChatNotificationService: NSObject, UNUserNotificationCenterDelegate,
         }
     }
 
+    /// Withdraw every notification this app has delivered.
+    ///
+    /// Notification Center is outside the app container, so its contents
+    /// outlive an erasure that everything else respects: a message from a
+    /// conversation that no longer exists would otherwise still be sitting
+    /// on the lock screen, quoting it.
+    func withdrawAllDelivered() {
+        UNUserNotificationCenter.current().removeAllDeliveredNotifications()
+    }
+
     /// Clear only if this conversation is still the visible one. When the
     /// user switches transcripts, the new view's appearance can precede the
     /// old view's disappearance; the stale disappearance must not erase the

@@ -228,6 +228,14 @@ actor RustMeshEngine: MeshEngine {
         }
     }
 
+    func lockIdentity() {
+        localIdentity = nil
+        // The session is built on the identity, so it goes with it; the
+        // next `meshSession` call answers nil until something unlocks
+        // again, which is what makes the counter files safe to delete.
+        mobileMeshSession = nil
+    }
+
     func meshSession(fileManager: FileManager = .default) async throws -> MobileMeshSession? {
         guard let localIdentity else { return nil }
         if let mobileMeshSession { return mobileMeshSession }

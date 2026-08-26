@@ -18,6 +18,8 @@ import UMSHMobileCore
 struct ManageDeviceScreen: View {
     let browsing: RemotePeerBrowsing
     @State private var model: ManageDeviceModel
+    @State private var confirmsRestart = false
+    @State private var confirmsFactoryReset = false
 
     init(peer: PeerSummary, management: DeviceManagementBackend, browsing: RemotePeerBrowsing) {
         self.browsing = browsing
@@ -29,10 +31,33 @@ struct ManageDeviceScreen: View {
             identitySection
             if model.card != nil {
                 categoriesSection
+                lifecycleSection
             }
             if let problem = model.problem {
                 Section { Text(problem).foregroundStyle(.red) }
             }
+        }
+        .confirmationDialog(
+            "Restart this device?",
+            isPresented: $confirmsRestart,
+            titleVisibility: .visible
+        ) {
+            Button("Restart", role: .destructive) { Task { await model.restart() } }
+            Button("Cancel", role: .cancel) {}
+        } message: {
+            Text("The device power-cycles and keeps everything it has saved. It is off the air until it comes back, and anything relaying through it is too.")
+        }
+        .confirmationDialog(
+            "Factory reset this device?",
+            isPresented: $confirmsFactoryReset,
+            titleVisibility: .visible
+        ) {
+            Button("Erase Everything and Restart", role: .destructive) {
+                Task { await model.factoryReset() }
+            }
+            Button("Cancel", role: .cancel) {}
+        } message: {
+            Text("Every setting, key, and pairing is erased, including the device's own identity — it comes back as a node nobody has met, at a different address, and has to be set up from scratch.")
         }
         // Not the device's name: it is on the row below, and a title that
         // repeats it spends the one line that could say where you are.
@@ -110,6 +135,38 @@ struct ManageDeviceScreen: View {
                 } label: {
                     Label(entry.title, systemImage: entry.symbol)
                 }
+            }
+        }
+    }
+
+    /// The controls that act on the device rather than on any one group of
+    /// its settings.
+    ///
+    /// Restart is offered wherever the device answers at all — the node
+    /// most worth restarting is the one nobody can walk to — and only when
+    /// the device says it can (`CAP_REBOOT`), the way the locate button
+    /// waits on `CAP_ALERT`. A factory reset is offered only where the
+    /// device is in hand: it destroys the identity this screen is addressed
+    /// to, so over the mesh there would be no device left to tell whether
+    /// it worked, and no way back if it was the wrong one.
+    @ViewBuilder
+    private var lifecycleSection: some View {
+        if model.supportsRestart || model.offersFactoryReset {
+            Section {
+                if model.supportsRestart {
+                    Button("Restart This Device…", role: .destructive) {
+                        confirmsRestart = true
+                    }
+                }
+                if model.offersFactoryReset {
+                    Button("Factory Reset…", role: .destructive) {
+                        confirmsFactoryReset = true
+                    }
+                }
+            } footer: {
+                Text(model.offersFactoryReset
+                     ? "A restart keeps everything the device has saved. A factory reset keeps nothing, the device's own identity included."
+                     : "A restart keeps everything the device has saved. Erasing a device is only offered while it is connected to this phone.")
             }
         }
     }

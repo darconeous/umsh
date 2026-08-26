@@ -51,6 +51,11 @@ protocol RadioConnection: AnyObject, Sendable {
     /// state. Requires a live connection; the radio drops the link on reset.
     /// The app also abandons its binding to the radio.
     func factoryReset() async throws
+    /// Restart the radio (`CMD_REBOOT`), keeping everything it has saved.
+    /// Requires a live connection; the radio drops the link on its way
+    /// down and the app's binding to it is deliberately kept, because what
+    /// comes back is the same radio.
+    func reboot() async throws
     /// Start or stop the radio's locate alert (`PROP_ALERT`) so a
     /// misplaced radio announces itself. What the radio does is up to its
     /// hardware — a buzzer, an indicator LED, or both — and the alert
@@ -199,6 +204,14 @@ protocol RadioConnection: AnyObject, Sendable {
         peerAddress: String,
         state: RadioAlertState
     ) async throws -> RadioAlertState
+    /// Restart a device across the mesh, or return it to a blank factory
+    /// state. Both are reset-class: the device acts and answers nothing, so
+    /// returning normally means the command was delivered rather than that
+    /// the device has finished with it.
+    func resetRemoteDevice(
+        peerAddress: String,
+        scope: MobileMeshResetScope
+    ) async throws
     /// Read named properties from the companion radio itself, over the
     /// local link, and answer with what it said about each — values and
     /// refusals alike. The local counterpart of `fetchRemoteProperties`,

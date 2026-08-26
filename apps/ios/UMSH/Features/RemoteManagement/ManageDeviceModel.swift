@@ -40,6 +40,11 @@ struct DeviceManagementBackend {
     /// Make the device conspicuous, or stop it, answering with what it
     /// reports it is doing.
     var setAlert: (String, RadioAlertState) async throws -> RadioAlertState
+    /// Act on the device itself rather than on its settings: restart it, or
+    /// return it to a blank factory state. Both are answered by the device
+    /// doing the thing and saying nothing, so success here means the
+    /// command was delivered, not that the device has finished.
+    var reset: (String, MobileMeshResetScope) async throws -> Void
     /// This phone's own node key, so the administrator list can say which
     /// entry is this phone — and refuse to remove it.
     ///
@@ -70,6 +75,15 @@ extension DeviceManagementBackend {
     /// screen takes to settle; on the mesh it costs everyone airtime, so
     /// asking stays the operator's decision.
     var refreshesStaleReadings: Bool { link != .mesh }
+
+    /// Whether to offer a factory reset at all.
+    ///
+    /// Only where the device is in hand. A wipe takes the device's identity
+    /// with it, so the node the command was addressed to stops existing
+    /// mid-exchange — there is no confirmation to wait for and no way back
+    /// if it was the wrong node. Restarting is offered everywhere; this is
+    /// not.
+    var offersFactoryReset: Bool { link != .mesh }
 }
 
 /// The property numbers the management screens name, read once.
@@ -166,6 +180,14 @@ final class ManageDeviceModel {
     /// What to show as the device's name: what it calls itself, then what
     /// this phone calls it.
     var displayName: String { card?.deviceName ?? fallbackName }
+
+    /// Whether this device says it can restart on command (`CAP_REBOOT`).
+    /// Read off the cached card, so offering the control costs no airtime.
+    var supportsRestart: Bool { card?.supportsReboot ?? false }
+
+    /// Whether a factory reset is offered here at all — a question about
+    /// how the device is reached, not about what it can do.
+    var offersFactoryReset: Bool { management.offersFactoryReset }
 
     /// This phone's own node key, once the radio has said what it is.
     private(set) var phoneNodeKey: Data?
@@ -267,6 +289,7 @@ final class ManageDeviceModel {
             supportsAdvert: decoded.supportsAdvert,
             supportsAdmin: decoded.supportsAdmin,
             supportsAlert: decoded.supportsAlert,
+            supportsReboot: decoded.supportsReboot,
             supportsSave: decoded.supportsSave,
             supportsMulti: decoded.supportsMulti
         )
@@ -497,6 +520,33 @@ final class ManageDeviceModel {
         await run { [self] in
             alert = try await management.setAlert(address, state)
         }
+    }
+
+    // MARK: - Acting on the device
+
+    /// Restart the device, keeping everything it has configured.
+    ///
+    /// Nothing here changes, so nothing is invalidated: the same device
+    /// comes back with the same settings, and the readings on screen are as
+    /// true afterward as they were before. What is no longer true is the
+    /// uptime, which the next refresh corrects.
+    func restart() async {
+        await run { [self] in
+            try await management.reset(address, .reboot)
+        }
+    }
+
+    /// Return the device to a blank factory state.
+    ///
+    /// It comes back as a different node — a factory reset takes the device
+    /// identity with it — so everything cached under this address describes
+    /// something that no longer exists. Drop it rather than let the next
+    /// open present a dead device's settings as current.
+    func factoryReset() async {
+        await run { [self] in
+            try await management.reset(address, .factory)
+        }
+        await forgetCache()
     }
 
     /// Forget everything cached about this device, so the next open asks it

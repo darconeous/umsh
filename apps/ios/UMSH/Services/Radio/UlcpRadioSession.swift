@@ -748,6 +748,31 @@ class UlcpRadioSession: NSObject, @unchecked Sendable {
         }
     }
 
+    func reboot() async throws {
+        try await withCheckedThrowingContinuation { (result: CheckedContinuation<Void, any Error>) in
+            sessionQueue.async { [self] in
+                guard link?.linkIsReady == true else {
+                    result.resume(throwing: RadioConnectionError.radioNotFound)
+                    return
+                }
+                Self.logger.notice("action: user pressed Restart Radio")
+                do {
+                    try applySessionUpdate(ulcpSession.reboot())
+                } catch {
+                    result.resume(throwing: RadioConnectionError.incompatibleProtocol)
+                    return
+                }
+                // The link drops when the radio restarts, and the same
+                // flush argument as the factory reset applies: leave the
+                // connection up so the GATT write lands. The binding is
+                // deliberately *kept* — the radio coming back is the same
+                // radio, with the same bond and the same host key, and
+                // reconnecting to it is the whole point.
+                result.resume()
+            }
+        }
+    }
+
     func ping(peerAddress: String) async throws -> RadioPingResult {
         try await withCheckedThrowingContinuation {
             (result: CheckedContinuation<RadioPingResult, any Error>) in
@@ -826,6 +851,22 @@ class UlcpRadioSession: NSObject, @unchecked Sendable {
             remaining.removeFirst(min(event.answers.count, remaining.count))
         }
         return answers
+    }
+
+    /// Restart or wipe a device across the mesh.
+    ///
+    /// The reset-class commands are answered by nothing: the device acts and
+    /// the MAC acknowledgment is the confirmation, so `.acknowledged` is
+    /// success rather than a shortfall and there is no status to require.
+    /// The one reply any of them produces is a refusal — a device without
+    /// `CAP_REBOOT` saying it cannot restart — and that is worth surfacing.
+    func resetRemoteDevice(peerAddress: String, scope: MobileMeshResetScope) async throws {
+        let event = try await performManagement { session in
+            try session.beginManagementReset(peerAddress: peerAddress, scope: scope)
+        }
+        if let status = event.statusCode {
+            try Self.requireSuccess(status)
+        }
     }
 
     func saveRemoteDevice(peerAddress: String) async throws {

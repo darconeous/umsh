@@ -12,6 +12,14 @@ protocol ChannelKeyVault: Actor {
     func storeKey(_ key: Data, channelID: UUID) async throws
     func loadKey(channelID: UUID) async throws -> Data?
     func deleteKey(channelID: UUID) async throws
+    /// Forget every channel key this phone holds.
+    ///
+    /// Erasing the identity is what calls this: channel keys are group
+    /// membership held by *this* phone, and a phone that is no longer the
+    /// node those groups admitted has no business keeping them. Deletes by
+    /// service rather than by walking the channel table, so a key whose
+    /// SQLite row was already lost goes with the rest.
+    func deleteAllKeys() async throws
 }
 
 actor KeychainChannelKeyVault: ChannelKeyVault {
@@ -82,6 +90,20 @@ actor KeychainChannelKeyVault: ChannelKeyVault {
             kSecAttrService: Self.service,
             kSecAttrAccount: channelID.uuidString,
             kSecAttrSynchronizable: kCFBooleanFalse as Any,
+        ]
+        let status = SecItemDelete(query as CFDictionary)
+        guard status == errSecSuccess || status == errSecItemNotFound else {
+            throw mapKeychainStatus(status)
+        }
+    }
+
+    func deleteAllKeys() throws {
+        // No account: on iOS a delete matching only class and service takes
+        // every item under it, which is the point — this must not depend on
+        // a channel list that may itself be gone.
+        let query: [CFString: Any] = [
+            kSecClass: kSecClassGenericPassword,
+            kSecAttrService: Self.service,
         ]
         let status = SecItemDelete(query as CFDictionary)
         guard status == errSecSuccess || status == errSecItemNotFound else {

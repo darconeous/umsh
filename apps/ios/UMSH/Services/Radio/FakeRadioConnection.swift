@@ -457,6 +457,10 @@ actor FakeRadioConnection: RadioConnection {
         return state
     }
 
+    func resetRemoteDevice(peerAddress: String, scope: MobileMeshResetScope) async throws {
+        try await answerAsIfOverTheAir()
+    }
+
     // MARK: - Managing the staging companion itself
 
     /// The staging companion answers the local management path from the
@@ -659,6 +663,13 @@ actor FakeRadioConnection: RadioConnection {
     }
 
     func factoryReset() async throws {
+        publish(.disconnected)
+    }
+
+    func reboot() async throws {
+        // Same visible consequence as the real thing: the link drops while
+        // the radio is away. Nothing staged is erased — that is the whole
+        // difference between this and the factory reset above.
         publish(.disconnected)
     }
 
@@ -917,9 +928,10 @@ struct FakeManagedDevice: Sendable {
     /// (36), device identity (37), device name (38), battery (39),
     /// repeater (40), identity (41), alert (42), administrators (43),
     /// clock (44), receiver (45), advertisement (46), batched commands
-    /// (49), and the LoRa modem (515, which needs two PUI octets).
+    /// (49), restart (51), and the LoRa modem (515, which needs two PUI
+    /// octets).
     private static let capabilities = Data([
-        0x10, 0x24, 0x25, 0x26, 0x27, 0x28, 0x29, 0x2A, 0x2B, 0x2C, 0x2D, 0x2E, 0x31,
+        0x10, 0x24, 0x25, 0x26, 0x27, 0x28, 0x29, 0x2A, 0x2B, 0x2C, 0x2D, 0x2E, 0x31, 0x33,
         0x83, 0x04,
     ])
 }

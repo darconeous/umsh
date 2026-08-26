@@ -15,6 +15,10 @@ struct SettingsView: View {
     /// action that changes it. Absent when no mesh session can exist.
     var phoneDiscoverable: Bool = true
     var setPhoneDiscoverable: ((Bool) async -> Void)? = nil
+    /// Destroy the private key and come back as a new node, keeping what is
+    /// stored; and the same plus every record on the phone.
+    var eraseIdentity: () async -> Void = {}
+    var startOver: () async -> Void = {}
     @Binding var radioSnapshot: RadioSnapshot
     let connectRadio: () async -> Void
     let reconnectRadio: () async -> Void
@@ -23,6 +27,7 @@ struct SettingsView: View {
     let disconnectRadio: () async -> Void
     var forgetRadio: () async -> Void = {}
     var factoryResetRadio: () async throws -> Void = {}
+    var rebootRadio: () async throws -> Void = {}
     let discoverRadios: () async -> AsyncStream<[DiscoveredRadio]>
     let selectRadio: (UUID) async throws -> Void
     let stopDiscovery: () async -> Void
@@ -115,7 +120,9 @@ struct SettingsView: View {
                             advertiseIdentity: advertiseIdentity,
                             identityShareURI: identityShareURI,
                             phoneDiscoverable: phoneDiscoverable,
-                            setPhoneDiscoverable: setPhoneDiscoverable
+                            setPhoneDiscoverable: setPhoneDiscoverable,
+                            eraseIdentity: eraseIdentity,
+                            startOver: startOver
                         )
                     } label: {
                         HStack(spacing: 12) {
@@ -176,6 +183,7 @@ struct SettingsView: View {
                         disconnect: disconnectRadio,
                         forget: forgetRadio,
                         factoryReset: factoryResetRadio,
+                        reboot: rebootRadio,
                         discoverRadios: discoverRadios,
                         selectRadio: selectRadio,
                         stopDiscovery: stopDiscovery,
@@ -331,12 +339,22 @@ struct IdentityDetailView: View {
     var identityShareURI: (() async -> String)? = nil
     var phoneDiscoverable: Bool = true
     var setPhoneDiscoverable: ((Bool) async -> Void)? = nil
+    /// Destroy the private key and come back as a new node, leaving the
+    /// messages and contacts on the phone.
+    var eraseIdentity: () async -> Void = {}
+    /// The same, and the records too.
+    var startOver: () async -> Void = {}
 
     @State private var shareURI = ""
     @State private var nameDraft = ""
     @State private var isAdvertising = false
     @State private var advertiseFeedback: AdvertiseFeedback?
     @State private var discoverableDraft = true
+    @State private var confirmsErase = false
+    @State private var confirmsStartOver = false
+    /// The second gate on Start Over. Only this one destroys transcripts,
+    /// and it is the only thing in the app that does so with no undo.
+    @State private var confirmsStartOverAgain = false
     /// Read straight from storage here rather than passed in: these drive
     /// the schedules in `AppRootView`, which reads the same keys, so a
     /// closure round trip would only add a way for the two to disagree.
@@ -445,16 +463,63 @@ struct IdentityDetailView: View {
 
             Section("Storage") {
                 LabeledContent("Private key", value: "Device-only Keychain")
-                Text("Private key bytes are never displayed, copied, synchronized, or included in diagnostics.")
+                Text("Private key bytes are never displayed, copied, synchronized, or included in diagnostics. The Keychain outlives the app: deleting UMSH does not delete this key, and only the controls below do.")
                     .font(.caption)
                     .foregroundStyle(.secondary)
             }
+
+            eraseSection
         }
         .navigationTitle("Your identity")
         .task {
             nameDraft = advertisedName
             discoverableDraft = phoneDiscoverable
             await refreshShareURI()
+        }
+        .confirmationDialog(
+            "Erase this identity?",
+            isPresented: $confirmsErase,
+            titleVisibility: .visible
+        ) {
+            Button("Erase Identity", role: .destructive) {
+                Task { await eraseIdentity() }
+            }
+            Button("Cancel", role: .cancel) {}
+        } message: {
+            Text("Your private key is destroyed and this phone comes back as a different node — nobody will recognize it as you again. Messages and contacts stay on the phone but belong to the old identity, so nothing will show them.")
+        }
+        .confirmationDialog(
+            "Start over?",
+            isPresented: $confirmsStartOver,
+            titleVisibility: .visible
+        ) {
+            Button("Erase Everything", role: .destructive) { confirmsStartOverAgain = true }
+            Button("Cancel", role: .cancel) {}
+        } message: {
+            Text("Your identity, messages, contacts, channels, and paired radio are all erased. UMSH comes back as a first launch.")
+        }
+        .confirmationDialog(
+            "This cannot be undone.",
+            isPresented: $confirmsStartOverAgain,
+            titleVisibility: .visible
+        ) {
+            Button("Erase Everything", role: .destructive) {
+                Task { await startOver() }
+            }
+            Button("Cancel", role: .cancel) {}
+        } message: {
+            Text("Nothing is backed up. Every message on this phone is about to be gone for good.")
+        }
+    }
+
+    /// The two ways out, ordered by how much they take. Both live under
+    /// Storage because that is where the page says what is kept and where.
+    private var eraseSection: some View {
+        Section {
+            Button("Erase Identity…", role: .destructive) { confirmsErase = true }
+            Button("Start Over…", role: .destructive) { confirmsStartOver = true }
+        } footer: {
+            Text("Erase Identity destroys the private key and mints a new one; your messages stay on the phone but are no longer reachable. Start Over removes those too, along with your contacts, channels, and paired radio.")
         }
     }
 
@@ -533,6 +598,7 @@ struct RadioDetailView: View {
     let disconnect: () async -> Void
     var forget: () async -> Void = {}
     var factoryReset: () async throws -> Void = {}
+    var reboot: () async throws -> Void = {}
     let discoverRadios: () async -> AsyncStream<[DiscoveredRadio]>
     let selectRadio: (UUID) async throws -> Void
     let stopDiscovery: () async -> Void
@@ -549,7 +615,11 @@ struct RadioDetailView: View {
     @State private var confirmsHostReplacement = false
     @State private var confirmsForget = false
     @State private var confirmsFactoryReset = false
-    @State private var factoryResetProblem: String?
+    /// Why the last restart or factory reset could not be sent. One slot
+    /// for both: only one of them is ever in flight, and the alert says
+    /// which it was.
+    @State private var radioActionProblem: String?
+    @State private var confirmsReboot = false
     @State private var showsRadioPicker = false
 
     var body: some View {
@@ -763,6 +833,24 @@ struct RadioDetailView: View {
             Text("The app stops reconnecting to this radio and drops it from Bluetooth's standing connections. The radio keeps its own bond until you re-pair; add it again later with \"Find companion radio\".")
         }
         .confirmationDialog(
+            "Restart this radio?",
+            isPresented: $confirmsReboot,
+            titleVisibility: .visible
+        ) {
+            Button("Restart", role: .destructive) {
+                Task {
+                    do {
+                        try await reboot()
+                    } catch {
+                        radioActionProblem = "The restart could not be sent. Make sure the radio is still connected, then try again."
+                    }
+                }
+            }
+            Button("Cancel", role: .cancel) {}
+        } message: {
+            Text("The radio power-cycles and keeps everything it has saved, including its pairing with this phone. It disconnects while it restarts and reconnects on its own.")
+        }
+        .confirmationDialog(
             "Factory reset this radio?",
             isPresented: $confirmsFactoryReset,
             titleVisibility: .visible
@@ -773,7 +861,7 @@ struct RadioDetailView: View {
                         try await factoryReset()
                         dismiss()
                     } catch {
-                        factoryResetProblem = "The factory reset could not be sent. Make sure the radio is still connected, then try again."
+                        radioActionProblem = "The factory reset could not be sent. Make sure the radio is still connected, then try again."
                     }
                 }
             }
@@ -784,13 +872,13 @@ struct RadioDetailView: View {
         .alert(
             "Factory reset failed",
             isPresented: Binding(
-                get: { factoryResetProblem != nil },
-                set: { if !$0 { factoryResetProblem = nil } }
+                get: { radioActionProblem != nil },
+                set: { if !$0 { radioActionProblem = nil } }
             )
         ) {
-            Button("OK", role: .cancel) { factoryResetProblem = nil }
+            Button("OK", role: .cancel) { radioActionProblem = nil }
         } message: {
-            Text(factoryResetProblem ?? "")
+            Text(radioActionProblem ?? "")
         }
         .sheet(isPresented: $showsRadioPicker, onDismiss: { Task { await stopDiscovery() } }) {
             NavigationStack {
@@ -899,6 +987,7 @@ struct RadioDetailView: View {
             Button("Disconnect", role: .destructive) {
                 Task { await disconnect() }
             }
+            rebootButton
             forgetButton
             factoryResetButton
         case .waitingForRadio:
@@ -943,6 +1032,16 @@ struct RadioDetailView: View {
     private var factoryResetButton: some View {
         Button("Factory Reset Radio…", role: .destructive) {
             confirmsFactoryReset = true
+        }
+    }
+
+    /// A restart keeps everything, so it sits above the two controls that
+    /// do not: it is the one to reach for first when a radio is behaving
+    /// oddly, and the only one with nothing to lose by trying.
+    @ViewBuilder
+    private var rebootButton: some View {
+        Button("Restart Radio…", role: .destructive) {
+            confirmsReboot = true
         }
     }
 }

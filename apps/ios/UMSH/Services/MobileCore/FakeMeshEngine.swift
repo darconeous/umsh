@@ -63,6 +63,8 @@ actor FakeMeshEngine: MeshEngine {
         )
     }
 
+    func lockIdentity() {}
+
     func inspectChannelURI(_ uri: String) throws -> MeshChannelPreview {
         if let name = uri.strippingPrefix("umsh:cs:") {
             return try inspectChannelName(name)
