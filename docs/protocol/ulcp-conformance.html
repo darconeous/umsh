@@ -35,7 +35,7 @@
             const path_to_root = "";
             const default_light_theme = "light";
             const default_dark_theme = "ayu";
-            window.path_to_searchindex_js = "searchindex-666b1035.js";
+            window.path_to_searchindex_js = "searchindex-66e741c0.js";
         </script>
         <!-- Start loading toc.js asap -->
         <script src="toc-438957a9.js"></script>
@@ -241,9 +241,11 @@ when the capability is not advertised; <code>CMD_CLEAR</code> and
 </tbody>
 </table>
 </div>
-<p><code>PROP_DEV_MODEL</code> (4) is the one property that is neither always required nor
-capability-gated: firmware built for a specific board <strong>SHOULD</strong> implement it,
-and anything else omits it. A host discovers it by asking.</p>
+<p><code>PROP_DEV_MODEL</code> (4) and <code>PROP_UPTIME</code> (6) are the two properties that are
+neither always required nor capability-gated. Firmware built for a specific
+board <strong>SHOULD</strong> implement the first, and a device with a monotonic clock
+<strong>SHOULD</strong> implement the second; anything else omits them. A host discovers
+both by asking.</p>
 <p>Every other property is gated by a capability. A device that does not
 advertise the capability does not implement the property, and rejects it
 with <code>STATUS_PROP_NOT_FOUND</code> or <code>STATUS_UNIMPLEMENTED</code>.</p>

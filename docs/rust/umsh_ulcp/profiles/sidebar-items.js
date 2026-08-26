@@ -1,0 +1,1 @@
+window.SIDEBAR_ITEMS = {"constant":["DEFAULT","DEFAULT_SYNC_WORD","DEFAULT_TX_POWER_DBM","SUPPORTED_BANDWIDTHS_HZ","VETTED"],"fn":["by_id","matching"],"struct":["PhyProfile"]};

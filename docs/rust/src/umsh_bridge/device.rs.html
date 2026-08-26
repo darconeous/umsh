@@ -59,505 +59,511 @@
 <a href=#59 id=59 data-nosnippet>59</a>/// exist because the constructor asks for them.
 <a href=#60 id=60 data-nosnippet>60</a></span><span class="attr">#[cfg(any(feature = <span class="string">"serial-radio"</span>, feature = <span class="string">"ble-radio"</span>))]
 <a href=#61 id=61 data-nosnippet>61</a></span><span class="kw">fn </span>attach_config() -&gt; UlcpDeviceConfig {
-<a href=#62 id=62 data-nosnippet>62</a>    UlcpDeviceConfig::new(<span class="number">910_525</span>, <span class="number">62_500</span>, <span class="number">7</span>, <span class="number">5</span>)
-<a href=#63 id=63 data-nosnippet>63</a>}
-<a href=#64 id=64 data-nosnippet>64</a>
-<a href=#65 id=65 data-nosnippet>65</a><span class="doccomment">/// What a `PROP_MAC_PROMISCUOUS` set means for the bridge.
-<a href=#66 id=66 data-nosnippet>66</a>///
-<a href=#67 id=67 data-nosnippet>67</a>/// Backhaul mode already decides *which* frames reach this host — the
-<a href=#68 id=68 data-nosnippet>68</a>/// node's transmissions, and nothing off the air — but they still pass
-<a href=#69 id=69 data-nosnippet>69</a>/// the device's receive filtering on the way. A device with no host
-<a href=#70 id=70 data-nosnippet>70</a>/// domain provisioned filters nothing, which is the ordinary case for a
-<a href=#71 id=71 data-nosnippet>71</a>/// bridge; asking for promiscuous delivery anyway is what keeps a device
-<a href=#72 id=72 data-nosnippet>72</a>/// that *has* been provisioned from hiding the repeats this bridge
-<a href=#73 id=73 data-nosnippet>73</a>/// exists to carry. A device that refuses the property is left as it is.
-<a href=#74 id=74 data-nosnippet>74</a></span><span class="attr">#[cfg(any(feature = <span class="string">"serial-radio"</span>, feature = <span class="string">"ble-radio"</span>))]
-<a href=#75 id=75 data-nosnippet>75</a></span><span class="kw">fn </span>promiscuous_outcome(result: <span class="prelude-ty">Result</span>&lt;Vec&lt;u8&gt;, UlcpError&gt;) -&gt; <span class="prelude-ty">Result</span>&lt;()&gt; {
-<a href=#76 id=76 data-nosnippet>76</a>    <span class="kw">match </span>result {
-<a href=#77 id=77 data-nosnippet>77</a>        <span class="prelude-val">Ok</span>(<span class="kw">_</span>) =&gt; {
-<a href=#78 id=78 data-nosnippet>78</a>            <span class="macro">tracing::debug!</span>(<span class="string">"promiscuous delivery enabled"</span>);
-<a href=#79 id=79 data-nosnippet>79</a>            <span class="prelude-val">Ok</span>(())
-<a href=#80 id=80 data-nosnippet>80</a>        }
-<a href=#81 id=81 data-nosnippet>81</a>        <span class="prelude-val">Err</span>(UlcpError::Status(status)) =&gt; {
-<a href=#82 id=82 data-nosnippet>82</a>            <span class="macro">tracing::warn!</span>(
-<a href=#83 id=83 data-nosnippet>83</a>                <span class="question-mark">?</span>status,
-<a href=#84 id=84 data-nosnippet>84</a>                <span class="string">"device refused promiscuous delivery; this interface carries only what the \
-<a href=#85 id=85 data-nosnippet>85</a>                 device's own receive filtering admits"
-<a href=#86 id=86 data-nosnippet>86</a>            </span>);
-<a href=#87 id=87 data-nosnippet>87</a>            <span class="prelude-val">Ok</span>(())
-<a href=#88 id=88 data-nosnippet>88</a>        }
-<a href=#89 id=89 data-nosnippet>89</a>        <span class="prelude-val">Err</span>(error) =&gt; <span class="prelude-val">Err</span>(<span class="macro">anyhow!</span>(<span class="string">"enabling promiscuous delivery: {error:?}"</span>)),
-<a href=#90 id=90 data-nosnippet>90</a>    }
-<a href=#91 id=91 data-nosnippet>91</a>}
-<a href=#92 id=92 data-nosnippet>92</a>
-<a href=#93 id=93 data-nosnippet>93</a><span class="doccomment">/// A ULCP device, or the fake radio that stands in for one.
-<a href=#94 id=94 data-nosnippet>94</a>///
-<a href=#95 id=95 data-nosnippet>95</a>/// The two ULCP transports are separate types rather than a trait
-<a href=#96 id=96 data-nosnippet>96</a>/// object because `UlcpDevice` is generic over its link and its receive
-<a href=#97 id=97 data-nosnippet>97</a>/// path is a `poll` function, not an `async fn` — which is exactly what
-<a href=#98 id=98 data-nosnippet>98</a>/// lets the relay poll a receive and a transmit from the same `&amp;mut`
-<a href=#99 id=99 data-nosnippet>99</a>/// without holding a borrow across an await.
-<a href=#100 id=100 data-nosnippet>100</a></span><span class="kw">enum </span>Device {
-<a href=#101 id=101 data-nosnippet>101</a>    <span class="attr">#[cfg(feature = <span class="string">"serial-radio"</span>)]
-<a href=#102 id=102 data-nosnippet>102</a>    </span>Serial(UlcpDevice&lt;umsh::ulcp::SerialFrameLink&lt;tokio_serial::SerialStream&gt;&gt;),
-<a href=#103 id=103 data-nosnippet>103</a>    <span class="attr">#[cfg(feature = <span class="string">"ble-radio"</span>)]
-<a href=#104 id=104 data-nosnippet>104</a>    </span>Ble(Box&lt;UlcpDevice&lt;umsh::ulcp::BleFrameLink&gt;&gt;),
-<a href=#105 id=105 data-nosnippet>105</a>    Udp(UdpFakeRadio),
-<a href=#106 id=106 data-nosnippet>106</a>}
-<a href=#107 id=107 data-nosnippet>107</a>
-<a href=#108 id=108 data-nosnippet>108</a><span class="macro">macro_rules!</span> with_device {
-<a href=#109 id=109 data-nosnippet>109</a>    (<span class="macro-nonterminal">$self</span>:expr, <span class="macro-nonterminal">$device</span>:ident =&gt; <span class="macro-nonterminal">$body</span>:expr) =&gt; {
-<a href=#110 id=110 data-nosnippet>110</a>        <span class="kw">match </span><span class="macro-nonterminal">$self </span>{
-<a href=#111 id=111 data-nosnippet>111</a>            <span class="attr">#[cfg(feature = <span class="string">"serial-radio"</span>)]
-<a href=#112 id=112 data-nosnippet>112</a>            </span>Device::Serial(<span class="macro-nonterminal">$device</span>) =&gt; <span class="macro-nonterminal">$body</span>,
-<a href=#113 id=113 data-nosnippet>113</a>            <span class="attr">#[cfg(feature = <span class="string">"ble-radio"</span>)]
-<a href=#114 id=114 data-nosnippet>114</a>            </span>Device::Ble(<span class="macro-nonterminal">$device</span>) =&gt; <span class="macro-nonterminal">$body</span>,
-<a href=#115 id=115 data-nosnippet>115</a>            Device::Udp(<span class="macro-nonterminal">$device</span>) =&gt; <span class="macro-nonterminal">$body</span>,
-<a href=#116 id=116 data-nosnippet>116</a>        }
-<a href=#117 id=117 data-nosnippet>117</a>    };
-<a href=#118 id=118 data-nosnippet>118</a>}
-<a href=#119 id=119 data-nosnippet>119</a>
-<a href=#120 id=120 data-nosnippet>120</a><span class="kw">impl </span>Device {
-<a href=#121 id=121 data-nosnippet>121</a>    <span class="kw">async fn </span>open(config: <span class="kw-2">&amp;</span>RadioConfig) -&gt; <span class="prelude-ty">Result</span>&lt;<span class="self">Self</span>&gt; {
-<a href=#122 id=122 data-nosnippet>122</a>        <span class="kw">match </span>config {
-<a href=#123 id=123 data-nosnippet>123</a>            <span class="attr">#[cfg(feature = <span class="string">"serial-radio"</span>)]
-<a href=#124 id=124 data-nosnippet>124</a>            </span>RadioConfig::Serial { port, baud } =&gt; {
-<a href=#125 id=125 data-nosnippet>125</a>                <span class="kw">let </span>link = open_serial_link(port, <span class="kw-2">*</span>baud).<span class="kw">await</span><span class="question-mark">?</span>;
-<a href=#126 id=126 data-nosnippet>126</a>                <span class="kw">let </span>device = UlcpDevice::attach_existing(link, attach_config())
-<a href=#127 id=127 data-nosnippet>127</a>                    .<span class="kw">await
-<a href=#128 id=128 data-nosnippet>128</a>                    </span>.map_err(|error| <span class="macro">anyhow!</span>(<span class="string">"attaching to {port}: {error:?}"</span>))<span class="question-mark">?</span>;
-<a href=#129 id=129 data-nosnippet>129</a>                <span class="prelude-val">Ok</span>(<span class="self">Self</span>::Serial(device))
-<a href=#130 id=130 data-nosnippet>130</a>            }
-<a href=#131 id=131 data-nosnippet>131</a>            <span class="attr">#[cfg(not(feature = <span class="string">"serial-radio"</span>))]
-<a href=#132 id=132 data-nosnippet>132</a>            </span>RadioConfig::Serial { .. } =&gt; {
-<a href=#133 id=133 data-nosnippet>133</a>                <span class="macro">bail!</span>(<span class="string">"this build has no serial support; rebuild with --features serial-radio"</span>)
-<a href=#134 id=134 data-nosnippet>134</a>            }
-<a href=#135 id=135 data-nosnippet>135</a>            <span class="attr">#[cfg(feature = <span class="string">"ble-radio"</span>)]
-<a href=#136 id=136 data-nosnippet>136</a>            </span>RadioConfig::Ble { selector } =&gt; {
-<a href=#137 id=137 data-nosnippet>137</a>                <span class="comment">// Connect and attach separately rather than through
-<a href=#138 id=138 data-nosnippet>138</a>                // `open_ble`, which resets the device: a bridge attaches
-<a href=#139 id=139 data-nosnippet>139</a>                // to a radio that is already operating and must not
-<a href=#140 id=140 data-nosnippet>140</a>                // disturb its configuration.
-<a href=#141 id=141 data-nosnippet>141</a>                </span><span class="kw">let </span>link = umsh::ulcp::BleFrameLink::connect(
-<a href=#142 id=142 data-nosnippet>142</a>                    selector.as_deref(),
-<a href=#143 id=143 data-nosnippet>143</a>                    umsh::ulcp::BleFrameLinkConfig::default(),
-<a href=#144 id=144 data-nosnippet>144</a>                )
-<a href=#145 id=145 data-nosnippet>145</a>                .<span class="kw">await
-<a href=#146 id=146 data-nosnippet>146</a>                </span>.map_err(|error| <span class="macro">anyhow!</span>(<span class="string">"connecting over BLE: {error:?}"</span>))<span class="question-mark">?</span>;
-<a href=#147 id=147 data-nosnippet>147</a>                <span class="kw">let </span>device = UlcpDevice::attach_existing(link, attach_config())
-<a href=#148 id=148 data-nosnippet>148</a>                    .<span class="kw">await
-<a href=#149 id=149 data-nosnippet>149</a>                    </span>.map_err(|error| <span class="macro">anyhow!</span>(<span class="string">"attaching over BLE: {error:?}"</span>))<span class="question-mark">?</span>;
-<a href=#150 id=150 data-nosnippet>150</a>                <span class="prelude-val">Ok</span>(<span class="self">Self</span>::Ble(Box::new(device)))
-<a href=#151 id=151 data-nosnippet>151</a>            }
-<a href=#152 id=152 data-nosnippet>152</a>            <span class="attr">#[cfg(not(feature = <span class="string">"ble-radio"</span>))]
-<a href=#153 id=153 data-nosnippet>153</a>            </span>RadioConfig::Ble { .. } =&gt; {
-<a href=#154 id=154 data-nosnippet>154</a>                <span class="macro">bail!</span>(<span class="string">"this build has no BLE support; rebuild with --features ble-radio"</span>)
-<a href=#155 id=155 data-nosnippet>155</a>            }
-<a href=#156 id=156 data-nosnippet>156</a>            RadioConfig::UdpMulticast {
-<a href=#157 id=157 data-nosnippet>157</a>                group,
-<a href=#158 id=158 data-nosnippet>158</a>                port,
-<a href=#159 id=159 data-nosnippet>159</a>                rssi,
-<a href=#160 id=160 data-nosnippet>160</a>                snr,
-<a href=#161 id=161 data-nosnippet>161</a>            } =&gt; <span class="prelude-val">Ok</span>(<span class="self">Self</span>::Udp(
-<a href=#162 id=162 data-nosnippet>162</a>                UdpFakeRadio::bind(<span class="kw-2">*</span>group, <span class="kw-2">*</span>port, <span class="kw-2">*</span>rssi, <span class="kw-2">*</span>snr).<span class="kw">await</span><span class="question-mark">?</span>,
-<a href=#163 id=163 data-nosnippet>163</a>            )),
-<a href=#164 id=164 data-nosnippet>164</a>            RadioConfig::None =&gt; <span class="macro">bail!</span>(<span class="string">"no radio is configured"</span>),
-<a href=#165 id=165 data-nosnippet>165</a>        }
-<a href=#166 id=166 data-nosnippet>166</a>    }
-<a href=#167 id=167 data-nosnippet>167</a>
-<a href=#168 id=168 data-nosnippet>168</a>    <span class="doccomment">/// Everything the spec asks of a bridge's attachment, in one place
-<a href=#169 id=169 data-nosnippet>169</a>    /// so a reconnection cannot forget any of it.
-<a href=#170 id=170 data-nosnippet>170</a>    </span><span class="kw">async fn </span>prepare(<span class="kw-2">&amp;mut </span><span class="self">self</span>) -&gt; <span class="prelude-ty">Result</span>&lt;()&gt; {
-<a href=#171 id=171 data-nosnippet>171</a>        <span class="kw">let </span>capabilities = <span class="self">self</span>.capabilities().<span class="kw">await</span><span class="question-mark">?</span>;
-<a href=#172 id=172 data-nosnippet>172</a>
-<a href=#173 id=173 data-nosnippet>173</a>        <span class="kw">if </span>!capabilities.contains(<span class="kw-2">&amp;</span>cap::MAC_BACKHAUL) {
-<a href=#174 id=174 data-nosnippet>174</a>            <span class="comment">// Fatal, and deliberately so. Without backhaul this host
-<a href=#175 id=175 data-nosnippet>175</a>            // would sit on the shared medium, and every frame the bridge
-<a href=#176 id=176 data-nosnippet>176</a>            // handed it would go on the air unrepeated: no duplicate
-<a href=#177 id=177 data-nosnippet>177</a>            // suppression, no hop accounting, no forwarding policy. A
-<a href=#178 id=178 data-nosnippet>178</a>            // bridge is not something to half-do.
-<a href=#179 id=179 data-nosnippet>179</a>            </span><span class="macro">bail!</span>(
-<a href=#180 id=180 data-nosnippet>180</a>                <span class="string">"device does not advertise CAP_MAC_BACKHAUL, so it cannot join a bridge; \
-<a href=#181 id=181 data-nosnippet>181</a>                 update its firmware"
-<a href=#182 id=182 data-nosnippet>182</a>            </span>);
-<a href=#183 id=183 data-nosnippet>183</a>        }
-<a href=#184 id=184 data-nosnippet>184</a>        <span class="kw">if </span>!capabilities.contains(<span class="kw-2">&amp;</span>cap::WRITABLE_RAW_STREAM) {
-<a href=#185 id=185 data-nosnippet>185</a>            <span class="comment">// Not fatal: a receive-only interface still carries what its
-<a href=#186 id=186 data-nosnippet>186</a>            // node transmits to the rest of the bridge, and saying so
-<a href=#187 id=187 data-nosnippet>187</a>            // once is more useful than refusing to start.
-<a href=#188 id=188 data-nosnippet>188</a>            </span><span class="macro">tracing::warn!</span>(
-<a href=#189 id=189 data-nosnippet>189</a>                <span class="string">"device does not advertise CAP_WRITABLE_RAW_STREAM; this interface can receive \
-<a href=#190 id=190 data-nosnippet>190</a>                 but not transmit"
-<a href=#191 id=191 data-nosnippet>191</a>            </span>);
-<a href=#192 id=192 data-nosnippet>192</a>        }
-<a href=#193 id=193 data-nosnippet>193</a>
-<a href=#194 id=194 data-nosnippet>194</a>        <span class="self">self</span>.set_backhaul().<span class="kw">await</span><span class="question-mark">?</span>;
-<a href=#195 id=195 data-nosnippet>195</a>        <span class="self">self</span>.set_promiscuous().<span class="kw">await</span><span class="question-mark">?</span>;
-<a href=#196 id=196 data-nosnippet>196</a>        <span class="self">self</span>.report_repeater_state().<span class="kw">await</span>;
-<a href=#197 id=197 data-nosnippet>197</a>        <span class="prelude-val">Ok</span>(())
-<a href=#198 id=198 data-nosnippet>198</a>    }
+<a href=#62 id=62 data-nosnippet>62</a>    <span class="kw">let </span>profile = umsh::ulcp_wire::profiles::DEFAULT;
+<a href=#63 id=63 data-nosnippet>63</a>    UlcpDeviceConfig::new(
+<a href=#64 id=64 data-nosnippet>64</a>        profile.freq_khz,
+<a href=#65 id=65 data-nosnippet>65</a>        profile.bw_hz,
+<a href=#66 id=66 data-nosnippet>66</a>        profile.sf,
+<a href=#67 id=67 data-nosnippet>67</a>        profile.cr_denom,
+<a href=#68 id=68 data-nosnippet>68</a>    )
+<a href=#69 id=69 data-nosnippet>69</a>}
+<a href=#70 id=70 data-nosnippet>70</a>
+<a href=#71 id=71 data-nosnippet>71</a><span class="doccomment">/// What a `PROP_MAC_PROMISCUOUS` set means for the bridge.
+<a href=#72 id=72 data-nosnippet>72</a>///
+<a href=#73 id=73 data-nosnippet>73</a>/// Backhaul mode already decides *which* frames reach this host — the
+<a href=#74 id=74 data-nosnippet>74</a>/// node's transmissions, and nothing off the air — but they still pass
+<a href=#75 id=75 data-nosnippet>75</a>/// the device's receive filtering on the way. A device with no host
+<a href=#76 id=76 data-nosnippet>76</a>/// domain provisioned filters nothing, which is the ordinary case for a
+<a href=#77 id=77 data-nosnippet>77</a>/// bridge; asking for promiscuous delivery anyway is what keeps a device
+<a href=#78 id=78 data-nosnippet>78</a>/// that *has* been provisioned from hiding the repeats this bridge
+<a href=#79 id=79 data-nosnippet>79</a>/// exists to carry. A device that refuses the property is left as it is.
+<a href=#80 id=80 data-nosnippet>80</a></span><span class="attr">#[cfg(any(feature = <span class="string">"serial-radio"</span>, feature = <span class="string">"ble-radio"</span>))]
+<a href=#81 id=81 data-nosnippet>81</a></span><span class="kw">fn </span>promiscuous_outcome(result: <span class="prelude-ty">Result</span>&lt;Vec&lt;u8&gt;, UlcpError&gt;) -&gt; <span class="prelude-ty">Result</span>&lt;()&gt; {
+<a href=#82 id=82 data-nosnippet>82</a>    <span class="kw">match </span>result {
+<a href=#83 id=83 data-nosnippet>83</a>        <span class="prelude-val">Ok</span>(<span class="kw">_</span>) =&gt; {
+<a href=#84 id=84 data-nosnippet>84</a>            <span class="macro">tracing::debug!</span>(<span class="string">"promiscuous delivery enabled"</span>);
+<a href=#85 id=85 data-nosnippet>85</a>            <span class="prelude-val">Ok</span>(())
+<a href=#86 id=86 data-nosnippet>86</a>        }
+<a href=#87 id=87 data-nosnippet>87</a>        <span class="prelude-val">Err</span>(UlcpError::Status(status)) =&gt; {
+<a href=#88 id=88 data-nosnippet>88</a>            <span class="macro">tracing::warn!</span>(
+<a href=#89 id=89 data-nosnippet>89</a>                <span class="question-mark">?</span>status,
+<a href=#90 id=90 data-nosnippet>90</a>                <span class="string">"device refused promiscuous delivery; this interface carries only what the \
+<a href=#91 id=91 data-nosnippet>91</a>                 device's own receive filtering admits"
+<a href=#92 id=92 data-nosnippet>92</a>            </span>);
+<a href=#93 id=93 data-nosnippet>93</a>            <span class="prelude-val">Ok</span>(())
+<a href=#94 id=94 data-nosnippet>94</a>        }
+<a href=#95 id=95 data-nosnippet>95</a>        <span class="prelude-val">Err</span>(error) =&gt; <span class="prelude-val">Err</span>(<span class="macro">anyhow!</span>(<span class="string">"enabling promiscuous delivery: {error:?}"</span>)),
+<a href=#96 id=96 data-nosnippet>96</a>    }
+<a href=#97 id=97 data-nosnippet>97</a>}
+<a href=#98 id=98 data-nosnippet>98</a>
+<a href=#99 id=99 data-nosnippet>99</a><span class="doccomment">/// A ULCP device, or the fake radio that stands in for one.
+<a href=#100 id=100 data-nosnippet>100</a>///
+<a href=#101 id=101 data-nosnippet>101</a>/// The two ULCP transports are separate types rather than a trait
+<a href=#102 id=102 data-nosnippet>102</a>/// object because `UlcpDevice` is generic over its link and its receive
+<a href=#103 id=103 data-nosnippet>103</a>/// path is a `poll` function, not an `async fn` — which is exactly what
+<a href=#104 id=104 data-nosnippet>104</a>/// lets the relay poll a receive and a transmit from the same `&amp;mut`
+<a href=#105 id=105 data-nosnippet>105</a>/// without holding a borrow across an await.
+<a href=#106 id=106 data-nosnippet>106</a></span><span class="kw">enum </span>Device {
+<a href=#107 id=107 data-nosnippet>107</a>    <span class="attr">#[cfg(feature = <span class="string">"serial-radio"</span>)]
+<a href=#108 id=108 data-nosnippet>108</a>    </span>Serial(UlcpDevice&lt;umsh::ulcp::SerialFrameLink&lt;tokio_serial::SerialStream&gt;&gt;),
+<a href=#109 id=109 data-nosnippet>109</a>    <span class="attr">#[cfg(feature = <span class="string">"ble-radio"</span>)]
+<a href=#110 id=110 data-nosnippet>110</a>    </span>Ble(Box&lt;UlcpDevice&lt;umsh::ulcp::BleFrameLink&gt;&gt;),
+<a href=#111 id=111 data-nosnippet>111</a>    Udp(UdpFakeRadio),
+<a href=#112 id=112 data-nosnippet>112</a>}
+<a href=#113 id=113 data-nosnippet>113</a>
+<a href=#114 id=114 data-nosnippet>114</a><span class="macro">macro_rules!</span> with_device {
+<a href=#115 id=115 data-nosnippet>115</a>    (<span class="macro-nonterminal">$self</span>:expr, <span class="macro-nonterminal">$device</span>:ident =&gt; <span class="macro-nonterminal">$body</span>:expr) =&gt; {
+<a href=#116 id=116 data-nosnippet>116</a>        <span class="kw">match </span><span class="macro-nonterminal">$self </span>{
+<a href=#117 id=117 data-nosnippet>117</a>            <span class="attr">#[cfg(feature = <span class="string">"serial-radio"</span>)]
+<a href=#118 id=118 data-nosnippet>118</a>            </span>Device::Serial(<span class="macro-nonterminal">$device</span>) =&gt; <span class="macro-nonterminal">$body</span>,
+<a href=#119 id=119 data-nosnippet>119</a>            <span class="attr">#[cfg(feature = <span class="string">"ble-radio"</span>)]
+<a href=#120 id=120 data-nosnippet>120</a>            </span>Device::Ble(<span class="macro-nonterminal">$device</span>) =&gt; <span class="macro-nonterminal">$body</span>,
+<a href=#121 id=121 data-nosnippet>121</a>            Device::Udp(<span class="macro-nonterminal">$device</span>) =&gt; <span class="macro-nonterminal">$body</span>,
+<a href=#122 id=122 data-nosnippet>122</a>        }
+<a href=#123 id=123 data-nosnippet>123</a>    };
+<a href=#124 id=124 data-nosnippet>124</a>}
+<a href=#125 id=125 data-nosnippet>125</a>
+<a href=#126 id=126 data-nosnippet>126</a><span class="kw">impl </span>Device {
+<a href=#127 id=127 data-nosnippet>127</a>    <span class="kw">async fn </span>open(config: <span class="kw-2">&amp;</span>RadioConfig) -&gt; <span class="prelude-ty">Result</span>&lt;<span class="self">Self</span>&gt; {
+<a href=#128 id=128 data-nosnippet>128</a>        <span class="kw">match </span>config {
+<a href=#129 id=129 data-nosnippet>129</a>            <span class="attr">#[cfg(feature = <span class="string">"serial-radio"</span>)]
+<a href=#130 id=130 data-nosnippet>130</a>            </span>RadioConfig::Serial { port, baud } =&gt; {
+<a href=#131 id=131 data-nosnippet>131</a>                <span class="kw">let </span>link = open_serial_link(port, <span class="kw-2">*</span>baud).<span class="kw">await</span><span class="question-mark">?</span>;
+<a href=#132 id=132 data-nosnippet>132</a>                <span class="kw">let </span>device = UlcpDevice::attach_existing(link, attach_config())
+<a href=#133 id=133 data-nosnippet>133</a>                    .<span class="kw">await
+<a href=#134 id=134 data-nosnippet>134</a>                    </span>.map_err(|error| <span class="macro">anyhow!</span>(<span class="string">"attaching to {port}: {error:?}"</span>))<span class="question-mark">?</span>;
+<a href=#135 id=135 data-nosnippet>135</a>                <span class="prelude-val">Ok</span>(<span class="self">Self</span>::Serial(device))
+<a href=#136 id=136 data-nosnippet>136</a>            }
+<a href=#137 id=137 data-nosnippet>137</a>            <span class="attr">#[cfg(not(feature = <span class="string">"serial-radio"</span>))]
+<a href=#138 id=138 data-nosnippet>138</a>            </span>RadioConfig::Serial { .. } =&gt; {
+<a href=#139 id=139 data-nosnippet>139</a>                <span class="macro">bail!</span>(<span class="string">"this build has no serial support; rebuild with --features serial-radio"</span>)
+<a href=#140 id=140 data-nosnippet>140</a>            }
+<a href=#141 id=141 data-nosnippet>141</a>            <span class="attr">#[cfg(feature = <span class="string">"ble-radio"</span>)]
+<a href=#142 id=142 data-nosnippet>142</a>            </span>RadioConfig::Ble { selector } =&gt; {
+<a href=#143 id=143 data-nosnippet>143</a>                <span class="comment">// Connect and attach separately rather than through
+<a href=#144 id=144 data-nosnippet>144</a>                // `open_ble`, which resets the device: a bridge attaches
+<a href=#145 id=145 data-nosnippet>145</a>                // to a radio that is already operating and must not
+<a href=#146 id=146 data-nosnippet>146</a>                // disturb its configuration.
+<a href=#147 id=147 data-nosnippet>147</a>                </span><span class="kw">let </span>link = umsh::ulcp::BleFrameLink::connect(
+<a href=#148 id=148 data-nosnippet>148</a>                    selector.as_deref(),
+<a href=#149 id=149 data-nosnippet>149</a>                    umsh::ulcp::BleFrameLinkConfig::default(),
+<a href=#150 id=150 data-nosnippet>150</a>                )
+<a href=#151 id=151 data-nosnippet>151</a>                .<span class="kw">await
+<a href=#152 id=152 data-nosnippet>152</a>                </span>.map_err(|error| <span class="macro">anyhow!</span>(<span class="string">"connecting over BLE: {error:?}"</span>))<span class="question-mark">?</span>;
+<a href=#153 id=153 data-nosnippet>153</a>                <span class="kw">let </span>device = UlcpDevice::attach_existing(link, attach_config())
+<a href=#154 id=154 data-nosnippet>154</a>                    .<span class="kw">await
+<a href=#155 id=155 data-nosnippet>155</a>                    </span>.map_err(|error| <span class="macro">anyhow!</span>(<span class="string">"attaching over BLE: {error:?}"</span>))<span class="question-mark">?</span>;
+<a href=#156 id=156 data-nosnippet>156</a>                <span class="prelude-val">Ok</span>(<span class="self">Self</span>::Ble(Box::new(device)))
+<a href=#157 id=157 data-nosnippet>157</a>            }
+<a href=#158 id=158 data-nosnippet>158</a>            <span class="attr">#[cfg(not(feature = <span class="string">"ble-radio"</span>))]
+<a href=#159 id=159 data-nosnippet>159</a>            </span>RadioConfig::Ble { .. } =&gt; {
+<a href=#160 id=160 data-nosnippet>160</a>                <span class="macro">bail!</span>(<span class="string">"this build has no BLE support; rebuild with --features ble-radio"</span>)
+<a href=#161 id=161 data-nosnippet>161</a>            }
+<a href=#162 id=162 data-nosnippet>162</a>            RadioConfig::UdpMulticast {
+<a href=#163 id=163 data-nosnippet>163</a>                group,
+<a href=#164 id=164 data-nosnippet>164</a>                port,
+<a href=#165 id=165 data-nosnippet>165</a>                rssi,
+<a href=#166 id=166 data-nosnippet>166</a>                snr,
+<a href=#167 id=167 data-nosnippet>167</a>            } =&gt; <span class="prelude-val">Ok</span>(<span class="self">Self</span>::Udp(
+<a href=#168 id=168 data-nosnippet>168</a>                UdpFakeRadio::bind(<span class="kw-2">*</span>group, <span class="kw-2">*</span>port, <span class="kw-2">*</span>rssi, <span class="kw-2">*</span>snr).<span class="kw">await</span><span class="question-mark">?</span>,
+<a href=#169 id=169 data-nosnippet>169</a>            )),
+<a href=#170 id=170 data-nosnippet>170</a>            RadioConfig::None =&gt; <span class="macro">bail!</span>(<span class="string">"no radio is configured"</span>),
+<a href=#171 id=171 data-nosnippet>171</a>        }
+<a href=#172 id=172 data-nosnippet>172</a>    }
+<a href=#173 id=173 data-nosnippet>173</a>
+<a href=#174 id=174 data-nosnippet>174</a>    <span class="doccomment">/// Everything the spec asks of a bridge's attachment, in one place
+<a href=#175 id=175 data-nosnippet>175</a>    /// so a reconnection cannot forget any of it.
+<a href=#176 id=176 data-nosnippet>176</a>    </span><span class="kw">async fn </span>prepare(<span class="kw-2">&amp;mut </span><span class="self">self</span>) -&gt; <span class="prelude-ty">Result</span>&lt;()&gt; {
+<a href=#177 id=177 data-nosnippet>177</a>        <span class="kw">let </span>capabilities = <span class="self">self</span>.capabilities().<span class="kw">await</span><span class="question-mark">?</span>;
+<a href=#178 id=178 data-nosnippet>178</a>
+<a href=#179 id=179 data-nosnippet>179</a>        <span class="kw">if </span>!capabilities.contains(<span class="kw-2">&amp;</span>cap::MAC_BACKHAUL) {
+<a href=#180 id=180 data-nosnippet>180</a>            <span class="comment">// Fatal, and deliberately so. Without backhaul this host
+<a href=#181 id=181 data-nosnippet>181</a>            // would sit on the shared medium, and every frame the bridge
+<a href=#182 id=182 data-nosnippet>182</a>            // handed it would go on the air unrepeated: no duplicate
+<a href=#183 id=183 data-nosnippet>183</a>            // suppression, no hop accounting, no forwarding policy. A
+<a href=#184 id=184 data-nosnippet>184</a>            // bridge is not something to half-do.
+<a href=#185 id=185 data-nosnippet>185</a>            </span><span class="macro">bail!</span>(
+<a href=#186 id=186 data-nosnippet>186</a>                <span class="string">"device does not advertise CAP_MAC_BACKHAUL, so it cannot join a bridge; \
+<a href=#187 id=187 data-nosnippet>187</a>                 update its firmware"
+<a href=#188 id=188 data-nosnippet>188</a>            </span>);
+<a href=#189 id=189 data-nosnippet>189</a>        }
+<a href=#190 id=190 data-nosnippet>190</a>        <span class="kw">if </span>!capabilities.contains(<span class="kw-2">&amp;</span>cap::WRITABLE_RAW_STREAM) {
+<a href=#191 id=191 data-nosnippet>191</a>            <span class="comment">// Not fatal: a receive-only interface still carries what its
+<a href=#192 id=192 data-nosnippet>192</a>            // node transmits to the rest of the bridge, and saying so
+<a href=#193 id=193 data-nosnippet>193</a>            // once is more useful than refusing to start.
+<a href=#194 id=194 data-nosnippet>194</a>            </span><span class="macro">tracing::warn!</span>(
+<a href=#195 id=195 data-nosnippet>195</a>                <span class="string">"device does not advertise CAP_WRITABLE_RAW_STREAM; this interface can receive \
+<a href=#196 id=196 data-nosnippet>196</a>                 but not transmit"
+<a href=#197 id=197 data-nosnippet>197</a>            </span>);
+<a href=#198 id=198 data-nosnippet>198</a>        }
 <a href=#199 id=199 data-nosnippet>199</a>
-<a href=#200 id=200 data-nosnippet>200</a>    <span class="kw">async fn </span>capabilities(<span class="kw-2">&amp;mut </span><span class="self">self</span>) -&gt; <span class="prelude-ty">Result</span>&lt;Vec&lt;u32&gt;&gt; {
-<a href=#201 id=201 data-nosnippet>201</a>        <span class="kw">match </span><span class="self">self </span>{
-<a href=#202 id=202 data-nosnippet>202</a>            <span class="attr">#[cfg(feature = <span class="string">"serial-radio"</span>)]
-<a href=#203 id=203 data-nosnippet>203</a>            </span><span class="self">Self</span>::Serial(device) =&gt; device
-<a href=#204 id=204 data-nosnippet>204</a>                .capabilities()
-<a href=#205 id=205 data-nosnippet>205</a>                .<span class="kw">await
-<a href=#206 id=206 data-nosnippet>206</a>                </span>.map_err(|error| <span class="macro">anyhow!</span>(<span class="string">"reading device capabilities: {error:?}"</span>)),
-<a href=#207 id=207 data-nosnippet>207</a>            <span class="attr">#[cfg(feature = <span class="string">"ble-radio"</span>)]
-<a href=#208 id=208 data-nosnippet>208</a>            </span><span class="self">Self</span>::Ble(device) =&gt; device
-<a href=#209 id=209 data-nosnippet>209</a>                .capabilities()
-<a href=#210 id=210 data-nosnippet>210</a>                .<span class="kw">await
-<a href=#211 id=211 data-nosnippet>211</a>                </span>.map_err(|error| <span class="macro">anyhow!</span>(<span class="string">"reading device capabilities: {error:?}"</span>)),
-<a href=#212 id=212 data-nosnippet>212</a>            <span class="comment">// The fake radio has no node behind it at all, so it claims
-<a href=#213 id=213 data-nosnippet>213</a>            // what it needs to stand in for one.
-<a href=#214 id=214 data-nosnippet>214</a>            </span><span class="self">Self</span>::Udp(<span class="kw">_</span>) =&gt; <span class="prelude-val">Ok</span>(<span class="macro">vec!</span>[cap::MAC_BACKHAUL, cap::WRITABLE_RAW_STREAM]),
-<a href=#215 id=215 data-nosnippet>215</a>        }
-<a href=#216 id=216 data-nosnippet>216</a>    }
-<a href=#217 id=217 data-nosnippet>217</a>
-<a href=#218 id=218 data-nosnippet>218</a>    <span class="doccomment">/// Move this host off the shared medium and onto a point-to-point
-<a href=#219 id=219 data-nosnippet>219</a>    /// link to the device's own node. The property is session-scoped,
-<a href=#220 id=220 data-nosnippet>220</a>    /// which is why this runs on every attach rather than once at
-<a href=#221 id=221 data-nosnippet>221</a>    /// provisioning time.
-<a href=#222 id=222 data-nosnippet>222</a>    </span><span class="kw">async fn </span>set_backhaul(<span class="kw-2">&amp;mut </span><span class="self">self</span>) -&gt; <span class="prelude-ty">Result</span>&lt;()&gt; {
-<a href=#223 id=223 data-nosnippet>223</a>        <span class="kw">let </span>result = <span class="kw">match </span><span class="self">self </span>{
-<a href=#224 id=224 data-nosnippet>224</a>            <span class="attr">#[cfg(feature = <span class="string">"serial-radio"</span>)]
-<a href=#225 id=225 data-nosnippet>225</a>            </span><span class="self">Self</span>::Serial(device) =&gt; device.set_prop(prop::MAC_BACKHAUL, <span class="kw-2">&amp;</span>[<span class="number">1</span>]).<span class="kw">await</span>,
-<a href=#226 id=226 data-nosnippet>226</a>            <span class="attr">#[cfg(feature = <span class="string">"ble-radio"</span>)]
-<a href=#227 id=227 data-nosnippet>227</a>            </span><span class="self">Self</span>::Ble(device) =&gt; device.set_prop(prop::MAC_BACKHAUL, <span class="kw-2">&amp;</span>[<span class="number">1</span>]).<span class="kw">await</span>,
-<a href=#228 id=228 data-nosnippet>228</a>            <span class="comment">// The fake radio has no medium to leave.
-<a href=#229 id=229 data-nosnippet>229</a>            </span><span class="self">Self</span>::Udp(<span class="kw">_</span>) =&gt; <span class="kw">return </span><span class="prelude-val">Ok</span>(()),
-<a href=#230 id=230 data-nosnippet>230</a>        };
-<a href=#231 id=231 data-nosnippet>231</a>        result
-<a href=#232 id=232 data-nosnippet>232</a>            .map(|<span class="kw">_</span>| ())
-<a href=#233 id=233 data-nosnippet>233</a>            .map_err(|error| <span class="macro">anyhow!</span>(<span class="string">"enabling backhaul mode: {error:?}"</span>))
-<a href=#234 id=234 data-nosnippet>234</a>    }
-<a href=#235 id=235 data-nosnippet>235</a>
-<a href=#236 id=236 data-nosnippet>236</a>    <span class="kw">async fn </span>set_promiscuous(<span class="kw-2">&amp;mut </span><span class="self">self</span>) -&gt; <span class="prelude-ty">Result</span>&lt;()&gt; {
-<a href=#237 id=237 data-nosnippet>237</a>        <span class="kw">match </span><span class="self">self </span>{
-<a href=#238 id=238 data-nosnippet>238</a>            <span class="attr">#[cfg(feature = <span class="string">"serial-radio"</span>)]
-<a href=#239 id=239 data-nosnippet>239</a>            </span><span class="self">Self</span>::Serial(device) =&gt; {
-<a href=#240 id=240 data-nosnippet>240</a>                promiscuous_outcome(device.set_prop(prop::MAC_PROMISCUOUS, <span class="kw-2">&amp;</span>[<span class="number">1</span>]).<span class="kw">await</span>)
-<a href=#241 id=241 data-nosnippet>241</a>            }
-<a href=#242 id=242 data-nosnippet>242</a>            <span class="attr">#[cfg(feature = <span class="string">"ble-radio"</span>)]
-<a href=#243 id=243 data-nosnippet>243</a>            </span><span class="self">Self</span>::Ble(device) =&gt; {
-<a href=#244 id=244 data-nosnippet>244</a>                promiscuous_outcome(device.set_prop(prop::MAC_PROMISCUOUS, <span class="kw-2">&amp;</span>[<span class="number">1</span>]).<span class="kw">await</span>)
-<a href=#245 id=245 data-nosnippet>245</a>            }
-<a href=#246 id=246 data-nosnippet>246</a>            <span class="comment">// The fake radio has no filtering to bypass.
-<a href=#247 id=247 data-nosnippet>247</a>            </span><span class="self">Self</span>::Udp(<span class="kw">_</span>) =&gt; <span class="prelude-val">Ok</span>(()),
-<a href=#248 id=248 data-nosnippet>248</a>        }
-<a href=#249 id=249 data-nosnippet>249</a>    }
-<a href=#250 id=250 data-nosnippet>250</a>
-<a href=#251 id=251 data-nosnippet>251</a>    <span class="doccomment">/// Say whether the node behind this radio forwards, and never change
-<a href=#252 id=252 data-nosnippet>252</a>    /// it.
-<a href=#253 id=253 data-nosnippet>253</a>    ///
-<a href=#254 id=254 data-nosnippet>254</a>    /// Whether a device repeats is persisted, device-domain
-<a href=#255 id=255 data-nosnippet>255</a>    /// configuration — its owner's decision, not a bridge's, and one
-<a href=#256 id=256 data-nosnippet>256</a>    /// that outlives the session. A device with its repeater off is a
-<a href=#257 id=257 data-nosnippet>257</a>    /// leaf: it is reachable from everywhere the bridge reaches and its
-<a href=#258 id=258 data-nosnippet>258</a>    /// own traffic crosses, but nothing is carried onward from its
-<a href=#259 id=259 data-nosnippet>259</a>    /// segment. That is a deployment, not a fault, so it is worth one
-<a href=#260 id=260 data-nosnippet>260</a>    /// line and no alarm.
-<a href=#261 id=261 data-nosnippet>261</a>    </span><span class="kw">async fn </span>report_repeater_state(<span class="kw-2">&amp;mut </span><span class="self">self</span>) {
-<a href=#262 id=262 data-nosnippet>262</a>        <span class="kw">let </span>value = <span class="kw">match </span><span class="self">self </span>{
-<a href=#263 id=263 data-nosnippet>263</a>            <span class="attr">#[cfg(feature = <span class="string">"serial-radio"</span>)]
-<a href=#264 id=264 data-nosnippet>264</a>            </span><span class="self">Self</span>::Serial(device) =&gt; device.get_prop(prop::MAC_REPEATER_ENABLED).<span class="kw">await</span>,
-<a href=#265 id=265 data-nosnippet>265</a>            <span class="attr">#[cfg(feature = <span class="string">"ble-radio"</span>)]
-<a href=#266 id=266 data-nosnippet>266</a>            </span><span class="self">Self</span>::Ble(device) =&gt; device.get_prop(prop::MAC_REPEATER_ENABLED).<span class="kw">await</span>,
-<a href=#267 id=267 data-nosnippet>267</a>            <span class="self">Self</span>::Udp(<span class="kw">_</span>) =&gt; {
-<a href=#268 id=268 data-nosnippet>268</a>                <span class="macro">tracing::info!</span>(
-<a href=#269 id=269 data-nosnippet>269</a>                    <span class="string">"fake radio: no node behind it, so frames cross this interface with no \
-<a href=#270 id=270 data-nosnippet>270</a>                     duplicate suppression and no hop accounting"
-<a href=#271 id=271 data-nosnippet>271</a>                </span>);
-<a href=#272 id=272 data-nosnippet>272</a>                <span class="kw">return</span>;
-<a href=#273 id=273 data-nosnippet>273</a>            }
-<a href=#274 id=274 data-nosnippet>274</a>        };
-<a href=#275 id=275 data-nosnippet>275</a>        <span class="kw">match </span>value.as_deref() {
-<a href=#276 id=276 data-nosnippet>276</a>            <span class="prelude-val">Ok</span>([<span class="number">0</span>]) =&gt; <span class="macro">tracing::info!</span>(
-<a href=#277 id=277 data-nosnippet>277</a>                <span class="string">"device repeater is disabled; this interface is a leaf — its node is reachable \
-<a href=#278 id=278 data-nosnippet>278</a>                 across the bridge, but carries nothing onward from its own segment"
-<a href=#279 id=279 data-nosnippet>279</a>            </span>),
-<a href=#280 id=280 data-nosnippet>280</a>            <span class="prelude-val">Ok</span>(<span class="kw">_</span>) =&gt; <span class="macro">tracing::debug!</span>(<span class="string">"device repeater is enabled"</span>),
-<a href=#281 id=281 data-nosnippet>281</a>            <span class="prelude-val">Err</span>(error) =&gt; <span class="macro">tracing::debug!</span>(<span class="question-mark">?</span>error, <span class="string">"could not read the device's repeater state"</span>),
-<a href=#282 id=282 data-nosnippet>282</a>        }
-<a href=#283 id=283 data-nosnippet>283</a>    }
-<a href=#284 id=284 data-nosnippet>284</a>
-<a href=#285 id=285 data-nosnippet>285</a>    <span class="kw">fn </span>poll_receive_raw(<span class="kw-2">&amp;mut </span><span class="self">self</span>, cx: <span class="kw-2">&amp;mut </span>Context&lt;<span class="lifetime">'_</span>&gt;) -&gt; Poll&lt;<span class="prelude-ty">Result</span>&lt;RawRxFrame, UlcpError&gt;&gt; {
-<a href=#286 id=286 data-nosnippet>286</a>        <span class="macro">with_device!</span>(<span class="self">self</span>, device =&gt; device.poll_receive_raw(cx))
-<a href=#287 id=287 data-nosnippet>287</a>    }
-<a href=#288 id=288 data-nosnippet>288</a>
-<a href=#289 id=289 data-nosnippet>289</a>    <span class="doccomment">/// Hand one frame to the node behind this radio.
-<a href=#290 id=290 data-nosnippet>290</a>    ///
-<a href=#291 id=291 data-nosnippet>291</a>    /// The metadata a frame carries across the tunnel describes how it
-<a href=#292 id=292 data-nosnippet>292</a>    /// was *received* at the far end, and is what the staleness limit
-<a href=#293 id=293 data-nosnippet>293</a>    /// reads on the way; a transmit needs metadata of its own. Building
-<a href=#294 id=294 data-nosnippet>294</a>    /// it here, at the last possible moment, is what lets the tunnel stay
-<a href=#295 id=295 data-nosnippet>295</a>    /// byte-faithful. The default asks for the device's configured power
-<a href=#296 id=296 data-nosnippet>296</a>    /// and leaves `TX_FLAG_NODUTY` clear — a bridge does not get to spend
-<a href=#297 id=297 data-nosnippet>297</a>    /// airtime the device's duty ledger has not granted.
-<a href=#298 id=298 data-nosnippet>298</a>    </span><span class="kw">async fn </span>transmit(<span class="kw-2">&amp;mut </span><span class="self">self</span>, frame: <span class="kw-2">&amp;</span>TunnelFrame) -&gt; <span class="prelude-ty">Result</span>&lt;(), TxError&lt;UlcpError&gt;&gt; {
-<a href=#299 id=299 data-nosnippet>299</a>        <span class="kw">let </span><span class="kw-2">mut </span>meta = [<span class="number">0u8</span>; TxMeta::WIRE_LEN];
-<a href=#300 id=300 data-nosnippet>300</a>        TxMeta::default()
-<a href=#301 id=301 data-nosnippet>301</a>            .encode(<span class="kw-2">&amp;mut </span>meta)
-<a href=#302 id=302 data-nosnippet>302</a>            .expect(<span class="string">"a fixed-size buffer holds fixed-size metadata"</span>);
-<a href=#303 id=303 data-nosnippet>303</a>        <span class="macro">with_device!</span>(<span class="self">self</span>, device =&gt; device
-<a href=#304 id=304 data-nosnippet>304</a>            .transmit_raw_with_meta(<span class="kw-2">&amp;</span>frame.data, <span class="kw-2">&amp;</span>meta)
-<a href=#305 id=305 data-nosnippet>305</a>            .<span class="kw">await</span>)
-<a href=#306 id=306 data-nosnippet>306</a>    }
-<a href=#307 id=307 data-nosnippet>307</a>
-<a href=#308 id=308 data-nosnippet>308</a>    <span class="kw">fn </span>max_frame_size(<span class="kw-2">&amp;</span><span class="self">self</span>) -&gt; usize {
-<a href=#309 id=309 data-nosnippet>309</a>        <span class="comment">// `UlcpDevice` reports it through the `Radio` trait; the fake
-<a href=#310 id=310 data-nosnippet>310</a>        // radio has it inherently.
-<a href=#311 id=311 data-nosnippet>311</a>        </span><span class="attr">#[cfg(any(feature = <span class="string">"serial-radio"</span>, feature = <span class="string">"ble-radio"</span>))]
-<a href=#312 id=312 data-nosnippet>312</a>        </span><span class="kw">use </span>umsh_hal::Radio <span class="kw">as _</span>;
+<a href=#200 id=200 data-nosnippet>200</a>        <span class="self">self</span>.set_backhaul().<span class="kw">await</span><span class="question-mark">?</span>;
+<a href=#201 id=201 data-nosnippet>201</a>        <span class="self">self</span>.set_promiscuous().<span class="kw">await</span><span class="question-mark">?</span>;
+<a href=#202 id=202 data-nosnippet>202</a>        <span class="self">self</span>.report_repeater_state().<span class="kw">await</span>;
+<a href=#203 id=203 data-nosnippet>203</a>        <span class="prelude-val">Ok</span>(())
+<a href=#204 id=204 data-nosnippet>204</a>    }
+<a href=#205 id=205 data-nosnippet>205</a>
+<a href=#206 id=206 data-nosnippet>206</a>    <span class="kw">async fn </span>capabilities(<span class="kw-2">&amp;mut </span><span class="self">self</span>) -&gt; <span class="prelude-ty">Result</span>&lt;Vec&lt;u32&gt;&gt; {
+<a href=#207 id=207 data-nosnippet>207</a>        <span class="kw">match </span><span class="self">self </span>{
+<a href=#208 id=208 data-nosnippet>208</a>            <span class="attr">#[cfg(feature = <span class="string">"serial-radio"</span>)]
+<a href=#209 id=209 data-nosnippet>209</a>            </span><span class="self">Self</span>::Serial(device) =&gt; device
+<a href=#210 id=210 data-nosnippet>210</a>                .capabilities()
+<a href=#211 id=211 data-nosnippet>211</a>                .<span class="kw">await
+<a href=#212 id=212 data-nosnippet>212</a>                </span>.map_err(|error| <span class="macro">anyhow!</span>(<span class="string">"reading device capabilities: {error:?}"</span>)),
+<a href=#213 id=213 data-nosnippet>213</a>            <span class="attr">#[cfg(feature = <span class="string">"ble-radio"</span>)]
+<a href=#214 id=214 data-nosnippet>214</a>            </span><span class="self">Self</span>::Ble(device) =&gt; device
+<a href=#215 id=215 data-nosnippet>215</a>                .capabilities()
+<a href=#216 id=216 data-nosnippet>216</a>                .<span class="kw">await
+<a href=#217 id=217 data-nosnippet>217</a>                </span>.map_err(|error| <span class="macro">anyhow!</span>(<span class="string">"reading device capabilities: {error:?}"</span>)),
+<a href=#218 id=218 data-nosnippet>218</a>            <span class="comment">// The fake radio has no node behind it at all, so it claims
+<a href=#219 id=219 data-nosnippet>219</a>            // what it needs to stand in for one.
+<a href=#220 id=220 data-nosnippet>220</a>            </span><span class="self">Self</span>::Udp(<span class="kw">_</span>) =&gt; <span class="prelude-val">Ok</span>(<span class="macro">vec!</span>[cap::MAC_BACKHAUL, cap::WRITABLE_RAW_STREAM]),
+<a href=#221 id=221 data-nosnippet>221</a>        }
+<a href=#222 id=222 data-nosnippet>222</a>    }
+<a href=#223 id=223 data-nosnippet>223</a>
+<a href=#224 id=224 data-nosnippet>224</a>    <span class="doccomment">/// Move this host off the shared medium and onto a point-to-point
+<a href=#225 id=225 data-nosnippet>225</a>    /// link to the device's own node. The property is session-scoped,
+<a href=#226 id=226 data-nosnippet>226</a>    /// which is why this runs on every attach rather than once at
+<a href=#227 id=227 data-nosnippet>227</a>    /// provisioning time.
+<a href=#228 id=228 data-nosnippet>228</a>    </span><span class="kw">async fn </span>set_backhaul(<span class="kw-2">&amp;mut </span><span class="self">self</span>) -&gt; <span class="prelude-ty">Result</span>&lt;()&gt; {
+<a href=#229 id=229 data-nosnippet>229</a>        <span class="kw">let </span>result = <span class="kw">match </span><span class="self">self </span>{
+<a href=#230 id=230 data-nosnippet>230</a>            <span class="attr">#[cfg(feature = <span class="string">"serial-radio"</span>)]
+<a href=#231 id=231 data-nosnippet>231</a>            </span><span class="self">Self</span>::Serial(device) =&gt; device.set_prop(prop::MAC_BACKHAUL, <span class="kw-2">&amp;</span>[<span class="number">1</span>]).<span class="kw">await</span>,
+<a href=#232 id=232 data-nosnippet>232</a>            <span class="attr">#[cfg(feature = <span class="string">"ble-radio"</span>)]
+<a href=#233 id=233 data-nosnippet>233</a>            </span><span class="self">Self</span>::Ble(device) =&gt; device.set_prop(prop::MAC_BACKHAUL, <span class="kw-2">&amp;</span>[<span class="number">1</span>]).<span class="kw">await</span>,
+<a href=#234 id=234 data-nosnippet>234</a>            <span class="comment">// The fake radio has no medium to leave.
+<a href=#235 id=235 data-nosnippet>235</a>            </span><span class="self">Self</span>::Udp(<span class="kw">_</span>) =&gt; <span class="kw">return </span><span class="prelude-val">Ok</span>(()),
+<a href=#236 id=236 data-nosnippet>236</a>        };
+<a href=#237 id=237 data-nosnippet>237</a>        result
+<a href=#238 id=238 data-nosnippet>238</a>            .map(|<span class="kw">_</span>| ())
+<a href=#239 id=239 data-nosnippet>239</a>            .map_err(|error| <span class="macro">anyhow!</span>(<span class="string">"enabling backhaul mode: {error:?}"</span>))
+<a href=#240 id=240 data-nosnippet>240</a>    }
+<a href=#241 id=241 data-nosnippet>241</a>
+<a href=#242 id=242 data-nosnippet>242</a>    <span class="kw">async fn </span>set_promiscuous(<span class="kw-2">&amp;mut </span><span class="self">self</span>) -&gt; <span class="prelude-ty">Result</span>&lt;()&gt; {
+<a href=#243 id=243 data-nosnippet>243</a>        <span class="kw">match </span><span class="self">self </span>{
+<a href=#244 id=244 data-nosnippet>244</a>            <span class="attr">#[cfg(feature = <span class="string">"serial-radio"</span>)]
+<a href=#245 id=245 data-nosnippet>245</a>            </span><span class="self">Self</span>::Serial(device) =&gt; {
+<a href=#246 id=246 data-nosnippet>246</a>                promiscuous_outcome(device.set_prop(prop::MAC_PROMISCUOUS, <span class="kw-2">&amp;</span>[<span class="number">1</span>]).<span class="kw">await</span>)
+<a href=#247 id=247 data-nosnippet>247</a>            }
+<a href=#248 id=248 data-nosnippet>248</a>            <span class="attr">#[cfg(feature = <span class="string">"ble-radio"</span>)]
+<a href=#249 id=249 data-nosnippet>249</a>            </span><span class="self">Self</span>::Ble(device) =&gt; {
+<a href=#250 id=250 data-nosnippet>250</a>                promiscuous_outcome(device.set_prop(prop::MAC_PROMISCUOUS, <span class="kw-2">&amp;</span>[<span class="number">1</span>]).<span class="kw">await</span>)
+<a href=#251 id=251 data-nosnippet>251</a>            }
+<a href=#252 id=252 data-nosnippet>252</a>            <span class="comment">// The fake radio has no filtering to bypass.
+<a href=#253 id=253 data-nosnippet>253</a>            </span><span class="self">Self</span>::Udp(<span class="kw">_</span>) =&gt; <span class="prelude-val">Ok</span>(()),
+<a href=#254 id=254 data-nosnippet>254</a>        }
+<a href=#255 id=255 data-nosnippet>255</a>    }
+<a href=#256 id=256 data-nosnippet>256</a>
+<a href=#257 id=257 data-nosnippet>257</a>    <span class="doccomment">/// Say whether the node behind this radio forwards, and never change
+<a href=#258 id=258 data-nosnippet>258</a>    /// it.
+<a href=#259 id=259 data-nosnippet>259</a>    ///
+<a href=#260 id=260 data-nosnippet>260</a>    /// Whether a device repeats is persisted, device-domain
+<a href=#261 id=261 data-nosnippet>261</a>    /// configuration — its owner's decision, not a bridge's, and one
+<a href=#262 id=262 data-nosnippet>262</a>    /// that outlives the session. A device with its repeater off is a
+<a href=#263 id=263 data-nosnippet>263</a>    /// leaf: it is reachable from everywhere the bridge reaches and its
+<a href=#264 id=264 data-nosnippet>264</a>    /// own traffic crosses, but nothing is carried onward from its
+<a href=#265 id=265 data-nosnippet>265</a>    /// segment. That is a deployment, not a fault, so it is worth one
+<a href=#266 id=266 data-nosnippet>266</a>    /// line and no alarm.
+<a href=#267 id=267 data-nosnippet>267</a>    </span><span class="kw">async fn </span>report_repeater_state(<span class="kw-2">&amp;mut </span><span class="self">self</span>) {
+<a href=#268 id=268 data-nosnippet>268</a>        <span class="kw">let </span>value = <span class="kw">match </span><span class="self">self </span>{
+<a href=#269 id=269 data-nosnippet>269</a>            <span class="attr">#[cfg(feature = <span class="string">"serial-radio"</span>)]
+<a href=#270 id=270 data-nosnippet>270</a>            </span><span class="self">Self</span>::Serial(device) =&gt; device.get_prop(prop::MAC_REPEATER_ENABLED).<span class="kw">await</span>,
+<a href=#271 id=271 data-nosnippet>271</a>            <span class="attr">#[cfg(feature = <span class="string">"ble-radio"</span>)]
+<a href=#272 id=272 data-nosnippet>272</a>            </span><span class="self">Self</span>::Ble(device) =&gt; device.get_prop(prop::MAC_REPEATER_ENABLED).<span class="kw">await</span>,
+<a href=#273 id=273 data-nosnippet>273</a>            <span class="self">Self</span>::Udp(<span class="kw">_</span>) =&gt; {
+<a href=#274 id=274 data-nosnippet>274</a>                <span class="macro">tracing::info!</span>(
+<a href=#275 id=275 data-nosnippet>275</a>                    <span class="string">"fake radio: no node behind it, so frames cross this interface with no \
+<a href=#276 id=276 data-nosnippet>276</a>                     duplicate suppression and no hop accounting"
+<a href=#277 id=277 data-nosnippet>277</a>                </span>);
+<a href=#278 id=278 data-nosnippet>278</a>                <span class="kw">return</span>;
+<a href=#279 id=279 data-nosnippet>279</a>            }
+<a href=#280 id=280 data-nosnippet>280</a>        };
+<a href=#281 id=281 data-nosnippet>281</a>        <span class="kw">match </span>value.as_deref() {
+<a href=#282 id=282 data-nosnippet>282</a>            <span class="prelude-val">Ok</span>([<span class="number">0</span>]) =&gt; <span class="macro">tracing::info!</span>(
+<a href=#283 id=283 data-nosnippet>283</a>                <span class="string">"device repeater is disabled; this interface is a leaf — its node is reachable \
+<a href=#284 id=284 data-nosnippet>284</a>                 across the bridge, but carries nothing onward from its own segment"
+<a href=#285 id=285 data-nosnippet>285</a>            </span>),
+<a href=#286 id=286 data-nosnippet>286</a>            <span class="prelude-val">Ok</span>(<span class="kw">_</span>) =&gt; <span class="macro">tracing::debug!</span>(<span class="string">"device repeater is enabled"</span>),
+<a href=#287 id=287 data-nosnippet>287</a>            <span class="prelude-val">Err</span>(error) =&gt; <span class="macro">tracing::debug!</span>(<span class="question-mark">?</span>error, <span class="string">"could not read the device's repeater state"</span>),
+<a href=#288 id=288 data-nosnippet>288</a>        }
+<a href=#289 id=289 data-nosnippet>289</a>    }
+<a href=#290 id=290 data-nosnippet>290</a>
+<a href=#291 id=291 data-nosnippet>291</a>    <span class="kw">fn </span>poll_receive_raw(<span class="kw-2">&amp;mut </span><span class="self">self</span>, cx: <span class="kw-2">&amp;mut </span>Context&lt;<span class="lifetime">'_</span>&gt;) -&gt; Poll&lt;<span class="prelude-ty">Result</span>&lt;RawRxFrame, UlcpError&gt;&gt; {
+<a href=#292 id=292 data-nosnippet>292</a>        <span class="macro">with_device!</span>(<span class="self">self</span>, device =&gt; device.poll_receive_raw(cx))
+<a href=#293 id=293 data-nosnippet>293</a>    }
+<a href=#294 id=294 data-nosnippet>294</a>
+<a href=#295 id=295 data-nosnippet>295</a>    <span class="doccomment">/// Hand one frame to the node behind this radio.
+<a href=#296 id=296 data-nosnippet>296</a>    ///
+<a href=#297 id=297 data-nosnippet>297</a>    /// The metadata a frame carries across the tunnel describes how it
+<a href=#298 id=298 data-nosnippet>298</a>    /// was *received* at the far end, and is what the staleness limit
+<a href=#299 id=299 data-nosnippet>299</a>    /// reads on the way; a transmit needs metadata of its own. Building
+<a href=#300 id=300 data-nosnippet>300</a>    /// it here, at the last possible moment, is what lets the tunnel stay
+<a href=#301 id=301 data-nosnippet>301</a>    /// byte-faithful. The default asks for the device's configured power
+<a href=#302 id=302 data-nosnippet>302</a>    /// and leaves `TX_FLAG_NODUTY` clear — a bridge does not get to spend
+<a href=#303 id=303 data-nosnippet>303</a>    /// airtime the device's duty ledger has not granted.
+<a href=#304 id=304 data-nosnippet>304</a>    </span><span class="kw">async fn </span>transmit(<span class="kw-2">&amp;mut </span><span class="self">self</span>, frame: <span class="kw-2">&amp;</span>TunnelFrame) -&gt; <span class="prelude-ty">Result</span>&lt;(), TxError&lt;UlcpError&gt;&gt; {
+<a href=#305 id=305 data-nosnippet>305</a>        <span class="kw">let </span><span class="kw-2">mut </span>meta = [<span class="number">0u8</span>; TxMeta::WIRE_LEN];
+<a href=#306 id=306 data-nosnippet>306</a>        TxMeta::default()
+<a href=#307 id=307 data-nosnippet>307</a>            .encode(<span class="kw-2">&amp;mut </span>meta)
+<a href=#308 id=308 data-nosnippet>308</a>            .expect(<span class="string">"a fixed-size buffer holds fixed-size metadata"</span>);
+<a href=#309 id=309 data-nosnippet>309</a>        <span class="macro">with_device!</span>(<span class="self">self</span>, device =&gt; device
+<a href=#310 id=310 data-nosnippet>310</a>            .transmit_raw_with_meta(<span class="kw-2">&amp;</span>frame.data, <span class="kw-2">&amp;</span>meta)
+<a href=#311 id=311 data-nosnippet>311</a>            .<span class="kw">await</span>)
+<a href=#312 id=312 data-nosnippet>312</a>    }
 <a href=#313 id=313 data-nosnippet>313</a>
-<a href=#314 id=314 data-nosnippet>314</a>        <span class="macro">with_device!</span>(<span class="self">self</span>, device =&gt; device.max_frame_size())
-<a href=#315 id=315 data-nosnippet>315</a>    }
-<a href=#316 id=316 data-nosnippet>316</a>}
-<a href=#317 id=317 data-nosnippet>317</a>
-<a href=#318 id=318 data-nosnippet>318</a><span class="attr">#[cfg(feature = <span class="string">"serial-radio"</span>)]
-<a href=#319 id=319 data-nosnippet>319</a></span><span class="kw">async fn </span>open_serial_link(
-<a href=#320 id=320 data-nosnippet>320</a>    port: <span class="kw-2">&amp;</span>str,
-<a href=#321 id=321 data-nosnippet>321</a>    baud: u32,
-<a href=#322 id=322 data-nosnippet>322</a>) -&gt; <span class="prelude-ty">Result</span>&lt;umsh::ulcp::SerialFrameLink&lt;tokio_serial::SerialStream&gt;&gt; {
-<a href=#323 id=323 data-nosnippet>323</a>    <span class="kw">use </span>anyhow::Context <span class="kw">as _</span>;
-<a href=#324 id=324 data-nosnippet>324</a>    <span class="kw">use </span>tokio_serial::SerialPortBuilderExt <span class="kw">as _</span>;
-<a href=#325 id=325 data-nosnippet>325</a>
-<a href=#326 id=326 data-nosnippet>326</a>    <span class="kw">let </span>stream = tokio_serial::new(port, baud)
-<a href=#327 id=327 data-nosnippet>327</a>        .open_native_async()
-<a href=#328 id=328 data-nosnippet>328</a>        .with_context(|| <span class="macro">format!</span>(<span class="string">"opening {port}"</span>))<span class="question-mark">?</span>;
-<a href=#329 id=329 data-nosnippet>329</a>    <span class="prelude-val">Ok</span>(umsh::ulcp::SerialFrameLink::new(stream))
-<a href=#330 id=330 data-nosnippet>330</a>}
+<a href=#314 id=314 data-nosnippet>314</a>    <span class="kw">fn </span>max_frame_size(<span class="kw-2">&amp;</span><span class="self">self</span>) -&gt; usize {
+<a href=#315 id=315 data-nosnippet>315</a>        <span class="comment">// `UlcpDevice` reports it through the `Radio` trait; the fake
+<a href=#316 id=316 data-nosnippet>316</a>        // radio has it inherently.
+<a href=#317 id=317 data-nosnippet>317</a>        </span><span class="attr">#[cfg(any(feature = <span class="string">"serial-radio"</span>, feature = <span class="string">"ble-radio"</span>))]
+<a href=#318 id=318 data-nosnippet>318</a>        </span><span class="kw">use </span>umsh_hal::Radio <span class="kw">as _</span>;
+<a href=#319 id=319 data-nosnippet>319</a>
+<a href=#320 id=320 data-nosnippet>320</a>        <span class="macro">with_device!</span>(<span class="self">self</span>, device =&gt; device.max_frame_size())
+<a href=#321 id=321 data-nosnippet>321</a>    }
+<a href=#322 id=322 data-nosnippet>322</a>}
+<a href=#323 id=323 data-nosnippet>323</a>
+<a href=#324 id=324 data-nosnippet>324</a><span class="attr">#[cfg(feature = <span class="string">"serial-radio"</span>)]
+<a href=#325 id=325 data-nosnippet>325</a></span><span class="kw">async fn </span>open_serial_link(
+<a href=#326 id=326 data-nosnippet>326</a>    port: <span class="kw-2">&amp;</span>str,
+<a href=#327 id=327 data-nosnippet>327</a>    baud: u32,
+<a href=#328 id=328 data-nosnippet>328</a>) -&gt; <span class="prelude-ty">Result</span>&lt;umsh::ulcp::SerialFrameLink&lt;tokio_serial::SerialStream&gt;&gt; {
+<a href=#329 id=329 data-nosnippet>329</a>    <span class="kw">use </span>anyhow::Context <span class="kw">as _</span>;
+<a href=#330 id=330 data-nosnippet>330</a>    <span class="kw">use </span>tokio_serial::SerialPortBuilderExt <span class="kw">as _</span>;
 <a href=#331 id=331 data-nosnippet>331</a>
-<a href=#332 id=332 data-nosnippet>332</a><span class="doccomment">/// How long to wait before offering a frame to a full node again.
-<a href=#333 id=333 data-nosnippet>333</a>///
-<a href=#334 id=334 data-nosnippet>334</a>/// Jittered so that several interfaces relieved by the same node do not
-<a href=#335 id=335 data-nosnippet>335</a>/// all come back at once.
-<a href=#336 id=336 data-nosnippet>336</a></span><span class="kw">fn </span>handoff_retry() -&gt; Duration {
-<a href=#337 id=337 data-nosnippet>337</a>    HANDOFF_RETRY + Duration::from_millis(rand::random_range(<span class="number">0</span>..=HANDOFF_RETRY_JITTER_MS))
-<a href=#338 id=338 data-nosnippet>338</a>}
-<a href=#339 id=339 data-nosnippet>339</a>
-<a href=#340 id=340 data-nosnippet>340</a><span class="doccomment">/// One interface's two queues, from the relay's point of view.
-<a href=#341 id=341 data-nosnippet>341</a></span><span class="kw">pub struct </span>DeviceRelay {
-<a href=#342 id=342 data-nosnippet>342</a>    config: RadioConfig,
-<a href=#343 id=343 data-nosnippet>343</a>    <span class="doccomment">/// Frames the device received, for whoever consumes this interface.
-<a href=#344 id=344 data-nosnippet>344</a>    </span>inbound: Arc&lt;TunnelQueue&gt;,
-<a href=#345 id=345 data-nosnippet>345</a>    <span class="doccomment">/// Frames to put on the air.
-<a href=#346 id=346 data-nosnippet>346</a>    </span>outbound: Arc&lt;TunnelQueue&gt;,
-<a href=#347 id=347 data-nosnippet>347</a>}
-<a href=#348 id=348 data-nosnippet>348</a>
-<a href=#349 id=349 data-nosnippet>349</a><span class="kw">impl </span>DeviceRelay {
-<a href=#350 id=350 data-nosnippet>350</a>    <span class="kw">pub fn </span>new(config: RadioConfig, inbound: Arc&lt;TunnelQueue&gt;, outbound: Arc&lt;TunnelQueue&gt;) -&gt; <span class="self">Self </span>{
-<a href=#351 id=351 data-nosnippet>351</a>        <span class="self">Self </span>{
-<a href=#352 id=352 data-nosnippet>352</a>            config,
-<a href=#353 id=353 data-nosnippet>353</a>            inbound,
-<a href=#354 id=354 data-nosnippet>354</a>            outbound,
-<a href=#355 id=355 data-nosnippet>355</a>        }
-<a href=#356 id=356 data-nosnippet>356</a>    }
-<a href=#357 id=357 data-nosnippet>357</a>
-<a href=#358 id=358 data-nosnippet>358</a>    <span class="doccomment">/// Keep a device attached and relaying for as long as the process
-<a href=#359 id=359 data-nosnippet>359</a>    /// runs, re-opening it after a failure.
-<a href=#360 id=360 data-nosnippet>360</a>    ///
-<a href=#361 id=361 data-nosnippet>361</a>    /// A device outage leaves no backlog to drain — backhaul mode ends
-<a href=#362 id=362 data-nosnippet>362</a>    /// with the session, and a detached device queues nothing on this
-<a href=#363 id=363 data-nosnippet>363</a>    /// host's behalf — so a fresh attachment starts clean by
-<a href=#364 id=364 data-nosnippet>364</a>    /// construction and this loop needs no reconciliation of its own. It
-<a href=#365 id=365 data-nosnippet>365</a>    /// is also what recovers a device whose firmware cannot bridge:
-<a href=#366 id=366 data-nosnippet>366</a>    /// attachment fails, the loop waits, and an updated device joins on
-<a href=#367 id=367 data-nosnippet>367</a>    /// its own.
-<a href=#368 id=368 data-nosnippet>368</a>    </span><span class="kw">pub async fn </span>run(<span class="kw-2">&amp;</span><span class="self">self</span>) -&gt; ! {
-<a href=#369 id=369 data-nosnippet>369</a>        <span class="kw">loop </span>{
-<a href=#370 id=370 data-nosnippet>370</a>            <span class="kw">match </span><span class="self">self</span>.session().<span class="kw">await </span>{
-<a href=#371 id=371 data-nosnippet>371</a>                <span class="prelude-val">Ok</span>(()) =&gt; <span class="macro">tracing::warn!</span>(radio = %<span class="self">self</span>.config.describe(), <span class="string">"device link ended"</span>),
-<a href=#372 id=372 data-nosnippet>372</a>                <span class="prelude-val">Err</span>(error) =&gt; {
-<a href=#373 id=373 data-nosnippet>373</a>                    <span class="macro">tracing::warn!</span>(radio = %<span class="self">self</span>.config.describe(), <span class="string">"device: {error:#}"</span>);
-<a href=#374 id=374 data-nosnippet>374</a>                }
-<a href=#375 id=375 data-nosnippet>375</a>            }
-<a href=#376 id=376 data-nosnippet>376</a>            <span class="comment">// Whatever was queued for a device that is no longer there
-<a href=#377 id=377 data-nosnippet>377</a>            // is as stale as anything queued for a dead tunnel.
-<a href=#378 id=378 data-nosnippet>378</a>            </span><span class="self">self</span>.outbound.clear();
-<a href=#379 id=379 data-nosnippet>379</a>            tokio::time::sleep(REOPEN_DELAY).<span class="kw">await</span>;
-<a href=#380 id=380 data-nosnippet>380</a>        }
-<a href=#381 id=381 data-nosnippet>381</a>    }
-<a href=#382 id=382 data-nosnippet>382</a>
-<a href=#383 id=383 data-nosnippet>383</a>    <span class="kw">async fn </span>session(<span class="kw-2">&amp;</span><span class="self">self</span>) -&gt; <span class="prelude-ty">Result</span>&lt;()&gt; {
-<a href=#384 id=384 data-nosnippet>384</a>        <span class="kw">let </span><span class="kw-2">mut </span>device = Device::open(<span class="kw-2">&amp;</span><span class="self">self</span>.config).<span class="kw">await</span><span class="question-mark">?</span>;
-<a href=#385 id=385 data-nosnippet>385</a>        device.prepare().<span class="kw">await</span><span class="question-mark">?</span>;
-<a href=#386 id=386 data-nosnippet>386</a>        <span class="kw">let </span>max_frame_size = device.max_frame_size();
-<a href=#387 id=387 data-nosnippet>387</a>        <span class="macro">tracing::info!</span>(
-<a href=#388 id=388 data-nosnippet>388</a>            radio = %<span class="self">self</span>.config.describe(),
-<a href=#389 id=389 data-nosnippet>389</a>            max_frame_size,
-<a href=#390 id=390 data-nosnippet>390</a>            <span class="string">"radio attached"
-<a href=#391 id=391 data-nosnippet>391</a>        </span>);
-<a href=#392 id=392 data-nosnippet>392</a>
-<a href=#393 id=393 data-nosnippet>393</a>        <span class="kw">let </span>generation = <span class="self">self</span>.outbound.generation();
-<a href=#394 id=394 data-nosnippet>394</a>        <span class="kw">loop </span>{
-<a href=#395 id=395 data-nosnippet>395</a>            <span class="comment">// The device is borrowed only for the duration of this
-<a href=#396 id=396 data-nosnippet>396</a>            // poll; the transmit below re-borrows it after the borrow
-<a href=#397 id=397 data-nosnippet>397</a>            // has ended, which is what keeps both directions on one
-<a href=#398 id=398 data-nosnippet>398</a>            // `&amp;mut` without a `select!` borrow conflict.
-<a href=#399 id=399 data-nosnippet>399</a>            </span><span class="kw">let </span>event = {
-<a href=#400 id=400 data-nosnippet>400</a>                <span class="kw">let </span>device = <span class="kw-2">&amp;mut </span>device;
-<a href=#401 id=401 data-nosnippet>401</a>                core::future::poll_fn(|cx| {
-<a href=#402 id=402 data-nosnippet>402</a>                    <span class="comment">// Reception first: a frame not taken from the device
-<a href=#403 id=403 data-nosnippet>403</a>                    // is a frame the device may have to drop.
-<a href=#404 id=404 data-nosnippet>404</a>                    </span><span class="kw">if let </span>Poll::Ready(result) = device.poll_receive_raw(cx) {
-<a href=#405 id=405 data-nosnippet>405</a>                        <span class="kw">return </span>Poll::Ready(Event::Received(result));
-<a href=#406 id=406 data-nosnippet>406</a>                    }
-<a href=#407 id=407 data-nosnippet>407</a>                    <span class="kw">match </span><span class="self">self</span>.outbound.poll_pop(generation, cx) {
-<a href=#408 id=408 data-nosnippet>408</a>                        Poll::Ready(Dequeued::Frame(frame)) =&gt; Poll::Ready(Event::Send(frame)),
-<a href=#409 id=409 data-nosnippet>409</a>                        Poll::Ready(Dequeued::SessionEnded) =&gt; Poll::Ready(Event::Ended),
-<a href=#410 id=410 data-nosnippet>410</a>                        Poll::Pending =&gt; Poll::Pending,
-<a href=#411 id=411 data-nosnippet>411</a>                    }
-<a href=#412 id=412 data-nosnippet>412</a>                })
-<a href=#413 id=413 data-nosnippet>413</a>                .<span class="kw">await
-<a href=#414 id=414 data-nosnippet>414</a>            </span>};
-<a href=#415 id=415 data-nosnippet>415</a>
-<a href=#416 id=416 data-nosnippet>416</a>            <span class="kw">match </span>event {
-<a href=#417 id=417 data-nosnippet>417</a>                Event::Ended =&gt; <span class="kw">return </span><span class="prelude-val">Ok</span>(()),
-<a href=#418 id=418 data-nosnippet>418</a>                Event::Received(<span class="prelude-val">Err</span>(error)) =&gt; {
-<a href=#419 id=419 data-nosnippet>419</a>                    <span class="kw">return </span><span class="prelude-val">Err</span>(<span class="macro">anyhow!</span>(<span class="string">"receiving from the device: {error:?}"</span>));
-<a href=#420 id=420 data-nosnippet>420</a>                }
-<a href=#421 id=421 data-nosnippet>421</a>                Event::Received(<span class="prelude-val">Ok</span>(raw)) =&gt; <span class="self">self</span>.accept(raw),
-<a href=#422 id=422 data-nosnippet>422</a>                Event::Send(frame) =&gt; {
-<a href=#423 id=423 data-nosnippet>423</a>                    <span class="kw">if </span>frame.data.len() &gt; max_frame_size {
-<a href=#424 id=424 data-nosnippet>424</a>                        <span class="macro">tracing::debug!</span>(
-<a href=#425 id=425 data-nosnippet>425</a>                            len = frame.data.len(),
-<a href=#426 id=426 data-nosnippet>426</a>                            max_frame_size,
-<a href=#427 id=427 data-nosnippet>427</a>                            <span class="string">"dropping a frame larger than this radio can transmit"
-<a href=#428 id=428 data-nosnippet>428</a>                        </span>);
-<a href=#429 id=429 data-nosnippet>429</a>                        <span class="kw">continue</span>;
-<a href=#430 id=430 data-nosnippet>430</a>                    }
-<a href=#431 id=431 data-nosnippet>431</a>                    <span class="self">self</span>.transmit(<span class="kw-2">&amp;mut </span>device, <span class="kw-2">&amp;</span>frame).<span class="kw">await</span><span class="question-mark">?</span>;
-<a href=#432 id=432 data-nosnippet>432</a>                }
-<a href=#433 id=433 data-nosnippet>433</a>            }
-<a href=#434 id=434 data-nosnippet>434</a>        }
-<a href=#435 id=435 data-nosnippet>435</a>    }
-<a href=#436 id=436 data-nosnippet>436</a>
-<a href=#437 id=437 data-nosnippet>437</a>    <span class="doccomment">/// Hand one frame to the device's node, retrying a few times if the
-<a href=#438 id=438 data-nosnippet>438</a>    /// node has nowhere to put it.
-<a href=#439 id=439 data-nosnippet>439</a>    ///
-<a href=#440 id=440 data-nosnippet>440</a>    /// A backhauled send never contends for the channel — it crosses a
-<a href=#441 id=441 data-nosnippet>441</a>    /// wire, spends no airtime, and waits for no one. What it can meet is
-<a href=#442 id=442 data-nosnippet>442</a>    /// a node whose receive queue is full, which ULCP reports the only
-<a href=#443 id=443 data-nosnippet>443</a>    /// way it can, as `STATUS_CCA_FAILURE`. The answer is to wait briefly
-<a href=#444 id=444 data-nosnippet>444</a>    /// and offer it again: the node drains as it works, and the waiting
-<a href=#445 id=445 data-nosnippet>445</a>    /// is done listening, which is itself what relieves the queue.
-<a href=#446 id=446 data-nosnippet>446</a>    ///
-<a href=#447 id=447 data-nosnippet>447</a>    /// Whether the frame then goes on the air is the node's decision. A
-<a href=#448 id=448 data-nosnippet>448</a>    /// duplicate it has already seen, or one whose flood budget is spent,
-<a href=#449 id=449 data-nosnippet>449</a>    /// ends there — that is the bridging policy doing its job, not a
-<a href=#450 id=450 data-nosnippet>450</a>    /// failure of this hand-off.
-<a href=#451 id=451 data-nosnippet>451</a>    </span><span class="kw">async fn </span>transmit(<span class="kw-2">&amp;</span><span class="self">self</span>, device: <span class="kw-2">&amp;mut </span>Device, frame: <span class="kw-2">&amp;</span>TunnelFrame) -&gt; <span class="prelude-ty">Result</span>&lt;()&gt; {
-<a href=#452 id=452 data-nosnippet>452</a>        <span class="kw">for </span>attempt <span class="kw">in </span><span class="number">1</span>..=MAX_HANDOFF_ATTEMPTS {
-<a href=#453 id=453 data-nosnippet>453</a>            <span class="kw">match </span>device.transmit(frame).<span class="kw">await </span>{
-<a href=#454 id=454 data-nosnippet>454</a>                <span class="prelude-val">Ok</span>(()) =&gt; {
-<a href=#455 id=455 data-nosnippet>455</a>                    <span class="macro">tracing::trace!</span>(len = frame.data.len(), attempt, <span class="string">"device tx"</span>);
-<a href=#456 id=456 data-nosnippet>456</a>                    <span class="kw">return </span><span class="prelude-val">Ok</span>(());
-<a href=#457 id=457 data-nosnippet>457</a>                }
-<a href=#458 id=458 data-nosnippet>458</a>                <span class="prelude-val">Err</span>(TxError::CadTimeout) =&gt; {
-<a href=#459 id=459 data-nosnippet>459</a>                    <span class="kw">if </span>attempt &lt; MAX_HANDOFF_ATTEMPTS {
-<a href=#460 id=460 data-nosnippet>460</a>                        <span class="self">self</span>.listen_during(device, handoff_retry()).<span class="kw">await</span><span class="question-mark">?</span>;
-<a href=#461 id=461 data-nosnippet>461</a>                    }
-<a href=#462 id=462 data-nosnippet>462</a>                }
-<a href=#463 id=463 data-nosnippet>463</a>                <span class="comment">// A refusal with a status is the device declining for a
-<a href=#464 id=464 data-nosnippet>464</a>                // reason of its own — detached, or handed something it
-<a href=#465 id=465 data-nosnippet>465</a>                // will not send. Re-offering would not change its mind.
-<a href=#466 id=466 data-nosnippet>466</a>                </span><span class="prelude-val">Err</span>(TxError::Io(UlcpError::Status(status))) =&gt; {
-<a href=#467 id=467 data-nosnippet>467</a>                    <span class="macro">tracing::debug!</span>(<span class="question-mark">?</span>status, <span class="string">"device refused a transmit"</span>);
-<a href=#468 id=468 data-nosnippet>468</a>                    <span class="kw">return </span><span class="prelude-val">Ok</span>(());
-<a href=#469 id=469 data-nosnippet>469</a>                }
-<a href=#470 id=470 data-nosnippet>470</a>                <span class="prelude-val">Err</span>(error) =&gt; <span class="macro">bail!</span>(<span class="string">"transmitting: {error:?}"</span>),
-<a href=#471 id=471 data-nosnippet>471</a>            }
-<a href=#472 id=472 data-nosnippet>472</a>        }
-<a href=#473 id=473 data-nosnippet>473</a>
-<a href=#474 id=474 data-nosnippet>474</a>        <span class="macro">tracing::debug!</span>(
-<a href=#475 id=475 data-nosnippet>475</a>            attempts = MAX_HANDOFF_ATTEMPTS,
-<a href=#476 id=476 data-nosnippet>476</a>            len = frame.data.len(),
-<a href=#477 id=477 data-nosnippet>477</a>            <span class="string">"hand-off abandoned: the node had no room for it"
-<a href=#478 id=478 data-nosnippet>478</a>        </span>);
-<a href=#479 id=479 data-nosnippet>479</a>        <span class="prelude-val">Ok</span>(())
-<a href=#480 id=480 data-nosnippet>480</a>    }
-<a href=#481 id=481 data-nosnippet>481</a>
-<a href=#482 id=482 data-nosnippet>482</a>    <span class="doccomment">/// Wait without going deaf.
-<a href=#483 id=483 data-nosnippet>483</a>    ///
-<a href=#484 id=484 data-nosnippet>484</a>    /// Reception cannot pause while the relay waits: a frame left sitting
-<a href=#485 id=485 data-nosnippet>485</a>    /// in the device is a frame the device may have to drop, and when the
-<a href=#486 id=486 data-nosnippet>486</a>    /// wait is for a full node receive queue, draining it is precisely
-<a href=#487 id=487 data-nosnippet>487</a>    /// what makes room for the frame being retried.
-<a href=#488 id=488 data-nosnippet>488</a>    </span><span class="kw">async fn </span>listen_during(<span class="kw-2">&amp;</span><span class="self">self</span>, device: <span class="kw-2">&amp;mut </span>Device, wait: Duration) -&gt; <span class="prelude-ty">Result</span>&lt;()&gt; {
-<a href=#489 id=489 data-nosnippet>489</a>        <span class="kw">let </span>sleep = tokio::time::sleep(wait);
-<a href=#490 id=490 data-nosnippet>490</a>        <span class="macro">tokio::pin!</span>(sleep);
-<a href=#491 id=491 data-nosnippet>491</a>
-<a href=#492 id=492 data-nosnippet>492</a>        core::future::poll_fn(|cx| {
-<a href=#493 id=493 data-nosnippet>493</a>            <span class="kw">loop </span>{
-<a href=#494 id=494 data-nosnippet>494</a>                <span class="kw">match </span>device.poll_receive_raw(cx) {
-<a href=#495 id=495 data-nosnippet>495</a>                    Poll::Ready(<span class="prelude-val">Ok</span>(raw)) =&gt; <span class="self">self</span>.accept(raw),
-<a href=#496 id=496 data-nosnippet>496</a>                    Poll::Ready(<span class="prelude-val">Err</span>(error)) =&gt; {
-<a href=#497 id=497 data-nosnippet>497</a>                        <span class="kw">return </span>Poll::Ready(<span class="prelude-val">Err</span>(<span class="macro">anyhow!</span>(<span class="string">"receiving from the device: {error:?}"</span>)));
-<a href=#498 id=498 data-nosnippet>498</a>                    }
-<a href=#499 id=499 data-nosnippet>499</a>                    Poll::Pending =&gt; <span class="kw">break</span>,
-<a href=#500 id=500 data-nosnippet>500</a>                }
-<a href=#501 id=501 data-nosnippet>501</a>            }
-<a href=#502 id=502 data-nosnippet>502</a>            sleep.as_mut().poll(cx).map(<span class="prelude-val">Ok</span>)
-<a href=#503 id=503 data-nosnippet>503</a>        })
-<a href=#504 id=504 data-nosnippet>504</a>        .<span class="kw">await
-<a href=#505 id=505 data-nosnippet>505</a>    </span>}
-<a href=#506 id=506 data-nosnippet>506</a>
-<a href=#507 id=507 data-nosnippet>507</a>    <span class="doccomment">/// One received frame, on its way to whoever consumes this interface.
-<a href=#508 id=508 data-nosnippet>508</a>    </span><span class="kw">fn </span>accept(<span class="kw-2">&amp;</span><span class="self">self</span>, raw: RawRxFrame) {
-<a href=#509 id=509 data-nosnippet>509</a>        <span class="macro">tracing::trace!</span>(len = raw.data.len(), <span class="string">"device rx"</span>);
-<a href=#510 id=510 data-nosnippet>510</a>        <span class="kw">if </span><span class="self">self</span>.inbound.push(TunnelFrame::new(raw.data, raw.metadata)) {
-<a href=#511 id=511 data-nosnippet>511</a>            <span class="macro">tracing::warn!</span>(<span class="string">"inbound queue full; dropped the oldest frame"</span>);
-<a href=#512 id=512 data-nosnippet>512</a>        }
-<a href=#513 id=513 data-nosnippet>513</a>    }
-<a href=#514 id=514 data-nosnippet>514</a>}
-<a href=#515 id=515 data-nosnippet>515</a>
-<a href=#516 id=516 data-nosnippet>516</a><span class="kw">enum </span>Event {
-<a href=#517 id=517 data-nosnippet>517</a>    Received(<span class="prelude-ty">Result</span>&lt;RawRxFrame, UlcpError&gt;),
-<a href=#518 id=518 data-nosnippet>518</a>    Send(TunnelFrame),
-<a href=#519 id=519 data-nosnippet>519</a>    Ended,
+<a href=#332 id=332 data-nosnippet>332</a>    <span class="kw">let </span>stream = tokio_serial::new(port, baud)
+<a href=#333 id=333 data-nosnippet>333</a>        .open_native_async()
+<a href=#334 id=334 data-nosnippet>334</a>        .with_context(|| <span class="macro">format!</span>(<span class="string">"opening {port}"</span>))<span class="question-mark">?</span>;
+<a href=#335 id=335 data-nosnippet>335</a>    <span class="prelude-val">Ok</span>(umsh::ulcp::SerialFrameLink::new(stream))
+<a href=#336 id=336 data-nosnippet>336</a>}
+<a href=#337 id=337 data-nosnippet>337</a>
+<a href=#338 id=338 data-nosnippet>338</a><span class="doccomment">/// How long to wait before offering a frame to a full node again.
+<a href=#339 id=339 data-nosnippet>339</a>///
+<a href=#340 id=340 data-nosnippet>340</a>/// Jittered so that several interfaces relieved by the same node do not
+<a href=#341 id=341 data-nosnippet>341</a>/// all come back at once.
+<a href=#342 id=342 data-nosnippet>342</a></span><span class="kw">fn </span>handoff_retry() -&gt; Duration {
+<a href=#343 id=343 data-nosnippet>343</a>    HANDOFF_RETRY + Duration::from_millis(rand::random_range(<span class="number">0</span>..=HANDOFF_RETRY_JITTER_MS))
+<a href=#344 id=344 data-nosnippet>344</a>}
+<a href=#345 id=345 data-nosnippet>345</a>
+<a href=#346 id=346 data-nosnippet>346</a><span class="doccomment">/// One interface's two queues, from the relay's point of view.
+<a href=#347 id=347 data-nosnippet>347</a></span><span class="kw">pub struct </span>DeviceRelay {
+<a href=#348 id=348 data-nosnippet>348</a>    config: RadioConfig,
+<a href=#349 id=349 data-nosnippet>349</a>    <span class="doccomment">/// Frames the device received, for whoever consumes this interface.
+<a href=#350 id=350 data-nosnippet>350</a>    </span>inbound: Arc&lt;TunnelQueue&gt;,
+<a href=#351 id=351 data-nosnippet>351</a>    <span class="doccomment">/// Frames to put on the air.
+<a href=#352 id=352 data-nosnippet>352</a>    </span>outbound: Arc&lt;TunnelQueue&gt;,
+<a href=#353 id=353 data-nosnippet>353</a>}
+<a href=#354 id=354 data-nosnippet>354</a>
+<a href=#355 id=355 data-nosnippet>355</a><span class="kw">impl </span>DeviceRelay {
+<a href=#356 id=356 data-nosnippet>356</a>    <span class="kw">pub fn </span>new(config: RadioConfig, inbound: Arc&lt;TunnelQueue&gt;, outbound: Arc&lt;TunnelQueue&gt;) -&gt; <span class="self">Self </span>{
+<a href=#357 id=357 data-nosnippet>357</a>        <span class="self">Self </span>{
+<a href=#358 id=358 data-nosnippet>358</a>            config,
+<a href=#359 id=359 data-nosnippet>359</a>            inbound,
+<a href=#360 id=360 data-nosnippet>360</a>            outbound,
+<a href=#361 id=361 data-nosnippet>361</a>        }
+<a href=#362 id=362 data-nosnippet>362</a>    }
+<a href=#363 id=363 data-nosnippet>363</a>
+<a href=#364 id=364 data-nosnippet>364</a>    <span class="doccomment">/// Keep a device attached and relaying for as long as the process
+<a href=#365 id=365 data-nosnippet>365</a>    /// runs, re-opening it after a failure.
+<a href=#366 id=366 data-nosnippet>366</a>    ///
+<a href=#367 id=367 data-nosnippet>367</a>    /// A device outage leaves no backlog to drain — backhaul mode ends
+<a href=#368 id=368 data-nosnippet>368</a>    /// with the session, and a detached device queues nothing on this
+<a href=#369 id=369 data-nosnippet>369</a>    /// host's behalf — so a fresh attachment starts clean by
+<a href=#370 id=370 data-nosnippet>370</a>    /// construction and this loop needs no reconciliation of its own. It
+<a href=#371 id=371 data-nosnippet>371</a>    /// is also what recovers a device whose firmware cannot bridge:
+<a href=#372 id=372 data-nosnippet>372</a>    /// attachment fails, the loop waits, and an updated device joins on
+<a href=#373 id=373 data-nosnippet>373</a>    /// its own.
+<a href=#374 id=374 data-nosnippet>374</a>    </span><span class="kw">pub async fn </span>run(<span class="kw-2">&amp;</span><span class="self">self</span>) -&gt; ! {
+<a href=#375 id=375 data-nosnippet>375</a>        <span class="kw">loop </span>{
+<a href=#376 id=376 data-nosnippet>376</a>            <span class="kw">match </span><span class="self">self</span>.session().<span class="kw">await </span>{
+<a href=#377 id=377 data-nosnippet>377</a>                <span class="prelude-val">Ok</span>(()) =&gt; <span class="macro">tracing::warn!</span>(radio = %<span class="self">self</span>.config.describe(), <span class="string">"device link ended"</span>),
+<a href=#378 id=378 data-nosnippet>378</a>                <span class="prelude-val">Err</span>(error) =&gt; {
+<a href=#379 id=379 data-nosnippet>379</a>                    <span class="macro">tracing::warn!</span>(radio = %<span class="self">self</span>.config.describe(), <span class="string">"device: {error:#}"</span>);
+<a href=#380 id=380 data-nosnippet>380</a>                }
+<a href=#381 id=381 data-nosnippet>381</a>            }
+<a href=#382 id=382 data-nosnippet>382</a>            <span class="comment">// Whatever was queued for a device that is no longer there
+<a href=#383 id=383 data-nosnippet>383</a>            // is as stale as anything queued for a dead tunnel.
+<a href=#384 id=384 data-nosnippet>384</a>            </span><span class="self">self</span>.outbound.clear();
+<a href=#385 id=385 data-nosnippet>385</a>            tokio::time::sleep(REOPEN_DELAY).<span class="kw">await</span>;
+<a href=#386 id=386 data-nosnippet>386</a>        }
+<a href=#387 id=387 data-nosnippet>387</a>    }
+<a href=#388 id=388 data-nosnippet>388</a>
+<a href=#389 id=389 data-nosnippet>389</a>    <span class="kw">async fn </span>session(<span class="kw-2">&amp;</span><span class="self">self</span>) -&gt; <span class="prelude-ty">Result</span>&lt;()&gt; {
+<a href=#390 id=390 data-nosnippet>390</a>        <span class="kw">let </span><span class="kw-2">mut </span>device = Device::open(<span class="kw-2">&amp;</span><span class="self">self</span>.config).<span class="kw">await</span><span class="question-mark">?</span>;
+<a href=#391 id=391 data-nosnippet>391</a>        device.prepare().<span class="kw">await</span><span class="question-mark">?</span>;
+<a href=#392 id=392 data-nosnippet>392</a>        <span class="kw">let </span>max_frame_size = device.max_frame_size();
+<a href=#393 id=393 data-nosnippet>393</a>        <span class="macro">tracing::info!</span>(
+<a href=#394 id=394 data-nosnippet>394</a>            radio = %<span class="self">self</span>.config.describe(),
+<a href=#395 id=395 data-nosnippet>395</a>            max_frame_size,
+<a href=#396 id=396 data-nosnippet>396</a>            <span class="string">"radio attached"
+<a href=#397 id=397 data-nosnippet>397</a>        </span>);
+<a href=#398 id=398 data-nosnippet>398</a>
+<a href=#399 id=399 data-nosnippet>399</a>        <span class="kw">let </span>generation = <span class="self">self</span>.outbound.generation();
+<a href=#400 id=400 data-nosnippet>400</a>        <span class="kw">loop </span>{
+<a href=#401 id=401 data-nosnippet>401</a>            <span class="comment">// The device is borrowed only for the duration of this
+<a href=#402 id=402 data-nosnippet>402</a>            // poll; the transmit below re-borrows it after the borrow
+<a href=#403 id=403 data-nosnippet>403</a>            // has ended, which is what keeps both directions on one
+<a href=#404 id=404 data-nosnippet>404</a>            // `&amp;mut` without a `select!` borrow conflict.
+<a href=#405 id=405 data-nosnippet>405</a>            </span><span class="kw">let </span>event = {
+<a href=#406 id=406 data-nosnippet>406</a>                <span class="kw">let </span>device = <span class="kw-2">&amp;mut </span>device;
+<a href=#407 id=407 data-nosnippet>407</a>                core::future::poll_fn(|cx| {
+<a href=#408 id=408 data-nosnippet>408</a>                    <span class="comment">// Reception first: a frame not taken from the device
+<a href=#409 id=409 data-nosnippet>409</a>                    // is a frame the device may have to drop.
+<a href=#410 id=410 data-nosnippet>410</a>                    </span><span class="kw">if let </span>Poll::Ready(result) = device.poll_receive_raw(cx) {
+<a href=#411 id=411 data-nosnippet>411</a>                        <span class="kw">return </span>Poll::Ready(Event::Received(result));
+<a href=#412 id=412 data-nosnippet>412</a>                    }
+<a href=#413 id=413 data-nosnippet>413</a>                    <span class="kw">match </span><span class="self">self</span>.outbound.poll_pop(generation, cx) {
+<a href=#414 id=414 data-nosnippet>414</a>                        Poll::Ready(Dequeued::Frame(frame)) =&gt; Poll::Ready(Event::Send(frame)),
+<a href=#415 id=415 data-nosnippet>415</a>                        Poll::Ready(Dequeued::SessionEnded) =&gt; Poll::Ready(Event::Ended),
+<a href=#416 id=416 data-nosnippet>416</a>                        Poll::Pending =&gt; Poll::Pending,
+<a href=#417 id=417 data-nosnippet>417</a>                    }
+<a href=#418 id=418 data-nosnippet>418</a>                })
+<a href=#419 id=419 data-nosnippet>419</a>                .<span class="kw">await
+<a href=#420 id=420 data-nosnippet>420</a>            </span>};
+<a href=#421 id=421 data-nosnippet>421</a>
+<a href=#422 id=422 data-nosnippet>422</a>            <span class="kw">match </span>event {
+<a href=#423 id=423 data-nosnippet>423</a>                Event::Ended =&gt; <span class="kw">return </span><span class="prelude-val">Ok</span>(()),
+<a href=#424 id=424 data-nosnippet>424</a>                Event::Received(<span class="prelude-val">Err</span>(error)) =&gt; {
+<a href=#425 id=425 data-nosnippet>425</a>                    <span class="kw">return </span><span class="prelude-val">Err</span>(<span class="macro">anyhow!</span>(<span class="string">"receiving from the device: {error:?}"</span>));
+<a href=#426 id=426 data-nosnippet>426</a>                }
+<a href=#427 id=427 data-nosnippet>427</a>                Event::Received(<span class="prelude-val">Ok</span>(raw)) =&gt; <span class="self">self</span>.accept(raw),
+<a href=#428 id=428 data-nosnippet>428</a>                Event::Send(frame) =&gt; {
+<a href=#429 id=429 data-nosnippet>429</a>                    <span class="kw">if </span>frame.data.len() &gt; max_frame_size {
+<a href=#430 id=430 data-nosnippet>430</a>                        <span class="macro">tracing::debug!</span>(
+<a href=#431 id=431 data-nosnippet>431</a>                            len = frame.data.len(),
+<a href=#432 id=432 data-nosnippet>432</a>                            max_frame_size,
+<a href=#433 id=433 data-nosnippet>433</a>                            <span class="string">"dropping a frame larger than this radio can transmit"
+<a href=#434 id=434 data-nosnippet>434</a>                        </span>);
+<a href=#435 id=435 data-nosnippet>435</a>                        <span class="kw">continue</span>;
+<a href=#436 id=436 data-nosnippet>436</a>                    }
+<a href=#437 id=437 data-nosnippet>437</a>                    <span class="self">self</span>.transmit(<span class="kw-2">&amp;mut </span>device, <span class="kw-2">&amp;</span>frame).<span class="kw">await</span><span class="question-mark">?</span>;
+<a href=#438 id=438 data-nosnippet>438</a>                }
+<a href=#439 id=439 data-nosnippet>439</a>            }
+<a href=#440 id=440 data-nosnippet>440</a>        }
+<a href=#441 id=441 data-nosnippet>441</a>    }
+<a href=#442 id=442 data-nosnippet>442</a>
+<a href=#443 id=443 data-nosnippet>443</a>    <span class="doccomment">/// Hand one frame to the device's node, retrying a few times if the
+<a href=#444 id=444 data-nosnippet>444</a>    /// node has nowhere to put it.
+<a href=#445 id=445 data-nosnippet>445</a>    ///
+<a href=#446 id=446 data-nosnippet>446</a>    /// A backhauled send never contends for the channel — it crosses a
+<a href=#447 id=447 data-nosnippet>447</a>    /// wire, spends no airtime, and waits for no one. What it can meet is
+<a href=#448 id=448 data-nosnippet>448</a>    /// a node whose receive queue is full, which ULCP reports the only
+<a href=#449 id=449 data-nosnippet>449</a>    /// way it can, as `STATUS_CCA_FAILURE`. The answer is to wait briefly
+<a href=#450 id=450 data-nosnippet>450</a>    /// and offer it again: the node drains as it works, and the waiting
+<a href=#451 id=451 data-nosnippet>451</a>    /// is done listening, which is itself what relieves the queue.
+<a href=#452 id=452 data-nosnippet>452</a>    ///
+<a href=#453 id=453 data-nosnippet>453</a>    /// Whether the frame then goes on the air is the node's decision. A
+<a href=#454 id=454 data-nosnippet>454</a>    /// duplicate it has already seen, or one whose flood budget is spent,
+<a href=#455 id=455 data-nosnippet>455</a>    /// ends there — that is the bridging policy doing its job, not a
+<a href=#456 id=456 data-nosnippet>456</a>    /// failure of this hand-off.
+<a href=#457 id=457 data-nosnippet>457</a>    </span><span class="kw">async fn </span>transmit(<span class="kw-2">&amp;</span><span class="self">self</span>, device: <span class="kw-2">&amp;mut </span>Device, frame: <span class="kw-2">&amp;</span>TunnelFrame) -&gt; <span class="prelude-ty">Result</span>&lt;()&gt; {
+<a href=#458 id=458 data-nosnippet>458</a>        <span class="kw">for </span>attempt <span class="kw">in </span><span class="number">1</span>..=MAX_HANDOFF_ATTEMPTS {
+<a href=#459 id=459 data-nosnippet>459</a>            <span class="kw">match </span>device.transmit(frame).<span class="kw">await </span>{
+<a href=#460 id=460 data-nosnippet>460</a>                <span class="prelude-val">Ok</span>(()) =&gt; {
+<a href=#461 id=461 data-nosnippet>461</a>                    <span class="macro">tracing::trace!</span>(len = frame.data.len(), attempt, <span class="string">"device tx"</span>);
+<a href=#462 id=462 data-nosnippet>462</a>                    <span class="kw">return </span><span class="prelude-val">Ok</span>(());
+<a href=#463 id=463 data-nosnippet>463</a>                }
+<a href=#464 id=464 data-nosnippet>464</a>                <span class="prelude-val">Err</span>(TxError::CadTimeout) =&gt; {
+<a href=#465 id=465 data-nosnippet>465</a>                    <span class="kw">if </span>attempt &lt; MAX_HANDOFF_ATTEMPTS {
+<a href=#466 id=466 data-nosnippet>466</a>                        <span class="self">self</span>.listen_during(device, handoff_retry()).<span class="kw">await</span><span class="question-mark">?</span>;
+<a href=#467 id=467 data-nosnippet>467</a>                    }
+<a href=#468 id=468 data-nosnippet>468</a>                }
+<a href=#469 id=469 data-nosnippet>469</a>                <span class="comment">// A refusal with a status is the device declining for a
+<a href=#470 id=470 data-nosnippet>470</a>                // reason of its own — detached, or handed something it
+<a href=#471 id=471 data-nosnippet>471</a>                // will not send. Re-offering would not change its mind.
+<a href=#472 id=472 data-nosnippet>472</a>                </span><span class="prelude-val">Err</span>(TxError::Io(UlcpError::Status(status))) =&gt; {
+<a href=#473 id=473 data-nosnippet>473</a>                    <span class="macro">tracing::debug!</span>(<span class="question-mark">?</span>status, <span class="string">"device refused a transmit"</span>);
+<a href=#474 id=474 data-nosnippet>474</a>                    <span class="kw">return </span><span class="prelude-val">Ok</span>(());
+<a href=#475 id=475 data-nosnippet>475</a>                }
+<a href=#476 id=476 data-nosnippet>476</a>                <span class="prelude-val">Err</span>(error) =&gt; <span class="macro">bail!</span>(<span class="string">"transmitting: {error:?}"</span>),
+<a href=#477 id=477 data-nosnippet>477</a>            }
+<a href=#478 id=478 data-nosnippet>478</a>        }
+<a href=#479 id=479 data-nosnippet>479</a>
+<a href=#480 id=480 data-nosnippet>480</a>        <span class="macro">tracing::debug!</span>(
+<a href=#481 id=481 data-nosnippet>481</a>            attempts = MAX_HANDOFF_ATTEMPTS,
+<a href=#482 id=482 data-nosnippet>482</a>            len = frame.data.len(),
+<a href=#483 id=483 data-nosnippet>483</a>            <span class="string">"hand-off abandoned: the node had no room for it"
+<a href=#484 id=484 data-nosnippet>484</a>        </span>);
+<a href=#485 id=485 data-nosnippet>485</a>        <span class="prelude-val">Ok</span>(())
+<a href=#486 id=486 data-nosnippet>486</a>    }
+<a href=#487 id=487 data-nosnippet>487</a>
+<a href=#488 id=488 data-nosnippet>488</a>    <span class="doccomment">/// Wait without going deaf.
+<a href=#489 id=489 data-nosnippet>489</a>    ///
+<a href=#490 id=490 data-nosnippet>490</a>    /// Reception cannot pause while the relay waits: a frame left sitting
+<a href=#491 id=491 data-nosnippet>491</a>    /// in the device is a frame the device may have to drop, and when the
+<a href=#492 id=492 data-nosnippet>492</a>    /// wait is for a full node receive queue, draining it is precisely
+<a href=#493 id=493 data-nosnippet>493</a>    /// what makes room for the frame being retried.
+<a href=#494 id=494 data-nosnippet>494</a>    </span><span class="kw">async fn </span>listen_during(<span class="kw-2">&amp;</span><span class="self">self</span>, device: <span class="kw-2">&amp;mut </span>Device, wait: Duration) -&gt; <span class="prelude-ty">Result</span>&lt;()&gt; {
+<a href=#495 id=495 data-nosnippet>495</a>        <span class="kw">let </span>sleep = tokio::time::sleep(wait);
+<a href=#496 id=496 data-nosnippet>496</a>        <span class="macro">tokio::pin!</span>(sleep);
+<a href=#497 id=497 data-nosnippet>497</a>
+<a href=#498 id=498 data-nosnippet>498</a>        core::future::poll_fn(|cx| {
+<a href=#499 id=499 data-nosnippet>499</a>            <span class="kw">loop </span>{
+<a href=#500 id=500 data-nosnippet>500</a>                <span class="kw">match </span>device.poll_receive_raw(cx) {
+<a href=#501 id=501 data-nosnippet>501</a>                    Poll::Ready(<span class="prelude-val">Ok</span>(raw)) =&gt; <span class="self">self</span>.accept(raw),
+<a href=#502 id=502 data-nosnippet>502</a>                    Poll::Ready(<span class="prelude-val">Err</span>(error)) =&gt; {
+<a href=#503 id=503 data-nosnippet>503</a>                        <span class="kw">return </span>Poll::Ready(<span class="prelude-val">Err</span>(<span class="macro">anyhow!</span>(<span class="string">"receiving from the device: {error:?}"</span>)));
+<a href=#504 id=504 data-nosnippet>504</a>                    }
+<a href=#505 id=505 data-nosnippet>505</a>                    Poll::Pending =&gt; <span class="kw">break</span>,
+<a href=#506 id=506 data-nosnippet>506</a>                }
+<a href=#507 id=507 data-nosnippet>507</a>            }
+<a href=#508 id=508 data-nosnippet>508</a>            sleep.as_mut().poll(cx).map(<span class="prelude-val">Ok</span>)
+<a href=#509 id=509 data-nosnippet>509</a>        })
+<a href=#510 id=510 data-nosnippet>510</a>        .<span class="kw">await
+<a href=#511 id=511 data-nosnippet>511</a>    </span>}
+<a href=#512 id=512 data-nosnippet>512</a>
+<a href=#513 id=513 data-nosnippet>513</a>    <span class="doccomment">/// One received frame, on its way to whoever consumes this interface.
+<a href=#514 id=514 data-nosnippet>514</a>    </span><span class="kw">fn </span>accept(<span class="kw-2">&amp;</span><span class="self">self</span>, raw: RawRxFrame) {
+<a href=#515 id=515 data-nosnippet>515</a>        <span class="macro">tracing::trace!</span>(len = raw.data.len(), <span class="string">"device rx"</span>);
+<a href=#516 id=516 data-nosnippet>516</a>        <span class="kw">if </span><span class="self">self</span>.inbound.push(TunnelFrame::new(raw.data, raw.metadata)) {
+<a href=#517 id=517 data-nosnippet>517</a>            <span class="macro">tracing::warn!</span>(<span class="string">"inbound queue full; dropped the oldest frame"</span>);
+<a href=#518 id=518 data-nosnippet>518</a>        }
+<a href=#519 id=519 data-nosnippet>519</a>    }
 <a href=#520 id=520 data-nosnippet>520</a>}
 <a href=#521 id=521 data-nosnippet>521</a>
-<a href=#522 id=522 data-nosnippet>522</a><span class="attr">#[cfg(test)]
-<a href=#523 id=523 data-nosnippet>523</a></span><span class="kw">mod </span>tests {
-<a href=#524 id=524 data-nosnippet>524</a>    <span class="kw">use </span>super::<span class="kw-2">*</span>;
-<a href=#525 id=525 data-nosnippet>525</a>
-<a href=#526 id=526 data-nosnippet>526</a>    <span class="attr">#[test]
-<a href=#527 id=527 data-nosnippet>527</a>    </span><span class="kw">fn </span>a_hand_off_retry_is_short_and_jittered() {
-<a href=#528 id=528 data-nosnippet>528</a>        <span class="comment">// Short because what is being waited out is a node draining its
-<a href=#529 id=529 data-nosnippet>529</a>        // receive queue, not a frame finishing in the air; jittered so
-<a href=#530 id=530 data-nosnippet>530</a>        // that interfaces sharing a node do not synchronize on it.
-<a href=#531 id=531 data-nosnippet>531</a>        </span><span class="kw">let </span><span class="kw-2">mut </span>seen_low = <span class="bool-val">false</span>;
-<a href=#532 id=532 data-nosnippet>532</a>        <span class="kw">let </span><span class="kw-2">mut </span>seen_high = <span class="bool-val">false</span>;
-<a href=#533 id=533 data-nosnippet>533</a>        <span class="kw">for _ in </span><span class="number">0</span>..<span class="number">512 </span>{
-<a href=#534 id=534 data-nosnippet>534</a>            <span class="kw">let </span>wait = handoff_retry();
-<a href=#535 id=535 data-nosnippet>535</a>            <span class="macro">assert!</span>(wait &gt;= HANDOFF_RETRY);
-<a href=#536 id=536 data-nosnippet>536</a>            <span class="macro">assert!</span>(wait &lt;= HANDOFF_RETRY + Duration::from_millis(HANDOFF_RETRY_JITTER_MS));
-<a href=#537 id=537 data-nosnippet>537</a>            seen_low |= wait &lt; HANDOFF_RETRY + Duration::from_millis(HANDOFF_RETRY_JITTER_MS / <span class="number">4</span>);
-<a href=#538 id=538 data-nosnippet>538</a>            seen_high |= wait &gt; HANDOFF_RETRY + Duration::from_millis(HANDOFF_RETRY_JITTER_MS / <span class="number">2</span>);
-<a href=#539 id=539 data-nosnippet>539</a>        }
-<a href=#540 id=540 data-nosnippet>540</a>        <span class="macro">assert!</span>(seen_low &amp;&amp; seen_high, <span class="string">"the range is not being covered"</span>);
-<a href=#541 id=541 data-nosnippet>541</a>    }
-<a href=#542 id=542 data-nosnippet>542</a>
-<a href=#543 id=543 data-nosnippet>543</a>    <span class="attr">#[test]
-<a href=#544 id=544 data-nosnippet>544</a>    </span><span class="kw">fn </span>the_whole_hand_off_is_bounded_well_inside_the_staleness_limit() {
-<a href=#545 id=545 data-nosnippet>545</a>        <span class="comment">// Frames are discarded once they are ten seconds old, so the
-<a href=#546 id=546 data-nosnippet>546</a>        // retries must not be able to hold one anywhere near that long.
-<a href=#547 id=547 data-nosnippet>547</a>        </span><span class="kw">let </span>worst = (HANDOFF_RETRY + Duration::from_millis(HANDOFF_RETRY_JITTER_MS))
-<a href=#548 id=548 data-nosnippet>548</a>            * u32::from(MAX_HANDOFF_ATTEMPTS - <span class="number">1</span>);
-<a href=#549 id=549 data-nosnippet>549</a>        <span class="macro">assert!</span>(worst &lt; Duration::from_secs(<span class="number">1</span>), <span class="string">"{worst:?}"</span>);
-<a href=#550 id=550 data-nosnippet>550</a>    }
-<a href=#551 id=551 data-nosnippet>551</a>
-<a href=#552 id=552 data-nosnippet>552</a>    <span class="attr">#[test]
-<a href=#553 id=553 data-nosnippet>553</a>    </span><span class="kw">fn </span>a_transmit_asks_for_no_favors() {
-<a href=#554 id=554 data-nosnippet>554</a>        <span class="comment">// Default power, and TX_FLAG_NODUTY clear: the device's duty
-<a href=#555 id=555 data-nosnippet>555</a>        // ledger is the backstop against a bridge that would otherwise
-<a href=#556 id=556 data-nosnippet>556</a>        // spend a segment's whole airtime budget on somebody else's
-<a href=#557 id=557 data-nosnippet>557</a>        // traffic.
-<a href=#558 id=558 data-nosnippet>558</a>        </span><span class="kw">let </span>meta = TxMeta::default();
-<a href=#559 id=559 data-nosnippet>559</a>        <span class="macro">assert_eq!</span>(meta.flags, <span class="number">0</span>);
-<a href=#560 id=560 data-nosnippet>560</a>        <span class="macro">assert_eq!</span>(meta.power, umsh_ulcp::meta::TX_POWER_DEFAULT);
-<a href=#561 id=561 data-nosnippet>561</a>    }
-<a href=#562 id=562 data-nosnippet>562</a>}
+<a href=#522 id=522 data-nosnippet>522</a><span class="kw">enum </span>Event {
+<a href=#523 id=523 data-nosnippet>523</a>    Received(<span class="prelude-ty">Result</span>&lt;RawRxFrame, UlcpError&gt;),
+<a href=#524 id=524 data-nosnippet>524</a>    Send(TunnelFrame),
+<a href=#525 id=525 data-nosnippet>525</a>    Ended,
+<a href=#526 id=526 data-nosnippet>526</a>}
+<a href=#527 id=527 data-nosnippet>527</a>
+<a href=#528 id=528 data-nosnippet>528</a><span class="attr">#[cfg(test)]
+<a href=#529 id=529 data-nosnippet>529</a></span><span class="kw">mod </span>tests {
+<a href=#530 id=530 data-nosnippet>530</a>    <span class="kw">use </span>super::<span class="kw-2">*</span>;
+<a href=#531 id=531 data-nosnippet>531</a>
+<a href=#532 id=532 data-nosnippet>532</a>    <span class="attr">#[test]
+<a href=#533 id=533 data-nosnippet>533</a>    </span><span class="kw">fn </span>a_hand_off_retry_is_short_and_jittered() {
+<a href=#534 id=534 data-nosnippet>534</a>        <span class="comment">// Short because what is being waited out is a node draining its
+<a href=#535 id=535 data-nosnippet>535</a>        // receive queue, not a frame finishing in the air; jittered so
+<a href=#536 id=536 data-nosnippet>536</a>        // that interfaces sharing a node do not synchronize on it.
+<a href=#537 id=537 data-nosnippet>537</a>        </span><span class="kw">let </span><span class="kw-2">mut </span>seen_low = <span class="bool-val">false</span>;
+<a href=#538 id=538 data-nosnippet>538</a>        <span class="kw">let </span><span class="kw-2">mut </span>seen_high = <span class="bool-val">false</span>;
+<a href=#539 id=539 data-nosnippet>539</a>        <span class="kw">for _ in </span><span class="number">0</span>..<span class="number">512 </span>{
+<a href=#540 id=540 data-nosnippet>540</a>            <span class="kw">let </span>wait = handoff_retry();
+<a href=#541 id=541 data-nosnippet>541</a>            <span class="macro">assert!</span>(wait &gt;= HANDOFF_RETRY);
+<a href=#542 id=542 data-nosnippet>542</a>            <span class="macro">assert!</span>(wait &lt;= HANDOFF_RETRY + Duration::from_millis(HANDOFF_RETRY_JITTER_MS));
+<a href=#543 id=543 data-nosnippet>543</a>            seen_low |= wait &lt; HANDOFF_RETRY + Duration::from_millis(HANDOFF_RETRY_JITTER_MS / <span class="number">4</span>);
+<a href=#544 id=544 data-nosnippet>544</a>            seen_high |= wait &gt; HANDOFF_RETRY + Duration::from_millis(HANDOFF_RETRY_JITTER_MS / <span class="number">2</span>);
+<a href=#545 id=545 data-nosnippet>545</a>        }
+<a href=#546 id=546 data-nosnippet>546</a>        <span class="macro">assert!</span>(seen_low &amp;&amp; seen_high, <span class="string">"the range is not being covered"</span>);
+<a href=#547 id=547 data-nosnippet>547</a>    }
+<a href=#548 id=548 data-nosnippet>548</a>
+<a href=#549 id=549 data-nosnippet>549</a>    <span class="attr">#[test]
+<a href=#550 id=550 data-nosnippet>550</a>    </span><span class="kw">fn </span>the_whole_hand_off_is_bounded_well_inside_the_staleness_limit() {
+<a href=#551 id=551 data-nosnippet>551</a>        <span class="comment">// Frames are discarded once they are ten seconds old, so the
+<a href=#552 id=552 data-nosnippet>552</a>        // retries must not be able to hold one anywhere near that long.
+<a href=#553 id=553 data-nosnippet>553</a>        </span><span class="kw">let </span>worst = (HANDOFF_RETRY + Duration::from_millis(HANDOFF_RETRY_JITTER_MS))
+<a href=#554 id=554 data-nosnippet>554</a>            * u32::from(MAX_HANDOFF_ATTEMPTS - <span class="number">1</span>);
+<a href=#555 id=555 data-nosnippet>555</a>        <span class="macro">assert!</span>(worst &lt; Duration::from_secs(<span class="number">1</span>), <span class="string">"{worst:?}"</span>);
+<a href=#556 id=556 data-nosnippet>556</a>    }
+<a href=#557 id=557 data-nosnippet>557</a>
+<a href=#558 id=558 data-nosnippet>558</a>    <span class="attr">#[test]
+<a href=#559 id=559 data-nosnippet>559</a>    </span><span class="kw">fn </span>a_transmit_asks_for_no_favors() {
+<a href=#560 id=560 data-nosnippet>560</a>        <span class="comment">// Default power, and TX_FLAG_NODUTY clear: the device's duty
+<a href=#561 id=561 data-nosnippet>561</a>        // ledger is the backstop against a bridge that would otherwise
+<a href=#562 id=562 data-nosnippet>562</a>        // spend a segment's whole airtime budget on somebody else's
+<a href=#563 id=563 data-nosnippet>563</a>        // traffic.
+<a href=#564 id=564 data-nosnippet>564</a>        </span><span class="kw">let </span>meta = TxMeta::default();
+<a href=#565 id=565 data-nosnippet>565</a>        <span class="macro">assert_eq!</span>(meta.flags, <span class="number">0</span>);
+<a href=#566 id=566 data-nosnippet>566</a>        <span class="macro">assert_eq!</span>(meta.power, umsh_ulcp::meta::TX_POWER_DEFAULT);
+<a href=#567 id=567 data-nosnippet>567</a>    }
+<a href=#568 id=568 data-nosnippet>568</a>}
 </code></pre></div></section></main></body></html>

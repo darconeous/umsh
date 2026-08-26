@@ -78,4 +78,7 @@ Unsigned, so the encoding is wrap-free into 2106. Requires
 <code>CAP_TIME</code>.</dd><dt><a class="constant" href="constant.TZ_OFFSET.html" title="constant umsh_ulcp::ids::prop::TZ_OFFSET">TZ_<wbr>OFFSET</a></dt><dd>Local time-zone offset from UTC (<code>PROP_TZ_OFFSET</code>) — <code>INT16_LE</code>
 minutes, default 0. Unlike <code>PROP_TIME</code> this always has a value:
 where the device is configured to be is known even when what time
-it is is not. Requires <code>CAP_TIME</code>.</dd></dl></section></div></main></body></html>
+it is is not. Requires <code>CAP_TIME</code>.</dd><dt><a class="constant" href="constant.UPTIME.html" title="constant umsh_ulcp::ids::prop::UPTIME">UPTIME</a></dt><dd>Seconds since the device booted (<code>PROP_UPTIME</code>). Optional and
+ungated, like <code>DEV_MODEL</code>: a device with no monotonic clock to
+answer from refuses the get. Reads next to <code>LAST_STATUS</code>, which
+says why the device last reset — this says how long ago.</dd></dl></section></div></main></body></html>

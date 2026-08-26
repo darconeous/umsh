@@ -1,1 +1,1 @@
-window.SIDEBAR_ITEMS = {"fn":["battery_display","cap_name","filter_list","format_millilux","illuminance","props","run"],"struct":["InfoArgs"]};
+window.SIDEBAR_ITEMS = {"enum":["InfoTopic"],"fn":["battery","battery_display","battery_env","cap_name","filter_list","format_millilux","illuminance","props","run"],"struct":["BatteryArgs","InfoArgs"]};

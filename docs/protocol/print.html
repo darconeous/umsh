@@ -36,7 +36,7 @@
             const path_to_root = "";
             const default_light_theme = "light";
             const default_dark_theme = "ayu";
-            window.path_to_searchindex_js = "searchindex-666b1035.js";
+            window.path_to_searchindex_js = "searchindex-66e741c0.js";
         </script>
         <!-- Start loading toc.js asap -->
         <script src="toc-438957a9.js"></script>
@@ -4135,6 +4135,31 @@ make decisions based on what a device <em>can do</em> has
 </ul>
 <p>Describes the supported capabilities of this device. Encoded as a list of packed
 unsigned integers. See <a href="#capabilities-1">Capabilities</a> for a list of values.</p>
+<h3 id="prop-uptime"><a class="header" href="#prop-uptime">PROP 6: <code>PROP_UPTIME</code></a></h3>
+<ul>
+<li>Type: Single-Value, Read-Only</li>
+<li>Asynchronous Updates: No</li>
+<li>Required: <strong>OPTIONAL</strong></li>
+<li>Scope: Device</li>
+<li>Value Type: UINT32</li>
+<li>Units: Seconds</li>
+<li>Post-Reset Value: 0</li>
+</ul>
+<p>Seconds elapsed since the device last booted, truncated toward zero. A
+device that runs long enough to exhaust the range saturates rather than
+wrapping, so the value never falsely reports a recent restart.</p>
+<p>This dates what <a href="#prop-last-status"><code>PROP_LAST_STATUS</code></a> describes: the
+reset code says why the device last started, and this says how long ago.
+Read together they distinguish a node that came up cleanly weeks back
+from one that is restarting under a fault and reporting the same code
+each time.</p>
+<p>Only a power cycle or a genuine restart resets it. <code>CMD_RST</code> returns
+protocol state to its post-reset values without rebooting the device, and
+<strong>MUST NOT</strong> reset this property; neither does a host attaching or
+detaching.</p>
+<p>A device with no monotonic clock to answer from <strong>SHOULD</strong> omit the
+property rather than report a fabricated value. A host <strong>MUST</strong> treat a
+refused get as “this device does not report its uptime” and continue.</p>
 <h2 id="state-classes"><a class="header" href="#state-classes">State Classes</a></h2>
 <p>Every piece of device state belongs to exactly one of three classes. The
 classes determine what survives a host attach, a change of host, and a
@@ -6939,9 +6964,11 @@ when the capability is not advertised; <code>CMD_CLEAR</code> and
 </tbody>
 </table>
 </div>
-<p><code>PROP_DEV_MODEL</code> (4) is the one property that is neither always required nor
-capability-gated: firmware built for a specific board <strong>SHOULD</strong> implement it,
-and anything else omits it. A host discovers it by asking.</p>
+<p><code>PROP_DEV_MODEL</code> (4) and <code>PROP_UPTIME</code> (6) are the two properties that are
+neither always required nor capability-gated. Firmware built for a specific
+board <strong>SHOULD</strong> implement the first, and a device with a monotonic clock
+<strong>SHOULD</strong> implement the second; anything else omits them. A host discovers
+both by asking.</p>
 <p>Every other property is gated by a capability. A device that does not
 advertise the capability does not implement the property, and rejects it
 with <code>STATUS_PROP_NOT_FOUND</code> or <code>STATUS_UNIMPLEMENTED</code>.</p>
@@ -7073,6 +7100,7 @@ it can do.</p>
 <tr><td>3</td><td><a href="#prop-interface-type"><code>PROP_INTERFACE_TYPE</code></a></td><td>Get</td><td>—</td></tr>
 <tr><td>4</td><td><a href="#prop-dev-model"><code>PROP_DEV_MODEL</code></a></td><td>Get</td><td>—</td></tr>
 <tr><td>5</td><td><a href="#prop-caps"><code>PROP_CAPS</code></a></td><td>Get</td><td>—</td></tr>
+<tr><td>6</td><td><a href="#prop-uptime"><code>PROP_UPTIME</code></a></td><td>Get</td><td>—</td></tr>
 <tr><td>32</td><td><a href="#prop-phy-enabled"><code>PROP_PHY_ENABLED</code></a></td><td>Get, Set</td><td>—</td></tr>
 <tr><td>35</td><td><a href="#prop-phy-freq"><code>PROP_PHY_FREQ</code></a></td><td>Get, Set</td><td>—</td></tr>
 <tr><td>37</td><td><a href="#prop-phy-tx-power"><code>PROP_PHY_TX_POWER</code></a></td><td>Get, Set</td><td>—</td></tr>
@@ -10995,6 +11023,15 @@ errors, or other mistakes, please <a href="https://github.com/darconeous/umsh/is
 </table>
 </div>
 <p>UMSH’s hybrid routing model allows a single packet to be source-routed to a specific area and then flood locally, which is useful for reaching a node in a known geographic region without flooding the entire mesh. MeshCore treats flood and direct routing as mutually exclusive modes selected by route-type bits.</p>
+<h3 id="region-scoped-flooding"><a class="header" href="#region-scoped-flooding">Region-Scoped Flooding</a></h3>
+<p>Although both protocols carry a 16-bit value to scope flood forwarding, those values are derived and evaluated very differently.</p>
+<p>An UMSH region code is a stable two-byte identifier for a region. It is derived from the configured region name according to the <a href="#region-code-encoding">Region Code Encoding</a>, independently of any particular packet. A sender places one or more region-code options in the routing metadata, and a repeater decides whether to forward by comparing those values directly with its configured region codes. The payload remains opaque: changing the payload does not change the region code or require the repeater to perform any payload-dependent calculation.</p>
+<p>A MeshCore transport code is packet-specific rather than a stable identifier for a region. For a public region, MeshCore first derives a 16-byte <em>transport key</em> from the region name: the first 16 bytes of SHA-256 over the <code>#</code>-prefixed name. Despite its name, this is not an encryption key; anyone who knows the public region name can derive it. For each packet, the transport code is the first 16 bits of:</p>
+<pre><code class="language-text">HMAC-SHA256(transport_key, payload_type || payload)
+</code></pre>
+<p>MeshCore remaps the reserved results <code>0x0000</code> and <code>0xFFFF</code> to <code>0x0001</code> and <code>0xFFFE</code>, respectively. The routing path and transport-code fields are not included in the HMAC input, so repeaters can extend the path without changing the code. Changing either the payload type or payload bytes does change the code.</p>
+<p>When a MeshCore repeater receives a transport-scoped packet, it iterates through the region entries allowed for that routing mode, obtains up to four candidate transport keys for each entry, recomputes the HMAC for each candidate, and compares the result with the packet’s first transport code. It forwards only after finding a match. Thus, MeshCore does not decrypt the payload to make this decision, but its forwarding layer does cryptographically process the payload once per candidate key. The work grows with both the number of candidate keys and the payload length. UMSH instead performs fixed two-byte comparisons against routing metadata.</p>
+<p>This payload-dependent transport-code mechanism was introduced in MeshCore commit <code>03fc9490</code>.</p>
 <p>Both protocols support automatic route learning, but through different mechanisms. UMSH uses a trace-route option that accumulates router hints as a packet floods; the recipient reverses the accumulated trace and caches it as a source route for all subsequent communication with the sender — replies, acknowledgments, and new messages alike (see <a href="#route-learning">Route Learning</a>). MeshCore uses a dedicated returned-path message type.</p>
 <p>Both protocols define channel access mechanisms. MeshCore checks for preamble or signal detection before transmitting and defers with a randomized backoff (120–360 ms) if the channel is busy, with a forced-transmit safety valve after 4 seconds. Flood retransmissions use a random delay proportional to airtime and a score-based priority derived from received SNR. UMSH uses CAD with random backoff and SNR-based contention windows for collision avoidance. UMSH additionally defines hop-by-hop forwarding confirmation with retries, providing reliability across the forwarding chain that MeshCore does not offer.</p>
 <h2 id="privacy-and-blind-modes"><a class="header" href="#privacy-and-blind-modes">Privacy and Blind Modes</a></h2>
@@ -11113,8 +11150,8 @@ errors, or other mistakes, please <a href="https://github.com/darconeous/umsh/is
 <p>The same logic applies to multicast channel identifiers. MeshCore uses a 1-byte hash of the channel key, giving a 1-in-256 chance that a packet sent to a different channel collides with one of the receiver’s configured channel identifiers and triggers an unnecessary verification attempt. UMSH’s 2-byte channel identifier reduces this to 1-in-65536.</p>
 <h3 id="repeater-power"><a class="header" href="#repeater-power">Repeater Power</a></h3>
 <p>Both protocols use flood routing, so nodes configured as repeaters must receive and retransmit packets intended for other nodes. Transmit is the most power-intensive radio operation, so minimizing unnecessary retransmissions matters. In practice, repeating is enabled only on dedicated infrastructure nodes; end-user devices are typically configured as non-repeating nodes and incur no forwarding transmit cost.</p>
-<p>For dedicated repeater nodes, UMSH does not require decrypting or verifying the payload MIC before forwarding — the MAC layer treats payloads opaquely, and forwarding decisions are based solely on the flood hop count and duplicate suppression cache. UMSH’s channel access mechanisms (CAD with random backoff, SNR-based contention windows) reduce collisions, and forwarding confirmation with retries provides reliable hop-by-hop delivery. The signal-quality filtering options (minimum RSSI and SNR) allow senders to prevent retransmission over weak links, avoiding wasted transmit power on paths unlikely to deliver the packet successfully.</p>
-<p>MeshCore’s SNR-based retransmit delay implicitly prioritizes better-positioned repeaters — nodes with stronger reception retransmit sooner, which can suppress weaker nodes via duplicate detection. However, no packet is ever dropped due to poor signal quality; every repeater in range of a flooded packet will eventually retransmit it (subject to hop count), regardless of link quality. UMSH’s explicit signal-quality thresholds allow the sender to prevent retransmission over weak links entirely, avoiding wasted transmit power on paths unlikely to deliver the packet successfully.</p>
+<p>For dedicated repeater nodes, UMSH does not require decrypting or verifying the payload MIC before forwarding — the MAC layer treats payloads opaquely, and forwarding decisions use routing metadata, duplicate suppression, and configured forwarding policy. In particular, region filtering consists of comparing the packet’s fixed two-byte region-code options with pre-derived local codes; it does not require an HMAC over the payload for every configured region. UMSH’s channel access mechanisms (CAD with random backoff, SNR-based contention windows) reduce collisions, and forwarding confirmation with retries provides reliable hop-by-hop delivery. The signal-quality filtering options (minimum RSSI and SNR) allow senders to prevent retransmission over weak links, avoiding wasted transmit power on paths unlikely to deliver the packet successfully.</p>
+<p>MeshCore’s SNR-based retransmit delay implicitly prioritizes better-positioned repeaters — nodes with stronger reception retransmit sooner, which can suppress weaker nodes via duplicate detection. MeshCore does not drop a packet merely because its received signal quality is poor, but that does not mean every repeater forwards every flood. Forwarding remains subject to path and duplicate limits, configured region policy, and transport-code matching. For a transport-scoped packet, a repeater performs the payload HMAC described above for each candidate region key and drops the packet if none match. Eligible repeaters still lack UMSH’s explicit sender-selected signal-quality thresholds, which can prevent retransmission over weak links entirely.</p>
 <h2 id="what-this-means-in-practice"><a class="header" href="#what-this-means-in-practice">What This Means in Practice</a></h2>
 <p>The protocol differences described above translate into concrete user-visible behaviors:</p>
 <ul>

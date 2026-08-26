@@ -1,1 +1,1 @@
-window.SIDEBAR_ITEMS = {"enum":["Command","DefaultOp"],"fn":["decode_u16","decode_u32","default","duty_percent","persist","scan"],"mod":["advert","capture","duty","gnss","info","lifecycle","manage","phy","ping","provision","repeater","tables","time","values"]};
+window.SIDEBAR_ITEMS = {"enum":["Command","DefaultOp"],"fn":["decode_u16","decode_u32","default","duty_percent","format_duration","persist","scan"],"mod":["advert","capture","duty","gnss","info","lifecycle","manage","phy","ping","provision","repeater","tables","time","values"]};

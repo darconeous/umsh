@@ -1,0 +1,1 @@
+window.SIDEBAR_ITEMS = {"constant":["COLD_BOOT_SETTLE_MS"],"enum":["ChargeCurrent","ChargeDirection","ChargeLed","ChargeState","ChargeVoltage","Error","PowerOffPress","PowerOnPress","Rail"],"fn":["decode_rail_mv","encode_rail_mv"],"mod":["reg"],"struct":["Axp2101","IrqMask"]};
