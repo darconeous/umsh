@@ -143,30 +143,37 @@ impl<M: RawMutex + 'static, F: JournalFlash + 'static> ProtoStore<M, F> {
         page0: u32,
     ) -> (Self, Option<BootPayload>) {
         let mut flash = shared.lock().await;
-        let mut latest: Option<(u32, proto::Stored)> = None;
+        let mut newest: Option<(u32, u32)> = None;
+        let mut bytes = [0u8; proto::SLOT_SIZE];
         for page in [page0, page0 + PAGE_SIZE] {
             let mut address = page;
             while address < page + PAGE_SIZE {
-                let mut bytes = [0u8; proto::SLOT_SIZE];
                 if flash.read_record(address, &mut bytes).is_ok() {
-                    latest = proto::consider_record(latest, address, &bytes);
+                    proto::consider_slot(&mut newest, address, &bytes);
                 }
                 address += proto::SLOT_SIZE as u32;
             }
         }
-        drop(flash);
+        // Read the winner once, after the scan, and copy its payload
+        // straight into what this returns. The scan itself only tracks
+        // addresses and generations, so a mount's working set is one slot
+        // buffer no matter how many records are live — and no full record
+        // is ever materialized on the way out.
+        //
         // A tombstone is authoritative "nothing saved": older records
         // still physically present are void.
-        let (slot, generation, payload) = match latest {
-            Some((slot, stored)) => {
-                let payload = match stored.record {
-                    proto::Record::Snapshot(payload) => Some(payload),
-                    proto::Record::Cleared => None,
-                };
-                (Some(slot), stored.generation, payload)
-            }
-            None => (None, 0, None),
-        };
+        let mut slot = None;
+        let mut generation = 0;
+        let mut payload: Option<BootPayload> = None;
+        if let Some((address, _)) = newest
+            && flash.read_record(address, &mut bytes).is_ok()
+            && let Some((found, bytes)) = proto::payload_bytes(&bytes)
+        {
+            slot = Some(address);
+            generation = found;
+            payload = bytes.and_then(|bytes| BootPayload::from_slice(bytes).ok());
+        }
+        drop(flash);
         debug_log(format_args!(
             "proto-store mount page0=0x{page0:06x} slot={:?} generation={} payload={}",
             slot,
@@ -206,28 +213,31 @@ impl<M: RawMutex + 'static, F: JournalFlash + 'static> ProtoStore<M, F> {
     pub async fn older_snapshot(&mut self, out: &mut [u8]) -> Option<usize> {
         let newer_than = self.walked_back_to?;
         let mut flash = self.flash.lock().await;
-        let mut latest: Option<(u32, proto::Stored)> = None;
+        let mut newest: Option<(u32, u32)> = None;
+        let mut bytes = [0u8; proto::SLOT_SIZE];
         for page in [self.page0, self.page0 + PAGE_SIZE] {
             let mut address = page;
             while address < page + PAGE_SIZE {
-                let mut bytes = [0u8; proto::SLOT_SIZE];
                 if flash.read_record(address, &mut bytes).is_ok() {
-                    latest = proto::consider_older_record(latest, address, &bytes, newer_than);
+                    proto::consider_older_slot(&mut newest, address, &bytes, newer_than);
                 }
                 address += proto::SLOT_SIZE as u32;
             }
         }
+        let (address, _) = newest?;
+        if flash.read_record(address, &mut bytes).is_err() {
+            return None;
+        }
         drop(flash);
-        let (_, stored) = latest?;
-        self.walked_back_to = Some(stored.generation);
-        let proto::Record::Snapshot(payload) = stored.record else {
+        let (generation, payload) = proto::payload_bytes(&bytes)?;
+        self.walked_back_to = Some(generation);
+        let Some(payload) = payload else {
             debug_log(format_args!("proto-store walk-back hit=tombstone"));
             self.walked_back_to = None;
             return None;
         };
         debug_log(format_args!(
-            "proto-store walk-back generation={} payload={}",
-            stored.generation,
+            "proto-store walk-back generation={generation} payload={}",
             payload.len(),
         ));
         let len = payload.len().min(out.len());

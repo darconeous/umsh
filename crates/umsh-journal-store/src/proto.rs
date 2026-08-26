@@ -116,21 +116,8 @@ impl Stored {
     }
 
     pub fn decode(bytes: &[u8; SLOT_SIZE]) -> Option<Self> {
-        if bytes[..4] != MAGIC {
-            return None;
-        }
-        if bytes[COMMIT_OFFSET..] != [0; 4] {
-            return None;
-        }
-        let crc = u32::from_le_bytes(bytes[CRC_OFFSET..COMMIT_OFFSET].try_into().ok()?);
-        if crc != record::crc32(&bytes[..CRC_OFFSET]) {
-            return None;
-        }
-        let generation = u32::from_le_bytes(bytes[4..8].try_into().ok()?);
+        let generation = probe_record(bytes)?;
         let len = usize::from(u16::from_le_bytes(bytes[9..11].try_into().ok()?));
-        if len > MAX_PAYLOAD {
-            return None;
-        }
         let record = match bytes[8] {
             KIND_SNAPSHOT => {
                 let mut payload = heapless::Vec::new();
@@ -139,28 +126,73 @@ impl Stored {
                     .ok()?;
                 Record::Snapshot(payload)
             }
-            KIND_CLEARED if len == 0 => Record::Cleared,
-            _ => return None,
+            // `probe_record` admits no other kind.
+            _ => Record::Cleared,
         };
         Some(Self { generation, record })
     }
 }
 
-/// Consider one journal slot while mounting.
-pub fn consider_record(
-    current: Option<(u32, Stored)>,
-    address: u32,
-    bytes: &[u8; SLOT_SIZE],
-) -> Option<(u32, Stored)> {
-    let Some(candidate) = Stored::decode(bytes) else {
-        return current;
+/// Validate one slot image — magic, commit word, CRC, kind, length —
+/// and return its generation, without touching the payload.
+///
+/// Mount scans run on this: a scan's working set stays one slot buffer
+/// plus the eight-byte candidate, and the winning slot is decoded
+/// exactly once after the scan settles. Passing whole [`Stored`] values
+/// through a scan costs a `MAX_PAYLOAD` copy per step, and on the
+/// embedded boot path those copies land on the one stack every task
+/// shares.
+pub fn probe_record(bytes: &[u8; SLOT_SIZE]) -> Option<u32> {
+    if bytes[..4] != MAGIC {
+        return None;
+    }
+    if bytes[COMMIT_OFFSET..] != [0; 4] {
+        return None;
+    }
+    let crc = u32::from_le_bytes(bytes[CRC_OFFSET..COMMIT_OFFSET].try_into().ok()?);
+    if crc != record::crc32(&bytes[..CRC_OFFSET]) {
+        return None;
+    }
+    let len = usize::from(u16::from_le_bytes(bytes[9..11].try_into().ok()?));
+    if len > MAX_PAYLOAD {
+        return None;
+    }
+    match bytes[8] {
+        KIND_SNAPSHOT => {}
+        KIND_CLEARED if len == 0 => {}
+        _ => return None,
+    }
+    Some(u32::from_le_bytes(bytes[4..8].try_into().ok()?))
+}
+
+/// Borrow a validated slot's committed payload in place: its generation,
+/// and the payload bytes when the record is a snapshot rather than a
+/// tombstone.
+///
+/// The mount path reads the winning slot through this rather than
+/// [`Stored::decode`] so the payload is copied exactly once, into
+/// whatever the caller is returning, instead of landing first in a
+/// `MAX_PAYLOAD` record on the way there.
+pub fn payload_bytes(bytes: &[u8; SLOT_SIZE]) -> Option<(u32, Option<&[u8]>)> {
+    let generation = probe_record(bytes)?;
+    let len = usize::from(u16::from_le_bytes(bytes[9..11].try_into().ok()?));
+    let payload = match bytes[8] {
+        KIND_SNAPSHOT => Some(&bytes[HEADER_LEN..HEADER_LEN + len]),
+        // `probe_record` admits no kind but a tombstone here.
+        _ => None,
     };
-    if current.as_ref().is_none_or(|(_, stored)| {
-        record::generation_is_newer(candidate.generation, stored.generation)
-    }) {
-        Some((address, candidate))
-    } else {
-        current
+    Some((generation, payload))
+}
+
+/// Consider one journal slot while mounting: keep the newest committed
+/// slot's address and generation. The payload stays in flash; the
+/// caller decodes the winner once the scan settles.
+pub fn consider_slot(current: &mut Option<(u32, u32)>, address: u32, bytes: &[u8; SLOT_SIZE]) {
+    let Some(generation) = probe_record(bytes) else {
+        return;
+    };
+    if current.is_none_or(|(_, newest)| record::generation_is_newer(generation, newest)) {
+        *current = Some((address, generation));
     }
 }
 
@@ -168,7 +200,7 @@ pub fn consider_record(
 /// record strictly older than `newer_than`.
 ///
 /// This is how a boot walks back after the layer above rejects a
-/// record's *payload*. [`consider_record`] recovers from a corrupt or
+/// record's *payload*. [`consider_slot`] recovers from a corrupt or
 /// uncommitted record, but a record whose CRC is fine and whose contents
 /// the session refuses would otherwise take the device to a bare boot
 /// while a readable older generation sits in the journal.
@@ -176,24 +208,20 @@ pub fn consider_record(
 /// Re-scanning rather than retaining a runner-up during the first mount
 /// keeps that path's "never buffers a second copy" discipline intact;
 /// the cost is paid only on a boot that is already going wrong.
-pub fn consider_older_record(
-    current: Option<(u32, Stored)>,
+pub fn consider_older_slot(
+    current: &mut Option<(u32, u32)>,
     address: u32,
     bytes: &[u8; SLOT_SIZE],
     newer_than: u32,
-) -> Option<(u32, Stored)> {
-    let Some(candidate) = Stored::decode(bytes) else {
-        return current;
+) {
+    let Some(generation) = probe_record(bytes) else {
+        return;
     };
-    if !record::generation_is_newer(newer_than, candidate.generation) {
-        return current;
+    if !record::generation_is_newer(newer_than, generation) {
+        return;
     }
-    if current.as_ref().is_none_or(|(_, stored)| {
-        record::generation_is_newer(candidate.generation, stored.generation)
-    }) {
-        Some((address, candidate))
-    } else {
-        current
+    if current.is_none_or(|(_, newest)| record::generation_is_newer(generation, newest)) {
+        *current = Some((address, generation));
     }
 }
 
@@ -263,11 +291,12 @@ mod tests {
             for page in [PAGE0, PAGE1] {
                 let mut address = page;
                 while address < page + PAGE_SIZE {
-                    latest = consider_record(latest, address, &self.slot(address));
+                    consider_slot(&mut latest, address, &self.slot(address));
                     address += SLOT_SIZE as u32;
                 }
             }
-            latest
+            let (slot, _) = latest?;
+            Stored::decode(&self.slot(slot)).map(|stored| (slot, stored))
         }
 
         /// The snapshot payload a boot would restore: the newest valid
@@ -483,12 +512,12 @@ mod tests {
             for page in [PAGE0, PAGE1] {
                 let mut address = page;
                 while address < page + PAGE_SIZE {
-                    latest =
-                        consider_older_record(latest, address, &flash.slot(address), newer_than);
+                    consider_older_slot(&mut latest, address, &flash.slot(address), newer_than);
                     address += SLOT_SIZE as u32;
                 }
             }
-            latest.map(|(_, stored)| stored)
+            let (slot, _) = latest?;
+            Stored::decode(&flash.slot(slot))
         };
 
         assert_eq!(flash.mount().unwrap().1, record(3, 0xCC, 40));

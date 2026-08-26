@@ -733,28 +733,27 @@ mod firmware {
 
     #[cfg(feature = "t1000e")]
     fn mapped_ux_preferences() -> Option<umsh_ux_tracker::state::UserPreferences> {
-        let mut latest: Option<(u32, proto_store::Stored)> = None;
+        let mut newest: Option<(u32, u32)> = None;
+        let mut bytes = [0u8; proto_store::SLOT_SIZE];
+        // Internal flash is memory mapped. These early reads happen
+        // before MPSL takes NVMC and never mutate flash.
+        let read_slot = |address: u32, bytes: &mut [u8; proto_store::SLOT_SIZE]| unsafe {
+            core::ptr::copy_nonoverlapping(address as *const u8, bytes.as_mut_ptr(), bytes.len());
+        };
         for page in [
             proto_store::UX_PAGE0,
             proto_store::UX_PAGE0 + proto_store::PAGE_SIZE,
         ] {
             let mut address = page;
             while address < page + proto_store::PAGE_SIZE {
-                let mut bytes = [0u8; proto_store::SLOT_SIZE];
-                // Internal flash is memory mapped. This early read happens
-                // before MPSL takes NVMC and never mutates flash.
-                unsafe {
-                    core::ptr::copy_nonoverlapping(
-                        address as *const u8,
-                        bytes.as_mut_ptr(),
-                        bytes.len(),
-                    );
-                }
-                latest = proto_store::consider_record(latest, address, &bytes);
+                read_slot(address, &mut bytes);
+                proto_store::consider_slot(&mut newest, address, &bytes);
                 address += proto_store::SLOT_SIZE as u32;
             }
         }
-        let (_, stored) = latest?;
+        let (slot, _) = newest?;
+        read_slot(slot, &mut bytes);
+        let stored = proto_store::Stored::decode(&bytes)?;
         let proto_store::Record::Snapshot(payload) = stored.record else {
             return None;
         };
