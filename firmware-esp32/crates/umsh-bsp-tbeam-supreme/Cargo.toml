@@ -1,0 +1,34 @@
+[package]
+name = "umsh-bsp-tbeam-supreme"
+description = "Board BSP for the LILYGO T-Beam Supreme: pin map, AXP2101 rail topology, SH1106, SX1262 wiring, L76K power"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+repository.workspace = true
+
+[dependencies]
+umsh-bsp-esp32 = { path = "../umsh-bsp-esp32", features = ["esp32s3"] }
+esp-hal = { version = "1.1", default-features = false, features = ["esp32s3", "rt", "unstable"] }
+embassy-time = { version = "0.5", default-features = false }
+# SX1262 driver; resolves to ../../lora-rs via the workspace [patch].
+lora-phy = { version = "3.0.2-alpha", default-features = false }
+embedded-hal-bus = { version = "0.3", default-features = false, features = ["async"] }
+embedded-hal-async = { version = "1", default-features = false }
+embedded-graphics = { version = "0.8", default-features = false }
+# 0.6 and not the nRF BSP's 0.3: the shared-bus `I2cDevice` bounds its
+# mutex on `embassy-sync`'s `RawMutex`, and only this line of releases
+# takes the 0.8 embassy-sync this workspace runs.
+embassy-embedded-hal = { version = "0.6", default-features = false }
+
+# The board's own peripheral drivers, shared with the root workspace.
+umsh-pmic-axp2101 = { path = "../../../crates/umsh-pmic-axp2101" }
+umsh-display-sh1106 = { path = "../../../crates/umsh-display-sh1106" }
+# `pump::Power` for the L76K power sequencing.
+umsh-gnss = { path = "../../../crates/umsh-gnss" }
+
+# `platform` module: the concrete `umsh_mac::Platform` bundle.
+umsh-crypto = { path = "../../../crates/umsh-crypto", default-features = false, features = ["software-crypto"] }
+umsh-hal = { path = "../../../crates/umsh-hal", default-features = false, features = ["embassy"] }
+umsh-mac = { path = "../../../crates/umsh-mac", default-features = false }
+umsh-radio-loraphy = { path = "../../../crates/umsh-radio-loraphy", default-features = false }
+embassy-sync = { version = "0.8", default-features = false }

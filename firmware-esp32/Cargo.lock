@@ -1333,6 +1333,7 @@ dependencies = [
  "embassy-time",
  "embedded-graphics",
  "embedded-hal-bus",
+ "embedded-io-async 0.7.0",
  "esp-alloc",
  "esp-bootloader-esp-idf",
  "esp-hal",
@@ -1376,6 +1377,7 @@ dependencies = [
  "embassy-time",
  "embedded-graphics",
  "embedded-hal-bus",
+ "embedded-io-async 0.7.0",
  "esp-alloc",
  "esp-bootloader-esp-idf",
  "esp-hal",
@@ -1437,6 +1439,54 @@ dependencies = [
  "umsh-node",
  "umsh-radio-loraphy",
  "umsh-sync",
+ "umsh-ux-tracker",
+]
+
+[[package]]
+name = "firmware-tbeam-supreme"
+version = "0.1.0"
+dependencies = [
+ "bt-hci",
+ "embassy-embedded-hal 0.6.0",
+ "embassy-executor",
+ "embassy-futures",
+ "embassy-sync 0.8.0",
+ "embassy-time",
+ "embedded-graphics",
+ "embedded-hal-bus",
+ "embedded-io-async 0.7.0",
+ "esp-alloc",
+ "esp-bootloader-esp-idf",
+ "esp-hal",
+ "esp-println",
+ "esp-radio",
+ "esp-rtos",
+ "esp-storage",
+ "heapless 0.8.0",
+ "heapless 0.9.3",
+ "lora-phy",
+ "rand 0.10.2",
+ "rand_chacha",
+ "rand_core 0.6.4",
+ "static_cell",
+ "trouble-host",
+ "umsh-bsp-esp32",
+ "umsh-bsp-tbeam-supreme",
+ "umsh-core",
+ "umsh-crypto",
+ "umsh-gnss",
+ "umsh-hal",
+ "umsh-journal-store",
+ "umsh-mac",
+ "umsh-node",
+ "umsh-pmic-axp2101",
+ "umsh-radio-loraphy",
+ "umsh-rtc-pcf8563",
+ "umsh-sync",
+ "umsh-ulcp",
+ "umsh-ulcp-device",
+ "umsh-ulcp-runtime",
+ "umsh-ux-display-tracker",
  "umsh-ux-tracker",
 ]
 
@@ -2729,6 +2779,28 @@ dependencies = [
 ]
 
 [[package]]
+name = "umsh-bsp-tbeam-supreme"
+version = "0.1.0"
+dependencies = [
+ "embassy-embedded-hal 0.6.0",
+ "embassy-sync 0.8.0",
+ "embassy-time",
+ "embedded-graphics",
+ "embedded-hal-async",
+ "embedded-hal-bus",
+ "esp-hal",
+ "lora-phy",
+ "umsh-bsp-esp32",
+ "umsh-crypto",
+ "umsh-display-sh1106",
+ "umsh-gnss",
+ "umsh-hal",
+ "umsh-mac",
+ "umsh-pmic-axp2101",
+ "umsh-radio-loraphy",
+]
+
+[[package]]
 name = "umsh-cli"
 version = "0.1.0"
 dependencies = [
@@ -2768,6 +2840,14 @@ dependencies = [
 ]
 
 [[package]]
+name = "umsh-display-sh1106"
+version = "0.1.0"
+dependencies = [
+ "embedded-graphics",
+ "embedded-hal-async",
+]
+
+[[package]]
 name = "umsh-flash-store"
 version = "0.1.0"
 dependencies = [
@@ -2776,6 +2856,15 @@ dependencies = [
  "heapless 0.8.0",
  "sequential-storage",
  "umsh-hal",
+]
+
+[[package]]
+name = "umsh-gnss"
+version = "0.1.0"
+dependencies = [
+ "embassy-futures",
+ "embedded-hal-async",
+ "embedded-io-async 0.7.0",
 ]
 
 [[package]]
@@ -2829,6 +2918,13 @@ dependencies = [
 ]
 
 [[package]]
+name = "umsh-pmic-axp2101"
+version = "0.1.0"
+dependencies = [
+ "embedded-hal-async",
+]
+
+[[package]]
 name = "umsh-radio-loraphy"
 version = "0.1.0"
 dependencies = [
@@ -2838,6 +2934,14 @@ dependencies = [
  "heapless 0.8.0",
  "lora-phy",
  "umsh-hal",
+]
+
+[[package]]
+name = "umsh-rtc-pcf8563"
+version = "0.1.0"
+dependencies = [
+ "embedded-hal-async",
+ "umsh-gnss",
 ]
 
 [[package]]
@@ -2885,6 +2989,7 @@ dependencies = [
  "rand_core 0.6.4",
  "umsh-core",
  "umsh-crypto",
+ "umsh-gnss",
  "umsh-hal",
  "umsh-journal-store",
  "umsh-mac",

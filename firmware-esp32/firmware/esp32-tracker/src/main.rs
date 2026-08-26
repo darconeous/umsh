@@ -1,12 +1,15 @@
-//! ULCP firmware for the Heltec WiFi LoRa 32 V3 (ESP32-S3 + SX1262).
+//! ULCP firmware for the ESP32 tracker boards (Heltec LoRa 32 V2/V3,
+//! LILYGO T-Beam Supreme), selected by `board-*` features.
 //!
 //! The protocol brain is the shared board-agnostic driver
 //! (`umsh_ulcp_runtime::driver`) — the same session loop the T-Echo
-//! and T-1000E images run — behind this board's couplings:
+//! and T-1000E images run — behind each board's couplings:
 //!
-//! - **Wired transport**: HDLC-framed CRP on UART0 (the CP2102 bridge).
-//!   UART has no connection state, so wired attachment is lazy and
-//!   permanent: the first valid HDLC frame attaches, nothing ever
+//! - **Wired transport**: HDLC-framed CRP on the board's serial port —
+//!   UART0 behind a CP2102 bridge on the Heltecs, the native
+//!   USB-Serial-JTAG peripheral where `wired-usb-serial-jtag` is on.
+//!   Neither has usable connection state, so wired attachment is lazy
+//!   and permanent: the first valid HDLC frame attaches, nothing ever
 //!   detaches it (serial hosts are assumed present once they speak),
 //!   and a board nobody serials into stays detached and autonomous.
 //!   Real attach/detach edges exist only on BLE.
@@ -14,27 +17,39 @@
 //!   esp-radio controller, with the same pairing/bonding lattice the
 //!   Phase 4 spike hardware-proved (PIN on the OLED, lockout policy,
 //!   durable bonds through `umsh_journal_store`).
-//! - **Radio**: the SX1262 behind `device_runner` + `radio_mux`; the
-//!   session (client A) and the on-board device node (client B) share
-//!   the physical radio and one duty ledger.
+//! - **Radio**: the board's LoRa modem behind `device_runner` +
+//!   `radio_mux`; the session (client A) and the on-board device node
+//!   (client B) share the physical radio and one duty ledger.
 //! - **Persistence**: snapshot / identity / counter journals in the
 //!   `umsh` partition tail (see `ble_store.rs`).
 //!
+//! On a `pmic-axp2101` board there is also **power**: everything
+//! interesting sits behind an AXP2101 rail, battery telemetry is the
+//! PMIC's own (with a real charge state), and power-off is a PMIC
+//! operation rather than deep sleep — the POWER key brings the board
+//! back with no firmware involved. `gnss` adds the shared `umsh_gnss`
+//! pump on UART1, and `rtc-pcf8563` a hardware wall clock read at boot
+//! and written back when a trusted source steps the time.
+//!
 //! ## Boot order is constrained
 //!
-//! The BLE controller comes up first and stays up: it is both a
-//! transport and the RF entropy source without which `EspCryptoRng`
-//! refuses to exist (see `umsh_bsp_esp32::rng`). Journals mount before
-//! the ULCP session starts so a stored snapshot is restored (and the PHY
-//! re-applied) before the first host command.
+//! On a `pmic-axp2101` board the PMU comes up before everything: until
+//! its rails are configured, the radio, panel, and receiver are dark,
+//! and probing them reports parts missing that are merely unpowered.
+//! The BLE controller is next (first, elsewhere) and stays up: it is
+//! both a transport and the RF entropy source without which
+//! `EspCryptoRng` refuses to exist (see `umsh_bsp_esp32::rng`).
+//! Journals mount before the ULCP session starts so a stored snapshot
+//! is restored (and the PHY re-applied) before the first host command.
 //!
-//! ## UART0 is the wire, so the console goes quiet
+//! ## The console shares the wire, so it goes quiet
 //!
-//! `esp-println` shares UART0 with the wired transport. Boot
-//! diagnostics interleave cleanly before the UART is claimed; after
-//! that, nothing may `println!`. The `ble-debug` feature multiplexes
-//! diagnostic lines onto the UART0 output stream as ASCII (HDLC hosts
-//! resynchronize past them), mirroring the nRF image's ble-debug.
+//! `esp-println` shares the wired transport's port (UART0, or the
+//! USB-Serial-JTAG peripheral). Boot diagnostics interleave cleanly
+//! before the port is claimed; after that, nothing may `println!`. The
+//! `ble-debug` feature multiplexes diagnostic lines onto the wired
+//! output stream as ASCII (HDLC hosts resynchronize past them),
+//! mirroring the nRF image's ble-debug.
 
 #![no_std]
 #![no_main]
@@ -45,6 +60,8 @@ use core::fmt::Write as _;
 use core::sync::atomic::{AtomicBool, AtomicU8, AtomicU16, AtomicU32, Ordering};
 
 use bt_hci::controller::ExternalController;
+#[cfg(feature = "pmic-axp2101")]
+use embassy_embedded_hal::shared_bus::asynch::i2c::I2cDevice;
 use embassy_executor::Spawner;
 use embassy_futures::join::join;
 use embassy_futures::select::{Either, Either3, Either4, select, select3, select4};
@@ -61,13 +78,18 @@ use esp_hal::clock::CpuClock;
 use esp_hal::gpio::{Input, InputConfig, Level, Output, OutputConfig, Pull};
 use esp_hal::i2c::master::{Config as I2cConfig, I2c};
 use esp_hal::interrupt::software::SoftwareInterruptControl;
+#[cfg(not(feature = "pmic-axp2101"))]
 use esp_hal::rtc_cntl::sleep::{Ext0WakeupSource, LowPower};
 use esp_hal::rtc_cntl::{Rtc, RwdtStage, SocResetReason};
 use esp_hal::spi::Mode;
 use esp_hal::spi::master::{Config as SpiConfig, Spi};
 use esp_hal::time::Rate;
 use esp_hal::timer::timg::TimerGroup;
-use esp_hal::uart::{Config as UartConfig, Uart, UartRx, UartTx};
+use esp_hal::uart::{Config as UartConfig, Uart};
+#[cfg(not(feature = "wired-usb-serial-jtag"))]
+use esp_hal::uart::{UartRx, UartTx};
+#[cfg(feature = "wired-usb-serial-jtag")]
+use esp_hal::usb::usb_serial_jtag::{UsbSerialJtag, UsbSerialJtagRx, UsbSerialJtagTx};
 use esp_println::println;
 use esp_radio::ble::controller::BleConnector;
 use lora_phy::LoRa;
@@ -83,21 +105,44 @@ use umsh_bsp_esp32::rng::EspCryptoRng;
 use umsh_bsp_heltec_lora32_v2 as board;
 #[cfg(feature = "board-heltec-v3")]
 use umsh_bsp_heltec_lora32_v3 as board;
+#[cfg(feature = "board-tbeam-supreme")]
+use umsh_bsp_tbeam_supreme as board;
 
+#[cfg(feature = "pmic-axp2101")]
+use board::battery as board_battery;
+#[cfg(not(feature = "pmic-axp2101"))]
 use board::battery::BatterySampler;
+#[cfg(feature = "display-sh1106")]
+use board::display::{self, Brightness, Display};
+// `DisplayConfigAsync` is the ssd1306 trait carrying `init()`.
+#[cfg(not(feature = "display-sh1106"))]
 use board::display::{self, Brightness, Display, DisplayConfigAsync as _};
+#[cfg(feature = "pmic-axp2101")]
+use board::gnss::{PmuI2cDevice, SharedPmic};
+#[cfg(feature = "pmic-axp2101")]
+use board::power as board_power;
 use board::radio as board_radio;
 // Boards whose `Vext` also gates the battery divider share one rail
 // between the display task and the sampler, so their handle is `Copy`
 // rather than an owned pin; the API surface is otherwise identical.
-#[cfg(not(feature = "vext-gates-battery"))]
+// PMIC boards have no `Vext` at all — the panel's rail belongs to the
+// AXP2101 and drops in the shutdown path instead.
+#[cfg(not(any(feature = "vext-gates-battery", feature = "pmic-axp2101")))]
 use board::vext::Vext;
 #[cfg(feature = "vext-gates-battery")]
 use board::vext::VextHandle as Vext;
 use umsh_crypto::CryptoEngine;
 use umsh_crypto::software::{SoftwareAes, SoftwareSha256};
+#[cfg(feature = "pmic-axp2101")]
+use umsh_pmic_axp2101::{Axp2101, ChargeDirection, ChargeState, IrqMask};
 use umsh_radio_loraphy::{DeviceControl, MAX_PAYLOAD};
+#[cfg(feature = "rtc-pcf8563")]
+use umsh_rtc_pcf8563::Pcf8563;
 use umsh_ulcp::{Status, gatt, hdlc};
+#[cfg(feature = "gnss")]
+use umsh_ulcp_device::GnssConfig;
+#[cfg(feature = "rtc-pcf8563")]
+use umsh_ulcp_device::TimeConfig;
 use umsh_ulcp_device::{BatteryFields, MAX_DEVICE_NAME_LEN, RadioSettings, SessionConfig};
 use umsh_ulcp_runtime::ble_security::{PairingFailureClass, PairingRuntime, pairing_enabled};
 use umsh_ulcp_runtime::driver::{
@@ -108,10 +153,12 @@ use umsh_ux_display_tracker::attention::{
     Attention, AttentionConfig, DisplayKind, HoldReason, Transition,
 };
 use umsh_ux_display_tracker::gate::{Disposition, Gate, GateReason};
-use umsh_ux_display_tracker::menu::{
-    MenuItem, MenuItems, ToggleId, UiEffect, UiInput, UiModel, UiNotice,
-};
+#[cfg(not(feature = "gnss"))]
+use umsh_ux_display_tracker::menu::MenuItem;
+use umsh_ux_display_tracker::menu::{MenuItems, ToggleId, UiEffect, UiInput, UiModel, UiNotice};
 use umsh_ux_display_tracker::screen;
+#[cfg(feature = "pmic-axp2101")]
+use umsh_ux_tracker::battery::ChargeClass;
 use umsh_ux_tracker::battery::soc_from_ocv;
 use umsh_ux_tracker::button::{ButtonEdge, ButtonEvent, ButtonFsm};
 
@@ -148,6 +195,14 @@ const BLE_CONNECTIONS_MAX: usize = 1;
 const BLE_L2CAP_CHANNELS_MAX: usize = 2;
 /// HCI command/event slot count for the external controller.
 const HCI_SLOTS: usize = 4;
+
+/// The one BLE controller this image builds, named so the GATT host's
+/// resource block can be a `static` — a generic function cannot own one.
+type BleController = ExternalController<BleConnector<'static>, HCI_SLOTS>;
+
+/// The GATT host's resource block. Tens of kilobytes; see `ble_app`.
+type BleResources =
+    HostResources<BleController, DefaultPacketPool, BLE_CONNECTIONS_MAX, BLE_L2CAP_CHANNELS_MAX>;
 /// Max GATT value payload the ULCP characteristics carry.
 /// Largest value the ULCP characteristics accept.
 ///
@@ -157,7 +212,12 @@ const HCI_SLOTS: usize = 4;
 /// would refuse with an invalid-length error.
 const BLE_VALUE_MAX: usize = 252;
 
+#[cfg(feature = "board-heltec-v2")]
+const DEFAULT_DEVICE_NAME: &str = "UMSH Heltec V2";
+#[cfg(feature = "board-heltec-v3")]
 const DEFAULT_DEVICE_NAME: &str = "UMSH Heltec V3";
+#[cfg(feature = "board-tbeam-supreme")]
+const DEFAULT_DEVICE_NAME: &str = "UMSH T-Beam";
 
 /// `PROP_DEV_VERSION`: the stack name and the release version from the
 /// build script, in the `STACK-NAME/STACK-VERSION` form the spec
@@ -166,7 +226,7 @@ const DEV_VERSION: &str = concat!("umsh/", env!("GIT_DESCRIBE"));
 
 /// `PROP_DEV_MODEL`: the hardware this image was built for, matching the
 /// board id used by the release manifest and `site/data/hardware.toml`
-/// (`heltec-v2` / `heltec-v3`).
+/// (`heltec-v2` / `heltec-v3` / `tbeam-supreme`).
 const DEV_MODEL: &str = board::BOARD_NAME;
 
 /// The board default name plus a stable per-die suffix — the low 16
@@ -265,20 +325,39 @@ fn session_config() -> SessionConfig {
         // charger-status signal (the charge LED is charger-driven), so
         // voltage and the OCV level estimate are reported and charge
         // state is not advertised.
+        #[cfg(not(feature = "pmic-axp2101"))]
         battery: Some(BatteryFields {
             voltage: true,
             level: true,
             charge_state: false,
         }),
-        // No locate alert. The board's only conspicuous output is the OLED,
-        // and its permanent wired attach means a second host can be present
-        // while the alert runs — neither is worth the wiring for a bench
-        // board that never leaves a desk.
+        // The AXP2101 measures its own battery terminal, runs a fuel
+        // gauge, and knows which way current is flowing — the first
+        // ESP32 board that can advertise all three fields.
+        #[cfg(feature = "pmic-axp2101")]
+        battery: Some(BatteryFields {
+            voltage: true,
+            level: true,
+            charge_state: true,
+        }),
+        // No locate alert. The boards' only conspicuous output is the
+        // OLED, and the permanent wired attach means a second host can
+        // be present while the alert runs — neither is worth the wiring.
         alert: None,
-        // No clock and no receiver. A permanently-wired bench board reads
-        // the time from the host it is wired to.
+        // No clock. A permanently-wired bench board reads the time from
+        // the host it is wired to.
+        #[cfg(not(feature = "rtc-pcf8563"))]
         time: None,
+        // A hardware RTC holds the time across power-off and the
+        // receiver can set it: `CAP_TIME` rests on a real clock.
+        #[cfg(feature = "rtc-pcf8563")]
+        time: Some(TimeConfig),
+        #[cfg(not(feature = "gnss"))]
         gnss: None,
+        // The receiver stays off until asked — a battery board, not a
+        // fixed outdoor node.
+        #[cfg(feature = "gnss")]
+        gnss: Some(GnssConfig::DEFAULT),
         // No ambient light sensor.
         illuminance: false,
         // The ESP32-S3 radio is always up on this board, but the
@@ -486,29 +565,46 @@ static UI_NOTICE: Signal<CriticalSectionRawMutex, UiNotice> = Signal::new();
 /// the press that began it.
 static SCREEN_OFF: AtomicBool = AtomicBool::new(false);
 /// The four-second power-off hold fired: button task → heartbeat task,
-/// which owns the `Rtc` that deep sleep is entered through.
+/// which owns the shutdown sequence (deep sleep through its `Rtc`, or
+/// a PMIC power-off on `pmic-axp2101` boards).
 static SHUTDOWN_REQUEST: Signal<CriticalSectionRawMutex, ()> = Signal::new();
 /// Shutdown sequence → display task. Distinct from `SHUTDOWN_REQUEST`
 /// so the two consumers cannot race for one signal: whichever awaited
 /// first would consume it and leave the other waiting forever.
 static DISPLAY_SHUTDOWN: Signal<CriticalSectionRawMutex, ()> = Signal::new();
-/// The display task has rendered its farewell and dropped `Vext`.
+/// The display task has rendered its farewell and powered the panel
+/// down (dropping `Vext` where it owns the rail).
 static DISPLAY_SHUTDOWN_DONE: Signal<CriticalSectionRawMutex, ()> = Signal::new();
-/// 0 = normal heartbeat, 1 = pairing mode (fast LED blink).
+/// 0 = normal heartbeat, 1 = pairing mode (fast LED blink). On a board
+/// with no firmware LED the state reaches the user through the panel's
+/// pairing page instead.
 static BLE_LED_MODE: AtomicU8 = AtomicU8::new(0);
 /// 0 = idle/advertising, 1 = connected, 2 = attached. Display only.
 static BLE_LINK: AtomicU8 = AtomicU8::new(0);
 /// Last battery sample in millivolts (0 = never sampled). Display only.
 static BATTERY_MV: AtomicU16 = AtomicU16::new(0);
+/// Last battery level percent (0xFF = unknown). Display only.
+#[cfg(feature = "pmic-axp2101")]
+static BATTERY_LEVEL: AtomicU8 = AtomicU8::new(0xFF);
+/// Last charge classification: 0 unknown, 1 discharging, 2 charging,
+/// 3 charged. Display only.
+#[cfg(feature = "pmic-axp2101")]
+static BATTERY_CHARGE: AtomicU8 = AtomicU8::new(0);
 /// Battery request/reply pair between the session env and the sampler
-/// task, which owns the ADC.
+/// task, which owns the ADC (or the PMIC telemetry cadence).
 static BATTERY_REQUEST: Signal<CriticalSectionRawMutex, ()> = Signal::new();
+#[cfg(not(feature = "pmic-axp2101"))]
 static BATTERY_REPLY: Signal<CriticalSectionRawMutex, u16> = Signal::new();
-/// Voltage readings worth announcing to a remote observer, for
-/// unsolicited `PROP_BATTERY` publication. A `Watch` rather than a
-/// `Signal`: the driver's select drops and re-creates the wait on every
-/// other iteration, and a receiver must not lose an update to that.
+#[cfg(feature = "pmic-axp2101")]
+static BATTERY_REPLY: Signal<CriticalSectionRawMutex, board_battery::Reading> = Signal::new();
+/// Readings worth announcing to a remote observer, for unsolicited
+/// `PROP_BATTERY` publication. A `Watch` rather than a `Signal`: the
+/// driver's select drops and re-creates the wait on every other
+/// iteration, and a receiver must not lose an update to that.
+#[cfg(not(feature = "pmic-axp2101"))]
 static BATTERY_ANNOUNCE: Watch<CriticalSectionRawMutex, u16, 1> = Watch::new();
+#[cfg(feature = "pmic-axp2101")]
+static BATTERY_ANNOUNCE: Watch<CriticalSectionRawMutex, board_battery::Reading, 1> = Watch::new();
 
 #[cfg(feature = "ble-debug")]
 type DebugLine = heapless::String<192>;
@@ -587,6 +683,41 @@ async fn clear_node_counters(counters: &'static NodeCountersMutex) {
     umsh_ulcp_runtime::node_counters::clear(counters).await
 }
 
+// ─── The PMU bus: PMIC + RTC ─────────────────────────────────────────────
+
+/// The PMU I²C controller, shared by the AXP2101 and the PCF8563
+/// through per-device `I2cDevice` handles.
+#[cfg(feature = "pmic-axp2101")]
+type PmuBus = Mutex<CriticalSectionRawMutex, I2c<'static, Async>>;
+#[cfg(feature = "pmic-axp2101")]
+static PMU_BUS: StaticCell<PmuBus> = StaticCell::new();
+
+/// The one AXP2101, shared by the battery task, the PMU IRQ task, the
+/// GNSS power control, and the shutdown path.
+#[cfg(feature = "pmic-axp2101")]
+static PMIC_CELL: StaticCell<SharedPmic> = StaticCell::new();
+
+/// The PCF8563. Read once at boot, then handed to the session's
+/// [`BoardDeviceEnv`] — the only thing that ever writes it back.
+///
+/// Deliberately not a global: esp-hal's `Async` peripherals are `!Send`
+/// by design (they belong to the executor that drives them), so the
+/// handle travels as a task argument rather than through a static.
+#[cfg(feature = "rtc-pcf8563")]
+type RtcMutex = Mutex<CriticalSectionRawMutex, Pcf8563<PmuI2cDevice>>;
+#[cfg(feature = "rtc-pcf8563")]
+static RTC_CELL: StaticCell<RtcMutex> = StaticCell::new();
+
+/// Write a stepped wall clock back to the RTC, so the time the board
+/// wakes up with is the time it went down with. Best-effort: a refused
+/// write costs the writeback, not the clock.
+#[cfg(feature = "rtc-pcf8563")]
+async fn rtc_writeback(rtc: &'static RtcMutex, epoch: u32) {
+    if rtc.lock().await.write(epoch).await.is_err() {
+        debug_log(format_args!("rtc: writeback FAILED"));
+    }
+}
+
 // ─── Battery sampling ────────────────────────────────────────────────────
 
 /// Smallest level movement worth announcing, in percentage points.
@@ -604,6 +735,17 @@ async fn clear_node_counters(counters: &'static NodeCountersMutex) {
 /// perpetually-discharging samples the clamp would never lift, so a fully
 /// recharged pack would keep reporting the level it bottomed out at until
 /// the next reboot.
+#[cfg(not(feature = "pmic-axp2101"))]
+const BATTERY_LEVEL_STEP: u8 = 5;
+
+/// Smallest level movement worth announcing, in percentage points.
+///
+/// Matched to the nRF estimator's five-point step so every board
+/// announces level movement at the same granularity. The level itself
+/// prefers the PMIC's fuel gauge and falls back to the OCV table while
+/// the gauge is unlearned — which of the two should be primary
+/// long-term is a hardware-validation question.
+#[cfg(feature = "pmic-axp2101")]
 const BATTERY_LEVEL_STEP: u8 = 5;
 
 /// Raised when the announced level moves, so the panel can redraw its
@@ -616,6 +758,7 @@ static BATTERY_UI_CHANGED: Signal<CriticalSectionRawMutex, ()> = Signal::new();
 
 /// Owns the ADC divider. Samples on a slow cadence for the OLED and
 /// immediately on session request (`Effect::SampleBattery`).
+#[cfg(not(feature = "pmic-axp2101"))]
 #[embassy_executor::task]
 async fn battery_task(mut sampler: BatterySampler) {
     let announce = BATTERY_ANNOUNCE.sender();
@@ -655,6 +798,7 @@ async fn battery_task(mut sampler: BatterySampler) {
 /// request/reply round trip into [`battery_task`], the sole ADC owner.
 /// No charger-status signal exists on this board, so charge state is
 /// never reported (and `SessionConfig::battery` does not advertise it).
+#[cfg(not(feature = "pmic-axp2101"))]
 async fn sample_battery_snapshot() -> Result<umsh_ulcp::battery::BatteryStatus, ()> {
     BATTERY_REPLY.reset();
     BATTERY_REQUEST.signal(());
@@ -670,11 +814,176 @@ async fn sample_battery_snapshot() -> Result<umsh_ulcp::battery::BatteryStatus, 
 /// Shared by the on-demand read (`Effect::SampleBattery`) and the
 /// asynchronous publication (`DeviceEnv::battery_event`) so the two can
 /// never report the same reading differently.
+#[cfg(not(feature = "pmic-axp2101"))]
 fn battery_snapshot(mv: u16) -> umsh_ulcp::battery::BatteryStatus {
     umsh_ulcp::battery::BatteryStatus {
         voltage_mv: Some(mv),
         level_percent: Some(soc_from_ocv(mv)),
         charge_state: None,
+    }
+}
+
+/// The level a reading supports: the PMIC gauge when it has learned the
+/// pack, the OCV table while it has not, nothing without a cell.
+#[cfg(feature = "pmic-axp2101")]
+fn battery_level(reading: &board_battery::Reading) -> Option<u8> {
+    reading
+        .percent
+        .or_else(|| reading.voltage_mv.map(soc_from_ocv))
+}
+
+/// The `ChargeClass` a reading supports, or `None` when the PMIC cannot
+/// say (no cell installed, or an unassigned status code).
+#[cfg(feature = "pmic-axp2101")]
+fn battery_charge_class(reading: &board_battery::Reading) -> Option<ChargeClass> {
+    match reading.direction {
+        ChargeDirection::Charging => Some(ChargeClass::Charging),
+        ChargeDirection::Discharging => Some(ChargeClass::Discharging),
+        ChargeDirection::Standby if matches!(reading.state, ChargeState::Done) => {
+            Some(ChargeClass::Charged)
+        }
+        ChargeDirection::Standby | ChargeDirection::Unknown(_) => None,
+    }
+}
+
+/// Owns the PMIC telemetry cadence. Samples on a slow cadence for the
+/// OLED, immediately on session request (`Effect::SampleBattery`), and
+/// on PMU events (VBUS/charger/battery edges poke [`BATTERY_REQUEST`]).
+#[cfg(feature = "pmic-axp2101")]
+#[embassy_executor::task]
+async fn battery_task(pmic: &'static SharedPmic) {
+    let announce = BATTERY_ANNOUNCE.sender();
+    // What was last announced; `None` until the first good sample, which
+    // always announces.
+    let mut announced: Option<(Option<u8>, Option<ChargeClass>)> = None;
+    loop {
+        let requested = matches!(
+            select(Timer::after_secs(60), BATTERY_REQUEST.wait()).await,
+            Either::Second(())
+        );
+        let reading = match board_battery::read(&mut *pmic.lock().await).await {
+            Ok(reading) => reading,
+            // A refused bus leaves the last numbers standing; a pending
+            // on-demand read times out on its own side.
+            Err(_) => continue,
+        };
+        BATTERY_MV.store(reading.voltage_mv.unwrap_or(0), Ordering::Release);
+        BATTERY_LEVEL.store(battery_level(&reading).unwrap_or(0xFF), Ordering::Release);
+        BATTERY_CHARGE.store(
+            match battery_charge_class(&reading) {
+                None => 0,
+                Some(ChargeClass::Discharging) => 1,
+                Some(ChargeClass::Charging) => 2,
+                Some(ChargeClass::Charged) => 3,
+            },
+            Ordering::Release,
+        );
+        if requested {
+            BATTERY_REPLY.signal(reading);
+        }
+        // Announce a level that moved far enough to be worth a frame, and
+        // every charge-class edge — plugging in is always news. On-demand
+        // reads pass through here too, so a read that reveals a move
+        // rebaselines rather than leaving a duplicate behind it.
+        let level = battery_level(&reading);
+        let charge = battery_charge_class(&reading);
+        let moved = match announced {
+            Some((previous_level, previous_charge)) => {
+                charge != previous_charge
+                    || match (level, previous_level) {
+                        (Some(now), Some(previous)) => now.abs_diff(previous) >= BATTERY_LEVEL_STEP,
+                        (now, previous) => now != previous,
+                    }
+            }
+            None => true,
+        };
+        if moved {
+            announced = Some((level, charge));
+            announce.send(reading);
+            // The same movement is what the on-screen indicator draws.
+            BATTERY_UI_CHANGED.signal(());
+        }
+    }
+}
+
+/// The platform battery source behind `Effect::SampleBattery`: a
+/// request/reply round trip into [`battery_task`], the sole owner of
+/// the telemetry cadence.
+#[cfg(feature = "pmic-axp2101")]
+async fn sample_battery_snapshot() -> Result<umsh_ulcp::battery::BatteryStatus, ()> {
+    BATTERY_REPLY.reset();
+    BATTERY_REQUEST.signal(());
+    let reading = with_timeout(Duration::from_secs(2), BATTERY_REPLY.wait())
+        .await
+        .map_err(|_| ())?;
+    Ok(battery_snapshot(&reading))
+}
+
+/// Reduce one reading to the protocol snapshot this board's
+/// `SessionConfig::battery` advertises.
+///
+/// Shared by the on-demand read (`Effect::SampleBattery`) and the
+/// asynchronous publication so the two can never report the same
+/// reading differently.
+#[cfg(feature = "pmic-axp2101")]
+fn battery_snapshot(reading: &board_battery::Reading) -> umsh_ulcp::battery::BatteryStatus {
+    umsh_ulcp::battery::BatteryStatus {
+        voltage_mv: reading.voltage_mv,
+        level_percent: battery_level(reading),
+        charge_state: battery_charge_class(reading).map(|class| match class {
+            ChargeClass::Discharging => umsh_ulcp::battery::BatteryChargeState::Discharging,
+            ChargeClass::Charging => umsh_ulcp::battery::BatteryChargeState::Charging,
+            ChargeClass::Charged => umsh_ulcp::battery::BatteryChargeState::Charged,
+        }),
+    }
+}
+
+// ─── PMU interrupt ───────────────────────────────────────────────────────
+
+/// Serve the AXP2101's interrupt line (active low).
+///
+/// Power-key presses wake the panel — the POWER key is a PMIC input,
+/// not a GPIO, so this is the only path a press reaches firmware by.
+/// Supply and charger edges poke the battery task, whose announce
+/// policy decides whether the change is worth a frame.
+#[cfg(feature = "pmic-axp2101")]
+#[embassy_executor::task]
+async fn pmu_irq_task(pmic: &'static SharedPmic, mut irq: Input<'static>) {
+    loop {
+        irq.wait_for_low().await;
+        let taken = match pmic.lock().await.take_irqs().await {
+            Ok(taken) => taken,
+            Err(_) => {
+                debug_log(format_args!("pmu irq: status read FAILED"));
+                Timer::after_millis(250).await;
+                continue;
+            }
+        };
+        if taken.contains(IrqMask::POWER_KEY_SHORT) || taken.contains(IrqMask::POWER_KEY_LONG) {
+            UI_WAKE.signal(());
+        }
+        if taken.contains(IrqMask::VBUS_INSERTED)
+            || taken.contains(IrqMask::VBUS_REMOVED)
+            || taken.contains(IrqMask::BATTERY_INSERTED)
+            || taken.contains(IrqMask::BATTERY_REMOVED)
+            || taken.contains(IrqMask::CHARGE_STARTED)
+            || taken.contains(IrqMask::CHARGE_DONE)
+        {
+            BATTERY_REQUEST.signal(());
+        }
+        // The line is level-triggered: the AXP2101 holds it low until
+        // every latched status bit is cleared, which is why this waits on
+        // the level rather than an edge — a source latched between the
+        // read and the write-back would otherwise be lost for good.
+        //
+        // The cost of that choice is that `wait_for_low` returns
+        // immediately while the line is still down, so the service rate
+        // has to be floored here or a source that re-latches as fast as
+        // it is cleared becomes an unbounded I2C flood on the bus the
+        // battery reads and the RTC share. Empty means the line is low
+        // with nothing latched at all — noise, or a source this build
+        // does not enable — and is worth backing off from much harder.
+        Timer::after_millis(if taken.is_empty() { 50 } else { 2 }).await;
     }
 }
 
@@ -799,9 +1108,23 @@ struct BoardDeviceEnv {
     identity_store: ProtoStore,
     identity_rng: IdentityRng,
     node_counters: &'static NodeCountersMutex,
-    /// Announce-worthy voltage readings from [`battery_task`], for
-    /// unsolicited `PROP_BATTERY` publication.
+    /// Announce-worthy readings from [`battery_task`], for unsolicited
+    /// `PROP_BATTERY` publication.
+    #[cfg(not(feature = "pmic-axp2101"))]
     battery: embassy_sync::watch::DynReceiver<'static, u16>,
+    #[cfg(feature = "pmic-axp2101")]
+    battery: embassy_sync::watch::DynReceiver<'static, board_battery::Reading>,
+    /// Positioning changes worth publishing unasked. The runtime's GNSS
+    /// sink owns the policy — a stationary receiver produces a fix a
+    /// second and almost none of them are news — so this only forwards
+    /// what it decided to raise.
+    #[cfg(feature = "gnss")]
+    gnss_announce: umsh_ulcp_runtime::gnss::Announcer,
+    /// The hardware clock, for writing a stepped time back. `None` when
+    /// the chip did not answer at boot — the board still keeps time,
+    /// it just will not survive a power-off.
+    #[cfg(feature = "rtc-pcf8563")]
+    rtc: Option<&'static RtcMutex>,
 }
 
 impl DeviceEnv for BoardDeviceEnv {
@@ -854,9 +1177,92 @@ impl DeviceEnv for BoardDeviceEnv {
 
     /// Publish the reading [`battery_task`] flagged, reduced the same way
     /// the on-demand read reduces it.
+    #[cfg(not(feature = "gnss"))]
     async fn battery_event(&mut self) -> umsh_ulcp::battery::BatteryStatus {
-        let mv = self.battery.changed().await;
-        battery_snapshot(mv)
+        #[cfg(not(feature = "pmic-axp2101"))]
+        {
+            let mv = self.battery.changed().await;
+            battery_snapshot(mv)
+        }
+        #[cfg(feature = "pmic-axp2101")]
+        {
+            let reading = self.battery.changed().await;
+            battery_snapshot(&reading)
+        }
+    }
+
+    #[cfg(feature = "rtc-pcf8563")]
+    async fn read_time(&mut self) -> Option<u32> {
+        umsh_hal::wall_clock::now()
+    }
+
+    /// A host wrote `PROP_TIME`. An operator outranks every other
+    /// source, and a manual set is worth persisting: it goes to the
+    /// hardware RTC too, so the board wakes up with it.
+    ///
+    /// The empty write returns the wall clock to not knowing. The RTC
+    /// keeps its time — "the host cleared the clock" is a statement
+    /// about the running device, not an instruction to destroy the
+    /// hardware clock's state — so the next boot restores from it.
+    #[cfg(feature = "rtc-pcf8563")]
+    async fn apply_time(&mut self, epoch: Option<u32>) {
+        match epoch {
+            Some(seconds) => {
+                umsh_hal::wall_clock::set_manual(seconds);
+                if let Some(rtc) = self.rtc {
+                    rtc_writeback(rtc, seconds).await;
+                }
+            }
+            None => umsh_hal::wall_clock::clear(),
+        }
+        // The clock appearing or vanishing is a visible change the user
+        // asked for, so redraw now rather than at whatever the next
+        // event happens to be.
+        UI_REFRESH.signal(());
+    }
+
+    /// The receiver's current view. Cached by the runtime rather than
+    /// re-read from the receiver, because "what did it last say" is the
+    /// only question a UART emitting one cycle a second can answer
+    /// promptly.
+    #[cfg(feature = "gnss")]
+    async fn sample_gnss(&mut self) -> Result<umsh_ulcp::gnss::GnssSnapshot, ()> {
+        Ok(umsh_ulcp_runtime::gnss::snapshot())
+    }
+
+    /// Everything this board publishes unasked, on one select arm.
+    ///
+    /// The driver has exactly one, because a hook per property would
+    /// need one `&mut self` borrow apiece. These are disjoint fields
+    /// rather than separate method calls, which is what makes selecting
+    /// over them legal.
+    #[cfg(feature = "gnss")]
+    async fn publish_event(&mut self) -> driver::PublishEvent {
+        match select(self.battery.changed(), self.gnss_announce.changed()).await {
+            Either::First(reading) => driver::PublishEvent::Battery(battery_snapshot(&reading)),
+            Either::Second(umsh_ulcp_runtime::gnss::Announce::Gnss(key, snapshot)) => {
+                driver::PublishEvent::Gnss(key, snapshot)
+            }
+            Either::Second(umsh_ulcp_runtime::gnss::Announce::Time(epoch)) => {
+                // A trusted receiver stepped the wall clock notably;
+                // carry the step into the RTC so it survives power-off.
+                // Sub-notable re-syncs never reach this arm, which is
+                // what keeps the writeback off the every-second fix
+                // cadence.
+                #[cfg(feature = "rtc-pcf8563")]
+                if let (Some(seconds), Some(rtc)) = (epoch, self.rtc) {
+                    rtc_writeback(rtc, seconds).await;
+                }
+                driver::PublishEvent::Time(epoch)
+            }
+            Either::Second(umsh_ulcp_runtime::gnss::Announce::IdentityFix(
+                location,
+                altitude_m,
+            )) => driver::PublishEvent::IdentityFix(
+                heapless::Vec::from_slice(location.as_bytes()).unwrap_or_default(),
+                altitude_m,
+            ),
+        }
     }
 
     async fn apply_pairing_pin(&mut self, pin: Option<u32>) -> bool {
@@ -906,6 +1312,21 @@ impl DeviceEnv for BoardDeviceEnv {
     }
 
     fn publish_dev_domain(&mut self, snapshot: driver::DevDomainSnapshot) {
+        // The zone and the positioning policy ride the device-domain
+        // mirror, so a host write, a boot restore, and a `CMD_RST` all
+        // reach the clock and the receiver by the same path — and
+        // neither needs anything to remember to push it.
+        #[cfg(feature = "rtc-pcf8563")]
+        umsh_hal::wall_clock::set_tz(snapshot.tz_offset_min);
+        #[cfg(feature = "gnss")]
+        umsh_ulcp_runtime::gnss::configure(
+            snapshot.gnss_enabled,
+            umsh_ulcp_runtime::gnss::Policy {
+                trust_time: snapshot.gnss_time_trust,
+                update_identity: snapshot.gnss_ident_update,
+                identity_precision: snapshot.gnss_ident_precision,
+            },
+        );
         device_node::DEV_SYNC.signal(snapshot);
     }
 
@@ -1476,13 +1897,14 @@ async fn ble_peripheral<'values, C: Controller>(
     }
 }
 
-async fn ble_app<C: Controller>(controller: C, store: BleStore) -> ! {
-    let mut resources: HostResources<
-        _,
-        DefaultPacketPool,
-        BLE_CONNECTIONS_MAX,
-        BLE_L2CAP_CHANNELS_MAX,
-    > = HostResources::new();
+async fn ble_app(controller: BleController, store: BleStore) -> ! {
+    // `HostResources` is tens of kilobytes, and `ble_app` is awaited
+    // directly from `main` — so a stack-built one lands as a temporary in
+    // main's poll frame, which is already the largest frame in the image.
+    // The same rule the `Mac` arena follows applies here: build it
+    // through `StaticCell::init_with`, never on the stack.
+    static BLE_RESOURCES: StaticCell<BleResources> = StaticCell::new();
+    let resources = BLE_RESOURCES.init_with(HostResources::new);
     let initial = store.snapshot().clone();
     debug_log(format_args!(
         "ble boot identity={} bonds={} pin={} local_irk={}",
@@ -1504,7 +1926,7 @@ async fn ble_app<C: Controller>(controller: C, store: BleStore) -> ! {
     };
     let initial_pairing_enabled =
         pairing_enabled(initial_pairing_mode, initial.pin.is_some(), false);
-    let stack = trouble_host::new(controller, &mut resources)
+    let stack = trouble_host::new(controller, resources)
         .set_random_address(ble_identity_address())
         .set_io_capabilities(io_capabilities)
         .set_pairing_enabled(initial_pairing_enabled)
@@ -1564,38 +1986,95 @@ async fn radio_mux_task() {
     radio_mux::radio_mux(&RADIO_CH, &MUX_CLIENTS, &radio_mux::MUX_MODE).await
 }
 
-// ─── Wired transport (UART0) ─────────────────────────────────────────────
+// ─── GNSS ────────────────────────────────────────────────────────────────
 
-/// Write all of `bytes` to the UART, best-effort.
-async fn uart_write_all(tx: &mut UartTx<'static, Async>, bytes: &[u8]) {
-    let mut sent = 0;
-    while sent < bytes.len() {
-        match tx.write_async(&bytes[sent..]).await {
-            Ok(0) | Err(_) => break,
-            Ok(n) => sent += n,
-        }
-    }
+/// Drive the board's GNSS receiver.
+///
+/// The whole of the per-board GNSS code: the UART and the board's power
+/// control, handed to the shared pump. An `#[embassy_executor::task]`
+/// cannot be generic, which is the only reason this shim exists at all
+/// — the loop it delegates to lives in `umsh_gnss::pump` and is common
+/// to both cargo workspaces.
+///
+/// The receiver stays powered down until `PROP_GNSS_ENABLED` says
+/// otherwise, including on a board that has never been configured. It
+/// is never asked for the time: the PCF8563 is this board's clock, so
+/// the receiver's own RTC is not consulted at boot.
+#[cfg(feature = "gnss")]
+#[embassy_executor::task]
+async fn gnss_task(uart: Uart<'static, Async>, control: board::gnss::Gnss) {
+    let Some(enable) = umsh_ulcp_runtime::gnss::EnableSource::new() else {
+        debug_log(format_args!("gnss: enable receiver already taken"));
+        return;
+    };
+    umsh_gnss::pump::run(
+        uart,
+        control,
+        enable,
+        umsh_ulcp_runtime::gnss::FixSink,
+        Delay,
+    )
+    .await
 }
 
-/// Owns the UART TX half, HDLC-encodes frames, and writes them out.
+// ─── Wired transport (UART0 or native USB-Serial-JTAG) ───────────────────
+
+/// The wired port's halves, whichever peripheral carries them.
+#[cfg(not(feature = "wired-usb-serial-jtag"))]
+type WiredTx = UartTx<'static, Async>;
+#[cfg(not(feature = "wired-usb-serial-jtag"))]
+type WiredRx = UartRx<'static, Async>;
+#[cfg(feature = "wired-usb-serial-jtag")]
+type WiredTx = UsbSerialJtagTx<'static, Async>;
+#[cfg(feature = "wired-usb-serial-jtag")]
+type WiredRx = UsbSerialJtagRx<'static, Async>;
+
+/// How long one wired write may sit in a FIFO nobody drains. The
+/// USB-Serial-JTAG FIFO only empties while a host has the port open, so
+/// an unplugged cable turns every write into a stall; bounding it keeps
+/// the output queue draining (frames are dropped instead) and the
+/// session alive. A UART drains unconditionally and never comes near
+/// this bound.
+const WIRED_WRITE_TIMEOUT: Duration = Duration::from_millis(500);
+
+/// Write all of `bytes`, best-effort. Returns false when the host
+/// stopped draining — the caller abandons the rest of the frame, since
+/// half an HDLC frame is worth less than nothing.
+async fn wired_write_all(tx: &mut WiredTx, bytes: &[u8]) -> bool {
+    let mut sent = 0;
+    while sent < bytes.len() {
+        match with_timeout(
+            WIRED_WRITE_TIMEOUT,
+            embedded_io_async::Write::write(tx, &bytes[sent..]),
+        )
+        .await
+        {
+            Ok(Ok(n)) if n > 0 => sent += n,
+            _ => return false,
+        }
+    }
+    true
+}
+
+/// Owns the wired TX half, HDLC-encodes frames, and writes them out.
 #[embassy_executor::task]
-async fn output_task(mut tx: UartTx<'static, Async>, panic_report: Option<heapless::String<128>>) {
+async fn output_task(mut tx: WiredTx, panic_report: Option<heapless::String<128>>) {
     // Emit the previous boot's panic message as ASCII. HDLC hosts
     // resynchronize past it; humans read it with a serial terminal.
-    // UART has no DTR, so this cannot wait for a reader — it lands in
-    // the CP2102 and is lost if no terminal is attached, which is the
-    // correct behavior for a serial console.
+    // There is no reader handshake to wait for — it lands in the bridge
+    // (or the bounded write drops it with no host attached), which is
+    // the correct behavior for a serial console.
     if let Some(report) = panic_report {
-        uart_write_all(&mut tx, b"[PREV PANIC]: ").await;
-        uart_write_all(&mut tx, report.as_bytes()).await;
-        uart_write_all(&mut tx, b"\r\n").await;
+        let _ = wired_write_all(&mut tx, b"[PREV PANIC]: ").await;
+        let _ = wired_write_all(&mut tx, report.as_bytes()).await;
+        let _ = wired_write_all(&mut tx, b"\r\n").await;
     }
     loop {
         #[cfg(feature = "ble-debug")]
         let outbound = match select(OUT_CH.wired.receive(), DEBUG_CH.receive()).await {
             Either::First(outbound) => outbound,
             Either::Second(line) => {
-                uart_write_all(&mut tx, line.as_bytes()).await;
+                let _ = wired_write_all(&mut tx, line.as_bytes()).await;
                 continue;
             }
         };
@@ -1611,24 +2090,26 @@ async fn output_task(mut tx: UartTx<'static, Async>, panic_report: Option<heaple
         for chunk in generation_checked(wire[..len].chunks(64), outbound.generation, || {
             SESSION_GEN.load(Ordering::Acquire)
         }) {
-            uart_write_all(&mut tx, chunk).await;
+            if !wired_write_all(&mut tx, chunk).await {
+                break;
+            }
         }
     }
 }
 
-/// Owns the UART RX half and HDLC decoder, forwarding frames into
-/// `INPUT_CH`. UART has no connection state, so wired attachment is
-/// lazy and permanent: the first valid HDLC frame attaches the wired
-/// transport, and no wired detach ever fires — a serial host is
-/// assumed present for good once it has spoken. Detach semantics exist
-/// only for BLE, whose link genuinely drops; a board nobody serials
-/// into therefore stays detached and operates autonomously (queueing
-/// and delegated acknowledgement). Displacement by a BLE attach is
-/// observed as a foreign `SESSION_GEN` bump, which re-arms the lazy
-/// attach, so a displaced serial host reclaims the session with its
-/// next frame.
+/// Owns the wired RX half and HDLC decoder, forwarding frames into
+/// `INPUT_CH`. Neither peripheral exposes usable connection state, so
+/// wired attachment is lazy and permanent: the first valid HDLC frame
+/// attaches the wired transport, and no wired detach ever fires — a
+/// serial host is assumed present for good once it has spoken. Detach
+/// semantics exist only for BLE, whose link genuinely drops; a board
+/// nobody serials into therefore stays detached and operates
+/// autonomously (queueing and delegated acknowledgement). Displacement
+/// by a BLE attach is observed as a foreign `SESSION_GEN` bump, which
+/// re-arms the lazy attach, so a displaced serial host reclaims the
+/// session with its next frame.
 #[embassy_executor::task]
-async fn uart_in_task(mut rx: UartRx<'static, Async>) {
+async fn uart_in_task(mut rx: WiredRx) {
     let mut decoder: hdlc::Decoder<FRAME_IN_MAX> = hdlc::Decoder::new();
     let mut local_generation = SESSION_GEN.load(Ordering::Acquire);
     // True while this task's own lazy attach is still unprocessed: the
@@ -1657,7 +2138,7 @@ async fn uart_in_task(mut rx: UartRx<'static, Async>) {
             local_generation = generation;
         }
         let mut packet = [0u8; 64];
-        match rx.read_async(&mut packet).await {
+        match embedded_io_async::Read::read(&mut rx, &mut packet).await {
             Ok(0) => {}
             // A FIFO overflow or framing error costs the in-flight
             // frame, not the session: resynchronize on the next flag.
@@ -1701,6 +2182,7 @@ async fn device_task(
     boot_identity: Option<[u8; 32]>,
     identity_rng: IdentityRng,
     node_counters: &'static NodeCountersMutex,
+    #[cfg(feature = "rtc-pcf8563")] rtc: Option<&'static RtcMutex>,
 ) {
     // The retained hardware reset cause answers the first
     // PROP_LAST_STATUS query; attach itself never modifies it.
@@ -1730,6 +2212,11 @@ async fn device_task(
             battery: BATTERY_ANNOUNCE
                 .dyn_receiver()
                 .expect("BATTERY_ANNOUNCE receiver slot"),
+            #[cfg(feature = "gnss")]
+            gnss_announce: umsh_ulcp_runtime::gnss::announcer()
+                .expect("GNSS announcement receiver slot"),
+            #[cfg(feature = "rtc-pcf8563")]
+            rtc,
         },
     )
     .await
@@ -1739,14 +2226,22 @@ async fn device_task(
 
 /// What this board's menu can do.
 ///
-/// Everything the class defines except the receiver: no GNSS is fitted,
-/// so both its entries come out and the submenu that led to them goes
-/// with them. Clearing bonds is a menu item rather than a bare gesture
-/// because the confirmation page in front of it is what makes it safe.
-fn heltec_menu_items() -> MenuItems {
-    MenuItems::all()
-        .without(MenuItem::GnssToggle)
-        .without(MenuItem::ShareLocation)
+/// Everything the class defines — minus the receiver entries on a board
+/// with no GNSS fitted, where both come out and the submenu that led to
+/// them goes with them. Clearing bonds is a menu item rather than a
+/// bare gesture because the confirmation page in front of it is what
+/// makes it safe.
+fn board_menu_items() -> MenuItems {
+    #[cfg(feature = "gnss")]
+    {
+        MenuItems::all()
+    }
+    #[cfg(not(feature = "gnss"))]
+    {
+        MenuItems::all()
+            .without(MenuItem::GnssToggle)
+            .without(MenuItem::ShareLocation)
+    }
 }
 
 /// Which device-domain switch a menu toggle names.
@@ -1804,24 +2299,47 @@ impl IdentityText {
 /// per frame and lends it to this.
 fn ui_status<'a>(name: &'a DeviceName, identity: &'a IdentityText) -> screen::StatusModel<'a> {
     let mv = BATTERY_MV.load(Ordering::Acquire);
+    // No charger telemetry reaches the MCU on the ADC boards, so their
+    // indicator says nothing about charging rather than asserting the
+    // pack is discharging; the PMIC boards know which way current flows,
+    // and unknown (no cell, or before the first sample) draws nothing
+    // rather than a guess.
+    #[cfg(not(feature = "pmic-axp2101"))]
+    let battery = screen::BatteryIndicator {
+        level_percent: (mv != 0).then(|| soc_from_ocv(mv)),
+        charge: None,
+    };
+    #[cfg(feature = "pmic-axp2101")]
+    let battery = {
+        let level = BATTERY_LEVEL.load(Ordering::Acquire);
+        screen::BatteryIndicator {
+            level_percent: (level != 0xFF).then_some(level),
+            charge: match BATTERY_CHARGE.load(Ordering::Acquire) {
+                1 => Some(ChargeClass::Discharging),
+                2 => Some(ChargeClass::Charging),
+                3 => Some(ChargeClass::Charged),
+                _ => None,
+            },
+        }
+    };
     screen::StatusModel {
         device_name: core::str::from_utf8(name).unwrap_or(DEFAULT_DEVICE_NAME),
-        // No receiver on this board, so both positioning switches report
-        // nothing rather than a guess — and neither is on the menu.
+        // Boards with no receiver report nothing on both positioning
+        // switches rather than a guess — and neither is on their menu.
         settings: screen::SettingsModel {
             bluetooth: Some(BLE_ENABLED.load(Ordering::Acquire)),
+            #[cfg(not(feature = "gnss"))]
             gnss: None,
+            #[cfg(not(feature = "gnss"))]
             share_location: None,
+            #[cfg(feature = "gnss")]
+            gnss: Some(umsh_ulcp_runtime::gnss::enabled()),
+            #[cfg(feature = "gnss")]
+            share_location: Some(umsh_ulcp_runtime::gnss::policy().update_identity),
             forwarding: Some(device_node::repeater_enabled()),
         },
         identity: identity.model(),
-        battery: screen::BatteryIndicator {
-            level_percent: (mv != 0).then(|| soc_from_ocv(mv)),
-            // No charger telemetry reaches the MCU on this board, so the
-            // indicator says nothing about charging rather than asserting
-            // the pack is discharging.
-            charge: None,
-        },
+        battery,
         battery_mv: (mv != 0).then_some(mv),
         link: match BLE_LINK.load(Ordering::Acquire) {
             2 => screen::LinkState::Attached,
@@ -1845,9 +2363,16 @@ fn ui_status<'a>(name: &'a DeviceName, identity: &'a IdentityText) -> screen::St
             screen::PairingState::Closed
         },
         stats: ui_stats(),
-        // This board advertises no `CAP_TIME`, so it never knows what
-        // time it is and must not indicate one.
+        // Boards without `CAP_TIME` never know what time it is and must
+        // not indicate one. On the rest, `None` whenever the device does
+        // not know, which the renderer draws as nothing at all — there
+        // is deliberately no fallback, because a placeholder would be an
+        // indication of the current time.
+        #[cfg(not(feature = "rtc-pcf8563"))]
         clock: None,
+        #[cfg(feature = "rtc-pcf8563")]
+        clock: umsh_hal::wall_clock::local_hhmm()
+            .map(|(hour, minute)| screen::ClockModel { hour, minute }),
     }
 }
 
@@ -1890,16 +2415,38 @@ async fn render_message(
     let _ = display.flush().await;
 }
 
-/// Owns the OLED, the `Vext` rail that powers it, and the display
-/// attention policy.
+/// Completes at the next minute boundary, so the clock row can advance.
+///
+/// The display layer's standing rule is that panels redraw on events
+/// and never on a timer, because a timer on a panel nobody is watching
+/// is a battery drain that reports nothing. A clock is the one thing
+/// that has to move on its own, so this is the sanctioned exception —
+/// bounded to exactly the case that needs it: it never completes unless
+/// the panel is already awake *and* the device knows what time it is
+/// (a clockless board never sets the wall clock, so this pends forever
+/// there). A panel that was asleep catches up on its next event-driven
+/// redraw.
+async fn clock_tick(awake: bool) {
+    if !awake {
+        core::future::pending::<()>().await;
+    }
+    match umsh_hal::wall_clock::millis_to_next_minute() {
+        Some(millis) => Timer::after_millis(u64::from(millis)).await,
+        None => core::future::pending().await,
+    }
+}
+
+/// Owns the OLED, the `Vext` rail that powers it (where one exists —
+/// on a PMIC board the panel's rail drops in the shutdown path
+/// instead), and the display attention policy.
 ///
 /// The panel is emissive, so attention lapsing actually turns it off:
 /// dimmed as a warning at 7 s, dark at 10 s. It stays lit for as long as
 /// a pairing window is open, because its PIN is the only place that
 /// number is shown.
 #[embassy_executor::task]
-async fn display_task(mut display: Display, mut vext: Vext) {
-    let mut model = UiModel::new(heltec_menu_items());
+async fn display_task(mut display: Display, #[cfg(not(feature = "pmic-axp2101"))] mut vext: Vext) {
+    let mut model = UiModel::new(board_menu_items());
     let mut attention = Attention::new(
         DisplayKind::Emissive,
         AttentionConfig::EMISSIVE,
@@ -1940,10 +2487,14 @@ async fn display_task(mut display: Display, mut vext: Vext) {
         match select4(
             UI_INPUT_CH.receive(),
             select3(
-                // Both are "content moved, redraw if the panel is already
-                // lit"; they differ only in what they do to the model, so
-                // they share an arm.
-                select(UI_REFRESH.wait(), BATTERY_UI_CHANGED.wait()),
+                // All three are "content moved, redraw if the panel is
+                // already lit"; they differ only in what they do to the
+                // model, so they share an arm.
+                select3(
+                    UI_REFRESH.wait(),
+                    BATTERY_UI_CHANGED.wait(),
+                    clock_tick(attention.accepts_redraw()),
+                ),
                 UI_NOTICE.wait(),
                 UI_WAKE.wait(),
             ),
@@ -2004,6 +2555,7 @@ async fn display_task(mut display: Display, mut vext: Vext) {
                 let _ = display.set_display_on(true).await;
                 Timer::after_millis(1_200).await;
                 let _ = display.set_display_on(false).await;
+                #[cfg(not(feature = "pmic-axp2101"))]
                 vext.disable();
                 DISPLAY_SHUTDOWN_DONE.signal(());
                 core::future::pending::<()>().await;
@@ -2122,6 +2674,7 @@ async fn button_task(mut button: Input<'static>) {
 ///
 /// It also owns the shutdown sequence, because it owns the `Rtc` that
 /// deep sleep is entered through.
+#[cfg(not(feature = "pmic-axp2101"))]
 #[embassy_executor::task]
 async fn heartbeat_task(
     mut led: Output<'static>,
@@ -2170,6 +2723,7 @@ async fn heartbeat_task(
 ///
 /// Counter persistence needs nothing here: `MacHandle::next_event`
 /// flushes it as it goes, so there is no buffered state to lose.
+#[cfg(not(feature = "pmic-axp2101"))]
 async fn shutdown(
     led: &mut Output<'static>,
     rtc: &mut Rtc<'static>,
@@ -2207,6 +2761,87 @@ async fn shutdown(
     rtc.rwdt.disable();
     let wake = Ext0WakeupSource::new(unsafe { esp_hal::peripherals::GPIO0::steal() }, Level::Low);
     low_power.sleep_deep(&[&wake]);
+}
+
+/// The RWDT feed, with no LED behind it — this board's only LEDs belong
+/// to the PMIC's charger and the receiver's PPS output.
+///
+/// It also owns the shutdown sequence, because it owns the `Rtc` whose
+/// watchdog has to keep getting fed across the button-release wait.
+#[cfg(feature = "pmic-axp2101")]
+#[embassy_executor::task]
+async fn heartbeat_task(mut rtc: Rtc<'static>, pmic: &'static SharedPmic) -> ! {
+    loop {
+        rtc.rwdt.feed();
+        if with_timeout(Duration::from_secs(2), SHUTDOWN_REQUEST.wait())
+            .await
+            .is_ok()
+        {
+            shutdown(&mut rtc, pmic).await;
+        }
+    }
+}
+
+/// Quiesce the board and hand the power topology back to the PMIC —
+/// "off" on this board is a PMIC power-off, not deep sleep, and the
+/// POWER key brings it back with no firmware involved.
+///
+/// Ordering matters at every step:
+///
+/// - The radio goes to chip sleep first, so it stops transmitting
+///   mid-frame before its rail is cut.
+/// - The display task renders its farewell and switches the panel off;
+///   a bounded wait keeps a wedged panel from stranding a board the
+///   user has asked to turn off.
+/// - The BOOT button must be released before the power-off: the PMIC
+///   cuts DCDC1 while GPIO0 is held low, and a strapped-low GPIO0 at
+///   the *next* power-on would drop the board into the ROM bootloader.
+/// - The switched rails drop before the soft power-off so nothing is
+///   back-powered through a peripheral bus during the down-ramp.
+///
+/// Counter persistence needs nothing here: `MacHandle::next_event`
+/// flushes it as it goes, so there is no buffered state to lose. And if
+/// the PMIC refuses the power-off, the abandoned RWDT resets the board
+/// back to a running state — worse than off, better than wedged.
+#[cfg(feature = "pmic-axp2101")]
+async fn shutdown(rtc: &mut Rtc<'static>, pmic: &'static SharedPmic) -> ! {
+    debug_log(format_args!("shutdown: power-off hold"));
+    DEVICE_CTL.shutdown();
+    DISPLAY_SHUTDOWN_DONE.reset();
+    DISPLAY_SHUTDOWN.signal(());
+    let _ = with_timeout(Duration::from_secs(2), DISPLAY_SHUTDOWN_DONE.wait()).await;
+
+    // GPIO0 is stolen rather than handed over: `button_task` holds an
+    // `Input` on it for the life of the board. Both uses are read-only,
+    // nothing drives the pin, and this function never returns — so no
+    // other task observes the duplicate.
+    {
+        let button = Input::new(
+            unsafe { esp_hal::peripherals::GPIO0::steal() },
+            InputConfig::default().with_pull(Pull::Up),
+        );
+        // Feed the watchdog across the release wait: a user may lean on
+        // the button for longer than the 8 s timeout, and rebooting the
+        // board they just asked to switch off is the one outcome worse
+        // than a slow shutdown.
+        while button.is_low() {
+            rtc.rwdt.feed();
+            Timer::after_millis(50).await;
+        }
+        Timer::after_millis(50).await;
+        rtc.rwdt.feed();
+    }
+
+    {
+        let mut pmic = pmic.lock().await;
+        let _ = board_power::shutdown_rails(&mut pmic).await;
+        let _ = pmic.power_off().await;
+    }
+    // Supply is dropping. If it somehow does not, stop feeding the RWDT
+    // and let it reset the board to a known-running state.
+    loop {
+        Timer::after_secs(1).await;
+    }
 }
 
 // ─── Boot ────────────────────────────────────────────────────────────────
@@ -2322,11 +2957,82 @@ async fn main(spawner: Spawner) {
         });
     let boot_reason = boot_reason(panic_report.is_some());
 
+    // ── PMU first: nothing else is powered until its rails are up ────────
+    // Hardware doc §5.3: the radio, panel, and receiver sit behind
+    // AXP2101 rails, and probing them before this block reports parts
+    // missing that are merely dark.
+    #[cfg(feature = "pmic-axp2101")]
+    let pmu_bus: &'static PmuBus = {
+        let pmu_i2c = I2c::new(
+            peripherals.I2C1,
+            I2cConfig::default().with_frequency(Rate::from_khz(100)),
+        )
+        .unwrap()
+        .with_sda(peripherals.GPIO42)
+        .with_scl(peripherals.GPIO41)
+        .into_async();
+        PMU_BUS.init(Mutex::new(pmu_i2c))
+    };
+    #[cfg(feature = "pmic-axp2101")]
+    let pmic: &'static SharedPmic = {
+        let mut pmic = Axp2101::new(I2cDevice::new(pmu_bus));
+        // The rail-settle cycle is for supplies that were genuinely
+        // down; a warm restart's rails were under firmware control the
+        // whole time.
+        let cold_boot = boot_reason == Status::RESET_POWER_ON;
+        board_power::bring_up(&mut pmic, &mut Delay, cold_boot)
+            .await
+            .unwrap_or_else(|e| panic!("pmu bring-up failed: {e:?}"));
+        println!("pmu: rails up (cold_boot={cold_boot})");
+        PMIC_CELL.init(Mutex::new(pmic))
+    };
+
+    // The hardware wall clock, read once before anything else competes
+    // for the bus. `ExternalRtc` applies only while the clock is unset,
+    // so a later GNSS fix or host write outranks it.
+    #[cfg(feature = "rtc-pcf8563")]
+    let wall_clock_rtc: Option<&'static RtcMutex> = {
+        let mut rtc_chip = Pcf8563::new(I2cDevice::new(pmu_bus));
+        match rtc_chip.read().await {
+            Ok(Some(epoch)) => {
+                umsh_hal::wall_clock::apply(
+                    epoch,
+                    umsh_hal::wall_clock::TimeSource::ExternalRtc,
+                    false,
+                );
+                println!("rtc: clock restored");
+                Some(RTC_CELL.init(Mutex::new(rtc_chip)))
+            }
+            Ok(None) => {
+                println!("rtc: no stored time");
+                Some(RTC_CELL.init(Mutex::new(rtc_chip)))
+            }
+            // A chip that does not answer at boot is not going to answer
+            // a writeback either; the board keeps time in RAM only.
+            Err(_) => {
+                println!("rtc: not responding");
+                None
+            }
+        }
+    };
+
+    #[cfg(feature = "pmic-axp2101")]
+    {
+        let pmu_irq = Input::new(
+            peripherals.GPIO40,
+            InputConfig::default().with_pull(Pull::Up),
+        );
+        spawner.spawn(pmu_irq_task(pmic, pmu_irq).unwrap());
+        spawner.spawn(heartbeat_task(rtc, pmic).unwrap());
+    }
+
     #[cfg(feature = "board-heltec-v3")]
     let led = Output::new(peripherals.GPIO35, Level::Low, OutputConfig::default());
     #[cfg(feature = "board-heltec-v2")]
     let led = Output::new(peripherals.GPIO25, Level::Low, OutputConfig::default());
+    #[cfg(not(feature = "pmic-axp2101"))]
     let low_power = LowPower::new(peripherals.LPWR);
+    #[cfg(not(feature = "pmic-axp2101"))]
     spawner.spawn(heartbeat_task(led, rtc, low_power).unwrap());
 
     // ── Vext rail and battery ADC, before the radio controller ───────────
@@ -2335,6 +3041,8 @@ async fn main(spawner: Spawner) {
     // panics once the esp-radio controller has taken it. Claiming here
     // costs the boards with an independent ADC nothing — the rail starts
     // off and no conversion runs until the battery task asks for one.
+    // A PMIC board has neither: its rails came up above, and the battery
+    // is read over the PMU bus.
     #[cfg(feature = "board-heltec-v3")]
     let mut vext = Vext::new(peripherals.GPIO36);
     #[cfg(feature = "board-heltec-v2")]
@@ -2446,9 +3154,11 @@ async fn main(spawner: Spawner) {
     let boot_identity = boot_identity_keys.as_ref().map(|(_secret, public)| *public);
 
     // ── The LoRa modem behind the device runner + mux ────────────────────
-    // SPI2 either way; the pins, the control lines, and the interface
-    // variant's arity are the board's.
-    #[cfg(feature = "radio-sx126x")]
+    // SPI2 on every board; the pins, the control lines, and the
+    // interface variant's arity are the board's. On a PMIC board the
+    // radio's rail (ALDO3) settled during PMU bring-up, so the reset
+    // that follows means something.
+    #[cfg(feature = "board-heltec-v3")]
     let spi = Spi::new(
         peripherals.SPI2,
         SpiConfig::default()
@@ -2460,7 +3170,7 @@ async fn main(spawner: Spawner) {
     .with_mosi(peripherals.GPIO10)
     .with_miso(peripherals.GPIO11)
     .into_async();
-    #[cfg(feature = "radio-sx127x")]
+    #[cfg(feature = "board-heltec-v2")]
     let spi = Spi::new(
         peripherals.SPI2,
         SpiConfig::default()
@@ -2472,29 +3182,43 @@ async fn main(spawner: Spawner) {
     .with_mosi(peripherals.GPIO27)
     .with_miso(peripherals.GPIO19)
     .into_async();
+    #[cfg(feature = "board-tbeam-supreme")]
+    let spi = Spi::new(
+        peripherals.SPI2,
+        SpiConfig::default()
+            .with_frequency(Rate::from_mhz(16))
+            .with_mode(Mode::_0),
+    )
+    .unwrap()
+    .with_sck(peripherals.GPIO12)
+    .with_mosi(peripherals.GPIO11)
+    .with_miso(peripherals.GPIO13)
+    .into_async();
 
-    #[cfg(feature = "radio-sx126x")]
+    #[cfg(feature = "board-heltec-v3")]
     let radio_cs = Output::new(peripherals.GPIO8, Level::High, OutputConfig::default());
-    #[cfg(feature = "radio-sx127x")]
+    #[cfg(feature = "board-heltec-v2")]
     let radio_cs = Output::new(peripherals.GPIO18, Level::High, OutputConfig::default());
+    #[cfg(feature = "board-tbeam-supreme")]
+    let radio_cs = Output::new(peripherals.GPIO10, Level::High, OutputConfig::default());
     let radio_spi = ExclusiveDevice::new(spi, radio_cs, Delay).unwrap();
 
-    #[cfg(feature = "radio-sx126x")]
+    #[cfg(feature = "board-heltec-v3")]
     let radio_reset = Output::new(peripherals.GPIO12, Level::High, OutputConfig::default());
-    #[cfg(feature = "radio-sx127x")]
+    #[cfg(feature = "board-heltec-v2")]
     let radio_reset = Output::new(peripherals.GPIO14, Level::High, OutputConfig::default());
+    #[cfg(feature = "board-tbeam-supreme")]
+    let radio_reset = Output::new(peripherals.GPIO5, Level::High, OutputConfig::default());
 
     // SX126x: DIO1 carries the IRQs and BUSY gates every command.
+    #[cfg(feature = "board-heltec-v3")]
+    let (radio_dio1, radio_busy) = (peripherals.GPIO14, peripherals.GPIO13);
+    #[cfg(feature = "board-tbeam-supreme")]
+    let (radio_dio1, radio_busy) = (peripherals.GPIO1, peripherals.GPIO4);
     #[cfg(feature = "radio-sx126x")]
     let kind = {
-        let radio_dio1 = Input::new(
-            peripherals.GPIO14,
-            InputConfig::default().with_pull(Pull::None),
-        );
-        let radio_busy = Input::new(
-            peripherals.GPIO13,
-            InputConfig::default().with_pull(Pull::None),
-        );
+        let radio_dio1 = Input::new(radio_dio1, InputConfig::default().with_pull(Pull::None));
+        let radio_busy = Input::new(radio_busy, InputConfig::default().with_pull(Pull::None));
         board_radio::new_radio_kind(radio_spi, radio_reset, radio_dio1, radio_busy)
     }
     .unwrap_or_else(|e| panic!("radio init failed: {e:?}"));
@@ -2518,11 +3242,13 @@ async fn main(spawner: Spawner) {
     spawner.spawn(radio_task(lora).unwrap());
     spawner.spawn(radio_mux_task().unwrap());
 
-    // ── UART0: the wired transport ────────────────────────────────────────
-    // Same pins the CP2102 bridge and `esp-println` use. Claiming UART0
-    // resets the TX FIFO, which truncates whatever `esp-println` left in
-    // flight; drain by time (20 ms clears a 64-byte FIFO at 115200 baud
-    // roughly four times over). The console goes quiet from here.
+    // ── The wired transport ───────────────────────────────────────────────
+    // The same port `esp-println` writes to: UART0 behind the CP2102
+    // bridge, or the chip's native USB-Serial-JTAG where the USB-C
+    // socket wires straight to the SoC. Claiming it resets the TX FIFO,
+    // which truncates whatever `esp-println` left in flight; drain by
+    // time (20 ms clears a 64-byte FIFO at 115200 baud roughly four
+    // times over). The console goes quiet from here.
     Timer::after_millis(20).await;
     #[cfg(feature = "board-heltec-v3")]
     let uart = Uart::new(peripherals.UART0, UartConfig::default())
@@ -2536,9 +3262,15 @@ async fn main(spawner: Spawner) {
         .with_rx(peripherals.GPIO3)
         .with_tx(peripherals.GPIO1)
         .into_async();
-    let (uart_rx, uart_tx) = uart.split();
-    spawner.spawn(output_task(uart_tx, panic_report.clone()).unwrap());
-    spawner.spawn(uart_in_task(uart_rx).unwrap());
+    #[cfg(not(feature = "wired-usb-serial-jtag"))]
+    let (wired_rx, wired_tx) = uart.split();
+    // Pinless: the peripheral owns GPIO19/20 itself.
+    #[cfg(feature = "wired-usb-serial-jtag")]
+    let (wired_rx, wired_tx) = UsbSerialJtag::new(peripherals.USB_DEVICE)
+        .into_async()
+        .split();
+    spawner.spawn(output_task(wired_tx, panic_report.clone()).unwrap());
+    spawner.spawn(uart_in_task(wired_rx).unwrap());
 
     // ── The ULCP session ─────────────────────────────────────────────────
     spawner.spawn(
@@ -2550,6 +3282,8 @@ async fn main(spawner: Spawner) {
             boot_identity,
             identity_rng,
             node_counters,
+            #[cfg(feature = "rtc-pcf8563")]
+            wall_clock_rtc,
         )
         .unwrap(),
     );
@@ -2569,33 +3303,62 @@ async fn main(spawner: Spawner) {
             lora_phy::mod_params::Bandwidth::_62KHz,
             umsh_radio_loraphy::MAX_PAYLOAD,
         );
-        device_node::bring_up(
-            spawner,
-            identity_secret,
-            node_seed,
-            t_frame_ms,
-            node_counters,
-            &INPUT_CH,
-            admin_nonce,
-        )
-        .await;
+        spawner.spawn(
+            device_node::bring_up(
+                spawner,
+                *identity_secret,
+                node_seed,
+                t_frame_ms,
+                node_counters,
+                &INPUT_CH,
+                admin_nonce,
+            )
+            .unwrap(),
+        );
     }
 
     // ── Battery, button ──────────────────────────────────────────────────
-    // The sampler was constructed above, before the radio controller.
+    // The sampler was constructed above, before the radio controller;
+    // on a PMIC board the telemetry comes off the PMU bus instead.
+    #[cfg(not(feature = "pmic-axp2101"))]
     spawner.spawn(battery_task(sampler).unwrap());
+    #[cfg(feature = "pmic-axp2101")]
+    spawner.spawn(battery_task(pmic).unwrap());
     let button = Input::new(
         peripherals.GPIO0,
         InputConfig::default().with_pull(Pull::Up),
     );
     spawner.spawn(button_task(button).unwrap());
 
-    // ── OLED (Vext up → reset → init), then hand the panel to its task ───
-    // The panel and the rail that powers it move together: the display
-    // task switches the panel off when attention lapses and drops the
-    // rail entirely on the way into deep sleep.
+    // ── GNSS: UART1 to the receiver, powered by the pump ─────────────────
+    // The pump owns when the receiver runs (`PROP_GNSS_ENABLED`); the
+    // BSP's `Power` impl owns how, and its rail starts off. This board's
+    // clock lives in the PCF8563, so nothing reads the receiver's own
+    // RTC at boot.
+    #[cfg(feature = "gnss")]
+    {
+        let gnss_uart = Uart::new(
+            peripherals.UART1,
+            UartConfig::default().with_baudrate(board::GNSS_BAUD),
+        )
+        .unwrap()
+        .with_rx(peripherals.GPIO9)
+        .with_tx(peripherals.GPIO8)
+        .into_async();
+        let gnss_wake = Output::new(peripherals.GPIO7, Level::Low, OutputConfig::default());
+        spawner.spawn(gnss_task(gnss_uart, board::gnss::Gnss::new(pmic, gnss_wake)).unwrap());
+    }
+
+    // ── OLED, then hand the panel to its task ────────────────────────────
+    // On a `Vext` board the panel and the rail that powers it move
+    // together: the display task switches the panel off when attention
+    // lapses and drops the rail entirely on the way into deep sleep. On
+    // a PMIC board the panel's rail came up with the sensor rails and
+    // drops in the shutdown path.
+    #[cfg(not(feature = "display-sh1106"))]
     #[cfg(feature = "board-heltec-v3")]
     let mut oled_reset = Output::new(peripherals.GPIO21, Level::High, OutputConfig::default());
+    #[cfg(not(feature = "display-sh1106"))]
     #[cfg(feature = "board-heltec-v2")]
     let mut oled_reset = Output::new(peripherals.GPIO16, Level::High, OutputConfig::default());
 
@@ -2617,11 +3380,42 @@ async fn main(spawner: Spawner) {
     .with_sda(peripherals.GPIO4)
     .with_scl(peripherals.GPIO15)
     .into_async();
-    let mut oled = display::new_display(i2c);
-    vext.enable().await;
-    display::reset(&mut oled_reset).await;
-    if oled.init().await.is_ok() {
-        spawner.spawn(display_task(oled, vext).unwrap());
+    #[cfg(feature = "board-tbeam-supreme")]
+    let i2c = I2c::new(
+        peripherals.I2C0,
+        I2cConfig::default().with_frequency(Rate::from_khz(400)),
+    )
+    .unwrap()
+    .with_sda(peripherals.GPIO17)
+    .with_scl(peripherals.GPIO18)
+    .into_async();
+
+    #[cfg(not(feature = "display-sh1106"))]
+    {
+        let mut oled = display::new_display(i2c);
+        vext.enable().await;
+        display::reset(&mut oled_reset).await;
+        if oled.init().await.is_ok() {
+            spawner.spawn(display_task(oled, vext).unwrap());
+        }
+    }
+    // The SH1106's address is a population variable and there is no
+    // reset pin — the rail is the reset, and it is already up. A panel
+    // that does not answer leaves the board headless rather than
+    // stopping the boot.
+    #[cfg(feature = "display-sh1106")]
+    {
+        let mut i2c = i2c;
+        match display::probe(&mut i2c).await {
+            Some(addr) => {
+                debug_log(format_args!("oled: sh1106 at 0x{addr:02x}"));
+                let mut oled = display::new_display(i2c, addr);
+                if oled.init().await.is_ok() {
+                    spawner.spawn(display_task(oled).unwrap());
+                }
+            }
+            None => debug_log(format_args!("oled: no panel found")),
+        }
     }
 
     // ── BLE app: runs the pairing lattice + GATT transport forever ───────

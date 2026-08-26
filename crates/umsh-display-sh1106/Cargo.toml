@@ -1,0 +1,14 @@
+[package]
+name = "umsh-display-sh1106"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+repository.workspace = true
+description = "Async SH1106 128x64 OLED driver shared by UMSH boards"
+
+[dependencies]
+embedded-graphics = { version = "0.8", default-features = false }
+embedded-hal-async.workspace = true
+
+[dev-dependencies]
+embassy-futures = "0.1"

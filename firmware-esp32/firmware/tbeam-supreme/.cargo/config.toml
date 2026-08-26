@@ -1,0 +1,5 @@
+# ESP32-S3 target selection. Build from inside this directory so this
+# file is picked up (the Makefile targets do); runner and rustflags come
+# from the workspace-level `.cargo/config.toml`.
+[build]
+target = "xtensa-esp32s3-none-elf"

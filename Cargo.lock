@@ -4142,6 +4142,15 @@ dependencies = [
 ]
 
 [[package]]
+name = "umsh-display-sh1106"
+version = "0.1.0"
+dependencies = [
+ "embassy-futures",
+ "embedded-graphics",
+ "embedded-hal-async",
+]
+
+[[package]]
 name = "umsh-flash-store"
 version = "0.1.0"
 dependencies = [
@@ -4244,6 +4253,14 @@ dependencies = [
 ]
 
 [[package]]
+name = "umsh-pmic-axp2101"
+version = "0.1.0"
+dependencies = [
+ "embassy-futures",
+ "embedded-hal-async",
+]
+
+[[package]]
 name = "umsh-radio-loraphy"
 version = "0.1.0"
 dependencies = [
@@ -4263,6 +4280,15 @@ dependencies = [
  "serde_json",
  "sha2",
  "umsh-core",
+]
+
+[[package]]
+name = "umsh-rtc-pcf8563"
+version = "0.1.0"
+dependencies = [
+ "embassy-futures",
+ "embedded-hal-async",
+ "umsh-gnss",
 ]
 
 [[package]]

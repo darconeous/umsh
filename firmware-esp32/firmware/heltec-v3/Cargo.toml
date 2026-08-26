@@ -19,6 +19,15 @@ repository.workspace = true
 default = ["board-heltec-v3"]
 board-heltec-v2 = ["chip-esp32", "radio-sx127x", "vext-gates-battery"]
 board-heltec-v3 = ["chip-esp32s3", "radio-sx126x"]
+board-tbeam-supreme = [
+    "chip-esp32s3",
+    "radio-sx126x",
+    "pmic-axp2101",
+    "display-sh1106",
+    "wired-usb-serial-jtag",
+    "gnss",
+    "rtc-pcf8563",
+]
 
 # ─── Capability features (shared code shape, board-portable) ───
 # Which Espressif part this is. Separate from the board features because
@@ -40,6 +49,28 @@ radio-sx126x = []
 # battery reading forces the rail up. Boards with an independent divider
 # gate leave this off.
 vext-gates-battery = []
+# Power comes through an AXP2101 PMIC instead of MCU GPIOs: rails are
+# brought up over I²C before any peripheral is probed, the battery is
+# read from the PMIC's gauge (no SAADC divider), the charge LED belongs
+# to the charger, and "off" is a PMIC power-off rather than deep sleep.
+# Replaces Vext, the battery sampler, and the status LED wholesale.
+pmic-axp2101 = []
+# SH1106 panel (shared `umsh-display-sh1106` driver) instead of the
+# ssd1306 crate: the I²C address is probed (0x3D first — 0x3C may be a
+# magnetometer), and there is no reset GPIO — the panel's rail is its
+# reset.
+display-sh1106 = []
+# The wired ULCP transport is the chip's native USB-Serial-JTAG port
+# rather than UART0 behind an external USB-UART bridge. Writes are
+# bounded: with no host attached the FIFO drains nowhere, and an unbound
+# write would wedge the session.
+wired-usb-serial-jtag = []
+# On-board GNSS receiver on UART1, powered through the pump's rail/wake
+# gate; positioning flows through `umsh-ulcp-runtime`'s gnss feature.
+gnss = []
+# PCF8563 wall-clock RTC: time is restored at boot (TimeSource::
+# ExternalRtc) and written back on manual set and trusted GNSS time.
+rtc-pcf8563 = []
 
 # Mirror of the nRF firmware's ble-debug: multiplex driver/BLE diagnostics as
 # ASCII lines onto the UART0 output stream (HDLC hosts resynchronize
@@ -87,6 +118,10 @@ embassy-sync = { version = "0.8", default-features = false }
 embassy-time = { version = "0.5", default-features = false }
 embedded-graphics = { version = "0.8", default-features = false }
 embedded-hal-bus = { version = "0.3", default-features = false, features = ["async"] }
+# The wired transport's read/write traits, which both the UART and the
+# USB-Serial-JTAG peripheral implement — one transport implementation
+# whichever port a board wires.
+embedded-io-async = { version = "0.7", default-features = false }
 # Raw flash over the internal SPI NOR (journal backing). The chip feature
 # and `embedded-storage` impl come from umsh-bsp-esp32's esp-storage
 # dependency via feature unification.

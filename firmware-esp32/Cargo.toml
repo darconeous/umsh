@@ -11,9 +11,11 @@ members = [
     "crates/umsh-bsp-esp32",
     "crates/umsh-bsp-heltec-lora32-v2",
     "crates/umsh-bsp-heltec-lora32-v3",
+    "crates/umsh-bsp-tbeam-supreme",
     "firmware/heltec-v2",
     "firmware/heltec-v3-console",
     "firmware/heltec-v3",
+    "firmware/tbeam-supreme",
 ]
 resolver = "2"
 

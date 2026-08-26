@@ -1,0 +1,17 @@
+[package]
+name = "umsh-rtc-pcf8563"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+repository.workspace = true
+description = "PCF8563 battery-backed RTC driver for UMSH boards"
+
+[dependencies]
+embedded-hal-async.workspace = true
+# For `epoch::DateTime` and the plausibility floor. Default features off
+# leaves a dependency-free civil-time module — the receiver pump, and
+# everything it pulls in, stays out.
+umsh-gnss = { path = "../umsh-gnss", default-features = false }
+
+[dev-dependencies]
+embassy-futures = "0.1"

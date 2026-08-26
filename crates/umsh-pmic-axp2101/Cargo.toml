@@ -1,0 +1,13 @@
+[package]
+name = "umsh-pmic-axp2101"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+repository.workspace = true
+description = "X-Powers AXP2101 PMIC driver for UMSH boards"
+
+[dependencies]
+embedded-hal-async.workspace = true
+
+[dev-dependencies]
+embassy-futures = "0.1"

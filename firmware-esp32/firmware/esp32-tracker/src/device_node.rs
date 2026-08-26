@@ -98,9 +98,19 @@ fn hooks() -> node::NodeHooks {
 
 /// Construct the node around the device identity and spawn its tasks.
 /// Call at most once.
+///
+/// A task rather than something `main` awaits, and deliberately so. The
+/// MAC arena write below is ~32 KiB constructed in place, but the
+/// temporaries around it are sized into whichever poll frame the body is
+/// inlined into — and `main`'s poll frame is held for the whole boot, so
+/// inlining it there leaves every other phase, and any interrupt that
+/// lands during one, running on what little is left underneath. As a
+/// task it gets a frame that exists only while bring-up runs. Nothing in
+/// `main` needs bring-up to have finished; the loops are spawned here.
+#[embassy_executor::task]
 pub async fn bring_up(
     spawner: Spawner,
-    identity_secret: &[u8; 32],
+    identity_secret: [u8; 32],
     node_seed: [u8; 32],
     t_frame_ms: u32,
     counters: &'static crate::NodeCountersMutex,
@@ -110,6 +120,7 @@ pub async fn bring_up(
     // Seed the node's copy of the device name before bring-up, so the
     // Identity Request responder's profile is correct from its first
     // reply rather than only from the first name change.
+    let identity_secret = &identity_secret;
     set_device_name(&crate::device_name_snapshot().await);
     let hooks = hooks();
     let parts = node::bring_up(

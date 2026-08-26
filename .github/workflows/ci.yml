@@ -287,7 +287,13 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        make_target: [build-heltec-v3, build-heltec-v3-console, build-heltec-v2]
+        make_target:
+          [
+            build-heltec-v3,
+            build-heltec-v3-console,
+            build-heltec-v2,
+            build-tbeam-supreme,
+          ]
     steps:
       - uses: actions/checkout@v4
 
