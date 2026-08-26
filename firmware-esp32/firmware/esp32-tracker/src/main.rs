@@ -1970,12 +1970,11 @@ async fn ble_app(controller: BleController, store: BleStore) -> ! {
 // ─── Radio ───────────────────────────────────────────────────────────────
 
 /// Owns the `lora_phy::LoRa` instance via the reconfigurable device
-/// runner. RX preamble 8 symbols, TX preamble 16 (MeshCore parity;
-/// the SX1262 detects MeshCore-US traffic fine at 8 — hardware-proven
-/// in Phase 2 on this board).
+/// runner. TX uses MeshCore's 32-symbol SF7 preamble; the hardware-proven
+/// 8-symbol SX1262 RX acquisition setting remains unchanged.
 #[embassy_executor::task]
 async fn radio_task(lora: board_radio::Radio) {
-    umsh_radio_loraphy::device_runner(lora, &RADIO_CH, &DEVICE_CTL, 8, 16).await;
+    umsh_radio_loraphy::device_runner(lora, &RADIO_CH, &DEVICE_CTL, 8, 32).await;
 }
 
 /// Owns the real `RADIO_CH` bundle and multiplexes it across the

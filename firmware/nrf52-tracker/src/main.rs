@@ -2724,16 +2724,17 @@ mod firmware {
     }
 
     /// Owns the `lora_phy::LoRa` instance via the reconfigurable device
-    /// runner. RX preamble 8 symbols, TX preamble 16 (MeshCore parity).
+    /// runner. TX uses MeshCore's 32-symbol SF7 preamble; existing per-radio
+    /// RX acquisition settings remain unchanged.
     #[embassy_executor::task]
     async fn radio_task(lora: LoraRadio) {
         #[cfg(not(feature = "t1000e"))]
         const RX_PREAMBLE: u16 = 8;
         // Hardware bring-up established that the LR1110 misses MeshCore-US
-        // traffic with an 8-symbol detector even though the SX1262 does not.
+        // traffic with an 8-symbol RX setting even though the SX1262 does not.
         #[cfg(feature = "t1000e")]
         const RX_PREAMBLE: u16 = 16;
-        umsh_radio_loraphy::device_runner(lora, &RADIO_CH, &DEVICE_CTL, RX_PREAMBLE, 16).await;
+        umsh_radio_loraphy::device_runner(lora, &RADIO_CH, &DEVICE_CTL, RX_PREAMBLE, 32).await;
     }
 
     /// Owns the real `RADIO_CH` bundle and multiplexes it across the

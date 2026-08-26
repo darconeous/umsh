@@ -533,11 +533,11 @@ The LR1110 `WriteBuffer` command (`0x0109`) is documented as `[opcode_hi, opcode
 
 `LoRa::process_irq_event()` calls the LR1110 `GetIrqStatus` command with `clear_interrupts = false`. The DIO1 interrupt line therefore **remains asserted** after `process_irq_event` returns. If the next call to `wait_for_irq` relies on a falling/rising edge detect (GPIOTE in edge mode), it will return immediately on every iteration, spinning the CPU and preventing any real RX work. Fix: always call `lora.clear_irq_status().await` immediately after every `process_irq_event` call.
 
-### Preamble length: 16 required (not 8)
+### Preamble configuration: RX requires at least 16; MeshCore TX uses 32
 
-The LR1110 requires a preamble length of at least **16** symbols for reliable packet detection with the LoRa modem configured for SF7 / 62.5 kHz / CR 4/5. Using the SX126x default of 8 symbols produces intermittent or zero packet detection. Both the RX and TX packet-parameter structs must use `preamble_length = 16` for interoperability between LR1110 nodes.
+The LR1110 requires a preamble length of at least **16** symbols for reliable packet detection with the LoRa modem configured for SF7 / 62.5 kHz / CR 4/5. Using the SX126x default of 8 symbols produces intermittent or zero packet detection. The successful bring-up test used `preamble_length = 16` in both the RX and TX packet-parameter structs.
 
-SX126x-based boards (T-Echo, Wio Tracker L1) use preamble 8 and work reliably between each other. Cross-chip interoperability requires preamble 16 on both sides, or adapting the SX126x firmware to also use 16 (8 is accepted by SX126x as a receiver when the transmitter uses 16).
+MeshCore v1.16 and later transmit a 32-symbol preamble at SF7-SF8. Current UMSH MeshCore-compatible profiles therefore use `preamble_length = 32` for TX while preserving the existing hardware-tested RX settings: 16 on LR1110 and 8 on SX126x.
 
 ### lora.rx()-in-select is unsafe for LR1110
 

@@ -694,9 +694,9 @@ pub const MESHCORE_US_FREQUENCY_HZ: u32 = 910_525_000;
 
 /// Build modulation + packet parameters matching MeshCore US (915 MHz band).
 ///
-/// Sourced from MeshCore's `CustomSX1262.h` and `platformio.ini`:
+/// Sourced from MeshCore's RadioLib wrappers and `platformio.ini`:
 ///   - 910.525 MHz / SF7 / BW62.5 kHz / CR4/5
-///   - 16-symbol TX preamble (matched against MeshCore nodes in the field)
+///   - 32-symbol TX preamble (MeshCore v1.16+ at SF7-SF8)
 ///   - Private sync word 0x1424 (via `enable_public_network = false` in LoRa::new)
 ///   - CRC enabled, IQ normal
 ///
@@ -708,23 +708,22 @@ where
     RK: RadioKind,
     DLY: embedded_hal_async::delay::DelayNs,
 {
-    // RX preamble detection uses 8 symbols (MeshCore TX sends 16; the SX1262
-    // starts decoding after detecting the minimum threshold, so setting 8 here
-    // is correct and robust against slight timing variations).
+    // MeshCore transmits a 32-symbol LoRa packet preamble at SF7-SF8. Keep
+    // the existing SX126x RX acquisition setting unchanged at 8 symbols.
     build_params(
         lora,
         SpreadingFactor::_7,
         Bandwidth::_62KHz,
         MESHCORE_US_FREQUENCY_HZ,
         8,
-        16,
+        32,
     )
 }
 
 /// Shared helper: build modulation + RX/TX packet params.
 ///
-/// `rx_preamble`: minimum preamble symbols for RX detection.
-/// `tx_preamble`: preamble symbols emitted on TX.
+/// `rx_preamble`: LoRa preamble length configured for RX packet parameters.
+/// `tx_preamble`: LoRa preamble length configured for TX packet parameters.
 fn build_params<RK, DLY>(
     lora: &mut LoRa<RK, DLY>,
     sf: SpreadingFactor,

@@ -675,12 +675,9 @@ mod firmware {
             // MeshCore-US on-air parameters tuned for LR1110.
             //
             // Phase 2.5 RX bringup proved that preamble_length=16 (matching
-            // MeshCore's RadioLib TX preamble) reliably triggers
-            // SyncWordHeaderValid → RxDone on the LR1110. The shared
-            // `umsh_radio_loraphy::meshcore_us_params` helper uses 8 for RX,
-            // which is fine for the SX1262 on T-Echo but loses packets on
-            // LR1110. We pin both rx and tx to 16 here to match what worked
-            // on real hardware.
+            // MeshCore at the time) reliably triggers SyncWordHeaderValid →
+            // RxDone on the LR1110. Preserve that RX setting. MeshCore v1.16+
+            // increased the transmitted SF7-SF8 preamble to 32 symbols.
             let mdltn = lora
                 .create_modulation_params(
                     SpreadingFactor::_7,
@@ -691,7 +688,7 @@ mod firmware {
                 .unwrap_or_else(|_| panic!("modulation params"));
             let rx_pkt = lora
                 .create_rx_packet_params(
-                    16,    // preamble length: LR1110 needs 16 for MeshCore-US
+                    16,    // RX setting proven reliable on LR1110 hardware
                     false, // explicit header
                     255,   // max payload
                     true,  // CRC on
@@ -701,7 +698,7 @@ mod firmware {
                 .unwrap_or_else(|_| panic!("rx packet params"));
             let tx_pkt = lora
                 .create_tx_packet_params(
-                    16,    // preamble length: matches MeshCore RadioLib
+                    32,    // TX preamble: MeshCore v1.16+ at SF7-SF8
                     false, // explicit header
                     true,  // CRC on
                     false, // IQ normal
