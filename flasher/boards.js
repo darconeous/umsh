@@ -83,7 +83,6 @@ const WARNINGS = {
     // worst shape a failure can take — so say it before the flash, not after.
     "This firmware is for the SX1262 version. The LR1121 version takes the same image and will run it, but its radio will not work.",
     "If this board previously ran different firmware, flashing clears whatever settings that firmware had stored on it.",
-    "Parts of this board are still unverified—the display, the GNSS receiver, the buttons, and how accurate the battery readout is. Messaging over Bluetooth and over the air both work.",
   ],
   "xiao-nrf52": [
     "Only if you flash with a downloaded UF2 file instead of this page: a UF2 built for a different board is silently ignored—the copy looks like it worked, and nothing changes. Flashing from this page rejects a mismatched image with an error.",

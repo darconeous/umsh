@@ -59,7 +59,7 @@ asked for. A command that wants the firmware version or the boot
 status reads it, and pays for it then.</p>
 <p>So <a href="struct.UlcpDevice.html#method.dev_version" title="method umsh::ulcp::UlcpDevice::dev_version"><code>Self::dev_version</code></a>, <a href="struct.UlcpDevice.html#method.dev_model" title="method umsh::ulcp::UlcpDevice::dev_model"><code>Self::dev_model</code></a>, and
 <a href="struct.UlcpDevice.html#method.boot_status" title="method umsh::ulcp::UlcpDevice::boot_status"><code>Self::boot_status</code></a> are empty on this handle, and the frame
-ceiling comes from the binding — [<code>umsh_node_mgmt::REQUEST_MAX</code>],
+ceiling comes from the binding — <a href="../../umsh_node_mgmt/constant.REQUEST_MAX.html" title="constant umsh_node_mgmt::REQUEST_MAX"><code>umsh_node_mgmt::REQUEST_MAX</code></a>,
 which bounds a request here more tightly than the device’s own
 PHY MTU does — rather than from asking. Give <code>config</code> the
 device’s PHY and a response timeout that outlasts the binding’s

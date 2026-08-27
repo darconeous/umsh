@@ -66,7 +66,7 @@ need to know should check the returned count of codes actually stored.</p>
     &amp;self,
     identity_id: <a class="struct" href="struct.LocalIdentityId.html" title="struct umsh_mac::LocalIdentityId">LocalIdentityId</a>,
     peer_id: <a class="struct" href="struct.PeerId.html" title="struct umsh_mac::PeerId">PeerId</a>,
-    pairwise_keys: <a class="struct" href="../umsh_crypto/struct.PairwiseKeys.html" title="struct umsh_crypto::PairwiseKeys">PairwiseKeys</a>,
+    pairwise_keys: PairwiseKeys,
 ) -&gt; <a class="enum" href="https://doc.rust-lang.org/nightly/core/result/enum.Result.html" title="enum core::result::Result">Result</a>&lt;<a class="enum" href="https://doc.rust-lang.org/nightly/core/option/enum.Option.html" title="enum core::option::Option">Option</a>&lt;<a class="struct" href="struct.PeerCryptoState.html" title="struct umsh_mac::PeerCryptoState">PeerCryptoState</a>&gt;, <a class="enum" href="enum.SendError.html" title="enum umsh_mac::SendError">SendError</a>&gt;</h4></section></summary><div class="docblock"><p>Installs pairwise transport keys for one local identity and remote peer.</p>
 <h5 id="safety-logical"><a class="doc-anchor" href="#safety-logical">§</a>Safety (logical)</h5>
 <p>Installing wrong keys will silently corrupt the session. This method
@@ -121,7 +121,7 @@ while this driver is waiting on the radio or a timer.</p>
 </div></details><details class="toggle method-toggle" open><summary><section id="method.register_ephemeral" class="method"><a class="src rightside" href="../src/umsh_mac/handle.rs.html#438-447">Source</a><h4 class="code-header">pub async fn <a href="#method.register_ephemeral" class="fn">register_ephemeral</a>(
     &amp;self,
     parent: <a class="struct" href="struct.LocalIdentityId.html" title="struct umsh_mac::LocalIdentityId">LocalIdentityId</a>,
-    identity: <a class="struct" href="../umsh_crypto/software/struct.SoftwareIdentity.html" title="struct umsh_crypto::software::SoftwareIdentity">SoftwareIdentity</a>,
+    identity: SoftwareIdentity,
 ) -&gt; <a class="enum" href="https://doc.rust-lang.org/nightly/core/result/enum.Result.html" title="enum core::result::Result">Result</a>&lt;<a class="struct" href="struct.LocalIdentityId.html" title="struct umsh_mac::LocalIdentityId">LocalIdentityId</a>, <a class="struct" href="struct.CapacityError.html" title="struct umsh_mac::CapacityError">CapacityError</a>&gt;</h4></section></summary><div class="docblock"><p>Registers an ephemeral software identity with the shared coordinator.</p>
 </div></details><details class="toggle method-toggle" open><summary><section id="method.remove_ephemeral" class="method"><a class="src rightside" href="../src/umsh_mac/handle.rs.html#451-453">Source</a><h4 class="code-header">pub async fn <a href="#method.remove_ephemeral" class="fn">remove_ephemeral</a>(&amp;self, id: <a class="struct" href="struct.LocalIdentityId.html" title="struct umsh_mac::LocalIdentityId">LocalIdentityId</a>) -&gt; <a class="primitive" href="https://doc.rust-lang.org/nightly/std/primitive.bool.html">bool</a></h4></section></summary><div class="docblock"><p>Removes a previously registered ephemeral identity.</p>
 </div></details><details class="toggle method-toggle" open><summary><section id="method.cancel_pending_ack" class="method"><a class="src rightside" href="../src/umsh_mac/handle.rs.html#458-467">Source</a><h4 class="code-header">pub async fn <a href="#method.cancel_pending_ack" class="fn">cancel_pending_ack</a>(
