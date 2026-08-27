@@ -199,6 +199,17 @@ struct RegionSuggestionSheet: View {
             if origin == nil { origin = offeredSources.first?.origin }
         }
         .task(id: proposalKey) { await propose() }
+        // Outside the Form, not on the section that opens it: a Section
+        // carries a presentation into every row it holds, and they collide.
+        .sheet(isPresented: $showsPlacePicker) {
+            PlacePicker(initial: typedCoordinate) { coordinate in
+                let format = FloatingPointFormatStyle<Double>.number
+                    .precision(.fractionLength(5))
+                    .grouping(.never)
+                latitudeText = coordinate.latitude.formatted(format)
+                longitudeText = coordinate.longitude.formatted(format)
+            }
+        }
     }
 
     // MARK: - Choosing a place
@@ -282,15 +293,6 @@ struct RegionSuggestionSheet: View {
             }
         } footer: {
             Text("Decimal degrees. A typed position is taken exactly, with no allowance for error.")
-        }
-        .sheet(isPresented: $showsPlacePicker) {
-            PlacePicker(initial: typedCoordinate) { coordinate in
-                let format = FloatingPointFormatStyle<Double>.number
-                    .precision(.fractionLength(5))
-                    .grouping(.never)
-                latitudeText = coordinate.latitude.formatted(format)
-                longitudeText = coordinate.longitude.formatted(format)
-            }
         }
     }
 

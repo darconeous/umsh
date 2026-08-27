@@ -514,6 +514,19 @@ struct RemoteIdentityEditor: View {
         )
         .onChange(of: reading?.asOf) { edits = Edits(reading, preserving: edits) }
         .onAppear { if edits.isEmpty { edits = Edits(reading) } }
+        // On the Form, never on the section holding the button that opens
+        // it: a presentation attached to a Section is attached to every row
+        // in it, and all of them try to present at once. One wins and the
+        // rest collide with it, which ends with the sheet appearing and
+        // going straight back down.
+        .sheet(isPresented: $showsPlacePicker) {
+            PlacePicker(
+                initial: edits.chosenCoordinate,
+                precision: edits.encodingPrecision
+            ) { coordinate in
+                edits.place(latitude: coordinate.latitude, longitude: coordinate.longitude)
+            }
+        }
     }
 
     /// Where the device says it is.
@@ -604,14 +617,6 @@ struct RemoteIdentityEditor: View {
                     Text("This phone could not find where it is.")
                         .foregroundStyle(.secondary)
                 }
-            }
-        }
-        .sheet(isPresented: $showsPlacePicker) {
-            PlacePicker(
-                initial: edits.chosenCoordinate,
-                precision: edits.encodingPrecision
-            ) { coordinate in
-                edits.place(latitude: coordinate.latitude, longitude: coordinate.longitude)
             }
         }
     }

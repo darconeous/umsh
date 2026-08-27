@@ -174,8 +174,21 @@ struct PlacePicker: View {
             )
             return
         }
+        // Framed on the world before CoreLocation is asked anything. A phone
+        // that will not say where it is — refused, or never asked — must
+        // still leave a map somebody can move and a place they can take;
+        // waiting on the fix to frame anything at all is how a denied
+        // permission turns into a picker that cannot pick.
+        center = Self.unplaced.center
+        camera = .region(Self.unplaced)
         await centerOnPhone()
     }
+
+    /// What a picker opens on when it is given nothing and told nothing.
+    private static let unplaced = MKCoordinateRegion(
+        center: CLLocationCoordinate2D(latitude: 20, longitude: 0),
+        span: MKCoordinateSpan(latitudeDelta: 120, longitudeDelta: 120)
+    )
 
     private func centerOnPhone() async {
         guard let readPhonePosition, !isReadingPhone else { return }
