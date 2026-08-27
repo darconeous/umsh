@@ -208,6 +208,31 @@
           "path": "/firmware/2026.08.27/umsh-heltec-v3-2026.08.27.bin"
         }
       ]
+    },
+    {
+      "id": "tbeam-supreme",
+      "name": "LILYGO T-Beam Supreme SX1262",
+      "chip": "esp32s3",
+      "model": "LILYGO T-Beam Supreme SX1262",
+      "flash_methods": [
+        "esp-serial"
+      ],
+      "esp": {
+        "chip": "esp32s3",
+        "offset": "0x0",
+        "flash_size": "4MB",
+        "partition_table": "partitions-umsh.csv"
+      },
+      "files": [
+        {
+          "role": "merged-bin",
+          "name": "umsh-tbeam-supreme-2026.08.27.bin",
+          "size": 1424512,
+          "sha256": "1841744e029b1613babc6238666a613b211df58f207fe875cb76aae6d412c7c5",
+          "url": "https://github.com/darconeous/umsh/releases/download/fw-2026.08.27/umsh-tbeam-supreme-2026.08.27.bin",
+          "path": "/firmware/2026.08.27/umsh-tbeam-supreme-2026.08.27.bin"
+        }
+      ]
     }
   ]
 }
