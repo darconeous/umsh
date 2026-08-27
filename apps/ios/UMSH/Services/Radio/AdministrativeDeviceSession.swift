@@ -751,19 +751,49 @@ final class AdministrativeDeviceSession: NSObject, @unchecked Sendable {
         } catch {
             fail(
                 "The ULCP session could not start",
-                error: RadioConnectionError.incompatibleProtocol
+                error: RadioConnectionError.incompatibleProtocol,
+                detail: "cause=\(UlcpFrameDiagnostic.cause(error)) stage=begin"
             )
         }
     }
 
     private func receive(_ value: Data, from peripheral: CBPeripheral) {
+        let frame: Data
         do {
-            guard let frame = try reassembler.push(segment: value) else { return }
-            try applySessionUpdate(ulcpSession.consume(frame: frame), from: peripheral)
+            guard let reassembled = try reassembler.push(segment: value) else { return }
+            frame = reassembled
         } catch {
             fail(
                 "The device sent an invalid ULCP frame",
-                error: RadioConnectionError.incompatibleProtocol
+                error: RadioConnectionError.incompatibleProtocol,
+                detail: """
+                    cause=\(UlcpFrameDiagnostic.cause(error)) \
+                    stage=gatt-reassembly segment=\(value.count)B
+                    """,
+                bytes: value
+            )
+            return
+        }
+        do {
+            try applySessionUpdate(ulcpSession.consume(frame: frame), from: peripheral)
+        } catch MobileError.UlcpUnexpectedCommand {
+            // Unhandled but well formed: ignored here for the same reason
+            // the tethered session ignores it — see `linkDidReceive`.
+            Self.logger.notice(
+                """
+                administrative session: ignoring unhandled command \
+                \(UlcpFrameDiagnostic.structure(frame), privacy: .public)
+                """
+            )
+        } catch {
+            fail(
+                "The device sent an invalid ULCP frame",
+                error: RadioConnectionError.incompatibleProtocol,
+                detail: """
+                    cause=\(UlcpFrameDiagnostic.cause(error)) \
+                    frame=[\(UlcpFrameDiagnostic.structure(frame))]
+                    """,
+                bytes: frame
             )
         }
     }
@@ -949,11 +979,24 @@ final class AdministrativeDeviceSession: NSObject, @unchecked Sendable {
 
     /// Terminal failure for this session. There is no reconnect ladder: the
     /// user is standing in front of the device and retrying is one tap.
-    private func fail(_ message: String, error: any Error, underlying: (any Error)? = nil) {
+    ///
+    /// `detail` names a protocol-layer cause the way `underlying` names a
+    /// CoreBluetooth one, and `bytes` are the octets behind it. Neither
+    /// reaches the UI: `message` is the only part a user sees.
+    private func fail(
+        _ message: String,
+        error: any Error,
+        underlying: (any Error)? = nil,
+        detail: String? = nil,
+        bytes: Data? = nil
+    ) {
+        let octets = bytes.map { UlcpFrameDiagnostic.hex($0) } ?? "none"
         Self.logger.error(
             """
             administrative session failed: \(message, privacy: .public) \
-            cause=\(underlying.map(BluetoothErrorText.diagnostic) ?? "none", privacy: .public)
+            cause=\(underlying.map(BluetoothErrorText.diagnostic) ?? "none", privacy: .public) \
+            \(detail ?? "detail unrecorded", privacy: .public) \
+            octets=\(octets, privacy: .private)
             """
         )
         let name = snapshot.name ?? peripheral?.name

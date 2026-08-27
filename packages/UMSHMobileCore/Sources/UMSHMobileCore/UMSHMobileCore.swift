@@ -11165,8 +11165,51 @@ enum MobileError: Swift.Error, Equatable, Hashable, Foundation.LocalizedError {
     case InvalidPublicKeyLength
     case InvalidUri
     case InvalidIdentityData
+    /**
+     * A ULCP frame could not be built or a value could not be encoded.
+     * Receive-path failures carry one of the `Ulcp*` causes below instead.
+     */
     case InvalidUlcpFrame
-    case InvalidGattSegment
+    /**
+     * An ATT value arrived with no SAR header octet.
+     */
+    case GattSegmentRunt
+    /**
+     * An ATT value's SAR header had a reserved bit set.
+     */
+    case GattSegmentReservedBits
+    /**
+     * A continuation or final segment arrived with no frame in progress.
+     */
+    case GattSegmentOrphan
+    /**
+     * Reassembly would have exceeded the frame bound.
+     */
+    case GattSegmentTooLong
+    /**
+     * The negotiated ATT value length leaves no room for frame bytes.
+     */
+    case GattMtuTooSmall
+    /**
+     * The received octets are not a ULCP frame.
+     */
+    case UlcpFrameUnparsable
+    /**
+     * A well-formed frame carried a command this session does not accept.
+     */
+    case UlcpUnexpectedCommand
+    /**
+     * A frame's payload did not decode for its command.
+     */
+    case UlcpMalformedPayload
+    /**
+     * A well-formed frame is not acceptable in the session's current state.
+     */
+    case UlcpUnexpectedFrame
+    /**
+     * A response did not answer the request its transaction was matched to.
+     */
+    case UlcpMismatchedResponse
     /**
      * A tethering operation was attempted on an administrative session.
      */
@@ -11232,13 +11275,22 @@ public struct FfiConverterTypeMobileError: FfiConverterRustBuffer {
         case 8: return .InvalidUri
         case 9: return .InvalidIdentityData
         case 10: return .InvalidUlcpFrame
-        case 11: return .InvalidGattSegment
-        case 12: return .AdministrativeSession
-        case 13: return .InvalidRegionCode
-        case 14: return .UnsupportedCapability
-        case 15: return .ChannelNameNotAscii
-        case 16: return .ChannelNameTooLong
-        case 17: return .InvalidChannelKeyLength
+        case 11: return .GattSegmentRunt
+        case 12: return .GattSegmentReservedBits
+        case 13: return .GattSegmentOrphan
+        case 14: return .GattSegmentTooLong
+        case 15: return .GattMtuTooSmall
+        case 16: return .UlcpFrameUnparsable
+        case 17: return .UlcpUnexpectedCommand
+        case 18: return .UlcpMalformedPayload
+        case 19: return .UlcpUnexpectedFrame
+        case 20: return .UlcpMismatchedResponse
+        case 21: return .AdministrativeSession
+        case 22: return .InvalidRegionCode
+        case 23: return .UnsupportedCapability
+        case 24: return .ChannelNameNotAscii
+        case 25: return .ChannelNameTooLong
+        case 26: return .InvalidChannelKeyLength
 
          default: throw UniffiInternalError.unexpectedEnumCase
         }
@@ -11291,32 +11343,68 @@ public struct FfiConverterTypeMobileError: FfiConverterRustBuffer {
             writeInt(&buf, Int32(10))
 
 
-        case .InvalidGattSegment:
+        case .GattSegmentRunt:
             writeInt(&buf, Int32(11))
 
 
-        case .AdministrativeSession:
+        case .GattSegmentReservedBits:
             writeInt(&buf, Int32(12))
 
 
-        case .InvalidRegionCode:
+        case .GattSegmentOrphan:
             writeInt(&buf, Int32(13))
 
 
-        case .UnsupportedCapability:
+        case .GattSegmentTooLong:
             writeInt(&buf, Int32(14))
 
 
-        case .ChannelNameNotAscii:
+        case .GattMtuTooSmall:
             writeInt(&buf, Int32(15))
 
 
-        case .ChannelNameTooLong:
+        case .UlcpFrameUnparsable:
             writeInt(&buf, Int32(16))
 
 
-        case .InvalidChannelKeyLength:
+        case .UlcpUnexpectedCommand:
             writeInt(&buf, Int32(17))
+
+
+        case .UlcpMalformedPayload:
+            writeInt(&buf, Int32(18))
+
+
+        case .UlcpUnexpectedFrame:
+            writeInt(&buf, Int32(19))
+
+
+        case .UlcpMismatchedResponse:
+            writeInt(&buf, Int32(20))
+
+
+        case .AdministrativeSession:
+            writeInt(&buf, Int32(21))
+
+
+        case .InvalidRegionCode:
+            writeInt(&buf, Int32(22))
+
+
+        case .UnsupportedCapability:
+            writeInt(&buf, Int32(23))
+
+
+        case .ChannelNameNotAscii:
+            writeInt(&buf, Int32(24))
+
+
+        case .ChannelNameTooLong:
+            writeInt(&buf, Int32(25))
+
+
+        case .InvalidChannelKeyLength:
+            writeInt(&buf, Int32(26))
 
         }
     }
@@ -14680,6 +14768,22 @@ public func ulcpRecordsFromAnswers(answers: [MobileMeshManagementAnswerRecord]) 
 })
 }
 /**
+ * Summarize a frame's header for a diagnostic log.
+ *
+ * Deliberately structural: transaction, command, property, and lengths,
+ * never payload bytes. A platform logging this alongside a rejected
+ * frame's cause learns what arrived without putting message contents
+ * in the system log.
+ */
+public func describeUlcpFrame(bytes: Data) -> String  {
+    return try!  FfiConverterString.lift(try! rustCall() {
+        uniffiCallStatus in
+    uniffi_umsh_mobile_core_fn_func_describe_ulcp_frame(
+        FfiConverterData.lower(bytes),uniffiCallStatus
+    )
+})
+}
+/**
  * Validate and reduce a `PROP_ALERT` value.
  */
 public func inspectUlcpAlert(value: Data)throws  -> UlcpAlertState  {
@@ -15175,6 +15279,9 @@ private let initializationResult: InitializationResult = {
         return InitializationResult.apiChecksumMismatch
     }
     if (uniffi_umsh_mobile_core_checksum_func_ulcp_records_from_answers() != 41634) {
+        return InitializationResult.apiChecksumMismatch
+    }
+    if (uniffi_umsh_mobile_core_checksum_func_describe_ulcp_frame() != 25764) {
         return InitializationResult.apiChecksumMismatch
     }
     if (uniffi_umsh_mobile_core_checksum_func_inspect_ulcp_alert() != 25982) {

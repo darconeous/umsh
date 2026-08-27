@@ -942,6 +942,13 @@ final class CoreBluetoothRadioConnection: UlcpRadioSession, RadioConnection, Ulc
         peripheral != nil && peripheral?.identifier == rememberedPeripheralIdentifier
     }
 
+    /// Exactly the condition `didDisconnectPeripheral` reconnects under.
+    /// A radio the app has not adopted, or has been deliberately
+    /// disconnected from, has no standing connect to come back on.
+    var linkCanReconnect: Bool {
+        shouldAutoConnect && rememberedPeripheralIdentifier != nil && !intentionalDisconnect
+    }
+
     /// Segment the frame and queue every ATT value, then start the queue
     /// if it was idle. GATT writes are strictly one at a time: the next
     /// value goes out from `didWriteValueFor`.
@@ -979,16 +986,27 @@ final class CoreBluetoothRadioConnection: UlcpRadioSession, RadioConnection, Ulc
         currentWriteRawTransactionID = nil
     }
 
-    func linkInvalidate() {
+    func linkInvalidate(retrying: Bool) {
         pendingWrites.removeAll()
         writeInProgress = false
         currentWriteRawTransactionID = nil
-        // Preserve the failure the session just published: the ordinary
-        // disconnect path would overwrite it with "Radio disconnected".
-        if let peripheral, peripheral.state == .connected {
-            preservesFailureOnDisconnect = true
-            central?.cancelPeripheralConnection(peripheral)
+        guard let peripheral, peripheral.state == .connected else {
+            // Nothing to disconnect means no `didDisconnectPeripheral`, so
+            // a retry has to arm itself here or the session waits on a
+            // reconnect that was never issued.
+            if retrying {
+                autoConnectRequested = true
+                startAutomaticConnection()
+            }
+            return
         }
+        // Not retrying: preserve the failure the session just published,
+        // which the ordinary disconnect path would overwrite with "Radio
+        // disconnected". Retrying: leave the flag clear so the disconnect
+        // falls through to the standing reconnect, which is the same
+        // machinery an ordinary link loss uses and needs no second path.
+        preservesFailureOnDisconnect = !retrying
+        central?.cancelPeripheralConnection(peripheral)
     }
 
     func linkDidAttach() {
@@ -1361,7 +1379,15 @@ extension CoreBluetoothRadioConnection: CBPeripheralDelegate {
             guard let frame = try reassembler.push(segment: value) else { return }
             linkDidReceive(frame: frame)
         } catch {
-            terminateConnectionForFatalProtocolError("The radio sent an invalid ULCP frame", name: displayName(for: peripheral))
+            terminateConnectionForFatalProtocolError(
+                "The radio sent an invalid ULCP frame",
+                detail: """
+                    cause=\(UlcpFrameDiagnostic.cause(error)) \
+                    stage=gatt-reassembly segment=\(value.count)B
+                    """,
+                bytes: value,
+                name: displayName(for: peripheral)
+            )
         }
     }
 }

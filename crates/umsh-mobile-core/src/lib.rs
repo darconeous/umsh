@@ -58,7 +58,7 @@ uniffi::setup_scaffolding!();
 ///
 /// Increment this when a binding-visible operation, record, or error contract
 /// changes incompatibly. It is independent of the UMSH wire version.
-pub const MOBILE_API_VERSION: u16 = 41;
+pub const MOBILE_API_VERSION: u16 = 42;
 
 /// Stable error categories consumed by platform adapters.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, uniffi::Error)]
@@ -72,8 +72,29 @@ pub enum MobileError {
     InvalidPublicKeyLength,
     InvalidUri,
     InvalidIdentityData,
+    /// A ULCP frame could not be built or a value could not be encoded.
+    /// Receive-path failures carry one of the `Ulcp*` causes below instead.
     InvalidUlcpFrame,
-    InvalidGattSegment,
+    /// An ATT value arrived with no SAR header octet.
+    GattSegmentRunt,
+    /// An ATT value's SAR header had a reserved bit set.
+    GattSegmentReservedBits,
+    /// A continuation or final segment arrived with no frame in progress.
+    GattSegmentOrphan,
+    /// Reassembly would have exceeded the frame bound.
+    GattSegmentTooLong,
+    /// The negotiated ATT value length leaves no room for frame bytes.
+    GattMtuTooSmall,
+    /// The received octets are not a ULCP frame.
+    UlcpFrameUnparsable,
+    /// A well-formed frame carried a command this session does not accept.
+    UlcpUnexpectedCommand,
+    /// A frame's payload did not decode for its command.
+    UlcpMalformedPayload,
+    /// A well-formed frame is not acceptable in the session's current state.
+    UlcpUnexpectedFrame,
+    /// A response did not answer the request its transaction was matched to.
+    UlcpMismatchedResponse,
     /// A tethering operation was attempted on an administrative session.
     AdministrativeSession,
     /// Text could not be read as a region code, or a supplied code was
@@ -104,7 +125,16 @@ impl MobileError {
             Self::InvalidUri => "mobile.error.uri.invalid",
             Self::InvalidIdentityData => "mobile.error.identity_data.invalid",
             Self::InvalidUlcpFrame => "mobile.error.ulcp.invalid_frame",
-            Self::InvalidGattSegment => "mobile.error.ulcp.invalid_gatt_segment",
+            Self::GattSegmentRunt => "mobile.error.ulcp.gatt_segment_runt",
+            Self::GattSegmentReservedBits => "mobile.error.ulcp.gatt_segment_reserved_bits",
+            Self::GattSegmentOrphan => "mobile.error.ulcp.gatt_segment_orphan",
+            Self::GattSegmentTooLong => "mobile.error.ulcp.gatt_segment_too_long",
+            Self::GattMtuTooSmall => "mobile.error.ulcp.gatt_mtu_too_small",
+            Self::UlcpFrameUnparsable => "mobile.error.ulcp.frame_unparsable",
+            Self::UlcpUnexpectedCommand => "mobile.error.ulcp.unexpected_command",
+            Self::UlcpMalformedPayload => "mobile.error.ulcp.malformed_payload",
+            Self::UlcpUnexpectedFrame => "mobile.error.ulcp.unexpected_frame",
+            Self::UlcpMismatchedResponse => "mobile.error.ulcp.mismatched_response",
             Self::AdministrativeSession => "mobile.error.ulcp.administrative_session",
             Self::InvalidRegionCode => "mobile.error.region_code.invalid",
             Self::UnsupportedCapability => "mobile.error.ulcp.unsupported_capability",
@@ -127,7 +157,16 @@ impl MobileError {
             Self::InvalidUri => "URI_INVALID",
             Self::InvalidIdentityData => "IDENTITY_DATA_INVALID",
             Self::InvalidUlcpFrame => "ULCP_INVALID_FRAME",
-            Self::InvalidGattSegment => "ULCP_INVALID_GATT_SEGMENT",
+            Self::GattSegmentRunt => "ULCP_GATT_SEGMENT_RUNT",
+            Self::GattSegmentReservedBits => "ULCP_GATT_SEGMENT_RESERVED_BITS",
+            Self::GattSegmentOrphan => "ULCP_GATT_SEGMENT_ORPHAN",
+            Self::GattSegmentTooLong => "ULCP_GATT_SEGMENT_TOO_LONG",
+            Self::GattMtuTooSmall => "ULCP_GATT_MTU_TOO_SMALL",
+            Self::UlcpFrameUnparsable => "ULCP_FRAME_UNPARSABLE",
+            Self::UlcpUnexpectedCommand => "ULCP_UNEXPECTED_COMMAND",
+            Self::UlcpMalformedPayload => "ULCP_MALFORMED_PAYLOAD",
+            Self::UlcpUnexpectedFrame => "ULCP_UNEXPECTED_FRAME",
+            Self::UlcpMismatchedResponse => "ULCP_MISMATCHED_RESPONSE",
             Self::AdministrativeSession => "ULCP_ADMINISTRATIVE_SESSION",
             Self::InvalidRegionCode => "REGION_CODE_INVALID",
             Self::UnsupportedCapability => "ULCP_UNSUPPORTED_CAPABILITY",
@@ -145,6 +184,18 @@ impl fmt::Display for MobileError {
 }
 
 impl std::error::Error for MobileError {}
+
+impl From<umsh_ulcp::gatt::DecodeError> for MobileError {
+    fn from(value: umsh_ulcp::gatt::DecodeError) -> Self {
+        use umsh_ulcp::gatt::DecodeError;
+        match value {
+            DecodeError::Runt => Self::GattSegmentRunt,
+            DecodeError::ReservedBits => Self::GattSegmentReservedBits,
+            DecodeError::Orphan => Self::GattSegmentOrphan,
+            DecodeError::TooLong => Self::GattSegmentTooLong,
+        }
+    }
+}
 
 impl From<AddressParseError> for MobileError {
     fn from(value: AddressParseError) -> Self {

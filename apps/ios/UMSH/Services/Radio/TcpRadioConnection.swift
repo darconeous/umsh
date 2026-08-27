@@ -172,6 +172,10 @@ final class TcpRadioConnection: UlcpRadioSession, RadioConnection, UlcpFrameLink
     /// is the radio this connection is bound to.
     var linkIsBoundRadio: Bool { true }
 
+    /// The endpoint is the binding, so a redial is always available for
+    /// as long as the user wants this connection.
+    var linkCanReconnect: Bool { wantsConnection }
+
     func linkSend(frame: Data, rawTransactionID: UInt8?) {
         guard let connection, connection.state == .ready else { return }
         let wire: Data
@@ -199,7 +203,12 @@ final class TcpRadioConnection: UlcpRadioSession, RadioConnection, UlcpFrameLink
         decoder.reset()
     }
 
-    func linkInvalidate() {
+    func linkInvalidate(retrying: Bool) {
+        // Giving up has to stop the redial as well. `teardown` rearms it
+        // from `wantsConnection` alone, so a fault left standing would
+        // otherwise reconnect to a radio this session has just declared
+        // unusable, every two seconds, for as long as the app runs.
+        if !retrying { wantsConnection = false }
         teardown(problem: nil, preservingPublishedFailure: true)
     }
 

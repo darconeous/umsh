@@ -2,6 +2,42 @@ import Foundation
 import OSLog
 import UMSHMobileCore
 
+/// What to say in the log when a ULCP frame is refused.
+///
+/// A refusal that reaches the log as prose alone is unactionable: the
+/// cause the Rust core named, the frame's own structure, and the octets
+/// all exist at the point of failure and are worth carrying.
+///
+/// Cause and structure are logged `.public` — they are what a bug report
+/// needs and neither carries user content. The octets are `.private`: a
+/// ULCP payload is message plaintext.
+enum UlcpFrameDiagnostic {
+    /// The stable cause name for an error out of the Rust core.
+    ///
+    /// `MobileError` is a Swift enum, so bridging it through `NSError`
+    /// the way `BluetoothErrorText` does would yield a synthesized domain
+    /// and an ordinal. The case name is the diagnostic.
+    static func cause(_ error: any Error) -> String {
+        if let error = error as? MobileError {
+            return String(describing: error)
+        }
+        return BluetoothErrorText.diagnostic(error)
+    }
+
+    /// The frame's header, command, and lengths, named by the Rust core
+    /// so the log reads `PropIs` rather than `6`.
+    static func structure(_ frame: Data) -> String {
+        describeUlcpFrame(bytes: frame)
+    }
+
+    /// Bounded hex for the octets themselves. Truncated because a frame
+    /// runs to 512 bytes and the head is where framing faults live.
+    static func hex(_ bytes: Data, limit: Int = 64) -> String {
+        let shown = bytes.prefix(limit).map { String(format: "%02x", $0) }.joined()
+        return bytes.count > limit ? "\(shown)… (\(bytes.count)B)" : shown
+    }
+}
+
 /// One transport carrying whole ULCP frames.
 ///
 /// The session above it owns the protocol; a link owns only the physical
@@ -25,6 +61,12 @@ protocol UlcpFrameLink: AnyObject {
     /// it; BLE can be connected to a radio it has not adopted.
     var linkIsBoundRadio: Bool { get }
 
+    /// True when this transport will bring the link back by itself after
+    /// an invalidate. A session with no standing reconnect behind it
+    /// must not report a fault as transient: nothing would undo it, and
+    /// the failure the user needs to see would never be published.
+    var linkCanReconnect: Bool { get }
+
     /// Queue one complete ULCP frame.
     ///
     /// `rawTransactionID` tags the write carrying a raw transmit, so a
@@ -40,7 +82,14 @@ protocol UlcpFrameLink: AnyObject {
 
     /// Tear the transport down: the session state behind it is no longer
     /// trustworthy.
-    func linkInvalidate()
+    ///
+    /// `retrying` says whether the session intends to come back. When it
+    /// does, the transport takes its ordinary link-loss path — the
+    /// standing reconnect, the reconnecting state — because that is what
+    /// this is. When it does not, the transport stops trying and
+    /// preserves the failure the session has already published, which an
+    /// ordinary disconnect notice would otherwise overwrite.
+    func linkInvalidate(retrying: Bool)
 
     /// The session reached `.attached`. Where a transport persists which
     /// radio the app is bound to, this is when it does so.
@@ -76,6 +125,26 @@ class UlcpRadioSession: NSObject, @unchecked Sendable {
     /// or deadline armed against one link cannot fire against the next.
     private(set) var linkGeneration: UInt64 = 0
 
+    /// Reconnects left to spend on a fatal protocol fault.
+    ///
+    /// Most of these faults are one bad frame — a corrupted segment, a
+    /// response that arrived after its transaction was retired — and the
+    /// link comes back clean. A radio whose firmware genuinely disagrees
+    /// with this app fails the same way every time, so the budget is
+    /// small: reconnecting past it only hides the disagreement behind
+    /// three teardowns instead of one.
+    ///
+    /// Refilled by an attach that *held*, so a fault after hours of
+    /// healthy session gets its own budget rather than inheriting a spent
+    /// one — while a radio that attaches and immediately faults cannot
+    /// refill its way into reconnecting forever.
+    private var fatalFaultRetriesRemaining = UlcpRadioSession.fatalFaultRetryBudget
+
+    /// Monotonic stamp of the attach edge, against which that holding is
+    /// measured. Uptime rather than wall clock: a clock adjustment must
+    /// not decide whether a session counted.
+    private var attachedAtUptimeNanoseconds: UInt64?
+
     init(sessionQueue: DispatchQueue) {
         self.sessionQueue = sessionQueue
         super.init()
@@ -86,6 +155,13 @@ class UlcpRadioSession: NSObject, @unchecked Sendable {
     static let peerPingTimeoutMilliseconds: UInt64 = 8_000
     static let logger = Logger(subsystem: "com.umsh.ios", category: "UlcpDevice")
     static let maximumRawTransmitBusyRetries = 20
+    /// Reconnects a fatal protocol fault is worth before the failure sticks.
+    static let fatalFaultRetryBudget = 2
+    /// How long an attach must hold before it earns a fresh retry budget.
+    /// Below this, the attach is part of the failure rather than proof
+    /// against it — a radio that attaches and immediately faults would
+    /// otherwise refill its budget on every cycle and never give up.
+    static let fatalFaultBudgetRefillSeconds: UInt64 = 60
     // The current mobile MAC needs the device's physical TX completion
     // before starting its ACK clock. A larger ULCP window is unsafe until the
     // device itself owns the inter-frame receive/ACK window.
@@ -1291,24 +1367,67 @@ class UlcpRadioSession: NSObject, @unchecked Sendable {
         )
     }
 
+    /// Whether the attach now ending lasted long enough to count as a
+    /// working session, and so to earn this fault a fresh retry budget.
+    ///
+    /// A session that never attached, or attached and fell over inside
+    /// the window, is one continuing failure and keeps spending the
+    /// budget it started with.
+    private func attachHeldLongEnoughToEarnFreshRetries() -> Bool {
+        guard let attachedAt = attachedAtUptimeNanoseconds else { return false }
+        let held = DispatchTime.now().uptimeNanoseconds &- attachedAt
+        return held >= Self.fatalFaultBudgetRefillSeconds * 1_000_000_000
+    }
+
     /// Tear down a ULCP link only when its framing or session state is
     /// no longer trustworthy. Ordinary ULCP status failures and rejected
     /// operations must never come through this path.
-    func terminateConnectionForFatalProtocolError(_ message: String, name: String? = nil) {
-        Self.logger.fault("Fatal ULCP error: \(message, privacy: .public)")
+    ///
+    /// The teardown is not the same as giving up. Most of these faults
+    /// are one bad frame, so the first few spend a retry and come back
+    /// through the transport's ordinary reconnect; only once the budget
+    /// is gone does the failure stick and the UI report it.
+    ///
+    /// `detail` names the cause and the frame's structure for the log;
+    /// `bytes` are the octets that caused it. Neither reaches the UI —
+    /// `message` is the only part a user sees.
+    func terminateConnectionForFatalProtocolError(
+        _ message: String,
+        detail: String? = nil,
+        bytes: Data? = nil,
+        name: String? = nil
+    ) {
+        let octets = bytes.map { UlcpFrameDiagnostic.hex($0) } ?? "none"
+        if attachHeldLongEnoughToEarnFreshRetries() {
+            fatalFaultRetriesRemaining = Self.fatalFaultRetryBudget
+        }
+        attachedAtUptimeNanoseconds = nil
+        let retrying = fatalFaultRetriesRemaining > 0 && link?.linkCanReconnect == true
+        if retrying { fatalFaultRetriesRemaining -= 1 }
+        Self.logger.fault(
+            """
+            Fatal ULCP error: \(message, privacy: .public) \
+            \(detail ?? "cause unrecorded", privacy: .public) \
+            octets=\(octets, privacy: .private) \
+            retries-left=\(self.fatalFaultRetriesRemaining, privacy: .public)
+            """
+        )
         finishPendingOperations(throwing: RadioConnectionError.incompatibleProtocol)
         abandonOutstandingMeshFrames()
         syncAttempt = UUID()
         _ = ulcpSession.reset()
-        snapshot.linkState = .failed
+        // A retry is a reconnect, and says so. Publishing `.failed` for a
+        // teardown the app is about to undo would flash an error the user
+        // cannot act on and that resolves itself a moment later.
+        snapshot.linkState = retrying ? .reconnecting : .failed
         snapshot.name = name ?? snapshot.name
         snapshot.localIdentifier = link?.linkID ?? snapshot.localIdentifier
-        snapshot.problemDescription = message
+        snapshot.problemDescription = retrying ? nil : message
         publish(snapshot)
         // The transport drops whatever it had queued and takes the
-        // connection down, preserving the failure just published rather
-        // than overwriting it with an ordinary disconnect.
-        link?.linkInvalidate()
+        // connection down, either to bring it back or to leave the
+        // failure just published standing.
+        link?.linkInvalidate(retrying: retrying)
     }
 
     /// Report a failed operation without disturbing the transport or the
@@ -1360,7 +1479,11 @@ class UlcpRadioSession: NSObject, @unchecked Sendable {
                 ulcpSession.begin(selectedHostKey: selectedHostKey)
             )
         } catch {
-            terminateConnectionForFatalProtocolError("The ULCP session could not start", name: link?.linkName)
+            terminateConnectionForFatalProtocolError(
+                "The ULCP session could not start",
+                detail: "cause=\(UlcpFrameDiagnostic.cause(error)) stage=begin",
+                name: link?.linkName
+            )
         }
     }
 
@@ -1409,6 +1532,10 @@ class UlcpRadioSession: NSObject, @unchecked Sendable {
             // the MAC coordinator borrow — and every mesh command — parked
             // behind it.
             scheduleMeshPump()
+            // Stamped here, read at the next fault: how long this attach
+            // held is what says whether that fault is a new incident or
+            // the same one still going.
+            attachedAtUptimeNanoseconds = DispatchTime.now().uptimeNanoseconds
         }
         // The device's own answer is the only authoritative name; record it
         // so every disconnected screen can use it instead of the
@@ -2247,12 +2374,50 @@ class UlcpRadioSession: NSObject, @unchecked Sendable {
     }
 
     /// One complete ULCP frame arrived.
+    ///
+    /// Consuming the frame and applying what it produced fail for
+    /// unrelated reasons — a frame this session cannot read, against a
+    /// value inside a frame it read fine — so they are reported apart
+    /// rather than under one message that blames the framing for both.
     func linkDidReceive(frame: Data) {
+        let update: UlcpSessionUpdateRecord
         do {
-            try applySessionUpdate(ulcpSession.consume(frame: frame))
+            update = try ulcpSession.consume(frame: frame)
+        } catch MobileError.UlcpUnexpectedCommand {
+            // A well-formed command this session does not handle — an
+            // unsolicited notification from newer firmware, a
+            // `CMD_PROP_ARE` — is not a broken link. Ignoring it costs at
+            // most one operation that times out; tearing the link down
+            // costs the whole session.
+            Self.logger.notice(
+                """
+                ulcp: ignoring unhandled command \
+                \(UlcpFrameDiagnostic.structure(frame), privacy: .public)
+                """
+            )
+            return
         } catch {
             terminateConnectionForFatalProtocolError(
                 "The radio sent an invalid ULCP frame",
+                detail: """
+                    cause=\(UlcpFrameDiagnostic.cause(error)) \
+                    frame=[\(UlcpFrameDiagnostic.structure(frame))]
+                    """,
+                bytes: frame,
+                name: link?.linkName
+            )
+            return
+        }
+        do {
+            try applySessionUpdate(update)
+        } catch {
+            terminateConnectionForFatalProtocolError(
+                "The radio sent a value the session could not use",
+                detail: """
+                    cause=\(UlcpFrameDiagnostic.cause(error)) \
+                    frame=[\(UlcpFrameDiagnostic.structure(frame))]
+                    """,
+                bytes: frame,
                 name: link?.linkName
             )
         }
@@ -2267,6 +2432,10 @@ class UlcpRadioSession: NSObject, @unchecked Sendable {
     /// of the session.
     func sessionDidLoseLink() {
         linkGeneration &+= 1
+        // The attach is over however it ended. Leaving the stamp behind
+        // would let a fault during the *next* attach's handshake claim
+        // credit for how long the previous one held.
+        attachedAtUptimeNanoseconds = nil
         finishPendingOperations(throwing: RadioConnectionError.radioNotFound)
         _ = ulcpSession.reset()
         abandonOutstandingMeshFrames()

@@ -10,7 +10,7 @@ use umsh_ulcp::{
     gatt::{self, MAX_FRAME, Reassembler},
     gnss::{FixKind, GnssSnapshot},
     hdlc,
-    host::{PropertyNotification, TidAllocator},
+    host::{PropertyNotification, PropertyNotificationError, TidAllocator},
     ids::{
         INTERFACE_TYPE, MAX_AUTO_ANNOUNCE_INTERVAL_S, MIN_AUTO_ANNOUNCE_INTERVAL_S,
         PROTOCOL_MAJOR_VERSION, PROTOCOL_MINOR_VERSION, cap, prop, saved,
@@ -1572,21 +1572,21 @@ impl MobileUlcpSession {
 
     /// Consume one complete ULCP frame and advance the session reducer.
     pub fn consume(&self, frame: Vec<u8>) -> Result<UlcpSessionUpdateRecord, MobileError> {
-        let parsed = Frame::parse(&frame).map_err(|_| MobileError::InvalidUlcpFrame)?;
+        let parsed = Frame::parse(&frame).map_err(|_| MobileError::UlcpFrameUnparsable)?;
         if parsed.command() == Some(Cmd::StrRecv) {
             if parsed.header.tid() != frame::TID_UNSOLICITED {
-                return Err(MobileError::InvalidUlcpFrame);
+                return Err(MobileError::UlcpUnexpectedFrame);
             }
-            let payload =
-                StreamPayload::parse(parsed.payload).map_err(|_| MobileError::InvalidUlcpFrame)?;
+            let payload = StreamPayload::parse(parsed.payload)
+                .map_err(|_| MobileError::UlcpMalformedPayload)?;
             if payload.stream != umsh_ulcp::ids::stream::PHY_RAW {
-                return Err(MobileError::InvalidUlcpFrame);
+                return Err(MobileError::UlcpUnexpectedFrame);
             }
             let metadata = BufferedRxMeta::decode(payload.metadata)
-                .map_err(|_| MobileError::InvalidUlcpFrame)?;
+                .map_err(|_| MobileError::UlcpMalformedPayload)?;
             let mut state = self.inner.lock().expect("ULCP session mutex poisoned");
             if state.stage == SessionStage::Idle {
-                return Err(MobileError::InvalidUlcpFrame);
+                return Err(MobileError::UlcpUnexpectedFrame);
             }
             return Ok(state.update_with_received(vec![UlcpReceivedFrameRecord {
                 data: payload.data.to_vec(),
@@ -1625,7 +1625,7 @@ impl MobileUlcpSession {
         let expected = state
             .expected
             .remove(&response.transaction_id)
-            .ok_or(MobileError::InvalidUlcpFrame)?;
+            .ok_or(MobileError::UlcpUnexpectedFrame)?;
         match expected {
             ExpectedResponse::Property(property) => {
                 if response.property_id == prop::LAST_STATUS && property != prop::LAST_STATUS {
@@ -1656,7 +1656,7 @@ impl MobileUlcpSession {
                     }
                 } else {
                     if response.property_id != property || response.command != Cmd::PropIs as u8 {
-                        return Err(MobileError::InvalidUlcpFrame);
+                        return Err(MobileError::UlcpMismatchedResponse);
                     }
                     state.responses.insert(property, response.clone());
                     state.apply_property(&response)?;
@@ -1673,7 +1673,7 @@ impl MobileUlcpSession {
                     if response.property_id != prop::HOST_KEY
                         || response.command != Cmd::PropIs as u8
                     {
-                        return Err(MobileError::InvalidUlcpFrame);
+                        return Err(MobileError::UlcpMismatchedResponse);
                     }
                     // Whatever the device reports is its host key, even if
                     // it is not the one just written — a claim that did not
@@ -1696,7 +1696,7 @@ impl MobileUlcpSession {
                 if response.property_id != prop::LAST_STATUS
                     || response.command != Cmd::PropIs as u8
                 {
-                    return Err(MobileError::InvalidUlcpFrame);
+                    return Err(MobileError::UlcpMismatchedResponse);
                 }
                 if inspect_ulcp_status(response.value.clone())? != 0 {
                     operation_error = Some(ulcp_operation_error(
@@ -1721,7 +1721,7 @@ impl MobileUlcpSession {
                     state.responses.remove(&property);
                 } else if response.property_id != property || response.command != Cmd::PropIs as u8
                 {
-                    return Err(MobileError::InvalidUlcpFrame);
+                    return Err(MobileError::UlcpMismatchedResponse);
                 } else {
                     // A `CMD_PROP_IS` is the device's authoritative value,
                     // whatever was written. It reports what the device holds
@@ -1739,7 +1739,7 @@ impl MobileUlcpSession {
                 if response.property_id != prop::LAST_STATUS
                     || response.command != Cmd::PropIs as u8
                 {
-                    return Err(MobileError::InvalidUlcpFrame);
+                    return Err(MobileError::UlcpMismatchedResponse);
                 }
                 if inspect_ulcp_status(response.value.clone())? != 0 {
                     operation_error = Some(ulcp_operation_error(
@@ -1755,7 +1755,7 @@ impl MobileUlcpSession {
                 if response.property_id != prop::LAST_STATUS
                     || response.command != Cmd::PropIs as u8
                 {
-                    return Err(MobileError::InvalidUlcpFrame);
+                    return Err(MobileError::UlcpMismatchedResponse);
                 }
                 let status_code = inspect_ulcp_status(response.value)?;
                 let status = umsh_ulcp::Status(status_code);
@@ -1795,7 +1795,7 @@ impl MobileUlcpSession {
                 } else if response.property_id != prop::HOST_CHANNEL_KEYS
                     || response.command != Cmd::PropInserted as u8
                 {
-                    return Err(MobileError::InvalidUlcpFrame);
+                    return Err(MobileError::UlcpMismatchedResponse);
                 }
                 if let Some(frame) = state.next_host_channel_insert(remaining) {
                     outbound.push(frame);
@@ -1812,7 +1812,7 @@ impl MobileUlcpSession {
                 } else if response.property_id != prop::HOST_CHANNEL_KEYS
                     || response.command != Cmd::PropIs as u8
                 {
-                    return Err(MobileError::InvalidUlcpFrame);
+                    return Err(MobileError::UlcpMismatchedResponse);
                 }
                 state.refresh_attached_snapshot(None)?;
             }
@@ -1833,7 +1833,7 @@ impl MobileUlcpSession {
                         || response.command != Cmd::PropInserted as u8
                         || response.value != id
                     {
-                        return Err(MobileError::InvalidUlcpFrame);
+                        return Err(MobileError::UlcpMismatchedResponse);
                     }
                     state.patch_dev_channels(&id, true);
                     if state.has_capability(cap::SAVE)? {
@@ -1862,7 +1862,7 @@ impl MobileUlcpSession {
                         || response.command != Cmd::PropRemoved as u8
                         || response.value != id
                     {
-                        return Err(MobileError::InvalidUlcpFrame);
+                        return Err(MobileError::UlcpMismatchedResponse);
                     }
                     state.patch_dev_channels(&id, false);
                     if state.has_capability(cap::SAVE)? {
@@ -1879,7 +1879,7 @@ impl MobileUlcpSession {
                 if response.property_id != prop::LAST_STATUS
                     || response.command != Cmd::PropIs as u8
                 {
-                    return Err(MobileError::InvalidUlcpFrame);
+                    return Err(MobileError::UlcpMismatchedResponse);
                 }
                 if inspect_ulcp_status(response.value.clone())? != 0 {
                     operation_error = Some(ulcp_operation_error(
@@ -1907,7 +1907,7 @@ impl MobileUlcpSession {
                         || response.command != Cmd::PropInserted as u8
                         || response.value != item
                     {
-                        return Err(MobileError::InvalidUlcpFrame);
+                        return Err(MobileError::UlcpMismatchedResponse);
                     }
                     state.patch_dev_keys(property, &item, true);
                     if state.has_capability(cap::SAVE)? {
@@ -1939,7 +1939,7 @@ impl MobileUlcpSession {
                         || response.command != Cmd::PropRemoved as u8
                         || response.value != item
                     {
-                        return Err(MobileError::InvalidUlcpFrame);
+                        return Err(MobileError::UlcpMismatchedResponse);
                     }
                     state.patch_dev_keys(property, &item, false);
                     if state.has_capability(cap::SAVE)? {
@@ -1956,7 +1956,7 @@ impl MobileUlcpSession {
                 if response.property_id != prop::LAST_STATUS
                     || response.command != Cmd::PropIs as u8
                 {
-                    return Err(MobileError::InvalidUlcpFrame);
+                    return Err(MobileError::UlcpMismatchedResponse);
                 }
                 if inspect_ulcp_status(response.value.clone())? != 0 {
                     // The live mutation stuck; only persistence failed. The
@@ -1983,7 +1983,7 @@ impl MobileUlcpSession {
                     });
                 } else if response.property_id != property || response.command != Cmd::PropIs as u8
                 {
-                    return Err(MobileError::InvalidUlcpFrame);
+                    return Err(MobileError::UlcpMismatchedResponse);
                 } else {
                     state.responses.insert(property, response.clone());
                     state.apply_property(&response)?;
@@ -2009,7 +2009,7 @@ impl MobileUlcpSession {
                     });
                 } else if response.property_id != property || response.command != Cmd::PropIs as u8
                 {
-                    return Err(MobileError::InvalidUlcpFrame);
+                    return Err(MobileError::UlcpMismatchedResponse);
                 } else {
                     // The echo is the device's authoritative value, whatever
                     // was written — see the ConfigurationProperty arm.
@@ -2027,7 +2027,7 @@ impl MobileUlcpSession {
                 if response.property_id != prop::LAST_STATUS
                     || response.command != Cmd::PropIs as u8
                 {
-                    return Err(MobileError::InvalidUlcpFrame);
+                    return Err(MobileError::UlcpMismatchedResponse);
                 }
                 let status_code = inspect_ulcp_status(response.value.clone())?;
                 if let Some(op) = state.management.as_mut() {
@@ -4476,7 +4476,7 @@ pub fn ulcp_gatt_segments(
     let segment_payload = usize::from(maximum_value_length)
         .checked_sub(1)
         .filter(|length| *length > 0)
-        .ok_or(MobileError::InvalidGattSegment)?;
+        .ok_or(MobileError::GattMtuTooSmall)?;
     if frame.len() > MAX_FRAME {
         return Err(MobileError::InvalidUlcpFrame);
     }
@@ -4709,10 +4709,44 @@ fn ulcp_operation_error(
     })
 }
 
+/// Summarize a frame's header for a diagnostic log.
+///
+/// Deliberately structural: transaction, command, property, and lengths,
+/// never payload bytes. A platform logging this alongside a rejected
+/// frame's cause learns what arrived without putting message contents
+/// in the system log.
+#[uniffi::export]
+pub fn describe_ulcp_frame(bytes: Vec<u8>) -> String {
+    let Ok(parsed) = Frame::parse(&bytes) else {
+        return format!("unparsable len={}", bytes.len());
+    };
+    let command = match parsed.command() {
+        Some(cmd) => format!("{cmd:?}({})", parsed.cmd),
+        None => format!("unknown({})", parsed.cmd),
+    };
+    let property = match PropertyNotification::parse(&bytes) {
+        Ok(notification) => format!(
+            " prop=0x{:04x} value={}B",
+            notification.key,
+            notification.value.len()
+        ),
+        Err(_) => String::new(),
+    };
+    format!(
+        "tid={} cmd={command}{property} len={}",
+        parsed.header.tid(),
+        bytes.len()
+    )
+}
+
 /// Parse and validate a property notification or response.
 #[uniffi::export]
 pub fn inspect_ulcp_property_frame(bytes: Vec<u8>) -> Result<UlcpPropertyFrameRecord, MobileError> {
-    let parsed = PropertyNotification::parse(&bytes).map_err(|_| MobileError::InvalidUlcpFrame)?;
+    let parsed = PropertyNotification::parse(&bytes).map_err(|cause| match cause {
+        PropertyNotificationError::MalformedFrame => MobileError::UlcpFrameUnparsable,
+        PropertyNotificationError::UnexpectedCommand => MobileError::UlcpUnexpectedCommand,
+        PropertyNotificationError::MalformedPayload => MobileError::UlcpMalformedPayload,
+    })?;
     Ok(UlcpPropertyFrameRecord {
         transaction_id: parsed.tid,
         command: parsed.kind.command() as u8,
@@ -4803,7 +4837,7 @@ impl MobileGattReassembler {
         match reassembler.push(&segment) {
             None => Ok(None),
             Some(Ok(frame)) => Ok(Some(frame.to_vec())),
-            Some(Err(_)) => Err(MobileError::InvalidGattSegment),
+            Some(Err(cause)) => Err(cause.into()),
         }
     }
 
@@ -5204,11 +5238,28 @@ mod tests {
         );
         assert_eq!(
             ulcp_gatt_segments(vec![1], 1),
-            Err(MobileError::InvalidGattSegment)
+            Err(MobileError::GattMtuTooSmall)
         );
         assert_eq!(
             MobileGattReassembler::new().push(vec![]),
-            Err(MobileError::InvalidGattSegment)
+            Err(MobileError::GattSegmentRunt)
+        );
+        // Each reassembly failure names itself, so a fatal link teardown
+        // says which one happened rather than "invalid segment".
+        let receiver = MobileGattReassembler::new();
+        assert_eq!(
+            receiver.push(vec![0xC0]),
+            Err(MobileError::GattSegmentOrphan)
+        );
+        assert_eq!(
+            receiver.push(vec![0x08]),
+            Err(MobileError::GattSegmentReservedBits)
+        );
+        let mut oversized = vec![0u8; MAX_FRAME + 2];
+        oversized[0] = gatt::SAR_FIRST << 6;
+        assert_eq!(
+            receiver.push(oversized),
+            Err(MobileError::GattSegmentTooLong)
         );
     }
 
@@ -5977,8 +6028,44 @@ mod tests {
         let (tid, _) = property_request(&begin.outbound_frames[0]);
         assert_eq!(
             session.consume(property_response(tid, prop::PHY_FREQ, &[0; 4])),
-            Err(MobileError::InvalidUlcpFrame)
+            Err(MobileError::UlcpMismatchedResponse)
         );
+        // The rejection consumed the expectation, so a second response on
+        // that transaction is a different fault — nobody is waiting on it —
+        // and says so rather than reusing one catch-all.
+        assert_eq!(
+            session.consume(property_response(tid, prop::PHY_FREQ, &[0; 4])),
+            Err(MobileError::UlcpUnexpectedFrame)
+        );
+    }
+
+    #[test]
+    fn received_frame_causes_are_distinguishable() {
+        let session = MobileUlcpSession::new();
+        assert_eq!(
+            session.consume(vec![0x00, 0x06]),
+            Err(MobileError::UlcpFrameUnparsable)
+        );
+        // A well-formed command this session does not handle — a newer
+        // firmware's unsolicited notification, or a `CMD_PROP_ARE` — is
+        // named as such, not reported as a corrupt frame.
+        let mut save = [0u8; 8];
+        let len = frame::save(&mut save, 1).unwrap();
+        assert_eq!(
+            session.consume(save[..len].to_vec()),
+            Err(MobileError::UlcpUnexpectedCommand)
+        );
+    }
+
+    #[test]
+    fn frame_descriptions_name_the_command_without_payload_bytes() {
+        let mut bytes = [0u8; 16];
+        let len = frame::prop_is(&mut bytes, 3, 0x1234, &[5, 6]).unwrap();
+        assert_eq!(
+            describe_ulcp_frame(bytes[..len].to_vec()),
+            "tid=3 cmd=PropIs(6) prop=0x1234 value=2B len=6"
+        );
+        assert_eq!(describe_ulcp_frame(vec![0x00]), "unparsable len=1");
     }
 
     #[test]
