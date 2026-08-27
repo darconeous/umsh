@@ -22,7 +22,7 @@ costs of migration before considering implementing it.
   shared `nrf52840` base.
 - `umsh/` — umbrella crate re-exporting the workspace; defines the `Platform` trait + Tokio/Embassy adapters. **Library only** — host binaries live in `tools/`, which is what keeps clap/rustyline out of the umbrella's dependency tree.
 - `firmware/` — nRF52840 firmware (thumbv7em, UF2/DFU). **One shipping image per board** (t1000e / techo / sensecap-solar / wio-tracker-l1 / xiao-nrf52) — there is no separate repeater build; role is configuration. All five are thin manifests over the shared `firmware/nrf52-tracker/src/main.rs`, differing only by their `board-*` feature. The existing `*-console` builds are per-board bringup harnesses, not products; **new boards do not get one** (xiao-nrf52 ships the device image only).
-- `firmware-esp32/` — **separate cargo workspace** for Xtensa boards (Heltec LoRa32 V2 and V3). See `firmware-esp32/CLAUDE.md` for its toolchain.
+- `firmware-esp32/` — **separate cargo workspace** for Xtensa boards (Heltec LoRa32 V2 and V3, LILYGO T-Beam Supreme). See `firmware-esp32/CLAUDE.md` for its toolchain.
 - `apps/ios/` — SwiftUI app; `packages/UMSHMobileCore` — UniFFI Swift package.
 - `tools/` — host binaries and dev tooling (`crates/` is reserved for library crates):
   - `umshctl` — the radio tool (clap + rustyline; capture is a subcommand)

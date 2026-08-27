@@ -7,7 +7,7 @@
 
 **UMSH** is an experimental, LoRa-oriented mesh protocol designed from the ground up with strong cryptography, clean layer separation, and strict bandwidth discipline. The primary use case it enables is decentralized, wide-area text chat and location/sensor reporting.
 
-Originally intended as a proposal for a "[MeshCore](https://github.com/meshcore-dev/MeshCore) 2.0", UMSH grew out of a simple question: what would a cryptographically addressed LoRa mesh protocol look like with proper security and clean architecture as primary design goals? Inspired by [MeshCore](https://github.com/meshcore-dev/MeshCore), it started as a thought experiment addressing the [critical shortcomings](https://darconeous.github.io/umsh/docs/protocol/meshcore-comparison.html#cryptography) in that protocol that would practically require backward-incompatible changes to fix. What began as a toy protocol has since been developed into a [comprehensive specification](https://darconeous.github.io/umsh/docs/protocol/), reference implementation, firmware for six boards, and an iOS app.
+Originally intended as a proposal for a "[MeshCore](https://github.com/meshcore-dev/MeshCore) 2.0", UMSH grew out of a simple question: what would a cryptographically addressed LoRa mesh protocol look like with proper security and clean architecture as primary design goals? Inspired by [MeshCore](https://github.com/meshcore-dev/MeshCore), it started as a thought experiment addressing the [critical shortcomings](https://darconeous.github.io/umsh/docs/protocol/meshcore-comparison.html#cryptography) in that protocol that would practically require backward-incompatible changes to fix. What began as a toy protocol has since been developed into a [comprehensive specification](https://darconeous.github.io/umsh/docs/protocol/), reference implementation, firmware for seven boards, and an iOS app.
 
 > [!NOTE]
 > Practically all of the content in this repository was written with the assistance of an LLM.
@@ -130,10 +130,11 @@ The Wireshark integration has its own targets, covered below.
 | Seeed Wio Tracker L1 / L1 Pro | nRF52840 | `make flash-wio-tracker-l1` |
 | Seeed XIAO nRF52840 + Wio-SX1262 | nRF52840 | `make flash-xiao-nrf52` |
 | Heltec WiFi LoRa 32 V3 | ESP32-S3 | `make flash-heltec-v3` |
+| LilyGO T-Beam Supreme (SX1262) | ESP32-S3 | `make flash-tbeam-supreme` |
 
-The Heltec is the odd one out: Espressif's Xtensa chips need a Rust fork rustup does not
-carry, installed once per machine with `cargo install espup espflash && espup install`
-([firmware-esp32/README.md](firmware-esp32/README.md)). Its `make` targets check for that
+The two Espressif boards are the odd ones out: Xtensa chips need a Rust fork rustup does
+not carry, installed once per machine with `cargo install espup espflash && espup install`
+([firmware-esp32/README.md](firmware-esp32/README.md)). Their `make` targets check for that
 first and say what to run, so a machine without it fails before the build rather than
 inside it.
 

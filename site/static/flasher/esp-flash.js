@@ -3,14 +3,16 @@
  *
  * The release image is a single merged binary written at offset 0 — on the
  * ESP32-S3 the second-stage bootloader lives at 0x0, not at 0x1000 as on the
- * classic ESP32. `make merged-bin-heltec-v3` builds it with `--skip-padding`,
+ * classic ESP32. `make merged-bin-<board>` builds it with `--skip-padding`,
  * so it stops short of the `umsh` data partition at 0x300000 and a flash does
  * not wipe the device's stored identity. Everything below that mark is
  * rewritten, including the partition table.
  *
- * The CP2102 asserts DTR/RTS to drop the chip into its ROM bootloader, so
- * there is no button sequence, and the ROM is in mask ROM: this path cannot
- * brick the board.
+ * DTR/RTS drops the chip into its ROM bootloader, so there is no button
+ * sequence — whether those lines arrive over a CP2102 bridge, as on the
+ * Heltec V3, or over the S3's own USB-Serial-JTAG peripheral, as on the
+ * T-Beam Supreme. Either way the ROM is mask ROM: this path cannot brick
+ * the board.
  */
 
 import { ESPLoader, Transport } from "./vendor/esptool-js/esptool.js";

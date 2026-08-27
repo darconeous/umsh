@@ -21,7 +21,7 @@
 	esp-toolchain-check espflash-check \
 	dfu-zip-techo dfu-zip-t1000e dfu-zip-sensecap-solar \
 	dfu-zip-wio-tracker-l1 dfu-zip-xiao-nrf52 \
-	merged-bin-heltec-v3 \
+	merged-bin-heltec-v3 merged-bin-tbeam-supreme \
 	release-artifacts release-stage release-publish release-mirror \
 	ios-mobile-core ios-archive ios-upload \
 	install-umshctl install-umsh-bridge install-dissector install-extcap \
@@ -104,9 +104,14 @@ endef
 UMSH_FW_VERSION ?=
 export UMSH_FW_VERSION
 
-# The five boards that ship a UF2 and a DFU package. heltec-v3 is handled
-# on its own — it has no UF2 bootloader and a different artifact entirely.
+# The five boards that ship a UF2 and a DFU package.
 RELEASE_BOARDS_NRF52 = techo t1000e sensecap-solar wio-tracker-l1 xiao-nrf52
+
+# The Espressif boards, which ship a merged `.bin` instead: no UF2
+# bootloader, so no family id or app base, and a different artifact
+# entirely. Both are ESP32-S3, which `merged-bin-%` assumes. heltec-v2 is
+# not here — it is a classic ESP32 and has no working image yet.
+RELEASE_BOARDS_ESP32 = heltec-v3 tbeam-supreme
 
 build-techo-console:
 	cd firmware/techo-console && cargo build --release
@@ -309,7 +314,7 @@ ESPFLASH_PARTITIONS = --partition-table firmware-esp32/partitions-umsh.csv
 # points LIBCLANG_PATH at the Xtensa clang, without which the build fails in
 # a way that looks nothing like its cause. Sourcing it here rather than
 # expecting it in the caller's shell is what lets `release-artifacts` build
-# all six boards in one invocation. Guarded, so a machine that installed the
+# every board in one invocation. Guarded, so a machine that installed the
 # toolchain some other way is unaffected. (Unrelated to the "don't set
 # LIBCLANG_PATH" rule in CLAUDE.md, which is about the nRF52 workspace's
 # bindgen; the Xtensa toolchain genuinely needs it.)
@@ -406,12 +411,15 @@ flash-tbeam-supreme: espflash-check build-tbeam-supreme
 # straight over the `umsh` data partition at 0x300000 — every device would
 # lose its identity and saved state on update. With it the image stops after
 # the application and 0x300000 is never touched.
-merged-bin-heltec-v3: espflash-check build-heltec-v3
+#
+# `-s 4mb` is the partition table's layout, not the chip's flash size —
+# both boards fit 8 MiB and neither claims past 0x310000.
+$(addprefix merged-bin-,$(RELEASE_BOARDS_ESP32)): merged-bin-%: espflash-check build-%
 	@mkdir -p $(FW_DIR)
 	espflash save-image --chip esp32s3 --merge --skip-padding -s 4mb \
 		$(ESPFLASH_PARTITIONS) \
-		$(ESP32S3_TARGET_DIR)/firmware-heltec-v3 \
-		$(FW_DIR)/umsh-heltec-v3-$(FW_VERSION).bin
+		$(ESP32S3_TARGET_DIR)/firmware-$* \
+		$(FW_DIR)/umsh-$*-$(FW_VERSION).bin
 
 # ─── Firmware releases ───────────────────────────────────────────────────────
 #
@@ -455,7 +463,8 @@ release-artifacts:
 # depends on its build-*, which is also what writes the UF2 the copy below
 # picks up — the release never re-converts an image, it ships the one the
 # build produced.
-release-stage: $(addprefix dfu-zip-,$(RELEASE_BOARDS_NRF52)) merged-bin-heltec-v3
+release-stage: $(addprefix dfu-zip-,$(RELEASE_BOARDS_NRF52)) \
+               $(addprefix merged-bin-,$(RELEASE_BOARDS_ESP32))
 	@for board in $(RELEASE_BOARDS_NRF52); do \
 		cp $(TARGET_DIR)/firmware-$$board.uf2 \
 			$(FW_DIR)/umsh-$$board-$(FW_VERSION).uf2 || exit 1; \
@@ -476,7 +485,7 @@ release-publish:
 		--notes "Technology preview. See docs/firmware-releases.md for what is in here and how to flash it." \
 		$(FW_DIR)/umsh-*-$(FW_VERSION).uf2 \
 		$(FW_DIR)/umsh-*-$(FW_VERSION)-dfu.zip \
-		$(FW_DIR)/umsh-heltec-v3-$(FW_VERSION).bin \
+		$(FW_DIR)/umsh-*-$(FW_VERSION).bin \
 		$(FW_DIR)/manifest.json \
 		$(FW_DIR)/SHA256SUMS
 	@echo
@@ -504,7 +513,7 @@ release-mirror:
 		git worktree remove $(GH_PAGES_WT); exit 1; }
 	mkdir -p $(GH_PAGES_WT)/firmware/$(FW_VERSION)
 	cp $(FW_DIR)/umsh-*-$(FW_VERSION)-dfu.zip \
-		$(FW_DIR)/umsh-heltec-v3-$(FW_VERSION).bin \
+		$(FW_DIR)/umsh-*-$(FW_VERSION).bin \
 		$(FW_DIR)/manifest.json \
 		$(GH_PAGES_WT)/firmware/$(FW_VERSION)/
 	scripts/release.py --index-mirror $(GH_PAGES_WT)/firmware --keep $(MIRROR_KEEP)

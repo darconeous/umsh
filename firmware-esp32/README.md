@@ -1,8 +1,10 @@
 # firmware-esp32 — Espressif (Xtensa) sibling workspace
 
 Firmware and BSPs for Espressif targets: the
-[Heltec WiFi LoRa 32 V3](../docs/hardware/heltec-lora32-v3-hardware.md) (ESP32-S3)
-and the [Heltec WiFi LoRa 32 V2](../docs/hardware/heltec-lora32-v2-hardware.md)
+[Heltec WiFi LoRa 32 V3](../docs/hardware/heltec-lora32-v3-hardware.md) and the
+[LILYGO T-Beam Supreme](../docs/hardware/lilygo-t-beam-supreme-hardware.md)
+(both ESP32-S3), and the
+[Heltec WiFi LoRa 32 V2](../docs/hardware/heltec-lora32-v2-hardware.md)
 (classic ESP32). This is a separate cargo workspace because the
 Xtensa chips need the Xtensa Rust fork (`rust-toolchain.toml` here pins
 `channel = "esp"`), which cannot coexist with the root workspace's toolchain
@@ -30,6 +32,8 @@ make flash-heltec-v3             # espflash over the CP2102, then monitor
 make flash-heltec-v3-console ESPFLASH_PORT=/dev/cu.usbserial-0001
 make build-heltec-v2
 make flash-heltec-v2
+make build-tbeam-supreme
+make flash-tbeam-supreme     # espflash over native USB, then monitor
 ```
 
 The workspace `.cargo/config.toml` carries only chip-agnostic settings

@@ -132,6 +132,38 @@ quirks = [
 ]
 
 [[boards]]
+id = "tbeam-supreme"
+name = "T-Beam Supreme"
+vendor = "LilyGO"
+category = "companion"
+status = "proven"
+status_note = "Validated on hardware, including the display, GNSS, and over-the-air radio work."
+blurb = """
+The best-equipped board UMSH runs on: an OLED display, a GNSS receiver, a \
+real-time clock, an 18650 holder, and a power management chip that owns \
+every rail—so "off" is genuinely off, and the board reports what its battery \
+is doing. Sold with several different radios; UMSH runs on the SX1262 \
+version."""
+mcu = "Espressif ESP32-S3"
+radio = "Semtech SX1262"
+gnss = "Quectel L76K or u-blox MAX-M10, depending on the variant"
+display = "1.3\" OLED, 128×64"
+battery = "18650 cell with onboard charger and fuel gauge"
+extras = "Real-time clock, environmental sensor, IMU, magnetometer, microSD"
+vendor_url = "https://lilygo.cc/en-us/products/t-beam-supreme"
+photo = "tbeam-supreme.jpg"
+
+[boards.flash]
+make_target = "flash-tbeam-supreme"
+methods = ["esp-serial"]
+chip = "ESP32-S3"
+dfu_entry = "None needed—the board enters its ROM bootloader on its own when the flashing tool asserts the USB serial control lines. If that ever fails, hold BOOT, tap RESET, release BOOT."
+quirks = [
+  "Building this board needs Espressif's Xtensa Rust toolchain, installed with <code>espup</code>.",
+  "Only the SX1262 variant is supported. The LR1121 version needs a different radio driver and is not built.",
+]
+
+[[boards]]
 id = "sensecap-solar"
 name = "SenseCAP Solar Node P1"
 vendor = "Seeed Studio"

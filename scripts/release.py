@@ -80,6 +80,24 @@ RELEASE_BOARDS = {
             "partition_table": "partitions-umsh.csv",
         },
     },
+    "tbeam-supreme": {
+        "chip": "esp32s3",
+        "elf": "firmware-tbeam-supreme",
+        # Names the radio, because `name` is also the PROP_DEV_MODEL string
+        # and the Supreme ships with three different ones. The other two
+        # would report something else, and should not match this entry.
+        "name": "LILYGO T-Beam Supreme SX1262",
+        "flash_methods": ["esp-serial"],
+        "esp": {
+            # 8 MiB of flash is fitted, but the shared partition table is
+            # laid out for 4 MB and the image is built to match; claiming
+            # the rest is a separate change.
+            "chip": "esp32s3",
+            "offset": "0x0",
+            "flash_size": "4MB",
+            "partition_table": "partitions-umsh.csv",
+        },
+    },
 }
 
 

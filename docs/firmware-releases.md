@@ -66,7 +66,7 @@ rejected rather than quietly missing the tag by one prefix.
 
 `release-artifacts` refuses to run unless the working tree is clean, the
 annotated tag exists, and `HEAD` is exactly at it — `git describe` has no way
-to warn you about any of those on its own. It builds all six shipping images,
+to warn you about any of those on its own. It builds all seven shipping images,
 converts them, and writes `manifest.json` and `SHA256SUMS` into
 `target/firmware-release/<version>/`, where `<version>` is the tag without its
 `fw-` prefix.
@@ -91,6 +91,7 @@ bringup harnesses, not products.
 | `wio-tracker-l1` | nRF52840 | `.uf2`, `-dfu.zip` |
 | `xiao-nrf52` | nRF52840 | `.uf2`, `-dfu.zip` |
 | `heltec-v3` | ESP32-S3 | `.bin` (merged, written at `0x0`) |
+| `tbeam-supreme` | ESP32-S3 | `.bin` (merged, written at `0x0`) |
 
 Named `umsh-<board>-<version>.<ext>`. Board ids match the `BOARDS` presets in
 `scripts/firmware_image.py`, the `make` target suffixes, and
@@ -130,6 +131,10 @@ espflash save-image --chip esp32s3 --merge --skip-padding -s 4mb \
     --partition-table firmware-esp32/partitions-umsh.csv <ELF> <OUT.bin>
 ```
 
+`-s 4mb` is the partition table's layout rather than the chip's flash size.
+Both released Espressif boards fit 8 MiB and neither claims past `0x310000`;
+widening the table is a separate, deliberate change.
+
 `--skip-padding` is load-bearing. Without it espflash pads the image out to
 the full flash size with `0xFF`, and writing that at `0x0` runs straight over
 the `umsh` data partition at `0x300000` — every device would lose its
@@ -157,7 +162,7 @@ same-origin into the `gh-pages` tree, whose ownership map reserves
 | `/firmware/releases.json` | every release — the mirrored versions, newest first |
 | `/firmware/<version>/manifest.json` | never, once written |
 | `/firmware/<version>/umsh-<board>-<version>-dfu.zip` | never |
-| `/firmware/<version>/umsh-heltec-v3-<version>.bin` | never |
+| `/firmware/<version>/umsh-<board>-<version>.bin` | never |
 
 `MIRROR_KEEP` (default 3) versions are kept so a bad release can be backed
 out from the flasher itself; older ones are pruned from the tree and remain

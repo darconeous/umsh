@@ -152,7 +152,11 @@ function renderFirmwareStep() {
   elements["flasher-file"].accept = isEsp(board) ? ".bin" : ".zip";
   elements["flasher-file-hint"].hidden = !custom;
   elements["flasher-file-hint"].innerHTML = isEsp(board)
-    ? "For developers: a merged image, as <code>make merged-bin-heltec-v3</code> writes it — <code>umsh-heltec-v3-&lt;version&gt;.bin</code>."
+    ? "For developers: a merged image, as <code>make merged-bin-" +
+      board.id +
+      "</code> writes it — <code>umsh-" +
+      board.id +
+      "-&lt;version&gt;.bin</code>."
     : "For developers: a DFU package, as <code>make dfu-zip-" +
       board.id +
       "</code> writes it — <code>umsh-" +
