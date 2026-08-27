@@ -1276,6 +1276,13 @@ impl<P: TextProfile, const SLOTS: usize, const PAGES: usize> Engine<P, SLOTS, PA
             if self.fill_gap_with_edit(envelope, key, original_id, content.body) {
                 return;
             }
+            // The edit supersedes the original outright, resolved or not. A
+            // late copy of that original — a repeater can still be retrying
+            // frames the sender abandoned — must render as a duplicate, not
+            // as a second message beside the edited one.
+            if let Some(stream) = self.inbound.get_mut(&key) {
+                stream.seen.insert(original_id);
+            }
             // Edits and deletes target the sender's own stream.
             let original = self
                 .inbound
@@ -1564,6 +1571,11 @@ impl<P: TextProfile, const SLOTS: usize, const PAGES: usize> Engine<P, SLOTS, PA
             if let Some(stream) = self.inbound.get_mut(&key) {
                 original_id = stream.edit_refs.resolve(original_id);
                 stream.edit_refs.record(id, original_id);
+            }
+            // As in the unfragmented path: the superseded original must not
+            // render beside the edit if a copy of it straggles in late.
+            if let Some(stream) = self.inbound.get_mut(&key) {
+                stream.seen.insert(original_id);
             }
             let original = self
                 .inbound

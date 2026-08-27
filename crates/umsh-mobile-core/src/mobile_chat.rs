@@ -528,11 +528,25 @@ impl MobileChatState {
         let mut drain = self.drain();
         let checkpoint = drain.checkpoint.ok_or(())?;
         let fragment_count = u8::try_from(drain.archives.len()).map_err(|_| ())?;
+        // What is actually going on the air. For an original message it
+        // matches the archive count, but an edit's frames carry the editing
+        // option while its replacement archive is re-encoded without it, so
+        // the two can fragment differently.
+        let transmission_count = u8::try_from(drain.transmissions.len()).map_err(|_| ())?;
         for mutation in &mut drain.mutations {
-            if mutation.kind == MobileChatMutationKind::Insert
-                && mutation.direction == Some(MobileChatDirection::Outbound)
-            {
-                mutation.fragment_count = Some(fragment_count.max(1));
+            match mutation.kind {
+                MobileChatMutationKind::Insert
+                    if mutation.direction == Some(MobileChatDirection::Outbound) =>
+                {
+                    mutation.fragment_count = Some(fragment_count.max(1));
+                }
+                // Stamped so the platform can re-key the edited message's
+                // delivery tracking to the edit's transmissions and still
+                // know how many acknowledgments make it delivered.
+                MobileChatMutationKind::Edit => {
+                    mutation.fragment_count = Some(transmission_count.max(1));
+                }
+                _ => {}
             }
         }
         let batch_id = self.next_batch_id;

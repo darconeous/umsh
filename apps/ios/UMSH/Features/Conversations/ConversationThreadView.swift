@@ -68,6 +68,7 @@ struct ConversationThreadView: View {
     @State private var editingMessage: ChatMessageSummary?
     @State private var editDraft = ""
     @State private var deletingMessage: ChatMessageSummary?
+    @State private var resendingMessage: ChatMessageSummary?
     @State private var inspectedMember: InspectedMember?
     @State private var inspectedMessage: ChatMessageSummary?
     @Environment(\.visibleConversationReporter) private var visibleConversationReporter
@@ -203,7 +204,12 @@ struct ConversationThreadView: View {
                                         senderHint: isChannel && !message.isOutbound
                                             ? message.senderNodeHint
                                             : nil,
+                                        // Editing reaches only the recent
+                                        // past: an edit of an older message
+                                        // has no reference peers still
+                                        // resolve, so it is not offered.
                                         onEdit: message.isOutbound && !message.isDeleted
+                                            && message.isWithinReviseWindow
                                             ? {
                                                 editDraft = message.body
                                                 editingMessage = message
@@ -212,6 +218,10 @@ struct ConversationThreadView: View {
                                         onDelete: message.isOutbound && !message.isDeleted
                                             ? { deletingMessage = message }
                                             : nil,
+                                        onResend: message.isOutbound && !message.isDeleted
+                                            && message.deliveryState?.lowercased() == "failed"
+                                            ? { resendingMessage = message }
+                                            : nil,
                                         onShowDetails: { inspectedMessage = message },
                                         onShowSender: isChannel && !message.isOutbound
                                             ? {
@@ -219,7 +229,12 @@ struct ConversationThreadView: View {
                                                     .map(InspectedMember.init)
                                             }
                                             : nil,
+                                        // No reacting to one's own failed
+                                        // message: nobody received the thing
+                                        // the reaction would decorate.
                                         onReact: message.isDeleted
+                                            || (message.isOutbound
+                                                && message.deliveryState?.lowercased() == "failed")
                                             ? nil
                                             : { glyph in react(to: message, with: glyph) }
                                     )
@@ -518,6 +533,43 @@ struct ConversationThreadView: View {
         } message: {
             Text(deleteMessageWarning)
         }
+        // Confirmed rather than fired on the tap: the badge sits right where
+        // a finger rests while scrolling, and a resend puts frames on the
+        // air — never something a stray touch should do. What the tap means
+        // depends on the failure's age. A recent one goes out as an edit of
+        // itself, invisible to anyone who already has it; an old one can
+        // only go out as a genuinely new message, and says so.
+        .confirmationDialog(
+            resendingMessage?.isWithinReviseWindow == false
+                ? "Resend this message?" : "Send this message again?",
+            isPresented: Binding(
+                get: { resendingMessage != nil },
+                set: { if !$0 { resendingMessage = nil } }
+            ),
+            titleVisibility: .visible
+        ) {
+            if resendingMessage?.isWithinReviseWindow == false {
+                Button("Resend") {
+                    if let message = resendingMessage {
+                        resendingMessage = nil
+                        resendAsNew(message)
+                    }
+                }
+            } else {
+                Button("Try Again") {
+                    if let message = resendingMessage {
+                        resendingMessage = nil
+                        resend(message)
+                    }
+                }
+            }
+        } message: {
+            Text(
+                resendingMessage?.isWithinReviseWindow == false
+                    ? "It failed too long ago to retry in place, so it will be sent as a new message."
+                    : "Anyone who already received it will not see it twice."
+            )
+        }
     }
 
     /// Who the conversation is with, floating over the transcript: the avatar
@@ -583,6 +635,42 @@ struct ConversationThreadView: View {
         case let .failed(reason):
             sendFailureMessage = reason
             showsBlockedReason = true
+        }
+    }
+
+    /// Fire-and-forget like a reaction: the message is already in the
+    /// transcript, so nothing new appears and the reader stays put — the
+    /// row's own delivery caption is the progress report.
+    private func resend(_ message: ChatMessageSummary) {
+        Task {
+            switch await messageActions.resend(conversation, message) {
+            case let .sent(updated):
+                conversation = updated
+            case let .failed(reason):
+                sendFailureMessage = reason
+                showsBlockedReason = true
+            }
+        }
+    }
+
+    /// Unlike an in-place resend, this one adds a row: the failed bubble goes
+    /// and the same words arrive as the newest message, so the transcript
+    /// follows them to the bottom the way it follows any send.
+    private func resendAsNew(_ message: ChatMessageSummary) {
+        Task {
+            switch await messageActions.resendAsNew(conversation, message) {
+            case let .sent(updated):
+                conversation = updated
+                if transcript.hasNewer {
+                    await landAtLiveEdge()
+                } else {
+                    scroll.followsLatestMessage = true
+                    scrollToBottomRequest += 1
+                }
+            case let .failed(reason):
+                sendFailureMessage = reason
+                showsBlockedReason = true
+            }
         }
     }
 

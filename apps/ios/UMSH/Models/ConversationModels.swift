@@ -378,6 +378,20 @@ struct ChatMessageSummary: Identifiable, Hashable, Sendable {
         guard createdAtMilliseconds > 0 else { return nil }
         return Date(timeIntervalSince1970: Double(createdAtMilliseconds) / 1000)
     }
+
+    /// How long a message stays revisable in place — editable, or resendable
+    /// as an edit of itself. Wire references only reach the recent past:
+    /// peers keep a bounded window of recent IDs, and the stream may have
+    /// reset since. Four hours is comfortably inside what survives.
+    static let reviseWindow: TimeInterval = 4 * 60 * 60
+
+    /// Whether in-place revision is still offered for this message. Beyond
+    /// the window a failed message can only go out again as a genuinely new
+    /// one, and editing is not offered at all.
+    var isWithinReviseWindow: Bool {
+        guard let sentDate else { return false }
+        return Date.now.timeIntervalSince(sentDate) <= Self.reviseWindow
+    }
 }
 
 /// One person's reaction to one message.
@@ -481,6 +495,16 @@ struct ChatMessageActions: Sendable {
     /// reaction by passing the one already chosen.
     var react: @Sendable (ConversationListItem, ChatMessageSummary, String) async
         -> MessageSendResult = { _, _, _ in .failed("Messaging is unavailable.") }
+    /// Put a failed message back on the air — an edit of itself carrying the
+    /// same text, so a peer who already has it never sees it twice. Recent
+    /// failures only (``ChatMessageSummary/isWithinReviseWindow``).
+    var resend: @Sendable (ConversationListItem, ChatMessageSummary) async
+        -> MessageSendResult = { _, _ in .failed("Messaging is unavailable.") }
+    /// Send a failed message's text again as a genuinely new message, for
+    /// failures too old to revise in place: the old row is removed and the
+    /// text goes out (and lands in the transcript) as the newest message.
+    var resendAsNew: @Sendable (ConversationListItem, ChatMessageSummary) async
+        -> MessageSendResult = { _, _ in .failed("Messaging is unavailable.") }
     /// Erase every message in the conversation at this address. Local only:
     /// nothing is sent, and everyone else keeps their copy. The conversation
     /// itself survives, as does its place in the wire stream.

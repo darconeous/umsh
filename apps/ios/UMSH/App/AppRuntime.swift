@@ -2087,7 +2087,10 @@ final class AppRuntime {
         _ message: ChatMessageSummary,
         _ newBody: String
     ) async -> MessageSendResult {
-        await performChatCompose(conversation, clearsDraft: false) { clientToken in
+        guard message.isWithinReviseWindow else {
+            return .failed("This message is too old to edit.")
+        }
+        return await performChatCompose(conversation, clearsDraft: false) { clientToken in
             try await radioConnection.composeEdit(
                 conversationAddress: conversation.conversationAddress,
                 clientToken: clientToken,
@@ -2095,6 +2098,85 @@ final class AppRuntime {
                 body: newBody
             )
         }
+    }
+
+    /// Put a message that was never delivered back on the air.
+    ///
+    /// It goes out as an edit of itself, carrying the same text under the
+    /// original's wire ID. That is what keeps a resend from reading as a
+    /// second message: a peer who received the original and lost only the
+    /// acknowledgment applies the edit to the copy they already have, and one
+    /// who never received it at all fills the gap the missing ID left with
+    /// this content. Either way they end up with the message once. (The store
+    /// recognizes an edit that changes nothing and does not annotate the
+    /// message "Edited" for it.) The edit hands the row its own delivery
+    /// tracking as any edit does, so the badge clears — or comes back — on
+    /// the resend's real fate.
+    func resendMessage(
+        _ conversation: ConversationListItem,
+        _ message: ChatMessageSummary
+    ) async -> MessageSendResult {
+        // Past the revise window the edit could not land anywhere; give the
+        // caller the behavior that is right for the message's age instead of
+        // an error.
+        guard message.isWithinReviseWindow else {
+            return await resendMessageAsNew(conversation, message)
+        }
+        return await performChatCompose(conversation, clearsDraft: false) { clientToken in
+            try await radioConnection.composeEdit(
+                conversationAddress: conversation.conversationAddress,
+                clientToken: clientToken,
+                original: originalRef(message),
+                body: message.body
+            )
+        }
+    }
+
+    /// Send a failed message's text again as a genuinely new message — the
+    /// path for failures too old to resend as an edit of themselves: their
+    /// wire ID has slid out of the reference window peers keep, so an
+    /// in-place revision could no longer land anywhere.
+    ///
+    /// The old row is removed only after the new compose is durable and
+    /// released; a compose that fails leaves the transcript exactly as it
+    /// was. On success the failed bubble disappears and the same words
+    /// arrive at the bottom as the newest message — a fresh wire identity
+    /// with its own delivery tracking. A peer who did receive the original
+    /// will see it twice; at this age, the resend being asked for is
+    /// literally "send these words again."
+    func resendMessageAsNew(
+        _ conversation: ConversationListItem,
+        _ message: ChatMessageSummary
+    ) async -> MessageSendResult {
+        guard message.deliveryState?.lowercased() == "failed", message.isOutbound else {
+            return .failed("Only a message that was not delivered can be resent.")
+        }
+        let result = await performChatCompose(conversation, clearsDraft: false) { clientToken in
+            try await radioConnection.composeText(
+                conversationAddress: conversation.conversationAddress,
+                clientToken: clientToken,
+                body: message.body
+            )
+        }
+        guard case .sent = result else { return result }
+        if let applicationStore, let localIdentity {
+            do {
+                try await applicationStore.removeFailedMessage(
+                    ownerIdentityID: localIdentity.id,
+                    sessionID: message.sessionID,
+                    handle: message.handle
+                )
+                coordinator.bumpChatRevisions([conversation.conversationAddress])
+                await reloadApplicationState()
+            } catch {
+                // The new message is on its way regardless; the worst case is
+                // the old red bubble lingering above it.
+                Self.chatLogger.error(
+                    "Could not remove a resent failed message: \(String(describing: error), privacy: .public)"
+                )
+            }
+        }
+        return result
     }
 
     func deleteMessage(
@@ -2119,6 +2201,9 @@ final class AppRuntime {
         _ message: ChatMessageSummary,
         _ glyph: String
     ) async -> MessageSendResult {
+        guard !(message.isOutbound && message.deliveryState?.lowercased() == "failed") else {
+            return .failed("This message was not delivered, so there is nothing to react to.")
+        }
         let withdrawing = message.myReaction?.glyph == glyph
         let body = withdrawing ? "" : ReactionEmoji.token(for: glyph)
         return await performChatCompose(conversation, clearsDraft: false) { clientToken in
@@ -2881,8 +2966,13 @@ final class AppRuntime {
             )
         }
         do {
+            // Edits whose originals this phone never stored come back from the
+            // store as materialized message rows — the shape a resend takes
+            // when the original never arrived. The engine could not flag them
+            // `notify`, so they join the notification pass by hand.
+            var materialized: [MobileChatMutationRecord] = []
             if !update.mutations.isEmpty {
-                try await applicationStore.applyChatMutations(
+                materialized = try await applicationStore.applyChatMutations(
                     ownerIdentityID: localIdentity.id,
                     mutations: update.mutations
                 )
@@ -2982,7 +3072,13 @@ final class AppRuntime {
             if !update.mutations.isEmpty || !update.deliveries.isEmpty {
                 await reloadApplicationState()
             }
-            await postNotifications(for: update.mutations)
+            await postNotifications(
+                for: update.mutations + materialized.map { record in
+                    var flagged = record
+                    flagged.notify = true
+                    return flagged
+                }
+            )
         } catch {
             // Effects remain idempotent, so the core re-offering this batch is
             // a real chance to recover from a transient failure.

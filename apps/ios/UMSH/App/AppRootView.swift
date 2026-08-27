@@ -105,6 +105,8 @@ struct AppRootView: View {
                         edit: runtime.editMessage,
                         delete: runtime.deleteMessage,
                         react: runtime.reactToMessage,
+                        resend: runtime.resendMessage,
+                        resendAsNew: runtime.resendMessageAsNew,
                         clearMessages: runtime.clearConversationMessages,
                         countMessages: runtime.countConversationMessages
                     ),
@@ -154,6 +156,8 @@ struct AppRootView: View {
                         edit: runtime.editMessage,
                         delete: runtime.deleteMessage,
                         react: runtime.reactToMessage,
+                        resend: runtime.resendMessage,
+                        resendAsNew: runtime.resendMessageAsNew,
                         clearMessages: runtime.clearConversationMessages,
                         countMessages: runtime.countConversationMessages
                     ),
@@ -183,6 +187,8 @@ struct AppRootView: View {
                         edit: runtime.editMessage,
                         delete: runtime.deleteMessage,
                         react: runtime.reactToMessage,
+                        resend: runtime.resendMessage,
+                        resendAsNew: runtime.resendMessageAsNew,
                         clearMessages: runtime.clearConversationMessages,
                         countMessages: runtime.countConversationMessages
                     ),
@@ -246,6 +252,8 @@ struct AppRootView: View {
                         edit: runtime.editMessage,
                         delete: runtime.deleteMessage,
                         react: runtime.reactToMessage,
+                        resend: runtime.resendMessage,
+                        resendAsNew: runtime.resendMessageAsNew,
                         clearMessages: runtime.clearConversationMessages,
                         countMessages: runtime.countConversationMessages
                     ),
@@ -328,6 +336,8 @@ struct AppRootView: View {
                         edit: runtime.editMessage,
                         delete: runtime.deleteMessage,
                         react: runtime.reactToMessage,
+                        resend: runtime.resendMessage,
+                        resendAsNew: runtime.resendMessageAsNew,
                         clearMessages: runtime.clearConversationMessages,
                         countMessages: runtime.countConversationMessages
                     )
@@ -351,6 +361,8 @@ struct AppRootView: View {
                     edit: runtime.editMessage,
                     delete: runtime.deleteMessage,
                     react: runtime.reactToMessage,
+                    resend: runtime.resendMessage,
+                    resendAsNew: runtime.resendMessageAsNew,
                     clearMessages: runtime.clearConversationMessages,
                     countMessages: runtime.countConversationMessages
                 ),

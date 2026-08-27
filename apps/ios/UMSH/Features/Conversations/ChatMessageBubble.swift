@@ -201,6 +201,10 @@ struct ChatMessageBubble: View, @MainActor Equatable {
     var senderHint: MeshNodeHint?
     var onEdit: (() -> Void)?
     var onDelete: (() -> Void)?
+    /// Put a failed message back on the air. Present only while the message
+    /// reads "Not Delivered"; both the red badge and the menu's Try Again
+    /// invoke it.
+    var onResend: (() -> Void)?
     var onShowDetails: (() -> Void)?
     var onShowSender: (() -> Void)?
     /// React with a palette glyph, or withdraw by passing the one already
@@ -228,6 +232,7 @@ struct ChatMessageBubble: View, @MainActor Equatable {
             && lhs.senderHint == rhs.senderHint
             && (lhs.onEdit == nil) == (rhs.onEdit == nil)
             && (lhs.onDelete == nil) == (rhs.onDelete == nil)
+            && (lhs.onResend == nil) == (rhs.onResend == nil)
             && (lhs.onReact == nil) == (rhs.onReact == nil)
     }
 
@@ -379,10 +384,20 @@ struct ChatMessageBubble: View, @MainActor Equatable {
             .padding(.trailing, isFailed ? failureBadgeReserve : 0)
             .overlay(alignment: .trailing) {
                 if isFailed {
-                    Image(systemName: "exclamationmark.circle.fill")
-                        .font(.body)
-                        .foregroundStyle(.red)
-                        .accessibilityLabel("Message not delivered")
+                    // The badge is the button: the thing saying the message
+                    // failed is the thing that tries again. Plain style so
+                    // the glyph stays exactly the badge it always was.
+                    Button {
+                        onResend?()
+                    } label: {
+                        Image(systemName: "exclamationmark.circle.fill")
+                            .font(.body)
+                            .foregroundStyle(.red)
+                    }
+                    .buttonStyle(.plain)
+                    .disabled(onResend == nil)
+                    .accessibilityLabel("Message not delivered")
+                    .accessibilityHint(onResend == nil ? "" : "Sends the message again")
                 }
             }
             .padding(.top, message.reactions.isEmpty ? 0 : ReactionBadgeView.overhang)
@@ -418,6 +433,15 @@ struct ChatMessageBubble: View, @MainActor Equatable {
             Button("View Original", systemImage: "clock.arrow.circlepath") {
                 showsOriginalBody = true
             }
+        }
+        if let onResend {
+            // The words match what confirming will do: a recent failure
+            // retries in place, an old one goes out as a new message.
+            Button(
+                message.isWithinReviseWindow ? "Try Again" : "Resend",
+                systemImage: "arrow.clockwise",
+                action: onResend
+            )
         }
         if let onEdit {
             Button("Edit", systemImage: "pencil", action: onEdit)
