@@ -465,9 +465,14 @@ actor SQLiteApplicationStore {
     static func eraseStagingStore(fileManager: FileManager = .default) async throws {
         try await stagingStore(fileManager: fileManager).eraseAllContent()
     }
+    #endif
 
     /// Delete every row in every table, leaving the schema and its stamped
     /// version in place so the next open has nothing to migrate.
+    ///
+    /// Not staging tooling, though staging discards go through it too: this
+    /// is what identity erasure uses to take the real store down with the
+    /// key, so it must exist in every configuration.
     func eraseAllContent() throws {
         let tables = try tableNames()
         try transaction {
@@ -498,7 +503,6 @@ actor SQLiteApplicationStore {
         }
         return names
     }
-    #endif
 
     init(path: String) throws {
         var connection: OpaquePointer?
