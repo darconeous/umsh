@@ -99,7 +99,7 @@ struct SettingsView: View {
         } header: {
             Text("Region database")
         } footer: {
-            Text("Used to suggest routing regions for a device from where it is. Lookups run on this phone and are never sent anywhere.")
+            Text("Used to suggest routing regions for a device from where it is.")
         }
     }
 

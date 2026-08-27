@@ -80,6 +80,7 @@
 		100000000000000000000051 /* UMSH/Features/Conversations/MessageReactions.swift in Sources */ = {isa = PBXBuildFile; fileRef = 200000000000000000000051 /* UMSH/Features/Conversations/MessageReactions.swift */; };
 		100000000000000000000052 /* UMSH/Features/Conversations/ConversationSecurity.swift in Sources */ = {isa = PBXBuildFile; fileRef = 200000000000000000000052 /* UMSH/Features/Conversations/ConversationSecurity.swift */; };
 		10000000000000000000003E /* UMSH/Features/Map/NodeMapView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 20000000000000000000003E /* UMSH/Features/Map/NodeMapView.swift */; };
+		1F3BF90A09C890F4E762DD71 /* UMSH/Features/Map/PlacePicker.swift in Sources */ = {isa = PBXBuildFile; fileRef = 2CEE4158EA69AD922AEE2AFD /* UMSH/Features/Map/PlacePicker.swift */; };
 		10000000000000000000003F /* UMSH/Features/Map/MapNodeModels.swift in Sources */ = {isa = PBXBuildFile; fileRef = 20000000000000000000003F /* UMSH/Features/Map/MapNodeModels.swift */; };
 		100000000000000000000040 /* UMSH/Features/Map/NodeMapAnnotationViews.swift in Sources */ = {isa = PBXBuildFile; fileRef = 200000000000000000000040 /* UMSH/Features/Map/NodeMapAnnotationViews.swift */; };
 		100000000000000000000041 /* UMSH/Features/Map/MapBottomCard.swift in Sources */ = {isa = PBXBuildFile; fileRef = 200000000000000000000041 /* UMSH/Features/Map/MapBottomCard.swift */; };
@@ -167,6 +168,7 @@
 		200000000000000000000051 /* UMSH/Features/Conversations/MessageReactions.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = UMSH/Features/Conversations/MessageReactions.swift; sourceTree = "<group>"; };
 		200000000000000000000052 /* UMSH/Features/Conversations/ConversationSecurity.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = UMSH/Features/Conversations/ConversationSecurity.swift; sourceTree = "<group>"; };
 		20000000000000000000003E /* UMSH/Features/Map/NodeMapView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = UMSH/Features/Map/NodeMapView.swift; sourceTree = "<group>"; };
+		2CEE4158EA69AD922AEE2AFD /* UMSH/Features/Map/PlacePicker.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = UMSH/Features/Map/PlacePicker.swift; sourceTree = "<group>"; };
 		20000000000000000000003F /* UMSH/Features/Map/MapNodeModels.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = UMSH/Features/Map/MapNodeModels.swift; sourceTree = "<group>"; };
 		200000000000000000000040 /* UMSH/Features/Map/NodeMapAnnotationViews.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = UMSH/Features/Map/NodeMapAnnotationViews.swift; sourceTree = "<group>"; };
 		200000000000000000000041 /* UMSH/Features/Map/MapBottomCard.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = UMSH/Features/Map/MapBottomCard.swift; sourceTree = "<group>"; };
@@ -224,6 +226,7 @@
 				20000000000000000000002E /* UMSH/Features/Peers/NodeImportView.swift */,
 				20000000000000000000002F /* UMSH/Features/Peers/DiscoverPeersView.swift */,
 				20000000000000000000003E /* UMSH/Features/Map/NodeMapView.swift */,
+				2CEE4158EA69AD922AEE2AFD /* UMSH/Features/Map/PlacePicker.swift */,
 				20000000000000000000003F /* UMSH/Features/Map/MapNodeModels.swift */,
 				200000000000000000000040 /* UMSH/Features/Map/NodeMapAnnotationViews.swift */,
 				200000000000000000000041 /* UMSH/Features/Map/MapBottomCard.swift */,
@@ -416,6 +419,7 @@
 				10000000000000000000002E /* UMSH/Features/Peers/NodeImportView.swift in Sources */,
 				10000000000000000000002F /* UMSH/Features/Peers/DiscoverPeersView.swift in Sources */,
 				10000000000000000000003E /* UMSH/Features/Map/NodeMapView.swift in Sources */,
+				1F3BF90A09C890F4E762DD71 /* UMSH/Features/Map/PlacePicker.swift in Sources */,
 				10000000000000000000003F /* UMSH/Features/Map/MapNodeModels.swift in Sources */,
 				100000000000000000000040 /* UMSH/Features/Map/NodeMapAnnotationViews.swift in Sources */,
 				100000000000000000000041 /* UMSH/Features/Map/MapBottomCard.swift in Sources */,

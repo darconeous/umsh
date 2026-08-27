@@ -84,6 +84,15 @@ extension DeviceManagementBackend {
     /// if it was the wrong node. Restarting is offered everywhere; this is
     /// not.
     var offersFactoryReset: Bool { link != .mesh }
+
+    /// Whether where this phone is stands for where the device is.
+    ///
+    /// True on a local link — a bench session or the companion radio — where
+    /// the two are within a few meters of each other, and where the phone's
+    /// own fix is the freshest thing either of them knows. Across the mesh
+    /// the device is by definition somewhere the phone is not, so its
+    /// position there would propose regions for the operator's desk.
+    var phoneStandsForDevice: Bool { link != .mesh }
 }
 
 /// The property numbers the management screens name, read once.
@@ -188,6 +197,10 @@ final class ManageDeviceModel {
     /// Whether a factory reset is offered here at all — a question about
     /// how the device is reached, not about what it can do.
     var offersFactoryReset: Bool { management.offersFactoryReset }
+
+    /// Whether this phone's own position can stand in for the device's — a
+    /// question about how the device is reached, not about what it can do.
+    var phoneStandsForDevice: Bool { management.phoneStandsForDevice }
 
     /// This phone's own node key, once the radio has said what it is.
     private(set) var phoneNodeKey: Data?

@@ -142,9 +142,10 @@ struct RegionSuggestionSheet: View {
     /// Whether where this phone is stands for where the node is.
     ///
     /// True at a bench, over Bluetooth, where the two are within a few
-    /// meters of each other. False for a node managed across the mesh,
-    /// which is by definition somewhere this phone is not — offering the
-    /// phone there would propose regions for the operator's desk.
+    /// meters of each other — and there it is the source this sheet opens
+    /// on. False for a node managed across the mesh, which is by definition
+    /// somewhere this phone is not — offering the phone there would propose
+    /// regions for the operator's desk.
     var offersPhone = false
     /// Refresh whatever the caller would need to offer a node's advertised
     /// position, when it has not been read. Absent where there is nothing
@@ -164,6 +165,7 @@ struct RegionSuggestionSheet: View {
     @State private var phonePosition: MobileRegionPositionRecord?
     @State private var isReadingPhone = false
     @State private var phoneUnavailable = false
+    @State private var showsPlacePicker = false
     @State private var proposal: MobileRegionProposalRecord?
     @State private var problem: String?
     @State private var isProposing = false
@@ -201,14 +203,21 @@ struct RegionSuggestionSheet: View {
 
     // MARK: - Choosing a place
 
-    /// Every source with something behind it. Typing coordinates is always
-    /// one of them: it is the only correct answer when configuring a node
-    /// for a site you are not standing at.
+    /// Every source with something behind it, best first — the head of this
+    /// list is what the sheet opens on. Typing coordinates is always one of
+    /// them, and always last: it is the only correct answer when configuring
+    /// a node for a site you are not standing at.
+    ///
+    /// This phone leads wherever it is offered at all, because it is offered
+    /// only when it is at the node, and then it is the freshest position
+    /// either of them has — a node's advertised cell can be hours old and
+    /// kilometers wide, and a node that has never advertised has none.
     private var offeredSources: [RegionPositionSource] {
-        var offered = sources.filter { $0.origin != .manual && $0.origin != .phone }
+        var offered: [RegionPositionSource] = []
         if offersPhone, readPhonePosition != nil {
             offered.append(RegionPositionSource(origin: .phone, position: nil))
         }
+        offered += sources.filter { $0.origin != .manual && $0.origin != .phone }
         offered.append(RegionPositionSource(origin: .manual, position: nil))
         return offered
     }
@@ -264,9 +273,34 @@ struct RegionSuggestionSheet: View {
                     .multilineTextAlignment(.trailing)
                     .autocorrectionDisabled()
             }
+            // Configuring a node for a site is far more often a place
+            // someone can point at than a pair of numbers they hold.
+            Button {
+                showsPlacePicker = true
+            } label: {
+                Label("Choose on Map", systemImage: "mappin.and.ellipse")
+            }
         } footer: {
             Text("Decimal degrees. A typed position is taken exactly, with no allowance for error.")
         }
+        .sheet(isPresented: $showsPlacePicker) {
+            PlacePicker(initial: typedCoordinate) { coordinate in
+                let format = FloatingPointFormatStyle<Double>.number
+                    .precision(.fractionLength(5))
+                    .grouping(.never)
+                latitudeText = coordinate.latitude.formatted(format)
+                longitudeText = coordinate.longitude.formatted(format)
+            }
+        }
+    }
+
+    /// The typed place, where a whole one has been typed. What the map
+    /// picker opens on, so reopening it lands where it was left.
+    private var typedCoordinate: CLLocationCoordinate2D? {
+        guard let latitude = Double(latitudeText.trimmingCharacters(in: .whitespaces)),
+              let longitude = Double(longitudeText.trimmingCharacters(in: .whitespaces))
+        else { return nil }
+        return CLLocationCoordinate2D(latitude: latitude, longitude: longitude)
     }
 
     @ViewBuilder

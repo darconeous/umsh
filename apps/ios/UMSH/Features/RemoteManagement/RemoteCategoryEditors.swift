@@ -1,3 +1,4 @@
+import CoreLocation
 import SwiftUI
 import UMSHMobileCore
 
@@ -399,7 +400,11 @@ struct RemoteRadioEditor: View {
 /// anyway.
 struct RemoteIdentityEditor: View {
     let model: ManageDeviceModel
+    @Environment(\.readPhonePosition) private var readPhonePosition
     @State private var edits = Edits()
+    @State private var showsPlacePicker = false
+    @State private var isReadingPhone = false
+    @State private var phoneUnavailable = false
 
     private var reading: RemoteCategoryReading? { model.readings[.identity] }
     private var problems: [UInt32: String] { model.writeRefusals[.identity] ?? [:] }
@@ -546,6 +551,32 @@ struct RemoteIdentityEditor: View {
                     signed: true,
                     problem: problems[edits.altitude.property]
                 )
+                if edits.location.isKnown {
+                    // Two coordinates typed to five decimal places is a poor
+                    // way to say "here" and the worst way to say "over
+                    // there", so both are offered as the acts they actually
+                    // are: standing at the device, or looking at where it
+                    // goes.
+                    if model.phoneStandsForDevice, readPhonePosition != nil {
+                        Button {
+                            Task { await placeFromPhone() }
+                        } label: {
+                            HStack {
+                                Label("Use This Phone's Position", systemImage: "location")
+                                if isReadingPhone {
+                                    Spacer()
+                                    ProgressView()
+                                }
+                            }
+                        }
+                        .disabled(isReadingPhone)
+                    }
+                    Button {
+                        showsPlacePicker = true
+                    } label: {
+                        Label("Choose on Map", systemImage: "mappin.and.ellipse")
+                    }
+                }
             }
             if model.card?.supportsGnss == true {
                 if edits.selfPositions.isKnown {
@@ -558,24 +589,83 @@ struct RemoteIdentityEditor: View {
                 } else {
                     RemoteReadOnlyToggle("Update position from GNSS", isOn: nil)
                 }
-                RemotePicker(
-                    "Reported precision",
-                    selection: $edits.precision.edited,
-                    problem: problems[edits.precision.property]
-                ) {
-                    ForEach(UInt8(1) ... UInt8(7), id: \.self) { precision in
-                        Text(Self.precisionLabel(precision)).tag(precision)
-                    }
-                }
             }
+            precisionRow
         } header: {
             Text("Position")
         } footer: {
-            // Only the read-only case needs saying: the rows have gone
-            // uneditable and the reason is not on screen.
-            if edits.isSelfPositioning {
-                Text("Turn this off to place the device by hand.")
+            VStack(alignment: .leading, spacing: 4) {
+                // Only the read-only case needs saying: the rows have gone
+                // uneditable and the reason is not on screen.
+                if edits.isSelfPositioning {
+                    Text("Turn this off to place the device by hand.")
+                }
+                if phoneUnavailable {
+                    Text("This phone could not find where it is.")
+                        .foregroundStyle(.secondary)
+                }
             }
+        }
+        .sheet(isPresented: $showsPlacePicker) {
+            PlacePicker(
+                initial: edits.chosenCoordinate,
+                precision: edits.encodingPrecision
+            ) { coordinate in
+                edits.place(latitude: coordinate.latitude, longitude: coordinate.longitude)
+            }
+        }
+    }
+
+    /// How coarsely the position is reported.
+    ///
+    /// The same choice reached two ways. A device with a receiver holds it as
+    /// a property — it is the clamp its own fixes pass through — and there
+    /// this writes it. A device without one has no such property and never
+    /// answered for it, so the choice is local: it decides how many bytes a
+    /// hand-placed position is encoded to, and reaches the device only inside
+    /// that value.
+    @ViewBuilder
+    private var precisionRow: some View {
+        if edits.precision.isKnown {
+            RemotePicker(
+                "Reported precision",
+                selection: $edits.precision.edited,
+                problem: problems[edits.precision.property]
+            ) {
+                ForEach(Edits.precisions, id: \.self) { precision in
+                    Text(Self.precisionLabel(precision)).tag(precision)
+                }
+            }
+        } else if !edits.isSelfPositioning, edits.location.isKnown {
+            Picker("Reported precision", selection: $edits.manualPrecision) {
+                ForEach(Edits.precisions, id: \.self) { precision in
+                    Text(Self.precisionLabel(precision)).tag(precision)
+                }
+            }
+        }
+    }
+
+    /// Place the device where this phone is.
+    ///
+    /// Offered only on a local link, where the two are in the same room. The
+    /// altitude comes along when the fix states one, because a phone that
+    /// knows its own height knows the device's — and is left alone otherwise
+    /// rather than written as a zero.
+    private func placeFromPhone() async {
+        guard let readPhonePosition, !isReadingPhone else { return }
+        isReadingPhone = true
+        phoneUnavailable = false
+        defer { isReadingPhone = false }
+        guard let reading = await readPhonePosition() else {
+            phoneUnavailable = true
+            return
+        }
+        edits.place(
+            latitude: reading.coordinate.latitude,
+            longitude: reading.coordinate.longitude
+        )
+        if reading.verticalAccuracy > 0, edits.altitude.isKnown {
+            edits.altitudeText = String(Int32(reading.altitude.rounded()))
         }
     }
 
@@ -602,6 +692,10 @@ struct RemoteIdentityEditor: View {
         var latitude = ""
         var longitude = ""
         var altitudeText = ""
+        /// The grid a hand-placed position is encoded to on a device that
+        /// holds no precision property of its own. Never on the air as
+        /// itself — it shapes ``location`` and nothing else.
+        var manualPrecision = Self.defaultPrecision
         var isEmpty = true
         /// What the device last said, in full.
         var held = UlcpDevicePropertiesRecord.empty
@@ -637,6 +731,16 @@ struct RemoteIdentityEditor: View {
             latitude = held.identLatitudeDeg.map { Self.coordinate($0) } ?? ""
             longitude = held.identLongitudeDeg.map { Self.coordinate($0) } ?? ""
             altitudeText = held.identAltitudeM.map(String.init) ?? ""
+            // Precision belongs to the receiver, so a device without one
+            // never answers for it — and a position written by hand still
+            // has to be encoded to some grid. The grid the device already
+            // advertises on is that answer where it has one; a device placed
+            // nowhere yet takes the same default a device resets to.
+            manualPrecision = precision.reported
+                ?? location.reported.flatMap { bytes in
+                    Self.precisions.first { Int($0) == bytes.count }
+                }
+                ?? Self.defaultPrecision
             isEmpty = reading == nil
         }
 
@@ -668,11 +772,49 @@ struct RemoteIdentityEditor: View {
             if typed.altitude.isDirty, altitude.isKnown {
                 altitudeText = old.altitudeText
             }
+            // A local choice rather than a device value, so a reading
+            // landing under the editor has nothing to say about it.
+            manualPrecision = old.manualPrecision
         }
 
         /// Whether the device is keeping its own advertised position, in
         /// which case a write here would be refused.
         var isSelfPositioning: Bool { selfPositions.value == true }
+
+        /// The grid a typed or picked position is encoded to: the device's
+        /// own precision where it has one, and the local choice otherwise.
+        ///
+        /// Always a precision the encoding accepts. Deriving it from the
+        /// byte count of whatever the device last reported cannot promise
+        /// that — an unplaced device reports no bytes at all, which is a
+        /// precision of zero and encodes nothing.
+        var encodingPrecision: UInt8 { precision.value ?? manualPrecision }
+
+        /// The place on screen, where both halves of one are on screen.
+        var chosenCoordinate: CLLocationCoordinate2D? {
+            guard let latitude = Double(latitude), let longitude = Double(longitude)
+            else { return nil }
+            return CLLocationCoordinate2D(latitude: latitude, longitude: longitude)
+        }
+
+        /// Put a place into the coordinate fields, written out finely enough
+        /// that the grid it was chosen on survives the round trip through
+        /// text.
+        mutating func place(latitude: Double, longitude: Double) {
+            let digits = max(
+                5,
+                LocationPresentation.coordinateDecimals(
+                    cellMeters: LocationPresentation.cellMeters(
+                        precisionBytes: encodingPrecision
+                    )
+                )
+            )
+            let format = FloatingPointFormatStyle<Double>.number
+                .precision(.fractionLength(digits))
+                .grouping(.never)
+            self.latitude = latitude.formatted(format)
+            self.longitude = longitude.formatted(format)
+        }
 
         var positionSummary: String {
             guard let bytes = location.value, !bytes.isEmpty else { return "None advertised" }
@@ -701,7 +843,7 @@ struct RemoteIdentityEditor: View {
                     try? ulcpEncodeLocation(
                         latitudeDeg: latitude,
                         longitudeDeg: longitude,
-                        precision: precision.value ?? UInt8(location.reported?.count ?? 4)
+                        precision: encodingPrecision
                     )
                 )
             } else if self.latitude.isEmpty, self.longitude.isEmpty {
@@ -756,6 +898,17 @@ struct RemoteIdentityEditor: View {
         static func coordinate(_ degrees: Double) -> String {
             degrees.formatted(.number.precision(.fractionLength(5)).grouping(.never))
         }
+
+        /// Every precision the location encoding accepts, asked of the core
+        /// rather than written out here.
+        static let precisions: [UInt8] = (UInt8.min ... UInt8.max).filter {
+            LocationPresentation.cellMeters(precisionBytes: $0) != nil
+        }
+
+        /// What to place a device at when nothing else says: a cell fine
+        /// enough to put it on a street and coarse enough not to put it in a
+        /// room, matching the device's own post-reset precision.
+        static let defaultPrecision: UInt8 = 5
     }
 
     static func precisionLabel(_ precision: UInt8) -> String {
@@ -930,6 +1083,11 @@ struct RemoteRepeaterEditor: View {
                 currentRegions: edits.regions.value ?? [],
                 currentDefaultRegion: edits.defaultRegion.value ?? nil,
                 sources: positionSources,
+                // Over a local link the phone is at the device, so where it
+                // is stands for where the device is — and is offered first,
+                // being the freshest position either of them has. Across
+                // the mesh it stands for nothing about the device.
+                offersPhone: model.phoneStandsForDevice,
                 refreshAdvertised: { await model.refreshCategory(.identity) },
                 accept: { pendingSuggestion = $0 }
             )
@@ -939,9 +1097,8 @@ struct RemoteRepeaterEditor: View {
     /// The places this device's regions could be proposed from.
     ///
     /// The device's own fix appears only when it disagrees with what the
-    /// device advertises; the sheet adds typed coordinates itself. This
-    /// phone is not offered — a device managed across the mesh is by
-    /// definition not where the phone is.
+    /// device advertises; the sheet adds this phone and typed coordinates
+    /// itself.
     private var positionSources: [RegionPositionSource] {
         let identity = model.readings[.identity]?.properties
         let advertised = RegionPositionSource.advertised(
