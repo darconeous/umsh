@@ -523,7 +523,10 @@ struct RemoteIdentityEditor: View {
             PlacePicker(
                 initial: edits.chosenCoordinate,
                 precision: edits.encodingPrecision
-            ) { coordinate in
+            ) { coordinate, precision in
+                // Precision first: it decides how finely the coordinates are
+                // written out, and what they encode to when applied.
+                if let precision { edits.setPrecision(precision) }
                 edits.place(latitude: coordinate.latitude, longitude: coordinate.longitude)
             }
         }
@@ -637,13 +640,13 @@ struct RemoteIdentityEditor: View {
                 selection: $edits.precision.edited,
                 problem: problems[edits.precision.property]
             ) {
-                ForEach(Edits.precisions, id: \.self) { precision in
+                ForEach(LocationPresentation.precisions, id: \.self) { precision in
                     Text(Self.precisionLabel(precision)).tag(precision)
                 }
             }
         } else if !edits.isSelfPositioning, edits.location.isKnown {
             Picker("Reported precision", selection: $edits.manualPrecision) {
-                ForEach(Edits.precisions, id: \.self) { precision in
+                ForEach(LocationPresentation.precisions, id: \.self) { precision in
                     Text(Self.precisionLabel(precision)).tag(precision)
                 }
             }
@@ -743,7 +746,7 @@ struct RemoteIdentityEditor: View {
             // nowhere yet takes the same default a device resets to.
             manualPrecision = precision.reported
                 ?? location.reported.flatMap { bytes in
-                    Self.precisions.first { Int($0) == bytes.count }
+                    LocationPresentation.precisions.first { Int($0) == bytes.count }
                 }
                 ?? Self.defaultPrecision
             isEmpty = reading == nil
@@ -800,6 +803,17 @@ struct RemoteIdentityEditor: View {
             guard let latitude = Double(latitude), let longitude = Double(longitude)
             else { return nil }
             return CLLocationCoordinate2D(latitude: latitude, longitude: longitude)
+        }
+
+        /// Take a precision from wherever it was chosen into whichever of
+        /// the two places holds it — the device's property where there is
+        /// one, the local choice otherwise. See ``encodingPrecision``.
+        mutating func setPrecision(_ value: UInt8) {
+            if precision.isKnown {
+                precision.edited = value
+            } else {
+                manualPrecision = value
+            }
         }
 
         /// Put a place into the coordinate fields, written out finely enough
@@ -902,12 +916,6 @@ struct RemoteIdentityEditor: View {
 
         static func coordinate(_ degrees: Double) -> String {
             degrees.formatted(.number.precision(.fractionLength(5)).grouping(.never))
-        }
-
-        /// Every precision the location encoding accepts, asked of the core
-        /// rather than written out here.
-        static let precisions: [UInt8] = (UInt8.min ... UInt8.max).filter {
-            LocationPresentation.cellMeters(precisionBytes: $0) != nil
         }
 
         /// What to place a device at when nothing else says: a cell fine

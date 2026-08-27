@@ -16,14 +16,14 @@ struct PlacePicker: View {
     /// of the whole world.
     var initial: CLLocationCoordinate2D?
     /// The grid this place will be reported on, drawn as the cell a node
-    /// would actually advertise. Absent where the coordinate is taken
-    /// exactly and there is no cell to draw.
+    /// would actually advertise and adjustable here. Absent where the
+    /// coordinate is taken exactly and there is no cell to draw.
     var precision: UInt8?
-    /// Hand back the crosshair, unrounded. What quantizes it is the location
-    /// encoding at the precision above, and that happens where the value is
-    /// written rather than here — so choosing a place and reporting it
-    /// coarsely stay two decisions rather than one.
-    let choose: (CLLocationCoordinate2D) -> Void
+    /// Hand back the crosshair, unrounded, and the grid chosen for it —
+    /// which is nil exactly where none was offered. What quantizes the point
+    /// is the location encoding, where the value is written rather than
+    /// here, so nothing on this screen has committed to anything.
+    let choose: (CLLocationCoordinate2D, UInt8?) -> Void
 
     @Environment(\.dismiss) private var dismiss
     @Environment(\.readPhonePosition) private var readPhonePosition
@@ -31,6 +31,10 @@ struct PlacePicker: View {
     @State private var camera: MapCameraPosition = .automatic
     /// Where the crosshair is, which is wherever the map's center is.
     @State private var center: CLLocationCoordinate2D?
+    /// The grid on screen, which starts as the one handed in. Held rather
+    /// than bound, so a precision tried out and then cancelled leaves
+    /// nothing behind.
+    @State private var chosenPrecision: UInt8?
     @State private var isReadingPhone = false
     @State private var phoneUnavailable = false
 
@@ -83,8 +87,24 @@ struct PlacePicker: View {
 
     private var footer: some View {
         VStack(spacing: 8) {
-            Text(readout)
-                .font(.callout.monospacedDigit())
+            HStack {
+                Text(readout)
+                    .font(.callout.monospacedDigit())
+                Spacer(minLength: 12)
+                // Beside the place rather than behind it, because the cell
+                // is drawn on the map: coarsening it is a box growing under
+                // the crosshair, which is the whole argument for choosing it
+                // here instead of in a form.
+                if precision != nil {
+                    Picker("Cell", selection: $chosenPrecision) {
+                        ForEach(LocationPresentation.precisions, id: \.self) { precision in
+                            Text(LocationPresentation.precisionLabel(precisionBytes: precision))
+                                .tag(UInt8?.some(precision))
+                        }
+                    }
+                    .pickerStyle(.menu)
+                }
+            }
             if let note {
                 Text(note)
                     .font(.caption)
@@ -93,7 +113,7 @@ struct PlacePicker: View {
             }
             Button {
                 guard let center else { return }
-                choose(center)
+                choose(center, chosenPrecision)
                 dismiss()
             } label: {
                 Text("Use This Place").frame(maxWidth: .infinity)
@@ -115,15 +135,11 @@ struct PlacePicker: View {
     }
 
     private var note: String? {
-        if phoneUnavailable {
-            return "This phone could not find where it is. Move the map by hand."
-        }
-        guard let cellMeters else { return nil }
-        return "Outlined cell, \(LocationPresentation.cellLabel(meters: cellMeters)) across."
+        phoneUnavailable ? "This phone could not find where it is. Move the map by hand." : nil
     }
 
     private var cellMeters: Double? {
-        precision.flatMap { LocationPresentation.cellMeters(precisionBytes: $0) }
+        chosenPrecision.flatMap { LocationPresentation.cellMeters(precisionBytes: $0) }
     }
 
     /// The cell the crosshair falls in, as the four corners of the box a
@@ -135,7 +151,7 @@ struct PlacePicker: View {
     /// encoding and decoding through the core because it is redrawn on every
     /// frame of a pan.
     private var cellCorners: [CLLocationCoordinate2D]? {
-        guard let precision, let center,
+        guard let precision = chosenPrecision, let center,
               // The core owns which precisions exist; a cell size coming
               // back at all is what says this one does.
               LocationPresentation.cellMeters(precisionBytes: precision) != nil
@@ -163,6 +179,7 @@ struct PlacePicker: View {
     }
 
     private func frame() async {
+        chosenPrecision = precision
         if let initial {
             center = initial
             camera = .region(

@@ -23,6 +23,10 @@ enum LocationPresentation {
         cellMetersByPrecision[precisionBytes]
     }
 
+    /// Every precision the encoding accepts, coarsest first. Whatever the
+    /// core answers a cell size for, and nothing written out here.
+    static let precisions: [UInt8] = cellMetersByPrecision.keys.sorted()
+
     /// A precision named by the area it discloses, which is the only thing
     /// about it a person can weigh. Bare sizes, so a picker row reads as a
     /// measurement rather than a sentence.

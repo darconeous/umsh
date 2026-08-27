@@ -202,7 +202,7 @@ struct RegionSuggestionSheet: View {
         // Outside the Form, not on the section that opens it: a Section
         // carries a presentation into every row it holds, and they collide.
         .sheet(isPresented: $showsPlacePicker) {
-            PlacePicker(initial: typedCoordinate) { coordinate in
+            PlacePicker(initial: typedCoordinate) { coordinate, _ in
                 let format = FloatingPointFormatStyle<Double>.number
                     .precision(.fractionLength(5))
                     .grouping(.never)
