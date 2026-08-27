@@ -16,6 +16,7 @@ and feature callouts, which would be misleading on this site.
 | `sensecap-solar.jpg` | Seeed Studio | [SenseCAP Solar Node P1 Pro](https://www.seeedstudio.com/SenseCAP-Solar-Node-P1-Pro-for-Meshtastic-LoRa-p-6412.html) |
 | `xiao-nrf52.jpg` | Seeed Studio | [XIAO nRF52840 + Wio-SX1262 Kit](https://www.seeedstudio.com/XIAO-nRF52840-Wio-SX1262-Kit-for-Meshtastic-p-6400.html) |
 | `heltec-v3.png` | Heltec | [WiFi LoRa 32 V3](https://heltec.org/project/wifi-lora-32-v3/) |
+| `tbeam-supreme.jpg` | LilyGO | [T-Beam SUPREME](https://lilygo.cc/en-us/products/t-beam-supreme) — the gallery's front-and-back shot, whose radio module reads `SX1262`, so it pictures the variant UMSH supports rather than the LR1121 one |
 
 ## Hero composite
 

@@ -35,6 +35,10 @@ export function isEsp(board) {
  * How a person puts each board into update mode by hand, written for someone
  * who has never heard the word "bootloader".
  *
+ * nRF52840 boards only. The ESP32 boards enter their ROM bootloader from the
+ * serial control lines with no help from anyone, so every place this is shown
+ * is behind an `isNrf` branch and they need no entry.
+ *
  * `hardware.toml`'s `dfu_entry` strings serve the developer docs and mention
  * things like the 1200-baud touch — which is not an instruction a user can
  * follow, it is the trick the Flash button performs for them. These are the
@@ -71,6 +75,15 @@ const WARNINGS = {
   ],
   "heltec-v3": [
     "If this board previously ran different firmware, flashing clears whatever settings that firmware had stored on it.",
+  ],
+  "tbeam-supreme": [
+    // The Supreme is sold with three different radios behind one product
+    // name, and only the SX1262 has a driver here. A board with the wrong
+    // one flashes cleanly and then never reaches the mesh, which is the
+    // worst shape a failure can take — so say it before the flash, not after.
+    "This firmware is for the SX1262 version. The LR1121 version takes the same image and will run it, but its radio will not work.",
+    "If this board previously ran different firmware, flashing clears whatever settings that firmware had stored on it.",
+    "Parts of this board are still unverified—the display, the GNSS receiver, the buttons, and how accurate the battery readout is. Messaging over Bluetooth and over the air both work.",
   ],
   "xiao-nrf52": [
     "Only if you flash with a downloaded UF2 file instead of this page: a UF2 built for a different board is silently ignored—the copy looks like it worked, and nothing changes. Flashing from this page rejects a mismatched image with an error.",

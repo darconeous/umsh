@@ -346,64 +346,69 @@
 <a href=#346 id=346 data-nosnippet>346</a>    /// nothing about the stack underneath, and in particular does not
 <a href=#347 id=347 data-nosnippet>347</a>    /// promise that clearing the property powers a radio down.
 <a href=#348 id=348 data-nosnippet>348</a>    </span><span class="kw">pub const </span>BLE: u32 = <span class="number">50</span>;
-<a href=#349 id=349 data-nosnippet>349</a>}
-<a href=#350 id=350 data-nosnippet>350</a>
-<a href=#351 id=351 data-nosnippet>351</a><span class="doccomment">/// Whether a property is reachable from a mesh administrator.
-<a href=#352 id=352 data-nosnippet>352</a>///
-<a href=#353 id=353 data-nosnippet>353</a>/// The out-of-reach set is small and named explicitly by the spec rather
-<a href=#354 id=354 data-nosnippet>354</a>/// than derived, because "device domain" is not a property of the key: a
-<a href=#355 id=355 data-nosnippet>355</a>/// host-domain table and a device-domain one differ only by which half of
-<a href=#356 id=356 data-nosnippet>356</a>/// the device they configure. A device answers all three with
-<a href=#357 id=357 data-nosnippet>357</a>/// `STATUS_PROP_NOT_FOUND` — an administrator learns that the property does
-<a href=#358 id=358 data-nosnippet>358</a>/// not exist for it, not that it exists and was refused — and an
-<a href=#359 id=359 data-nosnippet>359</a>/// administrator that reads this first spends no airtime asking.
-<a href=#360 id=360 data-nosnippet>360</a></span><span class="kw">pub fn </span>admin_reachable(key: u32) -&gt; bool {
-<a href=#361 id=361 data-nosnippet>361</a>    !<span class="macro">matches!</span>(
-<a href=#362 id=362 data-nosnippet>362</a>        key,
-<a href=#363 id=363 data-nosnippet>363</a>        <span class="comment">// The host domain in full: the assistance the device owes to
-<a href=#364 id=364 data-nosnippet>364</a>        // whatever host it serves is that host's business.
-<a href=#365 id=365 data-nosnippet>365</a>        </span>prop::HOST_KEY
-<a href=#366 id=366 data-nosnippet>366</a>            | prop::HOST_CHANNEL_KEYS
-<a href=#367 id=367 data-nosnippet>367</a>            | prop::HOST_PEER_KEYS
-<a href=#368 id=368 data-nosnippet>368</a>            | prop::HOST_RX_FILTERS
-<a href=#369 id=369 data-nosnippet>369</a>            | prop::HOST_AUTO_ACK
-<a href=#370 id=370 data-nosnippet>370</a>            | prop::HOST_RX_QUEUE_COUNT
-<a href=#371 id=371 data-nosnippet>371</a>            | prop::HOST_RX_QUEUE_CAPACITY
-<a href=#372 id=372 data-nosnippet>372</a>            | prop::HOST_RX_QUEUE_DROPPED
-<a href=#373 id=373 data-nosnippet>373</a>            <span class="comment">// Session state: an exchange is not an attach, so there is no
-<a href=#374 id=374 data-nosnippet>374</a>            // session for it to describe.
-<a href=#375 id=375 data-nosnippet>375</a>            </span>| prop::MAC_PROMISCUOUS
-<a href=#376 id=376 data-nosnippet>376</a>            | prop::MAC_BACKHAUL
-<a href=#377 id=377 data-nosnippet>377</a>            <span class="comment">// A device identity cannot be installed over the mesh.
-<a href=#378 id=378 data-nosnippet>378</a>            </span>| prop::DEV_PRIVATE_KEY
-<a href=#379 id=379 data-nosnippet>379</a>    )
-<a href=#380 id=380 data-nosnippet>380</a>}
-<a href=#381 id=381 data-nosnippet>381</a>
-<a href=#382 id=382 data-nosnippet>382</a><span class="doccomment">/// Value used in `PROP_PHY_DUTY_LIMIT` to disable duty-cycle limiting.
-<a href=#383 id=383 data-nosnippet>383</a></span><span class="kw">pub const </span>DUTY_LIMIT_DISABLED: u16 = <span class="number">0xFFFF</span>;
-<a href=#384 id=384 data-nosnippet>384</a>
-<a href=#385 id=385 data-nosnippet>385</a><span class="doccomment">/// Shortest accepted `PROP_ADVERT_INTERVAL` / `PROP_BEACON_INTERVAL`, in
-<a href=#386 id=386 data-nosnippet>386</a>/// seconds.
-<a href=#387 id=387 data-nosnippet>387</a>///
-<a href=#388 id=388 data-nosnippet>388</a>/// An absolute floor, and one a device may only ever round *up* from:
-<a href=#389 id=389 data-nosnippet>389</a>/// scheduling jitter delays an announcement and never brings it forward,
-<a href=#390 id=390 data-nosnippet>390</a>/// so no configuration can put an unsolicited broadcast on the air more
-<a href=#391 id=391 data-nosnippet>391</a>/// often than this. The duty ledger remains the airtime control; this is
-<a href=#392 id=392 data-nosnippet>392</a>/// what keeps a mistyped interval from spending the whole budget on
-<a href=#393 id=393 data-nosnippet>393</a>/// announcements before anything else can speak.
-<a href=#394 id=394 data-nosnippet>394</a></span><span class="kw">pub const </span>MIN_AUTO_ANNOUNCE_INTERVAL_S: u32 = <span class="number">20 </span>* <span class="number">60</span>;
-<a href=#395 id=395 data-nosnippet>395</a>
-<a href=#396 id=396 data-nosnippet>396</a><span class="doccomment">/// Longest accepted `PROP_ADVERT_INTERVAL` / `PROP_BEACON_INTERVAL`, in
-<a href=#397 id=397 data-nosnippet>397</a>/// seconds.
-<a href=#398 id=398 data-nosnippet>398</a>///
-<a href=#399 id=399 data-nosnippet>399</a>/// A ceiling on how stale the mesh's picture of a node may get while that
-<a href=#400 id=400 data-nosnippet>400</a>/// node still considers itself to be announcing. Past a day the schedule
-<a href=#401 id=401 data-nosnippet>401</a>/// has stopped being one, and 0 says so more honestly.
-<a href=#402 id=402 data-nosnippet>402</a></span><span class="kw">pub const </span>MAX_AUTO_ANNOUNCE_INTERVAL_S: u32 = <span class="number">24 </span>* <span class="number">60 </span>* <span class="number">60</span>;
-<a href=#403 id=403 data-nosnippet>403</a>
-<a href=#404 id=404 data-nosnippet>404</a><span class="doccomment">/// Default `PROP_ADVERT_INTERVAL`, in seconds.
-<a href=#405 id=405 data-nosnippet>405</a></span><span class="kw">pub const </span>DEFAULT_ADVERT_INTERVAL_S: u32 = <span class="number">4 </span>* <span class="number">60 </span>* <span class="number">60</span>;
-<a href=#406 id=406 data-nosnippet>406</a>
-<a href=#407 id=407 data-nosnippet>407</a><span class="doccomment">/// Default `PROP_BEACON_INTERVAL`, in seconds.
-<a href=#408 id=408 data-nosnippet>408</a></span><span class="kw">pub const </span>DEFAULT_BEACON_INTERVAL_S: u32 = <span class="number">60 </span>* <span class="number">60</span>;
+<a href=#349 id=349 data-nosnippet>349</a>    <span class="doccomment">/// `CAP_REBOOT` — the device can restart its hardware on command
+<a href=#350 id=350 data-nosnippet>350</a>    /// (`CMD_REBOOT`). A device that cannot — one whose ULCP session is
+<a href=#351 id=351 data-nosnippet>351</a>    /// a process rather than a board — leaves this out and answers the
+<a href=#352 id=352 data-nosnippet>352</a>    /// command `STATUS_UNIMPLEMENTED`.
+<a href=#353 id=353 data-nosnippet>353</a>    </span><span class="kw">pub const </span>REBOOT: u32 = <span class="number">51</span>;
+<a href=#354 id=354 data-nosnippet>354</a>}
+<a href=#355 id=355 data-nosnippet>355</a>
+<a href=#356 id=356 data-nosnippet>356</a><span class="doccomment">/// Whether a property is reachable from a mesh administrator.
+<a href=#357 id=357 data-nosnippet>357</a>///
+<a href=#358 id=358 data-nosnippet>358</a>/// The out-of-reach set is small and named explicitly by the spec rather
+<a href=#359 id=359 data-nosnippet>359</a>/// than derived, because "device domain" is not a property of the key: a
+<a href=#360 id=360 data-nosnippet>360</a>/// host-domain table and a device-domain one differ only by which half of
+<a href=#361 id=361 data-nosnippet>361</a>/// the device they configure. A device answers all three with
+<a href=#362 id=362 data-nosnippet>362</a>/// `STATUS_PROP_NOT_FOUND` — an administrator learns that the property does
+<a href=#363 id=363 data-nosnippet>363</a>/// not exist for it, not that it exists and was refused — and an
+<a href=#364 id=364 data-nosnippet>364</a>/// administrator that reads this first spends no airtime asking.
+<a href=#365 id=365 data-nosnippet>365</a></span><span class="kw">pub fn </span>admin_reachable(key: u32) -&gt; bool {
+<a href=#366 id=366 data-nosnippet>366</a>    !<span class="macro">matches!</span>(
+<a href=#367 id=367 data-nosnippet>367</a>        key,
+<a href=#368 id=368 data-nosnippet>368</a>        <span class="comment">// The host domain in full: the assistance the device owes to
+<a href=#369 id=369 data-nosnippet>369</a>        // whatever host it serves is that host's business.
+<a href=#370 id=370 data-nosnippet>370</a>        </span>prop::HOST_KEY
+<a href=#371 id=371 data-nosnippet>371</a>            | prop::HOST_CHANNEL_KEYS
+<a href=#372 id=372 data-nosnippet>372</a>            | prop::HOST_PEER_KEYS
+<a href=#373 id=373 data-nosnippet>373</a>            | prop::HOST_RX_FILTERS
+<a href=#374 id=374 data-nosnippet>374</a>            | prop::HOST_AUTO_ACK
+<a href=#375 id=375 data-nosnippet>375</a>            | prop::HOST_RX_QUEUE_COUNT
+<a href=#376 id=376 data-nosnippet>376</a>            | prop::HOST_RX_QUEUE_CAPACITY
+<a href=#377 id=377 data-nosnippet>377</a>            | prop::HOST_RX_QUEUE_DROPPED
+<a href=#378 id=378 data-nosnippet>378</a>            <span class="comment">// Session state: an exchange is not an attach, so there is no
+<a href=#379 id=379 data-nosnippet>379</a>            // session for it to describe.
+<a href=#380 id=380 data-nosnippet>380</a>            </span>| prop::MAC_PROMISCUOUS
+<a href=#381 id=381 data-nosnippet>381</a>            | prop::MAC_BACKHAUL
+<a href=#382 id=382 data-nosnippet>382</a>            <span class="comment">// A device identity cannot be installed over the mesh.
+<a href=#383 id=383 data-nosnippet>383</a>            </span>| prop::DEV_PRIVATE_KEY
+<a href=#384 id=384 data-nosnippet>384</a>    )
+<a href=#385 id=385 data-nosnippet>385</a>}
+<a href=#386 id=386 data-nosnippet>386</a>
+<a href=#387 id=387 data-nosnippet>387</a><span class="doccomment">/// Value used in `PROP_PHY_DUTY_LIMIT` to disable duty-cycle limiting.
+<a href=#388 id=388 data-nosnippet>388</a></span><span class="kw">pub const </span>DUTY_LIMIT_DISABLED: u16 = <span class="number">0xFFFF</span>;
+<a href=#389 id=389 data-nosnippet>389</a>
+<a href=#390 id=390 data-nosnippet>390</a><span class="doccomment">/// Shortest accepted `PROP_ADVERT_INTERVAL` / `PROP_BEACON_INTERVAL`, in
+<a href=#391 id=391 data-nosnippet>391</a>/// seconds.
+<a href=#392 id=392 data-nosnippet>392</a>///
+<a href=#393 id=393 data-nosnippet>393</a>/// An absolute floor, and one a device may only ever round *up* from:
+<a href=#394 id=394 data-nosnippet>394</a>/// scheduling jitter delays an announcement and never brings it forward,
+<a href=#395 id=395 data-nosnippet>395</a>/// so no configuration can put an unsolicited broadcast on the air more
+<a href=#396 id=396 data-nosnippet>396</a>/// often than this. The duty ledger remains the airtime control; this is
+<a href=#397 id=397 data-nosnippet>397</a>/// what keeps a mistyped interval from spending the whole budget on
+<a href=#398 id=398 data-nosnippet>398</a>/// announcements before anything else can speak.
+<a href=#399 id=399 data-nosnippet>399</a></span><span class="kw">pub const </span>MIN_AUTO_ANNOUNCE_INTERVAL_S: u32 = <span class="number">20 </span>* <span class="number">60</span>;
+<a href=#400 id=400 data-nosnippet>400</a>
+<a href=#401 id=401 data-nosnippet>401</a><span class="doccomment">/// Longest accepted `PROP_ADVERT_INTERVAL` / `PROP_BEACON_INTERVAL`, in
+<a href=#402 id=402 data-nosnippet>402</a>/// seconds.
+<a href=#403 id=403 data-nosnippet>403</a>///
+<a href=#404 id=404 data-nosnippet>404</a>/// A ceiling on how stale the mesh's picture of a node may get while that
+<a href=#405 id=405 data-nosnippet>405</a>/// node still considers itself to be announcing. Past a day the schedule
+<a href=#406 id=406 data-nosnippet>406</a>/// has stopped being one, and 0 says so more honestly.
+<a href=#407 id=407 data-nosnippet>407</a></span><span class="kw">pub const </span>MAX_AUTO_ANNOUNCE_INTERVAL_S: u32 = <span class="number">24 </span>* <span class="number">60 </span>* <span class="number">60</span>;
+<a href=#408 id=408 data-nosnippet>408</a>
+<a href=#409 id=409 data-nosnippet>409</a><span class="doccomment">/// Default `PROP_ADVERT_INTERVAL`, in seconds.
+<a href=#410 id=410 data-nosnippet>410</a></span><span class="kw">pub const </span>DEFAULT_ADVERT_INTERVAL_S: u32 = <span class="number">4 </span>* <span class="number">60 </span>* <span class="number">60</span>;
+<a href=#411 id=411 data-nosnippet>411</a>
+<a href=#412 id=412 data-nosnippet>412</a><span class="doccomment">/// Default `PROP_BEACON_INTERVAL`, in seconds.
+<a href=#413 id=413 data-nosnippet>413</a></span><span class="kw">pub const </span>DEFAULT_BEACON_INTERVAL_S: u32 = <span class="number">60 </span>* <span class="number">60</span>;
 </code></pre></div></section></main></body></html>

@@ -35,7 +35,7 @@
             const path_to_root = "";
             const default_light_theme = "light";
             const default_dark_theme = "ayu";
-            window.path_to_searchindex_js = "searchindex-66e741c0.js";
+            window.path_to_searchindex_js = "searchindex-5a161e7d.js";
         </script>
         <!-- Start loading toc.js asap -->
         <script src="toc-438957a9.js"></script>
@@ -316,14 +316,16 @@ allocation is in the <a href="ulcp-index.html">Command and Property Index</a>.</
 <tr><td>6</td><td><code>CMD_PROP_IS</code></td><td>Device-&gt;Host</td><td>Property value notification</td></tr>
 <tr><td>7</td><td><code>CMD_PROP_INSERTED</code></td><td>Device-&gt;Host</td><td>Item-inserted notification</td></tr>
 <tr><td>8</td><td><code>CMD_PROP_REMOVED</code></td><td>Device-&gt;Host</td><td>Item-removed notification</td></tr>
+<tr><td>16</td><td><code>CMD_REBOOT</code></td><td>Host-&gt;Device</td><td>Restart the device’s hardware</td></tr>
 <tr><td>21</td><td><code>CMD_PROP_MULTI_GET</code></td><td>Host-&gt;Device</td><td>Get several property values</td></tr>
 <tr><td>22</td><td><code>CMD_PROP_MULTI_SET</code></td><td>Host-&gt;Device</td><td>Set several property values in order</td></tr>
 <tr><td>23</td><td><code>CMD_PROP_ARE</code></td><td>Device-&gt;Host</td><td>Multiple property value notification</td></tr>
 </tbody>
 </table>
 </div>
-<p>The multi-property commands (21–23) are gated by <code>CAP_CMD_MULTI</code> (see
-<a href="#capabilities">Capabilities</a>); everything else is unconditional.</p>
+<p>The multi-property commands (21–23) are gated by <code>CAP_CMD_MULTI</code> and
+<code>CMD_REBOOT</code> by <code>CAP_REBOOT</code> (see <a href="#capabilities">Capabilities</a>);
+everything else is unconditional.</p>
 <h3 id="cmd-noop"><a class="header" href="#cmd-noop">CMD 0: (Host -&gt; Device) <code>CMD_NOP</code></a></h3>
 <pre><code> 0                   1
  0 1 2 3 4 5 6 7 8 9 0 1 2 3 4 5
@@ -487,6 +489,33 @@ of zero when the device removes an item from a multi-value property for its
 own reasons.</p>
 <p>The payload is the property identifier followed by the removed item as the
 device reports it.</p>
+<h3 id="cmd-reboot"><a class="header" href="#cmd-reboot">CMD 16: (Host -&gt; Device) <code>CMD_REBOOT</code></a></h3>
+<pre><code> 0                   1
+ 0 1 2 3 4 5 6 7 8 9 0 1 2 3 4 5
++-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+
+|1 0| RES | TID |  CMD_REBOOT   |
++-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+
+</code></pre>
+<p>Figure: Structure of <code>CMD_REBOOT</code></p>
+<p>Restart the device. Commands the device to power-cycle its hardware,
+keeping every piece of state it has persisted: the saved snapshot, the
+device identity, the pairing PIN, and all bonds survive, and the device
+comes back configured as it was.</p>
+<p>This differs from <a href="#cmd-reset"><code>CMD_RST</code></a>, which returns protocol state to
+its post-reset values with the device still running, and from
+<a href="ulcp-saved-state.html#cmd-factory-reset"><code>CMD_FACTORY_RESET</code></a>, which erases
+that state before restarting. Between the three, this is the one that
+changes nothing — it is how a host clears a condition the protocol cannot
+name.</p>
+<p>The command payload SHOULD be empty and MUST be ignored. A device that
+restarts sends <strong>no</strong> response: the reboot drops the transport link, and
+the TID is therefore irrelevant. A host treats the ensuing disconnect (and
+the device’s subsequent reappearance announcing <code>STATUS_RESET_POWER_ON</code>)
+as completion, and MUST NOT wait for a <code>PROP_LAST_STATUS</code>.</p>
+<p>This command is only available on devices advertising <code>CAP_REBOOT</code>.
+A device without it answers <code>STATUS_UNIMPLEMENTED</code> — which is the only
+response this command ever produces, and the only thing that distinguishes
+a device that declined from one that is already restarting.</p>
 <h3 id="cmd-prop-multi-get"><a class="header" href="#cmd-prop-multi-get">CMD 21: (Host -&gt; Device) <code>CMD_PROP_MULTI_GET</code></a></h3>
 <pre><code>  0                   1                   2                   3
  0 1 2 3 4 5 6 7 8 9 0 1 2 3 4 5 6 7 8 9 0 1 2 3 4 5 6 7 8 9 0 1
@@ -1144,14 +1173,16 @@ grants:</p>
 <tr><td>48</td><td><code>CAP_MAC_BACKHAUL</code></td><td><code>CAP_REPEATER</code></td><td><a href="ulcp-host.html#capabilities">Tethered Host Services</a></td></tr>
 <tr><td>49</td><td><code>CAP_CMD_MULTI</code></td><td>—</td><td><a href="ulcp-core.html#cmd-prop-multi-get">Framing and Common Semantics</a></td></tr>
 <tr><td>50</td><td><code>CAP_BLE</code></td><td>—</td><td><a href="ulcp-ble.html#capabilities">BLE Binding</a></td></tr>
+<tr><td>51</td><td><code>CAP_REBOOT</code></td><td>—</td><td><a href="ulcp-core.html#cmd-reboot">Framing and Common Semantics</a></td></tr>
 <tr><td>515</td><td><code>CAP_PHY_LORA</code></td><td>—</td><td><a href="ulcp-radio.html#capabilities">Radio Control</a></td></tr>
 </tbody>
 </table>
 </div>
 <p>A device <strong>MUST NOT</strong> advertise a capability without also advertising the
 capabilities it requires. Apart from the multi-property commands, which
-<code>CAP_CMD_MULTI</code> gates, the commands and status codes defined in this
-chapter are unconditional and need no capability; a device that defines no
+<code>CAP_CMD_MULTI</code> gates, and <code>CMD_REBOOT</code>, which <code>CAP_REBOOT</code> gates, the
+commands and status codes defined in this chapter are unconditional and
+need no capability; a device that defines no
 mutable multi-value properties simply has nothing to apply
 <code>CMD_PROP_INSERT</code>/<code>CMD_PROP_REMOVE</code> to.</p>
 

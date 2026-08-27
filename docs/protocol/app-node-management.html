@@ -35,7 +35,7 @@
             const path_to_root = "";
             const default_light_theme = "light";
             const default_dark_theme = "ayu";
-            window.path_to_searchindex_js = "searchindex-66e741c0.js";
+            window.path_to_searchindex_js = "searchindex-5a161e7d.js";
         </script>
         <!-- Start loading toc.js asap -->
         <script src="toc-438957a9.js"></script>
@@ -314,10 +314,14 @@ stopped on that failure; a success means it stopped for space, and the
 administrator reissues the remainder as a new exchange.</p>
 <h3 id="resets"><a class="header" href="#resets">Resets</a></h3>
 <p>Commands that initiate a reset — <code>CMD_RST</code>, <code>CMD_RESTORE</code> in its reset
-form, and <code>CMD_FACTORY_RESET</code> — are answered by <strong>no</strong> response payload.
-Delivery of such a command is confirmed by requesting a MAC
-acknowledgment, and its completion by a later exchange reading
-<code>PROP_LAST_STATUS</code> for the reset code.</p>
+form, <a href="ulcp-core.html#cmd-reboot"><code>CMD_REBOOT</code></a>, and <code>CMD_FACTORY_RESET</code> —
+are answered by <strong>no</strong> response payload. Delivery of such a command is
+confirmed by requesting a MAC acknowledgment, and its completion by a
+later exchange reading <code>PROP_LAST_STATUS</code> for the reset code.</p>
+<p>A device that restarts is unreachable for as long as it takes to come
+back, and a repeater that restarts takes its stretch of the network with
+it. <code>CMD_REBOOT</code> is nonetheless within an administrator’s reach, because
+the node it is most worth sending to is the one nobody can walk to.</p>
 <h3 id="at-most-once"><a class="header" href="#at-most-once">Retries and At-Most-Once Processing</a></h3>
 <p>The MAC layer’s replay protection means a device never receives the same
 request frame twice; what it can receive twice is the same request <em>sent</em>

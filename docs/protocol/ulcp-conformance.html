@@ -35,7 +35,7 @@
             const path_to_root = "";
             const default_light_theme = "light";
             const default_dark_theme = "ayu";
-            window.path_to_searchindex_js = "searchindex-66e741c0.js";
+            window.path_to_searchindex_js = "searchindex-5a161e7d.js";
         </script>
         <!-- Start loading toc.js asap -->
         <script src="toc-438957a9.js"></script>
@@ -217,9 +217,10 @@ mutable <a href="ulcp-core.html#multi-value-properties">multi-value property</a>
 nothing to apply them to and rejects them under the ordinary property
 rules. <code>CMD_QUEUE_DRAIN</code>, <code>CMD_SAVE</code>, and <code>CMD_RESTORE</code> belong to their
 subsystems’ capabilities and <strong>MUST</strong> fail with <code>STATUS_UNIMPLEMENTED</code>
-when the capability is not advertised; <code>CMD_CLEAR</code> and
-<code>CMD_FACTORY_RESET</code> are available regardless of capabilities (see
-<a href="ulcp-saved-state.html">Saved State</a>).</p>
+when the capability is not advertised, as <strong>MUST</strong>
+<a href="ulcp-core.html#cmd-reboot"><code>CMD_REBOOT</code></a> without <code>CAP_REBOOT</code>;
+<code>CMD_CLEAR</code> and <code>CMD_FACTORY_RESET</code> are available regardless of
+capabilities (see <a href="ulcp-saved-state.html">Saved State</a>).</p>
 <h2 id="properties"><a class="header" href="#properties">Properties</a></h2>
 <div class="table-wrapper">
 <table>

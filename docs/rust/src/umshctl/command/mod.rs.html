@@ -64,403 +64,408 @@
 <a href=#64 id=64 data-nosnippet>64</a>    /// restoring any saved snapshot. The MCU does not reboot.
 <a href=#65 id=65 data-nosnippet>65</a>    </span>Reset,
 <a href=#66 id=66 data-nosnippet>66</a>
-<a href=#67 id=67 data-nosnippet>67</a>    <span class="doccomment">/// Erase ALL state including BLE bonds and the pairing PIN, then
-<a href=#68 id=68 data-nosnippet>68</a>    /// reboot into a blank factory state.
-<a href=#69 id=69 data-nosnippet>69</a>    </span>FactoryReset {
-<a href=#70 id=70 data-nosnippet>70</a>        <span class="doccomment">/// Confirm the wipe. Required outside the REPL, which asks.
-<a href=#71 id=71 data-nosnippet>71</a>        </span><span class="attr">#[arg(long)]
-<a href=#72 id=72 data-nosnippet>72</a>        </span>yes: bool,
-<a href=#73 id=73 data-nosnippet>73</a>    },
-<a href=#74 id=74 data-nosnippet>74</a>
-<a href=#75 id=75 data-nosnippet>75</a>    <span class="doccomment">/// Set or clear the persisted BLE pairing PIN.
-<a href=#76 id=76 data-nosnippet>76</a>    </span>Pin {
-<a href=#77 id=77 data-nosnippet>77</a>        <span class="attr">#[arg(value_name = <span class="string">"6-DIGITS|clear"</span>)]
-<a href=#78 id=78 data-nosnippet>78</a>        </span>value: PinArg,
-<a href=#79 id=79 data-nosnippet>79</a>    },
-<a href=#80 id=80 data-nosnippet>80</a>
-<a href=#81 id=81 data-nosnippet>81</a>    <span class="doccomment">/// Show or set the PHY enable state and LoRa parameters.
-<a href=#82 id=82 data-nosnippet>82</a>    </span>Phy {
-<a href=#83 id=83 data-nosnippet>83</a>        <span class="attr">#[command(subcommand)]
-<a href=#84 id=84 data-nosnippet>84</a>        </span>op: <span class="prelude-ty">Option</span>&lt;phy::PhyOp&gt;,
-<a href=#85 id=85 data-nosnippet>85</a>    },
-<a href=#86 id=86 data-nosnippet>86</a>
-<a href=#87 id=87 data-nosnippet>87</a>    <span class="doccomment">/// Show duty-cycle usage, or bound it.
-<a href=#88 id=88 data-nosnippet>88</a>    </span>Duty {
-<a href=#89 id=89 data-nosnippet>89</a>        <span class="attr">#[command(subcommand)]
-<a href=#90 id=90 data-nosnippet>90</a>        </span>op: <span class="prelude-ty">Option</span>&lt;duty::DutyOp&gt;,
-<a href=#91 id=91 data-nosnippet>91</a>    },
-<a href=#92 id=92 data-nosnippet>92</a>
-<a href=#93 id=93 data-nosnippet>93</a>    <span class="doccomment">/// Show or set the autonomous repeater forwarding policy.
-<a href=#94 id=94 data-nosnippet>94</a>    </span>Repeater {
-<a href=#95 id=95 data-nosnippet>95</a>        <span class="attr">#[command(subcommand)]
-<a href=#96 id=96 data-nosnippet>96</a>        </span>op: <span class="prelude-ty">Option</span>&lt;repeater::RepeaterOp&gt;,
-<a href=#97 id=97 data-nosnippet>97</a>    },
-<a href=#98 id=98 data-nosnippet>98</a>
-<a href=#99 id=99 data-nosnippet>99</a>    <span class="doccomment">/// Show or set the device's wall clock and time zone.
-<a href=#100 id=100 data-nosnippet>100</a>    </span>Time {
-<a href=#101 id=101 data-nosnippet>101</a>        <span class="attr">#[command(subcommand)]
-<a href=#102 id=102 data-nosnippet>102</a>        </span>op: <span class="prelude-ty">Option</span>&lt;time::TimeOp&gt;,
-<a href=#103 id=103 data-nosnippet>103</a>    },
-<a href=#104 id=104 data-nosnippet>104</a>
-<a href=#105 id=105 data-nosnippet>105</a>    <span class="doccomment">/// Show or set the GNSS receiver and what is done with its fixes.
-<a href=#106 id=106 data-nosnippet>106</a>    </span>Gnss {
-<a href=#107 id=107 data-nosnippet>107</a>        <span class="attr">#[command(subcommand)]
-<a href=#108 id=108 data-nosnippet>108</a>        </span>op: <span class="prelude-ty">Option</span>&lt;gnss::GnssOp&gt;,
-<a href=#109 id=109 data-nosnippet>109</a>    },
-<a href=#110 id=110 data-nosnippet>110</a>
-<a href=#111 id=111 data-nosnippet>111</a>    <span class="doccomment">/// Show or set what the device announces on its own schedule.
-<a href=#112 id=112 data-nosnippet>112</a>    </span>Advert {
-<a href=#113 id=113 data-nosnippet>113</a>        <span class="attr">#[command(subcommand)]
-<a href=#114 id=114 data-nosnippet>114</a>        </span>op: <span class="prelude-ty">Option</span>&lt;advert::AdvertOp&gt;,
-<a href=#115 id=115 data-nosnippet>115</a>    },
-<a href=#116 id=116 data-nosnippet>116</a>
-<a href=#117 id=117 data-nosnippet>117</a>    <span class="doccomment">/// Device-identity channel keys: the multicast this device's own
-<a href=#118 id=118 data-nosnippet>118</a>    /// node joins.
-<a href=#119 id=119 data-nosnippet>119</a>    </span>DevChannel {
-<a href=#120 id=120 data-nosnippet>120</a>        <span class="attr">#[command(subcommand)]
-<a href=#121 id=121 data-nosnippet>121</a>        </span>op: <span class="prelude-ty">Option</span>&lt;tables::TableOp&gt;,
-<a href=#122 id=122 data-nosnippet>122</a>    },
-<a href=#123 id=123 data-nosnippet>123</a>
-<a href=#124 id=124 data-nosnippet>124</a>    <span class="doccomment">/// Device-identity peer public keys.
-<a href=#125 id=125 data-nosnippet>125</a>    </span>DevPeer {
-<a href=#126 id=126 data-nosnippet>126</a>        <span class="attr">#[command(subcommand)]
-<a href=#127 id=127 data-nosnippet>127</a>        </span>op: <span class="prelude-ty">Option</span>&lt;tables::TableOp&gt;,
-<a href=#128 id=128 data-nosnippet>128</a>    },
-<a href=#129 id=129 data-nosnippet>129</a>
-<a href=#130 id=130 data-nosnippet>130</a>    <span class="doccomment">/// Nodes authorized to manage this device over the mesh.
-<a href=#131 id=131 data-nosnippet>131</a>    </span>DevAdmin {
-<a href=#132 id=132 data-nosnippet>132</a>        <span class="attr">#[command(subcommand)]
-<a href=#133 id=133 data-nosnippet>133</a>        </span>op: <span class="prelude-ty">Option</span>&lt;tables::TableOp&gt;,
-<a href=#134 id=134 data-nosnippet>134</a>    },
-<a href=#135 id=135 data-nosnippet>135</a>
-<a href=#136 id=136 data-nosnippet>136</a>    <span class="doccomment">/// Administer another device over the mesh, using the attached radio
-<a href=#137 id=137 data-nosnippet>137</a>    /// to reach it.
-<a href=#138 id=138 data-nosnippet>138</a>    </span>Manage {
-<a href=#139 id=139 data-nosnippet>139</a>        <span class="doccomment">/// The device to manage, as its node public key.
-<a href=#140 id=140 data-nosnippet>140</a>        </span><span class="attr">#[arg(value_name = <span class="string">"KEY"</span>)]
-<a href=#141 id=141 data-nosnippet>141</a>        </span>target: values::KeyArg,
-<a href=#142 id=142 data-nosnippet>142</a>
-<a href=#143 id=143 data-nosnippet>143</a>        <span class="attr">#[command(subcommand)]
-<a href=#144 id=144 data-nosnippet>144</a>        </span>op: manage::ManageOp,
-<a href=#145 id=145 data-nosnippet>145</a>    },
+<a href=#67 id=67 data-nosnippet>67</a>    <span class="doccomment">/// Restart the device (CMD_REBOOT): a power cycle that keeps
+<a href=#68 id=68 data-nosnippet>68</a>    /// everything the device has persisted.
+<a href=#69 id=69 data-nosnippet>69</a>    </span>Reboot,
+<a href=#70 id=70 data-nosnippet>70</a>
+<a href=#71 id=71 data-nosnippet>71</a>    <span class="doccomment">/// Erase ALL state including BLE bonds and the pairing PIN, then
+<a href=#72 id=72 data-nosnippet>72</a>    /// reboot into a blank factory state.
+<a href=#73 id=73 data-nosnippet>73</a>    </span>FactoryReset {
+<a href=#74 id=74 data-nosnippet>74</a>        <span class="doccomment">/// Confirm the wipe. Required outside the REPL, which asks.
+<a href=#75 id=75 data-nosnippet>75</a>        </span><span class="attr">#[arg(long)]
+<a href=#76 id=76 data-nosnippet>76</a>        </span>yes: bool,
+<a href=#77 id=77 data-nosnippet>77</a>    },
+<a href=#78 id=78 data-nosnippet>78</a>
+<a href=#79 id=79 data-nosnippet>79</a>    <span class="doccomment">/// Set or clear the persisted BLE pairing PIN.
+<a href=#80 id=80 data-nosnippet>80</a>    </span>Pin {
+<a href=#81 id=81 data-nosnippet>81</a>        <span class="attr">#[arg(value_name = <span class="string">"6-DIGITS|clear"</span>)]
+<a href=#82 id=82 data-nosnippet>82</a>        </span>value: PinArg,
+<a href=#83 id=83 data-nosnippet>83</a>    },
+<a href=#84 id=84 data-nosnippet>84</a>
+<a href=#85 id=85 data-nosnippet>85</a>    <span class="doccomment">/// Show or set the PHY enable state and LoRa parameters.
+<a href=#86 id=86 data-nosnippet>86</a>    </span>Phy {
+<a href=#87 id=87 data-nosnippet>87</a>        <span class="attr">#[command(subcommand)]
+<a href=#88 id=88 data-nosnippet>88</a>        </span>op: <span class="prelude-ty">Option</span>&lt;phy::PhyOp&gt;,
+<a href=#89 id=89 data-nosnippet>89</a>    },
+<a href=#90 id=90 data-nosnippet>90</a>
+<a href=#91 id=91 data-nosnippet>91</a>    <span class="doccomment">/// Show duty-cycle usage, or bound it.
+<a href=#92 id=92 data-nosnippet>92</a>    </span>Duty {
+<a href=#93 id=93 data-nosnippet>93</a>        <span class="attr">#[command(subcommand)]
+<a href=#94 id=94 data-nosnippet>94</a>        </span>op: <span class="prelude-ty">Option</span>&lt;duty::DutyOp&gt;,
+<a href=#95 id=95 data-nosnippet>95</a>    },
+<a href=#96 id=96 data-nosnippet>96</a>
+<a href=#97 id=97 data-nosnippet>97</a>    <span class="doccomment">/// Show or set the autonomous repeater forwarding policy.
+<a href=#98 id=98 data-nosnippet>98</a>    </span>Repeater {
+<a href=#99 id=99 data-nosnippet>99</a>        <span class="attr">#[command(subcommand)]
+<a href=#100 id=100 data-nosnippet>100</a>        </span>op: <span class="prelude-ty">Option</span>&lt;repeater::RepeaterOp&gt;,
+<a href=#101 id=101 data-nosnippet>101</a>    },
+<a href=#102 id=102 data-nosnippet>102</a>
+<a href=#103 id=103 data-nosnippet>103</a>    <span class="doccomment">/// Show or set the device's wall clock and time zone.
+<a href=#104 id=104 data-nosnippet>104</a>    </span>Time {
+<a href=#105 id=105 data-nosnippet>105</a>        <span class="attr">#[command(subcommand)]
+<a href=#106 id=106 data-nosnippet>106</a>        </span>op: <span class="prelude-ty">Option</span>&lt;time::TimeOp&gt;,
+<a href=#107 id=107 data-nosnippet>107</a>    },
+<a href=#108 id=108 data-nosnippet>108</a>
+<a href=#109 id=109 data-nosnippet>109</a>    <span class="doccomment">/// Show or set the GNSS receiver and what is done with its fixes.
+<a href=#110 id=110 data-nosnippet>110</a>    </span>Gnss {
+<a href=#111 id=111 data-nosnippet>111</a>        <span class="attr">#[command(subcommand)]
+<a href=#112 id=112 data-nosnippet>112</a>        </span>op: <span class="prelude-ty">Option</span>&lt;gnss::GnssOp&gt;,
+<a href=#113 id=113 data-nosnippet>113</a>    },
+<a href=#114 id=114 data-nosnippet>114</a>
+<a href=#115 id=115 data-nosnippet>115</a>    <span class="doccomment">/// Show or set what the device announces on its own schedule.
+<a href=#116 id=116 data-nosnippet>116</a>    </span>Advert {
+<a href=#117 id=117 data-nosnippet>117</a>        <span class="attr">#[command(subcommand)]
+<a href=#118 id=118 data-nosnippet>118</a>        </span>op: <span class="prelude-ty">Option</span>&lt;advert::AdvertOp&gt;,
+<a href=#119 id=119 data-nosnippet>119</a>    },
+<a href=#120 id=120 data-nosnippet>120</a>
+<a href=#121 id=121 data-nosnippet>121</a>    <span class="doccomment">/// Device-identity channel keys: the multicast this device's own
+<a href=#122 id=122 data-nosnippet>122</a>    /// node joins.
+<a href=#123 id=123 data-nosnippet>123</a>    </span>DevChannel {
+<a href=#124 id=124 data-nosnippet>124</a>        <span class="attr">#[command(subcommand)]
+<a href=#125 id=125 data-nosnippet>125</a>        </span>op: <span class="prelude-ty">Option</span>&lt;tables::TableOp&gt;,
+<a href=#126 id=126 data-nosnippet>126</a>    },
+<a href=#127 id=127 data-nosnippet>127</a>
+<a href=#128 id=128 data-nosnippet>128</a>    <span class="doccomment">/// Device-identity peer public keys.
+<a href=#129 id=129 data-nosnippet>129</a>    </span>DevPeer {
+<a href=#130 id=130 data-nosnippet>130</a>        <span class="attr">#[command(subcommand)]
+<a href=#131 id=131 data-nosnippet>131</a>        </span>op: <span class="prelude-ty">Option</span>&lt;tables::TableOp&gt;,
+<a href=#132 id=132 data-nosnippet>132</a>    },
+<a href=#133 id=133 data-nosnippet>133</a>
+<a href=#134 id=134 data-nosnippet>134</a>    <span class="doccomment">/// Nodes authorized to manage this device over the mesh.
+<a href=#135 id=135 data-nosnippet>135</a>    </span>DevAdmin {
+<a href=#136 id=136 data-nosnippet>136</a>        <span class="attr">#[command(subcommand)]
+<a href=#137 id=137 data-nosnippet>137</a>        </span>op: <span class="prelude-ty">Option</span>&lt;tables::TableOp&gt;,
+<a href=#138 id=138 data-nosnippet>138</a>    },
+<a href=#139 id=139 data-nosnippet>139</a>
+<a href=#140 id=140 data-nosnippet>140</a>    <span class="doccomment">/// Administer another device over the mesh, using the attached radio
+<a href=#141 id=141 data-nosnippet>141</a>    /// to reach it.
+<a href=#142 id=142 data-nosnippet>142</a>    </span>Manage {
+<a href=#143 id=143 data-nosnippet>143</a>        <span class="doccomment">/// The device to manage, as its node public key.
+<a href=#144 id=144 data-nosnippet>144</a>        </span><span class="attr">#[arg(value_name = <span class="string">"KEY"</span>)]
+<a href=#145 id=145 data-nosnippet>145</a>        </span>target: values::KeyArg,
 <a href=#146 id=146 data-nosnippet>146</a>
-<a href=#147 id=147 data-nosnippet>147</a>    <span class="doccomment">/// Ask a repeater which repeaters it knows of, using the attached
-<a href=#148 id=148 data-nosnippet>148</a>    /// radio to reach it.
-<a href=#149 id=149 data-nosnippet>149</a>    </span>PeerRepeaters {
-<a href=#150 id=150 data-nosnippet>150</a>        <span class="doccomment">/// The repeater to ask, as its node public key.
-<a href=#151 id=151 data-nosnippet>151</a>        </span><span class="attr">#[arg(value_name = <span class="string">"KEY"</span>)]
-<a href=#152 id=152 data-nosnippet>152</a>        </span>target: values::KeyArg,
-<a href=#153 id=153 data-nosnippet>153</a>    },
-<a href=#154 id=154 data-nosnippet>154</a>
-<a href=#155 id=155 data-nosnippet>155</a>    <span class="doccomment">/// Measure the path to another node: reachability, round-trip time,
-<a href=#156 id=156 data-nosnippet>156</a>    /// hops, and signal. Needs no authorization from the far end.
-<a href=#157 id=157 data-nosnippet>157</a>    </span>Ping(ping::PingArgs),
+<a href=#147 id=147 data-nosnippet>147</a>        <span class="attr">#[command(subcommand)]
+<a href=#148 id=148 data-nosnippet>148</a>        </span>op: manage::ManageOp,
+<a href=#149 id=149 data-nosnippet>149</a>    },
+<a href=#150 id=150 data-nosnippet>150</a>
+<a href=#151 id=151 data-nosnippet>151</a>    <span class="doccomment">/// Ask a repeater which repeaters it knows of, using the attached
+<a href=#152 id=152 data-nosnippet>152</a>    /// radio to reach it.
+<a href=#153 id=153 data-nosnippet>153</a>    </span>PeerRepeaters {
+<a href=#154 id=154 data-nosnippet>154</a>        <span class="doccomment">/// The repeater to ask, as its node public key.
+<a href=#155 id=155 data-nosnippet>155</a>        </span><span class="attr">#[arg(value_name = <span class="string">"KEY"</span>)]
+<a href=#156 id=156 data-nosnippet>156</a>        </span>target: values::KeyArg,
+<a href=#157 id=157 data-nosnippet>157</a>    },
 <a href=#158 id=158 data-nosnippet>158</a>
-<a href=#159 id=159 data-nosnippet>159</a>    <span class="doccomment">/// Show the administrator identity this tool manages devices with.
-<a href=#160 id=160 data-nosnippet>160</a>    </span>AdminKey,
-<a href=#161 id=161 data-nosnippet>161</a>
-<a href=#162 id=162 data-nosnippet>162</a>    <span class="doccomment">/// Read several properties in one exchange.
-<a href=#163 id=163 data-nosnippet>163</a>    </span>Props {
-<a href=#164 id=164 data-nosnippet>164</a>        <span class="doccomment">/// Property identifiers, decimal or `0x`-prefixed.
-<a href=#165 id=165 data-nosnippet>165</a>        </span><span class="attr">#[arg(value_name = <span class="string">"PROP"</span>, required = <span class="bool-val">true</span>, value_parser = values::parse_u32)]
-<a href=#166 id=166 data-nosnippet>166</a>        </span>keys: Vec&lt;u32&gt;,
-<a href=#167 id=167 data-nosnippet>167</a>    },
-<a href=#168 id=168 data-nosnippet>168</a>
-<a href=#169 id=169 data-nosnippet>169</a>    <span class="doccomment">/// Take one ambient light reading.
-<a href=#170 id=170 data-nosnippet>170</a>    </span>Illuminance,
-<a href=#171 id=171 data-nosnippet>171</a>
-<a href=#172 id=172 data-nosnippet>172</a>    <span class="doccomment">/// Show or drive the locate alert: make the radio conspicuous so it
-<a href=#173 id=173 data-nosnippet>173</a>    /// can be found.
-<a href=#174 id=174 data-nosnippet>174</a>    </span>Alert {
-<a href=#175 id=175 data-nosnippet>175</a>        <span class="attr">#[command(subcommand)]
-<a href=#176 id=176 data-nosnippet>176</a>        </span>op: <span class="prelude-ty">Option</span>&lt;lifecycle::AlertOp&gt;,
-<a href=#177 id=177 data-nosnippet>177</a>    },
-<a href=#178 id=178 data-nosnippet>178</a>
-<a href=#179 id=179 data-nosnippet>179</a>    <span class="doccomment">/// Listen on the device's radio, decoding frames and optionally
-<a href=#180 id=180 data-nosnippet>180</a>    /// writing a Wireshark-compatible capture.
-<a href=#181 id=181 data-nosnippet>181</a>    </span>Capture(capture::CaptureArgs),
+<a href=#159 id=159 data-nosnippet>159</a>    <span class="doccomment">/// Measure the path to another node: reachability, round-trip time,
+<a href=#160 id=160 data-nosnippet>160</a>    /// hops, and signal. Needs no authorization from the far end.
+<a href=#161 id=161 data-nosnippet>161</a>    </span>Ping(ping::PingArgs),
+<a href=#162 id=162 data-nosnippet>162</a>
+<a href=#163 id=163 data-nosnippet>163</a>    <span class="doccomment">/// Show the administrator identity this tool manages devices with.
+<a href=#164 id=164 data-nosnippet>164</a>    </span>AdminKey,
+<a href=#165 id=165 data-nosnippet>165</a>
+<a href=#166 id=166 data-nosnippet>166</a>    <span class="doccomment">/// Read several properties in one exchange.
+<a href=#167 id=167 data-nosnippet>167</a>    </span>Props {
+<a href=#168 id=168 data-nosnippet>168</a>        <span class="doccomment">/// Property identifiers, decimal or `0x`-prefixed.
+<a href=#169 id=169 data-nosnippet>169</a>        </span><span class="attr">#[arg(value_name = <span class="string">"PROP"</span>, required = <span class="bool-val">true</span>, value_parser = values::parse_u32)]
+<a href=#170 id=170 data-nosnippet>170</a>        </span>keys: Vec&lt;u32&gt;,
+<a href=#171 id=171 data-nosnippet>171</a>    },
+<a href=#172 id=172 data-nosnippet>172</a>
+<a href=#173 id=173 data-nosnippet>173</a>    <span class="doccomment">/// Take one ambient light reading.
+<a href=#174 id=174 data-nosnippet>174</a>    </span>Illuminance,
+<a href=#175 id=175 data-nosnippet>175</a>
+<a href=#176 id=176 data-nosnippet>176</a>    <span class="doccomment">/// Show or drive the locate alert: make the radio conspicuous so it
+<a href=#177 id=177 data-nosnippet>177</a>    /// can be found.
+<a href=#178 id=178 data-nosnippet>178</a>    </span>Alert {
+<a href=#179 id=179 data-nosnippet>179</a>        <span class="attr">#[command(subcommand)]
+<a href=#180 id=180 data-nosnippet>180</a>        </span>op: <span class="prelude-ty">Option</span>&lt;lifecycle::AlertOp&gt;,
+<a href=#181 id=181 data-nosnippet>181</a>    },
 <a href=#182 id=182 data-nosnippet>182</a>
-<a href=#183 id=183 data-nosnippet>183</a>    <span class="doccomment">/// List nearby ULCP radios without connecting.
-<a href=#184 id=184 data-nosnippet>184</a>    </span>Scan {
-<a href=#185 id=185 data-nosnippet>185</a>        <span class="doccomment">/// Seconds to listen.
-<a href=#186 id=186 data-nosnippet>186</a>        </span><span class="attr">#[arg(long, default_value_t = <span class="number">2</span>, value_name = <span class="string">"SECS"</span>)]
-<a href=#187 id=187 data-nosnippet>187</a>        </span>timeout: u64,
-<a href=#188 id=188 data-nosnippet>188</a>    },
-<a href=#189 id=189 data-nosnippet>189</a>
-<a href=#190 id=190 data-nosnippet>190</a>    <span class="doccomment">/// Show, set, or clear the radio this tool reaches for when the
-<a href=#191 id=191 data-nosnippet>191</a>    /// command line names none.
-<a href=#192 id=192 data-nosnippet>192</a>    </span>Default {
-<a href=#193 id=193 data-nosnippet>193</a>        <span class="attr">#[command(subcommand)]
-<a href=#194 id=194 data-nosnippet>194</a>        </span>op: <span class="prelude-ty">Option</span>&lt;DefaultOp&gt;,
-<a href=#195 id=195 data-nosnippet>195</a>    },
-<a href=#196 id=196 data-nosnippet>196</a>}
-<a href=#197 id=197 data-nosnippet>197</a>
-<a href=#198 id=198 data-nosnippet>198</a><span class="attr">#[derive(Debug, clap::Subcommand)]
-<a href=#199 id=199 data-nosnippet>199</a></span><span class="kw">pub enum </span>DefaultOp {
-<a href=#200 id=200 data-nosnippet>200</a>    <span class="doccomment">/// Print the saved default radio.
-<a href=#201 id=201 data-nosnippet>201</a>    </span>Show,
-<a href=#202 id=202 data-nosnippet>202</a>    <span class="doccomment">/// Save a default radio. With no selector, saves the attached one.
-<a href=#203 id=203 data-nosnippet>203</a>    </span>Set {
-<a href=#204 id=204 data-nosnippet>204</a>        <span class="attr">#[arg(value_name = <span class="string">"SELECTOR"</span>)]
-<a href=#205 id=205 data-nosnippet>205</a>        </span>selector: <span class="prelude-ty">Option</span>&lt;String&gt;,
-<a href=#206 id=206 data-nosnippet>206</a>    },
-<a href=#207 id=207 data-nosnippet>207</a>    <span class="doccomment">/// Forget the saved default radio.
-<a href=#208 id=208 data-nosnippet>208</a>    </span>Clear,
-<a href=#209 id=209 data-nosnippet>209</a>}
-<a href=#210 id=210 data-nosnippet>210</a>
-<a href=#211 id=211 data-nosnippet>211</a><span class="kw">impl </span>Command {
-<a href=#212 id=212 data-nosnippet>212</a>    <span class="doccomment">/// Whether this command needs an attached device.
-<a href=#213 id=213 data-nosnippet>213</a>    </span><span class="kw">pub fn </span>needs_device(<span class="kw-2">&amp;</span><span class="self">self</span>) -&gt; bool {
-<a href=#214 id=214 data-nosnippet>214</a>        <span class="kw">match </span><span class="self">self </span>{
-<a href=#215 id=215 data-nosnippet>215</a>            <span class="self">Self</span>::Scan { .. } =&gt; <span class="bool-val">false</span>,
-<a href=#216 id=216 data-nosnippet>216</a>            <span class="comment">// The administrator identity is this tool's own; no radio is
-<a href=#217 id=217 data-nosnippet>217</a>            // involved in reading it out.
-<a href=#218 id=218 data-nosnippet>218</a>            </span><span class="self">Self</span>::AdminKey =&gt; <span class="bool-val">false</span>,
-<a href=#219 id=219 data-nosnippet>219</a>            <span class="comment">// Saving the attached radio as the default needs one; naming
-<a href=#220 id=220 data-nosnippet>220</a>            // a selector outright does not.
-<a href=#221 id=221 data-nosnippet>221</a>            </span><span class="self">Self</span>::Default { op } =&gt; <span class="macro">matches!</span>(op, <span class="prelude-val">Some</span>(DefaultOp::Set { selector: <span class="prelude-val">None </span>})),
-<a href=#222 id=222 data-nosnippet>222</a>            <span class="kw">_ </span>=&gt; <span class="bool-val">true</span>,
-<a href=#223 id=223 data-nosnippet>223</a>        }
-<a href=#224 id=224 data-nosnippet>224</a>    }
-<a href=#225 id=225 data-nosnippet>225</a>
-<a href=#226 id=226 data-nosnippet>226</a>    <span class="doccomment">/// Whether this command needs a tethered attach rather than the
-<a href=#227 id=227 data-nosnippet>227</a>    /// administrative one everything else uses.
-<a href=#228 id=228 data-nosnippet>228</a>    </span><span class="kw">pub fn </span>needs_tethered(<span class="kw-2">&amp;</span><span class="self">self</span>) -&gt; bool {
-<a href=#229 id=229 data-nosnippet>229</a>        <span class="macro">matches!</span>(<span class="self">self</span>, <span class="self">Self</span>::Provision(<span class="kw">_</span>))
-<a href=#230 id=230 data-nosnippet>230</a>    }
-<a href=#231 id=231 data-nosnippet>231</a>
-<a href=#232 id=232 data-nosnippet>232</a>    <span class="doccomment">/// Why this command cannot run against a device reached over the
-<a href=#233 id=233 data-nosnippet>233</a>    /// mesh, if it cannot.
-<a href=#234 id=234 data-nosnippet>234</a>    ///
-<a href=#235 id=235 data-nosnippet>235</a>    /// Most of the tool works unchanged over a mesh session: the handle
-<a href=#236 id=236 data-nosnippet>236</a>    /// is an ordinary one and the properties behind it are the same. The
-<a href=#237 id=237 data-nosnippet>237</a>    /// exceptions are the commands that need something the Node
-<a href=#238 id=238 data-nosnippet>238</a>    /// Management binding does not carry, and the ones that would want
-<a href=#239 id=239 data-nosnippet>239</a>    /// the radio this session has already borrowed. Refusing them here
-<a href=#240 id=240 data-nosnippet>240</a>    /// beats letting each fail in its own way somewhere over the air.
-<a href=#241 id=241 data-nosnippet>241</a>    </span><span class="kw">pub fn </span>mesh_refusal(<span class="kw-2">&amp;</span><span class="self">self</span>) -&gt; <span class="prelude-ty">Option</span>&lt;<span class="kw-2">&amp;</span><span class="lifetime">'static </span>str&gt; {
-<a href=#242 id=242 data-nosnippet>242</a>        <span class="kw">match </span><span class="self">self </span>{
-<a href=#243 id=243 data-nosnippet>243</a>            <span class="comment">// Captured frames arrive as unsolicited stream traffic, and
-<a href=#244 id=244 data-nosnippet>244</a>            // the binding carries nothing unsolicited — there is no
-<a href=#245 id=245 data-nosnippet>245</a>            // remote form of this to reach for.
-<a href=#246 id=246 data-nosnippet>246</a>            </span><span class="self">Self</span>::Capture(<span class="kw">_</span>) =&gt; <span class="prelude-val">Some</span>(
-<a href=#247 id=247 data-nosnippet>247</a>                <span class="string">"capture listens on the attached radio's own receiver, which a mesh session \
-<a href=#248 id=248 data-nosnippet>248</a>                 cannot reach; `disconnect` first"</span>,
-<a href=#249 id=249 data-nosnippet>249</a>            ),
-<a href=#250 id=250 data-nosnippet>250</a>            <span class="comment">// Provisioning establishes a host domain, which is exactly
-<a href=#251 id=251 data-nosnippet>251</a>            // what an administrator is not.
-<a href=#252 id=252 data-nosnippet>252</a>            </span><span class="self">Self</span>::Provision(<span class="kw">_</span>) =&gt; <span class="prelude-val">Some</span>(
-<a href=#253 id=253 data-nosnippet>253</a>                <span class="string">"provisioning claims a radio as your own, which needs a local attach; \
-<a href=#254 id=254 data-nosnippet>254</a>                 `disconnect` first"</span>,
-<a href=#255 id=255 data-nosnippet>255</a>            ),
-<a href=#256 id=256 data-nosnippet>256</a>            <span class="comment">// Each of these becomes a node on the mesh, and this session
-<a href=#257 id=257 data-nosnippet>257</a>            // is already using the only radio there is.
-<a href=#258 id=258 data-nosnippet>258</a>            </span><span class="self">Self</span>::Manage { .. } | <span class="self">Self</span>::PeerRepeaters { .. } | <span class="self">Self</span>::Ping(<span class="kw">_</span>) =&gt; <span class="prelude-val">Some</span>(
-<a href=#259 id=259 data-nosnippet>259</a>                <span class="string">"this session has already borrowed the radio; `disconnect` first, then reach \
-<a href=#260 id=260 data-nosnippet>260</a>                 the node from there"</span>,
-<a href=#261 id=261 data-nosnippet>261</a>            ),
-<a href=#262 id=262 data-nosnippet>262</a>            <span class="kw">_ </span>=&gt; <span class="prelude-val">None</span>,
-<a href=#263 id=263 data-nosnippet>263</a>        }
-<a href=#264 id=264 data-nosnippet>264</a>    }
-<a href=#265 id=265 data-nosnippet>265</a>
-<a href=#266 id=266 data-nosnippet>266</a>    <span class="doccomment">/// Check whatever clap's grammar cannot — combinations of flags,
-<a href=#267 id=267 data-nosnippet>267</a>    /// and the provisioning file — *before* a device is opened.
-<a href=#268 id=268 data-nosnippet>268</a>    ///
-<a href=#269 id=269 data-nosnippet>269</a>    /// Connecting takes seconds over BLE and disturbs a radio that was
-<a href=#270 id=270 data-nosnippet>270</a>    /// minding its own business; an argument mistake should cost
-<a href=#271 id=271 data-nosnippet>271</a>    /// neither.
-<a href=#272 id=272 data-nosnippet>272</a>    </span><span class="kw">pub fn </span>validate(<span class="kw-2">&amp;</span><span class="self">self</span>) -&gt; <span class="prelude-ty">Result</span>&lt;()&gt; {
-<a href=#273 id=273 data-nosnippet>273</a>        <span class="kw">match </span><span class="self">self </span>{
-<a href=#274 id=274 data-nosnippet>274</a>            <span class="self">Self</span>::Capture(args) =&gt; args.validate(),
-<a href=#275 id=275 data-nosnippet>275</a>            <span class="self">Self</span>::Provision(args) =&gt; args.desired().map(drop),
-<a href=#276 id=276 data-nosnippet>276</a>            <span class="kw">_ </span>=&gt; <span class="prelude-val">Ok</span>(()),
-<a href=#277 id=277 data-nosnippet>277</a>        }
-<a href=#278 id=278 data-nosnippet>278</a>    }
-<a href=#279 id=279 data-nosnippet>279</a>
-<a href=#280 id=280 data-nosnippet>280</a>    <span class="kw">pub async fn </span>run(<span class="self">self</span>, app: <span class="kw-2">&amp;mut </span>App) -&gt; <span class="prelude-ty">Result</span>&lt;()&gt; {
-<a href=#281 id=281 data-nosnippet>281</a>        <span class="kw">if </span>app
-<a href=#282 id=282 data-nosnippet>282</a>            .session
-<a href=#283 id=283 data-nosnippet>283</a>            .as_ref()
-<a href=#284 id=284 data-nosnippet>284</a>            .is_some_and(|session| session.is_mesh())
-<a href=#285 id=285 data-nosnippet>285</a>            &amp;&amp; <span class="kw">let </span><span class="prelude-val">Some</span>(refusal) = <span class="self">self</span>.mesh_refusal()
-<a href=#286 id=286 data-nosnippet>286</a>        {
-<a href=#287 id=287 data-nosnippet>287</a>            <span class="macro">bail!</span>(<span class="string">"{refusal}"</span>);
-<a href=#288 id=288 data-nosnippet>288</a>        }
-<a href=#289 id=289 data-nosnippet>289</a>        <span class="kw">match </span><span class="self">self </span>{
-<a href=#290 id=290 data-nosnippet>290</a>            <span class="self">Self</span>::Info(args) =&gt; info::run(app.device()<span class="question-mark">?</span>, args).<span class="kw">await</span>,
-<a href=#291 id=291 data-nosnippet>291</a>            <span class="self">Self</span>::Provision(args) =&gt; provision::run(app, args).<span class="kw">await</span>,
-<a href=#292 id=292 data-nosnippet>292</a>            <span class="self">Self</span>::Identity { op } =&gt; lifecycle::identity(app.device()<span class="question-mark">?</span>, op).<span class="kw">await</span>,
-<a href=#293 id=293 data-nosnippet>293</a>            <span class="self">Self</span>::Name { name } =&gt; lifecycle::name(app, name).<span class="kw">await</span>,
-<a href=#294 id=294 data-nosnippet>294</a>            <span class="self">Self</span>::Save =&gt; lifecycle::save(app.device()<span class="question-mark">?</span>).<span class="kw">await</span>,
-<a href=#295 id=295 data-nosnippet>295</a>            <span class="self">Self</span>::Restore =&gt; lifecycle::restore(app.device()<span class="question-mark">?</span>).<span class="kw">await</span>,
-<a href=#296 id=296 data-nosnippet>296</a>            <span class="self">Self</span>::Clear =&gt; lifecycle::clear(app.device()<span class="question-mark">?</span>).<span class="kw">await</span>,
-<a href=#297 id=297 data-nosnippet>297</a>            <span class="self">Self</span>::Reset =&gt; lifecycle::reset(app.device()<span class="question-mark">?</span>).<span class="kw">await</span>,
-<a href=#298 id=298 data-nosnippet>298</a>            <span class="self">Self</span>::FactoryReset { yes } =&gt; lifecycle::factory_reset(app, yes).<span class="kw">await</span>,
-<a href=#299 id=299 data-nosnippet>299</a>            <span class="self">Self</span>::Pin { value } =&gt; lifecycle::pin(app.device()<span class="question-mark">?</span>, value).<span class="kw">await</span>,
-<a href=#300 id=300 data-nosnippet>300</a>            <span class="self">Self</span>::Phy { op } =&gt; phy::run(app, op).<span class="kw">await</span>,
-<a href=#301 id=301 data-nosnippet>301</a>            <span class="self">Self</span>::Duty { op } =&gt; duty::run(app, op).<span class="kw">await</span>,
-<a href=#302 id=302 data-nosnippet>302</a>            <span class="self">Self</span>::Repeater { op } =&gt; repeater::run(app, op).<span class="kw">await</span>,
-<a href=#303 id=303 data-nosnippet>303</a>            <span class="self">Self</span>::Time { op } =&gt; time::run(app, op).<span class="kw">await</span>,
-<a href=#304 id=304 data-nosnippet>304</a>            <span class="self">Self</span>::Gnss { op } =&gt; gnss::run(app, op).<span class="kw">await</span>,
-<a href=#305 id=305 data-nosnippet>305</a>            <span class="self">Self</span>::Advert { op } =&gt; advert::run(app, op).<span class="kw">await</span>,
-<a href=#306 id=306 data-nosnippet>306</a>            <span class="self">Self</span>::DevChannel { op } =&gt; {
-<a href=#307 id=307 data-nosnippet>307</a>                tables::run(app, prop::DEV_CHANNEL_KEYS, <span class="string">"channel"</span>, op).<span class="kw">await
-<a href=#308 id=308 data-nosnippet>308</a>            </span>}
-<a href=#309 id=309 data-nosnippet>309</a>            <span class="self">Self</span>::DevPeer { op } =&gt; tables::run(app, prop::DEV_PEERS, <span class="string">"peer"</span>, op).<span class="kw">await</span>,
-<a href=#310 id=310 data-nosnippet>310</a>            <span class="self">Self</span>::DevAdmin { op } =&gt; tables::run(app, prop::DEV_ADMINS, <span class="string">"administrator"</span>, op).<span class="kw">await</span>,
-<a href=#311 id=311 data-nosnippet>311</a>            <span class="self">Self</span>::Manage { target, op } =&gt; {
-<a href=#312 id=312 data-nosnippet>312</a>                manage::run(app, target, manage::Operation::Manage(op)).<span class="kw">await
+<a href=#183 id=183 data-nosnippet>183</a>    <span class="doccomment">/// Listen on the device's radio, decoding frames and optionally
+<a href=#184 id=184 data-nosnippet>184</a>    /// writing a Wireshark-compatible capture.
+<a href=#185 id=185 data-nosnippet>185</a>    </span>Capture(capture::CaptureArgs),
+<a href=#186 id=186 data-nosnippet>186</a>
+<a href=#187 id=187 data-nosnippet>187</a>    <span class="doccomment">/// List nearby ULCP radios without connecting.
+<a href=#188 id=188 data-nosnippet>188</a>    </span>Scan {
+<a href=#189 id=189 data-nosnippet>189</a>        <span class="doccomment">/// Seconds to listen.
+<a href=#190 id=190 data-nosnippet>190</a>        </span><span class="attr">#[arg(long, default_value_t = <span class="number">2</span>, value_name = <span class="string">"SECS"</span>)]
+<a href=#191 id=191 data-nosnippet>191</a>        </span>timeout: u64,
+<a href=#192 id=192 data-nosnippet>192</a>    },
+<a href=#193 id=193 data-nosnippet>193</a>
+<a href=#194 id=194 data-nosnippet>194</a>    <span class="doccomment">/// Show, set, or clear the radio this tool reaches for when the
+<a href=#195 id=195 data-nosnippet>195</a>    /// command line names none.
+<a href=#196 id=196 data-nosnippet>196</a>    </span>Default {
+<a href=#197 id=197 data-nosnippet>197</a>        <span class="attr">#[command(subcommand)]
+<a href=#198 id=198 data-nosnippet>198</a>        </span>op: <span class="prelude-ty">Option</span>&lt;DefaultOp&gt;,
+<a href=#199 id=199 data-nosnippet>199</a>    },
+<a href=#200 id=200 data-nosnippet>200</a>}
+<a href=#201 id=201 data-nosnippet>201</a>
+<a href=#202 id=202 data-nosnippet>202</a><span class="attr">#[derive(Debug, clap::Subcommand)]
+<a href=#203 id=203 data-nosnippet>203</a></span><span class="kw">pub enum </span>DefaultOp {
+<a href=#204 id=204 data-nosnippet>204</a>    <span class="doccomment">/// Print the saved default radio.
+<a href=#205 id=205 data-nosnippet>205</a>    </span>Show,
+<a href=#206 id=206 data-nosnippet>206</a>    <span class="doccomment">/// Save a default radio. With no selector, saves the attached one.
+<a href=#207 id=207 data-nosnippet>207</a>    </span>Set {
+<a href=#208 id=208 data-nosnippet>208</a>        <span class="attr">#[arg(value_name = <span class="string">"SELECTOR"</span>)]
+<a href=#209 id=209 data-nosnippet>209</a>        </span>selector: <span class="prelude-ty">Option</span>&lt;String&gt;,
+<a href=#210 id=210 data-nosnippet>210</a>    },
+<a href=#211 id=211 data-nosnippet>211</a>    <span class="doccomment">/// Forget the saved default radio.
+<a href=#212 id=212 data-nosnippet>212</a>    </span>Clear,
+<a href=#213 id=213 data-nosnippet>213</a>}
+<a href=#214 id=214 data-nosnippet>214</a>
+<a href=#215 id=215 data-nosnippet>215</a><span class="kw">impl </span>Command {
+<a href=#216 id=216 data-nosnippet>216</a>    <span class="doccomment">/// Whether this command needs an attached device.
+<a href=#217 id=217 data-nosnippet>217</a>    </span><span class="kw">pub fn </span>needs_device(<span class="kw-2">&amp;</span><span class="self">self</span>) -&gt; bool {
+<a href=#218 id=218 data-nosnippet>218</a>        <span class="kw">match </span><span class="self">self </span>{
+<a href=#219 id=219 data-nosnippet>219</a>            <span class="self">Self</span>::Scan { .. } =&gt; <span class="bool-val">false</span>,
+<a href=#220 id=220 data-nosnippet>220</a>            <span class="comment">// The administrator identity is this tool's own; no radio is
+<a href=#221 id=221 data-nosnippet>221</a>            // involved in reading it out.
+<a href=#222 id=222 data-nosnippet>222</a>            </span><span class="self">Self</span>::AdminKey =&gt; <span class="bool-val">false</span>,
+<a href=#223 id=223 data-nosnippet>223</a>            <span class="comment">// Saving the attached radio as the default needs one; naming
+<a href=#224 id=224 data-nosnippet>224</a>            // a selector outright does not.
+<a href=#225 id=225 data-nosnippet>225</a>            </span><span class="self">Self</span>::Default { op } =&gt; <span class="macro">matches!</span>(op, <span class="prelude-val">Some</span>(DefaultOp::Set { selector: <span class="prelude-val">None </span>})),
+<a href=#226 id=226 data-nosnippet>226</a>            <span class="kw">_ </span>=&gt; <span class="bool-val">true</span>,
+<a href=#227 id=227 data-nosnippet>227</a>        }
+<a href=#228 id=228 data-nosnippet>228</a>    }
+<a href=#229 id=229 data-nosnippet>229</a>
+<a href=#230 id=230 data-nosnippet>230</a>    <span class="doccomment">/// Whether this command needs a tethered attach rather than the
+<a href=#231 id=231 data-nosnippet>231</a>    /// administrative one everything else uses.
+<a href=#232 id=232 data-nosnippet>232</a>    </span><span class="kw">pub fn </span>needs_tethered(<span class="kw-2">&amp;</span><span class="self">self</span>) -&gt; bool {
+<a href=#233 id=233 data-nosnippet>233</a>        <span class="macro">matches!</span>(<span class="self">self</span>, <span class="self">Self</span>::Provision(<span class="kw">_</span>))
+<a href=#234 id=234 data-nosnippet>234</a>    }
+<a href=#235 id=235 data-nosnippet>235</a>
+<a href=#236 id=236 data-nosnippet>236</a>    <span class="doccomment">/// Why this command cannot run against a device reached over the
+<a href=#237 id=237 data-nosnippet>237</a>    /// mesh, if it cannot.
+<a href=#238 id=238 data-nosnippet>238</a>    ///
+<a href=#239 id=239 data-nosnippet>239</a>    /// Most of the tool works unchanged over a mesh session: the handle
+<a href=#240 id=240 data-nosnippet>240</a>    /// is an ordinary one and the properties behind it are the same. The
+<a href=#241 id=241 data-nosnippet>241</a>    /// exceptions are the commands that need something the Node
+<a href=#242 id=242 data-nosnippet>242</a>    /// Management binding does not carry, and the ones that would want
+<a href=#243 id=243 data-nosnippet>243</a>    /// the radio this session has already borrowed. Refusing them here
+<a href=#244 id=244 data-nosnippet>244</a>    /// beats letting each fail in its own way somewhere over the air.
+<a href=#245 id=245 data-nosnippet>245</a>    </span><span class="kw">pub fn </span>mesh_refusal(<span class="kw-2">&amp;</span><span class="self">self</span>) -&gt; <span class="prelude-ty">Option</span>&lt;<span class="kw-2">&amp;</span><span class="lifetime">'static </span>str&gt; {
+<a href=#246 id=246 data-nosnippet>246</a>        <span class="kw">match </span><span class="self">self </span>{
+<a href=#247 id=247 data-nosnippet>247</a>            <span class="comment">// Captured frames arrive as unsolicited stream traffic, and
+<a href=#248 id=248 data-nosnippet>248</a>            // the binding carries nothing unsolicited — there is no
+<a href=#249 id=249 data-nosnippet>249</a>            // remote form of this to reach for.
+<a href=#250 id=250 data-nosnippet>250</a>            </span><span class="self">Self</span>::Capture(<span class="kw">_</span>) =&gt; <span class="prelude-val">Some</span>(
+<a href=#251 id=251 data-nosnippet>251</a>                <span class="string">"capture listens on the attached radio's own receiver, which a mesh session \
+<a href=#252 id=252 data-nosnippet>252</a>                 cannot reach; `disconnect` first"</span>,
+<a href=#253 id=253 data-nosnippet>253</a>            ),
+<a href=#254 id=254 data-nosnippet>254</a>            <span class="comment">// Provisioning establishes a host domain, which is exactly
+<a href=#255 id=255 data-nosnippet>255</a>            // what an administrator is not.
+<a href=#256 id=256 data-nosnippet>256</a>            </span><span class="self">Self</span>::Provision(<span class="kw">_</span>) =&gt; <span class="prelude-val">Some</span>(
+<a href=#257 id=257 data-nosnippet>257</a>                <span class="string">"provisioning claims a radio as your own, which needs a local attach; \
+<a href=#258 id=258 data-nosnippet>258</a>                 `disconnect` first"</span>,
+<a href=#259 id=259 data-nosnippet>259</a>            ),
+<a href=#260 id=260 data-nosnippet>260</a>            <span class="comment">// Each of these becomes a node on the mesh, and this session
+<a href=#261 id=261 data-nosnippet>261</a>            // is already using the only radio there is.
+<a href=#262 id=262 data-nosnippet>262</a>            </span><span class="self">Self</span>::Manage { .. } | <span class="self">Self</span>::PeerRepeaters { .. } | <span class="self">Self</span>::Ping(<span class="kw">_</span>) =&gt; <span class="prelude-val">Some</span>(
+<a href=#263 id=263 data-nosnippet>263</a>                <span class="string">"this session has already borrowed the radio; `disconnect` first, then reach \
+<a href=#264 id=264 data-nosnippet>264</a>                 the node from there"</span>,
+<a href=#265 id=265 data-nosnippet>265</a>            ),
+<a href=#266 id=266 data-nosnippet>266</a>            <span class="kw">_ </span>=&gt; <span class="prelude-val">None</span>,
+<a href=#267 id=267 data-nosnippet>267</a>        }
+<a href=#268 id=268 data-nosnippet>268</a>    }
+<a href=#269 id=269 data-nosnippet>269</a>
+<a href=#270 id=270 data-nosnippet>270</a>    <span class="doccomment">/// Check whatever clap's grammar cannot — combinations of flags,
+<a href=#271 id=271 data-nosnippet>271</a>    /// and the provisioning file — *before* a device is opened.
+<a href=#272 id=272 data-nosnippet>272</a>    ///
+<a href=#273 id=273 data-nosnippet>273</a>    /// Connecting takes seconds over BLE and disturbs a radio that was
+<a href=#274 id=274 data-nosnippet>274</a>    /// minding its own business; an argument mistake should cost
+<a href=#275 id=275 data-nosnippet>275</a>    /// neither.
+<a href=#276 id=276 data-nosnippet>276</a>    </span><span class="kw">pub fn </span>validate(<span class="kw-2">&amp;</span><span class="self">self</span>) -&gt; <span class="prelude-ty">Result</span>&lt;()&gt; {
+<a href=#277 id=277 data-nosnippet>277</a>        <span class="kw">match </span><span class="self">self </span>{
+<a href=#278 id=278 data-nosnippet>278</a>            <span class="self">Self</span>::Capture(args) =&gt; args.validate(),
+<a href=#279 id=279 data-nosnippet>279</a>            <span class="self">Self</span>::Provision(args) =&gt; args.desired().map(drop),
+<a href=#280 id=280 data-nosnippet>280</a>            <span class="kw">_ </span>=&gt; <span class="prelude-val">Ok</span>(()),
+<a href=#281 id=281 data-nosnippet>281</a>        }
+<a href=#282 id=282 data-nosnippet>282</a>    }
+<a href=#283 id=283 data-nosnippet>283</a>
+<a href=#284 id=284 data-nosnippet>284</a>    <span class="kw">pub async fn </span>run(<span class="self">self</span>, app: <span class="kw-2">&amp;mut </span>App) -&gt; <span class="prelude-ty">Result</span>&lt;()&gt; {
+<a href=#285 id=285 data-nosnippet>285</a>        <span class="kw">if </span>app
+<a href=#286 id=286 data-nosnippet>286</a>            .session
+<a href=#287 id=287 data-nosnippet>287</a>            .as_ref()
+<a href=#288 id=288 data-nosnippet>288</a>            .is_some_and(|session| session.is_mesh())
+<a href=#289 id=289 data-nosnippet>289</a>            &amp;&amp; <span class="kw">let </span><span class="prelude-val">Some</span>(refusal) = <span class="self">self</span>.mesh_refusal()
+<a href=#290 id=290 data-nosnippet>290</a>        {
+<a href=#291 id=291 data-nosnippet>291</a>            <span class="macro">bail!</span>(<span class="string">"{refusal}"</span>);
+<a href=#292 id=292 data-nosnippet>292</a>        }
+<a href=#293 id=293 data-nosnippet>293</a>        <span class="kw">match </span><span class="self">self </span>{
+<a href=#294 id=294 data-nosnippet>294</a>            <span class="self">Self</span>::Info(args) =&gt; info::run(app.device()<span class="question-mark">?</span>, args).<span class="kw">await</span>,
+<a href=#295 id=295 data-nosnippet>295</a>            <span class="self">Self</span>::Provision(args) =&gt; provision::run(app, args).<span class="kw">await</span>,
+<a href=#296 id=296 data-nosnippet>296</a>            <span class="self">Self</span>::Identity { op } =&gt; lifecycle::identity(app.device()<span class="question-mark">?</span>, op).<span class="kw">await</span>,
+<a href=#297 id=297 data-nosnippet>297</a>            <span class="self">Self</span>::Name { name } =&gt; lifecycle::name(app, name).<span class="kw">await</span>,
+<a href=#298 id=298 data-nosnippet>298</a>            <span class="self">Self</span>::Save =&gt; lifecycle::save(app.device()<span class="question-mark">?</span>).<span class="kw">await</span>,
+<a href=#299 id=299 data-nosnippet>299</a>            <span class="self">Self</span>::Restore =&gt; lifecycle::restore(app.device()<span class="question-mark">?</span>).<span class="kw">await</span>,
+<a href=#300 id=300 data-nosnippet>300</a>            <span class="self">Self</span>::Clear =&gt; lifecycle::clear(app.device()<span class="question-mark">?</span>).<span class="kw">await</span>,
+<a href=#301 id=301 data-nosnippet>301</a>            <span class="self">Self</span>::Reset =&gt; lifecycle::reset(app.device()<span class="question-mark">?</span>).<span class="kw">await</span>,
+<a href=#302 id=302 data-nosnippet>302</a>            <span class="self">Self</span>::Reboot =&gt; lifecycle::reboot(app).<span class="kw">await</span>,
+<a href=#303 id=303 data-nosnippet>303</a>            <span class="self">Self</span>::FactoryReset { yes } =&gt; lifecycle::factory_reset(app, yes).<span class="kw">await</span>,
+<a href=#304 id=304 data-nosnippet>304</a>            <span class="self">Self</span>::Pin { value } =&gt; lifecycle::pin(app.device()<span class="question-mark">?</span>, value).<span class="kw">await</span>,
+<a href=#305 id=305 data-nosnippet>305</a>            <span class="self">Self</span>::Phy { op } =&gt; phy::run(app, op).<span class="kw">await</span>,
+<a href=#306 id=306 data-nosnippet>306</a>            <span class="self">Self</span>::Duty { op } =&gt; duty::run(app, op).<span class="kw">await</span>,
+<a href=#307 id=307 data-nosnippet>307</a>            <span class="self">Self</span>::Repeater { op } =&gt; repeater::run(app, op).<span class="kw">await</span>,
+<a href=#308 id=308 data-nosnippet>308</a>            <span class="self">Self</span>::Time { op } =&gt; time::run(app, op).<span class="kw">await</span>,
+<a href=#309 id=309 data-nosnippet>309</a>            <span class="self">Self</span>::Gnss { op } =&gt; gnss::run(app, op).<span class="kw">await</span>,
+<a href=#310 id=310 data-nosnippet>310</a>            <span class="self">Self</span>::Advert { op } =&gt; advert::run(app, op).<span class="kw">await</span>,
+<a href=#311 id=311 data-nosnippet>311</a>            <span class="self">Self</span>::DevChannel { op } =&gt; {
+<a href=#312 id=312 data-nosnippet>312</a>                tables::run(app, prop::DEV_CHANNEL_KEYS, <span class="string">"channel"</span>, op).<span class="kw">await
 <a href=#313 id=313 data-nosnippet>313</a>            </span>}
-<a href=#314 id=314 data-nosnippet>314</a>            <span class="self">Self</span>::PeerRepeaters { target } =&gt; {
-<a href=#315 id=315 data-nosnippet>315</a>                manage::run(app, target, manage::Operation::PeerRepeaters).<span class="kw">await
-<a href=#316 id=316 data-nosnippet>316</a>            </span>}
-<a href=#317 id=317 data-nosnippet>317</a>            <span class="self">Self</span>::Ping(args) =&gt; {
-<a href=#318 id=318 data-nosnippet>318</a>                <span class="kw">let </span>target = args.target;
-<a href=#319 id=319 data-nosnippet>319</a>                manage::run(app, target, manage::Operation::Ping(args)).<span class="kw">await
-<a href=#320 id=320 data-nosnippet>320</a>            </span>}
-<a href=#321 id=321 data-nosnippet>321</a>            <span class="self">Self</span>::AdminKey =&gt; <span class="kw">crate</span>::mesh::show_admin_key(),
-<a href=#322 id=322 data-nosnippet>322</a>            <span class="self">Self</span>::Props { keys } =&gt; info::props(app.device()<span class="question-mark">?</span>, <span class="kw-2">&amp;</span>keys).<span class="kw">await</span>,
-<a href=#323 id=323 data-nosnippet>323</a>            <span class="self">Self</span>::Illuminance =&gt; info::illuminance(app.device()<span class="question-mark">?</span>).<span class="kw">await</span>,
-<a href=#324 id=324 data-nosnippet>324</a>            <span class="self">Self</span>::Alert { op } =&gt; lifecycle::alert(app.device()<span class="question-mark">?</span>, op).<span class="kw">await</span>,
-<a href=#325 id=325 data-nosnippet>325</a>            <span class="self">Self</span>::Capture(args) =&gt; capture::run(app, args).<span class="kw">await</span>,
-<a href=#326 id=326 data-nosnippet>326</a>            <span class="self">Self</span>::Scan { timeout } =&gt; scan(app, timeout).<span class="kw">await</span>,
-<a href=#327 id=327 data-nosnippet>327</a>            <span class="self">Self</span>::Default { op } =&gt; default(app, op.unwrap_or(DefaultOp::Show)),
-<a href=#328 id=328 data-nosnippet>328</a>        }
-<a href=#329 id=329 data-nosnippet>329</a>    }
-<a href=#330 id=330 data-nosnippet>330</a>}
-<a href=#331 id=331 data-nosnippet>331</a>
-<a href=#332 id=332 data-nosnippet>332</a><span class="kw">async fn </span>scan(app: <span class="kw-2">&amp;mut </span>App, timeout: u64) -&gt; <span class="prelude-ty">Result</span>&lt;()&gt; {
-<a href=#333 id=333 data-nosnippet>333</a>    <span class="macro">println!</span>(<span class="string">"scanning for ULCP radios ({timeout} s) ..."</span>);
-<a href=#334 id=334 data-nosnippet>334</a>    <span class="kw">let </span>found = connection::scan(std::time::Duration::from_secs(timeout)).<span class="kw">await</span><span class="question-mark">?</span>;
-<a href=#335 id=335 data-nosnippet>335</a>    connection::render_found(<span class="kw-2">&amp;</span>found);
-<a href=#336 id=336 data-nosnippet>336</a>    <span class="comment">// Retained so `connect &lt;N&gt;` can refer to this listing by number.
-<a href=#337 id=337 data-nosnippet>337</a>    </span>app.last_scan = found;
-<a href=#338 id=338 data-nosnippet>338</a>    <span class="prelude-val">Ok</span>(())
-<a href=#339 id=339 data-nosnippet>339</a>}
-<a href=#340 id=340 data-nosnippet>340</a>
-<a href=#341 id=341 data-nosnippet>341</a><span class="kw">fn </span>default(app: <span class="kw-2">&amp;mut </span>App, op: DefaultOp) -&gt; <span class="prelude-ty">Result</span>&lt;()&gt; {
-<a href=#342 id=342 data-nosnippet>342</a>    <span class="kw">match </span>op {
-<a href=#343 id=343 data-nosnippet>343</a>        DefaultOp::Show =&gt; {
-<a href=#344 id=344 data-nosnippet>344</a>            <span class="kw">match </span><span class="kw-2">&amp;</span>app.prefs.default_device {
-<a href=#345 id=345 data-nosnippet>345</a>                <span class="prelude-val">Some</span>(device) =&gt; output::field(<span class="string">"default"</span>, device.display()),
-<a href=#346 id=346 data-nosnippet>346</a>                <span class="prelude-val">None </span>=&gt; <span class="macro">println!</span>(<span class="string">"no default radio saved"</span>),
-<a href=#347 id=347 data-nosnippet>347</a>            }
-<a href=#348 id=348 data-nosnippet>348</a>            <span class="kw">if let </span><span class="prelude-val">Some</span>(path) = connection::config_path() {
-<a href=#349 id=349 data-nosnippet>349</a>                output::field(<span class="string">"settings"</span>, path.display());
-<a href=#350 id=350 data-nosnippet>350</a>            }
-<a href=#351 id=351 data-nosnippet>351</a>            <span class="prelude-val">Ok</span>(())
-<a href=#352 id=352 data-nosnippet>352</a>        }
-<a href=#353 id=353 data-nosnippet>353</a>        DefaultOp::Set { selector } =&gt; {
-<a href=#354 id=354 data-nosnippet>354</a>            <span class="kw">let </span>device = <span class="kw">match </span>selector {
-<a href=#355 id=355 data-nosnippet>355</a>                <span class="prelude-val">Some</span>(selector) =&gt; connection::DefaultDevice {
-<a href=#356 id=356 data-nosnippet>356</a>                    selector,
-<a href=#357 id=357 data-nosnippet>357</a>                    name: <span class="prelude-val">None</span>,
-<a href=#358 id=358 data-nosnippet>358</a>                },
-<a href=#359 id=359 data-nosnippet>359</a>                <span class="prelude-val">None </span>=&gt; {
-<a href=#360 id=360 data-nosnippet>360</a>                    <span class="kw">let </span>session = app.session()<span class="question-mark">?</span>;
-<a href=#361 id=361 data-nosnippet>361</a>                    <span class="kw">match </span><span class="kw-2">&amp;</span>session.target {
-<a href=#362 id=362 data-nosnippet>362</a>                        Target::Ble { selector, .. } =&gt; connection::DefaultDevice {
-<a href=#363 id=363 data-nosnippet>363</a>                            selector: selector.clone(),
-<a href=#364 id=364 data-nosnippet>364</a>                            name: <span class="prelude-val">Some</span>(session.label.clone()),
-<a href=#365 id=365 data-nosnippet>365</a>                        },
-<a href=#366 id=366 data-nosnippet>366</a>                        Target::Serial { .. } =&gt; <span class="macro">bail!</span>(
-<a href=#367 id=367 data-nosnippet>367</a>                            <span class="string">"the saved default is a BLE radio: serial port names change between \
-<a href=#368 id=368 data-nosnippet>368</a>                             plug-ins, so name one with --port or set UMSHCTL_PORT instead"
-<a href=#369 id=369 data-nosnippet>369</a>                        </span>),
-<a href=#370 id=370 data-nosnippet>370</a>                        Target::Tcp { .. } =&gt; <span class="macro">bail!</span>(
-<a href=#371 id=371 data-nosnippet>371</a>                            <span class="string">"the saved default is a BLE radio: a bridged radio is already named \
-<a href=#372 id=372 data-nosnippet>372</a>                             by its endpoint, so give it with --tcp or set UMSHCTL_TCP instead"
-<a href=#373 id=373 data-nosnippet>373</a>                        </span>),
-<a href=#374 id=374 data-nosnippet>374</a>                        Target::Mesh { .. } =&gt; <span class="macro">bail!</span>(
-<a href=#375 id=375 data-nosnippet>375</a>                            <span class="string">"the saved default is a radio to attach to, not a node to manage: \
-<a href=#376 id=376 data-nosnippet>376</a>                             `disconnect` first, then save the radio underneath"
-<a href=#377 id=377 data-nosnippet>377</a>                        </span>),
-<a href=#378 id=378 data-nosnippet>378</a>                    }
-<a href=#379 id=379 data-nosnippet>379</a>                }
-<a href=#380 id=380 data-nosnippet>380</a>            };
-<a href=#381 id=381 data-nosnippet>381</a>            app.prefs.default_device = <span class="prelude-val">Some</span>(device.clone());
-<a href=#382 id=382 data-nosnippet>382</a>            <span class="kw">let </span>path = app.prefs.store()<span class="question-mark">?</span>;
-<a href=#383 id=383 data-nosnippet>383</a>            <span class="macro">println!</span>(<span class="string">"default radio set to {}"</span>, device.display());
-<a href=#384 id=384 data-nosnippet>384</a>            output::field(<span class="string">"settings"</span>, path.display());
-<a href=#385 id=385 data-nosnippet>385</a>            <span class="prelude-val">Ok</span>(())
-<a href=#386 id=386 data-nosnippet>386</a>        }
-<a href=#387 id=387 data-nosnippet>387</a>        DefaultOp::Clear =&gt; {
-<a href=#388 id=388 data-nosnippet>388</a>            app.prefs.default_device = <span class="prelude-val">None</span>;
-<a href=#389 id=389 data-nosnippet>389</a>            app.prefs.store()<span class="question-mark">?</span>;
-<a href=#390 id=390 data-nosnippet>390</a>            <span class="macro">println!</span>(<span class="string">"default radio cleared"</span>);
-<a href=#391 id=391 data-nosnippet>391</a>            <span class="prelude-val">Ok</span>(())
-<a href=#392 id=392 data-nosnippet>392</a>        }
-<a href=#393 id=393 data-nosnippet>393</a>    }
-<a href=#394 id=394 data-nosnippet>394</a>}
-<a href=#395 id=395 data-nosnippet>395</a>
-<a href=#396 id=396 data-nosnippet>396</a><span class="doccomment">/// Finish a mutating command: persist by default, or report the
-<a href=#397 id=397 data-nosnippet>397</a>/// live-only state under `--no-save`.
-<a href=#398 id=398 data-nosnippet>398</a>///
-<a href=#399 id=399 data-nosnippet>399</a>/// Both modes behave the same. A REPL session killed by a dropped link
-<a href=#400 id=400 data-nosnippet>400</a>/// would otherwise silently lose everything since the last manual
-<a href=#401 id=401 data-nosnippet>401</a>/// `save`, and the device treats saving as cheap.
-<a href=#402 id=402 data-nosnippet>402</a></span><span class="kw">pub async fn </span>persist&lt;L: FrameLink&gt;(device: <span class="kw-2">&amp;mut </span>UlcpDevice&lt;L&gt;, no_save: bool) -&gt; <span class="prelude-ty">Result</span>&lt;()&gt; {
-<a href=#403 id=403 data-nosnippet>403</a>    <span class="kw">if </span>no_save {
-<a href=#404 id=404 data-nosnippet>404</a>        output::note(<span class="string">"--no-save — changes are live only; the save command persists them"</span>);
-<a href=#405 id=405 data-nosnippet>405</a>    } <span class="kw">else </span>{
-<a href=#406 id=406 data-nosnippet>406</a>        device.save().<span class="kw">await</span><span class="question-mark">?</span>;
-<a href=#407 id=407 data-nosnippet>407</a>        <span class="macro">println!</span>(<span class="string">"saved: changes persist across reboots"</span>);
-<a href=#408 id=408 data-nosnippet>408</a>    }
-<a href=#409 id=409 data-nosnippet>409</a>    <span class="prelude-val">Ok</span>(())
-<a href=#410 id=410 data-nosnippet>410</a>}
-<a href=#411 id=411 data-nosnippet>411</a>
-<a href=#412 id=412 data-nosnippet>412</a><span class="kw">fn </span>decode_u16(value: <span class="kw-2">&amp;</span>[u8]) -&gt; <span class="prelude-ty">Option</span>&lt;u16&gt; {
-<a href=#413 id=413 data-nosnippet>413</a>    &lt;[u8; <span class="number">2</span>]&gt;::try_from(value).ok().map(u16::from_le_bytes)
-<a href=#414 id=414 data-nosnippet>414</a>}
-<a href=#415 id=415 data-nosnippet>415</a>
-<a href=#416 id=416 data-nosnippet>416</a><span class="kw">fn </span>decode_u32(value: <span class="kw-2">&amp;</span>[u8]) -&gt; <span class="prelude-ty">Option</span>&lt;u32&gt; {
-<a href=#417 id=417 data-nosnippet>417</a>    &lt;[u8; <span class="number">4</span>]&gt;::try_from(value).ok().map(u32::from_le_bytes)
-<a href=#418 id=418 data-nosnippet>418</a>}
-<a href=#419 id=419 data-nosnippet>419</a>
-<a href=#420 id=420 data-nosnippet>420</a><span class="doccomment">/// Percentage of the hour a raw 0-65535 duty figure represents.
-<a href=#421 id=421 data-nosnippet>421</a></span><span class="kw">fn </span>duty_percent(raw: u16) -&gt; f64 {
-<a href=#422 id=422 data-nosnippet>422</a>    f64::from(raw) * <span class="number">100.0 </span>/ <span class="number">65535.0
-<a href=#423 id=423 data-nosnippet>423</a></span>}
+<a href=#314 id=314 data-nosnippet>314</a>            <span class="self">Self</span>::DevPeer { op } =&gt; tables::run(app, prop::DEV_PEERS, <span class="string">"peer"</span>, op).<span class="kw">await</span>,
+<a href=#315 id=315 data-nosnippet>315</a>            <span class="self">Self</span>::DevAdmin { op } =&gt; tables::run(app, prop::DEV_ADMINS, <span class="string">"administrator"</span>, op).<span class="kw">await</span>,
+<a href=#316 id=316 data-nosnippet>316</a>            <span class="self">Self</span>::Manage { target, op } =&gt; {
+<a href=#317 id=317 data-nosnippet>317</a>                manage::run(app, target, manage::Operation::Manage(op)).<span class="kw">await
+<a href=#318 id=318 data-nosnippet>318</a>            </span>}
+<a href=#319 id=319 data-nosnippet>319</a>            <span class="self">Self</span>::PeerRepeaters { target } =&gt; {
+<a href=#320 id=320 data-nosnippet>320</a>                manage::run(app, target, manage::Operation::PeerRepeaters).<span class="kw">await
+<a href=#321 id=321 data-nosnippet>321</a>            </span>}
+<a href=#322 id=322 data-nosnippet>322</a>            <span class="self">Self</span>::Ping(args) =&gt; {
+<a href=#323 id=323 data-nosnippet>323</a>                <span class="kw">let </span>target = args.target;
+<a href=#324 id=324 data-nosnippet>324</a>                manage::run(app, target, manage::Operation::Ping(args)).<span class="kw">await
+<a href=#325 id=325 data-nosnippet>325</a>            </span>}
+<a href=#326 id=326 data-nosnippet>326</a>            <span class="self">Self</span>::AdminKey =&gt; <span class="kw">crate</span>::mesh::show_admin_key(),
+<a href=#327 id=327 data-nosnippet>327</a>            <span class="self">Self</span>::Props { keys } =&gt; info::props(app.device()<span class="question-mark">?</span>, <span class="kw-2">&amp;</span>keys).<span class="kw">await</span>,
+<a href=#328 id=328 data-nosnippet>328</a>            <span class="self">Self</span>::Illuminance =&gt; info::illuminance(app.device()<span class="question-mark">?</span>).<span class="kw">await</span>,
+<a href=#329 id=329 data-nosnippet>329</a>            <span class="self">Self</span>::Alert { op } =&gt; lifecycle::alert(app.device()<span class="question-mark">?</span>, op).<span class="kw">await</span>,
+<a href=#330 id=330 data-nosnippet>330</a>            <span class="self">Self</span>::Capture(args) =&gt; capture::run(app, args).<span class="kw">await</span>,
+<a href=#331 id=331 data-nosnippet>331</a>            <span class="self">Self</span>::Scan { timeout } =&gt; scan(app, timeout).<span class="kw">await</span>,
+<a href=#332 id=332 data-nosnippet>332</a>            <span class="self">Self</span>::Default { op } =&gt; default(app, op.unwrap_or(DefaultOp::Show)),
+<a href=#333 id=333 data-nosnippet>333</a>        }
+<a href=#334 id=334 data-nosnippet>334</a>    }
+<a href=#335 id=335 data-nosnippet>335</a>}
+<a href=#336 id=336 data-nosnippet>336</a>
+<a href=#337 id=337 data-nosnippet>337</a><span class="kw">async fn </span>scan(app: <span class="kw-2">&amp;mut </span>App, timeout: u64) -&gt; <span class="prelude-ty">Result</span>&lt;()&gt; {
+<a href=#338 id=338 data-nosnippet>338</a>    <span class="macro">println!</span>(<span class="string">"scanning for ULCP radios ({timeout} s) ..."</span>);
+<a href=#339 id=339 data-nosnippet>339</a>    <span class="kw">let </span>found = connection::scan(std::time::Duration::from_secs(timeout)).<span class="kw">await</span><span class="question-mark">?</span>;
+<a href=#340 id=340 data-nosnippet>340</a>    connection::render_found(<span class="kw-2">&amp;</span>found);
+<a href=#341 id=341 data-nosnippet>341</a>    <span class="comment">// Retained so `connect &lt;N&gt;` can refer to this listing by number.
+<a href=#342 id=342 data-nosnippet>342</a>    </span>app.last_scan = found;
+<a href=#343 id=343 data-nosnippet>343</a>    <span class="prelude-val">Ok</span>(())
+<a href=#344 id=344 data-nosnippet>344</a>}
+<a href=#345 id=345 data-nosnippet>345</a>
+<a href=#346 id=346 data-nosnippet>346</a><span class="kw">fn </span>default(app: <span class="kw-2">&amp;mut </span>App, op: DefaultOp) -&gt; <span class="prelude-ty">Result</span>&lt;()&gt; {
+<a href=#347 id=347 data-nosnippet>347</a>    <span class="kw">match </span>op {
+<a href=#348 id=348 data-nosnippet>348</a>        DefaultOp::Show =&gt; {
+<a href=#349 id=349 data-nosnippet>349</a>            <span class="kw">match </span><span class="kw-2">&amp;</span>app.prefs.default_device {
+<a href=#350 id=350 data-nosnippet>350</a>                <span class="prelude-val">Some</span>(device) =&gt; output::field(<span class="string">"default"</span>, device.display()),
+<a href=#351 id=351 data-nosnippet>351</a>                <span class="prelude-val">None </span>=&gt; <span class="macro">println!</span>(<span class="string">"no default radio saved"</span>),
+<a href=#352 id=352 data-nosnippet>352</a>            }
+<a href=#353 id=353 data-nosnippet>353</a>            <span class="kw">if let </span><span class="prelude-val">Some</span>(path) = connection::config_path() {
+<a href=#354 id=354 data-nosnippet>354</a>                output::field(<span class="string">"settings"</span>, path.display());
+<a href=#355 id=355 data-nosnippet>355</a>            }
+<a href=#356 id=356 data-nosnippet>356</a>            <span class="prelude-val">Ok</span>(())
+<a href=#357 id=357 data-nosnippet>357</a>        }
+<a href=#358 id=358 data-nosnippet>358</a>        DefaultOp::Set { selector } =&gt; {
+<a href=#359 id=359 data-nosnippet>359</a>            <span class="kw">let </span>device = <span class="kw">match </span>selector {
+<a href=#360 id=360 data-nosnippet>360</a>                <span class="prelude-val">Some</span>(selector) =&gt; connection::DefaultDevice {
+<a href=#361 id=361 data-nosnippet>361</a>                    selector,
+<a href=#362 id=362 data-nosnippet>362</a>                    name: <span class="prelude-val">None</span>,
+<a href=#363 id=363 data-nosnippet>363</a>                },
+<a href=#364 id=364 data-nosnippet>364</a>                <span class="prelude-val">None </span>=&gt; {
+<a href=#365 id=365 data-nosnippet>365</a>                    <span class="kw">let </span>session = app.session()<span class="question-mark">?</span>;
+<a href=#366 id=366 data-nosnippet>366</a>                    <span class="kw">match </span><span class="kw-2">&amp;</span>session.target {
+<a href=#367 id=367 data-nosnippet>367</a>                        Target::Ble { selector, .. } =&gt; connection::DefaultDevice {
+<a href=#368 id=368 data-nosnippet>368</a>                            selector: selector.clone(),
+<a href=#369 id=369 data-nosnippet>369</a>                            name: <span class="prelude-val">Some</span>(session.label.clone()),
+<a href=#370 id=370 data-nosnippet>370</a>                        },
+<a href=#371 id=371 data-nosnippet>371</a>                        Target::Serial { .. } =&gt; <span class="macro">bail!</span>(
+<a href=#372 id=372 data-nosnippet>372</a>                            <span class="string">"the saved default is a BLE radio: serial port names change between \
+<a href=#373 id=373 data-nosnippet>373</a>                             plug-ins, so name one with --port or set UMSHCTL_PORT instead"
+<a href=#374 id=374 data-nosnippet>374</a>                        </span>),
+<a href=#375 id=375 data-nosnippet>375</a>                        Target::Tcp { .. } =&gt; <span class="macro">bail!</span>(
+<a href=#376 id=376 data-nosnippet>376</a>                            <span class="string">"the saved default is a BLE radio: a bridged radio is already named \
+<a href=#377 id=377 data-nosnippet>377</a>                             by its endpoint, so give it with --tcp or set UMSHCTL_TCP instead"
+<a href=#378 id=378 data-nosnippet>378</a>                        </span>),
+<a href=#379 id=379 data-nosnippet>379</a>                        Target::Mesh { .. } =&gt; <span class="macro">bail!</span>(
+<a href=#380 id=380 data-nosnippet>380</a>                            <span class="string">"the saved default is a radio to attach to, not a node to manage: \
+<a href=#381 id=381 data-nosnippet>381</a>                             `disconnect` first, then save the radio underneath"
+<a href=#382 id=382 data-nosnippet>382</a>                        </span>),
+<a href=#383 id=383 data-nosnippet>383</a>                    }
+<a href=#384 id=384 data-nosnippet>384</a>                }
+<a href=#385 id=385 data-nosnippet>385</a>            };
+<a href=#386 id=386 data-nosnippet>386</a>            app.prefs.default_device = <span class="prelude-val">Some</span>(device.clone());
+<a href=#387 id=387 data-nosnippet>387</a>            <span class="kw">let </span>path = app.prefs.store()<span class="question-mark">?</span>;
+<a href=#388 id=388 data-nosnippet>388</a>            <span class="macro">println!</span>(<span class="string">"default radio set to {}"</span>, device.display());
+<a href=#389 id=389 data-nosnippet>389</a>            output::field(<span class="string">"settings"</span>, path.display());
+<a href=#390 id=390 data-nosnippet>390</a>            <span class="prelude-val">Ok</span>(())
+<a href=#391 id=391 data-nosnippet>391</a>        }
+<a href=#392 id=392 data-nosnippet>392</a>        DefaultOp::Clear =&gt; {
+<a href=#393 id=393 data-nosnippet>393</a>            app.prefs.default_device = <span class="prelude-val">None</span>;
+<a href=#394 id=394 data-nosnippet>394</a>            app.prefs.store()<span class="question-mark">?</span>;
+<a href=#395 id=395 data-nosnippet>395</a>            <span class="macro">println!</span>(<span class="string">"default radio cleared"</span>);
+<a href=#396 id=396 data-nosnippet>396</a>            <span class="prelude-val">Ok</span>(())
+<a href=#397 id=397 data-nosnippet>397</a>        }
+<a href=#398 id=398 data-nosnippet>398</a>    }
+<a href=#399 id=399 data-nosnippet>399</a>}
+<a href=#400 id=400 data-nosnippet>400</a>
+<a href=#401 id=401 data-nosnippet>401</a><span class="doccomment">/// Finish a mutating command: persist by default, or report the
+<a href=#402 id=402 data-nosnippet>402</a>/// live-only state under `--no-save`.
+<a href=#403 id=403 data-nosnippet>403</a>///
+<a href=#404 id=404 data-nosnippet>404</a>/// Both modes behave the same. A REPL session killed by a dropped link
+<a href=#405 id=405 data-nosnippet>405</a>/// would otherwise silently lose everything since the last manual
+<a href=#406 id=406 data-nosnippet>406</a>/// `save`, and the device treats saving as cheap.
+<a href=#407 id=407 data-nosnippet>407</a></span><span class="kw">pub async fn </span>persist&lt;L: FrameLink&gt;(device: <span class="kw-2">&amp;mut </span>UlcpDevice&lt;L&gt;, no_save: bool) -&gt; <span class="prelude-ty">Result</span>&lt;()&gt; {
+<a href=#408 id=408 data-nosnippet>408</a>    <span class="kw">if </span>no_save {
+<a href=#409 id=409 data-nosnippet>409</a>        output::note(<span class="string">"--no-save — changes are live only; the save command persists them"</span>);
+<a href=#410 id=410 data-nosnippet>410</a>    } <span class="kw">else </span>{
+<a href=#411 id=411 data-nosnippet>411</a>        device.save().<span class="kw">await</span><span class="question-mark">?</span>;
+<a href=#412 id=412 data-nosnippet>412</a>        <span class="macro">println!</span>(<span class="string">"saved: changes persist across reboots"</span>);
+<a href=#413 id=413 data-nosnippet>413</a>    }
+<a href=#414 id=414 data-nosnippet>414</a>    <span class="prelude-val">Ok</span>(())
+<a href=#415 id=415 data-nosnippet>415</a>}
+<a href=#416 id=416 data-nosnippet>416</a>
+<a href=#417 id=417 data-nosnippet>417</a><span class="kw">fn </span>decode_u16(value: <span class="kw-2">&amp;</span>[u8]) -&gt; <span class="prelude-ty">Option</span>&lt;u16&gt; {
+<a href=#418 id=418 data-nosnippet>418</a>    &lt;[u8; <span class="number">2</span>]&gt;::try_from(value).ok().map(u16::from_le_bytes)
+<a href=#419 id=419 data-nosnippet>419</a>}
+<a href=#420 id=420 data-nosnippet>420</a>
+<a href=#421 id=421 data-nosnippet>421</a><span class="kw">fn </span>decode_u32(value: <span class="kw-2">&amp;</span>[u8]) -&gt; <span class="prelude-ty">Option</span>&lt;u32&gt; {
+<a href=#422 id=422 data-nosnippet>422</a>    &lt;[u8; <span class="number">4</span>]&gt;::try_from(value).ok().map(u32::from_le_bytes)
+<a href=#423 id=423 data-nosnippet>423</a>}
 <a href=#424 id=424 data-nosnippet>424</a>
-<a href=#425 id=425 data-nosnippet>425</a><span class="doccomment">/// A span of seconds at human scale, to at most two units: `45s`, `20m`,
-<a href=#426 id=426 data-nosnippet>426</a>/// `1h30m`, `12d6h`.
-<a href=#427 id=427 data-nosnippet>427</a>///
-<a href=#428 id=428 data-nosnippet>428</a>/// Two units is the point where more precision stops helping — nobody
-<a href=#429 id=429 data-nosnippet>429</a>/// reading an uptime of `12d6h` wanted the seconds. Days matter because
-<a href=#430 id=430 data-nosnippet>430</a>/// this also renders uptimes, where hour counts run into the hundreds.
-<a href=#431 id=431 data-nosnippet>431</a></span><span class="kw">fn </span>format_duration(seconds: u32) -&gt; String {
-<a href=#432 id=432 data-nosnippet>432</a>    <span class="kw">const </span>MINUTE: u32 = <span class="number">60</span>;
-<a href=#433 id=433 data-nosnippet>433</a>    <span class="kw">const </span>HOUR: u32 = <span class="number">60 </span>* MINUTE;
-<a href=#434 id=434 data-nosnippet>434</a>    <span class="kw">const </span>DAY: u32 = <span class="number">24 </span>* HOUR;
-<a href=#435 id=435 data-nosnippet>435</a>    <span class="kw">match </span>seconds {
-<a href=#436 id=436 data-nosnippet>436</a>        s <span class="kw">if </span>s &gt;= DAY &amp;&amp; s % DAY == <span class="number">0 </span>=&gt; <span class="macro">format!</span>(<span class="string">"{}d"</span>, s / DAY),
-<a href=#437 id=437 data-nosnippet>437</a>        s <span class="kw">if </span>s &gt;= DAY =&gt; <span class="macro">format!</span>(<span class="string">"{}d{}h"</span>, s / DAY, (s % DAY) / HOUR),
-<a href=#438 id=438 data-nosnippet>438</a>        s <span class="kw">if </span>s &gt;= HOUR &amp;&amp; s % HOUR == <span class="number">0 </span>=&gt; <span class="macro">format!</span>(<span class="string">"{}h"</span>, s / HOUR),
-<a href=#439 id=439 data-nosnippet>439</a>        s <span class="kw">if </span>s &gt;= HOUR =&gt; <span class="macro">format!</span>(<span class="string">"{}h{}m"</span>, s / HOUR, (s % HOUR) / MINUTE),
-<a href=#440 id=440 data-nosnippet>440</a>        s <span class="kw">if </span>s &gt;= MINUTE &amp;&amp; s % MINUTE == <span class="number">0 </span>=&gt; <span class="macro">format!</span>(<span class="string">"{}m"</span>, s / MINUTE),
-<a href=#441 id=441 data-nosnippet>441</a>        s <span class="kw">if </span>s &gt;= MINUTE =&gt; <span class="macro">format!</span>(<span class="string">"{}m{}s"</span>, s / MINUTE, s % MINUTE),
-<a href=#442 id=442 data-nosnippet>442</a>        s =&gt; <span class="macro">format!</span>(<span class="string">"{s}s"</span>),
-<a href=#443 id=443 data-nosnippet>443</a>    }
-<a href=#444 id=444 data-nosnippet>444</a>}
-<a href=#445 id=445 data-nosnippet>445</a>
-<a href=#446 id=446 data-nosnippet>446</a><span class="attr">#[cfg(test)]
-<a href=#447 id=447 data-nosnippet>447</a></span><span class="kw">mod </span>tests {
-<a href=#448 id=448 data-nosnippet>448</a>    <span class="kw">use </span><span class="kw">super</span>::format_duration;
-<a href=#449 id=449 data-nosnippet>449</a>
-<a href=#450 id=450 data-nosnippet>450</a>    <span class="attr">#[test]
-<a href=#451 id=451 data-nosnippet>451</a>    </span><span class="kw">fn </span>a_duration_reads_at_human_scale_to_two_units() {
-<a href=#452 id=452 data-nosnippet>452</a>        <span class="macro">assert_eq!</span>(format_duration(<span class="number">0</span>), <span class="string">"0s"</span>);
-<a href=#453 id=453 data-nosnippet>453</a>        <span class="macro">assert_eq!</span>(format_duration(<span class="number">45</span>), <span class="string">"45s"</span>);
-<a href=#454 id=454 data-nosnippet>454</a>        <span class="macro">assert_eq!</span>(format_duration(<span class="number">1200</span>), <span class="string">"20m"</span>);
-<a href=#455 id=455 data-nosnippet>455</a>        <span class="macro">assert_eq!</span>(format_duration(<span class="number">90</span>), <span class="string">"1m30s"</span>);
-<a href=#456 id=456 data-nosnippet>456</a>        <span class="macro">assert_eq!</span>(format_duration(<span class="number">3600</span>), <span class="string">"1h"</span>);
-<a href=#457 id=457 data-nosnippet>457</a>        <span class="macro">assert_eq!</span>(format_duration(<span class="number">5400</span>), <span class="string">"1h30m"</span>);
-<a href=#458 id=458 data-nosnippet>458</a>        <span class="macro">assert_eq!</span>(format_duration(<span class="number">14400</span>), <span class="string">"4h"</span>);
-<a href=#459 id=459 data-nosnippet>459</a>        <span class="comment">// Days, which is where uptimes live and advert intervals do not.
-<a href=#460 id=460 data-nosnippet>460</a>        </span><span class="macro">assert_eq!</span>(format_duration(<span class="number">86400</span>), <span class="string">"1d"</span>);
-<a href=#461 id=461 data-nosnippet>461</a>        <span class="macro">assert_eq!</span>(format_duration(<span class="number">1_058_400</span>), <span class="string">"12d6h"</span>);
-<a href=#462 id=462 data-nosnippet>462</a>        <span class="comment">// A day boundary with no leftover hours still reads as whole days.
-<a href=#463 id=463 data-nosnippet>463</a>        </span><span class="macro">assert_eq!</span>(format_duration(<span class="number">172_800</span>), <span class="string">"2d"</span>);
-<a href=#464 id=464 data-nosnippet>464</a>    }
-<a href=#465 id=465 data-nosnippet>465</a>}
+<a href=#425 id=425 data-nosnippet>425</a><span class="doccomment">/// Percentage of the hour a raw 0-65535 duty figure represents.
+<a href=#426 id=426 data-nosnippet>426</a></span><span class="kw">fn </span>duty_percent(raw: u16) -&gt; f64 {
+<a href=#427 id=427 data-nosnippet>427</a>    f64::from(raw) * <span class="number">100.0 </span>/ <span class="number">65535.0
+<a href=#428 id=428 data-nosnippet>428</a></span>}
+<a href=#429 id=429 data-nosnippet>429</a>
+<a href=#430 id=430 data-nosnippet>430</a><span class="doccomment">/// A span of seconds at human scale, to at most two units: `45s`, `20m`,
+<a href=#431 id=431 data-nosnippet>431</a>/// `1h30m`, `12d6h`.
+<a href=#432 id=432 data-nosnippet>432</a>///
+<a href=#433 id=433 data-nosnippet>433</a>/// Two units is the point where more precision stops helping — nobody
+<a href=#434 id=434 data-nosnippet>434</a>/// reading an uptime of `12d6h` wanted the seconds. Days matter because
+<a href=#435 id=435 data-nosnippet>435</a>/// this also renders uptimes, where hour counts run into the hundreds.
+<a href=#436 id=436 data-nosnippet>436</a></span><span class="kw">fn </span>format_duration(seconds: u32) -&gt; String {
+<a href=#437 id=437 data-nosnippet>437</a>    <span class="kw">const </span>MINUTE: u32 = <span class="number">60</span>;
+<a href=#438 id=438 data-nosnippet>438</a>    <span class="kw">const </span>HOUR: u32 = <span class="number">60 </span>* MINUTE;
+<a href=#439 id=439 data-nosnippet>439</a>    <span class="kw">const </span>DAY: u32 = <span class="number">24 </span>* HOUR;
+<a href=#440 id=440 data-nosnippet>440</a>    <span class="kw">match </span>seconds {
+<a href=#441 id=441 data-nosnippet>441</a>        s <span class="kw">if </span>s &gt;= DAY &amp;&amp; s % DAY == <span class="number">0 </span>=&gt; <span class="macro">format!</span>(<span class="string">"{}d"</span>, s / DAY),
+<a href=#442 id=442 data-nosnippet>442</a>        s <span class="kw">if </span>s &gt;= DAY =&gt; <span class="macro">format!</span>(<span class="string">"{}d{}h"</span>, s / DAY, (s % DAY) / HOUR),
+<a href=#443 id=443 data-nosnippet>443</a>        s <span class="kw">if </span>s &gt;= HOUR &amp;&amp; s % HOUR == <span class="number">0 </span>=&gt; <span class="macro">format!</span>(<span class="string">"{}h"</span>, s / HOUR),
+<a href=#444 id=444 data-nosnippet>444</a>        s <span class="kw">if </span>s &gt;= HOUR =&gt; <span class="macro">format!</span>(<span class="string">"{}h{}m"</span>, s / HOUR, (s % HOUR) / MINUTE),
+<a href=#445 id=445 data-nosnippet>445</a>        s <span class="kw">if </span>s &gt;= MINUTE &amp;&amp; s % MINUTE == <span class="number">0 </span>=&gt; <span class="macro">format!</span>(<span class="string">"{}m"</span>, s / MINUTE),
+<a href=#446 id=446 data-nosnippet>446</a>        s <span class="kw">if </span>s &gt;= MINUTE =&gt; <span class="macro">format!</span>(<span class="string">"{}m{}s"</span>, s / MINUTE, s % MINUTE),
+<a href=#447 id=447 data-nosnippet>447</a>        s =&gt; <span class="macro">format!</span>(<span class="string">"{s}s"</span>),
+<a href=#448 id=448 data-nosnippet>448</a>    }
+<a href=#449 id=449 data-nosnippet>449</a>}
+<a href=#450 id=450 data-nosnippet>450</a>
+<a href=#451 id=451 data-nosnippet>451</a><span class="attr">#[cfg(test)]
+<a href=#452 id=452 data-nosnippet>452</a></span><span class="kw">mod </span>tests {
+<a href=#453 id=453 data-nosnippet>453</a>    <span class="kw">use </span><span class="kw">super</span>::format_duration;
+<a href=#454 id=454 data-nosnippet>454</a>
+<a href=#455 id=455 data-nosnippet>455</a>    <span class="attr">#[test]
+<a href=#456 id=456 data-nosnippet>456</a>    </span><span class="kw">fn </span>a_duration_reads_at_human_scale_to_two_units() {
+<a href=#457 id=457 data-nosnippet>457</a>        <span class="macro">assert_eq!</span>(format_duration(<span class="number">0</span>), <span class="string">"0s"</span>);
+<a href=#458 id=458 data-nosnippet>458</a>        <span class="macro">assert_eq!</span>(format_duration(<span class="number">45</span>), <span class="string">"45s"</span>);
+<a href=#459 id=459 data-nosnippet>459</a>        <span class="macro">assert_eq!</span>(format_duration(<span class="number">1200</span>), <span class="string">"20m"</span>);
+<a href=#460 id=460 data-nosnippet>460</a>        <span class="macro">assert_eq!</span>(format_duration(<span class="number">90</span>), <span class="string">"1m30s"</span>);
+<a href=#461 id=461 data-nosnippet>461</a>        <span class="macro">assert_eq!</span>(format_duration(<span class="number">3600</span>), <span class="string">"1h"</span>);
+<a href=#462 id=462 data-nosnippet>462</a>        <span class="macro">assert_eq!</span>(format_duration(<span class="number">5400</span>), <span class="string">"1h30m"</span>);
+<a href=#463 id=463 data-nosnippet>463</a>        <span class="macro">assert_eq!</span>(format_duration(<span class="number">14400</span>), <span class="string">"4h"</span>);
+<a href=#464 id=464 data-nosnippet>464</a>        <span class="comment">// Days, which is where uptimes live and advert intervals do not.
+<a href=#465 id=465 data-nosnippet>465</a>        </span><span class="macro">assert_eq!</span>(format_duration(<span class="number">86400</span>), <span class="string">"1d"</span>);
+<a href=#466 id=466 data-nosnippet>466</a>        <span class="macro">assert_eq!</span>(format_duration(<span class="number">1_058_400</span>), <span class="string">"12d6h"</span>);
+<a href=#467 id=467 data-nosnippet>467</a>        <span class="comment">// A day boundary with no leftover hours still reads as whole days.
+<a href=#468 id=468 data-nosnippet>468</a>        </span><span class="macro">assert_eq!</span>(format_duration(<span class="number">172_800</span>), <span class="string">"2d"</span>);
+<a href=#469 id=469 data-nosnippet>469</a>    }
+<a href=#470 id=470 data-nosnippet>470</a>}
 </code></pre></div></section></main></body></html>
