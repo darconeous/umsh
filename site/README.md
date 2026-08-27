@@ -131,6 +131,16 @@ onto `origin/gh-pages` first and stops if the branches have diverged, and it
 refuses to commit a tree with no `CNAME`—publishing without that file makes
 GitHub drop the custom domain.
 
+```bash
+make gh-pages-site
+```
+
+`make gh-pages-site` deploys the site and the specification and leaves
+`docs/rust` as already published. The rustdoc build is the slow half of a
+deploy—it wipes `target/doc` first, so it never gets to be incremental—and the
+API docs rarely move when a page of site copy does. Use the full `make
+gh-pages` when they do.
+
 The published root belongs to Zola. `docs/protocol`, `docs/rust`,
 `firmware/` (release artifacts) and `tools/` are preserved across deploys;
 anything else at the root is replaced. A new top-level directory that Zola

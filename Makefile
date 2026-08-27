@@ -3,7 +3,7 @@
 	regions-fetch regions-update regions-update-check regions-build \
 	regions-build-fixture regions-check regions-test regions-diff \
 	regions-map regions-map-check regions-stage regions-map-serve \
-	gh-pages-with-regions \
+	gh-pages-site gh-pages-with-regions \
 	build-techo-console flash-techo-console \
 	build-wio-tracker-l1-console flash-wio-tracker-l1-console \
 	build-wio-tracker-l1 flash-wio-tracker-l1 \
@@ -880,7 +880,8 @@ site-preview: docs rust-docs-nightly
 #
 #   /              the Zola site — wiped and replaced on every run
 #   /docs/protocol the mdBook spec — wiped and replaced on every run
-#   /docs/rust     rustdoc — wiped and replaced on every run
+#   /docs/rust     rustdoc — wiped and replaced by `gh-pages`, left alone by
+#                  `gh-pages-site`
 #   /firmware      release artifacts, written by `release-mirror`
 #   /tools         reserved for the ULCP web debugger
 #
@@ -929,16 +930,35 @@ endef
 # Zola, the way release-mirror writes /firmware, would instead need /regions
 # preserved here, or the next `make gh-pages` would delete the database out
 # from under the map.
-gh-pages: site docs rust-docs-nightly
-	$(gh-pages-open)
+#
+# Everything except /docs/rust, shared by both deploys so the preserve list
+# above exists in exactly one place.
+define gh-pages-lay
 	find $(GH_PAGES_WT) -mindepth 1 -maxdepth 1 \
 		! -name .git ! -name docs ! -name firmware ! -name tools \
 		-exec rm -rf {} +
-	rm -rf $(GH_PAGES_WT)/docs/protocol $(GH_PAGES_WT)/docs/rust
+	rm -rf $(GH_PAGES_WT)/docs/protocol
 	cp -R site/public/. $(GH_PAGES_WT)/
-	mkdir -p $(GH_PAGES_WT)/docs/protocol $(GH_PAGES_WT)/docs/rust
+	mkdir -p $(GH_PAGES_WT)/docs/protocol
 	cp -R docs/protocol/book/. $(GH_PAGES_WT)/docs/protocol/
+	touch $(GH_PAGES_WT)/.nojekyll
+endef
+
+gh-pages: site docs rust-docs-nightly
+	$(gh-pages-open)
+	$(gh-pages-lay)
+	rm -rf $(GH_PAGES_WT)/docs/rust
+	mkdir -p $(GH_PAGES_WT)/docs/rust
 	cp -R target/doc/. $(GH_PAGES_WT)/docs/rust/
 	cp docs/rust-index.html $(GH_PAGES_WT)/docs/rust/index.html
-	touch $(GH_PAGES_WT)/.nojekyll
 	$(call gh-pages-commit,Update GitHub Pages)
+
+# The site and the spec without the rustdoc rebuild, which is the slow half of
+# a deploy: `rust-docs-nightly` wipes target/doc first, so it never gets to be
+# incremental. /docs/rust is left exactly as published — not deleted, and not
+# round-tripped through a possibly stale local target/doc. Use `gh-pages` when
+# the API docs themselves need to move.
+gh-pages-site: site docs
+	$(gh-pages-open)
+	$(gh-pages-lay)
+	$(call gh-pages-commit,Update GitHub Pages: site and spec)
