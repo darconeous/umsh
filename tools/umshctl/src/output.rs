@@ -83,8 +83,8 @@ pub fn warn(text: impl std::fmt::Display) {
     eprintln!("warning: {text}");
 }
 
-/// Lowercase hex, no separators — the form every digest, id, and key in
-/// this tool's output uses.
+/// Lowercase hex, no separators — the form every digest and id in this
+/// tool's output uses. Public keys go through [`address`] instead.
 pub fn hex(bytes: &[u8]) -> String {
     use std::fmt::Write as _;
     let mut text = String::with_capacity(bytes.len() * 2);
@@ -92,6 +92,17 @@ pub fn hex(bytes: &[u8]) -> String {
         let _ = write!(text, "{byte:02x}");
     }
     text
+}
+
+/// A public key in the canonical fixed-width base58 address form — how
+/// this tool prints every key, wherever it came from. Anything that is
+/// not key-shaped has no address to render and falls back to hex, so a
+/// device that quotes something unexpected still shows what it said.
+pub fn address(bytes: &[u8]) -> String {
+    match <[u8; 32]>::try_from(bytes) {
+        Ok(key) => umsh::core::PublicKey(key).to_string(),
+        Err(_) => hex(bytes),
+    }
 }
 
 #[cfg(test)]
@@ -114,5 +125,14 @@ mod tests {
     fn hex_has_no_separators() {
         assert_eq!(hex(&[0x0a, 0xff]), "0aff");
         assert_eq!(hex(&[]), "");
+    }
+
+    #[test]
+    fn addresses_are_base58_and_fall_back_to_hex() {
+        assert_eq!(
+            address(&[0xc4; 32]),
+            umsh::core::PublicKey([0xc4; 32]).to_string()
+        );
+        assert_eq!(address(&[0x0a, 0xff]), "0aff");
     }
 }

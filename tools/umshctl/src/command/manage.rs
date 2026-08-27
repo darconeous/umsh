@@ -27,7 +27,7 @@ use super::tables::TableOp;
 use super::values::{AssignArg, BytesArg, KeyArg};
 use crate::connection::{Session, SessionLink};
 use crate::mesh::{self, CtlHandle, CtlMac, NodeStack, OPERATION_TIMEOUT, describe};
-use crate::output::{field, hex, note, subfield};
+use crate::output::{address, field, hex, note, subfield};
 use crate::{App, connection};
 
 // ─── Command surface ─────────────────────────────────────────────────────────
@@ -514,7 +514,7 @@ where
                         .trim_end_matches('\0')
                         .to_owned(),
                 ),
-                prop::DEV_KEY => field(&label(key), hex(&value)),
+                prop::DEV_KEY => field(&label(key), address(&value)),
                 _ => field(&label(key), hex(&value)),
             },
         }
@@ -538,7 +538,7 @@ where
                 bail!("malformed administrator listing");
             } else {
                 for key in value.chunks(32) {
-                    println!("{}", hex(key));
+                    println!("{}", address(key));
                 }
             }
             Ok(())
@@ -550,7 +550,7 @@ where
                 })?)
                 .await?;
             let digest = value_of(prop::DEV_ADMINS, &reply)?;
-            println!("administrator added (digest {})", hex(&digest));
+            println!("administrator added (digest {})", address(&digest));
             save_if_asked(ctl, no_save).await
         }
         TableOp::Remove { key } => {
@@ -566,7 +566,7 @@ where
                 })?)
                 .await?;
             let digest = value_of(prop::DEV_ADMINS, &reply)?;
-            println!("administrator removed (digest {})", hex(&digest));
+            println!("administrator removed (digest {})", address(&digest));
             save_if_asked(ctl, no_save).await
         }
     }

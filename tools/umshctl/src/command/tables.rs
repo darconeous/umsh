@@ -3,7 +3,8 @@
 //!
 //! The digest form differs by table (a 2-byte channel id versus the
 //! 32-byte peer key itself), so listings and mutation reports print
-//! whatever digest the device quotes.
+//! whatever digest the device quotes — a channel id as hex, a key as
+//! the base58 address it is everywhere else.
 
 use anyhow::{Result, bail};
 
@@ -12,7 +13,7 @@ use umsh::ulcp_wire::ids::prop;
 use super::persist;
 use super::values::KeyArg;
 use crate::App;
-use crate::output::hex;
+use crate::output::{address, hex};
 
 #[derive(Debug, clap::Subcommand)]
 pub enum TableOp {
@@ -30,6 +31,17 @@ pub enum TableOp {
     },
 }
 
+/// How the device's quoted digest for `prop` reads back to the user.
+/// The channel table quotes a two-byte identifier, which has no address
+/// form; every other table quotes the public key itself.
+fn digest_text(prop: u32, digest: &[u8]) -> String {
+    if prop == prop::DEV_CHANNEL_KEYS {
+        hex(digest)
+    } else {
+        address(digest)
+    }
+}
+
 pub async fn run(app: &mut App, key: u32, noun: &str, op: Option<TableOp>) -> Result<()> {
     let no_save = app.no_save;
     let device = app.device()?;
@@ -43,19 +55,22 @@ pub async fn run(app: &mut App, key: u32, noun: &str, op: Option<TableOp>) -> Re
                 bail!("malformed device {noun} listing");
             } else {
                 for digest in value.chunks(digest_len) {
-                    println!("{}", hex(digest));
+                    println!("{}", digest_text(key, digest));
                 }
             }
             Ok(())
         }
         TableOp::Add { key: item } => {
             let digest = device.insert_prop_item(key, &item.0).await?;
-            println!("device {noun} added (digest {})", hex(&digest));
+            println!("device {noun} added (digest {})", digest_text(key, &digest));
             persist(device, no_save).await
         }
         TableOp::Remove { key: item } => {
             let digest = device.remove_prop_item(key, &item.0).await?;
-            println!("device {noun} removed (digest {})", hex(&digest));
+            println!(
+                "device {noun} removed (digest {})",
+                digest_text(key, &digest)
+            );
             persist(device, no_save).await
         }
     }
