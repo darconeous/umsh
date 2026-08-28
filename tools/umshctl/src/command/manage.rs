@@ -192,6 +192,15 @@ where
         .peer(target)
         .await
         .map_err(|error| anyhow!("registering the device as a peer: {error:?}"))?;
+    // What an earlier invocation learned about reaching this node, put
+    // back before the first frame. This is the path that matters most:
+    // `manage` and `ping` are run from scripts, over and over, and each
+    // one used to start by flooding for a route it had just been told.
+    let mut routes = crate::routes::RouteCache::load();
+    if let Some(record) = routes.get(&target) {
+        peer.restore_route(record.route.clone()).await;
+    }
+
     // The first token has only to be unpredictable; the manager keeps
     // every one after it distinct from all of its own, and the device
     // forgets this process's tokens long before another random seed
@@ -217,6 +226,10 @@ where
     };
     let result = run_op(&mut ctl, op, no_save).await;
     let _ = ctl.stack.handle.service_counter_persistence().await;
+    routes.harvest(&ctl.stack.handle).await;
+    if let Err(error) = routes.store() {
+        crate::output::warn(format!("could not save learned routes: {error:#}"));
+    }
     result
 }
 

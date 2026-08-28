@@ -381,6 +381,15 @@ where
             .clear_peer_route(&self.peer)
             .await
     }
+
+    /// Install a route learned before this MAC existed, returning whether
+    /// it could be installed.
+    pub async fn restore_route(&self, route: umsh_mac::CachedRoute) -> bool {
+        self.transport
+            .local_node()
+            .restore_peer_route(&self.peer, route)
+            .await
+    }
 }
 
 /// Forward secrecy is negotiated between two nodes, not inside a channel: the

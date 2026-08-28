@@ -526,6 +526,33 @@ impl<
         mac.peer_registry_mut().clear_route(peer_id)
     }
 
+    /// Install a route learned earlier, returning whether the peer was
+    /// registered to receive it.
+    ///
+    /// The counterpart to [`Self::peer_route`], for a host that outlives
+    /// the MAC it is talking through. A tool invoked once per command
+    /// builds a new MAC every time and would otherwise rediscover the
+    /// same path on every invocation, flooding the mesh to learn what it
+    /// already knew a second ago.
+    ///
+    /// Only for a peer already registered: a route to somebody nothing
+    /// is talking to has nowhere to live, and inventing a registration
+    /// for it would evict a peer that is in use. A stale route costs one
+    /// failed exchange, after which the ordinary ack-timeout retry
+    /// rediscovers the path and overwrites this.
+    pub async fn restore_peer_route(
+        &self,
+        peer: &umsh_core::PublicKey,
+        route: crate::CachedRoute,
+    ) -> bool {
+        let mut mac = self.mac.borrow_mut().await;
+        let Some((peer_id, _)) = mac.peer_registry().lookup_by_key(peer) else {
+            return false;
+        };
+        mac.peer_registry_mut().update_route(peer_id, route);
+        true
+    }
+
     /// Invoke `f` for each peer with an established crypto state for `id`,
     /// passing the peer's public key, last-accepted RX counter, and persisted RX boundary.
     pub async fn for_each_peer_counter(

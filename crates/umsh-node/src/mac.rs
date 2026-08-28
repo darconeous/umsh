@@ -164,6 +164,16 @@ pub trait MacBackend: Clone {
         let _ = peer;
         false
     }
+
+    /// Install a route learned before this MAC existed, returning whether
+    /// `peer` was registered to receive it.
+    ///
+    /// A backend that keeps no route cache accepts none, which is the
+    /// same answer it gives to [`Self::peer_route`].
+    async fn restore_peer_route(&self, peer: &PublicKey, route: CachedRoute) -> bool {
+        let _ = (peer, route);
+        false
+    }
 }
 
 /// Normalized wrapper around MAC-backend failures.
@@ -352,5 +362,9 @@ impl<
 
     async fn clear_peer_route(&self, peer: &PublicKey) -> bool {
         self.clear_peer_route(peer).await
+    }
+
+    async fn restore_peer_route(&self, peer: &PublicKey, route: CachedRoute) -> bool {
+        self.restore_peer_route(peer, route).await
     }
 }

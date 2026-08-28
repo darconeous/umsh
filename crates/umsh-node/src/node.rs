@@ -507,6 +507,15 @@ impl<M: MacBackend> LocalNode<M> {
         self.mac.clear_peer_route(peer).await
     }
 
+    /// Install a route learned before this MAC existed, returning whether
+    /// `peer` was registered to receive it.
+    ///
+    /// For a host that remembers routes across the lifetime of the stack
+    /// underneath it; see [`umsh_mac::MacHandle::restore_peer_route`].
+    pub async fn restore_peer_route(&self, peer: &PublicKey, route: CachedRoute) -> bool {
+        self.mac.restore_peer_route(peer, route).await
+    }
+
     fn add_receive_handler<F>(&self, handler: F) -> SubscriptionHandle
     where
         F: FnMut(&ReceivedPacketRef<'_>) -> bool + 'static,

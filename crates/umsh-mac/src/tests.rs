@@ -1041,6 +1041,36 @@ fn queue_unicast_enqueues_frame_and_pending_ack() {
     );
 }
 
+/// A host that outlives its MAC can put back a route it learned through
+/// an earlier one, which is what keeps a tool invoked once per command
+/// from re-flooding for a path it knew a second ago.
+#[test]
+fn a_learned_route_can_be_put_back_for_a_registered_peer() {
+    let mac = umsh_sync::AsyncRefCell::new(make_mac());
+    let handle = MacHandle::new(&mac);
+
+    block_on(async {
+        let peer_key = test_pubkey(0xC4);
+        let route = CachedRoute::Source(
+            heapless::Vec::from_slice(&[RouterHint([0xA1, 0xB2]), RouterHint([0xC3, 0xD4])])
+                .unwrap(),
+        );
+
+        // Nothing is talking to this peer yet, so there is nowhere to put
+        // a route and saying so beats registering one behind the caller.
+        assert!(!handle.restore_peer_route(&peer_key, route.clone()).await);
+        assert_eq!(handle.peer_route(&peer_key).await, None);
+
+        handle.add_peer(peer_key).await.unwrap();
+        assert!(handle.restore_peer_route(&peer_key, route.clone()).await);
+        assert_eq!(handle.peer_route(&peer_key).await, Some(route));
+
+        // And it is ordinary cached state afterwards: clearing discards it.
+        assert!(handle.clear_peer_route(&peer_key).await);
+        assert_eq!(handle.peer_route(&peer_key).await, None);
+    });
+}
+
 #[test]
 fn mac_handle_clones_share_send_queue_state() {
     let mac = umsh_sync::AsyncRefCell::new(make_mac());

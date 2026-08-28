@@ -762,6 +762,11 @@ pub fn admin_counter_path() -> Option<PathBuf> {
     state_dir().map(|dir| dir.join("umshctl-admin.counters"))
 }
 
+/// Routes learned to the nodes this tool has reached.
+pub fn routes_path() -> Option<PathBuf> {
+    state_dir().map(|dir| dir.join("umshctl-routes"))
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

@@ -535,6 +535,15 @@ async fn serve<R: Radio>(
             )));
         }
     };
+    // Whatever an earlier invocation learned about reaching this device,
+    // put back before the first frame goes out. A wrong guess costs one
+    // exchange and the MAC's own retry finds the path again; not
+    // guessing costs a flood every time the tool is run.
+    let mut routes = crate::routes::RouteCache::load();
+    if let Some(record) = routes.get(&target) {
+        peer.restore_route(record.route.clone()).await;
+    }
+
     // The first token has only to be unpredictable; the manager keeps
     // every one after it distinct from all of its own.
     let mut seed = [0u8; 2];
@@ -586,10 +595,23 @@ async fn serve<R: Radio>(
                     // and that is what ends things.
                     Err(error) => endpoint.refuse(format!("{error:#}")),
                 }
+                // An exchange is where a route is learned, so this is
+                // where there is something new to remember. Writing per
+                // exchange rather than at the end also means the file is
+                // current while a shell session is still open, which is
+                // what lets `routes` report on one.
+                routes.harvest(&stack.handle).await;
+                if let Err(error) = routes.store() {
+                    crate::output::warn(format!("could not save learned routes: {error:#}"));
+                }
             }
         }
     }
     let _ = stack.handle.service_counter_persistence().await;
+    routes.harvest(&stack.handle).await;
+    if let Err(error) = routes.store() {
+        crate::output::warn(format!("could not save learned routes: {error:#}"));
+    }
     if let Some(fault) = fatal {
         endpoint.fail(fault);
     }

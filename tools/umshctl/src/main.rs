@@ -22,6 +22,7 @@ mod extcap;
 mod mesh;
 mod output;
 mod repl;
+mod routes;
 
 use std::io::IsTerminal;
 
@@ -569,6 +570,33 @@ mod tests {
             panic!("expected factory-reset");
         };
         assert!(yes);
+    }
+
+    #[test]
+    fn routes_reads_this_tools_own_notes() {
+        use command::routes_cmd::RoutesOp;
+        let key = "c4".repeat(32);
+        assert!(matches!(
+            parse(&["routes"]).unwrap().command,
+            Some(Command::Routes { op: None })
+        ));
+        let Some(Command::Routes {
+            op: Some(RoutesOp::Show { key: shown }),
+        }) = parse(&["routes", "show", &key]).unwrap().command
+        else {
+            panic!("expected routes show");
+        };
+        assert_eq!(shown.0, [0xC4; 32]);
+        assert!(matches!(
+            parse(&["routes", "clear"]).unwrap().command,
+            Some(Command::Routes {
+                op: Some(RoutesOp::Clear { key: None })
+            })
+        ));
+        assert!(parse(&["routes", "clear", &key]).is_ok());
+        assert!(parse(&["routes", "show"]).is_err(), "show names a node");
+        // No radio is involved in reading a file this tool wrote.
+        assert!(!parse(&["routes"]).unwrap().command.unwrap().needs_device());
     }
 
     #[test]

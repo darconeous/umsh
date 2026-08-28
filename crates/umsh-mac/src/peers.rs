@@ -22,6 +22,31 @@ pub enum CachedRoute {
     Flood { hops: u8, regions: Vec<[u8; 2], 8> },
 }
 
+impl CachedRoute {
+    /// Maximum hops a source route can name, matching `MAX_SOURCE_ROUTE_HOPS`.
+    pub const MAX_HINTS: usize = 15;
+    /// Maximum region codes a learned flood route carries.
+    pub const MAX_REGIONS: usize = 8;
+
+    /// Build a source route from `hints`, or `None` if there are more
+    /// than a packet could carry.
+    ///
+    /// For callers outside this crate, which have no reason to name a
+    /// fixed-capacity container. Refusing an over-long route beats
+    /// truncating one, which would send traffic to the wrong place.
+    pub fn source(hints: &[RouterHint]) -> Option<Self> {
+        Vec::from_slice(hints).ok().map(Self::Source)
+    }
+
+    /// Build a flood route from `hops` and `regions`, or `None` if there
+    /// are more region codes than one carries.
+    pub fn flood(hops: u8, regions: &[[u8; 2]]) -> Option<Self> {
+        Vec::from_slice(regions)
+            .ok()
+            .map(|regions| Self::Flood { hops, regions })
+    }
+}
+
 /// Shared metadata tracked for a remote peer.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct PeerInfo {

@@ -14,6 +14,7 @@ pub mod manage;
 pub mod phy;
 pub mod ping;
 pub mod repeater;
+pub mod routes_cmd;
 pub mod tables;
 pub mod time;
 pub mod values;
@@ -155,6 +156,16 @@ pub enum Command {
     /// hops, and signal. Needs no authorization from the far end.
     Ping(ping::PingArgs),
 
+    /// Show or forget the routes this tool has learned to other nodes.
+    ///
+    /// Learned from replies and remembered between invocations, so a
+    /// script does not re-flood the mesh for a path it was told a second
+    /// ago. Needs no radio.
+    Routes {
+        #[command(subcommand)]
+        op: Option<routes_cmd::RoutesOp>,
+    },
+
     /// Show the administrator identity this tool manages devices with.
     AdminKey,
 
@@ -215,6 +226,9 @@ impl Command {
             // The administrator identity is this tool's own; no radio is
             // involved in reading it out.
             Self::AdminKey => false,
+            // Learned routes are this tool's own notes, and reading them
+            // is exactly what you want to do with nothing attached.
+            Self::Routes { .. } => false,
             // Saving the attached radio as the default needs one; naming
             // a selector outright does not.
             Self::Default { op } => matches!(op, Some(DefaultOp::Set { selector: None })),
@@ -304,6 +318,7 @@ impl Command {
                 let target = args.target;
                 manage::run(app, target, manage::Operation::Ping(args)).await
             }
+            Self::Routes { op } => routes_cmd::run(op),
             Self::AdminKey => crate::mesh::show_admin_key(),
             Self::Props { keys } => info::props(app.device()?, &keys).await,
             Self::Illuminance => info::illuminance(app.device()?).await,
