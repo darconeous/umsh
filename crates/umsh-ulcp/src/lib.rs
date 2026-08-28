@@ -38,7 +38,9 @@ pub mod status;
 
 pub use alert::AlertState;
 pub use battery::{BatteryChargeState, BatteryError, BatteryStatus};
-pub use describe::{FrameDescription, capability_name, property_name};
+pub use describe::{
+    FrameDescription, PROPERTIES, PropertyType, capability_name, property_name, property_type,
+};
 pub use frame::{
     Cmd, Frame, FrameWriter, Header, MultiEntries, MultiEntry, MultiGetKeys, PropPayload,
     StreamPayload,

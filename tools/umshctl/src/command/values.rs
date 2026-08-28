@@ -76,9 +76,14 @@ impl FromStr for AssignArg {
 
     fn from_str(text: &str) -> Result<Self, Self::Err> {
         let Some((key, value)) = text.split_once('=') else {
-            return Err(format!("expected PROP=HEX, got {text:?}"));
+            return Err(format!("expected PROP=VALUE, got {text:?}"));
         };
-        Ok(Self(parse_u32(key.trim())?, value.parse::<BytesArg>()?.0))
+        // The same names and the same value spellings the rest of the
+        // tool takes; a sequence of writes is no place for a second
+        // vocabulary.
+        let key = key.trim().parse::<super::props::PropArg>()?;
+        let value = super::props::encode_value(key.0, value).map_err(|error| error.to_string())?;
+        Ok(Self(key.0, value))
     }
 }
 

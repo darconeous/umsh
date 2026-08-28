@@ -266,10 +266,13 @@ fn announce_attached(session: &Session) {
         session.target.transport(),
         session.device.dev_version(),
         // `PROP_DEV_MODEL` is optional; say nothing rather than "unknown"
-        // when the device does not name its hardware.
+        // when the device does not name its hardware — and a device that
+        // answers with an empty string has named it no better than one
+        // that refuses the read.
         session
             .device
             .dev_model()
+            .filter(|model| !model.is_empty())
             .map(|model| format!(" on {model}"))
             .unwrap_or_default(),
         session.device.boot_status(),
@@ -642,7 +645,8 @@ mod tests {
         // the write-only pairing PIN.
         for argv in [
             vec!["info"],
-            vec!["props", "69"],
+            vec!["get", "battery"],
+            vec!["set", "dev-name", "Repeater 3"],
             vec!["name"],
             vec!["save"],
             vec!["reset"],

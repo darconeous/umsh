@@ -13,6 +13,7 @@ pub mod lifecycle;
 pub mod manage;
 pub mod phy;
 pub mod ping;
+pub mod props;
 pub mod repeater;
 pub mod routes_cmd;
 pub mod tables;
@@ -169,11 +170,35 @@ pub enum Command {
     /// Show the administrator identity this tool manages devices with.
     AdminKey,
 
-    /// Read several properties in one exchange.
-    Props {
-        /// Property identifiers, decimal or `0x`-prefixed.
-        #[arg(value_name = "PROP", required = true, value_parser = values::parse_u32)]
-        keys: Vec<u32>,
+    /// Read properties by name or number.
+    ///
+    /// Names are the spec mnemonics without their prefix
+    /// (`phy-freq`, `dev-name`); numbers are decimal or `0x`-prefixed.
+    /// Several are read in one exchange where the device supports it.
+    Get {
+        #[arg(value_name = "PROP", required = true)]
+        keys: Vec<props::PropArg>,
+
+        /// Print values as raw octets rather than reading them.
+        #[arg(long)]
+        hex: bool,
+    },
+
+    /// Write one property by name or number.
+    ///
+    /// The value is written the way `get` reads it back: `on`/`off` for
+    /// a switch, a decimal number for a count, an address for a key. A
+    /// property whose shape is a structure takes hex.
+    Set {
+        #[arg(value_name = "PROP")]
+        key: props::PropArg,
+
+        #[arg(value_name = "VALUE")]
+        value: String,
+
+        /// Print the stored value as raw octets.
+        #[arg(long)]
+        hex: bool,
     },
 
     /// Take one ambient light reading.
@@ -273,6 +298,10 @@ impl Command {
     pub fn validate(&self) -> Result<()> {
         match self {
             Self::Capture(args) => args.validate(),
+            // A value the property cannot hold is a typing mistake, and
+            // finding out after a BLE discovery pass and a handshake is
+            // no way to learn it.
+            Self::Set { key, value, .. } => props::encode_value(key.0, value).map(drop),
             _ => Ok(()),
         }
     }
@@ -320,7 +349,13 @@ impl Command {
             }
             Self::Routes { op } => routes_cmd::run(op),
             Self::AdminKey => crate::mesh::show_admin_key(),
-            Self::Props { keys } => info::props(app.device()?, &keys).await,
+            Self::Get { keys, hex } => props::get(app.device()?, &keys, hex).await,
+            Self::Set { key, value, hex } => {
+                let no_save = app.no_save;
+                let device = app.device()?;
+                props::set(device, key, &value, hex).await?;
+                persist(device, no_save).await
+            }
             Self::Illuminance => info::illuminance(app.device()?).await,
             Self::Alert { op } => lifecycle::alert(app.device()?, op).await,
             Self::Capture(args) => capture::run(app, args).await,

@@ -23,7 +23,7 @@ use props::PropSet;
 use topics::{Context, Topic};
 
 use super::values::KeyArg;
-use crate::output::{field, hex, subfield};
+use crate::output::{field, subfield};
 
 #[derive(Debug, clap::Args)]
 pub struct InfoArgs {
@@ -174,39 +174,6 @@ pub fn battery_display(status: &BatteryStatus) -> String {
         None => "charge state unsupported",
     };
     format!("{voltage}, {level}, {state}")
-}
-
-/// Read several properties in one exchange.
-///
-/// The point is the round trip, not the rendering: values print as raw
-/// hex, because the interesting question is whether the device answered
-/// every slot in order and put a status where it could not.
-pub async fn props<L: FrameLink>(device: &mut UlcpDevice<L>, keys: &[u32]) -> Result<()> {
-    let answers = device.get_props(keys).await?;
-    for (requested, answer) in keys.iter().zip(&answers) {
-        let label = match property_name(*requested) {
-            Some(name) => name.to_owned(),
-            None => format!("prop {requested}"),
-        };
-        match answer {
-            Ok((key, value)) if key == requested => field(&label, hex(value)),
-            // Position identifies the slot, so a key that disagrees with
-            // what was asked for is worth showing rather than hiding.
-            Ok((key, value)) => field(&label, format!("{} (answered prop {key})", hex(value))),
-            Err(status) => field(&label, format!("{status:?}")),
-        }
-    }
-    if answers.len() < keys.len() {
-        field(
-            "truncated",
-            format!(
-                "{} of {} answered; reissue the rest",
-                answers.len(),
-                keys.len()
-            ),
-        );
-    }
-    Ok(())
 }
 
 /// `illuminance`: one ambient light reading, on its own.

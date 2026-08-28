@@ -20,9 +20,10 @@ use umsh::node_mgmt::NodeManager;
 use umsh::node_mgmt::admin::Outcome;
 use umsh::ulcp::UlcpDevice;
 use umsh::ulcp_wire::ids::prop;
-use umsh::ulcp_wire::{Status, capability_name, frame, property_name, reply};
+use umsh::ulcp_wire::{Status, capability_name, frame, reply};
 use umsh_sync::AsyncRefCell;
 
+use super::props::PropArg;
 use super::tables::TableOp;
 use super::values::{AssignArg, BytesArg, KeyArg};
 use crate::connection::{Session, SessionLink};
@@ -37,40 +38,40 @@ pub enum ManageOp {
     /// Read the device's capabilities and versions in one exchange.
     Info,
 
-    /// Read one property.
+    /// Read one property, by name or number.
     Get {
-        #[arg(value_name = "PROP", value_parser = super::values::parse_u32)]
-        key: u32,
+        #[arg(value_name = "PROP")]
+        key: PropArg,
     },
 
-    /// Write one property.
+    /// Write one property, by name or number.
     Set {
-        #[arg(value_name = "PROP", value_parser = super::values::parse_u32)]
-        key: u32,
-        #[arg(value_name = "HEX")]
-        value: BytesArg,
+        #[arg(value_name = "PROP")]
+        key: PropArg,
+        #[arg(value_name = "VALUE")]
+        value: String,
     },
 
     /// Add an entry to a table property.
     Insert {
-        #[arg(value_name = "PROP", value_parser = super::values::parse_u32)]
-        key: u32,
+        #[arg(value_name = "PROP")]
+        key: PropArg,
         #[arg(value_name = "HEX")]
         item: BytesArg,
     },
 
     /// Remove an entry from a table property.
     Remove {
-        #[arg(value_name = "PROP", value_parser = super::values::parse_u32)]
-        key: u32,
+        #[arg(value_name = "PROP")]
+        key: PropArg,
         #[arg(value_name = "HEX")]
         selector: BytesArg,
     },
 
     /// Read several properties in one exchange.
     GetMany {
-        #[arg(value_name = "PROP", required = true, value_parser = super::values::parse_u32)]
-        keys: Vec<u32>,
+        #[arg(value_name = "PROP", required = true)]
+        keys: Vec<PropArg>,
     },
 
     /// Write several properties, in order, in one exchange. A failure
@@ -280,36 +281,40 @@ where
         ManageOp::Info => info(ctl).await,
         ManageOp::Get { key } => {
             let reply = ctl
-                .reply(&encode(|buf| frame::prop_get(buf, 0, key))?)
+                .reply(&encode(|buf| frame::prop_get(buf, 0, key.0))?)
                 .await?;
-            report_value(key, &reply)
+            report_value(key.0, &reply)
         }
         ManageOp::Set { key, value } => {
+            let encoded = super::props::encode_value(key.0, &value)?;
             let reply = ctl
-                .reply(&encode(|buf| frame::prop_set(buf, 0, key, &value.0))?)
+                .reply(&encode(|buf| frame::prop_set(buf, 0, key.0, &encoded))?)
                 .await?;
-            report_value(key, &reply)?;
+            report_value(key.0, &reply)?;
             save_if_asked(ctl, no_save).await
         }
         ManageOp::Insert { key, item } => {
             let reply = ctl
-                .reply(&encode(|buf| frame::prop_insert(buf, 0, key, &item.0))?)
+                .reply(&encode(|buf| frame::prop_insert(buf, 0, key.0, &item.0))?)
                 .await?;
-            report_value(key, &reply)?;
+            report_value(key.0, &reply)?;
             save_if_asked(ctl, no_save).await
         }
         ManageOp::Remove { key, selector } => {
             let reply = ctl
-                .reply(&encode(|buf| frame::prop_remove(buf, 0, key, &selector.0))?)
+                .reply(&encode(|buf| {
+                    frame::prop_remove(buf, 0, key.0, &selector.0)
+                })?)
                 .await?;
-            report_value(key, &reply)?;
+            report_value(key.0, &reply)?;
             save_if_asked(ctl, no_save).await
         }
         ManageOp::GetMany { keys } => {
+            let numbers: Vec<u32> = keys.iter().map(|key| key.0).collect();
             let reply = ctl
-                .reply(&encode(|buf| frame::prop_multi_get(buf, 0, &keys))?)
+                .reply(&encode(|buf| frame::prop_multi_get(buf, 0, &numbers))?)
                 .await?;
-            report_entries(&keys, &reply, "reissue the rest")
+            report_entries(&numbers, &reply, "reissue the rest")
         }
         ManageOp::SetMany { entries } => {
             let keys: Vec<u32> = entries.iter().map(|entry| entry.0).collect();
@@ -620,10 +625,7 @@ fn encode(
 }
 
 fn label(key: u32) -> String {
-    match property_name(key) {
-        Some(name) => name.to_owned(),
-        None => format!("prop {key}"),
-    }
+    super::props::spell(key)
 }
 
 /// The value a single-property reply carries, or the status that stands
@@ -639,7 +641,10 @@ fn value_of(requested: u32, reply: &[u8]) -> Result<Vec<u8>> {
 
 fn report_value(requested: u32, reply: &[u8]) -> Result<()> {
     let value = value_of(requested, reply)?;
-    field(&label(requested), hex(&value));
+    field(
+        &label(requested),
+        super::props::format_value(requested, &value),
+    );
     Ok(())
 }
 
@@ -674,8 +679,8 @@ fn report_entries(keys: &[u32], reply: &[u8], short_advice: &str) -> Result<()> 
     let answers = zip_answers(keys, reply)?;
     for (key, answer) in &answers {
         match answer {
-            Ok(value) => field(&label(*key), hex(value)),
-            Err(status) => field(&label(*key), format!("{status:?}")),
+            Ok(value) => field(&label(*key), super::props::format_value(*key, value)),
+            Err(status) => field(&label(*key), format!("refused: {status:?}")),
         }
     }
     if answers.len() < keys.len() {
