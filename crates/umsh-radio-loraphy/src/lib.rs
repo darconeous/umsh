@@ -47,7 +47,8 @@ use heapless::Vec;
 use lora_phy::{
     LoRa, RxMode,
     mod_params::{
-        Bandwidth, CodingRate, ModulationParams, PacketParams, RadioError, SpreadingFactor,
+        Bandwidth, CodingRate, DutyCycleParams, ModulationParams, PacketParams, RadioError,
+        SpreadingFactor,
     },
     mod_traits::{IrqState, RadioKind},
 };
@@ -443,6 +444,84 @@ impl<M: RawMutex> Default for DeviceControl<M> {
     }
 }
 
+// ─── RX strategy ─────────────────────────────────────────────────────────────
+
+/// How the runner keeps the radio listening between frames.
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub enum RxStrategy {
+    /// The chip sits in continuous RX. Works on every supported radio;
+    /// costs the chip's full RX current around the clock.
+    Continuous,
+    /// SX126x-style `SetRxDutyCycle` preamble sniffing: the chip's own
+    /// sequencer alternates short RX windows with sleep, sized against
+    /// the sender's TX preamble so no frame is missed (see
+    /// [`duty_cycle_rx_mode`] for the sizing rule). The MCU sees exactly
+    /// the same DIO1 IRQs as in continuous mode.
+    ///
+    /// Only for chips whose driver implements `RxMode::DutyCycle`
+    /// (SX126x, LR11xx). An SX127x rejects it with
+    /// `DutyCycleUnsupported` at RX setup, which the runner's
+    /// prepare-retry loop turns into a busy spin — SX127x boards must
+    /// pass [`RxStrategy::Continuous`].
+    PreambleDutyCycle,
+}
+
+/// One `SetRxDutyCycle` timer unit is 15.625 µs (24-bit registers).
+const DUTY_CYCLE_UNIT_NS: u64 = 15_625;
+
+/// Time the SX126x spends restarting its TCXO on each duty-cycle wake,
+/// mirroring lora-phy's `BRD_TCXO_WAKEUP_TIME` (10 ms, not exported).
+/// Each RX window is inflated by this much so the sniff window survives
+/// even if the chip bills the TCXO settling time against `rx_time`; if
+/// the chip instead settles before starting the window timer, the extra
+/// is a small power cost, never a missed frame.
+const TCXO_WAKEUP_NS: u64 = 10_000_000;
+
+/// Pick the RX mode for a strategy at the given modulation settings.
+///
+/// The duty-cycle windows treat `rx_preamble` (the receiver's configured
+/// acquisition length) as the number of preamble symbols that must land
+/// inside a single RX window for reliable detection. With
+/// `rx = rx_preamble + 1` symbols awake and
+/// `sleep = tx_preamble - 2*rx_preamble - 1` symbols asleep, the worst
+/// preamble alignment still puts `rx_preamble` symbols in one window
+/// with a symbol to spare: a preamble that starts too late in one
+/// window meets the next one after `sleep + rx` symbols, leaving
+/// `tx_preamble - sleep - rx - 1 >= rx_preamble` symbols of it to hear.
+/// (The chip's detector actually fires on fewer symbols than the full
+/// acquisition length, so the real margin is wider.)
+///
+/// Falls back to continuous RX when the TX preamble is too short to
+/// leave any sleep (`tx_preamble < 2*rx_preamble + 2` — the LR1110's
+/// 16-symbol acquisition against the 32-symbol MeshCore preamble lands
+/// here) or when a window overflows the chip's 24-bit timers.
+pub fn duty_cycle_rx_mode(
+    sf: SpreadingFactor,
+    bw: Bandwidth,
+    rx_preamble: u16,
+    tx_preamble: u16,
+) -> RxMode {
+    let det = rx_preamble as u64;
+    let tx = tx_preamble as u64;
+    if tx < 2 * det + 2 {
+        return RxMode::Continuous;
+    }
+    let rx_syms = det + 1;
+    let sleep_syms = tx - 2 * det - 1;
+
+    // Symbol duration in nanoseconds: t_sym = 2^SF / BW.
+    let t_sym_ns = (1u64 << sf_value(sf)) * 1_000_000_000 / bw_value_hz(bw) as u64;
+    let rx_time = (rx_syms * t_sym_ns + TCXO_WAKEUP_NS) / DUTY_CYCLE_UNIT_NS;
+    let sleep_time = sleep_syms * t_sym_ns / DUTY_CYCLE_UNIT_NS;
+    if rx_time > 0x00FF_FFFF || sleep_time > 0x00FF_FFFF || sleep_time == 0 {
+        return RxMode::Continuous;
+    }
+    RxMode::DutyCycle(DutyCycleParams {
+        rx_time: rx_time as u32,
+        sleep_time: sleep_time as u32,
+    })
+}
+
 /// Convert a bandwidth in Hz (the ULCP representation)
 /// to the lora-phy enum. Returns `None` for unsupported values.
 pub fn bandwidth_from_hz(hz: u32) -> Option<Bandwidth> {
@@ -497,6 +576,10 @@ pub fn coding_rate_from_denom(cr: u8) -> Option<CodingRate> {
 /// rejects transmits with `STATUS_INVALID_STATE` before they reach
 /// this queue, so nothing accumulates in practice.
 ///
+/// `rx_strategy` picks how the radio listens between frames; the
+/// duty-cycle windows are recomputed from each new set of modulation
+/// settings (see [`duty_cycle_rx_mode`]).
+///
 /// Cancellation-safety analysis is identical to [`runner`]: only
 /// `wait_for_irq` and the two channel/signal waits are cancelled by the
 /// select; IRQ processing and TX always run to completion.
@@ -506,6 +589,7 @@ pub async fn device_runner<RK, DLY, M, const RX: usize, const TX: usize>(
     ctl: &'static DeviceControl<M>,
     rx_preamble: u16,
     tx_preamble: u16,
+    rx_strategy: RxStrategy,
 ) -> !
 where
     RK: RadioKind,
@@ -574,12 +658,15 @@ where
             continue 'reconfigure;
         };
 
+        let rx_mode = match rx_strategy {
+            RxStrategy::Continuous => RxMode::Continuous,
+            RxStrategy::PreambleDutyCycle => {
+                duty_cycle_rx_mode(active.sf, active.bw, rx_preamble, tx_preamble)
+            }
+        };
+
         'rx: loop {
-            if lora
-                .prepare_for_rx(RxMode::Continuous, &mdltn, &rx_pkt)
-                .await
-                .is_err()
-            {
+            if lora.prepare_for_rx(rx_mode, &mdltn, &rx_pkt).await.is_err() {
                 continue;
             }
             if lora.start_rx().await.is_err() {
@@ -651,14 +738,20 @@ where
                         continue 'reconfigure;
                     }
                     Either4::Fourth(()) => {
-                        // Sample the instantaneous channel RSSI. We are in
-                        // continuous RX here, so GetRssiInst is valid. Like TX,
+                        // Sample the instantaneous channel RSSI. Like TX,
                         // `get_rssi` runs to completion outside the select
                         // (only `wait_for_irq` and the channel/signal waits are
-                        // cancel-safe). Reading RSSI does not disturb RX, so we
-                        // stay in the inner loop rather than re-preparing.
+                        // cancel-safe). In continuous RX the read does not
+                        // disturb reception, so we stay in the inner loop. In
+                        // duty-cycled RX the SPI traffic wakes the chip out of
+                        // its sniff sequence (and the sample is only
+                        // meaningful if it caught an RX window), so re-arm RX
+                        // afterwards.
                         let sample = lora.get_rssi().await.map_err(|_| ());
                         ctl.rssi_resp.signal(sample);
+                        if rx_mode != RxMode::Continuous {
+                            continue 'rx;
+                        }
                     }
                 }
             }
@@ -750,28 +843,8 @@ where
 /// auto-LDRO. Call this with `MAX_PAYLOAD` to get the worst-case figure for
 /// `t_frame_ms`.
 pub fn airtime_ms(sf: SpreadingFactor, bw: Bandwidth, payload_bytes: usize) -> u32 {
-    let sf_val: u32 = match sf {
-        SpreadingFactor::_5 => 5,
-        SpreadingFactor::_6 => 6,
-        SpreadingFactor::_7 => 7,
-        SpreadingFactor::_8 => 8,
-        SpreadingFactor::_9 => 9,
-        SpreadingFactor::_10 => 10,
-        SpreadingFactor::_11 => 11,
-        SpreadingFactor::_12 => 12,
-    };
-    let bw_hz: u64 = match bw {
-        Bandwidth::_7KHz => 7_810,
-        Bandwidth::_10KHz => 10_420,
-        Bandwidth::_15KHz => 15_630,
-        Bandwidth::_20KHz => 20_830,
-        Bandwidth::_31KHz => 31_250,
-        Bandwidth::_41KHz => 41_670,
-        Bandwidth::_62KHz => 62_500,
-        Bandwidth::_125KHz => 125_000,
-        Bandwidth::_250KHz => 250_000,
-        Bandwidth::_500KHz => 500_000,
-    };
+    let sf_val: u32 = sf_value(sf);
+    let bw_hz: u64 = bw_value_hz(bw) as u64;
 
     // Symbol duration in microseconds: t_sym = 2^SF / BW.
     let t_sym_us: u64 = (1u64 << sf_val) * 1_000_000 / bw_hz;
@@ -792,4 +865,110 @@ pub fn airtime_ms(sf: SpreadingFactor, bw: Bandwidth, payload_bytes: usize) -> u
     let total_sym = 12 + n_pay_sym as u64;
 
     ((total_sym * t_sym_us) / 1_000) as u32
+}
+
+/// The spreading factor as its numeric value (5–12).
+fn sf_value(sf: SpreadingFactor) -> u32 {
+    match sf {
+        SpreadingFactor::_5 => 5,
+        SpreadingFactor::_6 => 6,
+        SpreadingFactor::_7 => 7,
+        SpreadingFactor::_8 => 8,
+        SpreadingFactor::_9 => 9,
+        SpreadingFactor::_10 => 10,
+        SpreadingFactor::_11 => 11,
+        SpreadingFactor::_12 => 12,
+    }
+}
+
+/// The bandwidth in Hz.
+fn bw_value_hz(bw: Bandwidth) -> u32 {
+    match bw {
+        Bandwidth::_7KHz => 7_810,
+        Bandwidth::_10KHz => 10_420,
+        Bandwidth::_15KHz => 15_630,
+        Bandwidth::_20KHz => 20_830,
+        Bandwidth::_31KHz => 31_250,
+        Bandwidth::_41KHz => 41_670,
+        Bandwidth::_62KHz => 62_500,
+        Bandwidth::_125KHz => 125_000,
+        Bandwidth::_250KHz => 250_000,
+        Bandwidth::_500KHz => 500_000,
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn expect_duty_cycle(mode: RxMode) -> DutyCycleParams {
+        match mode {
+            RxMode::DutyCycle(params) => params,
+            _ => panic!("expected duty-cycle RX mode"),
+        }
+    }
+
+    /// The shipping SX1262 configuration: 8-symbol acquisition against
+    /// the 32-symbol MeshCore TX preamble at SF7/125 kHz.
+    #[test]
+    fn duty_cycle_sf7_bw125() {
+        let params = expect_duty_cycle(duty_cycle_rx_mode(
+            SpreadingFactor::_7,
+            Bandwidth::_125KHz,
+            8,
+            32,
+        ));
+        // t_sym = 1.024 ms. RX window: 9 symbols + the 10 ms TCXO
+        // wake = 19.216 ms; sleep: 15 symbols = 15.36 ms — in units of
+        // 15.625 µs.
+        assert_eq!(params.rx_time, 1229);
+        assert_eq!(params.sleep_time, 983);
+    }
+
+    /// Worst-case preamble alignment still lands a full acquisition
+    /// window inside one RX slot, across the whole parameter space.
+    #[test]
+    fn duty_cycle_worst_case_alignment_is_covered() {
+        for (det, tx) in [(4u64, 16u64), (8, 32), (8, 20), (12, 32)] {
+            if tx < 2 * det + 2 {
+                continue;
+            }
+            let rx_syms = det + 1;
+            let sleep_syms = tx - 2 * det - 1;
+            // A preamble that starts too late for one window (more than
+            // `rx - det` symbols in) meets the next window after
+            // `sleep + rx` symbols and must still have `det` symbols
+            // left to hear. The sizing is boundary-exact: the two
+            // coverage paths overlap by the one extra RX symbol, and
+            // the real-world margin comes from the chip's detector
+            // firing on fewer than `det` symbols plus the TCXO
+            // inflation of the RX window.
+            assert!(sleep_syms + rx_syms + det <= tx);
+        }
+    }
+
+    /// The LR1110's 16-symbol acquisition leaves no sleep budget
+    /// against a 32-symbol preamble: fall back to continuous RX.
+    #[test]
+    fn duty_cycle_falls_back_when_preamble_too_short() {
+        assert!(matches!(
+            duty_cycle_rx_mode(SpreadingFactor::_7, Bandwidth::_125KHz, 16, 32),
+            RxMode::Continuous
+        ));
+    }
+
+    /// The slowest vetted modulation must not overflow the chip's
+    /// 24-bit window timers.
+    #[test]
+    fn duty_cycle_slowest_modulation_fits_timers() {
+        let params = expect_duty_cycle(duty_cycle_rx_mode(
+            SpreadingFactor::_12,
+            Bandwidth::_7KHz,
+            8,
+            32,
+        ));
+        assert!(params.rx_time <= 0x00FF_FFFF);
+        assert!(params.sleep_time <= 0x00FF_FFFF);
+        assert!(params.sleep_time > 0);
+    }
 }

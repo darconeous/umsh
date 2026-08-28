@@ -1981,9 +1981,20 @@ async fn ble_app(controller: BleController, store: BleStore) -> ! {
 /// Owns the `lora_phy::LoRa` instance via the reconfigurable device
 /// runner. TX uses MeshCore's 32-symbol SF7 preamble; the hardware-proven
 /// 8-symbol SX1262 RX acquisition setting remains unchanged.
+///
+/// The SX1262 boards listen in preamble duty cycle: the 32-symbol TX
+/// preamble leaves ~24 symbols of slack over the 8-symbol acquisition
+/// setting, and the chip's sequencer spends that slack sleeping between
+/// sniff windows instead of receiving nothing. The V2's SX1276 has no
+/// duty-cycle sequencer and must listen continuously.
 #[embassy_executor::task]
 async fn radio_task(lora: board_radio::Radio) {
-    umsh_radio_loraphy::device_runner(lora, &RADIO_CH, &DEVICE_CTL, 8, 32).await;
+    use umsh_radio_loraphy::RxStrategy;
+    #[cfg(feature = "board-heltec-v2")]
+    const RX_STRATEGY: RxStrategy = RxStrategy::Continuous;
+    #[cfg(not(feature = "board-heltec-v2"))]
+    const RX_STRATEGY: RxStrategy = RxStrategy::PreambleDutyCycle;
+    umsh_radio_loraphy::device_runner(lora, &RADIO_CH, &DEVICE_CTL, 8, 32, RX_STRATEGY).await;
 }
 
 /// Owns the real `RADIO_CH` bundle and multiplexes it across the
@@ -2912,7 +2923,13 @@ async fn main(spawner: Spawner) {
     // before anything shared runs, so the journal mount lines are not
     // lost.
     umsh_ulcp_runtime::log::set_debug_log(debug_log);
-    let config = esp_hal::Config::default().with_cpu_clock(CpuClock::max());
+    // 80 MHz, not `CpuClock::max()`: this workload is idle-dominated and
+    // an idle `waiti` core still clocks its way through every wakeup, so
+    // the frequency is a direct battery cost (Meshtastic parks its ESP32
+    // targets at 80 MHz for the same reason). esp-radio's documented
+    // floor is 80 MHz, and APB stays at 80 MHz either way so SPI/UART
+    // timing is unchanged.
+    let config = esp_hal::Config::default().with_cpu_clock(CpuClock::_80MHz);
     let peripherals = esp_hal::init(config);
     // umsh-node and umsh-sync use `alloc`. The classic ESP32 has roughly
     // half the S3's data RAM and the BT controller takes a fixed bite out

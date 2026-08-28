@@ -16,11 +16,15 @@
 //! pulse through the interface variant.
 //!
 //! MeshCore parity notes: `rx_boost` on (`SX126X_RX_BOOSTED_GAIN=1`),
-//! LDO regulator mode (MeshCore leaves RadioLib's default), private
-//! sync word via `LoRa::new(kind, false, delay)` (0x12 expands to
-//! 0x14/0x24 in the driver). MeshCore's 140 mA current limit
+//! private sync word via `LoRa::new(kind, false, delay)` (0x12 expands
+//! to 0x14/0x24 in the driver). MeshCore's 140 mA current limit
 //! (`SX126X_CURRENT_LIMIT=140`) has no lora-phy API; the chip default
 //! OCP applies, which is fine at bring-up power levels.
+//!
+//! One deliberate departure from MeshCore: DC-DC regulator mode instead
+//! of RadioLib's default LDO. The chip's buck converter roughly halves
+//! RX/TX supply current, and every nRF52 SX1262 board here already
+//! runs it.
 
 use embassy_time::Delay;
 use esp_hal::Async;
@@ -62,7 +66,7 @@ pub fn new_radio_kind(
         Config {
             chip: Sx1262,
             tcxo_ctrl: Some(TcxoCtrlVoltage::Ctrl1V8),
-            use_dcdc: false,
+            use_dcdc: true,
             rx_boost: true,
         },
     ))

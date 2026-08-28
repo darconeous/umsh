@@ -15,8 +15,10 @@
 //!
 //! As on the Heltec V3: DIO2 drives the RF switch from inside the chip
 //! (`SetDio2AsRfSwitchCtrl` — no MCU pin switches TX/RX), NRESET is
-//! wired and driven, `rx_boost` on, LDO regulator mode, private sync
-//! word via `LoRa::new(kind, false, delay)`.
+//! wired and driven, `rx_boost` on, DC-DC regulator mode (the chip's
+//! buck converter roughly halves RX/TX supply current versus the LDO;
+//! every nRF52 SX1262 board here already runs it), private sync word
+//! via `LoRa::new(kind, false, delay)`.
 
 use embassy_time::Delay;
 use esp_hal::Async;
@@ -63,7 +65,7 @@ pub fn new_radio_kind(
         Config {
             chip: Sx1262,
             tcxo_ctrl: Some(TCXO_VOLTAGE),
-            use_dcdc: false,
+            use_dcdc: true,
             rx_boost: true,
         },
     ))

@@ -2747,7 +2747,20 @@ mod firmware {
         // traffic with an 8-symbol RX setting even though the SX1262 does not.
         #[cfg(feature = "t1000e")]
         const RX_PREAMBLE: u16 = 16;
-        umsh_radio_loraphy::device_runner(lora, &RADIO_CH, &DEVICE_CTL, RX_PREAMBLE, 32).await;
+        // Continuous RX for now: the nRF boards are hardware-proven in
+        // this mode, and preamble duty cycle (what the ESP32 SX1262
+        // boards run) should land here only with its own RF validation
+        // pass. The LR1110's 16-symbol acquisition would fall back to
+        // continuous against the 32-symbol preamble anyway.
+        umsh_radio_loraphy::device_runner(
+            lora,
+            &RADIO_CH,
+            &DEVICE_CTL,
+            RX_PREAMBLE,
+            32,
+            umsh_radio_loraphy::RxStrategy::Continuous,
+        )
+        .await;
     }
 
     /// Owns the real `RADIO_CH` bundle and multiplexes it across the
