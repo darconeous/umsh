@@ -120,13 +120,15 @@ pub struct ToolArgs {
     #[arg(long, global = true)]
     no_save: bool,
 
-    /// Run the command against a device across the mesh, using the
-    /// attached radio to reach it.
+    /// Reach a device across the mesh, using the attached radio to get
+    /// there.
     ///
-    /// The one-shot form of the shell's `remote`: attach a radio as
-    /// usual, borrow it to open a session to KEY, run the command, and
-    /// give the radio back. The device must list this tool's
-    /// administrator key (`admin-key` prints it).
+    /// The command-line form of the shell's `remote`: attach a radio as
+    /// usual, then borrow it to open a session to KEY. With a command,
+    /// that command runs over the mesh and the radio is handed back;
+    /// with no command, the shell opens already talking to KEY. The
+    /// device must list this tool's administrator key (`admin-key`
+    /// prints it).
     #[arg(long, value_name = "KEY", global = true)]
     node: Option<command::values::KeyArg>,
 
@@ -342,10 +344,6 @@ async fn run(args: ToolArgs) -> Result<()> {
             bail!("{refusal}");
         }
     }
-    if args.node.is_some() && args.command.is_none() {
-        bail!("--node names a device for one command; the shell reaches one with `remote <KEY>`");
-    }
-
     let needs_device = args
         .command
         .as_ref()
@@ -363,20 +361,29 @@ async fn run(args: ToolArgs) -> Result<()> {
         }
     }
 
-    // A one-shot against a remote node borrows the radio just attached,
-    // runs the command over the mesh, and hands the radio back — so a
-    // script gets the same session the shell would have opened. Nothing
-    // goes on the air before the command itself: a script asking for the
-    // battery should pay for the battery and nothing else.
+    // `--node` borrows the radio just attached and opens a session to
+    // the named device across the mesh. With a command that is the
+    // one-shot form of the shell's `remote`: run it and hand the radio
+    // back, so a script gets the same session the shell would have. With
+    // no command it is simply where the shell starts — the prompt opens
+    // already talking to the far node.
+    //
+    // A one-shot spends nothing on the air before the command itself: a
+    // script asking for the battery should pay for the battery and
+    // nothing else. The shell greets the node by name, because a prompt
+    // that says which device it is answers a question every subsequent
+    // command would otherwise raise.
     if let Some(node) = args.node {
-        mesh::open_remote(
-            &mut app,
-            umsh::core::PublicKey(node.0),
-            mesh::Greeting::Silent,
-        )
-        .await?;
-        let command = args.command.expect("checked above");
-        let result = command.run(&mut app).await;
+        let greeting = if interactive {
+            mesh::Greeting::Named
+        } else {
+            mesh::Greeting::Silent
+        };
+        mesh::open_remote(&mut app, umsh::core::PublicKey(node.0), greeting).await?;
+        let result = match args.command {
+            Some(command) => command.run(&mut app).await,
+            None => repl::run(&mut app).await,
+        };
         app.detach().await;
         return result;
     }
@@ -631,7 +638,7 @@ mod tests {
     }
 
     #[test]
-    fn the_node_flag_names_a_device_for_one_command() {
+    fn the_node_flag_names_a_device_with_or_without_a_command() {
         let key = "c4".repeat(32);
         let args = parse(&["--node", &key, "info"]).unwrap();
         assert_eq!(args.node.unwrap().0, [0xC4; 32]);
@@ -639,6 +646,12 @@ mod tests {
         // Global, so it reads the same before or after the command.
         let args = parse(&["info", "--node", &key]).unwrap();
         assert_eq!(args.node.unwrap().0, [0xC4; 32]);
+
+        // With no command it is where the shell starts, so the grammar
+        // must accept it standing alone.
+        let args = parse(&["--node", &key]).unwrap();
+        assert_eq!(args.node.unwrap().0, [0xC4; 32]);
+        assert!(args.command.is_none());
 
         assert!(parse(&["--node", "nonsense", "info"]).is_err());
     }
