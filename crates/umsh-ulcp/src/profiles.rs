@@ -103,9 +103,23 @@ const MESHCORE_US_CA: PhyProfile = PhyProfile {
     tx_preamble_symbols: MESHCORE_TX_PREAMBLE,
 };
 
+const UMSH_US_CA: PhyProfile = PhyProfile {
+    id: "umsh-us-ca",
+    name: "UMSH USA/Canada (recommended)",
+    freq_khz: 917_500,
+    bw_hz: 500_000,
+    sf: 10,
+    cr_denom: 5,
+    tx_power_dbm: Some(30),
+    duty_limit: DUTY_LIMIT_DISABLED,
+    sync_word: DEFAULT_SYNC_WORD,
+    tx_preamble_symbols: MESHCORE_TX_PREAMBLE,
+};
+
 /// Every vetted profile, in the order an operator is offered them: the
 /// default first, then the rest as MeshCore publishes them.
 pub const VETTED: &[PhyProfile] = &[
+    UMSH_US_CA,
     MESHCORE_US_CA,
     PhyProfile {
         id: "meshcore-au",
