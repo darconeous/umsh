@@ -365,7 +365,7 @@ pub const VETTED: &[PhyProfile] = &[
 
 /// The profile a device comes up on out of the box, and after a factory
 /// reset.
-pub const DEFAULT: &PhyProfile = &MESHCORE_US_CA;
+pub const DEFAULT: &PhyProfile = &UMSH_US_CA;
 
 /// `DEFAULT`'s vetted transmit power, for the firmware defaults that
 /// need a plain value. A default profile without one fails the build.
