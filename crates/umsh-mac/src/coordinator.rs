@@ -3886,9 +3886,14 @@ impl<
     /// `options.flood_hops` is a ceiling, not a target: a learned route only
     /// lowers it, and `no_flood()` still emits no flood-hop field at all. Each
     /// route form keeps [`ESTABLISHED_ROUTE_EXTRA_HOPS`] of slack beyond the
-    /// flood distance it already covers, so a slightly stale route still
-    /// self-heals. A source route covers that distance without spending flood
-    /// budget, so its slack is the entire budget.
+    /// flood distance it already covers. A source route covers that distance
+    /// without spending flood budget, so its slack is the entire budget.
+    ///
+    /// A budget of zero is returned as `None` rather than `Some(0)`. The two
+    /// say the same thing to every reader — no repeater may carry this frame —
+    /// but the field costs a byte and an FCF bit to say it, and an absent
+    /// `FHOPS` is what tells the receiver it heard us directly rather than
+    /// across a zero-hop flood.
     ///
     /// The result is clamped to [`MAX_FLOOD_HOPS`], the largest value the
     /// `FHOPS_REM` nibble can hold.
@@ -3911,7 +3916,7 @@ impl<
             // A source route costs no flood budget at all — routed hops do not
             // touch `FHOPS` — so the whole budget is slack past the route's
             // end. Heard directly is the same shape: our own transmission is
-            // the delivery, and the slack only buys a repeater backstop.
+            // the delivery, and any slack only buys a repeater backstop.
             (Some(_), _) | (None, Some(CachedRoute::Direct)) => ESTABLISHED_ROUTE_EXTRA_HOPS,
             // Flooding has to cover the distance the peer was last heard from.
             (None, Some(CachedRoute::Flood { hops, .. })) => {
@@ -3930,7 +3935,8 @@ impl<
         // flood distance of 15 plus slack); an unclamped value would be
         // silently dropped by the builder, sending the frame with no flood
         // hops at all.
-        Some(requested.min(ceiling).min(MAX_FLOOD_HOPS))
+        let hops = requested.min(ceiling).min(MAX_FLOOD_HOPS);
+        (hops > 0).then_some(hops)
     }
 
     fn cache_peer_crypto(

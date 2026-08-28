@@ -235,11 +235,18 @@ pub const MAX_FLOOD_HOPS: u8 = 15;
 ///
 /// A route learned from inbound traffic tells the sender how far away the peer
 /// was, so a unicast that follows it does not need the wide flood budget of a
-/// first-contact packet. Sending with exactly the route's own cost would make
-/// every stale route fail outright, so sends keep this much extra budget: a
+/// first-contact packet. Slack past that distance buys the send a backstop: a
 /// path that has grown one hop longer — a repeater moved, a link that now needs
 /// one more relay — still gets through and re-teaches the correct route.
-pub const ESTABLISHED_ROUTE_EXTRA_HOPS: u8 = 1;
+///
+/// Zero spends nothing on that backstop. An established route is transmitted as
+/// exactly what it costs, and a route that has gone stale is recovered by the
+/// ack timeout rather than by a hop bolted onto every packet:
+/// route recovery compares what the application asked for against what the MAC
+/// narrowed it to, so a peer that moved is re-flooded on retry. A send with no
+/// ack coming has no such recovery and no repeat to listen for — that is the
+/// reliability this trades away for the airtime.
+pub const ESTABLISHED_ROUTE_EXTRA_HOPS: u8 = 0;
 
 /// Error returned when a fixed-capacity MAC data structure is full.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]

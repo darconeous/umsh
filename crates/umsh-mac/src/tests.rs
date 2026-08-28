@@ -4468,11 +4468,24 @@ fn send_unicast_uses_cached_source_route_when_present() {
     }
 
     assert_eq!(source_route.as_slice(), &[[0x01, 0x02], [0x03, 0x04]]);
-    let flood_hops = header.flood_hops.expect("flood hops present");
     // The route spends no flood budget at all, so the wide first-contact
-    // default collapses to the self-healing slack past the route's end.
-    assert_eq!(flood_hops.remaining(), ESTABLISHED_ROUTE_EXTRA_HOPS);
+    // default collapses to the slack past the route's end — and with no slack
+    // to spend, the field is left off the frame entirely.
+    assert_eq!(
+        header.flood_hops.map(|hops| hops.remaining()),
+        ESTABLISHED_ROUTE_SLACK_FIELD
+    );
 }
+
+/// The `FHOPS_REM` a send narrowed to the established-route slack carries.
+///
+/// Zero slack is not `Some(0)`: a field granting no forward says nothing a
+/// missing field does not, so the send leaves it off.
+const ESTABLISHED_ROUTE_SLACK_FIELD: Option<u8> = if ESTABLISHED_ROUTE_EXTRA_HOPS > 0 {
+    Some(ESTABLISHED_ROUTE_EXTRA_HOPS)
+} else {
+    None
+};
 
 /// Build a MAC with one local identity and one keyed peer, returning the
 /// pieces the flood-budget tests need.
@@ -4539,7 +4552,7 @@ fn send_unicast_narrows_flood_hops_to_the_slack_for_a_direct_peer() {
 
     let hops = queued_unicast_flood_hops(&mut mac, local_id, &peer_key, &SendOptions::default());
 
-    assert_eq!(hops, Some(ESTABLISHED_ROUTE_EXTRA_HOPS));
+    assert_eq!(hops, ESTABLISHED_ROUTE_SLACK_FIELD);
 }
 
 #[test]
@@ -4571,7 +4584,7 @@ fn send_unicast_treats_a_peer_heard_at_zero_hops_as_direct() {
 
     let hops = queued_unicast_flood_hops(&mut mac, local_id, &peer_key, &SendOptions::default());
 
-    assert_eq!(hops, Some(ESTABLISHED_ROUTE_EXTRA_HOPS));
+    assert_eq!(hops, ESTABLISHED_ROUTE_SLACK_FIELD);
 }
 
 #[test]
@@ -8408,6 +8421,10 @@ fn route_retry_preserves_the_authenticated_header() {
 /// for, and carries no option saying so. When it stops answering, the cache
 /// entry is exactly as stale as a dead source-route hint — the retry has to
 /// abandon it and flood at the budget the application actually requested.
+///
+/// This is the recovery that a zero `ESTABLISHED_ROUTE_EXTRA_HOPS` leans on: no
+/// hop is spent on the chance that the peer moved, so the ack timeout is what
+/// finds out that it did.
 #[test]
 fn route_retry_escalates_a_send_narrowed_by_a_cached_direct_route() {
     let (mut mac, local_id, peer_key, peer_id) = mac_with_keyed_peer();
@@ -8434,8 +8451,8 @@ fn route_retry_escalates_a_send_narrowed_by_a_cached_direct_route() {
     )
     .unwrap();
     assert_eq!(
-        original_header.flood_hops.unwrap().remaining(),
-        ESTABLISHED_ROUTE_EXTRA_HOPS,
+        original_header.flood_hops.map(|hops| hops.remaining()),
+        ESTABLISHED_ROUTE_SLACK_FIELD,
         "a direct cache entry should narrow the attempt's budget"
     );
     assert!(
@@ -8589,8 +8606,8 @@ fn route_retry_restores_the_full_budget_after_a_narrowed_source_routed_send() {
     let original = mac.tx_queue_mut().pop_next().unwrap();
     let original_header = PacketHeader::parse(original.frame.as_slice()).unwrap();
     assert_eq!(
-        original_header.flood_hops.unwrap().remaining(),
-        ESTABLISHED_ROUTE_EXTRA_HOPS,
+        original_header.flood_hops.map(|hops| hops.remaining()),
+        ESTABLISHED_ROUTE_SLACK_FIELD,
         "the cached route should narrow the attempt's budget"
     );
 
