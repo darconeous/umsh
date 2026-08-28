@@ -80,6 +80,184 @@ pub const fn property_name(key: u32) -> Option<&'static str> {
         prop::GNSS_IDENT_UPDATE => "PROP_GNSS_IDENT_UPDATE",
         prop::GNSS_IDENT_PRECISION => "PROP_GNSS_IDENT_PRECISION",
         prop::GNSS_TIME_TRUST => "PROP_GNSS_TIME_TRUST",
+        prop::BLE_ENABLED => "PROP_BLE_ENABLED",
+        _ => return None,
+    })
+}
+
+/// Every property this module can name.
+///
+/// A tool that resolves a mnemonic back to an identifier derives its
+/// lookup from this list rather than keeping a second copy of the table:
+/// one place to add a property, one place that can fall out of date.
+pub const PROPERTIES: &[u32] = &[
+    prop::LAST_STATUS,
+    prop::PROTOCOL_VERSION,
+    prop::DEV_VERSION,
+    prop::DEV_MODEL,
+    prop::INTERFACE_TYPE,
+    prop::CAPS,
+    prop::UPTIME,
+    prop::PHY_ENABLED,
+    prop::PHY_FREQ,
+    prop::PHY_TX_POWER,
+    prop::PHY_RSSI,
+    prop::PHY_LORA_BW,
+    prop::PHY_LORA_SF,
+    prop::PHY_LORA_CR,
+    prop::PHY_MTU,
+    prop::PHY_LORA_SW,
+    prop::MAC_PROMISCUOUS,
+    prop::MAC_BACKHAUL,
+    prop::SAVED,
+    prop::DEV_KEY,
+    prop::DEV_PRIVATE_KEY,
+    prop::DEV_CHANNEL_KEYS,
+    prop::DEV_PEERS,
+    prop::DEV_NAME,
+    prop::BATTERY,
+    prop::MAC_REPEATER_ENABLED,
+    prop::IDENT,
+    prop::IDENT_ROLE,
+    prop::IDENT_MOBILE,
+    prop::MAC_REPEATER_REGIONS,
+    prop::MAC_REPEATER_DEFAULT_REGION,
+    prop::MAC_REPEATER_MIN_RSSI,
+    prop::MAC_REPEATER_MIN_SNR,
+    prop::DEV_DISCOVERABLE,
+    prop::ALERT,
+    prop::ADVERT_INTERVAL,
+    prop::BEACON_INTERVAL,
+    prop::STARTUP_BEACON,
+    prop::IDENT_LOCATION,
+    prop::IDENT_ALTITUDE,
+    prop::GNSS_ENABLED,
+    prop::GNSS_LOCATION,
+    prop::GNSS_ALTITUDE,
+    prop::GNSS_FIX,
+    prop::GNSS_PRECISION,
+    prop::GNSS_SATELLITES,
+    prop::ILLUMINANCE,
+    prop::HOST_KEY,
+    prop::HOST_CHANNEL_KEYS,
+    prop::HOST_PEER_KEYS,
+    prop::HOST_RX_FILTERS,
+    prop::HOST_AUTO_ACK,
+    prop::HOST_RX_QUEUE_COUNT,
+    prop::HOST_RX_QUEUE_CAPACITY,
+    prop::HOST_RX_QUEUE_DROPPED,
+    prop::PHY_DUTY_NOW,
+    prop::PHY_DUTY_LIMIT,
+    prop::BLE_PAIRING_PIN,
+    prop::DEV_ADMINS,
+    prop::TIME,
+    prop::TZ_OFFSET,
+    prop::GNSS_IDENT_UPDATE,
+    prop::GNSS_IDENT_PRECISION,
+    prop::GNSS_TIME_TRUST,
+    prop::BLE_ENABLED,
+];
+
+/// How a property's octets are meant to be read.
+///
+/// Enough to render a value a person can check and to accept one typed
+/// by hand. Anything whose shape is a structure rather than a scalar —
+/// a battery snapshot, an interleaved location, a table of keys — is
+/// [`PropertyType::Bytes`], which is an honest answer: the octets are
+/// the value, and whatever decodes them knows more than this table does.
+///
+/// Numerics are little-endian, as ULCP has them throughout.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum PropertyType {
+    /// One octet, 0 or 1.
+    Bool,
+    U8,
+    U16,
+    U32,
+    I8,
+    I16,
+    I32,
+    /// UTF-8, NUL-terminated on the wire.
+    Text,
+    /// A 32-octet Ed25519 public key or channel key.
+    Key32,
+    /// A status code in PUI form.
+    Status,
+    /// Octets whose meaning is structural, not scalar.
+    Bytes,
+}
+
+/// How to read a known property's octets.
+///
+/// A property absent from the table has no scalar reading, which is the
+/// same answer as [`PropertyType::Bytes`] but says so by omission: the
+/// caller knows it is looking at something this module has never heard
+/// of rather than something deliberately opaque.
+pub const fn property_type(key: u32) -> Option<PropertyType> {
+    use PropertyType::{Bool, Bytes, I8, I16, I32, Key32, Status, Text, U8, U16, U32};
+    Some(match key {
+        prop::LAST_STATUS => Status,
+        // Major and minor, one octet each.
+        prop::PROTOCOL_VERSION => Bytes,
+        prop::DEV_VERSION | prop::DEV_MODEL | prop::DEV_NAME => Text,
+        prop::INTERFACE_TYPE => U32,
+        // A list of capability codes in PUI form.
+        prop::CAPS => Bytes,
+        prop::UPTIME => U32,
+        prop::PHY_ENABLED => Bool,
+        prop::PHY_FREQ => U32,
+        prop::PHY_TX_POWER | prop::PHY_RSSI => I8,
+        prop::PHY_LORA_BW => U32,
+        prop::PHY_LORA_SF | prop::PHY_LORA_CR => U8,
+        prop::PHY_MTU | prop::PHY_LORA_SW => U16,
+        prop::MAC_PROMISCUOUS | prop::MAC_BACKHAUL => Bool,
+        prop::SAVED => U8,
+        prop::DEV_KEY | prop::DEV_PRIVATE_KEY | prop::HOST_KEY => Key32,
+        // Multiple-value tables, reported as digests.
+        prop::DEV_CHANNEL_KEYS
+        | prop::DEV_PEERS
+        | prop::DEV_ADMINS
+        | prop::HOST_CHANNEL_KEYS
+        | prop::HOST_PEER_KEYS
+        | prop::HOST_RX_FILTERS => Bytes,
+        // A flags octet followed by whichever components it claims.
+        prop::BATTERY => Bytes,
+        prop::MAC_REPEATER_ENABLED => Bool,
+        // The signed node-identity blob.
+        prop::IDENT => Bytes,
+        prop::IDENT_ROLE => U8,
+        prop::IDENT_MOBILE => Bool,
+        // UTF-8 region names, one per item.
+        prop::MAC_REPEATER_REGIONS => Text,
+        // A 2-octet region code.
+        prop::MAC_REPEATER_DEFAULT_REGION => Bytes,
+        prop::MAC_REPEATER_MIN_RSSI => I16,
+        prop::MAC_REPEATER_MIN_SNR => I8,
+        prop::DEV_DISCOVERABLE => Bool,
+        prop::ALERT => U8,
+        prop::ADVERT_INTERVAL | prop::BEACON_INTERVAL => U32,
+        prop::STARTUP_BEACON => Bool,
+        // Variable-precision interleaved coordinates.
+        prop::IDENT_LOCATION | prop::GNSS_LOCATION => Bytes,
+        // A minimal-length signed integer, which is its own encoding.
+        prop::IDENT_ALTITUDE => Bytes,
+        prop::GNSS_ENABLED => Bool,
+        prop::GNSS_ALTITUDE => I32,
+        prop::GNSS_FIX => U8,
+        prop::GNSS_PRECISION => U16,
+        // Used in the solution, optionally followed by in view.
+        prop::GNSS_SATELLITES => Bytes,
+        prop::ILLUMINANCE => U32,
+        prop::HOST_AUTO_ACK => Bool,
+        prop::HOST_RX_QUEUE_COUNT | prop::HOST_RX_QUEUE_CAPACITY => U16,
+        prop::HOST_RX_QUEUE_DROPPED => U32,
+        prop::PHY_DUTY_NOW | prop::PHY_DUTY_LIMIT => U16,
+        prop::BLE_PAIRING_PIN => U32,
+        prop::TIME => U32,
+        prop::TZ_OFFSET => I16,
+        prop::GNSS_IDENT_UPDATE => Bool,
+        prop::GNSS_IDENT_PRECISION => U8,
+        prop::GNSS_TIME_TRUST | prop::BLE_ENABLED => Bool,
         _ => return None,
     })
 }
@@ -346,6 +524,53 @@ mod tests {
             Some("PROP_MAC_REPEATER_MIN_SNR")
         );
         assert_eq!(property_name(prop::IDENT_ROLE), Some("PROP_IDENT_ROLE"));
+    }
+
+    #[test]
+    fn names_the_bluetooth_toggle() {
+        assert_eq!(property_name(prop::BLE_ENABLED), Some("PROP_BLE_ENABLED"));
+        assert_eq!(property_type(prop::BLE_ENABLED), Some(PropertyType::Bool));
+    }
+
+    /// The three tables answer for the same set of properties. A name
+    /// with no entry in `PROPERTIES` cannot be looked up backwards, and
+    /// one with no type reads back as hex forever — both are the kind of
+    /// omission that happens when a property is added in a hurry.
+    #[test]
+    fn every_named_property_is_listed_and_typed() {
+        for &key in PROPERTIES {
+            assert!(
+                property_name(key).is_some(),
+                "prop {key} is listed but unnamed"
+            );
+            assert!(
+                property_type(key).is_some(),
+                "prop {key} is listed but untyped"
+            );
+        }
+        // The listing is a set, not a sequence with repeats.
+        for (index, &key) in PROPERTIES.iter().enumerate() {
+            assert!(
+                !PROPERTIES[..index].contains(&key),
+                "prop {key} is listed twice"
+            );
+        }
+    }
+
+    #[test]
+    fn property_types_follow_the_wire() {
+        assert_eq!(property_type(prop::PHY_FREQ), Some(PropertyType::U32));
+        assert_eq!(property_type(prop::PHY_TX_POWER), Some(PropertyType::I8));
+        assert_eq!(property_type(prop::DEV_NAME), Some(PropertyType::Text));
+        assert_eq!(property_type(prop::DEV_KEY), Some(PropertyType::Key32));
+        assert_eq!(property_type(prop::TZ_OFFSET), Some(PropertyType::I16));
+        assert_eq!(
+            property_type(prop::HOST_RX_QUEUE_DROPPED),
+            Some(PropertyType::U32)
+        );
+        // Structured values are honestly opaque rather than mis-typed.
+        assert_eq!(property_type(prop::BATTERY), Some(PropertyType::Bytes));
+        assert_eq!(property_type(60_000), None);
     }
 
     #[test]
