@@ -270,7 +270,7 @@ impl FrameLink for SessionLink {
 // ---------------------------------------------------------------------
 
 /// An attached device plus everything needed to describe it, tap it, and
-/// re-attach it in the other mode.
+/// re-open it.
 pub struct Session {
     pub device: UlcpDevice<SessionLink>,
     pub target: Target,
@@ -279,51 +279,16 @@ pub struct Session {
 }
 
 impl Session {
-    /// True while this handle refuses host-domain writes.
-    pub fn is_administrative(&self) -> bool {
-        matches!(
-            self.device.attach_mode(),
-            umsh::ulcp::AttachMode::Administrative | umsh::ulcp::AttachMode::Remote
-        )
-    }
-
     /// True while this session reaches its device over the mesh.
     pub fn is_mesh(&self) -> bool {
         matches!(self.target, Target::Mesh { .. })
     }
 
-    /// Re-attach the open link in the other mode.
-    ///
-    /// The device sees no detach — this replaces the host's own
-    /// bookkeeping — so session-scoped state survives and the cost is
-    /// four property reads rather than a reconnect.
-    pub async fn reattach(self, tethered: bool, trace: bool) -> Result<Self> {
-        let Self {
-            device,
-            target,
-            label,
-            tap,
-        } = self;
-        // The link keeps its tap: the wrapper is recovered whole, so a
-        // capture in progress keeps recording.
-        let link = device.into_link();
-        let mut device = reattach_link(link, tethered).await?;
-        if trace {
-            install_trace(&mut device);
-        }
-        Ok(Self {
-            device,
-            target,
-            label,
-            tap,
-        })
-    }
-
     /// Open a fresh link to the same radio.
     ///
-    /// Unlike [`Self::reattach`] this really does drop the connection —
-    /// it exists for recovering a capture whose BLE link failed. The
-    /// capture tap comes along so a recovered capture stays one file.
+    /// This really does drop the connection — it exists for recovering a
+    /// capture whose BLE link failed. The capture tap comes along so a
+    /// recovered capture stays one file.
     pub async fn reconnect(self, trace: bool) -> Result<Self> {
         let Self {
             device,
@@ -333,7 +298,7 @@ impl Session {
         } = self;
         drop(device);
         let link = open(&target).await?;
-        let mut device = attach_tapped(link, tap.clone(), false).await?;
+        let mut device = attach_tapped(link, tap.clone()).await?;
         if trace {
             install_trace(&mut device);
         }
@@ -413,34 +378,22 @@ async fn open_ble(_selector: &str) -> Result<AnyLink> {
     bail!("this build has no BLE support (build with the ble-radio feature)")
 }
 
-async fn attach_tapped(
-    link: AnyLink,
-    tap: FrameTap,
-    tethered: bool,
-) -> Result<UlcpDevice<SessionLink>> {
-    reattach_link(SessionLink::new(link, tap), tethered).await
-}
-
-/// Attach to an already-wrapped link.
+/// Attach to a link, wrapping it in the capture tap.
 ///
-/// Administrative is the default relationship: this tool administers
-/// devices rather than tethering to them, so the handle refuses
-/// host-domain writes. Only `provision` — which exists to establish a
-/// host domain — asks for a tethered handle.
-async fn reattach_link(link: SessionLink, tethered: bool) -> Result<UlcpDevice<SessionLink>> {
-    let device = if tethered {
-        UlcpDevice::attach_existing(link, attach_config()).await
-    } else {
-        UlcpDevice::attach_administrative(link, attach_config()).await
-    }?;
+/// Administrative is the only relationship this tool has with a device:
+/// it administers radios rather than tethering to them, so the handle
+/// refuses host-domain writes.
+async fn attach_tapped(link: AnyLink, tap: FrameTap) -> Result<UlcpDevice<SessionLink>> {
+    let device =
+        UlcpDevice::attach_administrative(SessionLink::new(link, tap), attach_config()).await?;
     Ok(device)
 }
 
 /// Open, attach, and name a device in one step.
-pub async fn connect(target: Target, tethered: bool, trace: bool) -> Result<Session> {
+pub async fn connect(target: Target, trace: bool) -> Result<Session> {
     let tap = new_tap();
     let link = open(&target).await?;
-    let mut device = attach_tapped(link, tap.clone(), tethered).await?;
+    let mut device = attach_tapped(link, tap.clone()).await?;
     if trace {
         install_trace(&mut device);
     }

@@ -492,10 +492,10 @@ mod tests {
         let ctx_history = rustyline::history::DefaultHistory::new();
         let ctx = Context::new(&ctx_history);
 
-        let (_, pairs) = helper.complete("provision --", 12, &ctx).unwrap();
+        let (_, pairs) = helper.complete("capture --", 10, &ctx).unwrap();
         let names: Vec<&str> = pairs.iter().map(|pair| pair.display.as_str()).collect();
-        assert!(names.contains(&"--host-key"), "{names:?}");
-        assert!(names.contains(&"--force"), "{names:?}");
+        assert!(names.contains(&"--pcap"), "{names:?}");
+        assert!(names.contains(&"--layers"), "{names:?}");
     }
 
     #[test]

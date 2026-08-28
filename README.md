@@ -151,8 +151,8 @@ adding a new board are in [docs/firmware-architecture.md](docs/firmware-architec
 
 ### Talk to a radio with `umshctl`
 
-`umshctl` is the host tool for a UMSH radio over BLE or USB serial: inspection, provisioning,
-device identity, persistence, pairing, radio configuration, and packet capture. It attaches
+`umshctl` is the host tool for a UMSH radio over BLE or USB serial: inspection, device
+identity, persistence, pairing, radio configuration, and packet capture. It attaches
 administratively, using the non-resetting handshake, so pointing it at an autonomously
 operating board never disturbs that board — only the command you give changes anything.
 

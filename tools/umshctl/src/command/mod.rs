@@ -13,7 +13,6 @@ pub mod lifecycle;
 pub mod manage;
 pub mod phy;
 pub mod ping;
-pub mod provision;
 pub mod repeater;
 pub mod tables;
 pub mod time;
@@ -34,10 +33,6 @@ pub enum Command {
     /// Print capabilities, ownership, PHY state, and provisioning
     /// digests. Changes nothing.
     Info(info::InfoArgs),
-
-    /// Establish host provisioning: keys, filters, and the delegation
-    /// policy for the host that will tether to this device.
-    Provision(provision::ProvisionArgs),
 
     /// Show or generate the device identity public key.
     Identity {
@@ -227,12 +222,6 @@ impl Command {
         }
     }
 
-    /// Whether this command needs a tethered attach rather than the
-    /// administrative one everything else uses.
-    pub fn needs_tethered(&self) -> bool {
-        matches!(self, Self::Provision(_))
-    }
-
     /// Why this command cannot run against a device reached over the
     /// mesh, if it cannot.
     ///
@@ -251,12 +240,6 @@ impl Command {
                 "capture listens on the attached radio's own receiver, which a mesh session \
                  cannot reach; `disconnect` first",
             ),
-            // Provisioning establishes a host domain, which is exactly
-            // what an administrator is not.
-            Self::Provision(_) => Some(
-                "provisioning claims a radio as your own, which needs a local attach; \
-                 `disconnect` first",
-            ),
             // Each of these becomes a node on the mesh, and this session
             // is already using the only radio there is.
             Self::Manage { .. } | Self::PeerRepeaters { .. } | Self::Ping(_) => Some(
@@ -267,8 +250,8 @@ impl Command {
         }
     }
 
-    /// Check whatever clap's grammar cannot — combinations of flags,
-    /// and the provisioning file — *before* a device is opened.
+    /// Check whatever clap's grammar cannot — combinations of flags —
+    /// *before* a device is opened.
     ///
     /// Connecting takes seconds over BLE and disturbs a radio that was
     /// minding its own business; an argument mistake should cost
@@ -276,7 +259,6 @@ impl Command {
     pub fn validate(&self) -> Result<()> {
         match self {
             Self::Capture(args) => args.validate(),
-            Self::Provision(args) => args.desired().map(drop),
             _ => Ok(()),
         }
     }
@@ -292,7 +274,6 @@ impl Command {
         }
         match self {
             Self::Info(args) => info::run(app.device()?, args).await,
-            Self::Provision(args) => provision::run(app, args).await,
             Self::Identity { op } => lifecycle::identity(app.device()?, op).await,
             Self::Name { name } => lifecycle::name(app, name).await,
             Self::Save => lifecycle::save(app.device()?).await,

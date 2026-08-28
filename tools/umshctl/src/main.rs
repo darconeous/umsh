@@ -1,11 +1,11 @@
 //! `umshctl`: the host tool for ULCP radio devices — inspection,
-//! provisioning, device identity, persistence, pairing, radio
-//! configuration, and packet capture.
+//! device identity, persistence, pairing, radio configuration, and
+//! packet capture.
 //!
-//! Everything except `provision` attaches administratively, with the
-//! non-resetting full-protocol handshake, so pointing this tool at an
-//! autonomously operating board never disturbs its configuration: only
-//! the command explicitly given changes anything.
+//! Every attach is administrative, with the non-resetting full-protocol
+//! handshake, so pointing this tool at an autonomously operating board
+//! never disturbs its configuration: only the command explicitly given
+//! changes anything.
 //!
 //! With no command it opens a shell — one attach, many commands — which
 //! is worth a great deal over BLE, where each fresh attach costs a
@@ -232,19 +232,9 @@ impl App {
     }
 
     pub async fn attach(&mut self, target: Target) -> Result<()> {
-        let session = connection::connect(target, false, self.trace).await?;
+        let session = connection::connect(target, self.trace).await?;
         announce_attached(&session);
         self.session = Some(session);
-        Ok(())
-    }
-
-    /// Re-attach the open link in the other mode. Used by `provision`,
-    /// which needs a tethered handle for one command.
-    pub async fn reattach(&mut self, tethered: bool) -> Result<()> {
-        let Some(session) = self.session.take() else {
-            bail!("not attached");
-        };
-        self.session = Some(session.reattach(tethered, self.trace).await?);
         Ok(())
     }
 
@@ -268,7 +258,7 @@ impl App {
 
 fn announce_attached(session: &Session) {
     eprintln!(
-        "attached: {} ({}) device={}{} boot_status={:?} mode={}",
+        "attached: {} ({}) device={}{} boot_status={:?}",
         session.label,
         session.target.transport(),
         session.device.dev_version(),
@@ -280,11 +270,6 @@ fn announce_attached(session: &Session) {
             .map(|model| format!(" on {model}"))
             .unwrap_or_default(),
         session.device.boot_status(),
-        if session.is_administrative() {
-            "administrative"
-        } else {
-            "tethered"
-        },
     );
 }
 
@@ -368,11 +353,7 @@ async fn run(args: ToolArgs) -> Result<()> {
     if needs_device {
         match resolve(&args, &app.prefs).await? {
             Some(target) => {
-                let tethered = args
-                    .command
-                    .as_ref()
-                    .is_some_and(|command| command.needs_tethered());
-                let session = connection::connect(target, tethered, app.trace).await?;
+                let session = connection::connect(target, app.trace).await?;
                 announce_attached(&session);
                 app.session = Some(session);
             }
@@ -491,42 +472,9 @@ mod tests {
     }
 
     #[test]
-    fn provision_flags_build_the_desired_state() {
-        const KEY: &str = "c4c4c4c4c4c4c4c4c4c4c4c4c4c4c4c4c4c4c4c4c4c4c4c4c4c4c4c4c4c4c4c4";
-        let peer = format!("{KEY},{},{}", "e0".repeat(32), "50".repeat(32));
-        let args = parse(&[
-            "provision",
-            "--host-key",
-            KEY,
-            "--channel-key",
-            KEY,
-            "--peer",
-            &peer,
-            "--filter=pkt-type:1",
-            "--filter",
-            "channel-id:9b68",
-            "--auto-ack=off",
-            "--force",
-            "--no-save",
-        ])
-        .unwrap();
-        assert!(args.no_save);
-        let Some(Command::Provision(provision)) = args.command else {
-            panic!("expected provision");
-        };
-        assert!(provision.force);
-        assert_eq!(provision.host_key.len(), 1);
-        assert_eq!(provision.channel_key.len(), 1);
-        assert_eq!(provision.peer.len(), 1);
-        assert_eq!(provision.filter.len(), 2);
-        assert_eq!(provision.auto_ack.len(), 1);
-        assert!(!provision.auto_ack[0].0);
-    }
-
-    #[test]
     fn misplaced_options_are_rejected() {
         assert!(parse(&["info", "--force"]).is_err());
-        assert!(parse(&["save", "--host-key", "aa"]).is_err());
+        assert!(parse(&["save", "--pcap", "x.pcap"]).is_err());
         assert!(parse(&["info", "--expect-host-key=aa"]).is_err(), "bad key");
     }
 
@@ -650,7 +598,6 @@ mod tests {
 
         // Needs the attached radio's own receiver, or the radio itself.
         assert!(refused(&["capture"]));
-        assert!(refused(&["provision"]));
         assert!(refused(&["manage", &key, "info"]));
         assert!(refused(&["peer-repeaters", &key]));
         assert!(refused(&["ping", &key]));
@@ -694,19 +641,6 @@ mod tests {
         assert_eq!(args.node.unwrap().0, [0xC4; 32]);
 
         assert!(parse(&["--node", "nonsense", "info"]).is_err());
-    }
-
-    #[test]
-    fn only_provision_asks_to_tether() {
-        assert!(!parse(&["info"]).unwrap().command.unwrap().needs_tethered());
-        const KEY: &str = "c4c4c4c4c4c4c4c4c4c4c4c4c4c4c4c4c4c4c4c4c4c4c4c4c4c4c4c4c4c4c4c4";
-        assert!(
-            parse(&["provision", "--host-key", KEY])
-                .unwrap()
-                .command
-                .unwrap()
-                .needs_tethered()
-        );
     }
 
     #[test]

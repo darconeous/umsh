@@ -235,7 +235,7 @@ async fn capture(args: ExtcapArgs) -> Result<()> {
 
     let prefs = Prefs::load();
     let target = resolve_target(&args, &prefs).await?;
-    let session = connection::connect(target, false, false).await?;
+    let session = connection::connect(target, false).await?;
     let mut app = App::for_extcap(session, prefs, args.baud);
 
     // Wireshark stops a capture by closing the FIFO and signalling. The

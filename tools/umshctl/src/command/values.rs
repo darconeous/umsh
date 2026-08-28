@@ -11,7 +11,7 @@ use std::str::FromStr;
 use umsh::core::{ChannelKey, MicSize, PublicKey, RegionCode, RouterHint};
 use umsh::crypto::{ChannelNameError, MAX_CHANNEL_NAME_LEN};
 use umsh::node::Channel;
-use umsh::ulcp_wire::items::{Filter, PeerKeyEntry};
+use umsh::ulcp_wire::items::Filter;
 
 pub fn parse_key32(text: &str) -> Result<[u8; 32], String> {
     text.parse::<PublicKey>()
@@ -30,14 +30,6 @@ pub fn parse_hex<const N: usize>(text: &str) -> Result<[u8; N], String> {
             .map_err(|error| error.to_string())?;
     }
     Ok(out)
-}
-
-pub fn parse_bool(text: &str) -> Result<bool, String> {
-    match text {
-        "on" | "true" | "1" => Ok(true),
-        "off" | "false" | "0" => Ok(false),
-        other => Err(format!("expected on or off, got {other:?}")),
-    }
 }
 
 /// A number written in decimal or with an `0x` prefix.
@@ -99,41 +91,6 @@ impl FromStr for KeyArg {
 
     fn from_str(text: &str) -> Result<Self, Self::Err> {
         parse_key32(text).map(Self)
-    }
-}
-
-/// `PUB,KENC,KMIC` (or whitespace-separated): a peer public key and the
-/// two 32-byte pairwise secrets, hex.
-#[derive(Clone, Copy, PartialEq, Eq)]
-pub struct PeerArg(pub PeerKeyEntry);
-
-impl FromStr for PeerArg {
-    type Err = String;
-
-    fn from_str(text: &str) -> Result<Self, Self::Err> {
-        let fields: Vec<&str> = text
-            .split(|c: char| c == ',' || c.is_whitespace())
-            .filter(|field| !field.is_empty())
-            .collect();
-        let [public_key, k_enc, k_mic] = fields[..] else {
-            return Err(format!(
-                "expected peer as PUB,KENC,KMIC (got {} fields)",
-                fields.len()
-            ));
-        };
-        Ok(Self(PeerKeyEntry {
-            public_key: parse_key32(public_key)?,
-            k_enc: parse_hex::<32>(k_enc)?,
-            k_mic: parse_hex::<32>(k_mic)?,
-        }))
-    }
-}
-
-/// Redacted: a peer entry is two pairwise secrets, and `--help`-adjacent
-/// machinery has no business rendering them.
-impl fmt::Debug for PeerArg {
-    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        write!(f, "PeerArg({}, <secrets>)", PublicKey(self.0.public_key))
     }
 }
 
@@ -311,19 +268,6 @@ impl FromStr for MinSnrArg {
         text.parse::<i8>()
             .map(|db| Self(Some(db)))
             .map_err(|_| format!("expected dB or `none`, got {text:?}"))
-    }
-}
-
-/// An `on`/`off` switch, also accepting the `true`/`false` and `1`/`0`
-/// spellings the provisioning file has always allowed.
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub struct OnOffArg(pub bool);
-
-impl FromStr for OnOffArg {
-    type Err = String;
-
-    fn from_str(text: &str) -> Result<Self, Self::Err> {
-        parse_bool(text).map(Self)
     }
 }
 
@@ -534,18 +478,6 @@ mod tests {
         let base58 = PublicKey(hex.0).to_string();
         assert_eq!(base58.parse::<KeyArg>().unwrap().0, [0xC4; 32]);
         assert!("nonsense".parse::<KeyArg>().is_err());
-    }
-
-    #[test]
-    fn peer_entries_carry_both_pairwise_secrets() {
-        let peer: PeerArg = format!("{KEY_HEX},{},{}", "e0".repeat(32), "50".repeat(32))
-            .parse()
-            .unwrap();
-        assert_eq!(peer.0.public_key, [0xC4; 32]);
-        assert_eq!(peer.0.k_enc, [0xE0; 32]);
-        assert_eq!(peer.0.k_mic, [0x50; 32]);
-        // Secrets are never rendered, not even by a debug format.
-        assert!(!format!("{peer:?}").contains("e0e0"));
     }
 
     #[test]
