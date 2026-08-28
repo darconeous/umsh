@@ -455,21 +455,79 @@ mod tests {
     }
 
     #[test]
-    fn the_default_is_vetted_and_carries_a_power() {
-        assert_eq!(DEFAULT.id, "meshcore-us-ca");
+    fn the_default_is_vetted_and_reachable_by_id() {
+        // Which entry is the default is a shipping decision, free to
+        // move; that it is in the table and answers to its own
+        // identifier is not. `DEFAULT_TX_POWER_DBM` needs no assertion
+        // here — its `match` fails the build if the default carries no
+        // vetted power.
         assert!(VETTED.contains(DEFAULT));
-        assert_eq!(DEFAULT_TX_POWER_DBM, 21);
-        assert_eq!(by_id("meshcore-us-ca"), Some(DEFAULT));
+        assert_eq!(by_id(DEFAULT.id), Some(DEFAULT));
         assert_eq!(by_id("nonesuch"), None);
     }
 
     #[test]
     fn interop_ignores_local_settings() {
-        let profile = DEFAULT;
-        assert!(profile.interoperates_with(910_525, 62_500, 7, 5));
-        assert!(!profile.interoperates_with(915_000, 62_500, 7, 5));
-        assert!(!profile.interoperates_with(910_525, 125_000, 7, 5));
-        assert_eq!(matching(910_525, 62_500, 7, 5), Some(DEFAULT));
-        assert_eq!(matching(902_000, 62_500, 7, 5), None);
+        // Literals rather than a table entry: what is under test is the
+        // comparison rule, not any shipped profile's parameters.
+        let profile = PhyProfile {
+            id: "test",
+            name: "Test",
+            freq_khz: 906_875,
+            bw_hz: 250_000,
+            sf: 9,
+            cr_denom: 6,
+            tx_power_dbm: Some(14),
+            duty_limit: DUTY_LIMIT_DISABLED,
+            sync_word: DEFAULT_SYNC_WORD,
+            tx_preamble_symbols: MESHCORE_TX_PREAMBLE,
+        };
+        // The same four parameters, turned down and duty-limited.
+        let quieter = PhyProfile {
+            tx_power_dbm: Some(2),
+            duty_limit: DUTY_10_PERCENT,
+            ..profile
+        };
+        assert_ne!(profile, quieter);
+        assert!(profile.interoperates_with(906_875, 250_000, 9, 6));
+        assert!(quieter.interoperates_with(906_875, 250_000, 9, 6));
+
+        // Each of the four on its own breaks interop.
+        assert!(!profile.interoperates_with(906_975, 250_000, 9, 6));
+        assert!(!profile.interoperates_with(906_875, 125_000, 9, 6));
+        assert!(!profile.interoperates_with(906_875, 250_000, 10, 6));
+        assert!(!profile.interoperates_with(906_875, 250_000, 9, 5));
+    }
+
+    #[test]
+    fn every_vetted_profile_is_found_by_its_own_parameters() {
+        for profile in VETTED {
+            let found = matching(
+                profile.freq_khz,
+                profile.bw_hz,
+                profile.sf,
+                profile.cr_denom,
+            )
+            .unwrap_or_else(|| panic!("{} finds no vetted profile", profile.id));
+            // Not necessarily the entry asked about. Countries sharing a
+            // band share a radio configuration — `meshcore-hu`,
+            // `meshcore-nl` and `meshcore-sk` are one PHY under three
+            // names — so a lookup answers with the first interoperable
+            // entry, and the four parameters cannot name a country.
+            assert!(
+                found.interoperates_with(
+                    profile.freq_khz,
+                    profile.bw_hz,
+                    profile.sf,
+                    profile.cr_denom
+                ),
+                "{} matched {}",
+                profile.id,
+                found.id
+            );
+        }
+        // Nothing sits at 0 kHz: `parameters_are_settable_on_a_device`
+        // holds every entry inside a real radio's tuning range.
+        assert_eq!(matching(0, 0, 0, 0), None);
     }
 }
