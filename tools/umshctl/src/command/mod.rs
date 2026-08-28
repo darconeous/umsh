@@ -11,6 +11,7 @@ pub mod gnss;
 pub mod info;
 pub mod lifecycle;
 pub mod manage;
+pub mod message;
 pub mod phy;
 pub mod ping;
 pub mod props;
@@ -36,10 +37,38 @@ pub enum Command {
     /// Changes nothing.
     Info(info::InfoArgs),
 
-    /// Show or generate the device identity public key.
-    Identity {
-        #[command(subcommand)]
-        op: Option<lifecycle::IdentityOp>,
+    /// Read properties by name or number.
+    ///
+    /// Names are the spec mnemonics without their prefix
+    /// (`phy-freq`, `dev-name`); numbers are decimal or `0x`-prefixed.
+    /// Several are read in one exchange where the device supports it.
+    Get {
+        #[arg(value_name = "PROP", required = true)]
+        keys: Vec<props::PropArg>,
+
+        /// Print values as raw octets rather than reading them.
+        #[arg(long)]
+        hex: bool,
+    },
+
+    /// Take one ambient light reading.
+    Illuminance,
+
+    /// Write one property by name or number.
+    ///
+    /// The value is written the way `get` reads it back: `on`/`off` for
+    /// a switch, a decimal number for a count, an address for a key. A
+    /// property whose shape is a structure takes hex.
+    Set {
+        #[arg(value_name = "PROP")]
+        key: props::PropArg,
+
+        #[arg(value_name = "VALUE")]
+        value: String,
+
+        /// Print the stored value as raw octets.
+        #[arg(long)]
+        hex: bool,
     },
 
     /// Show or set the human-readable device name.
@@ -48,35 +77,10 @@ pub enum Command {
         name: Option<String>,
     },
 
-    /// Persist live state across reboots (CMD_SAVE).
-    Save,
-
-    /// Revert live state to the saved snapshot.
-    Restore,
-
-    /// Erase persisted state; live state keeps running.
-    Clear,
-
-    /// Protocol reset (CMD_RST): state returns to its post-reset values,
-    /// restoring any saved snapshot. The MCU does not reboot.
-    Reset,
-
-    /// Restart the device (CMD_REBOOT): a power cycle that keeps
-    /// everything the device has persisted.
-    Reboot,
-
-    /// Erase ALL state including BLE bonds and the pairing PIN, then
-    /// reboot into a blank factory state.
-    FactoryReset {
-        /// Confirm the wipe. Required outside the REPL, which asks.
-        #[arg(long)]
-        yes: bool,
-    },
-
-    /// Set or clear the persisted BLE pairing PIN.
-    Pin {
-        #[arg(value_name = "6-DIGITS|clear")]
-        value: PinArg,
+    /// Show or generate the device identity public key.
+    Identity {
+        #[command(subcommand)]
+        op: Option<lifecycle::IdentityOp>,
     },
 
     /// Show or set the PHY enable state and LoRa parameters.
@@ -115,6 +119,19 @@ pub enum Command {
         op: Option<advert::AdvertOp>,
     },
 
+    /// Show or drive the locate alert: make the radio conspicuous so it
+    /// can be found.
+    Alert {
+        #[command(subcommand)]
+        op: Option<lifecycle::AlertOp>,
+    },
+
+    /// Set or clear the persisted BLE pairing PIN.
+    Pin {
+        #[arg(value_name = "6-DIGITS|clear")]
+        value: PinArg,
+    },
+
     /// Device-identity channel keys: the multicast this device's own
     /// node joins.
     DevChannel {
@@ -132,6 +149,31 @@ pub enum Command {
     DevAdmin {
         #[command(subcommand)]
         op: Option<tables::TableOp>,
+    },
+
+    /// Persist live state across reboots (CMD_SAVE).
+    Save,
+
+    /// Revert live state to the saved snapshot.
+    Restore,
+
+    /// Erase persisted state; live state keeps running.
+    Clear,
+
+    /// Protocol reset (CMD_RST): state returns to its post-reset values,
+    /// restoring any saved snapshot. The MCU does not reboot.
+    Reset,
+
+    /// Restart the device (CMD_REBOOT): a power cycle that keeps
+    /// everything the device has persisted.
+    Reboot,
+
+    /// Erase ALL state including BLE bonds and the pairing PIN, then
+    /// reboot into a blank factory state.
+    FactoryReset {
+        /// Confirm the wipe. Required outside the REPL, which asks.
+        #[arg(long)]
+        yes: bool,
     },
 
     /// Administer another device over the mesh, using the attached radio
@@ -157,6 +199,12 @@ pub enum Command {
     /// hops, and signal. Needs no authorization from the far end.
     Ping(ping::PingArgs),
 
+    /// Send a text message to a node, as this tool's own identity.
+    Send(message::SendArgs),
+
+    /// Print text messages addressed to this tool, until interrupted.
+    Listen(message::ListenArgs),
+
     /// Show or forget the routes this tool has learned to other nodes.
     ///
     /// Learned from replies and remembered between invocations, so a
@@ -169,47 +217,6 @@ pub enum Command {
 
     /// Show the administrator identity this tool manages devices with.
     AdminKey,
-
-    /// Read properties by name or number.
-    ///
-    /// Names are the spec mnemonics without their prefix
-    /// (`phy-freq`, `dev-name`); numbers are decimal or `0x`-prefixed.
-    /// Several are read in one exchange where the device supports it.
-    Get {
-        #[arg(value_name = "PROP", required = true)]
-        keys: Vec<props::PropArg>,
-
-        /// Print values as raw octets rather than reading them.
-        #[arg(long)]
-        hex: bool,
-    },
-
-    /// Write one property by name or number.
-    ///
-    /// The value is written the way `get` reads it back: `on`/`off` for
-    /// a switch, a decimal number for a count, an address for a key. A
-    /// property whose shape is a structure takes hex.
-    Set {
-        #[arg(value_name = "PROP")]
-        key: props::PropArg,
-
-        #[arg(value_name = "VALUE")]
-        value: String,
-
-        /// Print the stored value as raw octets.
-        #[arg(long)]
-        hex: bool,
-    },
-
-    /// Take one ambient light reading.
-    Illuminance,
-
-    /// Show or drive the locate alert: make the radio conspicuous so it
-    /// can be found.
-    Alert {
-        #[command(subcommand)]
-        op: Option<lifecycle::AlertOp>,
-    },
 
     /// Listen on the device's radio, decoding frames and optionally
     /// writing a Wireshark-compatible capture.
@@ -281,7 +288,11 @@ impl Command {
             ),
             // Each of these becomes a node on the mesh, and this session
             // is already using the only radio there is.
-            Self::Manage { .. } | Self::PeerRepeaters { .. } | Self::Ping(_) => Some(
+            Self::Manage { .. }
+            | Self::PeerRepeaters { .. }
+            | Self::Ping(_)
+            | Self::Send(_)
+            | Self::Listen(_) => Some(
                 "this session has already borrowed the radio; `disconnect` first, then reach \
                  the node from there",
             ),
@@ -347,6 +358,8 @@ impl Command {
                 let target = args.target;
                 manage::run(app, target, manage::Operation::Ping(args)).await
             }
+            Self::Send(args) => message::send(app, args).await,
+            Self::Listen(args) => message::listen(app, args).await,
             Self::Routes { op } => routes_cmd::run(op),
             Self::AdminKey => crate::mesh::show_admin_key(),
             Self::Get { keys, hex } => props::get(app.device()?, &keys, hex).await,

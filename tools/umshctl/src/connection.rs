@@ -666,8 +666,7 @@ impl DefaultDevice {
 }
 
 /// Persisted tool preferences. Deliberately tiny: `setting = value`
-/// lines with `#` comments, the same vocabulary the provisioning file
-/// uses, and no dependency to read it.
+/// lines with `#` comments, and no dependency to read it.
 #[derive(Clone, Debug, Default, PartialEq, Eq)]
 pub struct Prefs {
     pub default_device: Option<DefaultDevice>,

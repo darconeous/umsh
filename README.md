@@ -152,7 +152,9 @@ adding a new board are in [docs/firmware-architecture.md](docs/firmware-architec
 ### Talk to a radio with `umshctl`
 
 `umshctl` is the host tool for a UMSH radio over BLE or USB serial: inspection, device
-identity, persistence, pairing, radio configuration, and packet capture. It attaches
+identity, persistence, pairing, radio configuration, and packet capture. Borrowing the
+attached radio, it is also a node in its own right — it administers other devices over the
+mesh, and sends and receives text messages under its own identity. It attaches
 administratively, using the non-resetting handshake, so pointing it at an autonomously
 operating board never disturbs that board — only the command you give changes anything.
 
@@ -169,7 +171,7 @@ every fresh attach costs a discovery pass plus a handshake:
 ```
 $ umshctl
 discovered: UMSH T-Echo
-attached: UMSH T-Echo (ble) device=techo/0.1 boot_status=RESET_POWER_ON mode=administrative
+attached: UMSH T-Echo (ble) device=techo/0.1 boot_status=RESET_POWER_ON
 umshctl — `help` lists commands, `exit` leaves.
 UMSH T-Echo (ble)> repeater on
 repeater on (on-board node forwards overheard frames)

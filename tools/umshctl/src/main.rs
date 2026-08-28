@@ -576,6 +576,63 @@ mod tests {
     }
 
     #[test]
+    fn a_message_is_whatever_words_follow_the_key() {
+        const KEY: &str = "c4c4c4c4c4c4c4c4c4c4c4c4c4c4c4c4c4c4c4c4c4c4c4c4c4c4c4c4c4c4c4c4";
+        let Some(Command::Send(args)) = parse(&["send", KEY, "on", "my", "way"]).unwrap().command
+        else {
+            panic!("expected send");
+        };
+        assert_eq!(args.target.0, [0xC4; 32]);
+        assert_eq!(args.text.join(" "), "on my way");
+        assert_eq!(args.timeout, 30);
+        assert!(!args.no_ack);
+
+        // A message needs a body.
+        assert!(parse(&["send", KEY]).is_err());
+
+        // The flags stay flags, wherever they are written.
+        let Some(Command::Send(args)) =
+            parse(&["send", KEY, "hurry", "--timeout", "5", "--no-ack"])
+                .unwrap()
+                .command
+        else {
+            panic!("expected send");
+        };
+        assert_eq!(args.text.join(" "), "hurry");
+        assert_eq!(args.timeout, 5);
+        assert!(args.no_ack);
+
+        // A body that begins with a dash goes after `--`, as anywhere.
+        let Some(Command::Send(args)) = parse(&["send", KEY, "--", "-9 dBm?"]).unwrap().command
+        else {
+            panic!("expected send");
+        };
+        assert_eq!(args.text.join(" "), "-9 dBm?");
+
+        let Some(Command::Listen(args)) = parse(&["listen"]).unwrap().command else {
+            panic!("expected listen");
+        };
+        assert!(args.timeout.is_none());
+        assert!(args.from.is_empty());
+
+        // Listening for somebody this tool has never reached takes their
+        // key, and takes it more than once.
+        const OTHER: &str = "a7a7a7a7a7a7a7a7a7a7a7a7a7a7a7a7a7a7a7a7a7a7a7a7a7a7a7a7a7a7a7a7";
+        let Some(Command::Listen(args)) =
+            parse(&["listen", "--from", KEY, "--from", OTHER, "--timeout", "5"])
+                .unwrap()
+                .command
+        else {
+            panic!("expected listen");
+        };
+        assert_eq!(args.timeout, Some(5));
+        assert_eq!(
+            args.from.iter().map(|key| key.0).collect::<Vec<_>>(),
+            [[0xC4; 32], [0xA7; 32]]
+        );
+    }
+
+    #[test]
     fn routes_reads_this_tools_own_notes() {
         use command::routes_cmd::RoutesOp;
         let key = "c4".repeat(32);
@@ -639,6 +696,10 @@ mod tests {
         assert!(refused(&["manage", &key, "info"]));
         assert!(refused(&["peer-repeaters", &key]));
         assert!(refused(&["ping", &key]));
+        // Messaging makes this tool a node, and the mesh session has
+        // already borrowed the only radio there is.
+        assert!(refused(&["send", &key, "hello"]));
+        assert!(refused(&["listen"]));
 
         // Everything else is an ordinary property conversation, and the
         // binding carries it — including the reset-class commands and

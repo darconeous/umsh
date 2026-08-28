@@ -127,6 +127,12 @@ pub fn show_admin_key() -> Result<()> {
 /// tool uses deliberately leaves the radio's configuration alone, so the
 /// defaults it carries may describe some other radio entirely. Read the
 /// real ones before borrowing the link.
+///
+/// A radio whose PHY is switched off refuses every transmission, and it
+/// does so far downstream — as an `INVALID_STATE` on the first frame the
+/// MAC tries to send, long after the radio has been borrowed. Reading
+/// the flag here turns that into an answer the caller can act on, while
+/// it still has its attachment.
 pub async fn adopt_phy(device: &mut UlcpDevice<SessionLink>) -> Result<UlcpDeviceConfig> {
     let keys = [
         prop::PHY_FREQ,
@@ -134,12 +140,18 @@ pub async fn adopt_phy(device: &mut UlcpDevice<SessionLink>) -> Result<UlcpDevic
         prop::PHY_LORA_SF,
         prop::PHY_LORA_CR,
         prop::PHY_TX_POWER,
+        prop::PHY_ENABLED,
     ];
     let answers = device.get_props(&keys).await?;
     let mut config = connection::attach_config();
     for (requested, answer) in keys.iter().zip(&answers) {
         let Ok((_, value)) = answer else { continue };
         match *requested {
+            prop::PHY_ENABLED => {
+                if value.first() == Some(&0) {
+                    bail!("the radio's PHY is switched off; turn it on with `set phy-enabled on`");
+                }
+            }
             prop::PHY_FREQ => {
                 if let Ok(bytes) = <[u8; 4]>::try_from(&value[..]) {
                     config.freq_khz = u32::from_le_bytes(bytes);
