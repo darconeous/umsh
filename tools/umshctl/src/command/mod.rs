@@ -30,8 +30,8 @@ use values::PinArg;
 
 #[derive(Debug, clap::Subcommand)]
 pub enum Command {
-    /// Print capabilities, ownership, PHY state, and provisioning
-    /// digests. Changes nothing.
+    /// Report what the device says about itself, whole or by topic.
+    /// Changes nothing.
     Info(info::InfoArgs),
 
     /// Show or generate the device identity public key.

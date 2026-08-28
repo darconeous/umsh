@@ -2170,16 +2170,7 @@ where
 
     /// Fetch and decode `PROP_CAPS`.
     pub async fn capabilities(&mut self) -> Result<Vec<u32>, UlcpError> {
-        let raw = self.get_prop(prop::CAPS).await?;
-        let mut caps = Vec::new();
-        let mut offset = 0;
-        while offset < raw.len() {
-            let (value, used) = pui::decode(&raw[offset..])
-                .map_err(|_| UlcpError::Protocol("malformed PROP_CAPS"))?;
-            caps.push(value);
-            offset += used;
-        }
-        Ok(caps)
+        decode_capabilities(&self.get_prop(prop::CAPS).await?)
     }
 
     /// Run the spec's post-attach synchronization procedure: fetch the
@@ -3003,16 +2994,40 @@ where
     }
 }
 
-fn decode_status(value: &[u8]) -> Status {
+// ─── Value decoders ──────────────────────────────────────────────────
+//
+// Public because fetching and decoding are separable and a batched read
+// separates them. A caller that asks for a dozen properties in one
+// `CMD_PROP_MULTI_GET` holds a bag of octets afterwards, and needs the
+// same readings the per-property methods here apply — otherwise the only
+// way to understand a value is to spend a round trip fetching it alone,
+// which is the cost batching exists to avoid.
+
+/// Decode a `PROP_LAST_STATUS` value. Anything malformed reads as
+/// `STATUS_FAILURE`, which is what a device unable to say why would mean.
+pub fn decode_status(value: &[u8]) -> Status {
     match pui::decode(value) {
         Ok((code, _)) => Status(code),
         Err(_) => Status::FAILURE,
     }
 }
 
+/// Decode a `PROP_CAPS` value: capability codes as consecutive PUIs.
+pub fn decode_capabilities(value: &[u8]) -> Result<Vec<u32>, UlcpError> {
+    let mut caps = Vec::new();
+    let mut offset = 0;
+    while offset < value.len() {
+        let (code, used) = pui::decode(&value[offset..])
+            .map_err(|_| UlcpError::Protocol("malformed PROP_CAPS"))?;
+        caps.push(code);
+        offset += used;
+    }
+    Ok(caps)
+}
+
 /// Decode a `PROP_HOST_RX_FILTERS` digest table (PUI-length-prefixed
 /// filter items).
-fn decode_filter_table(value: &[u8]) -> Result<Vec<items::Filter>, UlcpError> {
+pub fn decode_filter_table(value: &[u8]) -> Result<Vec<items::Filter>, UlcpError> {
     let mut filters = Vec::new();
     for item in items::prefixed_items(value) {
         let item = item.map_err(|_| UlcpError::Protocol("malformed PROP_HOST_RX_FILTERS"))?;
@@ -3026,7 +3041,7 @@ fn decode_filter_table(value: &[u8]) -> Result<Vec<items::Filter>, UlcpError> {
 
 /// Decode `PROP_MAC_REPEATER_REGIONS`: length-prefixed UTF-8 region
 /// strings, in the order they were written.
-fn decode_region_list(value: &[u8]) -> Result<Vec<String>, UlcpError> {
+pub fn decode_region_list(value: &[u8]) -> Result<Vec<String>, UlcpError> {
     let mut regions = Vec::new();
     for item in items::prefixed_items(value) {
         let item = item.map_err(|_| UlcpError::Protocol("malformed PROP_MAC_REPEATER_REGIONS"))?;
@@ -3050,7 +3065,7 @@ fn check_region(region: &str) -> Result<(), UlcpError> {
 }
 
 /// Decode a single optional region code. Empty means unset.
-fn decode_region_code(value: &[u8]) -> Result<Option<RegionCode>, UlcpError> {
+pub fn decode_region_code(value: &[u8]) -> Result<Option<RegionCode>, UlcpError> {
     match value {
         [] => Ok(None),
         [high, low] => Ok(Some(RegionCode::from_bytes([*high, *low]))),
@@ -3061,7 +3076,7 @@ fn decode_region_code(value: &[u8]) -> Result<Option<RegionCode>, UlcpError> {
 }
 
 /// Decode an optional INT16 gate. Empty means unset; `None` is malformed.
-fn decode_opt_i16(value: &[u8]) -> Option<Option<i16>> {
+pub fn decode_opt_i16(value: &[u8]) -> Option<Option<i16>> {
     match value {
         [] => Some(None),
         [low, high] => Some(Some(i16::from_le_bytes([*low, *high]))),
@@ -3070,7 +3085,7 @@ fn decode_opt_i16(value: &[u8]) -> Option<Option<i16>> {
 }
 
 /// Decode an optional INT8 gate. Empty means unset; `None` is malformed.
-fn decode_opt_i8(value: &[u8]) -> Option<Option<i8>> {
+pub fn decode_opt_i8(value: &[u8]) -> Option<Option<i8>> {
     match value {
         [] => Some(None),
         [byte] => Some(Some(*byte as i8)),
@@ -3079,7 +3094,7 @@ fn decode_opt_i8(value: &[u8]) -> Option<Option<i8>> {
 }
 
 /// Decode a `PROP_ALERT` value: exactly one PUI naming a known state.
-fn decode_alert(value: &[u8]) -> Result<AlertState, UlcpError> {
+pub fn decode_alert(value: &[u8]) -> Result<AlertState, UlcpError> {
     const MALFORMED: &str = "malformed PROP_ALERT";
     let (code, consumed) = pui::decode(value).map_err(|_| UlcpError::Protocol(MALFORMED))?;
     if consumed != value.len() {

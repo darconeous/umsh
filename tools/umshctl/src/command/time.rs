@@ -206,7 +206,7 @@ fn host_tz_offset() -> Result<i16> {
     bail!("this platform exposes no system time zone; give the offset with `time tz set`")
 }
 
-fn format_utc(epoch: u32) -> String {
+pub fn format_utc(epoch: u32) -> String {
     format!("{}Z", format_civil(DateTime::from_unix(epoch)))
 }
 
