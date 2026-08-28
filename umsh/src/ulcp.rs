@@ -1816,7 +1816,10 @@ where
     /// `PROP_LAST_STATUS` must not appear in `keys`: a refused position
     /// is reported by putting that very property into it, so its value
     /// and a refusal are indistinguishable. Read it on its own.
-    async fn read_each(&mut self, keys: &[u32]) -> Result<Vec<Result<Vec<u8>, Status>>, UlcpError> {
+    pub async fn read_each(
+        &mut self,
+        keys: &[u32],
+    ) -> Result<Vec<Result<Vec<u8>, Status>>, UlcpError> {
         debug_assert!(
             !keys.contains(&prop::LAST_STATUS),
             "PROP_LAST_STATUS cannot share a multi-property read"
@@ -1856,10 +1859,14 @@ where
     /// a lone `CMD_PROP_GET` would have produced. A device that answers
     /// with fewer entries than were requested ran out of room in the
     /// response; the caller reissues the remainder.
+    ///
+    /// Host-domain keys are not refused here. Reading one is not writing
+    /// it: a local device answers an administrative handle's read the
+    /// same way it answers a tethered one, and over the mesh the
+    /// unreachable half of the property space refuses per position, as
+    /// any other absent property does. Only writes are the host's alone,
+    /// and [`Self::set_prop`] still says so.
     pub async fn get_props(&mut self, keys: &[u32]) -> Result<Vec<MultiValue>, UlcpError> {
-        for &key in keys {
-            self.require_tethered(key)?;
-        }
         let tid = self.alloc_tid();
         let mut buf = vec![0u8; keys.len() * pui::MAX_LEN + 8];
         let len = frame::prop_multi_get(&mut buf, tid, keys)
@@ -3750,6 +3757,38 @@ mod tests {
             .await
             .expect_err("the fake device does not implement CMD_PROP_MULTI_GET");
         assert!(matches!(error, UlcpError::Status(Status::UNIMPLEMENTED)));
+    }
+
+    /// An administrative handle attaches to a device it does not own, so
+    /// it refuses to *write* the host domain. Reading it is another
+    /// matter: a local device answers an administrative read exactly as
+    /// it answers a tethered one, and refusing here would only mean the
+    /// question was never asked.
+    ///
+    /// The fake device implements no multi-property command, so a read
+    /// that reaches the wire comes back UNIMPLEMENTED. That is the whole
+    /// assertion — the refusal is the device's to make, not the handle's.
+    #[tokio::test]
+    async fn an_administrative_handle_reads_the_host_domain_but_will_not_write_it() {
+        let (client, server) = tokio::io::duplex(4096);
+        tokio::spawn(fake_device(server));
+        let mut radio = UlcpDevice::bare(SerialFrameLink::new(client), test_config());
+        radio.mode = AttachMode::Administrative;
+
+        let error = radio
+            .get_props(&[prop::HOST_KEY, prop::HOST_AUTO_ACK])
+            .await
+            .expect_err("the fake device does not implement CMD_PROP_MULTI_GET");
+        assert!(
+            matches!(error, UlcpError::Status(Status::UNIMPLEMENTED)),
+            "a host-domain read must reach the device, got {error:?}"
+        );
+
+        let error = radio
+            .set_prop(prop::HOST_AUTO_ACK, &[1])
+            .await
+            .expect_err("a host-domain write needs a tethered attach");
+        assert!(matches!(error, UlcpError::AdministrativeAttach));
     }
 
     #[tokio::test]
