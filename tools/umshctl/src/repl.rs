@@ -232,7 +232,7 @@ pub async fn run(app: &mut App) -> Result<()> {
 fn banner(app: &App) {
     println!("umshctl — `help` lists commands, `exit` leaves.");
     if app.session.is_none() {
-        println!("not attached: `scan` to look for radios, `connect` to attach.");
+        println!("not attached: `ble-scan` to look for radios, `connect` to attach.");
     }
 }
 
@@ -274,7 +274,7 @@ async fn process_line(app: &mut App, line: &str) -> Result<bool> {
         ReplCommand::Shared(command) => {
             command.validate()?;
             if command.needs_device() && app.session.is_none() {
-                anyhow::bail!("not attached — try `scan` or `connect`");
+                anyhow::bail!("not attached — try `ble-scan` or `connect`");
             }
             command.run(app).await?;
         }
@@ -285,14 +285,14 @@ async fn process_line(app: &mut App, line: &str) -> Result<bool> {
 /// `connect`: rediscover, or attach to the radio the user named.
 async fn connect(app: &mut App, selector: Option<String>, pick: bool) -> Result<()> {
     let target = match selector {
-        // A bare number refers to the last `scan` listing, which is the
-        // whole reason the REPL keeps it.
+        // A bare number refers to the last `ble-scan` listing, which is
+        // the whole reason the REPL keeps it.
         Some(selector) => match selector.parse::<usize>() {
             Ok(index) if (1..=app.last_scan.len()).contains(&index) => {
                 Target::from(&app.last_scan[index - 1])
             }
             Ok(index) => anyhow::bail!(
-                "no radio {index} in the last scan ({} listed); run `scan` again",
+                "no radio {index} in the last scan ({} listed); run `ble-scan` again",
                 app.last_scan.len()
             ),
             Err(_) => named_target(selector, app.baud)?,

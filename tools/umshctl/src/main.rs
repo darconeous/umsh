@@ -166,7 +166,7 @@ pub struct App {
     /// How a bare `connect` resolves a scan — `--pick` at launch keeps
     /// asking for the rest of the shell session.
     pub discovery: Discovery,
-    /// The last `scan` listing, so `connect <N>` can refer to it.
+    /// The last `ble-scan` listing, so `connect <N>` can refer to it.
     pub last_scan: Vec<Found>,
     /// What a mesh session borrowed, while one is open. Present exactly
     /// when `session` reaches its device over the air.
@@ -177,7 +177,7 @@ impl App {
     pub fn session(&mut self) -> Result<&mut Session> {
         match &mut self.session {
             Some(session) => Ok(session),
-            None => bail!("not attached — try `scan` or `connect`"),
+            None => bail!("not attached — try `ble-scan` or `connect`"),
         }
     }
 
@@ -661,7 +661,15 @@ mod tests {
 
     #[test]
     fn commands_that_look_up_nothing_need_no_device() {
-        assert!(!parse(&["scan"]).unwrap().command.unwrap().needs_device());
+        assert!(
+            !parse(&["ble-scan"])
+                .unwrap()
+                .command
+                .unwrap()
+                .needs_device()
+        );
+        // The old name is gone rather than aliased.
+        assert!(parse(&["scan"]).is_err());
         assert!(
             !parse(&["default", "set", "id-a"])
                 .unwrap()
@@ -696,10 +704,11 @@ mod tests {
         assert!(refused(&["manage", &key, "info"]));
         assert!(refused(&["peer-repeaters", &key]));
         assert!(refused(&["ping", &key]));
-        // Messaging makes this tool a node, and the mesh session has
-        // already borrowed the only radio there is.
+        // Messaging and discovery make this tool a node, and the mesh
+        // session has already borrowed the only radio there is.
         assert!(refused(&["send", &key, "hello"]));
         assert!(refused(&["listen"]));
+        assert!(refused(&["discover"]));
 
         // Everything else is an ordinary property conversation, and the
         // binding carries it — including the reset-class commands and

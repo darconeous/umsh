@@ -12,7 +12,7 @@
 
 use std::time::Duration;
 
-use anyhow::{Context, Result, anyhow, bail};
+use anyhow::{Result, anyhow, bail};
 use tokio::time::Instant;
 
 use umsh::core::{PayloadType, PublicKey};
@@ -21,15 +21,13 @@ use umsh::hal::Radio;
 use umsh::mac::{MacCounters, SendOptions};
 use umsh::node::{ReceivedPacketRef, SendProgressTicket};
 use umsh::text::{TextMessage, UnicastTextChatWrapper};
-use umsh::ulcp::UlcpDevice;
 use umsh_sync::AsyncRefCell;
 
 use super::values::KeyArg;
-use crate::connection::Session;
+use crate::App;
 use crate::mesh::{self, CtlMac, NodeStack};
 use crate::output::{field, note, subfield};
 use crate::routes::RouteCache;
-use crate::{App, connection};
 
 /// How far a message floods when no route to the peer is known.
 ///
@@ -87,63 +85,30 @@ enum Errand {
     Listen(ListenArgs),
 }
 
+impl mesh::RadioErrand for Errand {
+    async fn run<R: Radio>(
+        self,
+        mac: &AsyncRefCell<CtlMac<R>>,
+        identity: SoftwareIdentity,
+    ) -> Result<()>
+    where
+        R::Error: core::fmt::Debug,
+    {
+        match &self {
+            Errand::Send(args) => deliver(mac, identity, PublicKey(args.target.0), args).await,
+            Errand::Listen(args) => receive(mac, identity, args).await,
+        }
+    }
+}
+
 /// `send`: one message, and what became of it.
 pub async fn send(app: &mut App, args: SendArgs) -> Result<()> {
-    run(app, Errand::Send(args)).await
+    mesh::borrowing_the_radio(app, Errand::Send(args)).await
 }
 
 /// `listen`: whatever arrives, until you stop it.
 pub async fn listen(app: &mut App, args: ListenArgs) -> Result<()> {
-    run(app, Errand::Listen(args)).await
-}
-
-/// Take the attachment over as this tool's radio, run the errand, and
-/// hand the attachment back.
-///
-/// The same borrow-and-return shape `manage` uses, and for the same
-/// reason: this tool has one radio, and a command that kept it on
-/// failure would leave the session holding nothing.
-async fn run(app: &mut App, errand: Errand) -> Result<()> {
-    let identity = mesh::admin_identity()?;
-    // Read the device's own PHY before taking the link over, so the host
-    // MAC paces itself the way the radio is actually configured.
-    let config = mesh::adopt_phy(app.device()?).await?;
-
-    let Some(session) = app.session.take() else {
-        bail!("not attached — try `scan` or `connect`");
-    };
-    let Session {
-        device,
-        target: attached,
-        label,
-        tap,
-    } = session;
-    let mut device = UlcpDevice::attach_administrative(device.into_link(), config)
-        .await
-        .context("re-attaching the radio with its own PHY")?;
-    if app.trace {
-        connection::install_trace(&mut device);
-    }
-    mesh::prepare_radio(&mut device).await?;
-
-    let (device, result) = match mesh::counter_store() {
-        Ok(store) => {
-            let mac = mesh::build_mac(device, store);
-            let result = match &errand {
-                Errand::Send(args) => deliver(&mac, identity, PublicKey(args.target.0), args).await,
-                Errand::Listen(args) => receive(&mac, identity, args).await,
-            };
-            (mac.into_inner().into_radio(), result)
-        }
-        Err(error) => (device, Err(error)),
-    };
-    app.session = Some(Session {
-        device,
-        target: attached,
-        label,
-        tap,
-    });
-    result
+    mesh::borrowing_the_radio(app, Errand::Listen(args)).await
 }
 
 async fn deliver<R: Radio>(

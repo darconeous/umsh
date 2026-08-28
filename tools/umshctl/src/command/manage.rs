@@ -9,7 +9,7 @@ use std::cell::RefCell;
 use std::rc::Rc;
 use std::time::Duration;
 
-use anyhow::{Context, Result, anyhow, bail};
+use anyhow::{Result, anyhow, bail};
 use rand::{Rng as _, rng};
 use tokio::time::Instant;
 
@@ -18,7 +18,6 @@ use umsh::crypto::software::SoftwareIdentity;
 use umsh::hal::Radio;
 use umsh::node_mgmt::NodeManager;
 use umsh::node_mgmt::admin::Outcome;
-use umsh::ulcp::UlcpDevice;
 use umsh::ulcp_wire::ids::prop;
 use umsh::ulcp_wire::{Status, capability_name, frame, reply};
 use umsh_sync::AsyncRefCell;
@@ -26,10 +25,9 @@ use umsh_sync::AsyncRefCell;
 use super::props::PropArg;
 use super::tables::TableOp;
 use super::values::{AssignArg, BytesArg, KeyArg};
-use crate::connection::{Session, SessionLink};
+use crate::App;
 use crate::mesh::{self, CtlHandle, CtlMac, NodeStack, OPERATION_TIMEOUT, describe};
 use crate::output::{address, field, hex, note, subfield};
-use crate::{App, connection};
 
 // ─── Command surface ─────────────────────────────────────────────────────────
 
@@ -118,63 +116,35 @@ pub enum Operation {
     Ping(super::ping::PingArgs),
 }
 
-/// Take the attachment over as this tool's radio, run `op` against
-/// `target`, and hand the attachment back.
-pub async fn run(app: &mut App, target: KeyArg, op: Operation) -> Result<()> {
-    let identity = mesh::admin_identity()?;
-    let no_save = app.no_save;
-
-    // Read the device's own PHY before taking the link over.
-    let config = mesh::adopt_phy(app.device()?).await?;
-
-    let Some(session) = app.session.take() else {
-        bail!("not attached — try `scan` or `connect`");
-    };
-    let Session {
-        device,
-        target: attached,
-        label,
-        tap,
-    } = session;
-    // Re-attaching is the only way to give the handle a configuration; it
-    // costs a handful of property reads and no reconnect. The link is
-    // consumed, so a failure here really does end the attachment.
-    let mut device = UlcpDevice::attach_administrative(device.into_link(), config)
-        .await
-        .context("re-attaching the radio with its own PHY")?;
-    if app.trace {
-        connection::install_trace(&mut device);
-    }
-    mesh::prepare_radio(&mut device).await?;
-
-    let (device, result) = manage(device, identity, PublicKey(target.0), op, no_save).await;
-    app.session = Some(Session {
-        device,
-        target: attached,
-        label,
-        tap,
-    });
-    result
-}
-
-/// Run one operation with the radio borrowed, and give the radio back
-/// whether it succeeded or not.
-async fn manage(
-    radio: UlcpDevice<SessionLink>,
-    identity: SoftwareIdentity,
+/// One operation against one device, waiting for a radio to run on.
+struct Errand {
     target: PublicKey,
     op: Operation,
     no_save: bool,
-) -> (UlcpDevice<SessionLink>, Result<()>) {
-    // Opening the counter store before the radio is consumed leaves the
-    // caller its attachment to hand back if it fails.
-    let store = match mesh::counter_store() {
-        Ok(store) => store,
-        Err(error) => return (radio, Err(error)),
+}
+
+impl mesh::RadioErrand for Errand {
+    async fn run<R: Radio>(
+        self,
+        mac: &AsyncRefCell<CtlMac<R>>,
+        identity: SoftwareIdentity,
+    ) -> Result<()>
+    where
+        R::Error: core::fmt::Debug,
+    {
+        operate(mac, identity, self.target, self.op, self.no_save).await
+    }
+}
+
+/// Take the attachment over as this tool's radio, run `op` against
+/// `target`, and hand the attachment back.
+pub async fn run(app: &mut App, target: KeyArg, op: Operation) -> Result<()> {
+    let errand = Errand {
+        target: PublicKey(target.0),
+        op,
+        no_save: app.no_save,
     };
-    let mac = mesh::build_mac(radio, store);
-    let result = operate(&mac, identity, target, op, no_save).await;
-    (mac.into_inner().into_radio(), result)
+    mesh::borrowing_the_radio(app, errand).await
 }
 
 async fn operate<R: Radio>(

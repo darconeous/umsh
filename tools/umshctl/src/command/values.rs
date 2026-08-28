@@ -41,6 +41,28 @@ pub fn parse_u32(text: &str) -> Result<u32, String> {
     .map_err(|_| format!("invalid number: {text}"))
 }
 
+/// The leading bytes of a node hint, as one to three hex octets.
+///
+/// A whole hint is three bytes; a prefix of one or two narrows a
+/// discovery to a part of the address space without naming one node.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct HintPrefixArg(pub Vec<u8>);
+
+impl FromStr for HintPrefixArg {
+    type Err = String;
+
+    fn from_str(text: &str) -> Result<Self, Self::Err> {
+        let bytes = BytesArg::from_str(text)?.0;
+        if bytes.is_empty() || bytes.len() > 3 {
+            return Err(format!(
+                "a hint prefix is one to three hex octets, got {} in {text:?}",
+                bytes.len()
+            ));
+        }
+        Ok(Self(bytes))
+    }
+}
+
 /// A property value written as hex, of whatever length the property
 /// takes. Empty is a value too — it is how a string property is cleared.
 #[derive(Clone, Debug, Default, PartialEq, Eq)]

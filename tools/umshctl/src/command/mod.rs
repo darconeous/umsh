@@ -6,6 +6,7 @@
 
 pub mod advert;
 pub mod capture;
+pub mod discover;
 pub mod duty;
 pub mod gnss;
 pub mod info;
@@ -199,6 +200,12 @@ pub enum Command {
     /// hops, and signal. Needs no authorization from the far end.
     Ping(ping::PingArgs),
 
+    /// Find out which nodes are within reach of this radio.
+    ///
+    /// Asks every node in earshot to identify itself, then listens for
+    /// the answers and for whatever advertises itself unprompted.
+    Discover(discover::DiscoverArgs),
+
     /// Send a text message to a node, as this tool's own identity.
     Send(message::SendArgs),
 
@@ -222,8 +229,11 @@ pub enum Command {
     /// writing a Wireshark-compatible capture.
     Capture(capture::CaptureArgs),
 
-    /// List nearby ULCP radios without connecting.
-    Scan {
+    /// List nearby ULCP radios over BLE without connecting.
+    ///
+    /// This finds radios to attach *this tool* to. `discover` is the one
+    /// that finds nodes out on the mesh.
+    BleScan {
         /// Seconds to listen.
         #[arg(long, default_value_t = 2, value_name = "SECS")]
         timeout: u64,
@@ -254,7 +264,7 @@ impl Command {
     /// Whether this command needs an attached device.
     pub fn needs_device(&self) -> bool {
         match self {
-            Self::Scan { .. } => false,
+            Self::BleScan { .. } => false,
             // The administrator identity is this tool's own; no radio is
             // involved in reading it out.
             Self::AdminKey => false,
@@ -291,6 +301,7 @@ impl Command {
             Self::Manage { .. }
             | Self::PeerRepeaters { .. }
             | Self::Ping(_)
+            | Self::Discover(_)
             | Self::Send(_)
             | Self::Listen(_) => Some(
                 "this session has already borrowed the radio; `disconnect` first, then reach \
@@ -358,6 +369,7 @@ impl Command {
                 let target = args.target;
                 manage::run(app, target, manage::Operation::Ping(args)).await
             }
+            Self::Discover(args) => discover::discover(app, args).await,
             Self::Send(args) => message::send(app, args).await,
             Self::Listen(args) => message::listen(app, args).await,
             Self::Routes { op } => routes_cmd::run(op),
@@ -372,13 +384,13 @@ impl Command {
             Self::Illuminance => info::illuminance(app.device()?).await,
             Self::Alert { op } => lifecycle::alert(app.device()?, op).await,
             Self::Capture(args) => capture::run(app, args).await,
-            Self::Scan { timeout } => scan(app, timeout).await,
+            Self::BleScan { timeout } => ble_scan(app, timeout).await,
             Self::Default { op } => default(app, op.unwrap_or(DefaultOp::Show)),
         }
     }
 }
 
-async fn scan(app: &mut App, timeout: u64) -> Result<()> {
+async fn ble_scan(app: &mut App, timeout: u64) -> Result<()> {
     println!("scanning for ULCP radios ({timeout} s) ...");
     let found = connection::scan(std::time::Duration::from_secs(timeout)).await?;
     connection::render_found(&found);

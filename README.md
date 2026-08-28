@@ -176,9 +176,18 @@ umshctl — `help` lists commands, `exit` leaves.
 UMSH T-Echo (ble)> repeater on
 repeater on (on-board node forwards overheard frames)
 saved: changes persist across reboots
-UMSH T-Echo (ble)> scan
+UMSH T-Echo (ble)> ble-scan
 UMSH T-Echo (ble)> connect 2
 UMSH T-1000E (ble)> exit
+```
+
+`ble-scan` finds *radios to attach this tool to*; `discover` finds *nodes out on the mesh*,
+by asking everything in earshot to identify itself and then listening for the answers:
+
+```sh
+umshctl discover
+umshctl discover --role repeater --timeout 60
+umshctl discover --passive
 ```
 
 With no connection flag the tool finds a radio itself over BLE: the saved default first

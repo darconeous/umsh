@@ -40,16 +40,23 @@ use umsh::ulcp_wire::ids::prop;
 use umsh_sync::AsyncRefCell;
 
 use crate::App;
-use crate::connection::{self, SessionLink};
+use crate::connection::{self, Session, SessionLink};
 use crate::output::{field, note};
 
 // ─── The host stack this tool becomes ────────────────────────────────────────
 
-/// One identity — the administrator's. Peers, channels, and queues are
-/// sized for a tool that talks to one device at a time and holds one
-/// exchange open while it does.
+/// One identity — the administrator's. Channels and queues are sized for
+/// a tool that talks to one device at a time and holds one exchange open
+/// while it does.
+///
+/// Peers are sized for `discover` instead, which is the one command that
+/// meets a crowd: every stranger that answers a solicitation is
+/// auto-registered from the full key it sends, and the registry evicts
+/// the least recently used once it is full. Four slots would have made a
+/// discovery of any size report the last four nodes to speak. This is a
+/// host tool with a host's memory.
 const IDENTITIES: usize = 1;
-const PEERS: usize = 4;
+const PEERS: usize = 32;
 const CHANNELS: usize = 1;
 const ACKS: usize = 8;
 const TX: usize = 8;
@@ -208,6 +215,74 @@ pub fn counter_store() -> Result<TokioFileCounterStore> {
         .ok_or_else(|| anyhow!("no HOME directory to keep frame counters in"))?;
     TokioFileCounterStore::new(path)
         .map_err(|error| anyhow!("opening the counter store: {error:?}"))
+}
+
+/// Something this tool runs as a node on its own radio.
+///
+/// `manage`, the messaging commands, and `discover` all want the same
+/// preamble — read the device's PHY, take the attachment over, turn it
+/// into a MAC — and the same guarantee afterwards, that the attachment
+/// comes back whether the errand worked or not. That is
+/// [`borrowing_the_radio`]; this is the part that differs. It is a trait
+/// rather than a closure because it has to be generic over whatever
+/// radio the session happens to be holding.
+pub trait RadioErrand {
+    async fn run<R: Radio>(
+        self,
+        mac: &AsyncRefCell<CtlMac<R>>,
+        identity: SoftwareIdentity,
+    ) -> Result<()>
+    where
+        R::Error: core::fmt::Debug;
+}
+
+/// Take the attachment over as this tool's radio, run `errand` on it,
+/// and hand the attachment back.
+///
+/// This tool has one radio. A command that kept it on failure would
+/// leave the session holding nothing, so the give-back is unconditional
+/// — every early return here happens before the link is consumed.
+pub async fn borrowing_the_radio<E: RadioErrand>(app: &mut App, errand: E) -> Result<()> {
+    let identity = admin_identity()?;
+    // Read the device's own PHY before taking the link over, so the host
+    // MAC paces itself the way the radio is actually configured.
+    let config = adopt_phy(app.device()?).await?;
+
+    let Some(session) = app.session.take() else {
+        bail!("not attached — try `ble-scan` or `connect`");
+    };
+    let Session {
+        device,
+        target,
+        label,
+        tap,
+    } = session;
+    // Re-attaching is the only way to give the handle a configuration; it
+    // costs a handful of property reads and no reconnect. The link is
+    // consumed, so a failure here really does end the attachment.
+    let mut device = UlcpDevice::attach_administrative(device.into_link(), config)
+        .await
+        .context("re-attaching the radio with its own PHY")?;
+    if app.trace {
+        connection::install_trace(&mut device);
+    }
+    prepare_radio(&mut device).await?;
+
+    let (device, result) = match counter_store() {
+        Ok(store) => {
+            let mac = build_mac(device, store);
+            let result = errand.run(&mac, identity).await;
+            (mac.into_inner().into_radio(), result)
+        }
+        Err(error) => (device, Err(error)),
+    };
+    app.session = Some(Session {
+        device,
+        target,
+        label,
+        tap,
+    });
+    result
 }
 
 /// Take the radio over as this tool's MAC.
@@ -387,7 +462,7 @@ pub async fn open_remote(app: &mut App, target: PublicKey, greeting: Greeting) -
     let store = counter_store()?;
 
     let Some(session) = app.session.take() else {
-        bail!("not attached — try `scan` or `connect`");
+        bail!("not attached — try `ble-scan` or `connect`");
     };
     let connection::Session {
         device,
