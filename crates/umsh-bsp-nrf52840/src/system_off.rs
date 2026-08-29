@@ -4,12 +4,17 @@
 //! survives, and the CPU is power-gated. The chip wakes via a reset
 //! triggered by one of:
 //!
-//! - GPIO DETECT signal (PIN_CNF SENSE = HIGH or LOW), this module's path
-//! - NFC field, LPCOMP, watchdog, debugger attach
+//! - GPIO DETECT signal (PIN_CNF SENSE = HIGH or LOW), this module's
+//!   [`power_off`] path
+//! - the LPCOMP analog comparator, this module's [`arm_lpcomp_wake_up`]
+//!   path — the wake a board with no button still gets, and the one that
+//!   brings a solar node back when its cell recharges
+//! - NFC field, watchdog, debugger attach
 //!
 //! Wake-from-OFF is observed by software as a fresh boot — `RESETREAS`
-//! reports `OFF` (bit 16). The firmware must therefore restore any state
-//! it cares about from non-volatile storage on the cold path.
+//! reports `OFF` (bit 16), plus `LPCOMP` (bit 17) when the comparator was
+//! the trigger. The firmware must therefore restore any state it cares
+//! about from non-volatile storage on the cold path.
 //!
 //! ## Usage
 //!
@@ -26,6 +31,23 @@
 //! No SoftDevice is in use in the current firmware, so direct register
 //! access is correct. If a SoftDevice is ever enabled in this codebase,
 //! switch the SYSTEMOFF entry to `sd_power_system_off()` instead.
+
+/// Why a board is powering down.
+///
+/// Boards whose teardown differs between the two cases take this from
+/// their `SHUTDOWN_SIGNAL`. The distinction that matters is battery
+/// recovery: a node that shut down because its cell went flat should come
+/// back when the cell recharges ([`arm_lpcomp_wake_up`]), while a node the
+/// user turned off should stay off until the user turns it back on.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub enum ShutdownReason {
+    /// A deliberate power-off: a button gesture, the host API, or a remote
+    /// command. Arms only the board's usual user-facing wake sources.
+    Requested,
+    /// The protective low-battery cutoff. Arms battery-recovery wake on
+    /// boards that support it.
+    BatteryCritical,
+}
 
 /// GPIO port for [`WakePin`].
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
@@ -215,6 +237,84 @@ pub fn configure_wake_low(pin: WakePin) {
         sense: WakeSense::Low,
         ..pin
     });
+}
+
+pub use embassy_nrf::pac::lpcomp::vals::{PselPsel as LpcompInput, Refsel as LpcompReference};
+
+/// Arm LPCOMP as a System OFF wake source: the chip wakes — resets, with
+/// `RESETREAS.LPCOMP` (bit 17) set alongside `OFF` — when `input` crosses
+/// *upward* through `reference`, with 50 mV of hysteresis.
+///
+/// This is the battery-recovery wake. Point `input` at the board's battery
+/// divider tap and pick the `reference` fraction that puts the crossing at
+/// a cell voltage the node can actually run on; a node that shut itself
+/// down on a flat cell then comes back by itself once solar or a charger
+/// has refilled it, with no button and no cable.
+///
+/// Call immediately before [`enter_system_off`] or [`power_off`]. The two
+/// wake mechanisms are independent — a board can arm button DETECT and
+/// LPCOMP at once and be woken by whichever happens first.
+///
+/// Caveats:
+///
+/// - `reference` must be one of the VDD fractions; this helper does not
+///   configure `EXTREFSEL`, so [`LpcompReference::ARef`] would compare
+///   against whatever that register happens to hold.
+/// - The reference is *relative to VDD*, so the absolute threshold moves
+///   with the rail. On a board whose regulator holds VDD at 3.3 V this is
+///   benign: while the regulator is in dropout VDD tracks the cell and the
+///   tap sits below the fraction, so the comparator cannot trip until the
+///   rail is back in regulation — one effective wake point. Boards running
+///   the core straight off the cell must reason about this themselves.
+/// - `input`'s pin must be left tri-stated, not driven. The comparator
+///   reaches the pad through the analog mux, so `PIN_CNF`'s input buffer is
+///   irrelevant, but a driven output would fight the divider.
+/// - The divider feeding the pin must stay powered through System OFF —
+///   which usually means leaving its gate driven, since a board that raises
+///   the gate to save the divider's quiescent draw has nothing left to
+///   compare.
+pub fn arm_lpcomp_wake_up(input: LpcompInput, reference: LpcompReference) {
+    use embassy_nrf::pac;
+    use embassy_nrf::pac::lpcomp::vals::{Anadetect, Enable};
+
+    let lpcomp = pac::LPCOMP;
+
+    // Configuration registers only take effect on a disabled comparator,
+    // and nothing else in the firmware touches LPCOMP, so this is belt and
+    // braces against arriving here twice.
+    lpcomp.enable().write(|w| w.set_enable(Enable::Disabled));
+
+    lpcomp.psel().write(|w| w.set_psel(input));
+    lpcomp.refsel().write(|w| w.set_refsel(reference));
+    // Upward crossings only. A tap that is somehow already above the
+    // threshold at entry does not wake, and a cell continuing to decay
+    // produces a DOWN crossing, which this ignores.
+    lpcomp.anadetect().write(|w| w.set_anadetect(Anadetect::Up));
+    // 50 mV at the comparator input — enough that ripple on a recovering
+    // cell doesn't chatter across the threshold.
+    lpcomp.hyst().write(|w| w.set_hyst(true));
+
+    lpcomp.enable().write(|w| w.set_enable(Enable::Enabled));
+    lpcomp.tasks_start().write_value(1);
+
+    // Startup is tens of microseconds. Bound the spin anyway: if READY
+    // never arrives we fall through and enter System OFF unarmed, which is
+    // just the old behavior — far better than hanging with the radio down
+    // and the battery flat.
+    for _ in 0..100_000u32 {
+        if lpcomp.events_ready().read() != 0 {
+            break;
+        }
+    }
+
+    // Clear every event so nothing stale is latched into the armed state.
+    lpcomp.events_ready().write_value(0);
+    lpcomp.events_up().write_value(0);
+    lpcomp.events_down().write_value(0);
+    lpcomp.events_cross().write_value(0);
+
+    // No INTENSET and no ISR: the System OFF wake rides the ANADETECT
+    // signal into the power controller, not the interrupt path.
 }
 
 /// Enter System OFF. Diverges — the chip either powers down (and later

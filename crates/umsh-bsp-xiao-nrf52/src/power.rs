@@ -62,6 +62,7 @@
 
 use embassy_sync::blocking_mutex::raw::ThreadModeRawMutex;
 use embassy_sync::signal::Signal;
+use umsh_bsp_nrf52840::system_off::ShutdownReason;
 
 /// Single-consumer power-off trigger. The firmware's shutdown task
 /// ([`crate::shutdown::run`]) is the only consumer.
@@ -74,7 +75,11 @@ use embassy_sync::signal::Signal;
 /// powers this board down on its own — which is fine, because that is
 /// also the only case where powering down is worth the trip (see
 /// [`crate::shutdown`] for how hard it is to come back).
-pub static SHUTDOWN_SIGNAL: Signal<ThreadModeRawMutex, ()> = Signal::new();
+///
+/// The [`ShutdownReason`] carried here decides whether the teardown arms
+/// LPCOMP battery-recovery wake: the cutoff wants it, a deliberate
+/// power-off does not.
+pub static SHUTDOWN_SIGNAL: Signal<ThreadModeRawMutex, ShutdownReason> = Signal::new();
 
 /// `umsh_hal::PowerControl` implementation for the XIAO nRF52840 kit.
 ///
@@ -89,7 +94,7 @@ pub struct PowerSignaler;
 
 impl umsh_hal::PowerControl for PowerSignaler {
     fn request_power_off(&self) {
-        SHUTDOWN_SIGNAL.signal(());
+        SHUTDOWN_SIGNAL.signal(ShutdownReason::Requested);
     }
 
     fn request_reboot(&self) {
@@ -226,6 +231,10 @@ mod monitor {
     /// way to cut any rail, so firmware discipline is the *only*
     /// deep-discharge protection.
     ///
+    /// The signal carries [`ShutdownReason::BatteryCritical`](super::ShutdownReason), which is
+    /// what makes the teardown arm LPCOMP: a board that shuts down here
+    /// comes back on its own once the cell recharges past roughly 3.66 V.
+    ///
     /// Wrap in `#[embassy_executor::task]` in the firmware binary so the
     /// linker sees a concrete monomorphisation.
     pub async fn run_battery_monitor(
@@ -328,7 +337,7 @@ mod monitor {
             if state == BatteryState::BatteryCritical && !usb {
                 low_count = low_count.saturating_add(1);
                 if low_count >= CONSECUTIVE_NEEDED {
-                    super::SHUTDOWN_SIGNAL.signal(());
+                    super::SHUTDOWN_SIGNAL.signal(super::ShutdownReason::BatteryCritical);
                     return;
                 }
             } else {

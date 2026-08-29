@@ -47,13 +47,18 @@
 
 use embassy_sync::blocking_mutex::raw::ThreadModeRawMutex;
 use embassy_sync::signal::Signal;
+use umsh_bsp_nrf52840::system_off::ShutdownReason;
 
 /// Single-consumer shutdown trigger, raised by
 /// [`PowerSignaler::request_power_off`], by the nav button's four-second
 /// hold, and by the protective low-battery cutoff in
 /// [`run_battery_monitor`]. The firmware's shutdown task is the only
 /// consumer.
-pub static SHUTDOWN_SIGNAL: Signal<ThreadModeRawMutex, ()> = Signal::new();
+///
+/// The [`ShutdownReason`] carried here decides whether the teardown leaves
+/// the battery divider connected and arms LPCOMP battery-recovery wake:
+/// the cutoff wants that, a requested power-off does not.
+pub static SHUTDOWN_SIGNAL: Signal<ThreadModeRawMutex, ShutdownReason> = Signal::new();
 
 /// `umsh_hal::PowerControl` implementation for the Wio Tracker L1.
 ///
@@ -64,7 +69,7 @@ pub struct PowerSignaler;
 
 impl umsh_hal::PowerControl for PowerSignaler {
     fn request_power_off(&self) {
-        SHUTDOWN_SIGNAL.signal(());
+        SHUTDOWN_SIGNAL.signal(ShutdownReason::Requested);
     }
 
     fn request_reboot(&self) {
@@ -227,7 +232,10 @@ mod monitor {
     /// `CONSECUTIVE_NEEDED` samples below the critical threshold (≈3.1 V,
     /// sustained ~5 min, only ever reached off-USB since `classify`
     /// reports Charging while external power is present) fire
-    /// [`SHUTDOWN_SIGNAL`] for a protective System OFF.
+    /// [`SHUTDOWN_SIGNAL`] for a protective System OFF, carrying
+    /// `ShutdownReason::BatteryCritical` — which is what makes the teardown
+    /// leave the divider connected and arm LPCOMP, so a node shut down out
+    /// on a mast comes back once its cell recharges past roughly 3.71 V.
     ///
     /// Wrap in `#[embassy_executor::task]` in the firmware binary so the
     /// linker sees a concrete monomorphisation.
@@ -339,7 +347,7 @@ mod monitor {
             if state == BatteryState::BatteryCritical && !usb {
                 low_count = low_count.saturating_add(1);
                 if low_count >= CONSECUTIVE_NEEDED {
-                    super::SHUTDOWN_SIGNAL.signal(());
+                    super::SHUTDOWN_SIGNAL.signal(super::ShutdownReason::BatteryCritical);
                     return;
                 }
             } else {

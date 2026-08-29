@@ -3,9 +3,8 @@
 //! Two pieces:
 //!
 //! - [`PowerSignaler`] — the CLI's `umsh_hal::PowerControl` bridge.
-//!   **Phase 1 stub**: `request_power_off` is a no-op; `request_reboot`
-//!   is a plain `SYSRESETREQ`. Phase 6 replaces this with the real
-//!   System OFF teardown + LPCOMP solar-recovery wake.
+//!   `request_power_off` raises [`SHUTDOWN_SIGNAL`] for the teardown in
+//!   [`crate::shutdown`]; `request_reboot` is a plain `SYSRESETREQ`.
 //! - The battery monitor ([`run_battery_monitor`], [`sample_battery`],
 //!   [`BatterySample`], [`battery_state`]) — ported from the T1000-E BSP
 //!   with this board's wiring, so the device's `CAP_BATTERY`
@@ -32,13 +31,19 @@
 
 use embassy_sync::blocking_mutex::raw::ThreadModeRawMutex;
 use embassy_sync::signal::Signal;
+use umsh_bsp_nrf52840::system_off::ShutdownReason;
 
 /// Single-consumer power-off trigger. Fired by the dedicated PWR-button
 /// state machine (hold-to-off), the low-battery protective cutoff in
 /// [`run_battery_monitor`], and [`PowerSignaler::request_power_off`]. The
 /// firmware's sensecap shutdown task ([`crate::shutdown::run`]) is the
 /// only consumer; it runs the System OFF teardown and arms PWR wake.
-pub static SHUTDOWN_SIGNAL: Signal<ThreadModeRawMutex, ()> = Signal::new();
+///
+/// The [`ShutdownReason`] carried here splits that teardown in two: a
+/// requested power-off disconnects the divider and waits for a button,
+/// while the low-battery cutoff leaves the divider live and arms LPCOMP so
+/// the panel can bring the node back unattended. See [`crate::shutdown`].
+pub static SHUTDOWN_SIGNAL: Signal<ThreadModeRawMutex, ShutdownReason> = Signal::new();
 
 /// `umsh_hal::PowerControl` implementation for the SenseCAP Solar Node.
 ///
@@ -49,7 +54,7 @@ pub struct PowerSignaler;
 
 impl umsh_hal::PowerControl for PowerSignaler {
     fn request_power_off(&self) {
-        SHUTDOWN_SIGNAL.signal(());
+        SHUTDOWN_SIGNAL.signal(ShutdownReason::Requested);
     }
 
     fn request_reboot(&self) {
@@ -173,6 +178,10 @@ mod monitor {
     /// only ever reached off-USB since `classify` reports Charging while
     /// external power is present) fire [`SHUTDOWN_SIGNAL`] for a protective
     /// System OFF — the unattended-node counterpart of the PWR button.
+    /// That signal carries `ShutdownReason::BatteryCritical`, which is what
+    /// makes the teardown leave the divider connected and arm LPCOMP: an
+    /// unattended node that runs its cell down comes back by itself once
+    /// the panel has refilled it past roughly 3.65 V.
     ///
     /// Wrap in `#[embassy_executor::task]` in the firmware binary so the
     /// linker sees a concrete monomorphisation.
@@ -277,7 +286,7 @@ mod monitor {
             if state == BatteryState::BatteryCritical && !usb {
                 low_count = low_count.saturating_add(1);
                 if low_count >= CONSECUTIVE_NEEDED {
-                    super::SHUTDOWN_SIGNAL.signal(());
+                    super::SHUTDOWN_SIGNAL.signal(super::ShutdownReason::BatteryCritical);
                     return;
                 }
             } else {

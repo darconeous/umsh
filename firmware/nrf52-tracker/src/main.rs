@@ -190,7 +190,9 @@ mod firmware {
         feature = "t1000e"
     ))]
     use umsh_bsp_nrf52840::system_off::Port;
-    #[cfg(feature = "system-off-techo")]
+    #[cfg(any(feature = "system-off-wio", feature = "power-button"))]
+    use umsh_bsp_nrf52840::system_off::ShutdownReason;
+    #[cfg(any(feature = "system-off-techo", feature = "system-off-wio"))]
     use umsh_bsp_nrf52840::system_off::drive_pin_high;
     #[cfg(any(
         feature = "t1000e",
@@ -198,6 +200,8 @@ mod firmware {
         feature = "system-off-techo"
     ))]
     use umsh_bsp_nrf52840::system_off::drive_pin_low;
+    #[cfg(feature = "system-off-wio")]
+    use umsh_bsp_nrf52840::system_off::{LpcompInput, LpcompReference, arm_lpcomp_wake_up};
     #[cfg(any(feature = "system-off-techo", feature = "system-off-wio"))]
     use umsh_bsp_nrf52840::system_off::{WakePin, WakeSense, power_off, tristate_pin};
     #[cfg(any(feature = "system-off-techo", feature = "system-off-wio"))]
@@ -4139,17 +4143,28 @@ mod firmware {
     /// board), the radio is parked by holding RST low — driven outputs
     /// keep their level through System OFF — and everything else is
     /// tri-stated.
+    ///
+    /// The low-battery path diverges in one place: it leaves the divider
+    /// connected and arms LPCOMP, so the board can come back on its own
+    /// when the cell recharges. See the divider-gate comment below.
     #[cfg(feature = "system-off-wio")]
     #[embassy_executor::task]
     async fn wio_shutdown_task() -> ! {
         // Two producers: the nav button's four-second hold (the local
         // signal) and the battery monitor's protective low-voltage cutoff
-        // (the BSP's). Either one runs the same teardown.
-        let _ = select(
+        // (the BSP's). The teardown is the same either way except for the
+        // battery-recovery wake, which only the cutoff asks for — a node
+        // somebody switched off should stay off.
+        let reason = match select(
             SHUTDOWN_SIGNAL.wait(),
             umsh_bsp_wio_tracker_l1::power::SHUTDOWN_SIGNAL.wait(),
         )
-        .await;
+        .await
+        {
+            Either::First(()) => ShutdownReason::Requested,
+            Either::Second(reason) => reason,
+        };
+        let battery_recovery = reason == ShutdownReason::BatteryCritical;
 
         DISPLAY_SHUTDOWN.signal(());
         let _ = select(
@@ -4175,10 +4190,22 @@ mod firmware {
         // System OFF that draws microamps. Holding RST (active-low) low
         // collapses it to its reset-state minimum.
         drive_pin_low(Port::P1, 7);
-        // Battery divider gate is active-high: drive it LOW (disconnected)
-        // rather than tri-stating, so the FET gate is pinned instead of
-        // floating and the divider's quiescent draw is provably gone.
-        drive_pin_low(Port::P0, 4);
+        // Battery divider gate, active-high, driven either way rather than
+        // tri-stated — a floating FET gate is not a gate that is provably
+        // anything, and driven levels are retained through System OFF.
+        //
+        // LOW disconnects the divider and its quiescent draw is provably
+        // gone, which is what a requested power-off wants. On the
+        // low-battery cutoff, though, that tap is the only thing LPCOMP can
+        // watch, so it stays HIGH and the board pays the divider's ~2 µA
+        // for the ability to wake itself when the cell comes back. On a
+        // board that may be up a mast on a solar pack that is a trade worth
+        // making; on a board somebody flipped off by hand it is not.
+        if battery_recovery {
+            drive_pin_high(Port::P0, 4);
+        } else {
+            drive_pin_low(Port::P0, 4);
+        }
         // The L76K GNSS shares the always-on rail, so System OFF does not
         // reach it: its standby line (active-high wake) is the only thing
         // that decides whether the board's floor is microamps or the tens
@@ -4219,7 +4246,35 @@ mod firmware {
             tristate_pin(port, pin);
         }
 
+        if battery_recovery {
+            // Let the tap settle: the gate went high a moment ago and
+            // P0.31 was floating before that.
+            Timer::after(Duration::from_millis(10)).await;
+
+            // Wake when the cell recovers. AIN7 is P0.31, the divider tap,
+            // and 9/16 VDD is the right step for a *half* divider: on a
+            // regulated 3.3 V rail the tap threshold is 1.856 V, so the
+            // crossing is at ≈3.71 V of cell — above the firmware's Low
+            // threshold, far above Critical (≈3.1 V), and nowhere near
+            // re-triggering a cutoff that needs five minutes of sustained
+            // critical anyway. (1/2 would land at 3.30 V, under Low with no
+            // margin for sag; 5/8 at 4.13 V, essentially "only when full".)
+            //
+            // This board has no published schematic, so unlike the XIAO and
+            // the Solar P1 we cannot say for certain that its rail is
+            // regulated at 3.3 V — and the reference is VDD-relative. The
+            // choice of fraction makes that safe rather than merely
+            // hopeful: a half divider puts the tap at exactly 1/2 of VDD
+            // whenever VDD tracks the cell, which is *below* 9/16, so an
+            // unregulated rail means the comparator simply never trips —
+            // the no-autonomous-wake status quo, never a wake loop. Bench
+            // measurement settles which of the two this board is.
+            arm_lpcomp_wake_up(LpcompInput::AnalogInput7, LpcompReference::Ref916vdd);
+        }
+
         // P0.08 is the nav button. Active-low, pull-up → DETECT-low wakes.
+        // Armed on both paths, so a battery-recovery shutdown is revived by
+        // a charge or by a press, whichever comes first.
         power_off(&[WakePin {
             port: Port::P0,
             pin: 8,
@@ -4272,7 +4327,8 @@ mod firmware {
                         Timer::after(Duration::from_millis(1500)),
                     )
                     .await;
-                    umsh_bsp_sensecap_solar::power::SHUTDOWN_SIGNAL.signal(());
+                    umsh_bsp_sensecap_solar::power::SHUTDOWN_SIGNAL
+                        .signal(ShutdownReason::Requested);
                     // The shutdown task waits for PWR release before arming
                     // wake; park here until it powers us off.
                     button.wait_for_high().await;

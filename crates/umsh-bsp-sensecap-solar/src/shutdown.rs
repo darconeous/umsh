@@ -8,8 +8,8 @@
 //! [`SHUTDOWN_SIGNAL`](crate::power::SHUTDOWN_SIGNAL) fires:
 //!
 //! - hold the SX1262 in reset (P0.28 low) to collapse its draw,
-//! - disconnect the battery divider (active-low gate P0.14 driven HIGH) so
-//!   the 1 MΩ/512 kΩ bridge stops drawing in System OFF,
+//! - settle the battery divider's active-low gate (P0.14) one way or the
+//!   other — see below,
 //! - keep GNSS powered down (enable P1.05 low, standby P0.02 low),
 //! - tri-state every remaining peripheral signal pin so embassy's leftover
 //!   SENSE bits can't fire DETECT and reverse current can't leak into the
@@ -20,11 +20,48 @@
 //! Powering *off* is P1.01-only (the firmware policy), but *either* button
 //! wakes the node: a press resets the chip — observed as a normal cold boot
 //! (`RESETREAS.OFF`) — which powers it back on.
+//!
+//! ## Two ways down, and the divider decides
+//!
+//! The [`ShutdownReason`] on the signal splits the teardown, exactly as
+//! MeshCore splits its own (see the hardware doc's shutdown section):
+//!
+//! - **[`ShutdownReason::Requested`]** — somebody turned the node off.
+//!   Drive P0.14 HIGH to disconnect the 1 MΩ/512 kΩ bridge, since a driven
+//!   output retains its level through System OFF and there is no reason to
+//!   keep paying its quiescent draw. Off means off until a button press.
+//! - **[`ShutdownReason::BatteryCritical`]** — the cell ran down. Drive
+//!   P0.14 LOW instead, keeping the bridge connected, and arm LPCOMP on
+//!   AIN7 (`P0.31`, the tap) against 3/8 VDD with upward detection. The
+//!   divider's draw is the price of the wake; without it the comparator
+//!   has nothing to look at.
+//!
+//! On this board that second path is the whole point. A solar node that
+//! shuts down in a week of overcast is not a node someone walks out to
+//! press a button on — it has to come back when the panel refills the
+//! cell, and this is how it does.
+//!
+//! Where the threshold lands: the bridge gives cell = tap × 1512/512 =
+//! tap × 2.953, and 3/8 of a regulated 3.3 V VDD puts the tap threshold at
+//! 1.2375 V, so the crossing is at **≈3.65 V of cell** with 50 mV of
+//! hysteresis at the tap (≈148 mV at the cell). That is at or above the
+//! firmware's Low threshold and well clear of Critical (≈3.1 V), so a
+//! freshly woken node is nowhere near re-triggering the cutoff — which
+//! needs ten consecutive critical samples, about five minutes, anyway. The
+//! reference is relative to VDD, but the cell feeds VDDH and REG0 holds
+//! VDD at 3.3 V: while the regulator is in dropout the tap sits below the
+//! fraction and the comparator cannot trip, so there is one effective wake
+//! point rather than a moving one.
+//!
+//! Both buttons stay armed on either path, so the LPCOMP wake is strictly
+//! an addition — a critical-cutoff node is revived by sunlight *or* by a
+//! press, whichever comes first.
 
 use embassy_time::{Duration, Timer};
 use umsh_bsp_nrf52840::system_off::{
-    Port, WakePin, WakePull, WakeSense, configure_wake_input, connect_input, drive_pin_high,
-    drive_pin_low, enter_system_off, read_pin, tristate_pin,
+    LpcompInput, LpcompReference, Port, ShutdownReason, WakePin, WakePull, WakeSense,
+    arm_lpcomp_wake_up, configure_wake_input, connect_input, drive_pin_high, drive_pin_low,
+    enter_system_off, read_pin, tristate_pin,
 };
 
 use crate::power::SHUTDOWN_SIGNAL;
@@ -33,11 +70,11 @@ use crate::power::SHUTDOWN_SIGNAL;
 /// `#[embassy_executor::task]` in the firmware binary so the linker sees a
 /// concrete monomorphisation.
 pub async fn run() -> ! {
-    SHUTDOWN_SIGNAL.wait().await;
-    enter_off().await
+    let reason = SHUTDOWN_SIGNAL.wait().await;
+    enter_off(reason).await
 }
 
-async fn enter_off() -> ! {
+async fn enter_off(reason: ShutdownReason) -> ! {
     // Both buttons (P1.01 power, P1.07 user) are active-low with a pull-up
     // and both are wake sources. If either is still held (LOW) when we arm
     // WakeSense::Low, DETECT fires immediately and the chip wakes right back
@@ -56,10 +93,19 @@ async fn enter_off() -> ! {
     drive_pin_low(Port::P0, 28);
     cortex_m::asm::delay(640); // ~10 µs @ 64 MHz
 
-    // Disconnect the battery divider: active-low gate P0.14 → HIGH. A driven
-    // output retains its level through System OFF, so the bridge stays
-    // disconnected and its quiescent draw is removed.
-    drive_pin_high(Port::P0, 14);
+    // The battery divider's active-low gate P0.14, driven either way — a
+    // driven output retains its level through System OFF. On a requested
+    // power-off, HIGH disconnects the bridge and removes its quiescent
+    // draw. On the low-battery cutoff, LOW keeps it connected so LPCOMP
+    // has a tap to watch (the monitor left the gate HIGH before it
+    // returned, and dropping its `Output` disconnected the pin, so this is
+    // a real re-assertion, not a restatement).
+    let battery_recovery = reason == ShutdownReason::BatteryCritical;
+    if battery_recovery {
+        drive_pin_low(Port::P0, 14);
+    } else {
+        drive_pin_high(Port::P0, 14);
+    }
     // Keep GNSS powered down (enable P1.05 low), and pin its standby line
     // (P0.02) low with it. Standby sits on the module's side of the load
     // switch, so a pin left driving into an unpowered module is current
@@ -96,5 +142,16 @@ async fn enter_off() -> ! {
             WakePull::Up,
         );
     }
+
+    if battery_recovery {
+        // Let the tap settle. The gate was HIGH — bridge disconnected —
+        // until a moment ago, so P0.31 has been floating; give it time to
+        // reach the divided cell voltage before the comparator starts.
+        Timer::after(Duration::from_millis(10)).await;
+
+        // Wake when the cell recovers past ~3.65 V. See the module docs.
+        arm_lpcomp_wake_up(LpcompInput::AnalogInput7, LpcompReference::Ref38vdd);
+    }
+
     enter_system_off()
 }

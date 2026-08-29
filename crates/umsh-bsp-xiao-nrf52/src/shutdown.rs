@@ -3,16 +3,16 @@
 //! **This board has no GPIO wake source.** A stock kit's only button is
 //! the XIAO's RESET, which is `nRESET` rather than a readable GPIO, and
 //! the radio carrier's K1 footprint ships bare. So unlike every other
-//! board in this family, the teardown here arms nothing: System OFF is
-//! entered and the chip stays down until something physical happens.
+//! board in this family, the teardown here arms no *pin*: what brings the
+//! board back is a cable, the reset button, or the cell itself refilling.
 //!
-//! What can still bring it back:
+//! What can bring it back:
 //!
 //! | Wake source            | Available | Notes |
 //! |------------------------|-----------|-------|
 //! | RESET button           | yes       | the reliable one; a cold boot either way |
 //! | USB attach (VBUS)      | yes       | plugging in wakes the board |
-//! | LPCOMP on AIN7         | not yet   | the one *autonomous* wake; see below |
+//! | LPCOMP on AIN7         | yes       | the one *autonomous* wake; see below |
 //! | NFC field `P0.09/0.10` | untested  | would forfeit those pads for I²C |
 //! | GPIO DETECT on a button| **no**    | needs K1 retrofitted — see [`crate`] |
 //!
@@ -50,18 +50,45 @@
 //!   leak into the unpowered radio. The RGB LED is common-anode, so
 //!   tri-stating its three cathodes extinguishes it.
 //!
-//! ## Not implemented: LPCOMP battery-recovery wake
+//! ## LPCOMP battery-recovery wake
 //!
-//! MeshCore arms LPCOMP on AIN7 (`REFSEL` 2 = 3/8 VDD) before its
-//! low-battery System OFF, so the node comes back on its own once the
-//! cell recovers. That is the only autonomous wake this board can have,
-//! and it is the one that matters for an unattended node — worth adding.
-//! Two cautions for whoever does: the divider must stay live (which it
-//! is, per above), and the threshold is a *relative* comparison against
-//! VDD, so it moves with the rail — roughly 3.67 V of cell at VDD 3.3 V,
-//! 3.33 V at VDD 3.0 V.
+//! On the protective-cutoff path the teardown arms LPCOMP on AIN7 —
+//! `P0.31`, the divider tap — against 3/8 VDD with upward detection, the
+//! same configuration MeshCore uses. The chip then resets by itself, with
+//! `RESETREAS.LPCOMP` set, when the cell has recharged. On a headless
+//! board that is the difference between a node that recovers from a solar
+//! lull and one that needs a visit.
+//!
+//! Where the threshold lands:
+//!
+//! - the divider gives cell = tap × 1510/510 = tap × 2.9608 (which is what
+//!   [`crate::power`]'s `DIVIDER_MICRO` says too)
+//! - 3/8 of a regulated 3.3 V VDD puts the tap threshold at 1.2375 V, so
+//!   the crossing is at **≈3.66 V of cell**, with 50 mV of hysteresis at
+//!   the tap ≈ 148 mV at the cell
+//! - that is at or above the firmware's Low threshold and well clear of
+//!   Critical (≈3.1 V), so a freshly woken board is nowhere near
+//!   re-triggering the cutoff — which in any case needs ten consecutive
+//!   critical samples, about five minutes
+//! - the neighboring references are both wrong here: 5/16 lands at
+//!   ≈3.05 V, *below* critical, which is a wake-and-die loop; 7/16 lands
+//!   at ≈4.27 V, essentially "only when full"
+//!
+//! The reference is relative to VDD, which sounds like it should smear the
+//! threshold across the rail — but the cell feeds VDDH and REG0 holds VDD
+//! at 3.3 V. While the regulator is in dropout VDD tracks the cell and the
+//! tap sits at 0.338 × VDD, below the 0.375 × VDD it would have to cross,
+//! so the comparator cannot trip until the rail is back in regulation.
+//! One effective wake point, not a moving one.
+//!
+//! A deliberate power-off does not arm it. There is no such path in the
+//! shipping image, but if one is ever added, "off" should mean off until
+//! someone comes back to the board.
 
-use umsh_bsp_nrf52840::system_off::{Port, drive_pin_low, enter_system_off, tristate_pin};
+use umsh_bsp_nrf52840::system_off::{
+    LpcompInput, LpcompReference, Port, ShutdownReason, arm_lpcomp_wake_up, drive_pin_low,
+    enter_system_off, tristate_pin,
+};
 
 use crate::power::SHUTDOWN_SIGNAL;
 
@@ -69,11 +96,11 @@ use crate::power::SHUTDOWN_SIGNAL;
 /// `#[embassy_executor::task]` in the firmware binary so the linker sees a
 /// concrete monomorphisation.
 pub async fn run() -> ! {
-    SHUTDOWN_SIGNAL.wait().await;
-    enter_off()
+    let reason = SHUTDOWN_SIGNAL.wait().await;
+    enter_off(reason)
 }
 
-fn enter_off() -> ! {
+fn enter_off(reason: ShutdownReason) -> ! {
     // Hold the SX1262 in reset (active-low). Collapses radio current to
     // its reset-state minimum without a switchable rail. Must be driven,
     // not released: R1 on the carrier pulls this line up.
@@ -108,6 +135,20 @@ fn enter_off() -> ! {
     tristate_pin(Port::P0, 17); // BQ25100 ~CHG: drop the input buffer
 
     // No wake pin is armed: there is nothing on this board to arm. The
-    // chip comes back on RESET or on USB attach.
+    // chip comes back on RESET, on USB attach, or — below — on the cell
+    // recovering.
+    if reason == ShutdownReason::BatteryCritical {
+        // Let the tap settle first. This path runs after the battery
+        // monitor returned and dropped its `Output`s, so P0.14 floated
+        // briefly and the tap drifted up toward the cell; give it time to
+        // decay back through the 510 kΩ leg. Strictly this is belt and
+        // braces — upward-only detection ignores a tap that starts high —
+        // but the teardown has nothing else to do.
+        cortex_m::asm::delay(640_000); // ~10 ms @ 64 MHz
+
+        // Wake when the cell recovers past ~3.66 V. See the module docs.
+        arm_lpcomp_wake_up(LpcompInput::AnalogInput7, LpcompReference::Ref38vdd);
+    }
+
     enter_system_off()
 }

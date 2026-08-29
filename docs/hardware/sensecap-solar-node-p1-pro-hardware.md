@@ -775,7 +775,9 @@ MeshCore's explicit shutdown path is the best available reference:
    recovery;
 5. enter nRF52840 System OFF.
 
-UMSH should distinguish:
+UMSH makes exactly this distinction, on the `ShutdownReason` carried by the
+BSP's `SHUTDOWN_SIGNAL` — see `crates/umsh-bsp-sensecap-solar/src/shutdown.rs`.
+Both paths arm both buttons; what differs is the divider gate and LPCOMP.
 
 ### User-requested off
 
@@ -800,11 +802,21 @@ UMSH should distinguish:
 ### Solar recovery
 
 With the divider and LPCOMP configured correctly, increasing battery voltage can
-wake the nRF52840. UMSH should then re-measure battery voltage before fully
-booting. A single comparator crossing under intermittent sunlight should not
-start GNSS and LoRa immediately if the battery cannot sustain them.
+wake the nRF52840. UMSH arms AIN7 against 3/8 VDD with upward detection and
+50 mV of hysteresis — a crossing at ≈3.65 V of cell, given the 1 MΩ/512 kΩ
+bridge's ×2.953 and a rail REG0 holds at 3.3 V.
 
-A useful boot policy is:
+There is deliberately **no** boot-side re-measure gate. The reasoning is that
+the wake point does the same job at less cost: ≈3.65 V is at or above the
+firmware's Low threshold and well clear of Critical (≈3.1 V), the cutoff that
+put the board down needs ten consecutive critical samples (about five minutes)
+to fire again, and a cell that merely rebounded after shutdown rests below the
+wake point rather than above it. A comparator crossing under intermittent
+sunlight therefore already implies a cell with real charge in it, and if the
+sun goes back behind a cloud the ordinary cutoff catches it a few minutes
+later. The alternative — the boot policy sketched below — buys nothing those
+two thresholds do not already provide, at the cost of a second, separately
+tuned recovery margin.
 
 ```text
 wake from low-battery System OFF
@@ -813,6 +825,10 @@ wake from low-battery System OFF
     -> optionally require the voltage to remain healthy for N seconds
     -> begin normal boot
 ```
+
+Worth revisiting only if bench or field data shows the board cycling — which
+would mean one of the assumptions above is wrong, not that the policy was
+missing.
 
 ## Thermal and charging considerations
 
@@ -854,7 +870,7 @@ water resistance.
 | LED pin 12 | called green | called blue and LoRa TX | P0.19 per `variant.cpp` ("Breathing LED"). Use neutral `LED_B` until color tested. Product docs and the "Breathing" label favor blue/white pair. |
 | LED active level | high | high | Treat as confirmed. |
 | External flash | P25Q16H on 21-26 | same | Treat as confirmed. |
-| Low-voltage boot lock | not in board header | 3.3 V plus LPCOMP recovery | Adopt only after battery scaling is calibrated. |
+| Low-voltage boot lock | not in board header | 3.3 V plus LPCOMP recovery | LPCOMP recovery adopted; no boot lock, since the wake point already sits above Low. |
 
 ## Recommended initial UMSH board definition
 
@@ -921,8 +937,14 @@ rather than embedding Arduino IDs in low-level drivers.
 - Measure ADC code with known SAADC configuration.
 - Measure divider current if practical.
 - Calibrate voltage conversion at multiple battery voltages.
-- Determine whether P0.31 remains usable by LPCOMP while System OFF.
-- Validate a conservative low-battery shutdown and recovery threshold.
+- Determine whether P0.31 remains usable by LPCOMP while System OFF. The
+  firmware arms it on the low-battery path and assumes it does; this is the
+  measurement that confirms it.
+- Validate a conservative low-battery shutdown and the ≈3.65 V recovery
+  threshold the firmware arms — ramp a bench supply up through it and confirm
+  the reset lands where the math says, with `rr=0x20000` in the boot log.
+- Record the System OFF floor on the low-battery path, where the divider stays
+  connected, against the user-off path, where it does not.
 
 ### Phase 3: radio
 

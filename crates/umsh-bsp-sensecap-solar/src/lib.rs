@@ -20,9 +20,10 @@
 //! - two user LEDs and two buttons for identification (Phase 1)
 //! - calibrated battery measurement (Phase 2)
 //! - SX1262 LoRa radio + external RXEN pin (Phase 3)
+//! - low-battery System OFF with LPCOMP solar recovery (Phase 6) — see
+//!   [`shutdown`]
 //!
-//! Future expansion (device-node behavior, low-battery
-//! System OFF + LPCOMP solar recovery, GNSS) is welcome but is not yet
+//! Future expansion (device-node behavior, GNSS) is welcome but is not yet
 //! implemented.
 //!
 //! See `docs/hardware/sensecap-solar-node-p1-pro-hardware.md` for the
@@ -80,4 +81,3 @@ pub use power::PowerSignaler;
 //   Phase 2: pub mod power  — port the T1000-E battery monitor
 //            (SAADC AIN7/P0.31, gated divider P0.14) with calibrated
 //            slope/offset constants.
-//   Phase 6: low-battery System OFF + LPCOMP solar-recovery wake.

@@ -26,13 +26,13 @@ repository.workspace = true
 #   * two user LEDs (P0.15 / P0.19) + two buttons (P1.01 / P1.07)
 #   * calibrated battery measurement (SAADC AIN7/P0.31 + gated divider) — Phase 2
 #   * SX1262 LoRa radio + external RXEN pin (P0.05) — Phase 3
+#   * Low-battery System OFF + LPCOMP solar-recovery wake — Phase 6
 #
 #   * Quectel L76K GNSS power sequencing (P1.05 enable, P0.02 standby) — Phase 7
 #
 # Out of scope for bringup (planned but not yet):
 #   * Grove / expansion I²C bus (P0.09/P0.10, NFC pins)
 #   * QSPI external flash (P25Q16H) — reserved, NV stays on internal NVMC
-#   * Low-battery System OFF + LPCOMP solar-recovery wake — Phase 6
 
 [features]
 default = []

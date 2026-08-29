@@ -32,7 +32,7 @@ it has been run on the board**. It compiles and packs to a UF2 whose family and
 address extent are verified against the probe results below; everything past that
 is the bring-up checklist at the end of this document, which is entirely open.
 The build is deliberately headless (no button profile) and does not implement
-GNSS, QSPI deep power-down, or the LPCOMP recovery wake.
+GNSS or QSPI deep power-down. It does implement the LPCOMP recovery wake.
 
 Two schematic-versus-reality discrepancies **were** found by physical
 inspection of a retail kit (2026-08-03), and they run in opposite directions:
@@ -570,6 +570,16 @@ but it is still outside Seeed's stated rule. A UMSH implementation that wants
 the 2.8 µA back on a user-requested System OFF should treat it as a deliberate,
 documented deviation, not as the default.
 
+UMSH implements the first case and skips the second entirely: the cutoff arms
+LPCOMP on AIN7 against 3/8 VDD with upward detection and 50 mV of hysteresis
+(`umsh-bsp-nrf52840`'s `arm_lpcomp_wake_up`, called from
+`umsh-bsp-xiao-nrf52`'s shutdown teardown), and `P0.14` stays LOW on every
+path, so the deviation above never arises. The VDD dependence turns out to be
+benign here: the cell feeds VDDH and REG0 holds VDD at 3.3 V, and while the
+regulator is in dropout the tap sits at 0.338 × VDD — below the 0.375 × VDD it
+would have to cross — so the comparator cannot trip until the rail is back in
+regulation. One effective wake point at ≈3.66 V of cell, not a sliding one.
+
 ## Charging
 
 The charger is a TI **BQ25100** (schematic reference U2). Seeed's specification
@@ -1047,7 +1057,7 @@ the XIAO and are the only guaranteed recovery route.
 | LED roles | green = `LED_POWER` | red = TX indicator, blue = status | Policy. Pick per UMSH UX. |
 | SPI1 | not defined | `PIN_SPI1_*` = 25/26/29, **collides with QSPI** | Do not expose a second SPI on those pins. |
 | App flash window | `LENGTH = 0xEA000 - 0x27000` | `LENGTH = 0xED000 - 0x27000` | Meshtastic is right. The bootloader's `USER_FLASH_END` is `0xEA000` (confirmed); anything above is silently not written. |
-| Low-voltage protection | none in the variant | bootlock 3300 mV + LPCOMP AIN7 refsel 2 | Adopt after calibration; note the threshold tracks VDD. |
+| Low-voltage protection | none in the variant | bootlock 3300 mV + LPCOMP AIN7 refsel 2 | LPCOMP AIN7 refsel 2 adopted; no bootlock, since the wake point already sits above Low. |
 | `PIN_A2` | redefined to 32 (VBAT) | left at 2 (D2) | Irrelevant on this kit — D2 is the radio reset. |
 | `D32` comment | says "P0.10" (wrong; value is 31) | says "P0.31" (right) | Value is `P0.31`/AIN7. |
 
@@ -1166,8 +1176,9 @@ the volume name and family ID depend on which bootloader Seeed loaded.
 - Measure system current with `P0.14` LOW and confirm the ~2.8 µA divider draw
   against the board's < 5 µA standby claim.
 - **Do not** drive `P0.14` high, or leave it high-Z, as part of this experiment.
-- Validate a conservative low-battery cutoff and the LPCOMP recovery threshold,
-  remembering that a 3/8-VDD reference moves with the rail.
+- Validate a conservative low-battery cutoff and the LPCOMP recovery threshold
+  the firmware arms — 3/8 VDD, expected to fire at ≈3.66 V of cell. Ramp a bench
+  supply up through it and confirm the reset lands where the math says.
 
 ### Phase 3: radio
 
@@ -1201,10 +1212,11 @@ the volume name and family ID depend on which bootloader Seeed loaded.
 
 - Confirm System OFF entry, and confirm which wake sources actually work with
   no button available: reset, USB attach (VBUS), LPCOMP on AIN7, and — if it is
-  ever worth the NFC pads — an NFC field.
+  ever worth the NFC pads — an NFC field. The LPCOMP wake should show
+  `RESETREAS = 0x2_0000` in the boot log's `rr=` field.
 - Confirm the charge-current select actually changes charge current.
 - Measure standby against Seeed's < 5 µA claim with the divider, QSPI flash, and
-  radio all accounted for.
+  radio all accounted for, and record what the armed comparator adds on top.
 
 ## Open questions requiring hardware confirmation
 

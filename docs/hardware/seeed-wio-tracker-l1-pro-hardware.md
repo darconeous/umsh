@@ -518,6 +518,31 @@ OFF / 3300 / 3400 / 3500 / 3600 mV
 
 This means there is definitely **firmware-level** low-battery shutdown support, but I did not find evidence of a firmware-controlled **hardware** battery cutoff.
 
+### What UMSH does
+
+The protective cutoff (ten consecutive critical samples at 30 s, so about five
+minutes) enters System OFF with the nav button armed, as a user-requested
+power-off does — and, unlike a user-requested power-off, it leaves the divider
+gate `P0.04` **driven HIGH** and arms LPCOMP on AIN7 so the board can wake
+itself when the cell recharges. The divider costs roughly 2 µA in System OFF on
+that path; on a board with solar as one of its three power inputs, that buys
+the difference between a node that recovers on its own and one that needs
+someone to walk out and flip the mechanical switch.
+
+The reference is 9/16 VDD, which on a regulated 3.3 V rail crosses at ≈3.71 V
+of cell through the half divider. The fraction is chosen with the missing
+schematic in mind: it sits *above* the divider's fixed 1/2 ratio, so if this
+board's rail turns out to track the cell rather than being regulated, the
+comparator simply never trips — the no-autonomous-wake status quo, rather than
+a wake-and-die loop.
+
+Which of the two this board is remains a bench question, and the measurement is
+cheap: run the pack down to the cutoff on a supply, then ramp back up and see
+whether a reset arrives near 3.71 V with `rr=0x20000` in the boot log. Until
+that has been done, treat the Wio's battery-recovery wake as arming correctly
+but firing unproven. Measuring VDD directly on the 3V3 test point while the
+supply sweeps would answer the underlying question outright.
+
 ## RTC / wall-clock time
 
 I did not find a board-specific dedicated RTC chip definition in the Wio Tracker L1 variant headers.
@@ -617,6 +642,9 @@ nRF52840
 - Do not assume firmware-visible charger status or PMIC control.
 - Do not assume System OFF cuts power to all peripherals — on this board
   it cuts power to none of them.
+- D30/P0.04 is driven both ways in the System OFF teardown, never tri-stated:
+  LOW on a user-requested off (divider provably disconnected), HIGH on the
+  low-battery cutoff so LPCOMP has a tap to watch. See "Low-battery shutdown".
 
 ## Source references
 
