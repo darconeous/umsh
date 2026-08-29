@@ -2844,7 +2844,15 @@ async fn run_worker(
         // forwarded it, which is the only reachability signal a multicast
         // ever produces. Claim it so nothing else interprets it, and report
         // how far it travelled.
-        if packet.from_key() == Some(local_key) {
+        //
+        // Scoped to multicast, because a directed frame naming us is not an
+        // echo. A unicast reaches this handler only when it also named a
+        // local identity as its destination, which makes it a message we
+        // addressed to ourselves; that belongs in the transcript like any
+        // other. It takes a neighbor willing to repeat it to arrive at all,
+        // since a radio never hears its own transmission.
+        if packet.packet_family() == PacketFamily::Multicast && packet.from_key() == Some(local_key)
+        {
             let distance = match packet.hop_count() {
                 Some(hops) => format!("after {hops} hop(s)"),
                 None => "over a source route".to_string(),
@@ -6675,6 +6683,78 @@ mod tests {
         assert!(
             inbound.is_empty(),
             "our own relayed message was transcribed as inbound: {inbound:?}"
+        );
+    }
+
+    /// A message addressed to our own key is a message, not an echo.
+    ///
+    /// The unicast goes out naming us as both sender and destination, so it
+    /// arrives looking exactly like the relayed group copy above; only the
+    /// packet family tells them apart. Nothing can carry it without a
+    /// neighbor willing to repeat it, which is what the echo below stands in
+    /// for.
+    #[tokio::test]
+    async fn a_message_addressed_to_ourselves_is_transcribed() {
+        let directory = tempfile::tempdir().unwrap();
+        let identity = identity(71);
+        let session = MobileMeshSession::new(
+            identity.clone(),
+            MobileCounterStore::new(directory.path().join("self").display().to_string()).unwrap(),
+        )
+        .await
+        .unwrap();
+
+        let own_address = address(&identity);
+        session
+            .register_peers(vec![own_address.clone()])
+            .await
+            .unwrap();
+
+        let body = "note to self".to_owned();
+        let batch = session
+            .compose_text(own_address, 7, body.clone())
+            .await
+            .unwrap();
+        session.commit_chat_batch(batch.batch_id).await.unwrap();
+
+        // Stand in for the repeater: every frame the session emits goes back
+        // in, including the acknowledgment it composes for its own message.
+        let deadline = Instant::now() + Duration::from_secs(10);
+        let mut inbound = Vec::new();
+        while Instant::now() < deadline {
+            let update = session.poll_update();
+            for frame in update.outbound_frames {
+                session.complete_outbound_frame(frame.id, true).unwrap();
+                session
+                    .receive(MobileMeshRxRecord {
+                        data: frame.data,
+                        rssi_dbm: Some(-60),
+                        lqi: None,
+                        snr_cb: Some(70),
+                    })
+                    .unwrap();
+            }
+            inbound.extend(
+                update
+                    .chat_mutations
+                    .iter()
+                    .filter(|mutation| mutation.direction == Some(MobileChatDirection::Inbound))
+                    .cloned(),
+            );
+            if let Some(batch_id) = update.chat_batch_id {
+                session.acknowledge_chat_batch(batch_id).unwrap();
+            }
+            if !inbound.is_empty() {
+                break;
+            }
+            std::thread::sleep(Duration::from_millis(5));
+        }
+
+        assert!(
+            inbound
+                .iter()
+                .any(|mutation| mutation.body.as_deref() == Some(body.as_str())),
+            "the message we sent ourselves never arrived: {inbound:?}"
         );
     }
 
