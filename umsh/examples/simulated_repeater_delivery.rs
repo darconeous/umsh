@@ -1,8 +1,9 @@
 use std::cell::RefCell;
 use std::future::{Future, poll_fn};
 use std::rc::Rc;
-use std::task::{Poll, RawWaker, RawWakerVTable, Waker};
+use std::task::Poll;
 
+use embassy_executor::Spawner;
 use rand::rngs::ThreadRng;
 use umsh::{
     core::{PacketHeader, ParsedOptions, PublicKey},
@@ -40,8 +41,12 @@ type RepeaterMac = Mac<RepeaterPlatform, IDENTITIES, PEERS, CHANNELS, ACKS, TX, 
 type RepeaterHost<'a> =
     Host<MacHandle<'a, RepeaterPlatform, IDENTITIES, PEERS, CHANNELS, ACKS, TX, FRAME, DUP>>;
 
-fn main() {
-    block_on(async_main());
+#[embassy_executor::main]
+async fn main(_spawner: Spawner) {
+    async_main().await;
+    // The executor never returns, so a demo that has said its piece has to
+    // leave by itself.
+    std::process::exit(0);
 }
 
 async fn async_main() {
@@ -49,9 +54,9 @@ async fn async_main() {
     // It shows an end-to-end forwarding topology with Alice -> repeater -> Bob while still
     // using the current Host/LocalNode/text-wrapper layering at the application edge.
     //
-    // We intentionally avoid `#[embassy_executor::main]` here: on `arch-std` it would spawn
-    // this whole large demo future into Embassy's fixed task arena, which is easy to overflow.
-    // A tiny local `block_on` is a better fit for this single-threaded simulated example.
+    // It runs on the embassy executor rather than a local `block_on`, because embassy-time
+    // reads its queue entry out of the waker of the embassy task being polled. A hand-rolled
+    // waker has none, so the first delay the MAC registers has nowhere to go.
     let network = SimulatedNetwork::new();
     let alice_radio = network.add_radio();
     let repeater_radio = network.add_radio();
@@ -326,6 +331,13 @@ fn format_mac_command(command: &umsh::node::OwnedMacCommand) -> String {
             full_key(ephemeral_key)
         ),
         umsh::node::OwnedMacCommand::EndPfsSession => String::from("EndPfsSession"),
+        umsh::node::OwnedMacCommand::Noop => String::from("Noop"),
+        umsh::node::OwnedMacCommand::PeerRepeatersRequest { options } => {
+            format!("PeerRepeatersRequest ({} option bytes)", options.len())
+        }
+        umsh::node::OwnedMacCommand::PeerRepeatersResponse { body } => {
+            format!("PeerRepeatersResponse {} bytes", body.len())
+        }
     }
 }
 
@@ -628,35 +640,9 @@ fn summarize_mac_event(event: &MacEventRef<'_>) -> String {
             receipt,
             hint,
         } => format!("forwarded id={identity_id:?} receipt={receipt:?} hint={hint:?}"),
+        MacEventRef::TxAbandoned {
+            identity_id,
+            receipt,
+        } => format!("tx-abandoned id={identity_id:?} receipt={receipt:?}"),
     }
-}
-
-fn block_on<F: Future>(future: F) -> F::Output {
-    let waker = noop_waker();
-    let mut cx = std::task::Context::from_waker(&waker);
-    let mut future = core::pin::pin!(future);
-    loop {
-        match Future::poll(future.as_mut(), &mut cx) {
-            Poll::Ready(output) => return output,
-            Poll::Pending => core::hint::spin_loop(),
-        }
-    }
-}
-
-fn noop_waker() -> Waker {
-    fn noop_raw_waker() -> RawWaker {
-        fn clone(_: *const ()) -> RawWaker {
-            noop_raw_waker()
-        }
-        fn wake(_: *const ()) {}
-        fn wake_by_ref(_: *const ()) {}
-        fn drop(_: *const ()) {}
-
-        RawWaker::new(
-            core::ptr::null(),
-            &RawWakerVTable::new(clone, wake, wake_by_ref, drop),
-        )
-    }
-
-    unsafe { Waker::from_raw(noop_raw_waker()) }
 }

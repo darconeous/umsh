@@ -1092,17 +1092,6 @@ dependencies = [
 
 [[package]]
 name = "embassy-executor"
-version = "0.7.0"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "90327bcc66333a507f89ecc4e2d911b265c45f5c9bc241f98eee076752d35ac6"
-dependencies = [
- "critical-section",
- "document-features",
- "embassy-executor-macros 0.6.2",
-]
-
-[[package]]
-name = "embassy-executor"
 version = "0.10.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "5d0d3b15c9d7dc4fec1d8cb77112472fb008b3b28c51ad23838d83587a6d2f1e"
@@ -1111,21 +1100,9 @@ dependencies = [
  "cortex-m",
  "critical-section",
  "document-features",
- "embassy-executor-macros 0.8.0",
+ "embassy-executor-macros",
  "embassy-executor-timer-queue",
  "embassy-time-driver",
-]
-
-[[package]]
-name = "embassy-executor-macros"
-version = "0.6.2"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "3577b1e9446f61381179a330fc5324b01d511624c55f25e3c66c9e3c626dbecf"
-dependencies = [
- "darling",
- "proc-macro2 1.0.106",
- "quote 1.0.45",
- "syn 2.0.117",
 ]
 
 [[package]]
@@ -1525,7 +1502,7 @@ dependencies = [
  "cortex-m-rt",
  "critical-section",
  "defmt 0.3.100",
- "embassy-executor 0.10.0",
+ "embassy-executor",
  "embassy-futures",
  "embassy-nrf",
  "embassy-sync 0.8.0",
@@ -1569,7 +1546,7 @@ dependencies = [
  "cortex-m",
  "cortex-m-rt",
  "defmt 0.3.100",
- "embassy-executor 0.10.0",
+ "embassy-executor",
  "embassy-futures",
  "embassy-nrf",
  "embassy-sync 0.8.0",
@@ -1589,7 +1566,7 @@ dependencies = [
  "cortex-m",
  "cortex-m-rt",
  "defmt 0.3.100",
- "embassy-executor 0.10.0",
+ "embassy-executor",
  "embassy-futures",
  "embassy-nrf",
  "embassy-sync 0.8.0",
@@ -1633,7 +1610,7 @@ dependencies = [
  "cortex-m",
  "cortex-m-rt",
  "defmt 0.3.100",
- "embassy-executor 0.10.0",
+ "embassy-executor",
  "embassy-futures",
  "embassy-nrf",
  "embassy-sync 0.8.0",
@@ -1667,7 +1644,7 @@ dependencies = [
  "cortex-m-rt",
  "critical-section",
  "defmt 0.3.100",
- "embassy-executor 0.10.0",
+ "embassy-executor",
  "embassy-futures",
  "embassy-nrf",
  "embassy-sync 0.8.0",
@@ -1712,7 +1689,7 @@ dependencies = [
  "cortex-m",
  "cortex-m-rt",
  "defmt 0.3.100",
- "embassy-executor 0.10.0",
+ "embassy-executor",
  "embassy-futures",
  "embassy-nrf",
  "embassy-sync 0.8.0",
@@ -1746,7 +1723,7 @@ dependencies = [
  "cortex-m-rt",
  "critical-section",
  "defmt 0.3.100",
- "embassy-executor 0.10.0",
+ "embassy-executor",
  "embassy-futures",
  "embassy-nrf",
  "embassy-sync 0.8.0",
@@ -1791,7 +1768,7 @@ dependencies = [
  "cortex-m",
  "cortex-m-rt",
  "defmt 0.3.100",
- "embassy-executor 0.10.0",
+ "embassy-executor",
  "embassy-futures",
  "embassy-nrf",
  "embassy-sync 0.8.0",
@@ -1825,7 +1802,7 @@ dependencies = [
  "cortex-m-rt",
  "critical-section",
  "defmt 0.3.100",
- "embassy-executor 0.10.0",
+ "embassy-executor",
  "embassy-futures",
  "embassy-nrf",
  "embassy-sync 0.8.0",
@@ -3923,7 +3900,7 @@ version = "0.1.0"
 dependencies = [
  "btleplug",
  "critical-section",
- "embassy-executor 0.7.0",
+ "embassy-executor",
  "embassy-time",
  "embedded-hal-async",
  "futures-util",
