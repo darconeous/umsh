@@ -124,8 +124,8 @@ repository = "https://github.com/darconeous/umsh"
 # pinned to the pairing-policy gate revision; nrf-sdc/nrf-mpsl are pinned to the
 # controller revision audited with it. Pins move only after deliberate review.
 [patch.crates-io]
-lora-phy        = { git = "https://github.com/darconeous/lora-rs.git", rev = "dbb7263c7910b83c9872569285865fa671cea670" }
-lora-modulation = { git = "https://github.com/darconeous/lora-rs.git", rev = "dbb7263c7910b83c9872569285865fa671cea670" }
+lora-phy        = { git = "https://github.com/darconeous/lora-rs.git", rev = "bddfba7a269fe16e295f4e6c62aaba8c4d34937a" }
+lora-modulation = { git = "https://github.com/darconeous/lora-rs.git", rev = "bddfba7a269fe16e295f4e6c62aaba8c4d34937a" }
 trouble-host    = { git = "https://github.com/darconeous/trouble.git", rev = "675edc8a373b58ccdeaf1821653b41e19e595bab" }
 nrf-sdc         = { git = "https://github.com/alexmoon/nrf-sdc.git", rev = "abe49d22ebfc85fae134eb082fbfddf752016a55" }
 nrf-mpsl        = { git = "https://github.com/alexmoon/nrf-sdc.git", rev = "abe49d22ebfc85fae134eb082fbfddf752016a55" }

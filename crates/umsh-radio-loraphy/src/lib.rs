@@ -470,12 +470,13 @@ pub enum RxStrategy {
 const DUTY_CYCLE_UNIT_NS: u64 = 15_625;
 
 /// Time the SX126x spends restarting its TCXO on each duty-cycle wake,
-/// mirroring lora-phy's `BRD_TCXO_WAKEUP_TIME` (10 ms, not exported).
-/// Each RX window is inflated by this much so the sniff window survives
-/// even if the chip bills the TCXO settling time against `rx_time`; if
-/// the chip instead settles before starting the window timer, the extra
-/// is a small power cost, never a missed frame.
-const TCXO_WAKEUP_NS: u64 = 10_000_000;
+/// mirroring lora-phy's `BRD_TCXO_WAKEUP_TIME` (5 ms since fork rev
+/// bddfba7a, not exported — keep the two in lockstep). Each RX window
+/// is inflated by this much so the sniff window survives even if the
+/// chip bills the TCXO settling time against `rx_time`; if the chip
+/// instead settles before starting the window timer, the extra is a
+/// small power cost, never a missed frame.
+const TCXO_WAKEUP_NS: u64 = 5_000_000;
 
 /// Pick the RX mode for a strategy at the given modulation settings.
 ///
@@ -918,10 +919,10 @@ mod tests {
             8,
             32,
         ));
-        // t_sym = 1.024 ms. RX window: 9 symbols + the 10 ms TCXO
-        // wake = 19.216 ms; sleep: 15 symbols = 15.36 ms — in units of
+        // t_sym = 1.024 ms. RX window: 9 symbols + the 5 ms TCXO
+        // wake = 14.216 ms; sleep: 15 symbols = 15.36 ms — in units of
         // 15.625 µs.
-        assert_eq!(params.rx_time, 1229);
+        assert_eq!(params.rx_time, 909);
         assert_eq!(params.sleep_time, 983);
     }
 

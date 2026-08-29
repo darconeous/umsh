@@ -2430,12 +2430,12 @@ dependencies = [
 [[package]]
 name = "lora-modulation"
 version = "0.1.5"
-source = "git+https://github.com/darconeous/lora-rs.git?rev=dbb7263c7910b83c9872569285865fa671cea670#dbb7263c7910b83c9872569285865fa671cea670"
+source = "git+https://github.com/darconeous/lora-rs.git?rev=bddfba7a269fe16e295f4e6c62aaba8c4d34937a#bddfba7a269fe16e295f4e6c62aaba8c4d34937a"
 
 [[package]]
 name = "lora-phy"
 version = "3.0.2-alpha"
-source = "git+https://github.com/darconeous/lora-rs.git?rev=dbb7263c7910b83c9872569285865fa671cea670#dbb7263c7910b83c9872569285865fa671cea670"
+source = "git+https://github.com/darconeous/lora-rs.git?rev=bddfba7a269fe16e295f4e6c62aaba8c4d34937a#bddfba7a269fe16e295f4e6c62aaba8c4d34937a"
 dependencies = [
  "document-features",
  "embedded-hal 1.0.0",
