@@ -2702,12 +2702,21 @@ async fn heartbeat_task(
 ) -> ! {
     loop {
         rtc.rwdt.feed();
-        // The idle blink spends two seconds dark, so the shutdown hold
+        // The idle blink spends four seconds dark, so the shutdown hold
         // has to interrupt the wait rather than be noticed after it.
         let (on_ms, off_ms) = if BLE_LED_MODE.load(Ordering::Acquire) == 1 {
             (100, 300)
         } else {
-            (40, 2_000)
+            // Four seconds apart matches the nRF boards' heartbeat
+            // (`LedTimings::default`). The pulse does not: the white LED
+            // on both Heltec boards is far brighter than their status
+            // LEDs, so it takes a bare flick to read as alive rather
+            // than their 20 ms.
+            //
+            // Four seconds is also as slow as this loop may go — it
+            // carries the `WDT_TIMEOUT` feed, and half of eight seconds
+            // is the margin the watchdog has left for a late wake.
+            (3, 4_000)
         };
         led.set_high();
         if with_timeout(Duration::from_millis(on_ms), SHUTDOWN_REQUEST.wait())

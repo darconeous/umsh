@@ -13,11 +13,11 @@
 //!
 //! The heartbeat is anchored at the engine's start time. After every
 //! `heartbeat_interval`, the LED pulses for `heartbeat_pulse` (defaults:
-//! 2 s and 50 ms). When a one-shot sequence is active it preempts the
+//! 4 s and 20 ms). When a one-shot sequence is active it preempts the
 //! heartbeat for the sequence's duration; once the sequence completes
 //! the heartbeat resumes on its original rhythm (i.e. it is *not*
-//! re-anchored), so the user-perceived 2-second cadence stays consistent
-//! across overlays.
+//! re-anchored), so the user-perceived cadence stays consistent across
+//! overlays.
 
 use core::time::Duration;
 
