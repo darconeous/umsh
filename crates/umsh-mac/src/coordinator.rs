@@ -1488,10 +1488,12 @@ impl<
         } else {
             builder.source_hint(source_key.hint())
         };
+        let repeatable =
+            Self::frame_is_repeatable(options.flood_hops, options.source_route.as_deref());
         if let Some(hops) = options.flood_hops {
             builder = builder.flood_hops(hops);
         }
-        if options.trace_route {
+        if options.trace_route && repeatable {
             builder = builder.trace_route();
         }
         // A route that constrains no hop is not attached: only a repeater
@@ -1506,7 +1508,7 @@ impl<
         if let Some(callsign) = self.operating_policy.operator_callsign {
             builder = builder.option(OptionNumber::OperatorCallsign, callsign.as_trimmed_slice());
         }
-        if options.trace_signal {
+        if options.trace_signal && repeatable {
             builder = builder.trace_signal();
         }
         if let Some(region_code) = options.region_code {
@@ -1588,10 +1590,12 @@ impl<
         if let Some(salt) = salt {
             builder = builder.salt(salt);
         }
+        let repeatable =
+            Self::frame_is_repeatable(options.flood_hops, options.source_route.as_deref());
         if let Some(hops) = options.flood_hops {
             builder = builder.flood_hops(hops);
         }
-        if options.trace_route {
+        if options.trace_route && repeatable {
             builder = builder.trace_route();
         }
         // A route that constrains no hop is not attached: only a repeater
@@ -1606,7 +1610,7 @@ impl<
         if let Some(callsign) = self.operating_policy.operator_callsign {
             builder = builder.option(OptionNumber::OperatorCallsign, callsign.as_trimmed_slice());
         }
-        if options.trace_signal {
+        if options.trace_signal && repeatable {
             builder = builder.trace_signal();
         }
         if let Some(region_code) = options.region_code {
@@ -1643,7 +1647,7 @@ impl<
     /// carries neither a flood budget nor a source route, so no repeater may
     /// touch it and the trace would arrive as empty as it left. The sender
     /// reads the direct link off the ack's own shape instead — see
-    /// [`Coordinator::learn_route_for_peer`].
+    /// [`Mac::learn_route_for_peer`].
     ///
     /// An ack that does ride through repeaters is tracked like any other
     /// repeat-confirmed send: silence where the repeat should be means the
@@ -1811,16 +1815,22 @@ impl<
         if let Some(salt) = salt {
             builder = builder.salt(salt);
         }
+        // A caller asking for a trace is asking for a path to be recorded,
+        // not for an empty option: a frame no repeater may carry has no path
+        // to record, and the request is dropped rather than honored blind.
+        let repeatable =
+            Self::frame_is_repeatable(effective_flood_hops, effective_source_route.as_deref());
         if let Some(hops) = effective_flood_hops {
             builder = builder.flood_hops(hops);
         }
-        if options.trace_route
-            || self.needs_route_discovery(
-                peer_id,
-                effective_source_route.as_ref(),
-                effective_flood_hops,
-                options.ack_requested,
-            )
+        if repeatable
+            && (options.trace_route
+                || self.needs_route_discovery(
+                    peer_id,
+                    effective_source_route.as_ref(),
+                    effective_flood_hops,
+                    options.ack_requested,
+                ))
         {
             builder = builder.trace_route();
         }
@@ -1830,7 +1840,7 @@ impl<
         if let Some(callsign) = self.operating_policy.operator_callsign {
             builder = builder.option(OptionNumber::OperatorCallsign, callsign.as_trimmed_slice());
         }
-        if options.trace_signal {
+        if options.trace_signal && repeatable {
             builder = builder.trace_signal();
         }
         if let Some(region_code) = options.region_code {
@@ -1973,16 +1983,21 @@ impl<
         if let Some(salt) = salt {
             builder = builder.salt(salt);
         }
+        // Same rule as the plain unicast above: no repeater may carry an
+        // unrepeatable frame, so neither trace option has anything to collect.
+        let repeatable =
+            Self::frame_is_repeatable(effective_flood_hops, effective_source_route.as_deref());
         if let Some(hops) = effective_flood_hops {
             builder = builder.flood_hops(hops);
         }
-        if options.trace_route
-            || self.needs_route_discovery(
-                peer_id,
-                effective_source_route.as_ref(),
-                effective_flood_hops,
-                options.ack_requested,
-            )
+        if repeatable
+            && (options.trace_route
+                || self.needs_route_discovery(
+                    peer_id,
+                    effective_source_route.as_ref(),
+                    effective_flood_hops,
+                    options.ack_requested,
+                ))
         {
             builder = builder.trace_route();
         }
@@ -1992,7 +2007,7 @@ impl<
         if let Some(callsign) = self.operating_policy.operator_callsign {
             builder = builder.option(OptionNumber::OperatorCallsign, callsign.as_trimmed_slice());
         }
-        if options.trace_signal {
+        if options.trace_signal && repeatable {
             builder = builder.trace_signal();
         }
         if let Some(region_code) = options.region_code {
@@ -3826,7 +3841,7 @@ impl<
     /// carry. A frame with no flood budget and no source route is not one:
     /// nothing may forward it, the trace is guaranteed to arrive empty, and
     /// the destination learns the link is direct from the frame's own shape
-    /// anyway — see [`Coordinator::learn_route_for_peer`].
+    /// anyway — see [`Mac::learn_route_for_peer`].
     ///
     /// Past that, a peer heard directly has no repeaters for a trace to
     /// record. Everything else floods toward a destination whose distance we
@@ -3851,7 +3866,7 @@ impl<
     /// This is unconditional for now. The narrower form only traces when the
     /// peer has not shown it can reach us — a frame arriving from it with a
     /// source-route option present, or with accumulated flood hops, is that
-    /// proof, and [`Coordinator::learn_route_for_peer`] already sees both.
+    /// proof, and [`Mac::learn_route_for_peer`] already sees both.
     /// Relax to that once there is enough field data to say the evidence bit
     /// tracks reality; until then the extra byte is cheaper than a delivery
     /// that silently never lands.
@@ -3878,6 +3893,28 @@ impl<
                 .and_then(|peer| peer.route.as_ref()),
             Some(CachedRoute::Direct)
         )
+    }
+
+    /// Whether a frame this node is about to originate gives any repeater
+    /// permission to carry it.
+    ///
+    /// Both trace options are filled in by repeaters and by nobody else. With
+    /// no flood budget and no source route, nothing on the frame lets a
+    /// repeater touch it, so a trace arrives exactly as empty as it left: an
+    /// option header spent on a question no one is in a position to answer,
+    /// and one more option in the block than the frame needs. The receiver
+    /// reads the direct link off the frame's own shape instead of out of an
+    /// empty trace, which is what makes the option redundant rather than
+    /// merely unanswered; see [`Mac::learn_route_for_peer`].
+    ///
+    /// A flood budget of zero is not permission. The field goes on the wire
+    /// but no repeater may spend it, so it forwards nothing.
+    ///
+    /// [`Mac::queue_mac_ack_for_peer`] asks the same question of the
+    /// cached route it is about to attach, before it has fields to read.
+    fn frame_is_repeatable(flood_hops: Option<u8>, source_route: Option<&[RouterHint]>) -> bool {
+        flood_hops.is_some_and(|hops| hops > 0)
+            || source_route.is_some_and(|route| !route.is_empty())
     }
 
     /// Flood budget for a unicast send, narrowed by whatever is already known
@@ -4395,6 +4432,10 @@ impl<
     /// request, which is the point of a ping — a response routed or sized
     /// differently from the traffic it stands in for measures a path that
     /// traffic will not take.
+    ///
+    /// Both are requests, not guarantees. A response that ends up with no
+    /// flood budget and no source route drops them again on the way out; see
+    /// [`Mac::frame_is_repeatable`].
     fn echo_response_options(frame: &[u8], header: &PacketHeader) -> SendOptions {
         let mut options = SendOptions::default();
         let Ok(parsed) = ParsedOptions::extract(frame, header.options_range.clone()) else {

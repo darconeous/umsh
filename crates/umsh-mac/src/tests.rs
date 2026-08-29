@@ -467,9 +467,14 @@ fn receive_one_auto_replies_to_echo_request() {
     let header = PacketHeader::parse(response.frame.as_slice()).unwrap();
     let options =
         ParsedOptions::extract(response.frame.as_slice(), header.options_range.clone()).unwrap();
+    // The request arrived with no flood budget and no route, so it was heard
+    // directly and the response goes back the same way. There is no repeater
+    // on that path to write a trace, and the mirrored request is dropped
+    // rather than carried empty — see
+    // `echo_response_mirrors_a_trace_signal_request` for the traced path.
     assert!(
-        options.trace_route.is_some(),
-        "echo response must preserve a trace-route request"
+        options.trace_route.is_none(),
+        "echo response to a direct neighbor must not carry an empty trace"
     );
     let payload = decrypt_unicast_payload(response.frame.as_slice(), &keys);
     assert_eq!(
@@ -3946,6 +3951,15 @@ fn frame_has_trace_route(frame: &[u8]) -> bool {
         .is_some()
 }
 
+/// Whether an already-built frame carries a trace-signal option.
+fn frame_has_trace_signal(frame: &[u8]) -> bool {
+    let header = PacketHeader::parse(frame).unwrap();
+    ParsedOptions::extract(frame, header.options_range.clone())
+        .unwrap()
+        .trace_signal
+        .is_some()
+}
+
 /// A peer nothing is known about is reached by flooding, and the flood is
 /// what discovers the path — so the frame records it whether or not the
 /// application asked.
@@ -4232,6 +4246,89 @@ fn unicast_to_a_directly_heard_peer_carries_no_trace_route() {
 
     let queued = mac.tx_queue_mut().pop_next().expect("queued unicast");
     assert!(!frame_has_trace_route(queued.frame.as_slice()));
+}
+
+/// Asking does not change the arithmetic. A directly heard peer is narrowed to
+/// no flood budget and no source route, so a caller that asks for both trace
+/// options gets neither: the applications that turn them on do so for every
+/// send, and honoring that literally would put two unanswerable options on
+/// every frame to every neighbor.
+#[test]
+fn requested_trace_options_are_dropped_on_an_unrepeatable_unicast() {
+    let mut mac = make_mac();
+    let local_id = mac.add_identity(DummyIdentity::new([0x10; 32])).unwrap();
+    let peer_key = test_pubkey(0xAB);
+    let peer_id = mac.add_peer(peer_key).unwrap();
+    mac.install_pairwise_keys(
+        local_id,
+        peer_id,
+        PairwiseKeys {
+            k_enc: [1; 32],
+            k_mic: [2; 32],
+        },
+    )
+    .unwrap();
+    mac.peer_registry_mut()
+        .update_route(peer_id, CachedRoute::Direct);
+
+    let _ = block_on(
+        mac.send_unicast(
+            local_id,
+            &peer_key,
+            b"hi",
+            &SendOptions::default()
+                .with_trace_route()
+                .with_trace_signal(),
+        ),
+    )
+    .unwrap();
+
+    let queued = mac.tx_queue_mut().pop_next().expect("queued unicast");
+    let frame = queued.frame.as_slice();
+    let header = PacketHeader::parse(frame).unwrap();
+    assert!(header.flood_hops.is_none(), "expected no flood-hop field");
+    assert!(!frame_has_trace_route(frame));
+    assert!(!frame_has_trace_signal(frame));
+}
+
+/// The same rule where the caller, not the route cache, empties the frame: a
+/// broadcast that no repeater may carry records no path either.
+#[test]
+fn requested_trace_options_are_dropped_on_an_unrepeatable_broadcast() {
+    let mut mac = make_mac();
+    let local_id = mac.add_identity(DummyIdentity::new([0x10; 32])).unwrap();
+
+    mac.queue_broadcast(
+        local_id,
+        b"hi",
+        &SendOptions::default()
+            .no_flood()
+            .with_trace_route()
+            .with_trace_signal(),
+    )
+    .unwrap();
+
+    let queued = mac.tx_queue_mut().pop_next().expect("queued broadcast");
+    let frame = queued.frame.as_slice();
+    assert!(!frame_has_trace_route(frame));
+    assert!(!frame_has_trace_signal(frame));
+
+    // A flood budget is what makes the pair worth carrying, and it brings both
+    // back.
+    mac.queue_broadcast(
+        local_id,
+        b"hi",
+        &SendOptions::default()
+            .with_flood_hops(3)
+            .with_trace_route()
+            .with_trace_signal(),
+    )
+    .unwrap();
+
+    let queued = mac.tx_queue_mut().pop_next().expect("queued broadcast");
+    let frame = queued.frame.as_slice();
+    assert!(frame_has_trace_route(frame));
+    assert!(frame_has_trace_signal(frame));
 }
 
 /// The sender's trace taught us a path back; the mirrored trace on the ack is
@@ -10107,6 +10204,11 @@ impl DummyRadio {
 
     /// An echo request that arrives asking for both trace options, the way a
     /// ping does.
+    /// An echo request as it arrives having crossed one repeater, which
+    /// prepended its hint and the signal it heard the frame at. The hop is
+    /// what makes the trace worth mirroring: a request that reached us
+    /// directly gives the response no repeater to record and no field to
+    /// record it in.
     fn queue_received_traced_echo_request(
         &mut self,
         source: &DummyIdentity,
@@ -10120,8 +10222,9 @@ impl DummyRadio {
             .source_full(source.public_key())
             .frame_counter(7)
             .encrypted()
-            .trace_route()
-            .trace_signal()
+            .flood_hops(3)
+            .option(OptionNumber::TraceRoute, &[0x11, 0x22])
+            .option(OptionNumber::TraceSignal, &[90, 40])
             .payload(payload)
             .build()
             .unwrap();

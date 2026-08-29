@@ -45,7 +45,7 @@ pub struct SendReceipt(pub u32);
 /// let opts = SendOptions::default()
 ///     .with_ack_requested(true)
 ///     .with_mic_size(MicSize::Mic8)
-///     .no_flood()
+///     .with_flood_hops(3)
 ///     .with_trace_route();
 /// ```
 ///
@@ -66,7 +66,12 @@ pub struct SendReceipt(pub u32);
 ///   peer rather than taken literally. A unicast with no route to follow adds one whether or
 ///   not it was asked for, so the destination's reply has a path to come back along; a send
 ///   that follows a source route, or that goes to a peer heard directly, adds none unless
-///   the caller asks.
+///   the caller asks. A frame that ends up with no flood budget and no source route adds
+///   none either way: repeaters are what fill a trace in, and no repeater may carry such a
+///   frame. Note that a peer heard directly is exactly the case where the narrowing above
+///   leaves no flood-hop field, so asking for a trace there gets none.
+/// - **`trace_signal`** — held to the same condition as `trace_route`, which it pairs with
+///   entry for entry.
 /// - **`full_source`** — include the full 32-byte public key instead of the 3-byte hint,
 ///   allowing the receiver to authenticate without a prior key exchange. Useful for first
 ///   contact or identity announcements; costs 29 extra bytes per frame.
@@ -157,6 +162,12 @@ impl SendOptions {
     /// route to follow carries a trace route whether or not the caller asked
     /// for one, so the destination can learn a path back. Leaving it unset
     /// means "no trace beyond what routing needs", not "never".
+    ///
+    /// It is a request rather than an instruction in the other direction too.
+    /// A trace is written by the repeaters that carry the frame, so a frame
+    /// that ends up with no flood budget and no source route carries none:
+    /// nothing may forward it, and the option would arrive as empty as it
+    /// left.
     pub fn with_trace_route(mut self) -> Self {
         self.trace_route = true;
         self
@@ -165,7 +176,8 @@ impl SendOptions {
     /// Request that a trace-signal option be added. Each repeater prepends
     /// the signal quality it received the frame at, one entry per trace-route
     /// hint, so this is only useful together with
-    /// [`with_trace_route`](Self::with_trace_route).
+    /// [`with_trace_route`](Self::with_trace_route), and it is dropped under
+    /// the same condition: a frame no repeater may carry collects no entries.
     pub fn with_trace_signal(mut self) -> Self {
         self.trace_signal = true;
         self
