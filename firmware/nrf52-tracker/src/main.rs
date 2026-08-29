@@ -37,6 +37,9 @@
 //                        pairing policy, generation-tagged OUT_CH.ble, and
 //                        MPSL-coordinated PIN/bond persistence
 //   - button_task:       resolves the side button into display-menu gestures
+//                        on a board where it is the only control
+//   - back_button_task:  the same button beside a pad, where it means Back
+//                        and the power-off hold and nothing else
 //   - display_task:      owns the e-paper BLE menu and its attention policy
 //   - touch_task:        publishes the touch button's backlight demand
 //   - backlight_task:    arbitrates backlight demand (locate alert wins)
@@ -277,8 +280,17 @@ mod firmware {
     use umsh_ux_display_tracker::menu::{MenuItems, ToggleId, UiEffect, UiInput, UiModel};
     #[cfg(feature = "has-display")]
     use umsh_ux_display_tracker::screen;
+    // `ButtonEvent` is the vocabulary [`Gate`] judges, so every board with
+    // a control needs it. The recognizer behind it is only for a button
+    // carrying more than one meaning — which the Wio's Back button, beside
+    // a pad, does not.
     #[cfg(any(feature = "button-nav", feature = "t1000e"))]
-    use umsh_ux_tracker::button::{ButtonEdge, ButtonEvent, ButtonFsm};
+    use umsh_ux_tracker::button::ButtonEvent;
+    #[cfg(any(
+        all(feature = "button-nav", not(feature = "dpad-nav")),
+        feature = "t1000e"
+    ))]
+    use umsh_ux_tracker::button::{ButtonEdge, ButtonFsm};
     // The display trackers take their timings from the shared class
     // policy; only the headless T-1000E still names its own.
     #[cfg(feature = "t1000e")]
@@ -1666,7 +1678,16 @@ mod firmware {
                     identity_precision: snapshot.gnss_ident_precision,
                 },
             );
-            super::device_node::DEV_SYNC.signal(snapshot);
+            super::device_node::publish_snapshot(snapshot);
+            // Every switch the settings menu shows is read back out of the
+            // mirrors this call has just finished writing, so this is the
+            // one place that can honestly say they moved. A host write, a
+            // boot restore, a `CMD_RST` and a press on the panel all
+            // arrive here, which is why none of them has to remember to
+            // raise it for itself. `UI_REFRESH` never lights a dark panel
+            // — the press that caused this already did.
+            #[cfg(feature = "has-display")]
+            UI_REFRESH.signal(());
         }
 
         #[cfg(feature = "t1000e")]
@@ -3373,10 +3394,22 @@ mod firmware {
                             // the property, an attached host and the saved
                             // snapshot all see the same flip; poking the
                             // subsystem here would be undone by the next
-                            // device-domain sync. The new state reaches the
-                            // panel through `ui_settings` on the redraw
-                            // below, which is why the entry stays put.
+                            // device-domain sync.
+                            //
+                            // Which is also why the frame is *not* drawn
+                            // here. The session runs in another task and
+                            // has not moved the value yet, so a redraw on
+                            // this pass would push the old state back onto
+                            // the panel and call it fresh. The frame that
+                            // shows the flip is the one `UI_REFRESH` will
+                            // drive out of `publish_dev_domain`, and on a
+                            // bistable panel that is one partial refresh
+                            // rather than two. Nothing else on screen
+                            // needed this press: a notice only ever lives
+                            // on the status page, and a toggle entry never
+                            // does.
                             INPUT_CH.send(InEvent::Toggle(ulcp_setting(id))).await;
+                            redraw = false;
                         }
                         None => {}
                     }
@@ -3451,10 +3484,10 @@ mod firmware {
     ///
     /// A board whose only control is this button has to carry the whole
     /// vocabulary on it: click advances, double-click selects, and a
-    /// 1–4 second hold released by the user goes back one entry. Beside
-    /// a D-pad the same button is only what the case labels it — Back —
-    /// and the pad carries the rest, so a click leaves the screen and
-    /// nothing else on the button means anything.
+    /// 1–4 second hold released by the user goes back one entry. That is
+    /// the only situation worth a chord recognizer — beside a pad the
+    /// button is only what the case labels it, and
+    /// [`back_button_task`] resolves it without one.
     #[cfg(all(feature = "button-nav", not(feature = "dpad-nav")))]
     const fn nav_input(event: ButtonEvent) -> Option<UiInput> {
         match event {
@@ -3462,14 +3495,6 @@ mod firmware {
             ButtonEvent::Double => Some(UiInput::Select),
             ButtonEvent::Long => Some(UiInput::Backward),
             ButtonEvent::Triple | ButtonEvent::Quad | ButtonEvent::VeryLong => None,
-        }
-    }
-
-    #[cfg(feature = "dpad-nav")]
-    const fn nav_input(event: ButtonEvent) -> Option<UiInput> {
-        match event {
-            ButtonEvent::Single => Some(UiInput::Back),
-            _ => None,
         }
     }
 
@@ -3481,7 +3506,7 @@ mod firmware {
     /// What a gesture means is decided by [`Gate`] at the press that
     /// starts it, not at the event that ends it, so a chord begun while
     /// something else owned the button is judged as a whole.
-    #[cfg(feature = "button-nav")]
+    #[cfg(all(feature = "button-nav", not(feature = "dpad-nav")))]
     #[embassy_executor::task]
     async fn button_task(mut button: Input<'static>) {
         const DEBOUNCE: Duration = Duration::from_millis(10);
@@ -3553,6 +3578,80 @@ mod firmware {
             }
 
             gate.settle(fsm.next_deadline().is_none());
+        }
+    }
+
+    /// The Back button on a board that also has a pad (active-low,
+    /// pull-up): press to leave the screen, hold four seconds to power
+    /// off.
+    ///
+    /// Deliberately *not* [`ButtonFsm`]. The recognizer exists so a board
+    /// whose only control is one button can carry a whole vocabulary on
+    /// it, and it pays for that in latency: a click is not a click until
+    /// the chord gap has passed without a second press, so every Back
+    /// costs 400 ms — and pressing Back three times quickly to climb out
+    /// of the tree resolves as one triple-click, which on this board
+    /// means nothing at all. Beside a pad the button is only what the
+    /// case labels it, so it acts on the release edge and the only other
+    /// thing it can mean is the power-off hold.
+    ///
+    /// [`Gate`] still decides what a press means, by the same
+    /// alert-cancel and wake-the-panel rules every control obeys. The
+    /// hold passes the gate regardless: a device that has gone dark still
+    /// has to be switchable off.
+    #[cfg(feature = "dpad-nav")]
+    #[embassy_executor::task]
+    async fn back_button_task(mut button: Input<'static>) {
+        const DEBOUNCE: Duration = Duration::from_millis(15);
+        // Taken from the shared class timings rather than written again
+        // here, so the hold that powers this board off is the same hold
+        // that powers off every other board in the class.
+        let power_off = umsh_ux_display_tracker::button_timings()
+            .very_long_press
+            .map_or(Duration::from_secs(4), |hold| {
+                Duration::from_millis(hold.as_millis() as u64)
+            });
+        let mut gate = Gate::new();
+        loop {
+            button.wait_for_low().await;
+            Timer::after(DEBOUNCE).await;
+            if !button.is_low() {
+                continue;
+            }
+
+            gate.set(GateReason::AlertActive, alert_active());
+            #[cfg(feature = "display-oled")]
+            gate.set(GateReason::ScreenOff, SCREEN_OFF.load(Ordering::Acquire));
+            gate.on_press();
+            // Wake on the press, not on the release, so the panel is lit
+            // while the user is still deciding how long to hold.
+            #[cfg(feature = "display-oled")]
+            UI_WAKE.signal(());
+
+            // The hold fires while still held rather than on release, so
+            // it confirms itself while the user is committing to it.
+            let held = match select(button.wait_for_high(), Timer::after(power_off)).await {
+                Either::First(()) => ButtonEvent::Single,
+                Either::Second(()) => ButtonEvent::VeryLong,
+            };
+
+            match gate.disposition(held) {
+                // Whoever found the radio meant to silence it, not to
+                // leave the screen.
+                Disposition::CancelAlert => INPUT_CH.send(InEvent::CancelAlert).await,
+                Disposition::ConsumedByWake | Disposition::Discard => {}
+                Disposition::Deliver => match held {
+                    ButtonEvent::VeryLong => SHUTDOWN_SIGNAL.signal(()),
+                    _ => UI_INPUT_CH.send(UiInput::Back).await,
+                },
+            }
+            gate.settle(true);
+
+            // Whatever the press became, the button is done until it is
+            // let go — otherwise a four-second hold would also deliver
+            // the Back its release looks like.
+            button.wait_for_high().await;
+            Timer::after(DEBOUNCE).await;
         }
     }
 
@@ -3720,9 +3819,10 @@ mod firmware {
     /// Owns the SH1106 panel and the display attention policy.
     ///
     /// The panel is emissive, so attention lapsing actually turns it off:
-    /// dimmed as a warning at 7 s, dark at 10 s. It stays lit for as long
-    /// as a pairing window is open, because its PIN is the only place
-    /// that number is shown, and for as long as a locate alert runs.
+    /// full brightness for 20 s, a second-long fall into the dim warning,
+    /// dark at 30 s. It stays lit for as long as a pairing window is open,
+    /// because its PIN is the only place that number is shown, and for as
+    /// long as a locate alert runs.
     #[cfg(feature = "display-oled")]
     #[embassy_executor::task]
     async fn oled_display_task(mut oled: display::Sh1106<'static>) {
@@ -3807,10 +3907,20 @@ mod firmware {
                             // the property, an attached host and the saved
                             // snapshot all see the same flip; poking the
                             // subsystem here would be undone by the next
-                            // device-domain sync. The new state reaches the
-                            // panel through `ui_settings` on the redraw
-                            // below, which is why the entry stays put.
+                            // device-domain sync.
+                            //
+                            // Which is also why the frame is *not* drawn
+                            // here. The session runs in another task and
+                            // has not moved the value yet, so a redraw on
+                            // this pass would push the old state back onto
+                            // the panel and call it fresh. The frame that
+                            // shows the flip is the one `UI_REFRESH` will
+                            // drive out of `publish_dev_domain`. Nothing
+                            // else on screen needed this press: a notice
+                            // only ever lives on the status page, and a
+                            // toggle entry never does.
                             INPUT_CH.send(InEvent::Toggle(ulcp_setting(id))).await;
+                            redraw = false;
                         }
                         None => {}
                     }
@@ -3874,8 +3984,15 @@ mod firmware {
                     oled.set_display_on(false).await;
                     redraw = false;
                 }
-                Some(Transition::Dimmed) => {
-                    oled.set_contrast(display::CONTRAST_DIM).await;
+                // One step of the fall, not the whole of it: the policy
+                // sends one of these per ramp step and says where between
+                // the panel's two contrasts to sit. Nothing is redrawn —
+                // a contrast write costs three bytes and leaves the
+                // framebuffer alone, which is what makes a fade affordable
+                // on a panel that redraws only on events.
+                Some(Transition::Dimming) => {
+                    oled.set_contrast(display::contrast_for(attention.brightness_permille()))
+                        .await;
                     redraw = false;
                 }
                 Some(Transition::Woke) | None => {}
@@ -5835,7 +5952,7 @@ mod firmware {
             // is the one the case labels Back, and is where the
             // four-second power-off hold lives.
             let button = Input::new(p.P0_08, Pull::Up);
-            spawner.spawn(button_task(button).unwrap());
+            spawner.spawn(back_button_task(button).unwrap());
             // The four-way pad and its center press: D25–D29, in the
             // order `dpad_task` reads them.
             spawner.spawn(

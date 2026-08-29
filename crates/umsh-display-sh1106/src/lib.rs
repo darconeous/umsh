@@ -44,10 +44,25 @@ pub const ADDR_CANDIDATES: [u8; 2] = [0x3D, 0x3C];
 
 /// Panel contrast for an actively used display.
 pub const CONTRAST_NORMAL: u8 = 0x7F;
-/// Panel contrast for the dim warning that precedes lapsing. Visibly
-/// darker than [`CONTRAST_NORMAL`] while still legible, so the user gets
-/// a chance to touch the button before the panel goes dark.
-pub const CONTRAST_DIM: u8 = 0x10;
+/// Panel contrast for the dim warning that precedes lapsing. Far darker
+/// than [`CONTRAST_NORMAL`] while still legible in the dark, so the
+/// warning is unmistakable and the user still has a screen to answer it
+/// on before the panel goes dark.
+pub const CONTRAST_DIM: u8 = 0x07;
+
+/// Where between [`CONTRAST_DIM`] and [`CONTRAST_NORMAL`] to sit, given a
+/// permille of the way from the first to the second.
+///
+/// This is the mapping the display-attention policy's
+/// `brightness_permille` needs, and the reason it deals in permille of the
+/// gap rather than in absolute brightness: full brightness on this
+/// controller is 0x7F where an SSD1306's is 0x5F, so a policy that named
+/// a contrast would be naming the wrong one on half the class.
+pub const fn contrast_for(permille: u16) -> u8 {
+    let span = (CONTRAST_NORMAL - CONTRAST_DIM) as u32;
+    let permille = if permille > 1_000 { 1_000 } else { permille };
+    CONTRAST_DIM + (span * permille as u32 / 1_000) as u8
+}
 
 /// Control byte introducing a command stream.
 const CTRL_CMD: u8 = 0x00;

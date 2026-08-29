@@ -34,7 +34,7 @@ configuration—stays on the phone, per
 Status              reads in place; Select checks in
 Identity            reads in place; Select alternates QR code and address text
 Messages            reads in place; Select enters the message list
-Settings            Select enters
+Settings            reads in place; Select enters
     Back
     Bluetooth       Select enters
         Back
@@ -48,17 +48,31 @@ Settings            Select enters
     Radio           Select enters
         Back
         Forwarding      toggle
-        Statistics      reads in place
+        Statistics      Select opens
 ```
 
 Each level is a wrapping list. Next and Previous walk it, and Select does
 whatever the highlighted entry defines.
 
-**Highlighting an entry is how you read it.** An entry that has content shows
-it right there rather than behind a Select; the top three entries and
-Statistics are all read by walking to them. Walking the list therefore never
-changes anything, which is what makes it safe to explore a device whose entire
-input vocabulary is three gestures.
+**The top level is a set of pages; every level below it is a list.** At the top
+there is nothing to compare an entry against, so each one takes the whole panel
+while the cursor is on it: Status answers what the device is doing, Identity
+gives its address, and Settings reads back what the switches under it are set
+to. Below the top an entry is one row among its neighbors, and reading one takes
+a Select, which opens its page.
+
+**Reading in place is a property of the level, not of the entry**, and the top
+level is the exception rather than the rule. A submenu that answered a question
+the moment the cursor crossed it would make walking the list a way of asking
+questions—and would spend the whole panel on whichever entry the user happened
+to be passing through on the way to another. Statistics is the case that makes
+this concrete: it belongs to Radio, so it is a row there, and its counters are
+one Select away.
+
+Walking still never changes anything, which is what makes it safe to explore a
+device whose entire input vocabulary is three gestures. Opening a reading page
+changes nothing either; any press dismisses it, back onto the entry it was
+opened from.
 
 **Status is home.** It is where boot lands, where a completed action returns,
 and where a display lapse sends the user back to. It is always enabled.
@@ -137,7 +151,8 @@ several entries is a row that never changes.
 
 | Entry kind | On Select |
 |---|---|
-| Reading entry | Nothing, or the one extra action that entry defines |
+| Reading entry, top level | Nothing, or the one extra action that entry defines |
+| Reading entry, below the top | Open its page; any press dismisses it |
 | Submenu | Enter it |
 | Toggle | Flip it and stay on the entry, showing the new state |
 | Action | Perform it, return home, and report the outcome |

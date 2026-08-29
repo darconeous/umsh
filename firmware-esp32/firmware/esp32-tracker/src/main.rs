@@ -113,10 +113,12 @@ use board::battery as board_battery;
 #[cfg(not(feature = "pmic-axp2101"))]
 use board::battery::BatterySampler;
 #[cfg(feature = "display-sh1106")]
-use board::display::{self, Brightness, Display};
+use board::display::{self, Brightness, Display, brightness_from_permille};
 // `DisplayConfigAsync` is the ssd1306 trait carrying `init()`.
 #[cfg(not(feature = "display-sh1106"))]
-use board::display::{self, Brightness, Display, DisplayConfigAsync as _};
+use board::display::{
+    self, Brightness, Display, DisplayConfigAsync as _, brightness_from_permille,
+};
 #[cfg(feature = "pmic-axp2101")]
 use board::gnss::{PmuI2cDevice, SharedPmic};
 #[cfg(feature = "pmic-axp2101")]
@@ -1336,7 +1338,15 @@ impl DeviceEnv for BoardDeviceEnv {
                 identity_precision: snapshot.gnss_ident_precision,
             },
         );
-        device_node::DEV_SYNC.signal(snapshot);
+        device_node::publish_snapshot(snapshot);
+        // Every switch the settings menu shows is read back out of the
+        // mirrors this call has just finished writing, so this is the one
+        // place that can honestly say they moved. A host write, a boot
+        // restore, a `CMD_RST` and a press on the panel all arrive here,
+        // which is why none of them has to remember to raise it for
+        // itself. `UI_REFRESH` never lights a dark panel — the press that
+        // caused this already did.
+        UI_REFRESH.signal(());
     }
 
     fn trace(&mut self, args: core::fmt::Arguments<'_>) {
@@ -2460,9 +2470,9 @@ async fn clock_tick(awake: bool) {
 /// instead), and the display attention policy.
 ///
 /// The panel is emissive, so attention lapsing actually turns it off:
-/// dimmed as a warning at 7 s, dark at 10 s. It stays lit for as long as
-/// a pairing window is open, because its PIN is the only place that
-/// number is shown.
+/// full brightness for 20 s, a second-long fall into the dim warning,
+/// dark at 30 s. It stays lit for as long as a pairing window is open,
+/// because its PIN is the only place that number is shown.
 #[embassy_executor::task]
 async fn display_task(mut display: Display, #[cfg(not(feature = "pmic-axp2101"))] mut vext: Vext) {
     let mut model = UiModel::new(board_menu_items());
@@ -2536,10 +2546,19 @@ async fn display_task(mut display: Display, #[cfg(not(feature = "pmic-axp2101"))
                     Some(UiEffect::Toggle(id)) => {
                         // Applied by the ULCP session, so the property, an
                         // attached host and the saved snapshot all see the
-                        // same flip. The new state reaches the panel
-                        // through `ui_status` on the redraw below, which
-                        // is why the entry stays put.
+                        // same flip.
+                        //
+                        // Which is also why the frame is *not* drawn here.
+                        // The session runs in another task and has not
+                        // moved the value yet, so a redraw on this pass
+                        // would push the old state back onto the panel and
+                        // call it fresh. The frame that shows the flip is
+                        // the one `UI_REFRESH` will drive out of
+                        // `publish_dev_domain`. Nothing else on screen
+                        // needed this press: a notice only ever lives on
+                        // the status page, and a toggle entry never does.
                         INPUT_CH.send(InEvent::Toggle(ulcp_setting(id))).await;
+                        redraw = false;
                     }
                     None => {}
                 }
@@ -2590,8 +2609,16 @@ async fn display_task(mut display: Display, #[cfg(not(feature = "pmic-axp2101"))
                 let _ = display.set_display_on(false).await;
                 redraw = false;
             }
-            Some(Transition::Dimmed) => {
-                let _ = display.set_brightness(Brightness::DIM).await;
+            // One step of the fall, not the whole of it: the policy sends
+            // one of these per ramp step and says where between the
+            // panel's two contrasts to sit. Nothing is redrawn — a
+            // contrast write leaves the framebuffer alone, which is what
+            // makes a fade affordable on a panel that redraws only on
+            // events.
+            Some(Transition::Dimming) => {
+                let _ = display
+                    .set_brightness(brightness_from_permille(attention.brightness_permille()))
+                    .await;
                 redraw = false;
             }
             Some(Transition::Woke) | None => {}

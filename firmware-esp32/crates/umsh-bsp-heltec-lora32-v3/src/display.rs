@@ -27,6 +27,50 @@ use ssd1306::{I2CDisplayInterface, Ssd1306Async};
 pub use ssd1306::mode::DisplayConfigAsync;
 pub use ssd1306::prelude::Brightness;
 
+/// The two ends of the ramp, as raw contrast. The ssd1306 crate keeps
+/// these behind preset constants, so they are restated here to be
+/// interpolated between.
+///
+/// The dim end is the bottom of the register, well below the crate's own
+/// `Brightness::DIM` (0x2F). This panel needs it: measured against the
+/// hardware, an SSD1306 at the 0x07 the SH1106 boards dim to is still
+/// bright enough that the warning does not read as one. Contrast 0 is not
+/// off — the panel stays faintly legible, which is the whole point of the
+/// dim state. `CONTRAST_NORMAL` is the crate's `Brightness::NORMAL`, so
+/// the lit end is exactly where it has always been.
+const CONTRAST_DIM: u8 = 0x00;
+const CONTRAST_NORMAL: u8 = 0x5F;
+/// Precharge period, the controller's other brightness lever and the only
+/// one left once contrast is on the floor. The crate's own `DIMMEST`
+/// preset pairs the short period with contrast 0, so the bottom of this
+/// ramp does too; every step above it keeps the period the lit presets
+/// use, which leaves contrast the only thing moving across the fade.
+const PRECHARGE_DIM: u8 = 0x1;
+const PRECHARGE_NORMAL: u8 = 0x2;
+
+/// A point on the way from the dim floor to full brightness, given a
+/// permille of the gap — what the display-attention policy's
+/// `brightness_permille` hands back while the panel is falling into its
+/// dim state. Present under this name on every board in the ESP32
+/// workspace, so the shared display task never learns which panel it has.
+///
+/// The presets are a five-step ladder, which is too coarse to read as a
+/// fade; `Brightness::custom` reaches the controller's whole 8-bit
+/// contrast range.
+pub const fn brightness_from_permille(permille: u16) -> Brightness {
+    let span = (CONTRAST_NORMAL - CONTRAST_DIM) as u32;
+    let permille = if permille > 1_000 { 1_000 } else { permille };
+    let precharge = if permille == 0 {
+        PRECHARGE_DIM
+    } else {
+        PRECHARGE_NORMAL
+    };
+    Brightness::custom(
+        precharge,
+        CONTRAST_DIM + (span * permille as u32 / 1_000) as u8,
+    )
+}
+
 /// The concrete driver type for this board's OLED.
 pub type Display = Ssd1306Async<
     I2CInterface<I2c<'static, Async>>,

@@ -41,6 +41,15 @@ impl Brightness {
     pub const DIM: Self = Self(umsh_display_sh1106::CONTRAST_DIM);
 }
 
+/// A point on the way from [`Brightness::DIM`] to [`Brightness::NORMAL`],
+/// given a permille of the gap — what the display-attention policy's
+/// `brightness_permille` hands back while the panel is falling into its
+/// dim state. Present under this name on every board in the ESP32
+/// workspace, so the shared display task never learns which panel it has.
+pub const fn brightness_from_permille(permille: u16) -> Brightness {
+    Brightness(umsh_display_sh1106::contrast_for(permille))
+}
+
 /// The panel plus its frame buffer, presenting the buffered-graphics
 /// surface the shared tracker sources expect: draw into it, `flush` to
 /// push the frame.

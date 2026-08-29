@@ -14,9 +14,13 @@
 //! [`level`](MenuItem::level), and a level knows the entry that opens it.
 //! That keeps [`UiModel`] `Copy`, which the display tasks rely on.
 //!
-//! Highlighting an entry is how you read it. An entry that has content
-//! shows it in place, so walking the list never changes anything and
-//! Select is reserved for the entries that act.
+//! The top level is a set of pages the user walks between: each of its
+//! three entries takes the whole panel while the cursor is on it. Every
+//! level below it is a list, and reading an entry there takes a Select,
+//! which opens a [`Page::Detail`]. Reading in place is a property of the
+//! level rather than of the entry, and the top level is the exception —
+//! a submenu that answered a question the moment the cursor crossed it
+//! would make walking the list a way of asking questions.
 //!
 //! [`MenuItem::Status`] is the home item and is always enabled: it is
 //! where boot starts, where an activated item returns to, and where the
@@ -109,8 +113,10 @@ pub enum ToggleId {
 /// What an entry does when it is selected.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum EntryKind {
-    /// Reads in place. Select does nothing, or the one extra action the
-    /// entry defines — home's check-in is the only one today.
+    /// Has something to read. At the top level it reads in place, and
+    /// Select does nothing or the one extra action the entry defines —
+    /// home's check-in is the only one today. Below the top level it is
+    /// an ordinary list row, and Select opens its [`Page::Detail`].
     Reading(Option<UiEffect>),
     /// Opens the named level.
     Submenu(Level),
@@ -262,6 +268,18 @@ impl MenuItem {
         )
     }
 
+    /// Whether highlighting this entry is already enough to read it.
+    ///
+    /// A property of the *level*, not of the entry. The top level is a
+    /// set of pages the user walks between, so an entry there is the
+    /// whole panel while the cursor is on it; every level below it is a
+    /// list, where an entry is one row among its neighbors and reading it
+    /// takes a Select. The top level is the exception, and this is the
+    /// one place that says so.
+    pub const fn reads_in_place(self) -> bool {
+        matches!(self.level(), Level::Top)
+    }
+
     /// Whether selecting this item opens a confirmation page rather than
     /// acting immediately.
     ///
@@ -371,8 +389,11 @@ impl MenuItems {
     /// The enabled entries of one level, in navigation order.
     ///
     /// This is what a renderer draws a list from, so it and
-    /// [`step`](Self::step) must agree about what is on screen.
-    pub fn entries(self, level: Level) -> impl Iterator<Item = MenuItem> {
+    /// [`step`](Self::step) must agree about what is on screen. It is
+    /// `Clone` because a renderer windowing a list walks it more than
+    /// once — for the count, for the window, and for the entry past its
+    /// end — and rebuilding it each time would have to repeat the level.
+    pub fn entries(self, level: Level) -> impl Iterator<Item = MenuItem> + Clone {
         MenuItem::ALL
             .into_iter()
             .filter(move |&item| item.level() == level && self.reachable(item))
@@ -433,6 +454,10 @@ pub enum Page {
     /// The menu, with `.0` highlighted. The item's own
     /// [`level`](MenuItem::level) is the list being shown.
     Menu(MenuItem),
+    /// The page a reading entry below the top level opens, taking the
+    /// whole panel. The entry it was opened from is where any press
+    /// returns to.
+    Detail(MenuItem),
     /// A confirmation for a destructive `item`. `confirm_selected` is
     /// false while Cancel is the visible choice.
     Confirm {
@@ -500,7 +525,7 @@ impl UiModel {
     /// The list currently on screen.
     pub const fn level(&self) -> Level {
         match self.page {
-            Page::Menu(item) => item.level(),
+            Page::Menu(item) | Page::Detail(item) => item.level(),
             Page::Confirm { item, .. } => item.level(),
         }
     }
@@ -563,10 +588,17 @@ impl UiModel {
                 None
             }
             (Page::Menu(item), UiInput::Select) => match item.kind() {
-                // A reading entry stays where it is: the user is looking
-                // at it, and its action — where it has one — returns
-                // nothing to look at instead.
-                EntryKind::Reading(effect) => effect,
+                // At the top level the entry is already the whole screen,
+                // so it stays where it is and Select is free to carry its
+                // action — home's check-in is the only one.
+                EntryKind::Reading(effect) if item.reads_in_place() => effect,
+                // Below the top the entry is one row of a list, so Select
+                // is what opens it. Reaching a page by walking past it
+                // would make walking the list a way of asking questions.
+                EntryKind::Reading(_) => {
+                    self.page = Page::Detail(item);
+                    None
+                }
                 EntryKind::Submenu(level) => {
                     self.page = Page::Menu(self.items.first_after_back(level));
                     None
@@ -593,6 +625,14 @@ impl UiModel {
             },
             (Page::Menu(item), UiInput::Back) => {
                 self.leave(item.level());
+                None
+            }
+            // A reading page has nothing to walk and nothing to activate,
+            // so any press dismisses it back onto the entry it was opened
+            // from. A one-button board has no fourth gesture to reserve
+            // for a page whose only remaining question is "done?".
+            (Page::Detail(item), _) => {
+                self.page = Page::Menu(item);
                 None
             }
             // Backing out of a question is answering it with no, which
@@ -849,7 +889,7 @@ mod tests {
     }
 
     #[test]
-    fn reading_entries_stay_put_and_only_home_acts() {
+    fn top_level_reading_entries_stay_put_and_only_home_acts() {
         let mut ui = full();
         // Home carries the device's frequent, non-destructive action.
         assert_eq!(ui.apply(UiInput::Select), Some(UiEffect::CheckIn));
@@ -858,14 +898,56 @@ mod tests {
         walk_to(&mut ui, MenuItem::Identity);
         assert_eq!(ui.apply(UiInput::Select), None);
         assert_eq!(ui.page(), Page::Menu(MenuItem::Identity));
+    }
 
+    /// Walk to Statistics, which lives two levels down.
+    fn at_stats() -> UiModel {
+        let mut ui = full();
         walk_to(&mut ui, MenuItem::Settings);
         ui.apply(UiInput::Select);
         walk_to(&mut ui, MenuItem::Radio);
         ui.apply(UiInput::Select);
         walk_to(&mut ui, MenuItem::Stats);
-        assert_eq!(ui.apply(UiInput::Select), None);
+        ui
+    }
+
+    #[test]
+    fn a_reading_entry_below_the_top_opens_a_page() {
+        let mut ui = at_stats();
+        // Walking onto it shows the Radio list, not the statistics.
         assert_eq!(ui.page(), Page::Menu(MenuItem::Stats));
+        assert_eq!(ui.apply(UiInput::Select), None);
+        assert_eq!(ui.page(), Page::Detail(MenuItem::Stats));
+        assert_eq!(ui.level(), Level::Radio);
+    }
+
+    #[test]
+    fn any_press_dismisses_a_reading_page() {
+        for input in [
+            UiInput::Forward,
+            UiInput::Backward,
+            UiInput::Select,
+            UiInput::Back,
+        ] {
+            let mut ui = at_stats();
+            ui.apply(UiInput::Select);
+            assert_eq!(ui.page(), Page::Detail(MenuItem::Stats));
+            // Back onto the entry it was opened from, not to the top of
+            // the list and not home.
+            assert_eq!(ui.apply(input), None, "{input:?}");
+            assert_eq!(ui.page(), Page::Menu(MenuItem::Stats), "{input:?}");
+        }
+    }
+
+    #[test]
+    fn a_reading_page_is_never_home_and_a_lapse_unwinds_it() {
+        let mut ui = at_stats();
+        ui.apply(UiInput::Select);
+        assert!(!ui.is_home());
+        ui.go_home();
+        assert_eq!(ui.page(), Page::Menu(MenuItem::Status));
+        assert_eq!(ui.level(), Level::Top);
+        assert!(ui.is_home());
     }
 
     /// Walk to Clear bonds, which lives two levels down.

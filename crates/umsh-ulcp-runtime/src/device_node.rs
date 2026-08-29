@@ -203,6 +203,30 @@ pub static NODE_CH: umsh_radio_loraphy::Channels<NodeMutex, 4, 2> =
 /// just sits here unconsumed.
 pub static DEV_SYNC: Signal<NodeMutex, DevDomainSnapshot> = Signal::new();
 
+/// Hand a snapshot to the sync loop, publishing the mirrors a reader can
+/// see synchronously on the way past.
+///
+/// Everything a display reads back after a settings change has to be true
+/// by the time this returns. The sync loop runs in its own task and does
+/// not, so a mirror updated where the snapshot is *consumed* is a value
+/// that lags the publish by however long that task takes to be scheduled
+/// — and a panel redrawing on the publish would draw the old one.
+pub fn publish_snapshot(snapshot: DevDomainSnapshot) {
+    if NODE_IS_REPEATER.swap(snapshot.repeater_enabled, Ordering::Relaxed)
+        != snapshot.repeater_enabled
+    {
+        debug_log(format_args!(
+            "node dev-sync: repeater {}",
+            if snapshot.repeater_enabled {
+                "ON"
+            } else {
+                "off"
+            }
+        ));
+    }
+    DEV_SYNC.signal(snapshot);
+}
+
 /// Whether the device node may transmit. Cleared when a snapshot reports
 /// the identity gone (factory reset); the MAC still holds the old
 /// identity until reboot, but it must stop originating traffic.
@@ -513,18 +537,6 @@ pub async fn dev_sync_loop<CS: CounterStore + 'static>(
             node.enable_peer_repeaters_responder();
         } else {
             node.disable_peer_repeaters_responder();
-        }
-        if NODE_IS_REPEATER.swap(snapshot.repeater_enabled, Ordering::Relaxed)
-            != snapshot.repeater_enabled
-        {
-            debug_log(format_args!(
-                "node dev-sync: repeater {}",
-                if snapshot.repeater_enabled {
-                    "ON"
-                } else {
-                    "off"
-                }
-            ));
         }
         let mut index = 0;
         while index < applied.len() {

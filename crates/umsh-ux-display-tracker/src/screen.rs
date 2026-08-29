@@ -470,11 +470,11 @@ where
 
     let mut line: String<LINE> = String::new();
     let content_end = match model.page() {
-        // An entry with something to read gets the panel to itself: the
-        // highlight names what is being read and the rows below are the
-        // reading. Which entries those are is a property of the entry,
-        // not of the level it sits in — Statistics reads in place from
-        // two levels down.
+        // The top level is three pages the user walks between, each of
+        // them the whole panel: the highlight names what is being read
+        // and the rows below are the reading. Everything below the top is
+        // only meaningful beside its neighbors, so the list it belongs to
+        // is the screen and a Select is what opens one of its entries.
         Page::Menu(MenuItem::Status) => {
             draw_row_inverted(target, layout, 1, menu_label(MenuItem::Status));
             draw_status_page(target, layout, model, status, &mut line)
@@ -483,12 +483,20 @@ where
             draw_row_inverted(target, layout, 1, menu_label(MenuItem::Identity));
             draw_identity_page(target, layout, status)
         }
-        Page::Menu(MenuItem::Stats) => {
+        Page::Menu(MenuItem::Settings) => {
+            draw_row_inverted(target, layout, 1, menu_label(MenuItem::Settings));
+            draw_settings_page(target, layout, model, status)
+        }
+        Page::Detail(MenuItem::Stats) => {
             draw_row_inverted(target, layout, 1, menu_label(MenuItem::Stats));
             draw_stats_page(target, layout, status, &mut line)
         }
-        // Everything else is only meaningful beside its neighbors, so
-        // the list it belongs to is the screen.
+        // No other entry opens a page yet. Naming it is still better than
+        // a blank panel, and better than a list the Select just left.
+        Page::Detail(item) => {
+            draw_row_inverted(target, layout, 1, menu_label(item));
+            2
+        }
         Page::Menu(item) => draw_level_list(target, layout, model, status, item),
         Page::Confirm {
             confirm_selected, ..
@@ -516,6 +524,13 @@ where
                 &menu_hints[..]
             }
             None => &menu_hints[..1],
+        },
+        // A reading page has one question left, so it gets one hint —
+        // and it names the gesture that is quickest rather than the only
+        // one that works, since every press dismisses it.
+        Page::Detail(_) => match layout.controls {
+            Controls::OneButton => &["2x: back"],
+            Controls::Dpad => &["OK: back"],
         },
         Page::Confirm { .. } => match layout.controls {
             Controls::OneButton => &["1x/hold: toggle", "2x: confirm"],
@@ -816,14 +831,40 @@ where
 {
     let level = selected.level();
     let items = model.items();
-    let count = items.entries(level).count();
-    let index = items
-        .entries(level)
-        .position(|item| item == selected)
-        .unwrap_or(0);
+    draw_entry_rows(
+        target,
+        layout,
+        status,
+        1,
+        items.entries(level),
+        items.entries(level).count(),
+        items.entries(level).position(|item| item == selected),
+    )
+}
 
-    // Rows 1.. belong to the list; row 0 is the header.
-    let available = layout.rows.saturating_sub(1);
+/// Draw a run of menu entries down the panel from `first_row`, windowed
+/// so `cursor` — where there is one — lands on a row drawn complete, and
+/// overflowing in the board's own idiom.
+///
+/// Shared by the settings list, where the cursor picks the window, and by
+/// the top-level Settings summary, which has no cursor and simply starts
+/// at the beginning. Both have more entries than a five-row OLED can hold,
+/// and neither should invent its own way of saying so: two overflow
+/// idioms in one product teach the user to read neither.
+fn draw_entry_rows<D, I>(
+    target: &mut D,
+    layout: &Layout,
+    status: &StatusModel<'_>,
+    first_row: usize,
+    entries: I,
+    count: usize,
+    cursor: Option<usize>,
+) -> usize
+where
+    D: DrawTarget<Color = BinaryColor>,
+    I: Iterator<Item = MenuItem> + Clone,
+{
+    let available = layout.rows.saturating_sub(first_row);
     let overflows = count > available;
     // With a clipped row the last slot shows a partial entry, so one
     // fewer entry is drawn complete. A scroll bar costs width, not rows.
@@ -832,6 +873,7 @@ where
         _ => available,
     };
 
+    let index = cursor.unwrap_or(0);
     let start = if index < visible {
         0
     } else {
@@ -839,28 +881,60 @@ where
     };
 
     let mut line: String<LINE> = String::new();
-    for (offset, item) in items.entries(level).skip(start).take(visible).enumerate() {
+    for (offset, item) in entries.clone().skip(start).take(visible).enumerate() {
         line.clear();
         write_entry(&mut line, item, &status.settings);
-        draw_row_selectable(target, layout, 1 + offset, &line, item == selected);
+        let selected = cursor == Some(start + offset);
+        draw_row_selectable(target, layout, first_row + offset, &line, selected);
     }
 
     if !overflows {
-        return 1 + count;
+        return first_row + count;
     }
 
     match layout.overflow {
         Overflow::ClipRow => {
-            let after = start + visible;
-            if let Some(item) = items.entries(level).nth(after) {
+            if let Some(item) = entries.clone().nth(start + visible) {
                 line.clear();
                 write_entry(&mut line, item, &status.settings);
-                draw_clipped_row(target, layout, 1 + visible, &line);
+                draw_clipped_row(target, layout, first_row + visible, &line);
             }
         }
         Overflow::ScrollBar => draw_scroll_bar(target, layout, count, start, visible),
     }
     layout.rows
+}
+
+/// The top level's Settings page: what the switches under it are set to.
+///
+/// A page rather than a list, because at the top level an entry is the
+/// whole panel. It is a reading, not a control — the switches themselves
+/// are one Select and one level away, where they can be walked to and
+/// flipped — so nothing here is highlighted.
+fn draw_settings_page<D>(
+    target: &mut D,
+    layout: &Layout,
+    model: &UiModel,
+    status: &StatusModel<'_>,
+) -> usize
+where
+    D: DrawTarget<Color = BinaryColor>,
+{
+    let items = model.items();
+    let toggles = || {
+        MenuItem::ALL.into_iter().filter(move |item| {
+            matches!(item.kind(), EntryKind::Toggle(_)) && items.contains(*item)
+        })
+    };
+    draw_entry_rows(
+        target,
+        layout,
+        status,
+        2,
+        toggles(),
+        toggles().count(),
+        None,
+    )
 }
 
 /// An entry's name and, for a toggle, the state it is in.
@@ -1149,8 +1223,14 @@ const fn move_hint(controls: Controls) -> &'static str {
 ///
 /// The verb comes from the entry and the gesture from the hardware, so
 /// the two tables below say the same things in each board's own words.
+/// A reading entry is the one whose verb depends on where it sits: at the
+/// top level it is already the whole screen and Select has nothing left
+/// to do, while below the top it is a row that Select opens.
 const fn select_hint(controls: Controls, item: MenuItem) -> Option<&'static str> {
+    let reading_opens = matches!(item.kind(), EntryKind::Reading(_)) && !item.reads_in_place();
     match (controls, item.kind()) {
+        (Controls::OneButton, _) if reading_opens => Some("2x: open"),
+        (Controls::Dpad, _) if reading_opens => Some("OK: open"),
         (_, EntryKind::Reading(None)) => None,
         (Controls::OneButton, kind) => Some(match kind {
             EntryKind::Reading(Some(UiEffect::CheckIn)) => "2x: check in",
@@ -1465,6 +1545,15 @@ mod tests {
             let mut panel = TestPanel::new(layout.size);
             render_frame(&mut panel, &layout, &model, &demo_status());
             assert!(panel.lit_in(zone) > 0, "confirm frame lost the battery");
+
+            // And the reading page a submenu entry opens.
+            let mut model = UiModel::new(MenuItems::all());
+            navigate_to(&mut model, MenuItem::Stats);
+            model.apply(UiInput::Select);
+            assert!(matches!(model.page(), Page::Detail(_)));
+            let mut panel = TestPanel::new(layout.size);
+            render_frame(&mut panel, &layout, &model, &demo_status());
+            assert!(panel.lit_in(zone) > 0, "detail frame lost the battery");
         }
     }
 
@@ -1966,6 +2055,9 @@ mod tests {
         for layout in layouts() {
             let mut model = UiModel::new(MenuItems::all());
             navigate_to(&mut model, MenuItem::Stats);
+            // Below the top level, reading takes a Select.
+            model.apply(UiInput::Select);
+            assert_eq!(model.page(), Page::Detail(MenuItem::Stats));
 
             let mut panel = TestPanel::new(layout.size);
             render_frame(&mut panel, &layout, &model, &demo_status());
@@ -1976,6 +2068,53 @@ mod tests {
                     layout.size
                 );
             }
+        }
+    }
+
+    /// Walking onto Statistics shows the Radio list with Statistics
+    /// highlighted — not the statistics. Reading in place is the top
+    /// level's exception, and this is the entry that used to break it.
+    #[test]
+    fn a_reading_entry_below_the_top_is_drawn_as_a_row() {
+        for layout in layouts() {
+            let mut model = UiModel::new(MenuItems::all());
+            navigate_to(&mut model, MenuItem::Stats);
+
+            let mut panel = TestPanel::new(layout.size);
+            render_frame(&mut panel, &layout, &model, &demo_status());
+            assert!(
+                shows_row(&panel, &layout, "Forwarding  on"),
+                "the Radio list is not on screen at {:?}",
+                layout.size
+            );
+            // The counters belong to the page a Select away.
+            assert!(
+                !shows_row(&panel, &layout, "tx 12  rx 340"),
+                "the statistics leaked onto the list at {:?}",
+                layout.size
+            );
+        }
+    }
+
+    /// Every top-level entry takes the whole panel, Settings included:
+    /// what it says is what the switches under it are set to.
+    #[test]
+    fn the_top_level_settings_page_reads_the_switches() {
+        for layout in layouts() {
+            let mut model = UiModel::new(MenuItems::all());
+            walk_to(&mut model, MenuItem::Settings);
+
+            let mut panel = TestPanel::new(layout.size);
+            render_frame(&mut panel, &layout, &model, &demo_status());
+            assert!(
+                shows_row(&panel, &layout, "Bluetooth  on"),
+                "no switch reading on {:?}",
+                layout.size
+            );
+            // A summary, not a control: only the page title inverts,
+            // because nothing on it is under a cursor.
+            let rows = inverted_rows(&layout, &model, &demo_status());
+            assert_eq!(rows.as_slice(), &[1], "on {:?}", layout.size);
         }
     }
 
@@ -2038,6 +2177,15 @@ mod tests {
                                 render_frame(&mut panel, &layout, &model, &status);
                                 model.apply(UiInput::Forward);
                             }
+                        }
+
+                        // ...and the page every reading entry below the
+                        // top level opens.
+                        if !item.reads_in_place() && matches!(item.kind(), EntryKind::Reading(_)) {
+                            model.apply(UiInput::Select);
+                            assert!(matches!(model.page(), Page::Detail(_)));
+                            let mut panel = TestPanel::new(layout.size);
+                            render_frame(&mut panel, &layout, &model, &status);
                         }
                     }
 

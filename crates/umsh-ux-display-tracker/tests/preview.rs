@@ -18,7 +18,9 @@
 #![cfg(feature = "screen")]
 use embedded_graphics::pixelcolor::BinaryColor;
 use embedded_graphics::prelude::*;
-use umsh_ux_display_tracker::menu::{Level, MenuItem, MenuItems, Page, UiInput, UiModel};
+use umsh_ux_display_tracker::menu::{
+    EntryKind, Level, MenuItem, MenuItems, Page, UiInput, UiModel,
+};
 use umsh_ux_display_tracker::screen::*;
 use umsh_ux_tracker::battery::ChargeClass;
 
@@ -271,8 +273,10 @@ fn frames(layout: &Layout) -> Vec<Panel> {
     });
 
     // Every entry of every level, in the order the tree declares them:
-    // the reading pages, then each settings list with its highlight on a
-    // different row so the window and the bar can both be looked at.
+    // the top level's three pages, then each settings list with its
+    // highlight on a different row so the window and the bar can both be
+    // looked at — and, for the entries that open one, the page behind the
+    // Select.
     for item in MenuItem::ALL {
         let mut m = UiModel::new(MenuItems::all());
         navigate_to(&mut m, item);
@@ -289,6 +293,23 @@ fn frames(layout: &Layout) -> Vec<Panel> {
                 ),
             )
         });
+
+        if !item.reads_in_place() && matches!(item.kind(), EntryKind::Reading(_)) {
+            m.apply(UiInput::Select);
+            push(&|p| {
+                render_frame(
+                    p,
+                    layout,
+                    &m,
+                    &status(
+                        Some(60),
+                        Some(ChargeClass::Discharging),
+                        open,
+                        LinkState::Advertising,
+                    ),
+                )
+            });
+        }
     }
 
     // The confirmation page, both ways round.

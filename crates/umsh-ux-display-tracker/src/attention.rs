@@ -5,8 +5,8 @@
 //! lapsing *does* differs, because their costs differ:
 //!
 //! - [`DisplayKind::Emissive`] (OLED) burns current for as long as it is
-//!   lit, so lapsing turns the panel off — via a dimmed warning state
-//!   first, so it reads as going to sleep rather than dying.
+//!   lit, so lapsing turns the panel off — falling smoothly into a dimmed
+//!   warning state first, so it reads as going to sleep rather than dying.
 //! - [`DisplayKind::Persistent`] (e-paper) costs nothing to keep
 //!   readable, so it stays visible. Lapsing instead collapses the menu
 //!   back to its home page.
@@ -36,6 +36,13 @@
 
 use core::time::Duration;
 
+/// How often the fall into the dim state is stepped.
+///
+/// Twenty steps to a second, which on every panel in this class is one
+/// three-byte contrast write apiece and no framebuffer traffic at all.
+const RAMP_STEP_MS: u64 = 50;
+const RAMP_STEP: Duration = Duration::from_millis(RAMP_STEP_MS);
+
 /// How the board's panel behaves when it is not being looked at.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum DisplayKind {
@@ -57,13 +64,26 @@ pub struct AttentionConfig {
     /// Zero (or anything at least as large as `timeout`) disables the
     /// dim state. Ignored for persistent panels.
     pub dim_margin: Duration,
+    /// How long the fall from full brightness to the dim floor is drawn
+    /// out over. Zero drops in a single step, which is what a persistent
+    /// panel — and any board whose panel cannot be dimmed gradually —
+    /// wants.
+    pub dim_ramp: Duration,
 }
 
 impl AttentionConfig {
-    /// OLED default: off after 10 s, dimmed for the last 3 s of that.
+    /// OLED default: off after 30 s, dimmed for the last 10 s of that,
+    /// falling into the dim over the first second of those ten.
+    ///
+    /// The numbers are what a panel a person is actually reading from
+    /// needs: twenty seconds is long enough to walk to a menu entry,
+    /// read it, and think about it, and ten dimmed seconds afterwards is
+    /// long enough that the warning is a warning rather than the last
+    /// moment before the screen is gone.
     pub const EMISSIVE: Self = Self {
-        timeout: Duration::from_secs(10),
-        dim_margin: Duration::from_secs(3),
+        timeout: Duration::from_secs(30),
+        dim_margin: Duration::from_secs(10),
+        dim_ramp: Duration::from_secs(1),
     };
 
     /// E-paper default: menu returns home after 30 s. Longer than the
@@ -74,6 +94,7 @@ impl AttentionConfig {
     pub const PERSISTENT: Self = Self {
         timeout: Duration::from_secs(30),
         dim_margin: Duration::ZERO,
+        dim_ramp: Duration::ZERO,
     };
 
     /// The instant, relative to the last activity, at which the panel
@@ -86,6 +107,15 @@ impl AttentionConfig {
             return None;
         }
         Some(self.timeout - self.dim_margin)
+    }
+
+    /// How many [`RAMP_STEP`]s the fall into the dim state takes.
+    ///
+    /// Always at least one: a zero ramp is a single step change, which is
+    /// the whole of what a panel that cannot fade gradually needs.
+    fn ramp_steps(&self) -> u16 {
+        let steps = self.dim_ramp.as_millis().div_ceil(u128::from(RAMP_STEP_MS));
+        steps.clamp(1, u128::from(u16::MAX)) as u16
     }
 }
 
@@ -114,7 +144,8 @@ impl HoldReason {
 pub enum DisplayState {
     /// Being looked at: lit at full brightness, menu navigable.
     Active,
-    /// Emissive only: still lit, dimmed, about to lapse.
+    /// Emissive only: still lit, falling to or resting at the dim floor,
+    /// about to lapse. [`Attention::brightness_permille`] says which.
     Dim,
     /// Attention has lapsed. Emissive panels are off; persistent panels
     /// are showing their home page.
@@ -127,9 +158,16 @@ pub enum Transition {
     /// Attention regained. Emissive: draw the fresh frame *first*, then
     /// power the panel on (and restore full contrast if it was dimmed),
     /// so the user never catches a stale frame. Persistent: just redraw.
+    ///
+    /// A wake snaps straight back to full brightness. Only the fall is
+    /// gradual — the user is waiting on the rise.
     Woke,
-    /// Emissive only: drop to the dimmed contrast.
-    Dimmed,
+    /// Emissive only: apply [`Attention::brightness_permille`].
+    ///
+    /// One of these arrives per [`RAMP_STEP`] of the fall into the dim
+    /// state, not one per lapse, so a caller that treats it as a single
+    /// edge to a fixed contrast will draw a staircase of one step.
+    Dimming,
     /// Attention lapsed. Send the menu home, then — emissive only —
     /// power the panel off.
     Lapsed,
@@ -148,6 +186,9 @@ pub struct Attention {
     holds: u8,
     /// Timestamp the current inactivity window is measured from.
     since_ms: u64,
+    /// How many steps of the fall into the dim state have been reported.
+    /// Zero outside [`DisplayState::Dim`].
+    ramp_step: u16,
 }
 
 impl Attention {
@@ -159,6 +200,7 @@ impl Attention {
             state: DisplayState::Active,
             holds: 0,
             since_ms: now_ms,
+            ramp_step: 0,
         }
     }
 
@@ -203,6 +245,28 @@ impl Attention {
         self.holds != 0
     }
 
+    /// How far the panel sits between its dim floor and full brightness,
+    /// in permille: 1000 while active, falling across
+    /// [`AttentionConfig::dim_ramp`] once the dim state begins, and 0
+    /// once it has settled there.
+    ///
+    /// Deliberately *not* an absolute brightness. Which two levels a
+    /// panel's floor and full are is the board's business — an SH1106's
+    /// dim contrast is an eighth of its normal one and an SSD1306's is
+    /// half — and a policy that named either would be wrong on the other.
+    /// All this says is where between them to sit.
+    pub fn brightness_permille(&self) -> u16 {
+        match self.state {
+            DisplayState::Active => 1_000,
+            DisplayState::Dim => {
+                let steps = self.config.ramp_steps();
+                let done = u32::from(self.ramp_step.min(steps));
+                (1_000 - 1_000 * done / u32::from(steps)) as u16
+            }
+            DisplayState::Lapsed => 0,
+        }
+    }
+
     /// Register user-driven activity.
     ///
     /// Returns [`Transition::Woke`] when this actually brought the panel
@@ -215,6 +279,7 @@ impl Attention {
             return None;
         }
         self.state = DisplayState::Active;
+        self.ramp_step = 0;
         Some(Transition::Woke)
     }
 
@@ -258,14 +323,24 @@ impl Attention {
             self.state = DisplayState::Lapsed;
             return Some(Transition::Lapsed);
         }
-        if matches!(self.state, DisplayState::Active)
-            && let Some(dim_after) = self.config.dim_after(self.kind)
-            && idle >= dim_after
-        {
-            self.state = DisplayState::Dim;
-            return Some(Transition::Dimmed);
+        let dim_after = self.config.dim_after(self.kind)?;
+        if idle < dim_after {
+            return None;
         }
-        None
+        // Which step the fall has reached is derived from the clock rather
+        // than counted, so a poll that arrives late — or several steps
+        // late — lands on the brightness the elapsed time asks for instead
+        // of walking there one call at a time.
+        let steps = self.config.ramp_steps();
+        let elapsed = (idle - dim_after).as_millis() as u64;
+        let due = ((elapsed / RAMP_STEP_MS) + 1).min(u64::from(steps)) as u16;
+        if matches!(self.state, DisplayState::Active) {
+            self.state = DisplayState::Dim;
+        } else if due <= self.ramp_step {
+            return None;
+        }
+        self.ramp_step = due;
+        Some(Transition::Dimming)
     }
 
     /// Absolute monotonic-millisecond deadline for the next
@@ -274,15 +349,29 @@ impl Attention {
         if self.held() || self.is_lapsed() {
             return None;
         }
+        let lapse_at = self
+            .since_ms
+            .saturating_add(self.config.timeout.as_millis() as u64);
         let after = match self.state {
             DisplayState::Active => self
                 .config
                 .dim_after(self.kind)
                 .unwrap_or(self.config.timeout),
-            DisplayState::Dim => self.config.timeout,
+            // Still falling: the next step of the ramp. Once it has
+            // settled on the floor there is nothing left to do but lapse.
+            DisplayState::Dim => match self.config.dim_after(self.kind) {
+                Some(dim_after) if self.ramp_step < self.config.ramp_steps() => {
+                    dim_after + RAMP_STEP * u32::from(self.ramp_step)
+                }
+                _ => return Some(lapse_at),
+            },
             DisplayState::Lapsed => return None,
         };
-        Some(self.since_ms.saturating_add(after.as_millis() as u64))
+        Some(
+            self.since_ms
+                .saturating_add(after.as_millis() as u64)
+                .min(lapse_at),
+        )
     }
 }
 
@@ -298,26 +387,145 @@ mod tests {
         Attention::new(DisplayKind::Persistent, AttentionConfig::PERSISTENT, 0)
     }
 
+    /// Drive `a` the way a display task does: poll at each deadline up to
+    /// `until_ms`. Returns how many steps of the fall came back and the
+    /// first and last instant one did, asserting on the way through that
+    /// nothing but a ramp step arrived.
+    fn ramp(a: &mut Attention, until_ms: u64) -> (usize, u64, u64) {
+        let (mut count, mut first, mut last) = (0, 0, 0);
+        while let Some(deadline) = a.next_deadline() {
+            if deadline > until_ms {
+                break;
+            }
+            if let Some(transition) = a.poll(deadline) {
+                assert_eq!(transition, Transition::Dimming, "at {deadline}");
+                if count == 0 {
+                    first = deadline;
+                }
+                last = deadline;
+                count += 1;
+            }
+        }
+        (count, first, last)
+    }
+
     #[test]
     fn emissive_dims_then_lapses() {
         let mut a = oled();
-        assert_eq!(a.next_deadline(), Some(7_000));
-        assert_eq!(a.poll(6_999), None);
-        assert_eq!(a.poll(7_000), Some(Transition::Dimmed));
+        assert_eq!(a.next_deadline(), Some(20_000));
+        assert_eq!(a.poll(19_999), None);
+        assert_eq!(a.poll(20_000), Some(Transition::Dimming));
         assert_eq!(a.state(), DisplayState::Dim);
-        assert_eq!(a.next_deadline(), Some(10_000));
-        assert_eq!(a.poll(9_999), None);
-        assert_eq!(a.poll(10_000), Some(Transition::Lapsed));
+
+        // The ramp owns the next second; the lapse is the deadline after it.
+        ramp(&mut a, 29_999);
+        assert_eq!(a.brightness_permille(), 0);
+        assert_eq!(a.next_deadline(), Some(30_000));
+        assert_eq!(a.poll(29_999), None);
+        assert_eq!(a.poll(30_000), Some(Transition::Lapsed));
         assert_eq!(a.state(), DisplayState::Lapsed);
         assert_eq!(a.next_deadline(), None);
+    }
+
+    /// The whole point of the ramp: a fall the eye reads as a fade rather
+    /// than as the panel dropping a level.
+    #[test]
+    fn the_fall_into_the_dim_state_is_stepped() {
+        let mut a = oled();
+        let (count, first, last) = ramp(&mut a, 29_999);
+        assert_eq!(count, 20, "one second of 50 ms steps");
+        // First step at the dim instant, last one 950 ms later.
+        assert_eq!(first, 20_000);
+        assert_eq!(last, 20_950);
+    }
+
+    #[test]
+    fn brightness_falls_monotonically_to_the_floor() {
+        let mut a = oled();
+        assert_eq!(a.brightness_permille(), 1_000);
+        let mut previous = 1_000;
+        while let Some(deadline) = a.next_deadline() {
+            if deadline >= 30_000 {
+                break;
+            }
+            a.poll(deadline);
+            let now = a.brightness_permille();
+            assert!(now < previous, "{now} is not below {previous}");
+            previous = now;
+        }
+        assert_eq!(previous, 0);
+        a.poll(30_000);
+        assert_eq!(a.brightness_permille(), 0);
+    }
+
+    /// A task that misses several steps — a busy radio, a long flush —
+    /// lands on the brightness the clock asks for rather than walking
+    /// there one poll at a time.
+    #[test]
+    fn a_late_poll_catches_up_in_one_step() {
+        let mut a = oled();
+        assert_eq!(a.poll(20_500), Some(Transition::Dimming));
+        assert_eq!(a.brightness_permille(), 450);
+        assert_eq!(a.poll(20_950), Some(Transition::Dimming));
+        assert_eq!(a.brightness_permille(), 0);
+    }
+
+    #[test]
+    fn the_ramp_stops_at_the_floor() {
+        let mut a = oled();
+        ramp(&mut a, 29_999);
+        assert_eq!(a.poll(25_000), None);
+        assert_eq!(a.brightness_permille(), 0);
+    }
+
+    #[test]
+    fn a_wake_mid_ramp_returns_to_full_brightness() {
+        let mut a = oled();
+        a.poll(20_200);
+        assert_eq!(a.state(), DisplayState::Dim);
+        assert!(a.brightness_permille() < 1_000);
+        assert_eq!(a.wake(20_300), Some(Transition::Woke));
+        assert_eq!(a.brightness_permille(), 1_000);
+        assert_eq!(a.next_deadline(), Some(40_300));
+    }
+
+    #[test]
+    fn a_panel_that_cannot_fade_drops_in_one_step() {
+        let config = AttentionConfig {
+            dim_ramp: Duration::ZERO,
+            ..AttentionConfig::EMISSIVE
+        };
+        let mut a = Attention::new(DisplayKind::Emissive, config, 0);
+        assert_eq!(a.poll(20_000), Some(Transition::Dimming));
+        assert_eq!(a.brightness_permille(), 0);
+        assert_eq!(a.next_deadline(), Some(30_000));
+        assert_eq!(a.poll(25_000), None);
+    }
+
+    #[test]
+    fn no_deadline_ever_overshoots_the_lapse() {
+        // A ramp longer than the margin it has to fit inside.
+        let config = AttentionConfig {
+            timeout: Duration::from_secs(10),
+            dim_margin: Duration::from_secs(1),
+            dim_ramp: Duration::from_secs(5),
+        };
+        let mut a = Attention::new(DisplayKind::Emissive, config, 0);
+        while let Some(deadline) = a.next_deadline() {
+            assert!(deadline <= 10_000, "{deadline} is past the lapse");
+            if a.poll(deadline) == Some(Transition::Lapsed) {
+                break;
+            }
+        }
+        assert!(a.is_lapsed());
     }
 
     #[test]
     fn lapse_fires_once() {
         let mut a = oled();
-        a.poll(7_000);
-        assert_eq!(a.poll(10_000), Some(Transition::Lapsed));
-        assert_eq!(a.poll(20_000), None);
+        a.poll(20_000);
+        assert_eq!(a.poll(30_000), Some(Transition::Lapsed));
+        assert_eq!(a.poll(40_000), None);
     }
 
     #[test]
@@ -342,38 +550,39 @@ mod tests {
     fn dark_emissive_panel_refuses_redraw() {
         let mut a = oled();
         assert!(a.accepts_redraw());
-        a.poll(7_000);
+        a.poll(20_000);
         // Dimmed is still visible.
         assert!(a.accepts_redraw());
-        a.poll(10_000);
+        a.poll(30_000);
         assert!(!a.accepts_redraw());
     }
 
     #[test]
     fn wake_from_lapsed_reports_the_transition() {
         let mut a = oled();
-        a.poll(10_000);
-        assert_eq!(a.wake(12_000), Some(Transition::Woke));
+        a.poll(30_000);
+        assert_eq!(a.wake(32_000), Some(Transition::Woke));
         assert_eq!(a.state(), DisplayState::Active);
         // Full timeout again, measured from the wake.
-        assert_eq!(a.next_deadline(), Some(19_000));
+        assert_eq!(a.next_deadline(), Some(52_000));
     }
 
     #[test]
     fn wake_from_dim_restores_full_brightness() {
         let mut a = oled();
-        a.poll(7_000);
+        a.poll(20_000);
         assert_eq!(a.state(), DisplayState::Dim);
-        assert_eq!(a.wake(8_000), Some(Transition::Woke));
+        assert_eq!(a.wake(21_000), Some(Transition::Woke));
         assert_eq!(a.state(), DisplayState::Active);
+        assert_eq!(a.brightness_permille(), 1_000);
     }
 
     #[test]
     fn wake_while_active_only_defers_the_deadline() {
         let mut a = oled();
         assert_eq!(a.wake(5_000), None);
-        assert_eq!(a.next_deadline(), Some(12_000));
-        assert_eq!(a.poll(10_000), None);
+        assert_eq!(a.next_deadline(), Some(25_000));
+        assert_eq!(a.poll(20_000), None);
     }
 
     #[test]
@@ -388,10 +597,10 @@ mod tests {
     #[test]
     fn asserting_a_hold_wakes_a_lapsed_panel() {
         let mut a = oled();
-        a.poll(10_000);
+        a.poll(30_000);
         assert!(a.is_lapsed());
         assert_eq!(
-            a.set_hold(HoldReason::Alert, true, 11_000),
+            a.set_hold(HoldReason::Alert, true, 31_000),
             Some(Transition::Woke)
         );
         assert_eq!(a.state(), DisplayState::Active);
@@ -402,9 +611,9 @@ mod tests {
         let mut a = oled();
         a.set_hold(HoldReason::Pairing, true, 1_000);
         assert_eq!(a.set_hold(HoldReason::Pairing, false, 60_000), None);
-        assert_eq!(a.next_deadline(), Some(67_000));
-        assert_eq!(a.poll(66_000), None);
-        assert_eq!(a.poll(67_000), Some(Transition::Dimmed));
+        assert_eq!(a.next_deadline(), Some(80_000));
+        assert_eq!(a.poll(79_000), None);
+        assert_eq!(a.poll(80_000), Some(Transition::Dimming));
     }
 
     #[test]
@@ -417,7 +626,7 @@ mod tests {
         assert_eq!(a.poll(60_000), None);
         a.set_hold(HoldReason::Alert, false, 4_000);
         assert!(!a.held());
-        assert_eq!(a.next_deadline(), Some(11_000));
+        assert_eq!(a.next_deadline(), Some(24_000));
     }
 
     #[test]
@@ -427,14 +636,14 @@ mod tests {
         a.set_hold(HoldReason::Pairing, true, 5_000);
         a.set_hold(HoldReason::Pairing, false, 6_000);
         // Timer restarts from the real release, not the duplicate assert.
-        assert_eq!(a.next_deadline(), Some(13_000));
+        assert_eq!(a.next_deadline(), Some(26_000));
     }
 
     #[test]
     fn releasing_a_hold_that_was_never_held_is_inert() {
         let mut a = oled();
         assert_eq!(a.set_hold(HoldReason::Maintenance, false, 5_000), None);
-        assert_eq!(a.next_deadline(), Some(7_000));
+        assert_eq!(a.next_deadline(), Some(20_000));
     }
 
     #[test]
@@ -442,6 +651,7 @@ mod tests {
         let config = AttentionConfig {
             timeout: Duration::from_secs(10),
             dim_margin: Duration::ZERO,
+            ..AttentionConfig::EMISSIVE
         };
         let mut a = Attention::new(DisplayKind::Emissive, config, 0);
         assert_eq!(a.next_deadline(), Some(10_000));
@@ -454,6 +664,7 @@ mod tests {
         let config = AttentionConfig {
             timeout: Duration::from_secs(10),
             dim_margin: Duration::from_secs(10),
+            ..AttentionConfig::EMISSIVE
         };
         let mut a = Attention::new(DisplayKind::Emissive, config, 0);
         assert_eq!(a.next_deadline(), Some(10_000));
@@ -466,6 +677,7 @@ mod tests {
         a.set_config(AttentionConfig {
             timeout: Duration::from_secs(5),
             dim_margin: Duration::ZERO,
+            ..AttentionConfig::EMISSIVE
         });
         assert_eq!(a.next_deadline(), Some(5_000));
         assert_eq!(a.poll(5_000), Some(Transition::Lapsed));
@@ -478,6 +690,7 @@ mod tests {
         a.set_config(AttentionConfig {
             timeout: Duration::from_secs(1),
             dim_margin: Duration::ZERO,
+            ..AttentionConfig::EMISSIVE
         });
         assert_eq!(a.poll(101_500), Some(Transition::Lapsed));
     }

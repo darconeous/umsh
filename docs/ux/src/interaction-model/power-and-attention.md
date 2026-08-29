@@ -25,7 +25,7 @@ differs because their costs differ.
 
 | Panel | On lapse |
 |---|---|
-| Emissive (OLED, LCD) | Dim as a warning, then switch the panel off |
+| Emissive (OLED, LCD) | Fall to a dim warning, then switch the panel off |
 | Persistent (e-paper) | Stay readable; return the menu to its home page |
 
 The user-visible rule is the same on both: after a while away, the device
@@ -72,10 +72,30 @@ finished refreshing is discarded rather than acted on.
 
 ### Timings
 
-Ten seconds suits an emissive panel, with the last three of them dimmed. A
-persistent panel can afford longer—thirty seconds is comfortable—because
-only stale context is at stake, and because a visible refresh makes an
-aggressive fallback an annoyance of its own.
+Thirty seconds suits an emissive panel, with the last ten of them dimmed. Time
+the panel at what a person actually does with it: walk to an entry, read it,
+and think about the answer. Ten seconds is barely the first of those, and a
+dimmed period short enough to be a countdown is a threat rather than a warning.
+A persistent panel wants the same thirty for a different reason—only stale
+context is at stake, and a visible refresh makes an aggressive fallback an
+annoyance of its own.
+
+Fall into the dim rather than dropping into it. About a second, stepped often
+enough to read as a fade, turns "the screen is going" into something the user
+notices in peripheral vision and can answer before it finishes. The rise is not
+gradual: a panel coming back is a panel someone is waiting on.
+
+A fade is affordable because it is not a redraw. Brightness on these
+controllers is a register, so a step costs a few bytes on the bus and leaves the
+framebuffer alone—which is what lets a panel that redraws only on events still
+dim smoothly.
+
+Express the fall as a position between the panel's own dim and full levels
+rather than as a brightness. Full is not the same number across a class—an
+SH1106 and an SSD1306 disagree about it—so a policy that named a brightness
+would be naming the wrong one on half the boards. Where the dim end sits is a
+judgment about the warning rather than about the panel: far enough down to be
+unmistakable in peripheral vision, still lit enough to read and answer.
 
 Devices in one product class should share a single set of numbers, and a shared
 implementation, so that learning one teaches the others.
