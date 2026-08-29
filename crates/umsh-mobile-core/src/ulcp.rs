@@ -8959,13 +8959,22 @@ mod tests {
         assert_eq!(presets.len(), umsh_ulcp::profiles::VETTED.len());
         assert_eq!(presets[0].id, umsh_ulcp::profiles::DEFAULT.id);
 
-        let default = &presets[0];
-        assert_eq!(default.frequency_khz, 910_525);
-        assert_eq!(default.bandwidth_hz, 62_500);
-        assert_eq!(default.spreading_factor, 7);
-        assert_eq!(default.coding_rate_denom, 5);
-        assert_eq!(default.transmit_power_dbm, Some(21));
-        assert_eq!(default.duty_cycle_limit, u16::MAX);
+        // Every field of every vetted profile, rather than one profile's
+        // numbers written out again. A field dropped or crossed onto the
+        // wrong one is what this conversion can get wrong; which entry holds
+        // the default, and what it is tuned to, belongs to the profile table.
+        for (preset, profile) in presets.iter().zip(umsh_ulcp::profiles::VETTED) {
+            assert_eq!(preset.id, profile.id);
+            assert_eq!(preset.name, profile.name);
+            assert_eq!(preset.frequency_khz, profile.freq_khz);
+            assert_eq!(preset.bandwidth_hz, profile.bw_hz);
+            assert_eq!(preset.spreading_factor, profile.sf);
+            assert_eq!(preset.coding_rate_denom, profile.cr_denom);
+            assert_eq!(preset.transmit_power_dbm, profile.tx_power_dbm);
+            assert_eq!(preset.duty_cycle_limit, profile.duty_limit);
+            assert_eq!(preset.sync_word, profile.sync_word);
+            assert_eq!(preset.tx_preamble_symbols, profile.tx_preamble_symbols);
+        }
 
         // A profile with no vetted power crosses as an absent one
         // rather than a zero.
@@ -8975,6 +8984,9 @@ mod tests {
                 .any(|preset| preset.transmit_power_dbm.is_none()),
             "the optional power is reachable from the app"
         );
-        assert_eq!(ulcp_supported_bandwidths_hz().len(), 10);
+        assert_eq!(
+            ulcp_supported_bandwidths_hz(),
+            umsh_ulcp::profiles::SUPPORTED_BANDWIDTHS_HZ
+        );
     }
 }
