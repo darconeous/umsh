@@ -1,16 +1,26 @@
 //! AXP2101 bring-up: the step that has to run before any peripheral is
 //! probed (hardware doc §5.3, §19 step 3).
 //!
-//! What comes up, and what deliberately does not:
+//! Every output the part has, in one table. A channel this does not
+//! name is a channel nobody decided about, left wherever the PMIC's
+//! reset default put it — so the ones this board does not use are
+//! switched off explicitly rather than merely not switched on:
 //!
-//! | Rail | Load | State after `bring_up` |
+//! | Output | Load | State after `bring_up` |
 //! |---|---|---|
-//! | DCDC1 | ESP32-S3 core | untouched — the driver cannot write it |
+//! | DCDC1 | ESP32-S3 core | untouched — unnameable in the driver |
 //! | ALDO3 | SX1262 | on, 3.3 V |
-//! | ALDO1/ALDO2 | OLED, BME280, magnetometer | on, 3.3 V |
+//! | ALDO1 | OLED, BME280, QMC6309 | on, 3.3 V |
 //! | ALDO4 | GNSS | configured 3.3 V, **off** — [`crate::gnss::Gnss`] owns it |
 //! | BLDO1 | SD card | off — out of scope |
-//! | BLDO2, DCDC3–5 | expansion/M.2 | untouched |
+//! | ALDO2, BLDO2 | nothing on this carrier | **off** |
+//! | DCDC2–5, DLDO1/2 | nothing on this carrier | **off** |
+//! | CPUSLDO | unattributed | untouched — see `UnusedOutput` |
+//!
+//! The exported-rail entries are the T-Beam S3 Core module's outputs to
+//! its carrier, and this carrier takes none of them (§5.2). Switching
+//! them off is worth microamps today; it is worth a great deal more
+//! once the idle floor is not dominated by a resident BLE controller.
 //!
 //! On a cold boot the sensor and SD rails are first held down for
 //! ~250 ms, reproducing the LILYGO/MeshCore sequence that lets a device
@@ -21,10 +31,10 @@
 use embedded_hal_async::delay::DelayNs;
 use embedded_hal_async::i2c::I2c;
 use umsh_pmic_axp2101::{
-    Axp2101, ChargeCurrent, ChargeLed, ChargeVoltage, Error, IrqMask, PowerOffPress,
+    Axp2101, ChargeCurrent, ChargeLed, ChargeVoltage, Error, IrqMask, PowerOffPress, UnusedOutput,
 };
 
-use crate::{GNSS_RAIL, RADIO_RAIL, RAIL_MILLIVOLTS, SD_RAIL, SENSOR_RAILS};
+use crate::{GNSS_RAIL, RADIO_RAIL, RAIL_MILLIVOLTS, SD_RAIL, SENSOR_RAIL, UNUSED_RAILS};
 
 /// Charge configuration: 500 mA constant current into a 4.2 V target,
 /// the known-working values LILYGO's reference code and MeshCore both
@@ -59,19 +69,15 @@ pub async fn bring_up<I: I2c, D: DelayNs>(
     pmic.probe().await?;
 
     if cold_boot {
-        pmic.cold_boot_cycle(&[SENSOR_RAILS[0], SENSOR_RAILS[1], SD_RAIL], delay)
-            .await?;
+        pmic.cold_boot_cycle(&[SENSOR_RAIL, SD_RAIL], delay).await?;
     }
 
     // Radio first: ALDO3 wants the longest settle before the SX1262
     // reset that follows bring-up.
     pmic.enable_rail_at(RADIO_RAIL, RAIL_MILLIVOLTS).await?;
 
-    // Sensor/display rails, together — the OLED probe needs both
-    // populations' supplies up before it can distinguish 0x3C from 0x3D.
-    for rail in SENSOR_RAILS {
-        pmic.enable_rail_at(rail, RAIL_MILLIVOLTS).await?;
-    }
+    // Display, environmental sensor, and magnetometer share one rail.
+    pmic.enable_rail_at(SENSOR_RAIL, RAIL_MILLIVOLTS).await?;
 
     // GNSS: configured to the right voltage now, switched on only by the
     // pump's `Power` impl when positioning actually runs.
@@ -81,12 +87,25 @@ pub async fn bring_up<I: I2c, D: DelayNs>(
     // SD stays dark until something ships that uses it.
     pmic.set_rail_enabled(SD_RAIL, false).await?;
 
+    // Everything this carrier does not consume, off explicitly.
+    for rail in UNUSED_RAILS {
+        pmic.set_rail_enabled(rail, false).await?;
+    }
+    for output in UnusedOutput::ALL {
+        pmic.disable_unused(output).await?;
+    }
+
     pmic.set_charge_current(CHARGE_CURRENT).await?;
     pmic.set_charge_voltage(CHARGE_VOLTAGE).await?;
     // The charge LED means "charging", driven by the charger itself.
     pmic.set_charge_led(ChargeLed::Charger).await?;
 
     pmic.enable_telemetry().await?;
+    // The TS pin is populated on this board (§6.5), so the charger's
+    // thermal protection has something real to act on. Whether the part
+    // is an NTC or the fixed resistor often fitted in its place is still
+    // open — `thermistor_raw` is there to answer it.
+    pmic.set_thermistor_measurement(true).await?;
 
     // Events latched while the MCU was down would hold the IRQ line
     // asserted forever; clear before enabling (§5.5).
@@ -105,9 +124,7 @@ pub async fn bring_up<I: I2c, D: DelayNs>(
 /// already stopped the tasks that own those peripherals.
 pub async fn shutdown_rails<I: I2c>(pmic: &mut Axp2101<I>) -> Result<(), Error<I::Error>> {
     pmic.set_rail_enabled(GNSS_RAIL, false).await?;
-    for rail in SENSOR_RAILS {
-        pmic.set_rail_enabled(rail, false).await?;
-    }
+    pmic.set_rail_enabled(SENSOR_RAIL, false).await?;
     pmic.set_rail_enabled(SD_RAIL, false).await?;
     pmic.set_rail_enabled(RADIO_RAIL, false).await?;
     Ok(())

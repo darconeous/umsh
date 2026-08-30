@@ -44,6 +44,14 @@ The T-Beam Supreme is a feature-rich ESP32-S3 LoRa/GNSS board containing:
 - GNSS PPS LED and PMIC charge LED
 - an M.2-style expansion interface and an external power/header interface
 
+### 1.1 The Supreme is a carrier, and the Core is the module
+
+The **T-Beam S3 Core** is an M.2-form-factor module carrying the ESP32-S3 and the AXP2101. The **T-Beam S3 Supreme** is a carrier board with a Core seated in its M.2 slot. Meshtastic's hardware model for this product is `LILYGO_TBEAM_S3_CORE` for exactly that reason.
+
+This matters for the power topology and is easy to get backwards. The PMIC is on the *module*, so the M.2 supplies are rails the module **exports to the carrier**, not rails the board provides to a card it hosts. On the Supreme carrier nothing consumes them.
+
+It also fixes where board-specific decisions belong: which exported rails are wanted is a property of the carrier, so it lives in the board-support crate, not in the PMIC driver. A different carrier is a new BSP with a different rail table.
+
 The critical UMSH assignments for the **SX1262 version** are:
 
 | Function | ESP32-S3 GPIO | Notes |
@@ -360,22 +368,35 @@ The PMU bus is separate from the OLED/sensor bus.
 
 ### 5.2 Power-channel map
 
-LILYGO documents the following AXP2101 rails:
+Reading the channel map against the schematic, rather than against what other firmware happens to enable:
 
-| AXP2101 channel | Board load |
+| AXP2101 channel | Load on the Supreme carrier |
 | --- | --- |
 | DCDC1 / DC1 | ESP32-S3 core supply — **do not casually reconfigure/disable** |
-| DCDC3 | external M.2 interface |
-| DCDC4 | external M.2/interface power |
-| DCDC5 | external M.2/interface power |
-| ALDO1 | BME280 + OLED + magnetometer-side sensor rail |
-| ALDO2 | additional sensor rail |
+| DCDC2 | unused |
+| DCDC3 | exported to the carrier's M.2 slot — unused |
+| DCDC4 | exported to the carrier's M.2 slot — unused |
+| DCDC5 | exported to the carrier's M.2 slot — unused |
+| ALDO1 | BME280 + SH1106 OLED + QMC6309 magnetometer |
+| ALDO2 | **unused** |
 | ALDO3 | LoRa radio |
 | ALDO4 | GNSS |
 | BLDO1 | SD card |
-| BLDO2 | external pin/header rail |
+| BLDO2 | external pin/header rail — unused |
+| DLDO1, DLDO2 | unused |
+| CPUSLDO | not traced |
+| VBACKUP | pin left floating |
 
-Both LILYGO's current example code and MeshCore configure these peripheral rails to roughly 3.3 V before enabling them, with DCDC4 handled according to the AXP2101 voltage API/range in the older helper code.
+Remember §1.1 when reading the M.2 entries: those are the Core module's outputs *to* the carrier.
+
+Two of these disagree with what the other stacks do, and the schematic wins:
+
+- **ALDO2 powers nothing.** LILYGO's own code and MeshCore both bring it up — MeshCore labels it the QMC6310U rail — and Meshtastic's comment goes further, claiming it "cannot be turned off" and that it supplies the PCF8563. That comment is in a branch shared with the T-Watch S3, which is the likely source of the RTC claim. On this carrier the magnetometer, BME280, and OLED are all on ALDO1.
+- **VBACKUP's pin is floating**, so the backup-battery charger has nothing to charge. This also explains §17.2: GNSS hot-start depends on the battery because the backup domain is fed from the cell, not through the PMIC's backup charger.
+
+UMSH therefore enables ALDO1/ALDO3/ALDO4 at 3.3 V and switches every other reachable channel off explicitly, so none of them is left at a reset default nobody chose. The exceptions are DCDC1, which no type in the driver can name, and CPUSLDO, whose load has not been traced — an output nobody has followed is not one to switch off blind.
+
+Both LILYGO's current example code and MeshCore configure the peripheral rails to roughly 3.3 V before enabling them, with DCDC4 handled according to the AXP2101 voltage API/range in the older helper code. MeshCore additionally powers BLDO2, DCDC4, and DCDC5 out to the headers; UMSH does not.
 
 ### 5.3 Critical warning: PMU initialization is prerequisite hardware initialization
 
@@ -385,10 +406,10 @@ Before probing:
 
 - LoRa: enable ALDO3
 - GNSS: enable ALDO4
-- OLED/BME/magnetometer: enable ALDO1 and the applicable sensor rail
+- OLED/BME/magnetometer: enable ALDO1
 - SD: enable BLDO1
 
-LILYGO's code also power-cycles ALDO1, ALDO2, and BLDO1 for about 250 ms on a cold boot to avoid devices holding/occupying buses during initialization. MeshCore copied the same strategy.
+LILYGO's code also power-cycles ALDO1, ALDO2, and BLDO1 for about 250 ms on a cold boot to avoid devices holding/occupying buses during initialization. MeshCore copied the same strategy. UMSH cycles ALDO1 and BLDO1 only: the point of the cycle is to make a device that latched onto a bus let go, and ALDO2 has nothing behind it to let go.
 
 A UMSH port should preserve that behavior unless testing establishes that a simpler sequence is safe across V3.0/V3.1 populations.
 
@@ -400,15 +421,16 @@ A safe initial sequence is:
 2. probe AXP2101 at `0x34`
 3. initialize the AXP2101 driver
 4. **never disable DCDC1**, which supplies the ESP32-S3
-5. on cold boot, consider disabling ALDO1/ALDO2/BLDO1 briefly as LILYGO and MeshCore do
+5. on cold boot, consider disabling ALDO1/BLDO1 briefly as LILYGO and MeshCore do
 6. configure required rails to 3.3 V
 7. enable ALDO3 before radio access
 8. enable ALDO4 before GNSS access
-9. enable ALDO1/ALDO2 before sensor/display I2C access
+9. enable ALDO1 before sensor/display I2C access
 10. enable BLDO1 before SD access
-11. configure charge current/target voltage
-12. enable battery/VBUS/system measurement ADCs if telemetry is desired
-13. clear stale PMU IRQ status before enabling desired IRQs
+11. switch off every channel the carrier does not consume, rather than leaving it at its reset default
+12. configure charge current/target voltage
+13. enable battery/VBUS/system measurement ADCs if telemetry is desired
+14. clear stale PMU IRQ status before enabling desired IRQs
 
 ### 5.5 PMU interrupt
 
@@ -469,6 +491,21 @@ For state-of-charge percentage, keep in mind that PMIC-reported percentage may r
 The charge LED is controlled through/by the PMU charge logic. LILYGO's code configures the AXP2101 charging LED mode rather than treating it as a general GPIO LED.
 
 Do not assign a generic UMSH status LED to it unless deliberately controlling the corresponding PMIC function.
+
+### 6.5 Battery thermistor (TS)
+
+The TS pin is **populated** on this board, per the schematic.
+
+Both other stacks disable TS measurement — MeshCore in its Supreme branch with the comment that it is not used, Meshtastic unconditionally for every AXP2101 board. The unconditional form reads like a default that was never revisited, and on a single-cell 18650 a charger with working thermal protection is worth having, so UMSH enables the channel instead.
+
+One question remains open, and a populated footprint does not answer it: a TS footprint is often fitted with a plain fixed resistor rather than an NTC, purely so the charger sees a valid mid-range reading and does not fold back. Both populations report a plausible temperature at room temperature. The distinguishing test is whether the reading **moves** — warm the cell by hand for a minute and watch successive values. Tracking ambient means a real NTC and real protection; a steady value means a stand-in resistor, in which case enabling the channel is harmless but buys nothing.
+
+Two further transcription items are unproven and should be settled on hardware:
+
+- the TS result register address, inferred from the regular two-register-per-channel spacing of that ADC block rather than read off a datasheet page
+- whether the part gates the charger's *response* to TS separately from the ADC channel enable
+
+Until both are settled, treat the reading as raw counts. UMSH does not convert it to a temperature or display it.
 
 ---
 
@@ -805,7 +842,7 @@ These are separate from the GNSS UART pins 8/9.
 
 LILYGO associates GPIO43/44 with its QWIIC/expansion presentation. Exact connector use should be verified against the intended carrier/accessory before assigning alternate functions.
 
-The board also exposes PMIC-controlled power rails through its expansion interfaces, notably BLDO2 and the DCDC3/DCDC4/DCDC5 M.2 supplies. Treat those rails as shared board resources with explicit ownership rather than generic always-on 3.3 V pins.
+The Core module also exports PMIC-controlled power rails through the expansion interfaces, notably BLDO2 and the DCDC3/DCDC4/DCDC5 M.2 supplies (§1.1). Nothing on the Supreme carrier consumes them, so UMSH switches them off; a carrier that does want one wants explicit ownership and a voltage chosen on purpose, not a generic always-on 3.3 V pin.
 
 ---
 
@@ -933,20 +970,21 @@ LILYGO reference code and MeshCore independently agree on the firmware-critical 
 
 - ALDO4 GNSS
 - ALDO3 radio
-- ALDO1/ALDO2 sensors/display
+- ALDO1 sensors/display
 - BLDO1 SD
 - BLDO2 external header
-- DCDC3/4/5 expansion/M.2
+- DCDC3/4/5 M.2
 
-This mapping should be considered high-confidence.
+This mapping should be considered high-confidence for the rails that carry a load.
+
+It says nothing about the rails that do not. Both stacks *enable* ALDO2, and MeshCore additionally enables BLDO2, DCDC4, and DCDC5; none of that establishes a load, and the schematic shows none. Agreement between two firmwares is evidence about what they do, not about what the board is — see §5.2.
 
 ### 18.9 Old LILYGO `DC1` sensor-power note conflicts with current code
 
 An older LILYGO hardware-documentation note says that devices on the GPIO17/18 I2C bus need their sensor power supply connected to **DC1**. That statement conflicts with the newer power-channel table and with both LILYGO's current reference code and MeshCore:
 
 - **DCDC1/DC1 is the ESP32-S3 core supply** and should not be reconfigured or disabled.
-- **ALDO1** powers the BME280/display and associated sensor population.
-- **ALDO2** powers the additional sensor rail.
+- **ALDO1** powers the BME280, OLED, and magnetometer — the whole GPIO17/18 sensor population (§5.2).
 
 Treat the older `DC1` sentence as a documentation error or stale wording. UMSH must not repurpose or cycle DCDC1 while running.
 
@@ -979,13 +1017,14 @@ A deterministic initial implementation should bring the board up in roughly this
 
 3. **AXP2101 rails**
    - do not disturb DCDC1
-   - on a true cold boot, reproduce the LILYGO/MeshCore brief ALDO1/ALDO2/BLDO1 power-cycle unless testing justifies removing it
+   - on a true cold boot, reproduce the LILYGO/MeshCore brief ALDO1/BLDO1 power-cycle unless testing justifies removing it
    - configure ALDO3 = 3.3 V for radio
    - configure ALDO4 = 3.3 V for GNSS
-   - configure ALDO1/ALDO2 = 3.3 V for onboard sensors/display
+   - configure ALDO1 = 3.3 V for onboard sensors/display
    - configure BLDO1 = 3.3 V for SD if needed
+   - switch off ALDO2, BLDO2, DCDC2–5, and DLDO1/2 explicitly
    - configure charge current (known-working default 500 mA) and 4.2 V target
-   - enable PMU ADC measurements used by telemetry
+   - enable PMU ADC measurements used by telemetry, TS included (§6.5)
 
 4. **LoRa SPI and SX1262**
    - initialize SCK12/MOSI11/MISO13, CS10
@@ -1087,10 +1126,9 @@ The board abstraction also needs **non-pin resources** that are just as importan
 PMU: AXP2101 @ 0x34 on GPIO42/41
 radio power rail: ALDO3 @ 3.3 V
 GNSS power rail: ALDO4 @ 3.3 V
-sensor/display rails: ALDO1 + ALDO2 @ 3.3 V
+sensor/display rail: ALDO1 @ 3.3 V
 SD power rail: BLDO1 @ 3.3 V
-external/header rail: BLDO2
-M.2 rails: DCDC3/DCDC4/DCDC5
+unused, switched off: ALDO2, BLDO2, DCDC2/3/4/5, DLDO1/2
 ```
 
 Do not bury those relationships in ad-hoc startup code. They are board topology and belong in the hardware definition/board-support layer.
@@ -1165,6 +1203,9 @@ An implementation agent should validate the following on physical hardware rathe
 - DIO1 GPIO1 generates RX/TX IRQs
 - radio initializes reliably and frequency behavior is validated with the selected TCXO voltage (1.6 V baseline; compare 1.8 V if needed)
 - battery voltage reported by AXP2101 roughly agrees with a multimeter
+- with ALDO2 off, the sensor bus and the RTC at `0x51` both still answer — the direct test of §5.2's claim that nothing is on it, against LILYGO, MeshCore, and Meshtastic all enabling it
+- with DCDC2–5, BLDO2, and DLDO1/2 off, nothing on the carrier misbehaves
+- TS raw counts sit at a plausible steady value, and **move** when the cell is warmed by hand — a value that does not move means a fixed resistor rather than an NTC (§6.5)
 - sensor I2C bus does not wedge after cold boot
 - SH1106 address is detected correctly on at least two board populations if available
 - BME280 is detected at the actual board address

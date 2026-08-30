@@ -56,12 +56,22 @@ pub const PRESS_OFF_MASK: u8 = 0x0C;
 /// ADC channel enables: bit 0 VBAT, 1 TS, 2 VBUS, 3 VSYS, 4 TDIE.
 pub const ADC_CHANNEL_CTRL: u8 = 0x30;
 pub const ADC_CH_VBAT: u8 = 0;
+pub const ADC_CH_TS: u8 = 1;
 pub const ADC_CH_VBUS: u8 = 2;
 pub const ADC_CH_VSYS: u8 = 3;
 
 /// VBAT result, high byte. 5 significant bits, then an 8-bit low byte.
 pub const ADC_VBAT_H: u8 = 0x34;
 pub const ADC_VBAT_L: u8 = 0x35;
+/// TS (battery thermistor) result, high byte. 6 significant bits.
+///
+/// Address inferred from the regular two-register-per-channel layout
+/// this block follows (VBAT 0x34, TS 0x36, VBUS 0x38, VSYS 0x3A, TDIE
+/// 0x3C) rather than read off a datasheet page, and the LSB scaling is
+/// **not** the 1 mV/LSB the voltage channels use. Treat the result as
+/// raw counts until a board confirms both.
+pub const ADC_TS_H: u8 = 0x36;
+pub const ADC_TS_L: u8 = 0x37;
 /// VBUS result, high byte. 6 significant bits.
 pub const ADC_VBUS_H: u8 = 0x38;
 pub const ADC_VBUS_L: u8 = 0x39;
@@ -104,14 +114,29 @@ pub const CHGLED_PATTERN_SHIFT: u8 = 4;
 
 // ─── Rails ────────────────────────────────────────────────────────────────
 
-/// DCDC1–5 enables. **Read-only to UMSH**: DCDC1 is the ESP32-S3 core
-/// supply on the T-Beam Supreme and writing this register can cut power
-/// to the running MCU (hardware doc §5.2, §18.9).
+/// DCDC1–5 enables, one bit per converter from bit 0.
+///
+/// DCDC1's bit is never written: it is the ESP32-S3 core supply on the
+/// T-Beam Supreme and clearing it cuts power to the running MCU
+/// (hardware doc §5.2, §18.9). The rest are reachable only through
+/// [`crate::UnusedOutput`], which has no variant that can name DCDC1.
 pub const DC_ONOFF_DVM_CTRL: u8 = 0x80;
 
+pub const DCDC1_BIT: u8 = 0;
+pub const DCDC2_BIT: u8 = 1;
+pub const DCDC3_BIT: u8 = 2;
+pub const DCDC4_BIT: u8 = 3;
+pub const DCDC5_BIT: u8 = 4;
+
 /// LDO enables: bit 0 ALDO1, 1 ALDO2, 2 ALDO3, 3 ALDO4, 4 BLDO1,
-/// 5 BLDO2.
+/// 5 BLDO2, 6 CPUSLDO, 7 DLDO1 (`enableCPUSLDO`/`enableDLDO1`).
 pub const LDO_ONOFF_CTRL0: u8 = 0x90;
+
+/// Second LDO enable register; bit 0 is DLDO2 (`enableDLDO2`).
+pub const LDO_ONOFF_CTRL1: u8 = 0x91;
+
+pub const DLDO1_BIT: u8 = 7;
+pub const DLDO2_BIT: u8 = 0;
 
 /// Per-rail voltage registers, in [`LDO_ONOFF_CTRL0`] bit order.
 pub const ALDO1_VOL: u8 = 0x92;

@@ -242,16 +242,68 @@ fn enable_rail_at_sets_the_voltage_before_switching_on() {
 }
 
 #[test]
-fn the_dcdc_enable_register_is_never_written() {
-    // DCDC1 is the MCU core supply. Exercise everything that touches
-    // rails and confirm none of it reaches 0x80.
+fn rail_control_never_reaches_the_dcdc_register() {
+    // The `Rail` API is LDO-only; nothing it does should touch 0x80.
     let mut p = pmic(MockPmic::new());
     block_on(p.enable_rail_at(Rail::Aldo1, 3300)).unwrap();
     block_on(p.enable_rail_at(Rail::Aldo3, 3300)).unwrap();
     block_on(p.enable_rail_at(Rail::Bldo1, 3300)).unwrap();
     block_on(p.set_rail_enabled(Rail::Aldo4, false)).unwrap();
-    block_on(p.cold_boot_cycle(&[Rail::Aldo1, Rail::Aldo2, Rail::Bldo1], &mut NoDelay)).unwrap();
+    block_on(p.cold_boot_cycle(&[Rail::Aldo1, Rail::Bldo1], &mut NoDelay)).unwrap();
     assert!(!p.release().touched(reg::DC_ONOFF_DVM_CTRL));
+}
+
+#[test]
+fn disabling_every_unused_output_leaves_dcdc1_on() {
+    // The one bit in 0x80 that must survive: it is the MCU core supply,
+    // and the read-modify-write is the only thing protecting it.
+    let mut p = pmic(
+        MockPmic::new()
+            .with(reg::DC_ONOFF_DVM_CTRL, 0b0001_1111)
+            .with(reg::LDO_ONOFF_CTRL0, 0xFF)
+            .with(reg::LDO_ONOFF_CTRL1, 0xFF),
+    );
+    for output in UnusedOutput::ALL {
+        block_on(p.disable_unused(output)).unwrap();
+    }
+    let regs = p.release().regs;
+    assert_eq!(
+        regs[reg::DC_ONOFF_DVM_CTRL as usize],
+        0b0000_0001,
+        "DCDC2-5 off, DCDC1 untouched"
+    );
+    assert_eq!(
+        regs[reg::LDO_ONOFF_CTRL0 as usize] & (1 << reg::DLDO1_BIT),
+        0,
+        "DLDO1 off"
+    );
+    assert_eq!(
+        regs[reg::LDO_ONOFF_CTRL1 as usize] & (1 << reg::DLDO2_BIT),
+        0,
+        "DLDO2 off"
+    );
+}
+
+#[test]
+fn disabling_dldo1_preserves_the_rails_sharing_its_register() {
+    // DLDO1 lives in the same byte as all six `Rail`s.
+    let mut p = pmic(MockPmic::new().with(reg::LDO_ONOFF_CTRL0, 0b1011_1101));
+    block_on(p.disable_unused(UnusedOutput::Dldo1)).unwrap();
+    assert_eq!(p.release().regs[reg::LDO_ONOFF_CTRL0 as usize], 0b0011_1101);
+}
+
+#[test]
+fn every_unused_output_maps_to_a_distinct_bit() {
+    let mut seen = Vec::new();
+    for output in UnusedOutput::ALL {
+        let slot = output.enable_bit();
+        assert!(!seen.contains(&slot), "{output:?} duplicates a bit");
+        seen.push(slot);
+    }
+    assert!(
+        !seen.contains(&(reg::DC_ONOFF_DVM_CTRL, reg::DCDC1_BIT)),
+        "no unused output may name DCDC1"
+    );
 }
 
 // ─── Cold-boot cycle ──────────────────────────────────────────────────────
@@ -408,13 +460,45 @@ fn charge_direction_reads_the_high_field() {
 
 #[test]
 fn enabling_telemetry_leaves_the_thermistor_channel_alone() {
+    // Whether TS belongs on is a board fact; the board opts in.
     let mut p = pmic(MockPmic::new());
     block_on(p.enable_telemetry()).unwrap();
     let state = p.release().regs[reg::ADC_CHANNEL_CTRL as usize];
     assert_eq!(state & (1 << reg::ADC_CH_VBAT), 1 << reg::ADC_CH_VBAT);
     assert_eq!(state & (1 << reg::ADC_CH_VBUS), 1 << reg::ADC_CH_VBUS);
     assert_eq!(state & (1 << reg::ADC_CH_VSYS), 1 << reg::ADC_CH_VSYS);
-    assert_eq!(state & 0b10, 0, "the TS channel must stay off");
+    assert_eq!(state & (1 << reg::ADC_CH_TS), 0, "TS must stay off");
+}
+
+#[test]
+fn the_thermistor_channel_toggles_without_disturbing_the_others() {
+    let mut p = pmic(MockPmic::new());
+    block_on(p.enable_telemetry()).unwrap();
+    block_on(p.set_thermistor_measurement(true)).unwrap();
+    assert_eq!(
+        p.release().regs[reg::ADC_CHANNEL_CTRL as usize],
+        0b0000_1111,
+        "VBAT, TS, VBUS, VSYS on"
+    );
+
+    let mut p = pmic(MockPmic::new().with(reg::ADC_CHANNEL_CTRL, 0b0001_1111));
+    block_on(p.set_thermistor_measurement(false)).unwrap();
+    assert_eq!(
+        p.release().regs[reg::ADC_CHANNEL_CTRL as usize],
+        0b0001_1101,
+        "only TS cleared"
+    );
+}
+
+#[test]
+fn the_thermistor_reading_assembles_six_high_bits_over_a_low_byte() {
+    let mut p = pmic(
+        MockPmic::new()
+            // High byte carries reserved bits above the 6 significant ones.
+            .with(reg::ADC_TS_H, 0b1101_0010)
+            .with(reg::ADC_TS_L, 0x9A),
+    );
+    assert_eq!(block_on(p.thermistor_raw()).unwrap(), 0x129A);
 }
 
 #[test]

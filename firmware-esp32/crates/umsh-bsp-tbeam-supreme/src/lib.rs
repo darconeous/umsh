@@ -95,17 +95,35 @@ pub const EXT_UART_RX: u8 = 44;
 
 // ─── Rail topology (hardware doc §5.2, §18.8) ─────────────────────────────
 //
-// DCDC1 is the ESP32-S3 core supply and is deliberately absent from
-// [`Rail`]; the driver cannot write DCDC registers at all.
+// The AXP2101 sits on the T-Beam S3 Core module, not on the carrier, so
+// DCDC3/4/5 and BLDO2 are outputs the module *exports* to whatever
+// carrier it is plugged into. This carrier consumes none of them, which
+// is why they appear in [`UNUSED_RAILS`] and `UnusedOutput::ALL` rather
+// than in the table below. A different carrier would want a different
+// BSP, not a different driver.
+//
+// DCDC1 is the ESP32-S3 core supply and no type in the driver can name
+// it.
 
 /// SX1262 supply.
 pub const RADIO_RAIL: Rail = Rail::Aldo3;
 /// GNSS supply. Owned by [`gnss::Gnss`] — nothing else toggles it.
 pub const GNSS_RAIL: Rail = Rail::Aldo4;
-/// OLED + BME280 + magnetometer sensor rails; brought up together.
-pub const SENSOR_RAILS: [Rail; 2] = [Rail::Aldo1, Rail::Aldo2];
+/// OLED + BME280 + QMC6309 magnetometer, all three confirmed against the
+/// schematic on this one rail.
+pub const SENSOR_RAIL: Rail = Rail::Aldo1;
 /// SD card supply. Off — the SD card is out of scope.
 pub const SD_RAIL: Rail = Rail::Bldo1;
+
+/// Switchable rails this carrier does not consume.
+///
+/// ALDO2 is the interesting one: LILYGO's own code and MeshCore both
+/// bring it up, and Meshtastic's comment claims it "cannot be turned
+/// off". The schematic says otherwise — nothing on this carrier is on
+/// it — so it goes off, and the failure mode if that reading is wrong
+/// is a dead sensor bus, which the display and BME280 probes will
+/// report immediately.
+pub const UNUSED_RAILS: [Rail; 2] = [Rail::Aldo2, Rail::Bldo2];
 
 /// Every switched rail this board runs at 3.3 V.
 pub const RAIL_MILLIVOLTS: u16 = 3300;

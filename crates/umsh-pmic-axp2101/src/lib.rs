@@ -9,12 +9,19 @@
 //!
 //! The surface here is deliberately narrow — rails, charging, telemetry,
 //! interrupts, and the power key. The AXP2101 does considerably more
-//! (JEITA profiles, watchdogs, sleep sequencing, DLDO/CPUSLDO rails);
-//! none of it is reachable through UMSH, so none of it is transcribed.
+//! (JEITA profiles, watchdogs, sleep sequencing, backup-battery
+//! charging); none of it is reachable through UMSH, so none of it is
+//! transcribed.
 //!
-//! **DCDC1 is never written.** On the boards UMSH supports it is the MCU
-//! core supply, and the enable register that holds it is exposed for
-//! reading only.
+//! The outputs a board does not use are the exception: those are
+//! reachable through [`UnusedOutput`], one direction only, because a
+//! channel left at the part's reset default is a channel nobody decided
+//! about.
+//!
+//! **DCDC1's enable bit is never cleared.** On the boards UMSH supports
+//! it is the MCU core supply, so no value of any type in this crate can
+//! name it, and every write that touches its register is a
+//! read-modify-write that puts it back.
 //!
 //! Register provenance and the transcription caveat: see [`reg`].
 
@@ -73,6 +80,61 @@ impl Rail {
             Rail::Aldo4 => reg::ALDO4_VOL,
             Rail::Bldo1 => reg::BLDO1_VOL,
             Rail::Bldo2 => reg::BLDO2_VOL,
+        }
+    }
+}
+
+/// A PMIC output UMSH never brings up, exposed only so a board can
+/// switch it off rather than inherit whatever the part's reset default
+/// left it at.
+///
+/// There is no setter for these and no voltage control: the type says
+/// "off", and enabling a converter at a voltage some previous session
+/// chose is the hazard [`Axp2101::enable_rail_at`] exists to avoid. A
+/// carrier that genuinely needs one of these up wants voltage support
+/// added deliberately, not a bool flipped here.
+///
+/// Deliberately absent:
+///
+/// - **DCDC1**, the MCU core supply on every board UMSH supports.
+///   Clearing its bit switches off the processor doing the clearing, so
+///   no value of this type can name it — the mistake is unrepresentable
+///   rather than runtime-guarded.
+/// - **CPUSLDO**, whose load is unattributed on the boards we have. An
+///   output nobody has traced is not an output to switch off blind.
+/// - The six [`Rail`]s, which have their own on-and-off API.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum UnusedOutput {
+    Dcdc2,
+    Dcdc3,
+    Dcdc4,
+    Dcdc5,
+    Dldo1,
+    Dldo2,
+}
+
+impl UnusedOutput {
+    /// Every output this type can name, for a board that uses none of
+    /// them. Iterate it in bring-up rather than listing variants, so a
+    /// new variant cannot be silently missed.
+    pub const ALL: [UnusedOutput; 6] = [
+        UnusedOutput::Dcdc2,
+        UnusedOutput::Dcdc3,
+        UnusedOutput::Dcdc4,
+        UnusedOutput::Dcdc5,
+        UnusedOutput::Dldo1,
+        UnusedOutput::Dldo2,
+    ];
+
+    /// This output's enable register and the bit within it.
+    pub const fn enable_bit(self) -> (u8, u8) {
+        match self {
+            UnusedOutput::Dcdc2 => (reg::DC_ONOFF_DVM_CTRL, reg::DCDC2_BIT),
+            UnusedOutput::Dcdc3 => (reg::DC_ONOFF_DVM_CTRL, reg::DCDC3_BIT),
+            UnusedOutput::Dcdc4 => (reg::DC_ONOFF_DVM_CTRL, reg::DCDC4_BIT),
+            UnusedOutput::Dcdc5 => (reg::DC_ONOFF_DVM_CTRL, reg::DCDC5_BIT),
+            UnusedOutput::Dldo1 => (reg::LDO_ONOFF_CTRL0, reg::DLDO1_BIT),
+            UnusedOutput::Dldo2 => (reg::LDO_ONOFF_CTRL1, reg::DLDO2_BIT),
         }
     }
 }
@@ -364,6 +426,22 @@ impl<I: I2c> Axp2101<I> {
         self.set_rail_enabled(rail, true).await
     }
 
+    /// Switch off an output this board does not use.
+    ///
+    /// Read-modify-write, so the neighboring bits — DCDC1's included —
+    /// come back unchanged.
+    pub async fn disable_unused(&mut self, output: UnusedOutput) -> Result<(), I::Error> {
+        let (register, bit) = output.enable_bit();
+        self.set_bit(register, bit, false).await
+    }
+
+    /// Whether an unused output is currently on, for diagnostics and for
+    /// checking what the part's reset default actually was.
+    pub async fn unused_enabled(&mut self, output: UnusedOutput) -> Result<bool, I::Error> {
+        let (register, bit) = output.enable_bit();
+        self.get_bit(register, bit).await
+    }
+
     /// Drop the given rails, wait [`COLD_BOOT_SETTLE_MS`], and leave them
     /// off.
     ///
@@ -436,14 +514,43 @@ impl<I: I2c> Axp2101<I> {
 
     /// Enable the battery, VBUS, and system voltage ADC channels.
     ///
-    /// The TS (battery thermistor) channel is left alone: on boards that
-    /// do not populate a thermistor, enabling it makes the charger act on
-    /// a floating input.
+    /// The TS (battery thermistor) channel is not among them, because
+    /// whether it should be on is a board fact rather than a driver one:
+    /// with no thermistor populated the input floats and the charger's
+    /// thermal protection acts on noise. A board that knows its TS pin
+    /// is populated opts in with
+    /// [`set_thermistor_measurement`](Self::set_thermistor_measurement).
     pub async fn enable_telemetry(&mut self) -> Result<(), I::Error> {
         for bit in [reg::ADC_CH_VBAT, reg::ADC_CH_VBUS, reg::ADC_CH_VSYS] {
             self.set_bit(reg::ADC_CHANNEL_CTRL, bit, true).await?;
         }
         Ok(())
+    }
+
+    /// Switch the TS (battery thermistor) ADC channel on or off.
+    ///
+    /// Only for a board that has confirmed its TS pin is populated. Two
+    /// things are unproven here and both want a board to answer them:
+    /// whether the part gates the charger's response to TS separately
+    /// from this ADC channel, and whether the populated part is a real
+    /// NTC or the fixed resistor often fitted in its place to keep the
+    /// charger from folding back. A reading that tracks ambient
+    /// temperature settles the second; a reading that sits still does
+    /// not.
+    pub async fn set_thermistor_measurement(&mut self, on: bool) -> Result<(), I::Error> {
+        self.set_bit(reg::ADC_CHANNEL_CTRL, reg::ADC_CH_TS, on)
+            .await
+    }
+
+    /// Raw TS ADC counts.
+    ///
+    /// Deliberately unscaled: unlike the voltage channels this one is
+    /// not 1 mV/LSB, and inventing a conversion before a board has been
+    /// warmed up and watched would be a temperature reading nobody had
+    /// checked. Compare successive values, do not display this.
+    pub async fn thermistor_raw(&mut self) -> Result<u16, I::Error> {
+        self.read_adc(reg::ADC_TS_H, reg::ADC_TS_L, reg::ADC_H6_MASK)
+            .await
     }
 
     pub async fn battery_present(&mut self) -> Result<bool, I::Error> {
