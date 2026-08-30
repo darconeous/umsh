@@ -389,11 +389,8 @@ impl MenuItems {
     /// The enabled entries of one level, in navigation order.
     ///
     /// This is what a renderer draws a list from, so it and
-    /// [`step`](Self::step) must agree about what is on screen. It is
-    /// `Clone` because a renderer windowing a list walks it more than
-    /// once — for the count, for the window, and for the entry past its
-    /// end — and rebuilding it each time would have to repeat the level.
-    pub fn entries(self, level: Level) -> impl Iterator<Item = MenuItem> + Clone {
+    /// [`step`](Self::step) must agree about what is on screen.
+    pub fn entries(self, level: Level) -> impl Iterator<Item = MenuItem> {
         MenuItem::ALL
             .into_iter()
             .filter(move |&item| item.level() == level && self.reachable(item))

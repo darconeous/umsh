@@ -483,9 +483,14 @@ where
             draw_row_inverted(target, layout, 1, menu_label(MenuItem::Identity));
             draw_identity_page(target, layout, status)
         }
+        // Settings is a doorway and has nothing of its own to say. A page
+        // that listed what was behind it read as the list one Select
+        // away rather than as the way to it — rows of labels and states,
+        // under a bar that looked like a highlight on the first of them.
+        // So: its name, centered, and the hint saying what opens it.
         Page::Menu(MenuItem::Settings) => {
-            draw_row_inverted(target, layout, 1, menu_label(MenuItem::Settings));
-            draw_settings_page(target, layout, model, status)
+            draw_row_centered(target, layout, 1, menu_label(MenuItem::Settings));
+            2
         }
         Page::Detail(MenuItem::Stats) => {
             draw_row_inverted(target, layout, 1, menu_label(MenuItem::Stats));
@@ -831,40 +836,14 @@ where
 {
     let level = selected.level();
     let items = model.items();
-    draw_entry_rows(
-        target,
-        layout,
-        status,
-        1,
-        items.entries(level),
-        items.entries(level).count(),
-        items.entries(level).position(|item| item == selected),
-    )
-}
+    let count = items.entries(level).count();
+    let index = items
+        .entries(level)
+        .position(|item| item == selected)
+        .unwrap_or(0);
 
-/// Draw a run of menu entries down the panel from `first_row`, windowed
-/// so `cursor` — where there is one — lands on a row drawn complete, and
-/// overflowing in the board's own idiom.
-///
-/// Shared by the settings list, where the cursor picks the window, and by
-/// the top-level Settings summary, which has no cursor and simply starts
-/// at the beginning. Both have more entries than a five-row OLED can hold,
-/// and neither should invent its own way of saying so: two overflow
-/// idioms in one product teach the user to read neither.
-fn draw_entry_rows<D, I>(
-    target: &mut D,
-    layout: &Layout,
-    status: &StatusModel<'_>,
-    first_row: usize,
-    entries: I,
-    count: usize,
-    cursor: Option<usize>,
-) -> usize
-where
-    D: DrawTarget<Color = BinaryColor>,
-    I: Iterator<Item = MenuItem> + Clone,
-{
-    let available = layout.rows.saturating_sub(first_row);
+    // Rows 1.. belong to the list; row 0 is the header.
+    let available = layout.rows.saturating_sub(1);
     let overflows = count > available;
     // With a clipped row the last slot shows a partial entry, so one
     // fewer entry is drawn complete. A scroll bar costs width, not rows.
@@ -873,7 +852,6 @@ where
         _ => available,
     };
 
-    let index = cursor.unwrap_or(0);
     let start = if index < visible {
         0
     } else {
@@ -881,60 +859,28 @@ where
     };
 
     let mut line: String<LINE> = String::new();
-    for (offset, item) in entries.clone().skip(start).take(visible).enumerate() {
+    for (offset, item) in items.entries(level).skip(start).take(visible).enumerate() {
         line.clear();
         write_entry(&mut line, item, &status.settings);
-        let selected = cursor == Some(start + offset);
-        draw_row_selectable(target, layout, first_row + offset, &line, selected);
+        draw_row_selectable(target, layout, 1 + offset, &line, item == selected);
     }
 
     if !overflows {
-        return first_row + count;
+        return 1 + count;
     }
 
     match layout.overflow {
         Overflow::ClipRow => {
-            if let Some(item) = entries.clone().nth(start + visible) {
+            let after = start + visible;
+            if let Some(item) = items.entries(level).nth(after) {
                 line.clear();
                 write_entry(&mut line, item, &status.settings);
-                draw_clipped_row(target, layout, first_row + visible, &line);
+                draw_clipped_row(target, layout, 1 + visible, &line);
             }
         }
         Overflow::ScrollBar => draw_scroll_bar(target, layout, count, start, visible),
     }
     layout.rows
-}
-
-/// The top level's Settings page: what the switches under it are set to.
-///
-/// A page rather than a list, because at the top level an entry is the
-/// whole panel. It is a reading, not a control — the switches themselves
-/// are one Select and one level away, where they can be walked to and
-/// flipped — so nothing here is highlighted.
-fn draw_settings_page<D>(
-    target: &mut D,
-    layout: &Layout,
-    model: &UiModel,
-    status: &StatusModel<'_>,
-) -> usize
-where
-    D: DrawTarget<Color = BinaryColor>,
-{
-    let items = model.items();
-    let toggles = || {
-        MenuItem::ALL.into_iter().filter(move |item| {
-            matches!(item.kind(), EntryKind::Toggle(_)) && items.contains(*item)
-        })
-    };
-    draw_entry_rows(
-        target,
-        layout,
-        status,
-        2,
-        toggles(),
-        toggles().count(),
-        None,
-    )
 }
 
 /// An entry's name and, for a toggle, the state it is in.
@@ -2099,22 +2045,26 @@ mod tests {
     /// Every top-level entry takes the whole panel, Settings included:
     /// what it says is what the switches under it are set to.
     #[test]
-    fn the_top_level_settings_page_reads_the_switches() {
+    fn the_top_level_settings_page_says_only_its_name() {
         for layout in layouts() {
             let mut model = UiModel::new(MenuItems::all());
             walk_to(&mut model, MenuItem::Settings);
 
             let mut panel = TestPanel::new(layout.size);
             render_frame(&mut panel, &layout, &model, &demo_status());
-            assert!(
-                shows_row(&panel, &layout, "Bluetooth  on"),
-                "no switch reading on {:?}",
-                layout.size
-            );
-            // A summary, not a control: only the page title inverts,
-            // because nothing on it is under a cursor.
+            // Nothing from the level behind it: rows of labels and states
+            // here read as that list rather than as the way into it.
+            for switch in ["Bluetooth  on", "GNSS  on", "Forwarding  on"] {
+                assert!(
+                    !shows_row(&panel, &layout, switch),
+                    "{switch:?} leaked onto the doorway at {:?}",
+                    layout.size
+                );
+            }
+            // And no inverted bar, which is what made it look like a list
+            // with its first row highlighted.
             let rows = inverted_rows(&layout, &model, &demo_status());
-            assert_eq!(rows.as_slice(), &[1], "on {:?}", layout.size);
+            assert!(rows.is_empty(), "inverted {rows:?} on {:?}", layout.size);
         }
     }
 
@@ -2229,6 +2179,11 @@ mod tests {
     /// The highlight is a solid bar across the whole row, not emphasized
     /// text — that is what makes it legible on a bistable panel with no
     /// backlight, and it is the contract Select is drawn against.
+    ///
+    /// Settings is the one frame without one. It is a doorway whose whole
+    /// content is its own name, and a bar there had nothing under it to
+    /// mark: it read as a list with its first row highlighted, which is
+    /// exactly what the page is not.
     #[test]
     fn the_highlight_is_a_solid_bar_and_there_is_exactly_one() {
         for layout in layouts() {
@@ -2236,6 +2191,10 @@ mod tests {
                 let mut model = UiModel::new(MenuItems::all());
                 navigate_to(&mut model, item);
                 let rows = inverted_rows(&layout, &model, &demo_status());
+                if item == MenuItem::Settings {
+                    assert!(rows.is_empty(), "the doorway inverted {rows:?}");
+                    continue;
+                }
                 assert_eq!(
                     rows.len(),
                     1,

@@ -34,7 +34,7 @@ configuration—stays on the phone, per
 Status              reads in place; Select checks in
 Identity            reads in place; Select alternates QR code and address text
 Messages            reads in place; Select enters the message list
-Settings            reads in place; Select enters
+Settings            names itself; Select enters
     Back
     Bluetooth       Select enters
         Back
@@ -57,9 +57,16 @@ whatever the highlighted entry defines.
 **The top level is a set of pages; every level below it is a list.** At the top
 there is nothing to compare an entry against, so each one takes the whole panel
 while the cursor is on it: Status answers what the device is doing, Identity
-gives its address, and Settings reads back what the switches under it are set
-to. Below the top an entry is one row among its neighbors, and reading one takes
-a Select, which opens its page.
+gives its address, and Settings says only its own name. Below the top an entry
+is one row among its neighbors, and reading one takes a Select, which opens its
+page.
+
+**A doorway shows nothing but where it goes.** Settings has no content of its
+own, and a page that summarized what was behind it—rows of labels and their
+states, under a bar that looked like a highlight on the first of them—read as
+the list one Select away rather than as the way to it. Its name is centered and
+uninverted for the same reason: a solid bar is the cursor, and on a page whose
+whole content is a title there is nothing for it to be on.
 
 **Reading in place is a property of the level, not of the entry**, and the top
 level is the exception rather than the rule. A submenu that answered a question
@@ -104,7 +111,9 @@ The highlighted entry is drawn inverted: the panel's foreground and background
 swap across the whole width of the row, including the space either side of the
 label, so the highlight reads as a solid bar rather than as emphasized text.
 Exactly one entry is inverted at any moment, and the two choices on a
-confirmation page use the same inversion.
+confirmation page use the same inversion. A page with no entry on it—a doorway
+that shows only its own name—inverts nothing, because the bar is the cursor and
+there is nothing there for the cursor to be on.
 
 Inversion is chosen because it survives everything these panels do badly. It
 needs no color, no second font, and no glyph column stolen from a row that is
