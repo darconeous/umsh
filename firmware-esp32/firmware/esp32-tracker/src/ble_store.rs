@@ -17,7 +17,8 @@
 //!   survive the reservation growing),
 //! - next pair down: protocol snapshot journal,
 //! - next pair down: device-identity journal,
-//! - next pair down: device-node counter journal.
+//! - next pair down: device-node counter journal,
+//! - next pair down: entropy-pool seed journal.
 //!
 //! The same constant shrinks the `sequential-storage` map range in
 //! `new_storage`, so the map and the journals can never overlap.
@@ -33,6 +34,7 @@ use umsh_journal_store::ble::{self, Snapshot};
 use umsh_journal_store::record::{
     CommitError, PAGE_SIZE, PageEraser, RecordReader, RecordWriter, write_committed_record,
 };
+use umsh_journal_store::seed;
 
 pub use umsh_journal_store::ble::{MAX_BONDS, SLOT_SIZE, StoredBond};
 
@@ -79,8 +81,8 @@ impl RecordReader for JournalFlash {
 // ─── Journal placement inside the reserved tail ─────────────────────────
 
 const _: () = assert!(
-    JOURNAL_RESERVED >= 8 * PAGE_SIZE,
-    "four journal page pairs must fit inside the map carve-out"
+    JOURNAL_RESERVED >= 10 * PAGE_SIZE,
+    "five journal page pairs must fit inside the map carve-out"
 );
 
 /// BLE security journal: the topmost page pair (anchored — see module doc).
@@ -104,6 +106,92 @@ pub fn identity_page0(partition: &core::ops::Range<u32>) -> u32 {
 /// snapshot or the identity record away.
 pub fn counter_page0(partition: &core::ops::Range<u32>) -> u32 {
     partition.end - 8 * PAGE_SIZE
+}
+
+/// Entropy-pool seed journal: the pair below the counter journal.
+pub fn seed_page0(partition: &core::ops::Range<u32>) -> u32 {
+    partition.end - 10 * PAGE_SIZE
+}
+
+// ─── Entropy-pool seed journal handle ───────────────────────────────────
+
+/// Runtime handle for the two-page entropy-pool seed journal.
+///
+/// Same shape as [`BleStore`]: mount scans both pages for the newest
+/// committed record, persist writes body-then-commit into the next
+/// erased slot (erasing the opposite page when full). The pool's
+/// crash-safety contract needs exactly one property from this store:
+/// `persist` returns `Ok` only after the commit word is on flash.
+pub struct SeedStore {
+    flash: &'static SharedFlash,
+    page0: u32,
+    generation: u32,
+    seed: Option<[u8; 32]>,
+    slot: Option<u32>,
+}
+
+impl SeedStore {
+    /// Mount the journal over the shared flash.
+    pub async fn mount(shared: &'static SharedFlash, partition: &core::ops::Range<u32>) -> Self {
+        let page0 = seed_page0(partition);
+        let mut flash = shared.lock().await;
+        let mut latest: Option<(u32, seed::SeedRecord)> = None;
+        for page in [page0, page0 + PAGE_SIZE] {
+            let mut address = page;
+            while address < page + PAGE_SIZE {
+                let mut bytes = [0u8; seed::SLOT_SIZE];
+                if flash.0.read(address, &mut bytes).is_ok() {
+                    latest = seed::consider_record(latest, address, &bytes);
+                }
+                address += seed::SLOT_SIZE as u32;
+            }
+        }
+        drop(flash);
+        let (slot, generation, stored) = match latest {
+            Some((slot, record)) => (Some(slot), record.generation, Some(record.seed)),
+            None => (None, 0, None),
+        };
+        Self {
+            flash: shared,
+            page0,
+            generation,
+            seed: stored,
+            slot,
+        }
+    }
+
+    /// The stored seed, if any boot has ever committed one.
+    pub fn seed(&self) -> Option<[u8; 32]> {
+        self.seed
+    }
+
+    /// Write `seed` as the next committed record. Returns only after the
+    /// commit word is on flash — the caller may release pool output once
+    /// this is `Ok`.
+    pub async fn persist(&mut self, seed: [u8; 32]) -> Result<(), ()> {
+        let record = seed::SeedRecord {
+            generation: self.generation.wrapping_add(1),
+            seed,
+        };
+        let mut flash = self.flash.lock().await;
+        let target = umsh_ulcp_runtime::journal::journal_write_target(
+            &mut *flash,
+            self.slot,
+            self.page0,
+            seed::SLOT_SIZE,
+        )
+        .await?;
+        let bytes = record.encode();
+        match write_committed_record(&mut *flash, target, &bytes).await {
+            Ok(()) => {}
+            Err(CommitError::Body(())) | Err(CommitError::Commit(())) => return Err(()),
+        }
+        drop(flash);
+        self.generation = record.generation;
+        self.seed = Some(seed);
+        self.slot = Some(target);
+        Ok(())
+    }
 }
 
 // ─── BLE security journal handle ────────────────────────────────────────

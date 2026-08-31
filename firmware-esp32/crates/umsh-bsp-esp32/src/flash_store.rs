@@ -105,14 +105,14 @@ pub enum StorageInitError {
 /// the partition) and journal placement (top of the partition, growing
 /// downward) derive from this one constant.
 ///
-/// Four page pairs, growing downward from the partition top:
+/// Five page pairs, growing downward from the partition top:
 /// BLE security journal (topmost pair — anchored there so bonds survive
 /// the reservation growing), protocol snapshot journal, device-identity
-/// journal, device-node counter journal (Phase 5). Growing this
-/// reservation shrinks the map range from the top, which is safe (see
-/// [`new_storage`]); existing journals keep their addresses because
-/// every pair anchors to the partition end.
-pub const JOURNAL_RESERVED: u32 = 8 * FlashStorage::SECTOR_SIZE;
+/// journal, device-node counter journal (Phase 5), entropy-pool seed
+/// journal. Growing this reservation shrinks the map range from the
+/// top, which is safe (see [`new_storage`]); existing journals keep
+/// their addresses because every pair anchors to the partition end.
+pub const JOURNAL_RESERVED: u32 = 10 * FlashStorage::SECTOR_SIZE;
 
 /// Locate the UMSH data partition and build the store over it.
 ///

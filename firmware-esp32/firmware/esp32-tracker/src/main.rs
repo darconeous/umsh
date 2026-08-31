@@ -134,6 +134,7 @@ use board::vext::Vext;
 #[cfg(feature = "vext-gates-battery")]
 use board::vext::VextHandle as Vext;
 use umsh_crypto::CryptoEngine;
+use umsh_crypto::pool::EntropyPool;
 use umsh_crypto::software::{SoftwareAes, SoftwareSha256};
 #[cfg(feature = "pmic-axp2101")]
 use umsh_pmic_axp2101::{Axp2101, ChargeDirection, ChargeState, IrqMask};
@@ -3113,12 +3114,6 @@ async fn main(spawner: Spawner) {
     #[cfg(feature = "board-heltec-v2")]
     let sampler = BatterySampler::new(peripherals.ADC2, peripherals.GPIO13, vext);
 
-    // ── BLE controller: transport AND the RF entropy source ──────────────
-    let connector = BleConnector::new(peripherals.BT, Default::default())
-        .unwrap_or_else(|e| panic!("ble init failed ({e:?}) — no trustworthy RNG"));
-    let mut rng = EspCryptoRng::new().unwrap_or_else(|e| panic!("crypto rng unavailable: {e:?}"));
-    let controller: ExternalController<_, HCI_SLOTS> = ExternalController::new(connector);
-
     // ── Flash: discover the `umsh` partition (never hardcoded) ───────────
     let (flash, partition) = flash_store::open_partition(peripherals.FLASH)
         .unwrap_or_else(|e| panic!("umsh partition not found: {e:?}"));
@@ -3129,6 +3124,65 @@ async fn main(spawner: Spawner) {
     static SHARED_FLASH: StaticCell<ble_store::SharedFlash> = StaticCell::new();
     let shared: &'static ble_store::SharedFlash = SHARED_FLASH.init(ble_store::shared(flash));
 
+    // ── BLE controller ───────────────────────────────────────────────────
+    let connector = BleConnector::new(peripherals.BT, Default::default())
+        .unwrap_or_else(|e| panic!("ble init failed: {e:?}"));
+    let controller: ExternalController<_, HCI_SLOTS> = ExternalController::new(connector);
+
+    // ── Entropy pool: seeded from flash, healed by the TRNG ──────────────
+    // The seed-file protocol (see `umsh_crypto::pool`): derive the
+    // working key one-way from the stored seed plus per-boot salt,
+    // commit the next boot's seed to flash, and only then draw. The
+    // RF-gated TRNG is a source the pool harvests when the radio
+    // happens to be up — not a liveness requirement, which is what lets
+    // the BLE controller be torn down while the node keeps running.
+    let mut seed_store = ble_store::SeedStore::mount(shared, &partition).await;
+    let mut pool = match seed_store.seed() {
+        Some(stored) => {
+            let mut salt = [0u8; 7];
+            salt[..6].copy_from_slice(&base_mac_bytes());
+            salt[6] = esp_hal::system::reset_reason()
+                .map(|r| r as u8)
+                .unwrap_or(0xff);
+            EntropyPool::from_seed(SoftwareSha256, &stored, &salt)
+        }
+        None => {
+            // First boot, or the boot completing a factory reset: no
+            // seed exists, so bootstrap from the hardware TRNG. The RF
+            // subsystem is live (the connector above was just
+            // constructed), and a factory reset also restores
+            // PROP_BLE_ENABLED to its default of on, so this path can
+            // always reach real entropy.
+            let mut rng =
+                EspCryptoRng::new().unwrap_or_else(|e| panic!("crypto rng unavailable: {e:?}"));
+            let mut fresh = [0u8; 32];
+            rng.fill_bytes(&mut fresh);
+            let pool = EntropyPool::from_seed(SoftwareSha256, &fresh, b"first-boot");
+            println!("entropy pool bootstrapped from TRNG");
+            pool
+        }
+    };
+    match seed_store.persist(pool.next_seed()).await {
+        Ok(()) => pool.seed_committed(),
+        Err(()) => {
+            // The commit is what makes a crash unable to replay this
+            // boot's outputs. With the write refused, fall back to the
+            // TRNG for the replay-sensitive draws below by mixing it in
+            // — the RF subsystem is still up this early in boot.
+            println!("entropy seed persist FAILED — mixing TRNG for this boot");
+            let mut rng =
+                EspCryptoRng::new().unwrap_or_else(|e| panic!("crypto rng unavailable: {e:?}"));
+            let mut fresh = [0u8; 32];
+            rng.fill_bytes(&mut fresh);
+            pool.mix(&fresh);
+            pool.seed_committed();
+        }
+    }
+    let mut pool_draw = |label: &[u8], out: &mut [u8]| {
+        pool.draw(label, out)
+            .unwrap_or_else(|_| panic!("entropy pool draw before commit"));
+    };
+
     // ── Journals: BLE security, snapshot, identity, node counters ────────
     // Mounted before the ULCP session starts: a stored snapshot must be
     // restored (and the PHY re-applied) and the persisted device
@@ -3136,7 +3190,7 @@ async fn main(spawner: Spawner) {
     let mut ble_store_handle = BleStore::mount(shared, &partition).await;
     if ble_store_handle.snapshot().local_irk.is_none() {
         let mut local_irk = [0u8; 16];
-        rng.fill_bytes(&mut local_irk);
+        pool_draw(b"ble-local-irk", &mut local_irk);
         if local_irk == [0; 16] {
             local_irk[0] = 1;
         }
@@ -3162,17 +3216,16 @@ async fn main(spawner: Spawner) {
     // its absence, so identity is never a commissioning step the
     // operator has to perform.
     //
-    // `rng` is `EspCryptoRng`, which cannot be constructed at all unless
-    // the RF entropy source is live and panics if it goes away, so this
-    // draw is true-random by construction rather than by convention. It
-    // is deliberately taken directly rather than from the ChaCha20
-    // stream seeded below.
+    // The draw comes from the entropy pool, whose no-seed bootstrap
+    // path above ran on the RF-gated TRNG — so a first-boot identity is
+    // true-random by construction, and a later regeneration inherits
+    // the pool's ratcheted, TRNG-healed state.
     let mut identity_keys = identity_payload
         .as_deref()
         .and_then(umsh_journal_store::proto::decode_identity);
     if identity_keys.is_none() {
         let mut secret = [0u8; 32];
-        rng.fill_bytes(&mut secret);
+        pool_draw(b"device-identity", &mut secret);
         let (public, record) = driver::device_identity_record(&secret);
         // A persist failure is not fatal: the device runs on this key
         // for the current boot and generates another next time.
@@ -3198,18 +3251,19 @@ async fn main(spawner: Spawner) {
     );
 
     // Seed the identity-generation and device-node CSPRNGs from the
-    // TRNG while the RF subsystem is known-live.
+    // entropy pool.
     let mut identity_seed = [0u8; 32];
-    rng.fill_bytes(&mut identity_seed);
+    pool_draw(b"identity-rng", &mut identity_seed);
     let identity_rng = <IdentityRng as rand_core::SeedableRng>::from_seed(identity_seed);
     let mut node_seed = [0u8; 32];
-    rng.fill_bytes(&mut node_seed);
+    pool_draw(b"node-rng", &mut node_seed);
     // The Node Management cursor nonce, from the same cryptographic
     // source: it is what keeps a cursor issued before a reboot from being
     // honored after one.
     let mut admin_nonce = [0u8; 2];
-    rng.fill_bytes(&mut admin_nonce);
+    pool_draw(b"admin-nonce", &mut admin_nonce);
     let admin_nonce = u16::from_be_bytes(admin_nonce);
+    drop(pool_draw);
 
     let boot_identity = boot_identity_keys.as_ref().map(|(_secret, public)| *public);
 
