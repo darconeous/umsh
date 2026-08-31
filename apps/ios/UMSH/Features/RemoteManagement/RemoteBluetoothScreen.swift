@@ -45,19 +45,22 @@ struct RemoteBluetoothScreen: View {
                 )
             }
 
-            if model.supportsBluetoothPairing {
-                Section {
+            Section {
+                if model.supportsBluetoothPairing {
                     if let count = reading?.properties.bleBondCount {
                         LabeledContent("Paired phones", value: "\(count)")
                     } else {
                         LabeledContent("Paired phones", value: "Not read")
                     }
-                } header: {
-                    Text("Pairings")
-                } footer: {
-                    RemoteReadingFooter(reading: reading, isBusy: model.isBusy)
                 }
+                LabeledContent("Connection", value: connectionSummary)
+            } header: {
+                Text("Status")
+            } footer: {
+                RemoteReadingFooter(reading: reading, isBusy: model.isBusy)
+            }
 
+            if model.supportsBluetoothPairing {
                 Section {
                     Button("Start Pairing Mode…") { isConfirmingPairing = true }
                     Button("Clear Pairings…", role: .destructive) { isConfirmingClear = true }
@@ -104,6 +107,23 @@ struct RemoteBluetoothScreen: View {
         )
         .onChange(of: reading?.asOf) { edits = Edits(reading, preserving: edits) }
         .onAppear { if edits.isEmpty { edits = Edits(reading) } }
+    }
+
+    /// Who is on the device's Bluetooth right now.
+    ///
+    /// Over the mesh this is the interesting row on the screen — it is the
+    /// only way to ask whether someone else is managing the device. Over
+    /// Bluetooth it can only ever say "attached", because the phone
+    /// reading it is the attachment, so the copy says so instead of
+    /// reporting the phone back to itself as news.
+    private var connectionSummary: String {
+        guard let state = reading?.properties.bleLink else { return "Not read" }
+        switch state {
+        case 0: return "Nobody connected"
+        case 1: return "A phone is connected"
+        case 2: return overThisLink ? "This phone" : "A phone is managing this device"
+        default: return "Unknown"
+        }
     }
 
     /// What clearing costs, which is not the same question on every link.

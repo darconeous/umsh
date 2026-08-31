@@ -2110,16 +2110,20 @@ where
     }
 
     /// Forget every Bluetooth bond, the pairing PIN, and the pairing
-    /// lockout (`CMD_BLE_CLEAR_BONDS`; requires `CAP_BLE_PAIRING`), then
-    /// leave the device in a pairing window.
+    /// lockout (`CMD_BLE_CLEAR_BONDS`; requires `CAP_BLE`), then leave
+    /// the device in a pairing window.
     ///
-    /// `Ok(false)` means the device does not advertise the capability and
-    /// nothing was sent. Over Bluetooth this severs the caller's own
-    /// link — the bond that carried it is one of the bonds deleted — but
-    /// the status arrives first; over a cable and over the mesh nothing
-    /// is disturbed.
+    /// `Ok(false)` means the device has no Bluetooth transport at all and
+    /// nothing was sent. One that has a transport but does not manage its
+    /// own bonds answers `STATUS_UNIMPLEMENTED`, which surfaces as an
+    /// error — the caps list stops at "has Bluetooth", so the refusal is
+    /// where the rest of the answer lives.
+    ///
+    /// Over Bluetooth this severs the caller's own link — the bond that
+    /// carried it is one of the bonds deleted — but the status arrives
+    /// first; over a cable and over the mesh nothing is disturbed.
     pub async fn ble_clear_bonds(&mut self) -> Result<bool, UlcpError> {
-        if !self.capabilities().await?.contains(&cap::BLE_PAIRING) {
+        if !self.capabilities().await?.contains(&cap::BLE) {
             return Ok(false);
         }
         self.status_only_command(frame::ble_clear_bonds).await?;
@@ -2127,15 +2131,16 @@ where
     }
 
     /// Open a pairing window (`CMD_BLE_START_PAIRING`; requires
-    /// `CAP_BLE_PAIRING`) so an unbonded host can pair without a gesture
-    /// at the device.
+    /// `CAP_BLE`) so an unbonded host can pair without a gesture at the
+    /// device.
     ///
-    /// `Ok(false)` means the device does not advertise the capability.
-    /// A device that could not open a window — locked out, or with a full
-    /// bond store — answers `STATUS_INVALID_STATE`, which surfaces as an
-    /// error rather than a quiet success.
+    /// `Ok(false)` means the device has no Bluetooth transport at all. A
+    /// device that does not manage its own bonds answers
+    /// `STATUS_UNIMPLEMENTED`, and one that could not open a window right
+    /// now — locked out — answers `STATUS_INVALID_STATE`; both surface as
+    /// errors rather than a quiet success.
     pub async fn ble_start_pairing(&mut self) -> Result<bool, UlcpError> {
-        if !self.capabilities().await?.contains(&cap::BLE_PAIRING) {
+        if !self.capabilities().await?.contains(&cap::BLE) {
             return Ok(false);
         }
         self.status_only_command(frame::ble_start_pairing).await?;
@@ -3422,9 +3427,10 @@ mod tests {
                             replies.push(buf[..len].to_vec());
                         }
                     }
-                    // This device predates CAP_CMD_MULTI, CAP_REBOOT and
-                    // CAP_BLE_PAIRING: it answers commands it does not
-                    // implement the way any such device answers them.
+                    // This device predates CAP_CMD_MULTI and CAP_REBOOT,
+                    // and manages no bonds of its own: it answers commands
+                    // it does not implement the way any such device
+                    // answers them.
                     Cmd::PropMultiGet
                     | Cmd::PropMultiSet
                     | Cmd::Reboot

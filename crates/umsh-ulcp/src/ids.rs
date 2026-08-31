@@ -254,8 +254,9 @@ pub mod prop {
     /// would be lying about the thing a user turns it off for.
     pub const BLE_ENABLED: u32 = 4871;
     /// How many Bluetooth bonds the device is holding
-    /// (`PROP_BLE_BOND_COUNT`) — `UINT8`, read-only. Requires
-    /// `CAP_BLE_PAIRING`.
+    /// (`PROP_BLE_BOND_COUNT`) — `UINT8`, read-only. Requires `CAP_BLE`;
+    /// a device whose bonds it cannot manage answers
+    /// `STATUS_PROP_NOT_FOUND`.
     ///
     /// The count is live state rather than configuration, so it is not
     /// part of the saved snapshot. It says how many hosts are enrolled,
@@ -263,6 +264,17 @@ pub mod prop {
     /// bonded hosts to whoever asked would leak the association its
     /// pairing ceremony exists to protect.
     pub const BLE_BOND_COUNT: u32 = 4872;
+    /// How far the Bluetooth transport has got with whoever is on the
+    /// other end of it (`PROP_BLE_LINK`) — `UINT8`, read-only, one of
+    /// [`crate::ble::BleLinkState`]. Requires `CAP_BLE`.
+    ///
+    /// Live transport state, so it is not part of the saved snapshot and
+    /// a protocol reset does not touch it. Read over Bluetooth it always
+    /// answers `BLE_LINK_ATTACHED`, because the session asking is the
+    /// session it is reporting; it earns its keep over the mesh and over
+    /// a cable, where it is the only way to ask whether a phone is on the
+    /// device right now.
+    pub const BLE_LINK: u32 = 4873;
 }
 
 /// `PROP_SAVED` values.
@@ -352,21 +364,22 @@ pub mod cap {
     /// `CMD_PROP_MULTI_SET` and answers them with `CMD_PROP_ARE`.
     pub const CMD_MULTI: u32 = 49;
     /// `CAP_BLE` — the device has a Bluetooth transport whose
-    /// reachability it can turn on and off (`PROP_BLE_ENABLED`). It says
-    /// nothing about the stack underneath, and in particular does not
-    /// promise that clearing the property powers a radio down.
+    /// reachability it can turn on and off (`PROP_BLE_ENABLED`,
+    /// `PROP_BLE_LINK`). It says nothing about the stack underneath, and
+    /// in particular does not promise that clearing `PROP_BLE_ENABLED`
+    /// powers a radio down.
+    ///
+    /// The only Bluetooth capability there is. What else a given
+    /// transport will do — manage its own bonds, hold a pairing PIN — a
+    /// host learns by asking for the property or sending the command and
+    /// reading the refusal, which is a question it has to be able to
+    /// answer anyway.
     pub const BLE: u32 = 50;
     /// `CAP_REBOOT` — the device can restart its hardware on command
     /// (`CMD_REBOOT`). A device that cannot — one whose ULCP session is
     /// a process rather than a board — leaves this out and answers the
     /// command `STATUS_UNIMPLEMENTED`.
     pub const REBOOT: u32 = 51;
-    /// `CAP_BLE_PAIRING` — the device manages its own Bluetooth bonds on
-    /// command (`CMD_BLE_CLEAR_BONDS`, `CMD_BLE_START_PAIRING`,
-    /// `PROP_BLE_BOND_COUNT`). Requires `CAP_BLE`. A device whose bonds
-    /// are only reachable by a gesture at the device itself leaves this
-    /// out and answers both commands `STATUS_UNIMPLEMENTED`.
-    pub const BLE_PAIRING: u32 = 52;
 }
 
 /// Whether a property is reachable from a mesh administrator.

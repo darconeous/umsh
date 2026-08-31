@@ -1374,8 +1374,8 @@ impl MobileMeshSession {
     ///
     /// Both commands answer with a status rather than silence: they are
     /// not reset-class, and what they did is the whole of what they
-    /// report. `STATUS_UNIMPLEMENTED` is a device without
-    /// `CAP_BLE_PAIRING`; `STATUS_INVALID_STATE` from
+    /// report. `STATUS_UNIMPLEMENTED` is a device that does not manage
+    /// its own bonds; `STATUS_INVALID_STATE` from
     /// [`MobileMeshBleCommand::StartPairing`] is a device that could not
     /// open a window.
     ///

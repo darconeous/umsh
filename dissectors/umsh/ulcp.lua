@@ -77,6 +77,7 @@ local PROPERTIES = {
   [4865] = "PROP_DEV_ADMINS",
   [4871] = "PROP_BLE_ENABLED",
   [4872] = "PROP_BLE_BOND_COUNT",
+  [4873] = "PROP_BLE_LINK",
 }
 
 local STREAMS = {[113] = "STR_PHY_RAW"}

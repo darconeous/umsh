@@ -223,21 +223,30 @@ bonded hosts can reconnect.
 
 ## Capabilities {#capabilities}
 
-Code | Name              | Requires  | Grants
------|-------------------|-----------|--------
-50   | `CAP_BLE`         | —         | A Bluetooth transport whose reachability the device can turn on and off: `PROP_BLE_ENABLED`
-52   | `CAP_BLE_PAIRING` | `CAP_BLE` | Bond management on command: `CMD_BLE_CLEAR_BONDS`, `CMD_BLE_START_PAIRING`, `PROP_BLE_BOND_COUNT`
+Code | Name      | Requires | Grants
+-----|-----------|----------|--------
+50   | `CAP_BLE` | —        | A Bluetooth transport whose reachability the device can turn on and off, and which reports what is on it: `PROP_BLE_ENABLED`, `PROP_BLE_LINK`
 
 A device implementing this binding **MAY** advertise `CAP_BLE`. Not
 advertising it means the transport is always reachable while the device
 is powered, which is what every device did before the capability
 existed; it does not mean the device has no BLE.
 
-`CAP_BLE_PAIRING` is separate because the two claims are separate: a
-device can be made unreachable without being able to rearrange who it
-trusts. A device whose bonds are reachable only by a gesture at the
-device itself leaves it out and answers both commands
-`STATUS_UNIMPLEMENTED`.
+`CAP_BLE` is the only capability this binding defines, and everything
+else about a transport is discovered by asking for it. A device that
+manages its own bonds answers `PROP_BLE_BOND_COUNT` and the two bond
+commands; one whose bonds are reachable only by a gesture at the device
+itself answers `STATUS_PROP_NOT_FOUND` to the property and
+`STATUS_UNIMPLEMENTED` to the commands.
+
+This is deliberate. A capability is worth a code when a host would
+otherwise have to guess, and here it would not: the refusal is a
+complete answer, arrives in the same exchange the host was already
+making, and is a case the host must handle regardless — any property may
+be refused by firmware older than the host that asks. Splitting the
+transport into finer capabilities would buy a host nothing it cannot
+learn in the reply it is already waiting for, at the cost of a second
+claim that can disagree with the first.
 
 ## Reachability {#ble-reachability}
 
@@ -275,13 +284,56 @@ device that cannot be configured by the host that would make it
 reachable again, and on most hardware the only other way in is the menu
 on the front of it.
 
+### PROP 4873: `PROP_BLE_LINK` {#prop-ble-link}
+
+* Type: Single-Value, Read-Only
+* Asynchronous Updates: Yes
+* Required: `CAP_BLE`
+* Value Type: UINT8
+* Post-Reset Value: what the transport is doing
+
+Value | Name                 | Meaning
+------|----------------------|---------
+0     | `BLE_LINK_NONE`      | Nothing is connected over Bluetooth
+1     | `BLE_LINK_CONNECTED` | A central holds a connection but has not attached
+2     | `BLE_LINK_ATTACHED`  | A host is attached and running ULCP over Bluetooth
+
+How far the transport has got with whoever is on the other end of it. A
+device **MUST** publish the new value when it changes: a host arriving
+or walking away is a transition nobody asked for, and one that a
+watching administrator would otherwise have to poll for.
+
+Connected and attached are separate values because they are separate
+facts. A central can hold the device's connection without ever
+subscribing to the ULCP notification characteristic — a stalled pairing,
+an operating system reconnecting a bond in the background, or a host
+that simply occupies the slot — and a device with one peripheral
+connection is unreachable by anyone else while that lasts. Reporting
+that as "nobody is here" would describe a device that is in fact
+unavailable.
+
+Read over BLE the value is always `BLE_LINK_ATTACHED`, because the
+session asking is the session it reports. The property earns its keep on
+the other bindings: over a serial transport and over
+[Node Management](node-mgmt.md) it is the only way to ask whether
+someone is on the device's Bluetooth right now.
+
+Like the bond count, it is live transport state: **NOT** part of the
+saved snapshot, and `CMD_RST` **MUST NOT** change it. A host does not
+disconnect because a reset was performed on the device it is attached
+to.
+
+It says what the transport is doing, never with whom. Identifying the
+connected host would leak the same association the
+[bond count](#prop-ble-bond-count) withholds.
+
 ## Bond Management Commands {#bond-management-commands}
 
 ### PROP 4872: `PROP_BLE_BOND_COUNT` {#prop-ble-bond-count}
 
 * Type: Single-Value, Read-Only
 * Asynchronous Updates: Yes
-* Required: `CAP_BLE_PAIRING`
+* Required: `CAP_BLE`
 * Value Type: UINT8
 * Post-Reset Value: the number of bonds the device holds
 
@@ -289,6 +341,10 @@ How many hosts are currently bonded. A device **MUST** report the count
 its durable bond store holds, and **MUST** publish the new value when it
 changes — enrollment and eviction both happen without the host asking,
 so a host that was not told would have to poll.
+
+A device that does not manage its own bonds answers
+`STATUS_PROP_NOT_FOUND`, which is how a host learns that the two bond
+commands below will refuse it as well.
 
 The count is live transport state, not configuration: it is **NOT** part
 of the saved snapshot, and `CMD_RST` **MUST NOT** change it. A protocol
@@ -323,7 +379,8 @@ enter pairing mode: a device that has forgotten every host it trusts and
 is not accepting new ones is reachable by nothing.
 
 The device answers `PROP_LAST_STATUS`: `STATUS_OK` once the deletion is
-durable, `STATUS_UNIMPLEMENTED` without `CAP_BLE_PAIRING`. Sent over
+durable, `STATUS_UNIMPLEMENTED` on a device that does not manage its own
+bonds and `STATUS_UNIMPLEMENTED` without `CAP_BLE`. Sent over
 BLE, that answer is the last thing the sender hears, because the bond
 that carried it is among the bonds deleted; the reply **MUST** be
 emitted before the connection is dropped.
@@ -353,7 +410,8 @@ perceptible indication.
 The device answers `PROP_LAST_STATUS`: `STATUS_OK` once the window is
 open, `STATUS_INVALID_STATE` when it cannot open one — the device is
 locked out after repeated pairing failures — and
-`STATUS_UNIMPLEMENTED` without `CAP_BLE_PAIRING`. A full bond store is
+`STATUS_UNIMPLEMENTED` on a device that does not manage its own bonds. A
+full bond store is
 **NOT** a refusal: enrollment at capacity evicts rather than refuses
 (see [Bond Management](#bond-management)), so a device with a full store
 opens the window like any other.
@@ -509,8 +567,8 @@ BLE.
 
 * Devices **MUST** provide a local mechanism to delete stored bonds. The
   mechanism is implementation-specific. Deletion **MUST NOT** be
-  invocable over an unauthenticated path; a device advertising
-  `CAP_BLE_PAIRING` additionally accepts
+  invocable over an unauthenticated path; a device that manages its own
+  bonds additionally accepts
   [`CMD_BLE_CLEAR_BONDS`](#cmd-ble-clear-bonds), whose authorization is
   the session's own (see [Administrative
   Authorization](#administrative-authorization)).

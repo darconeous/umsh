@@ -14,6 +14,7 @@ use umsh_ulcp::Status;
 use umsh_ulcp::airtime::lora_airtime_ms;
 use umsh_ulcp::alert::AlertState;
 use umsh_ulcp::battery::{self, BatteryStatus};
+use umsh_ulcp::ble::BleLinkState;
 use umsh_ulcp::frame::{
     self, Cmd, Frame, Header, MultiEntries, PropPayload, StreamPayload, TID_UNSOLICITED,
 };
@@ -233,14 +234,20 @@ pub struct SessionConfig {
     pub illuminance: bool,
     /// Whether the device has a Bluetooth transport it can make
     /// unreachable on demand. When set, `CAP_BLE` is advertised and
-    /// `PROP_BLE_ENABLED` exists; otherwise the property is unknown.
+    /// `PROP_BLE_ENABLED` and `PROP_BLE_LINK` exist; otherwise both
+    /// properties are unknown.
     pub ble: bool,
     /// Whether the platform manages its own Bluetooth bonds on command.
-    /// When set, `CAP_BLE_PAIRING` is advertised, `PROP_BLE_BOND_COUNT`
-    /// exists, and `CMD_BLE_CLEAR_BONDS` and `CMD_BLE_START_PAIRING` reach
-    /// their effects; otherwise both commands answer `STATUS_UNIMPLEMENTED`
-    /// and the property is unknown. Meaningful only alongside
-    /// [`ble`](Self::ble).
+    /// When set, `PROP_BLE_BOND_COUNT` exists and `CMD_BLE_CLEAR_BONDS`
+    /// and `CMD_BLE_START_PAIRING` reach their effects; otherwise both
+    /// commands answer `STATUS_UNIMPLEMENTED` and the property is
+    /// unknown. Meaningful only alongside [`ble`](Self::ble).
+    ///
+    /// Deliberately not a capability of its own. `CAP_BLE` is the only
+    /// Bluetooth capability there is, and a host that wants to know
+    /// whether this device manages its bonds asks for the count and reads
+    /// the refusal — a question it has to be able to answer anyway, since
+    /// any property may be refused by firmware older than the host.
     pub ble_pairing: bool,
     /// Whether the platform can restart the hardware on command. When
     /// set, `CAP_REBOOT` is advertised and `CMD_REBOOT` reaches
@@ -581,11 +588,6 @@ struct DeviceDomain {
     /// device nobody can configure, and on most boards the menu that
     /// clears this is reached over the very link it drops.
     ble_enabled: bool,
-    /// `PROP_BLE_BOND_COUNT`: how many bonds the transport is holding.
-    /// Live state the transport reports through
-    /// [`Session::set_ble_bond_count`], never anything the session counts
-    /// or saves.
-    ble_bond_count: u8,
 }
 
 impl DeviceDomain {
@@ -628,7 +630,6 @@ impl DeviceDomain {
             gnss_ident_precision: DEFAULT_IDENT_PRECISION,
             gnss_time_trust: true,
             ble_enabled: true,
-            ble_bond_count: 0,
         }
     }
 }
@@ -2233,6 +2234,19 @@ pub struct Session<A: AesProvider, S: Sha256Provider, const TX: usize = 1> {
     /// The deadline is the only thing that stops it unattended.
     alert: AlertState,
     alert_deadline_ms: Option<u64>,
+    /// `PROP_BLE_BOND_COUNT` and `PROP_BLE_LINK`: how many hosts the
+    /// Bluetooth transport has enrolled, and what it is doing with one
+    /// right now.
+    ///
+    /// Live transport state, held here for the same reason the alert is:
+    /// neither is device-domain configuration, so neither is saved and
+    /// `CMD_RST` must not invent a value for it. A reset that reported
+    /// zero bonds would be describing a device that still trusts every
+    /// host it did before. The transport is authoritative for both and
+    /// reports them through [`Session::set_ble_bond_count`] and
+    /// [`Session::set_ble_link`].
+    ble_bond_count: u8,
+    ble_link: BleLinkState,
     /// A `CMD_PROP_MULTI_GET` or `CMD_PROP_MULTI_SET` part-way through
     /// its entries. Present only between the arrival of that frame and
     /// the `CMD_PROP_ARE` answering it, which is why it belongs to no
@@ -2365,6 +2379,8 @@ impl<A: AesProvider, S: Sha256Provider, const TX: usize> Session<A, S, TX> {
             dev_domain_version: 0,
             alert: AlertState::None,
             alert_deadline_ms: None,
+            ble_bond_count: 0,
+            ble_link: BleLinkState::None,
             multi: None,
             binding: Binding::Local,
             scratch: [0; SCRATCH],
@@ -2529,12 +2545,7 @@ impl<A: AesProvider, S: Sha256Provider, const TX: usize> Session<A, S, TX> {
     /// saved. Queue contents and replay baselines are discarded either
     /// way.
     pub fn reset(&mut self, reason: Status, emit: &mut impl FnMut(&[u8])) -> Effect {
-        // The bond count mirrors the transport, which a protocol reset
-        // does not touch: `CMD_RST` returns protocol state to its
-        // post-reset values, and bonds are neither.
-        let bonds = self.device.ble_bond_count;
         self.device = DeviceDomain::post_reset(&self.config);
-        self.device.ble_bond_count = bonds;
         // The device identity's post-reset value is the persisted one:
         // normally unchanged, gone after CMD_CLEAR (completing a
         // factory reset).
@@ -3655,9 +3666,22 @@ impl<A: AesProvider, S: Sha256Provider, const TX: usize> Session<A, S, TX> {
     /// `PROP_BLE_BOND_COUNT`: how many bonds the transport last reported.
     pub fn ble_bond_count(&self) -> u8 {
         if self.config.ble_pairing {
-            self.device.ble_bond_count
+            self.ble_bond_count
         } else {
             0
+        }
+    }
+
+    /// `PROP_BLE_LINK`: how far the Bluetooth transport has got with
+    /// whoever is on the other end of it.
+    ///
+    /// Always `None` on a board without `CAP_BLE`, so a platform can act
+    /// on it without first asking whether it has a transport.
+    pub fn ble_link(&self) -> BleLinkState {
+        if self.config.ble {
+            self.ble_link
+        } else {
+            BleLinkState::None
         }
     }
 
@@ -4255,13 +4279,31 @@ impl<A: AesProvider, S: Sha256Provider, const TX: usize> Session<A, S, TX> {
     /// or forgetting a bond happens at the device, so an attached host
     /// would otherwise have to poll to notice.
     pub fn set_ble_bond_count(&mut self, count: u8, emit: &mut impl FnMut(&[u8])) {
-        if !self.config.ble_pairing || self.device.ble_bond_count == count {
+        if !self.config.ble_pairing || self.ble_bond_count == count {
             return;
         }
-        self.device.ble_bond_count = count;
-        self.bump_dev_domain();
+        self.ble_bond_count = count;
         if self.attached {
             self.announce_prop_is(prop::BLE_BOND_COUNT, &[count], emit);
+        }
+    }
+
+    /// How far the Bluetooth transport has got with whoever is on the
+    /// other end of it, as reported by `PROP_BLE_LINK`.
+    ///
+    /// Announced like the bond count, and for the same reason: a host
+    /// connecting or walking away is a transition nobody asked for. An
+    /// announcement only ever reaches a host on some *other* binding —
+    /// the Bluetooth host that would hear "attached" is the one that
+    /// caused it, and by the time the state is `None` there is nobody
+    /// there to tell.
+    pub fn set_ble_link(&mut self, state: BleLinkState, emit: &mut impl FnMut(&[u8])) {
+        if !self.config.ble || self.ble_link == state {
+            return;
+        }
+        self.ble_link = state;
+        if self.attached {
+            self.announce_prop_is(prop::BLE_LINK, &[state.code()], emit);
         }
     }
 
@@ -4739,6 +4781,10 @@ impl<A: AesProvider, S: Sha256Provider, const TX: usize> Session<A, S, TX> {
             // `CMD_BLE_CLEAR_BONDS`; the count reports that, it does not
             // steer it.
             prop::BLE_BOND_COUNT if self.config.ble_pairing => Err(Status::INVALID_ARGUMENT),
+            // Who is connected is the transport's to report, not the
+            // host's to arrange. A host that wants nobody connected has
+            // `PROP_BLE_ENABLED`.
+            prop::BLE_LINK if self.config.ble => Err(Status::INVALID_ARGUMENT),
             _ => Err(Status::PROP_NOT_FOUND),
         }
     }
@@ -5099,6 +5145,9 @@ impl<A: AesProvider, S: Sha256Provider, const TX: usize> Session<A, S, TX> {
         if key == prop::BLE_BOND_COUNT {
             return self.config.ble_pairing;
         }
+        if key == prop::BLE_LINK {
+            return self.config.ble;
+        }
         if matches!(key, prop::TIME | prop::TZ_OFFSET) {
             return self.config.time.is_some();
         }
@@ -5240,9 +5289,6 @@ impl<A: AesProvider, S: Sha256Provider, const TX: usize> Session<A, S, TX> {
                 if self.config.ble {
                     len += pui::encode(cap::BLE, &mut out[len..]).unwrap_or(0);
                 }
-                if self.config.ble_pairing {
-                    len += pui::encode(cap::BLE_PAIRING, &mut out[len..]).unwrap_or(0);
-                }
                 if self.config.reboot {
                     len += pui::encode(cap::REBOOT, &mut out[len..]).unwrap_or(0);
                 }
@@ -5367,7 +5413,11 @@ impl<A: AesProvider, S: Sha256Provider, const TX: usize> Session<A, S, TX> {
                 1
             }
             prop::BLE_BOND_COUNT if self.config.ble_pairing => {
-                out[0] = self.device.ble_bond_count;
+                out[0] = self.ble_bond_count;
+                1
+            }
+            prop::BLE_LINK if self.config.ble => {
+                out[0] = self.ble_link.code();
                 1
             }
             prop::MAC_REPEATER_REGIONS if self.config.mac_node => {
@@ -6271,7 +6321,6 @@ mod tests {
                 cap::GNSS,
                 cap::ILLUMINANCE,
                 cap::BLE,
-                cap::BLE_PAIRING,
                 cap::REBOOT
             ]
         );
@@ -6420,7 +6469,6 @@ mod tests {
         let (emitted, effect) = dispatch(&mut session, &pair, 0);
         assert_eq!(effect, Some(Effect::BleStartPairing { tid: 4 }));
         assert!(emitted.is_empty());
-        assert!(capabilities(&mut session).contains(&cap::BLE_PAIRING));
 
         // A device that cannot open a window refuses with a state the
         // caller can retry out of, not an internal error.
@@ -6449,7 +6497,15 @@ mod tests {
             assert_eq!(key, prop::LAST_STATUS);
             assert_eq!(pui::decode(&value).unwrap().0, Status::UNIMPLEMENTED.0);
         }
-        assert!(!capabilities(&mut fixed).contains(&cap::BLE_PAIRING));
+        // The refusal is the whole of what the host is told. Bluetooth
+        // has one capability, and a device that keeps its bonds to itself
+        // still advertises it — so the count, not the caps list, is what
+        // a host asks.
+        assert!(capabilities(&mut fixed).contains(&cap::BLE));
+        let mut buf = [0u8; 16];
+        let len = frame::prop_get(&mut buf, 6, prop::BLE_BOND_COUNT).unwrap();
+        let (emitted, _) = dispatch(&mut fixed, &buf[..len], 0);
+        expect_status(&emitted[0], 6, Status::PROP_NOT_FOUND);
     }
 
     /// The bond count mirrors the transport. It is not configuration, so
@@ -6476,6 +6532,72 @@ mod tests {
 
         session.reset(Status::RESET_OTHER, &mut |_| {});
         assert_eq!(get(&mut session, prop::BLE_BOND_COUNT), [2]);
+    }
+
+    /// The link is live transport state on the same footing as the bond
+    /// count: reported, announced, not writable, and untouched by a
+    /// protocol reset — the host on the other end of it does not
+    /// disconnect because someone sent `CMD_RST`.
+    #[test]
+    fn link_state_reports_the_transport_and_survives_a_reset() {
+        let mut session = test_session();
+        assert_eq!(
+            get(&mut session, prop::BLE_LINK),
+            [BleLinkState::None.code()]
+        );
+
+        // Connected and attached are different claims, and both are
+        // published: a host arriving on Bluetooth is a transition the
+        // administrator watching over the mesh never asked about.
+        let mut announced = Vec::new();
+        let mut emit = |frame: &[u8]| announced.push(frame.to_vec());
+        session.set_ble_link(BleLinkState::Connected, &mut emit);
+        session.set_ble_link(BleLinkState::Connected, &mut emit);
+        session.set_ble_link(BleLinkState::Attached, &mut emit);
+        assert_eq!(announced.len(), 2, "an unchanged state announces nothing");
+        let (_, key, value) = parse_prop_is(&announced[1]);
+        assert_eq!(key, prop::BLE_LINK);
+        assert_eq!(value, [BleLinkState::Attached.code()]);
+        assert!(session.ble_link().is_attached());
+
+        let mut buf = [0u8; 16];
+        let len = frame::prop_set(&mut buf, 5, prop::BLE_LINK, &[0]).unwrap();
+        let (emitted, _) = dispatch(&mut session, &buf[..len], 0);
+        expect_status(&emitted[0], 5, Status::INVALID_ARGUMENT);
+
+        session.reset(Status::RESET_OTHER, &mut |_| {});
+        assert_eq!(
+            get(&mut session, prop::BLE_LINK),
+            [BleLinkState::Attached.code()]
+        );
+    }
+
+    /// A board with no Bluetooth has neither property, and the session
+    /// answers for the transport it does not have rather than guessing.
+    #[test]
+    fn a_board_without_bluetooth_has_no_link_to_report() {
+        let config = SessionConfig {
+            ble: false,
+            ble_pairing: false,
+            ..test_config()
+        };
+        let mut session: TestSession = Session::new(config, Status::RESET_POWER_ON, test_engine());
+        session.attach(true);
+        assert!(!capabilities(&mut session).contains(&cap::BLE));
+
+        let mut buf = [0u8; 16];
+        let len = frame::prop_get(&mut buf, 2, prop::BLE_LINK).unwrap();
+        let (emitted, _) = dispatch(&mut session, &buf[..len], 0);
+        expect_status(&emitted[0], 2, Status::PROP_NOT_FOUND);
+
+        // Told about a link anyway, it stays quiet: a transport the
+        // config says is absent has nothing to announce.
+        let mut announced = Vec::new();
+        session.set_ble_link(BleLinkState::Attached, &mut |frame| {
+            announced.push(frame.to_vec())
+        });
+        assert!(announced.is_empty());
+        assert_eq!(session.ble_link(), BleLinkState::None);
     }
 
     /// The clock is the platform's, not the session's: a get defers, a

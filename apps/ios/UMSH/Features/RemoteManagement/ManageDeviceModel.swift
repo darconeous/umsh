@@ -136,6 +136,17 @@ struct RemoteCategoryReading {
     /// the cache. A refreshed screen stops dating what it shows.
     private(set) var isFresh = false
 
+    /// Whether the device actually answered for this property.
+    ///
+    /// The three outcomes a screen has to tell apart: answered, refused,
+    /// and never asked. Absence in ``properties`` covers the last two
+    /// together, which is not enough — a refusal is the device saying it
+    /// does not have the property, and that is the signal for leaving its
+    /// controls out rather than showing them empty.
+    func answered(_ property: UInt32) -> Bool {
+        propertyIDs.contains(property) && !refused.contains(property)
+    }
+
     /// Take in values the device reported, from a read or from a write's
     /// echoes, and redecode around them.
     mutating func absorb(_ reported: [UInt32: Data], at instant: Date, fromAir: Bool) {
@@ -198,9 +209,15 @@ final class ManageDeviceModel {
     /// Read off the cached card, so offering the control costs no airtime.
     var supportsRestart: Bool { card?.supportsReboot ?? false }
 
-    /// Whether this device manages its own Bluetooth bonds on command
-    /// (`CAP_BLE_PAIRING`), read off the cached card.
-    var supportsBluetoothPairing: Bool { card?.supportsBlePairing ?? false }
+    /// Whether this device manages its own Bluetooth bonds on command.
+    ///
+    /// Not a capability — Bluetooth has only one, and the rest is
+    /// discovered by asking. The device answering for its bond count is
+    /// the claim; a refusal, or a screen that has not been read yet, is
+    /// not, so the controls stay out until the device has said otherwise.
+    var supportsBluetoothPairing: Bool {
+        readings[.bluetooth]?.answered(ulcpProperties.bleBondCount) ?? false
+    }
 
     /// How this device is reached. The Bluetooth screen is the one place
     /// it changes what a control *means* rather than only what it costs:
@@ -317,7 +334,6 @@ final class ManageDeviceModel {
             supportsAdmin: decoded.supportsAdmin,
             supportsAlert: decoded.supportsAlert,
             supportsBle: decoded.supportsBle,
-            supportsBlePairing: decoded.supportsBlePairing,
             supportsReboot: decoded.supportsReboot,
             supportsSave: decoded.supportsSave,
             supportsMulti: decoded.supportsMulti

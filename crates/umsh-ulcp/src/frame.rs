@@ -111,15 +111,15 @@ pub enum Cmd {
     /// pairing passkey and the pairing failure lockout, then enter pairing
     /// mode so the device can be paired again. Bonded hosts lose their
     /// bonds and any attached over Bluetooth are dropped, including the one
-    /// that sent the command. Requires `CAP_BLE_PAIRING`; a device without
-    /// it answers `STATUS_UNIMPLEMENTED`.
+    /// that sent the command. Requires `CAP_BLE`; a device that does not
+    /// manage its own bonds answers `STATUS_UNIMPLEMENTED`.
     BleClearBonds = 17,
     /// Open a pairing window (host to device) so an unbonded host may pair
     /// without a physical gesture at the device. The window closes on a new
     /// bond, on a bonded host connecting, or on a timeout of the device's
-    /// choosing. Requires `CAP_BLE_PAIRING`; a device without it answers
-    /// `STATUS_UNIMPLEMENTED`, and one that cannot open a window right now
-    /// answers `STATUS_INVALID_STATE`.
+    /// choosing. Requires `CAP_BLE`; a device that does not manage its own
+    /// bonds answers `STATUS_UNIMPLEMENTED`, and one that cannot open a
+    /// window right now answers `STATUS_INVALID_STATE`.
     BleStartPairing = 18,
     /// Get several property values (host to device). Requires
     /// `CAP_CMD_MULTI`.

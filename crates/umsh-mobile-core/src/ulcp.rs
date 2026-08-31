@@ -2114,7 +2114,7 @@ impl MobileUlcpSession {
     ) -> Result<UlcpSessionUpdateRecord, MobileError> {
         let mut state = self.inner.lock().expect("ULCP session mutex poisoned");
         state.begin_local_management()?;
-        if !state.has_capability(cap::BLE_PAIRING)? {
+        if !state.has_capability(cap::BLE)? {
             return Err(MobileError::UnsupportedCapability);
         }
         state.management = Some(LocalManagement::default());
@@ -3203,6 +3203,7 @@ pub struct UlcpManagedPropertyIds {
     pub gnss_time_trust: u32,
     pub ble_enabled: u32,
     pub ble_bond_count: u32,
+    pub ble_link: u32,
     pub time: u32,
     pub tz_offset: u32,
     pub alert: u32,
@@ -3247,6 +3248,7 @@ pub fn ulcp_managed_property_ids() -> UlcpManagedPropertyIds {
         gnss_time_trust: prop::GNSS_TIME_TRUST,
         ble_enabled: prop::BLE_ENABLED,
         ble_bond_count: prop::BLE_BOND_COUNT,
+        ble_link: prop::BLE_LINK,
         time: prop::TIME,
         tz_offset: prop::TZ_OFFSET,
         alert: prop::ALERT,
@@ -3360,11 +3362,15 @@ pub fn ulcp_category_properties(
             when(has(cap::GNSS), &[prop::GNSS_TIME_TRUST]);
         }
         UlcpManageCategory::Bluetooth => {
-            when(has(cap::BLE), &[prop::BLE_ENABLED]);
-            // The count exists only where the bonds can be managed; a
-            // device that only offers the reachability toggle has one
-            // row and no actions.
-            when(has(cap::BLE_PAIRING), &[prop::BLE_BOND_COUNT]);
+            // One capability covers the whole transport, so the count is
+            // asked for unconditionally: a device that does not manage
+            // its own bonds refuses it, and the refusal is what tells the
+            // screen to leave the actions out. Asking costs one slot in a
+            // batch that is being sent anyway.
+            when(
+                has(cap::BLE),
+                &[prop::BLE_ENABLED, prop::BLE_BOND_COUNT, prop::BLE_LINK],
+            );
         }
         UlcpManageCategory::Repeater => when(
             has(cap::REPEATER),
@@ -3417,9 +3423,6 @@ pub struct UlcpDeviceCardRecord {
     /// Whether the device has a Bluetooth transport it can be made
     /// unreachable over (`CAP_BLE`).
     pub supports_ble: bool,
-    /// Whether the bond commands and the bond count are worth offering
-    /// (`CAP_BLE_PAIRING`).
-    pub supports_ble_pairing: bool,
     /// Whether a Restart control is worth offering (`CAP_REBOOT`).
     pub supports_reboot: bool,
     pub supports_save: bool,
@@ -3467,7 +3470,6 @@ pub fn inspect_ulcp_device_card(
         supports_admin: has(cap::ADMIN),
         supports_alert: has(cap::ALERT),
         supports_ble: has(cap::BLE),
-        supports_ble_pairing: has(cap::BLE_PAIRING),
         supports_reboot: has(cap::REBOOT),
         supports_save: has(cap::SAVE),
         supports_multi: has(cap::CMD_MULTI),
@@ -3525,8 +3527,14 @@ pub struct UlcpDevicePropertiesRecord {
     pub gnss_time_trust: Option<bool>,
     /// Whether the device can be reached over Bluetooth.
     pub ble_enabled: Option<bool>,
-    /// How many hosts are paired with it. Read-only.
+    /// How many hosts are paired with it. Read-only, and absent on a
+    /// device that does not manage its own bonds.
     pub ble_bond_count: Option<u8>,
+    /// Whether a host is on the device's Bluetooth right now: 0 nobody,
+    /// 1 connected, 2 attached and running ULCP. Read-only, and always 2
+    /// when the question was asked over Bluetooth — the session asking is
+    /// the session it reports.
+    pub ble_link: Option<u8>,
     /// What the device's clock read when it answered. Present when the
     /// clock was asked about; the inner epoch is absent on a device that
     /// has not found the time.
@@ -3651,6 +3659,7 @@ pub fn inspect_ulcp_properties(
         gnss_time_trust: optional_value(at, prop::GNSS_TIME_TRUST, decode_bool),
         ble_enabled: optional_value(at, prop::BLE_ENABLED, decode_bool),
         ble_bond_count: optional_value(at, prop::BLE_BOND_COUNT, decode_u8),
+        ble_link: optional_value(at, prop::BLE_LINK, decode_u8),
         time: optional_value(at, prop::TIME, |value| {
             Ok::<UlcpTimeRecord, MobileError>(UlcpTimeRecord {
                 epoch_seconds: decode_optional(value, decode_u32)?,
@@ -8318,20 +8327,21 @@ mod tests {
             cap::ADMIN,
             cap::ALERT,
             cap::BLE,
-            cap::BLE_PAIRING,
             cap::SAVE,
             cap::CMD_MULTI,
         ])
     }
 
-    /// The Bluetooth screen is two rows on a device that manages its own
-    /// bonds, and one on a device that only offers the toggle.
+    /// Bluetooth has one capability, so the screen asks for everything it
+    /// could show and lets the device refuse what it does not have. What
+    /// the caps list decides is only whether there is a screen at all.
     #[test]
-    fn the_bluetooth_screen_follows_what_the_device_manages() {
+    fn the_bluetooth_screen_asks_for_everything_and_lets_the_device_refuse() {
+        let expected = vec![prop::BLE_ENABLED, prop::BLE_BOND_COUNT, prop::BLE_LINK];
         assert_eq!(
             ulcp_category_properties(UlcpManageCategory::Bluetooth, managed_capabilities())
                 .unwrap(),
-            vec![prop::BLE_ENABLED, prop::BLE_BOND_COUNT]
+            expected
         );
         assert_eq!(
             ulcp_category_properties(
@@ -8339,8 +8349,8 @@ mod tests {
                 encoded_capabilities(&[cap::BLE])
             )
             .unwrap(),
-            vec![prop::BLE_ENABLED],
-            "without CAP_BLE_PAIRING there is no count and no actions"
+            expected,
+            "CAP_BLE alone asks the same questions; the answers differ"
         );
         assert!(
             ulcp_category_properties(UlcpManageCategory::Bluetooth, encoded_capabilities(&[]))
@@ -8350,16 +8360,26 @@ mod tests {
         );
     }
 
-    /// The count reports what the transport holds and is never written
-    /// back; only the toggle is editable.
+    /// The count and the link report what the transport holds and is
+    /// doing, and neither is ever written back; only the toggle is
+    /// editable.
     #[test]
     fn the_bond_count_is_read_but_never_written() {
         let record = inspect_ulcp_properties(vec![
             response(prop::BLE_ENABLED, &[1]),
             response(prop::BLE_BOND_COUNT, &[3]),
+            response(prop::BLE_LINK, &[2]),
         ]);
         assert_eq!(record.ble_enabled, Some(true));
         assert_eq!(record.ble_bond_count, Some(3));
+        assert_eq!(record.ble_link, Some(2));
+
+        // A device that answered the toggle but not the rest is a device
+        // with a transport it does not manage, and the record says which
+        // questions went unanswered rather than inventing zeroes.
+        let partial = inspect_ulcp_properties(vec![response(prop::BLE_ENABLED, &[1])]);
+        assert_eq!(partial.ble_bond_count, None);
+        assert_eq!(partial.ble_link, None);
 
         assert_eq!(
             dirty(

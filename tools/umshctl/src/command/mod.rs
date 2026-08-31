@@ -169,7 +169,7 @@ pub enum Command {
     /// everything the device has persisted.
     Reboot,
 
-    /// Manage the device's Bluetooth bonds (CAP_BLE_PAIRING).
+    /// Manage the device's Bluetooth bonds (CAP_BLE).
     Ble {
         #[command(subcommand)]
         op: lifecycle::BleOp,

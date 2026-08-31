@@ -141,6 +141,7 @@ use umsh_pmic_axp2101::{Axp2101, ChargeDirection, ChargeState, IrqMask};
 use umsh_radio_loraphy::{DeviceControl, MAX_PAYLOAD};
 #[cfg(feature = "rtc-pcf8563")]
 use umsh_rtc_pcf8563::Pcf8563;
+use umsh_ulcp::ble::BleLinkState;
 use umsh_ulcp::{Status, gatt, hdlc};
 #[cfg(feature = "gnss")]
 use umsh_ulcp_device::GnssConfig;
@@ -548,6 +549,10 @@ pub(crate) async fn device_name_snapshot() -> DeviceName {
 
 /// `u32::MAX` sentinel means "no PIN configured".
 static PAIRING_PIN: AtomicU32 = AtomicU32::new(u32::MAX);
+/// How many bonds the journal holds. Seeded from the store at mount,
+/// not from the BLE stack: the stack does not run at all on a board that
+/// boots with `PROP_BLE_ENABLED` cleared, and the count has to be right
+/// on one that does.
 static BLE_BOND_COUNT: AtomicU8 = AtomicU8::new(0);
 static PAIRING_MODE: AtomicBool = AtomicBool::new(true);
 static PAIRING_LOCKED_OUT: AtomicBool = AtomicBool::new(false);
@@ -565,6 +570,10 @@ static PAIRING_MODE_ACK: Signal<CriticalSectionRawMutex, bool> = Signal::new();
 /// The bond count moved, carrying the new value to `publish_event` so
 /// `PROP_BLE_BOND_COUNT` follows enrollment without polling.
 static BLE_BOND_COUNT_CHANGED: Signal<CriticalSectionRawMutex, u8> = Signal::new();
+/// The BLE link moved, carrying the new state to `publish_event` so
+/// `PROP_BLE_LINK` follows a host arriving or walking away without
+/// polling.
+static BLE_LINK_CHANGED: Signal<CriticalSectionRawMutex, BleLinkState> = Signal::new();
 
 /// Wired protocol attachment suppresses BLE advertising. The signal
 /// wakes a pending advertiser/connection so it can apply the policy.
@@ -631,8 +640,11 @@ static DISPLAY_SHUTDOWN_DONE: Signal<CriticalSectionRawMutex, ()> = Signal::new(
 /// with no firmware LED the state reaches the user through the panel's
 /// pairing page instead.
 static BLE_LED_MODE: AtomicU8 = AtomicU8::new(0);
-/// 0 = idle/advertising, 1 = connected, 2 = attached. Display only.
-static BLE_LINK: AtomicU8 = AtomicU8::new(0);
+/// How far the BLE link has got, for the status page and for
+/// `PROP_BLE_LINK`. Holds a [`BleLinkState`] code rather than an encoding
+/// of its own: the panel and the property are two readings of one fact,
+/// and the wire enumeration is the one place that fact is defined.
+static BLE_LINK: AtomicU8 = AtomicU8::new(BleLinkState::None.code());
 /// Last battery sample in millivolts (0 = never sampled). Display only.
 static BATTERY_MV: AtomicU16 = AtomicU16::new(0);
 /// Last battery level percent (0xFF = unknown). Display only.
@@ -1110,6 +1122,22 @@ fn set_bond_count(count: u8) {
     }
 }
 
+/// Record how far the BLE link has got, waking anything that reports it.
+/// Every write to the state goes through here for the same reason the
+/// bond count does — the panel and `PROP_BLE_LINK` are two readings of
+/// one fact and must not disagree.
+///
+/// The panel wake goes with it: on this family a connection arriving is
+/// exactly the moment the screen should come back, and every site that
+/// used to store the state raised both signals by hand.
+fn set_ble_link(state: BleLinkState) {
+    if BLE_LINK.swap(state.code(), Ordering::AcqRel) != state.code() {
+        BLE_LINK_CHANGED.signal(state);
+        UI_REFRESH.signal(());
+        UI_WAKE.signal(());
+    }
+}
+
 fn set_advertising_allowed(allowed: bool) {
     let previous = ADV_ALLOWED.swap(allowed, Ordering::AcqRel);
     debug_log(format_args!(
@@ -1398,15 +1426,22 @@ impl DeviceEnv for BoardDeviceEnv {
     /// Everything this board publishes unasked, on one select arm.
     ///
     /// The driver has exactly one, because a hook per property would
-    /// need one `&mut self` borrow apiece. The bond count is the one
-    /// source that needs no board hardware — it comes off a static — so
-    /// it rides here on every board, GNSS or not, while
+    /// need one `&mut self` borrow apiece. The bond count and the link
+    /// state are the two sources that need no board hardware — both come
+    /// off statics — so they ride here on every board, GNSS or not, while
     /// [`sensor_event`](Self::sensor_event) keeps the sources that do
     /// vary by board behind their own features.
     async fn publish_event(&mut self) -> driver::PublishEvent {
-        match select(self.sensor_event(), BLE_BOND_COUNT_CHANGED.wait()).await {
-            Either::First(event) => event,
-            Either::Second(count) => driver::PublishEvent::BleBondCount(count),
+        match select3(
+            self.sensor_event(),
+            BLE_BOND_COUNT_CHANGED.wait(),
+            BLE_LINK_CHANGED.wait(),
+        )
+        .await
+        {
+            Either3::First(event) => event,
+            Either3::Second(count) => driver::PublishEvent::BleBondCount(count),
+            Either3::Third(state) => driver::PublishEvent::BleLink(state),
         }
     }
 
@@ -1751,9 +1786,7 @@ async fn gatt_connection<C: Controller, P: PacketPool>(
         conn.raw().security_level(),
         conn.raw().att_mtu(),
     ));
-    BLE_LINK.store(1, Ordering::Release);
-    UI_REFRESH.signal(());
-    UI_WAKE.signal(());
+    set_ble_link(BleLinkState::Connected);
     let mut attached = false;
     let mut reassembler: gatt::Reassembler<{ gatt::MAX_FRAME }> = gatt::Reassembler::new();
 
@@ -1961,18 +1994,14 @@ async fn gatt_connection<C: Controller, P: PacketPool>(
                         (false, true) => {
                             debug_log(format_args!("cccd subscribed=true"));
                             attached = true;
-                            BLE_LINK.store(2, Ordering::Release);
-                            UI_REFRESH.signal(());
-                            UI_WAKE.signal(());
+                            set_ble_link(BleLinkState::Attached);
                             INPUT_CH.send(InEvent::Attached(Transport::Ble)).await;
                         }
                         (true, false) => {
                             debug_log(format_args!("cccd subscribed=false"));
                             attached = false;
                             reassembler.reset();
-                            BLE_LINK.store(1, Ordering::Release);
-                            UI_REFRESH.signal(());
-                            UI_WAKE.signal(());
+                            set_ble_link(BleLinkState::Connected);
                             INPUT_CH.send(InEvent::Detached(Transport::Ble)).await;
                         }
                         _ => {}
@@ -2018,9 +2047,7 @@ async fn gatt_connection<C: Controller, P: PacketPool>(
             }
         }
     }
-    BLE_LINK.store(0, Ordering::Release);
-    UI_REFRESH.signal(());
-    UI_WAKE.signal(());
+    set_ble_link(BleLinkState::None);
     if attached {
         INPUT_CH.send(InEvent::Detached(Transport::Ble)).await;
     }
@@ -2263,6 +2290,12 @@ async fn run_ble_stack(
     // wedged (the hazard `advertise()` documents) — harmless here,
     // because the entire stack this state lives in is dropped on
     // return and rebuilt fresh next cycle.
+    //
+    // The link state is not harmless, though: the connection future is
+    // one of the futures cancelled, so its own teardown never ran. Say
+    // here that nothing is connected, or `PROP_BLE_LINK` goes on
+    // reporting a host that no longer has a radio to be on.
+    set_ble_link(BleLinkState::None);
 }
 
 // ─── Radio ───────────────────────────────────────────────────────────────
@@ -2828,9 +2861,9 @@ fn ui_status<'a>(name: &'a DeviceName, identity: &'a IdentityText) -> screen::St
         identity: identity.model(),
         battery,
         battery_mv: (mv != 0).then_some(mv),
-        link: match BLE_LINK.load(Ordering::Acquire) {
-            2 => screen::LinkState::Attached,
-            1 => screen::LinkState::Connected,
+        link: match BleLinkState::from_code(BLE_LINK.load(Ordering::Acquire)) {
+            Some(BleLinkState::Attached) => screen::LinkState::Attached,
+            Some(BleLinkState::Connected) => screen::LinkState::Connected,
             _ if advertising_permitted() => screen::LinkState::Advertising,
             _ => screen::LinkState::OffWired,
         },
@@ -3688,6 +3721,14 @@ async fn main(spawner: Spawner) {
     // restored (and the PHY re-applied) and the persisted device
     // identity installed before the first host command.
     let mut ble_store_handle = BleStore::mount(shared, &partition).await;
+
+    // The bond count comes off the journal, not the radio. A board that
+    // boots with `PROP_BLE_ENABLED` cleared never brings the stack up, so
+    // a count seeded only inside `run_ble_stack` would report zero bonds
+    // on a device holding several — and `PROP_BLE_BOND_COUNT` would be
+    // lying about the one thing an operator clears bonds over. Seeded
+    // here, at the mount, exactly as the nRF image seeds it.
+    set_bond_count(ble_store_handle.snapshot().bonds.len() as u8);
     if ble_store_handle.snapshot().local_irk.is_none() {
         let mut local_irk = [0u8; 16];
         pool_draw(b"ble-local-irk", &mut local_irk);

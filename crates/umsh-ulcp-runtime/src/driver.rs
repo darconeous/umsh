@@ -326,6 +326,10 @@ pub enum PublishEvent {
     /// forgetting both happen below the session, so this is the only way
     /// `PROP_BLE_BOND_COUNT` learns it moved.
     BleBondCount(u8),
+    /// How far the Bluetooth transport has got with whoever is on the
+    /// other end of it. Connecting and walking away both happen below the
+    /// session, so this is the only way `PROP_BLE_LINK` learns it moved.
+    BleLink(umsh_ulcp::ble::BleLinkState),
 }
 
 /// Board couplings of the session driver. Everything the loop needs from
@@ -469,8 +473,8 @@ pub trait DeviceEnv {
     /// Unlike the factory reset below, this runs with the board still up,
     /// so the live BLE stack has to be emptied alongside the journal — a
     /// bond forgotten on flash but still held in RAM would keep working
-    /// until the next boot. Boards without `CAP_BLE_PAIRING` never see
-    /// this and keep the default, which refuses.
+    /// until the next boot. Boards that do not manage their own bonds
+    /// never see this and keep the default, which refuses.
     async fn clear_ble_bonds(&mut self) -> bool {
         false
     }
@@ -1497,6 +1501,9 @@ where
                     }
                     PublishEvent::BleBondCount(count) => {
                         session.set_ble_bond_count(count, emit);
+                    }
+                    PublishEvent::BleLink(state) => {
+                        session.set_ble_link(state, emit);
                     }
                     PublishEvent::IdentityFix(location, altitude_m) => {
                         // The session clamps, compares, and bumps the

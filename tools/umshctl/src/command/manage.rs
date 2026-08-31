@@ -92,7 +92,7 @@ pub enum ManageOp {
     /// acknowledgment, and a device that cannot restart says so.
     Reboot,
 
-    /// Manage the device's Bluetooth bonds (CAP_BLE_PAIRING). Unlike the
+    /// Manage the device's Bluetooth bonds (CAP_BLE). Unlike the
     /// resets above these answer with a status: an administrator is
     /// addressing the device's node, not one of its Bluetooth hosts, so
     /// the link survives even a clear.

@@ -82,6 +82,7 @@ pub const fn property_name(key: u32) -> Option<&'static str> {
         prop::GNSS_TIME_TRUST => "PROP_GNSS_TIME_TRUST",
         prop::BLE_ENABLED => "PROP_BLE_ENABLED",
         prop::BLE_BOND_COUNT => "PROP_BLE_BOND_COUNT",
+        prop::BLE_LINK => "PROP_BLE_LINK",
         _ => return None,
     })
 }
@@ -158,6 +159,7 @@ pub const PROPERTIES: &[u32] = &[
     prop::GNSS_TIME_TRUST,
     prop::BLE_ENABLED,
     prop::BLE_BOND_COUNT,
+    prop::BLE_LINK,
 ];
 
 /// How a property's octets are meant to be read.
@@ -260,7 +262,7 @@ pub const fn property_type(key: u32) -> Option<PropertyType> {
         prop::GNSS_IDENT_UPDATE => Bool,
         prop::GNSS_IDENT_PRECISION => U8,
         prop::GNSS_TIME_TRUST | prop::BLE_ENABLED => Bool,
-        prop::BLE_BOND_COUNT => U8,
+        prop::BLE_BOND_COUNT | prop::BLE_LINK => U8,
         _ => return None,
     })
 }
@@ -291,7 +293,6 @@ pub const fn capability_name(code: u32) -> Option<&'static str> {
         cap::CMD_MULTI => "CMD_MULTI",
         cap::BLE => "BLE",
         cap::REBOOT => "REBOOT",
-        cap::BLE_PAIRING => "BLE_PAIRING",
         _ => return None,
     })
 }
@@ -538,14 +539,20 @@ mod tests {
         assert_eq!(property_type(prop::BLE_ENABLED), Some(PropertyType::Bool));
     }
 
+    /// Bluetooth has one capability and three properties. Everything past
+    /// reachability is discovered by asking, so nothing here may grow a
+    /// capability of its own without the tables saying so out loud.
     #[test]
-    fn names_the_bond_count_and_its_capability() {
+    fn names_the_bond_count_and_the_link() {
         assert_eq!(
             property_name(prop::BLE_BOND_COUNT),
             Some("PROP_BLE_BOND_COUNT")
         );
         assert_eq!(property_type(prop::BLE_BOND_COUNT), Some(PropertyType::U8));
-        assert_eq!(capability_name(cap::BLE_PAIRING), Some("BLE_PAIRING"));
+        assert_eq!(property_name(prop::BLE_LINK), Some("PROP_BLE_LINK"));
+        assert_eq!(property_type(prop::BLE_LINK), Some(PropertyType::U8));
+        assert_eq!(capability_name(cap::BLE), Some("BLE"));
+        assert_eq!(capability_name(cap::BLE + 2), None);
     }
 
     /// The three tables answer for the same set of properties. A name

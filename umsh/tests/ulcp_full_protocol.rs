@@ -981,8 +981,20 @@ async fn bonds_are_cleared_and_the_count_follows() {
 
     assert!(
         radio.ble_start_pairing().await.unwrap(),
-        "the simulator advertises CAP_BLE_PAIRING"
+        "the simulator advertises CAP_BLE"
     );
+
+    // The simulator's host is attached over its simulated serial link,
+    // not over Bluetooth, so the link property answers truthfully that
+    // nobody is on the transport it describes.
+    assert_eq!(
+        radio
+            .get_prop(umsh_ulcp::ids::prop::BLE_LINK)
+            .await
+            .unwrap(),
+        vec![umsh_ulcp::ble::BleLinkState::None.code()]
+    );
+
     assert!(radio.ble_clear_bonds().await.unwrap());
     assert_eq!(
         radio

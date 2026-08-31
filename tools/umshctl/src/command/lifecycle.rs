@@ -150,9 +150,7 @@ pub async fn ble(app: &mut App, op: BleOp) -> Result<()> {
         }
         BleOp::Pair => {
             if !app.device()?.ble_start_pairing().await? {
-                bail!(
-                    "this device does not advertise CAP_BLE_PAIRING; it cannot open a pairing window on command"
-                );
+                bail!("this device does not advertise CAP_BLE; it has no Bluetooth transport");
             }
             println!("pairing window open; pair from the other host now");
             Ok(())
@@ -169,9 +167,7 @@ pub async fn ble(app: &mut App, op: BleOp) -> Result<()> {
                 }
             }
             if !app.device()?.ble_clear_bonds().await? {
-                bail!(
-                    "this device does not advertise CAP_BLE_PAIRING; it cannot clear bonds on command"
-                );
+                bail!("this device does not advertise CAP_BLE; it has no Bluetooth transport");
             }
             println!("bonds cleared; the device is in a pairing window");
             app.detach().await;

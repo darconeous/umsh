@@ -21,6 +21,7 @@
 pub mod airtime;
 pub mod alert;
 pub mod battery;
+pub mod ble;
 pub mod describe;
 pub mod frame;
 pub mod gatt;

@@ -244,6 +244,7 @@ mod firmware {
     type GnssUart = BufferedUarte<'static>;
     use umsh_crypto::CryptoEngine;
     use umsh_crypto::software::{SoftwareAes, SoftwareSha256};
+    use umsh_ulcp::ble::BleLinkState;
     use umsh_ulcp::{Status, gatt, hdlc};
     #[cfg(feature = "cap-gnss")]
     use umsh_ulcp_device::GnssConfig;
@@ -1068,17 +1069,18 @@ mod firmware {
     static BLE_BONDS_AT_BOOT: AtomicU8 = AtomicU8::new(0);
     static BLE_BOND_COUNT: AtomicU8 = AtomicU8::new(0);
 
-    /// How far the BLE link has got, for the status page. Nothing is
-    /// connected until a GATT connection is accepted; "attached" means the
-    /// client has subscribed to the ULCP notification characteristic and
-    /// is therefore actually talking to us, not merely nearby.
+    /// How far the BLE link has got, for the status page and for
+    /// `PROP_BLE_LINK`. Nothing is connected until a GATT connection is
+    /// accepted; "attached" means the client has subscribed to the ULCP
+    /// notification characteristic and is therefore actually talking to
+    /// us, not merely nearby.
     ///
+    /// Holds a [`BleLinkState`] code rather than a private encoding of
+    /// its own: the panel and the property are two readings of one fact,
+    /// and the wire enumeration is the one place that fact is defined.
     /// Same encoding as the Heltec V3's, so both families read the state
     /// out of their `ui_status` the same way.
-    static BLE_LINK: AtomicU8 = AtomicU8::new(BLE_LINK_NONE);
-    const BLE_LINK_NONE: u8 = 0;
-    const BLE_LINK_CONNECTED: u8 = 1;
-    const BLE_LINK_ATTACHED: u8 = 2;
+    static BLE_LINK: AtomicU8 = AtomicU8::new(BleLinkState::None.code());
 
     static PAIRING_MODE: AtomicBool = AtomicBool::new(true);
     static PAIRING_LOCKED_OUT: AtomicBool = AtomicBool::new(false);
@@ -1102,6 +1104,10 @@ mod firmware {
     /// The bond count moved, carrying the new value to `publish_event` so
     /// `PROP_BLE_BOND_COUNT` follows enrollment without polling.
     static BLE_BOND_COUNT_CHANGED: Signal<ThreadModeRawMutex, u8> = Signal::new();
+    /// The BLE link moved, carrying the new state to `publish_event` so
+    /// `PROP_BLE_LINK` follows a host arriving or walking away without
+    /// polling.
+    static BLE_LINK_CHANGED: Signal<ThreadModeRawMutex, BleLinkState> = Signal::new();
     #[cfg(feature = "has-display")]
     static UI_INPUT_CH: Channel<ThreadModeRawMutex, UiInput, 8> = Channel::new();
     static UI_REFRESH: Signal<ThreadModeRawMutex, ()> = Signal::new();
@@ -1327,6 +1333,17 @@ mod firmware {
     fn set_bond_count(count: u8) {
         if BLE_BOND_COUNT.swap(count, Ordering::AcqRel) != count {
             BLE_BOND_COUNT_CHANGED.signal(count);
+            UI_REFRESH.signal(());
+        }
+    }
+
+    /// Record how far the BLE link has got, waking anything that reports
+    /// it. Every write to the state goes through here for the same reason
+    /// the bond count does — the panel and `PROP_BLE_LINK` are two
+    /// readings of one fact and must not disagree.
+    fn set_ble_link(state: BleLinkState) {
+        if BLE_LINK.swap(state.code(), Ordering::AcqRel) != state.code() {
+            BLE_LINK_CHANGED.signal(state);
             UI_REFRESH.signal(());
         }
     }
@@ -1623,20 +1640,29 @@ mod firmware {
         /// Everything this board publishes unasked, on one select arm.
         ///
         /// The driver has exactly one, because a hook per property would
-        /// need one `&mut self` borrow apiece. The bond count is the one
-        /// source that needs no board hardware — it comes off a static —
-        /// so it rides here on every board, GNSS or not, while
-        /// [`sensor_event`](Self::sensor_event) keeps the sources that do
-        /// vary by board behind their own features.
+        /// need one `&mut self` borrow apiece. The bond count and the
+        /// link state are the two sources that need no board hardware —
+        /// both come off statics — so they ride here on every board, GNSS
+        /// or not, while [`sensor_event`](Self::sensor_event) keeps the
+        /// sources that do vary by board behind their own features.
         async fn publish_event(&mut self) -> driver::PublishEvent {
             loop {
-                match select(self.sensor_event(), BLE_BOND_COUNT_CHANGED.wait()).await {
-                    Either::First(Some(event)) => return event,
+                let woke = select3(
+                    self.sensor_event(),
+                    BLE_BOND_COUNT_CHANGED.wait(),
+                    BLE_LINK_CHANGED.wait(),
+                )
+                .await;
+                match woke {
+                    Either3::First(Some(event)) => return event,
                     // A reading this board could not reduce to its
                     // advertised field set; wait for the next one.
-                    Either::First(None) => continue,
-                    Either::Second(count) => {
+                    Either3::First(None) => continue,
+                    Either3::Second(count) => {
                         return driver::PublishEvent::BleBondCount(count);
+                    }
+                    Either3::Third(state) => {
+                        return driver::PublishEvent::BleLink(state);
                     }
                 }
             }
@@ -2203,7 +2229,7 @@ mod firmware {
             conn.raw().att_mtu(),
         ));
         let mut attached = false;
-        BLE_LINK.store(BLE_LINK_CONNECTED, Ordering::Release);
+        set_ble_link(BleLinkState::Connected);
         let mut reassembler: gatt::Reassembler<{ gatt::MAX_FRAME }> = gatt::Reassembler::new();
 
         // Reap a connection that never reaches encryption, so an unbonded or
@@ -2551,15 +2577,13 @@ mod firmware {
                             (false, true) => {
                                 debug_log(format_args!("cccd subscribed=true"));
                                 attached = true;
-                                BLE_LINK.store(BLE_LINK_ATTACHED, Ordering::Release);
-                                UI_REFRESH.signal(());
+                                set_ble_link(BleLinkState::Attached);
                                 INPUT_CH.send(InEvent::Attached(Transport::Ble)).await;
                             }
                             (true, false) => {
                                 debug_log(format_args!("cccd subscribed=false"));
                                 attached = false;
-                                BLE_LINK.store(BLE_LINK_CONNECTED, Ordering::Release);
-                                UI_REFRESH.signal(());
+                                set_ble_link(BleLinkState::Connected);
                                 reassembler.reset();
                                 INPUT_CH.send(InEvent::Detached(Transport::Ble)).await;
                             }
@@ -2660,8 +2684,7 @@ mod firmware {
                 }
             }
         }
-        BLE_LINK.store(BLE_LINK_NONE, Ordering::Release);
-        UI_REFRESH.signal(());
+        set_ble_link(BleLinkState::None);
         if attached {
             INPUT_CH.send(InEvent::Detached(Transport::Ble)).await;
         }
@@ -3097,9 +3120,9 @@ mod firmware {
             // A live host outranks discoverability: "somebody is talking
             // to me" is the fact worth a row, and advertising with nobody
             // there is the resting state the page no longer mentions.
-            link: match BLE_LINK.load(Ordering::Acquire) {
-                BLE_LINK_ATTACHED => screen::LinkState::Attached,
-                BLE_LINK_CONNECTED => screen::LinkState::Connected,
+            link: match BleLinkState::from_code(BLE_LINK.load(Ordering::Acquire)) {
+                Some(BleLinkState::Attached) => screen::LinkState::Attached,
+                Some(BleLinkState::Connected) => screen::LinkState::Connected,
                 _ if advertising_permitted() => screen::LinkState::Advertising,
                 _ => screen::LinkState::OffWired,
             },

@@ -713,10 +713,7 @@ struct RemoteIdentityEditor: View {
         init(_ reading: RemoteCategoryReading?) {
             let id = ulcpProperties
             held = reading?.properties ?? UlcpDevicePropertiesRecord.empty
-            let read = { (property: UInt32) in
-                reading?.propertyIDs.contains(property) == true
-                    && reading?.refused.contains(property) != true
-            }
+            let read = { (property: UInt32) in reading?.answered(property) == true }
             name = RemoteField(id.deviceName, held.deviceName)
             // A role the device does not state is a device deriving its
             // own, and an altitude it leaves empty is a device at no stated
@@ -1199,10 +1196,7 @@ struct RemoteRepeaterEditor: View {
         init(_ reading: RemoteCategoryReading?) {
             let id = ulcpProperties
             held = reading?.properties ?? UlcpDevicePropertiesRecord.empty
-            let read = { (property: UInt32) in
-                reading?.propertyIDs.contains(property) == true
-                    && reading?.refused.contains(property) != true
-            }
+            let read = { (property: UInt32) in reading?.answered(property) == true }
             enabled = RemoteField(id.repeaterEnabled, held.repeaterEnabled)
             regions = RemoteField(id.repeaterRegions, held.repeaterRegions)
             // Empty is "never tag" and "no threshold": values in their own
