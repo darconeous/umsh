@@ -551,6 +551,20 @@ static ADV_ALLOWED: AtomicBool = AtomicBool::new(true);
 /// reachable by the host that could fix it.
 static BLE_ENABLED: AtomicBool = AtomicBool::new(true);
 static ADV_POLICY_CHANGED: Signal<CriticalSectionRawMutex, ()> = Signal::new();
+/// Wakes the BLE supervisor on a `PROP_BLE_ENABLED` edge. Separate from
+/// [`ADV_POLICY_CHANGED`] because embassy's `Signal` holds a single
+/// waker — the advertiser loop and the supervisor cannot share one.
+static BLE_LIFECYCLE: Signal<CriticalSectionRawMutex, ()> = Signal::new();
+
+/// Heltec V2 only: arbitration for ADC2, which the classic ESP32 shares
+/// exclusively between the radio and the battery divider. The battery
+/// task holds this across a sample; the BLE supervisor holds it across
+/// controller bring-up, so `Adc::new` and esp-radio init can never race
+/// each other's claim. [`ADC2_RADIO_UP`] says which way the claim went.
+#[cfg(feature = "board-heltec-v2")]
+static ADC2_ARBITER: Mutex<CriticalSectionRawMutex, ()> = Mutex::new(());
+#[cfg(feature = "board-heltec-v2")]
+static ADC2_RADIO_UP: AtomicBool = AtomicBool::new(false);
 
 /// OLED redraw trigger for content that changed without the user asking
 /// — a battery sample, a bond count. Deliberately *not* a wake event:
@@ -775,7 +789,29 @@ async fn battery_task(mut sampler: BatterySampler) {
             select(Timer::after_secs(60), BATTERY_REQUEST.wait()).await,
             Either::Second(())
         );
-        let mv = sampler.sample_mv().await;
+        // V2: ADC2 belongs to the radio while the BLE controller is up
+        // (`Adc::new` would panic), so sampling waits for a BLE-off
+        // window and the last reading is served in the meantime. Until
+        // a first reading exists there is nothing to serve — skip, and
+        // let an on-demand request time out rather than answer with a
+        // made-up voltage.
+        #[cfg(feature = "board-heltec-v2")]
+        let sampled = {
+            let _claim = ADC2_ARBITER.lock().await;
+            if ADC2_RADIO_UP.load(Ordering::Acquire) {
+                match BATTERY_MV.load(Ordering::Acquire) {
+                    0 => None,
+                    last => Some(last),
+                }
+            } else {
+                Some(sampler.sample_mv().await)
+            }
+        };
+        #[cfg(not(feature = "board-heltec-v2"))]
+        let sampled = Some(sampler.sample_mv().await);
+        let Some(mv) = sampled else {
+            continue;
+        };
         BATTERY_MV.store(mv, Ordering::Release);
         if requested {
             BATTERY_REPLY.signal(mv);
@@ -1001,9 +1037,11 @@ fn advertising_permitted() -> bool {
     ADV_ALLOWED.load(Ordering::Acquire) && BLE_ENABLED.load(Ordering::Acquire)
 }
 
-/// Apply `PROP_BLE_ENABLED` by reusing the advertising-policy path, which
-/// already stops the advertiser and drops a live connection. Bonds are
-/// untouched, so the host reconnects without pairing again.
+/// Apply `PROP_BLE_ENABLED`. The advertising-policy signal stops the
+/// advertiser and drops a live connection; the lifecycle signal then
+/// has the supervisor tear the whole controller down (or bring it back
+/// up). Bonds are untouched, so the host reconnects without pairing
+/// again after a re-enable.
 fn set_ble_enabled(enabled: bool) {
     if BLE_ENABLED.swap(enabled, Ordering::AcqRel) != enabled {
         debug_log(format_args!(
@@ -1011,6 +1049,7 @@ fn set_ble_enabled(enabled: bool) {
             if enabled { "ON" } else { "off" }
         ));
         ADV_POLICY_CHANGED.signal(());
+        BLE_LIFECYCLE.signal(());
         UI_REFRESH.signal(());
     }
 }
@@ -1917,7 +1956,44 @@ async fn ble_peripheral<'values, C: Controller>(
     }
 }
 
-async fn ble_app(controller: BleController, store: BleStore) -> ! {
+/// Bring the RF subsystem up just long enough for one TRNG draw, then
+/// tear it back down.
+///
+/// Only for the boot paths that cannot proceed without hardware
+/// entropy — an empty seed journal, or a refused seed commit. The
+/// connector's drop deinitializes the controller again; the BLE
+/// supervisor brings its own up when advertising is wanted.
+fn harvest_trng_once(bt: &mut esp_hal::peripherals::BT<'static>) -> [u8; 32] {
+    let connector = BleConnector::new(bt.reborrow(), Default::default())
+        .unwrap_or_else(|e| panic!("ble init failed ({e:?}) — no entropy source"));
+    let mut rng = EspCryptoRng::new().unwrap_or_else(|e| panic!("crypto rng unavailable: {e:?}"));
+    let mut out = [0u8; 32];
+    rng.fill_bytes(&mut out);
+    drop(connector);
+    out
+}
+
+/// BLE supervisor: one controller lifecycle per `PROP_BLE_ENABLED`
+/// cycle.
+///
+/// While BLE is enabled this owns the whole trouble stack. When the
+/// property goes false, [`run_ble_stack`] unwinds and everything drops
+/// in reverse order — server, peripheral, runner, stack, controller,
+/// connector — and the connector's drop is what deinitializes the btdm
+/// controller, powers down the PHY, and releases esp-radio's wake
+/// lock, the gate on the scheduler's light-sleep path. Re-enabling
+/// builds a fresh stack over the same static `HostResources`, which
+/// `trouble_host::new` rewrites field-by-field on every call.
+///
+/// Each bring-up is also the entropy pool's harvest point: the RF
+/// subsystem is provably up right after the connector exists, so the
+/// TRNG is mixed in and the stored seed refreshed with the healed key.
+async fn ble_app(
+    bt: esp_hal::peripherals::BT<'static>,
+    mut pool: EntropyPool<SoftwareSha256>,
+    mut seed_store: ble_store::SeedStore,
+    store: BleStore,
+) -> ! {
     // `HostResources` is tens of kilobytes, and `ble_app` is awaited
     // directly from `main` — so a stack-built one lands as a temporary in
     // main's poll frame, which is already the largest frame in the image.
@@ -1925,7 +2001,73 @@ async fn ble_app(controller: BleController, store: BleStore) -> ! {
     // through `StaticCell::init_with`, never on the stack.
     static BLE_RESOURCES: StaticCell<BleResources> = StaticCell::new();
     let resources = BLE_RESOURCES.init_with(HostResources::new);
-    let initial = store.snapshot().clone();
+    let store = BleStoreMutex::new(store);
+    let mut bt = Some(bt);
+    loop {
+        if !BLE_ENABLED.load(Ordering::Acquire) {
+            BLE_LED_MODE.store(0, Ordering::Release);
+            UI_REFRESH.signal(());
+            debug_log(format_args!("ble supervisor: controller down"));
+            BLE_LIFECYCLE.wait().await;
+            continue;
+        }
+        let device = bt.take().unwrap_or_else(|| {
+            // SAFETY: the peripheral singleton was consumed by a
+            // previous cycle's connector, which `run_ble_stack`
+            // dropped before returning; this supervisor is the only
+            // place the radio is ever (re)constructed, so exactly one
+            // owner exists at any time.
+            unsafe { esp_hal::peripherals::BT::steal() }
+        });
+        let connector = {
+            // V2: exclude a mid-flight battery sample while esp-radio
+            // claims ADC2 (see [`ADC2_ARBITER`]).
+            #[cfg(feature = "board-heltec-v2")]
+            let _adc2_claim = ADC2_ARBITER.lock().await;
+            #[cfg(feature = "board-heltec-v2")]
+            ADC2_RADIO_UP.store(true, Ordering::Release);
+            BleConnector::new(device, Default::default())
+        };
+        let connector = match connector {
+            Ok(connector) => connector,
+            Err(error) => {
+                #[cfg(feature = "board-heltec-v2")]
+                ADC2_RADIO_UP.store(false, Ordering::Release);
+                debug_log(format_args!("ble init FAILED error={error:?}; retrying"));
+                Timer::after_secs(5).await;
+                continue;
+            }
+        };
+        // Harvest: the RF entropy source is live for as long as the
+        // connector exists. A failed seed refresh is not fatal — the
+        // mix still hardens this session, and the boot-time commit
+        // already covers replay.
+        if let Ok(mut rng) = EspCryptoRng::new() {
+            let mut fresh = [0u8; 32];
+            rng.fill_bytes(&mut fresh);
+            pool.mix(&fresh);
+            if seed_store.persist(pool.next_seed()).await.is_ok() {
+                pool.seed_refreshed();
+            }
+        }
+        let controller: BleController = ExternalController::new(connector);
+        run_ble_stack(controller, resources, &store).await;
+        // Everything up to and including the connector has dropped by
+        // here; the radio's ADC2 claim went with it.
+        #[cfg(feature = "board-heltec-v2")]
+        ADC2_RADIO_UP.store(false, Ordering::Release);
+        debug_log(format_args!("ble supervisor: stack torn down"));
+    }
+}
+
+/// One enable-cycle of the trouble stack. Returns — unwinding every
+/// borrow of `resources` — when `PROP_BLE_ENABLED` goes false.
+async fn run_ble_stack(
+    controller: BleController,
+    resources: &mut BleResources,
+    store: &BleStoreMutex,
+) {
+    let initial = store.lock().await.snapshot().clone();
     debug_log(format_args!(
         "ble boot identity={} bonds={} pin={} local_irk={}",
         ble_identity_address(),
@@ -1964,7 +2106,6 @@ async fn ble_app(controller: BleController, store: BleStore) -> ! {
             None => debug_log(format_args!("restored bond index={index} decode=FAILED")),
         }
     }
-    let store = BleStoreMutex::new(store);
     let runner = stack.runner();
     let mut peripheral = stack.peripheral();
     let server = UlcpServer::new_with_config(GapConfig::Peripheral(PeripheralConfig {
@@ -1973,18 +2114,31 @@ async fn ble_app(controller: BleController, store: BleStore) -> ! {
     }))
     .unwrap_or_else(|_| panic!("gatt server construction failed"));
 
-    join(
-        ble_runner(runner),
+    select(
         join(
-            pairing_timeout(&stack),
+            ble_runner(runner),
             join(
-                pairing_config_task(&stack, &store),
-                ble_peripheral(&stack, &store, &mut peripheral, &server),
+                pairing_timeout(&stack),
+                join(
+                    pairing_config_task(&stack, store),
+                    ble_peripheral(&stack, store, &mut peripheral, &server),
+                ),
             ),
         ),
+        async {
+            loop {
+                BLE_LIFECYCLE.wait().await;
+                if !BLE_ENABLED.load(Ordering::Acquire) {
+                    break;
+                }
+            }
+        },
     )
     .await;
-    unreachable!()
+    // Cancelled futures may leave trouble's advertise command state
+    // wedged (the hazard `advertise()` documents) — harmless here,
+    // because the entire stack this state lives in is dropped on
+    // return and rebuilt fresh next cycle.
 }
 
 // ─── Radio ───────────────────────────────────────────────────────────────
@@ -3096,14 +3250,14 @@ async fn main(spawner: Spawner) {
     #[cfg(not(feature = "pmic-axp2101"))]
     spawner.spawn(heartbeat_task(led, rtc, low_power).unwrap());
 
-    // ── Vext rail and battery ADC, before the radio controller ───────────
-    // Claim order matters on the classic ESP32: the battery divider sits
-    // on an ADC2 channel, ADC2 is shared with the radio, and `Adc::new`
-    // panics once the esp-radio controller has taken it. Claiming here
-    // costs the boards with an independent ADC nothing — the rail starts
-    // off and no conversion runs until the battery task asks for one.
-    // A PMIC board has neither: its rails came up above, and the battery
-    // is read over the PMU bus.
+    // ── Vext rail and battery ADC ────────────────────────────────────────
+    // The classic ESP32 shares ADC2 exclusively between the battery
+    // divider and the radio; the V2 sampler therefore claims the ADC
+    // per sample under [`ADC2_ARBITER`] instead of holding it, so the
+    // BLE supervisor can bring the controller up and down freely. The
+    // V3's ADC1 is independent, and a PMIC board has no ADC at all —
+    // its rails came up above, and the battery is read over the PMU
+    // bus.
     #[cfg(feature = "board-heltec-v3")]
     let mut vext = Vext::new(peripherals.GPIO36);
     #[cfg(feature = "board-heltec-v2")]
@@ -3124,10 +3278,11 @@ async fn main(spawner: Spawner) {
     static SHARED_FLASH: StaticCell<ble_store::SharedFlash> = StaticCell::new();
     let shared: &'static ble_store::SharedFlash = SHARED_FLASH.init(ble_store::shared(flash));
 
-    // ── BLE controller ───────────────────────────────────────────────────
-    let connector = BleConnector::new(peripherals.BT, Default::default())
-        .unwrap_or_else(|e| panic!("ble init failed: {e:?}"));
-    let controller: ExternalController<_, HCI_SLOTS> = ExternalController::new(connector);
+    // The radio peripheral: constructed into a controller by the BLE
+    // supervisor, one lifecycle per PROP_BLE_ENABLED cycle — and
+    // borrowed briefly below if the entropy pool needs a hardware
+    // bootstrap before the supervisor exists.
+    let mut bt = peripherals.BT;
 
     // ── Entropy pool: seeded from flash, healed by the TRNG ──────────────
     // The seed-file protocol (see `umsh_crypto::pool`): derive the
@@ -3148,15 +3303,12 @@ async fn main(spawner: Spawner) {
         }
         None => {
             // First boot, or the boot completing a factory reset: no
-            // seed exists, so bootstrap from the hardware TRNG. The RF
-            // subsystem is live (the connector above was just
-            // constructed), and a factory reset also restores
-            // PROP_BLE_ENABLED to its default of on, so this path can
-            // always reach real entropy.
-            let mut rng =
-                EspCryptoRng::new().unwrap_or_else(|e| panic!("crypto rng unavailable: {e:?}"));
-            let mut fresh = [0u8; 32];
-            rng.fill_bytes(&mut fresh);
+            // seed exists, so bootstrap from the hardware TRNG through
+            // a short-lived controller bring-up. A factory reset also
+            // restores PROP_BLE_ENABLED to its default of on, so this
+            // path never strands a BLE-disabled configuration without
+            // entropy.
+            let fresh = harvest_trng_once(&mut bt);
             let pool = EntropyPool::from_seed(SoftwareSha256, &fresh, b"first-boot");
             println!("entropy pool bootstrapped from TRNG");
             pool
@@ -3166,14 +3318,10 @@ async fn main(spawner: Spawner) {
         Ok(()) => pool.seed_committed(),
         Err(()) => {
             // The commit is what makes a crash unable to replay this
-            // boot's outputs. With the write refused, fall back to the
-            // TRNG for the replay-sensitive draws below by mixing it in
-            // — the RF subsystem is still up this early in boot.
+            // boot's outputs. With the write refused, break the replay
+            // instead by mixing in a fresh TRNG draw.
             println!("entropy seed persist FAILED — mixing TRNG for this boot");
-            let mut rng =
-                EspCryptoRng::new().unwrap_or_else(|e| panic!("crypto rng unavailable: {e:?}"));
-            let mut fresh = [0u8; 32];
-            rng.fill_bytes(&mut fresh);
+            let fresh = harvest_trng_once(&mut bt);
             pool.mix(&fresh);
             pool.seed_committed();
         }
@@ -3533,5 +3681,5 @@ async fn main(spawner: Spawner) {
     }
 
     // ── BLE app: runs the pairing lattice + GATT transport forever ───────
-    ble_app(controller, ble_store_handle).await
+    ble_app(bt, pool, seed_store, ble_store_handle).await
 }

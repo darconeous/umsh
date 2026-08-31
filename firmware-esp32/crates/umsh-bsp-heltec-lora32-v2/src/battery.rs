@@ -7,10 +7,13 @@
 //! the way it found it, so a reading taken while the panel is dark does
 //! not silently power the panel up behind the display task's back.
 //!
-//! GPIO13 is an ADC2 channel. On the classic ESP32, ADC2 is shared with
-//! the radio: `Adc::new` panics if the esp-radio controller has already
-//! claimed it, so the sampler must be constructed *before* radio init.
-//! The firmware's boot order does this.
+//! GPIO13 is an ADC2 channel. On the classic ESP32, ADC2 is shared
+//! with the radio, and the sharing is exclusive both ways: `Adc::new`
+//! panics while the esp-radio controller holds the claim, and esp-radio
+//! init panics while an `Adc` instance does. So the sampler holds only
+//! the *peripherals* and claims the ADC per sample, releasing it before
+//! returning — and the caller must guarantee the radio is down for the
+//! duration of the call (the firmware's ADC2 arbiter does).
 //!
 //! The classic ESP32 ADC has no esp-hal calibration scheme; the
 //! raw→millivolt conversion below is the nominal 6 dB transfer function
@@ -18,8 +21,7 @@
 //! §9.5).
 
 use embassy_time::Timer;
-use esp_hal::Blocking;
-use esp_hal::analog::adc::{Adc, AdcConfig, AdcPin, Attenuation};
+use esp_hal::analog::adc::{Adc, AdcConfig, Attenuation};
 use esp_hal::peripherals::{ADC2, GPIO13};
 
 use crate::vext::VextHandle;
@@ -35,43 +37,54 @@ const DIVIDER_SETTLE_MS: u64 = 5;
 const FULL_SCALE_MV: u32 = 2_200;
 const FULL_SCALE_CODE: u32 = 4_095;
 
-/// Owned battery ADC: the ADC2 instance, the configured GPIO13 pin, and
-/// the shared rail the divider hangs off.
+/// Owned battery ADC peripherals: ADC2 and GPIO13, claimed only for
+/// the duration of a sample, plus the shared rail the divider hangs
+/// off.
 pub struct BatterySampler {
-    adc: Adc<'static, ADC2<'static>, Blocking>,
-    pin: AdcPin<GPIO13<'static>, ADC2<'static>>,
+    adc2: ADC2<'static>,
+    gpio13: GPIO13<'static>,
     vext: VextHandle,
 }
 
 impl BatterySampler {
-    /// Claim ADC2 and GPIO13. Panics if the radio already owns ADC2 —
-    /// construct before radio init.
+    /// Take ownership of the peripherals. Nothing is claimed here — the
+    /// per-sample claim inside [`sample_mv`](Self::sample_mv) is what
+    /// keeps ADC2 free for the radio the rest of the time.
     pub fn new(adc2: ADC2<'static>, gpio13: GPIO13<'static>, vext: VextHandle) -> Self {
-        let mut config = AdcConfig::new();
-        let pin = config.enable_pin(gpio13, Attenuation::_6dB);
-        Self {
-            adc: Adc::new(adc2, config),
-            pin,
-            vext,
-        }
+        Self { adc2, gpio13, vext }
     }
 
     /// Measure the battery terminal voltage in millivolts.
     ///
-    /// Raises `Vext` if it was down, settles the divider, discards one
-    /// read, then medians a burst and applies the ×3.2 divider ratio.
-    /// The rail is left as it was found: a sample taken with the panel
-    /// powered down does not leave it powered up and uninitialized.
+    /// Claims ADC2 for the duration (the caller must guarantee the
+    /// radio is down, or `Adc::new` panics), raises `Vext` if it was
+    /// down, settles the divider, discards one read, then medians a
+    /// burst and applies the ×3.2 divider ratio. Both the claim and the
+    /// rail are left as they were found.
     pub async fn sample_mv(&mut self) -> u16 {
         let was_on = self.vext.is_on();
         self.vext.enable().await;
         Timer::after_millis(DIVIDER_SETTLE_MS).await;
 
-        let _ = self.read_raw();
+        let mut config = AdcConfig::new();
+        let mut pin = config.enable_pin(self.gpio13.reborrow(), Attenuation::_6dB);
+        let mut adc = Adc::new(self.adc2.reborrow(), config);
+        let mut read_raw = || loop {
+            match adc.read_oneshot(&mut pin) {
+                Ok(value) => return value,
+                Err(nb::Error::WouldBlock) => continue,
+                Err(nb::Error::Other(())) => return 0,
+            }
+        };
+
+        let _ = read_raw();
         let mut burst = [0u16; BURST];
         for slot in &mut burst {
-            *slot = self.read_raw();
+            *slot = read_raw();
         }
+        drop(read_raw);
+        // Dropping the `Adc` releases the ADC2 claim for the radio.
+        drop(adc);
 
         if !was_on {
             self.vext.disable();
@@ -83,15 +96,5 @@ impl BatterySampler {
         let adc_mv = median * FULL_SCALE_MV / FULL_SCALE_CODE;
         let battery_mv = adc_mv * u32::from(crate::BATTERY_DIVIDER_RATIO_X10) / 10;
         battery_mv.min(u32::from(u16::MAX)) as u16
-    }
-
-    fn read_raw(&mut self) -> u16 {
-        loop {
-            match self.adc.read_oneshot(&mut self.pin) {
-                Ok(value) => return value,
-                Err(nb::Error::WouldBlock) => continue,
-                Err(nb::Error::Other(())) => return 0,
-            }
-        }
     }
 }
