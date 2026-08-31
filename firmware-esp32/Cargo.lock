@@ -2733,10 +2733,12 @@ version = "0.1.0"
 dependencies = [
  "embassy-embedded-hal 0.3.2",
  "embassy-sync 0.8.0",
+ "embedded-hal-async",
  "esp-bootloader-esp-idf",
  "esp-hal",
  "esp-println",
  "esp-storage",
+ "lora-phy",
  "rand 0.10.2",
  "umsh-flash-store",
 ]

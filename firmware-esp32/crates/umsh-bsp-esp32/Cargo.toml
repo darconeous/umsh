@@ -42,3 +42,7 @@ embassy-sync = { version = "0.8", default-features = false }
 # `rand 0.10` synchronous traits, so the RF-gated TRNG satisfies
 # `rand::CryptoRng` and can be handed straight to `Mac` as `Platform::Rng`.
 rand = { version = "0.10.1", default-features = false }
+# The wake-aware radio InterfaceVariant (`iv`): the trait is lora-phy's,
+# the pin driving is esp-hal's.
+lora-phy = { version = "3.0.2-alpha", default-features = false }
+embedded-hal-async = "1.0"

@@ -2,11 +2,11 @@
 //! NSS=GPIO18, reset=GPIO14, DIO0=GPIO26).
 //!
 //! The SX127x family has no BUSY pin, and this board's RF switch is
-//! driven by the radio's own RXTX output — so the
-//! `GenericSx127xInterfaceVariant` is used with both RF-switch pins
-//! `None`, which makes `wait_on_busy` and the `enable_rf_switch_*`
-//! hooks no-ops. DIO0 carries every IRQ lora-phy needs; DIO1 (GPIO35)
-//! and DIO2 (GPIO34) are wired but unused.
+//! driven by the radio's own RXTX output — so the esp-aware
+//! `EspInterfaceVariant` runs in its no-BUSY shape, which makes
+//! `wait_on_busy` and the `enable_rf_switch_*` hooks no-ops. DIO0
+//! carries every IRQ lora-phy needs; DIO1 (GPIO35) and DIO2 (GPIO34)
+//! are wired but unused.
 //!
 //! The antenna is on the PA_BOOST port (`tx_boost: true`); the RFO path
 //! is not connected. Crystal oscillator, no TCXO.
@@ -23,7 +23,6 @@ use esp_hal::Async;
 use esp_hal::gpio::{Input, Output};
 use esp_hal::spi::master::Spi;
 use lora_phy::LoRa;
-use lora_phy::iv::GenericSx127xInterfaceVariant;
 use lora_phy::mod_params::RadioError;
 use lora_phy::sx127x::{Config, Sx127x, Sx1276};
 
@@ -33,7 +32,9 @@ pub type RadioSpi =
     embedded_hal_bus::spi::ExclusiveDevice<Spi<'static, Async>, Output<'static>, Delay>;
 
 /// Interface variant: reset + DIO0, no BUSY, no host-driven RF switch.
-pub type RadioIv = GenericSx127xInterfaceVariant<Output<'static>, Input<'static>>;
+/// The esp-aware variant, so the DIO0 wait is a light-sleep wake source
+/// instead of a wake-lock holder.
+pub type RadioIv = umsh_bsp_esp32::iv::EspInterfaceVariant;
 
 /// The lora-phy `RadioKind` for this board.
 pub type RadioKind = Sx127x<RadioSpi, RadioIv, Sx1276>;
@@ -79,7 +80,7 @@ pub fn new_radio_kind(
     reset: Output<'static>,
     dio0: Input<'static>,
 ) -> Result<RadioKind, RadioError> {
-    let iv = GenericSx127xInterfaceVariant::new(reset, dio0, None, None)?;
+    let iv = umsh_bsp_esp32::iv::EspInterfaceVariant::sx127x(reset, dio0);
     Ok(Sx127x::new(
         spi,
         iv,

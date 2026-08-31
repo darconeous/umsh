@@ -75,11 +75,11 @@ use embassy_time::{Delay, Duration, Instant, Timer, with_timeout};
 use embedded_hal_bus::spi::ExclusiveDevice;
 use esp_hal::Async;
 use esp_hal::clock::CpuClock;
-use esp_hal::gpio::{Input, InputConfig, Level, Output, OutputConfig, Pull};
+use esp_hal::gpio::{Event, Input, InputConfig, Level, Output, OutputConfig, Pull, WaitForOptions};
 use esp_hal::i2c::master::{Config as I2cConfig, I2c};
 use esp_hal::interrupt::software::SoftwareInterruptControl;
 #[cfg(not(feature = "pmic-axp2101"))]
-use esp_hal::rtc_cntl::sleep::{Ext0WakeupSource, LowPower};
+use esp_hal::rtc_cntl::sleep::Ext0WakeupSource;
 use esp_hal::rtc_cntl::{Rtc, RwdtStage, SocResetReason};
 use esp_hal::spi::Mode;
 use esp_hal::spi::master::{Config as SpiConfig, Spi};
@@ -176,7 +176,18 @@ esp_bootloader_esp_idf::esp_app_desc!();
 
 // ─── Configuration ───────────────────────────────────────────────────────
 
+/// RWDT timeout. The PMIC board runs a longer leash: its heartbeat's
+/// feed cadence is the ceiling on light-sleep residency (the RWDT runs
+/// through light sleep and the feed is a timer wake), so the pair is
+/// 20 s feeds under a 30 s timeout there, against the Heltecs' 4 s LED
+/// blink under the original 8 s.
+#[cfg(not(feature = "pmic-axp2101"))]
 const WDT_TIMEOUT: esp_hal::time::Duration = esp_hal::time::Duration::from_secs(8);
+#[cfg(feature = "pmic-axp2101")]
+const WDT_TIMEOUT: esp_hal::time::Duration = esp_hal::time::Duration::from_secs(30);
+/// PMIC-board heartbeat cadence; see [`WDT_TIMEOUT`].
+#[cfg(feature = "pmic-axp2101")]
+const HEARTBEAT_FEED_SECS: u64 = 20;
 
 /// SX1262 PA limits on this module.
 #[cfg(feature = "radio-sx126x")]
@@ -566,6 +577,16 @@ static ADC2_ARBITER: Mutex<CriticalSectionRawMutex, ()> = Mutex::new(());
 #[cfg(feature = "board-heltec-v2")]
 static ADC2_RADIO_UP: AtomicBool = AtomicBool::new(false);
 
+/// Whether USB power is present, per the PMIC's last word (its IRQ
+/// pokes an immediate re-read on plug/unplug, so this trails the cable
+/// by milliseconds). Starts optimistic so the wired console exists
+/// from the first instruction of a USB-powered boot; the first reading
+/// corrects a battery boot.
+#[cfg(feature = "pmic-axp2101")]
+static VBUS_PRESENT: AtomicBool = AtomicBool::new(true);
+#[cfg(feature = "pmic-axp2101")]
+static VBUS_EDGE: Signal<CriticalSectionRawMutex, ()> = Signal::new();
+
 /// OLED redraw trigger for content that changed without the user asking
 /// — a battery sample, a bond count. Deliberately *not* a wake event:
 /// the battery is sampled on a timer, so a redraw that woke the panel
@@ -909,6 +930,11 @@ async fn battery_task(pmic: &'static SharedPmic) {
             Err(_) => continue,
         };
         BATTERY_MV.store(reading.voltage_mv.unwrap_or(0), Ordering::Release);
+        if VBUS_PRESENT.swap(reading.vbus, Ordering::AcqRel) != reading.vbus {
+            // The wired-transport supervisor keys the USB-Serial-JTAG
+            // driver's existence off this.
+            VBUS_EDGE.signal(());
+        }
         BATTERY_LEVEL.store(battery_level(&reading).unwrap_or(0xFF), Ordering::Release);
         BATTERY_CHARGE.store(
             match battery_charge_class(&reading) {
@@ -991,7 +1017,15 @@ fn battery_snapshot(reading: &board_battery::Reading) -> umsh_ulcp::battery::Bat
 #[embassy_executor::task]
 async fn pmu_irq_task(pmic: &'static SharedPmic, mut irq: Input<'static>) {
     loop {
-        irq.wait_for_low().await;
+        // Wake-enabled: the PMU IRQ (a level line) pulls the chip out
+        // of light sleep instead of forbidding it. `Wait` would hold a
+        // WakeLock for the whole park.
+        let _ = irq
+            .wait_for_with_options(
+                Event::LowLevel,
+                WaitForOptions::default().with_wake_enable(true),
+            )
+            .await;
         let taken = match pmic.lock().await.take_irqs().await {
             Ok(taken) => taken,
             Err(_) => {
@@ -2185,19 +2219,132 @@ async fn radio_mux_task() {
 /// the receiver's own RTC is not consulted at boot.
 #[cfg(feature = "gnss")]
 #[embassy_executor::task]
-async fn gnss_task(uart: Uart<'static, Async>, control: board::gnss::Gnss) {
+async fn gnss_task(
+    uart1: esp_hal::peripherals::UART1<'static>,
+    rx: esp_hal::peripherals::GPIO9<'static>,
+    tx: esp_hal::peripherals::GPIO8<'static>,
+    control: board::gnss::Gnss,
+) {
     let Some(enable) = umsh_ulcp_runtime::gnss::EnableSource::new() else {
         debug_log(format_args!("gnss: enable receiver already taken"));
         return;
     };
+    let slot = core::cell::RefCell::new(GnssUartSlot {
+        boot: Some((uart1, rx, tx)),
+        open: None,
+    });
     umsh_gnss::pump::run(
-        uart,
-        control,
+        GnssPort { slot: &slot },
+        GnssPower {
+            inner: control,
+            slot: &slot,
+        },
         enable,
         umsh_ulcp_runtime::gnss::FixSink,
         Delay,
     )
     .await
+}
+
+/// The GNSS UART, existing only while the receiver is powered.
+///
+/// `UartRx` holds a `WakeLock` for its entire lifetime, so a UART that
+/// exists while the receiver is off is a light-sleep veto with nobody
+/// on the other end. The pump's `Power` edges own the driver's
+/// lifecycle instead: opened in `power_on`, dropped in `power_off` —
+/// which also makes "GNSS enabled forbids sleep" true by construction,
+/// exactly the right policy while NMEA is streaming (a light-sleeping
+/// UART loses RX bytes).
+#[cfg(feature = "gnss")]
+struct GnssUartSlot {
+    /// The real peripherals, consumed by the first open; later opens
+    /// steal (see `open_port`).
+    boot: Option<(
+        esp_hal::peripherals::UART1<'static>,
+        esp_hal::peripherals::GPIO9<'static>,
+        esp_hal::peripherals::GPIO8<'static>,
+    )>,
+    open: Option<Uart<'static, Async>>,
+}
+
+#[cfg(feature = "gnss")]
+impl GnssUartSlot {
+    fn open_port(&mut self) {
+        if self.open.is_some() {
+            return;
+        }
+        let (uart1, rx, tx) = self.boot.take().unwrap_or_else(|| {
+            // SAFETY: the previous open's driver — the singletons' only
+            // consumer — was dropped by `power_off` before this runs,
+            // and the slot (single-task, behind one `RefCell`) is the
+            // sole place they are ever (re)constructed.
+            unsafe {
+                (
+                    esp_hal::peripherals::UART1::steal(),
+                    esp_hal::peripherals::GPIO9::steal(),
+                    esp_hal::peripherals::GPIO8::steal(),
+                )
+            }
+        });
+        self.open = Some(
+            Uart::new(uart1, UartConfig::default().with_baudrate(board::GNSS_BAUD))
+                .unwrap()
+                .with_rx(rx)
+                .with_tx(tx)
+                .into_async(),
+        );
+    }
+}
+
+/// The pump's `Read` half over the slot. The `RefMut` is held across
+/// the read await, which is sound here because everything touching the
+/// slot runs sequentially inside `gnss_task`: `power_off` can only
+/// borrow after the pump has dropped the read future it was selecting
+/// on.
+#[cfg(feature = "gnss")]
+struct GnssPort<'a> {
+    slot: &'a core::cell::RefCell<GnssUartSlot>,
+}
+
+#[cfg(feature = "gnss")]
+impl embedded_io_async::ErrorType for GnssPort<'_> {
+    type Error = <Uart<'static, Async> as embedded_io_async::ErrorType>::Error;
+}
+
+#[cfg(feature = "gnss")]
+impl embedded_io_async::Read for GnssPort<'_> {
+    async fn read(&mut self, buf: &mut [u8]) -> Result<usize, Self::Error> {
+        let mut slot = self.slot.borrow_mut();
+        let Some(uart) = slot.open.as_mut() else {
+            // Powered down: the pump reads 0 as a closed stream and
+            // backs off rather than spinning.
+            return Ok(0);
+        };
+        embedded_io_async::Read::read(uart, buf).await
+    }
+}
+
+/// The pump's `Power` half: the board's rail/wake sequencing wrapped
+/// with the UART's lifecycle.
+#[cfg(feature = "gnss")]
+struct GnssPower<'a> {
+    inner: board::gnss::Gnss,
+    slot: &'a core::cell::RefCell<GnssUartSlot>,
+}
+
+#[cfg(feature = "gnss")]
+impl umsh_gnss::pump::Power for GnssPower<'_> {
+    async fn power_on(&mut self) {
+        self.slot.borrow_mut().open_port();
+        self.inner.power_on().await;
+    }
+
+    async fn power_off(&mut self) {
+        self.inner.power_off().await;
+        // After the receiver, so no sentence is in flight when the
+        // driver (and its wake lock) goes away.
+        self.slot.borrow_mut().open = None;
+    }
 }
 
 // ─── Wired transport (UART0 or native USB-Serial-JTAG) ───────────────────
@@ -2240,24 +2387,32 @@ async fn wired_write_all(tx: &mut WiredTx, bytes: &[u8]) -> bool {
 }
 
 /// Owns the wired TX half, HDLC-encodes frames, and writes them out.
+#[cfg(not(feature = "wired-usb-serial-jtag"))]
 #[embassy_executor::task]
 async fn output_task(mut tx: WiredTx, panic_report: Option<heapless::String<128>>) {
+    output_pump(&mut tx, panic_report).await
+}
+
+/// The wired TX pump: HDLC-encode frames and write them out. Never
+/// returns; on the USB-Serial-JTAG board the supervisor cancels it when
+/// VBUS drops.
+async fn output_pump(tx: &mut WiredTx, panic_report: Option<heapless::String<128>>) {
     // Emit the previous boot's panic message as ASCII. HDLC hosts
     // resynchronize past it; humans read it with a serial terminal.
     // There is no reader handshake to wait for — it lands in the bridge
     // (or the bounded write drops it with no host attached), which is
     // the correct behavior for a serial console.
     if let Some(report) = panic_report {
-        let _ = wired_write_all(&mut tx, b"[PREV PANIC]: ").await;
-        let _ = wired_write_all(&mut tx, report.as_bytes()).await;
-        let _ = wired_write_all(&mut tx, b"\r\n").await;
+        let _ = wired_write_all(tx, b"[PREV PANIC]: ").await;
+        let _ = wired_write_all(tx, report.as_bytes()).await;
+        let _ = wired_write_all(tx, b"\r\n").await;
     }
     loop {
         #[cfg(feature = "ble-debug")]
         let outbound = match select(OUT_CH.wired.receive(), DEBUG_CH.receive()).await {
             Either::First(outbound) => outbound,
             Either::Second(line) => {
-                let _ = wired_write_all(&mut tx, line.as_bytes()).await;
+                let _ = wired_write_all(tx, line.as_bytes()).await;
                 continue;
             }
         };
@@ -2273,7 +2428,7 @@ async fn output_task(mut tx: WiredTx, panic_report: Option<heapless::String<128>
         for chunk in generation_checked(wire[..len].chunks(64), outbound.generation, || {
             SESSION_GEN.load(Ordering::Acquire)
         }) {
-            if !wired_write_all(&mut tx, chunk).await {
+            if !wired_write_all(tx, chunk).await {
                 break;
             }
         }
@@ -2291,8 +2446,16 @@ async fn output_task(mut tx: WiredTx, panic_report: Option<heapless::String<128>
 /// by a BLE attach is observed as a foreign `SESSION_GEN` bump, which
 /// re-arms the lazy attach, so a displaced serial host reclaims the
 /// session with its next frame.
+#[cfg(not(feature = "wired-usb-serial-jtag"))]
 #[embassy_executor::task]
 async fn uart_in_task(mut rx: WiredRx) {
+    input_pump(&mut rx).await
+}
+
+/// The wired RX pump. Never returns; on the USB-Serial-JTAG board the
+/// supervisor cancels it when VBUS drops, and the decoder state dies
+/// with it — a torn frame cannot outlive the cable that carried it.
+async fn input_pump(rx: &mut WiredRx) {
     let mut decoder: hdlc::Decoder<FRAME_IN_MAX> = hdlc::Decoder::new();
     let mut local_generation = SESSION_GEN.load(Ordering::Acquire);
     // True while this task's own lazy attach is still unprocessed: the
@@ -2321,7 +2484,7 @@ async fn uart_in_task(mut rx: WiredRx) {
             local_generation = generation;
         }
         let mut packet = [0u8; 64];
-        match embedded_io_async::Read::read(&mut rx, &mut packet).await {
+        match embedded_io_async::Read::read(rx, &mut packet).await {
             Ok(0) => {}
             // A FIFO overflow or framing error costs the in-flight
             // frame, not the session: resynchronize on the next flag.
@@ -2347,6 +2510,57 @@ async fn uart_in_task(mut rx: WiredRx) {
                 }
             }
         }
+    }
+}
+
+/// Owns the USB-Serial-JTAG driver for exactly as long as USB power is
+/// present.
+///
+/// Both halves of the driver hold a `WakeLock` for their entire
+/// lifetime — the peripheral cannot receive across light sleep — so a
+/// driver that exists on battery is a driver that forbids sleep
+/// forever. Keying its existence off VBUS turns that lock into policy:
+/// on USB power the transport is up and the board never sleeps (there
+/// is nothing to save), on battery the transport does not exist and
+/// its locks with it. Wired ULCP attach loses nothing — with no VBUS
+/// there is no host on the other end of the pins.
+#[cfg(feature = "wired-usb-serial-jtag")]
+#[embassy_executor::task]
+async fn wired_transport_task(
+    usb: esp_hal::peripherals::USB_DEVICE<'static>,
+    panic_report: Option<heapless::String<128>>,
+) {
+    let mut usb = Some(usb);
+    let mut panic_report = panic_report;
+    loop {
+        if !VBUS_PRESENT.load(Ordering::Acquire) {
+            VBUS_EDGE.wait().await;
+            continue;
+        }
+        let device = usb.take().unwrap_or_else(|| {
+            // SAFETY: the previous cycle's driver — the singleton's only
+            // consumer — was dropped before this loop came back around,
+            // and this task is the sole place the peripheral is ever
+            // (re)constructed.
+            unsafe { esp_hal::peripherals::USB_DEVICE::steal() }
+        });
+        let (mut rx, mut tx) = UsbSerialJtag::new(device).into_async().split();
+        debug_log(format_args!("wired transport: up (VBUS)"));
+        select3(
+            output_pump(&mut tx, panic_report.take()),
+            input_pump(&mut rx),
+            async {
+                loop {
+                    VBUS_EDGE.wait().await;
+                    if !VBUS_PRESENT.load(Ordering::Acquire) {
+                        break;
+                    }
+                }
+            },
+        )
+        .await;
+        // rx/tx drop here, releasing the peripheral's wake locks.
+        debug_log(format_args!("wired transport: down (no VBUS)"));
     }
 }
 
@@ -2810,11 +3024,27 @@ async fn button_task(mut button: Input<'static>) {
             let now_ms = Instant::now().as_millis();
             let edge_fut = async {
                 if pressed {
-                    button.wait_for_high().await;
+                    // Held: a release cannot be slept through anyway
+                    // (the hold itself keeps deadlines short), but the
+                    // level wake keeps the story uniform.
+                    let _ = button
+                        .wait_for_with_options(
+                            Event::HighLevel,
+                            WaitForOptions::default().with_wake_enable(true),
+                        )
+                        .await;
                     Timer::after(DEBOUNCE).await;
                     ButtonEdge::Release
                 } else {
-                    button.wait_for_low().await;
+                    // Idle park, often for the 60 s floor: wake-enabled
+                    // so a press wakes the chip from light sleep
+                    // instead of the wait pinning it awake.
+                    let _ = button
+                        .wait_for_with_options(
+                            Event::LowLevel,
+                            WaitForOptions::default().with_wake_enable(true),
+                        )
+                        .await;
                     Timer::after(DEBOUNCE).await;
                     ButtonEdge::Press
                 }
@@ -2879,7 +3109,7 @@ async fn button_task(mut button: Input<'static>) {
 async fn heartbeat_task(
     mut led: Output<'static>,
     mut rtc: Rtc<'static>,
-    mut low_power: LowPower<'static>,
+    mut deep_sleep: esp_rtos::sleep::DeepSleep,
 ) -> ! {
     loop {
         rtc.rwdt.feed();
@@ -2904,14 +3134,14 @@ async fn heartbeat_task(
             .await
             .is_ok()
         {
-            shutdown(&mut led, &mut rtc, &mut low_power).await;
+            shutdown(&mut led, &mut rtc, &mut deep_sleep).await;
         }
         led.set_low();
         if with_timeout(Duration::from_millis(off_ms), SHUTDOWN_REQUEST.wait())
             .await
             .is_ok()
         {
-            shutdown(&mut led, &mut rtc, &mut low_power).await;
+            shutdown(&mut led, &mut rtc, &mut deep_sleep).await;
         }
     }
 }
@@ -2936,7 +3166,7 @@ async fn heartbeat_task(
 async fn shutdown(
     led: &mut Output<'static>,
     rtc: &mut Rtc<'static>,
-    low_power: &mut LowPower<'static>,
+    deep_sleep: &mut esp_rtos::sleep::DeepSleep,
 ) -> ! {
     debug_log(format_args!("shutdown: power-off hold"));
     DEVICE_CTL.shutdown();
@@ -2969,7 +3199,7 @@ async fn shutdown(
 
     rtc.rwdt.disable();
     let wake = Ext0WakeupSource::new(unsafe { esp_hal::peripherals::GPIO0::steal() }, Level::Low);
-    low_power.sleep_deep(&[&wake]);
+    deep_sleep.deep_sleep(&[&wake]);
 }
 
 /// The RWDT feed, with no LED behind it — this board's only LEDs belong
@@ -2982,9 +3212,15 @@ async fn shutdown(
 async fn heartbeat_task(mut rtc: Rtc<'static>, pmic: &'static SharedPmic) -> ! {
     loop {
         rtc.rwdt.feed();
-        if with_timeout(Duration::from_secs(2), SHUTDOWN_REQUEST.wait())
-            .await
-            .is_ok()
+        // The feed cadence caps light-sleep residency (each feed is a
+        // timer wake), so it runs as slow as the watchdog allows; the
+        // shutdown signal still lands instantly through the timeout.
+        if with_timeout(
+            Duration::from_secs(HEARTBEAT_FEED_SECS),
+            SHUTDOWN_REQUEST.wait(),
+        )
+        .await
+        .is_ok()
         {
             shutdown(&mut rtc, pmic).await;
         }
@@ -3146,7 +3382,22 @@ async fn main(spawner: Spawner) {
 
     let timg0 = TimerGroup::new(peripherals.TIMG0);
     let sw_int = SoftwareInterruptControl::new(peripherals.SW_INTERRUPT);
-    esp_rtos::start(timg0.timer0, sw_int.software_interrupt0);
+    // Automatic light sleep: when the scheduler runs out of ready
+    // tasks, no `WakeLock` is held, and the next timer deadline is far
+    // enough away, the idle hook enters light sleep until that deadline
+    // (GPIO wake always armed) instead of spinning `waiti` at 80 MHz.
+    // The gating is entirely lock-driven — esp-radio holds a lock from
+    // BLE init to deinit, the wired-transport and UART drivers hold
+    // theirs for their lifetimes, and GPIO waits hold one unless the
+    // pin is wake-enabled — so a board whose locks never all clear
+    // simply falls back to WFI, and sleep arrives exactly when the
+    // holders learn to let go.
+    let sleep = esp_rtos::sleep::configure(peripherals.LPWR);
+    esp_rtos::start_with_idle_hook(
+        timg0.timer0,
+        sw_int.software_interrupt0,
+        sleep.light_sleep_hook,
+    );
 
     println!(
         "{} {} on {}",
@@ -3199,6 +3450,13 @@ async fn main(spawner: Spawner) {
             .await
             .unwrap_or_else(|e| panic!("pmu bring-up failed: {e:?}"));
         println!("pmu: rails up (cold_boot={cold_boot})");
+        // Seed the VBUS mirror from a direct read, so a battery boot
+        // does not spend its first minute pretending to have USB (the
+        // optimistic initial value) while the battery task waits out
+        // its first cadence.
+        if let Ok(vbus) = pmic.vbus_present().await {
+            VBUS_PRESENT.store(vbus, Ordering::Release);
+        }
         PMIC_CELL.init(Mutex::new(pmic))
     };
 
@@ -3245,10 +3503,14 @@ async fn main(spawner: Spawner) {
     let led = Output::new(peripherals.GPIO35, Level::Low, OutputConfig::default());
     #[cfg(feature = "board-heltec-v2")]
     let led = Output::new(peripherals.GPIO25, Level::Low, OutputConfig::default());
+    // The Heltecs' power-off is deep sleep, entered through the same
+    // `Sleep` handle whose idle hook was installed above — LPWR has one
+    // owner now. A PMIC board powers off through the PMIC instead and
+    // has no use for the deep-sleep half.
     #[cfg(not(feature = "pmic-axp2101"))]
-    let low_power = LowPower::new(peripherals.LPWR);
-    #[cfg(not(feature = "pmic-axp2101"))]
-    spawner.spawn(heartbeat_task(led, rtc, low_power).unwrap());
+    spawner.spawn(heartbeat_task(led, rtc, sleep.deep_sleep).unwrap());
+    #[cfg(feature = "pmic-axp2101")]
+    let _ = sleep;
 
     // ── Vext rail and battery ADC ────────────────────────────────────────
     // The classic ESP32 shares ADC2 exclusively between the battery
@@ -3525,14 +3787,15 @@ async fn main(spawner: Spawner) {
         .with_tx(peripherals.GPIO1)
         .into_async();
     #[cfg(not(feature = "wired-usb-serial-jtag"))]
-    let (wired_rx, wired_tx) = uart.split();
-    // Pinless: the peripheral owns GPIO19/20 itself.
+    {
+        let (wired_rx, wired_tx) = uart.split();
+        spawner.spawn(output_task(wired_tx, panic_report.clone()).unwrap());
+        spawner.spawn(uart_in_task(wired_rx).unwrap());
+    }
+    // Pinless: the peripheral owns GPIO19/20 itself. The supervisor
+    // constructs and drops the driver as USB power comes and goes.
     #[cfg(feature = "wired-usb-serial-jtag")]
-    let (wired_rx, wired_tx) = UsbSerialJtag::new(peripherals.USB_DEVICE)
-        .into_async()
-        .split();
-    spawner.spawn(output_task(wired_tx, panic_report.clone()).unwrap());
-    spawner.spawn(uart_in_task(wired_rx).unwrap());
+    spawner.spawn(wired_transport_task(peripherals.USB_DEVICE, panic_report.clone()).unwrap());
 
     // ── The ULCP session ─────────────────────────────────────────────────
     spawner.spawn(
@@ -3599,16 +3862,16 @@ async fn main(spawner: Spawner) {
     // RTC at boot.
     #[cfg(feature = "gnss")]
     {
-        let gnss_uart = Uart::new(
-            peripherals.UART1,
-            UartConfig::default().with_baudrate(board::GNSS_BAUD),
-        )
-        .unwrap()
-        .with_rx(peripherals.GPIO9)
-        .with_tx(peripherals.GPIO8)
-        .into_async();
         let gnss_wake = Output::new(peripherals.GPIO7, Level::Low, OutputConfig::default());
-        spawner.spawn(gnss_task(gnss_uart, board::gnss::Gnss::new(pmic, gnss_wake)).unwrap());
+        spawner.spawn(
+            gnss_task(
+                peripherals.UART1,
+                peripherals.GPIO9,
+                peripherals.GPIO8,
+                board::gnss::Gnss::new(pmic, gnss_wake),
+            )
+            .unwrap(),
+        );
     }
 
     // ── OLED, then hand the panel to its task ────────────────────────────

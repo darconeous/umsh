@@ -7,5 +7,6 @@
 #![no_std]
 
 pub mod flash_store;
+pub mod iv;
 pub mod panic_capture;
 pub mod rng;

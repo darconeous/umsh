@@ -31,7 +31,6 @@ use esp_hal::Async;
 use esp_hal::gpio::{Input, Output};
 use esp_hal::spi::master::Spi;
 use lora_phy::LoRa;
-use lora_phy::iv::GenericSx126xInterfaceVariant;
 use lora_phy::mod_params::RadioError;
 use lora_phy::sx126x::{Config, Sx126x, Sx1262, TcxoCtrlVoltage};
 
@@ -41,8 +40,10 @@ pub type RadioSpi =
     embedded_hal_bus::spi::ExclusiveDevice<Spi<'static, Async>, Output<'static>, Delay>;
 
 /// Interface variant: reset + DIO1 + BUSY, no host-driven RF switch
-/// (DIO2 handles it inside the radio).
-pub type RadioIv = GenericSx126xInterfaceVariant<Output<'static>, Input<'static>>;
+/// (DIO2 handles it inside the radio). The esp-aware variant, so the
+/// DIO1 wait is a light-sleep wake source instead of a wake-lock
+/// holder.
+pub type RadioIv = umsh_bsp_esp32::iv::EspInterfaceVariant;
 
 /// The lora-phy `RadioKind` for this board.
 pub type RadioKind = Sx126x<RadioSpi, RadioIv, Sx1262>;
@@ -59,7 +60,7 @@ pub fn new_radio_kind(
     dio1: Input<'static>,
     busy: Input<'static>,
 ) -> Result<RadioKind, RadioError> {
-    let iv = GenericSx126xInterfaceVariant::new(reset, dio1, busy, None, None)?;
+    let iv = umsh_bsp_esp32::iv::EspInterfaceVariant::sx126x(reset, dio1, busy);
     Ok(Sx126x::new(
         spi,
         iv,
