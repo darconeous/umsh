@@ -1992,19 +1992,18 @@ async fn ble_app(controller: BleController, store: BleStore) -> ! {
 /// runner. TX uses MeshCore's 32-symbol SF7 preamble; the hardware-proven
 /// 8-symbol SX1262 RX acquisition setting remains unchanged.
 ///
-/// The SX1262 boards listen in preamble duty cycle: the 32-symbol TX
-/// preamble leaves ~24 symbols of slack over the 8-symbol acquisition
-/// setting, and the chip's sequencer spends that slack sleeping between
-/// sniff windows instead of receiving nothing. The V2's SX1276 has no
-/// duty-cycle sequencer and must listen continuously.
+/// Continuous RX on every board. The SX1262 boards ran preamble duty
+/// cycle for a time, but a counted bench campaign found an intrinsic
+/// loss mode: the chip's raw preamble detector false-fires in sniff
+/// mode and each false detection camps the demodulator, deaf to real
+/// frames, until the host re-arms RX — a few percent of unretried
+/// traffic lost, unfixable chip-side without breaking real detection.
+/// See `docs/sx1262-rx-duty-cycle-findings.md` before reintroducing it.
 #[embassy_executor::task]
 async fn radio_task(lora: board_radio::Radio) {
     use umsh_radio_loraphy::RxStrategy;
-    #[cfg(feature = "board-heltec-v2")]
-    const RX_STRATEGY: RxStrategy = RxStrategy::Continuous;
-    #[cfg(not(feature = "board-heltec-v2"))]
-    const RX_STRATEGY: RxStrategy = RxStrategy::PreambleDutyCycle;
-    umsh_radio_loraphy::device_runner(lora, &RADIO_CH, &DEVICE_CTL, 8, 32, RX_STRATEGY).await;
+    umsh_radio_loraphy::device_runner(lora, &RADIO_CH, &DEVICE_CTL, 8, 32, RxStrategy::Continuous)
+        .await;
 }
 
 /// Owns the real `RADIO_CH` bundle and multiplexes it across the
