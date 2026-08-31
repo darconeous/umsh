@@ -880,28 +880,26 @@ The ESP32-S3 can route many peripheral signals through the GPIO matrix. Neverthe
 
 The Supreme offers considerably more power-control opportunity than a board with fixed peripheral rails because the AXP2101 can shut down large peripheral groups.
 
-Before ESP32-S3 deep sleep, a battery-oriented UMSH implementation should consider:
+### 17.1 Light sleep, gated by wake locks
 
-1. put SX1262 into the chosen sleep mode
-2. ensure DIO3/TCXO and RF-switch state are appropriate for sleep
-3. disable LoRa ALDO3 if wake-on-radio is not required and the restart cost is acceptable
-4. stop GNSS and disable ALDO4 when location is not needed
-5. disable OLED/sensor rails when no display/sensor activity is needed
-6. unmount/idle SD and disable BLDO1 when appropriate
-7. disable Wi-Fi/BLE as required
-8. configure GPIO pulls to avoid back-powering unpowered peripherals
-9. select wake sources such as BOOT, RTC INT, timer, or radio DIO1 according to the use case
-10. enter ESP32-S3 deep sleep
+The UMSH firmware's low-power architecture on this board is **automatic light sleep with the radio receiving through it**: the SX1262 stays in continuous RX on its own rail, the ESP32-S3 sleeps whenever the scheduler is idle, and DIO1—armed as a level-triggered GPIO wake source—pulls the chip back up when a frame arrives. The radio latches its IRQ and buffers the frame in its own FIFO, so the sub-millisecond wake costs nothing. Deep sleep is not part of the receive story (it is a reboot, and the mesh state does not survive it); on this board deep sleep is not used at all, since "off" is a PMIC power-off.
 
-### 17.1 Wake-on-radio tradeoff
+Sleep is gated entirely by esp-hal wake locks rather than by explicit policy code. The lock holders, and what each one means:
 
-MeshCore has code to use SX1262 DIO1 as an ESP32 deep-sleep wake source. If UMSH wants the same behavior, **the radio power rail must remain on** and the SX1262 must be configured in a state capable of generating the intended DIO1 event.
+| Holder | Meaning |
+| --- | --- |
+| esp-radio (BLE init → deinit) | BLE enabled ⇒ no sleep. The controller has hard real-time deadlines and esp-radio has no modem sleep; `PROP_BLE_ENABLED` off tears the controller down and releases the lock. |
+| USB-Serial-JTAG driver | The driver exists only while the PMU reports VBUS, so this lock **is** the never-sleep-on-USB-power policy. |
+| GNSS UART | Opened at receiver power-on, dropped at power-off, so GNSS enabled ⇒ no sleep—correct, since a light-sleeping UART loses RX bytes mid-sentence. |
+| GPIO waits (unarmed) | Any `wait_for_*` without wake-enable holds a lock; the firmware's long-lived waits (DIO1, PMU IRQ, BOOT button) are all wake-enabled level events instead. |
 
-This has a higher standby cost than completely removing radio power, so it should be a deliberate operating mode.
+The steady sleeping state on battery is therefore: BLE off, GNSS off, panel dark, no USB—radio in RX, chip asleep between the watchdog's timer wakes (20 s feeds under a 30 s RWDT timeout), woken by DIO1 traffic, the PMU IRQ (POWER key, VBUS), or the BOOT button.
+
+Sleep **during** BLE would need esp-radio modem sleep, which does not exist and is gated upstream behind an esp-hal clock-tree rework (esp-rs/esp-hal#3235)—and full sleep-during-BLE on the S3 additionally wants an external 32.768 kHz crystal, which this board is not known to route. BLE-off-then-sleep is the architecture, not a stopgap.
 
 ### 17.2 GNSS backup
 
-LILYGO notes that GNSS backup power/hot-start capability depends on the installed battery. Removing the battery may make every GNSS startup effectively colder/slower even when USB is used to power the board.
+LILYGO notes that GNSS backup power/hot-start capability depends on the installed battery. Removing the battery may make every GNSS startup effectively colder/slower even when USB is used to power the board. (§5.2: VBACKUP floats, so the backup domain is fed from the cell, not through the PMIC's backup charger.)
 
 ---
 
@@ -1183,12 +1181,11 @@ This is enough for a minimally useful radio node.
 
 ### Milestone 6 — low power
 
-- explicit PMIC rail shutdown policy
-- SX1262 sleep policy
-- optional wake on DIO1
-- GNSS power/wake policy
-- RTC alarm wake
-- measurement of actual current in each state
+- explicit PMIC rail shutdown policy — done (§5.2: every unused channel off)
+- automatic light sleep with wake-on-DIO1 — implemented (§17.1); bench validation open
+- GNSS power/wake policy — receiver rail and UART both follow `PROP_GNSS_ENABLED`
+- RTC alarm wake — open, no consumer yet
+- measurement of actual current in each state — open, needs an external meter (the AXP2101 measures no current)
 
 ---
 
