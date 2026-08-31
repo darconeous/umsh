@@ -37,3 +37,4 @@ pub mod ble;
 pub mod counter;
 pub mod proto;
 pub mod record;
+pub mod seed;

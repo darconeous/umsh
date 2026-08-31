@@ -32,6 +32,7 @@ use umsh_core::{
 };
 use zeroize::{Zeroize, ZeroizeOnDrop};
 
+pub mod pool;
 pub mod replay;
 
 /// AES block-cipher instance used by the protocol engine.
@@ -666,22 +667,33 @@ impl<A: AesProvider, S: Sha256Provider> CryptoEngine<A, S> {
 
     /// Run HKDF-SHA256 and write the output into `okm`.
     pub fn hkdf(&self, ikm: &[u8], salt: &[u8], info: &[u8], okm: &mut [u8]) {
-        let prk = self.sha.hmac(salt, &[ikm]);
-        let mut previous = [0u8; 32];
-        let mut previous_len = 0usize;
-        let mut written = 0usize;
-        let mut counter = 1u8;
-        while written < okm.len() {
-            let next = self
-                .sha
-                .hmac(&prk, &[&previous[..previous_len], info, &[counter]]);
-            let take = (okm.len() - written).min(next.len());
-            okm[written..written + take].copy_from_slice(&next[..take]);
-            previous = next;
-            previous_len = 32;
-            written += take;
-            counter = counter.wrapping_add(1);
-        }
+        hkdf_sha256(&self.sha, ikm, salt, info, okm);
+    }
+}
+
+/// HKDF-SHA256 over any [`Sha256Provider`], for callers that have no
+/// [`CryptoEngine`] — the entropy pool derives keys before any AES
+/// provider exists.
+pub fn hkdf_sha256<S: Sha256Provider>(
+    sha: &S,
+    ikm: &[u8],
+    salt: &[u8],
+    info: &[u8],
+    okm: &mut [u8],
+) {
+    let prk = sha.hmac(salt, &[ikm]);
+    let mut previous = [0u8; 32];
+    let mut previous_len = 0usize;
+    let mut written = 0usize;
+    let mut counter = 1u8;
+    while written < okm.len() {
+        let next = sha.hmac(&prk, &[&previous[..previous_len], info, &[counter]]);
+        let take = (okm.len() - written).min(next.len());
+        okm[written..written + take].copy_from_slice(&next[..take]);
+        previous = next;
+        previous_len = 32;
+        written += take;
+        counter = counter.wrapping_add(1);
     }
 }
 
