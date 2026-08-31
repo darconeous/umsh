@@ -1342,6 +1342,23 @@ public protocol MobileMeshSessionProtocol: AnyObject, Sendable {
     func applyChatArchiveResult(requestId: UInt32, kind: MobileChatArchiveResultKind, payload: Data) throws
 
     /**
+     * Manage a device's Bluetooth bonds across the mesh.
+     *
+     * Both commands answer with a status rather than silence: they are
+     * not reset-class, and what they did is the whole of what they
+     * report. `STATUS_UNIMPLEMENTED` is a device without
+     * `CAP_BLE_PAIRING`; `STATUS_INVALID_STATE` from
+     * [`MobileMeshBleCommand::StartPairing`] is a device that could not
+     * open a window.
+     *
+     * Clearing bonds over the mesh does not touch this exchange — the
+     * administrator is addressing the device's node, not one of its
+     * Bluetooth hosts — so unlike the same command over Bluetooth, the
+     * reply arrives on a link that survives it.
+     */
+    func beginManagementBle(peerAddress: String, command: MobileMeshBleCommand) throws  -> UInt64
+
+    /**
      * Read a named set of properties across the mesh.
      *
      * The caller names what it wants, in as many exchanges as the
@@ -1854,6 +1871,32 @@ open func applyChatArchiveResult(requestId: UInt32, kind: MobileChatArchiveResul
         FfiConverterData.lower(payload),uniffiCallStatus
     )
 }
+}
+
+    /**
+     * Manage a device's Bluetooth bonds across the mesh.
+     *
+     * Both commands answer with a status rather than silence: they are
+     * not reset-class, and what they did is the whole of what they
+     * report. `STATUS_UNIMPLEMENTED` is a device without
+     * `CAP_BLE_PAIRING`; `STATUS_INVALID_STATE` from
+     * [`MobileMeshBleCommand::StartPairing`] is a device that could not
+     * open a window.
+     *
+     * Clearing bonds over the mesh does not touch this exchange — the
+     * administrator is addressing the device's node, not one of its
+     * Bluetooth hosts — so unlike the same command over Bluetooth, the
+     * reply arrives on a link that survives it.
+     */
+open func beginManagementBle(peerAddress: String, command: MobileMeshBleCommand)throws  -> UInt64  {
+    return try  FfiConverterUInt64.lift(try rustCallWithError(FfiConverterTypeMobileMeshError_lift) {
+        uniffiCallStatus in
+    uniffi_umsh_mobile_core_fn_method_mobilemeshsession_begin_management_ble(
+            self.uniffiCloneHandle(),
+        FfiConverterString.lower(peerAddress),
+        FfiConverterTypeMobileMeshBleCommand_lower(command),uniffiCallStatus
+    )
+})
 }
 
     /**
@@ -3267,6 +3310,26 @@ public protocol MobileUlcpSessionProtocol: AnyObject, Sendable {
     func begin(selectedHostKey: Data?) throws  -> UlcpSessionUpdateRecord
 
     /**
+     * Delete every Bluetooth bond the radio holds, along with its
+     * pairing PIN (`CMD_BLE_CLEAR_BONDS`). The radio then opens a
+     * pairing window, which is what makes it reachable again.
+     *
+     * Over Bluetooth this severs the caller's own link: the bond that
+     * carried the command is one of the bonds deleted. The status
+     * arrives first, so the completion event still reports what
+     * happened.
+     */
+    func beginBleClearBonds() throws  -> UlcpSessionUpdateRecord
+
+    /**
+     * Open a pairing window (`CMD_BLE_START_PAIRING`) so another host
+     * can pair without a gesture at the radio. `STATUS_INVALID_STATE`
+     * means no window could be opened — the radio is locked out after
+     * repeated pairing failures, or it has nowhere to put another bond.
+     */
+    func beginBleStartPairing() throws  -> UlcpSessionUpdateRecord
+
+    /**
      * Read the named properties, whatever they are, and answer with what
      * the device said about each.
      *
@@ -3715,6 +3778,40 @@ open func begin(selectedHostKey: Data?)throws  -> UlcpSessionUpdateRecord  {
     uniffi_umsh_mobile_core_fn_method_mobileulcpsession_begin(
             self.uniffiCloneHandle(),
         FfiConverterOptionData.lower(selectedHostKey),uniffiCallStatus
+    )
+})
+}
+
+    /**
+     * Delete every Bluetooth bond the radio holds, along with its
+     * pairing PIN (`CMD_BLE_CLEAR_BONDS`). The radio then opens a
+     * pairing window, which is what makes it reachable again.
+     *
+     * Over Bluetooth this severs the caller's own link: the bond that
+     * carried the command is one of the bonds deleted. The status
+     * arrives first, so the completion event still reports what
+     * happened.
+     */
+open func beginBleClearBonds()throws  -> UlcpSessionUpdateRecord  {
+    return try  FfiConverterTypeUlcpSessionUpdateRecord_lift(try rustCallWithError(FfiConverterTypeMobileError_lift) {
+        uniffiCallStatus in
+    uniffi_umsh_mobile_core_fn_method_mobileulcpsession_begin_ble_clear_bonds(
+            self.uniffiCloneHandle(),uniffiCallStatus
+    )
+})
+}
+
+    /**
+     * Open a pairing window (`CMD_BLE_START_PAIRING`) so another host
+     * can pair without a gesture at the radio. `STATUS_INVALID_STATE`
+     * means no window could be opened — the radio is locked out after
+     * repeated pairing failures, or it has nowhere to put another bond.
+     */
+open func beginBleStartPairing()throws  -> UlcpSessionUpdateRecord  {
+    return try  FfiConverterTypeUlcpSessionUpdateRecord_lift(try rustCallWithError(FfiConverterTypeMobileError_lift) {
+        uniffiCallStatus in
+    uniffi_umsh_mobile_core_fn_method_mobileulcpsession_begin_ble_start_pairing(
+            self.uniffiCloneHandle(),uniffiCallStatus
     )
 })
 }
@@ -7974,6 +8071,16 @@ public struct UlcpDeviceCardRecord: Equatable, Hashable {
     public var supportsAdmin: Bool
     public var supportsAlert: Bool
     /**
+     * Whether the device has a Bluetooth transport it can be made
+     * unreachable over (`CAP_BLE`).
+     */
+    public var supportsBle: Bool
+    /**
+     * Whether the bond commands and the bond count are worth offering
+     * (`CAP_BLE_PAIRING`).
+     */
+    public var supportsBlePairing: Bool
+    /**
      * Whether a Restart control is worth offering (`CAP_REBOOT`).
      */
     public var supportsReboot: Bool
@@ -8001,6 +8108,14 @@ public struct UlcpDeviceCardRecord: Equatable, Hashable {
          * `PROP_DEV_MODEL`: the hardware, when the device names it.
          */deviceModel: String?, deviceName: String?, supportsDeviceName: Bool, supportsBattery: Bool, supportsLora: Bool, supportsDutyCycleLimit: Bool, supportsRepeater: Bool, supportsIdent: Bool, supportsDeviceIdentity: Bool, supportsGnss: Bool, supportsAdvert: Bool, supportsAdmin: Bool, supportsAlert: Bool,
         /**
+         * Whether the device has a Bluetooth transport it can be made
+         * unreachable over (`CAP_BLE`).
+         */supportsBle: Bool,
+        /**
+         * Whether the bond commands and the bond count are worth offering
+         * (`CAP_BLE_PAIRING`).
+         */supportsBlePairing: Bool,
+        /**
          * Whether a Restart control is worth offering (`CAP_REBOOT`).
          */supportsReboot: Bool, supportsSave: Bool,
         /**
@@ -8023,6 +8138,8 @@ public struct UlcpDeviceCardRecord: Equatable, Hashable {
         self.supportsAdvert = supportsAdvert
         self.supportsAdmin = supportsAdmin
         self.supportsAlert = supportsAlert
+        self.supportsBle = supportsBle
+        self.supportsBlePairing = supportsBlePairing
         self.supportsReboot = supportsReboot
         self.supportsSave = supportsSave
         self.supportsMulti = supportsMulti
@@ -8059,6 +8176,8 @@ public struct FfiConverterTypeUlcpDeviceCardRecord: FfiConverterRustBuffer {
                 supportsAdvert: FfiConverterBool.read(from: &buf),
                 supportsAdmin: FfiConverterBool.read(from: &buf),
                 supportsAlert: FfiConverterBool.read(from: &buf),
+                supportsBle: FfiConverterBool.read(from: &buf),
+                supportsBlePairing: FfiConverterBool.read(from: &buf),
                 supportsReboot: FfiConverterBool.read(from: &buf),
                 supportsSave: FfiConverterBool.read(from: &buf),
                 supportsMulti: FfiConverterBool.read(from: &buf)
@@ -8081,6 +8200,8 @@ public struct FfiConverterTypeUlcpDeviceCardRecord: FfiConverterRustBuffer {
         FfiConverterBool.write(value.supportsAdvert, into: &buf)
         FfiConverterBool.write(value.supportsAdmin, into: &buf)
         FfiConverterBool.write(value.supportsAlert, into: &buf)
+        FfiConverterBool.write(value.supportsBle, into: &buf)
+        FfiConverterBool.write(value.supportsBlePairing, into: &buf)
         FfiConverterBool.write(value.supportsReboot, into: &buf)
         FfiConverterBool.write(value.supportsSave, into: &buf)
         FfiConverterBool.write(value.supportsMulti, into: &buf)
@@ -8268,7 +8389,7 @@ public func FfiConverterTypeUlcpDeviceConfigRecord_lower(_ value: UlcpDeviceConf
 
 
 /**
- * Everything the six management screens show, all of it optional.
+ * Everything the management screens show, all of it optional.
  *
  * A category read answers a handful of properties, so anything outside
  * it is simply absent — this record says what the last read of *some*
@@ -8330,6 +8451,14 @@ public struct UlcpDevicePropertiesRecord: Equatable, Hashable {
     public var gnss: UlcpGnssRecord?
     public var gnssTimeTrust: Bool?
     /**
+     * Whether the device can be reached over Bluetooth.
+     */
+    public var bleEnabled: Bool?
+    /**
+     * How many hosts are paired with it. Read-only.
+     */
+    public var bleBondCount: UInt8?
+    /**
      * What the device's clock read when it answered. Present when the
      * clock was asked about; the inner epoch is absent on a device that
      * has not found the time.
@@ -8373,6 +8502,12 @@ public struct UlcpDevicePropertiesRecord: Equatable, Hashable {
          * device with no receiver.
          */gnss: UlcpGnssRecord?, gnssTimeTrust: Bool?,
         /**
+         * Whether the device can be reached over Bluetooth.
+         */bleEnabled: Bool?,
+        /**
+         * How many hosts are paired with it. Read-only.
+         */bleBondCount: UInt8?,
+        /**
          * What the device's clock read when it answered. Present when the
          * clock was asked about; the inner epoch is absent on a device that
          * has not found the time.
@@ -8404,6 +8539,8 @@ public struct UlcpDevicePropertiesRecord: Equatable, Hashable {
         self.gnssEnabled = gnssEnabled
         self.gnss = gnss
         self.gnssTimeTrust = gnssTimeTrust
+        self.bleEnabled = bleEnabled
+        self.bleBondCount = bleBondCount
         self.time = time
         self.tzOffsetMin = tzOffsetMin
         self.repeaterEnabled = repeaterEnabled
@@ -8458,6 +8595,8 @@ public struct FfiConverterTypeUlcpDevicePropertiesRecord: FfiConverterRustBuffer
                 gnssEnabled: FfiConverterOptionBool.read(from: &buf),
                 gnss: FfiConverterOptionTypeUlcpGnssRecord.read(from: &buf),
                 gnssTimeTrust: FfiConverterOptionBool.read(from: &buf),
+                bleEnabled: FfiConverterOptionBool.read(from: &buf),
+                bleBondCount: FfiConverterOptionUInt8.read(from: &buf),
                 time: FfiConverterOptionTypeUlcpTimeRecord.read(from: &buf),
                 tzOffsetMin: FfiConverterOptionInt16.read(from: &buf),
                 repeaterEnabled: FfiConverterOptionBool.read(from: &buf),
@@ -8498,6 +8637,8 @@ public struct FfiConverterTypeUlcpDevicePropertiesRecord: FfiConverterRustBuffer
         FfiConverterOptionBool.write(value.gnssEnabled, into: &buf)
         FfiConverterOptionTypeUlcpGnssRecord.write(value.gnss, into: &buf)
         FfiConverterOptionBool.write(value.gnssTimeTrust, into: &buf)
+        FfiConverterOptionBool.write(value.bleEnabled, into: &buf)
+        FfiConverterOptionUInt8.write(value.bleBondCount, into: &buf)
         FfiConverterOptionTypeUlcpTimeRecord.write(value.time, into: &buf)
         FfiConverterOptionInt16.write(value.tzOffsetMin, into: &buf)
         FfiConverterOptionBool.write(value.repeaterEnabled, into: &buf)
@@ -9008,6 +9149,8 @@ public struct UlcpManagedPropertyIds: Equatable, Hashable {
     public var startupBeacon: UInt32
     public var gnssEnabled: UInt32
     public var gnssTimeTrust: UInt32
+    public var bleEnabled: UInt32
+    public var bleBondCount: UInt32
     public var time: UInt32
     public var tzOffset: UInt32
     public var alert: UInt32
@@ -9021,7 +9164,7 @@ public struct UlcpManagedPropertyIds: Equatable, Hashable {
 
     // Default memberwise initializers are never public by default, so we
     // declare one manually.
-    public init(caps: UInt32, deviceVersion: UInt32, deviceModel: UInt32, deviceName: UInt32, battery: UInt32, phyEnabled: UInt32, frequency: UInt32, transmitPower: UInt32, loraBandwidth: UInt32, loraSpreadingFactor: UInt32, loraCodingRate: UInt32, dutyCycleNow: UInt32, dutyCycleLimit: UInt32, identRole: UInt32, identMobile: UInt32, identLocation: UInt32, identAltitude: UInt32, devDiscoverable: UInt32, gnssIdentUpdate: UInt32, gnssIdentPrecision: UInt32, uptime: UInt32, advertInterval: UInt32, beaconInterval: UInt32, startupBeacon: UInt32, gnssEnabled: UInt32, gnssTimeTrust: UInt32, time: UInt32, tzOffset: UInt32, alert: UInt32, repeaterEnabled: UInt32, repeaterRegions: UInt32, repeaterDefaultRegion: UInt32, repeaterMinRssi: UInt32, repeaterMinSnr: UInt32, devPeers: UInt32, devAdmins: UInt32) {
+    public init(caps: UInt32, deviceVersion: UInt32, deviceModel: UInt32, deviceName: UInt32, battery: UInt32, phyEnabled: UInt32, frequency: UInt32, transmitPower: UInt32, loraBandwidth: UInt32, loraSpreadingFactor: UInt32, loraCodingRate: UInt32, dutyCycleNow: UInt32, dutyCycleLimit: UInt32, identRole: UInt32, identMobile: UInt32, identLocation: UInt32, identAltitude: UInt32, devDiscoverable: UInt32, gnssIdentUpdate: UInt32, gnssIdentPrecision: UInt32, uptime: UInt32, advertInterval: UInt32, beaconInterval: UInt32, startupBeacon: UInt32, gnssEnabled: UInt32, gnssTimeTrust: UInt32, bleEnabled: UInt32, bleBondCount: UInt32, time: UInt32, tzOffset: UInt32, alert: UInt32, repeaterEnabled: UInt32, repeaterRegions: UInt32, repeaterDefaultRegion: UInt32, repeaterMinRssi: UInt32, repeaterMinSnr: UInt32, devPeers: UInt32, devAdmins: UInt32) {
         self.caps = caps
         self.deviceVersion = deviceVersion
         self.deviceModel = deviceModel
@@ -9048,6 +9191,8 @@ public struct UlcpManagedPropertyIds: Equatable, Hashable {
         self.startupBeacon = startupBeacon
         self.gnssEnabled = gnssEnabled
         self.gnssTimeTrust = gnssTimeTrust
+        self.bleEnabled = bleEnabled
+        self.bleBondCount = bleBondCount
         self.time = time
         self.tzOffset = tzOffset
         self.alert = alert
@@ -9102,6 +9247,8 @@ public struct FfiConverterTypeUlcpManagedPropertyIds: FfiConverterRustBuffer {
                 startupBeacon: FfiConverterUInt32.read(from: &buf),
                 gnssEnabled: FfiConverterUInt32.read(from: &buf),
                 gnssTimeTrust: FfiConverterUInt32.read(from: &buf),
+                bleEnabled: FfiConverterUInt32.read(from: &buf),
+                bleBondCount: FfiConverterUInt32.read(from: &buf),
                 time: FfiConverterUInt32.read(from: &buf),
                 tzOffset: FfiConverterUInt32.read(from: &buf),
                 alert: FfiConverterUInt32.read(from: &buf),
@@ -9142,6 +9289,8 @@ public struct FfiConverterTypeUlcpManagedPropertyIds: FfiConverterRustBuffer {
         FfiConverterUInt32.write(value.startupBeacon, into: &buf)
         FfiConverterUInt32.write(value.gnssEnabled, into: &buf)
         FfiConverterUInt32.write(value.gnssTimeTrust, into: &buf)
+        FfiConverterUInt32.write(value.bleEnabled, into: &buf)
+        FfiConverterUInt32.write(value.bleBondCount, into: &buf)
         FfiConverterUInt32.write(value.time, into: &buf)
         FfiConverterUInt32.write(value.tzOffset, into: &buf)
         FfiConverterUInt32.write(value.alert, into: &buf)
@@ -11426,6 +11575,83 @@ public func FfiConverterTypeMobileError_lower(_ value: MobileError) -> RustBuffe
 }
 
 
+/**
+ * Which bond command to send.
+ */
+
+public enum MobileMeshBleCommand: Equatable, Hashable {
+
+    /**
+     * `CMD_BLE_CLEAR_BONDS`: forget every paired host, the pairing PIN,
+     * and the pairing lockout, then open a pairing window.
+     */
+    case clearBonds
+    /**
+     * `CMD_BLE_START_PAIRING`: open a pairing window so an unpaired host
+     * can pair without a gesture at the device.
+     */
+    case startPairing
+
+
+
+
+
+}
+
+#if compiler(>=6)
+extension MobileMeshBleCommand: Sendable {}
+#endif
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public struct FfiConverterTypeMobileMeshBleCommand: FfiConverterRustBuffer {
+    typealias SwiftType = MobileMeshBleCommand
+
+    public static func read(from buf: inout (data: Data, offset: Data.Index)) throws -> MobileMeshBleCommand {
+        let variant: Int32 = try readInt(&buf)
+        switch variant {
+
+        case 1: return .clearBonds
+
+        case 2: return .startPairing
+
+        default: throw UniffiInternalError.unexpectedEnumCase
+        }
+    }
+
+    public static func write(_ value: MobileMeshBleCommand, into buf: inout [UInt8]) {
+        switch value {
+
+
+        case .clearBonds:
+            writeInt(&buf, Int32(1))
+
+
+        case .startPairing:
+            writeInt(&buf, Int32(2))
+
+        }
+    }
+}
+
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public func FfiConverterTypeMobileMeshBleCommand_lift(_ buf: RustBuffer) throws -> MobileMeshBleCommand {
+    return try FfiConverterTypeMobileMeshBleCommand.lift(buf)
+}
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public func FfiConverterTypeMobileMeshBleCommand_lower(_ value: MobileMeshBleCommand) -> RustBuffer {
+    return FfiConverterTypeMobileMeshBleCommand.lower(value)
+}
+
+
+
 public
 enum MobileMeshError: Swift.Error, Equatable, Hashable, Foundation.LocalizedError {
 
@@ -12744,6 +12970,11 @@ public enum UlcpManageCategory: Equatable, Hashable {
      */
     case time
     /**
+     * Bluetooth: whether the device can be reached over it, how many
+     * hosts are paired, and the two bond commands.
+     */
+    case bluetooth
+    /**
      * The forwarding policy.
      */
     case repeater
@@ -12782,9 +13013,11 @@ public struct FfiConverterTypeUlcpManageCategory: FfiConverterRustBuffer {
 
         case 5: return .time
 
-        case 6: return .repeater
+        case 6: return .bluetooth
 
-        case 7: return .peerNodes
+        case 7: return .repeater
+
+        case 8: return .peerNodes
 
         default: throw UniffiInternalError.unexpectedEnumCase
         }
@@ -12814,12 +13047,16 @@ public struct FfiConverterTypeUlcpManageCategory: FfiConverterRustBuffer {
             writeInt(&buf, Int32(5))
 
 
-        case .repeater:
+        case .bluetooth:
             writeInt(&buf, Int32(6))
 
 
-        case .peerNodes:
+        case .repeater:
             writeInt(&buf, Int32(7))
+
+
+        case .peerNodes:
+            writeInt(&buf, Int32(8))
 
         }
     }
@@ -14910,6 +15147,28 @@ public func regionCodeFromString(text: String)throws  -> Data  {
 })
 }
 /**
+ * Encode a `CMD_BLE_CLEAR_BONDS` request with the shared ULCP codec.
+ */
+public func ulcpBleClearBonds(transactionId: UInt8)throws  -> Data  {
+    return try  FfiConverterData.lift(try rustCallWithError(FfiConverterTypeMobileError_lift) {
+        uniffiCallStatus in
+    uniffi_umsh_mobile_core_fn_func_ulcp_ble_clear_bonds(
+        FfiConverterUInt8.lower(transactionId),uniffiCallStatus
+    )
+})
+}
+/**
+ * Encode a `CMD_BLE_START_PAIRING` request with the shared ULCP codec.
+ */
+public func ulcpBleStartPairing(transactionId: UInt8)throws  -> Data  {
+    return try  FfiConverterData.lift(try rustCallWithError(FfiConverterTypeMobileError_lift) {
+        uniffiCallStatus in
+    uniffi_umsh_mobile_core_fn_func_ulcp_ble_start_pairing(
+        FfiConverterUInt8.lower(transactionId),uniffiCallStatus
+    )
+})
+}
+/**
  * The four properties a device is identified by, asked for together.
  *
  * Capabilities first, so a device that declines the batch teaches the
@@ -15311,6 +15570,12 @@ private let initializationResult: InitializationResult = {
     if (uniffi_umsh_mobile_core_checksum_func_region_code_from_string() != 49569) {
         return InitializationResult.apiChecksumMismatch
     }
+    if (uniffi_umsh_mobile_core_checksum_func_ulcp_ble_clear_bonds() != 17083) {
+        return InitializationResult.apiChecksumMismatch
+    }
+    if (uniffi_umsh_mobile_core_checksum_func_ulcp_ble_start_pairing() != 46457) {
+        return InitializationResult.apiChecksumMismatch
+    }
     if (uniffi_umsh_mobile_core_checksum_func_ulcp_card_properties() != 10189) {
         return InitializationResult.apiChecksumMismatch
     }
@@ -15393,6 +15658,9 @@ private let initializationResult: InitializationResult = {
         return InitializationResult.apiChecksumMismatch
     }
     if (uniffi_umsh_mobile_core_checksum_method_mobilemeshsession_apply_chat_archive_result() != 29458) {
+        return InitializationResult.apiChecksumMismatch
+    }
+    if (uniffi_umsh_mobile_core_checksum_method_mobilemeshsession_begin_management_ble() != 59442) {
         return InitializationResult.apiChecksumMismatch
     }
     if (uniffi_umsh_mobile_core_checksum_method_mobilemeshsession_begin_management_fetch() != 30118) {
@@ -15567,6 +15835,12 @@ private let initializationResult: InitializationResult = {
         return InitializationResult.apiChecksumMismatch
     }
     if (uniffi_umsh_mobile_core_checksum_method_mobileulcpsession_begin() != 7480) {
+        return InitializationResult.apiChecksumMismatch
+    }
+    if (uniffi_umsh_mobile_core_checksum_method_mobileulcpsession_begin_ble_clear_bonds() != 10776) {
+        return InitializationResult.apiChecksumMismatch
+    }
+    if (uniffi_umsh_mobile_core_checksum_method_mobileulcpsession_begin_ble_start_pairing() != 61221) {
         return InitializationResult.apiChecksumMismatch
     }
     if (uniffi_umsh_mobile_core_checksum_method_mobileulcpsession_begin_property_fetch() != 22103) {

@@ -87,6 +87,7 @@ impl<const PAYLOAD: usize> Device<PAYLOAD> {
             gnss: Some(GnssConfig::DEFAULT),
             illuminance: true,
             ble: true,
+            ble_pairing: true,
             reboot: true,
             mac_node: true,
         };
@@ -236,6 +237,19 @@ impl<const PAYLOAD: usize> Device<PAYLOAD> {
                     self.session.respond_save(tid, Ok(()), &mut |bytes: &[u8]| {
                         emitted.push(bytes.to_vec())
                     })
+                }
+                Effect::BleClearBonds { tid } => {
+                    self.session.set_ble_bond_count(0, &mut |_| {});
+                    self.session
+                        .respond_ble_clear_bonds(tid, Ok(()), &mut |bytes: &[u8]| {
+                            emitted.push(bytes.to_vec())
+                        })
+                }
+                Effect::BleStartPairing { tid } => {
+                    self.session
+                        .respond_ble_start_pairing(tid, Ok(()), &mut |bytes: &[u8]| {
+                            emitted.push(bytes.to_vec())
+                        })
                 }
                 // Radio and platform effects with no reply of their own.
                 _ => {}
@@ -766,6 +780,30 @@ fn a_reset_is_answered_by_nothing() {
     // it. A device managed before it was saved would not answer its
     // administrator again.
     assert_eq!(device.local_get(prop::DEV_ADMINS), ADMIN_KEY.to_vec());
+}
+
+/// The bond commands are not reset-class: an administrator hears what
+/// they did. Clearing bonds over the mesh addresses the device's node,
+/// not one of its Bluetooth hosts, so the link that carried the command
+/// survives it and the reply arrives.
+#[test]
+fn an_administrator_manages_bonds_and_is_told_the_outcome() {
+    let mut device = managed();
+    let mut buf = [0u8; 64];
+
+    let len = frame::prop_get(&mut buf, 0, prop::BLE_BOND_COUNT).unwrap();
+    let read = converse(&mut device, &buf[..len], 1);
+    assert_eq!(value_of(&read.reply), vec![0]);
+
+    let len = frame::ble_start_pairing(&mut buf, 0).unwrap();
+    let pairing = converse(&mut device, &buf[..len], 2);
+    assert!(matches!(pairing.outcome, Outcome::Replied { .. }));
+    assert_eq!(status_of(&pairing.reply), Status::OK);
+
+    let len = frame::ble_clear_bonds(&mut buf, 0).unwrap();
+    let cleared = converse(&mut device, &buf[..len], 3);
+    assert!(matches!(cleared.outcome, Outcome::Replied { .. }));
+    assert_eq!(status_of(&cleared.reply), Status::OK);
 }
 
 /// What the binding does not reach, checked from the far end of the link

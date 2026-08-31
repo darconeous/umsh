@@ -169,6 +169,12 @@ pub enum Command {
     /// everything the device has persisted.
     Reboot,
 
+    /// Manage the device's Bluetooth bonds (CAP_BLE_PAIRING).
+    Ble {
+        #[command(subcommand)]
+        op: lifecycle::BleOp,
+    },
+
     /// Erase ALL state including BLE bonds and the pairing PIN, then
     /// reboot into a blank factory state.
     FactoryReset {
@@ -346,6 +352,7 @@ impl Command {
             Self::Clear => lifecycle::clear(app.device()?).await,
             Self::Reset => lifecycle::reset(app.device()?).await,
             Self::Reboot => lifecycle::reboot(app).await,
+            Self::Ble { op } => lifecycle::ble(app, op).await,
             Self::FactoryReset { yes } => lifecycle::factory_reset(app, yes).await,
             Self::Pin { value } => lifecycle::pin(app.device()?, value).await,
             Self::Phy { op } => phy::run(app, op).await,

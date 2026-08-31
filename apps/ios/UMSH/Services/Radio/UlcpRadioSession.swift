@@ -945,6 +945,19 @@ class UlcpRadioSession: NSObject, @unchecked Sendable {
         }
     }
 
+    func manageRemoteBluetooth(
+        peerAddress: String,
+        command: MobileMeshBleCommand
+    ) async throws {
+        let event = try await performManagement { session in
+            try session.beginManagementBle(peerAddress: peerAddress, command: command)
+        }
+        // Unlike a reset these always answer, so an absent status is a
+        // device that did not do what was asked rather than one too busy
+        // to say.
+        try Self.requireSuccess(event.statusCode)
+    }
+
     func saveRemoteDevice(peerAddress: String) async throws {
         let event = try await performManagement { session in
             try session.beginManagementSave(peerAddress: peerAddress)
@@ -1078,6 +1091,26 @@ class UlcpRadioSession: NSObject, @unchecked Sendable {
     func saveCompanionDevice() async throws {
         let event = try await performLocalManagement { session in
             try session.beginSave()
+        }
+        try Self.requireSuccess(event.statusCode)
+    }
+
+    func clearBluetoothBonds() async throws {
+        Self.logger.notice("action: user cleared the radio's Bluetooth pairings")
+        // The radio answers before it drops the bonds, so this completes
+        // normally and the disconnect arrives afterward on its own. The
+        // binding is kept: this is the same radio, and the operator's next
+        // move is pairing with it again.
+        let event = try await performLocalManagement { session in
+            try session.beginBleClearBonds()
+        }
+        try Self.requireSuccess(event.statusCode)
+    }
+
+    func startBluetoothPairing() async throws {
+        Self.logger.notice("action: user opened a pairing window on the radio")
+        let event = try await performLocalManagement { session in
+            try session.beginBleStartPairing()
         }
         try Self.requireSuccess(event.statusCode)
     }

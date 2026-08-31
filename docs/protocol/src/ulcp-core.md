@@ -1163,6 +1163,7 @@ Code | Name                      | Requires                             | Define
 49   | `CAP_CMD_MULTI`           | —                                    | [Framing and Common Semantics](ulcp-core.md#cmd-prop-multi-get)
 50   | `CAP_BLE`                 | —                                    | [BLE Binding](ulcp-ble.md#capabilities)
 51   | `CAP_REBOOT`              | —                                    | [Framing and Common Semantics](ulcp-core.md#cmd-reboot)
+52   | `CAP_BLE_PAIRING`         | `CAP_BLE`                            | [BLE Binding](ulcp-ble.md#capabilities)
 515  | `CAP_PHY_LORA`            | —                                    | [Radio Control](ulcp-radio.md#capabilities)
 
 A device **MUST NOT** advertise a capability without also advertising the

@@ -253,6 +253,16 @@ pub mod prop {
     /// do, and a property that says "off" while a stack is still up
     /// would be lying about the thing a user turns it off for.
     pub const BLE_ENABLED: u32 = 4871;
+    /// How many Bluetooth bonds the device is holding
+    /// (`PROP_BLE_BOND_COUNT`) — `UINT8`, read-only. Requires
+    /// `CAP_BLE_PAIRING`.
+    ///
+    /// The count is live state rather than configuration, so it is not
+    /// part of the saved snapshot. It says how many hosts are enrolled,
+    /// never which: a bond identifies a host, and a device that named its
+    /// bonded hosts to whoever asked would leak the association its
+    /// pairing ceremony exists to protect.
+    pub const BLE_BOND_COUNT: u32 = 4872;
 }
 
 /// `PROP_SAVED` values.
@@ -351,6 +361,12 @@ pub mod cap {
     /// a process rather than a board — leaves this out and answers the
     /// command `STATUS_UNIMPLEMENTED`.
     pub const REBOOT: u32 = 51;
+    /// `CAP_BLE_PAIRING` — the device manages its own Bluetooth bonds on
+    /// command (`CMD_BLE_CLEAR_BONDS`, `CMD_BLE_START_PAIRING`,
+    /// `PROP_BLE_BOND_COUNT`). Requires `CAP_BLE`. A device whose bonds
+    /// are only reachable by a gesture at the device itself leaves this
+    /// out and answers both commands `STATUS_UNIMPLEMENTED`.
+    pub const BLE_PAIRING: u32 = 52;
 }
 
 /// Whether a property is reachable from a mesh administrator.

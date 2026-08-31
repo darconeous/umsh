@@ -377,6 +377,10 @@ fn session_config() -> SessionConfig {
         // The ESP32-S3 radio is always up on this board, but the
         // peripheral can be made unfindable: see `advertising_permitted`.
         ble: true,
+        // The bond journal and the pairing window are the same as the
+        // nRF boards'; both commands reach the machinery the front-panel
+        // menu already drives.
+        ble_pairing: true,
         // The SoC restarts on command; see the `reboot` hook below.
         reboot: true,
         // A real MAC runs behind this session.
@@ -553,6 +557,14 @@ static PAIRING_CONFIG_ACK: Signal<CriticalSectionRawMutex, bool> = Signal::new()
 static PAIRING_MODE_REQUEST: Signal<CriticalSectionRawMutex, ()> = Signal::new();
 static PAIRING_TIMER_RESET: Signal<CriticalSectionRawMutex, ()> = Signal::new();
 static BLE_WIPE_REQUEST: Signal<CriticalSectionRawMutex, ()> = Signal::new();
+/// Outcomes for the two requests above, for a caller that has someone to
+/// answer. The menu fires and forgets; a ULCP command waits, and resets
+/// the signal first so it cannot read the menu's stale result.
+static BLE_WIPE_ACK: Signal<CriticalSectionRawMutex, bool> = Signal::new();
+static PAIRING_MODE_ACK: Signal<CriticalSectionRawMutex, bool> = Signal::new();
+/// The bond count moved, carrying the new value to `publish_event` so
+/// `PROP_BLE_BOND_COUNT` follows enrollment without polling.
+static BLE_BOND_COUNT_CHANGED: Signal<CriticalSectionRawMutex, u8> = Signal::new();
 
 /// Wired protocol attachment suppresses BLE advertising. The signal
 /// wakes a pending advertiser/connection so it can apply the policy.
@@ -1088,6 +1100,16 @@ fn set_ble_enabled(enabled: bool) {
     }
 }
 
+/// Record how many bonds the store now holds, waking anything that
+/// reports it. Every write to the count goes through here so the
+/// property, the status page and the atomic cannot drift apart.
+fn set_bond_count(count: u8) {
+    if BLE_BOND_COUNT.swap(count, Ordering::AcqRel) != count {
+        BLE_BOND_COUNT_CHANGED.signal(count);
+        UI_REFRESH.signal(());
+    }
+}
+
 fn set_advertising_allowed(allowed: bool) {
     let previous = ADV_ALLOWED.swap(allowed, Ordering::AcqRel);
     debug_log(format_args!(
@@ -1205,6 +1227,71 @@ struct BoardDeviceEnv {
     rtc: Option<&'static RtcMutex>,
 }
 
+/// One battery reading as the session reports it, taking the reading by
+/// value so callers need not know that the PMIC boards carry a struct
+/// where the rest carry millivolts.
+#[cfg(not(feature = "pmic-axp2101"))]
+fn battery_reading_snapshot(mv: u16) -> umsh_ulcp::battery::BatteryStatus {
+    battery_snapshot(mv)
+}
+
+#[cfg(feature = "pmic-axp2101")]
+fn battery_reading_snapshot(reading: board_battery::Reading) -> umsh_ulcp::battery::BatteryStatus {
+    battery_snapshot(&reading)
+}
+
+impl BoardDeviceEnv {
+    /// The publishable sources that depend on what is fitted, as one
+    /// future.
+    ///
+    /// Split out of [`DeviceEnv::publish_event`] so the feature
+    /// combinations live in one place instead of multiplying against the
+    /// sources that are always present. Cancellation-safe: `Watch::changed`
+    /// remembers which value the receiver last observed, and the driver's
+    /// select drops this future whenever another arm wins.
+    async fn sensor_event(&mut self) -> driver::PublishEvent {
+        // Disjoint field borrows, not method calls: two `&mut self`
+        // futures cannot coexist in one select.
+        #[cfg(feature = "gnss")]
+        let event = select(self.battery.changed(), self.gnss_announce.changed()).await;
+        #[cfg(not(feature = "gnss"))]
+        let event = Either::First(self.battery.changed().await) as Either<_, ()>;
+
+        match event {
+            Either::First(reading) => {
+                driver::PublishEvent::Battery(battery_reading_snapshot(reading))
+            }
+            #[cfg(feature = "gnss")]
+            Either::Second(umsh_ulcp_runtime::gnss::Announce::Gnss(key, snapshot)) => {
+                driver::PublishEvent::Gnss(key, snapshot)
+            }
+            #[cfg(feature = "gnss")]
+            Either::Second(umsh_ulcp_runtime::gnss::Announce::Time(epoch)) => {
+                // A trusted receiver stepped the wall clock notably;
+                // carry the step into the RTC so it survives power-off.
+                // Sub-notable re-syncs never reach this arm, which is
+                // what keeps the writeback off the every-second fix
+                // cadence.
+                #[cfg(feature = "rtc-pcf8563")]
+                if let (Some(seconds), Some(rtc)) = (epoch, self.rtc) {
+                    rtc_writeback(rtc, seconds).await;
+                }
+                driver::PublishEvent::Time(epoch)
+            }
+            #[cfg(feature = "gnss")]
+            Either::Second(umsh_ulcp_runtime::gnss::Announce::IdentityFix(
+                location,
+                altitude_m,
+            )) => driver::PublishEvent::IdentityFix(
+                heapless::Vec::from_slice(location.as_bytes()).unwrap_or_default(),
+                altitude_m,
+            ),
+            #[cfg(not(feature = "gnss"))]
+            Either::Second(()) => unreachable!("no receiver on this board"),
+        }
+    }
+}
+
 impl DeviceEnv for BoardDeviceEnv {
     async fn persist_snapshot(&mut self, bytes: &[u8]) -> Result<(), ()> {
         self.proto_store.persist(bytes).await
@@ -1311,41 +1398,36 @@ impl DeviceEnv for BoardDeviceEnv {
     /// Everything this board publishes unasked, on one select arm.
     ///
     /// The driver has exactly one, because a hook per property would
-    /// need one `&mut self` borrow apiece. These are disjoint fields
-    /// rather than separate method calls, which is what makes selecting
-    /// over them legal.
-    #[cfg(feature = "gnss")]
+    /// need one `&mut self` borrow apiece. The bond count is the one
+    /// source that needs no board hardware — it comes off a static — so
+    /// it rides here on every board, GNSS or not, while
+    /// [`sensor_event`](Self::sensor_event) keeps the sources that do
+    /// vary by board behind their own features.
     async fn publish_event(&mut self) -> driver::PublishEvent {
-        match select(self.battery.changed(), self.gnss_announce.changed()).await {
-            Either::First(reading) => driver::PublishEvent::Battery(battery_snapshot(&reading)),
-            Either::Second(umsh_ulcp_runtime::gnss::Announce::Gnss(key, snapshot)) => {
-                driver::PublishEvent::Gnss(key, snapshot)
-            }
-            Either::Second(umsh_ulcp_runtime::gnss::Announce::Time(epoch)) => {
-                // A trusted receiver stepped the wall clock notably;
-                // carry the step into the RTC so it survives power-off.
-                // Sub-notable re-syncs never reach this arm, which is
-                // what keeps the writeback off the every-second fix
-                // cadence.
-                #[cfg(feature = "rtc-pcf8563")]
-                if let (Some(seconds), Some(rtc)) = (epoch, self.rtc) {
-                    rtc_writeback(rtc, seconds).await;
-                }
-                driver::PublishEvent::Time(epoch)
-            }
-            Either::Second(umsh_ulcp_runtime::gnss::Announce::IdentityFix(
-                location,
-                altitude_m,
-            )) => driver::PublishEvent::IdentityFix(
-                heapless::Vec::from_slice(location.as_bytes()).unwrap_or_default(),
-                altitude_m,
-            ),
+        match select(self.sensor_event(), BLE_BOND_COUNT_CHANGED.wait()).await {
+            Either::First(event) => event,
+            Either::Second(count) => driver::PublishEvent::BleBondCount(count),
         }
     }
 
     async fn apply_pairing_pin(&mut self, pin: Option<u32>) -> bool {
         PAIRING_CONFIG_CH.send(pin).await;
         PAIRING_CONFIG_ACK.wait().await
+    }
+
+    async fn clear_ble_bonds(&mut self) -> bool {
+        // The menu fires this signal too and never waits, so an outcome
+        // may already be sitting in the ack; clear it before asking or we
+        // would answer with the menu's.
+        BLE_WIPE_ACK.reset();
+        BLE_WIPE_REQUEST.signal(());
+        BLE_WIPE_ACK.wait().await
+    }
+
+    async fn start_ble_pairing(&mut self) -> bool {
+        PAIRING_MODE_ACK.reset();
+        PAIRING_MODE_REQUEST.signal(());
+        PAIRING_MODE_ACK.wait().await
     }
 
     async fn factory_reset(&mut self) -> ! {
@@ -1509,11 +1591,17 @@ async fn pairing_config_task<C: Controller, P: PacketPool>(
                 });
                 PAIRING_TIMER_RESET.signal(());
                 apply_pairing_gate(stack);
+                // A window that cannot be walked through is not a window:
+                // a caller that asked for one is told so rather than left
+                // waiting out a timeout. A full store is not that case —
+                // enrollment at capacity evicts rather than refuses, so
+                // it warns the operator without failing the command.
+                PAIRING_MODE_ACK.signal(!PAIRING_LOCKED_OUT.load(Ordering::Acquire));
             }
             Either3::Third(()) => {
                 debug_log(format_args!("security wipe requested"));
                 if store.lock().await.clear_security().await.is_ok() {
-                    BLE_BOND_COUNT.store(0, Ordering::Release);
+                    set_bond_count(0);
                     let mut identities: heapless09::Vec<Identity, { ble_store::MAX_BONDS }> =
                         heapless09::Vec::new();
                     stack.with_bond_information(|bonds| {
@@ -1535,9 +1623,11 @@ async fn pairing_config_task<C: Controller, P: PacketPool>(
                     apply_pairing_gate(stack);
                     debug_log(format_args!("security wipe complete"));
                     UI_NOTICE.signal(UiNotice::BondsCleared);
+                    BLE_WIPE_ACK.signal(true);
                 } else {
                     debug_log(format_args!("security wipe flash=FAILED"));
                     UI_NOTICE.signal(UiNotice::ClearFailed);
+                    BLE_WIPE_ACK.signal(false);
                 }
             }
         }
@@ -1706,7 +1796,7 @@ async fn gatt_connection<C: Controller, P: PacketPool>(
                             break;
                         }
                     };
-                    BLE_BOND_COUNT.store(persisted_bonds as u8, Ordering::Release);
+                    set_bond_count(persisted_bonds as u8);
                     UI_REFRESH.signal(());
                 }
                 // Trouble may report a successful peripheral pairing with
@@ -1787,7 +1877,7 @@ async fn gatt_connection<C: Controller, P: PacketPool>(
                         Some(bond) => match persist_bond(store, &bond).await {
                             Ok((count, evicted)) => {
                                 forget_evicted_bond(stack, evicted);
-                                BLE_BOND_COUNT.store(count as u8, Ordering::Release);
+                                set_bond_count(count as u8);
                                 apply_pairing_gate(stack);
                                 true
                             }
@@ -2110,7 +2200,7 @@ async fn run_ble_stack(
         initial.local_irk.is_some(),
     ));
     PAIRING_PIN.store(initial.pin.unwrap_or(u32::MAX), Ordering::Release);
-    BLE_BOND_COUNT.store(initial.bonds.len() as u8, Ordering::Release);
+    set_bond_count(initial.bonds.len() as u8);
     let initial_pairing_mode = initial.bonds.is_empty();
     PAIRING_MODE.store(initial_pairing_mode, Ordering::Release);
     BLE_LED_MODE.store(u8::from(initial_pairing_mode), Ordering::Release);

@@ -456,6 +456,12 @@ final class AppRuntime {
                     scope: scope
                 )
             },
+            manageBluetooth: { address, command in
+                try await self.radioConnection.manageRemoteBluetooth(
+                    peerAddress: address,
+                    command: command
+                )
+            },
             // The attached radio's own key, which is what a managed device
             // sees requests arrive from. The phone's stored identity is the
             // same bytes rendered, and stands in until a radio can say —
@@ -562,6 +568,18 @@ final class AppRuntime {
                 // the local link has `refreshRadio` for the first and no
                 // use for the second.
                 throw RemoteManagementError.unavailable
+            }
+        }
+        // Both bond commands sever this very link — clearing forgets the
+        // bond it arrived on, and a pairing window is the radio's own
+        // business either way — so they go over the local path rather than
+        // out onto the mesh and back.
+        management.manageBluetooth = { _, command in
+            switch command {
+            case .clearBonds:
+                try await self.radioConnection.clearBluetoothBonds()
+            case .startPairing:
+                try await self.radioConnection.startBluetoothPairing()
             }
         }
         management.propertyPushes = {

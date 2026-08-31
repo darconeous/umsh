@@ -213,6 +213,17 @@ pub enum MobileMeshResetScope {
     Factory,
 }
 
+/// Which bond command to send.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, uniffi::Enum)]
+pub enum MobileMeshBleCommand {
+    /// `CMD_BLE_CLEAR_BONDS`: forget every paired host, the pairing PIN,
+    /// and the pairing lockout, then open a pairing window.
+    ClearBonds,
+    /// `CMD_BLE_START_PAIRING`: open a pairing window so an unpaired host
+    /// can pair without a gesture at the device.
+    StartPairing,
+}
+
 /// One position of a multi-property write.
 #[derive(Clone, Debug, PartialEq, Eq, uniffi::Record)]
 pub struct MobileMeshPropertyWriteRecord {
@@ -1350,6 +1361,37 @@ impl MobileMeshSession {
     /// Persist a device's live configuration across the mesh.
     pub fn begin_management_save(&self, peer_address: String) -> Result<u64, MobileMeshError> {
         let frame = encode_management(|buf| frame::save(buf, 0))?;
+        self.begin_management(
+            peer_address,
+            ManagementRequest::One {
+                frame,
+                shape: ReplyShape::Status,
+            },
+        )
+    }
+
+    /// Manage a device's Bluetooth bonds across the mesh.
+    ///
+    /// Both commands answer with a status rather than silence: they are
+    /// not reset-class, and what they did is the whole of what they
+    /// report. `STATUS_UNIMPLEMENTED` is a device without
+    /// `CAP_BLE_PAIRING`; `STATUS_INVALID_STATE` from
+    /// [`MobileMeshBleCommand::StartPairing`] is a device that could not
+    /// open a window.
+    ///
+    /// Clearing bonds over the mesh does not touch this exchange — the
+    /// administrator is addressing the device's node, not one of its
+    /// Bluetooth hosts — so unlike the same command over Bluetooth, the
+    /// reply arrives on a link that survives it.
+    pub fn begin_management_ble(
+        &self,
+        peer_address: String,
+        command: MobileMeshBleCommand,
+    ) -> Result<u64, MobileMeshError> {
+        let frame = encode_management(|buf| match command {
+            MobileMeshBleCommand::ClearBonds => frame::ble_clear_bonds(buf, 0),
+            MobileMeshBleCommand::StartPairing => frame::ble_start_pairing(buf, 0),
+        })?;
         self.begin_management(
             peer_address,
             ManagementRequest::One {

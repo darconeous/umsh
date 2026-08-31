@@ -722,6 +722,10 @@ enum ExpectedResponse {
     ManagementSet(u32),
     /// The `CMD_SAVE` issued by a local management save.
     ManagementSave,
+    /// A payloadless management command answered by a bare
+    /// `PROP_LAST_STATUS`: the two bond commands. Completion carries the
+    /// device's status, which is the whole of what they report.
+    ManagementCommand,
 }
 
 impl ExpectedResponse {
@@ -730,7 +734,10 @@ impl ExpectedResponse {
     fn is_management(&self) -> bool {
         matches!(
             self,
-            Self::ManagementGet(_) | Self::ManagementSet(_) | Self::ManagementSave
+            Self::ManagementGet(_)
+                | Self::ManagementSet(_)
+                | Self::ManagementSave
+                | Self::ManagementCommand
         )
     }
 }
@@ -1320,6 +1327,26 @@ impl MobileUlcpSession {
         state.expected.insert(tid, ExpectedResponse::ManagementSave);
         let frame = ulcp_save(tid)?;
         Ok(state.update(vec![frame]))
+    }
+
+    /// Delete every Bluetooth bond the radio holds, along with its
+    /// pairing PIN (`CMD_BLE_CLEAR_BONDS`). The radio then opens a
+    /// pairing window, which is what makes it reachable again.
+    ///
+    /// Over Bluetooth this severs the caller's own link: the bond that
+    /// carried the command is one of the bonds deleted. The status
+    /// arrives first, so the completion event still reports what
+    /// happened.
+    pub fn begin_ble_clear_bonds(&self) -> Result<UlcpSessionUpdateRecord, MobileError> {
+        self.begin_ble_command(ulcp_ble_clear_bonds)
+    }
+
+    /// Open a pairing window (`CMD_BLE_START_PAIRING`) so another host
+    /// can pair without a gesture at the radio. `STATUS_INVALID_STATE`
+    /// means no window could be opened — the radio is locked out after
+    /// repeated pairing failures, or it has nowhere to put another bond.
+    pub fn begin_ble_start_pairing(&self) -> Result<UlcpSessionUpdateRecord, MobileError> {
+        self.begin_ble_command(ulcp_ble_start_pairing)
     }
 
     /// Store one channel key on the radio's device identity
@@ -2023,7 +2050,7 @@ impl MobileUlcpSession {
                 }
                 state.continue_local_management(&mut outbound)?;
             }
-            ExpectedResponse::ManagementSave => {
+            ExpectedResponse::ManagementSave | ExpectedResponse::ManagementCommand => {
                 if response.property_id != prop::LAST_STATUS
                     || response.command != Cmd::PropIs as u8
                 {
@@ -2079,6 +2106,26 @@ impl MobileUlcpSession {
 }
 
 impl MobileUlcpSession {
+    /// The shared body of the two bond commands: one payloadless frame,
+    /// answered by one status, reported on the management completion.
+    fn begin_ble_command(
+        &self,
+        encode: fn(u8) -> Result<Vec<u8>, MobileError>,
+    ) -> Result<UlcpSessionUpdateRecord, MobileError> {
+        let mut state = self.inner.lock().expect("ULCP session mutex poisoned");
+        state.begin_local_management()?;
+        if !state.has_capability(cap::BLE_PAIRING)? {
+            return Err(MobileError::UnsupportedCapability);
+        }
+        state.management = Some(LocalManagement::default());
+        let tid = state.allocate_tid();
+        state
+            .expected
+            .insert(tid, ExpectedResponse::ManagementCommand);
+        let frame = encode(tid)?;
+        Ok(state.update(vec![frame]))
+    }
+
     fn with_mode(mode: UlcpAttachMode) -> Self {
         Self {
             inner: Mutex::new(UlcpSessionState {
@@ -3110,6 +3157,9 @@ pub enum UlcpManageCategory {
     /// The wall clock: what time the device holds, where it is meant to
     /// be, and whether the receiver may set the clock.
     Time,
+    /// Bluetooth: whether the device can be reached over it, how many
+    /// hosts are paired, and the two bond commands.
+    Bluetooth,
     /// The forwarding policy.
     Repeater,
     /// Who this device talks to, and who may manage it.
@@ -3151,6 +3201,8 @@ pub struct UlcpManagedPropertyIds {
     pub startup_beacon: u32,
     pub gnss_enabled: u32,
     pub gnss_time_trust: u32,
+    pub ble_enabled: u32,
+    pub ble_bond_count: u32,
     pub time: u32,
     pub tz_offset: u32,
     pub alert: u32,
@@ -3193,6 +3245,8 @@ pub fn ulcp_managed_property_ids() -> UlcpManagedPropertyIds {
         startup_beacon: prop::STARTUP_BEACON,
         gnss_enabled: prop::GNSS_ENABLED,
         gnss_time_trust: prop::GNSS_TIME_TRUST,
+        ble_enabled: prop::BLE_ENABLED,
+        ble_bond_count: prop::BLE_BOND_COUNT,
         time: prop::TIME,
         tz_offset: prop::TZ_OFFSET,
         alert: prop::ALERT,
@@ -3305,6 +3359,13 @@ pub fn ulcp_category_properties(
             // business, so it lives here rather than with the receiver.
             when(has(cap::GNSS), &[prop::GNSS_TIME_TRUST]);
         }
+        UlcpManageCategory::Bluetooth => {
+            when(has(cap::BLE), &[prop::BLE_ENABLED]);
+            // The count exists only where the bonds can be managed; a
+            // device that only offers the reachability toggle has one
+            // row and no actions.
+            when(has(cap::BLE_PAIRING), &[prop::BLE_BOND_COUNT]);
+        }
         UlcpManageCategory::Repeater => when(
             has(cap::REPEATER),
             &[
@@ -3353,6 +3414,12 @@ pub struct UlcpDeviceCardRecord {
     pub supports_advert: bool,
     pub supports_admin: bool,
     pub supports_alert: bool,
+    /// Whether the device has a Bluetooth transport it can be made
+    /// unreachable over (`CAP_BLE`).
+    pub supports_ble: bool,
+    /// Whether the bond commands and the bond count are worth offering
+    /// (`CAP_BLE_PAIRING`).
+    pub supports_ble_pairing: bool,
     /// Whether a Restart control is worth offering (`CAP_REBOOT`).
     pub supports_reboot: bool,
     pub supports_save: bool,
@@ -3399,13 +3466,15 @@ pub fn inspect_ulcp_device_card(
         supports_advert: has(cap::ADVERT),
         supports_admin: has(cap::ADMIN),
         supports_alert: has(cap::ALERT),
+        supports_ble: has(cap::BLE),
+        supports_ble_pairing: has(cap::BLE_PAIRING),
         supports_reboot: has(cap::REBOOT),
         supports_save: has(cap::SAVE),
         supports_multi: has(cap::CMD_MULTI),
     })
 }
 
-/// Everything the six management screens show, all of it optional.
+/// Everything the management screens show, all of it optional.
 ///
 /// A category read answers a handful of properties, so anything outside
 /// it is simply absent — this record says what the last read of *some*
@@ -3454,6 +3523,10 @@ pub struct UlcpDevicePropertiesRecord {
     /// device with no receiver.
     pub gnss: Option<UlcpGnssRecord>,
     pub gnss_time_trust: Option<bool>,
+    /// Whether the device can be reached over Bluetooth.
+    pub ble_enabled: Option<bool>,
+    /// How many hosts are paired with it. Read-only.
+    pub ble_bond_count: Option<u8>,
     /// What the device's clock read when it answered. Present when the
     /// clock was asked about; the inner epoch is absent on a device that
     /// has not found the time.
@@ -3576,6 +3649,8 @@ pub fn inspect_ulcp_properties(
         gnss_enabled: optional_value(at, prop::GNSS_ENABLED, decode_bool),
         gnss: gnss_readout(at),
         gnss_time_trust: optional_value(at, prop::GNSS_TIME_TRUST, decode_bool),
+        ble_enabled: optional_value(at, prop::BLE_ENABLED, decode_bool),
+        ble_bond_count: optional_value(at, prop::BLE_BOND_COUNT, decode_u8),
         time: optional_value(at, prop::TIME, |value| {
             Ok::<UlcpTimeRecord, MobileError>(UlcpTimeRecord {
                 epoch_seconds: decode_optional(value, decode_u32)?,
@@ -3728,6 +3803,9 @@ pub fn ulcp_dirty_writes(
                 vec![precision]
             }
             prop::GNSS_TIME_TRUST => vec![desired.gnss_time_trust.ok_or_else(missing)? as u8],
+            // The bond count is read-only and has no arm here; only the
+            // reachability toggle is writable.
+            prop::BLE_ENABLED => vec![desired.ble_enabled.ok_or_else(missing)? as u8],
             // Empty clears the clock back to unknown, which is what a
             // device reports before its first fix.
             prop::TIME => desired
@@ -4669,6 +4747,24 @@ pub fn ulcp_reboot(transaction_id: u8) -> Result<Vec<u8>, MobileError> {
     let mut output = [0; 2];
     let length =
         frame::reboot(&mut output, transaction_id).map_err(|_| MobileError::InvalidUlcpFrame)?;
+    Ok(output[..length].to_vec())
+}
+
+/// Encode a `CMD_BLE_CLEAR_BONDS` request with the shared ULCP codec.
+#[uniffi::export]
+pub fn ulcp_ble_clear_bonds(transaction_id: u8) -> Result<Vec<u8>, MobileError> {
+    let mut output = [0; 2];
+    let length = frame::ble_clear_bonds(&mut output, transaction_id)
+        .map_err(|_| MobileError::InvalidUlcpFrame)?;
+    Ok(output[..length].to_vec())
+}
+
+/// Encode a `CMD_BLE_START_PAIRING` request with the shared ULCP codec.
+#[uniffi::export]
+pub fn ulcp_ble_start_pairing(transaction_id: u8) -> Result<Vec<u8>, MobileError> {
+    let mut output = [0; 2];
+    let length = frame::ble_start_pairing(&mut output, transaction_id)
+        .map_err(|_| MobileError::InvalidUlcpFrame)?;
     Ok(output[..length].to_vec())
 }
 
@@ -8221,9 +8317,73 @@ mod tests {
             cap::ADVERT,
             cap::ADMIN,
             cap::ALERT,
+            cap::BLE,
+            cap::BLE_PAIRING,
             cap::SAVE,
             cap::CMD_MULTI,
         ])
+    }
+
+    /// The Bluetooth screen is two rows on a device that manages its own
+    /// bonds, and one on a device that only offers the toggle.
+    #[test]
+    fn the_bluetooth_screen_follows_what_the_device_manages() {
+        assert_eq!(
+            ulcp_category_properties(UlcpManageCategory::Bluetooth, managed_capabilities())
+                .unwrap(),
+            vec![prop::BLE_ENABLED, prop::BLE_BOND_COUNT]
+        );
+        assert_eq!(
+            ulcp_category_properties(
+                UlcpManageCategory::Bluetooth,
+                encoded_capabilities(&[cap::BLE])
+            )
+            .unwrap(),
+            vec![prop::BLE_ENABLED],
+            "without CAP_BLE_PAIRING there is no count and no actions"
+        );
+        assert!(
+            ulcp_category_properties(UlcpManageCategory::Bluetooth, encoded_capabilities(&[]))
+                .unwrap()
+                .is_empty(),
+            "a device with no Bluetooth has no screen at all"
+        );
+    }
+
+    /// The count reports what the transport holds and is never written
+    /// back; only the toggle is editable.
+    #[test]
+    fn the_bond_count_is_read_but_never_written() {
+        let record = inspect_ulcp_properties(vec![
+            response(prop::BLE_ENABLED, &[1]),
+            response(prop::BLE_BOND_COUNT, &[3]),
+        ]);
+        assert_eq!(record.ble_enabled, Some(true));
+        assert_eq!(record.ble_bond_count, Some(3));
+
+        assert_eq!(
+            dirty(
+                UlcpDevicePropertiesRecord {
+                    ble_enabled: Some(false),
+                    ble_bond_count: Some(3),
+                    ..Default::default()
+                },
+                &[prop::BLE_ENABLED],
+            )
+            .unwrap(),
+            vec![(prop::BLE_ENABLED, vec![0])]
+        );
+        assert!(
+            dirty(
+                UlcpDevicePropertiesRecord {
+                    ble_bond_count: Some(0),
+                    ..Default::default()
+                },
+                &[prop::BLE_BOND_COUNT],
+            )
+            .is_err(),
+            "the count is not a way to forget a host"
+        );
     }
 
     #[test]

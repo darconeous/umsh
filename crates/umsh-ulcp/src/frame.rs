@@ -107,6 +107,20 @@ pub enum Cmd {
     /// `CMD_FACTORY_RESET` it does not reply. Requires `CAP_REBOOT`; a
     /// device without it answers `STATUS_UNIMPLEMENTED` instead.
     Reboot = 16,
+    /// Delete every stored Bluetooth bond (host to device), along with the
+    /// pairing passkey and the pairing failure lockout, then enter pairing
+    /// mode so the device can be paired again. Bonded hosts lose their
+    /// bonds and any attached over Bluetooth are dropped, including the one
+    /// that sent the command. Requires `CAP_BLE_PAIRING`; a device without
+    /// it answers `STATUS_UNIMPLEMENTED`.
+    BleClearBonds = 17,
+    /// Open a pairing window (host to device) so an unbonded host may pair
+    /// without a physical gesture at the device. The window closes on a new
+    /// bond, on a bonded host connecting, or on a timeout of the device's
+    /// choosing. Requires `CAP_BLE_PAIRING`; a device without it answers
+    /// `STATUS_UNIMPLEMENTED`, and one that cannot open a window right now
+    /// answers `STATUS_INVALID_STATE`.
+    BleStartPairing = 18,
     /// Get several property values (host to device). Requires
     /// `CAP_CMD_MULTI`.
     PropMultiGet = 21,
@@ -138,6 +152,8 @@ impl Cmd {
             14 => Some(Self::Restore),
             15 => Some(Self::FactoryReset),
             16 => Some(Self::Reboot),
+            17 => Some(Self::BleClearBonds),
+            18 => Some(Self::BleStartPairing),
             21 => Some(Self::PropMultiGet),
             22 => Some(Self::PropMultiSet),
             23 => Some(Self::PropAre),
@@ -562,6 +578,19 @@ pub fn reboot(buf: &mut [u8], tid: u8) -> Result<usize, WriteError> {
     Ok(FrameWriter::new(buf, tid, Cmd::Reboot)?.finish())
 }
 
+/// Encode a `CMD_BLE_CLEAR_BONDS` frame (no payload). The device answers
+/// once the bonds are gone, which over Bluetooth is the last thing the
+/// sender hears before it is dropped.
+pub fn ble_clear_bonds(buf: &mut [u8], tid: u8) -> Result<usize, WriteError> {
+    Ok(FrameWriter::new(buf, tid, Cmd::BleClearBonds)?.finish())
+}
+
+/// Encode a `CMD_BLE_START_PAIRING` frame (no payload). The device answers
+/// once the pairing window is open, or refuses if it cannot open one.
+pub fn ble_start_pairing(buf: &mut [u8], tid: u8) -> Result<usize, WriteError> {
+    Ok(FrameWriter::new(buf, tid, Cmd::BleStartPairing)?.finish())
+}
+
 /// Encode a `CMD_RESTORE` frame (no payload).
 pub fn restore(buf: &mut [u8], tid: u8) -> Result<usize, WriteError> {
     Ok(FrameWriter::new(buf, tid, Cmd::Restore)?.finish())
@@ -785,18 +814,18 @@ mod tests {
 
     #[test]
     fn unknown_command_is_well_formed() {
-        let frame = Frame::parse(&[0x81, 0x11]).unwrap();
-        assert_eq!(frame.cmd, 17);
+        let frame = Frame::parse(&[0x81, 0x13]).unwrap();
+        assert_eq!(frame.cmd, 19);
         assert_eq!(frame.command(), None);
     }
 
     #[test]
     fn every_assigned_command_round_trips() {
-        for id in (0..=16u8).chain(21..=23) {
+        for id in (0..=18u8).chain(21..=23) {
             let cmd = Cmd::from_u8(id).unwrap_or_else(|| panic!("command {id} unassigned"));
             assert_eq!(cmd as u8, id);
         }
-        for id in (17..=20u8).chain(24..=127) {
+        for id in (19..=20u8).chain(24..=127) {
             assert_eq!(Cmd::from_u8(id), None, "command {id} should be unassigned");
         }
     }
@@ -858,6 +887,8 @@ mod tests {
             (restore, Cmd::Restore),
             (factory_reset, Cmd::FactoryReset),
             (reboot, Cmd::Reboot),
+            (ble_clear_bonds, Cmd::BleClearBonds),
+            (ble_start_pairing, Cmd::BleStartPairing),
         ] {
             let len = encode(&mut buf, 2).unwrap();
             assert_eq!(len, 2);

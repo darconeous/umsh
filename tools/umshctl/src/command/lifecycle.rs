@@ -1,6 +1,6 @@
 //! State lifecycle and one-off device settings: `save`, `restore`,
-//! `clear`, `reset`, `factory-reset`, `pin`, `identity`, `name`, and
-//! `alert`.
+//! `clear`, `reset`, `factory-reset`, `pin`, `ble`, `identity`, `name`,
+//! and `alert`.
 
 use anyhow::{Result, bail};
 
@@ -21,6 +21,21 @@ pub enum IdentityOp {
     Show,
     /// Generate a device identity if none exists.
     Generate,
+}
+
+#[derive(Debug, clap::Subcommand)]
+pub enum BleOp {
+    /// Report how many hosts are paired with this device.
+    Bonds,
+    /// Open a pairing window so another host can pair.
+    Pair,
+    /// Forget every paired host, the pairing PIN, and the pairing
+    /// lockout, then open a pairing window.
+    Clear {
+        /// Confirm the wipe. Required outside the REPL, which asks.
+        #[arg(long)]
+        yes: bool,
+    },
 }
 
 #[derive(Debug, clap::Subcommand)]
@@ -111,6 +126,58 @@ pub async fn pin<L: FrameLink>(device: &mut UlcpDevice<L>, value: PinArg) -> Res
         None => println!("BLE pairing PIN cleared"),
     }
     Ok(())
+}
+
+const CLEAR_BONDS_WARNING: &str = "ble clear forgets every paired host, the pairing PIN, and the pairing lockout; \
+     the device then opens a pairing window";
+
+/// Read or manage the device's Bluetooth bonds.
+///
+/// Over Bluetooth, clearing severs this very link — the bond that
+/// carried the command is one of the bonds deleted — so the handle is
+/// detached afterward for the same reason `reboot` detaches. Over a
+/// cable or the mesh nothing is disturbed, but detaching costs only a
+/// reattach and keeps one rule instead of two.
+pub async fn ble(app: &mut App, op: BleOp) -> Result<()> {
+    match op {
+        BleOp::Bonds => {
+            let value = app.device()?.get_prop(prop::BLE_BOND_COUNT).await?;
+            let [count] = value[..] else {
+                bail!("malformed PROP_BLE_BOND_COUNT");
+            };
+            field("paired hosts", count);
+            Ok(())
+        }
+        BleOp::Pair => {
+            if !app.device()?.ble_start_pairing().await? {
+                bail!(
+                    "this device does not advertise CAP_BLE_PAIRING; it cannot open a pairing window on command"
+                );
+            }
+            println!("pairing window open; pair from the other host now");
+            Ok(())
+        }
+        BleOp::Clear { yes } => {
+            if !yes {
+                if !app.interactive {
+                    bail!("{CLEAR_BONDS_WARNING}; re-run with --yes to confirm");
+                }
+                println!("{CLEAR_BONDS_WARNING}.");
+                if !confirm("forget every paired host?")? {
+                    println!("cancelled");
+                    return Ok(());
+                }
+            }
+            if !app.device()?.ble_clear_bonds().await? {
+                bail!(
+                    "this device does not advertise CAP_BLE_PAIRING; it cannot clear bonds on command"
+                );
+            }
+            println!("bonds cleared; the device is in a pairing window");
+            app.detach().await;
+            Ok(())
+        }
+    }
 }
 
 pub async fn identity<L: FrameLink>(

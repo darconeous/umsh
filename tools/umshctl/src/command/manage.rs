@@ -26,6 +26,7 @@ use super::props::PropArg;
 use super::tables::TableOp;
 use super::values::{AssignArg, BytesArg, KeyArg};
 use crate::App;
+use crate::connection::confirm;
 use crate::mesh::{self, CtlHandle, CtlMac, NodeStack, OPERATION_TIMEOUT, describe};
 use crate::output::{address, field, hex, note, subfield};
 
@@ -91,10 +92,33 @@ pub enum ManageOp {
     /// acknowledgment, and a device that cannot restart says so.
     Reboot,
 
+    /// Manage the device's Bluetooth bonds (CAP_BLE_PAIRING). Unlike the
+    /// resets above these answer with a status: an administrator is
+    /// addressing the device's node, not one of its Bluetooth hosts, so
+    /// the link survives even a clear.
+    Ble {
+        #[command(subcommand)]
+        op: BleOp,
+    },
+
     /// Nodes authorized to manage the device — including this tool.
     Admins {
         #[command(subcommand)]
         op: Option<TableOp>,
+    },
+}
+
+/// Bond management over the mesh.
+#[derive(Debug, clap::Subcommand)]
+pub enum BleOp {
+    /// Open a pairing window so another host can pair.
+    Pair,
+    /// Forget every paired host, the pairing PIN, and the pairing
+    /// lockout, then open a pairing window.
+    Clear {
+        /// Confirm the wipe. Required outside the REPL, which asks.
+        #[arg(long)]
+        yes: bool,
     },
 }
 
@@ -139,6 +163,24 @@ impl mesh::RadioErrand for Errand {
 /// Take the attachment over as this tool's radio, run `op` against
 /// `target`, and hand the attachment back.
 pub async fn run(app: &mut App, target: KeyArg, op: Operation) -> Result<()> {
+    // Ask before borrowing the radio: a cancelled wipe should not have
+    // cost an attach, and this is the last point where the terminal is
+    // still ours.
+    if let Operation::Manage(ManageOp::Ble {
+        op: BleOp::Clear { yes: false },
+    }) = &op
+    {
+        const WARNING: &str = "manage ble clear forgets every paired host, the pairing PIN, \
+             and the pairing lockout on the target";
+        if !app.interactive {
+            bail!("{WARNING}; re-run with --yes to confirm");
+        }
+        println!("{WARNING}.");
+        if !confirm("forget every paired host?")? {
+            println!("cancelled");
+            return Ok(());
+        }
+    }
     let errand = Errand {
         target: PublicKey(target.0),
         op,
@@ -328,6 +370,20 @@ where
                 // The one answer this command produces: a device without
                 // `CAP_REBOOT` saying it cannot restart itself.
                 Outcome::Replied { .. } => report_value(prop::LAST_STATUS, ctl.manager.reply()),
+                Outcome::Failed(failure) => Err(describe(failure)),
+            }
+        }
+        ManageOp::Ble { op } => {
+            // Confirmed in `run`, before the radio was borrowed.
+            let frame = match op {
+                BleOp::Pair => encode(|buf| frame::ble_start_pairing(buf, 0))?,
+                BleOp::Clear { .. } => encode(|buf| frame::ble_clear_bonds(buf, 0))?,
+            };
+            match ctl.exchange(&frame).await? {
+                Outcome::Replied { .. } => report_value(prop::LAST_STATUS, ctl.manager.reply()),
+                Outcome::NoResponse => {
+                    bail!("the device answered nothing; these commands report a status")
+                }
                 Outcome::Failed(failure) => Err(describe(failure)),
             }
         }

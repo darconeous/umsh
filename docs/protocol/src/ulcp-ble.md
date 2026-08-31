@@ -223,14 +223,21 @@ bonded hosts can reconnect.
 
 ## Capabilities {#capabilities}
 
-Code | Name      | Requires | Grants
------|-----------|----------|--------
-50   | `CAP_BLE` | —        | A Bluetooth transport whose reachability the device can turn on and off: `PROP_BLE_ENABLED`
+Code | Name              | Requires  | Grants
+-----|-------------------|-----------|--------
+50   | `CAP_BLE`         | —         | A Bluetooth transport whose reachability the device can turn on and off: `PROP_BLE_ENABLED`
+52   | `CAP_BLE_PAIRING` | `CAP_BLE` | Bond management on command: `CMD_BLE_CLEAR_BONDS`, `CMD_BLE_START_PAIRING`, `PROP_BLE_BOND_COUNT`
 
 A device implementing this binding **MAY** advertise `CAP_BLE`. Not
 advertising it means the transport is always reachable while the device
 is powered, which is what every device did before the capability
 existed; it does not mean the device has no BLE.
+
+`CAP_BLE_PAIRING` is separate because the two claims are separate: a
+device can be made unreachable without being able to rearrange who it
+trusts. A device whose bonds are reachable only by a gesture at the
+device itself leaves it out and answers both commands
+`STATUS_UNIMPLEMENTED`.
 
 ## Reachability {#ble-reachability}
 
@@ -267,6 +274,94 @@ The post-reset value is true. A device unreachable by default is a
 device that cannot be configured by the host that would make it
 reachable again, and on most hardware the only other way in is the menu
 on the front of it.
+
+## Bond Management Commands {#bond-management-commands}
+
+### PROP 4872: `PROP_BLE_BOND_COUNT` {#prop-ble-bond-count}
+
+* Type: Single-Value, Read-Only
+* Asynchronous Updates: Yes
+* Required: `CAP_BLE_PAIRING`
+* Value Type: UINT8
+* Post-Reset Value: the number of bonds the device holds
+
+How many hosts are currently bonded. A device **MUST** report the count
+its durable bond store holds, and **MUST** publish the new value when it
+changes — enrollment and eviction both happen without the host asking,
+so a host that was not told would have to poll.
+
+The count is live transport state, not configuration: it is **NOT** part
+of the saved snapshot, and `CMD_RST` **MUST NOT** change it. A protocol
+reset returns protocol state to its post-reset values, and a bond is
+neither protocol state nor something a reset deletes.
+
+It says how many hosts are enrolled, never which. A device that named
+its bonded hosts to whoever asked would leak the association the pairing
+ceremony exists to protect, and the count is what an operator deciding
+whether to clear bonds actually needs.
+
+### CMD 17: (Host -> Device) `CMD_BLE_CLEAR_BONDS` {#cmd-ble-clear-bonds}
+
+~~~
+ 0                   1
+ 0 1 2 3 4 5 6 7 8 9 0 1 2 3 4 5
++-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+
+|1 0| RES | TID |CMD_BLE_CLEAR_B|
++-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+
+~~~
+
+Figure: Structure of `CMD_BLE_CLEAR_BONDS`
+
+Delete every stored bond, the pairing PIN, and the pairing failure
+lockout, then enter pairing mode.
+
+The device **MUST NOT** report success before the deletion is durable,
+and **MUST** drop the deleted bonds from any live in-memory bond table
+as well as from durable storage — a bond forgotten on flash but still
+held in RAM would keep working until the next boot. It **MUST** then
+enter pairing mode: a device that has forgotten every host it trusts and
+is not accepting new ones is reachable by nothing.
+
+The device answers `PROP_LAST_STATUS`: `STATUS_OK` once the deletion is
+durable, `STATUS_UNIMPLEMENTED` without `CAP_BLE_PAIRING`. Sent over
+BLE, that answer is the last thing the sender hears, because the bond
+that carried it is among the bonds deleted; the reply **MUST** be
+emitted before the connection is dropped.
+
+Clearing the PIN alongside the bonds is deliberate. A PIN outliving the
+hosts it was set for would leave a device that has forgotten everyone
+still demanding a secret the operator may no longer have, recoverable
+only by a local wipe.
+
+### CMD 18: (Host -> Device) `CMD_BLE_START_PAIRING` {#cmd-ble-start-pairing}
+
+~~~
+ 0                   1
+ 0 1 2 3 4 5 6 7 8 9 0 1 2 3 4 5
++-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+
+|1 0| RES | TID |CMD_BLE_START_P|
++-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+
+~~~
+
+Figure: Structure of `CMD_BLE_START_PAIRING`
+
+Enter [pairing mode](#pairing-mode), so an unbonded host may pair
+without a physical gesture at the device. The window ends on the same
+three conditions as any other, and the device **SHOULD** give the same
+perceptible indication.
+
+The device answers `PROP_LAST_STATUS`: `STATUS_OK` once the window is
+open, `STATUS_INVALID_STATE` when it cannot open one — the device is
+locked out after repeated pairing failures — and
+`STATUS_UNIMPLEMENTED` without `CAP_BLE_PAIRING`. A full bond store is
+**NOT** a refusal: enrollment at capacity evicts rather than refuses
+(see [Bond Management](#bond-management)), so a device with a full store
+opens the window like any other.
+
+Both commands are ordinary commands rather than reset-class: what they
+did is the whole of what they report, and a caller that heard nothing
+could not tell a device that had cleared its bonds from one that never
+received the request.
 
 ## Security {#ble-security}
 
@@ -310,10 +405,12 @@ Entering pairing mode:
   automatically at power-on for a short window (15–30 seconds
   **RECOMMENDED**).
 * Once the device holds one or more bonds, it **MUST NOT** enter pairing
-  mode automatically. Entering pairing mode then requires a deliberate
-  physical gesture distinct from normal power-on — for example,
-  holding the user button through power-on until the device signals
-  that pairing mode is active.
+  mode automatically. Entering pairing mode then requires either a
+  deliberate physical gesture distinct from normal power-on — for
+  example, holding the user button through power-on until the device
+  signals that pairing mode is active — or
+  [`CMD_BLE_START_PAIRING`](#cmd-ble-start-pairing) from an authorized
+  session.
 
 Pairing mode **MUST** end when any of the following occurs:
 
@@ -326,7 +423,14 @@ or display) while pairing mode is active.
 
 A physical-presence-gated ceremony reduces the pairing trust decision
 to possession of the device — the same property that protects the
-serial transports.
+serial transports. A command from an already-authorized session is the
+same decision made by someone who has already passed that ceremony: an
+attached host holds a bond, and a mesh administrator is listed in
+`PROP_DEV_ADMINS`, which is itself set through an attached session. What
+the gesture proves about a person standing at the device, authorization
+proves about a party that was admitted earlier; a party that can already
+administer the device gains nothing by opening a window it could open by
+walking over.
 
 ### Association Models
 
@@ -404,9 +508,12 @@ BLE.
 ### Bond Management
 
 * Devices **MUST** provide a local mechanism to delete stored bonds. The
-  mechanism is implementation-specific but **MUST NOT** be invocable
-  through ULCP itself over an unauthenticated
-  path.
+  mechanism is implementation-specific. Deletion **MUST NOT** be
+  invocable over an unauthenticated path; a device advertising
+  `CAP_BLE_PAIRING` additionally accepts
+  [`CMD_BLE_CLEAR_BONDS`](#cmd-ble-clear-bonds), whose authorization is
+  the session's own (see [Administrative
+  Authorization](#administrative-authorization)).
 * Devices **MAY** limit the number of stored bonds. A full bond store
   **MUST NOT** cause pairing to be refused: when a new bond is enrolled
   while the store is full, the device **MUST** evict the
@@ -426,9 +533,12 @@ which the device can only be recovered by a local wipe, while enrollment
 already requires physical presence and the eviction victim is by
 construction the bond that has gone longest without connecting.
 
-Removing one specific bond while retaining the others is not currently
-expressible through this protocol; the local mechanism above and
-`CMD_FACTORY_RESET` are the available paths.
+Removing one specific bond while retaining the others is not expressible
+through this protocol. `CMD_BLE_CLEAR_BONDS` forgets every host at once,
+which is the operation an operator reaching for it wants: the case that
+motivates it is a device whose paired hosts are no longer trusted or no
+longer known, and enumerating bonds so one could be named would mean
+reporting which hosts a device has met.
 
 ### Administrative Authorization {#administrative-authorization}
 

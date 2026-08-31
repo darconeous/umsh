@@ -322,6 +322,10 @@ pub enum PublishEvent {
         heapless::Vec<u8, { umsh_ulcp::gnss::MAX_LOCATION_LEN }>,
         Option<i32>,
     ),
+    /// How many bonds the Bluetooth transport now holds. Pairing and
+    /// forgetting both happen below the session, so this is the only way
+    /// `PROP_BLE_BOND_COUNT` learns it moved.
+    BleBondCount(u8),
 }
 
 /// Board couplings of the session driver. Everything the loop needs from
@@ -458,13 +462,33 @@ pub trait DeviceEnv {
     /// Apply a `PROP_BLE_PAIRING_PIN` write against the bond journal and
     /// the live BLE stack; `true` when it took effect.
     async fn apply_pairing_pin(&mut self, pin: Option<u32>) -> bool;
+    /// `CMD_BLE_CLEAR_BONDS`: delete every stored bond, the pairing PIN,
+    /// and the pairing lockout, then open a pairing window. `true` once
+    /// the deletion is durable.
+    ///
+    /// Unlike the factory reset below, this runs with the board still up,
+    /// so the live BLE stack has to be emptied alongside the journal — a
+    /// bond forgotten on flash but still held in RAM would keep working
+    /// until the next boot. Boards without `CAP_BLE_PAIRING` never see
+    /// this and keep the default, which refuses.
+    async fn clear_ble_bonds(&mut self) -> bool {
+        false
+    }
+    /// `CMD_BLE_START_PAIRING`: open a pairing window so an unbonded host
+    /// may pair. `false` when no window can be opened — the board is
+    /// locked out after repeated pairing failures, or it has nowhere to
+    /// put another bond.
+    async fn start_ble_pairing(&mut self) -> bool {
+        false
+    }
     /// `CMD_FACTORY_RESET`: erase EVERY piece of persistent state the
     /// platform owns — saved snapshot, device identity, frame-counter
     /// boundaries, BLE bonds, pairing PIN, and any other journal — then
     /// reboot. Never returns: the reset discards in-RAM state and the
-    /// board comes back factory-fresh. There is no separate "clear bonds"
-    /// hook because a reboot reloads bonds from the (now-erased) journal,
-    /// so the live BLE stack never has to be touched.
+    /// board comes back factory-fresh. Unlike
+    /// [`clear_ble_bonds`](Self::clear_ble_bonds) it need not empty the
+    /// live BLE stack, because the reboot reloads bonds from the
+    /// now-erased journal.
     async fn factory_reset(&mut self) -> !;
     /// `CMD_REBOOT`: restart the hardware, keeping every persisted
     /// journal intact. Never returns. Only reached on a board whose
@@ -750,6 +774,8 @@ async fn apply_effect<A, S, const TXQ: usize, M, const RX: usize, const TX: usiz
         | Some(Effect::ReadTime { .. })
         | Some(Effect::SampleGnss { .. })
         | Some(Effect::SetPairingPin { .. })
+        | Some(Effect::BleClearBonds { .. })
+        | Some(Effect::BleStartPairing { .. })
         | Some(Effect::DrainQueue)
         | Some(Effect::SaveSnapshot { .. })
         | Some(Effect::ClearSaved { .. })
@@ -1043,6 +1069,35 @@ async fn serve_frame<A, S, const TXQ: usize, M, const RX: usize, const TX: usize
                 session.respond_pin_set(
                     tid,
                     applied.then_some(()).ok_or(()),
+                    &mut |frame: &[u8]| emitter.push(frame),
+                );
+                emitter.flush(sink).await;
+            }
+            Some(Effect::BleClearBonds { tid }) => {
+                // The answer goes out before the bonds are gone from the
+                // live stack only in the sense that the flush below races
+                // the disconnect; the platform does the durable work
+                // first, so a host that hears OK has really been
+                // forgotten. Over Bluetooth this reply is the last thing
+                // the sender hears — dropping its bond drops its link.
+                env.trace(format_args!("CMD_BLE_CLEAR_BONDS: forgetting every host"));
+                let cleared = env.clear_ble_bonds().await;
+                session.respond_ble_clear_bonds(
+                    tid,
+                    cleared.then_some(()).ok_or(()),
+                    &mut |frame: &[u8]| emitter.push(frame),
+                );
+                emitter.flush(sink).await;
+            }
+            Some(Effect::BleStartPairing { tid }) => {
+                let opened = env.start_ble_pairing().await;
+                env.trace(format_args!(
+                    "CMD_BLE_START_PAIRING: window {}",
+                    if opened { "open" } else { "refused" }
+                ));
+                session.respond_ble_start_pairing(
+                    tid,
+                    opened.then_some(()).ok_or(()),
                     &mut |frame: &[u8]| emitter.push(frame),
                 );
                 emitter.flush(sink).await;
@@ -1439,6 +1494,9 @@ where
                     }
                     PublishEvent::Gnss(key, snapshot) => {
                         session.publish_gnss(key, &snapshot, emit);
+                    }
+                    PublishEvent::BleBondCount(count) => {
+                        session.set_ble_bond_count(count, emit);
                     }
                     PublishEvent::IdentityFix(location, altitude_m) => {
                         // The session clamps, compares, and bumps the

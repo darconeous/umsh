@@ -30,6 +30,7 @@
 		9AAAB66E0DA2111510FFC6C9 /* UMSH/Features/RemoteManagement/ManageDeviceScreen.swift in Sources */ = {isa = PBXBuildFile; fileRef = 486C2B63FFAA6F5C45337190 /* UMSH/Features/RemoteManagement/ManageDeviceScreen.swift */; };
 		16B86C03E19911F0FB509FE8 /* UMSH/Features/RemoteManagement/RemoteCategoryEditors.swift in Sources */ = {isa = PBXBuildFile; fileRef = 5B2115AE5EDA1EEEBE4A6027 /* UMSH/Features/RemoteManagement/RemoteCategoryEditors.swift */; };
 		8C84BE75B26BAD36700F2992 /* UMSH/Features/RemoteManagement/RemoteStatusScreens.swift in Sources */ = {isa = PBXBuildFile; fileRef = 33CDD82E26CE9A507BA4E207 /* UMSH/Features/RemoteManagement/RemoteStatusScreens.swift */; };
+		4E1B7A0C93D5F26418AC0731 /* UMSH/Features/RemoteManagement/RemoteBluetoothScreen.swift in Sources */ = {isa = PBXBuildFile; fileRef = 91FA3C6D07B8E4519D2C5A84 /* UMSH/Features/RemoteManagement/RemoteBluetoothScreen.swift */; };
 		257B387EEEF08BCCD73E5E7C /* UMSH/Features/RemoteManagement/RemotePeerNodesScreen.swift in Sources */ = {isa = PBXBuildFile; fileRef = 6D1D031E0577ECAA708A7EF4 /* UMSH/Features/RemoteManagement/RemotePeerNodesScreen.swift */; };
 		10000000000000000000002E /* UMSH/Features/Peers/NodeImportView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 20000000000000000000002E /* UMSH/Features/Peers/NodeImportView.swift */; };
 		10000000000000000000002F /* UMSH/Features/Peers/DiscoverPeersView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 20000000000000000000002F /* UMSH/Features/Peers/DiscoverPeersView.swift */; };
@@ -118,6 +119,7 @@
 		486C2B63FFAA6F5C45337190 /* UMSH/Features/RemoteManagement/ManageDeviceScreen.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = UMSH/Features/RemoteManagement/ManageDeviceScreen.swift; sourceTree = "<group>"; };
 		5B2115AE5EDA1EEEBE4A6027 /* UMSH/Features/RemoteManagement/RemoteCategoryEditors.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = UMSH/Features/RemoteManagement/RemoteCategoryEditors.swift; sourceTree = "<group>"; };
 		33CDD82E26CE9A507BA4E207 /* UMSH/Features/RemoteManagement/RemoteStatusScreens.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = UMSH/Features/RemoteManagement/RemoteStatusScreens.swift; sourceTree = "<group>"; };
+		91FA3C6D07B8E4519D2C5A84 /* UMSH/Features/RemoteManagement/RemoteBluetoothScreen.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = UMSH/Features/RemoteManagement/RemoteBluetoothScreen.swift; sourceTree = "<group>"; };
 		6D1D031E0577ECAA708A7EF4 /* UMSH/Features/RemoteManagement/RemotePeerNodesScreen.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = UMSH/Features/RemoteManagement/RemotePeerNodesScreen.swift; sourceTree = "<group>"; };
 		20000000000000000000002E /* UMSH/Features/Peers/NodeImportView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = UMSH/Features/Peers/NodeImportView.swift; sourceTree = "<group>"; };
 		20000000000000000000002F /* UMSH/Features/Peers/DiscoverPeersView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = UMSH/Features/Peers/DiscoverPeersView.swift; sourceTree = "<group>"; };
@@ -222,6 +224,7 @@
 				486C2B63FFAA6F5C45337190 /* UMSH/Features/RemoteManagement/ManageDeviceScreen.swift */,
 				5B2115AE5EDA1EEEBE4A6027 /* UMSH/Features/RemoteManagement/RemoteCategoryEditors.swift */,
 				33CDD82E26CE9A507BA4E207 /* UMSH/Features/RemoteManagement/RemoteStatusScreens.swift */,
+				91FA3C6D07B8E4519D2C5A84 /* UMSH/Features/RemoteManagement/RemoteBluetoothScreen.swift */,
 				6D1D031E0577ECAA708A7EF4 /* UMSH/Features/RemoteManagement/RemotePeerNodesScreen.swift */,
 				20000000000000000000002E /* UMSH/Features/Peers/NodeImportView.swift */,
 				20000000000000000000002F /* UMSH/Features/Peers/DiscoverPeersView.swift */,
@@ -415,6 +418,7 @@
 				9AAAB66E0DA2111510FFC6C9 /* UMSH/Features/RemoteManagement/ManageDeviceScreen.swift in Sources */,
 				16B86C03E19911F0FB509FE8 /* UMSH/Features/RemoteManagement/RemoteCategoryEditors.swift in Sources */,
 				8C84BE75B26BAD36700F2992 /* UMSH/Features/RemoteManagement/RemoteStatusScreens.swift in Sources */,
+				4E1B7A0C93D5F26418AC0731 /* UMSH/Features/RemoteManagement/RemoteBluetoothScreen.swift in Sources */,
 				257B387EEEF08BCCD73E5E7C /* UMSH/Features/RemoteManagement/RemotePeerNodesScreen.swift in Sources */,
 				10000000000000000000002E /* UMSH/Features/Peers/NodeImportView.swift in Sources */,
 				10000000000000000000002F /* UMSH/Features/Peers/DiscoverPeersView.swift in Sources */,

@@ -235,6 +235,13 @@ pub struct SessionConfig {
     /// unreachable on demand. When set, `CAP_BLE` is advertised and
     /// `PROP_BLE_ENABLED` exists; otherwise the property is unknown.
     pub ble: bool,
+    /// Whether the platform manages its own Bluetooth bonds on command.
+    /// When set, `CAP_BLE_PAIRING` is advertised, `PROP_BLE_BOND_COUNT`
+    /// exists, and `CMD_BLE_CLEAR_BONDS` and `CMD_BLE_START_PAIRING` reach
+    /// their effects; otherwise both commands answer `STATUS_UNIMPLEMENTED`
+    /// and the property is unknown. Meaningful only alongside
+    /// [`ble`](Self::ble).
+    pub ble_pairing: bool,
     /// Whether the platform can restart the hardware on command. When
     /// set, `CAP_REBOOT` is advertised and `CMD_REBOOT` reaches
     /// [`Effect::Reboot`]; otherwise the command answers
@@ -371,6 +378,18 @@ pub enum Effect {
     /// link. What comes back is the same device with the same identity,
     /// announcing its power-on reset.
     Reboot,
+    /// `CMD_BLE_CLEAR_BONDS`: delete every stored bond, the pairing PIN,
+    /// and the pairing failure lockout, then open a pairing window so the
+    /// device can be paired again. Complete with
+    /// [`Session::respond_ble_clear_bonds`] once the deletion is durable —
+    /// over Bluetooth that reply is the last thing the sender hears, since
+    /// dropping its bond drops its link.
+    BleClearBonds { tid: u8 },
+    /// `CMD_BLE_START_PAIRING`: open a pairing window. Complete with
+    /// [`Session::respond_ble_start_pairing`], reporting whether a window
+    /// could be opened — a device that is locked out after repeated
+    /// pairing failures, or whose bond store is full, refuses.
+    BleStartPairing { tid: u8 },
 }
 
 /// A staged `PROP_DEV_PRIVATE_KEY` provisioning request (see
@@ -562,6 +581,11 @@ struct DeviceDomain {
     /// device nobody can configure, and on most boards the menu that
     /// clears this is reached over the very link it drops.
     ble_enabled: bool,
+    /// `PROP_BLE_BOND_COUNT`: how many bonds the transport is holding.
+    /// Live state the transport reports through
+    /// [`Session::set_ble_bond_count`], never anything the session counts
+    /// or saves.
+    ble_bond_count: u8,
 }
 
 impl DeviceDomain {
@@ -604,6 +628,7 @@ impl DeviceDomain {
             gnss_ident_precision: DEFAULT_IDENT_PRECISION,
             gnss_time_trust: true,
             ble_enabled: true,
+            ble_bond_count: 0,
         }
     }
 }
@@ -2504,7 +2529,12 @@ impl<A: AesProvider, S: Sha256Provider, const TX: usize> Session<A, S, TX> {
     /// saved. Queue contents and replay baselines are discarded either
     /// way.
     pub fn reset(&mut self, reason: Status, emit: &mut impl FnMut(&[u8])) -> Effect {
+        // The bond count mirrors the transport, which a protocol reset
+        // does not touch: `CMD_RST` returns protocol state to its
+        // post-reset values, and bonds are neither.
+        let bonds = self.device.ble_bond_count;
         self.device = DeviceDomain::post_reset(&self.config);
+        self.device.ble_bond_count = bonds;
         // The device identity's post-reset value is the persisted one:
         // normally unchanged, gone after CMD_CLEAR (completing a
         // factory reset).
@@ -2858,6 +2888,24 @@ impl<A: AesProvider, S: Sha256Provider, const TX: usize> Session<A, S, TX> {
                     return None;
                 }
                 Some(Effect::Reboot)
+            }
+            // Bond management. Both defer: the answer reports what the
+            // platform actually did, and neither is safe to acknowledge
+            // before it is durable — a clear that replied first and then
+            // failed would leave a host believing it had been forgotten.
+            Some(Cmd::BleClearBonds) => {
+                if !self.config.ble_pairing {
+                    self.complete(tid, Status::UNIMPLEMENTED, emit);
+                    return None;
+                }
+                Some(Effect::BleClearBonds { tid })
+            }
+            Some(Cmd::BleStartPairing) => {
+                if !self.config.ble_pairing {
+                    self.complete(tid, Status::UNIMPLEMENTED, emit);
+                    return None;
+                }
+                Some(Effect::BleStartPairing { tid })
             }
             // Several properties in one exchange. Both commands are
             // served entry by entry through the ordinary single-property
@@ -3604,6 +3652,15 @@ impl<A: AesProvider, S: Sha256Provider, const TX: usize> Session<A, S, TX> {
         self.config.ble && self.device.ble_enabled
     }
 
+    /// `PROP_BLE_BOND_COUNT`: how many bonds the transport last reported.
+    pub fn ble_bond_count(&self) -> u8 {
+        if self.config.ble_pairing {
+            self.device.ble_bond_count
+        } else {
+            0
+        }
+    }
+
     /// `PROP_GNSS_IDENT_PRECISION`: the precision the advertised location
     /// is clamped to.
     pub fn gnss_ident_precision(&self) -> u8 {
@@ -4151,6 +4208,63 @@ impl<A: AesProvider, S: Sha256Provider, const TX: usize> Session<A, S, TX> {
         );
     }
 
+    /// Complete a deferred `CMD_BLE_CLEAR_BONDS`.
+    pub fn respond_ble_clear_bonds(
+        &mut self,
+        tid: u8,
+        result: Result<(), ()>,
+        emit: &mut impl FnMut(&[u8]),
+    ) {
+        self.complete(
+            tid,
+            if result.is_ok() {
+                Status::OK
+            } else {
+                Status::INTERNAL_ERROR
+            },
+            emit,
+        );
+    }
+
+    /// Complete a deferred `CMD_BLE_START_PAIRING`. `Err` means the device
+    /// could not open a window — it is locked out after repeated pairing
+    /// failures, or it has nowhere to put another bond — which is a state
+    /// the caller can retry out of rather than a fault.
+    pub fn respond_ble_start_pairing(
+        &mut self,
+        tid: u8,
+        result: Result<(), ()>,
+        emit: &mut impl FnMut(&[u8]),
+    ) {
+        self.complete(
+            tid,
+            if result.is_ok() {
+                Status::OK
+            } else {
+                Status::INVALID_STATE
+            },
+            emit,
+        );
+    }
+
+    /// The number of Bluetooth bonds the platform is holding, as reported
+    /// by `PROP_BLE_BOND_COUNT`. Bonding is the transport's business, so
+    /// the session mirrors what it is told rather than counting anything.
+    ///
+    /// A change is announced like any the host did not command: enrolling
+    /// or forgetting a bond happens at the device, so an attached host
+    /// would otherwise have to poll to notice.
+    pub fn set_ble_bond_count(&mut self, count: u8, emit: &mut impl FnMut(&[u8])) {
+        if !self.config.ble_pairing || self.device.ble_bond_count == count {
+            return;
+        }
+        self.device.ble_bond_count = count;
+        self.bump_dev_domain();
+        if self.attached {
+            self.announce_prop_is(prop::BLE_BOND_COUNT, &[count], emit);
+        }
+    }
+
     fn prop_set(
         &mut self,
         tid: u8,
@@ -4621,6 +4735,10 @@ impl<A: AesProvider, S: Sha256Provider, const TX: usize> Session<A, S, TX> {
                 Err(Status::INVALID_ARGUMENT)
             }
             prop::ILLUMINANCE if self.config.illuminance => Err(Status::INVALID_ARGUMENT),
+            // Bonds are enrolled by pairing and removed by
+            // `CMD_BLE_CLEAR_BONDS`; the count reports that, it does not
+            // steer it.
+            prop::BLE_BOND_COUNT if self.config.ble_pairing => Err(Status::INVALID_ARGUMENT),
             _ => Err(Status::PROP_NOT_FOUND),
         }
     }
@@ -4978,6 +5096,9 @@ impl<A: AesProvider, S: Sha256Provider, const TX: usize> Session<A, S, TX> {
         if key == prop::BLE_ENABLED {
             return self.config.ble;
         }
+        if key == prop::BLE_BOND_COUNT {
+            return self.config.ble_pairing;
+        }
         if matches!(key, prop::TIME | prop::TZ_OFFSET) {
             return self.config.time.is_some();
         }
@@ -5119,6 +5240,9 @@ impl<A: AesProvider, S: Sha256Provider, const TX: usize> Session<A, S, TX> {
                 if self.config.ble {
                     len += pui::encode(cap::BLE, &mut out[len..]).unwrap_or(0);
                 }
+                if self.config.ble_pairing {
+                    len += pui::encode(cap::BLE_PAIRING, &mut out[len..]).unwrap_or(0);
+                }
                 if self.config.reboot {
                     len += pui::encode(cap::REBOOT, &mut out[len..]).unwrap_or(0);
                 }
@@ -5240,6 +5364,10 @@ impl<A: AesProvider, S: Sha256Provider, const TX: usize> Session<A, S, TX> {
             }
             prop::BLE_ENABLED if self.config.ble => {
                 out[0] = self.device.ble_enabled as u8;
+                1
+            }
+            prop::BLE_BOND_COUNT if self.config.ble_pairing => {
+                out[0] = self.device.ble_bond_count;
                 1
             }
             prop::MAC_REPEATER_REGIONS if self.config.mac_node => {
@@ -5722,6 +5850,7 @@ mod tests {
             gnss: Some(GnssConfig::DEFAULT),
             illuminance: true,
             ble: true,
+            ble_pairing: true,
             reboot: true,
             mac_node: true,
         }
@@ -6142,6 +6271,7 @@ mod tests {
                 cap::GNSS,
                 cap::ILLUMINANCE,
                 cap::BLE,
+                cap::BLE_PAIRING,
                 cap::REBOOT
             ]
         );
@@ -6269,6 +6399,83 @@ mod tests {
         assert_eq!(status_key, prop::LAST_STATUS);
         assert_eq!(pui::decode(&value).unwrap().0, Status::UNIMPLEMENTED.0);
         assert!(!capabilities(&mut fixed).contains(&cap::REBOOT));
+    }
+
+    /// Both bond commands wait for the platform before they answer:
+    /// acknowledging a clear that then failed would leave a host believing
+    /// it had been forgotten when it had not.
+    #[test]
+    fn bond_commands_defer_to_the_platform_or_say_they_cannot() {
+        let mut buf = [0u8; 8];
+        let clear = frame::ble_clear_bonds(&mut buf, 3).unwrap();
+        let clear = buf[..clear].to_vec();
+        let mut buf = [0u8; 8];
+        let pair = frame::ble_start_pairing(&mut buf, 4).unwrap();
+        let pair = buf[..pair].to_vec();
+
+        let mut session = test_session();
+        let (emitted, effect) = dispatch(&mut session, &clear, 0);
+        assert_eq!(effect, Some(Effect::BleClearBonds { tid: 3 }));
+        assert!(emitted.is_empty(), "the answer waits for the platform");
+        let (emitted, effect) = dispatch(&mut session, &pair, 0);
+        assert_eq!(effect, Some(Effect::BleStartPairing { tid: 4 }));
+        assert!(emitted.is_empty());
+        assert!(capabilities(&mut session).contains(&cap::BLE_PAIRING));
+
+        // A device that cannot open a window refuses with a state the
+        // caller can retry out of, not an internal error.
+        let mut emitted = Vec::new();
+        session.respond_ble_start_pairing(4, Err(()), &mut |frame| emitted.push(frame.to_vec()));
+        let (_, key, value) = parse_prop_is(&emitted[0]);
+        assert_eq!(key, prop::LAST_STATUS);
+        assert_eq!(pui::decode(&value).unwrap().0, Status::INVALID_STATE.0);
+
+        let mut emitted = Vec::new();
+        session.respond_ble_clear_bonds(3, Ok(()), &mut |frame| emitted.push(frame.to_vec()));
+        let (_, key, value) = parse_prop_is(&emitted[0]);
+        assert_eq!(key, prop::LAST_STATUS);
+        assert_eq!(pui::decode(&value).unwrap().0, Status::OK.0);
+
+        let config = SessionConfig {
+            ble_pairing: false,
+            ..test_config()
+        };
+        let mut fixed: TestSession = Session::new(config, Status::RESET_POWER_ON, test_engine());
+        fixed.attach(true);
+        for frame in [&clear, &pair] {
+            let (emitted, effect) = dispatch(&mut fixed, frame, 0);
+            assert_eq!(effect, None);
+            let (_, key, value) = parse_prop_is(&emitted[0]);
+            assert_eq!(key, prop::LAST_STATUS);
+            assert_eq!(pui::decode(&value).unwrap().0, Status::UNIMPLEMENTED.0);
+        }
+        assert!(!capabilities(&mut fixed).contains(&cap::BLE_PAIRING));
+    }
+
+    /// The bond count mirrors the transport. It is not configuration, so
+    /// it is not writable and a protocol reset does not clear it — bonds
+    /// outlive `CMD_RST`, and a count that said zero would be lying about
+    /// hosts that are still enrolled.
+    #[test]
+    fn bond_count_reports_the_transport_and_survives_a_reset() {
+        let mut session = test_session();
+        assert_eq!(get(&mut session, prop::BLE_BOND_COUNT), [0]);
+        let mut announced = Vec::new();
+        session.set_ble_bond_count(2, &mut |frame| announced.push(frame.to_vec()));
+        assert_eq!(get(&mut session, prop::BLE_BOND_COUNT), [2]);
+        let (_, key, value) = parse_prop_is(&announced[0]);
+        assert_eq!(key, prop::BLE_BOND_COUNT);
+        assert_eq!(value, [2]);
+
+        let mut buf = [0u8; 16];
+        let len = frame::prop_set(&mut buf, 5, prop::BLE_BOND_COUNT, &[1]).unwrap();
+        let (emitted, _) = dispatch(&mut session, &buf[..len], 0);
+        let (_, key, value) = parse_prop_is(&emitted[0]);
+        assert_eq!(key, prop::LAST_STATUS);
+        assert_eq!(pui::decode(&value).unwrap().0, Status::INVALID_ARGUMENT.0);
+
+        session.reset(Status::RESET_OTHER, &mut |_| {});
+        assert_eq!(get(&mut session, prop::BLE_BOND_COUNT), [2]);
     }
 
     /// The clock is the platform's, not the session's: a get defers, a

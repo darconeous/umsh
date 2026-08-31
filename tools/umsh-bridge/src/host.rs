@@ -81,6 +81,7 @@ fn session_config() -> SessionConfig {
         gnss: None,
         illuminance: false,
         ble: false,
+        ble_pairing: false,
         // A host interface is a task inside this process; there is no
         // hardware for `CMD_REBOOT` to restart, and restarting the
         // bridge is the operator's business.

@@ -33,6 +33,9 @@ pub use umsh_ulcp_device::{
 
 const WIRE_CAPACITY: usize = umsh_ulcp::gatt::MAX_FRAME;
 
+/// Bonds a fresh simulated device pretends to be holding.
+const SIMULATED_BONDS: u8 = 2;
+
 type DeviceSession = Session<SoftwareAes, SoftwareSha256>;
 
 /// A deterministic, RAM-backed device that speaks HDLC-Lite exactly like USB.
@@ -45,6 +48,10 @@ pub struct SimulatedDevice {
     identity: Option<([u8; 32], [u8; 32])>,
     identity_seed: u8,
     pairing_pin: Option<u32>,
+    /// Bonds the simulated transport is holding. Nothing here pairs, so
+    /// the count only ever falls — it starts non-zero so a host has
+    /// something to clear, which is the state the command is for.
+    bond_count: u8,
     air: Vec<Vec<u8>>,
     now_ms: u64,
     /// The caller's clock reading when this device last came up.
@@ -65,12 +72,16 @@ pub struct SimulatedDevice {
 
 impl SimulatedDevice {
     pub fn new(config: SessionConfig) -> Self {
+        let mut session = DeviceSession::new(
+            config,
+            Status::RESET_POWER_ON,
+            CryptoEngine::new(SoftwareAes, SoftwareSha256),
+        );
+        // Nothing is attached yet, so this only seeds the value a later
+        // read answers with.
+        session.set_ble_bond_count(SIMULATED_BONDS, &mut |_| {});
         Self {
-            session: DeviceSession::new(
-                config,
-                Status::RESET_POWER_ON,
-                CryptoEngine::new(SoftwareAes, SoftwareSha256),
-            ),
+            session,
             config,
             decoder: hdlc::Decoder::new(),
             outbound: VecDeque::new(),
@@ -78,6 +89,7 @@ impl SimulatedDevice {
             identity: None,
             identity_seed: 0,
             pairing_pin: None,
+            bond_count: SIMULATED_BONDS,
             air: Vec::new(),
             now_ms: 0,
             boot_ms: 0,
@@ -224,6 +236,22 @@ impl SimulatedDevice {
                 self.pairing_pin = pin;
                 self.session.respond_pin_set(tid, Ok(()), &mut emit);
             }
+            Some(Effect::BleClearBonds { tid }) => {
+                // The full security reset a board performs: bonds, PIN,
+                // and lockout together.
+                self.bond_count = 0;
+                self.pairing_pin = None;
+                self.session.set_ble_bond_count(0, &mut emit);
+                self.session.respond_ble_clear_bonds(tid, Ok(()), &mut emit);
+            }
+            Some(Effect::BleStartPairing { tid }) => {
+                // Nothing here can pair, so the window opens and nothing
+                // walks through it. A full store is not a refusal —
+                // enrollment at capacity evicts — and the one state that
+                // would refuse, a pairing lockout, needs failed pairings
+                // this device cannot have.
+                self.session.respond_ble_start_pairing(tid, Ok(()), &mut emit);
+            }
             Some(Effect::DrainQueue) => {
                 let device_ms = self.device_ms();
                 while self.session.drain_step(device_ms, &mut emit) {}
@@ -253,6 +281,7 @@ impl SimulatedDevice {
                 self.identity = None;
                 self.identity_seed = 0;
                 self.pairing_pin = None;
+                self.bond_count = 0;
                 // The reboot restarts the monotonic clock along with
                 // everything else, so uptime counts from here.
                 self.boot_ms = self.now_ms;
@@ -281,6 +310,11 @@ impl SimulatedDevice {
                 if let Some(saved) = self.snapshot.clone() {
                     let _ = self.session.restore_at_boot(&saved);
                 }
+                // Bonds outlive a reboot, and the fresh session starts
+                // from zero, so the transport reports itself again exactly
+                // as a board's does on the way up.
+                self.session
+                    .set_ble_bond_count(self.bond_count, &mut |_| {});
             }
             Some(Effect::ReadTime { tid }) => {
                 self.session.respond_time(tid, self.epoch, &mut emit);
@@ -382,6 +416,7 @@ mod tests {
             gnss: Some(GnssConfig::DEFAULT),
             illuminance: true,
             ble: true,
+            ble_pairing: true,
             // A simulated power cycle is a rebuilt session, which is
             // exactly what a host watching this device would see.
             reboot: true,

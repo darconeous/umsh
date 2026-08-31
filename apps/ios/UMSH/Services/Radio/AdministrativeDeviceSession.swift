@@ -598,6 +598,27 @@ final class AdministrativeDeviceSession: NSObject, @unchecked Sendable {
         }
     }
 
+    /// Manage the attached device's Bluetooth bonds.
+    ///
+    /// Unlike the resets below these are answered, so the exchange runs to
+    /// completion: what a bench operator needs to know is whether the
+    /// device did it, and clearing bonds sends its answer before it drops
+    /// this session with the rest.
+    func manageBluetooth(_ command: MobileMeshBleCommand) async throws {
+        Self.logger.notice(
+            "action: user sent Bluetooth command \(String(describing: command), privacy: .public)"
+        )
+        let event = try await performManagement { session in
+            switch command {
+            case .clearBonds: try session.beginBleClearBonds()
+            case .startPairing: try session.beginBleStartPairing()
+            }
+        }
+        if let status = event.statusCode, status != 0 {
+            throw RemoteManagementError.refused(status: status)
+        }
+    }
+
     /// Restart the attached device, or return it to a blank factory state.
     ///
     /// Neither is answered: the device acts and the link drops, so there is

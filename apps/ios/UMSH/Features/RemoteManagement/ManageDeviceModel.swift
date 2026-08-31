@@ -45,6 +45,10 @@ struct DeviceManagementBackend {
     /// doing the thing and saying nothing, so success here means the
     /// command was delivered, not that the device has finished.
     var reset: (String, MobileMeshResetScope) async throws -> Void
+    /// Manage the device's Bluetooth bonds: forget every paired host, or
+    /// open a pairing window. Unlike the resets above these are answered,
+    /// so returning means the device said it did it.
+    var manageBluetooth: (String, MobileMeshBleCommand) async throws -> Void
     /// This phone's own node key, so the administrator list can say which
     /// entry is this phone — and refuse to remove it.
     ///
@@ -194,6 +198,16 @@ final class ManageDeviceModel {
     /// Read off the cached card, so offering the control costs no airtime.
     var supportsRestart: Bool { card?.supportsReboot ?? false }
 
+    /// Whether this device manages its own Bluetooth bonds on command
+    /// (`CAP_BLE_PAIRING`), read off the cached card.
+    var supportsBluetoothPairing: Bool { card?.supportsBlePairing ?? false }
+
+    /// How this device is reached. The Bluetooth screen is the one place
+    /// it changes what a control *means* rather than only what it costs:
+    /// switching Bluetooth off, or forgetting every bond, severs a
+    /// companion or bench link and leaves a mesh one untouched.
+    var link: DeviceManagementLink { management.link }
+
     /// Whether a factory reset is offered here at all — a question about
     /// how the device is reached, not about what it can do.
     var offersFactoryReset: Bool { management.offersFactoryReset }
@@ -302,6 +316,8 @@ final class ManageDeviceModel {
             supportsAdvert: decoded.supportsAdvert,
             supportsAdmin: decoded.supportsAdmin,
             supportsAlert: decoded.supportsAlert,
+            supportsBle: decoded.supportsBle,
+            supportsBlePairing: decoded.supportsBlePairing,
             supportsReboot: decoded.supportsReboot,
             supportsSave: decoded.supportsSave,
             supportsMulti: decoded.supportsMulti
@@ -547,6 +563,35 @@ final class ManageDeviceModel {
         await run { [self] in
             try await management.reset(address, .reboot)
         }
+    }
+
+    /// Open a pairing window on the device, so another phone can pair with
+    /// it without a gesture at the device itself.
+    ///
+    /// Nothing on screen changes: the window is live state with no property
+    /// behind it, and a device that could not open one says so rather than
+    /// leaving the operator to guess from a count that did not move.
+    func startBluetoothPairing() async {
+        await run { [self] in
+            try await management.manageBluetooth(address, .startPairing)
+        }
+    }
+
+    /// Forget every host paired with the device, along with its pairing PIN.
+    ///
+    /// The bond count on screen is stale the moment this returns, and on a
+    /// local link the value the device pushes back cannot arrive — clearing
+    /// bonds drops the very link it would arrive on. Refresh the reading
+    /// from what the command means rather than from what the device says
+    /// next, so the screen is not left reporting hosts that no longer exist.
+    func clearBluetoothPairings() async {
+        await run { [self] in
+            try await management.manageBluetooth(address, .clearBonds)
+        }
+        guard problem == nil else { return }
+        await absorb(
+            UlcpPropertyPushRecord(propertyId: ulcpProperties.bleBondCount, value: Data([0]))
+        )
     }
 
     /// Return the device to a blank factory state.

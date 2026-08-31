@@ -228,6 +228,11 @@ struct ManageDeviceCategory: Identifiable {
             symbol: "clock"
         ) { model, _ in AnyView(RemoteTimeScreen(model: model)) },
         ManageDeviceCategory(
+            category: .bluetooth,
+            title: "Bluetooth",
+            symbol: "dot.radiowaves.left.and.right"
+        ) { model, _ in AnyView(RemoteBluetoothScreen(model: model)) },
+        ManageDeviceCategory(
             category: .repeater,
             title: "Repeater",
             symbol: "arrow.triangle.branch"

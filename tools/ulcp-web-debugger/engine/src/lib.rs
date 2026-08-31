@@ -74,6 +74,7 @@ pub fn web_sim_config() -> umsh_ulcp_simdev::SessionConfig {
         // reachability switch the debugger can flip, which is the whole
         // of what the capability claims.
         ble: true,
+        ble_pairing: true,
         // The simulator restarts by rebuilding its session, which is
         // near enough a power cycle for the debugger to exercise.
         reboot: true,

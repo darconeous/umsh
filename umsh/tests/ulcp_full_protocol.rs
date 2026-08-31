@@ -82,6 +82,7 @@ fn session_config() -> SessionConfig {
         // against the real session too.
         illuminance: true,
         ble: true,
+        ble_pairing: true,
         reboot: true,
         mac_node: true,
     }
@@ -110,9 +111,15 @@ struct SimDevice {
 }
 
 impl SimDevice {
+    /// Bonds this simulated transport pretends to be holding, so a wipe
+    /// has something to remove.
+    const BONDS: u8 = 2;
+
     fn new() -> Arc<Mutex<Self>> {
+        let mut session = Session::new(session_config(), Status::RESET_POWER_ON, engine());
+        session.set_ble_bond_count(Self::BONDS, &mut |_| {});
         Arc::new(Mutex::new(Self {
-            session: Session::new(session_config(), Status::RESET_POWER_ON, engine()),
+            session,
             out: VecDeque::new(),
             air: Vec::new(),
             snapshot: None,
@@ -128,7 +135,11 @@ impl SimDevice {
     /// identity installed and the saved snapshot restored, before any
     /// host command is served.
     fn boot(&mut self) {
+        // Bonds live in a journal of their own, so a reboot finds exactly
+        // the ones it left — including none, after a wipe.
+        let bonds = self.session.ble_bond_count();
         self.session = Session::new(session_config(), Status::RESET_POWER_ON, engine());
+        self.session.set_ble_bond_count(bonds, &mut |_| {});
         if let Some((_, public)) = self.identity {
             self.session.set_boot_identity(public);
         }
@@ -203,6 +214,14 @@ impl SimDevice {
             }
             Some(Effect::SetPairingPin { tid, .. }) => {
                 self.session.respond_pin_set(tid, Ok(()), &mut emit);
+            }
+            Some(Effect::BleClearBonds { tid }) => {
+                self.session.set_ble_bond_count(0, &mut emit);
+                self.session.respond_ble_clear_bonds(tid, Ok(()), &mut emit);
+            }
+            Some(Effect::BleStartPairing { tid }) => {
+                self.session
+                    .respond_ble_start_pairing(tid, Ok(()), &mut emit);
             }
             Some(Effect::ReadTime { tid }) => {
                 self.session.respond_time(tid, self.epoch, &mut emit);
@@ -940,6 +959,49 @@ async fn an_ordered_write_sequence_stops_at_its_first_failure() {
             .await
             .unwrap(),
         vec![5]
+    );
+}
+
+/// The bond commands answer with a status, and clearing bonds moves the
+/// count the device reports. Unlike a reset there is no silence to
+/// interpret: what the device did is what it says.
+#[tokio::test]
+async fn bonds_are_cleared_and_the_count_follows() {
+    let sim = SimDevice::new();
+    let mut radio = attached_host(&sim).await;
+
+    assert_eq!(
+        radio
+            .get_prop(umsh_ulcp::ids::prop::BLE_BOND_COUNT)
+            .await
+            .unwrap(),
+        vec![2],
+        "the simulator starts with hosts to forget"
+    );
+
+    assert!(
+        radio.ble_start_pairing().await.unwrap(),
+        "the simulator advertises CAP_BLE_PAIRING"
+    );
+    assert!(radio.ble_clear_bonds().await.unwrap());
+    assert_eq!(
+        radio
+            .get_prop(umsh_ulcp::ids::prop::BLE_BOND_COUNT)
+            .await
+            .unwrap(),
+        vec![0],
+        "the count is what proves the wipe ran"
+    );
+
+    // Bonds are transport state, not protocol state: a reset does not
+    // bring back hosts the device was told to forget.
+    radio.reset().await.unwrap();
+    assert_eq!(
+        radio
+            .get_prop(umsh_ulcp::ids::prop::BLE_BOND_COUNT)
+            .await
+            .unwrap(),
+        vec![0]
     );
 }
 

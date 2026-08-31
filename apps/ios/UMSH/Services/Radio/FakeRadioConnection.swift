@@ -461,6 +461,16 @@ actor FakeRadioConnection: RadioConnection {
         try await answerAsIfOverTheAir()
     }
 
+    func manageRemoteBluetooth(
+        peerAddress: String,
+        command: MobileMeshBleCommand
+    ) async throws {
+        try await answerAsIfOverTheAir()
+        if command == .clearBonds {
+            managedDevice.values[ulcpProperties.bleBondCount] = Data([0])
+        }
+    }
+
     // MARK: - Managing the staging companion itself
 
     /// The staging companion answers the local management path from the
@@ -671,6 +681,18 @@ actor FakeRadioConnection: RadioConnection {
         // the radio is away. Nothing staged is erased — that is the whole
         // difference between this and the factory reset above.
         publish(.disconnected)
+    }
+
+    func clearBluetoothBonds() async throws {
+        // The real radio answers before it drops the bonds, so the staged
+        // one answers and stays up: the disconnect that follows on
+        // hardware is the transport's doing, not this command's.
+        managedDevice.values[ulcpProperties.bleBondCount] = Data([0])
+    }
+
+    func startBluetoothPairing() async throws {
+        // A window nothing can walk through, which is the whole of what a
+        // staged radio can offer: no bond is created, so the count holds.
     }
 
     func setAlert(_ state: RadioAlertState) async throws {
@@ -889,6 +911,10 @@ struct FakeManagedDevice: Sendable {
             id.startupBeacon: Data([1]),
             id.gnssEnabled: Data([1]),
             id.gnssTimeTrust: Data([1]),
+            id.bleEnabled: Data([1]),
+            // Two paired phones, so Clear Pairings has something to say
+            // it is forgetting.
+            id.bleBondCount: Data([2]),
             // A clock a few seconds behind the phone's, so the Time screen
             // has a drift to state, and Pacific daylight time to state it in.
             id.time: UInt32(Date.now.timeIntervalSince1970 - 4).littleEndianData,
@@ -928,11 +954,11 @@ struct FakeManagedDevice: Sendable {
     /// (36), device identity (37), device name (38), battery (39),
     /// repeater (40), identity (41), alert (42), administrators (43),
     /// clock (44), receiver (45), advertisement (46), batched commands
-    /// (49), restart (51), and the LoRa modem (515, which needs two PUI
-    /// octets).
+    /// (49), Bluetooth (50), restart (51), bond management (52), and the
+    /// LoRa modem (515, which needs two PUI octets).
     private static let capabilities = Data([
-        0x10, 0x24, 0x25, 0x26, 0x27, 0x28, 0x29, 0x2A, 0x2B, 0x2C, 0x2D, 0x2E, 0x31, 0x33,
-        0x83, 0x04,
+        0x10, 0x24, 0x25, 0x26, 0x27, 0x28, 0x29, 0x2A, 0x2B, 0x2C, 0x2D, 0x2E, 0x31, 0x32,
+        0x33, 0x34, 0x83, 0x04,
     ])
 }
 
