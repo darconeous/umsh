@@ -83,6 +83,7 @@ pub const fn property_name(key: u32) -> Option<&'static str> {
         prop::BLE_ENABLED => "PROP_BLE_ENABLED",
         prop::BLE_BOND_COUNT => "PROP_BLE_BOND_COUNT",
         prop::BLE_LINK => "PROP_BLE_LINK",
+        prop::BLE_PAIRING => "PROP_BLE_PAIRING",
         _ => return None,
     })
 }
@@ -160,6 +161,7 @@ pub const PROPERTIES: &[u32] = &[
     prop::BLE_ENABLED,
     prop::BLE_BOND_COUNT,
     prop::BLE_LINK,
+    prop::BLE_PAIRING,
 ];
 
 /// How a property's octets are meant to be read.
@@ -261,7 +263,7 @@ pub const fn property_type(key: u32) -> Option<PropertyType> {
         prop::TZ_OFFSET => I16,
         prop::GNSS_IDENT_UPDATE => Bool,
         prop::GNSS_IDENT_PRECISION => U8,
-        prop::GNSS_TIME_TRUST | prop::BLE_ENABLED => Bool,
+        prop::GNSS_TIME_TRUST | prop::BLE_ENABLED | prop::BLE_PAIRING => Bool,
         prop::BLE_BOND_COUNT | prop::BLE_LINK => U8,
         _ => return None,
     })
@@ -322,8 +324,7 @@ impl fmt::Display for FrameDescription<'_> {
             | Cmd::Restore
             | Cmd::FactoryReset
             | Cmd::Reboot
-            | Cmd::BleClearBonds
-            | Cmd::BleStartPairing => {
+            | Cmd::BleClearBonds => {
                 write!(out, "{command:?} tid={tid}")
             }
             Cmd::PropGet
@@ -551,6 +552,12 @@ mod tests {
         assert_eq!(property_type(prop::BLE_BOND_COUNT), Some(PropertyType::U8));
         assert_eq!(property_name(prop::BLE_LINK), Some("PROP_BLE_LINK"));
         assert_eq!(property_type(prop::BLE_LINK), Some(PropertyType::U8));
+        assert_eq!(property_name(prop::BLE_PAIRING), Some("PROP_BLE_PAIRING"));
+        assert_eq!(
+            property_type(prop::BLE_PAIRING),
+            Some(PropertyType::Bool),
+            "the window is a state you set, not an act you request"
+        );
         assert_eq!(capability_name(cap::BLE), Some("BLE"));
         assert_eq!(capability_name(cap::BLE + 2), None);
     }

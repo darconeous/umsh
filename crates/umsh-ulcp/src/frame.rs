@@ -114,13 +114,10 @@ pub enum Cmd {
     /// that sent the command. Requires `CAP_BLE`; a device that does not
     /// manage its own bonds answers `STATUS_UNIMPLEMENTED`.
     BleClearBonds = 17,
-    /// Open a pairing window (host to device) so an unbonded host may pair
-    /// without a physical gesture at the device. The window closes on a new
-    /// bond, on a bonded host connecting, or on a timeout of the device's
-    /// choosing. Requires `CAP_BLE`; a device that does not manage its own
-    /// bonds answers `STATUS_UNIMPLEMENTED`, and one that cannot open a
-    /// window right now answers `STATUS_INVALID_STATE`.
-    BleStartPairing = 18,
+    // 18 briefly held CMD_BLE_START_PAIRING; the pairing window is
+    // `PROP_BLE_PAIRING` now. A window that can be opened but not closed
+    // or observed was half a control, and only a property can publish
+    // the window closing on its own.
     /// Get several property values (host to device). Requires
     /// `CAP_CMD_MULTI`.
     PropMultiGet = 21,
@@ -153,7 +150,6 @@ impl Cmd {
             15 => Some(Self::FactoryReset),
             16 => Some(Self::Reboot),
             17 => Some(Self::BleClearBonds),
-            18 => Some(Self::BleStartPairing),
             21 => Some(Self::PropMultiGet),
             22 => Some(Self::PropMultiSet),
             23 => Some(Self::PropAre),
@@ -585,12 +581,6 @@ pub fn ble_clear_bonds(buf: &mut [u8], tid: u8) -> Result<usize, WriteError> {
     Ok(FrameWriter::new(buf, tid, Cmd::BleClearBonds)?.finish())
 }
 
-/// Encode a `CMD_BLE_START_PAIRING` frame (no payload). The device answers
-/// once the pairing window is open, or refuses if it cannot open one.
-pub fn ble_start_pairing(buf: &mut [u8], tid: u8) -> Result<usize, WriteError> {
-    Ok(FrameWriter::new(buf, tid, Cmd::BleStartPairing)?.finish())
-}
-
 /// Encode a `CMD_RESTORE` frame (no payload).
 pub fn restore(buf: &mut [u8], tid: u8) -> Result<usize, WriteError> {
     Ok(FrameWriter::new(buf, tid, Cmd::Restore)?.finish())
@@ -814,18 +804,18 @@ mod tests {
 
     #[test]
     fn unknown_command_is_well_formed() {
-        let frame = Frame::parse(&[0x81, 0x13]).unwrap();
-        assert_eq!(frame.cmd, 19);
+        let frame = Frame::parse(&[0x81, 0x12]).unwrap();
+        assert_eq!(frame.cmd, 18);
         assert_eq!(frame.command(), None);
     }
 
     #[test]
     fn every_assigned_command_round_trips() {
-        for id in (0..=18u8).chain(21..=23) {
+        for id in (0..=17u8).chain(21..=23) {
             let cmd = Cmd::from_u8(id).unwrap_or_else(|| panic!("command {id} unassigned"));
             assert_eq!(cmd as u8, id);
         }
-        for id in (19..=20u8).chain(24..=127) {
+        for id in (18..=20u8).chain(24..=127) {
             assert_eq!(Cmd::from_u8(id), None, "command {id} should be unassigned");
         }
     }
@@ -888,7 +878,6 @@ mod tests {
             (factory_reset, Cmd::FactoryReset),
             (reboot, Cmd::Reboot),
             (ble_clear_bonds, Cmd::BleClearBonds),
-            (ble_start_pairing, Cmd::BleStartPairing),
         ] {
             let len = encode(&mut buf, 2).unwrap();
             assert_eq!(len, 2);

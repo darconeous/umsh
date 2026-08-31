@@ -62,10 +62,6 @@ protocol RadioConnection: AnyObject, Sendable {
     /// window — so returning normally means it was done, and the
     /// disconnect that follows is expected rather than a failure.
     func clearBluetoothBonds() async throws
-    /// Open a pairing window on the radio (`CMD_BLE_START_PAIRING`) so
-    /// another phone can pair with it without a gesture at the radio.
-    /// Existing bonds, this phone's included, are untouched.
-    func startBluetoothPairing() async throws
     /// Start or stop the radio's locate alert (`PROP_ALERT`) so a
     /// misplaced radio announces itself. What the radio does is up to its
     /// hardware — a buzzer, an indicator LED, or both — and the alert
@@ -222,15 +218,12 @@ protocol RadioConnection: AnyObject, Sendable {
         peerAddress: String,
         scope: MobileMeshResetScope
     ) async throws
-    /// Manage a device's Bluetooth bonds across the mesh. Unlike the
-    /// resets above these are answered, so returning means the device
-    /// said what it did; an administrator addresses the device's node
-    /// rather than one of its Bluetooth hosts, so even clearing bonds
-    /// leaves this exchange intact.
-    func manageRemoteBluetooth(
-        peerAddress: String,
-        command: MobileMeshBleCommand
-    ) async throws
+    /// Clear a device's Bluetooth bonds across the mesh. Unlike the
+    /// resets above this is answered, so returning means the device said
+    /// it did it; an administrator addresses the device's node rather
+    /// than one of its Bluetooth hosts, so even clearing bonds leaves
+    /// this exchange intact.
+    func clearRemoteBluetoothBonds(peerAddress: String) async throws
     /// Read named properties from the companion radio itself, over the
     /// local link, and answer with what it said about each — values and
     /// refusals alike. The local counterpart of `fetchRemoteProperties`,

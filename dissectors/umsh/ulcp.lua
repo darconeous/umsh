@@ -21,7 +21,6 @@ local COMMANDS = {
   [15] = "CMD_FACTORY_RESET",
   [16] = "CMD_REBOOT",
   [17] = "CMD_BLE_CLEAR_BONDS",
-  [18] = "CMD_BLE_START_PAIRING",
   [21] = "CMD_PROP_MULTI_GET",
   [22] = "CMD_PROP_MULTI_SET",
   [23] = "CMD_PROP_ARE",
@@ -35,7 +34,7 @@ M.COMMANDS = COMMANDS
 M.COMMAND_TO_DEVICE = {
   [0] = true, [1] = true, [2] = true, [3] = true, [4] = true, [5] = true,
   [9] = true, [11] = true, [12] = true, [13] = true, [14] = true,
-  [15] = true, [16] = true, [17] = true, [18] = true,
+  [15] = true, [16] = true, [17] = true,
   [21] = true, [22] = true,
 }
 M.COMMAND_TO_HOST = {
@@ -78,6 +77,7 @@ local PROPERTIES = {
   [4871] = "PROP_BLE_ENABLED",
   [4872] = "PROP_BLE_BOND_COUNT",
   [4873] = "PROP_BLE_LINK",
+  [4874] = "PROP_BLE_PAIRING",
 }
 
 local STREAMS = {[113] = "STR_PHY_RAW"}

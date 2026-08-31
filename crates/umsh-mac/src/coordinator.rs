@@ -1244,6 +1244,32 @@ impl<
         Ok(wrote)
     }
 
+    /// Persist every RX frame-counter boundary that has advanced past what
+    /// the store holds, regardless of how little it advanced.
+    ///
+    /// The block-cadence persistence above trades a bounded replay window
+    /// for flash wear: up to [`COUNTER_PERSIST_BLOCK_SIZE`] frames per peer
+    /// ride in RAM only, and an abrupt power loss re-opens that window. A
+    /// *deliberate* restart must not: a command the device executed and
+    /// then rebooted on would be executed again when the sender's retry
+    /// lands inside the stale window. Call this before any intentional
+    /// reset so the boundary on flash is the boundary that was live.
+    pub async fn persist_all_rx_counters(
+        &mut self,
+    ) -> Result<usize, <P::CounterStore as CounterStore>::Error> {
+        for slot in self.identities.iter_mut() {
+            let Some(slot) = slot.as_mut() else {
+                continue;
+            };
+            for (_, state) in slot.peer_crypto_mut().iter_mut() {
+                if state.replay_window.last_accepted != state.persisted_rx_counter {
+                    state.needs_rx_persist = true;
+                }
+            }
+        }
+        self.service_rx_counter_persistence().await
+    }
+
     /// Load persisted RX frame-counter boundaries for all registered peers and
     /// store them in [`PeerInfo::initial_rx_counter`].
     ///

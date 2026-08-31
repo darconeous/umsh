@@ -136,6 +136,11 @@ pub enum InEvent {
     /// the capability behind it, so a board may report the press
     /// unconditionally.
     Toggle(Setting),
+    /// The hold-through-power-on ceremony fired: `PROP_BLE_ENABLED` must
+    /// end up on, whatever it was. Not a toggle — the same gesture on a
+    /// device already reachable would otherwise strand it — and ignored
+    /// entirely when Bluetooth is already on or the device has none.
+    ForceBluetoothOn,
 }
 
 /// A device-domain switch a board may offer as a control the operator
@@ -330,6 +335,11 @@ pub enum PublishEvent {
     /// other end of it. Connecting and walking away both happen below the
     /// session, so this is the only way `PROP_BLE_LINK` learns it moved.
     BleLink(umsh_ulcp::ble::BleLinkState),
+    /// Whether a pairing window is open. The window closes on its own —
+    /// a new bond, a timeout — and opens from the device's own menu and
+    /// boot gesture too, so `PROP_BLE_PAIRING` moves without the host
+    /// asking more often than because it asked.
+    BlePairing(bool),
 }
 
 /// Board couplings of the session driver. Everything the loop needs from
@@ -478,11 +488,13 @@ pub trait DeviceEnv {
     async fn clear_ble_bonds(&mut self) -> bool {
         false
     }
-    /// `CMD_BLE_START_PAIRING`: open a pairing window so an unbonded host
-    /// may pair. `false` when no window can be opened — the board is
-    /// locked out after repeated pairing failures, or it has nowhere to
-    /// put another bond.
-    async fn start_ble_pairing(&mut self) -> bool {
+    /// A `PROP_BLE_PAIRING` write: open (or renew) the pairing window, or
+    /// close it. `false` when the requested state cannot be entered —
+    /// only ever an open the board must refuse, because it is locked out
+    /// after repeated pairing failures or its Bluetooth is off; a close
+    /// always succeeds.
+    async fn set_ble_pairing(&mut self, open: bool) -> bool {
+        let _ = open;
         false
     }
     /// `CMD_FACTORY_RESET`: erase EVERY piece of persistent state the
@@ -498,6 +510,16 @@ pub trait DeviceEnv {
     /// journal intact. Never returns. Only reached on a board whose
     /// `SessionConfig::reboot` advertises the capability, so there is no
     /// default — a board that sets the flag owes an implementation.
+    ///
+    /// A board with a mesh node owes it two courtesies before the reset
+    /// (`device_node::quiesce_for_reboot` provides both): airing the MAC
+    /// acknowledgment of the frame that carried the command — a
+    /// reset-class command is answered by that acknowledgment and
+    /// nothing else — and forcing the frame-counter boundaries to
+    /// durable storage. Skipping the flush re-opens the replay window
+    /// the command was admitted through, and the administrator's
+    /// retries of that same command are then accepted again after boot:
+    /// one reboot per retry.
     async fn reboot(&mut self) -> !;
     /// Publish the transport-arbitration advertising policy (a wired
     /// attach suppresses BLE advertising). Diagnostic builds may
@@ -779,7 +801,7 @@ async fn apply_effect<A, S, const TXQ: usize, M, const RX: usize, const TX: usiz
         | Some(Effect::SampleGnss { .. })
         | Some(Effect::SetPairingPin { .. })
         | Some(Effect::BleClearBonds { .. })
-        | Some(Effect::BleStartPairing { .. })
+        | Some(Effect::SetBlePairing { .. })
         | Some(Effect::DrainQueue)
         | Some(Effect::SaveSnapshot { .. })
         | Some(Effect::ClearSaved { .. })
@@ -1093,15 +1115,15 @@ async fn serve_frame<A, S, const TXQ: usize, M, const RX: usize, const TX: usize
                 );
                 emitter.flush(sink).await;
             }
-            Some(Effect::BleStartPairing { tid }) => {
-                let opened = env.start_ble_pairing().await;
+            Some(Effect::SetBlePairing { tid, open }) => {
+                let applied = env.set_ble_pairing(open).await;
                 env.trace(format_args!(
-                    "CMD_BLE_START_PAIRING: window {}",
-                    if opened { "open" } else { "refused" }
+                    "PROP_BLE_PAIRING <- {open}: {}",
+                    if applied { "applied" } else { "refused" }
                 ));
-                session.respond_ble_start_pairing(
+                session.respond_ble_pairing(
                     tid,
-                    opened.then_some(()).ok_or(()),
+                    applied.then_some(open).ok_or(()),
                     &mut |frame: &[u8]| emitter.push(frame),
                 );
                 emitter.flush(sink).await;
@@ -1392,6 +1414,31 @@ where
                     ));
                 }
             }
+            Either4::First(InEvent::ForceBluetoothOn) => {
+                if session
+                    .force_ble_on(&mut |frame: &[u8]| emitter.push(frame))
+                    .is_some()
+                {
+                    emitter
+                        .flush(&mut ReplySink::Transport {
+                            destination: arbitration.destination(),
+                            out: rt.out,
+                        })
+                        .await;
+                    // Persisted like a toggle: the gesture is the device's
+                    // own control for the property, and a radio rescued by
+                    // it should stay rescued across the next reboot.
+                    if session.saved_status() != SavedStatus::None
+                        && let Some(len) = session.encode_snapshot(&mut snapshot_buf)
+                        && env.persist_snapshot(&snapshot_buf[..len]).await.is_ok()
+                    {
+                        session.note_snapshot_saved();
+                    }
+                    crate::log::debug_log(format_args!(
+                        "ulcp: Bluetooth forced ON by the power-on gesture"
+                    ));
+                }
+            }
             Either4::First(InEvent::Frame(transport, frame_bytes)) => {
                 if arbitration.accepts_frame(transport) {
                     let mut sink = ReplySink::Transport {
@@ -1504,6 +1551,9 @@ where
                     }
                     PublishEvent::BleLink(state) => {
                         session.set_ble_link(state, emit);
+                    }
+                    PublishEvent::BlePairing(open) => {
+                        session.set_ble_pairing(open, emit);
                     }
                     PublishEvent::IdentityFix(location, altitude_m) => {
                         // The session clamps, compares, and bumps the

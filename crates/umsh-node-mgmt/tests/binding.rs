@@ -245,9 +245,9 @@ impl<const PAYLOAD: usize> Device<PAYLOAD> {
                             emitted.push(bytes.to_vec())
                         })
                 }
-                Effect::BleStartPairing { tid } => {
+                Effect::SetBlePairing { tid, open } => {
                     self.session
-                        .respond_ble_start_pairing(tid, Ok(()), &mut |bytes: &[u8]| {
+                        .respond_ble_pairing(tid, Ok(open), &mut |bytes: &[u8]| {
                             emitted.push(bytes.to_vec())
                         })
                 }
@@ -782,10 +782,11 @@ fn a_reset_is_answered_by_nothing() {
     assert_eq!(device.local_get(prop::DEV_ADMINS), ADMIN_KEY.to_vec());
 }
 
-/// The bond commands are not reset-class: an administrator hears what
-/// they did. Clearing bonds over the mesh addresses the device's node,
-/// not one of its Bluetooth hosts, so the link that carried the command
-/// survives it and the reply arrives.
+/// Bond management is not reset-class: an administrator hears what it
+/// did. Clearing bonds over the mesh addresses the device's node, not
+/// one of its Bluetooth hosts, so the link that carried the command
+/// survives it and the reply arrives — and the pairing window is an
+/// ordinary property write whose reply quotes the state back.
 #[test]
 fn an_administrator_manages_bonds_and_is_told_the_outcome() {
     let mut device = managed();
@@ -795,10 +796,10 @@ fn an_administrator_manages_bonds_and_is_told_the_outcome() {
     let read = converse(&mut device, &buf[..len], 1);
     assert_eq!(value_of(&read.reply), vec![0]);
 
-    let len = frame::ble_start_pairing(&mut buf, 0).unwrap();
+    let len = frame::prop_set(&mut buf, 0, prop::BLE_PAIRING, &[1]).unwrap();
     let pairing = converse(&mut device, &buf[..len], 2);
     assert!(matches!(pairing.outcome, Outcome::Replied { .. }));
-    assert_eq!(status_of(&pairing.reply), Status::OK);
+    assert_eq!(value_of(&pairing.reply), vec![1]);
 
     let len = frame::ble_clear_bonds(&mut buf, 0).unwrap();
     let cleared = converse(&mut device, &buf[..len], 3);

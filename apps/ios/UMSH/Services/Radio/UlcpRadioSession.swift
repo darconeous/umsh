@@ -945,14 +945,11 @@ class UlcpRadioSession: NSObject, @unchecked Sendable {
         }
     }
 
-    func manageRemoteBluetooth(
-        peerAddress: String,
-        command: MobileMeshBleCommand
-    ) async throws {
+    func clearRemoteBluetoothBonds(peerAddress: String) async throws {
         let event = try await performManagement { session in
-            try session.beginManagementBle(peerAddress: peerAddress, command: command)
+            try session.beginManagementBleClearBonds(peerAddress: peerAddress)
         }
-        // Unlike a reset these always answer, so an absent status is a
+        // Unlike a reset this always answers, so an absent status is a
         // device that did not do what was asked rather than one too busy
         // to say.
         try Self.requireSuccess(event.statusCode)
@@ -1103,14 +1100,6 @@ class UlcpRadioSession: NSObject, @unchecked Sendable {
         // move is pairing with it again.
         let event = try await performLocalManagement { session in
             try session.beginBleClearBonds()
-        }
-        try Self.requireSuccess(event.statusCode)
-    }
-
-    func startBluetoothPairing() async throws {
-        Self.logger.notice("action: user opened a pairing window on the radio")
-        let event = try await performLocalManagement { session in
-            try session.beginBleStartPairing()
         }
         try Self.requireSuccess(event.statusCode)
     }

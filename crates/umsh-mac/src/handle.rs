@@ -124,6 +124,31 @@ impl<
             .await
     }
 
+    /// Persist every frame-counter boundary — TX reservations and every
+    /// peer's RX replay boundary — to durable storage, now.
+    ///
+    /// The pump persists on a block cadence, which is the right trade
+    /// against flash wear right up until the device is about to reset on
+    /// purpose. Call this before a deliberate reboot: a replay boundary
+    /// left in RAM is a command the device will happily execute again
+    /// when the sender's retry arrives after boot.
+    pub async fn flush_frame_counters(&self) -> Result<(), ()> {
+        let mut mac = self.mac.borrow_mut().await;
+        let tx = mac.service_counter_persistence().await.map(|_| ());
+        let rx = mac.persist_all_rx_counters().await.map(|_| ());
+        tx.and(rx).map_err(|_| ())
+    }
+
+    /// Whether the transmit queue is empty.
+    ///
+    /// The coordinator borrow is held across a frame's whole time on the
+    /// air, so an answer of `true` from this method means every queued
+    /// frame — a pending MAC acknowledgment above all — has finished
+    /// transmitting, not merely left the queue.
+    pub async fn tx_queue_empty(&self) -> bool {
+        self.mac.borrow().await.tx_queue().is_empty()
+    }
+
     /// Load persisted RX counter boundaries for all registered peers from
     /// durable storage, storing them in each peer's [`PeerInfo::initial_rx_counter`].
     ///

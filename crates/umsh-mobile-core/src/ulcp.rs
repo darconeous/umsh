@@ -1341,14 +1341,6 @@ impl MobileUlcpSession {
         self.begin_ble_command(ulcp_ble_clear_bonds)
     }
 
-    /// Open a pairing window (`CMD_BLE_START_PAIRING`) so another host
-    /// can pair without a gesture at the radio. `STATUS_INVALID_STATE`
-    /// means no window could be opened — the radio is locked out after
-    /// repeated pairing failures, or it has nowhere to put another bond.
-    pub fn begin_ble_start_pairing(&self) -> Result<UlcpSessionUpdateRecord, MobileError> {
-        self.begin_ble_command(ulcp_ble_start_pairing)
-    }
-
     /// Store one channel key on the radio's device identity
     /// (`PROP_DEV_CHANNEL_KEYS`), then persist with a chained `CMD_SAVE` when
     /// the device can.
@@ -3204,6 +3196,7 @@ pub struct UlcpManagedPropertyIds {
     pub ble_enabled: u32,
     pub ble_bond_count: u32,
     pub ble_link: u32,
+    pub ble_pairing: u32,
     pub time: u32,
     pub tz_offset: u32,
     pub alert: u32,
@@ -3249,6 +3242,7 @@ pub fn ulcp_managed_property_ids() -> UlcpManagedPropertyIds {
         ble_enabled: prop::BLE_ENABLED,
         ble_bond_count: prop::BLE_BOND_COUNT,
         ble_link: prop::BLE_LINK,
+        ble_pairing: prop::BLE_PAIRING,
         time: prop::TIME,
         tz_offset: prop::TZ_OFFSET,
         alert: prop::ALERT,
@@ -3369,7 +3363,12 @@ pub fn ulcp_category_properties(
             // batch that is being sent anyway.
             when(
                 has(cap::BLE),
-                &[prop::BLE_ENABLED, prop::BLE_BOND_COUNT, prop::BLE_LINK],
+                &[
+                    prop::BLE_ENABLED,
+                    prop::BLE_BOND_COUNT,
+                    prop::BLE_LINK,
+                    prop::BLE_PAIRING,
+                ],
             );
         }
         UlcpManageCategory::Repeater => when(
@@ -3535,6 +3534,9 @@ pub struct UlcpDevicePropertiesRecord {
     /// when the question was asked over Bluetooth — the session asking is
     /// the session it reports.
     pub ble_link: Option<u8>,
+    /// Whether a pairing window is open. Read-write, and absent on a
+    /// device that does not manage its own bonds.
+    pub ble_pairing: Option<bool>,
     /// What the device's clock read when it answered. Present when the
     /// clock was asked about; the inner epoch is absent on a device that
     /// has not found the time.
@@ -3660,6 +3662,7 @@ pub fn inspect_ulcp_properties(
         ble_enabled: optional_value(at, prop::BLE_ENABLED, decode_bool),
         ble_bond_count: optional_value(at, prop::BLE_BOND_COUNT, decode_u8),
         ble_link: optional_value(at, prop::BLE_LINK, decode_u8),
+        ble_pairing: optional_value(at, prop::BLE_PAIRING, decode_bool),
         time: optional_value(at, prop::TIME, |value| {
             Ok::<UlcpTimeRecord, MobileError>(UlcpTimeRecord {
                 epoch_seconds: decode_optional(value, decode_u32)?,
@@ -3812,9 +3815,11 @@ pub fn ulcp_dirty_writes(
                 vec![precision]
             }
             prop::GNSS_TIME_TRUST => vec![desired.gnss_time_trust.ok_or_else(missing)? as u8],
-            // The bond count is read-only and has no arm here; only the
-            // reachability toggle is writable.
+            // The bond count and link state are read-only and have no
+            // arms here; the reachability and pairing-window toggles are
+            // what a phone can write.
             prop::BLE_ENABLED => vec![desired.ble_enabled.ok_or_else(missing)? as u8],
+            prop::BLE_PAIRING => vec![desired.ble_pairing.ok_or_else(missing)? as u8],
             // Empty clears the clock back to unknown, which is what a
             // device reports before its first fix.
             prop::TIME => desired
@@ -4764,15 +4769,6 @@ pub fn ulcp_reboot(transaction_id: u8) -> Result<Vec<u8>, MobileError> {
 pub fn ulcp_ble_clear_bonds(transaction_id: u8) -> Result<Vec<u8>, MobileError> {
     let mut output = [0; 2];
     let length = frame::ble_clear_bonds(&mut output, transaction_id)
-        .map_err(|_| MobileError::InvalidUlcpFrame)?;
-    Ok(output[..length].to_vec())
-}
-
-/// Encode a `CMD_BLE_START_PAIRING` request with the shared ULCP codec.
-#[uniffi::export]
-pub fn ulcp_ble_start_pairing(transaction_id: u8) -> Result<Vec<u8>, MobileError> {
-    let mut output = [0; 2];
-    let length = frame::ble_start_pairing(&mut output, transaction_id)
         .map_err(|_| MobileError::InvalidUlcpFrame)?;
     Ok(output[..length].to_vec())
 }
@@ -8337,7 +8333,12 @@ mod tests {
     /// the caps list decides is only whether there is a screen at all.
     #[test]
     fn the_bluetooth_screen_asks_for_everything_and_lets_the_device_refuse() {
-        let expected = vec![prop::BLE_ENABLED, prop::BLE_BOND_COUNT, prop::BLE_LINK];
+        let expected = vec![
+            prop::BLE_ENABLED,
+            prop::BLE_BOND_COUNT,
+            prop::BLE_LINK,
+            prop::BLE_PAIRING,
+        ];
         assert_eq!(
             ulcp_category_properties(UlcpManageCategory::Bluetooth, managed_capabilities())
                 .unwrap(),
@@ -8369,10 +8370,12 @@ mod tests {
             response(prop::BLE_ENABLED, &[1]),
             response(prop::BLE_BOND_COUNT, &[3]),
             response(prop::BLE_LINK, &[2]),
+            response(prop::BLE_PAIRING, &[1]),
         ]);
         assert_eq!(record.ble_enabled, Some(true));
         assert_eq!(record.ble_bond_count, Some(3));
         assert_eq!(record.ble_link, Some(2));
+        assert_eq!(record.ble_pairing, Some(true));
 
         // A device that answered the toggle but not the rest is a device
         // with a transport it does not manage, and the record says which
@@ -8392,6 +8395,18 @@ mod tests {
             )
             .unwrap(),
             vec![(prop::BLE_ENABLED, vec![0])]
+        );
+        assert_eq!(
+            dirty(
+                UlcpDevicePropertiesRecord {
+                    ble_pairing: Some(false),
+                    ..Default::default()
+                },
+                &[prop::BLE_PAIRING],
+            )
+            .unwrap(),
+            vec![(prop::BLE_PAIRING, vec![0])],
+            "the window is a toggle, closable from the same switch that opens it"
         );
         assert!(
             dirty(

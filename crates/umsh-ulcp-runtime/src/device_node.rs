@@ -1005,6 +1005,68 @@ pub async fn identity_profile_loop<CS: CounterStore + 'static>(node: DeviceNode<
 /// is single-executor `Rc`/`RefCell` state and cannot live in a `static`
 /// at all, and this is the same shape the pairing-PIN round trip already
 /// uses.
+static QUIESCE_REQUEST: Signal<NodeMutex, ()> = Signal::new();
+static QUIESCE_DONE: Signal<NodeMutex, ()> = Signal::new();
+
+/// How long a pending transmission may hold up a reboot.
+///
+/// Long enough for the MAC acknowledgment of the frame that carried the
+/// reboot command to win one CAD-free transmit slot even at the slowest
+/// spreading factor; short enough that a jammed channel cannot turn a
+/// reboot command into a device that never reboots.
+const QUIESCE_TX_DEADLINE: Duration = Duration::from_secs(3);
+
+/// Settle the mesh before a deliberate reset: let queued transmissions
+/// finish, then force every frame-counter boundary to flash.
+///
+/// A reboot commanded over the mesh has two obligations the reset itself
+/// would otherwise destroy. The MAC acknowledgment of the frame that
+/// carried the command is sitting in the TX queue — a reset-class command
+/// is answered by that acknowledgment and nothing else, so resetting
+/// first leaves the administrator retrying into silence. And the RX
+/// replay boundary that admitted the command is normally persisted only
+/// every persist-block of frames — resetting inside the block re-opens
+/// the window, and the administrator's retries of the very same command
+/// are then accepted again after boot, one reboot per retry.
+///
+/// The TX drain is bounded and best-effort — an unlucky channel loses the
+/// acknowledgment, which the sender's retry ladder is built for. The
+/// counter flush is not optional and happens last, so any frame accepted
+/// while the drain waited is inside the persisted boundary too.
+///
+/// A node that never came up has accepted nothing and holds no
+/// acknowledgment; the call returns immediately.
+pub async fn quiesce_for_reboot() {
+    if !NODE_UP.load(Ordering::Relaxed) {
+        return;
+    }
+    QUIESCE_DONE.reset();
+    QUIESCE_REQUEST.signal(());
+    QUIESCE_DONE.wait().await;
+}
+
+/// Answers [`QUIESCE_REQUEST`]; see [`quiesce_for_reboot`].
+pub async fn reboot_quiesce_loop<CS: CounterStore + 'static>(mac: DeviceNodeHandle<CS>) {
+    loop {
+        QUIESCE_REQUEST.wait().await;
+        let deadline = Instant::now() + QUIESCE_TX_DEADLINE;
+        while !mac.tx_queue_empty().await {
+            if Instant::now() >= deadline {
+                debug_log(format_args!("reboot quiesce: TX drain deadline expired"));
+                break;
+            }
+            Timer::after_millis(20).await;
+        }
+        if mac.flush_frame_counters().await.is_err() {
+            // Nothing to do but say so: the reboot must happen either
+            // way, and the sender's retries will at worst be absorbed by
+            // the (stale) persisted boundary plus the dedup cache.
+            debug_log(format_args!("reboot quiesce: counter flush FAILED"));
+        }
+        QUIESCE_DONE.signal(());
+    }
+}
+
 static IDENT_REQUEST: Signal<NodeMutex, ()> = Signal::new();
 static IDENT_RESPONSE: Signal<NodeMutex, Option<IdentityBlob>> = Signal::new();
 

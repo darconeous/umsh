@@ -131,9 +131,7 @@ mod firmware {
     use embassy_futures::join::join;
     #[cfg(feature = "dpad-nav")]
     use embassy_futures::select::select_array;
-    use embassy_futures::select::{Either, Either3, select, select3};
-    #[cfg(any(feature = "has-display", feature = "button-nav", feature = "t1000e"))]
-    use embassy_futures::select::{Either4, select4};
+    use embassy_futures::select::{Either, Either3, Either4, select, select3, select4};
     use embassy_nrf::bind_interrupts;
     #[cfg(feature = "cap-gnss")]
     use embassy_nrf::buffered_uarte::BufferedUarte;
@@ -1093,7 +1091,7 @@ mod firmware {
     static BLE_STORE_FAULT_ARMED: AtomicBool = AtomicBool::new(false);
     static PAIRING_CONFIG_CH: Channel<ThreadModeRawMutex, Option<u32>, 1> = Channel::new();
     static PAIRING_CONFIG_ACK: Signal<ThreadModeRawMutex, bool> = Signal::new();
-    static PAIRING_MODE_REQUEST: Signal<ThreadModeRawMutex, ()> = Signal::new();
+    static PAIRING_MODE_REQUEST: Signal<ThreadModeRawMutex, bool> = Signal::new();
     static PAIRING_TIMER_RESET: Signal<ThreadModeRawMutex, ()> = Signal::new();
     static BLE_WIPE_REQUEST: Signal<ThreadModeRawMutex, ()> = Signal::new();
     /// Outcomes for the two requests above, for a caller that has someone
@@ -1108,6 +1106,12 @@ mod firmware {
     /// `PROP_BLE_LINK` follows a host arriving or walking away without
     /// polling.
     static BLE_LINK_CHANGED: Signal<ThreadModeRawMutex, BleLinkState> = Signal::new();
+    /// The pairing window moved, carrying the new state to
+    /// `publish_event` so `PROP_BLE_PAIRING` follows the window without
+    /// polling — including the transitions nobody commanded (a timeout,
+    /// the boot-time window) and the boot seeding of the session's
+    /// mirror.
+    static BLE_PAIRING_CHANGED: Signal<ThreadModeRawMutex, bool> = Signal::new();
     #[cfg(feature = "has-display")]
     static UI_INPUT_CH: Channel<ThreadModeRawMutex, UiInput, 8> = Channel::new();
     static UI_REFRESH: Signal<ThreadModeRawMutex, ()> = Signal::new();
@@ -1310,6 +1314,18 @@ mod firmware {
         ADV_ALLOWED.load(Ordering::Acquire) && BLE_ENABLED.load(Ordering::Acquire)
     }
 
+    /// Whether a pairing window is genuinely open, for everything that
+    /// shows one: the status page and the attention hold that keeps the
+    /// panel awake while a PIN might need reading.
+    ///
+    /// Gated on `PROP_BLE_ENABLED` because pairing mode is a property of
+    /// the running stack: nothing can pair through a transport that is
+    /// off, and a panel held awake for a window nobody can walk through
+    /// is a battery drain announcing a falsehood.
+    fn pairing_window_open() -> bool {
+        BLE_ENABLED.load(Ordering::Acquire) && PAIRING_MODE.load(Ordering::Acquire)
+    }
+
     /// Apply `PROP_BLE_ENABLED`.
     ///
     /// Reuses the advertising-policy path, which already stops the
@@ -1317,6 +1333,7 @@ mod firmware {
     /// the property requires and nothing more: bonds are untouched, so
     /// the host reconnects without pairing again when it comes back on.
     fn set_ble_enabled(enabled: bool) {
+        let window_was = pairing_window_open();
         if BLE_ENABLED.swap(enabled, Ordering::AcqRel) != enabled {
             debug_log(format_args!(
                 "ble reachability {}",
@@ -1324,6 +1341,12 @@ mod firmware {
             ));
             ADV_POLICY_CHANGED.signal(());
             UI_REFRESH.signal(());
+            // `PROP_BLE_PAIRING` reports the window through this gate, so
+            // flipping the transport can move the property too.
+            let window_now = pairing_window_open();
+            if window_was != window_now {
+                BLE_PAIRING_CHANGED.signal(window_now);
+            }
         }
     }
 
@@ -1333,6 +1356,20 @@ mod firmware {
     fn set_bond_count(count: u8) {
         if BLE_BOND_COUNT.swap(count, Ordering::AcqRel) != count {
             BLE_BOND_COUNT_CHANGED.signal(count);
+            UI_REFRESH.signal(());
+        }
+    }
+
+    /// Move the pairing window, waking anything that reports it. What is
+    /// published is `pairing_window_open()` — the window as the property
+    /// defines it, gated on `PROP_BLE_ENABLED` — so the session's mirror
+    /// and the panel read the same fact.
+    fn set_pairing_mode(open: bool) {
+        let was = pairing_window_open();
+        PAIRING_MODE.store(open, Ordering::Release);
+        let now = pairing_window_open();
+        if was != now {
+            BLE_PAIRING_CHANGED.signal(now);
             UI_REFRESH.signal(());
         }
     }
@@ -1389,9 +1426,17 @@ mod firmware {
     }
 
     fn publish_pairing_runtime(state: PairingRuntime) {
+        let window_was = pairing_window_open();
         PAIRING_MODE.store(state.pairing_mode, Ordering::Release);
         PAIRING_FAILURES.store(state.failures, Ordering::Release);
         PAIRING_LOCKED_OUT.store(state.locked_out, Ordering::Release);
+        // A pairing success or a bonded reconnect closes the window with
+        // no host asking, which is exactly what `PROP_BLE_PAIRING`
+        // promises to announce.
+        let window_now = pairing_window_open();
+        if window_was != window_now {
+            BLE_PAIRING_CHANGED.signal(window_now);
+        }
         UI_REFRESH.signal(());
     }
 
@@ -1647,22 +1692,26 @@ mod firmware {
         /// sources that do vary by board behind their own features.
         async fn publish_event(&mut self) -> driver::PublishEvent {
             loop {
-                let woke = select3(
+                let woke = select4(
                     self.sensor_event(),
                     BLE_BOND_COUNT_CHANGED.wait(),
                     BLE_LINK_CHANGED.wait(),
+                    BLE_PAIRING_CHANGED.wait(),
                 )
                 .await;
                 match woke {
-                    Either3::First(Some(event)) => return event,
+                    Either4::First(Some(event)) => return event,
                     // A reading this board could not reduce to its
                     // advertised field set; wait for the next one.
-                    Either3::First(None) => continue,
-                    Either3::Second(count) => {
+                    Either4::First(None) => continue,
+                    Either4::Second(count) => {
                         return driver::PublishEvent::BleBondCount(count);
                     }
-                    Either3::Third(state) => {
+                    Either4::Third(state) => {
                         return driver::PublishEvent::BleLink(state);
+                    }
+                    Either4::Fourth(open) => {
+                        return driver::PublishEvent::BlePairing(open);
                     }
                 }
             }
@@ -1682,9 +1731,19 @@ mod firmware {
             BLE_WIPE_ACK.wait().await
         }
 
-        async fn start_ble_pairing(&mut self) -> bool {
+        async fn set_ble_pairing(&mut self, open: bool) -> bool {
+            if !BLE_ENABLED.load(Ordering::Acquire) {
+                // Nothing can pair through a transport that is off, so a
+                // window cannot open — and closing one is trivially done
+                // without the stack's help, which matters because the
+                // task that would answer may be parked with the radio.
+                if !open {
+                    set_pairing_mode(false);
+                }
+                return !open;
+            }
             PAIRING_MODE_ACK.reset();
-            PAIRING_MODE_REQUEST.signal(());
+            PAIRING_MODE_REQUEST.signal(open);
             PAIRING_MODE_ACK.wait().await
         }
 
@@ -1703,6 +1762,12 @@ mod firmware {
             const NV_REGION_START: u32 = ble_store::PAGE0; // 0x000E_4000
             const NV_REGION_END: u32 = 0x000F_4000;
             debug_log(format_args!("FACTORY RESET: erasing NV region + reboot"));
+            // Commanded over the mesh, the MAC acknowledgment of the
+            // request is still in the TX queue; let it out so the
+            // administrator hears the command landed. The counter flush
+            // that rides along is erased two lines down, which is fine —
+            // a factory-fresh device has no admins left to replay at.
+            super::device_node::quiesce_for_reboot().await;
             {
                 let mut flash = self.proto_store.flash().lock().await;
                 let mut page = NV_REGION_START;
@@ -1719,6 +1784,13 @@ mod firmware {
         }
 
         async fn reboot(&mut self) -> ! {
+            // Settle the mesh first: air the MAC acknowledgment that
+            // answers a mesh-commanded reboot, and force the frame
+            // counters to flash. Without the flush, the boundary that
+            // admitted the reboot command dies with the RAM it lives in,
+            // and the administrator's retries are accepted again after
+            // boot — one reboot per retry.
+            super::device_node::quiesce_for_reboot().await;
             // Nothing is erased: every journal stays where it is and the
             // board remounts from it. Through `reset_to_app` rather than
             // a bare `sys_reset` so GPREGRET is cleared first — a stale
@@ -1870,7 +1942,7 @@ mod firmware {
             {
                 Either::First(()) => {
                     debug_log(format_args!("pairing window expired"));
-                    PAIRING_MODE.store(false, Ordering::Release);
+                    set_pairing_mode(false);
                     BLE_LED_MODE.store(0, Ordering::Release);
                     UI_REFRESH.signal(());
                     apply_pairing_gate(stack);
@@ -1942,11 +2014,33 @@ mod firmware {
                     ));
                     PAIRING_CONFIG_ACK.signal(result);
                 }
-                Either3::Second(()) => {
+                Either3::Second(false) => {
+                    debug_log(format_args!("pairing window closed on request"));
+                    set_pairing_mode(false);
+                    BLE_LED_MODE.store(0, Ordering::Release);
+                    UI_REFRESH.signal(());
+                    apply_pairing_gate(stack);
+                    // Closing always lands: there is no state the device
+                    // can be in where a window refuses to shut.
+                    PAIRING_MODE_ACK.signal(true);
+                }
+                Either3::Second(true) => {
                     debug_log(format_args!("pairing mode requested"));
-                    PAIRING_MODE.store(true, Ordering::Release);
-                    BLE_LED_MODE.store(1, Ordering::Release);
-                    let unavailable = PAIRING_LOCKED_OUT.load(Ordering::Acquire)
+                    let locked_out = PAIRING_LOCKED_OUT.load(Ordering::Acquire);
+                    // A window that cannot be walked through is not a
+                    // window: while locked out nothing is opened and the
+                    // caller is told so rather than left waiting out a
+                    // timeout — and `PROP_BLE_PAIRING` never reports a
+                    // window nothing can use. A full store is not that
+                    // case — enrollment at capacity evicts rather than
+                    // refuses, so it warns the operator without failing
+                    // the request.
+                    if !locked_out {
+                        set_pairing_mode(true);
+                        BLE_LED_MODE.store(1, Ordering::Release);
+                        PAIRING_TIMER_RESET.signal(());
+                    }
+                    let unavailable = locked_out
                         || usize::from(BLE_BOND_COUNT.load(Ordering::Acquire))
                             >= ble_store::MAX_BONDS;
                     UI_NOTICE.signal(if unavailable {
@@ -1954,15 +2048,8 @@ mod firmware {
                     } else {
                         UiNotice::PairingStarted
                     });
-                    PAIRING_TIMER_RESET.signal(());
                     apply_pairing_gate(stack);
-                    // A window that cannot be walked through is not a
-                    // window: a caller that asked for one is told so
-                    // rather than left waiting out a timeout. A full
-                    // store is not that case — enrollment at capacity
-                    // evicts rather than refuses, so it warns the
-                    // operator without failing the command.
-                    PAIRING_MODE_ACK.signal(!PAIRING_LOCKED_OUT.load(Ordering::Acquire));
+                    PAIRING_MODE_ACK.signal(!locked_out);
                 }
                 Either3::Third(()) => {
                     debug_log(format_args!("security wipe requested"));
@@ -2000,7 +2087,7 @@ mod firmware {
                         PAIRING_PIN.store(u32::MAX, Ordering::Release);
                         PAIRING_FAILURES.store(0, Ordering::Release);
                         PAIRING_LOCKED_OUT.store(false, Ordering::Release);
-                        PAIRING_MODE.store(true, Ordering::Release);
+                        set_pairing_mode(true);
                         BLE_LED_MODE.store(2, Ordering::Release);
                         PAIRING_TIMER_RESET.signal(());
                         apply_pairing_gate(stack);
@@ -2782,6 +2869,17 @@ mod firmware {
             || cfg!(feature = "boot-pairing-window");
         PAIRING_MODE.store(initial_pairing_mode, Ordering::Release);
         BLE_LED_MODE.store(u8::from(initial_pairing_mode), Ordering::Release);
+        // Seed the session's `PROP_BLE_PAIRING` mirror unconditionally:
+        // the change-triggered signal in `set_pairing_mode` cannot fire
+        // for a boot that lands on the static's initial value.
+        BLE_PAIRING_CHANGED.signal(pairing_window_open());
+        // The hold-through-power-on ceremony must end with a reachable
+        // radio even when the operator had turned Bluetooth off. Routed
+        // through the session so the property, the panel, the saved
+        // snapshot, and this transport all move together.
+        if FORCE_PAIRING_AT_BOOT.load(Ordering::Acquire) {
+            INPUT_CH.send(InEvent::ForceBluetoothOn).await;
+        }
         UI_REFRESH.signal(());
         let io_capabilities = if initial.pin.is_some() {
             IoCapabilities::DisplayOnly
@@ -3124,13 +3222,21 @@ mod firmware {
                 Some(BleLinkState::Attached) => screen::LinkState::Attached,
                 Some(BleLinkState::Connected) => screen::LinkState::Connected,
                 _ if advertising_permitted() => screen::LinkState::Advertising,
+                // The operator's own switch, not the wired-host suppression:
+                // "off (wired)" on a device whose Bluetooth was turned off
+                // reads as someone else's doing.
+                _ if !BLE_ENABLED.load(Ordering::Acquire) => screen::LinkState::Disabled,
                 _ => screen::LinkState::OffWired,
             },
             stats: ui_stats(),
             bonds: BLE_BOND_COUNT.load(Ordering::Acquire),
-            // Lockout outranks the window: while locked out there is no
-            // window to describe.
-            pairing: if PAIRING_LOCKED_OUT.load(Ordering::Acquire) {
+            // Bluetooth off outranks everything — a lockout on a
+            // transport that is off is not a state anyone can act on —
+            // then lockout outranks the window: while locked out there
+            // is no window to describe.
+            pairing: if !BLE_ENABLED.load(Ordering::Acquire) {
+                screen::PairingState::Closed
+            } else if PAIRING_LOCKED_OUT.load(Ordering::Acquire) {
                 screen::PairingState::LockedOut
             } else if PAIRING_MODE.load(Ordering::Acquire) {
                 screen::PairingState::Open {
@@ -3426,11 +3532,7 @@ mod firmware {
             // Both holds are edge-published by other tasks, but re-deriving
             // them here each pass is idempotent and cannot miss an edge.
             let now = Instant::now().as_millis();
-            attention.set_hold(
-                HoldReason::Pairing,
-                PAIRING_MODE.load(Ordering::Acquire),
-                now,
-            );
+            attention.set_hold(HoldReason::Pairing, pairing_window_open(), now);
             attention.set_hold(HoldReason::Alert, alert_active(), now);
 
             let lapse = async {
@@ -3474,7 +3576,7 @@ mod firmware {
                             );
                             push!();
                             redraw = false;
-                            PAIRING_MODE_REQUEST.signal(());
+                            PAIRING_MODE_REQUEST.signal(true);
                         }
                         Some(UiEffect::ClearBonds) => {
                             render_message_frame(
@@ -3949,11 +4051,7 @@ mod firmware {
             // Both holds are edge-published by other tasks, but re-deriving
             // them here each pass is idempotent and cannot miss an edge.
             let now = Instant::now().as_millis();
-            attention.set_hold(
-                HoldReason::Pairing,
-                PAIRING_MODE.load(Ordering::Acquire),
-                now,
-            );
+            attention.set_hold(HoldReason::Pairing, pairing_window_open(), now);
             attention.set_hold(HoldReason::Alert, alert_active(), now);
             SCREEN_OFF.store(attention.is_lapsed(), Ordering::Release);
 
@@ -3998,7 +4096,7 @@ mod firmware {
                             );
                             model.set_notice(UiNotice::CheckInRequested);
                         }
-                        Some(UiEffect::StartPairing) => PAIRING_MODE_REQUEST.signal(()),
+                        Some(UiEffect::StartPairing) => PAIRING_MODE_REQUEST.signal(true),
                         Some(UiEffect::ClearBonds) => BLE_WIPE_REQUEST.signal(()),
                         Some(UiEffect::Toggle(id)) => {
                             // The switch is applied by the ULCP session, so
@@ -6169,7 +6267,13 @@ mod firmware {
             let alert_holds_the_led = alert_active();
             #[cfg(feature = "power-button")]
             let alert_holds_the_led = false;
-            let ble_mode = BLE_LED_MODE.load(Ordering::Acquire);
+            // The pairing blink is a claim about the transport: with Bluetooth
+            // off there is no window to advertise, so mode 1 reads as idle. The
+            // wipe notice (2) is a completed act and stays.
+            let ble_mode = match BLE_LED_MODE.load(Ordering::Acquire) {
+                1 if !BLE_ENABLED.load(Ordering::Acquire) => 0,
+                mode => mode,
+            };
             if ble_mode != 0 && !alert_holds_the_led {
                 let phase = Instant::now().as_millis() % 2_000;
                 let on = if ble_mode == 1 {
@@ -6317,7 +6421,11 @@ mod firmware {
                 engine.stop_alert();
             }
 
-            let ble_mode = BLE_LED_MODE.load(Ordering::Acquire);
+            // As above: a pairing blink on a transport that is off is a lie.
+            let ble_mode = match BLE_LED_MODE.load(Ordering::Acquire) {
+                1 if !BLE_ENABLED.load(Ordering::Acquire) => 0,
+                mode => mode,
+            };
             if ble_mode != 0
                 && !alert_active()
                 && matches!(

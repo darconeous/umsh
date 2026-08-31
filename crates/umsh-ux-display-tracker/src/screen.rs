@@ -289,6 +289,10 @@ pub enum LinkState {
     /// Advertising is suppressed, typically because a wired host owns the
     /// device.
     OffWired,
+    /// The operator turned Bluetooth off. Distinct from `OffWired`: this
+    /// device is unreachable because it was told to be, not because a
+    /// cable outranks the radio.
+    Disabled,
 }
 
 /// Whether a companion can pair right now, and with what secret.
@@ -1237,6 +1241,7 @@ const fn link_label(link: LinkState) -> Option<&'static str> {
         LinkState::Attached => Some("host attached"),
         LinkState::Connected => Some("host connected"),
         LinkState::OffWired => Some("off (wired)"),
+        LinkState::Disabled => Some("off"),
         LinkState::Advertising => None,
     }
 }

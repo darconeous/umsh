@@ -22,6 +22,7 @@ use umsh::ulcp_wire::ids::prop;
 use umsh::ulcp_wire::{Status, capability_name, frame, reply};
 use umsh_sync::AsyncRefCell;
 
+use super::lifecycle::PairState;
 use super::props::PropArg;
 use super::tables::TableOp;
 use super::values::{AssignArg, BytesArg, KeyArg};
@@ -111,8 +112,12 @@ pub enum ManageOp {
 /// Bond management over the mesh.
 #[derive(Debug, clap::Subcommand)]
 pub enum BleOp {
-    /// Open a pairing window so another host can pair.
-    Pair,
+    /// Open or close the pairing window.
+    Pair {
+        /// The window state to set.
+        #[arg(value_enum, default_value_t = PairState::On)]
+        state: PairState,
+    },
     /// Forget every paired host, the pairing PIN, and the pairing
     /// lockout, then open a pairing window.
     Clear {
@@ -373,20 +378,30 @@ where
                 Outcome::Failed(failure) => Err(describe(failure)),
             }
         }
-        ManageOp::Ble { op } => {
-            // Confirmed in `run`, before the radio was borrowed.
-            let frame = match op {
-                BleOp::Pair => encode(|buf| frame::ble_start_pairing(buf, 0))?,
-                BleOp::Clear { .. } => encode(|buf| frame::ble_clear_bonds(buf, 0))?,
-            };
-            match ctl.exchange(&frame).await? {
-                Outcome::Replied { .. } => report_value(prop::LAST_STATUS, ctl.manager.reply()),
-                Outcome::NoResponse => {
-                    bail!("the device answered nothing; these commands report a status")
-                }
-                Outcome::Failed(failure) => Err(describe(failure)),
+        ManageOp::Ble { op } => match op {
+            // The window is a property, so opening and closing it is an
+            // ordinary write the reply quotes back.
+            BleOp::Pair { state } => {
+                let open = state == PairState::On;
+                let reply = ctl
+                    .reply(&encode(|buf| {
+                        frame::prop_set(buf, 0, prop::BLE_PAIRING, &[open as u8])
+                    })?)
+                    .await?;
+                report_value(prop::BLE_PAIRING, &reply)
             }
-        }
+            BleOp::Clear { .. } => {
+                // Confirmed in `run`, before the radio was borrowed.
+                let frame = encode(|buf| frame::ble_clear_bonds(buf, 0))?;
+                match ctl.exchange(&frame).await? {
+                    Outcome::Replied { .. } => report_value(prop::LAST_STATUS, ctl.manager.reply()),
+                    Outcome::NoResponse => {
+                        bail!("the device answered nothing; this command reports a status")
+                    }
+                    Outcome::Failed(failure) => Err(describe(failure)),
+                }
+            }
+        },
         ManageOp::Admins { op } => admins(ctl, op.unwrap_or(TableOp::List), no_save).await,
     }
 }

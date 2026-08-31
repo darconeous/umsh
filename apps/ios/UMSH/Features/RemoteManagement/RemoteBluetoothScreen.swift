@@ -12,7 +12,6 @@ import UMSHMobileCore
 struct RemoteBluetoothScreen: View {
     let model: ManageDeviceModel
     @State private var edits = Edits()
-    @State private var isConfirmingPairing = false
     @State private var isConfirmingClear = false
 
     private var reading: RemoteCategoryReading? { model.readings[.bluetooth] }
@@ -53,7 +52,7 @@ struct RemoteBluetoothScreen: View {
                         LabeledContent("Paired phones", value: "Not read")
                     }
                 }
-                LabeledContent("Connection", value: connectionSummary)
+                LabeledContent("Currently Connected", value: connectionSummary)
             } header: {
                 Text("Status")
             } footer: {
@@ -62,28 +61,25 @@ struct RemoteBluetoothScreen: View {
 
             if model.supportsBluetoothPairing {
                 Section {
-                    Button("Start Pairing Mode…") { isConfirmingPairing = true }
+                    if edits.pairing.isKnown {
+                        Toggle(isOn: $edits.pairing.edited.replacingNil(with: false)) {
+                            RemoteFieldTitle(
+                                "Pairing mode",
+                                problem: problems[edits.pairing.property]
+                            )
+                        }
+                    } else {
+                        RemoteReadOnlyToggle("Pairing mode", isOn: nil)
+                    }
                     Button("Clear Pairings…", role: .destructive) { isConfirmingClear = true }
                 } footer: {
                     Text(
-                        "Pairing mode lets another phone pair without pressing anything on the device. Clearing forgets every paired phone and the pairing PIN."
+                        "Pairing mode lets another phone pair without pressing anything on the device. It closes by itself after a short while, or when a phone pairs. Clearing forgets every paired phone and the pairing PIN."
                     )
                 }
             }
 
             RemoteProblemSection(model: model)
-        }
-        .confirmationDialog(
-            "Start pairing mode?",
-            isPresented: $isConfirmingPairing,
-            titleVisibility: .visible
-        ) {
-            Button("Start Pairing Mode") { Task { await model.startBluetoothPairing() } }
-            Button("Cancel", role: .cancel) {}
-        } message: {
-            Text(
-                "For about half a minute, any phone nearby can pair with this device. A phone that pairs can manage it and read everything it holds."
-            )
         }
         .confirmationDialog(
             "Clear every pairing?",
@@ -103,27 +99,39 @@ struct RemoteBluetoothScreen: View {
             title: "Bluetooth",
             apply: { await apply() },
             hasEdits: !edits.dirty.isEmpty,
-            applyWarning: edits.disablesBluetooth ? disableWarning : nil
+            applyWarning: applyWarning
         )
         .onChange(of: reading?.asOf) { edits = Edits(reading, preserving: edits) }
         .onAppear { if edits.isEmpty { edits = Edits(reading) } }
     }
 
-    /// Who is on the device's Bluetooth right now.
+    /// Whether anyone is on the device's Bluetooth right now.
     ///
     /// Over the mesh this is the interesting row on the screen — it is the
-    /// only way to ask whether someone else is managing the device. Over
-    /// Bluetooth it can only ever say "attached", because the phone
-    /// reading it is the attachment, so the copy says so instead of
-    /// reporting the phone back to itself as news.
+    /// only way to ask whether someone else is on the device. Over
+    /// Bluetooth it can only ever say yes, because the phone reading it is
+    /// the connection.
     private var connectionSummary: String {
         guard let state = reading?.properties.bleLink else { return "Not read" }
-        switch state {
-        case 0: return "Nobody connected"
-        case 1: return "A phone is connected"
-        case 2: return overThisLink ? "This phone" : "A phone is managing this device"
-        default: return "Unknown"
+        return state == 0 ? "No" : "Yes"
+    }
+
+    /// The one confirmation Apply gets. Stranding the device outranks the
+    /// pairing window: a change that does both is confirmed for the harm
+    /// it can do, not the door it opens.
+    private var applyWarning: (title: String, message: String)? {
+        if edits.disablesBluetooth { return disableWarning }
+        if edits.opensPairing {
+            return (
+                title: "Turn On Pairing Mode",
+                message: """
+                    While pairing mode is on, any phone nearby can pair with \
+                    this device. A phone that pairs can manage it and read \
+                    everything it holds.
+                    """
+            )
         }
+        return nil
     }
 
     /// What clearing costs, which is not the same question on every link.
@@ -183,10 +191,12 @@ struct RemoteBluetoothScreen: View {
         }
     }
 
-    /// The one setting on this screen. The pairing count is a reading, and
-    /// the two actions are commands — neither is part of Apply.
+    /// The two settings on this screen. The pairing count and the link
+    /// are readings, and clearing bonds is a command — neither is part of
+    /// Apply.
     private struct Edits {
         var enabled = RemoteField<Bool>(0, nil)
+        var pairing = RemoteField<Bool>(0, nil)
         var isEmpty = true
         /// What the device last said, in full.
         var held = UlcpDevicePropertiesRecord.empty
@@ -197,24 +207,30 @@ struct RemoteBluetoothScreen: View {
             let id = ulcpProperties
             held = reading?.properties ?? UlcpDevicePropertiesRecord.empty
             enabled = RemoteField(id.bleEnabled, held.bleEnabled)
+            pairing = RemoteField(id.blePairing, held.blePairing)
             isEmpty = reading == nil
         }
 
         /// The new reading as the baseline, with the operator's standing
-        /// edit carried over — see ``RemoteField/preserving(_:)``.
+        /// edits carried over — see ``RemoteField/preserving(_:)``.
         init(_ reading: RemoteCategoryReading?, preserving old: Edits) {
             self.init(reading)
             guard !old.isEmpty else { return }
             enabled = enabled.preserving(old.enabled)
+            pairing = pairing.preserving(old.pairing)
         }
 
         /// Whether Apply would turn Bluetooth off. Only an edit counts: a
         /// device already unreachable over Bluetooth is not being made so.
         var disablesBluetooth: Bool { enabled.isDirty && enabled.value == false }
 
+        /// Whether Apply would open the pairing window.
+        var opensPairing: Bool { pairing.isDirty && pairing.value == true }
+
         var dirty: Set<UInt32> {
             var dirty: Set<UInt32> = []
             if enabled.isDirty { dirty.insert(enabled.property) }
+            if pairing.isDirty { dirty.insert(pairing.property) }
             return dirty
         }
 
@@ -223,6 +239,7 @@ struct RemoteBluetoothScreen: View {
             // carried for completeness and never reaches the air.
             var desired = held
             desired.bleEnabled = enabled.value
+            desired.blePairing = pairing.value
             return desired
         }
     }

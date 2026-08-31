@@ -2130,21 +2130,25 @@ where
         Ok(true)
     }
 
-    /// Open a pairing window (`CMD_BLE_START_PAIRING`; requires
-    /// `CAP_BLE`) so an unbonded host can pair without a gesture at the
-    /// device.
+    /// Open or close the pairing window (`PROP_BLE_PAIRING`; requires
+    /// `CAP_BLE`). Open, an unbonded host can pair without a gesture at
+    /// the device; the window also closes by itself, on a new bond or a
+    /// timeout, which is why it is a property a caller can read back
+    /// rather than a command.
     ///
-    /// `Ok(false)` means the device has no Bluetooth transport at all. A
+    /// `Ok(None)` means the device has no Bluetooth transport at all;
+    /// `Ok(Some(state))` quotes the state the device settled on. A
     /// device that does not manage its own bonds answers
-    /// `STATUS_UNIMPLEMENTED`, and one that could not open a window right
-    /// now — locked out — answers `STATUS_INVALID_STATE`; both surface as
-    /// errors rather than a quiet success.
-    pub async fn ble_start_pairing(&mut self) -> Result<bool, UlcpError> {
+    /// `STATUS_PROP_NOT_FOUND`, and one that could not open a window
+    /// right now — locked out, or with Bluetooth disabled — answers
+    /// `STATUS_INVALID_STATE`; both surface as errors rather than a
+    /// quiet success.
+    pub async fn set_ble_pairing(&mut self, open: bool) -> Result<Option<bool>, UlcpError> {
         if !self.capabilities().await?.contains(&cap::BLE) {
-            return Ok(false);
+            return Ok(None);
         }
-        self.status_only_command(frame::ble_start_pairing).await?;
-        Ok(true)
+        let value = self.set_prop(prop::BLE_PAIRING, &[open as u8]).await?;
+        Ok(Some(value.first().copied() == Some(1)))
     }
 
     /// Revert the device to its saved snapshot (`CMD_RESTORE`; requires
@@ -3431,11 +3435,7 @@ mod tests {
                     // and manages no bonds of its own: it answers commands
                     // it does not implement the way any such device
                     // answers them.
-                    Cmd::PropMultiGet
-                    | Cmd::PropMultiSet
-                    | Cmd::Reboot
-                    | Cmd::BleClearBonds
-                    | Cmd::BleStartPairing => {
+                    Cmd::PropMultiGet | Cmd::PropMultiSet | Cmd::Reboot | Cmd::BleClearBonds => {
                         let len = frame::last_status(&mut buf, tid, Status::UNIMPLEMENTED).unwrap();
                         replies.push(buf[..len].to_vec());
                     }

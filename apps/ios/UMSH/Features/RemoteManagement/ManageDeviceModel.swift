@@ -45,10 +45,11 @@ struct DeviceManagementBackend {
     /// doing the thing and saying nothing, so success here means the
     /// command was delivered, not that the device has finished.
     var reset: (String, MobileMeshResetScope) async throws -> Void
-    /// Manage the device's Bluetooth bonds: forget every paired host, or
-    /// open a pairing window. Unlike the resets above these are answered,
-    /// so returning means the device said it did it.
-    var manageBluetooth: (String, MobileMeshBleCommand) async throws -> Void
+    /// Forget every host paired with the device. Unlike the resets above
+    /// this is answered, so returning means the device said it did it.
+    /// The pairing window the clear opens is a property, not a command,
+    /// and takes the ordinary write path.
+    var clearBluetoothBonds: (String) async throws -> Void
     /// This phone's own node key, so the administrator list can say which
     /// entry is this phone — and refuse to remove it.
     ///
@@ -581,18 +582,6 @@ final class ManageDeviceModel {
         }
     }
 
-    /// Open a pairing window on the device, so another phone can pair with
-    /// it without a gesture at the device itself.
-    ///
-    /// Nothing on screen changes: the window is live state with no property
-    /// behind it, and a device that could not open one says so rather than
-    /// leaving the operator to guess from a count that did not move.
-    func startBluetoothPairing() async {
-        await run { [self] in
-            try await management.manageBluetooth(address, .startPairing)
-        }
-    }
-
     /// Forget every host paired with the device, along with its pairing PIN.
     ///
     /// The bond count on screen is stale the moment this returns, and on a
@@ -602,11 +591,16 @@ final class ManageDeviceModel {
     /// next, so the screen is not left reporting hosts that no longer exist.
     func clearBluetoothPairings() async {
         await run { [self] in
-            try await management.manageBluetooth(address, .clearBonds)
+            try await management.clearBluetoothBonds(address)
         }
         guard problem == nil else { return }
         await absorb(
             UlcpPropertyPushRecord(propertyId: ulcpProperties.bleBondCount, value: Data([0]))
+        )
+        // Clearing opens a pairing window, and the window is a property
+        // this screen shows as a toggle — reflect what the command means.
+        await absorb(
+            UlcpPropertyPushRecord(propertyId: ulcpProperties.blePairing, value: Data([1]))
         )
     }
 

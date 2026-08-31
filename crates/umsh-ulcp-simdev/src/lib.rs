@@ -238,19 +238,21 @@ impl SimulatedDevice {
             }
             Some(Effect::BleClearBonds { tid }) => {
                 // The full security reset a board performs: bonds, PIN,
-                // and lockout together.
+                // and lockout together, and the pairing window a
+                // freshly-cleared device opens.
                 self.bond_count = 0;
                 self.pairing_pin = None;
                 self.session.set_ble_bond_count(0, &mut emit);
+                self.session.set_ble_pairing(true, &mut emit);
                 self.session.respond_ble_clear_bonds(tid, Ok(()), &mut emit);
             }
-            Some(Effect::BleStartPairing { tid }) => {
+            Some(Effect::SetBlePairing { tid, open }) => {
                 // Nothing here can pair, so the window opens and nothing
                 // walks through it. A full store is not a refusal —
                 // enrollment at capacity evicts — and the one state that
-                // would refuse, a pairing lockout, needs failed pairings
-                // this device cannot have.
-                self.session.respond_ble_start_pairing(tid, Ok(()), &mut emit);
+                // would refuse an open, a pairing lockout, needs failed
+                // pairings this device cannot have.
+                self.session.respond_ble_pairing(tid, Ok(open), &mut emit);
             }
             Some(Effect::DrainQueue) => {
                 let device_ms = self.device_ms();

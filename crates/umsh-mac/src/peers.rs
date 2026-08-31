@@ -335,6 +335,11 @@ impl<const N: usize> PeerCryptoMap<N> {
     pub fn iter(&self) -> impl Iterator<Item = (&PeerId, &PeerCryptoState)> {
         self.entries.iter()
     }
+
+    /// Iterate mutably over all peer crypto entries.
+    pub fn iter_mut(&mut self) -> impl Iterator<Item = (&PeerId, &mut PeerCryptoState)> {
+        self.entries.iter_mut()
+    }
 }
 
 /// Replay state for a sender known only by hint.

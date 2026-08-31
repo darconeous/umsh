@@ -275,6 +275,22 @@ pub mod prop {
     /// a cable, where it is the only way to ask whether a phone is on the
     /// device right now.
     pub const BLE_LINK: u32 = 4873;
+    /// Whether a pairing window is open (`PROP_BLE_PAIRING`) — BOOL,
+    /// read-write. Requires `CAP_BLE`; a device that does not manage its
+    /// own bonds answers `STATUS_PROP_NOT_FOUND`.
+    ///
+    /// A property rather than a command because a window is a state, not
+    /// an act: it can be opened, closed early, observed, and — the case
+    /// no command can express — it closes on its own, on a new bond or a
+    /// timeout, and the device publishes that transition. Writing 1
+    /// opens (or renews) the window; a device that cannot open one right
+    /// now — locked out after repeated pairing failures, or with its
+    /// Bluetooth disabled — answers `STATUS_INVALID_STATE`. Writing 0
+    /// closes it.
+    ///
+    /// Live transport state like the link and the bond count: not part
+    /// of the saved snapshot, and untouched by `CMD_RST`.
+    pub const BLE_PAIRING: u32 = 4874;
 }
 
 /// `PROP_SAVED` values.

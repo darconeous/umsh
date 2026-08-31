@@ -17,8 +17,9 @@ use umsh_ulcp_runtime::device_node as node;
 // board with a primary-action button, so it is unused in some builds.
 #[allow(unused_imports)]
 pub use umsh_ulcp_runtime::device_node::{
-    BeaconTrigger, NODE_CH, mac_counters, node_key, publish_snapshot, repeater_enabled,
-    request_beacon, set_device_name, set_tx_power_dbm, sign_identity_blob, tx_power_dbm,
+    BeaconTrigger, NODE_CH, mac_counters, node_key, publish_snapshot, quiesce_for_reboot,
+    repeater_enabled, request_beacon, set_device_name, set_tx_power_dbm, sign_identity_blob,
+    tx_power_dbm,
 };
 
 /// The node's platform binding: everything generic resolved against this
@@ -72,6 +73,11 @@ async fn node_beacon_task(
 #[embassy_executor::task]
 async fn node_advert_task(mac: DeviceNodeHandle) {
     node::advert_loop(mac).await
+}
+
+#[embassy_executor::task]
+async fn node_reboot_quiesce_task(mac: DeviceNodeHandle) {
+    node::reboot_quiesce_loop(mac).await
 }
 
 #[embassy_executor::task]
@@ -161,4 +167,5 @@ pub async fn bring_up(
         .unwrap(),
     );
     spawner.spawn(node_advert_task(parts.mac).unwrap());
+    spawner.spawn(node_reboot_quiesce_task(parts.mac).unwrap());
 }

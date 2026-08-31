@@ -456,10 +456,9 @@ final class AppRuntime {
                     scope: scope
                 )
             },
-            manageBluetooth: { address, command in
-                try await self.radioConnection.manageRemoteBluetooth(
-                    peerAddress: address,
-                    command: command
+            clearBluetoothBonds: { address in
+                try await self.radioConnection.clearRemoteBluetoothBonds(
+                    peerAddress: address
                 )
             },
             // The attached radio's own key, which is what a managed device
@@ -570,17 +569,11 @@ final class AppRuntime {
                 throw RemoteManagementError.unavailable
             }
         }
-        // Both bond commands sever this very link — clearing forgets the
-        // bond it arrived on, and a pairing window is the radio's own
-        // business either way — so they go over the local path rather than
-        // out onto the mesh and back.
-        management.manageBluetooth = { _, command in
-            switch command {
-            case .clearBonds:
-                try await self.radioConnection.clearBluetoothBonds()
-            case .startPairing:
-                try await self.radioConnection.startBluetoothPairing()
-            }
+        // Clearing bonds severs this very link — the bond it arrived on is
+        // one of the bonds forgotten — so it goes over the local path
+        // rather than out onto the mesh and back.
+        management.clearBluetoothBonds = { _ in
+            try await self.radioConnection.clearBluetoothBonds()
         }
         management.propertyPushes = {
             AsyncStream { continuation in

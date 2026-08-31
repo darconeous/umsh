@@ -1942,6 +1942,58 @@ fn secure_send_survives_the_boundary_when_the_counter_starts_late_in_its_block()
     }
 }
 
+/// A deliberate reboot must persist every RX boundary, however little it
+/// advanced. The block cadence deliberately leaves up to a block of
+/// accepted counters in RAM; a device that resets on command inside that
+/// window would accept the same command again from the sender's retry —
+/// the reboot-on-repeat failure this call exists to prevent.
+#[test]
+fn persist_all_rx_counters_flushes_sub_block_boundaries_the_cadence_would_not() {
+    use crate::coordinator::COUNTER_PERSIST_BLOCK_SIZE;
+
+    let mut mac = make_mac();
+    let local_id = mac.add_identity(DummyIdentity::new([0x10; 32])).unwrap();
+    let peer_id = mac.add_peer(test_pubkey(0xAB)).unwrap();
+    mac.install_pairwise_keys(
+        local_id,
+        peer_id,
+        PairwiseKeys {
+            k_enc: [1; 32],
+            k_mic: [2; 32],
+        },
+    )
+    .unwrap();
+
+    // A handful of accepted frames: far inside the persist block, so the
+    // cadence path sees nothing worth writing.
+    let advanced = COUNTER_PERSIST_BLOCK_SIZE / 8;
+    {
+        let state = mac
+            .identity_mut(local_id)
+            .unwrap()
+            .peer_crypto_mut()
+            .get_mut(&peer_id)
+            .unwrap();
+        state.replay_window.last_accepted = advanced;
+        assert!(!state.needs_rx_persist);
+    }
+    assert_eq!(block_on(mac.service_rx_counter_persistence()).unwrap(), 0);
+
+    // The forced flush writes it anyway and settles the bookkeeping.
+    assert_eq!(block_on(mac.persist_all_rx_counters()).unwrap(), 1);
+    let state = mac
+        .identity(local_id)
+        .unwrap()
+        .peer_crypto()
+        .get(&peer_id)
+        .unwrap();
+    assert_eq!(state.persisted_rx_counter, advanced);
+    assert!(!state.needs_rx_persist);
+
+    // Nothing new accepted: a second force writes nothing.
+    assert_eq!(block_on(mac.persist_all_rx_counters()).unwrap(), 0);
+}
+
 #[test]
 fn drain_tx_queue_transmits_all_queued_frames_in_priority_order() {
     let mut mac = make_mac();

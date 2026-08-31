@@ -461,14 +461,12 @@ actor FakeRadioConnection: RadioConnection {
         try await answerAsIfOverTheAir()
     }
 
-    func manageRemoteBluetooth(
-        peerAddress: String,
-        command: MobileMeshBleCommand
-    ) async throws {
+    func clearRemoteBluetoothBonds(peerAddress: String) async throws {
         try await answerAsIfOverTheAir()
-        if command == .clearBonds {
-            managedDevice.values[ulcpProperties.bleBondCount] = Data([0])
-        }
+        managedDevice.values[ulcpProperties.bleBondCount] = Data([0])
+        // Clearing opens a pairing window, and the window is a property
+        // the next refresh reads back.
+        managedDevice.values[ulcpProperties.blePairing] = Data([1])
     }
 
     // MARK: - Managing the staging companion itself
@@ -688,11 +686,7 @@ actor FakeRadioConnection: RadioConnection {
         // one answers and stays up: the disconnect that follows on
         // hardware is the transport's doing, not this command's.
         managedDevice.values[ulcpProperties.bleBondCount] = Data([0])
-    }
-
-    func startBluetoothPairing() async throws {
-        // A window nothing can walk through, which is the whole of what a
-        // staged radio can offer: no bond is created, so the count holds.
+        managedDevice.values[ulcpProperties.blePairing] = Data([1])
     }
 
     func setAlert(_ state: RadioAlertState) async throws {
@@ -918,6 +912,9 @@ struct FakeManagedDevice: Sendable {
             // Attached: this fake stands in for a radio this phone is
             // talking to, and the property reports the session asking it.
             id.bleLink: Data([2]),
+            // The pairing window starts closed, so the toggle has a state
+            // to move away from.
+            id.blePairing: Data([0]),
             // A clock a few seconds behind the phone's, so the Time screen
             // has a drift to state, and Pacific daylight time to state it in.
             id.time: UInt32(Date.now.timeIntervalSince1970 - 4).littleEndianData,

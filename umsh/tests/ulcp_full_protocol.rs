@@ -219,9 +219,8 @@ impl SimDevice {
                 self.session.set_ble_bond_count(0, &mut emit);
                 self.session.respond_ble_clear_bonds(tid, Ok(()), &mut emit);
             }
-            Some(Effect::BleStartPairing { tid }) => {
-                self.session
-                    .respond_ble_start_pairing(tid, Ok(()), &mut emit);
+            Some(Effect::SetBlePairing { tid, open }) => {
+                self.session.respond_ble_pairing(tid, Ok(open), &mut emit);
             }
             Some(Effect::ReadTime { tid }) => {
                 self.session.respond_time(tid, self.epoch, &mut emit);
@@ -979,9 +978,10 @@ async fn bonds_are_cleared_and_the_count_follows() {
         "the simulator starts with hosts to forget"
     );
 
-    assert!(
-        radio.ble_start_pairing().await.unwrap(),
-        "the simulator advertises CAP_BLE"
+    assert_eq!(
+        radio.set_ble_pairing(true).await.unwrap(),
+        Some(true),
+        "the simulator advertises CAP_BLE, and the window opens as a toggle"
     );
 
     // The simulator's host is attached over its simulated serial link,

@@ -390,36 +390,46 @@ hosts it was set for would leave a device that has forgotten everyone
 still demanding a secret the operator may no longer have, recoverable
 only by a local wipe.
 
-### CMD 18: (Host -> Device) `CMD_BLE_START_PAIRING` {#cmd-ble-start-pairing}
-
-~~~
- 0                   1
- 0 1 2 3 4 5 6 7 8 9 0 1 2 3 4 5
-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+
-|1 0| RES | TID |CMD_BLE_START_P|
-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+
-~~~
-
-Figure: Structure of `CMD_BLE_START_PAIRING`
-
-Enter [pairing mode](#pairing-mode), so an unbonded host may pair
-without a physical gesture at the device. The window ends on the same
-three conditions as any other, and the device **SHOULD** give the same
-perceptible indication.
-
-The device answers `PROP_LAST_STATUS`: `STATUS_OK` once the window is
-open, `STATUS_INVALID_STATE` when it cannot open one — the device is
-locked out after repeated pairing failures — and
-`STATUS_UNIMPLEMENTED` on a device that does not manage its own bonds. A
-full bond store is
-**NOT** a refusal: enrollment at capacity evicts rather than refuses
-(see [Bond Management](#bond-management)), so a device with a full store
-opens the window like any other.
-
-Both commands are ordinary commands rather than reset-class: what they
-did is the whole of what they report, and a caller that heard nothing
-could not tell a device that had cleared its bonds from one that never
+The command is an ordinary command rather than reset-class: what it did
+is the whole of what it reports, and a caller that heard nothing could
+not tell a device that had cleared its bonds from one that never
 received the request.
+
+### PROP 4874: `PROP_BLE_PAIRING` {#prop-ble-pairing}
+
+* Type: Single-Value, Read-Write
+* Asynchronous Updates: Yes
+* Required: `CAP_BLE`
+* Value Type: BOOL
+* Post-Reset Value: whether the window is open
+
+Whether [pairing mode](#pairing-mode) is active. Writing `1` opens a
+window, so an unbonded host may pair without a physical gesture at the
+device; writing `0` closes one. The window is a property rather than a
+command because it is a state with more ways out than in — the write, a
+timeout, a completed bond — and only a property can be closed again,
+read back, and reported moving on its own.
+
+The device **MUST** publish the new value on any transition the writer
+did not just command: expiry and a new bond both close the window with
+no host asking, and a physical gesture at the device opens one.
+
+A write of `1` answers `STATUS_INVALID_STATE` when no window can open:
+the device is locked out after repeated pairing failures, or Bluetooth
+is off ([`PROP_BLE_ENABLED`](#prop-ble-enabled) is `0`) — nothing can
+pair through a transport that is down, and a device **MUST NOT** report
+a window nothing can walk through. A full bond store is **NOT** a
+refusal: enrollment at capacity evicts rather than refuses (see
+[Bond Management](#bond-management)), so a device with a full store
+opens the window like any other. A write of `0` **MUST** succeed: there
+is no state in which a window refuses to shut.
+
+A device that does not manage its own bonds answers
+`STATUS_PROP_NOT_FOUND`, like the [bond count](#prop-ble-bond-count).
+
+Like the bond count and the link, the window is live transport state:
+**NOT** part of the saved snapshot, and `CMD_RST` **MUST NOT** touch
+it.
 
 ## Security {#ble-security}
 
@@ -466,9 +476,8 @@ Entering pairing mode:
   mode automatically. Entering pairing mode then requires either a
   deliberate physical gesture distinct from normal power-on — for
   example, holding the user button through power-on until the device
-  signals that pairing mode is active — or
-  [`CMD_BLE_START_PAIRING`](#cmd-ble-start-pairing) from an authorized
-  session.
+  signals that pairing mode is active — or a write of `1` to
+  [`PROP_BLE_PAIRING`](#prop-ble-pairing) from an authorized session.
 
 Pairing mode **MUST** end when any of the following occurs:
 

@@ -237,11 +237,11 @@ pub struct SessionConfig {
     /// `PROP_BLE_ENABLED` and `PROP_BLE_LINK` exist; otherwise both
     /// properties are unknown.
     pub ble: bool,
-    /// Whether the platform manages its own Bluetooth bonds on command.
-    /// When set, `PROP_BLE_BOND_COUNT` exists and `CMD_BLE_CLEAR_BONDS`
-    /// and `CMD_BLE_START_PAIRING` reach their effects; otherwise both
-    /// commands answer `STATUS_UNIMPLEMENTED` and the property is
-    /// unknown. Meaningful only alongside [`ble`](Self::ble).
+    /// Whether the platform manages its own Bluetooth bonds. When set,
+    /// `PROP_BLE_BOND_COUNT` and `PROP_BLE_PAIRING` exist and
+    /// `CMD_BLE_CLEAR_BONDS` reaches its effect; otherwise the command
+    /// answers `STATUS_UNIMPLEMENTED` and both properties are unknown.
+    /// Meaningful only alongside [`ble`](Self::ble).
     ///
     /// Deliberately not a capability of its own. `CAP_BLE` is the only
     /// Bluetooth capability there is, and a host that wants to know
@@ -392,11 +392,13 @@ pub enum Effect {
     /// over Bluetooth that reply is the last thing the sender hears, since
     /// dropping its bond drops its link.
     BleClearBonds { tid: u8 },
-    /// `CMD_BLE_START_PAIRING`: open a pairing window. Complete with
-    /// [`Session::respond_ble_start_pairing`], reporting whether a window
-    /// could be opened — a device that is locked out after repeated
-    /// pairing failures, or whose bond store is full, refuses.
-    BleStartPairing { tid: u8 },
+    /// A `PROP_BLE_PAIRING` write: open (or renew) the pairing window, or
+    /// close it. Complete with [`Session::respond_ble_pairing`], quoting
+    /// the state the transport is actually in — a device that cannot open
+    /// a window right now (locked out after repeated pairing failures, or
+    /// Bluetooth disabled) refuses rather than echoing a window that is
+    /// not there.
+    SetBlePairing { tid: u8, open: bool },
 }
 
 /// A staged `PROP_DEV_PRIVATE_KEY` provisioning request (see
@@ -2247,6 +2249,11 @@ pub struct Session<A: AesProvider, S: Sha256Provider, const TX: usize = 1> {
     /// [`Session::set_ble_link`].
     ble_bond_count: u8,
     ble_link: BleLinkState,
+    /// `PROP_BLE_PAIRING`: whether a pairing window is open. Live like
+    /// its two neighbors, and doubly so: the window closes on its own —
+    /// a new bond, a timeout — and the transport reports every
+    /// transition through [`Session::set_ble_pairing`].
+    ble_pairing_open: bool,
     /// A `CMD_PROP_MULTI_GET` or `CMD_PROP_MULTI_SET` part-way through
     /// its entries. Present only between the arrival of that frame and
     /// the `CMD_PROP_ARE` answering it, which is why it belongs to no
@@ -2381,6 +2388,7 @@ impl<A: AesProvider, S: Sha256Provider, const TX: usize> Session<A, S, TX> {
             alert_deadline_ms: None,
             ble_bond_count: 0,
             ble_link: BleLinkState::None,
+            ble_pairing_open: false,
             multi: None,
             binding: Binding::Local,
             scratch: [0; SCRATCH],
@@ -2900,23 +2908,17 @@ impl<A: AesProvider, S: Sha256Provider, const TX: usize> Session<A, S, TX> {
                 }
                 Some(Effect::Reboot)
             }
-            // Bond management. Both defer: the answer reports what the
-            // platform actually did, and neither is safe to acknowledge
-            // before it is durable — a clear that replied first and then
-            // failed would leave a host believing it had been forgotten.
+            // Bond management. Defers: the answer reports what the
+            // platform actually did, and it is not safe to acknowledge
+            // before the deletion is durable — a clear that replied first
+            // and then failed would leave a host believing it had been
+            // forgotten.
             Some(Cmd::BleClearBonds) => {
                 if !self.config.ble_pairing {
                     self.complete(tid, Status::UNIMPLEMENTED, emit);
                     return None;
                 }
                 Some(Effect::BleClearBonds { tid })
-            }
-            Some(Cmd::BleStartPairing) => {
-                if !self.config.ble_pairing {
-                    self.complete(tid, Status::UNIMPLEMENTED, emit);
-                    return None;
-                }
-                Some(Effect::BleStartPairing { tid })
             }
             // Several properties in one exchange. Both commands are
             // served entry by entry through the ordinary single-property
@@ -3685,6 +3687,11 @@ impl<A: AesProvider, S: Sha256Provider, const TX: usize> Session<A, S, TX> {
         }
     }
 
+    /// `PROP_BLE_PAIRING`: whether a pairing window is open.
+    pub fn ble_pairing(&self) -> bool {
+        self.config.ble_pairing && self.ble_pairing_open
+    }
+
     /// `PROP_GNSS_IDENT_PRECISION`: the precision the advertised location
     /// is clamped to.
     pub fn gnss_ident_precision(&self) -> u8 {
@@ -3793,6 +3800,26 @@ impl<A: AesProvider, S: Sha256Provider, const TX: usize> Session<A, S, TX> {
             |device| &mut device.ble_enabled,
             emit,
         )
+    }
+
+    /// Force `PROP_BLE_ENABLED` on for a physical gesture at the device —
+    /// the hold-through-power-on ceremony that must always end with a
+    /// reachable radio, including one whose operator turned Bluetooth off
+    /// and walked away. A toggle would re-strand the ones already on.
+    ///
+    /// Returns `Some(true)` only when the flag actually moved, so the
+    /// caller persists a snapshot for the same reason a toggle does and
+    /// stays quiet when there was nothing to change.
+    pub fn force_ble_on(&mut self, emit: &mut impl FnMut(&[u8])) -> Option<bool> {
+        if !self.config.ble || self.device.ble_enabled {
+            return None;
+        }
+        self.device.ble_enabled = true;
+        self.bump_dev_domain();
+        if self.attached {
+            self.announce_prop_is(prop::BLE_ENABLED, &[1], emit);
+        }
+        Some(true)
     }
 
     /// Flip one device-domain boolean on behalf of a control the operator
@@ -4250,27 +4277,6 @@ impl<A: AesProvider, S: Sha256Provider, const TX: usize> Session<A, S, TX> {
         );
     }
 
-    /// Complete a deferred `CMD_BLE_START_PAIRING`. `Err` means the device
-    /// could not open a window — it is locked out after repeated pairing
-    /// failures, or it has nowhere to put another bond — which is a state
-    /// the caller can retry out of rather than a fault.
-    pub fn respond_ble_start_pairing(
-        &mut self,
-        tid: u8,
-        result: Result<(), ()>,
-        emit: &mut impl FnMut(&[u8]),
-    ) {
-        self.complete(
-            tid,
-            if result.is_ok() {
-                Status::OK
-            } else {
-                Status::INVALID_STATE
-            },
-            emit,
-        );
-    }
-
     /// The number of Bluetooth bonds the platform is holding, as reported
     /// by `PROP_BLE_BOND_COUNT`. Bonding is the transport's business, so
     /// the session mirrors what it is told rather than counting anything.
@@ -4307,6 +4313,45 @@ impl<A: AesProvider, S: Sha256Provider, const TX: usize> Session<A, S, TX> {
         }
     }
 
+    /// Whether a pairing window is open, as reported by
+    /// `PROP_BLE_PAIRING`.
+    ///
+    /// The transport calls this on every transition, commanded or not —
+    /// and "or not" is the whole reason the window is a property: it
+    /// closes by itself on a new bond or a timeout, and a host showing a
+    /// toggle has to see it flip back.
+    pub fn set_ble_pairing(&mut self, open: bool, emit: &mut impl FnMut(&[u8])) {
+        if !self.config.ble_pairing || self.ble_pairing_open == open {
+            return;
+        }
+        self.ble_pairing_open = open;
+        if self.attached {
+            self.announce_prop_is(prop::BLE_PAIRING, &[open as u8], emit);
+        }
+    }
+
+    /// Complete a deferred `PROP_BLE_PAIRING` write.
+    ///
+    /// `Ok(state)` quotes the state the transport is now in, which
+    /// answers the write the way any set is answered — with the
+    /// property's value. `Err(())` is a window the device cannot open
+    /// right now: locked out after repeated pairing failures, or
+    /// Bluetooth disabled.
+    pub fn respond_ble_pairing(
+        &mut self,
+        tid: u8,
+        result: Result<bool, ()>,
+        emit: &mut impl FnMut(&[u8]),
+    ) {
+        match result {
+            Ok(open) => {
+                self.ble_pairing_open = open;
+                self.send_prop_is(tid, prop::BLE_PAIRING, &[open as u8], emit);
+            }
+            Err(()) => self.complete(tid, Status::INVALID_STATE, emit),
+        }
+    }
+
     fn prop_set(
         &mut self,
         tid: u8,
@@ -4332,6 +4377,24 @@ impl<A: AesProvider, S: Sha256Provider, const TX: usize> Session<A, S, TX> {
                 }
             };
             return Some(Effect::SetPairingPin { tid, pin });
+        }
+        // The pairing window. Defers like the PIN: whether a window can
+        // open is the transport's call (lockout, Bluetooth off), and the
+        // answer quotes the state actually reached rather than the one
+        // asked for.
+        if key == prop::BLE_PAIRING {
+            if !self.config.ble_pairing {
+                self.complete(tid, Status::PROP_NOT_FOUND, emit);
+                return None;
+            }
+            let open = match parse_bool(value) {
+                Ok(open) => open,
+                Err(status) => {
+                    self.complete(tid, status, emit);
+                    return None;
+                }
+            };
+            return Some(Effect::SetBlePairing { tid, open });
         }
         if key == prop::DEV_PRIVATE_KEY {
             // Both forms — installing a key and commanding on-device
@@ -5148,6 +5211,9 @@ impl<A: AesProvider, S: Sha256Provider, const TX: usize> Session<A, S, TX> {
         if key == prop::BLE_LINK {
             return self.config.ble;
         }
+        if key == prop::BLE_PAIRING {
+            return self.config.ble_pairing;
+        }
         if matches!(key, prop::TIME | prop::TZ_OFFSET) {
             return self.config.time.is_some();
         }
@@ -5418,6 +5484,10 @@ impl<A: AesProvider, S: Sha256Provider, const TX: usize> Session<A, S, TX> {
             }
             prop::BLE_LINK if self.config.ble => {
                 out[0] = self.ble_link.code();
+                1
+            }
+            prop::BLE_PAIRING if self.config.ble_pairing => {
+                out[0] = self.ble_pairing_open as u8;
                 1
             }
             prop::MAC_REPEATER_REGIONS if self.config.mac_node => {
@@ -6458,25 +6528,11 @@ mod tests {
         let mut buf = [0u8; 8];
         let clear = frame::ble_clear_bonds(&mut buf, 3).unwrap();
         let clear = buf[..clear].to_vec();
-        let mut buf = [0u8; 8];
-        let pair = frame::ble_start_pairing(&mut buf, 4).unwrap();
-        let pair = buf[..pair].to_vec();
 
         let mut session = test_session();
         let (emitted, effect) = dispatch(&mut session, &clear, 0);
         assert_eq!(effect, Some(Effect::BleClearBonds { tid: 3 }));
         assert!(emitted.is_empty(), "the answer waits for the platform");
-        let (emitted, effect) = dispatch(&mut session, &pair, 0);
-        assert_eq!(effect, Some(Effect::BleStartPairing { tid: 4 }));
-        assert!(emitted.is_empty());
-
-        // A device that cannot open a window refuses with a state the
-        // caller can retry out of, not an internal error.
-        let mut emitted = Vec::new();
-        session.respond_ble_start_pairing(4, Err(()), &mut |frame| emitted.push(frame.to_vec()));
-        let (_, key, value) = parse_prop_is(&emitted[0]);
-        assert_eq!(key, prop::LAST_STATUS);
-        assert_eq!(pui::decode(&value).unwrap().0, Status::INVALID_STATE.0);
 
         let mut emitted = Vec::new();
         session.respond_ble_clear_bonds(3, Ok(()), &mut |frame| emitted.push(frame.to_vec()));
@@ -6490,13 +6546,11 @@ mod tests {
         };
         let mut fixed: TestSession = Session::new(config, Status::RESET_POWER_ON, test_engine());
         fixed.attach(true);
-        for frame in [&clear, &pair] {
-            let (emitted, effect) = dispatch(&mut fixed, frame, 0);
-            assert_eq!(effect, None);
-            let (_, key, value) = parse_prop_is(&emitted[0]);
-            assert_eq!(key, prop::LAST_STATUS);
-            assert_eq!(pui::decode(&value).unwrap().0, Status::UNIMPLEMENTED.0);
-        }
+        let (emitted, effect) = dispatch(&mut fixed, &clear, 0);
+        assert_eq!(effect, None);
+        let (_, key, value) = parse_prop_is(&emitted[0]);
+        assert_eq!(key, prop::LAST_STATUS);
+        assert_eq!(pui::decode(&value).unwrap().0, Status::UNIMPLEMENTED.0);
         // The refusal is the whole of what the host is told. Bluetooth
         // has one capability, and a device that keeps its bonds to itself
         // still advertises it — so the count, not the caps list, is what
@@ -6505,6 +6559,61 @@ mod tests {
         let mut buf = [0u8; 16];
         let len = frame::prop_get(&mut buf, 6, prop::BLE_BOND_COUNT).unwrap();
         let (emitted, _) = dispatch(&mut fixed, &buf[..len], 0);
+        expect_status(&emitted[0], 6, Status::PROP_NOT_FOUND);
+    }
+
+    /// The pairing window is a property, not a command: it can be
+    /// opened, closed, observed, and — the case no command could
+    /// express — the transport reports it closing on its own.
+    #[test]
+    fn the_pairing_window_is_a_toggle_the_transport_answers_for() {
+        let mut session = test_session();
+        assert_eq!(get(&mut session, prop::BLE_PAIRING), [0]);
+
+        // Opening defers to the transport, which answers with the state
+        // actually reached.
+        let mut buf = [0u8; 16];
+        let len = frame::prop_set(&mut buf, 4, prop::BLE_PAIRING, &[1]).unwrap();
+        let (emitted, effect) = dispatch(&mut session, &buf[..len], 0);
+        assert_eq!(effect, Some(Effect::SetBlePairing { tid: 4, open: true }));
+        assert!(emitted.is_empty(), "the answer waits for the platform");
+        let mut emitted = Vec::new();
+        session.respond_ble_pairing(4, Ok(true), &mut |frame| emitted.push(frame.to_vec()));
+        let (_, key, value) = parse_prop_is(&emitted[0]);
+        assert_eq!(key, prop::BLE_PAIRING);
+        assert_eq!(value, [1]);
+        assert_eq!(get(&mut session, prop::BLE_PAIRING), [1]);
+
+        // A refused open — locked out, or Bluetooth disabled — is a
+        // state the caller can retry out of, not an internal error.
+        let len = frame::prop_set(&mut buf, 5, prop::BLE_PAIRING, &[1]).unwrap();
+        let (_, effect) = dispatch(&mut session, &buf[..len], 0);
+        assert_eq!(effect, Some(Effect::SetBlePairing { tid: 5, open: true }));
+        let mut emitted = Vec::new();
+        session.respond_ble_pairing(5, Err(()), &mut |frame| emitted.push(frame.to_vec()));
+        expect_status(&emitted[0], 5, Status::INVALID_STATE);
+
+        // The transport closing the window on its own — a bond enrolled,
+        // a timeout — is published like any transition the host did not
+        // command.
+        let mut announced = Vec::new();
+        session.set_ble_pairing(false, &mut |frame| announced.push(frame.to_vec()));
+        let (_, key, value) = parse_prop_is(&announced[0]);
+        assert_eq!(key, prop::BLE_PAIRING);
+        assert_eq!(value, [0]);
+        assert_eq!(get(&mut session, prop::BLE_PAIRING), [0]);
+
+        // A device that does not manage its own bonds has no window to
+        // ask about, and says so the same way it does for the count.
+        let config = SessionConfig {
+            ble_pairing: false,
+            ..test_config()
+        };
+        let mut fixed: TestSession = Session::new(config, Status::RESET_POWER_ON, test_engine());
+        fixed.attach(true);
+        let len = frame::prop_set(&mut buf, 6, prop::BLE_PAIRING, &[1]).unwrap();
+        let (emitted, effect) = dispatch(&mut fixed, &buf[..len], 0);
+        assert_eq!(effect, None);
         expect_status(&emitted[0], 6, Status::PROP_NOT_FOUND);
     }
 

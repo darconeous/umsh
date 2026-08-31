@@ -27,8 +27,12 @@ pub enum IdentityOp {
 pub enum BleOp {
     /// Report how many hosts are paired with this device.
     Bonds,
-    /// Open a pairing window so another host can pair.
-    Pair,
+    /// Open or close the pairing window.
+    Pair {
+        /// The window state to set.
+        #[arg(value_enum, default_value_t = PairState::On)]
+        state: PairState,
+    },
     /// Forget every paired host, the pairing PIN, and the pairing
     /// lockout, then open a pairing window.
     Clear {
@@ -36,6 +40,15 @@ pub enum BleOp {
         #[arg(long)]
         yes: bool,
     },
+}
+
+/// Whether the pairing window should be open. The window is a state,
+/// not an act — `PROP_BLE_PAIRING` — so it can be set in either
+/// direction and read back.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, clap::ValueEnum)]
+pub enum PairState {
+    On,
+    Off,
 }
 
 #[derive(Debug, clap::Subcommand)]
@@ -148,11 +161,16 @@ pub async fn ble(app: &mut App, op: BleOp) -> Result<()> {
             field("paired hosts", count);
             Ok(())
         }
-        BleOp::Pair => {
-            if !app.device()?.ble_start_pairing().await? {
+        BleOp::Pair { state } => {
+            let open = state == PairState::On;
+            if app.device()?.set_ble_pairing(open).await?.is_none() {
                 bail!("this device does not advertise CAP_BLE; it has no Bluetooth transport");
             }
-            println!("pairing window open; pair from the other host now");
+            if open {
+                println!("pairing window open; pair from the other host now");
+            } else {
+                println!("pairing window closed");
+            }
             Ok(())
         }
         BleOp::Clear { yes } => {
