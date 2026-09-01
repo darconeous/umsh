@@ -175,29 +175,28 @@ async fn a_write_round_trips_and_the_device_kept_it() {
 }
 
 #[tokio::test(flavor = "current_thread")]
-async fn the_synchronization_procedure_leaves_the_host_domain_out() {
+async fn the_synchronization_procedure_reads_the_host_domain_too() {
     mesh!("sync", mesh);
     let (link, mut endpoint) = mesh_link();
     let mut device = open(link);
 
     let sync = with_mesh(&mut mesh, &mut endpoint, device.sync(None))
         .await
-        .expect("sync completes without asking for what it cannot have");
+        .expect("sync completes over the administrative binding");
 
-    // The device serves some host or none; either way it is not an
-    // administrator's business, and asking would have cost an exchange
-    // to be told so.
-    assert_eq!(sync.ownership, HostOwnership::Unreachable);
+    // Reads are not the gated half. An administrator asks for the host
+    // domain like anything else and is told what is actually there —
+    // here, a device no host has claimed.
+    assert_eq!(sync.ownership, HostOwnership::Unclaimed);
     assert_eq!(sync.host_key, None);
-    assert_eq!(sync.filters, None);
-    assert_eq!(sync.host_channel_ids, None);
-    assert_eq!(sync.host_peer_keys, None);
-    assert_eq!(sync.auto_ack, None);
-    assert_eq!(sync.queue_count, None);
-    assert_eq!(sync.queue_dropped, None);
+    assert_eq!(sync.filters, Some(Vec::new()));
+    assert_eq!(sync.host_channel_ids, Some(Vec::new()));
+    assert_eq!(sync.host_peer_keys, Some(Vec::new()));
+    assert_eq!(sync.auto_ack, Some(false));
+    assert_eq!(sync.queue_count, Some(0));
+    assert_eq!(sync.queue_dropped, Some(0));
 
-    // Everything an administrator *can* see is there, device domain and
-    // radio configuration alike.
+    // The device domain and radio configuration alike.
     assert_eq!(sync.device_name, "Simulated Device");
     assert_eq!(sync.last_status, Status::RESET_POWER_ON);
     assert_eq!(sync.freq_khz, 910_525);
