@@ -16,7 +16,8 @@ use umsh_ulcp::alert::AlertState;
 use umsh_ulcp::battery::{self, BatteryStatus};
 use umsh_ulcp::ble::BleLinkState;
 use umsh_ulcp::frame::{
-    self, Cmd, Frame, Header, MultiEntries, PropPayload, StreamPayload, TID_UNSOLICITED,
+    self, Cmd, Frame, Header, MultiEntries, PropPayload, SessionResetReason, StreamPayload,
+    TID_UNSOLICITED,
 };
 use umsh_ulcp::gnss::{self, GnssSnapshot};
 use umsh_ulcp::ids::{
@@ -276,8 +277,8 @@ pub struct SessionConfig {
     /// device's own that can repeat and that a backhauled host can sit
     /// point-to-point behind. Every firmware sets this; a simulated
     /// device with no node behind it must not, or it would advertise
-    /// `CAP_MAC_BACKHAUL` while `Effect::ApplyBackhaul` connects the
-    /// host to nothing. When unset, `CAP_REPEATER` and
+    /// `CAP_MAC_BACKHAUL` while the backhaul switch connects the host
+    /// to nothing. When unset, `CAP_REPEATER` and
     /// `CAP_MAC_BACKHAUL` are absent and the repeater and backhaul
     /// properties are unknown.
     pub mac_node: bool,
@@ -350,12 +351,6 @@ pub enum Effect {
     /// and `key`. Emitted for a get of any positioning property; the
     /// session never caches a reading, so every get samples.
     SampleGnss { tid: u8, key: u32 },
-    /// A `PROP_MAC_BACKHAUL` write. While enabled, the host's frames go
-    /// to the device's own node instead of the air, and the node's
-    /// repeater carries them the rest of the way; the host stops hearing
-    /// the medium directly. Applied by whatever shares the radio, which
-    /// on a device with a node of its own is the multiplexer.
-    ApplyBackhaul { enabled: bool },
     /// The live human-readable device name changed. Transports that expose a
     /// name should refresh it without disrupting the active session.
     DeviceNameChanged,
@@ -2281,6 +2276,15 @@ pub struct Session<A: AesProvider, S: Sha256Provider, const TX: usize = 1> {
     /// `respond_*` completing an admin exchange still answers by the
     /// admin binding's rules.
     binding: Binding,
+    /// A session reset the attached host has not been told about yet.
+    ///
+    /// Session state is discarded from four places, some of which are
+    /// reached over the administrative binding or by a transport edge
+    /// rather than by a host frame. Recording the debt here and letting
+    /// the driver drain it at the tail of its loop puts the notice on
+    /// the host's transport in every case, and keeps a discard with
+    /// nobody attached from firing into the next session.
+    session_reset_pending: Option<SessionResetReason>,
     scratch: [u8; SCRATCH],
 }
 
@@ -2408,6 +2412,7 @@ impl<A: AesProvider, S: Sha256Provider, const TX: usize> Session<A, S, TX> {
             ble_pairing_open: false,
             multi: None,
             binding: Binding::Local,
+            session_reset_pending: None,
             scratch: [0; SCRATCH],
         }
     }
@@ -2579,7 +2584,7 @@ impl<A: AesProvider, S: Sha256Provider, const TX: usize> Session<A, S, TX> {
         if self.saved.is_some() {
             self.apply_saved_device();
         }
-        self.session = SessionState::default();
+        self.discard_session_state(SessionResetReason::Reset);
         // The device tables were rebuilt from post-reset (and possibly
         // the saved snapshot); the node must re-sync.
         self.bump_dev_domain();
@@ -2700,16 +2705,20 @@ impl<A: AesProvider, S: Sha256Provider, const TX: usize> Session<A, S, TX> {
     /// A host attached. Resets session state only (spec §Attach): the
     /// device and host domains — PHY configuration and enable state,
     /// device name, duty accounting, provisioning, and the inbound
-    /// queue — are untouched, and nothing is emitted; the attach itself
-    /// produces no notification. Accepted frames are delivered live
-    /// from here on; queued frames wait for `CMD_QUEUE_DRAIN`.
+    /// queue — are untouched. Accepted frames are delivered live from
+    /// here on; queued frames wait for `CMD_QUEUE_DRAIN`.
+    ///
+    /// The discarded session state is owed to the host as a
+    /// `CMD_SESSION_RESET`, which the driver drains through
+    /// [`Session::take_session_reset_notice`] before anything else
+    /// reaches the new session.
     ///
     /// `link_secure` states whether this transport meets its security
     /// binding for key provisioning (spec §Provisioning Security):
     /// physical possession for serial transports, an encrypted bonded
     /// LESC link for BLE. Key-bearing writes are refused while false.
     pub fn attach(&mut self, link_secure: bool) {
-        self.session = SessionState::default();
+        self.discard_session_state(SessionResetReason::Attached);
         self.attached = true;
         self.link_secure = link_secure;
     }
@@ -2718,10 +2727,58 @@ impl<A: AesProvider, S: Sha256Provider, const TX: usize> Session<A, S, TX> {
     /// host domains keep operating detached: accepted frames are queued
     /// instead of delivered (delegated acknowledgement arrives with
     /// `CAP_HOST_AUTO_ACK`).
+    ///
+    /// No notice is owed, and any notice still owed is dropped: there is
+    /// nobody left to tell, and carrying the debt across would fire it
+    /// into the session that follows.
     pub fn detach(&mut self) {
         self.session = SessionState::default();
+        self.session_reset_pending = None;
         self.attached = false;
         self.link_secure = false;
+    }
+
+    /// `PROP_MAC_BACKHAUL`: whether the host's outbound frames are
+    /// handed to the device's own node instead of the air.
+    ///
+    /// The radio multiplexer mirrors this at the tail of the driver
+    /// loop. Reading it there rather than pushing an effect from each
+    /// write is what keeps the routing and the property agreeing across
+    /// paths that never touch `prop_set` at all.
+    pub const fn backhaul(&self) -> bool {
+        self.session.backhaul
+    }
+
+    /// Discard session state and record that the attached host has to be
+    /// told. The single path every discard takes; see
+    /// [`Session::take_session_reset_notice`] for how the debt is paid.
+    fn discard_session_state(&mut self, reason: SessionResetReason) {
+        self.session = SessionState::default();
+        self.session_reset_pending = Some(reason);
+    }
+
+    /// Emit any owed `CMD_SESSION_RESET` on the host transport, and
+    /// report whether one was written.
+    ///
+    /// Called at the tail of the driver loop, which is after the frame
+    /// that caused the reset has been served: an administrative
+    /// `CMD_RST` has released the admin binding by then, so the notice
+    /// goes where it belongs. Detaching clears the debt without emitting
+    /// — a detach discards session state with nobody to tell, and a debt
+    /// carried across would fire into the next session.
+    pub fn take_session_reset_notice(&mut self, emit: &mut impl FnMut(&[u8])) -> bool {
+        let Some(reason) = self.session_reset_pending.take() else {
+            return false;
+        };
+        if !self.attached {
+            return false;
+        }
+        let mut buf = [0u8; 8];
+        let Ok(len) = frame::session_reset(&mut buf, reason) else {
+            return false;
+        };
+        emit(&buf[..len]);
+        true
     }
 
     /// Handle one decoded ULCP frame from the host.
@@ -2896,7 +2953,7 @@ impl<A: AesProvider, S: Sha256Provider, const TX: usize> Session<A, S, TX> {
                     return None;
                 }
                 self.apply_saved_device();
-                self.session = SessionState::default();
+                self.discard_session_state(SessionResetReason::Restored);
                 self.announce_status(Status::RESET_RESTORED, emit);
                 Some(self.apply_radio())
             }
@@ -2949,7 +3006,12 @@ impl<A: AesProvider, S: Sha256Provider, const TX: usize> Session<A, S, TX> {
             }
             // device-to-host commands arriving from the host.
             Some(
-                Cmd::PropIs | Cmd::StrRecv | Cmd::PropInserted | Cmd::PropRemoved | Cmd::PropAre,
+                Cmd::PropIs
+                | Cmd::StrRecv
+                | Cmd::PropInserted
+                | Cmd::PropRemoved
+                | Cmd::PropAre
+                | Cmd::SessionReset,
             ) => {
                 self.complete(tid, Status::INVALID_COMMAND, emit);
                 None
@@ -4520,10 +4582,13 @@ impl<A: AesProvider, S: Sha256Provider, const TX: usize> Session<A, S, TX> {
                     return None;
                 }
             };
-            // Session-scoped: reverts to false on every attach.
+            // Session-scoped: reverts to false on every attach. The
+            // multiplexer follows `backhaul()` rather than an effect, so
+            // every path that moves this — an attach, a CMD_RST, an
+            // administrator over the mesh — takes the routing with it.
             self.session.backhaul = enabled;
             self.send_prop_is(tid, key, &[enabled as u8], emit);
-            return Some(Effect::ApplyBackhaul { enabled });
+            return None;
         }
         if key == prop::DEV_NAME {
             if !valid_device_name(value) {
@@ -7992,6 +8057,115 @@ mod tests {
         assert_eq!(pui::decode(&raw).unwrap().0, Status::RESET_WATCHDOG.0);
     }
 
+    /// Drain the owed notice the way the driver does at the tail of its
+    /// loop, reporting the reason if one was written.
+    fn take_notice(session: &mut TestSession) -> Option<SessionResetReason> {
+        let mut emitted = Vec::new();
+        if !session.take_session_reset_notice(&mut |bytes: &[u8]| emitted.push(bytes.to_vec())) {
+            return None;
+        }
+        assert_eq!(emitted.len(), 1, "the notice is exactly one frame");
+        let parsed = Frame::parse(&emitted[0]).unwrap();
+        assert_eq!(parsed.header.tid(), TID_UNSOLICITED);
+        assert_eq!(parsed.command(), Some(Cmd::SessionReset));
+        Some(frame::parse_session_reset(parsed.payload).unwrap())
+    }
+
+    #[test]
+    fn every_session_discard_owes_the_host_a_notice() {
+        let mut session = test_session();
+        assert_eq!(
+            take_notice(&mut session),
+            Some(SessionResetReason::Attached)
+        );
+        // Paid once, and only once.
+        assert_eq!(take_notice(&mut session), None);
+
+        let mut buf = [0u8; 16];
+        let len = frame::nop(&mut buf, 1).unwrap();
+        session.handle_frame(&buf[..len], 0, &mut |_: &[u8]| {});
+        assert_eq!(take_notice(&mut session), None);
+
+        session.reset(Status::RESET_SOFTWARE, &mut |_: &[u8]| {});
+        assert_eq!(take_notice(&mut session), Some(SessionResetReason::Reset));
+
+        // A restore with nothing saved is refused, so nothing is owed.
+        let len = frame::restore(&mut buf, 2).unwrap();
+        session.handle_frame(&buf[..len], 0, &mut |_: &[u8]| {});
+        assert_eq!(take_notice(&mut session), None);
+
+        let len = frame::save(&mut buf, 3).unwrap();
+        session.handle_frame(&buf[..len], 0, &mut |_: &[u8]| {});
+        session.respond_save(3, Ok(()), &mut |_: &[u8]| {});
+        let len = frame::restore(&mut buf, 4).unwrap();
+        session.handle_frame(&buf[..len], 0, &mut |_: &[u8]| {});
+        assert_eq!(
+            take_notice(&mut session),
+            Some(SessionResetReason::Restored)
+        );
+    }
+
+    /// The one case `announce_status` cannot serve: an administrator over
+    /// the mesh resets session state and the local host hears nothing.
+    #[test]
+    fn an_admin_reset_still_owes_the_local_host_a_notice() {
+        let mut session = test_session();
+        take_notice(&mut session);
+
+        let mut buf = [0u8; 16];
+        let len = frame::reset(&mut buf, TID_UNSOLICITED).unwrap();
+        let mut emitted = Vec::new();
+        session.handle_admin_frame(&buf[..len], 0, 180, &mut |bytes: &[u8]| {
+            emitted.push(bytes.to_vec())
+        });
+        session.end_admin_exchange();
+        assert_eq!(take_notice(&mut session), Some(SessionResetReason::Reset));
+    }
+
+    /// A discard with nobody attached has nobody to tell, and the debt
+    /// must not survive into the session that follows.
+    #[test]
+    fn a_detached_discard_owes_nothing_and_leaves_nothing_behind() {
+        let mut session = test_session();
+        take_notice(&mut session);
+
+        session.detach();
+        assert_eq!(take_notice(&mut session), None);
+
+        session.reset(Status::RESET_SOFTWARE, &mut |_: &[u8]| {});
+        assert_eq!(take_notice(&mut session), None);
+
+        // The attach that follows owes its own notice, not the reset's.
+        session.attach(true);
+        assert_eq!(
+            take_notice(&mut session),
+            Some(SessionResetReason::Attached)
+        );
+    }
+
+    /// The notice is a separate channel from the boot cause: a host that
+    /// attaches still reads why the device came up.
+    #[test]
+    fn the_notice_leaves_the_last_status_alone() {
+        let mut session = test_session_with_boot_status(Status::RESET_WATCHDOG);
+        assert_eq!(
+            take_notice(&mut session),
+            Some(SessionResetReason::Attached)
+        );
+        let raw = get(&mut session, prop::LAST_STATUS);
+        assert_eq!(pui::decode(&raw).unwrap().0, Status::RESET_WATCHDOG.0);
+    }
+
+    /// Device-to-host, so a host sending it is answered the way any other
+    /// wrong-direction command is.
+    #[test]
+    fn a_host_may_not_send_the_notice() {
+        let mut session = test_session();
+        // Carrying a TID it never uses, so the refusal is observable.
+        let (emitted, _) = dispatch(&mut session, &[0x83, Cmd::SessionReset as u8, 0x01], 0);
+        expect_status(&emitted[0], 3, Status::INVALID_COMMAND);
+    }
+
     #[test]
     fn attach_resets_promiscuous_mode() {
         let mut session = test_session();
@@ -8014,12 +8188,13 @@ mod tests {
     #[test]
     fn attach_resets_backhaul_mode() {
         let mut session = test_session();
-        let (_, effect) = set(&mut session, prop::MAC_BACKHAUL, &[1]);
-        assert_eq!(effect, Some(Effect::ApplyBackhaul { enabled: true }));
+        set(&mut session, prop::MAC_BACKHAUL, &[1]);
         assert_eq!(get(&mut session, prop::MAC_BACKHAUL), [1]);
+        assert!(session.backhaul());
 
         session.attach(true);
         assert_eq!(get(&mut session, prop::MAC_BACKHAUL), [0]);
+        assert!(!session.backhaul());
 
         let (emitted, _) = set(&mut session, prop::MAC_BACKHAUL, &[2]);
         expect_status(&emitted[0], 2, Status::INVALID_ARGUMENT);
@@ -12027,10 +12202,11 @@ mod tests {
             emitted.push(bytes.to_vec())
         });
         session.end_admin_exchange();
-        assert!(matches!(
-            effect,
-            Some(Effect::ApplyBackhaul { enabled: true })
-        ));
+        assert!(effect.is_none());
+        // The multiplexer follows this rather than an effect, which is
+        // the whole point: the administrator's write reaches the routing
+        // without the local host having been involved.
+        assert!(session.backhaul());
         let (_, key, value) = parse_prop_is(&emitted[0]);
         assert_eq!(key, prop::MAC_BACKHAUL);
         assert_eq!(value, [1]);

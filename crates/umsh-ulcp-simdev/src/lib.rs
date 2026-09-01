@@ -11,8 +11,8 @@
 //! The [`SessionConfig`] is the caller's: it names the device and
 //! declares its capability surface. A simulated device has no node
 //! behind it, so its configuration must leave
-//! [`SessionConfig::mac_node`] unset — `Effect::ApplyBackhaul` would
-//! connect the host to nothing.
+//! [`SessionConfig::mac_node`] unset — a backhaul would connect the host
+//! to nothing.
 
 use std::collections::VecDeque;
 
@@ -108,12 +108,25 @@ impl SimulatedDevice {
         self.decoder.reset();
         self.outbound.clear();
         self.session.attach(true);
+        self.flush_session_reset_notice();
     }
 
     pub fn detach(&mut self) {
         self.decoder.reset();
         self.outbound.clear();
         self.session.detach();
+    }
+
+    /// Pay whatever session-reset notice the session is owing, the way
+    /// the firmware driver does at the tail of its loop.
+    fn flush_session_reset_notice(&mut self) {
+        let mut emitted = Vec::new();
+        if self
+            .session
+            .take_session_reset_notice(&mut |frame: &[u8]| emitted.push(frame.to_vec()))
+        {
+            self.queue_emitted(emitted);
+        }
     }
 
     /// Feed an arbitrary serial byte chunk into the virtual USB link.
@@ -186,6 +199,7 @@ impl SimulatedDevice {
             .handle_frame(frame, device_ms, &mut |bytes| emitted.push(bytes.to_vec()));
         self.execute(effect, &mut emitted);
         self.queue_emitted(emitted);
+        self.flush_session_reset_notice();
     }
 
     fn execute(&mut self, effect: Option<Effect>, emitted: &mut Vec<Vec<u8>>) {
@@ -196,9 +210,6 @@ impl SimulatedDevice {
             None
             | Some(Effect::ApplyRadio(_))
             | Some(Effect::DeviceNameChanged)
-            // The simulated board has no node of its own, so there is
-            // nothing for a backhaul to connect the host to.
-            | Some(Effect::ApplyBackhaul { .. })
             | Some(Effect::ApplyAlert(_)) => {}
             Some(Effect::StartTransmit) => {
                 let device_ms = self.device_ms();
@@ -428,6 +439,27 @@ mod tests {
         }
     }
 
+    /// Attach and take delivery of the `CMD_SESSION_RESET` the attach
+    /// owes, the way a host does. What it asserts along the way is that
+    /// the notice is the first frame of the session and the only one the
+    /// attach itself produces.
+    fn attach(sim: &mut SimulatedDevice) {
+        sim.attach();
+        let frame = decode(sim.take_outbound().expect("the attach announces itself"));
+        assert_eq!(
+            Frame::parse(&frame).unwrap().command(),
+            Some(umsh_ulcp::Cmd::SessionReset)
+        );
+        assert!(sim.take_outbound().is_none(), "and nothing else");
+    }
+
+    fn decode(wire: Vec<u8>) -> Vec<u8> {
+        let mut decoder = hdlc::Decoder::<WIRE_CAPACITY>::new();
+        wire.into_iter()
+            .find_map(|byte| decoder.push(byte).map(|frame| frame.unwrap().to_vec()))
+            .unwrap()
+    }
+
     fn exchange(sim: &mut SimulatedDevice, request: &[u8]) -> Vec<Vec<u8>> {
         exchange_at(sim, request, 100)
     }
@@ -439,12 +471,7 @@ mod tests {
 
         let mut frames = Vec::new();
         while let Some(wire) = sim.take_outbound() {
-            let mut decoder = hdlc::Decoder::<WIRE_CAPACITY>::new();
-            frames.push(
-                wire.into_iter()
-                    .find_map(|byte| decoder.push(byte).map(|frame| frame.unwrap().to_vec()))
-                    .unwrap(),
-            );
+            frames.push(decode(wire));
         }
         frames
     }
@@ -452,7 +479,7 @@ mod tests {
     #[test]
     fn real_session_answers_attach_property_over_hdlc() {
         let mut sim = SimulatedDevice::new(test_config());
-        sim.attach();
+        attach(&mut sim);
         let mut request = [0; 16];
         let len = frame::prop_get(&mut request, 1, prop::DEV_VERSION).unwrap();
         let responses = exchange(&mut sim, &request[..len]);
@@ -469,7 +496,7 @@ mod tests {
     #[test]
     fn a_factory_reset_restarts_the_uptime_clock() {
         let mut sim = SimulatedDevice::new(test_config());
-        sim.attach();
+        attach(&mut sim);
 
         let read_uptime = |sim: &mut SimulatedDevice, now_ms: u64| -> u32 {
             let mut request = [0; 16];
@@ -494,7 +521,7 @@ mod tests {
     #[test]
     fn real_session_executes_radio_transmit_effect() {
         let mut sim = SimulatedDevice::new(test_config());
-        sim.attach();
+        attach(&mut sim);
         let mut request = [0; 64];
         let len = frame::prop_set(&mut request, 1, prop::PHY_ENABLED, &[1]).unwrap();
         exchange(&mut sim, &request[..len]);
@@ -517,7 +544,7 @@ mod tests {
     #[test]
     fn demo_packet_uses_the_real_receive_path() {
         let mut sim = SimulatedDevice::new(test_config());
-        sim.attach();
+        attach(&mut sim);
         let mut request = [0; 16];
         let len = frame::prop_set(&mut request, 1, prop::PHY_ENABLED, &[1]).unwrap();
         exchange(&mut sim, &request[..len]);
@@ -540,7 +567,7 @@ mod tests {
     #[test]
     fn a_simulated_device_claims_no_node() {
         let mut sim = SimulatedDevice::new(test_config());
-        sim.attach();
+        attach(&mut sim);
         let mut request = [0; 16];
         let len = frame::prop_get(&mut request, 1, umsh_ulcp::ids::prop::CAPS).unwrap();
         let responses = exchange(&mut sim, &request[..len]);

@@ -127,6 +127,12 @@ pub enum Cmd {
     /// Multiple property value notification (device to host), answering
     /// `CMD_PROP_MULTI_GET` or `CMD_PROP_MULTI_SET`. Never unsolicited.
     PropAre = 23,
+    /// Session reset notification (device to host): the device has
+    /// discarded session state, so every session-scoped property is back
+    /// at its documented default. Always unsolicited, and never carried
+    /// over the administrative binding. The payload is one
+    /// [`SessionResetReason`].
+    SessionReset = 24,
 }
 
 impl Cmd {
@@ -153,7 +159,46 @@ impl Cmd {
             21 => Some(Self::PropMultiGet),
             22 => Some(Self::PropMultiSet),
             23 => Some(Self::PropAre),
+            24 => Some(Self::SessionReset),
             _ => None,
+        }
+    }
+}
+
+/// Why the device discarded session state, carried by
+/// [`Cmd::SessionReset`].
+///
+/// Diagnostic: the host's obligation is the same for every value, so an
+/// unrecognized reason is a session reset without a name for it, never a
+/// parse failure.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum SessionResetReason {
+    /// A host attached.
+    Attached,
+    /// `CMD_RST`.
+    Reset,
+    /// `CMD_RESTORE` in its reset form.
+    Restored,
+    /// A reason this implementation does not have a name for.
+    Other(u32),
+}
+
+impl SessionResetReason {
+    pub const fn from_u32(value: u32) -> Self {
+        match value {
+            0 => Self::Attached,
+            1 => Self::Reset,
+            2 => Self::Restored,
+            other => Self::Other(other),
+        }
+    }
+
+    pub const fn to_u32(self) -> u32 {
+        match self {
+            Self::Attached => 0,
+            Self::Reset => 1,
+            Self::Restored => 2,
+            Self::Other(value) => value,
         }
     }
 }
@@ -594,6 +639,19 @@ pub fn last_status(buf: &mut [u8], tid: u8, status: Status) -> Result<usize, Wri
     Ok(writer.finish())
 }
 
+/// Encode a `CMD_SESSION_RESET` frame. Always uses TID zero.
+pub fn session_reset(buf: &mut [u8], reason: SessionResetReason) -> Result<usize, WriteError> {
+    let mut writer = FrameWriter::new(buf, TID_UNSOLICITED, Cmd::SessionReset)?;
+    writer.write_pui(reason.to_u32())?;
+    Ok(writer.finish())
+}
+
+/// Decode the payload of a `CMD_SESSION_RESET` frame.
+pub fn parse_session_reset(payload: &[u8]) -> Result<SessionResetReason, ParseError> {
+    let (reason, _) = pui::decode(payload)?;
+    Ok(SessionResetReason::from_u32(reason))
+}
+
 fn stream_payload(
     writer: &mut FrameWriter<'_>,
     stream: u32,
@@ -760,6 +818,40 @@ mod tests {
     }
 
     #[test]
+    fn session_reset_frame() {
+        let mut buf = [0u8; 8];
+        let len = session_reset(&mut buf, SessionResetReason::Reset).unwrap();
+        assert_eq!(&buf[..len], &[0x80, 0x18, 0x01]);
+
+        let frame = Frame::parse(&buf[..len]).unwrap();
+        assert_eq!(frame.header.tid(), TID_UNSOLICITED);
+        assert_eq!(frame.command(), Some(Cmd::SessionReset));
+        assert_eq!(
+            parse_session_reset(frame.payload),
+            Ok(SessionResetReason::Reset)
+        );
+    }
+
+    #[test]
+    fn session_reset_reason_keeps_unknown_values() {
+        for reason in [
+            SessionResetReason::Attached,
+            SessionResetReason::Reset,
+            SessionResetReason::Restored,
+            SessionResetReason::Other(9),
+        ] {
+            let mut buf = [0u8; 8];
+            let len = session_reset(&mut buf, reason).unwrap();
+            let frame = Frame::parse(&buf[..len]).unwrap();
+            assert_eq!(parse_session_reset(frame.payload), Ok(reason));
+        }
+        assert_eq!(
+            SessionResetReason::from_u32(9),
+            SessionResetReason::Other(9)
+        );
+    }
+
+    #[test]
     fn stream_round_trip() {
         let mut buf = [0u8; 32];
         let data = [0xDEu8, 0xAD, 0xBE, 0xEF];
@@ -811,11 +903,11 @@ mod tests {
 
     #[test]
     fn every_assigned_command_round_trips() {
-        for id in (0..=17u8).chain(21..=23) {
+        for id in (0..=17u8).chain(21..=24) {
             let cmd = Cmd::from_u8(id).unwrap_or_else(|| panic!("command {id} unassigned"));
             assert_eq!(cmd as u8, id);
         }
-        for id in (18..=20u8).chain(24..=127) {
+        for id in (18..=20u8).chain(25..=127) {
             assert_eq!(Cmd::from_u8(id), None, "command {id} should be unassigned");
         }
     }

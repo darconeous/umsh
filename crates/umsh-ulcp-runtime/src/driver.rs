@@ -788,9 +788,6 @@ async fn apply_effect<A, S, const TXQ: usize, M, const RX: usize, const TX: usiz
         Some(Effect::ApplyTime { epoch }) => {
             env.apply_time(epoch).await;
         }
-        Some(Effect::ApplyBackhaul { enabled }) => {
-            crate::radio_mux::MUX_MODE.set_backhaul(enabled);
-        }
         // Deferred effects needing `&mut Session` + the emitter are
         // handled inline in the run loop rather than here.
         Some(Effect::SampleRssi { .. })
@@ -1334,13 +1331,6 @@ where
                 // refuses any access outside an encrypted LESC-bonded
                 // link.
                 session.attach(true);
-                // PROP_MAC_BACKHAUL is session-scoped but its routing
-                // lives in the mux, which the session-state reset above
-                // cannot reach. A displaced session attaches without any
-                // detach in between, so this is the reset that keeps a
-                // predecessor's backhaul mode from leaving the new
-                // session deaf to the air while its property reads 0.
-                crate::radio_mux::MUX_MODE.set_backhaul(false);
             }
             Either4::First(InEvent::Detached(transport)) => {
                 // Only the active transport's detach ends the
@@ -1349,11 +1339,6 @@ where
                 if arbitration.detach(transport) {
                     env.set_advertising_allowed(true);
                     session.detach();
-                    // The session that enabled backhaul is gone; without
-                    // this, detached operation would keep the mux routing
-                    // for a host that no longer exists and the device
-                    // would stop queueing what it hears off the air.
-                    crate::radio_mux::MUX_MODE.set_backhaul(false);
                 }
             }
             Either4::First(InEvent::CancelAlert) => {
@@ -1590,5 +1575,27 @@ where
         // (property mutation, CMD_RST, CMD_RESTORE); one u32
         // compare when they did not.
         sync_dev_domain(&session, &mut dev_domain_synced, &mut env);
+        // PROP_MAC_BACKHAUL is session-scoped but its routing lives in
+        // the mux, which nothing inside the session can reach. Mirroring
+        // it here rather than pushing it from each write is what keeps
+        // the two agreeing across every path that moves it — a host's
+        // write, an attach that discards session state, a CMD_RST off
+        // the mesh. The store is a relaxed atomic, so doing it every
+        // iteration costs nothing.
+        crate::radio_mux::MUX_MODE.set_backhaul(session.backhaul());
+        // Session state was discarded under a host that did not ask for
+        // it; tell it, so it can re-establish whatever it was holding
+        // there. Drained here rather than at the discard because a
+        // CMD_RST off the mesh discards while the admin binding is
+        // still held: by now `serve_frame` has released it and the sink
+        // below is the host's own transport.
+        if session.take_session_reset_notice(&mut |frame: &[u8]| emitter.push(frame)) {
+            emitter
+                .flush(&mut ReplySink::Transport {
+                    destination: arbitration.destination(),
+                    out: rt.out,
+                })
+                .await;
+        }
     }
 }

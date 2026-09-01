@@ -177,6 +177,7 @@ Id | Mnemonic             | Dir          | Description
 21 | `CMD_PROP_MULTI_GET` | Host->Device | Get several property values
 22 | `CMD_PROP_MULTI_SET` | Host->Device | Set several property values in order
 23 | `CMD_PROP_ARE`       | Device->Host | Multiple property value notification
+24 | `CMD_SESSION_RESET`  | Device->Host | Session state was discarded
 
 The multi-property commands (21–23) are gated by `CAP_CMD_MULTI` and
 `CMD_REBOOT` by `CAP_REBOOT` (see [Capabilities](#capabilities));
@@ -524,6 +525,64 @@ The device emits this command only in response to `CMD_PROP_MULTI_GET`
 or `CMD_PROP_MULTI_SET`, with the TID of that command. It **MUST NOT**
 be emitted unsolicited: asynchronous updates use `CMD_PROP_IS` and its
 companions, one property at a time.
+
+### CMD 24: (Device -> Host) `CMD_SESSION_RESET` {#cmd-session-reset}
+
+~~~
+  0                   1                   2
+ 0 1 2 3 4 5 6 7 8 9 0 1 2 3 4 5 6 7 8 9 0 1 2 3
++-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+
+|1 0| RES | TID |      CMD      |     REASON
++-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+
+~~~
+Figure: Structure of `CMD_SESSION_RESET`
+
+The device has discarded [session state](#state-classes), so every
+session-scoped property is back at its documented default under a host
+that did not ask for it. The TID **MUST** be zero: the frame is always
+unsolicited.
+
+**REASON** is a packed unsigned integer. It is diagnostic — a host's
+obligation is the same for every value:
+
+Value | Meaning
+------|----------------------------------
+0     | A host attached
+1     | `CMD_RST`
+2     | `CMD_RESTORE` in its reset form
+
+Unassigned values are reserved. A host **MUST** treat an unrecognized
+reason as a session reset it does not have a name for, never as a parse
+failure.
+
+A device **MUST** emit this command whenever it discards session state
+while a host is attached, and **MUST NOT** emit it when no host is
+attached: a detach discards session state with nobody to tell.
+
+The frame **MUST** be emitted before any frame belonging to the new
+session, so a host can tell which session anything it receives came
+from. The completion of the command that caused the discard belongs to
+the exchange that requested it and **MAY** precede the notice; a
+`CMD_RST` is answered by its `STATUS_RESET_SOFTWARE` and then the
+notice. Where a session is instead created by the host's own first
+frame, nothing has been answered yet and the notice comes first.
+
+The command **MUST NOT** be emitted over the administrative binding. It
+concerns the local tethered session; an administrator over the mesh is
+not party to it, and the binding carries only what was asked for.
+
+A host **MUST** tolerate the frame at any time while attached. On
+receiving it, a host **MUST** re-establish anything it holds in session
+state and **SHOULD** otherwise resynchronize as it would on a fresh
+attach (see [Attach, Detach, and Synchronization](#attach-sync)).
+
+This is deliberately not a [reset code](#reset-codes), and **MUST NOT**
+disturb `PROP_LAST_STATUS`. The two report different losses:
+`STATUS_RESET_POWER_ON` means the host domain went with the session and
+must be reprovisioned in full, whereas a session reset means only session
+state went. A reboot implies a session reset, so recording the narrower
+fact over the broader one would lose the distinction that governs
+recovery.
 
 ## Properties and Streams
 
@@ -887,8 +946,10 @@ How attach and detach are detected is defined by the transport binding:
 On attach, the device **MUST** reset session state (see [State Classes](ulcp-core.md#state-classes)) and
 **MUST NOT** modify the device or host domains in any way. In particular,
 the PHY is not disabled and no property outside session state changes
-value. The device **MUST NOT** emit any frame before attach, and emits no
-unsolicited notification as a result of the attach itself.
+value. The device **MUST NOT** emit any frame before attach; the first
+frame of the session is the [`CMD_SESSION_RESET`](#cmd-session-reset)
+announcing the session state the attach discarded, with reason `0`, and
+the attach itself produces no other unsolicited notification.
 
 Because attach no longer implies any known default state, the host
 synchronizes by *fetching*, not by assuming. The following post-attach
@@ -924,6 +985,10 @@ while attached, updating its view of the affected property accordingly:
 device state can change for reasons the host did not initiate, and
 publication of the new authoritative value is how the protocol reports
 that.
+
+The same applies to [`CMD_SESSION_RESET`](#cmd-session-reset), which
+reports the one change no property notification can: the session itself
+starting over. A host that receives one runs this procedure again.
 
 On detach, the device discards session state, keeps operating with the
 current device- and host-domain state, and begins detached operation:
@@ -1105,6 +1170,12 @@ failure.
 
 Unexpected or unrequested resets are always an indication of a problem, no
 matter what the code value is.
+
+A session reset is not one of these. Discarding session state costs the
+host what it established there and nothing more, so it is announced by
+[`CMD_SESSION_RESET`](#cmd-session-reset) and leaves `PROP_LAST_STATUS`
+alone. Every reset code above implies a session reset; none of them is
+implied by one.
 
 `STATUS_RESET_POWER_ON`
 : Cold power-on start.

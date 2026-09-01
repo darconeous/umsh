@@ -27,8 +27,9 @@ Id | Mnemonic                                                     | Dir         
 21 | [`CMD_PROP_MULTI_GET`](ulcp-core.md#cmd-prop-multi-get)      | Host->Device | `CAP_CMD_MULTI`
 22 | [`CMD_PROP_MULTI_SET`](ulcp-core.md#cmd-prop-multi-set)      | Host->Device | `CAP_CMD_MULTI`
 23 | [`CMD_PROP_ARE`](ulcp-core.md#cmd-prop-are)                  | Device->Host | `CAP_CMD_MULTI`
+24 | [`CMD_SESSION_RESET`](ulcp-core.md#cmd-session-reset)        | Device->Host | —
 
-Command identifiers are 7-bit; 18–20 and 24–127 are unassigned.
+Command identifiers are 7-bit; 18–20 and 25–127 are unassigned.
 
 ## Properties and Streams
 
@@ -191,3 +192,4 @@ Alert states | 0 `ALERT_NONE`, 1 `ALERT_LOCATE` | [`PROP_ALERT`](ulcp-device.md#
 Fix quality | 0 none, 1 two-dimensional, 2 three-dimensional | [`PROP_GNSS_FIX`](ulcp-device.md#prop-gnss-fix)
 Transmit flags | bit 0 `TX_FLAG_NOCCA`, bit 1 `TX_FLAG_NODUTY` | [`STR_PHY_RAW`](ulcp-transport.md#str-radio-raw)
 Receive flags | bit 0 `RX_FLAG_BUFFERED`, bit 1 `RX_FLAG_ACKED`, bit 2 `RX_FLAG_SELF_TX` | [Extended Recv Metadata](ulcp-transport.md#buffered-metadata)
+Session reset reasons | 0 attached, 1 `CMD_RST`, 2 `CMD_RESTORE` | [`CMD_SESSION_RESET`](ulcp-core.md#cmd-session-reset)

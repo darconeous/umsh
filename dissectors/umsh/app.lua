@@ -1035,7 +1035,11 @@ local function dissect_node_management(payload, subtree, tvb, pinfo, ctx, is_res
       if is_response then wrong_way = ulcp.COMMAND_TO_DEVICE[cmd]
       else                wrong_way = ulcp.COMMAND_TO_HOST[cmd]
       end
-      if wrong_way then
+      if ulcp.COMMAND_LOCAL_ONLY and ulcp.COMMAND_LOCAL_ONLY[cmd] then
+        ctx.flag(frame_tree, tvb(opts_end, 1), string.format(
+          "Node Management %s must not carry %s, which concerns the local session",
+          kind, name))
+      elseif wrong_way then
         ctx.flag(frame_tree, tvb(opts_end, 1), string.format(
           "Node Management %s must not carry %s, which travels %s",
           kind, name,

@@ -174,9 +174,6 @@ impl SimDevice {
             None
             | Some(Effect::ApplyRadio(_))
             | Some(Effect::DeviceNameChanged)
-            // The simulator has no node of its own to hand frames to, so
-            // there is nothing for a backhaul to connect the host to.
-            | Some(Effect::ApplyBackhaul { .. })
             | Some(Effect::ApplyAlert(_)) => {}
             // The simulator has no platform to wipe and reboot; a
             // factory reset is exercised against real firmware.

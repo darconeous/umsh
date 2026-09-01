@@ -1617,6 +1617,37 @@ impl MobileUlcpSession {
                 age_seconds: metadata.age_s,
             }]));
         }
+        if parsed.command() == Some(Cmd::SessionReset) {
+            if parsed.header.tid() != frame::TID_UNSOLICITED {
+                return Err(MobileError::UlcpUnexpectedFrame);
+            }
+            // The reason is diagnostic; what matters is that the device
+            // started a session over.
+            frame::parse_session_reset(parsed.payload)
+                .map_err(|_| MobileError::UlcpMalformedPayload)?;
+            let mut state = self.inner.lock().expect("ULCP session mutex poisoned");
+            if state.stage == SessionStage::Idle {
+                return Err(MobileError::UlcpUnexpectedFrame);
+            }
+            // A settled session re-reads: this phone holds nothing
+            // session-scoped of its own, but everything it synchronized
+            // was read from a session that no longer exists. A session
+            // still synchronizing — including the one this notice's own
+            // attach produced — is already on its way to reading all of
+            // it, and interrupting that would restart the handshake it
+            // belongs to.
+            if state.stage != SessionStage::Attached || !state.expected.is_empty() {
+                return Ok(state.update(Vec::new()));
+            }
+            let Some(capabilities) = state.responses.get(&prop::CAPS).map(|c| c.value.clone())
+            else {
+                return Ok(state.update(Vec::new()));
+            };
+            state.inspection_queue = ulcp_refresh_properties(capabilities)?.into();
+            let mut outbound = Vec::new();
+            state.start_refresh(&mut outbound)?;
+            return Ok(state.update(outbound));
+        }
         let response = inspect_ulcp_property_frame(frame)?;
         let mut state = self.inner.lock().expect("ULCP session mutex poisoned");
         let mut outbound = Vec::new();

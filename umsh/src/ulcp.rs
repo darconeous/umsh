@@ -28,7 +28,10 @@ use umsh_ulcp::Status;
 use umsh_ulcp::airtime::lora_airtime_ms;
 use umsh_ulcp::alert::AlertState;
 use umsh_ulcp::battery::BatteryStatus;
-use umsh_ulcp::frame::{self, Cmd, Frame, MultiEntries, StreamPayload, TID_UNSOLICITED};
+use umsh_ulcp::frame::{
+    self, Cmd, Frame, MultiEntries, SessionResetReason, StreamPayload, TID_UNSOLICITED,
+    parse_session_reset,
+};
 use umsh_ulcp::gnss::GnssSnapshot;
 use umsh_ulcp::hdlc;
 use umsh_ulcp::host::{PropertyNotification, PropertyNotificationKind, TidAllocator};
@@ -65,6 +68,10 @@ pub enum UlcpError {
     /// The device reset outside of an initialization handshake, losing
     /// its configuration. The radio must be re-initialized.
     UnexpectedReset(Status),
+    /// The device discarded session state under us: every session-scoped
+    /// property is back at its default, and whatever this host had
+    /// established there is gone. The session must be set up again.
+    SessionReset(SessionResetReason),
     /// The frame exceeds the device's advertised MTU.
     FrameTooLarge(usize),
     /// The device did not answer a command in time.
@@ -86,6 +93,9 @@ impl core::fmt::Display for UlcpError {
             Self::Status(status) => write!(formatter, "device reported {status:?}"),
             Self::UnexpectedReset(status) => {
                 write!(formatter, "device reset unexpectedly ({status:?})")
+            }
+            Self::SessionReset(reason) => {
+                write!(formatter, "device reset the session ({reason:?})")
             }
             Self::FrameTooLarge(len) => write!(formatter, "frame too large: {len} bytes"),
             Self::Timeout => write!(formatter, "timed out waiting for device response"),
@@ -983,6 +993,22 @@ pub struct UlcpDevice<L> {
     prop_events: VecDeque<PropEvent>,
     /// Unsolicited reset notification not yet surfaced to the caller.
     seen_reset: Option<Status>,
+    /// Unsolicited session-reset notice not yet surfaced to the caller.
+    ///
+    /// Latched exactly like `seen_reset` and surfaced from the same
+    /// places, because it means the same thing to whoever is holding
+    /// session-scoped state: what you established is gone.
+    seen_session_reset: Option<SessionResetReason>,
+    /// A session reset this host asked for, to be absorbed rather than
+    /// reported when its notice arrives.
+    ///
+    /// Set before the action that causes one and consumed by the first
+    /// matching notice. It is not enough to swallow notices for the
+    /// duration of a call: the device emits the notice after the reply
+    /// that completes the command, so it commonly arrives during the
+    /// *next* exchange. Matching on the reason keeps the expectation
+    /// from absorbing a reset somebody else caused in the meantime.
+    expected_session_reset: Option<SessionResetReason>,
     max_frame_size: usize,
     t_frame_ms: u32,
     dev_version: String,
@@ -1036,6 +1062,8 @@ where
             responses: VecDeque::new(),
             prop_events: VecDeque::new(),
             seen_reset: None,
+            seen_session_reset: None,
+            expected_session_reset: None,
             max_frame_size: 0,
             t_frame_ms: 0,
             dev_version: String::new(),
@@ -1176,6 +1204,14 @@ where
     ) -> Result<Self, UlcpError> {
         let mut radio = Self::bare(link, config);
         radio.mode = mode;
+        // Opening the transport is what attached us, and the device
+        // announces the session state it discarded doing so. Recording
+        // the expectation before the first exchange keeps that notice
+        // from failing the very handshake it belongs to; a mesh handle
+        // is not a session and gets none.
+        if mode != AttachMode::Remote {
+            radio.expected_session_reset = Some(SessionResetReason::Attached);
+        }
         // Reading LAST_STATUS does not overwrite it, so sync() still
         // sees a retained reset code after this handshake.
         //
@@ -1689,6 +1725,9 @@ where
     }
 
     async fn initialize(&mut self) -> Result<(), UlcpError> {
+        // Opening the transport is what attached us; the notice for that
+        // is ours, and would otherwise fail the handshake it belongs to.
+        self.expected_session_reset = Some(SessionResetReason::Attached);
         // The reset-status property is deliberately read before CMD_RST. The
         // protocol requires the device to retain its hardware boot cause for this
         // first query; CMD_RST would replace it with RESET_SOFTWARE.
@@ -1697,12 +1736,8 @@ where
 
         // Reset and wait for the reset notification. The TID is
         // ignored for CMD_RST; the notification is unsolicited.
-        let mut buf = [0u8; 2];
-        let len = frame::reset(&mut buf, TID_UNSOLICITED)
-            .map_err(|_| UlcpError::Protocol("frame encode"))?;
-        self.send(&buf[..len]).await?;
         let deadline = Instant::now() + self.config.response_timeout;
-        self.wait_reset(deadline).await?;
+        self.send_reset(deadline).await?;
 
         // Reject devices speaking an incompatible protocol revision.
         let version = self.get_prop(prop::PROTOCOL_VERSION).await?;
@@ -2016,8 +2051,8 @@ where
                 }
                 return Err(UlcpError::Protocol("unexpected drain response"));
             }
-            if let Some(status) = self.seen_reset.take() {
-                return Err(UlcpError::UnexpectedReset(status));
+            if let Some(error) = self.take_reset_notice() {
+                return Err(error);
             }
             // Deliver at ingest time: each read that queued a stream
             // frame reports it immediately, so the callback cannot
@@ -2050,12 +2085,8 @@ where
     /// factory configuration otherwise. All session-scoped state and
     /// cached views are gone; follow with [`Self::sync`].
     pub async fn reset(&mut self) -> Result<Status, UlcpError> {
-        let mut buf = [0u8; 2];
-        let len = frame::reset(&mut buf, TID_UNSOLICITED)
-            .map_err(|_| UlcpError::Protocol("frame encode"))?;
-        self.send(&buf[..len]).await?;
         let deadline = Instant::now() + self.config.response_timeout;
-        self.wait_reset(deadline).await
+        self.send_reset(deadline).await
     }
 
     /// Factory-reset the device (`CMD_FACTORY_RESET`): erase ALL mutable
@@ -2142,6 +2173,9 @@ where
         let tid = self.alloc_tid();
         let mut buf = [0u8; 4];
         let len = frame::restore(&mut buf, tid).map_err(|_| UlcpError::Protocol("frame encode"))?;
+        // The reset form of a restore discards session state; the notice
+        // for it is ours, and lands after the announcement below.
+        self.expected_session_reset = Some(SessionResetReason::Restored);
         self.send(&buf[..len]).await?;
 
         let deadline = Instant::now() + self.config.response_timeout;
@@ -2152,20 +2186,24 @@ where
                 }
                 if response.kind == ResponseKind::Is && response.key == prop::LAST_STATUS {
                     let status = decode_status(&response.value);
+                    // The updated form leaves session state alone, so
+                    // there is no notice coming after all.
+                    self.expected_session_reset = None;
                     return if status == Status::OK {
                         Ok(RestoreCompletion::Updated)
                     } else {
                         Err(UlcpError::Status(status))
                     };
                 }
+                self.expected_session_reset = None;
                 return Err(UlcpError::Protocol("unexpected restore response"));
             }
-            match self.seen_reset.take() {
-                Some(status) if status == Status::RESET_RESTORED => {
-                    return Ok(RestoreCompletion::Reset);
-                }
-                Some(status) => return Err(UlcpError::UnexpectedReset(status)),
-                None => {}
+            if self.seen_reset == Some(Status::RESET_RESTORED) {
+                self.seen_reset = None;
+                return Ok(RestoreCompletion::Reset);
+            }
+            if let Some(error) = self.take_reset_notice() {
+                return Err(error);
             }
             self.read_more(deadline).await?;
         }
@@ -2617,6 +2655,19 @@ where
                     });
                 }
             }
+            // The device discarded session state. One we asked for is
+            // absorbed — the caller who asked is already rebuilding the
+            // session; anything else is surfaced as an error.
+            Some(Cmd::SessionReset) => {
+                let Ok(reason) = parse_session_reset(frame.payload) else {
+                    return false;
+                };
+                if self.expected_session_reset == Some(reason) {
+                    self.expected_session_reset = None;
+                    return false;
+                }
+                self.seen_session_reset = Some(reason);
+            }
             _ => {}
         }
         false
@@ -2677,6 +2728,21 @@ where
         self.prop_events.push_back(event);
     }
 
+    /// Take whichever unsolicited loss-of-state notice is latched, as the
+    /// error the caller should see.
+    ///
+    /// A device reset is reported ahead of a session reset when both are
+    /// pending: it is the broader loss — the host domain went with it —
+    /// and a reboot implies the session reset that follows the reattach.
+    fn take_reset_notice(&mut self) -> Option<UlcpError> {
+        if let Some(status) = self.seen_reset.take() {
+            // The reboot took the session with it; one report is enough.
+            self.seen_session_reset = None;
+            return Some(UlcpError::UnexpectedReset(status));
+        }
+        self.seen_session_reset.take().map(UlcpError::SessionReset)
+    }
+
     /// Take the oldest retained unsolicited property notification.
     ///
     /// Events accumulate while other calls read from the link (bounded
@@ -2690,9 +2756,9 @@ where
     /// Frames received meanwhile are queued for [`Radio::poll_receive`].
     async fn wait_response(&mut self, tid: u8, deadline: Instant) -> Result<Response, UlcpError> {
         loop {
-            // Drain responses before honoring a reset notice: if both
-            // arrived in one read, the response was sent first and the
-            // command did complete. The reset stays latched for the
+            // Drain responses before honoring a loss-of-state notice: if
+            // both arrived in one read, the response was sent first and
+            // the command did complete. The notice stays latched for the
             // next receive poll.
             while let Some(response) = self.responses.pop_front() {
                 if response.tid == tid {
@@ -2701,8 +2767,8 @@ where
                 // A stale response from an earlier timed-out
                 // transaction; drop it.
             }
-            if let Some(status) = self.seen_reset.take() {
-                return Err(UlcpError::UnexpectedReset(status));
+            if let Some(error) = self.take_reset_notice() {
+                return Err(error);
             }
             self.read_more(deadline).await?;
         }
@@ -2725,6 +2791,20 @@ where
             }
             self.read_more(deadline).await?;
         }
+    }
+
+    /// Send `CMD_RST` and wait for the device to announce it.
+    ///
+    /// The session reset that follows is ours, and lands after the
+    /// announcement — commonly during the next exchange — so the
+    /// expectation is recorded here rather than waited on.
+    async fn send_reset(&mut self, deadline: Instant) -> Result<Status, UlcpError> {
+        let mut buf = [0u8; 2];
+        let len = frame::reset(&mut buf, TID_UNSOLICITED)
+            .map_err(|_| UlcpError::Protocol("frame encode"))?;
+        self.expected_session_reset = Some(SessionResetReason::Reset);
+        self.send(&buf[..len]).await?;
+        self.wait_reset(deadline).await
     }
 
     /// Read and ingest one frame before `deadline`; returns whether it
@@ -2854,8 +2934,8 @@ where
         cx: &mut core::task::Context<'_>,
     ) -> core::task::Poll<Result<RawRxFrame, UlcpError>> {
         loop {
-            if let Some(status) = self.seen_reset.take() {
-                return core::task::Poll::Ready(Err(UlcpError::UnexpectedReset(status)));
+            if let Some(error) = self.take_reset_notice() {
+                return core::task::Poll::Ready(Err(error));
             }
             if let Some(packet) = self.rx_queue.pop_front() {
                 return core::task::Poll::Ready(Ok(RawRxFrame {
@@ -2987,8 +3067,8 @@ where
         buf: &mut [u8],
     ) -> core::task::Poll<Result<RxInfo, Self::Error>> {
         loop {
-            if let Some(status) = self.seen_reset.take() {
-                return core::task::Poll::Ready(Err(UlcpError::UnexpectedReset(status)));
+            if let Some(error) = self.take_reset_notice() {
+                return core::task::Poll::Ready(Err(error));
             }
             if let Some(info) = self.pop_rx(buf) {
                 return core::task::Poll::Ready(Ok(info));
@@ -3189,6 +3269,10 @@ mod tests {
     /// Payload that makes the fake device report success and then
     /// announce a spurious watchdog reset.
     const RESET_AFTER: &[u8] = b"reset-after";
+    /// Payload that makes the fake device report success and then
+    /// announce a session reset nobody asked for — a second host
+    /// displacing this one, as far as this host can tell.
+    const SESSION_RESET_AFTER: &[u8] = b"session-reset-after";
     /// Property that switches the fake device's `CMD_RESTORE` completion
     /// to the reset form.
     const RESTORE_RESET_FORM_KEY: u32 = 59_999;
@@ -3205,6 +3289,10 @@ mod tests {
         let mut props: HashMap<u32, Vec<u8>> = HashMap::new();
         let mut tables: HashMap<u32, Vec<Vec<u8>>> = HashMap::new();
         let mut chunk = [0u8; READ_CHUNK];
+        // This device attaches lazily, the way the ESP32 wired transport
+        // does: the host's own first frame creates the session, so the
+        // notice for it precedes the reply to that frame.
+        let mut announced_attach = false;
         loop {
             let read = match io.read(&mut chunk).await {
                 Ok(0) | Err(_) => return,
@@ -3218,11 +3306,21 @@ mod tests {
                 let frame = Frame::parse(frame_bytes).expect("host sent malformed frame");
                 let tid = frame.header.tid();
                 let mut buf = vec![0u8; 512];
+                if !announced_attach {
+                    announced_attach = true;
+                    let len = frame::session_reset(&mut buf, SessionResetReason::Attached).unwrap();
+                    replies.push(buf[..len].to_vec());
+                }
                 match frame.command().expect("host sent unknown command") {
                     Cmd::Reset => {
                         let len =
                             frame::last_status(&mut buf, TID_UNSOLICITED, Status::RESET_SOFTWARE)
                                 .unwrap();
+                        replies.push(buf[..len].to_vec());
+                        // Announced after the status, the way the driver
+                        // pays the debt at the tail of its loop.
+                        let len =
+                            frame::session_reset(&mut buf, SessionResetReason::Reset).unwrap();
                         replies.push(buf[..len].to_vec());
                     }
                     Cmd::PropGet => {
@@ -3268,6 +3366,12 @@ mod tests {
                                 Status::RESET_WATCHDOG,
                             )
                             .unwrap();
+                            replies.push(buf[..len].to_vec());
+                            continue;
+                        }
+                        if payload.data == SESSION_RESET_AFTER {
+                            let len = frame::session_reset(&mut buf, SessionResetReason::Attached)
+                                .unwrap();
                             replies.push(buf[..len].to_vec());
                             continue;
                         }
@@ -3420,7 +3524,8 @@ mod tests {
                     | Cmd::StrRecv
                     | Cmd::PropInserted
                     | Cmd::PropRemoved
-                    | Cmd::PropAre => {
+                    | Cmd::PropAre
+                    | Cmd::SessionReset => {
                         panic!("host sent a device-only command")
                     }
                 }
@@ -3703,6 +3808,62 @@ mod tests {
         ));
     }
 
+    /// The attach handshake absorbs the notice its own attach produced;
+    /// every test in this module would fail on the first exchange
+    /// otherwise, since the fake device attaches lazily and announces it
+    /// ahead of the first reply.
+    #[tokio::test]
+    async fn the_attach_handshake_absorbs_its_own_notice() {
+        let mut radio = attached_radio().await;
+        // The session is usable, so nothing was left latched to fire on
+        // the next exchange either.
+        assert_eq!(radio.get_prop(prop::PHY_FREQ).await.unwrap().len(), 4);
+    }
+
+    /// A session reset this host did not cause is an error, from the
+    /// command path and the receive path alike: whatever it established
+    /// in session state is gone, and it has to be told.
+    #[tokio::test]
+    async fn an_unrequested_session_reset_surfaces_on_receive() {
+        let mut radio = attached_radio().await;
+        radio
+            .transmit(SESSION_RESET_AFTER, TxOptions::default())
+            .await
+            .unwrap();
+
+        let result = core::future::poll_fn(|cx| radio.poll_receive_raw(cx)).await;
+        assert!(matches!(
+            result,
+            Err(UlcpError::SessionReset(SessionResetReason::Attached))
+        ));
+    }
+
+    #[tokio::test]
+    async fn an_unrequested_session_reset_surfaces_from_a_command() {
+        let mut radio = attached_radio().await;
+        radio
+            .transmit(SESSION_RESET_AFTER, TxOptions::default())
+            .await
+            .unwrap();
+
+        assert!(matches!(
+            radio.get_prop(prop::PHY_FREQ).await,
+            Err(UlcpError::SessionReset(SessionResetReason::Attached))
+        ));
+        // Reported once: the latch is consumed, not sticky.
+        assert!(radio.get_prop(prop::PHY_FREQ).await.is_ok());
+    }
+
+    /// A reset the host asked for takes the session with it, and says so
+    /// through `PROP_LAST_STATUS`. Reporting the narrower loss as well
+    /// would be noise.
+    #[tokio::test]
+    async fn a_requested_reset_absorbs_the_session_notice_it_causes() {
+        let mut radio = attached_radio().await;
+        assert_eq!(radio.reset().await.unwrap(), Status::RESET_SOFTWARE);
+        assert!(radio.get_prop(prop::PHY_FREQ).await.is_ok());
+    }
+
     #[tokio::test]
     async fn table_insert_replace_remove_with_secret_free_digests() {
         let mut radio = attached_radio().await;
@@ -3809,6 +3970,10 @@ mod tests {
         tokio::spawn(fake_device(server));
         let mut radio = UlcpDevice::bare(SerialFrameLink::new(client), test_config());
         radio.mode = AttachMode::Administrative;
+        // Standing in for the handshake this test skips: the fake device
+        // has no CAP_CMD_MULTI, so `attach_administrative` cannot get
+        // past its own multi-property read.
+        radio.expected_session_reset = Some(SessionResetReason::Attached);
 
         let error = radio
             .get_props(&[prop::HOST_KEY, prop::HOST_AUTO_ACK])

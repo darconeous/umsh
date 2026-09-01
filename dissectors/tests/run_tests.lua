@@ -988,6 +988,23 @@ check("the flagged command is named",
         backwards.violations[1]:find("CMD_PROP_IS", 1, true) ~= nil,
       true)
 
+-- A session reset concerns the local tethered session, so it may not ride
+-- this binding in either direction — the direction tables alone would only
+-- catch the request half.
+for _, case in ipairs({{"08", "request"}, {"09", "response"}}) do
+  local local_only = dissect_payload(case[1] .. " 0001 FF 8018 00")
+  check("CMD_SESSION_RESET in a " .. case[2] .. " is flagged",
+        #local_only.violations, 1)
+  check("the " .. case[2] .. " violation names the local session",
+        local_only.violations[1] and
+          local_only.violations[1]:find("concerns the local session", 1, true) ~= nil,
+        true)
+end
+
+-- On its own binding it is an ordinary frame, and the reason is named.
+local notice = dissect_payload("08 0001 FF 8018 01")
+check("the reason is decoded", has(notice, "Session Reset Reason: CMD_RST (1)"), true)
+
 -- A payload that stops at the end-of-options marker carries no frame.
 local no_frame = dissect_payload("08 0001 FF")
 check("missing frame is flagged", #no_frame.violations, 1)

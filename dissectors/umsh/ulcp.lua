@@ -24,6 +24,7 @@ local COMMANDS = {
   [21] = "CMD_PROP_MULTI_GET",
   [22] = "CMD_PROP_MULTI_SET",
   [23] = "CMD_PROP_ARE",
+  [24] = "CMD_SESSION_RESET",
 }
 
 M.COMMANDS = COMMANDS
@@ -38,7 +39,15 @@ M.COMMAND_TO_DEVICE = {
   [21] = true, [22] = true,
 }
 M.COMMAND_TO_HOST = {
-  [6] = true, [7] = true, [8] = true, [10] = true, [23] = true,
+  [6] = true, [7] = true, [8] = true, [10] = true, [23] = true, [24] = true,
+}
+
+-- Commands that never ride the Node Management binding in either direction.
+-- A session reset concerns the local tethered session; an administrator over
+-- the mesh is not party to it, so neither a request nor a response may carry
+-- one, and the direction tables alone would only catch the request.
+M.COMMAND_LOCAL_ONLY = {
+  [24] = true,
 }
 
 -- Commands whose payload is a property key followed by a value or item.
@@ -91,6 +100,14 @@ local PROPERTIES = {
 
 local STREAMS = {[113] = "STR_PHY_RAW"}
 
+-- CMD_SESSION_RESET payload. Unassigned values are reserved rather than
+-- malformed, so an unknown one renders as its number.
+local SESSION_RESET_REASONS = {
+  [0] = "attached",
+  [1] = "CMD_RST",
+  [2] = "CMD_RESTORE",
+}
+
 local proto = Proto("umsh.ulcp", "UMSH ULCP")
 local f = {}
 f.direction = ProtoField.string("umsh.ulcp.direction", "Direction")
@@ -117,6 +134,9 @@ f.rx_flag_self_tx = ProtoField.bool("umsh.ulcp.rx.flags.self_tx", "Self-transmit
 f.rx_age = ProtoField.uint32("umsh.ulcp.rx.age_s", "RX Age (seconds)", base.DEC)
 f.tx_power = ProtoField.int8("umsh.ulcp.tx.power", "TX Power (dBm)", base.DEC)
 f.tx_flags = ProtoField.uint8("umsh.ulcp.tx.flags", "TX Flags", base.HEX)
+f.session_reset_reason = ProtoField.uint32(
+  "umsh.ulcp.session_reset_reason", "Session Reset Reason", base.DEC,
+  SESSION_RESET_REASONS)
 f.payload = ProtoField.bytes("umsh.ulcp.payload", "Payload")
 proto.fields = f
 
@@ -295,6 +315,15 @@ local function dissect_frame(buf, pinfo, tree, direction)
           pinfo.cols.protocol = "UMSH-ULCP"
         end
       end
+    end
+  elseif command == 24 then
+    local reason, consumed = decode_pui(buf, 2)
+    if not reason then
+      add_malformed(root, "truncated or malformed session reset reason")
+    else
+      root:add(f.session_reset_reason, buf(2, consumed), reason)
+      info = info .. " " ..
+        (SESSION_RESET_REASONS[reason] or string.format("reason %d", reason))
     end
   elseif buf:len() > 2 then
     root:add(f.payload, buf(2))

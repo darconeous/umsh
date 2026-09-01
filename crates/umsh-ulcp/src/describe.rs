@@ -419,6 +419,10 @@ impl fmt::Display for FrameDescription<'_> {
                     "{command:?} tid={tid} ({count} entries, {value_bytes} value bytes)"
                 )
             }
+            Cmd::SessionReset => match crate::frame::parse_session_reset(frame.payload) {
+                Ok(reason) => write!(out, "{command:?} tid={tid} {reason:?}"),
+                Err(_) => write!(out, "{command:?} tid={tid} (malformed payload)"),
+            },
             Cmd::StrSend | Cmd::StrRecv => match StreamPayload::parse(frame.payload) {
                 Ok(payload) => write!(
                     out,

@@ -61,9 +61,10 @@ use umsh_ulcp::stats::{Counter, StatsLedger};
 /// session first.
 const SESSION: usize = 0;
 
-/// How the mux is routing, written by whoever handles
-/// [`Effect::ApplyBackhaul`](umsh_ulcp_device::Effect) and read by the
-/// mux as each frame is routed.
+/// How the mux is routing: a mirror of
+/// [`Session::backhaul`](umsh_ulcp_device::Session::backhaul), refreshed
+/// at the tail of the driver loop and read by the mux as each frame is
+/// routed.
 pub struct MuxMode(AtomicBool);
 
 impl MuxMode {

@@ -78,10 +78,10 @@ pub fn web_sim_config() -> umsh_ulcp_simdev::SessionConfig {
         // The simulator restarts by rebuilding its session, which is
         // near enough a power cycle for the debugger to exercise.
         reboot: true,
-        // No node behind the session: `Effect::ApplyBackhaul` would
-        // connect the host to nothing, so the device must not claim
-        // `CAP_MAC_BACKHAUL` — that claim is exactly what a bridge
-        // checks before trusting a device to front a segment.
+        // No node behind the session: a backhaul would connect the host
+        // to nothing, so the device must not claim `CAP_MAC_BACKHAUL` —
+        // that claim is exactly what a bridge checks before trusting a
+        // device to front a segment.
         stats: None,
         mac_node: false,
     }
