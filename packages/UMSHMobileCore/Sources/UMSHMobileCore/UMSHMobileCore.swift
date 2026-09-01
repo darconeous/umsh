@@ -3364,6 +3364,18 @@ public protocol MobileUlcpSessionProtocol: AnyObject, Sendable {
     func consume(frame: Data) throws  -> UlcpSessionUpdateRecord
 
     /**
+     * Replay every frame the device queued while no host was attached.
+     *
+     * The frames themselves arrive as ordinary received traffic, each
+     * wearing buffered metadata (`was_buffered`, `was_acknowledged`,
+     * `age_seconds`), interleaved before the completion; the operation
+     * completes on the device's correlated `PROP_LAST_STATUS`, after which
+     * the queue count reads zero. Requires an attached, otherwise-idle
+     * session on a device advertising `CAP_HOST_RX_QUEUE`.
+     */
+    func drainQueue() throws  -> UlcpSessionUpdateRecord
+
+    /**
      * Erase ALL mutable state on the radio (saved provisioning, device
      * identity, BLE bonds, pairing PIN, every persisted journal) and
      * reboot it. The radio does not reply — the reset drops the link —
@@ -3884,6 +3896,25 @@ open func consume(frame: Data)throws  -> UlcpSessionUpdateRecord  {
     uniffi_umsh_mobile_core_fn_method_mobileulcpsession_consume(
             self.uniffiCloneHandle(),
         FfiConverterData.lower(frame),uniffiCallStatus
+    )
+})
+}
+
+    /**
+     * Replay every frame the device queued while no host was attached.
+     *
+     * The frames themselves arrive as ordinary received traffic, each
+     * wearing buffered metadata (`was_buffered`, `was_acknowledged`,
+     * `age_seconds`), interleaved before the completion; the operation
+     * completes on the device's correlated `PROP_LAST_STATUS`, after which
+     * the queue count reads zero. Requires an attached, otherwise-idle
+     * session on a device advertising `CAP_HOST_RX_QUEUE`.
+     */
+open func drainQueue()throws  -> UlcpSessionUpdateRecord  {
+    return try  FfiConverterTypeUlcpSessionUpdateRecord_lift(try rustCallWithError(FfiConverterTypeMobileError_lift) {
+        uniffiCallStatus in
+    uniffi_umsh_mobile_core_fn_method_mobileulcpsession_drain_queue(
+            self.uniffiCloneHandle(),uniffiCallStatus
     )
 })
 }
@@ -5280,6 +5311,13 @@ public struct MobileChatRxMetadataRecord: Equatable, Hashable {
      */
     public var routeHints: [Data]
     public var sourceAuthenticated: Bool
+    /**
+     * Seconds the frame spent queued on the radio before delivery; zero
+     * for a live reception. Platforms stamping the record into a
+     * transcript subtract this so a drained backlog reads as when it was
+     * received off the air, not as a burst of "just now".
+     */
+    public var bufferedAgeSeconds: UInt32
 
     // Default memberwise initializers are never public by default, so we
     // declare one manually.
@@ -5296,13 +5334,20 @@ public struct MobileChatRxMetadataRecord: Equatable, Hashable {
          * repeater prepends its own hint, so the list starts nearest us and ends
          * nearest the sender. That is return-path order — usable directly as a
          * source route back — and the reverse of the path the frame travelled.
-         */routeHints: [Data], sourceAuthenticated: Bool) {
+         */routeHints: [Data], sourceAuthenticated: Bool,
+        /**
+         * Seconds the frame spent queued on the radio before delivery; zero
+         * for a live reception. Platforms stamping the record into a
+         * transcript subtract this so a drained backlog reads as when it was
+         * received off the air, not as a burst of "just now".
+         */bufferedAgeSeconds: UInt32) {
         self.rssiDbm = rssiDbm
         self.snrCentibels = snrCentibels
         self.lqi = lqi
         self.hopCount = hopCount
         self.routeHints = routeHints
         self.sourceAuthenticated = sourceAuthenticated
+        self.bufferedAgeSeconds = bufferedAgeSeconds
     }
 
 
@@ -5326,7 +5371,8 @@ public struct FfiConverterTypeMobileChatRxMetadataRecord: FfiConverterRustBuffer
                 lqi: FfiConverterOptionUInt8.read(from: &buf),
                 hopCount: FfiConverterOptionUInt8.read(from: &buf),
                 routeHints: FfiConverterSequenceData.read(from: &buf),
-                sourceAuthenticated: FfiConverterBool.read(from: &buf)
+                sourceAuthenticated: FfiConverterBool.read(from: &buf),
+                bufferedAgeSeconds: FfiConverterUInt32.read(from: &buf)
         )
     }
 
@@ -5337,6 +5383,7 @@ public struct FfiConverterTypeMobileChatRxMetadataRecord: FfiConverterRustBuffer
         FfiConverterOptionUInt8.write(value.hopCount, into: &buf)
         FfiConverterSequenceData.write(value.routeHints, into: &buf)
         FfiConverterBool.write(value.sourceAuthenticated, into: &buf)
+        FfiConverterUInt32.write(value.bufferedAgeSeconds, into: &buf)
     }
 }
 
@@ -6261,14 +6308,44 @@ public struct MobileMeshRxRecord: Equatable, Hashable {
     public var rssiDbm: Int16?
     public var lqi: UInt8?
     public var snrCb: Int16?
+    /**
+     * The frame was replayed from the radio's inbound queue rather than
+     * received live; the signal fields are still the measurements taken at
+     * the original reception.
+     */
+    public var wasBuffered: Bool
+    /**
+     * The radio already acknowledged the frame on this host's behalf.
+     */
+    public var wasAcknowledged: Bool
+    /**
+     * Seconds the frame spent queued before delivery; zero for a live
+     * reception.
+     */
+    public var ageSeconds: UInt32
 
     // Default memberwise initializers are never public by default, so we
     // declare one manually.
-    public init(data: Data, rssiDbm: Int16?, lqi: UInt8?, snrCb: Int16?) {
+    public init(data: Data, rssiDbm: Int16?, lqi: UInt8?, snrCb: Int16?,
+        /**
+         * The frame was replayed from the radio's inbound queue rather than
+         * received live; the signal fields are still the measurements taken at
+         * the original reception.
+         */wasBuffered: Bool,
+        /**
+         * The radio already acknowledged the frame on this host's behalf.
+         */wasAcknowledged: Bool,
+        /**
+         * Seconds the frame spent queued before delivery; zero for a live
+         * reception.
+         */ageSeconds: UInt32) {
         self.data = data
         self.rssiDbm = rssiDbm
         self.lqi = lqi
         self.snrCb = snrCb
+        self.wasBuffered = wasBuffered
+        self.wasAcknowledged = wasAcknowledged
+        self.ageSeconds = ageSeconds
     }
 
 
@@ -6290,7 +6367,10 @@ public struct FfiConverterTypeMobileMeshRxRecord: FfiConverterRustBuffer {
                 data: FfiConverterData.read(from: &buf),
                 rssiDbm: FfiConverterOptionInt16.read(from: &buf),
                 lqi: FfiConverterOptionUInt8.read(from: &buf),
-                snrCb: FfiConverterOptionInt16.read(from: &buf)
+                snrCb: FfiConverterOptionInt16.read(from: &buf),
+                wasBuffered: FfiConverterBool.read(from: &buf),
+                wasAcknowledged: FfiConverterBool.read(from: &buf),
+                ageSeconds: FfiConverterUInt32.read(from: &buf)
         )
     }
 
@@ -6299,6 +6379,9 @@ public struct FfiConverterTypeMobileMeshRxRecord: FfiConverterRustBuffer {
         FfiConverterOptionInt16.write(value.rssiDbm, into: &buf)
         FfiConverterOptionUInt8.write(value.lqi, into: &buf)
         FfiConverterOptionInt16.write(value.snrCb, into: &buf)
+        FfiConverterBool.write(value.wasBuffered, into: &buf)
+        FfiConverterBool.write(value.wasAcknowledged, into: &buf)
+        FfiConverterUInt32.write(value.ageSeconds, into: &buf)
     }
 }
 
@@ -15765,6 +15848,9 @@ private let initializationResult: InitializationResult = {
         return InitializationResult.apiChecksumMismatch
     }
     if (uniffi_umsh_mobile_core_checksum_method_mobileulcpsession_consume() != 10958) {
+        return InitializationResult.apiChecksumMismatch
+    }
+    if (uniffi_umsh_mobile_core_checksum_method_mobileulcpsession_drain_queue() != 18254) {
         return InitializationResult.apiChecksumMismatch
     }
     if (uniffi_umsh_mobile_core_checksum_method_mobileulcpsession_factory_reset() != 21547) {

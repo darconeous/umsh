@@ -56,7 +56,10 @@ actor StagingMeshAir: FakeRadioAir {
                     data: data,
                     rssiDbm: peer.rssiDBm,
                     lqi: peer.linkQuality,
-                    snrCb: peer.snrCentibels
+                    snrCb: peer.snrCentibels,
+                    wasBuffered: false,
+                    wasAcknowledged: false,
+                    ageSeconds: 0
                 )
             )
             pumpPeer(index)
@@ -95,7 +98,10 @@ actor StagingMeshAir: FakeRadioAir {
                     data: $0.data,
                     rssiDbm: peer.rssiDBm,
                     lqi: peer.linkQuality,
-                    snrCb: peer.snrCentibels
+                    snrCb: peer.snrCentibels,
+                    wasBuffered: false,
+                    wasAcknowledged: false,
+                    ageSeconds: 0
                 )
             }
         )

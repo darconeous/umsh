@@ -713,6 +713,11 @@ enum ExpectedResponse {
     /// The whole-table `CMD_PROP_SET` used when the device holds a channel
     /// this phone cannot name, and so cannot select for removal.
     HostChannelReplace,
+    /// The `CMD_QUEUE_DRAIN` replaying the device's inbound queue. The
+    /// drained frames arrive as ordinary `CMD_STR_RECV` traffic wearing
+    /// buffered metadata; the correlated `PROP_LAST_STATUS` is what
+    /// completes the operation.
+    QueueDrain,
     /// A `CMD_PROP_GET` issued by a local management fetch. Unlike
     /// `Property`, a refusal is an answer to record, never a stage
     /// failure: the caller asked an open question about one property.
@@ -1445,6 +1450,31 @@ impl MobileUlcpSession {
         }
     }
 
+    /// Replay every frame the device queued while no host was attached.
+    ///
+    /// The frames themselves arrive as ordinary received traffic, each
+    /// wearing buffered metadata (`was_buffered`, `was_acknowledged`,
+    /// `age_seconds`), interleaved before the completion; the operation
+    /// completes on the device's correlated `PROP_LAST_STATUS`, after which
+    /// the queue count reads zero. Requires an attached, otherwise-idle
+    /// session on a device advertising `CAP_HOST_RX_QUEUE`.
+    pub fn drain_queue(&self) -> Result<UlcpSessionUpdateRecord, MobileError> {
+        let mut state = self.inner.lock().expect("ULCP session mutex poisoned");
+        if state.stage != SessionStage::Attached || !state.expected.is_empty() {
+            return Err(MobileError::InvalidUlcpFrame);
+        }
+        if !state.has_capability(cap::HOST_RX_QUEUE)? {
+            return Err(MobileError::UnsupportedCapability);
+        }
+        let tid = state.allocate_tid();
+        state.expected.insert(tid, ExpectedResponse::QueueDrain);
+        let mut output = vec![0; MAX_FRAME];
+        let length =
+            frame::queue_drain(&mut output, tid).map_err(|_| MobileError::InvalidUlcpFrame)?;
+        output.truncate(length);
+        Ok(state.update(vec![output]))
+    }
+
     /// Store one peer public key on the radio's device identity
     /// (`PROP_DEV_PEERS`), then persist with a chained `CMD_SAVE` when the
     /// device can.
@@ -1844,6 +1874,24 @@ impl MobileUlcpSession {
                     || response.command != Cmd::PropIs as u8
                 {
                     return Err(MobileError::UlcpMismatchedResponse);
+                }
+                state.refresh_attached_snapshot(None)?;
+            }
+            ExpectedResponse::QueueDrain => {
+                if response.property_id != prop::LAST_STATUS {
+                    return Err(MobileError::UlcpMismatchedResponse);
+                }
+                let status_code = inspect_ulcp_status(response.value.clone())?;
+                if status_code == u32::from(umsh_ulcp::Status::OK.0) {
+                    // A completed drain leaves the queue empty by
+                    // definition; the cached count is patched rather than
+                    // re-read, like every other table mutation.
+                    state.patch_queue_count(0);
+                } else {
+                    operation_error = Some(ulcp_operation_error(
+                        "drain offline queue".to_owned(),
+                        response.value.as_slice(),
+                    )?);
                 }
                 state.refresh_attached_snapshot(None)?;
             }
@@ -2497,6 +2545,19 @@ impl UlcpSessionState {
     /// Patch the cached `PROP_DEV_CHANNEL_KEYS` digest after a confirmed
     /// mutation. The cached value is a list of derived identifiers, so this
     /// tracks identifiers rather than key material.
+    /// Overwrite the cached inbound-queue count after a completed drain.
+    fn patch_queue_count(&mut self, count: u16) {
+        self.responses.insert(
+            prop::HOST_RX_QUEUE_COUNT,
+            UlcpPropertyFrameRecord {
+                transaction_id: frame::TID_UNSOLICITED,
+                command: Cmd::PropIs as u8,
+                property_id: prop::HOST_RX_QUEUE_COUNT,
+                value: count.to_le_bytes().to_vec(),
+            },
+        );
+    }
+
     fn patch_dev_channels(&mut self, id: &[u8], present: bool) {
         let entry = self
             .responses
@@ -7187,6 +7248,121 @@ mod tests {
             .unwrap();
         assert_eq!(host_channel_count(&done), Some(1));
         assert!(!done.waiting_for_responses);
+    }
+
+    fn attach_offline_queue_capable(session: &MobileUlcpSession) -> UlcpSessionUpdateRecord {
+        let mut capabilities = commissionable_capabilities();
+        capabilities.push(cap::HOST_KEYS);
+        capabilities.push(cap::HOST_RX_QUEUE);
+        let begin = session.begin(Some(vec![0xAA; 32])).unwrap();
+        drive_reads(
+            session,
+            begin.outbound_frames,
+            move |property| match property {
+                prop::CAPS => (property, encoded_capabilities(&capabilities)),
+                prop::HOST_KEY => (property, vec![0xAA; 32]),
+                prop::HOST_CHANNEL_KEYS | prop::HOST_PEER_KEYS => (property, Vec::new()),
+                prop::HOST_RX_QUEUE_COUNT => (property, 2u16.to_le_bytes().to_vec()),
+                prop::HOST_RX_QUEUE_DROPPED => (property, 0u32.to_le_bytes().to_vec()),
+                _ => commissionable_value(property),
+            },
+        )
+    }
+
+    fn buffered_str_recv(data: &[u8], age_s: u32) -> Vec<u8> {
+        let metadata = BufferedRxMeta {
+            rx: umsh_ulcp::RxMeta {
+                rssi_dbm: Some(-90),
+                lqi: None,
+                snr_cb: Some(50),
+            },
+            flags: RX_FLAG_BUFFERED | RX_FLAG_ACKED,
+            age_s,
+        };
+        let mut metadata_bytes = [0; BufferedRxMeta::WIRE_LEN];
+        metadata.encode(&mut metadata_bytes).unwrap();
+        let mut bytes = vec![0; MAX_FRAME];
+        let len = frame::str_recv(
+            &mut bytes,
+            umsh_ulcp::ids::stream::PHY_RAW,
+            data,
+            &metadata_bytes,
+        )
+        .unwrap();
+        bytes.truncate(len);
+        bytes
+    }
+
+    #[test]
+    fn queue_drain_interleaves_buffered_frames_and_completes() {
+        let session = MobileUlcpSession::new();
+        let attached = attach_offline_queue_capable(&session);
+        let queued = |update: &UlcpSessionUpdateRecord| {
+            update.snapshot.provisioning.as_ref().unwrap().queued_frames
+        };
+        assert_eq!(queued(&attached), Some(2));
+
+        let update = session.drain_queue().unwrap();
+        assert_eq!(update.outbound_frames.len(), 1);
+        let request = Frame::parse(&update.outbound_frames[0]).unwrap();
+        assert_eq!(request.command(), Some(Cmd::QueueDrain));
+        assert!(update.waiting_for_responses);
+
+        // The replayed frames arrive as ordinary received traffic before
+        // the completion, wearing their buffered metadata.
+        let received = session.consume(buffered_str_recv(&[9, 9], 17)).unwrap();
+        assert_eq!(received.received_frames.len(), 1);
+        assert!(received.received_frames[0].was_buffered);
+        assert!(received.received_frames[0].was_acknowledged);
+        assert_eq!(received.received_frames[0].age_seconds, 17);
+        assert!(received.waiting_for_responses);
+
+        let done = session
+            .consume(property_response(
+                request.header.tid(),
+                prop::LAST_STATUS,
+                &[umsh_ulcp::Status::OK.0 as u8],
+            ))
+            .unwrap();
+        assert_eq!(done.operation_error, None);
+        assert!(!done.waiting_for_responses);
+        assert_eq!(queued(&done), Some(0));
+    }
+
+    #[test]
+    fn queue_drain_refusal_surfaces_as_operation_error() {
+        let session = MobileUlcpSession::new();
+        attach_offline_queue_capable(&session);
+
+        let update = session.drain_queue().unwrap();
+        let request = Frame::parse(&update.outbound_frames[0]).unwrap();
+        let refused = session
+            .consume(property_response(
+                request.header.tid(),
+                prop::LAST_STATUS,
+                &[umsh_ulcp::Status::INVALID_STATE.0 as u8],
+            ))
+            .unwrap();
+        assert_eq!(
+            refused.operation_error,
+            Some(UlcpOperationErrorRecord {
+                operation: "drain offline queue".into(),
+                status_code: umsh_ulcp::Status::INVALID_STATE.0,
+                status_name: "Status::INVALID_STATE".into(),
+            })
+        );
+        assert_eq!(refused.snapshot.phase, UlcpSessionPhase::Attached);
+        assert!(!refused.waiting_for_responses);
+    }
+
+    #[test]
+    fn queue_drain_requires_the_capability() {
+        let session = MobileUlcpSession::new();
+        attach_host_keys_capable(&session);
+        assert_eq!(
+            session.drain_queue(),
+            Err(MobileError::UnsupportedCapability)
+        );
     }
 
     #[test]

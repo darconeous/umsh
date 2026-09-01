@@ -293,6 +293,7 @@ final class AppRuntime {
             await synchronizeRadioPeer(from: snapshot)
             await synchronizeRadioChannels(from: snapshot)
             await reconcileHostChannels()
+            await drainOfflineQueueIfNeeded()
         }
     }
 
@@ -1751,6 +1752,30 @@ final class AppRuntime {
         }
     }
 
+    /// Replay the radio's offline queue, once per attach, after the host
+    /// tables are reconciled. The backlog arrives through the ordinary
+    /// receive path wearing buffered metadata, so the MAC skips the
+    /// double-ack and the transcript backdates each message.
+    private func drainOfflineQueueIfNeeded() async {
+        guard radioSnapshot.linkState == .attached || radioSnapshot.linkState == .ready,
+              radioSnapshot.hostState == .matchesCurrentIdentity,
+              radioSnapshot.provisioning?.supportsOfflineQueue == true,
+              coordinator.meshSessionInstalled
+        else {
+            coordinator.drainedOfflineQueue = false
+            return
+        }
+        guard !coordinator.drainedOfflineQueue else { return }
+        coordinator.drainedOfflineQueue = true
+        do {
+            try await radioConnection.drainOfflineQueue()
+        } catch {
+            // A racing operation or a dropped link; the next snapshot
+            // retries.
+            coordinator.drainedOfflineQueue = false
+        }
+    }
+
     /// `public` and `EMERGENCY` first, then the most recently joined.
     private static func hostChannelPriority(_ lhs: ChannelSummary, _ rhs: ChannelSummary) -> Bool {
         if (lhs.kind == .builtin) != (rhs.kind == .builtin) {
@@ -2915,6 +2940,7 @@ final class AppRuntime {
     private func installMeshSession() async throws {
         let session = try await meshEngine.meshSession()
         await radioConnection.useMeshSession(session)
+        coordinator.meshSessionInstalled = true
     }
 
     private func prepareChatState() async {
@@ -3633,6 +3659,13 @@ private final class AppStateCoordinator {
     /// The channel keys last provisioned to the radio's host table, so
     /// reconciling is free when nothing has changed.
     var lastReconciledHostChannels: [Data]?
+    /// Whether this attach's offline queue has been replayed. Cleared when
+    /// the link drops so the next attach drains again.
+    var drainedOfflineQueue = false
+    /// Whether the Rust mesh session has been installed on the radio
+    /// connection. Draining before that would spill the backlog into the
+    /// bounded pre-bootstrap holding buffer instead of the MAC.
+    var meshSessionInstalled = false
     /// Each joined channel's conversation address, derived from its key when
     /// the key is unlocked. Kept here rather than on `ChannelSummary` because
     /// deriving it needs the key, which the summary deliberately never holds.

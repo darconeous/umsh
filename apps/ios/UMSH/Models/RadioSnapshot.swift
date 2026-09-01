@@ -451,7 +451,7 @@ struct RadioProvisioningSummary: Equatable, Sendable {
     let dutyCycleNow: UInt16?
     let dutyCycleLimit: UInt16?
     let saved: SavedSnapshotRecord?
-    let queuedFrames: Int?
+    var queuedFrames: Int?
     let droppedFrames: UInt32?
     let filterCount: Int?
     var hostChannelCount: Int?

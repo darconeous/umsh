@@ -326,6 +326,16 @@ actor FakeRadioConnection: RadioConnection {
         publish(updated)
     }
 
+    func drainOfflineQueue() async throws {
+        guard var provisioning = snapshot.provisioning, provisioning.supportsOfflineQueue else {
+            return
+        }
+        provisioning.queuedFrames = 0
+        var updated = snapshot
+        updated.provisioning = provisioning
+        publish(updated)
+    }
+
     private func mutateDeviceChannels(
         _ channelKey: Data,
         _ mutate: (inout [Data], Data) throws -> Void

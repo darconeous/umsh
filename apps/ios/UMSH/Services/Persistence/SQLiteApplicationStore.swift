@@ -3234,7 +3234,11 @@ actor SQLiteApplicationStore {
             try bindOptionalInt(mutation.fragmentCount.map(Int64.init), to: statement, at: 18)
             try bindOptionalBool(mutation.finalized, to: statement, at: 19)
             try bindOptional(direction == .outbound ? "pending" : nil, to: statement, at: 20)
-            try check(sqlite3_bind_int64(statement, 21, Self.nowMilliseconds()))
+            // A message replayed from the radio's offline queue is stamped
+            // when it was received off the air, not when the drain landed it
+            // here, so a drained backlog sorts and reads correctly.
+            let bufferedAgeMs = Int64(mutation.rx?.bufferedAgeSeconds ?? 0) * 1000
+            try check(sqlite3_bind_int64(statement, 21, Self.nowMilliseconds() - bufferedAgeMs))
             try check(sqlite3_bind_int(statement, 22, presenceCode(mutation.presence)))
             try check(sqlite3_bind_int(statement, 23, mutation.receivedLate ? 1 : 0))
             try bindOptional(mutation.senderHint.map { Data($0) }, to: statement, at: 24)

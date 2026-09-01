@@ -687,6 +687,12 @@ class UlcpRadioSession: NSObject, @unchecked Sendable {
         }
     }
 
+    func drainOfflineQueue() async throws {
+        try await performDevicePeerOperation(requiringDeviceIdentity: false) { session in
+            try session.drainQueue()
+        }
+    }
+
     /// One `PROP_DEV_PEERS` mutation at a time, resolved by the update that
     /// carries its outcome. The Rust session requires an otherwise-idle
     /// attached session, so a mutation racing chat traffic reports
@@ -1794,7 +1800,10 @@ class UlcpRadioSession: NSObject, @unchecked Sendable {
                 data: received.data,
                 rssiDbm: received.rssiDbm,
                 lqi: received.lqi,
-                snrCb: received.snrCb
+                snrCb: received.snrCb,
+                wasBuffered: received.wasBuffered,
+                wasAcknowledged: received.wasAcknowledged,
+                ageSeconds: received.ageSeconds
             )
             if let meshSession {
                 try meshSession.receive(frame: record)

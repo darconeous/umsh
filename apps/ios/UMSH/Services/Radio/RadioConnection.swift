@@ -147,6 +147,11 @@ protocol RadioConnection: AnyObject, Sendable {
     /// away. Bookkeeping between the app and its own radio: callers reconcile
     /// on attach and after every membership change, and never surface it.
     func reconcileHostChannels(_ channelKeys: [Data]) async throws
+    /// Replay every frame the radio queued while the phone was away. The
+    /// frames arrive through the ordinary receive path wearing buffered
+    /// metadata; completion leaves the radio's queue empty. Callers drain
+    /// once per attach, after the host tables are reconciled.
+    func drainOfflineQueue() async throws
     func ping(peerAddress: String) async throws -> RadioPingResult
     /// This phone's own node public key — what a device lists to let this
     /// phone manage it from a distance. Nil before a mesh session exists.

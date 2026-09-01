@@ -30,7 +30,8 @@ use umsh_crypto::{
     software::{SoftwareAes, SoftwareIdentity, SoftwareSha256},
 };
 use umsh_hal::{
-    Clock, CounterStore, KeyValueStore, Radio, RxInfo, RxOrigin, Snr, TxError, TxOptions,
+    Clock, CounterStore, KeyValueStore, Radio, RxBuffered, RxInfo, RxOrigin, Snr, TxError,
+    TxOptions,
 };
 use umsh_mac::{Mac, MacHandle, OperatingPolicy, RepeaterConfig, SendOptions};
 use umsh_node::{
@@ -524,6 +525,15 @@ pub struct MobileMeshRxRecord {
     pub rssi_dbm: Option<i16>,
     pub lqi: Option<u8>,
     pub snr_cb: Option<i16>,
+    /// The frame was replayed from the radio's inbound queue rather than
+    /// received live; the signal fields are still the measurements taken at
+    /// the original reception.
+    pub was_buffered: bool,
+    /// The radio already acknowledged the frame on this host's behalf.
+    pub was_acknowledged: bool,
+    /// Seconds the frame spent queued before delivery; zero for a live
+    /// reception.
+    pub age_seconds: u32,
 }
 
 enum WorkerCommand {
@@ -919,6 +929,10 @@ impl Radio for BridgeRadio {
                     snr: Snr::from_centibels(frame.record.snr_cb.unwrap_or(0)),
                     lqi: frame.record.lqi.and_then(core::num::NonZeroU8::new),
                     origin: RxOrigin::Air,
+                    buffered: frame.record.was_buffered.then_some(RxBuffered {
+                        age_s: frame.record.age_seconds,
+                        acked: frame.record.was_acknowledged,
+                    }),
                 }))
             }
             Poll::Ready(None) => Poll::Ready(Err(BridgeRadioError::Closed)),
@@ -2928,6 +2942,7 @@ async fn run_worker(
                     .map(|hop| hop.0.to_vec())
                     .collect(),
                 source_authenticated: packet.source_authenticated(),
+                buffered_age_seconds: packet.rx().buffered_age_s(),
             },
         });
         true
@@ -4669,6 +4684,9 @@ mod tests {
                     rssi_dbm: Some(-40),
                     lqi: None,
                     snr_cb: Some(100),
+                    was_buffered: false,
+                    was_acknowledged: false,
+                    age_seconds: 0,
                 })
                 .unwrap();
             }
@@ -4697,6 +4715,9 @@ mod tests {
                         rssi_dbm: Some(-42),
                         lqi: None,
                         snr_cb: Some(90),
+                        was_buffered: false,
+                        was_acknowledged: false,
+                        age_seconds: 0,
                     })
                     .unwrap();
             }
@@ -4719,6 +4740,9 @@ mod tests {
                     rssi_dbm: Some(-40),
                     lqi: None,
                     snr_cb: Some(100),
+                    was_buffered: false,
+                    was_acknowledged: false,
+                    age_seconds: 0,
                 })
                 .unwrap();
             }
@@ -4736,6 +4760,9 @@ mod tests {
                         rssi_dbm: Some(-42),
                         lqi: None,
                         snr_cb: Some(90),
+                        was_buffered: false,
+                        was_acknowledged: false,
+                        age_seconds: 0,
                     })
                     .unwrap();
             }
@@ -4894,6 +4921,9 @@ mod tests {
             rssi_dbm: Some(-40),
             lqi: None,
             snr_cb: Some(100),
+            was_buffered: false,
+            was_acknowledged: false,
+            age_seconds: 0,
         })
         .unwrap();
 
@@ -5066,6 +5096,9 @@ mod tests {
                     rssi_dbm: Some(-40),
                     lqi: None,
                     snr_cb: Some(100),
+                    was_buffered: false,
+                    was_acknowledged: false,
+                    age_seconds: 0,
                 })
                 .unwrap();
             }
@@ -5083,6 +5116,9 @@ mod tests {
                         rssi_dbm: Some(-42),
                         lqi: None,
                         snr_cb: Some(90),
+                        was_buffered: false,
+                        was_acknowledged: false,
+                        age_seconds: 0,
                     })
                     .unwrap();
             }
@@ -5118,6 +5154,9 @@ mod tests {
                     rssi_dbm: Some(-40),
                     lqi: None,
                     snr_cb: Some(100),
+                    was_buffered: false,
+                    was_acknowledged: false,
+                    age_seconds: 0,
                 })
                 .unwrap();
             }
@@ -5171,6 +5210,9 @@ mod tests {
                     rssi_dbm: Some(-40),
                     lqi: None,
                     snr_cb: Some(100),
+                    was_buffered: false,
+                    was_acknowledged: false,
+                    age_seconds: 0,
                 })
                 .unwrap();
             }
@@ -5189,6 +5231,9 @@ mod tests {
                         rssi_dbm: Some(-42),
                         lqi: None,
                         snr_cb: Some(90),
+                        was_buffered: false,
+                        was_acknowledged: false,
+                        age_seconds: 0,
                     })
                     .unwrap();
             }
@@ -5237,6 +5282,9 @@ mod tests {
                     rssi_dbm: Some(-40),
                     lqi: None,
                     snr_cb: Some(100),
+                    was_buffered: false,
+                    was_acknowledged: false,
+                    age_seconds: 0,
                 })
                 .unwrap();
             }
@@ -5255,6 +5303,9 @@ mod tests {
                         rssi_dbm: Some(-42),
                         lqi: None,
                         snr_cb: Some(90),
+                        was_buffered: false,
+                        was_acknowledged: false,
+                        age_seconds: 0,
                     })
                     .unwrap();
             }
@@ -5317,6 +5368,9 @@ mod tests {
                     rssi_dbm: Some(-50),
                     lqi: None,
                     snr_cb: None,
+                    was_buffered: false,
+                    was_acknowledged: false,
+                    age_seconds: 0,
                 })
                 .unwrap();
             }
@@ -5404,6 +5458,9 @@ mod tests {
                         rssi_dbm: Some(-50),
                         lqi: None,
                         snr_cb: None,
+                        was_buffered: false,
+                        was_acknowledged: false,
+                        age_seconds: 0,
                     })
                     .unwrap();
                 }
@@ -5507,6 +5564,9 @@ mod tests {
                     rssi_dbm: Some(-50),
                     lqi: None,
                     snr_cb: None,
+                    was_buffered: false,
+                    was_acknowledged: false,
+                    age_seconds: 0,
                 })
                 .unwrap();
             }
@@ -5787,6 +5847,9 @@ mod tests {
                     rssi_dbm: Some(-55),
                     lqi: Some(200),
                     snr_cb: Some(70),
+                    was_buffered: false,
+                    was_acknowledged: false,
+                    age_seconds: 0,
                 })
                 .unwrap();
             }
@@ -5799,6 +5862,9 @@ mod tests {
                         rssi_dbm: Some(-55),
                         lqi: Some(200),
                         snr_cb: Some(70),
+                        was_buffered: false,
+                        was_acknowledged: false,
+                        age_seconds: 0,
                     })
                     .unwrap();
             }
@@ -5885,6 +5951,9 @@ mod tests {
                     rssi_dbm: Some(-55),
                     lqi: Some(200),
                     snr_cb: Some(70),
+                    was_buffered: false,
+                    was_acknowledged: false,
+                    age_seconds: 0,
                 })
                 .unwrap();
             }
@@ -5905,6 +5974,9 @@ mod tests {
                         rssi_dbm: Some(-55),
                         lqi: Some(200),
                         snr_cb: Some(70),
+                        was_buffered: false,
+                        was_acknowledged: false,
+                        age_seconds: 0,
                     })
                     .unwrap();
             }
@@ -6023,6 +6095,9 @@ mod tests {
                     rssi_dbm: Some(-50),
                     lqi: None,
                     snr_cb: Some(80),
+                    was_buffered: false,
+                    was_acknowledged: false,
+                    age_seconds: 0,
                 })
                 .unwrap();
             }
@@ -6042,6 +6117,9 @@ mod tests {
                         rssi_dbm: Some(-50),
                         lqi: None,
                         snr_cb: Some(80),
+                        was_buffered: false,
+                        was_acknowledged: false,
+                        age_seconds: 0,
                     })
                     .unwrap();
             }
@@ -6187,6 +6265,9 @@ mod tests {
                     rssi_dbm: Some(-70),
                     lqi: None,
                     snr_cb: Some(60),
+                    was_buffered: false,
+                    was_acknowledged: false,
+                    age_seconds: 0,
                 })
                 .unwrap();
             }
@@ -6394,6 +6475,9 @@ mod tests {
             rssi_dbm: Some(-70),
             lqi: None,
             snr_cb: Some(60),
+            was_buffered: false,
+            was_acknowledged: false,
+            age_seconds: 0,
         })
         .unwrap();
 
@@ -6430,6 +6514,9 @@ mod tests {
             rssi_dbm: Some(-70),
             lqi: None,
             snr_cb: Some(60),
+            was_buffered: false,
+            was_acknowledged: false,
+            age_seconds: 0,
         })
         .unwrap();
         let deadline = Instant::now() + Duration::from_secs(10);
@@ -6534,6 +6621,9 @@ mod tests {
                     rssi_dbm: Some(-70),
                     lqi: None,
                     snr_cb: Some(60),
+                    was_buffered: false,
+                    was_acknowledged: false,
+                    age_seconds: 0,
                 })
                 .unwrap();
             }
@@ -6569,6 +6659,9 @@ mod tests {
                         rssi_dbm: Some(-70),
                         lqi: None,
                         snr_cb: Some(60),
+                        was_buffered: false,
+                        was_acknowledged: false,
+                        age_seconds: 0,
                     })
                     .unwrap();
             }
@@ -6636,6 +6729,9 @@ mod tests {
                         rssi_dbm: Some(-60),
                         lqi: None,
                         snr_cb: Some(70),
+                        was_buffered: false,
+                        was_acknowledged: false,
+                        age_seconds: 0,
                     })
                     .unwrap();
                 echoed += 1;
@@ -6728,6 +6824,9 @@ mod tests {
                         rssi_dbm: Some(-60),
                         lqi: None,
                         snr_cb: Some(70),
+                        was_buffered: false,
+                        was_acknowledged: false,
+                        age_seconds: 0,
                     })
                     .unwrap();
             }
@@ -6867,6 +6966,9 @@ mod tests {
                     rssi_dbm: Some(-55),
                     lqi: None,
                     snr_cb: Some(75),
+                    was_buffered: false,
+                    was_acknowledged: false,
+                    age_seconds: 0,
                 })
                 .unwrap();
             }
@@ -6882,6 +6984,9 @@ mod tests {
                         rssi_dbm: Some(-55),
                         lqi: None,
                         snr_cb: Some(75),
+                        was_buffered: false,
+                        was_acknowledged: false,
+                        age_seconds: 0,
                     })
                     .unwrap();
             }
@@ -7003,6 +7108,9 @@ mod tests {
                     rssi_dbm: Some(-70),
                     lqi: None,
                     snr_cb: Some(60),
+                    was_buffered: false,
+                    was_acknowledged: false,
+                    age_seconds: 0,
                 })
                 .unwrap();
             }
@@ -7023,6 +7131,9 @@ mod tests {
                         rssi_dbm: Some(-70),
                         lqi: None,
                         snr_cb: Some(60),
+                        was_buffered: false,
+                        was_acknowledged: false,
+                        age_seconds: 0,
                     })
                     .unwrap();
             }

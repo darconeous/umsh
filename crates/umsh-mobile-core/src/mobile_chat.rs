@@ -100,6 +100,11 @@ pub struct MobileChatRxMetadataRecord {
     /// source route back — and the reverse of the path the frame travelled.
     pub route_hints: Vec<Vec<u8>>,
     pub source_authenticated: bool,
+    /// Seconds the frame spent queued on the radio before delivery; zero
+    /// for a live reception. Platforms stamping the record into a
+    /// transcript subtract this so a drained backlog reads as when it was
+    /// received off the air, not as a burst of "just now".
+    pub buffered_age_seconds: u32,
 }
 
 /// A channel member previously known only by their claimed hint has been
