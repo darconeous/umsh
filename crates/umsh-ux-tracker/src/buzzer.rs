@@ -170,38 +170,53 @@ pub mod melodies {
         },
     ]);
 
-    /// A direct message was taken in for a host that is not here: two
-    /// high pips, the sound of a knock at the door.
+    /// A direct message was taken in for a host that is not here: a
+    /// four-note run up E-G-B to C, about a fifth of a second all told.
     ///
-    /// Kept to the T1000-E's ~60 ms audible floor and to two notes. A
-    /// radio holding mail chirps on its own schedule — whenever a sender
-    /// happens to reach it — so this has to be something an operator can
-    /// have go off in a pocket all afternoon.
+    /// Lifted from MeshCore, whose companion firmware plays it for the
+    /// same event — `MsgRcv3:d=4,o=6,b=200:32e,32g,32b,16c7` in RTTTL,
+    /// which at 200 BPM is three 37.5 ms notes and a 75 ms one. Two radios
+    /// on the same table should not disagree about what an arriving
+    /// message sounds like, and this one is brief enough to go off in a
+    /// pocket all afternoon.
     pub static QUEUED_DIRECT: Melody = Melody::new(&[
         Tone {
-            frequency_hz: 2_400,
-            duration: Duration::from_millis(60),
+            frequency_hz: 1_319,
+            duration: Duration::from_millis(38),
         },
         Tone {
-            frequency_hz: 0,
-            duration: Duration::from_millis(60),
+            frequency_hz: 1_568,
+            duration: Duration::from_millis(38),
         },
         Tone {
-            frequency_hz: 2_400,
-            duration: Duration::from_millis(60),
+            frequency_hz: 1_976,
+            duration: Duration::from_millis(38),
+        },
+        Tone {
+            frequency_hz: 2_093,
+            duration: Duration::from_millis(75),
         },
     ]);
 
-    /// Group traffic was taken in for an absent host: one low pip.
+    /// Group traffic was taken in for an absent host: two notes falling
+    /// G-sharp to C-sharp, an eighth of a second.
     ///
-    /// Told apart from [`QUEUED_DIRECT`] twice over — one note against
-    /// two, and low against high — because the distinction that matters
-    /// is whether someone was addressing *you*, and it has to survive
-    /// being heard from a jacket pocket.
-    pub static QUEUED_GROUP: Melody = Melody::new(&[Tone {
-        frequency_hz: 1_400,
-        duration: Duration::from_millis(80),
-    }]);
+    /// MeshCore's again — `kerplop:d=16,o=6,b=120:32g#,32c#`, what it
+    /// plays for a channel message. Told apart from [`QUEUED_DIRECT`]
+    /// three ways over: two notes against four, falling against rising,
+    /// and a lower register throughout. The distinction that matters is
+    /// whether someone was addressing *you*, and it has to survive being
+    /// heard from a jacket pocket.
+    pub static QUEUED_GROUP: Melody = Melody::new(&[
+        Tone {
+            frequency_hz: 1_661,
+            duration: Duration::from_millis(63),
+        },
+        Tone {
+            frequency_hz: 1_109,
+            duration: Duration::from_millis(63),
+        },
+    ]);
 
     /// Bright blip played when the buzzer is un-silenced.
     pub static UNSILENCE: Melody = Melody::new(&[Tone {
@@ -859,32 +874,38 @@ mod tests {
 
     #[test]
     fn the_two_queue_chirps_are_told_apart_by_ear() {
-        let direct = &melodies::QUEUED_DIRECT.notes;
-        let group = &melodies::QUEUED_GROUP.notes;
-        // Two differences, not one: a listener who misses the pitch
-        // still hears the count.
+        let direct = melodies::QUEUED_DIRECT.notes;
+        let group = melodies::QUEUED_GROUP.notes;
+        // Three differences, not one: a listener who misses the contour
+        // still hears the count, and one who misses both hears the
+        // register.
         assert_ne!(direct.len(), group.len());
-        let pitch = |notes: &[Tone]| {
+        let rising = |notes: &[Tone]| {
+            notes
+                .windows(2)
+                .all(|w| w[0].frequency_hz < w[1].frequency_hz)
+        };
+        assert!(rising(direct), "a message for you climbs");
+        assert!(!rising(group), "group traffic falls");
+        let lowest = |notes: &[Tone]| {
             notes
                 .iter()
-                .filter(|note| note.frequency_hz != 0)
                 .map(|note| note.frequency_hz)
-                .max()
+                .min()
                 .expect("a chirp has at least one tone")
         };
-        assert!(pitch(direct) > pitch(group) + 500);
+        assert!(lowest(direct) > lowest(group));
     }
 
     #[test]
-    fn the_queue_chirps_stay_above_the_audible_floor() {
-        // The amplified T1000-E piezo needs ~60 ms a note to sound at
-        // all, and a chirp nobody hears is worse than no chirp.
+    fn the_queue_chirps_stay_brief() {
+        // A radio holding mail chirps on its own schedule — whenever a
+        // sender happens to reach it — so this has to be something an
+        // operator can have go off in a pocket all afternoon. Both carry
+        // MeshCore's own timings; a fifth of a second is the ceiling.
         for melody in [&melodies::QUEUED_DIRECT, &melodies::QUEUED_GROUP] {
-            for note in melody.notes {
-                if note.frequency_hz != 0 {
-                    assert!(note.duration >= Duration::from_millis(60));
-                }
-            }
+            let total: Duration = melody.notes.iter().map(|note| note.duration).sum();
+            assert!(total <= Duration::from_millis(200), "{total:?}");
         }
     }
 
