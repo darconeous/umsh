@@ -262,6 +262,27 @@ final class ChatNotificationService: NSObject, UNUserNotificationCenterDelegate,
         }
     }
 
+    /// Say that several messages arrived in one conversation at once,
+    /// instead of saying it several times.
+    ///
+    /// This is what a drained offline queue looks like: a radio that held a
+    /// conversation's traffic for an hour hands it over all at once, and
+    /// sixteen banners for one conversation are worse than useless. No
+    /// message body is quoted — with more than one there is no single
+    /// message this is about, and quoting the last would misrepresent the
+    /// rest.
+    func postInboundMessageSummary(
+        conversationAddress: String,
+        displayName: String,
+        count: Int
+    ) {
+        postNotice(
+            conversationAddress: conversationAddress,
+            title: displayName,
+            body: "\(count) new messages"
+        )
+    }
+
     /// Tell the user a notification reply did not go out.
     ///
     /// Failed sends are never silently queued; from a notification or a

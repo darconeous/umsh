@@ -484,10 +484,10 @@ private struct ConversationRow: View {
     }
 
     private var isMuted: Bool {
-        if case let .channel(conversation) = item {
-            return !conversation.channel.notificationsEnabled
+        switch item {
+        case let .channel(conversation): !conversation.channel.notificationsEnabled
+        case let .direct(conversation): !conversation.notificationsEnabled
         }
-        return false
     }
 
     private var timestamp: String? {

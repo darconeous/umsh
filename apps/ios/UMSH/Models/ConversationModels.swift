@@ -211,6 +211,12 @@ struct DirectConversationSummary: Identifiable, Hashable, Sendable {
     /// When the conversation was created, which stands in for activity until
     /// the first message.
     var createdAtMilliseconds: Int64 = 0
+    /// Whether this conversation may raise a notification — on the phone, and
+    /// on a companion radio holding its messages while the phone is away.
+    ///
+    /// Defaults on, where a channel's defaults off: a message addressed to you
+    /// is worth interrupting for before you have said so.
+    var notificationsEnabled: Bool = true
     /// Bumped whenever this conversation's stored messages change, so an open
     /// transcript knows to re-read its window.
     ///
@@ -733,6 +739,9 @@ struct PeerActions {
     /// Arm or disarm the one-shot watch on the node: notify once, the next
     /// time anything is heard from it, then disarm itself.
     var setNotifyWhenHeard: ((PeerSummary, Bool) async -> Bool)? = nil
+    /// Turn a direct conversation's notifications on or off — on the phone,
+    /// and on a companion radio holding its messages while the phone is away.
+    var setConversationNotifications: ((DirectConversationSummary, Bool) async -> Void)? = nil
     /// Save a transient node onto the local identity.
     var promoteToSaved: ((PeerSummary) async -> Bool)? = nil
     /// Take a saved node off the local identity, keeping its history and

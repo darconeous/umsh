@@ -27,6 +27,10 @@ use crate::{
     },
 };
 
+/// Item width of `PROP_HOST_MUTED_CHANNELS`: the full channel
+/// identifier, not the two octets the wire carries.
+const HOST_MUTE_CHANNEL_LEN: usize = 16;
+
 /// One header-prefixed ATT value produced by ULCP GATT segmentation.
 #[derive(Clone, Debug, PartialEq, Eq, uniffi::Record)]
 pub struct GattSegmentRecord {
@@ -671,6 +675,22 @@ enum SessionStage {
     Attached,
 }
 
+/// One insert or removal in a mute reconciliation.
+///
+/// Both mute tables are reconciled by the same pass because the phone
+/// decides both from the same thing — which conversations the user wants
+/// to hear about — and a device that has one and not the other does not
+/// exist: `CAP_HOST_RX_QUEUE` grants the pair.
+#[derive(Clone, Debug, PartialEq, Eq)]
+struct HostMuteStep {
+    /// `PROP_HOST_MUTED_CHANNELS` or `PROP_HOST_MUTED_PEERS`.
+    property: u32,
+    /// The item, which is also the remove selector and the digest.
+    item: Vec<u8>,
+    /// Insert when true, remove when false.
+    insert: bool,
+}
+
 #[derive(Clone, Debug, PartialEq, Eq)]
 enum ExpectedResponse {
     Property(u32),
@@ -735,6 +755,14 @@ enum ExpectedResponse {
     /// The `CMD_PROP_SET` of `PROP_HOST_AUTO_ACK`, answered by the
     /// device's echo.
     HostAutoAck,
+    /// One step of the mute reconciliation: the insert or removal just
+    /// issued, and the steps still to come across both mute tables. Mute
+    /// items are their own digest, so a step is confirmed by the device
+    /// echoing the item back.
+    HostMute {
+        issued: HostMuteStep,
+        remaining: VecDeque<HostMuteStep>,
+    },
     /// A `CMD_PROP_GET` issued by a local management fetch. Unlike
     /// `Property`, a refusal is an answer to record, never a stage
     /// failure: the caller asked an open question about one property.
@@ -1601,6 +1629,81 @@ impl MobileUlcpSession {
         Ok(state.update(vec![frame]))
     }
 
+    /// Tell the radio which conversations to take in quietly
+    /// (`PROP_HOST_MUTED_CHANNELS`, `PROP_HOST_MUTED_PEERS`).
+    ///
+    /// `channel_identifiers` are full 16-byte channel identifiers (see
+    /// [`crate::channel_identifier`]) and `peer_keys` are 32-byte public
+    /// keys; both name what the device should queue without chirping.
+    /// Muting reaches the receipt cue and nothing else — the frames are
+    /// still queued, acknowledged, counted, and drained.
+    ///
+    /// Both tables are diffed against the values cached at attach and
+    /// reconciled item by item, so calling it whenever a notification
+    /// setting moves costs nothing when nothing moved. Requires an
+    /// attached, otherwise-idle session on a device advertising
+    /// `CAP_HOST_RX_QUEUE`.
+    pub fn reconcile_host_mutes(
+        &self,
+        channel_identifiers: Vec<Vec<u8>>,
+        peer_keys: Vec<Vec<u8>>,
+    ) -> Result<UlcpSessionUpdateRecord, MobileError> {
+        let desired = [
+            (
+                prop::HOST_MUTED_CHANNELS,
+                HOST_MUTE_CHANNEL_LEN,
+                channel_identifiers,
+            ),
+            (prop::HOST_MUTED_PEERS, items::PUBLIC_KEY_LEN, peer_keys),
+        ];
+        for (_, item_len, items) in &desired {
+            if items.iter().any(|item| item.len() != *item_len) {
+                return Err(MobileError::InvalidUlcpFrame);
+            }
+        }
+
+        let mut state = self.inner.lock().expect("ULCP session mutex poisoned");
+        if state.stage != SessionStage::Attached || !state.expected.is_empty() {
+            return Err(MobileError::InvalidUlcpFrame);
+        }
+        if !state.has_capability(cap::HOST_RX_QUEUE)? {
+            return Err(MobileError::UnsupportedCapability);
+        }
+
+        // Removals before inserts on each table, so a full table can be
+        // reshaped without transiently overflowing it.
+        let mut steps: VecDeque<HostMuteStep> = VecDeque::new();
+        for (property, item_len, items) in desired {
+            let current: Vec<Vec<u8>> = state
+                .responses
+                .get(&property)
+                .map(|entry| entry.value.clone())
+                .unwrap_or_default()
+                .chunks(item_len)
+                .map(<[u8]>::to_vec)
+                .collect();
+            for item in current.iter().filter(|item| !items.contains(item)) {
+                steps.push_back(HostMuteStep {
+                    property,
+                    item: item.clone(),
+                    insert: false,
+                });
+            }
+            for item in items.into_iter().filter(|item| !current.contains(item)) {
+                steps.push_back(HostMuteStep {
+                    property,
+                    item,
+                    insert: true,
+                });
+            }
+        }
+
+        match state.next_host_mute_operation(steps) {
+            Some(frame) => Ok(state.update(vec![frame])),
+            None => Ok(state.update(Vec::new())),
+        }
+    }
+
     /// Store one peer public key on the radio's device identity
     /// (`PROP_DEV_PEERS`), then persist with a chained `CMD_SAVE` when the
     /// device can.
@@ -2066,6 +2169,44 @@ impl MobileUlcpSession {
                         .insert(prop::HOST_AUTO_ACK, response.clone());
                 }
                 state.refresh_attached_snapshot(None)?;
+            }
+            ExpectedResponse::HostMute {
+                issued,
+                mut remaining,
+            } => {
+                if response.property_id == prop::LAST_STATUS {
+                    let error = ulcp_operation_error(
+                        "reconcile notification mutes".to_owned(),
+                        response.value.as_slice(),
+                    )?;
+                    // Either refusal asserts the state that was asked
+                    // for: the entry is already there, or already gone.
+                    let benign = if issued.insert {
+                        umsh_ulcp::Status::ALREADY.0
+                    } else {
+                        umsh_ulcp::Status::ITEM_NOT_FOUND.0
+                    };
+                    if error.status_code != benign {
+                        operation_error = Some(error);
+                        remaining.clear();
+                    }
+                } else {
+                    let expected_command = if issued.insert {
+                        Cmd::PropInserted
+                    } else {
+                        Cmd::PropRemoved
+                    };
+                    if response.property_id != issued.property
+                        || response.command != expected_command as u8
+                    {
+                        return Err(MobileError::UlcpMismatchedResponse);
+                    }
+                }
+                if let Some(frame) = state.next_host_mute_operation(remaining) {
+                    outbound.push(frame);
+                } else {
+                    state.refresh_attached_snapshot(None)?;
+                }
             }
             ExpectedResponse::QueueDrain => {
                 if response.property_id != prop::LAST_STATUS {
@@ -2733,6 +2874,56 @@ impl UlcpSessionState {
         Some(frame)
     }
 
+    /// Issue the next step of a mute reconciliation, one frame at a time,
+    /// patching the cached table as each frame goes out.
+    fn next_host_mute_operation(&mut self, mut steps: VecDeque<HostMuteStep>) -> Option<Vec<u8>> {
+        let issued = steps.pop_front()?;
+        let tid = self.allocate_tid();
+        let frame = if issued.insert {
+            ulcp_prop_insert(tid, issued.property, &issued.item).ok()?
+        } else {
+            ulcp_prop_remove(tid, issued.property, &issued.item).ok()?
+        };
+        self.patch_item_table(issued.property, &issued.item, issued.insert);
+        self.expected.insert(
+            tid,
+            ExpectedResponse::HostMute {
+                issued,
+                remaining: steps,
+            },
+        );
+        Some(frame)
+    }
+
+    /// Patch one item in or out of a cached table whose items are their
+    /// own digest.
+    fn patch_item_table(&mut self, property: u32, item: &[u8], present: bool) {
+        let entry = self
+            .responses
+            .entry(property)
+            .or_insert_with(|| UlcpPropertyFrameRecord {
+                transaction_id: frame::TID_UNSOLICITED,
+                command: Cmd::PropIs as u8,
+                property_id: property,
+                value: Vec::new(),
+            });
+        let mut value = Vec::with_capacity(entry.value.len() + item.len());
+        let mut found = false;
+        for chunk in entry.value.chunks(item.len()) {
+            if chunk == item {
+                found = true;
+                if !present {
+                    continue;
+                }
+            }
+            value.extend_from_slice(chunk);
+        }
+        if present && !found {
+            value.extend_from_slice(item);
+        }
+        entry.value = value;
+    }
+
     /// Patch one public key in or out of the cached `PROP_HOST_PEER_KEYS`
     /// digest.
     fn patch_host_peer_digest(&mut self, public_key: &[u8], present: bool) {
@@ -3092,7 +3283,12 @@ pub fn ulcp_inspection_properties(capabilities: Vec<u8>) -> Result<Vec<u32>, Mob
         properties.extend([prop::HOST_CHANNEL_KEYS, prop::HOST_PEER_KEYS]);
     }
     if has(cap::HOST_RX_QUEUE) {
-        properties.extend([prop::HOST_RX_QUEUE_COUNT, prop::HOST_RX_QUEUE_DROPPED]);
+        properties.extend([
+            prop::HOST_RX_QUEUE_COUNT,
+            prop::HOST_RX_QUEUE_DROPPED,
+            prop::HOST_MUTED_CHANNELS,
+            prop::HOST_MUTED_PEERS,
+        ]);
     }
     if has(cap::HOST_AUTO_ACK) {
         properties.push(prop::HOST_AUTO_ACK);
@@ -5031,6 +5227,19 @@ pub fn ulcp_max_dev_peers() -> u8 {
     8
 }
 
+/// Capacity of the muted-channel table (`PROP_HOST_MUTED_CHANNELS`),
+/// which matches the host channel-key table it names entries from.
+#[uniffi::export]
+pub fn ulcp_max_host_muted_channels() -> u8 {
+    8
+}
+
+/// Capacity of the muted-peer table (`PROP_HOST_MUTED_PEERS`).
+#[uniffi::export]
+pub fn ulcp_max_host_muted_peers() -> u8 {
+    8
+}
+
 /// Capacity of the host peer-key table (`PROP_HOST_PEER_KEYS`).
 ///
 /// A label constant like [`ulcp_max_dev_peers`]: callers cap what they
@@ -5521,7 +5730,10 @@ mod tests {
             move |property| match property {
                 prop::CAPS => (property, encoded_capabilities(&capabilities)),
                 prop::HOST_KEY => (property, vec![0xAA; 32]),
-                prop::HOST_CHANNEL_KEYS | prop::HOST_PEER_KEYS => (property, Vec::new()),
+                prop::HOST_CHANNEL_KEYS
+                | prop::HOST_PEER_KEYS
+                | prop::HOST_MUTED_CHANNELS
+                | prop::HOST_MUTED_PEERS => (property, Vec::new()),
                 _ => commissionable_value(property),
             },
         )
@@ -7515,7 +7727,10 @@ mod tests {
             move |property| match property {
                 prop::CAPS => (property, encoded_capabilities(&capabilities)),
                 prop::HOST_KEY => (property, vec![0xAA; 32]),
-                prop::HOST_CHANNEL_KEYS | prop::HOST_PEER_KEYS => (property, Vec::new()),
+                prop::HOST_CHANNEL_KEYS
+                | prop::HOST_PEER_KEYS
+                | prop::HOST_MUTED_CHANNELS
+                | prop::HOST_MUTED_PEERS => (property, Vec::new()),
                 prop::HOST_RX_QUEUE_COUNT => (property, 2u16.to_le_bytes().to_vec()),
                 prop::HOST_RX_QUEUE_DROPPED => (property, 0u32.to_le_bytes().to_vec()),
                 _ => commissionable_value(property),
@@ -7621,7 +7836,10 @@ mod tests {
             move |property| match property {
                 prop::CAPS => (property, encoded_capabilities(&capabilities)),
                 prop::HOST_KEY => (property, vec![0xAA; 32]),
-                prop::HOST_CHANNEL_KEYS | prop::HOST_PEER_KEYS => (property, Vec::new()),
+                prop::HOST_CHANNEL_KEYS
+                | prop::HOST_PEER_KEYS
+                | prop::HOST_MUTED_CHANNELS
+                | prop::HOST_MUTED_PEERS => (property, Vec::new()),
                 prop::HOST_RX_QUEUE_COUNT => (property, 0u16.to_le_bytes().to_vec()),
                 prop::HOST_RX_QUEUE_DROPPED => (property, 0u32.to_le_bytes().to_vec()),
                 prop::HOST_AUTO_ACK => (property, vec![0]),
@@ -7731,6 +7949,101 @@ mod tests {
         assert!(full.outbound_frames.is_empty());
         assert!(!full.waiting_for_responses);
         assert_eq!(full.snapshot.phase, UlcpSessionPhase::Attached);
+    }
+
+    #[test]
+    fn mute_reconcile_walks_both_tables_and_then_settles() {
+        let session = MobileUlcpSession::new();
+        attach_delegated_ack_capable(&session);
+
+        let channel = vec![0x11u8; 16];
+        let peer = vec![0xE1u8; 32];
+        let update = session
+            .reconcile_host_mutes(vec![channel.clone()], vec![peer.clone()])
+            .unwrap();
+        // One frame at a time, channels before peers.
+        assert_eq!(update.outbound_frames.len(), 1);
+        let request = Frame::parse(&update.outbound_frames[0]).unwrap();
+        assert_eq!(request.command(), Some(Cmd::PropInsert));
+        let next = session
+            .consume(inserted_response(
+                request.header.tid(),
+                prop::HOST_MUTED_CHANNELS,
+                &channel,
+            ))
+            .unwrap();
+        assert_eq!(next.outbound_frames.len(), 1);
+        let request = Frame::parse(&next.outbound_frames[0]).unwrap();
+        let done = session
+            .consume(inserted_response(
+                request.header.tid(),
+                prop::HOST_MUTED_PEERS,
+                &peer,
+            ))
+            .unwrap();
+        assert!(done.outbound_frames.is_empty());
+        assert!(!done.waiting_for_responses);
+        assert_eq!(done.operation_error, None);
+
+        // Asking for the same thing again asks the radio for nothing.
+        let again = session
+            .reconcile_host_mutes(vec![channel], vec![peer.clone()])
+            .unwrap();
+        assert!(again.outbound_frames.is_empty());
+        assert!(!again.waiting_for_responses);
+
+        // Un-muting the channel sheds exactly its entry, and the peer
+        // entry is left alone.
+        let update = session
+            .reconcile_host_mutes(Vec::new(), vec![peer])
+            .unwrap();
+        assert_eq!(update.outbound_frames.len(), 1);
+        let request = Frame::parse(&update.outbound_frames[0]).unwrap();
+        assert_eq!(request.command(), Some(Cmd::PropRemove));
+        let done = session
+            .consume(removed_response(
+                request.header.tid(),
+                prop::HOST_MUTED_CHANNELS,
+                &[0x11; 16],
+            ))
+            .unwrap();
+        assert!(done.outbound_frames.is_empty());
+        assert!(!done.waiting_for_responses);
+    }
+
+    #[test]
+    fn an_already_muted_source_is_not_an_error() {
+        let session = MobileUlcpSession::new();
+        attach_delegated_ack_capable(&session);
+
+        let update = session
+            .reconcile_host_mutes(vec![vec![0x11; 16]], Vec::new())
+            .unwrap();
+        let request = Frame::parse(&update.outbound_frames[0]).unwrap();
+        // STATUS_ALREADY asserts the state that was asked for.
+        let done = session
+            .consume(property_response(
+                request.header.tid(),
+                prop::LAST_STATUS,
+                &[umsh_ulcp::Status::ALREADY.0 as u8],
+            ))
+            .unwrap();
+        assert_eq!(done.operation_error, None);
+        assert!(!done.waiting_for_responses);
+        assert_eq!(done.snapshot.phase, UlcpSessionPhase::Attached);
+    }
+
+    #[test]
+    fn a_mute_item_of_the_wrong_width_is_refused_locally() {
+        let session = MobileUlcpSession::new();
+        attach_delegated_ack_capable(&session);
+
+        // The wire carries two octets of a channel identifier; the mute
+        // table takes the full sixteen, and nothing in between.
+        assert!(matches!(
+            session.reconcile_host_mutes(vec![vec![0x11; 2]], Vec::new()),
+            Err(MobileError::InvalidUlcpFrame)
+        ));
     }
 
     #[test]

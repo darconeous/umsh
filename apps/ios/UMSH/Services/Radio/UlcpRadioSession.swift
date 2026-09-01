@@ -693,6 +693,15 @@ class UlcpRadioSession: NSObject, @unchecked Sendable {
         }
     }
 
+    func reconcileHostMutes(channelIdentifiers: [Data], peerKeys: [Data]) async throws {
+        try await performDevicePeerOperation(requiringDeviceIdentity: false) { session in
+            try session.reconcileHostMutes(
+                channelIdentifiers: channelIdentifiers,
+                peerKeys: peerKeys
+            )
+        }
+    }
+
     func setHostAutoAcknowledgement(_ enabled: Bool) async throws {
         try await performDevicePeerOperation(requiringDeviceIdentity: false) { session in
             try session.setHostAutoAck(enabled: enabled)

@@ -425,6 +425,23 @@ pub fn derive_channel_id(key: Vec<u8>) -> Result<Vec<u8>, MobileError> {
     Ok(channel.channel_id().0.to_vec())
 }
 
+/// Derive the full sixteen-octet channel identifier for a key.
+///
+/// The two-octet identifier is its prefix and is what travels on the wire;
+/// this is the width at which two channels can be told apart, which is what
+/// naming one to a device takes — `PROP_HOST_MUTED_CHANNELS` is where that
+/// matters today.
+#[uniffi::export]
+pub fn channel_identifier(key: Vec<u8>) -> Result<Vec<u8>, MobileError> {
+    use umsh_crypto::software::{SoftwareAes, SoftwareSha256};
+
+    let key = channel_key_from_bytes(&key)?;
+    Ok(umsh_crypto::CryptoEngine::new(SoftwareAes, SoftwareSha256)
+        .derive_channel_tag(&key)
+        .0
+        .to_vec())
+}
+
 /// Derive the three presentation octets for a key — the identifier extended by
 /// one byte, so a channel's color is stable wherever it is shown.
 #[uniffi::export]

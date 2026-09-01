@@ -138,6 +138,9 @@ struct StoredDirectConversation: Equatable, Sendable {
     /// When the conversation row was created — the activity time of a
     /// conversation that has no messages yet.
     let createdAtMilliseconds: Int64
+    /// Whether this conversation may raise a notification. Defaults on,
+    /// unlike a channel's, which defaults off.
+    let notificationsEnabled: Bool
     let lastMessage: StoredConversationPreview?
     let unreadCount: Int
 }
@@ -411,7 +414,7 @@ actor SQLiteApplicationStore {
     /// store refuses to open any database above this constant, so a stale value
     /// lets the new schema apply once and then locks the user out of their own
     /// data on the next launch. ``migrate(_:)`` checks the two agree.
-    static let currentSchemaVersion: Int32 = 20
+    static let currentSchemaVersion: Int32 = 21
 
     nonisolated(unsafe) private let database: OpaquePointer
 
@@ -1678,6 +1681,7 @@ actor SQLiteApplicationStore {
                    n.is_saved, n.is_favorite, n.on_dev_identity,
                    n.notify_when_heard,
                    c.draft_text, c.last_read_at_ms, c.created_at_ms,
+                   c.notifications_enabled,
                    \(Self.conversationTailColumns(
                         owner: "c.owner_identity_id",
                         address: "n.public_address"
@@ -1696,7 +1700,7 @@ actor SQLiteApplicationStore {
         while true {
             switch sqlite3_step(statement) {
             case SQLITE_ROW:
-                let tail = Self.conversationTail(statement, at: 18)
+                let tail = Self.conversationTail(statement, at: 19)
                 conversations.append(
                     StoredDirectConversation(
                         id: sqlite3_column_int64(statement, 0),
@@ -1704,6 +1708,7 @@ actor SQLiteApplicationStore {
                         draftText: Self.stringColumn(statement, at: 15),
                         lastReadAtMilliseconds: sqlite3_column_int64(statement, 16),
                         createdAtMilliseconds: sqlite3_column_int64(statement, 17),
+                        notificationsEnabled: sqlite3_column_int(statement, 18) != 0,
                         lastMessage: tail.lastMessage,
                         unreadCount: tail.unreadCount
                     )
@@ -1959,6 +1964,25 @@ actor SQLiteApplicationStore {
             try bind(ownerIdentityID, to: conversation, at: 2)
             try stepDone(conversation)
         }
+    }
+
+    /// Turn notifications for one direct conversation on or off.
+    func setDirectConversationNotifications(
+        ownerIdentityID: String,
+        conversationID: Int64,
+        enabled: Bool
+    ) throws {
+        let statement = try prepare(
+            """
+            UPDATE direct_conversation SET notifications_enabled = ?
+            WHERE id = ? AND owner_identity_id = ?
+            """
+        )
+        defer { sqlite3_finalize(statement) }
+        try check(sqlite3_bind_int(statement, 1, enabled ? 1 : 0))
+        try check(sqlite3_bind_int64(statement, 2, conversationID))
+        try bind(ownerIdentityID, to: statement, at: 3)
+        try stepDone(statement)
     }
 
     func updateDraft(ownerIdentityID: String, conversationID: Int64, text: String) throws {
@@ -4385,6 +4409,31 @@ actor SQLiteApplicationStore {
                     );
 
                     PRAGMA user_version = 20;
+                    """
+                )
+                try execute(database, sql: "COMMIT")
+            } catch {
+                try? execute(database, sql: "ROLLBACK")
+                throw error
+            }
+        }
+
+        if version < 21 {
+            try execute(database, sql: "BEGIN IMMEDIATE")
+            do {
+                // Whether a direct conversation may notify. Defaults on,
+                // which is what direct messages did before there was a
+                // switch. Channels have carried the same setting since they
+                // arrived, defaulting off — the asymmetry is deliberate: a
+                // message addressed to you is worth interrupting for, and a
+                // channel's traffic is not until its owner says so.
+                try execute(
+                    database,
+                    sql: """
+                    ALTER TABLE direct_conversation
+                        ADD COLUMN notifications_enabled INTEGER NOT NULL DEFAULT 1;
+
+                    PRAGMA user_version = 21;
                     """
                 )
                 try execute(database, sql: "COMMIT")

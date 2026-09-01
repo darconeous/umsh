@@ -152,6 +152,11 @@ protocol RadioConnection: AnyObject, Sendable {
     /// verify and acknowledge their unicast traffic while the phone is away.
     /// Bookkeeping like the channel reconcile above, never surfaced.
     func reconcileHostPeerKeys(_ entries: [HostPeerKeyEntryRecord]) async throws
+    /// Name the sources whose queued frames the radio should take in without
+    /// a sound: full channel identifiers and peer public keys. Follows the
+    /// phone's own notification switches; reaches the radio's cue and
+    /// nothing else.
+    func reconcileHostMutes(channelIdentifiers: [Data], peerKeys: [Data]) async throws
     /// Whether the radio acknowledges queued unicast on the phone's behalf
     /// while the phone is away, using the peer keys provisioned above.
     func setHostAutoAcknowledgement(_ enabled: Bool) async throws

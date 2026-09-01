@@ -22,6 +22,7 @@ struct DirectConversationDetailView: View {
     var countMessages: () async -> Int = { 0 }
 
     @State private var messageCount: Int?
+    @State private var pendingNotifications: Bool?
 
     private var peer: PeerSummary { conversation.peer }
 
@@ -52,6 +53,25 @@ struct DirectConversationDetailView: View {
                 }
             } footer: {
                 Text("Everything this phone knows about the node on the other end.")
+            }
+            Section {
+                Toggle("Notifications", isOn: Binding(
+                    get: { pendingNotifications ?? conversation.notificationsEnabled },
+                    set: { enabled in
+                        pendingNotifications = enabled
+                        Task {
+                            await peerActions.setConversationNotifications?(
+                                conversation, enabled
+                            )
+                            // The store has reloaded by now, so hand the toggle
+                            // back to it — including when the write failed and
+                            // the honest answer is the old value.
+                            pendingNotifications = nil
+                        }
+                    }
+                ))
+            } footer: {
+                Text("Messages from \(peer.displayName) still arrive and still count as unread. This decides only whether they interrupt you — and whether a companion radio holding them while this phone is away makes a sound.")
             }
             Section("Conversation") {
                 LabeledContent("Node hint") {

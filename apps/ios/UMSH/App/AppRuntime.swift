@@ -290,10 +290,12 @@ final class AppRuntime {
                 // message notification has concrete meaning.
                 notificationService.requestAuthorizationIfNeeded()
             }
+            noteDroppedFrames(from: snapshot)
             await synchronizeRadioPeer(from: snapshot)
             await synchronizeRadioChannels(from: snapshot)
             await reconcileHostChannels()
             await reconcileHostPeers()
+            await reconcileHostMutes()
             await drainOfflineQueueIfNeeded()
         }
     }
@@ -383,6 +385,7 @@ final class AppRuntime {
             identifyRouter: identifyRouter(_:precededBy:),
             setFavorite: setPeerFavorite,
             setNotifyWhenHeard: setPeerNotifyWhenHeard,
+            setConversationNotifications: setConversationNotifications,
             promoteToSaved: promotePeerToSaved,
             demoteToTransient: demotePeerToTransient,
             deletePeer: deletePeer,
@@ -1493,6 +1496,7 @@ final class AppRuntime {
             }
             await reloadApplicationState()
             await reconcileHostChannels()
+            await reconcileHostMutes()
             return .success
         } catch {
             return .failed
@@ -1564,6 +1568,7 @@ final class AppRuntime {
             }
             await reloadApplicationState()
             await reconcileHostChannels()
+            await reconcileHostMutes()
             return .success
         } catch {
             return .failed
@@ -1604,6 +1609,7 @@ final class AppRuntime {
                 await reloadApplicationState()
             }
             await reconcileHostChannels()
+            await reconcileHostMutes()
             return .success
         } catch {
             return .failed
@@ -1677,6 +1683,32 @@ final class AppRuntime {
                 notificationsEnabled: enabled
             )
         )
+        // The same switch decides whether a companion radio holding this
+        // channel's traffic makes a sound about it.
+        await reconcileHostMutes()
+    }
+
+    /// Toggle a direct conversation's banners, from the same sheet the
+    /// channel switch lives in — and, through the mute tables, whether a
+    /// companion radio chirps when it takes one of these messages in for a
+    /// phone that is away.
+    func setConversationNotifications(
+        _ conversation: DirectConversationSummary,
+        _ enabled: Bool
+    ) async {
+        guard let applicationStore, let localIdentity else { return }
+        do {
+            try await applicationStore.setDirectConversationNotifications(
+                ownerIdentityID: localIdentity.id,
+                conversationID: conversation.id,
+                enabled: enabled
+            )
+            await reloadApplicationState()
+            await reconcileHostMutes()
+        } catch {
+            // The toggle re-reads the store, so a failed write shows the
+            // old value rather than a lie.
+        }
     }
 
     /// Build the URI that invites someone else to this channel. A named
@@ -1791,6 +1823,82 @@ final class AppRuntime {
             }
         } catch {
             // Retried on the next attach or conversation change.
+        }
+    }
+
+    /// Record it when the radio's queue has thrown traffic away.
+    ///
+    /// `PROP_HOST_RX_QUEUE_DROPPED` rising across a detached interval is the
+    /// one honest signal that the transcript is incomplete: the queue holds
+    /// sixteen frames and evicts the oldest to make room, so a busy hour
+    /// away is not fully recoverable. There is nothing the user can do about
+    /// it and no way to name what was lost, so this goes to the log rather
+    /// than to a banner — the Settings diagnostics row already shows the
+    /// count itself.
+    private func noteDroppedFrames(from snapshot: RadioSnapshot) {
+        guard let dropped = snapshot.provisioning?.droppedFrames else {
+            coordinator.lastDroppedFrames = nil
+            return
+        }
+        defer { coordinator.lastDroppedFrames = dropped }
+        // A counter that went backwards is a rebooted radio, not a loss.
+        guard let previous = coordinator.lastDroppedFrames, dropped > previous else { return }
+        Self.logger.notice(
+            """
+            Companion radio dropped \(dropped - previous, privacy: .public) queued \
+            frames; the transcript for that interval is incomplete
+            """
+        )
+    }
+
+    /// Tell the radio which conversations to take in quietly, so a
+    /// companion holding messages for a phone that is away chirps for the
+    /// ones its owner asked to hear about and no others.
+    ///
+    /// The lists follow the same switches the phone's own banners follow:
+    /// a channel is muted unless its Notifications toggle is on (channels
+    /// default off), a peer is muted when its conversation's toggle is off
+    /// (direct conversations default on). Muting reaches the radio's cue
+    /// alone — the traffic is still queued, acknowledged, and drained.
+    private func reconcileHostMutes() async {
+        guard radioSnapshot.linkState == .attached || radioSnapshot.linkState == .ready,
+              radioSnapshot.hostState == .matchesCurrentIdentity,
+              radioSnapshot.provisioning?.supportsOfflineQueue == true
+        else {
+            coordinator.lastReconciledHostMutes = nil
+            return
+        }
+        var mutedChannels: [Data] = []
+        for channel in channels.filter({ $0.joinedPhone && !$0.notificationsEnabled })
+            .sorted(by: Self.hostChannelPriority)
+            .prefix(Int(ulcpMaxHostMutedChannels()))
+        {
+            guard let key = try? await channelKeyVault.loadKey(channelID: channel.id),
+                  let identifier = try? UMSHMobileCore.channelIdentifier(key: key)
+            else { continue }
+            mutedChannels.append(identifier)
+        }
+        // The peers the radio holds keys for are the only ones it can
+        // attribute a frame to, so mirror that ordering: a mute for a peer
+        // outside the provisioned table is inert either way.
+        let mutedPeers = conversations
+            .filter { !$0.notificationsEnabled }
+            .sorted {
+                ($0.lastMessage?.createdAtMilliseconds ?? $0.createdAtMilliseconds)
+                    > ($1.lastMessage?.createdAtMilliseconds ?? $1.createdAtMilliseconds)
+            }
+            .prefix(Int(ulcpMaxHostMutedPeers()))
+            .compactMap { try? publicIdentityBytes(address: $0.peer.identity.canonicalAddress) }
+        let desired = HostMuteLists(channels: mutedChannels, peers: mutedPeers)
+        guard coordinator.lastReconciledHostMutes != desired else { return }
+        do {
+            try await radioConnection.reconcileHostMutes(
+                channelIdentifiers: desired.channels,
+                peerKeys: desired.peers
+            )
+            coordinator.lastReconciledHostMutes = desired
+        } catch {
+            // Retried on the next attach or notification-setting change.
         }
     }
 
@@ -3207,9 +3315,49 @@ final class AppRuntime {
     /// suppresses the banner when that conversation is visible in the
     /// foreground. A redelivered batch can repeat a banner; accepted worst case.
     private func postNotifications(for mutations: [MobileChatMutationRecord]) async {
-        guard let applicationStore, let localIdentity else { return }
+        var subjects: [ChatNotificationSubject] = []
         for mutation in mutations where mutation.notify {
-            guard let target = await notificationSubject(for: mutation) else { continue }
+            if let target = await notificationSubject(for: mutation) {
+                subjects.append(target)
+            }
+        }
+        // A batch carrying several messages for one conversation gets one
+        // banner rather than several. Drained backlogs arrive exactly this
+        // way, and live traffic almost never does.
+        var batchCount: [String: Int] = [:]
+        for subject in subjects {
+            batchCount[subject.conversationAddress, default: 0] += 1
+        }
+        var summarized: Set<String> = []
+
+        for target in subjects {
+            if let count = batchCount[target.conversationAddress], count > 1 {
+                guard summarized.insert(target.conversationAddress).inserted else { continue }
+                if Self.isChannelAddress(target.conversationAddress) {
+                    guard let channel = channels.first(where: {
+                        coordinator.channelAddresses[$0.id] == target.conversationAddress
+                    }), channel.notificationsEnabled else { continue }
+                    notificationService.postInboundMessageSummary(
+                        conversationAddress: target.conversationAddress,
+                        displayName: channel.title,
+                        count: count
+                    )
+                } else {
+                    guard notificationsEnabled(forPeerAddress: target.conversationAddress) else {
+                        continue
+                    }
+                    let peer = peers.first {
+                        $0.identity.canonicalAddress == target.conversationAddress
+                    }
+                    notificationService.postInboundMessageSummary(
+                        conversationAddress: target.conversationAddress,
+                        displayName: peer?.displayName
+                            ?? String(target.conversationAddress.prefix(10)),
+                        count: count
+                    )
+                }
+                continue
+            }
             if Self.isChannelAddress(target.conversationAddress) {
                 guard let channel = channels.first(where: {
                     coordinator.channelAddresses[$0.id] == target.conversationAddress
@@ -3238,6 +3386,11 @@ final class AppRuntime {
                     body: target.body
                 )
             } else {
+                // Muting a conversation silences its banners the same way
+                // muting a channel does.
+                guard notificationsEnabled(forPeerAddress: target.conversationAddress) else {
+                    continue
+                }
                 let peer = peers.first {
                     $0.identity.canonicalAddress == target.conversationAddress
                 }
@@ -3254,13 +3407,20 @@ final class AppRuntime {
         }
     }
 
+    /// Whether a direct conversation may notify. A conversation this phone
+    /// has no row for has never been muted, so it may.
+    private func notificationsEnabled(forPeerAddress address: String) -> Bool {
+        conversations.first { $0.peer.identity.canonicalAddress == address }?
+            .notificationsEnabled ?? true
+    }
+
     /// Say out loud that a message is not going to arrive.
     ///
     /// The transcript already marks it failed, and the delegate suppresses
     /// the banner when that transcript is on screen — so this speaks up
     /// exactly when nobody was watching it happen, which over a mesh is the
-    /// normal case. A muted channel stays muted: the user asked not to hear
-    /// from it, and that covers the app's own bad news about it.
+    /// normal case. A muted conversation stays muted: the user asked not to
+    /// hear from it, and that covers the app's own bad news about it.
     private func postDeliveryFailureNotifications(_ failures: [ChatDeliveryFailure]) {
         for failure in failures {
             let name: String
@@ -3270,6 +3430,9 @@ final class AppRuntime {
                 }), channel.notificationsEnabled else { continue }
                 name = channel.title
             } else {
+                guard notificationsEnabled(forPeerAddress: failure.conversationAddress) else {
+                    continue
+                }
                 name = peers.first {
                     $0.identity.canonicalAddress == failure.conversationAddress
                 }?.displayName ?? String(failure.conversationAddress.prefix(10))
@@ -3414,6 +3577,7 @@ final class AppRuntime {
             await replayChannelMembership()
             await reconcileHostChannels()
             await reconcileHostPeers()
+            await reconcileHostMutes()
         } catch {
             peers = []
             conversations = []
@@ -3565,6 +3729,7 @@ final class AppRuntime {
                         lastMessage: Self.previewMessage(from: stored.lastMessage),
                         unreadCount: stored.unreadCount,
                         createdAtMilliseconds: stored.createdAtMilliseconds,
+                        notificationsEnabled: stored.notificationsEnabled,
                         messageRevision: coordinator.chatRevisions[
                             peer.identity.canonicalAddress
                         ] ?? 0
@@ -3692,6 +3857,13 @@ final class AppRuntime {
     }
 }
 
+/// What the radio has been told to take in quietly: full channel
+/// identifiers and peer public keys.
+struct HostMuteLists: Equatable, Sendable {
+    var channels: [Data]
+    var peers: [Data]
+}
+
 /// Mutable, non-visual bookkeeping for ``AppRuntime``. Held by reference so
 /// updating it never invalidates the view graph.
 @MainActor
@@ -3709,6 +3881,11 @@ private final class AppStateCoordinator {
     /// The peer addresses last provisioned to the radio's host peer-key
     /// table, gating the same way.
     var lastReconciledHostPeers: [String]?
+    /// The mute lists last written to the radio, gating the same way.
+    var lastReconciledHostMutes: HostMuteLists?
+    /// The radio's dropped-frame counter as of the last snapshot, so a rise
+    /// across a detached interval can be told from the standing total.
+    var lastDroppedFrames: UInt32?
     /// Whether this attach's offline queue has been replayed. Cleared when
     /// the link drops so the next attach drains again.
     var drainedOfflineQueue = false

@@ -336,6 +336,11 @@ actor FakeRadioConnection: RadioConnection {
         publish(updated)
     }
 
+    /// Nothing in the snapshot describes the mute tables, and nothing in the
+    /// app reads them back — they steer a sound a simulated radio does not
+    /// make — so the fake accepts them and keeps nothing.
+    func reconcileHostMutes(channelIdentifiers: [Data], peerKeys: [Data]) async throws {}
+
     func setHostAutoAcknowledgement(_ enabled: Bool) async throws {
         guard var provisioning = snapshot.provisioning,
               provisioning.autoAcknowledgementEnabled != nil

@@ -3504,6 +3504,24 @@ public protocol MobileUlcpSessionProtocol: AnyObject, Sendable {
     func reconcileHostChannelKeys(keys: [Data]) throws  -> UlcpSessionUpdateRecord
 
     /**
+     * Tell the radio which conversations to take in quietly
+     * (`PROP_HOST_MUTED_CHANNELS`, `PROP_HOST_MUTED_PEERS`).
+     *
+     * `channel_identifiers` are full 16-byte channel identifiers (see
+     * [`crate::channel_identifier`]) and `peer_keys` are 32-byte public
+     * keys; both name what the device should queue without chirping.
+     * Muting reaches the receipt cue and nothing else — the frames are
+     * still queued, acknowledged, counted, and drained.
+     *
+     * Both tables are diffed against the values cached at attach and
+     * reconciled item by item, so calling it whenever a notification
+     * setting moves costs nothing when nothing moved. Requires an
+     * attached, otherwise-idle session on a device advertising
+     * `CAP_HOST_RX_QUEUE`.
+     */
+    func reconcileHostMutes(channelIdentifiers: [Data], peerKeys: [Data]) throws  -> UlcpSessionUpdateRecord
+
+    /**
      * Make the radio's host peer-key table (`PROP_HOST_PEER_KEYS`) match
      * the supplied entries — the pairwise keys for the peers whose
      * conversations are open, so the radio can verify and acknowledge
@@ -4117,6 +4135,33 @@ open func reconcileHostChannelKeys(keys: [Data])throws  -> UlcpSessionUpdateReco
     uniffi_umsh_mobile_core_fn_method_mobileulcpsession_reconcile_host_channel_keys(
             self.uniffiCloneHandle(),
         FfiConverterSequenceData.lower(keys),uniffiCallStatus
+    )
+})
+}
+
+    /**
+     * Tell the radio which conversations to take in quietly
+     * (`PROP_HOST_MUTED_CHANNELS`, `PROP_HOST_MUTED_PEERS`).
+     *
+     * `channel_identifiers` are full 16-byte channel identifiers (see
+     * [`crate::channel_identifier`]) and `peer_keys` are 32-byte public
+     * keys; both name what the device should queue without chirping.
+     * Muting reaches the receipt cue and nothing else — the frames are
+     * still queued, acknowledged, counted, and drained.
+     *
+     * Both tables are diffed against the values cached at attach and
+     * reconciled item by item, so calling it whenever a notification
+     * setting moves costs nothing when nothing moved. Requires an
+     * attached, otherwise-idle session on a device advertising
+     * `CAP_HOST_RX_QUEUE`.
+     */
+open func reconcileHostMutes(channelIdentifiers: [Data], peerKeys: [Data])throws  -> UlcpSessionUpdateRecord  {
+    return try  FfiConverterTypeUlcpSessionUpdateRecord_lift(try rustCallWithError(FfiConverterTypeMobileError_lift) {
+        uniffiCallStatus in
+    uniffi_umsh_mobile_core_fn_method_mobileulcpsession_reconcile_host_mutes(
+            self.uniffiCloneHandle(),
+        FfiConverterSequenceData.lower(channelIdentifiers),
+        FfiConverterSequenceData.lower(peerKeys),uniffiCallStatus
     )
 })
 }
@@ -14916,6 +14961,22 @@ public func channelConversationAddress(key: Data)throws  -> String  {
 })
 }
 /**
+ * Derive the full sixteen-octet channel identifier for a key.
+ *
+ * The two-octet identifier is its prefix and is what travels on the wire;
+ * this is the width at which two channels can be told apart, which is what
+ * naming one to a device takes — `PROP_HOST_MUTED_CHANNELS` is where that
+ * matters today.
+ */
+public func channelIdentifier(key: Data)throws  -> Data  {
+    return try  FfiConverterData.lift(try rustCallWithError(FfiConverterTypeMobileError_lift) {
+        uniffiCallStatus in
+    uniffi_umsh_mobile_core_fn_func_channel_identifier(
+        FfiConverterData.lower(key),uniffiCallStatus
+    )
+})
+}
+/**
  * Decode a persisted advertised-identity payload for display.
  *
  * `address` is the canonical Base58 address of the node the payload claims
@@ -15547,6 +15608,27 @@ public func ulcpMaxDevPeers() -> UInt8  {
 })
 }
 /**
+ * Capacity of the muted-channel table (`PROP_HOST_MUTED_CHANNELS`),
+ * which matches the host channel-key table it names entries from.
+ */
+public func ulcpMaxHostMutedChannels() -> UInt8  {
+    return try!  FfiConverterUInt8.lift(try! rustCall() {
+        uniffiCallStatus in
+    uniffi_umsh_mobile_core_fn_func_ulcp_max_host_muted_channels(uniffiCallStatus
+    )
+})
+}
+/**
+ * Capacity of the muted-peer table (`PROP_HOST_MUTED_PEERS`).
+ */
+public func ulcpMaxHostMutedPeers() -> UInt8  {
+    return try!  FfiConverterUInt8.lift(try! rustCall() {
+        uniffiCallStatus in
+    uniffi_umsh_mobile_core_fn_func_ulcp_max_host_muted_peers(uniffiCallStatus
+    )
+})
+}
+/**
  * Capacity of the host peer-key table (`PROP_HOST_PEER_KEYS`).
  *
  * A label constant like [`ulcp_max_dev_peers`]: callers cap what they
@@ -15681,6 +15763,9 @@ private let initializationResult: InitializationResult = {
     if (uniffi_umsh_mobile_core_checksum_func_channel_conversation_address() != 37) {
         return InitializationResult.apiChecksumMismatch
     }
+    if (uniffi_umsh_mobile_core_checksum_func_channel_identifier() != 35157) {
+        return InitializationResult.apiChecksumMismatch
+    }
     if (uniffi_umsh_mobile_core_checksum_func_decode_node_identity() != 44653) {
         return InitializationResult.apiChecksumMismatch
     }
@@ -15808,6 +15893,12 @@ private let initializationResult: InitializationResult = {
         return InitializationResult.apiChecksumMismatch
     }
     if (uniffi_umsh_mobile_core_checksum_func_ulcp_max_dev_peers() != 5213) {
+        return InitializationResult.apiChecksumMismatch
+    }
+    if (uniffi_umsh_mobile_core_checksum_func_ulcp_max_host_muted_channels() != 41393) {
+        return InitializationResult.apiChecksumMismatch
+    }
+    if (uniffi_umsh_mobile_core_checksum_func_ulcp_max_host_muted_peers() != 29750) {
         return InitializationResult.apiChecksumMismatch
     }
     if (uniffi_umsh_mobile_core_checksum_func_ulcp_max_host_peers() != 45637) {
@@ -16081,6 +16172,9 @@ private let initializationResult: InitializationResult = {
         return InitializationResult.apiChecksumMismatch
     }
     if (uniffi_umsh_mobile_core_checksum_method_mobileulcpsession_reconcile_host_channel_keys() != 27528) {
+        return InitializationResult.apiChecksumMismatch
+    }
+    if (uniffi_umsh_mobile_core_checksum_method_mobileulcpsession_reconcile_host_mutes() != 38069) {
         return InitializationResult.apiChecksumMismatch
     }
     if (uniffi_umsh_mobile_core_checksum_method_mobileulcpsession_reconcile_host_peer_keys() != 20443) {
