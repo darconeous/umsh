@@ -273,6 +273,14 @@ impl Attention {
     /// back, so the caller can order its redraw and power-on correctly;
     /// returns `None` when the display was already active and only the
     /// inactivity timer moved.
+    ///
+    /// Dropping the transition is how a panel gets stranded: the state
+    /// machine moves to [`DisplayState::Active`] while the glass stays
+    /// dark, and because every later wake then finds it already active,
+    /// nothing can light it again. A caller that genuinely has nothing to
+    /// do with a wake — a persistent panel has no power to restore —
+    /// should say so with `let _ =`.
+    #[must_use = "a wake that is not acted on leaves the panel dark while the policy calls it lit"]
     pub fn wake(&mut self, now_ms: u64) -> Option<Transition> {
         self.since_ms = now_ms;
         if matches!(self.state, DisplayState::Active) {
@@ -289,6 +297,14 @@ impl Attention {
     /// window opening both wakes the panel and pins it. Releasing the
     /// last hold restarts the inactivity window from that moment, so the
     /// user gets a full timeout to read whatever the hold was showing.
+    ///
+    /// The returned wake matters most exactly where it is easiest to
+    /// overlook. A hold is often re-derived on a loop rather than
+    /// received as an event, and an alert or a pairing window that
+    /// arrives at a sleeping tracker has no press behind it — so this
+    /// call is the only thing that will ever say to light the panel. See
+    /// [`wake`](Self::wake) for what dropping it costs.
+    #[must_use = "asserting a hold can be the wake that lights the panel"]
     pub fn set_hold(
         &mut self,
         reason: HoldReason,
@@ -588,7 +604,7 @@ mod tests {
     #[test]
     fn a_hold_pins_the_display_awake() {
         let mut a = oled();
-        a.set_hold(HoldReason::Pairing, true, 1_000);
+        let _ = a.set_hold(HoldReason::Pairing, true, 1_000);
         assert_eq!(a.next_deadline(), None);
         assert_eq!(a.poll(60_000), None);
         assert_eq!(a.state(), DisplayState::Active);
@@ -609,7 +625,7 @@ mod tests {
     #[test]
     fn releasing_the_last_hold_restarts_the_full_timeout() {
         let mut a = oled();
-        a.set_hold(HoldReason::Pairing, true, 1_000);
+        let _ = a.set_hold(HoldReason::Pairing, true, 1_000);
         assert_eq!(a.set_hold(HoldReason::Pairing, false, 60_000), None);
         assert_eq!(a.next_deadline(), Some(80_000));
         assert_eq!(a.poll(79_000), None);
@@ -619,12 +635,12 @@ mod tests {
     #[test]
     fn overlapping_holds_release_independently() {
         let mut a = oled();
-        a.set_hold(HoldReason::Pairing, true, 1_000);
-        a.set_hold(HoldReason::Alert, true, 2_000);
-        a.set_hold(HoldReason::Pairing, false, 3_000);
+        let _ = a.set_hold(HoldReason::Pairing, true, 1_000);
+        let _ = a.set_hold(HoldReason::Alert, true, 2_000);
+        let _ = a.set_hold(HoldReason::Pairing, false, 3_000);
         assert!(a.held());
         assert_eq!(a.poll(60_000), None);
-        a.set_hold(HoldReason::Alert, false, 4_000);
+        let _ = a.set_hold(HoldReason::Alert, false, 4_000);
         assert!(!a.held());
         assert_eq!(a.next_deadline(), Some(24_000));
     }
@@ -632,9 +648,9 @@ mod tests {
     #[test]
     fn redundant_hold_changes_do_not_move_the_clock() {
         let mut a = oled();
-        a.set_hold(HoldReason::Pairing, true, 1_000);
-        a.set_hold(HoldReason::Pairing, true, 5_000);
-        a.set_hold(HoldReason::Pairing, false, 6_000);
+        let _ = a.set_hold(HoldReason::Pairing, true, 1_000);
+        let _ = a.set_hold(HoldReason::Pairing, true, 5_000);
+        let _ = a.set_hold(HoldReason::Pairing, false, 6_000);
         // Timer restarts from the real release, not the duplicate assert.
         assert_eq!(a.next_deadline(), Some(26_000));
     }
@@ -686,7 +702,7 @@ mod tests {
     #[test]
     fn a_timeout_already_exceeded_lapses_at_the_next_poll() {
         let mut a = oled();
-        a.wake(100_000);
+        let _ = a.wake(100_000);
         a.set_config(AttentionConfig {
             timeout: Duration::from_secs(1),
             dim_margin: Duration::ZERO,

@@ -3232,19 +3232,34 @@ async fn display_task(mut display: Display, #[cfg(not(feature = "pmic-axp2101"))
         let name = device_name_snapshot().await;
         let identity = IdentityText::current();
 
+        // Asserting the hold is itself a wake, and on a dark panel that
+        // wake is the whole event: a pairing window a host opened has no
+        // press behind it. So the transition is carried into this pass
+        // rather than dropped. Dropping it leaves the policy believing the
+        // panel is lit while the glass stays dark, and every later wake is
+        // then a no-op against an already-active state — the panel cannot
+        // be brought back at all until a lapse puts the two back in
+        // agreement.
         let now = Instant::now().as_millis();
-        attention.set_hold(HoldReason::Pairing, pairing_window_open(), now);
+        let mut transition = attention.set_hold(HoldReason::Pairing, pairing_window_open(), now);
         SCREEN_OFF.store(attention.is_lapsed(), Ordering::Release);
+
+        // A panel about to be powered on needs a frame drawn into it
+        // first, whether or not an arm below asks for one.
+        let mut redraw = transition.is_some();
 
         let lapse = async {
             match attention.next_deadline() {
+                // A hold pins the panel awake, so there is no deadline to
+                // wait for — but a wake it just produced still has to be
+                // applied. Falling through to the arm below is what gets
+                // this pass to the power-on; blocking here would hold it
+                // until some unrelated event arrived.
+                None if transition.is_some() => {}
                 Some(deadline) => Timer::at(Instant::from_millis(deadline)).await,
                 None => core::future::pending().await,
             }
         };
-
-        let mut redraw = false;
-        let mut transition = None;
         match select4(
             UI_INPUT_CH.receive(),
             select3(
@@ -3266,7 +3281,7 @@ async fn display_task(mut display: Display, #[cfg(not(feature = "pmic-axp2101"))
         {
             Either4::First(input) => {
                 let now = Instant::now().as_millis();
-                transition = attention.wake(now);
+                transition = attention.wake(now).or(transition);
                 redraw = true;
                 match model.apply(input) {
                     Some(UiEffect::CheckIn) => {
@@ -3303,14 +3318,14 @@ async fn display_task(mut display: Display, #[cfg(not(feature = "pmic-axp2101"))
                 Either3::First(_) => redraw = true,
                 Either3::Second(notice) => {
                     model.set_notice(notice);
-                    transition = attention.wake(Instant::now().as_millis());
+                    transition = attention.wake(Instant::now().as_millis()).or(transition);
                     redraw = true;
                 }
                 // A wake on its own changes no content — a lit panel is
                 // already showing the truth, and the events that do
                 // change something raise `UI_REFRESH` alongside this.
                 Either3::Third(()) => {
-                    transition = attention.wake(Instant::now().as_millis());
+                    transition = attention.wake(Instant::now().as_millis()).or(transition);
                     redraw = transition.is_some();
                 }
             },
@@ -3330,7 +3345,9 @@ async fn display_task(mut display: Display, #[cfg(not(feature = "pmic-axp2101"))
                 DISPLAY_SHUTDOWN_DONE.signal(());
                 core::future::pending::<()>().await;
             }
-            Either4::Fourth(()) => transition = attention.poll(Instant::now().as_millis()),
+            Either4::Fourth(()) => {
+                transition = attention.poll(Instant::now().as_millis()).or(transition);
+            }
         }
 
         match transition {

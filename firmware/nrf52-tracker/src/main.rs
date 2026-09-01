@@ -3601,10 +3601,15 @@ mod firmware {
             let identity = IdentityText::current();
 
             // Both holds are edge-published by other tasks, but re-deriving
-            // them here each pass is idempotent and cannot miss an edge.
+            // them here each pass cannot miss an edge.
+            //
+            // The wakes these report are dropped on purpose: this panel is
+            // bistable, so there is no power to restore and nothing to
+            // order a redraw against. `Lapsed` is the only transition it
+            // acts on, and a hold never returns one.
             let now = Instant::now().as_millis();
-            attention.set_hold(HoldReason::Pairing, pairing_window_open(), now);
-            attention.set_hold(HoldReason::Alert, alert_active(), now);
+            let _ = attention.set_hold(HoldReason::Pairing, pairing_window_open(), now);
+            let _ = attention.set_hold(HoldReason::Alert, alert_active(), now);
 
             let lapse = async {
                 match attention.next_deadline() {
@@ -3630,7 +3635,7 @@ mod firmware {
             {
                 Either4::First(input) => {
                     debug_log(format_args!("ui input={input:?}"));
-                    attention.wake(Instant::now().as_millis());
+                    let _ = attention.wake(Instant::now().as_millis());
                     match model.apply(input) {
                         Some(UiEffect::CheckIn) => {
                             super::device_node::request_beacon(
@@ -3691,15 +3696,15 @@ mod firmware {
                         // user or their phone just did, so all of them
                         // count as attention.
                         Either4::First(()) => {
-                            attention.wake(Instant::now().as_millis());
+                            let _ = attention.wake(Instant::now().as_millis());
                             model.clear_notice();
                         }
                         Either4::Second(notice) => {
-                            attention.wake(Instant::now().as_millis());
+                            let _ = attention.wake(Instant::now().as_millis());
                             model.set_notice(notice);
                         }
                         Either4::Third(()) => {
-                            attention.wake(Instant::now().as_millis());
+                            let _ = attention.wake(Instant::now().as_millis());
                             if alert_active() {
                                 render_message_frame(
                                     &mut next,
@@ -4120,22 +4125,42 @@ mod firmware {
             let identity = IdentityText::current();
 
             // Both holds are edge-published by other tasks, but re-deriving
-            // them here each pass is idempotent and cannot miss an edge.
+            // them here each pass cannot miss an edge.
+            //
+            // Asserting one is itself a wake, and on a dark panel that wake
+            // is the whole event: an alert arriving at a sleeping tracker
+            // has no press behind it. So the transition is carried into
+            // this pass rather than dropped. Dropping it leaves the policy
+            // believing the panel is lit while the glass stays dark, and
+            // every later wake is then a no-op against an already-active
+            // state — the panel cannot be brought back at all until a lapse
+            // puts the two back in agreement.
             let now = Instant::now().as_millis();
-            attention.set_hold(HoldReason::Pairing, pairing_window_open(), now);
-            attention.set_hold(HoldReason::Alert, alert_active(), now);
+            let pairing_hold = attention.set_hold(HoldReason::Pairing, pairing_window_open(), now);
+            let alert_hold = attention.set_hold(HoldReason::Alert, alert_active(), now);
             SCREEN_OFF.store(attention.is_lapsed(), Ordering::Release);
+
+            let mut transition = pairing_hold.or(alert_hold);
+            // A panel about to be powered on needs a frame drawn into it
+            // first, whether or not an arm below asks for one.
+            let mut redraw = transition.is_some();
+            // If the alert hold was what woke the panel, the frame that
+            // lights it is the alert's own — not the status page the
+            // tracker happened to be showing when it went dark.
+            let mut alert_frame = alert_hold.is_some();
 
             let lapse = async {
                 match attention.next_deadline() {
+                    // A hold pins the panel awake, so there is no deadline
+                    // to wait for — but a wake it just produced still has
+                    // to be applied. Falling through to the arm below is
+                    // what gets this pass to the power-on; blocking here
+                    // would hold it until some unrelated event arrived.
+                    None if transition.is_some() => {}
                     Some(deadline) => Timer::at(Instant::from_millis(deadline)).await,
                     None => core::future::pending().await,
                 }
             };
-
-            let mut redraw = false;
-            let mut alert_frame = false;
-            let mut transition = None;
             match select4(
                 UI_INPUT_CH.receive(),
                 select4(
@@ -4158,7 +4183,7 @@ mod firmware {
             {
                 Either4::First(input) => {
                     debug_log(format_args!("ui input={input:?}"));
-                    transition = attention.wake(Instant::now().as_millis());
+                    transition = attention.wake(Instant::now().as_millis()).or(transition);
                     redraw = true;
                     match model.apply(input) {
                         Some(UiEffect::CheckIn) => {
@@ -4206,21 +4231,21 @@ mod firmware {
                     Either4::First(Either3::Second(()) | Either3::Third(())) => redraw = true,
                     Either4::Second(notice) => {
                         model.set_notice(notice);
-                        transition = attention.wake(Instant::now().as_millis());
+                        transition = attention.wake(Instant::now().as_millis()).or(transition);
                         redraw = true;
                     }
                     // A wake on its own changes no content — a lit panel
                     // is already showing the truth, and the events that do
                     // change something raise `UI_REFRESH` alongside this.
                     Either4::Third(()) => {
-                        transition = attention.wake(Instant::now().as_millis());
+                        transition = attention.wake(Instant::now().as_millis()).or(transition);
                         redraw = transition.is_some();
                     }
                     // An alert takes the whole panel: being conspicuous is
                     // the point, and the hold above keeps it lit until the
                     // alert ends.
                     Either4::Fourth(()) => {
-                        transition = attention.wake(Instant::now().as_millis());
+                        transition = attention.wake(Instant::now().as_millis()).or(transition);
                         redraw = true;
                         alert_frame = alert_active();
                     }
@@ -4240,7 +4265,9 @@ mod firmware {
                     DISPLAY_SHUTDOWN_DONE.signal(());
                     core::future::pending::<()>().await;
                 }
-                Either4::Fourth(()) => transition = attention.poll(Instant::now().as_millis()),
+                Either4::Fourth(()) => {
+                    transition = attention.poll(Instant::now().as_millis()).or(transition);
+                }
             }
 
             match transition {
