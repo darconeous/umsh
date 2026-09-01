@@ -3429,7 +3429,6 @@ pub fn ulcp_category_properties(
             when(has(cap::ADMIN), &[prop::DEV_ADMINS]);
         }
     }
-    properties.retain(|&key| umsh_ulcp::ids::admin_reachable(key));
     Ok(properties)
 }
 

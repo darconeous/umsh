@@ -991,6 +991,7 @@ Id | Name
 19 | `STATUS_ALREADY`
 20 | `STATUS_ITEM_NOT_FOUND`
 21 | `STATUS_CURSOR_INVALID`
+22 | `STATUS_NOT_PERMITTED`
 32 | `STATUS_DUTY_LIMIT`
 
 `STATUS_OK`
@@ -1051,6 +1052,14 @@ Id | Name
   issued for a different request, or the underlying data has changed so
   that the position is meaningless. The administrator restarts the read
   from an initial, cursor-less request.
+
+`STATUS_NOT_PERMITTED`
+: The property or command exists, but the binding the request arrived
+  over is not allowed to perform it — in particular, a [Node
+  Management](app-node-management.md#authorization) write to a property
+  reserved to the tethered host. Distinct from `STATUS_PROP_NOT_FOUND`
+  and `STATUS_INVALID_COMMAND`: the operation would be accepted from a
+  binding with the standing to ask.
 
 `STATUS_CCA_FAILURE`
 : The packet was not sent due to a CCA failure. This status code is only

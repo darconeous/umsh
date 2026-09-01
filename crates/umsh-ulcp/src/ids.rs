@@ -457,16 +457,19 @@ pub mod cap {
     pub const STATS: u32 = 52;
 }
 
-/// Whether a property is reachable from a mesh administrator.
+/// Whether a property is writable by a mesh administrator.
 ///
-/// The out-of-reach set is small and named explicitly by the spec rather
+/// Gates mutation only — `CMD_PROP_SET`/`INSERT`/`REMOVE`. Reads are
+/// never gated: an administrator may `CMD_PROP_GET` anything, and a
+/// property the device does not serve fails on its own terms.
+///
+/// The unwritable set is small and named explicitly by the spec rather
 /// than derived, because "device domain" is not a property of the key: a
 /// host-domain table and a device-domain one differ only by which half of
-/// the device they configure. A device answers all three with
-/// `STATUS_PROP_NOT_FOUND` — an administrator learns that the property does
-/// not exist for it, not that it exists and was refused — and an
-/// administrator that reads this first spends no airtime asking.
-pub fn admin_reachable(key: u32) -> bool {
+/// the device they configure. A device answers writes to all of these with
+/// `STATUS_NOT_PERMITTED` — the property exists, and the binding is what
+/// refused it.
+pub fn admin_writable(key: u32) -> bool {
     !matches!(
         key,
         // The host domain in full: the assistance the device owes to
@@ -480,9 +483,12 @@ pub fn admin_reachable(key: u32) -> bool {
             | prop::HOST_RX_QUEUE_CAPACITY
             | prop::HOST_RX_QUEUE_DROPPED
             // Session state: an exchange is not an attach, so there is no
-            // session for it to describe.
+            // session for it to configure. `PROP_MAC_BACKHAUL` is the
+            // exception: which side of the radio multiplexer the tethered
+            // host sits on is worth flipping from across the mesh, so an
+            // administrator may write it even though the host's next
+            // attach resets it.
             | prop::MAC_PROMISCUOUS
-            | prop::MAC_BACKHAUL
             // A device identity cannot be installed over the mesh.
             | prop::DEV_PRIVATE_KEY
     )

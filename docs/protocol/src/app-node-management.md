@@ -252,19 +252,27 @@ and the source's public key is listed in
 accounting and without a response: an unlisted sender learns nothing about
 whether the device is manageable.
 
-Administrators reach the device domain and the device-scoped protocol
-state — including `PROP_CAPS`, so capability discovery works exactly as on
-the local link. Out of reach are:
+Administrators read everything: `CMD_PROP_GET` is never refused for lack
+of standing, and a property the device does not serve fails exactly as it
+would on the local link. `PROP_CAPS` in particular is readable, so
+capability discovery works exactly as on the local link.
 
-- **session state** and the **host domain**
-  (see [State Classes](ulcp-core.md#state-classes)): a request naming such
-  a property is answered as an unrecognized property,
-  `STATUS_PROP_NOT_FOUND`;
-- `CMD_STR_SEND` and `CMD_QUEUE_DRAIN`, answered as unrecognized
-  commands, `STATUS_INVALID_COMMAND`;
-- [`PROP_DEV_PRIVATE_KEY`](ulcp-device.md#prop-dev-private-key), answered
-  `STATUS_PROP_NOT_FOUND`: a device identity cannot be installed over the
-  mesh.
+Writes are narrower. A device answers `STATUS_NOT_PERMITTED` — the
+operation exists, and the binding is what refused it — to:
+
+- `CMD_PROP_SET`, `CMD_PROP_INSERT`, and `CMD_PROP_REMOVE` naming
+  **session state** or the **host domain**
+  (see [State Classes](ulcp-core.md#state-classes)): that state belongs
+  to the tethered host, and an administrator is not one. The exception is
+  [`PROP_MAC_BACKHAUL`](ulcp-host.md#prop-mac-backhaul): which side of the
+  radio multiplexer the tethered host sits on is worth flipping from
+  across the mesh, so an administrator may write it, though the host's
+  next attach still resets it;
+- `CMD_STR_SEND` and `CMD_QUEUE_DRAIN`: the raw PHY stream and the
+  receive queue are likewise the tethered host's;
+- writes to
+  [`PROP_DEV_PRIVATE_KEY`](ulcp-device.md#prop-dev-private-key): a device
+  identity cannot be installed over the mesh.
 
 For everything else this binding meets the transport requirement of
 [Provisioning Security](ulcp-core.md#provisioning-security): every

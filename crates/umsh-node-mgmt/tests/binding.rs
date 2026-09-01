@@ -809,17 +809,24 @@ fn an_administrator_manages_bonds_and_is_told_the_outcome() {
 }
 
 /// What the binding does not reach, checked from the far end of the link
-/// rather than at the session's door.
+/// rather than at the session's door: reads go through, writes and the
+/// host transports are refused by name.
 #[test]
-fn the_host_domain_is_out_of_reach_over_the_mesh() {
+fn the_host_domain_is_readable_but_not_writable_over_the_mesh() {
     let mut device = managed();
     let mut buf = [0u8; 64];
 
     let len = frame::prop_get(&mut buf, 0, prop::HOST_KEY).unwrap();
-    let refused = converse(&mut device, &buf[..len], 1);
-    assert_eq!(status_of(&refused.reply), Status::PROP_NOT_FOUND);
+    let answered = converse(&mut device, &buf[..len], 1);
+    let parsed = Frame::parse(&answered.reply).unwrap();
+    assert_eq!(parsed.command(), Some(Cmd::PropIs));
+    assert_eq!(pui::decode(parsed.payload).unwrap().0, prop::HOST_KEY);
+
+    let len = frame::prop_set(&mut buf, 0, prop::HOST_AUTO_ACK, &[0]).unwrap();
+    let refused = converse(&mut device, &buf[..len], 2);
+    assert_eq!(status_of(&refused.reply), Status::NOT_PERMITTED);
 
     let len = frame::queue_drain(&mut buf, 0).unwrap();
-    let refused = converse(&mut device, &buf[..len], 2);
-    assert_eq!(status_of(&refused.reply), Status::INVALID_COMMAND);
+    let refused = converse(&mut device, &buf[..len], 3);
+    assert_eq!(status_of(&refused.reply), Status::NOT_PERMITTED);
 }

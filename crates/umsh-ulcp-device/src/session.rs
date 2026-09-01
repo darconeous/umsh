@@ -21,7 +21,7 @@ use umsh_ulcp::frame::{
 use umsh_ulcp::gnss::{self, GnssSnapshot};
 use umsh_ulcp::ids::{
     self, DEFAULT_ADVERT_INTERVAL_S, DEFAULT_BEACON_INTERVAL_S, MAX_AUTO_ANNOUNCE_INTERVAL_S,
-    MIN_AUTO_ANNOUNCE_INTERVAL_S, admin_reachable, cap, prop, stream,
+    MIN_AUTO_ANNOUNCE_INTERVAL_S, admin_writable, cap, prop, stream,
 };
 pub use umsh_ulcp::items::REGION_STRING_MAX_LEN;
 use umsh_ulcp::items::{self, Filter, ItemError, REGION_CODE_LEN};
@@ -2832,11 +2832,10 @@ impl<A: AesProvider, S: Sha256Provider, const TX: usize> Session<A, S, TX> {
                 }
             },
             // The raw PHY stream and the host-facing receive queue are
-            // the tethered host's, and an administrator is not one.
-            // Answered as unrecognized commands rather than refused ones
+            // the tethered host's, and an administrator is not one
             // (spec §Node Management — Authorization).
             Some(Cmd::StrSend | Cmd::QueueDrain) if self.is_admin() => {
-                self.complete(tid, Status::INVALID_COMMAND, emit);
+                self.complete(tid, Status::NOT_PERMITTED, emit);
                 None
             }
             Some(Cmd::StrSend) => match StreamPayload::parse(received.payload) {
@@ -3481,10 +3480,9 @@ impl<A: AesProvider, S: Sha256Provider, const TX: usize> Session<A, S, TX> {
         now_ms: u64,
         emit: &mut impl FnMut(&[u8]),
     ) -> Option<Effect> {
-        if self.is_admin() && !admin_reachable(key) {
-            self.complete(tid, Status::PROP_NOT_FOUND, emit);
-            return None;
-        }
+        // Reads are never gated by the admin binding: `admin_writable`
+        // covers mutation only, and a get of a property the device does
+        // not serve fails on its own terms.
         // PROP_PHY_RSSI is an instantaneous radio reading the session cannot
         // produce on its own. While the PHY is enabled (in RX), defer to the
         // caller to sample it; while disabled there is no ambient RSSI to read.
@@ -4377,8 +4375,8 @@ impl<A: AesProvider, S: Sha256Provider, const TX: usize> Session<A, S, TX> {
         now_ms: u64,
         emit: &mut impl FnMut(&[u8]),
     ) -> Option<Effect> {
-        if self.is_admin() && !admin_reachable(key) {
-            self.complete(tid, Status::PROP_NOT_FOUND, emit);
+        if self.is_admin() && !admin_writable(key) {
+            self.complete(tid, Status::NOT_PERMITTED, emit);
             return None;
         }
         if key == prop::BLE_PAIRING_PIN {
@@ -4884,8 +4882,8 @@ impl<A: AesProvider, S: Sha256Provider, const TX: usize> Session<A, S, TX> {
     /// `CMD_PROP_INSERT`: add one item (in item form, no length prefix)
     /// to a multi-value property.
     fn prop_insert(&mut self, tid: u8, key: u32, item: &[u8], emit: &mut impl FnMut(&[u8])) {
-        if self.is_admin() && !admin_reachable(key) {
-            return self.complete(tid, Status::PROP_NOT_FOUND, emit);
+        if self.is_admin() && !admin_writable(key) {
+            return self.complete(tid, Status::NOT_PERMITTED, emit);
         }
         match key {
             prop::HOST_RX_FILTERS => {
@@ -4994,8 +4992,8 @@ impl<A: AesProvider, S: Sha256Provider, const TX: usize> Session<A, S, TX> {
     /// `CMD_PROP_REMOVE`: remove the item matching the selector from a
     /// multi-value property.
     fn prop_remove(&mut self, tid: u8, key: u32, selector: &[u8], emit: &mut impl FnMut(&[u8])) {
-        if self.is_admin() && !admin_reachable(key) {
-            return self.complete(tid, Status::PROP_NOT_FOUND, emit);
+        if self.is_admin() && !admin_writable(key) {
+            return self.complete(tid, Status::NOT_PERMITTED, emit);
         }
         match key {
             prop::HOST_RX_FILTERS => {
@@ -11961,12 +11959,12 @@ mod tests {
         {
             let emitted = admin(&mut session, &buf[..len]);
             assert_eq!(emitted.len(), 1);
-            expect_status(&emitted[0], TID_UNSOLICITED, Status::INVALID_COMMAND);
+            expect_status(&emitted[0], TID_UNSOLICITED, Status::NOT_PERMITTED);
         }
     }
 
     #[test]
-    fn the_host_domain_does_not_exist_for_an_admin() {
+    fn the_host_domain_is_not_an_admins_to_write() {
         let mut session = test_session();
         let mut buf = [0u8; 64];
         for key in [
@@ -11979,25 +11977,63 @@ mod tests {
             prop::HOST_RX_QUEUE_CAPACITY,
             prop::HOST_RX_QUEUE_DROPPED,
             prop::MAC_PROMISCUOUS,
-            prop::MAC_BACKHAUL,
             prop::DEV_PRIVATE_KEY,
         ] {
-            let len = frame::prop_get(&mut buf, TID_UNSOLICITED, key).unwrap();
-            let emitted = admin(&mut session, &buf[..len]);
-            expect_status(&emitted[0], TID_UNSOLICITED, Status::PROP_NOT_FOUND);
-
             let len = frame::prop_set(&mut buf, TID_UNSOLICITED, key, &[0]).unwrap();
             let emitted = admin(&mut session, &buf[..len]);
-            expect_status(&emitted[0], TID_UNSOLICITED, Status::PROP_NOT_FOUND);
+            expect_status(&emitted[0], TID_UNSOLICITED, Status::NOT_PERMITTED);
 
             let len = frame::prop_insert(&mut buf, TID_UNSOLICITED, key, &[0; 32]).unwrap();
             let emitted = admin(&mut session, &buf[..len]);
-            expect_status(&emitted[0], TID_UNSOLICITED, Status::PROP_NOT_FOUND);
+            expect_status(&emitted[0], TID_UNSOLICITED, Status::NOT_PERMITTED);
 
             let len = frame::prop_remove(&mut buf, TID_UNSOLICITED, key, &[0; 32]).unwrap();
             let emitted = admin(&mut session, &buf[..len]);
-            expect_status(&emitted[0], TID_UNSOLICITED, Status::PROP_NOT_FOUND);
+            expect_status(&emitted[0], TID_UNSOLICITED, Status::NOT_PERMITTED);
         }
+    }
+
+    /// Reads are never refused for standing: what the device serves it
+    /// serves to an administrator too, and what it does not serve fails
+    /// exactly as it would on the local link.
+    #[test]
+    fn an_admins_reads_are_never_refused_for_standing() {
+        let mut session = test_session();
+        let mut buf = [0u8; 64];
+
+        // Host-domain and session state read fine.
+        for key in [prop::HOST_AUTO_ACK, prop::MAC_PROMISCUOUS] {
+            let len = frame::prop_get(&mut buf, TID_UNSOLICITED, key).unwrap();
+            let emitted = admin(&mut session, &buf[..len]);
+            let (_, response_key, _) = parse_prop_is(&emitted[0]);
+            assert_eq!(response_key, key);
+        }
+
+        // Write-only stays write-only — the same answer a local host gets.
+        let len = frame::prop_get(&mut buf, TID_UNSOLICITED, prop::DEV_PRIVATE_KEY).unwrap();
+        let emitted = admin(&mut session, &buf[..len]);
+        expect_status(&emitted[0], TID_UNSOLICITED, Status::UNIMPLEMENTED);
+    }
+
+    /// The one session-scoped write an administrator may make: which side
+    /// of the radio multiplexer the tethered host sits on.
+    #[test]
+    fn an_admin_may_flip_the_backhaul_switch() {
+        let mut session = test_session();
+        let mut buf = [0u8; 64];
+        let len = frame::prop_set(&mut buf, TID_UNSOLICITED, prop::MAC_BACKHAUL, &[1]).unwrap();
+        let mut emitted = Vec::new();
+        let effect = session.handle_admin_frame(&buf[..len], 0, 180, &mut |bytes: &[u8]| {
+            emitted.push(bytes.to_vec())
+        });
+        session.end_admin_exchange();
+        assert!(matches!(
+            effect,
+            Some(Effect::ApplyBackhaul { enabled: true })
+        ));
+        let (_, key, value) = parse_prop_is(&emitted[0]);
+        assert_eq!(key, prop::MAC_BACKHAUL);
+        assert_eq!(value, [1]);
     }
 
     /// Key-bearing device-domain writes are the reason the binding
@@ -12077,16 +12113,21 @@ mod tests {
         assert_eq!(value.len(), 1);
     }
 
-    /// A multi read reaches the device domain and reports the
-    /// out-of-reach slots in place, without ending the sequence.
+    /// A multi read reaches everything the device serves — the host
+    /// domain included — and reports the refused slots in place, without
+    /// ending the sequence.
     #[test]
-    fn a_multi_read_reports_out_of_reach_slots_in_place() {
+    fn a_multi_read_reports_refused_slots_in_place() {
         let mut session = test_session();
         let mut buf = [0u8; 64];
         let len = frame::prop_multi_get(
             &mut buf,
             TID_UNSOLICITED,
-            &[prop::PROTOCOL_VERSION, prop::HOST_AUTO_ACK, prop::DEV_MODEL],
+            &[
+                prop::PROTOCOL_VERSION,
+                prop::DEV_PRIVATE_KEY,
+                prop::HOST_AUTO_ACK,
+            ],
         )
         .unwrap();
         let mut emitted = Vec::new();
@@ -12104,8 +12145,8 @@ mod tests {
         assert_eq!(entries.len(), 3);
         assert_eq!(entries[0].0, prop::PROTOCOL_VERSION);
         assert_eq!(entries[1].0, prop::LAST_STATUS);
-        assert_eq!(entry_status(&entries[1].1), Status::PROP_NOT_FOUND);
-        assert_eq!(entries[2].0, prop::DEV_MODEL);
+        assert_eq!(entry_status(&entries[1].1), Status::UNIMPLEMENTED);
+        assert_eq!(entries[2].0, prop::HOST_AUTO_ACK);
     }
 
     #[test]

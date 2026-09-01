@@ -42,11 +42,7 @@ use umsh_sync::AsyncRefCell;
 use umsh_text::engine::{ArchiveResult, DeliveryState, Destination};
 use umsh_text::model::{ConversationKey, SenderScope};
 use umsh_text::validate::{DeliveryPath, Envelope};
-use umsh_ulcp::{
-    frame,
-    ids::{self, prop},
-    items,
-};
+use umsh_ulcp::{frame, ids::prop, items};
 
 use crate::mobile_chat::{
     ChannelRegistry, MobileChatArchiveLookupRecord, MobileChatArchiveResultKind,
@@ -2414,10 +2410,7 @@ struct FetchCrawl {
 
 impl FetchCrawl {
     fn new(properties: Vec<u32>, multi_hint: bool) -> Self {
-        let mut pending: Vec<u32> = properties
-            .into_iter()
-            .filter(|&key| ids::admin_reachable(key))
-            .collect();
+        let mut pending = properties;
         pending.dedup();
         Self {
             multi: multi_hint,
