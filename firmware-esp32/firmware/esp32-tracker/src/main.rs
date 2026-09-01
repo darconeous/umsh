@@ -1649,49 +1649,112 @@ async fn pairing_timeout<C: Controller, P: PacketPool>(stack: &Stack<'_, C, P>) 
     }
 }
 
+/// A pending change to the pairing configuration, from a ULCP host or
+/// from the menu on the front of the device.
+///
+/// Each of these has a durable half in the bond journal, which is
+/// mounted for the life of the board, and a live half on the BLE stack,
+/// which exists only while `PROP_BLE_ENABLED` is set. So they are served
+/// in two places — by [`pairing_config_task`] while the stack is up, and
+/// by [`serve_pairing_request_offline`] while the supervisor is parked —
+/// and never by both at once.
+enum PairingRequest {
+    /// A `PROP_BLE_PAIRING_PIN` write; `None` clears the PIN.
+    Pin(Option<u32>),
+    /// A `PROP_BLE_PAIRING` write, or the menu's Start pairing.
+    Window(bool),
+    /// A `PROP_BLE_BOND_COUNT` write of zero, or the menu's Clear bonds.
+    Wipe,
+}
+
+/// Wait for the next pairing request. Cancel-safe: nothing is taken from
+/// the channel or the signals until one is ready, so the supervisor can
+/// race this against a lifecycle edge and lose no request. A request
+/// that arrives while neither server is listening — the moments either
+/// side of a controller bring-up — waits latched until one is.
+async fn next_pairing_request() -> PairingRequest {
+    match select3(
+        PAIRING_CONFIG_CH.receive(),
+        PAIRING_MODE_REQUEST.wait(),
+        BLE_WIPE_REQUEST.wait(),
+    )
+    .await
+    {
+        Either3::First(pin) => PairingRequest::Pin(pin),
+        Either3::Second(open) => PairingRequest::Window(open),
+        Either3::Third(()) => PairingRequest::Wipe,
+    }
+}
+
+/// The durable half of a `PROP_BLE_PAIRING_PIN` write: the journal, and
+/// the mirror everything else reads. A stack, when one exists, takes the
+/// PIN from here at every bring-up.
+async fn persist_pairing_pin(store: &BleStoreMutex, pin: Option<u32>) -> bool {
+    if store.lock().await.set_pin(pin).await.is_err() {
+        return false;
+    }
+    PAIRING_PIN.store(pin.unwrap_or(u32::MAX), Ordering::Release);
+    UI_REFRESH.signal(());
+    true
+}
+
+/// The durable half of forgetting every host: empty the security journal
+/// and reset every mirror that describes it, including pairing mode — a
+/// device that has forgotten every host it trusts and is not accepting
+/// new ones is reachable by nothing.
+///
+/// Emptying a live stack's in-memory bond table is the other half, and
+/// only the caller that has a stack can do it. A wipe performed with the
+/// controller down needs no such half: the next bring-up builds the
+/// stack's table from this journal.
+async fn wipe_ble_security(store: &BleStoreMutex) -> bool {
+    if store.lock().await.clear_security().await.is_err() {
+        debug_log(format_args!("security wipe flash=FAILED"));
+        UI_NOTICE.signal(UiNotice::ClearFailed);
+        return false;
+    }
+    set_bond_count(0);
+    PAIRING_PIN.store(u32::MAX, Ordering::Release);
+    PAIRING_FAILURES.store(0, Ordering::Release);
+    PAIRING_LOCKED_OUT.store(false, Ordering::Release);
+    set_pairing_mode(true);
+    debug_log(format_args!("security wipe journal=ok"));
+    UI_NOTICE.signal(UiNotice::BondsCleared);
+    true
+}
+
+/// Serve pairing requests against the live stack, for one
+/// `PROP_BLE_ENABLED` cycle.
 async fn pairing_config_task<C: Controller, P: PacketPool>(
     stack: &Stack<'_, C, P>,
     store: &BleStoreMutex,
 ) -> ! {
     loop {
-        match select3(
-            PAIRING_CONFIG_CH.receive(),
-            PAIRING_MODE_REQUEST.wait(),
-            BLE_WIPE_REQUEST.wait(),
-        )
-        .await
-        {
-            Either3::First(pin) => {
+        match next_pairing_request().await {
+            PairingRequest::Pin(pin) => {
                 debug_log(format_args!(
                     "pin config begin configured={}",
                     pin.is_some()
                 ));
-                let persisted = store.lock().await.set_pin(pin).await.is_ok();
-                let applied = if persisted {
-                    stack.set_fixed_passkey(pin).is_ok()
-                } else {
-                    false
-                };
-                let result = persisted && applied;
-                if result {
+                let persisted = persist_pairing_pin(store, pin).await;
+                let applied = persisted && stack.set_fixed_passkey(pin).is_ok();
+                if applied {
                     stack.set_io_capabilities(if pin.is_some() {
                         IoCapabilities::DisplayOnly
                     } else {
                         IoCapabilities::NoInputNoOutput
                     });
-                    PAIRING_PIN.store(pin.unwrap_or(u32::MAX), Ordering::Release);
                     apply_pairing_gate(stack);
-                    UI_REFRESH.signal(());
                 }
                 debug_log(format_args!(
                     "pin config requested={} persisted={} applied={}",
                     pin.is_some(),
                     persisted,
-                    result,
+                    applied,
                 ));
-                PAIRING_CONFIG_ACK.signal(result);
+                PAIRING_CONFIG_ACK.signal(applied);
             }
-            Either3::Second(false) => {
+            PairingRequest::Window(false) => {
                 debug_log(format_args!("pairing window closed on request"));
                 set_pairing_mode(false);
                 BLE_LED_MODE.store(0, Ordering::Release);
@@ -1701,7 +1764,7 @@ async fn pairing_config_task<C: Controller, P: PacketPool>(
                 // be in where a window refuses to shut.
                 PAIRING_MODE_ACK.signal(true);
             }
-            Either3::Second(true) => {
+            PairingRequest::Window(true) => {
                 debug_log(format_args!("pairing mode requested"));
                 let locked_out = PAIRING_LOCKED_OUT.load(Ordering::Acquire);
                 // A window that cannot be walked through is not a window:
@@ -1726,10 +1789,10 @@ async fn pairing_config_task<C: Controller, P: PacketPool>(
                 apply_pairing_gate(stack);
                 PAIRING_MODE_ACK.signal(!locked_out);
             }
-            Either3::Third(()) => {
+            PairingRequest::Wipe => {
                 debug_log(format_args!("security wipe requested"));
-                if store.lock().await.clear_security().await.is_ok() {
-                    set_bond_count(0);
+                let wiped = wipe_ble_security(store).await;
+                if wiped {
                     let mut identities: heapless09::Vec<Identity, { ble_store::MAX_BONDS }> =
                         heapless09::Vec::new();
                     stack.with_bond_information(|bonds| {
@@ -1742,22 +1805,59 @@ async fn pairing_config_task<C: Controller, P: PacketPool>(
                     }
                     let _ = stack.set_fixed_passkey(None);
                     stack.set_io_capabilities(IoCapabilities::NoInputNoOutput);
-                    PAIRING_PIN.store(u32::MAX, Ordering::Release);
-                    PAIRING_FAILURES.store(0, Ordering::Release);
-                    PAIRING_LOCKED_OUT.store(false, Ordering::Release);
-                    set_pairing_mode(true);
                     BLE_LED_MODE.store(1, Ordering::Release);
                     PAIRING_TIMER_RESET.signal(());
                     apply_pairing_gate(stack);
                     debug_log(format_args!("security wipe complete"));
-                    UI_NOTICE.signal(UiNotice::BondsCleared);
-                    BLE_WIPE_ACK.signal(true);
-                } else {
-                    debug_log(format_args!("security wipe flash=FAILED"));
-                    UI_NOTICE.signal(UiNotice::ClearFailed);
-                    BLE_WIPE_ACK.signal(false);
                 }
+                BLE_WIPE_ACK.signal(wiped);
             }
+        }
+    }
+}
+
+/// Serve one pairing request with the controller down.
+///
+/// Called only from the supervisor's parked branch, where
+/// [`pairing_config_task`] does not exist, so the two never race for the
+/// same request. Clearing bonds and writing the PIN are journal work and
+/// complete here exactly as they would with a stack up; only the window
+/// needs a live transport, and there is none.
+///
+/// The window requests that reach this are the menu's — a
+/// `PROP_BLE_PAIRING` write never gets here, because
+/// [`BoardDeviceEnv::set_ble_pairing`] answers it without the stack when
+/// Bluetooth is off. Serving them anyway is what keeps a press on a
+/// parked device from latching an open-window request into the next
+/// bring-up.
+async fn serve_pairing_request_offline(request: PairingRequest, store: &BleStoreMutex) {
+    match request {
+        PairingRequest::Pin(pin) => {
+            let persisted = persist_pairing_pin(store, pin).await;
+            debug_log(format_args!(
+                "pin config with ble down requested={} persisted={}",
+                pin.is_some(),
+                persisted,
+            ));
+            PAIRING_CONFIG_ACK.signal(persisted);
+        }
+        PairingRequest::Window(open) => {
+            debug_log(format_args!(
+                "pairing window {open} requested with ble down"
+            ));
+            if open {
+                // Nothing advertises, so nothing can walk through a
+                // window: the operator is told rather than left watching
+                // for a host that cannot arrive.
+                UI_NOTICE.signal(UiNotice::PairingUnavailable);
+            } else {
+                set_pairing_mode(false);
+            }
+            PAIRING_MODE_ACK.signal(!open);
+        }
+        PairingRequest::Wipe => {
+            debug_log(format_args!("security wipe requested with ble down"));
+            BLE_WIPE_ACK.signal(wipe_ble_security(store).await);
         }
     }
 }
@@ -2252,7 +2352,16 @@ async fn ble_app(
             BLE_LED_MODE.store(0, Ordering::Release);
             UI_REFRESH.signal(());
             debug_log(format_args!("ble supervisor: controller down"));
-            BLE_LIFECYCLE.wait().await;
+            // Parked, but not deaf. Bond clearing and PIN writes are
+            // journal work, and a host still reaches them over the mesh
+            // admin binding or a wired link — a command that waited here
+            // for a stack-scoped task to answer would never be answered
+            // at all. Serving happens outside the `select` so an enable
+            // edge cannot cancel a flash write halfway.
+            match select(BLE_LIFECYCLE.wait(), next_pairing_request()).await {
+                Either::First(()) => {}
+                Either::Second(request) => serve_pairing_request_offline(request, &store).await,
+            }
             continue;
         }
         let device = bt.take().unwrap_or_else(|| {
