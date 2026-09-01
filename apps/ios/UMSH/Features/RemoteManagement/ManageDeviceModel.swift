@@ -408,7 +408,7 @@ final class ManageDeviceModel {
         }
     }
 
-    /// Write the fields the operator changed, and save.
+    /// Write the fields the operator changed, and normally save.
     ///
     /// What the device echoes is what it is now holding, which is not always
     /// what was asked for — a transmit power above what the hardware can
@@ -423,7 +423,8 @@ final class ManageDeviceModel {
     func apply(
         _ category: UlcpManageCategory,
         desired: UlcpDevicePropertiesRecord,
-        dirty: Set<UInt32>
+        dirty: Set<UInt32>,
+        save: Bool = true
     ) async -> Bool {
         guard !dirty.isEmpty else { return true }
         var answered = false
@@ -449,10 +450,14 @@ final class ManageDeviceModel {
                 writeRefusals[category] = refused.reduce(into: [:]) { map, answer in
                     map[answer.propertyId] = Self.refusalText(answer.statusCode)
                 }
-                problem = "Settings the device did accept are running but not saved."
+                problem = save
+                    ? "Settings the device did accept are running but not saved."
+                    : "The device rejected some counter resets."
                 return
             }
-            try await management.save(address)
+            if save {
+                try await management.save(address)
+            }
         }
         return answered
     }

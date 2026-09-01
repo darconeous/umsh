@@ -84,6 +84,7 @@ fn session_config() -> SessionConfig {
         ble: true,
         ble_pairing: true,
         reboot: true,
+        stats: None,
         mac_node: true,
     }
 }

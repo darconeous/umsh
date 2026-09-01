@@ -3142,6 +3142,8 @@ pub enum UlcpManageCategory {
     Power,
     /// The radio: frequency, power, the modem profile, the duty ledger.
     Radio,
+    /// Traffic counters, measured duty cycle, and uptime.
+    Statistics,
     /// What the device advertises about itself, including where it is.
     Identity,
     /// The receiver, and what it currently sees. The fix is read-only.
@@ -3180,6 +3182,15 @@ pub struct UlcpManagedPropertyIds {
     pub lora_coding_rate: u32,
     pub duty_cycle_now: u32,
     pub duty_cycle_limit: u32,
+    pub stat_tx_packets: u32,
+    pub stat_tx_channel_busy: u32,
+    pub stat_rx_packets: u32,
+    pub stat_rx_bad_crc: u32,
+    pub stat_rx_non_umsh: u32,
+    pub stat_rx_accepted: u32,
+    pub stat_forwarded: u32,
+    pub stat_forward_dropped: u32,
+    pub stat_forward_cancelled: u32,
     pub ident_role: u32,
     pub ident_mobile: u32,
     pub ident_location: u32,
@@ -3226,6 +3237,15 @@ pub fn ulcp_managed_property_ids() -> UlcpManagedPropertyIds {
         lora_coding_rate: prop::PHY_LORA_CR,
         duty_cycle_now: prop::PHY_DUTY_NOW,
         duty_cycle_limit: prop::PHY_DUTY_LIMIT,
+        stat_tx_packets: prop::STAT_TX_PACKETS,
+        stat_tx_channel_busy: prop::STAT_TX_CHANNEL_BUSY,
+        stat_rx_packets: prop::STAT_RX_PACKETS,
+        stat_rx_bad_crc: prop::STAT_RX_BAD_CRC,
+        stat_rx_non_umsh: prop::STAT_RX_NON_UMSH,
+        stat_rx_accepted: prop::STAT_RX_ACCEPTED,
+        stat_forwarded: prop::STAT_FORWARDED,
+        stat_forward_dropped: prop::STAT_FORWARD_DROPPED,
+        stat_forward_cancelled: prop::STAT_FORWARD_CANCELLED,
         ident_role: prop::IDENT_ROLE,
         ident_mobile: prop::IDENT_MOBILE,
         ident_location: prop::IDENT_LOCATION,
@@ -3304,6 +3324,29 @@ pub fn ulcp_category_properties(
             when(
                 has(cap::PHY_DUTY_LIMIT),
                 &[prop::PHY_DUTY_NOW, prop::PHY_DUTY_LIMIT],
+            );
+        }
+        UlcpManageCategory::Statistics => {
+            when(
+                has(cap::STATS),
+                &[
+                    prop::STAT_TX_PACKETS,
+                    prop::STAT_TX_CHANNEL_BUSY,
+                    prop::STAT_RX_PACKETS,
+                    prop::STAT_RX_BAD_CRC,
+                    prop::STAT_RX_NON_UMSH,
+                    prop::STAT_RX_ACCEPTED,
+                    prop::PHY_DUTY_NOW,
+                    prop::UPTIME,
+                ],
+            );
+            when(
+                has(cap::STATS) && has(cap::REPEATER),
+                &[
+                    prop::STAT_FORWARDED,
+                    prop::STAT_FORWARD_DROPPED,
+                    prop::STAT_FORWARD_CANCELLED,
+                ],
             );
         }
         UlcpManageCategory::Identity => {
@@ -3493,6 +3536,15 @@ pub struct UlcpDevicePropertiesRecord {
     pub coding_rate_denom: Option<u8>,
     pub duty_cycle_now: Option<u16>,
     pub duty_cycle_limit: Option<u16>,
+    pub stat_tx_packets: Option<u32>,
+    pub stat_tx_channel_busy: Option<u32>,
+    pub stat_rx_packets: Option<u32>,
+    pub stat_rx_bad_crc: Option<u32>,
+    pub stat_rx_non_umsh: Option<u32>,
+    pub stat_rx_accepted: Option<u32>,
+    pub stat_forwarded: Option<u32>,
+    pub stat_forward_dropped: Option<u32>,
+    pub stat_forward_cancelled: Option<u32>,
     pub device_name: Option<String>,
     /// `None` is the device deriving its own role, which reads the same
     /// as never having been told.
@@ -3634,6 +3686,15 @@ pub fn inspect_ulcp_properties(
         coding_rate_denom: optional_value(at, prop::PHY_LORA_CR, decode_u8),
         duty_cycle_now: optional_value(at, prop::PHY_DUTY_NOW, decode_u16),
         duty_cycle_limit: optional_value(at, prop::PHY_DUTY_LIMIT, decode_u16),
+        stat_tx_packets: optional_value(at, prop::STAT_TX_PACKETS, decode_u32),
+        stat_tx_channel_busy: optional_value(at, prop::STAT_TX_CHANNEL_BUSY, decode_u32),
+        stat_rx_packets: optional_value(at, prop::STAT_RX_PACKETS, decode_u32),
+        stat_rx_bad_crc: optional_value(at, prop::STAT_RX_BAD_CRC, decode_u32),
+        stat_rx_non_umsh: optional_value(at, prop::STAT_RX_NON_UMSH, decode_u32),
+        stat_rx_accepted: optional_value(at, prop::STAT_RX_ACCEPTED, decode_u32),
+        stat_forwarded: optional_value(at, prop::STAT_FORWARDED, decode_u32),
+        stat_forward_dropped: optional_value(at, prop::STAT_FORWARD_DROPPED, decode_u32),
+        stat_forward_cancelled: optional_value(at, prop::STAT_FORWARD_CANCELLED, decode_u32),
         device_name: optional_value(at, prop::DEV_NAME, decode_device_name).flatten(),
         ident_role: optional_value(at, prop::IDENT_ROLE, |value| {
             decode_optional(value, decode_u8)
@@ -3776,6 +3837,15 @@ pub fn ulcp_dirty_writes(
                 .ok_or_else(missing)?
                 .to_le_bytes()
                 .to_vec(),
+            prop::STAT_TX_PACKETS
+            | prop::STAT_TX_CHANNEL_BUSY
+            | prop::STAT_RX_PACKETS
+            | prop::STAT_RX_BAD_CRC
+            | prop::STAT_RX_NON_UMSH
+            | prop::STAT_RX_ACCEPTED
+            | prop::STAT_FORWARDED
+            | prop::STAT_FORWARD_DROPPED
+            | prop::STAT_FORWARD_CANCELLED => 0u32.to_le_bytes().to_vec(),
             prop::DEV_NAME => desired
                 .device_name
                 .clone()
@@ -8323,6 +8393,7 @@ mod tests {
             cap::ADMIN,
             cap::ALERT,
             cap::BLE,
+            cap::STATS,
             cap::SAVE,
             cap::CMD_MULTI,
         ])
@@ -8442,6 +8513,70 @@ mod tests {
             ulcp_category_properties(UlcpManageCategory::Power, caps).unwrap(),
             vec![prop::BATTERY],
             "one property is the whole of a power screen"
+        );
+    }
+
+    #[test]
+    fn the_statistics_screen_is_capability_gated_and_resets_with_zeroes() {
+        let full = ulcp_category_properties(UlcpManageCategory::Statistics, managed_capabilities())
+            .unwrap();
+        assert_eq!(
+            full,
+            vec![
+                prop::STAT_TX_PACKETS,
+                prop::STAT_TX_CHANNEL_BUSY,
+                prop::STAT_RX_PACKETS,
+                prop::STAT_RX_BAD_CRC,
+                prop::STAT_RX_NON_UMSH,
+                prop::STAT_RX_ACCEPTED,
+                prop::PHY_DUTY_NOW,
+                prop::UPTIME,
+                prop::STAT_FORWARDED,
+                prop::STAT_FORWARD_DROPPED,
+                prop::STAT_FORWARD_CANCELLED,
+            ]
+        );
+        assert!(
+            ulcp_category_properties(
+                UlcpManageCategory::Statistics,
+                encoded_capabilities(&[cap::DEV_IDENTITY, cap::REPEATER])
+            )
+            .unwrap()
+            .is_empty(),
+            "duty cycle and uptime do not keep the screen visible without CAP_STATS"
+        );
+        assert_eq!(
+            ulcp_category_properties(
+                UlcpManageCategory::Statistics,
+                encoded_capabilities(&[cap::STATS])
+            )
+            .unwrap(),
+            full[..8],
+            "forwarding counters need CAP_REPEATER"
+        );
+
+        let record = inspect_ulcp_properties(vec![
+            response(prop::STAT_TX_PACKETS, &23u32.to_le_bytes()),
+            response(prop::STAT_RX_BAD_CRC, &4u32.to_le_bytes()),
+            response(prop::PHY_DUTY_NOW, &655u16.to_le_bytes()),
+            response(prop::UPTIME, &3600u32.to_le_bytes()),
+        ]);
+        assert_eq!(record.stat_tx_packets, Some(23));
+        assert_eq!(record.stat_rx_bad_crc, Some(4));
+        assert_eq!(record.duty_cycle_now, Some(655));
+        assert_eq!(record.uptime_seconds, Some(3600));
+
+        assert_eq!(
+            dirty(
+                UlcpDevicePropertiesRecord::default(),
+                &[prop::STAT_RX_BAD_CRC, prop::STAT_TX_PACKETS],
+            )
+            .unwrap(),
+            vec![
+                (prop::STAT_TX_PACKETS, vec![0, 0, 0, 0]),
+                (prop::STAT_RX_BAD_CRC, vec![0, 0, 0, 0]),
+            ],
+            "counter reset writes do not require invented desired values"
         );
     }
 

@@ -35,6 +35,7 @@ pub mod profiles;
 pub mod pui;
 pub mod reply;
 pub mod sint;
+pub mod stats;
 pub mod status;
 
 pub use alert::AlertState;

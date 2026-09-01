@@ -73,6 +73,15 @@ pub const fn property_name(key: u32) -> Option<&'static str> {
         prop::HOST_RX_QUEUE_DROPPED => "PROP_HOST_RX_QUEUE_DROPPED",
         prop::PHY_DUTY_NOW => "PROP_PHY_DUTY_NOW",
         prop::PHY_DUTY_LIMIT => "PROP_PHY_DUTY_LIMIT",
+        prop::STAT_TX_PACKETS => "PROP_STAT_TX_PACKETS",
+        prop::STAT_TX_CHANNEL_BUSY => "PROP_STAT_TX_CHANNEL_BUSY",
+        prop::STAT_RX_PACKETS => "PROP_STAT_RX_PACKETS",
+        prop::STAT_RX_BAD_CRC => "PROP_STAT_RX_BAD_CRC",
+        prop::STAT_RX_NON_UMSH => "PROP_STAT_RX_NON_UMSH",
+        prop::STAT_RX_ACCEPTED => "PROP_STAT_RX_ACCEPTED",
+        prop::STAT_FORWARDED => "PROP_STAT_FORWARDED",
+        prop::STAT_FORWARD_DROPPED => "PROP_STAT_FORWARD_DROPPED",
+        prop::STAT_FORWARD_CANCELLED => "PROP_STAT_FORWARD_CANCELLED",
         prop::BLE_PAIRING_PIN => "PROP_BLE_PAIRING_PIN",
         prop::DEV_ADMINS => "PROP_DEV_ADMINS",
         prop::TIME => "PROP_TIME",
@@ -151,6 +160,15 @@ pub const PROPERTIES: &[u32] = &[
     prop::HOST_RX_QUEUE_DROPPED,
     prop::PHY_DUTY_NOW,
     prop::PHY_DUTY_LIMIT,
+    prop::STAT_TX_PACKETS,
+    prop::STAT_TX_CHANNEL_BUSY,
+    prop::STAT_RX_PACKETS,
+    prop::STAT_RX_BAD_CRC,
+    prop::STAT_RX_NON_UMSH,
+    prop::STAT_RX_ACCEPTED,
+    prop::STAT_FORWARDED,
+    prop::STAT_FORWARD_DROPPED,
+    prop::STAT_FORWARD_CANCELLED,
     prop::BLE_PAIRING_PIN,
     prop::DEV_ADMINS,
     prop::TIME,
@@ -258,6 +276,15 @@ pub const fn property_type(key: u32) -> Option<PropertyType> {
         prop::HOST_RX_QUEUE_COUNT | prop::HOST_RX_QUEUE_CAPACITY => U16,
         prop::HOST_RX_QUEUE_DROPPED => U32,
         prop::PHY_DUTY_NOW | prop::PHY_DUTY_LIMIT => U16,
+        prop::STAT_TX_PACKETS
+        | prop::STAT_TX_CHANNEL_BUSY
+        | prop::STAT_RX_PACKETS
+        | prop::STAT_RX_BAD_CRC
+        | prop::STAT_RX_NON_UMSH
+        | prop::STAT_RX_ACCEPTED
+        | prop::STAT_FORWARDED
+        | prop::STAT_FORWARD_DROPPED
+        | prop::STAT_FORWARD_CANCELLED => U32,
         prop::BLE_PAIRING_PIN => U32,
         prop::TIME => U32,
         prop::TZ_OFFSET => I16,
@@ -295,6 +322,7 @@ pub const fn capability_name(code: u32) -> Option<&'static str> {
         cap::CMD_MULTI => "CMD_MULTI",
         cap::BLE => "BLE",
         cap::REBOOT => "REBOOT",
+        cap::STATS => "STATS",
         _ => return None,
     })
 }
@@ -559,7 +587,9 @@ mod tests {
             "the window is a state you set, not an act you request"
         );
         assert_eq!(capability_name(cap::BLE), Some("BLE"));
-        assert_eq!(capability_name(cap::BLE + 2), None);
+        // One past the last allocated code: an unassigned capability has
+        // no name to give, whatever a device claims by advertising it.
+        assert_eq!(capability_name(cap::STATS + 1), None);
     }
 
     /// The three tables answer for the same set of properties. A name

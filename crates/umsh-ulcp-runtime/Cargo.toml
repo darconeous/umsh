@@ -21,12 +21,18 @@ repository.workspace = true
 # spike, or host tooling — pull only what they use instead of dragging in
 # the radio stack or the journal store.
 default = ["radio", "counters", "driver"]
-# The radio multiplexer, over `umsh-radio-loraphy`'s `Channels`.
+# The radio multiplexer, over `umsh-radio-loraphy`'s `Channels`. It is
+# also where a device tallies what its antenna did, so it needs the stats
+# ledger (`umsh-ulcp`) and enough of the wire format (`umsh-core`) to tell
+# an UMSH frame from somebody else's. Both are pure protocol crates — no
+# board HAL crosses this line.
 radio = [
     "dep:umsh-radio-loraphy",
     "dep:embassy-futures",
     "dep:umsh-hal",
     "dep:heapless",
+    "dep:umsh-ulcp",
+    "dep:umsh-core",
 ]
 # The persisted frame-counter map, the two-page journal handles, and the
 # device node's counter store — over `umsh-journal-store`.

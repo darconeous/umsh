@@ -243,6 +243,9 @@ mod firmware {
     use umsh_crypto::CryptoEngine;
     use umsh_crypto::software::{SoftwareAes, SoftwareSha256};
     use umsh_ulcp::ble::BleLinkState;
+    #[cfg(feature = "has-display")]
+    use umsh_ulcp::stats::Counter;
+    use umsh_ulcp::stats::StatsLedger;
     use umsh_ulcp::{Status, gatt, hdlc};
     #[cfg(feature = "cap-gnss")]
     use umsh_ulcp_device::GnssConfig;
@@ -504,6 +507,7 @@ mod firmware {
             reboot: true,
             // A real MAC runs behind every session here.
             mac_node: true,
+            stats: Some(&STATS),
         }
     }
 
@@ -915,6 +919,16 @@ mod firmware {
 
     /// Runtime radio settings pushed by the session to the runner.
     static DEVICE_CTL: DeviceControl<ThreadModeRawMutex> = DeviceControl::new();
+
+    /// The one traffic ledger for the whole device.
+    ///
+    /// The mux is where every real transmit and every off-air reception
+    /// passes exactly once, so that is where the air counters are kept —
+    /// counting at the MAC would miss everything the session sends, which
+    /// on a phone-attached tracker is most of it. The runner adds the CRC
+    /// failures it alone can see, and the node's pump mirrors the four
+    /// figures only the MAC knows.
+    pub(crate) static STATS: StatsLedger = StatsLedger::new();
 
     /// Framing-free receive path and connection edges into the shared
     /// ULCP driver (`InEvent`/`FrameBuf` and the queue types live there).
@@ -2980,6 +2994,7 @@ mod firmware {
             RX_PREAMBLE,
             32,
             umsh_radio_loraphy::RxStrategy::Continuous,
+            Some(&STATS),
         )
         .await;
     }
@@ -2989,7 +3004,13 @@ mod firmware {
     /// completion routing plus RX fan-out to every client.
     #[embassy_executor::task]
     async fn radio_mux_task() {
-        super::radio_mux::radio_mux(&RADIO_CH, &MUX_CLIENTS, &super::radio_mux::MUX_MODE).await
+        super::radio_mux::radio_mux(
+            &RADIO_CH,
+            &MUX_CLIENTS,
+            &super::radio_mux::MUX_MODE,
+            Some(&STATS),
+        )
+        .await
     }
 
     /// Owns the USB `Sender`, HDLC-encodes frames, and writes USB packets.
@@ -3266,12 +3287,14 @@ mod firmware {
     /// looking at.
     #[cfg(feature = "has-display")]
     fn ui_stats() -> screen::StatsModel {
-        let counters = super::device_node::mac_counters();
+        // The same ledger the host reads over ULCP, so a reset from the
+        // phone clears this page too. `rx_frames` is everything the radio
+        // handed up, UMSH or not, which is what the page has always meant.
         screen::StatsModel {
-            tx_frames: counters.tx_frames,
-            rx_frames: counters.rx_frames,
-            rx_accepted: counters.rx_accepted,
-            forwarded: counters.forwarded,
+            tx_frames: STATS.get(Counter::TxPackets),
+            rx_frames: STATS.get(Counter::RxPackets) + STATS.get(Counter::RxNonUmsh),
+            rx_accepted: STATS.get(Counter::RxAccepted),
+            forwarded: STATS.get(Counter::Forwarded),
             tx_power_dbm: super::device_node::tx_power_dbm(),
             // The ledger's scale is 0-65535 for 0-100%; the page shows
             // tenths of a percent, which is the range a tracker lives in.

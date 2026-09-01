@@ -43,7 +43,7 @@ static mut NODE_MAC_ARENA: node::DeviceNodeMacArena<CounterStore> =
 
 #[embassy_executor::task]
 async fn node_pump_task(host: DeviceNodeHost, mac: DeviceNodeHandle) {
-    node::pump_loop(host, mac).await
+    node::pump_loop(host, mac, Some(&crate::firmware::STATS)).await
 }
 
 #[embassy_executor::task]

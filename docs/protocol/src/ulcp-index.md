@@ -95,6 +95,15 @@ Id   | Mnemonic                                                                 
 113  | [`STR_PHY_RAW`](ulcp-transport.md#str-radio-raw)                           | Send, Recv               | —
 4820 | [`PROP_PHY_DUTY_NOW`](ulcp-radio.md#prop-phy-duty-now)                     | Get                      | `CAP_PHY_DUTY_LIMIT`
 4822 | [`PROP_PHY_DUTY_LIMIT`](ulcp-radio.md#prop-phy-duty-limit)                 | Get, Set                 | `CAP_PHY_DUTY_LIMIT`
+4832 | [`PROP_STAT_TX_PACKETS`](ulcp-radio.md#prop-stat-tx-packets)               | Get, Set                 | `CAP_STATS`
+4833 | [`PROP_STAT_TX_CHANNEL_BUSY`](ulcp-radio.md#prop-stat-tx-channel-busy)     | Get, Set                 | `CAP_STATS`
+4834 | [`PROP_STAT_RX_PACKETS`](ulcp-radio.md#prop-stat-rx-packets)               | Get, Set                 | `CAP_STATS`
+4835 | [`PROP_STAT_RX_BAD_CRC`](ulcp-radio.md#prop-stat-rx-bad-crc)               | Get, Set                 | `CAP_STATS`
+4836 | [`PROP_STAT_RX_NON_UMSH`](ulcp-radio.md#prop-stat-rx-non-umsh)             | Get, Set                 | `CAP_STATS`
+4837 | [`PROP_STAT_RX_ACCEPTED`](ulcp-radio.md#prop-stat-rx-accepted)             | Get, Set                 | `CAP_STATS`, `CAP_REPEATER`
+4838 | [`PROP_STAT_FORWARDED`](ulcp-radio.md#prop-stat-forwarded)                 | Get, Set                 | `CAP_STATS`, `CAP_REPEATER`
+4839 | [`PROP_STAT_FORWARD_DROPPED`](ulcp-radio.md#prop-stat-forward-dropped)     | Get, Set                 | `CAP_STATS`, `CAP_REPEATER`
+4840 | [`PROP_STAT_FORWARD_CANCELLED`](ulcp-radio.md#prop-stat-forward-cancelled) | Get, Set                 | `CAP_STATS`, `CAP_REPEATER`
 4864 | [`PROP_BLE_PAIRING_PIN`](ulcp-ble.md#prop-ble-pairing-pin)                 | Set                      | BLE transport
 4865 | [`PROP_DEV_ADMINS`](app-node-management.md#prop-dev-admins)                | Get, Set, Insert, Remove | `CAP_ADMIN`
 4866 | [`PROP_TIME`](ulcp-device.md#prop-time)                                    | Get, Set, Is             | `CAP_TIME`
@@ -136,6 +145,7 @@ Code | Name                      | Defined in
 49   | `CAP_CMD_MULTI`           | [Framing and Common Semantics](ulcp-core.md#cmd-prop-multi-get)
 50   | `CAP_BLE`                 | [BLE Binding](ulcp-ble.md#capabilities)
 51   | `CAP_REBOOT`              | [Framing and Common Semantics](ulcp-core.md#cmd-reboot)
+52   | `CAP_STATS`               | [Radio Control](ulcp-radio.md#capabilities)
 515  | `CAP_PHY_LORA`            | [Radio Control](ulcp-radio.md#capabilities)
 
 ## Status Codes

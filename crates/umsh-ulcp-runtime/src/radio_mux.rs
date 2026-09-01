@@ -49,8 +49,10 @@ use core::task::Poll;
 
 use embassy_futures::select::{Either3, select3};
 use embassy_sync::blocking_mutex::raw::RawMutex;
+use umsh_core::{Fcf, UMSH_VERSION};
 use umsh_hal::{RxInfo, RxOrigin, Snr, TxError};
 use umsh_radio_loraphy::{Channels, MAX_PAYLOAD, RxFrame, TxRequest};
+use umsh_ulcp::stats::{Counter, StatsLedger};
 
 /// Index in `clients` of the ULCP session's virtual bundle.
 ///
@@ -96,10 +98,20 @@ pub static MUX_MODE: MuxMode = MuxMode::new();
 /// be that bundle's only client. Each entry in `clients` is one virtual
 /// bundle, owned (RX-drained and TX-fed) by exactly one radio client.
 /// `clients[0]` must be the ULCP session; the rest are on the medium.
+///
+/// # Counting
+///
+/// This is the only place on a device where every frame that reaches the
+/// air, and every frame that comes off it, passes exactly once no matter
+/// which client owns it — the ULCP session transmits straight to the
+/// radio and never touches the device node's MAC — so `stats` is
+/// tallied here rather than anywhere further up. A board with no ledger
+/// passes `None`.
 pub async fn radio_mux<M, const RX: usize, const TX: usize>(
     real: &'static Channels<M, RX, TX>,
     clients: &'static [&'static Channels<M, RX, TX>],
     mode: &'static MuxMode,
+    stats: Option<&'static StatsLedger>,
 ) -> !
 where
     M: RawMutex,
@@ -133,6 +145,9 @@ where
 
         match select3(real.rx.receive(), tx_done, next_tx).await {
             Either3::First(frame) => {
+                // Counted before delivery, because who hears it is a
+                // routing question and this one is about the antenna.
+                note_reception(stats, &frame.data);
                 // In backhaul mode the session is not on the medium, so
                 // it hears nothing off the air.
                 let skip = mode.backhaul().then_some(SESSION);
@@ -143,6 +158,16 @@ where
                     continue;
                 };
                 let aired = result.is_ok();
+                if let Some(stats) = stats {
+                    // Every completion the radio reports arrives here, and
+                    // only frames that went to the radio have one — see
+                    // the backhaul branch below, which answers its own.
+                    match &result {
+                        Ok(()) => stats.bump(Counter::TxPackets),
+                        Err(TxError::CadTimeout) => stats.bump(Counter::TxChannelBusy),
+                        Err(_) => {}
+                    }
+                }
                 clients[sent.owner].tx_done.signal(result);
                 if aired {
                     deliver(
@@ -165,6 +190,16 @@ where
                 if who == SESSION && mode.backhaul() {
                     // The session's link is point to point: the frame
                     // goes to the medium clients and nowhere else.
+                    //
+                    // Nothing is counted on this path, and the early
+                    // return is what keeps it that way: the completion it
+                    // signals below is synthesized here, never seen by the
+                    // radio, so it cannot reach the arm above. A frame
+                    // that never reached the air is not a transmission,
+                    // and the busy verdict this branch invents to report a
+                    // backed-up tunnel is not a busy channel. If this
+                    // early return ever goes away, the counting above has
+                    // to grow a guard.
                     let delivered = deliver(
                         clients,
                         Some(SESSION),
@@ -195,6 +230,38 @@ where
 struct InFlight {
     owner: usize,
     data: heapless::Vec<u8, MAX_PAYLOAD>,
+}
+
+/// Tally one reception off the air, split by whether it is ours.
+///
+/// The test is the frame-control field alone — the protocol version and
+/// the reserved bit — not a header parse. The MAC walks the header
+/// anyway a moment later, and this runs in the path every client shares.
+///
+/// It is a test of provenance, not of health: a truncated or damaged
+/// UMSH frame still counts as UMSH, which is right. What went wrong with
+/// a frame of ours shows up in the CRC tally and in the gap between
+/// receptions and the ones the node acted on. What lands in
+/// `RxNonUmsh` is somebody else's traffic on the same sync word.
+fn note_reception(stats: Option<&'static StatsLedger>, data: &[u8]) {
+    let Some(stats) = stats else {
+        return;
+    };
+    let ours = match data.first() {
+        Some(&first) => {
+            let fcf = Fcf(first);
+            fcf.version() == UMSH_VERSION && fcf.reserved_valid()
+        }
+        // A zero-length reception is not a packet of anyone's, and the
+        // radio should never hand one up; count it with the foreign
+        // traffic rather than inventing a third bucket for it.
+        None => false,
+    };
+    stats.bump(if ours {
+        Counter::RxPackets
+    } else {
+        Counter::RxNonUmsh
+    });
 }
 
 /// Metadata for a frame that reached a client without being received:
@@ -311,12 +378,38 @@ mod tests {
         mode: &'static MuxMode,
         scenario: F,
     ) -> F::Output {
+        drive(real, clients, mode, None, scenario)
+    }
+
+    /// Drive the mux with a ledger attached, so a scenario can read back
+    /// what it counted.
+    fn run_with_stats<F: Future>(
+        real: &'static TestCh,
+        clients: &'static [&'static TestCh],
+        mode: &'static MuxMode,
+        stats: &'static StatsLedger,
+        scenario: F,
+    ) -> F::Output {
+        drive(real, clients, mode, Some(stats), scenario)
+    }
+
+    fn drive<F: Future>(
+        real: &'static TestCh,
+        clients: &'static [&'static TestCh],
+        mode: &'static MuxMode,
+        stats: Option<&'static StatsLedger>,
+        scenario: F,
+    ) -> F::Output {
         block_on(async {
-            match select(radio_mux(real, clients, mode), scenario).await {
+            match select(radio_mux(real, clients, mode, stats), scenario).await {
                 Either::First(_) => unreachable!("mux never returns"),
                 Either::Second(output) => output,
             }
         })
+    }
+
+    fn ledger() -> &'static StatsLedger {
+        Box::leak(Box::new(StatsLedger::new()))
     }
 
     fn mode() -> &'static MuxMode {
@@ -619,6 +712,96 @@ mod tests {
 
             real.tx_done.signal(Ok(()));
             assert!(a.tx_done.wait().await.is_ok());
+        });
+    }
+
+    /// A frame whose first octet carries the UMSH version and a clear
+    /// reserved bit.
+    fn umsh_rx_frame(tag: u8) -> RxFrame {
+        let mut frame = rx_frame(Fcf::new(umsh_core::PacketType::Broadcast, false, false).0);
+        frame.data.push(tag).unwrap();
+        frame.info.len = frame.data.len();
+        frame
+    }
+
+    #[test]
+    fn counts_transmits_at_the_radio_and_receptions_off_the_air() {
+        let real = channels();
+        let session = channels();
+        let node = channels();
+        let clients: &'static [&'static TestCh] = Box::leak(Box::new([session, node]));
+        let stats = ledger();
+
+        run_with_stats(real, clients, mode(), stats, async {
+            // A session transmit — the traffic the device node's MAC
+            // never sees, and the reason counting happens here.
+            session.tx.send(tx_request(0xA1)).await;
+            let _ = real.tx.receive().await;
+            real.tx_done.signal(Ok(()));
+            assert!(session.tx_done.wait().await.is_ok());
+            // Its own client is skipped, but the other one gets a copy;
+            // that copy is not a reception and must not be counted.
+            assert_eq!(node.rx.receive().await.info.origin, RxOrigin::LocalTx);
+
+            // A busy channel is an attempt, not a transmission.
+            node.tx.send(tx_request(0xB1)).await;
+            let _ = real.tx.receive().await;
+            real.tx_done.signal(Err(TxError::CadTimeout));
+            assert!(node.tx_done.wait().await.is_err());
+
+            // A radio fault is neither.
+            node.tx.send(tx_request(0xB2)).await;
+            let _ = real.tx.receive().await;
+            real.tx_done
+                .signal(Err(TxError::Io(RadioError::TransmitTimeout)));
+            assert!(node.tx_done.wait().await.is_err());
+
+            real.rx.send(umsh_rx_frame(0x01)).await;
+            let _ = session.rx.receive().await;
+            let _ = node.rx.receive().await;
+            // 0x00 is version 0, not ours.
+            real.rx.send(rx_frame(0x00)).await;
+            let _ = session.rx.receive().await;
+            let _ = node.rx.receive().await;
+
+            assert_eq!(stats.get(Counter::TxPackets), 1);
+            assert_eq!(stats.get(Counter::TxChannelBusy), 1);
+            assert_eq!(stats.get(Counter::RxPackets), 1);
+            assert_eq!(stats.get(Counter::RxNonUmsh), 1);
+        });
+    }
+
+    /// In backhaul mode a session frame is handed to the medium clients
+    /// and never reaches the radio, so it is not a transmission — and the
+    /// busy verdict the mux invents to report a backed-up tunnel is not a
+    /// busy channel either.
+    #[test]
+    fn counts_nothing_for_a_frame_that_never_reached_the_air() {
+        let real = channels();
+        let session = channels();
+        let node = channels();
+        let clients: &'static [&'static TestCh] = Box::leak(Box::new([session, node]));
+        let stats = ledger();
+
+        run_with_stats(real, clients, backhaul_mode(), stats, async {
+            session.tx.send(tx_request(0x51)).await;
+            let _ = node.rx.receive().await;
+            assert!(session.tx_done.wait().await.is_ok());
+
+            // Now fill the node's queue so the next one is refused.
+            for tag in 0..4u8 {
+                session.tx.send(tx_request(tag)).await;
+                assert!(session.tx_done.wait().await.is_ok());
+            }
+            session.tx.send(tx_request(0xFF)).await;
+            assert!(matches!(
+                session.tx_done.wait().await,
+                Err(TxError::CadTimeout)
+            ));
+
+            assert_eq!(stats.get(Counter::TxPackets), 0);
+            assert_eq!(stats.get(Counter::TxChannelBusy), 0);
+            assert_eq!(stats.get(Counter::RxPackets), 0);
         });
     }
 }

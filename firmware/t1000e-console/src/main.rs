@@ -227,7 +227,8 @@ mod firmware {
         rx_pkt: PacketParams,
         tx_pkt: PacketParams,
     ) {
-        umsh_radio_loraphy::runner(lora, &RADIO_CH, mdltn, rx_pkt, tx_pkt, TX_POWER_DBM).await;
+        umsh_radio_loraphy::runner(lora, &RADIO_CH, mdltn, rx_pkt, tx_pkt, TX_POWER_DBM, None)
+            .await;
     }
 
     /// Owns the piezo buzzer (PWM on P0.25 + power-enable on P1.05).

@@ -89,6 +89,7 @@ impl<const PAYLOAD: usize> Device<PAYLOAD> {
             ble: true,
             ble_pairing: true,
             reboot: true,
+            stats: None,
             mac_node: true,
         };
         let mut session = Session::new(

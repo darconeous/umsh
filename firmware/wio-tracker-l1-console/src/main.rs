@@ -220,7 +220,8 @@ mod firmware {
         rx_pkt: PacketParams,
         tx_pkt: PacketParams,
     ) {
-        umsh_radio_loraphy::runner(lora, &RADIO_CH, mdltn, rx_pkt, tx_pkt, TX_POWER_DBM).await;
+        umsh_radio_loraphy::runner(lora, &RADIO_CH, mdltn, rx_pkt, tx_pkt, TX_POWER_DBM, None)
+            .await;
     }
 
     // `PowerSignaler` lives in `umsh-bsp-wio-tracker-l1::power`. The L1's

@@ -899,6 +899,17 @@ pub struct MacCounters {
     /// Queued forwards dropped because the destination's ack was overheard
     /// before they went out. Airtime this node did not have to spend.
     pub forward_cancelled: u32,
+    /// Receptions this node would have repeated and declined under the
+    /// operator's forwarding policy: an exhausted flood budget, a signal
+    /// under the configured minimum RSSI or SNR, or a region this
+    /// repeater does not serve.
+    ///
+    /// Deliberately narrow. Duplicates, traffic addressed to us, and
+    /// frames arriving while forwarding is switched off are all reasons
+    /// not to repeat something, and none of them is a decision the
+    /// operator made about *this* frame — counting them here would bury
+    /// the four numbers a repeater's settings can actually move.
+    pub forward_dropped_policy: u32,
 }
 
 impl MacCounters {
@@ -5028,7 +5039,13 @@ impl<
 
         if decrement_flood_hops {
             let flood_hops = header.flood_hops?;
+            // From here to the end of this branch, every refusal is the
+            // operator's policy talking about a frame this node would
+            // otherwise have carried — which is exactly what
+            // `forward_dropped_policy` means. The `?` above is not one of
+            // them: a packet with no flood-hop field was never floodable.
             if flood_hops.remaining() == 0 {
+                MacCounters::bump(&mut self.counters.forward_dropped_policy);
                 return None;
             }
             // Signal-quality filtering applies only to flood forwarding,
@@ -5039,11 +5056,13 @@ impl<
             if rx.origin.is_measured() {
                 if let Some(min_rssi) = Self::effective_min_rssi(options, &self.repeater) {
                     if rx.rssi < min_rssi {
+                        MacCounters::bump(&mut self.counters.forward_dropped_policy);
                         return None;
                     }
                 }
                 if let Some(min_snr) = Self::effective_min_snr(options, &self.repeater) {
                     if rx.snr < Snr::from_decibels(min_snr) {
+                        MacCounters::bump(&mut self.counters.forward_dropped_policy);
                         return None;
                     }
                 }
@@ -5071,6 +5090,7 @@ impl<
             if saw_region_code {
                 // An empty configured list imposes no regional restriction.
                 if !self.repeater.regions.is_empty() && !matched_region_code {
+                    MacCounters::bump(&mut self.counters.forward_dropped_policy);
                     return None;
                 }
             } else {

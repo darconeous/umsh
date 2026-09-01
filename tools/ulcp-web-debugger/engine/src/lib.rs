@@ -82,6 +82,7 @@ pub fn web_sim_config() -> umsh_ulcp_simdev::SessionConfig {
         // connect the host to nothing, so the device must not claim
         // `CAP_MAC_BACKHAUL` — that claim is exactly what a bridge
         // checks before trusting a device to front a segment.
+        stats: None,
         mac_node: false,
     }
 }

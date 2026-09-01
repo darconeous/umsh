@@ -6431,6 +6431,58 @@ fn counters_record_a_forwarded_frame() {
     assert_eq!(mac.counters().rx_frames, 1);
     assert_eq!(mac.counters().rx_accepted, 1);
     assert_eq!(mac.counters().forwarded, 1);
+    // Nothing about a repeat this node made was a policy refusal.
+    assert_eq!(mac.counters().forward_dropped_policy, 0);
+}
+
+/// `forward_dropped_policy` counts the operator's settings turning a
+/// frame away, and nothing else. A signal under the configured floor is
+/// the canonical case; noise the radio could not even parse is not, and
+/// the difference is what makes the number worth reading.
+#[test]
+fn counters_record_a_forward_the_policy_turned_away() {
+    let mut repeater = make_mac();
+    repeater.repeater_config_mut().enabled = true;
+    repeater.repeater_config_mut().min_rssi = Some(10);
+    repeater.repeater_config_mut().min_snr = Some(10);
+    repeater
+        .add_identity(DummyIdentity::new([0x10; 32]))
+        .unwrap();
+
+    // Noise first: undecodable, so no forwarding decision was ever made.
+    repeater
+        .radio_mut()
+        .queue_received_frame(b"not a umsh frame");
+    assert!(!block_on(repeater.receive_one(|_, _| {})).unwrap());
+    assert_eq!(repeater.counters().forward_dropped_policy, 0);
+
+    let remote = DummyIdentity::new([0xAB; 32]);
+    let keys = PairwiseKeys {
+        k_enc: [1; 32],
+        k_mic: [2; 32],
+    };
+    let dst = umsh_core::NodeHint([0x77, 0x66, 0x55]);
+    let source_route: [RouterHint; 0] = [];
+
+    // A floodable frame carrying its own thresholds, arriving under them.
+    repeater.radio_mut().queue_received_unicast_with_thresholds(
+        &remote,
+        &keys,
+        &dst,
+        b"hello",
+        false,
+        7,
+        Some((1, 0)),
+        None,
+        Some(&source_route),
+        Some(20),
+        Some(20),
+    );
+
+    assert!(!block_on(repeater.receive_one(|_, _| {})).unwrap());
+    assert!(repeater.tx_queue_mut().pop_next().is_none());
+    assert_eq!(repeater.counters().forward_dropped_policy, 1);
+    assert_eq!(repeater.counters().forwarded, 0);
 }
 
 #[test]

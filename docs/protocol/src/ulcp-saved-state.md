@@ -40,6 +40,10 @@ acknowledging on the host's behalf.
   `CMD_RESTORE` nor a reboot can revert the device identity to an earlier
   key.
 
+  Traffic statistics (`PROP_STAT_*`) are also excluded. They are live
+  hardware history since boot or the last explicit counter reset, not
+  configuration a snapshot can restore.
+
   [`PROP_TIME`](ulcp-device.md#prop-time) is excluded for a third reason:
   a stored epoch is wrong by however long the device was off, by an amount
   nothing can bound, so restoring one would be restoring a confidently

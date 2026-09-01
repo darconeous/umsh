@@ -30,6 +30,7 @@ use umsh_ulcp::meta::{
 };
 use umsh_ulcp::pui;
 use umsh_ulcp::sint;
+use umsh_ulcp::stats::{Counter, StatsLedger};
 
 use crate::duty::DutyLedger;
 
@@ -255,6 +256,22 @@ pub struct SessionConfig {
     /// `STATUS_UNIMPLEMENTED`. Every firmware sets this; a session that
     /// is a process rather than a board must not.
     pub reboot: bool,
+    /// The shared traffic ledger. `None`: the device keeps no counters;
+    /// `CAP_STATS` is absent and the `PROP_STAT_*` properties are
+    /// unknown. `Some`: the capability is advertised and the counters
+    /// are read and cleared through it.
+    ///
+    /// Shared for the same reason the duty ledger is — the session is
+    /// one of several radio clients and none of them sees the whole
+    /// picture — and read straight out of `encode_prop` rather than
+    /// fetched through an effect, because a host asks for all of these
+    /// at once and nine deferred round trips to answer one screen would
+    /// be absurd.
+    ///
+    /// The four counters the MAC feeds
+    /// ([`Counter::needs_node`]) additionally require
+    /// [`mac_node`](Self::mac_node).
+    pub stats: Option<&'static StatsLedger>,
     /// Whether a mesh node runs behind this session — a MAC of the
     /// device's own that can repeat and that a backhauled host can sit
     /// point-to-point behind. Every firmware sets this; a simulated
@@ -4538,6 +4555,18 @@ impl<A: AesProvider, S: Sha256Provider, const TX: usize> Session<A, S, TX> {
     /// Validate and apply a property write. Returns whether the radio
     /// configuration changed.
     fn apply_prop_set(&mut self, key: u32, value: &[u8]) -> Result<bool, Status> {
+        // Clearing a counter. Zero is the only value a write may carry:
+        // a counter that can be set to an arbitrary number is a counter
+        // that can lie, and nothing downstream would be able to tell.
+        // Not a device-domain change, so no `bump_dev_domain` and nothing
+        // for the saved snapshot to carry.
+        if let Some((counter, ledger)) = self.stats_counter(key) {
+            if parse_u32(value)? != 0 {
+                return Err(Status::INVALID_ARGUMENT);
+            }
+            ledger.reset(counter);
+            return Ok(false);
+        }
         match key {
             prop::PHY_ENABLED => {
                 self.device.settings.enabled = parse_bool(value)?;
@@ -5189,6 +5218,20 @@ impl<A: AesProvider, S: Sha256Provider, const TX: usize> Session<A, S, TX> {
     /// Whether `key` names a property this session knows, including
     /// write-only (`PROP_BLE_PAIRING_PIN`) and deferred-read
     /// (`PROP_PHY_RSSI`) properties that `encode_prop` cannot produce.
+    /// The counter a key names, together with the ledger holding it —
+    /// or `None` when this device does not have that property.
+    ///
+    /// One gate for the get, the set, and `known_prop`, so the three can
+    /// never disagree about whether a counter exists.
+    fn stats_counter(&self, key: u32) -> Option<(Counter, &'static StatsLedger)> {
+        let counter = Counter::from_property(key)?;
+        let ledger = self.config.stats?;
+        // The four the MAC feeds exist only where there is a MAC.
+        // Answering 0 instead would read as a repeater that has never
+        // repeated anything, which is a different device.
+        (!counter.needs_node() || self.config.mac_node).then_some((counter, ledger))
+    }
+
     fn known_prop(&self, key: u32) -> bool {
         if key == prop::DEV_MODEL {
             return self.config.dev_model.is_some();
@@ -5216,6 +5259,9 @@ impl<A: AesProvider, S: Sha256Provider, const TX: usize> Session<A, S, TX> {
         }
         if matches!(key, prop::TIME | prop::TZ_OFFSET) {
             return self.config.time.is_some();
+        }
+        if Counter::from_property(key).is_some() {
+            return self.stats_counter(key).is_some();
         }
         if matches!(
             key,
@@ -5288,6 +5334,14 @@ impl<A: AesProvider, S: Sha256Provider, const TX: usize> Session<A, S, TX> {
     }
 
     fn encode_prop(&mut self, key: u32, now_ms: u64, out: &mut [u8; PROP_BUF]) -> PropValue {
+        // Read straight out of the shared ledger, like the duty usage
+        // below and for the same reason: the session is one radio client
+        // of several, and what a host is asking about is the antenna.
+        // Lifted out of the match because the counter and the ledger are
+        // two bindings a match guard cannot make.
+        if let Some((counter, ledger)) = self.stats_counter(key) {
+            return PropValue::Encoded(put(out, &ledger.get(counter).to_le_bytes()));
+        }
         let len = match key {
             prop::LAST_STATUS => pui::encode(self.last_status.0, out).unwrap_or(0),
             prop::PROTOCOL_VERSION => {
@@ -5357,6 +5411,9 @@ impl<A: AesProvider, S: Sha256Provider, const TX: usize> Session<A, S, TX> {
                 }
                 if self.config.reboot {
                     len += pui::encode(cap::REBOOT, &mut out[len..]).unwrap_or(0);
+                }
+                if self.config.stats.is_some() {
+                    len += pui::encode(cap::STATS, &mut out[len..]).unwrap_or(0);
                 }
                 len
             }
@@ -5523,6 +5580,7 @@ impl<A: AesProvider, S: Sha256Provider, const TX: usize> Session<A, S, TX> {
             }
             prop::PHY_DUTY_NOW => put(out, &self.config.duty.usage(now_ms).to_le_bytes()),
             prop::PHY_DUTY_LIMIT => put(out, &self.config.duty.limit().to_le_bytes()),
+
             prop::MAC_PROMISCUOUS => {
                 out[0] = self.session.promiscuous as u8;
                 1
@@ -5958,6 +6016,8 @@ mod tests {
             // Each test session gets its own leaked ledger so parallel
             // tests never share duty state.
             duty: Box::leak(Box::new(DutyLedger::new())),
+            // Likewise for the traffic counters.
+            stats: Some(Box::leak(Box::new(StatsLedger::new()))),
             // Mixed support matrix: voltage and charge state without a
             // level, the same shape as the T-1000E profile.
             battery: Some(BatteryFields {
@@ -6391,7 +6451,8 @@ mod tests {
                 cap::GNSS,
                 cap::ILLUMINANCE,
                 cap::BLE,
-                cap::REBOOT
+                cap::REBOOT,
+                cap::STATS,
             ]
         );
     }
@@ -6438,6 +6499,124 @@ mod tests {
                 Status::PROP_NOT_FOUND.0,
                 "prop {key} is visible without its capability"
             );
+        }
+    }
+
+    /// The traffic counters are a window on a ledger the session does not
+    /// own: it reports what is in it, clears it on request, and keeps no
+    /// copy of its own.
+    #[test]
+    fn traffic_counters_report_the_ledger_and_clear_to_zero() {
+        let stats: &'static StatsLedger = Box::leak(Box::new(StatsLedger::new()));
+        let config = SessionConfig {
+            stats: Some(stats),
+            ..test_config()
+        };
+        let mut session: TestSession = Session::new(config, Status::RESET_POWER_ON, test_engine());
+        session.attach(true);
+
+        assert!(capabilities(&mut session).contains(&cap::STATS));
+
+        stats.add(Counter::TxPackets, 7);
+        stats.add(Counter::RxBadCrc, 3);
+        assert_eq!(
+            get(&mut session, prop::STAT_TX_PACKETS),
+            7u32.to_le_bytes().to_vec()
+        );
+        assert_eq!(
+            get(&mut session, prop::STAT_RX_BAD_CRC),
+            3u32.to_le_bytes().to_vec()
+        );
+        assert_eq!(
+            get(&mut session, prop::STAT_RX_PACKETS),
+            0u32.to_le_bytes().to_vec()
+        );
+
+        // Zero is the only value a write may carry, and the echo is the
+        // authoritative value rather than what the host sent.
+        let (emitted, effect) = set(&mut session, prop::STAT_TX_PACKETS, &0u32.to_le_bytes());
+        assert!(effect.is_none());
+        let (_, key, value) = parse_prop_is(&emitted[0]);
+        assert_eq!(key, prop::STAT_TX_PACKETS);
+        assert_eq!(value, 0u32.to_le_bytes().to_vec());
+        assert_eq!(stats.get(Counter::TxPackets), 0);
+        // Clearing one counter clears only that one.
+        assert_eq!(stats.get(Counter::RxBadCrc), 3);
+
+        // Counting resumes from the clear.
+        stats.add(Counter::TxPackets, 2);
+        assert_eq!(
+            get(&mut session, prop::STAT_TX_PACKETS),
+            2u32.to_le_bytes().to_vec()
+        );
+
+        let (emitted, _) = set(&mut session, prop::STAT_TX_PACKETS, &1u32.to_le_bytes());
+        expect_status(&emitted[0], 2, Status::INVALID_ARGUMENT);
+        assert_eq!(
+            stats.get(Counter::TxPackets),
+            2,
+            "a refused write cleared it"
+        );
+
+        // A protocol reset is not an operator asking to start over.
+        // `PROP_LAST_STATUS` and `PROP_UPTIME` are what say a device
+        // restarted; the counters are hardware history.
+        let _ = session.reset(Status::RESET_SOFTWARE, &mut |_| {});
+        session.attach(true);
+        assert_eq!(
+            get(&mut session, prop::STAT_TX_PACKETS),
+            2u32.to_le_bytes().to_vec()
+        );
+        assert_eq!(
+            get(&mut session, prop::STAT_RX_BAD_CRC),
+            3u32.to_le_bytes().to_vec()
+        );
+    }
+
+    /// A device that keeps no counters does not have the properties, and
+    /// a device with no node of its own has only the ones its antenna can
+    /// answer for. Reporting zero forwards would describe a repeater that
+    /// has never repeated anything, which is a different device.
+    #[test]
+    fn traffic_counters_follow_the_capability_and_the_node() {
+        let mut countless: TestSession = Session::new(
+            SessionConfig {
+                stats: None,
+                ..test_config()
+            },
+            Status::RESET_POWER_ON,
+            test_engine(),
+        );
+        countless.attach(true);
+        assert!(!capabilities(&mut countless).contains(&cap::STATS));
+        for counter in Counter::ALL {
+            let mut buf = [0u8; 16];
+            let len = frame::prop_get(&mut buf, 1, counter.property()).unwrap();
+            let (emitted, _) = dispatch(&mut countless, &buf[..len], 0);
+            expect_status(&emitted[0], 1, Status::PROP_NOT_FOUND);
+        }
+
+        let mut headless: TestSession = Session::new(
+            SessionConfig {
+                mac_node: false,
+                ..test_config()
+            },
+            Status::RESET_POWER_ON,
+            test_engine(),
+        );
+        headless.attach(true);
+        assert!(capabilities(&mut headless).contains(&cap::STATS));
+        for counter in Counter::ALL {
+            let mut buf = [0u8; 16];
+            let len = frame::prop_get(&mut buf, 1, counter.property()).unwrap();
+            let (emitted, _) = dispatch(&mut headless, &buf[..len], 0);
+            if counter.needs_node() {
+                expect_status(&emitted[0], 1, Status::PROP_NOT_FOUND);
+            } else {
+                let (_, key, value) = parse_prop_is(&emitted[0]);
+                assert_eq!(key, counter.property());
+                assert_eq!(value, 0u32.to_le_bytes().to_vec());
+            }
         }
     }
 

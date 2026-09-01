@@ -8,7 +8,7 @@ The interface is deliberately not LoRa-specific in shape where that can be
 avoided. The properties that any radio has — enable, frequency, transmit
 power, RSSI, MTU — are unconditional; the LoRa modulation parameters are
 gated behind `CAP_PHY_LORA`, and duty-cycle accounting behind
-`CAP_PHY_DUTY_LIMIT`.
+`CAP_PHY_DUTY_LIMIT`. Traffic counters are exposed by `CAP_STATS`.
 
 The RF configuration is [device-domain](ulcp-core.md#device-domain) state:
 it belongs to the radio rather than to whichever host is attached, it is
@@ -20,6 +20,7 @@ survives a change of host.
 Code | Name                 | Grants
 -----|----------------------|--------
 16   | `CAP_PHY_DUTY_LIMIT` | Duty-cycle accounting and enforcement: `PROP_PHY_DUTY_NOW`, `PROP_PHY_DUTY_LIMIT`, and `STATUS_DUTY_LIMIT`
+52   | `CAP_STATS`          | Radio and forwarding traffic counters: `PROP_STAT_*`
 515  | `CAP_PHY_LORA`       | The LoRa modulation parameters: `PROP_PHY_LORA_BW`, `PROP_PHY_LORA_SF`, `PROP_PHY_LORA_CR`, `PROP_PHY_LORA_SW`
 
 ## Properties
@@ -37,6 +38,15 @@ Id   | Mnemonic              | Commands | Description
 43   | `PROP_PHY_LORA_SW`    | Get, Set | LoRa sync word (16-bit style)
 4820 | `PROP_PHY_DUTY_NOW`   | Get      | Current duty usage
 4822 | `PROP_PHY_DUTY_LIMIT` | Get, Set | Duty-cycle limit
+4832 | `PROP_STAT_TX_PACKETS` | Get, Set | Packets transmitted over the air
+4833 | `PROP_STAT_TX_CHANNEL_BUSY` | Get, Set | Transmissions deferred because the channel was busy
+4834 | `PROP_STAT_RX_PACKETS` | Get, Set | Received packets with a UMSH first-octet pattern
+4835 | `PROP_STAT_RX_BAD_CRC` | Get, Set | Receptions rejected because of a bad CRC
+4836 | `PROP_STAT_RX_NON_UMSH` | Get, Set | Received packets without a UMSH first-octet pattern
+4837 | `PROP_STAT_RX_ACCEPTED` | Get, Set | Received packets accepted by this device's node
+4838 | `PROP_STAT_FORWARDED` | Get, Set | Packets this device chose to forward
+4839 | `PROP_STAT_FORWARD_DROPPED` | Get, Set | Forwarding candidates rejected by policy
+4840 | `PROP_STAT_FORWARD_CANCELLED` | Get, Set | Queued forwards cancelled after an acknowledgement
 
 ### PROP 32: `PROP_PHY_ENABLED` {#prop-phy-enabled}
 
@@ -202,3 +212,70 @@ Value | Percentage
 6553  | 10%
 655   | 1%
 65    | 0.1%
+
+## Statistics
+
+A device advertising `CAP_STATS` exposes cumulative `UINT32_LE` traffic
+counters. Values count since boot or the most recent reset of that counter and
+wrap modulo 2^32. Writing four zero octets resets a counter. A device **MUST**
+reject every other value or length with `STATUS_INVALID_ARGUMENT`.
+
+Statistics are live hardware history rather than configuration. They are not
+part of a saved snapshot, and `CMD_RST` **MUST NOT** clear them. A host can reset
+several counters with `CMD_PROP_MULTI_SET`, but the individual resets do not
+occur simultaneously: traffic arriving during the write sweep can fall on
+different sides of different counter resets.
+
+`PROP_PHY_DUTY_NOW` is commonly displayed alongside these counters, but it is a
+rolling regulatory measurement and is not resettable.
+
+### PROP 4832: `PROP_STAT_TX_PACKETS` {#prop-stat-tx-packets}
+
+Packets whose transmission completed successfully over the physical radio.
+Requires `CAP_STATS`.
+
+### PROP 4833: `PROP_STAT_TX_CHANNEL_BUSY` {#prop-stat-tx-channel-busy}
+
+Transmission attempts deferred because channel assessment reported the channel
+busy. Such an attempt does not also increment `PROP_STAT_TX_PACKETS`. Requires
+`CAP_STATS`.
+
+### PROP 4834: `PROP_STAT_RX_PACKETS` {#prop-stat-rx-packets}
+
+Off-air receptions whose first octet carries the UMSH version and valid reserved
+bits. This classification does not require the rest of the packet to parse.
+Requires `CAP_STATS`.
+
+### PROP 4835: `PROP_STAT_RX_BAD_CRC` {#prop-stat-rx-bad-crc}
+
+Receptions the physical radio rejected because their payload CRC was invalid.
+Requires `CAP_STATS`.
+
+### PROP 4836: `PROP_STAT_RX_NON_UMSH` {#prop-stat-rx-non-umsh}
+
+Off-air receptions whose first octet does not carry the UMSH version and valid
+reserved bits. Requires `CAP_STATS`.
+
+### PROP 4837: `PROP_STAT_RX_ACCEPTED` {#prop-stat-rx-accepted}
+
+Receptions on which this device's own node acted. Frames addressed to an
+attached host's identity are not included. Requires `CAP_STATS` and
+`CAP_REPEATER`.
+
+### PROP 4838: `PROP_STAT_FORWARDED` {#prop-stat-forwarded}
+
+Receptions this device's own node chose to repeat. The counter records the
+forwarding decision; successful physical transmissions are counted separately
+by `PROP_STAT_TX_PACKETS`. Requires `CAP_STATS` and `CAP_REPEATER`.
+
+### PROP 4839: `PROP_STAT_FORWARD_DROPPED` {#prop-stat-forward-dropped}
+
+Packets that were eligible for forwarding but were rejected by the configured
+flood budget, minimum RSSI, minimum SNR, or region policy. Duplicates,
+self-addressed packets, and packets received while forwarding is disabled are
+not included. Requires `CAP_STATS` and `CAP_REPEATER`.
+
+### PROP 4840: `PROP_STAT_FORWARD_CANCELLED` {#prop-stat-forward-cancelled}
+
+Queued forwards cancelled because the destination's acknowledgement was
+overheard before transmission. Requires `CAP_STATS` and `CAP_REPEATER`.

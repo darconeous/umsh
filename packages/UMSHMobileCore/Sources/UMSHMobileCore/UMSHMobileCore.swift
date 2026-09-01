@@ -8371,6 +8371,15 @@ public struct UlcpDevicePropertiesRecord: Equatable, Hashable {
     public var codingRateDenom: UInt8?
     public var dutyCycleNow: UInt16?
     public var dutyCycleLimit: UInt16?
+    public var statTxPackets: UInt32?
+    public var statTxChannelBusy: UInt32?
+    public var statRxPackets: UInt32?
+    public var statRxBadCrc: UInt32?
+    public var statRxNonUmsh: UInt32?
+    public var statRxAccepted: UInt32?
+    public var statForwarded: UInt32?
+    public var statForwardDropped: UInt32?
+    public var statForwardCancelled: UInt32?
     public var deviceName: String?
     /**
      * `None` is the device deriving its own role, which reads the same
@@ -8452,7 +8461,7 @@ public struct UlcpDevicePropertiesRecord: Equatable, Hashable {
 
     // Default memberwise initializers are never public by default, so we
     // declare one manually.
-    public init(battery: UlcpBatteryRecord?, phyEnabled: Bool?, frequencyKhz: UInt32?, transmitPowerDbm: Int8?, bandwidthHz: UInt32?, spreadingFactor: UInt8?, codingRateDenom: UInt8?, dutyCycleNow: UInt16?, dutyCycleLimit: UInt16?, deviceName: String?,
+    public init(battery: UlcpBatteryRecord?, phyEnabled: Bool?, frequencyKhz: UInt32?, transmitPowerDbm: Int8?, bandwidthHz: UInt32?, spreadingFactor: UInt8?, codingRateDenom: UInt8?, dutyCycleNow: UInt16?, dutyCycleLimit: UInt16?, statTxPackets: UInt32?, statTxChannelBusy: UInt32?, statRxPackets: UInt32?, statRxBadCrc: UInt32?, statRxNonUmsh: UInt32?, statRxAccepted: UInt32?, statForwarded: UInt32?, statForwardDropped: UInt32?, statForwardCancelled: UInt32?, deviceName: String?,
         /**
          * `None` is the device deriving its own role, which reads the same
          * as never having been told.
@@ -8509,6 +8518,15 @@ public struct UlcpDevicePropertiesRecord: Equatable, Hashable {
         self.codingRateDenom = codingRateDenom
         self.dutyCycleNow = dutyCycleNow
         self.dutyCycleLimit = dutyCycleLimit
+        self.statTxPackets = statTxPackets
+        self.statTxChannelBusy = statTxChannelBusy
+        self.statRxPackets = statRxPackets
+        self.statRxBadCrc = statRxBadCrc
+        self.statRxNonUmsh = statRxNonUmsh
+        self.statRxAccepted = statRxAccepted
+        self.statForwarded = statForwarded
+        self.statForwardDropped = statForwardDropped
+        self.statForwardCancelled = statForwardCancelled
         self.deviceName = deviceName
         self.identRole = identRole
         self.identMobile = identMobile
@@ -8567,6 +8585,15 @@ public struct FfiConverterTypeUlcpDevicePropertiesRecord: FfiConverterRustBuffer
                 codingRateDenom: FfiConverterOptionUInt8.read(from: &buf),
                 dutyCycleNow: FfiConverterOptionUInt16.read(from: &buf),
                 dutyCycleLimit: FfiConverterOptionUInt16.read(from: &buf),
+                statTxPackets: FfiConverterOptionUInt32.read(from: &buf),
+                statTxChannelBusy: FfiConverterOptionUInt32.read(from: &buf),
+                statRxPackets: FfiConverterOptionUInt32.read(from: &buf),
+                statRxBadCrc: FfiConverterOptionUInt32.read(from: &buf),
+                statRxNonUmsh: FfiConverterOptionUInt32.read(from: &buf),
+                statRxAccepted: FfiConverterOptionUInt32.read(from: &buf),
+                statForwarded: FfiConverterOptionUInt32.read(from: &buf),
+                statForwardDropped: FfiConverterOptionUInt32.read(from: &buf),
+                statForwardCancelled: FfiConverterOptionUInt32.read(from: &buf),
                 deviceName: FfiConverterOptionString.read(from: &buf),
                 identRole: FfiConverterOptionUInt8.read(from: &buf),
                 identMobile: FfiConverterOptionBool.read(from: &buf),
@@ -8611,6 +8638,15 @@ public struct FfiConverterTypeUlcpDevicePropertiesRecord: FfiConverterRustBuffer
         FfiConverterOptionUInt8.write(value.codingRateDenom, into: &buf)
         FfiConverterOptionUInt16.write(value.dutyCycleNow, into: &buf)
         FfiConverterOptionUInt16.write(value.dutyCycleLimit, into: &buf)
+        FfiConverterOptionUInt32.write(value.statTxPackets, into: &buf)
+        FfiConverterOptionUInt32.write(value.statTxChannelBusy, into: &buf)
+        FfiConverterOptionUInt32.write(value.statRxPackets, into: &buf)
+        FfiConverterOptionUInt32.write(value.statRxBadCrc, into: &buf)
+        FfiConverterOptionUInt32.write(value.statRxNonUmsh, into: &buf)
+        FfiConverterOptionUInt32.write(value.statRxAccepted, into: &buf)
+        FfiConverterOptionUInt32.write(value.statForwarded, into: &buf)
+        FfiConverterOptionUInt32.write(value.statForwardDropped, into: &buf)
+        FfiConverterOptionUInt32.write(value.statForwardCancelled, into: &buf)
         FfiConverterOptionString.write(value.deviceName, into: &buf)
         FfiConverterOptionUInt8.write(value.identRole, into: &buf)
         FfiConverterOptionBool.write(value.identMobile, into: &buf)
@@ -9130,6 +9166,15 @@ public struct UlcpManagedPropertyIds: Equatable, Hashable {
     public var loraCodingRate: UInt32
     public var dutyCycleNow: UInt32
     public var dutyCycleLimit: UInt32
+    public var statTxPackets: UInt32
+    public var statTxChannelBusy: UInt32
+    public var statRxPackets: UInt32
+    public var statRxBadCrc: UInt32
+    public var statRxNonUmsh: UInt32
+    public var statRxAccepted: UInt32
+    public var statForwarded: UInt32
+    public var statForwardDropped: UInt32
+    public var statForwardCancelled: UInt32
     public var identRole: UInt32
     public var identMobile: UInt32
     public var identLocation: UInt32
@@ -9160,7 +9205,7 @@ public struct UlcpManagedPropertyIds: Equatable, Hashable {
 
     // Default memberwise initializers are never public by default, so we
     // declare one manually.
-    public init(caps: UInt32, deviceVersion: UInt32, deviceModel: UInt32, deviceName: UInt32, battery: UInt32, phyEnabled: UInt32, frequency: UInt32, transmitPower: UInt32, loraBandwidth: UInt32, loraSpreadingFactor: UInt32, loraCodingRate: UInt32, dutyCycleNow: UInt32, dutyCycleLimit: UInt32, identRole: UInt32, identMobile: UInt32, identLocation: UInt32, identAltitude: UInt32, devDiscoverable: UInt32, gnssIdentUpdate: UInt32, gnssIdentPrecision: UInt32, uptime: UInt32, advertInterval: UInt32, beaconInterval: UInt32, startupBeacon: UInt32, gnssEnabled: UInt32, gnssTimeTrust: UInt32, bleEnabled: UInt32, bleBondCount: UInt32, bleLink: UInt32, blePairing: UInt32, time: UInt32, tzOffset: UInt32, alert: UInt32, repeaterEnabled: UInt32, repeaterRegions: UInt32, repeaterDefaultRegion: UInt32, repeaterMinRssi: UInt32, repeaterMinSnr: UInt32, devPeers: UInt32, devAdmins: UInt32) {
+    public init(caps: UInt32, deviceVersion: UInt32, deviceModel: UInt32, deviceName: UInt32, battery: UInt32, phyEnabled: UInt32, frequency: UInt32, transmitPower: UInt32, loraBandwidth: UInt32, loraSpreadingFactor: UInt32, loraCodingRate: UInt32, dutyCycleNow: UInt32, dutyCycleLimit: UInt32, statTxPackets: UInt32, statTxChannelBusy: UInt32, statRxPackets: UInt32, statRxBadCrc: UInt32, statRxNonUmsh: UInt32, statRxAccepted: UInt32, statForwarded: UInt32, statForwardDropped: UInt32, statForwardCancelled: UInt32, identRole: UInt32, identMobile: UInt32, identLocation: UInt32, identAltitude: UInt32, devDiscoverable: UInt32, gnssIdentUpdate: UInt32, gnssIdentPrecision: UInt32, uptime: UInt32, advertInterval: UInt32, beaconInterval: UInt32, startupBeacon: UInt32, gnssEnabled: UInt32, gnssTimeTrust: UInt32, bleEnabled: UInt32, bleBondCount: UInt32, bleLink: UInt32, blePairing: UInt32, time: UInt32, tzOffset: UInt32, alert: UInt32, repeaterEnabled: UInt32, repeaterRegions: UInt32, repeaterDefaultRegion: UInt32, repeaterMinRssi: UInt32, repeaterMinSnr: UInt32, devPeers: UInt32, devAdmins: UInt32) {
         self.caps = caps
         self.deviceVersion = deviceVersion
         self.deviceModel = deviceModel
@@ -9174,6 +9219,15 @@ public struct UlcpManagedPropertyIds: Equatable, Hashable {
         self.loraCodingRate = loraCodingRate
         self.dutyCycleNow = dutyCycleNow
         self.dutyCycleLimit = dutyCycleLimit
+        self.statTxPackets = statTxPackets
+        self.statTxChannelBusy = statTxChannelBusy
+        self.statRxPackets = statRxPackets
+        self.statRxBadCrc = statRxBadCrc
+        self.statRxNonUmsh = statRxNonUmsh
+        self.statRxAccepted = statRxAccepted
+        self.statForwarded = statForwarded
+        self.statForwardDropped = statForwardDropped
+        self.statForwardCancelled = statForwardCancelled
         self.identRole = identRole
         self.identMobile = identMobile
         self.identLocation = identLocation
@@ -9232,6 +9286,15 @@ public struct FfiConverterTypeUlcpManagedPropertyIds: FfiConverterRustBuffer {
                 loraCodingRate: FfiConverterUInt32.read(from: &buf),
                 dutyCycleNow: FfiConverterUInt32.read(from: &buf),
                 dutyCycleLimit: FfiConverterUInt32.read(from: &buf),
+                statTxPackets: FfiConverterUInt32.read(from: &buf),
+                statTxChannelBusy: FfiConverterUInt32.read(from: &buf),
+                statRxPackets: FfiConverterUInt32.read(from: &buf),
+                statRxBadCrc: FfiConverterUInt32.read(from: &buf),
+                statRxNonUmsh: FfiConverterUInt32.read(from: &buf),
+                statRxAccepted: FfiConverterUInt32.read(from: &buf),
+                statForwarded: FfiConverterUInt32.read(from: &buf),
+                statForwardDropped: FfiConverterUInt32.read(from: &buf),
+                statForwardCancelled: FfiConverterUInt32.read(from: &buf),
                 identRole: FfiConverterUInt32.read(from: &buf),
                 identMobile: FfiConverterUInt32.read(from: &buf),
                 identLocation: FfiConverterUInt32.read(from: &buf),
@@ -9276,6 +9339,15 @@ public struct FfiConverterTypeUlcpManagedPropertyIds: FfiConverterRustBuffer {
         FfiConverterUInt32.write(value.loraCodingRate, into: &buf)
         FfiConverterUInt32.write(value.dutyCycleNow, into: &buf)
         FfiConverterUInt32.write(value.dutyCycleLimit, into: &buf)
+        FfiConverterUInt32.write(value.statTxPackets, into: &buf)
+        FfiConverterUInt32.write(value.statTxChannelBusy, into: &buf)
+        FfiConverterUInt32.write(value.statRxPackets, into: &buf)
+        FfiConverterUInt32.write(value.statRxBadCrc, into: &buf)
+        FfiConverterUInt32.write(value.statRxNonUmsh, into: &buf)
+        FfiConverterUInt32.write(value.statRxAccepted, into: &buf)
+        FfiConverterUInt32.write(value.statForwarded, into: &buf)
+        FfiConverterUInt32.write(value.statForwardDropped, into: &buf)
+        FfiConverterUInt32.write(value.statForwardCancelled, into: &buf)
         FfiConverterUInt32.write(value.identRole, into: &buf)
         FfiConverterUInt32.write(value.identMobile, into: &buf)
         FfiConverterUInt32.write(value.identLocation, into: &buf)
@@ -12882,6 +12954,10 @@ public enum UlcpManageCategory: Equatable, Hashable {
      */
     case radio
     /**
+     * Traffic counters, measured duty cycle, and uptime.
+     */
+    case statistics
+    /**
      * What the device advertises about itself, including where it is.
      */
     case identity
@@ -12932,17 +13008,19 @@ public struct FfiConverterTypeUlcpManageCategory: FfiConverterRustBuffer {
 
         case 2: return .radio
 
-        case 3: return .identity
+        case 3: return .statistics
 
-        case 4: return .gnss
+        case 4: return .identity
 
-        case 5: return .time
+        case 5: return .gnss
 
-        case 6: return .bluetooth
+        case 6: return .time
 
-        case 7: return .repeater
+        case 7: return .bluetooth
 
-        case 8: return .peerNodes
+        case 8: return .repeater
+
+        case 9: return .peerNodes
 
         default: throw UniffiInternalError.unexpectedEnumCase
         }
@@ -12960,28 +13038,32 @@ public struct FfiConverterTypeUlcpManageCategory: FfiConverterRustBuffer {
             writeInt(&buf, Int32(2))
 
 
-        case .identity:
+        case .statistics:
             writeInt(&buf, Int32(3))
 
 
-        case .gnss:
+        case .identity:
             writeInt(&buf, Int32(4))
 
 
-        case .time:
+        case .gnss:
             writeInt(&buf, Int32(5))
 
 
-        case .bluetooth:
+        case .time:
             writeInt(&buf, Int32(6))
 
 
-        case .repeater:
+        case .bluetooth:
             writeInt(&buf, Int32(7))
 
 
-        case .peerNodes:
+        case .repeater:
             writeInt(&buf, Int32(8))
+
+
+        case .peerNodes:
+            writeInt(&buf, Int32(9))
 
         }
     }

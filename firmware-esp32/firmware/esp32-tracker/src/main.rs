@@ -142,6 +142,7 @@ use umsh_radio_loraphy::{DeviceControl, MAX_PAYLOAD};
 #[cfg(feature = "rtc-pcf8563")]
 use umsh_rtc_pcf8563::Pcf8563;
 use umsh_ulcp::ble::BleLinkState;
+use umsh_ulcp::stats::{Counter, StatsLedger};
 use umsh_ulcp::{Status, gatt, hdlc};
 #[cfg(feature = "gnss")]
 use umsh_ulcp_device::GnssConfig;
@@ -386,6 +387,7 @@ fn session_config() -> SessionConfig {
         reboot: true,
         // A real MAC runs behind this session.
         mac_node: true,
+        stats: Some(&STATS),
     }
 }
 
@@ -433,6 +435,16 @@ static MUX_CLIENTS: [&RadioCh; 2] = [&SESSION_CH, &device_node::NODE_CH];
 
 /// Runtime radio settings pushed by the session to the runner.
 static DEVICE_CTL: DeviceControl<CriticalSectionRawMutex> = DeviceControl::new();
+
+/// The one traffic ledger for the whole device.
+///
+/// The mux is where every real transmit and every off-air reception passes
+/// exactly once, so that is where the air counters are kept — counting at
+/// the MAC would miss everything the session sends, which on a
+/// phone-attached tracker is most of it. The runner adds the CRC failures
+/// it alone can see, and the node's pump mirrors the four figures only the
+/// MAC knows.
+pub(crate) static STATS: StatsLedger = StatsLedger::new();
 
 /// Framing-free receive path and connection edges into the shared
 /// ULCP driver (`InEvent`/`FrameBuf` and the queue types live there).
@@ -2399,8 +2411,16 @@ async fn run_ble_stack(
 #[embassy_executor::task]
 async fn radio_task(lora: board_radio::Radio) {
     use umsh_radio_loraphy::RxStrategy;
-    umsh_radio_loraphy::device_runner(lora, &RADIO_CH, &DEVICE_CTL, 8, 32, RxStrategy::Continuous)
-        .await;
+    umsh_radio_loraphy::device_runner(
+        lora,
+        &RADIO_CH,
+        &DEVICE_CTL,
+        8,
+        32,
+        RxStrategy::Continuous,
+        Some(&STATS),
+    )
+    .await;
 }
 
 /// Owns the real `RADIO_CH` bundle and multiplexes it across the
@@ -2408,7 +2428,7 @@ async fn radio_task(lora: board_radio::Radio) {
 /// completion routing plus RX fan-out to every client.
 #[embassy_executor::task]
 async fn radio_mux_task() {
-    radio_mux::radio_mux(&RADIO_CH, &MUX_CLIENTS, &radio_mux::MUX_MODE).await
+    radio_mux::radio_mux(&RADIO_CH, &MUX_CLIENTS, &radio_mux::MUX_MODE, Some(&STATS)).await
 }
 
 // ─── GNSS ────────────────────────────────────────────────────────────────
@@ -2995,12 +3015,14 @@ fn ui_status<'a>(name: &'a DeviceName, identity: &'a IdentityText) -> screen::St
 /// with every frame on the air, and a redraw per frame would burn the
 /// panel's power budget reporting numbers nobody is looking at.
 fn ui_stats() -> screen::StatsModel {
-    let counters = device_node::mac_counters();
+    // The same ledger the host reads over ULCP, so a reset from the phone
+    // clears this page too. `rx_frames` is everything the radio handed up,
+    // UMSH or not, which is what the page has always meant.
     screen::StatsModel {
-        tx_frames: counters.tx_frames,
-        rx_frames: counters.rx_frames,
-        rx_accepted: counters.rx_accepted,
-        forwarded: counters.forwarded,
+        tx_frames: STATS.get(Counter::TxPackets),
+        rx_frames: STATS.get(Counter::RxPackets) + STATS.get(Counter::RxNonUmsh),
+        rx_accepted: STATS.get(Counter::RxAccepted),
+        forwarded: STATS.get(Counter::Forwarded),
         tx_power_dbm: device_node::tx_power_dbm(),
         // The ledger's scale is 0-65535 for 0-100%; the page shows tenths
         // of a percent, which is the range a tracker lives in.

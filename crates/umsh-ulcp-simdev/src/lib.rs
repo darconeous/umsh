@@ -422,6 +422,8 @@ mod tests {
             // A simulated power cycle is a rebuilt session, which is
             // exactly what a host watching this device would see.
             reboot: true,
+            // A simulated device has no radio to count for.
+            stats: None,
             mac_node: false,
         }
     }

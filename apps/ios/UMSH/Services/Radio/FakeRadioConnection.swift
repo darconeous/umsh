@@ -889,6 +889,16 @@ struct FakeManagedDevice: Sendable {
             // Fractions of UInt16.max: 1% used against a 10% limit.
             id.dutyCycleNow: UInt16(655).littleEndianData,
             id.dutyCycleLimit: UInt16(6_553).littleEndianData,
+            id.statTxPackets: UInt32(1_284).littleEndianData,
+            id.statTxChannelBusy: UInt32(37).littleEndianData,
+            id.statRxPackets: UInt32(8_912).littleEndianData,
+            id.statRxBadCrc: UInt32(46).littleEndianData,
+            id.statRxNonUmsh: UInt32(119).littleEndianData,
+            id.statRxAccepted: UInt32(2_405).littleEndianData,
+            id.statForwarded: UInt32(1_733).littleEndianData,
+            id.statForwardDropped: UInt32(82).littleEndianData,
+            id.statForwardCancelled: UInt32(14).littleEndianData,
+            id.uptime: UInt32(172_800).littleEndianData,
             id.identRole: Data([1]),
             id.identMobile: Data([0]),
             // Four octets of cell — about 600 m across — over Mount Tallac,
@@ -954,14 +964,14 @@ struct FakeManagedDevice: Sendable {
     /// (36), device identity (37), device name (38), battery (39),
     /// repeater (40), identity (41), alert (42), administrators (43),
     /// clock (44), receiver (45), advertisement (46), batched commands
-    /// (49), Bluetooth (50), restart (51), and the LoRa modem (515, which
-    /// needs two PUI octets).
+    /// (49), Bluetooth (50), restart (51), statistics (52), and the LoRa
+    /// modem (515, which needs two PUI octets).
     ///
     /// Bond management has no capability of its own: this fake claims it
     /// by answering `PROP_BLE_BOND_COUNT` rather than by listing a code.
     private static let capabilities = Data([
         0x10, 0x24, 0x25, 0x26, 0x27, 0x28, 0x29, 0x2A, 0x2B, 0x2C, 0x2D, 0x2E, 0x31, 0x32,
-        0x33, 0x83, 0x04,
+        0x33, 0x34, 0x83, 0x04,
     ])
 }
 

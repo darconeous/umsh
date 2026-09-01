@@ -58,6 +58,17 @@ use umsh_hal::{RxInfo, RxOrigin, Snr, TxOptions};
 /// only on this one can name a profile without a manifest entry.
 pub use umsh_ulcp::profiles;
 use umsh_ulcp::profiles::PhyProfile;
+use umsh_ulcp::stats::{Counter, StatsLedger};
+
+/// Tally a reception the demodulator rejected on CRC.
+///
+/// A board with no ledger passes `None` and the counting costs nothing;
+/// the bringup consoles do exactly that.
+fn note_bad_crc(stats: Option<&'static StatsLedger>) {
+    if let Some(stats) = stats {
+        stats.bump(Counter::RxBadCrc);
+    }
+}
 
 /// Maximum SX1262 LoRa payload: 255 bytes.
 pub const MAX_PAYLOAD: usize = 255;
@@ -269,6 +280,7 @@ pub async fn runner<RK, DLY, M, const RX: usize, const TX: usize>(
     rx_pkt: PacketParams,
     mut tx_pkt: PacketParams,
     power_dbm: i32,
+    stats: Option<&'static StatsLedger>,
 ) -> !
 where
     RK: RadioKind,
@@ -335,7 +347,18 @@ where
                         // past this point is forwarded, and its damaged bytes
                         // give it a duplicate-cache identity no node in the
                         // mesh has seen. The frame is dropped and RX
-                        // re-prepared; the bytes are left unread.
+                        // re-prepared; the bytes are left unread — but it is
+                        // counted, because a climbing CRC tally beside a flat
+                        // packet count is the signature of interference and
+                        // is otherwise invisible from anywhere above here.
+                        Err(RadioError::CrcError) => {
+                            note_bad_crc(stats);
+                            continue 'outer;
+                        }
+                        // Everything else is the driver or the bus failing,
+                        // not the air. Counting it as a bad CRC would put
+                        // SPI trouble in a column an operator reads as
+                        // interference.
                         Err(_) => continue 'outer,
                     }
                 }
@@ -591,6 +614,7 @@ pub async fn device_runner<RK, DLY, M, const RX: usize, const TX: usize>(
     rx_preamble: u16,
     tx_preamble: u16,
     rx_strategy: RxStrategy,
+    stats: Option<&'static StatsLedger>,
 ) -> !
 where
     RK: RadioKind,
@@ -716,6 +740,13 @@ where
                                 continue;
                             }
                             Ok(_) => continue,
+                            // See `runner`: a failed payload CRC is only
+                            // catchable here, and it is the one radio-level
+                            // drop worth a number of its own.
+                            Err(RadioError::CrcError) => {
+                                note_bad_crc(stats);
+                                continue 'rx;
+                            }
                             Err(_) => continue 'rx,
                         }
                     }

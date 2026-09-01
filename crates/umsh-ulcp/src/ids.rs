@@ -213,6 +213,58 @@ pub mod prop {
     pub const PHY_DUTY_NOW: u32 = 4820;
     /// Duty-cycle limit (`PROP_PHY_DUTY_LIMIT`).
     pub const PHY_DUTY_LIMIT: u32 = 4822;
+    /// Frames that reached the air (`PROP_STAT_TX_PACKETS`) — `UINT32_LE`,
+    /// counted for every client of the radio, the attached host included.
+    /// Requires `CAP_STATS`. See [`crate::stats`] for what the counters
+    /// share: they wrap, they are not saved, `CMD_RST` does not touch
+    /// them, and the only value a write may carry is zero.
+    pub const STAT_TX_PACKETS: u32 = 4832;
+    /// Transmits the channel-activity check held back
+    /// (`PROP_STAT_TX_CHANNEL_BUSY`) — `UINT32_LE`. Counted per attempt,
+    /// so one frame that retries several times before it airs is counted
+    /// several times here and once in
+    /// [`STAT_TX_PACKETS`]. Requires `CAP_STATS`.
+    pub const STAT_TX_CHANNEL_BUSY: u32 = 4833;
+    /// Receptions off the air that are UMSH packets
+    /// (`PROP_STAT_RX_PACKETS`) — `UINT32_LE`, counted whoever they were
+    /// addressed to. Requires `CAP_STATS`.
+    pub const STAT_RX_PACKETS: u32 = 4834;
+    /// Receptions the radio rejected on CRC (`PROP_STAT_RX_BAD_CRC`) —
+    /// `UINT32_LE`. These never reach the MAC: the bytes are unusable and
+    /// the frame is dropped where it was demodulated. A count that climbs
+    /// with a quiet packet count is interference or a marginal link.
+    /// Requires `CAP_STATS`.
+    pub const STAT_RX_BAD_CRC: u32 = 4835;
+    /// Receptions that passed CRC but are not UMSH packets
+    /// (`PROP_STAT_RX_NON_UMSH`) — `UINT32_LE`. The test is the first
+    /// octet's protocol version and reserved bits, so a truncated UMSH
+    /// frame still counts as UMSH; this is somebody else's traffic on the
+    /// same sync word. Requires `CAP_STATS`.
+    pub const STAT_RX_NON_UMSH: u32 = 4836;
+    /// Receptions the device's own node acted on
+    /// (`PROP_STAT_RX_ACCEPTED`) — `UINT32_LE`. Frames addressed to an
+    /// attached host's identity are that host's business and are not
+    /// counted here. Requires `CAP_STATS` and `CAP_REPEATER`.
+    pub const STAT_RX_ACCEPTED: u32 = 4837;
+    /// Receptions this node chose to repeat (`PROP_STAT_FORWARDED`) —
+    /// `UINT32_LE`, counted at the decision rather than at the transmit,
+    /// so a repeat the channel never let out is counted here and not in
+    /// [`STAT_TX_PACKETS`]. Requires `CAP_STATS`
+    /// and `CAP_REPEATER`.
+    pub const STAT_FORWARDED: u32 = 4838;
+    /// Receptions this node would have repeated and declined under the
+    /// operator's forwarding policy (`PROP_STAT_FORWARD_DROPPED`) —
+    /// `UINT32_LE`: an exhausted flood budget, a signal below the
+    /// configured minimum RSSI or SNR, or a region the repeater does not
+    /// serve. Duplicates and traffic addressed to this device are not
+    /// policy decisions and are not counted. Requires `CAP_STATS` and
+    /// `CAP_REPEATER`.
+    pub const STAT_FORWARD_DROPPED: u32 = 4839;
+    /// Queued repeats dropped after the destination's acknowledgement was
+    /// overheard (`PROP_STAT_FORWARD_CANCELLED`) — `UINT32_LE`. Airtime
+    /// this node did not have to spend. Requires `CAP_STATS` and
+    /// `CAP_REPEATER`.
+    pub const STAT_FORWARD_CANCELLED: u32 = 4840;
     /// Persisted, write-only BLE pairing passkey (`PROP_BLE_PAIRING_PIN`).
     pub const BLE_PAIRING_PIN: u32 = 4864;
     /// Nodes authorized to manage this device over the mesh
@@ -396,6 +448,13 @@ pub mod cap {
     /// a process rather than a board — leaves this out and answers the
     /// command `STATUS_UNIMPLEMENTED`.
     pub const REBOOT: u32 = 51;
+    /// `CAP_STATS` — the device keeps traffic counters and will report
+    /// them (`PROP_STAT_*`). The forwarding counters additionally require
+    /// [`REPEATER`]: a session with no node of its own
+    /// behind it never repeats anything, and reporting zero forwards
+    /// would read as a repeater that has done nothing rather than as no
+    /// repeater at all.
+    pub const STATS: u32 = 52;
 }
 
 /// Whether a property is reachable from a mesh administrator.

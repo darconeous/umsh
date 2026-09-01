@@ -28,16 +28,16 @@ final class UMSHMobileCoreTests: XCTestCase {
 
     func testRadioPresetsSurfaceTheVettedTable() throws {
         let presets = ulcpRadioPresets()
-        XCTAssertEqual(presets.count, 21)
+        XCTAssertEqual(presets.count, 22)
         XCTAssertEqual(Set(presets.map(\.id)).count, presets.count)
 
         let usCanada = try XCTUnwrap(presets.first)
-        XCTAssertEqual(usCanada.id, "meshcore-us-ca")
-        XCTAssertEqual(usCanada.frequencyKhz, 910_525)
-        XCTAssertEqual(usCanada.bandwidthHz, 62_500)
-        XCTAssertEqual(usCanada.spreadingFactor, 7)
+        XCTAssertEqual(usCanada.id, "umsh-us-ca")
+        XCTAssertEqual(usCanada.frequencyKhz, 917_500)
+        XCTAssertEqual(usCanada.bandwidthHz, 500_000)
+        XCTAssertEqual(usCanada.spreadingFactor, 10)
         XCTAssertEqual(usCanada.codingRateDenom, 5)
-        XCTAssertEqual(usCanada.transmitPowerDbm, 21)
+        XCTAssertEqual(usCanada.transmitPowerDbm, 30)
         XCTAssertEqual(usCanada.dutyCycleLimit, UInt16.max)
 
         XCTAssertEqual(ulcpSupportedBandwidthsHz().count, 10)

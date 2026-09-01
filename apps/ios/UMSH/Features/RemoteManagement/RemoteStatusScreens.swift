@@ -379,6 +379,154 @@ struct RemoteTimeScreen: View {
     }
 }
 
+/// Traffic accumulated by the device since boot or the last explicit reset.
+/// Duty cycle is shown beside the tallies but remains a rolling regulatory
+/// measurement, so Reset Counters never touches it.
+struct RemoteStatisticsScreen: View {
+    let model: ManageDeviceModel
+    @State private var confirmsReset = false
+
+    private var reading: RemoteCategoryReading? { model.readings[.statistics] }
+    private var stats: UlcpDevicePropertiesRecord {
+        reading?.properties ?? .empty
+    }
+
+    private var counterIDs: [UInt32] {
+        let id = ulcpProperties
+        return [
+            id.statTxPackets,
+            id.statTxChannelBusy,
+            id.statRxPackets,
+            id.statRxBadCrc,
+            id.statRxNonUmsh,
+            id.statRxAccepted,
+            id.statForwarded,
+            id.statForwardDropped,
+            id.statForwardCancelled,
+        ]
+    }
+
+    private var answeredCounterIDs: Set<UInt32> {
+        Set(counterIDs.filter { reading?.answered($0) == true })
+    }
+
+    private var hasForwarding: Bool {
+        stats.statForwarded != nil
+            || stats.statForwardDropped != nil
+            || stats.statForwardCancelled != nil
+    }
+
+    var body: some View {
+        Form {
+            Section("Transmit") {
+                if let value = stats.statTxPackets {
+                    LabeledContent("Packets", value: value.formatted())
+                }
+                if let value = stats.statTxChannelBusy {
+                    LabeledContent("Deferred—channel busy", value: value.formatted())
+                }
+                if let value = stats.dutyCycleNow {
+                    LabeledContent("Duty cycle", value: dutyPercent(value))
+                }
+                if stats.statTxPackets == nil,
+                   stats.statTxChannelBusy == nil,
+                   stats.dutyCycleNow == nil {
+                    RemoteEmptyReading()
+                }
+            }
+
+            Section("Receive") {
+                if let value = stats.statRxPackets {
+                    LabeledContent("UMSH packets", value: value.formatted())
+                }
+                if let value = stats.statRxBadCrc {
+                    LabeledContent("Bad CRC", value: value.formatted())
+                }
+                if let value = stats.statRxNonUmsh {
+                    LabeledContent("Non-UMSH packets", value: value.formatted())
+                }
+                if let value = stats.statRxAccepted {
+                    LabeledContent("For this node", value: value.formatted())
+                }
+            }
+
+            if hasForwarding {
+                Section("Forwarding") {
+                    if let value = stats.statForwarded {
+                        LabeledContent("Forwarded", value: value.formatted())
+                    }
+                    if let value = stats.statForwardDropped {
+                        LabeledContent("Policy dropped", value: value.formatted())
+                    }
+                    if let value = stats.statForwardCancelled {
+                        LabeledContent("Cancelled", value: value.formatted())
+                    }
+                }
+            }
+
+            Section {
+                if let uptime = currentUptime {
+                    TimelineView(.periodic(from: .now, by: 1)) { context in
+                        LabeledContent(
+                            "Uptime",
+                            value: formattedUptime(elapsedUptime(uptime, asOf: context.date))
+                        )
+                    }
+                }
+                Button("Reset Counters…", role: .destructive) {
+                    confirmsReset = true
+                }
+                .disabled(answeredCounterIDs.isEmpty)
+            } footer: {
+                RemoteReadingFooter(reading: reading, isBusy: model.isBusy)
+            }
+            RemoteProblemSection(model: model)
+        }
+        .remoteCategoryChrome(model: model, category: .statistics, title: "Statistics")
+        .confirmationDialog(
+            "Reset all counters?",
+            isPresented: $confirmsReset,
+            titleVisibility: .visible
+        ) {
+            Button("Reset Counters", role: .destructive) {
+                Task { await resetCounters() }
+            }
+            Button("Cancel", role: .cancel) {}
+        } message: {
+            Text("Duty cycle and uptime are not reset.")
+        }
+    }
+
+    private var currentUptime: (read: UInt32, asOf: Date)? {
+        guard let reading, let seconds = stats.uptimeSeconds, let asOf = reading.asOf else {
+            return nil
+        }
+        return (seconds, asOf)
+    }
+
+    private func elapsedUptime(_ uptime: (read: UInt32, asOf: Date), asOf now: Date) -> UInt32 {
+        let since = max(0, now.timeIntervalSince(uptime.asOf))
+        return UInt32(clamping: UInt64(uptime.read) + UInt64(since))
+    }
+
+    private func dutyPercent(_ raw: UInt16) -> String {
+        (Double(raw) * 100 / Double(UInt16.max))
+            .formatted(.number.precision(.fractionLength(2))) + "%"
+    }
+
+    private func resetCounters() async {
+        guard !answeredCounterIDs.isEmpty else { return }
+        if await model.apply(
+            .statistics,
+            desired: .empty,
+            dirty: answeredCounterIDs,
+            save: false
+        ) {
+            await model.refreshCategory(.statistics)
+        }
+    }
+}
+
 // MARK: - Shared pieces
 
 /// A setting shown as the device reports it, with no way to change it here.

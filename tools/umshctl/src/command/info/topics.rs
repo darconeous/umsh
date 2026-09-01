@@ -90,6 +90,28 @@ pub const TOPICS: &[Topic] = &[
         env: env_radio,
     },
     Topic {
+        name: "stats",
+        prefix: "STATS",
+        gate: |ctx| ctx.has(cap::STATS),
+        keys: |_| {
+            vec![
+                prop::STAT_TX_PACKETS,
+                prop::STAT_TX_CHANNEL_BUSY,
+                prop::STAT_RX_PACKETS,
+                prop::STAT_RX_BAD_CRC,
+                prop::STAT_RX_NON_UMSH,
+                prop::STAT_RX_ACCEPTED,
+                prop::STAT_FORWARDED,
+                prop::STAT_FORWARD_DROPPED,
+                prop::STAT_FORWARD_CANCELLED,
+                prop::PHY_DUTY_NOW,
+                prop::UPTIME,
+            ]
+        },
+        render: render_stats,
+        env: env_stats,
+    },
+    Topic {
         name: "battery",
         prefix: "BATTERY",
         gate: |ctx| ctx.has(cap::BATTERY),
@@ -410,6 +432,72 @@ fn duty_limit(raw: u16) -> String {
     } else {
         format!("{:.1}%", duty_percent(raw))
     }
+}
+
+// ─── statistics ──────────────────────────────────────────────────────
+
+const STAT_FIELDS: &[(u32, &str, &str)] = &[
+    (prop::STAT_TX_PACKETS, "tx packets", "TX_PACKETS"),
+    (
+        prop::STAT_TX_CHANNEL_BUSY,
+        "tx channel busy",
+        "TX_CHANNEL_BUSY",
+    ),
+    (prop::STAT_RX_PACKETS, "rx UMSH", "RX_PACKETS"),
+    (prop::STAT_RX_BAD_CRC, "rx bad CRC", "RX_BAD_CRC"),
+    (prop::STAT_RX_NON_UMSH, "rx non-UMSH", "RX_NON_UMSH"),
+    (prop::STAT_RX_ACCEPTED, "rx accepted", "RX_ACCEPTED"),
+    (prop::STAT_FORWARDED, "forwarded", "FORWARDED"),
+    (
+        prop::STAT_FORWARD_DROPPED,
+        "forward policy drops",
+        "FORWARD_DROPPED",
+    ),
+    (
+        prop::STAT_FORWARD_CANCELLED,
+        "forwards cancelled",
+        "FORWARD_CANCELLED",
+    ),
+];
+
+fn render_stats(set: &PropSet, _ctx: &Context) -> Vec<Line> {
+    let mut lines = STAT_FIELDS
+        .iter()
+        .filter_map(|&(key, label, _)| {
+            set.u32(key)
+                .map(|value| (label.to_string(), value.to_string()))
+        })
+        .collect::<Vec<_>>();
+    if let Some(raw) = set.u16(prop::PHY_DUTY_NOW) {
+        lines.push(("tx duty cycle".into(), format!("{:.1}%", duty_percent(raw))));
+    }
+    if let Some(seconds) = set.u32(prop::UPTIME) {
+        lines.push((
+            "uptime".into(),
+            format!("{} ({seconds} s)", format_duration(seconds)),
+        ));
+    }
+    lines
+}
+
+fn env_stats(set: &PropSet, _ctx: &Context) -> Vec<Line> {
+    let mut env = STAT_FIELDS
+        .iter()
+        .filter_map(|&(key, _, name)| {
+            set.u32(key)
+                .map(|value| (name.to_string(), value.to_string()))
+        })
+        .collect::<Vec<_>>();
+    if let Some(raw) = set.u16(prop::PHY_DUTY_NOW) {
+        env.push((
+            "TX_DUTY_PERCENT".into(),
+            format!("{:.2}", duty_percent(raw)),
+        ));
+    }
+    if let Some(seconds) = set.u32(prop::UPTIME) {
+        env.push(("UPTIME_S".into(), seconds.to_string()));
+    }
+    env
 }
 
 // ─── battery ─────────────────────────────────────────────────────────

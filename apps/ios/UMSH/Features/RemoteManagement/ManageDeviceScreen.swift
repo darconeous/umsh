@@ -213,6 +213,11 @@ struct ManageDeviceCategory: Identifiable {
             symbol: "antenna.radiowaves.left.and.right"
         ) { model, _ in AnyView(RemoteRadioEditor(model: model)) },
         ManageDeviceCategory(
+            category: .statistics,
+            title: "Statistics",
+            symbol: "chart.bar"
+        ) { model, _ in AnyView(RemoteStatisticsScreen(model: model)) },
+        ManageDeviceCategory(
             category: .identity,
             title: "Identity",
             symbol: "person.text.rectangle"

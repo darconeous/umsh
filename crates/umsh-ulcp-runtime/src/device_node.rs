@@ -65,6 +65,7 @@ use umsh_node::{
     never_respond_policy,
 };
 use umsh_sync::AsyncRefCell;
+use umsh_ulcp::stats::{Counter, Mirror, StatsLedger};
 use umsh_ulcp_device::{MAX_CHANNEL_KEYS, MAX_DEV_ADMINS, MAX_DEV_PEERS, MAX_DEVICE_NAME_LEN};
 
 use crate::driver::DevDomainSnapshot;
@@ -286,6 +287,7 @@ static MAC_RX_FRAMES: AtomicU32 = AtomicU32::new(0);
 static MAC_RX_ACCEPTED: AtomicU32 = AtomicU32::new(0);
 static MAC_FORWARDED: AtomicU32 = AtomicU32::new(0);
 static MAC_FORWARD_CANCELLED: AtomicU32 = AtomicU32::new(0);
+static MAC_FORWARD_DROPPED_POLICY: AtomicU32 = AtomicU32::new(0);
 
 /// The most recently published MAC tallies.
 ///
@@ -300,6 +302,7 @@ pub fn mac_counters() -> MacCounters {
         rx_accepted: MAC_RX_ACCEPTED.load(Ordering::Relaxed),
         forwarded: MAC_FORWARDED.load(Ordering::Relaxed),
         forward_cancelled: MAC_FORWARD_CANCELLED.load(Ordering::Relaxed),
+        forward_dropped_policy: MAC_FORWARD_DROPPED_POLICY.load(Ordering::Relaxed),
     }
 }
 
@@ -310,6 +313,7 @@ fn publish_mac_counters(counters: MacCounters) {
     MAC_RX_ACCEPTED.store(counters.rx_accepted, Ordering::Relaxed);
     MAC_FORWARDED.store(counters.forwarded, Ordering::Relaxed);
     MAC_FORWARD_CANCELLED.store(counters.forward_cancelled, Ordering::Relaxed);
+    MAC_FORWARD_DROPPED_POLICY.store(counters.forward_dropped_policy, Ordering::Relaxed);
 }
 
 /// The transmit power the radio was last configured with, in dBm, offset
@@ -715,8 +719,14 @@ impl Default for NodeHooks {
 pub async fn pump_loop<CS: CounterStore + 'static>(
     mut host: DeviceNodeHost<CS>,
     mac: DeviceNodeHandle<CS>,
+    stats: Option<&'static StatsLedger>,
 ) -> ! {
     debug_log(format_args!("node pump: running"));
+    // What the MAC decides is the one part of the traffic picture the mux
+    // cannot see, so the ledger learns it here. Deltas, not absolutes:
+    // the ledger's cells belong to it, and a host's clear must not be
+    // overwritten by the next pass through this loop.
+    let mut mirrors = MacMirrors::new();
     // `Host::run` is this loop without the republish. Spelling it out here
     // is what lets the counters be refreshed on a schedule that already
     // exists: one wake cycle has just completed, the coordinator's borrow
@@ -726,9 +736,49 @@ pub async fn pump_loop<CS: CounterStore + 'static>(
             debug_log(format_args!("node pump: EXITED error={error:?}"));
             break;
         }
-        publish_mac_counters(mac.counters().await);
+        let counters = mac.counters().await;
+        publish_mac_counters(counters);
+        if let Some(stats) = stats {
+            mirrors.advance(stats, counters);
+        }
     }
     panic!("device node host exited");
+}
+
+/// One [`Mirror`] per MAC tally the ledger carries.
+struct MacMirrors {
+    rx_accepted: Mirror,
+    forwarded: Mirror,
+    forward_dropped_policy: Mirror,
+    forward_cancelled: Mirror,
+}
+
+impl MacMirrors {
+    const fn new() -> Self {
+        Self {
+            rx_accepted: Mirror::new(),
+            forwarded: Mirror::new(),
+            forward_dropped_policy: Mirror::new(),
+            forward_cancelled: Mirror::new(),
+        }
+    }
+
+    fn advance(&mut self, stats: &StatsLedger, counters: MacCounters) {
+        self.rx_accepted
+            .advance(stats, Counter::RxAccepted, counters.rx_accepted);
+        self.forwarded
+            .advance(stats, Counter::Forwarded, counters.forwarded);
+        self.forward_dropped_policy.advance(
+            stats,
+            Counter::ForwardDropped,
+            counters.forward_dropped_policy,
+        );
+        self.forward_cancelled.advance(
+            stats,
+            Counter::ForwardCancelled,
+            counters.forward_cancelled,
+        );
+    }
 }
 
 /// Turns beacon triggers into node sends on the device identity: a signed

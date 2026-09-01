@@ -86,6 +86,8 @@ fn session_config() -> SessionConfig {
         // hardware for `CMD_REBOOT` to restart, and restarting the
         // bridge is the operator's business.
         reboot: false,
+        // A soft device on the bridge has no antenna of its own.
+        stats: None,
         mac_node: false,
     }
 }
