@@ -6095,6 +6095,46 @@ fn receive_one_repeater_without_configured_regions_forwards_tagged_floods() {
 }
 
 #[test]
+fn receive_one_repeater_counts_configured_region_refusal_as_policy_drop() {
+    let mut mac = make_mac();
+    mac.repeater_config_mut().enabled = true;
+    mac.repeater_config_mut()
+        .regions
+        .push([0x31, 0xD9])
+        .unwrap();
+    let _repeater_id = mac.add_identity(DummyIdentity::new([0x10; 32])).unwrap();
+
+    let remote = DummyIdentity::new([0xAB; 32]);
+    let keys = PairwiseKeys {
+        k_enc: [1; 32],
+        k_mic: [2; 32],
+    };
+    let mut buf = [0u8; 256];
+    let mut packet = PacketBuilder::new(&mut buf)
+        .unicast(umsh_core::NodeHint([0x77, 0x66, 0x55]))
+        .source_full(remote.public_key())
+        .frame_counter(7)
+        .encrypted()
+        .flood_hops(4)
+        .region_code([0x78, 0x53])
+        .payload(b"hello")
+        .build()
+        .unwrap();
+    {
+        packet.header().unwrap();
+        packet.as_bytes_mut()[1] = FloodHops::new(4, 0).unwrap().0;
+    }
+    CryptoEngine::new(DummyAes, DummySha)
+        .seal_packet(&mut packet, &keys)
+        .unwrap();
+
+    mac.radio_mut().queue_received_frame(packet.as_bytes());
+    assert!(!block_on(mac.receive_one(|_, _| {})).unwrap());
+    assert!(mac.tx_queue_mut().pop_next().is_none());
+    assert_eq!(mac.counters().forward_dropped_policy, 1);
+}
+
+#[test]
 fn receive_one_repeater_preserves_existing_region_without_inserting_another() {
     let mut mac = make_mac();
     mac.repeater_config_mut().enabled = true;
@@ -6435,16 +6475,14 @@ fn counters_record_a_forwarded_frame() {
     assert_eq!(mac.counters().forward_dropped_policy, 0);
 }
 
-/// `forward_dropped_policy` counts the operator's settings turning a
-/// frame away, and nothing else. A signal under the configured floor is
-/// the canonical case; noise the radio could not even parse is not, and
-/// the difference is what makes the number worth reading.
+/// `forward_dropped_policy` counts the operator's settings turning a frame
+/// away, and nothing else. Normal packet behavior must not inflate it.
 #[test]
-fn counters_record_a_forward_the_policy_turned_away() {
+fn counters_record_only_administrator_policy_drops() {
     let mut repeater = make_mac();
     repeater.repeater_config_mut().enabled = true;
-    repeater.repeater_config_mut().min_rssi = Some(10);
-    repeater.repeater_config_mut().min_snr = Some(10);
+    repeater.repeater_config_mut().min_rssi = Some(-70);
+    repeater.repeater_config_mut().min_snr = Some(5);
     repeater
         .add_identity(DummyIdentity::new([0x10; 32]))
         .unwrap();
@@ -6464,7 +6502,7 @@ fn counters_record_a_forward_the_policy_turned_away() {
     let dst = umsh_core::NodeHint([0x77, 0x66, 0x55]);
     let source_route: [RouterHint; 0] = [];
 
-    // A floodable frame carrying its own thresholds, arriving under them.
+    // An exhausted flood budget is normal packet behavior, not policy.
     repeater.radio_mut().queue_received_unicast_with_thresholds(
         &remote,
         &keys,
@@ -6472,13 +6510,48 @@ fn counters_record_a_forward_the_policy_turned_away() {
         b"hello",
         false,
         7,
+        Some((0, 0)),
+        None,
+        Some(&source_route),
+        None,
+        None,
+    );
+    assert!(!block_on(repeater.receive_one(|_, _| {})).unwrap());
+    assert_eq!(repeater.counters().forward_dropped_policy, 0);
+
+    // The packet's own SNR threshold rejects this reception. The local floor
+    // would reject it too, but it is not the cause of the refusal.
+    repeater.radio_mut().queue_received_unicast_with_thresholds(
+        &remote,
+        &keys,
+        &dst,
+        b"hello",
+        false,
+        8,
         Some((1, 0)),
         None,
         Some(&source_route),
-        Some(20),
+        None,
         Some(20),
     );
+    assert!(!block_on(repeater.receive_one(|_, _| {})).unwrap());
+    assert_eq!(repeater.counters().forward_dropped_policy, 0);
 
+    // This packet permits the measured SNR, but the administrator's local
+    // floor rejects it. This is the policy drop.
+    repeater.radio_mut().queue_received_unicast_with_thresholds(
+        &remote,
+        &keys,
+        &dst,
+        b"hello",
+        false,
+        9,
+        Some((1, 0)),
+        None,
+        Some(&source_route),
+        None,
+        Some(-5),
+    );
     assert!(!block_on(repeater.receive_one(|_, _| {})).unwrap());
     assert!(repeater.tx_queue_mut().pop_next().is_none());
     assert_eq!(repeater.counters().forward_dropped_policy, 1);

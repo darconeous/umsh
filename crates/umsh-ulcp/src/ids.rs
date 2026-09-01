@@ -254,11 +254,12 @@ pub mod prop {
     pub const STAT_FORWARDED: u32 = 4838;
     /// Receptions this node would have repeated and declined under the
     /// operator's forwarding policy (`PROP_STAT_FORWARD_DROPPED`) —
-    /// `UINT32_LE`: an exhausted flood budget, a signal below the
-    /// configured minimum RSSI or SNR, or a region the repeater does not
-    /// serve. Duplicates and traffic addressed to this device are not
-    /// policy decisions and are not counted. Requires `CAP_STATS` and
-    /// `CAP_REPEATER`.
+    /// `UINT32_LE`: a signal below this repeater's configured minimum RSSI
+    /// or SNR, or a region the repeater does not serve. Exhausted flood
+    /// budgets and packet-imposed signal thresholds are normal packet
+    /// behavior, not administrator policy, and are not counted. Duplicates
+    /// and traffic addressed to this device are also excluded. Requires
+    /// `CAP_STATS` and `CAP_REPEATER`.
     pub const STAT_FORWARD_DROPPED: u32 = 4839;
     /// Queued repeats dropped after the destination's acknowledgement was
     /// overheard (`PROP_STAT_FORWARD_CANCELLED`) — `UINT32_LE`. Airtime

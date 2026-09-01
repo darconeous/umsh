@@ -270,10 +270,12 @@ by `PROP_STAT_TX_PACKETS`. Requires `CAP_STATS` and `CAP_REPEATER`.
 
 ### PROP 4839: `PROP_STAT_FORWARD_DROPPED` {#prop-stat-forward-dropped}
 
-Packets that were eligible for forwarding but were rejected by the configured
-flood budget, minimum RSSI, minimum SNR, or region policy. Duplicates,
-self-addressed packets, and packets received while forwarding is disabled are
-not included. Requires `CAP_STATS` and `CAP_REPEATER`.
+Packets that were eligible for forwarding but were rejected by this repeater's
+configured minimum RSSI, minimum SNR, or region policy. Exhausted flood budgets
+and packet-imposed signal thresholds are normal packet behavior, not
+administrator policy, and are not included. Duplicates, self-addressed packets,
+and packets received while forwarding is disabled are also excluded. Requires
+`CAP_STATS` and `CAP_REPEATER`.
 
 ### PROP 4840: `PROP_STAT_FORWARD_CANCELLED` {#prop-stat-forward-cancelled}
 
