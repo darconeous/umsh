@@ -1527,16 +1527,37 @@ impl HostDomain {
     /// window recording every frame in earshot on nobody's behalf — its
     /// own transmissions among them.
     ///
-    /// The broadcast rule is the second: a broadcast is implicitly
-    /// accepted live because it is addressed to every node, the host
-    /// included, but ambient broadcast traffic must not displace queued
-    /// unicast frames. A detached device queues one only when an explicit
-    /// filter selects it, which is the host having asked.
+    /// What the implicit filters admit is the second. They exist to
+    /// recognize traffic the device can take custody of, and custody is
+    /// what an acknowledgement request asks for: a sender that wanted one
+    /// retries until it arrives, which is the retrying this queue exists
+    /// to stop. Traffic nobody asked to have confirmed is opportunistic —
+    /// a broadcast addressed to every node at once, an echo or identity
+    /// reply answering a question that has timed out by the time a drain
+    /// runs — and it must not displace frames held under custody. So a
+    /// detached device queues a broadcast, a plain unicast, or a plain
+    /// blind unicast only where an explicit filter names its packet type,
+    /// which is the host having asked for it.
+    ///
+    /// The host cannot ask any other way, which is why the default has to
+    /// be the strict one: filters are a union, so an entry for
+    /// `UNICAST_ACK_REQ` would only widen what the implicit host-hint
+    /// filter already admits — it could never narrow it to exclude
+    /// `UNICAST`.
     fn accepts_queued_frame(&self, data: &[u8]) -> bool {
         if !self.filtering_configured() {
             return false;
         }
-        self.accepts_frame(data)
+        if !self.accepts_frame(data) {
+            return false;
+        }
+        let Ok(header) = PacketHeader::parse(data) else {
+            return false;
+        };
+        match header.fcf.packet_type() {
+            PacketType::Unicast | PacketType::BlindUnicast => self.matches_explicit_filter(&header),
+            _ => true,
+        }
     }
 
     /// Whether receive filtering accepts this frame for live delivery:
@@ -1601,6 +1622,15 @@ impl HostDomain {
         {
             return true;
         }
+        self.matches_explicit_filter(&header)
+    }
+
+    /// Whether an entry in `PROP_HOST_RX_FILTERS` selects this frame —
+    /// the host having named something, as opposed to the implicit
+    /// filters a host key and its channel keys create on their own.
+    fn matches_explicit_filter(&self, header: &PacketHeader) -> bool {
+        let dst = header.dst.map(|hint| hint.0);
+        let channel = header.channel.map(|channel| channel.0);
         let pkt_type = header.fcf.packet_type() as u8;
         self.filters.iter().any(|filter| match filter {
             Filter::DestHint(hint) => dst == Some(*hint),
@@ -9621,6 +9651,23 @@ mod tests {
             .to_vec()
     }
 
+    /// The same frame asking to be acknowledged, which is what traffic
+    /// the implicit filters queue looks like: a sender that wants an ack
+    /// is a sender that will retry without one.
+    fn unicast_ack_req_to(dst: [u8; 3]) -> Vec<u8> {
+        let mut buf = [0u8; 64];
+        PacketBuilder::new(&mut buf)
+            .unicast(NodeHint(dst))
+            .source_hint(NodeHint([9, 9, 9]))
+            .frame_counter(1)
+            .ack_requested()
+            .payload(&[1, 2, 3])
+            .build()
+            .unwrap()
+            .as_bytes()
+            .to_vec()
+    }
+
     fn multicast_on(channel: [u8; 2]) -> Vec<u8> {
         let mut buf = [0u8; 64];
         PacketBuilder::new(&mut buf)
@@ -10344,6 +10391,62 @@ mod tests {
     }
 
     #[test]
+    fn only_directed_traffic_asking_to_be_acked_is_queued_implicitly() {
+        let mut session = test_session();
+        enable(&mut session);
+        install_host_key(&mut session, &[0xC4; 32]);
+        session.detach();
+
+        // The implicit host-hint filter matches both forms, and both are
+        // delivered live. Only the one whose sender is waiting on an
+        // acknowledgement is worth holding: the other is an echo or
+        // identity reply answering a question that has timed out by the
+        // time a drain runs.
+        receive_detached(&mut session, &unicast_to([0xC4, 0xC4, 0xC4]), 0);
+        receive_detached(&mut session, &unicast_ack_req_to([0xC4, 0xC4, 0xC4]), 0);
+        session.attach(true);
+        assert_eq!(queue_count(&mut session), 1);
+        assert!(delivered(&mut session, &unicast_to([0xC4, 0xC4, 0xC4])));
+
+        // Not a silent drop dressed as an eviction.
+        assert_eq!(
+            get(&mut session, prop::HOST_RX_QUEUE_DROPPED),
+            0u32.to_le_bytes()
+        );
+
+        // An explicit filter naming the packet type is the host asking,
+        // and is the only way it can: filters are a union, so no entry
+        // could ever narrow the implicit hint filter instead.
+        insert_item(
+            &mut session,
+            prop::HOST_RX_FILTERS,
+            &[items::FILTER_PKT_TYPE, PacketType::Unicast as u8],
+        );
+        session.detach();
+        receive_detached(&mut session, &unicast_to([0xC4, 0xC4, 0xC4]), 0);
+        session.attach(true);
+        assert_eq!(queue_count(&mut session), 2);
+    }
+
+    #[test]
+    fn a_blind_unicast_is_queued_only_when_it_asks_to_be_acked() {
+        let channel_key = [0x42u8; 32];
+        let mut session = auto_ack_session();
+        session.attach(true);
+        install_channel_key(&mut session, &channel_key);
+        session.detach();
+
+        // Both reach the queue's door through the implicit channel
+        // filter — a blind unicast's destination is concealed, so the
+        // channel is what admits it — and only the ack-requesting form
+        // goes through.
+        receive_detached(&mut session, &sealed_blind_unicast(1, &channel_key), 0);
+        rx_effect(&mut session, &sealed_buar(2, &channel_key), 0);
+        session.attach(true);
+        assert_eq!(queue_count(&mut session), 1);
+    }
+
+    #[test]
     fn our_own_transmissions_are_never_queued() {
         // The TX loopback exists so an attached host's MAC can watch its
         // own frame reach the air. Replayed on a later drain it answers
@@ -10449,7 +10552,7 @@ mod tests {
         // address the host.)
         enable(&mut session);
         session.detach();
-        receive_detached(&mut session, &unicast_to([0xAA, 0xAA, 0xAA]), 0);
+        receive_detached(&mut session, &unicast_ack_req_to([0xAA, 0xAA, 0xAA]), 0);
         session.attach(true);
         assert_eq!(queue_count(&mut session), 1);
         let _ = session.reset(Status::RESET_SOFTWARE, &mut |_| {});
@@ -10727,14 +10830,28 @@ mod tests {
 
     /// A sealed BUAR from the test peer to the host through `channel_key`.
     fn sealed_buar(counter: u32, channel_key: &[u8; 32]) -> Vec<u8> {
+        sealed_blind(counter, channel_key, true)
+    }
+
+    /// The same frame with no acknowledgement asked for.
+    fn sealed_blind_unicast(counter: u32, channel_key: &[u8; 32]) -> Vec<u8> {
+        sealed_blind(counter, channel_key, false)
+    }
+
+    fn sealed_blind(counter: u32, channel_key: &[u8; 32], ack_requested: bool) -> Vec<u8> {
         let engine = test_engine();
         let channel_keys = engine.derive_channel_keys(&ChannelKey(*channel_key));
         let mut buf = [0u8; 96];
-        let mut packet = PacketBuilder::new(&mut buf)
+        let builder = PacketBuilder::new(&mut buf)
             .blind_unicast(channel_keys.channel_id, NodeHint([0xC4, 0xC4, 0xC4]))
             .source_hint(NodeHint([0x0A, 0x0A, 0x0A]))
-            .frame_counter(counter)
-            .ack_requested()
+            .frame_counter(counter);
+        let builder = if ack_requested {
+            builder.ack_requested()
+        } else {
+            builder
+        };
+        let mut packet = builder
             .encrypted()
             .mic_size(MicSize::Mic8)
             .payload(&[3, 9, 9])
@@ -11526,7 +11643,7 @@ mod tests {
         session.detach();
         assert!(!delivered_at(
             &mut session,
-            &unicast_to([0xBB, 0xBB, 0xBB]),
+            &unicast_ack_req_to([0xBB, 0xBB, 0xBB]),
             0
         ));
         session.attach(true);

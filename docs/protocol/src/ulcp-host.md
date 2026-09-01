@@ -478,6 +478,17 @@ detached, a broadcast is queued only when an explicit filter selects it
 (e.g., a `FILTER_PKT_TYPE` entry with value 0), so ambient broadcast
 traffic cannot displace queued unicast frames.
 
+Directed traffic that asks for no acknowledgement follows the same shape.
+A `UNIC` or `BUNI` frame accepted only by an implicit filter is delivered
+live but **MUST NOT** be queued; queueing it requires an explicit
+`FILTER_PKT_TYPE` entry selecting that packet type. Its sender is not
+waiting on the device — nothing about it will be repeated or given up on —
+so the frame is a request whose asker has moved on by the time a drain
+runs, while the queue slot it takes is one an ack-requesting frame needed.
+The rule is stated as a default the host must override rather than one it
+can refuse, because filters only widen: an entry for `UNAR` would add to
+what the implicit destination-hint filter already admits, never narrow it.
+
 Device-domain state never creates implicit host filters: frames for the
 device identity or its channels reach the host only if the host's own
 filtering matches them.
