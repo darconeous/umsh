@@ -45,10 +45,10 @@ struct DeviceManagementBackend {
     /// doing the thing and saying nothing, so success here means the
     /// command was delivered, not that the device has finished.
     var reset: (String, MobileMeshResetScope) async throws -> Void
-    /// Forget every host paired with the device. Unlike the resets above
-    /// this is answered, so returning means the device said it did it.
-    /// The pairing window the clear opens is a property, not a command,
-    /// and takes the ordinary write path.
+    /// Forget every host paired with the device: the bond count written to
+    /// zero. Unlike the resets above this is answered, so returning means
+    /// the device said it did it. It stands apart from the ordinary Apply
+    /// flow only because it is destructive and confirmed on its own.
     var clearBluetoothBonds: (String) async throws -> Void
     /// This phone's own node key, so the administrator list can say which
     /// entry is this phone — and refuse to remove it.
@@ -592,7 +592,7 @@ final class ManageDeviceModel {
     /// The bond count on screen is stale the moment this returns, and on a
     /// local link the value the device pushes back cannot arrive — clearing
     /// bonds drops the very link it would arrive on. Refresh the reading
-    /// from what the command means rather than from what the device says
+    /// from what the write means rather than from what the device says
     /// next, so the screen is not left reporting hosts that no longer exist.
     func clearBluetoothPairings() async {
         await run { [self] in
@@ -603,7 +603,7 @@ final class ManageDeviceModel {
             UlcpPropertyPushRecord(propertyId: ulcpProperties.bleBondCount, value: Data([0]))
         )
         // Clearing opens a pairing window, and the window is a property
-        // this screen shows as a toggle — reflect what the command means.
+        // this screen shows as a toggle — reflect what the write means.
         await absorb(
             UlcpPropertyPushRecord(propertyId: ulcpProperties.blePairing, value: Data([1]))
         )

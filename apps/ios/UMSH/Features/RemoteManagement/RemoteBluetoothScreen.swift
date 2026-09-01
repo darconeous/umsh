@@ -191,9 +191,9 @@ struct RemoteBluetoothScreen: View {
         }
     }
 
-    /// The two settings on this screen. The pairing count and the link
-    /// are readings, and clearing bonds is a command — neither is part of
-    /// Apply.
+    /// The two settings on this screen. The link is a reading, and the
+    /// bond count is written only by Clear Pairings — a destructive act
+    /// with its own confirmation — so neither is part of Apply.
     private struct Edits {
         var enabled = RemoteField<Bool>(0, nil)
         var pairing = RemoteField<Bool>(0, nil)

@@ -239,10 +239,10 @@ impl<const PAYLOAD: usize> Device<PAYLOAD> {
                         emitted.push(bytes.to_vec())
                     })
                 }
-                Effect::BleClearBonds { tid } => {
+                Effect::ClearBleBonds { tid } => {
                     self.session.set_ble_bond_count(0, &mut |_| {});
                     self.session
-                        .respond_ble_clear_bonds(tid, Ok(()), &mut |bytes: &[u8]| {
+                        .respond_ble_bond_count(tid, Ok(()), &mut |bytes: &[u8]| {
                             emitted.push(bytes.to_vec())
                         })
                 }
@@ -785,9 +785,9 @@ fn a_reset_is_answered_by_nothing() {
 
 /// Bond management is not reset-class: an administrator hears what it
 /// did. Clearing bonds over the mesh addresses the device's node, not
-/// one of its Bluetooth hosts, so the link that carried the command
-/// survives it and the reply arrives — and the pairing window is an
-/// ordinary property write whose reply quotes the state back.
+/// one of its Bluetooth hosts, so the link that carried the write
+/// survives it and the reply arrives — and both halves are ordinary
+/// property writes whose replies quote the state back.
 #[test]
 fn an_administrator_manages_bonds_and_is_told_the_outcome() {
     let mut device = managed();
@@ -802,10 +802,10 @@ fn an_administrator_manages_bonds_and_is_told_the_outcome() {
     assert!(matches!(pairing.outcome, Outcome::Replied { .. }));
     assert_eq!(value_of(&pairing.reply), vec![1]);
 
-    let len = frame::ble_clear_bonds(&mut buf, 0).unwrap();
+    let len = frame::prop_set(&mut buf, 0, prop::BLE_BOND_COUNT, &[0]).unwrap();
     let cleared = converse(&mut device, &buf[..len], 3);
     assert!(matches!(cleared.outcome, Outcome::Replied { .. }));
-    assert_eq!(status_of(&cleared.reply), Status::OK);
+    assert_eq!(value_of(&cleared.reply), vec![0]);
 }
 
 /// What the binding does not reach, checked from the far end of the link

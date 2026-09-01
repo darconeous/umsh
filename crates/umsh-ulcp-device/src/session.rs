@@ -240,9 +240,9 @@ pub struct SessionConfig {
     /// properties are unknown.
     pub ble: bool,
     /// Whether the platform manages its own Bluetooth bonds. When set,
-    /// `PROP_BLE_BOND_COUNT` and `PROP_BLE_PAIRING` exist and
-    /// `CMD_BLE_CLEAR_BONDS` reaches its effect; otherwise the command
-    /// answers `STATUS_UNIMPLEMENTED` and both properties are unknown.
+    /// `PROP_BLE_BOND_COUNT` and `PROP_BLE_PAIRING` exist, and a write of
+    /// zero to the count reaches the platform's wipe; otherwise both
+    /// properties are unknown and answer `STATUS_PROP_NOT_FOUND`.
     /// Meaningful only alongside [`ble`](Self::ble).
     ///
     /// Deliberately not a capability of its own. `CAP_BLE` is the only
@@ -397,13 +397,13 @@ pub enum Effect {
     /// link. What comes back is the same device with the same identity,
     /// announcing its power-on reset.
     Reboot,
-    /// `CMD_BLE_CLEAR_BONDS`: delete every stored bond, the pairing PIN,
-    /// and the pairing failure lockout, then open a pairing window so the
-    /// device can be paired again. Complete with
-    /// [`Session::respond_ble_clear_bonds`] once the deletion is durable —
+    /// A `PROP_BLE_BOND_COUNT` write of zero: delete every stored bond,
+    /// the pairing PIN, and the pairing failure lockout, then open a
+    /// pairing window so the device can be paired again. Complete with
+    /// [`Session::respond_ble_bond_count`] once the deletion is durable —
     /// over Bluetooth that reply is the last thing the sender hears, since
     /// dropping its bond drops its link.
-    BleClearBonds { tid: u8 },
+    ClearBleBonds { tid: u8 },
     /// A `PROP_BLE_PAIRING` write: open (or renew) the pairing window, or
     /// close it. Complete with [`Session::respond_ble_pairing`], quoting
     /// the state the transport is actually in — a device that cannot open
@@ -2981,18 +2981,6 @@ impl<A: AesProvider, S: Sha256Provider, const TX: usize> Session<A, S, TX> {
                 }
                 Some(Effect::Reboot)
             }
-            // Bond management. Defers: the answer reports what the
-            // platform actually did, and it is not safe to acknowledge
-            // before the deletion is durable — a clear that replied first
-            // and then failed would leave a host believing it had been
-            // forgotten.
-            Some(Cmd::BleClearBonds) => {
-                if !self.config.ble_pairing {
-                    self.complete(tid, Status::UNIMPLEMENTED, emit);
-                    return None;
-                }
-                Some(Effect::BleClearBonds { tid })
-            }
             // Several properties in one exchange. Both commands are
             // served entry by entry through the ordinary single-property
             // paths, so a value that needs a platform round trip defers
@@ -4336,22 +4324,25 @@ impl<A: AesProvider, S: Sha256Provider, const TX: usize> Session<A, S, TX> {
         );
     }
 
-    /// Complete a deferred `CMD_BLE_CLEAR_BONDS`.
-    pub fn respond_ble_clear_bonds(
+    /// Complete a deferred `PROP_BLE_BOND_COUNT` write.
+    ///
+    /// `Ok(())` is a durable deletion, answered the way any set is — with
+    /// the property's value, which after a clear is zero. `Err(())` is a
+    /// platform that could not empty its store, and the host's bonds are
+    /// where they were.
+    pub fn respond_ble_bond_count(
         &mut self,
         tid: u8,
         result: Result<(), ()>,
         emit: &mut impl FnMut(&[u8]),
     ) {
-        self.complete(
-            tid,
-            if result.is_ok() {
-                Status::OK
-            } else {
-                Status::INTERNAL_ERROR
-            },
-            emit,
-        );
+        match result {
+            Ok(()) => {
+                self.ble_bond_count = 0;
+                self.send_prop_is(tid, prop::BLE_BOND_COUNT, &[0], emit);
+            }
+            Err(()) => self.complete(tid, Status::INTERNAL_ERROR, emit),
+        }
     }
 
     /// The number of Bluetooth bonds the platform is holding, as reported
@@ -4454,6 +4445,24 @@ impl<A: AesProvider, S: Sha256Provider, const TX: usize> Session<A, S, TX> {
                 }
             };
             return Some(Effect::SetPairingPin { tid, pin });
+        }
+        // Forgetting every host. Defers because it is not safe to
+        // acknowledge before the deletion is durable — a clear that
+        // replied first and then failed would leave a host believing it
+        // had been forgotten. Zero is the only count a host can write:
+        // bonds arrive one pairing ceremony at a time, so no other value
+        // names a state the device could be put into.
+        if key == prop::BLE_BOND_COUNT {
+            if !self.config.ble_pairing {
+                self.complete(tid, Status::PROP_NOT_FOUND, emit);
+                return None;
+            }
+            match parse_u8(value) {
+                Ok(0) => return Some(Effect::ClearBleBonds { tid }),
+                Ok(_) => self.complete(tid, Status::INVALID_ARGUMENT, emit),
+                Err(status) => self.complete(tid, status, emit),
+            }
+            return None;
         }
         // The pairing window. Defers like the PIN: whether a window can
         // open is the transport's call (lockout, Bluetooth off), and the
@@ -4932,10 +4941,6 @@ impl<A: AesProvider, S: Sha256Provider, const TX: usize> Session<A, S, TX> {
                 Err(Status::INVALID_ARGUMENT)
             }
             prop::ILLUMINANCE if self.config.illuminance => Err(Status::INVALID_ARGUMENT),
-            // Bonds are enrolled by pairing and removed by
-            // `CMD_BLE_CLEAR_BONDS`; the count reports that, it does not
-            // steer it.
-            prop::BLE_BOND_COUNT if self.config.ble_pairing => Err(Status::INVALID_ARGUMENT),
             // Who is connected is the transport's to report, not the
             // host's to arrange. A host that wants nobody connected has
             // `PROP_BLE_ENABLED`.
@@ -6762,25 +6767,30 @@ mod tests {
         assert!(!capabilities(&mut fixed).contains(&cap::REBOOT));
     }
 
-    /// Both bond commands wait for the platform before they answer:
-    /// acknowledging a clear that then failed would leave a host believing
-    /// it had been forgotten when it had not.
+    /// Forgetting every host is the count written to zero, and it waits
+    /// for the platform before it answers: acknowledging a clear that then
+    /// failed would leave a host believing it had been forgotten when it
+    /// had not.
     #[test]
-    fn bond_commands_defer_to_the_platform_or_say_they_cannot() {
-        let mut buf = [0u8; 8];
-        let clear = frame::ble_clear_bonds(&mut buf, 3).unwrap();
+    fn clearing_bonds_defers_to_the_platform_or_says_it_cannot() {
+        let mut buf = [0u8; 16];
+        let clear = frame::prop_set(&mut buf, 3, prop::BLE_BOND_COUNT, &[0]).unwrap();
         let clear = buf[..clear].to_vec();
 
         let mut session = test_session();
+        session.set_ble_bond_count(2, &mut |_| {});
         let (emitted, effect) = dispatch(&mut session, &clear, 0);
-        assert_eq!(effect, Some(Effect::BleClearBonds { tid: 3 }));
+        assert_eq!(effect, Some(Effect::ClearBleBonds { tid: 3 }));
         assert!(emitted.is_empty(), "the answer waits for the platform");
 
+        // A durable deletion answers with the property's value, the way
+        // any set does.
         let mut emitted = Vec::new();
-        session.respond_ble_clear_bonds(3, Ok(()), &mut |frame| emitted.push(frame.to_vec()));
+        session.respond_ble_bond_count(3, Ok(()), &mut |frame| emitted.push(frame.to_vec()));
         let (_, key, value) = parse_prop_is(&emitted[0]);
-        assert_eq!(key, prop::LAST_STATUS);
-        assert_eq!(pui::decode(&value).unwrap().0, Status::OK.0);
+        assert_eq!(key, prop::BLE_BOND_COUNT);
+        assert_eq!(value, [0]);
+        assert_eq!(get(&mut session, prop::BLE_BOND_COUNT), [0]);
 
         let config = SessionConfig {
             ble_pairing: false,
@@ -6790,15 +6800,12 @@ mod tests {
         fixed.attach(true);
         let (emitted, effect) = dispatch(&mut fixed, &clear, 0);
         assert_eq!(effect, None);
-        let (_, key, value) = parse_prop_is(&emitted[0]);
-        assert_eq!(key, prop::LAST_STATUS);
-        assert_eq!(pui::decode(&value).unwrap().0, Status::UNIMPLEMENTED.0);
+        expect_status(&emitted[0], 3, Status::PROP_NOT_FOUND);
         // The refusal is the whole of what the host is told. Bluetooth
         // has one capability, and a device that keeps its bonds to itself
         // still advertises it — so the count, not the caps list, is what
         // a host asks.
         assert!(capabilities(&mut fixed).contains(&cap::BLE));
-        let mut buf = [0u8; 16];
         let len = frame::prop_get(&mut buf, 6, prop::BLE_BOND_COUNT).unwrap();
         let (emitted, _) = dispatch(&mut fixed, &buf[..len], 0);
         expect_status(&emitted[0], 6, Status::PROP_NOT_FOUND);
@@ -6859,10 +6866,12 @@ mod tests {
         expect_status(&emitted[0], 6, Status::PROP_NOT_FOUND);
     }
 
-    /// The bond count mirrors the transport. It is not configuration, so
-    /// it is not writable and a protocol reset does not clear it — bonds
-    /// outlive `CMD_RST`, and a count that said zero would be lying about
-    /// hosts that are still enrolled.
+    /// The bond count mirrors the transport, and the only count a host
+    /// may write is zero: bonds arrive one ceremony at a time, so no other
+    /// value names a state the device could be put into. It is not
+    /// configuration either, so a protocol reset does not clear it —
+    /// bonds outlive `CMD_RST`, and a count that said zero would be lying
+    /// about hosts that are still enrolled.
     #[test]
     fn bond_count_reports_the_transport_and_survives_a_reset() {
         let mut session = test_session();

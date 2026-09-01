@@ -2126,24 +2126,25 @@ where
     }
 
     /// Forget every Bluetooth bond, the pairing PIN, and the pairing
-    /// lockout (`CMD_BLE_CLEAR_BONDS`; requires `CAP_BLE`), then leave
-    /// the device in a pairing window.
+    /// lockout, then leave the device in a pairing window — the bond
+    /// count written to zero (`PROP_BLE_BOND_COUNT`; requires `CAP_BLE`).
     ///
-    /// `Ok(false)` means the device has no Bluetooth transport at all and
-    /// nothing was sent. One that has a transport but does not manage its
-    /// own bonds answers `STATUS_UNIMPLEMENTED`, which surfaces as an
-    /// error — the caps list stops at "has Bluetooth", so the refusal is
-    /// where the rest of the answer lives.
+    /// `Ok(None)` means the device has no Bluetooth transport at all and
+    /// nothing was sent; `Ok(Some(count))` quotes the count the device
+    /// now holds. One that has a transport but does not manage its own
+    /// bonds answers `STATUS_PROP_NOT_FOUND`, which surfaces as an error —
+    /// the caps list stops at "has Bluetooth", so the refusal is where the
+    /// rest of the answer lives.
     ///
     /// Over Bluetooth this severs the caller's own link — the bond that
-    /// carried it is one of the bonds deleted — but the status arrives
+    /// carried it is one of the bonds deleted — but the answer arrives
     /// first; over a cable and over the mesh nothing is disturbed.
-    pub async fn ble_clear_bonds(&mut self) -> Result<bool, UlcpError> {
+    pub async fn clear_ble_bonds(&mut self) -> Result<Option<u8>, UlcpError> {
         if !self.capabilities().await?.contains(&cap::BLE) {
-            return Ok(false);
+            return Ok(None);
         }
-        self.status_only_command(frame::ble_clear_bonds).await?;
-        Ok(true)
+        let value = self.set_prop(prop::BLE_BOND_COUNT, &[0]).await?;
+        Ok(Some(value.first().copied().unwrap_or(0)))
     }
 
     /// Open or close the pairing window (`PROP_BLE_PAIRING`; requires
@@ -3512,11 +3513,10 @@ mod tests {
                             replies.push(buf[..len].to_vec());
                         }
                     }
-                    // This device predates CAP_CMD_MULTI and CAP_REBOOT,
-                    // and manages no bonds of its own: it answers commands
-                    // it does not implement the way any such device
-                    // answers them.
-                    Cmd::PropMultiGet | Cmd::PropMultiSet | Cmd::Reboot | Cmd::BleClearBonds => {
+                    // This device predates CAP_CMD_MULTI and CAP_REBOOT:
+                    // it answers commands it does not implement the way
+                    // any such device answers them.
+                    Cmd::PropMultiGet | Cmd::PropMultiSet | Cmd::Reboot => {
                         let len = frame::last_status(&mut buf, tid, Status::UNIMPLEMENTED).unwrap();
                         replies.push(buf[..len].to_vec());
                     }

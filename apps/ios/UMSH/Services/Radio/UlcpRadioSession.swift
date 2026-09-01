@@ -946,13 +946,22 @@ class UlcpRadioSession: NSObject, @unchecked Sendable {
     }
 
     func clearRemoteBluetoothBonds(peerAddress: String) async throws {
-        let event = try await performManagement { session in
-            try session.beginManagementBleClearBonds(peerAddress: peerAddress)
+        // Forgetting every host is the bond count written to zero, so this
+        // is an ordinary property write and the device echoes the count it
+        // now holds. A refusal arrives as a status in place of that value.
+        let answers = try await writeRemoteProperties(
+            peerAddress: peerAddress,
+            writes: [
+                MobileMeshPropertyWriteRecord(
+                    propertyId: ulcpManagedPropertyIds().bleBondCount,
+                    value: Data([0])
+                )
+            ]
+        )
+        guard let answer = answers.first else { throw RemoteManagementError.unreadable }
+        if answer.value == nil {
+            throw RemoteManagementError.refused(status: answer.statusCode ?? 0)
         }
-        // Unlike a reset this always answers, so an absent status is a
-        // device that did not do what was asked rather than one too busy
-        // to say.
-        try Self.requireSuccess(event.statusCode)
     }
 
     func saveRemoteDevice(peerAddress: String) async throws {
@@ -1094,14 +1103,20 @@ class UlcpRadioSession: NSObject, @unchecked Sendable {
 
     func clearBluetoothBonds() async throws {
         Self.logger.notice("action: user cleared the radio's Bluetooth pairings")
-        // The radio answers before it drops the bonds, so this completes
-        // normally and the disconnect arrives afterward on its own. The
-        // binding is kept: this is the same radio, and the operator's next
-        // move is pairing with it again.
-        let event = try await performLocalManagement { session in
-            try session.beginBleClearBonds()
+        // The bond count written to zero. The radio answers before it drops
+        // the bonds, so this completes normally and the disconnect arrives
+        // afterward on its own. The binding is kept: this is the same
+        // radio, and the operator's next move is pairing with it again.
+        let answers = try await writeCompanionProperties([
+            MobileMeshPropertyWriteRecord(
+                propertyId: ulcpManagedPropertyIds().bleBondCount,
+                value: Data([0])
+            )
+        ])
+        guard let answer = answers.first else { throw RemoteManagementError.unreadable }
+        if answer.value == nil {
+            throw RemoteManagementError.refused(status: answer.statusCode ?? 0)
         }
-        try Self.requireSuccess(event.statusCode)
     }
 
     /// Values the companion radio announces on its own, verbatim.

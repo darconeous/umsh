@@ -23,13 +23,12 @@ Id | Mnemonic                                                     | Dir         
 14 | [`CMD_RESTORE`](ulcp-saved-state.md#cmd-restore)             | Host->Device | `CAP_SAVE`
 15 | [`CMD_FACTORY_RESET`](ulcp-saved-state.md#cmd-factory-reset) | Host->Device | —
 16 | [`CMD_REBOOT`](ulcp-core.md#cmd-reboot)                      | Host->Device | `CAP_REBOOT`
-17 | [`CMD_BLE_CLEAR_BONDS`](ulcp-ble.md#cmd-ble-clear-bonds)     | Host->Device | `CAP_BLE`
 21 | [`CMD_PROP_MULTI_GET`](ulcp-core.md#cmd-prop-multi-get)      | Host->Device | `CAP_CMD_MULTI`
 22 | [`CMD_PROP_MULTI_SET`](ulcp-core.md#cmd-prop-multi-set)      | Host->Device | `CAP_CMD_MULTI`
 23 | [`CMD_PROP_ARE`](ulcp-core.md#cmd-prop-are)                  | Device->Host | `CAP_CMD_MULTI`
 24 | [`CMD_SESSION_RESET`](ulcp-core.md#cmd-session-reset)        | Device->Host | —
 
-Command identifiers are 7-bit; 18–20 and 25–127 are unassigned.
+Command identifiers are 7-bit; 17–20 and 25–127 are unassigned.
 
 ## Properties and Streams
 
@@ -113,7 +112,7 @@ Id   | Mnemonic                                                                 
 4869 | [`PROP_GNSS_IDENT_PRECISION`](ulcp-device.md#prop-gnss-ident-precision)    | Get, Set                 | `CAP_GNSS`
 4870 | [`PROP_GNSS_TIME_TRUST`](ulcp-device.md#prop-gnss-time-trust)              | Get, Set                 | `CAP_GNSS`
 4871 | [`PROP_BLE_ENABLED`](ulcp-ble.md#prop-ble-enabled)                         | Get, Set, Is             | `CAP_BLE`
-4872 | [`PROP_BLE_BOND_COUNT`](ulcp-ble.md#prop-ble-bond-count)                   | Get, Is                  | `CAP_BLE`
+4872 | [`PROP_BLE_BOND_COUNT`](ulcp-ble.md#prop-ble-bond-count)                   | Get, Set, Is             | `CAP_BLE`
 4873 | [`PROP_BLE_LINK`](ulcp-ble.md#prop-ble-link)                               | Get, Is                  | `CAP_BLE`
 4874 | [`PROP_BLE_PAIRING`](ulcp-ble.md#prop-ble-pairing)                         | Get, Set, Is             | `CAP_BLE`
 

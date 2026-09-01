@@ -351,8 +351,7 @@ impl fmt::Display for FrameDescription<'_> {
             | Cmd::Clear
             | Cmd::Restore
             | Cmd::FactoryReset
-            | Cmd::Reboot
-            | Cmd::BleClearBonds => {
+            | Cmd::Reboot => {
                 write!(out, "{command:?} tid={tid}")
             }
             Cmd::PropGet

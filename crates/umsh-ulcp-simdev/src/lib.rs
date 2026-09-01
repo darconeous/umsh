@@ -247,7 +247,7 @@ impl SimulatedDevice {
                 self.pairing_pin = pin;
                 self.session.respond_pin_set(tid, Ok(()), &mut emit);
             }
-            Some(Effect::BleClearBonds { tid }) => {
+            Some(Effect::ClearBleBonds { tid }) => {
                 // The full security reset a board performs: bonds, PIN,
                 // and lockout together, and the pairing window a
                 // freshly-cleared device opens.
@@ -255,7 +255,7 @@ impl SimulatedDevice {
                 self.pairing_pin = None;
                 self.session.set_ble_bond_count(0, &mut emit);
                 self.session.set_ble_pairing(true, &mut emit);
-                self.session.respond_ble_clear_bonds(tid, Ok(()), &mut emit);
+                self.session.respond_ble_bond_count(tid, Ok(()), &mut emit);
             }
             Some(Effect::SetBlePairing { tid, open }) => {
                 // Nothing here can pair, so the window opens and nothing

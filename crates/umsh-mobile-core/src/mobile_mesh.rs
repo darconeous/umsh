@@ -1355,33 +1355,6 @@ impl MobileMeshSession {
         )
     }
 
-    /// Clear a device's Bluetooth bonds across the mesh
-    /// (`CMD_BLE_CLEAR_BONDS`): forget every paired host, the pairing
-    /// PIN, and the pairing lockout, then open a pairing window.
-    ///
-    /// The command answers with a status rather than silence: it is not
-    /// reset-class, and what it did is the whole of what it reports.
-    /// `STATUS_UNIMPLEMENTED` is a device that does not manage its own
-    /// bonds.
-    ///
-    /// Clearing bonds over the mesh does not touch this exchange — the
-    /// administrator is addressing the device's node, not one of its
-    /// Bluetooth hosts — so unlike the same command over Bluetooth, the
-    /// reply arrives on a link that survives it.
-    pub fn begin_management_ble_clear_bonds(
-        &self,
-        peer_address: String,
-    ) -> Result<u64, MobileMeshError> {
-        let frame = encode_management(|buf| frame::ble_clear_bonds(buf, 0))?;
-        self.begin_management(
-            peer_address,
-            ManagementRequest::One {
-                frame,
-                shape: ReplyShape::Status,
-            },
-        )
-    }
-
     /// Reset a device across the mesh.
     ///
     /// A device answers a reset with nothing — it is busy doing what was

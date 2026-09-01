@@ -147,7 +147,7 @@ const CLEAR_BONDS_WARNING: &str = "ble clear forgets every paired host, the pair
 /// Read or manage the device's Bluetooth bonds.
 ///
 /// Over Bluetooth, clearing severs this very link — the bond that
-/// carried the command is one of the bonds deleted — so the handle is
+/// carried the write is one of the bonds deleted — so the handle is
 /// detached afterward for the same reason `reboot` detaches. Over a
 /// cable or the mesh nothing is disturbed, but detaching costs only a
 /// reattach and keeps one rule instead of two.
@@ -184,9 +184,10 @@ pub async fn ble(app: &mut App, op: BleOp) -> Result<()> {
                     return Ok(());
                 }
             }
-            if !app.device()?.ble_clear_bonds().await? {
+            let Some(count) = app.device()?.clear_ble_bonds().await? else {
                 bail!("this device does not advertise CAP_BLE; it has no Bluetooth transport");
-            }
+            };
+            field("paired hosts", count);
             println!("bonds cleared; the device is in a pairing window");
             app.detach().await;
             Ok(())

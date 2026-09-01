@@ -1342,23 +1342,6 @@ public protocol MobileMeshSessionProtocol: AnyObject, Sendable {
     func applyChatArchiveResult(requestId: UInt32, kind: MobileChatArchiveResultKind, payload: Data) throws
 
     /**
-     * Clear a device's Bluetooth bonds across the mesh
-     * (`CMD_BLE_CLEAR_BONDS`): forget every paired host, the pairing
-     * PIN, and the pairing lockout, then open a pairing window.
-     *
-     * The command answers with a status rather than silence: it is not
-     * reset-class, and what it did is the whole of what it reports.
-     * `STATUS_UNIMPLEMENTED` is a device that does not manage its own
-     * bonds.
-     *
-     * Clearing bonds over the mesh does not touch this exchange — the
-     * administrator is addressing the device's node, not one of its
-     * Bluetooth hosts — so unlike the same command over Bluetooth, the
-     * reply arrives on a link that survives it.
-     */
-    func beginManagementBleClearBonds(peerAddress: String) throws  -> UInt64
-
-    /**
      * Read a named set of properties across the mesh.
      *
      * The caller names what it wants, in as many exchanges as the
@@ -1871,31 +1854,6 @@ open func applyChatArchiveResult(requestId: UInt32, kind: MobileChatArchiveResul
         FfiConverterData.lower(payload),uniffiCallStatus
     )
 }
-}
-
-    /**
-     * Clear a device's Bluetooth bonds across the mesh
-     * (`CMD_BLE_CLEAR_BONDS`): forget every paired host, the pairing
-     * PIN, and the pairing lockout, then open a pairing window.
-     *
-     * The command answers with a status rather than silence: it is not
-     * reset-class, and what it did is the whole of what it reports.
-     * `STATUS_UNIMPLEMENTED` is a device that does not manage its own
-     * bonds.
-     *
-     * Clearing bonds over the mesh does not touch this exchange — the
-     * administrator is addressing the device's node, not one of its
-     * Bluetooth hosts — so unlike the same command over Bluetooth, the
-     * reply arrives on a link that survives it.
-     */
-open func beginManagementBleClearBonds(peerAddress: String)throws  -> UInt64  {
-    return try  FfiConverterUInt64.lift(try rustCallWithError(FfiConverterTypeMobileMeshError_lift) {
-        uniffiCallStatus in
-    uniffi_umsh_mobile_core_fn_method_mobilemeshsession_begin_management_ble_clear_bonds(
-            self.uniffiCloneHandle(),
-        FfiConverterString.lower(peerAddress),uniffiCallStatus
-    )
-})
 }
 
     /**
@@ -3309,18 +3267,6 @@ public protocol MobileUlcpSessionProtocol: AnyObject, Sendable {
     func begin(selectedHostKey: Data?) throws  -> UlcpSessionUpdateRecord
 
     /**
-     * Delete every Bluetooth bond the radio holds, along with its
-     * pairing PIN (`CMD_BLE_CLEAR_BONDS`). The radio then opens a
-     * pairing window, which is what makes it reachable again.
-     *
-     * Over Bluetooth this severs the caller's own link: the bond that
-     * carried the command is one of the bonds deleted. The status
-     * arrives first, so the completion event still reports what
-     * happened.
-     */
-    func beginBleClearBonds() throws  -> UlcpSessionUpdateRecord
-
-    /**
      * Read the named properties, whatever they are, and answer with what
      * the device said about each.
      *
@@ -3769,25 +3715,6 @@ open func begin(selectedHostKey: Data?)throws  -> UlcpSessionUpdateRecord  {
     uniffi_umsh_mobile_core_fn_method_mobileulcpsession_begin(
             self.uniffiCloneHandle(),
         FfiConverterOptionData.lower(selectedHostKey),uniffiCallStatus
-    )
-})
-}
-
-    /**
-     * Delete every Bluetooth bond the radio holds, along with its
-     * pairing PIN (`CMD_BLE_CLEAR_BONDS`). The radio then opens a
-     * pairing window, which is what makes it reachable again.
-     *
-     * Over Bluetooth this severs the caller's own link: the bond that
-     * carried the command is one of the bonds deleted. The status
-     * arrives first, so the completion event still reports what
-     * happened.
-     */
-open func beginBleClearBonds()throws  -> UlcpSessionUpdateRecord  {
-    return try  FfiConverterTypeUlcpSessionUpdateRecord_lift(try rustCallWithError(FfiConverterTypeMobileError_lift) {
-        uniffiCallStatus in
-    uniffi_umsh_mobile_core_fn_method_mobileulcpsession_begin_ble_clear_bonds(
-            self.uniffiCloneHandle(),uniffiCallStatus
     )
 })
 }
@@ -15154,17 +15081,6 @@ public func regionCodeFromString(text: String)throws  -> Data  {
 })
 }
 /**
- * Encode a `CMD_BLE_CLEAR_BONDS` request with the shared ULCP codec.
- */
-public func ulcpBleClearBonds(transactionId: UInt8)throws  -> Data  {
-    return try  FfiConverterData.lift(try rustCallWithError(FfiConverterTypeMobileError_lift) {
-        uniffiCallStatus in
-    uniffi_umsh_mobile_core_fn_func_ulcp_ble_clear_bonds(
-        FfiConverterUInt8.lower(transactionId),uniffiCallStatus
-    )
-})
-}
-/**
  * The four properties a device is identified by, asked for together.
  *
  * Capabilities first, so a device that declines the batch teaches the
@@ -15566,9 +15482,6 @@ private let initializationResult: InitializationResult = {
     if (uniffi_umsh_mobile_core_checksum_func_region_code_from_string() != 49569) {
         return InitializationResult.apiChecksumMismatch
     }
-    if (uniffi_umsh_mobile_core_checksum_func_ulcp_ble_clear_bonds() != 17083) {
-        return InitializationResult.apiChecksumMismatch
-    }
     if (uniffi_umsh_mobile_core_checksum_func_ulcp_card_properties() != 10189) {
         return InitializationResult.apiChecksumMismatch
     }
@@ -15651,9 +15564,6 @@ private let initializationResult: InitializationResult = {
         return InitializationResult.apiChecksumMismatch
     }
     if (uniffi_umsh_mobile_core_checksum_method_mobilemeshsession_apply_chat_archive_result() != 29458) {
-        return InitializationResult.apiChecksumMismatch
-    }
-    if (uniffi_umsh_mobile_core_checksum_method_mobilemeshsession_begin_management_ble_clear_bonds() != 29988) {
         return InitializationResult.apiChecksumMismatch
     }
     if (uniffi_umsh_mobile_core_checksum_method_mobilemeshsession_begin_management_fetch() != 30118) {
@@ -15828,9 +15738,6 @@ private let initializationResult: InitializationResult = {
         return InitializationResult.apiChecksumMismatch
     }
     if (uniffi_umsh_mobile_core_checksum_method_mobileulcpsession_begin() != 7480) {
-        return InitializationResult.apiChecksumMismatch
-    }
-    if (uniffi_umsh_mobile_core_checksum_method_mobileulcpsession_begin_ble_clear_bonds() != 10776) {
         return InitializationResult.apiChecksumMismatch
     }
     if (uniffi_umsh_mobile_core_checksum_method_mobileulcpsession_begin_property_fetch() != 22103) {

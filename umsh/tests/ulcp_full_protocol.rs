@@ -213,9 +213,9 @@ impl SimDevice {
             Some(Effect::SetPairingPin { tid, .. }) => {
                 self.session.respond_pin_set(tid, Ok(()), &mut emit);
             }
-            Some(Effect::BleClearBonds { tid }) => {
+            Some(Effect::ClearBleBonds { tid }) => {
                 self.session.set_ble_bond_count(0, &mut emit);
-                self.session.respond_ble_clear_bonds(tid, Ok(()), &mut emit);
+                self.session.respond_ble_bond_count(tid, Ok(()), &mut emit);
             }
             Some(Effect::SetBlePairing { tid, open }) => {
                 self.session.respond_ble_pairing(tid, Ok(open), &mut emit);
@@ -959,8 +959,8 @@ async fn an_ordered_write_sequence_stops_at_its_first_failure() {
     );
 }
 
-/// The bond commands answer with a status, and clearing bonds moves the
-/// count the device reports. Unlike a reset there is no silence to
+/// Bond management is two property writes, and each answers with the
+/// value the device settled on. Unlike a reset there is no silence to
 /// interpret: what the device did is what it says.
 #[tokio::test]
 async fn bonds_are_cleared_and_the_count_follows() {
@@ -993,7 +993,11 @@ async fn bonds_are_cleared_and_the_count_follows() {
         vec![umsh_ulcp::ble::BleLinkState::None.code()]
     );
 
-    assert!(radio.ble_clear_bonds().await.unwrap());
+    assert_eq!(
+        radio.clear_ble_bonds().await.unwrap(),
+        Some(0),
+        "the write is answered with the count the device now holds"
+    );
     assert_eq!(
         radio
             .get_prop(umsh_ulcp::ids::prop::BLE_BOND_COUNT)

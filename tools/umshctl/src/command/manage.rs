@@ -94,9 +94,9 @@ pub enum ManageOp {
     Reboot,
 
     /// Manage the device's Bluetooth bonds (CAP_BLE). Unlike the
-    /// resets above these answer with a status: an administrator is
-    /// addressing the device's node, not one of its Bluetooth hosts, so
-    /// the link survives even a clear.
+    /// resets above these are property writes and answer with a value:
+    /// an administrator is addressing the device's node, not one of its
+    /// Bluetooth hosts, so the link survives even a clear.
     Ble {
         #[command(subcommand)]
         op: BleOp,
@@ -378,9 +378,10 @@ where
                 Outcome::Failed(failure) => Err(describe(failure)),
             }
         }
+        // Both halves are properties, so both are ordinary writes the
+        // reply quotes back: the window is a state, and forgetting every
+        // host is the bond count written to zero.
         ManageOp::Ble { op } => match op {
-            // The window is a property, so opening and closing it is an
-            // ordinary write the reply quotes back.
             BleOp::Pair { state } => {
                 let open = state == PairState::On;
                 let reply = ctl
@@ -392,14 +393,12 @@ where
             }
             BleOp::Clear { .. } => {
                 // Confirmed in `run`, before the radio was borrowed.
-                let frame = encode(|buf| frame::ble_clear_bonds(buf, 0))?;
-                match ctl.exchange(&frame).await? {
-                    Outcome::Replied { .. } => report_value(prop::LAST_STATUS, ctl.manager.reply()),
-                    Outcome::NoResponse => {
-                        bail!("the device answered nothing; this command reports a status")
-                    }
-                    Outcome::Failed(failure) => Err(describe(failure)),
-                }
+                let reply = ctl
+                    .reply(&encode(|buf| {
+                        frame::prop_set(buf, 0, prop::BLE_BOND_COUNT, &[0])
+                    })?)
+                    .await?;
+                report_value(prop::BLE_BOND_COUNT, &reply)
             }
         },
         ManageOp::Admins { op } => admins(ctl, op.unwrap_or(TableOp::List), no_save).await,

@@ -43,9 +43,8 @@ nothing to apply them to and rejects them under the ordinary property
 rules. `CMD_QUEUE_DRAIN`, `CMD_SAVE`, and `CMD_RESTORE` belong to their
 subsystems' capabilities and **MUST** fail with `STATUS_UNIMPLEMENTED`
 when the capability is not advertised, as **MUST**
-[`CMD_REBOOT`](ulcp-core.md#cmd-reboot) without `CAP_REBOOT` and
-[`CMD_BLE_CLEAR_BONDS`](ulcp-ble.md#cmd-ble-clear-bonds) on a device
-that does not manage its own bonds; `CMD_CLEAR` and `CMD_FACTORY_RESET`
+[`CMD_REBOOT`](ulcp-core.md#cmd-reboot) without `CAP_REBOOT`;
+`CMD_CLEAR` and `CMD_FACTORY_RESET`
 are available regardless of capabilities (see
 [Saved State](ulcp-saved-state.md)).
 

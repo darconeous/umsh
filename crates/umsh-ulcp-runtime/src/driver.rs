@@ -476,9 +476,9 @@ pub trait DeviceEnv {
     /// Apply a `PROP_BLE_PAIRING_PIN` write against the bond journal and
     /// the live BLE stack; `true` when it took effect.
     async fn apply_pairing_pin(&mut self, pin: Option<u32>) -> bool;
-    /// `CMD_BLE_CLEAR_BONDS`: delete every stored bond, the pairing PIN,
-    /// and the pairing lockout, then open a pairing window. `true` once
-    /// the deletion is durable.
+    /// A `PROP_BLE_BOND_COUNT` write of zero: delete every stored bond,
+    /// the pairing PIN, and the pairing lockout, then open a pairing
+    /// window. `true` once the deletion is durable.
     ///
     /// Unlike the factory reset below, this runs with the board still up,
     /// so the live BLE stack has to be emptied alongside the journal — a
@@ -797,7 +797,7 @@ async fn apply_effect<A, S, const TXQ: usize, M, const RX: usize, const TX: usiz
         | Some(Effect::ReadTime { .. })
         | Some(Effect::SampleGnss { .. })
         | Some(Effect::SetPairingPin { .. })
-        | Some(Effect::BleClearBonds { .. })
+        | Some(Effect::ClearBleBonds { .. })
         | Some(Effect::SetBlePairing { .. })
         | Some(Effect::DrainQueue)
         | Some(Effect::SaveSnapshot { .. })
@@ -1096,16 +1096,18 @@ async fn serve_frame<A, S, const TXQ: usize, M, const RX: usize, const TX: usize
                 );
                 emitter.flush(sink).await;
             }
-            Some(Effect::BleClearBonds { tid }) => {
+            Some(Effect::ClearBleBonds { tid }) => {
                 // The answer goes out before the bonds are gone from the
                 // live stack only in the sense that the flush below races
                 // the disconnect; the platform does the durable work
-                // first, so a host that hears OK has really been
+                // first, so a host that hears zero has really been
                 // forgotten. Over Bluetooth this reply is the last thing
                 // the sender hears — dropping its bond drops its link.
-                env.trace(format_args!("CMD_BLE_CLEAR_BONDS: forgetting every host"));
+                env.trace(format_args!(
+                    "PROP_BLE_BOND_COUNT <- 0: forgetting every host"
+                ));
                 let cleared = env.clear_ble_bonds().await;
-                session.respond_ble_clear_bonds(
+                session.respond_ble_bond_count(
                     tid,
                     cleared.then_some(()).ok_or(()),
                     &mut |frame: &[u8]| emitter.push(frame),

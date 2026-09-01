@@ -307,9 +307,18 @@ pub mod prop {
     /// would be lying about the thing a user turns it off for.
     pub const BLE_ENABLED: u32 = 4871;
     /// How many Bluetooth bonds the device is holding
-    /// (`PROP_BLE_BOND_COUNT`) — `UINT8`, read-only. Requires `CAP_BLE`;
+    /// (`PROP_BLE_BOND_COUNT`) — `UINT8`, read-write. Requires `CAP_BLE`;
     /// a device whose bonds it cannot manage answers
     /// `STATUS_PROP_NOT_FOUND`.
+    ///
+    /// Writing 0 is how a host forgets every bond, along with the pairing
+    /// PIN and the failure lockout, leaving the device in pairing mode.
+    /// Zero is the only value a host may write: bonds are enrolled by the
+    /// pairing ceremony one at a time, so no other count is a state the
+    /// device could be put into, and the rest answer
+    /// `STATUS_INVALID_ARGUMENT`. The device answers once the deletion is
+    /// durable — over Bluetooth the last thing the sender hears, because
+    /// the bond carrying the answer is among those deleted.
     ///
     /// The count is live state rather than configuration, so it is not
     /// part of the saved snapshot. It says how many hosts are enrolled,
@@ -440,9 +449,8 @@ pub mod cap {
     ///
     /// The only Bluetooth capability there is. What else a given
     /// transport will do — manage its own bonds, hold a pairing PIN — a
-    /// host learns by asking for the property or sending the command and
-    /// reading the refusal, which is a question it has to be able to
-    /// answer anyway.
+    /// host learns by asking for the property and reading the refusal,
+    /// which is a question it has to be able to answer anyway.
     pub const BLE: u32 = 50;
     /// `CAP_REBOOT` — the device can restart its hardware on command
     /// (`CMD_REBOOT`). A device that cannot — one whose ULCP session is

@@ -722,10 +722,6 @@ enum ExpectedResponse {
     ManagementSet(u32),
     /// The `CMD_SAVE` issued by a local management save.
     ManagementSave,
-    /// A payloadless management command answered by a bare
-    /// `PROP_LAST_STATUS`: the two bond commands. Completion carries the
-    /// device's status, which is the whole of what they report.
-    ManagementCommand,
 }
 
 impl ExpectedResponse {
@@ -734,10 +730,7 @@ impl ExpectedResponse {
     fn is_management(&self) -> bool {
         matches!(
             self,
-            Self::ManagementGet(_)
-                | Self::ManagementSet(_)
-                | Self::ManagementSave
-                | Self::ManagementCommand
+            Self::ManagementGet(_) | Self::ManagementSet(_) | Self::ManagementSave
         )
     }
 }
@@ -1327,18 +1320,6 @@ impl MobileUlcpSession {
         state.expected.insert(tid, ExpectedResponse::ManagementSave);
         let frame = ulcp_save(tid)?;
         Ok(state.update(vec![frame]))
-    }
-
-    /// Delete every Bluetooth bond the radio holds, along with its
-    /// pairing PIN (`CMD_BLE_CLEAR_BONDS`). The radio then opens a
-    /// pairing window, which is what makes it reachable again.
-    ///
-    /// Over Bluetooth this severs the caller's own link: the bond that
-    /// carried the command is one of the bonds deleted. The status
-    /// arrives first, so the completion event still reports what
-    /// happened.
-    pub fn begin_ble_clear_bonds(&self) -> Result<UlcpSessionUpdateRecord, MobileError> {
-        self.begin_ble_command(ulcp_ble_clear_bonds)
     }
 
     /// Store one channel key on the radio's device identity
@@ -2073,7 +2054,7 @@ impl MobileUlcpSession {
                 }
                 state.continue_local_management(&mut outbound)?;
             }
-            ExpectedResponse::ManagementSave | ExpectedResponse::ManagementCommand => {
+            ExpectedResponse::ManagementSave => {
                 if response.property_id != prop::LAST_STATUS
                     || response.command != Cmd::PropIs as u8
                 {
@@ -2129,26 +2110,6 @@ impl MobileUlcpSession {
 }
 
 impl MobileUlcpSession {
-    /// The shared body of the two bond commands: one payloadless frame,
-    /// answered by one status, reported on the management completion.
-    fn begin_ble_command(
-        &self,
-        encode: fn(u8) -> Result<Vec<u8>, MobileError>,
-    ) -> Result<UlcpSessionUpdateRecord, MobileError> {
-        let mut state = self.inner.lock().expect("ULCP session mutex poisoned");
-        state.begin_local_management()?;
-        if !state.has_capability(cap::BLE)? {
-            return Err(MobileError::UnsupportedCapability);
-        }
-        state.management = Some(LocalManagement::default());
-        let tid = state.allocate_tid();
-        state
-            .expected
-            .insert(tid, ExpectedResponse::ManagementCommand);
-        let frame = encode(tid)?;
-        Ok(state.update(vec![frame]))
-    }
-
     fn with_mode(mode: UlcpAttachMode) -> Self {
         Self {
             inner: Mutex::new(UlcpSessionState {
@@ -4861,15 +4822,6 @@ pub fn ulcp_reboot(transaction_id: u8) -> Result<Vec<u8>, MobileError> {
     let mut output = [0; 2];
     let length =
         frame::reboot(&mut output, transaction_id).map_err(|_| MobileError::InvalidUlcpFrame)?;
-    Ok(output[..length].to_vec())
-}
-
-/// Encode a `CMD_BLE_CLEAR_BONDS` request with the shared ULCP codec.
-#[uniffi::export]
-pub fn ulcp_ble_clear_bonds(transaction_id: u8) -> Result<Vec<u8>, MobileError> {
-    let mut output = [0; 2];
-    let length = frame::ble_clear_bonds(&mut output, transaction_id)
-        .map_err(|_| MobileError::InvalidUlcpFrame)?;
     Ok(output[..length].to_vec())
 }
 

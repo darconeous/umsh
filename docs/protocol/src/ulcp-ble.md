@@ -234,10 +234,9 @@ existed; it does not mean the device has no BLE.
 
 `CAP_BLE` is the only capability this binding defines, and everything
 else about a transport is discovered by asking for it. A device that
-manages its own bonds answers `PROP_BLE_BOND_COUNT` and the two bond
-commands; one whose bonds are reachable only by a gesture at the device
-itself answers `STATUS_PROP_NOT_FOUND` to the property and
-`STATUS_UNIMPLEMENTED` to the commands.
+manages its own bonds answers `PROP_BLE_BOND_COUNT` and
+`PROP_BLE_PAIRING`; one whose bonds are reachable only by a gesture at
+the device itself answers `STATUS_PROP_NOT_FOUND` to both.
 
 This is deliberate. A capability is worth a code when a host would
 otherwise have to guess, and here it would not: the refusal is a
@@ -327,11 +326,11 @@ It says what the transport is doing, never with whom. Identifying the
 connected host would leak the same association the
 [bond count](#prop-ble-bond-count) withholds.
 
-## Bond Management Commands {#bond-management-commands}
+## Bond Management {#bond-management-properties}
 
 ### PROP 4872: `PROP_BLE_BOND_COUNT` {#prop-ble-bond-count}
 
-* Type: Single-Value, Read-Only
+* Type: Single-Value, Read-Write
 * Asynchronous Updates: Yes
 * Required: `CAP_BLE`
 * Value Type: UINT8
@@ -343,8 +342,8 @@ changes — enrollment and eviction both happen without the host asking,
 so a host that was not told would have to poll.
 
 A device that does not manage its own bonds answers
-`STATUS_PROP_NOT_FOUND`, which is how a host learns that the two bond
-commands below will refuse it as well.
+`STATUS_PROP_NOT_FOUND`, which is how a host learns that neither half of
+bond management is available to it.
 
 The count is live transport state, not configuration: it is **NOT** part
 of the saved snapshot, and `CMD_RST` **MUST NOT** change it. A protocol
@@ -356,44 +355,50 @@ its bonded hosts to whoever asked would leak the association the pairing
 ceremony exists to protect, and the count is what an operator deciding
 whether to clear bonds actually needs.
 
-### CMD 17: (Host -> Device) `CMD_BLE_CLEAR_BONDS` {#cmd-ble-clear-bonds}
+#### Writing Zero: Forgetting Every Host {#clearing-bonds}
 
-~~~
- 0                   1
- 0 1 2 3 4 5 6 7 8 9 0 1 2 3 4 5
-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+
-|1 0| RES | TID |CMD_BLE_CLEAR_B|
-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+
-~~~
+Writing `0` deletes every stored bond, the pairing PIN, and the pairing
+failure lockout, then enters pairing mode.
 
-Figure: Structure of `CMD_BLE_CLEAR_BONDS`
+Zero is the only value a host may write, and any other **MUST** be
+answered `STATUS_INVALID_ARGUMENT`. Bonds are enrolled one pairing
+ceremony at a time and evicted by the device, so no other count names a
+state a device could be put into: a host asking for three bonds is not
+describing anything the device could do.
 
-Delete every stored bond, the pairing PIN, and the pairing failure
-lockout, then enter pairing mode.
+The device **MUST NOT** answer before the deletion is durable, and
+**MUST** drop the deleted bonds from any live in-memory bond table as
+well as from durable storage — a bond forgotten on flash but still held
+in RAM would keep working until the next boot. It **MUST** then enter
+pairing mode: a device that has forgotten every host it trusts and is
+not accepting new ones is reachable by nothing.
 
-The device **MUST NOT** report success before the deletion is durable,
-and **MUST** drop the deleted bonds from any live in-memory bond table
-as well as from durable storage — a bond forgotten on flash but still
-held in RAM would keep working until the next boot. It **MUST** then
-enter pairing mode: a device that has forgotten every host it trusts and
-is not accepting new ones is reachable by nothing.
-
-The device answers `PROP_LAST_STATUS`: `STATUS_OK` once the deletion is
-durable, `STATUS_UNIMPLEMENTED` on a device that does not manage its own
-bonds and `STATUS_UNIMPLEMENTED` without `CAP_BLE`. Sent over
-BLE, that answer is the last thing the sender hears, because the bond
-that carried it is among the bonds deleted; the reply **MUST** be
-emitted before the connection is dropped.
+The write is answered like any other, with the property's value: a
+`CMD_PROP_IS` carrying `0` once the deletion is durable. Sent over BLE,
+that answer is the last thing the sender hears, because the bond that
+carried it is among the bonds deleted; the reply **MUST** be emitted
+before the connection is dropped.
 
 Clearing the PIN alongside the bonds is deliberate. A PIN outliving the
 hosts it was set for would leave a device that has forgotten everyone
 still demanding a secret the operator may no longer have, recoverable
 only by a local wipe.
 
-The command is an ordinary command rather than reset-class: what it did
-is the whole of what it reports, and a caller that heard nothing could
-not tell a device that had cleared its bonds from one that never
-received the request.
+[`PROP_BLE_ENABLED`](#prop-ble-enabled) does not gate this write, which
+is where it parts company with
+[`PROP_BLE_PAIRING`](#prop-ble-pairing). Bonds are durable state rather
+than reachability: a device with the transport turned off still holds
+them and still counts them, and deleting them is exactly as meaningful
+there as it is with a host connected. The pairing mode the deletion
+leaves behind is then a window onto a transport that is down, which
+[`PROP_BLE_PAIRING`](#prop-ble-pairing) reports as closed like any
+other.
+
+Forgetting every host is a write rather than a command, and rather than
+a reset-class one, because the count is already the state it changes. A
+command would have had to be answered by a status saying what the
+property could say by quoting itself, and a host reading the count back
+is asking the same question the answer already contains.
 
 ### PROP 4874: `PROP_BLE_PAIRING` {#prop-ble-pairing}
 
@@ -577,9 +582,9 @@ BLE.
 * Devices **MUST** provide a local mechanism to delete stored bonds. The
   mechanism is implementation-specific. Deletion **MUST NOT** be
   invocable over an unauthenticated path; a device that manages its own
-  bonds additionally accepts
-  [`CMD_BLE_CLEAR_BONDS`](#cmd-ble-clear-bonds), whose authorization is
-  the session's own (see [Administrative
+  bonds additionally accepts a write of zero to
+  [`PROP_BLE_BOND_COUNT`](#clearing-bonds), whose authorization is the
+  session's own (see [Administrative
   Authorization](#administrative-authorization)).
 * Devices **MAY** limit the number of stored bonds. A full bond store
   **MUST NOT** cause pairing to be refused: when a new bond is enrolled
@@ -601,11 +606,12 @@ already requires physical presence and the eviction victim is by
 construction the bond that has gone longest without connecting.
 
 Removing one specific bond while retaining the others is not expressible
-through this protocol. `CMD_BLE_CLEAR_BONDS` forgets every host at once,
-which is the operation an operator reaching for it wants: the case that
-motivates it is a device whose paired hosts are no longer trusted or no
-longer known, and enumerating bonds so one could be named would mean
-reporting which hosts a device has met.
+through this protocol, which is also why zero is the only count a host
+may write. The count [written to zero](#clearing-bonds) forgets every
+host at once, and that is the operation an operator reaching for it
+wants: the case that motivates it is a device whose paired hosts are no
+longer trusted or no longer known, and enumerating bonds so one could be
+named would mean reporting which hosts a device has met.
 
 ### Administrative Authorization {#administrative-authorization}
 

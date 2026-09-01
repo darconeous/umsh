@@ -107,17 +107,12 @@ pub enum Cmd {
     /// `CMD_FACTORY_RESET` it does not reply. Requires `CAP_REBOOT`; a
     /// device without it answers `STATUS_UNIMPLEMENTED` instead.
     Reboot = 16,
-    /// Delete every stored Bluetooth bond (host to device), along with the
-    /// pairing passkey and the pairing failure lockout, then enter pairing
-    /// mode so the device can be paired again. Bonded hosts lose their
-    /// bonds and any attached over Bluetooth are dropped, including the one
-    /// that sent the command. Requires `CAP_BLE`; a device that does not
-    /// manage its own bonds answers `STATUS_UNIMPLEMENTED`.
-    BleClearBonds = 17,
-    // 18 briefly held CMD_BLE_START_PAIRING; the pairing window is
-    // `PROP_BLE_PAIRING` now. A window that can be opened but not closed
-    // or observed was half a control, and only a property can publish
-    // the window closing on its own.
+    // 17 and 18 briefly held CMD_BLE_CLEAR_BONDS and
+    // CMD_BLE_START_PAIRING. Both were states wearing a command's
+    // clothes: forgetting every host is `PROP_BLE_BOND_COUNT` written to
+    // zero, and the pairing window is `PROP_BLE_PAIRING`. A property can
+    // be read back and can publish itself moving, which a command that
+    // only acts can never do.
     /// Get several property values (host to device). Requires
     /// `CAP_CMD_MULTI`.
     PropMultiGet = 21,
@@ -155,7 +150,6 @@ impl Cmd {
             14 => Some(Self::Restore),
             15 => Some(Self::FactoryReset),
             16 => Some(Self::Reboot),
-            17 => Some(Self::BleClearBonds),
             21 => Some(Self::PropMultiGet),
             22 => Some(Self::PropMultiSet),
             23 => Some(Self::PropAre),
@@ -619,13 +613,6 @@ pub fn reboot(buf: &mut [u8], tid: u8) -> Result<usize, WriteError> {
     Ok(FrameWriter::new(buf, tid, Cmd::Reboot)?.finish())
 }
 
-/// Encode a `CMD_BLE_CLEAR_BONDS` frame (no payload). The device answers
-/// once the bonds are gone, which over Bluetooth is the last thing the
-/// sender hears before it is dropped.
-pub fn ble_clear_bonds(buf: &mut [u8], tid: u8) -> Result<usize, WriteError> {
-    Ok(FrameWriter::new(buf, tid, Cmd::BleClearBonds)?.finish())
-}
-
 /// Encode a `CMD_RESTORE` frame (no payload).
 pub fn restore(buf: &mut [u8], tid: u8) -> Result<usize, WriteError> {
     Ok(FrameWriter::new(buf, tid, Cmd::Restore)?.finish())
@@ -903,11 +890,11 @@ mod tests {
 
     #[test]
     fn every_assigned_command_round_trips() {
-        for id in (0..=17u8).chain(21..=24) {
+        for id in (0..=16u8).chain(21..=24) {
             let cmd = Cmd::from_u8(id).unwrap_or_else(|| panic!("command {id} unassigned"));
             assert_eq!(cmd as u8, id);
         }
-        for id in (18..=20u8).chain(25..=127) {
+        for id in (17..=20u8).chain(25..=127) {
             assert_eq!(Cmd::from_u8(id), None, "command {id} should be unassigned");
         }
     }
@@ -969,7 +956,6 @@ mod tests {
             (restore, Cmd::Restore),
             (factory_reset, Cmd::FactoryReset),
             (reboot, Cmd::Reboot),
-            (ble_clear_bonds, Cmd::BleClearBonds),
         ] {
             let len = encode(&mut buf, 2).unwrap();
             assert_eq!(len, 2);

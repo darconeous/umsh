@@ -598,19 +598,24 @@ final class AdministrativeDeviceSession: NSObject, @unchecked Sendable {
         }
     }
 
-    /// Forget every host paired with the attached device.
+    /// Forget every host paired with the attached device — the bond count
+    /// written to zero.
     ///
     /// Unlike the resets below this is answered, so the exchange runs to
     /// completion: what a bench operator needs to know is whether the
-    /// device did it, and clearing bonds sends its answer before it drops
-    /// this session with the rest.
+    /// device did it, and the write is echoed with the count the device
+    /// now holds before it drops this session with the rest.
     func clearBluetoothBonds() async throws {
         Self.logger.notice("action: user cleared the device's Bluetooth pairings")
-        let event = try await performManagement { session in
-            try session.beginBleClearBonds()
-        }
-        if let status = event.statusCode, status != 0 {
-            throw RemoteManagementError.refused(status: status)
+        let answers = try await writeProperties([
+            MobileMeshPropertyWriteRecord(
+                propertyId: ulcpManagedPropertyIds().bleBondCount,
+                value: Data([0])
+            )
+        ])
+        guard let answer = answers.first else { throw RemoteManagementError.unreadable }
+        if answer.value == nil {
+            throw RemoteManagementError.refused(status: answer.statusCode ?? 0)
         }
     }
 
