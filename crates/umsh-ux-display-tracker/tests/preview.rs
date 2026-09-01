@@ -153,6 +153,7 @@ fn status(
         },
         battery_mv: Some(3_950),
         link,
+        queued: None,
         bonds: 3,
         pairing,
         stats: StatsModel {

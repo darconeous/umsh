@@ -15,7 +15,7 @@ How a node obtains a channel key depends on the type of channel — see [Joining
 
 ## Channel Identifier
 
-Each channel is identified on the wire by a 2-byte channel identifier [derived from the channel key](packet-types.md#channel-identifier-derivation). This identifier is a compact hint that allows receivers to quickly identify candidate channels without attempting decryption with every configured key. Like destination hints, channel identifiers are not cryptographically authoritative — collisions are possible and must be resolved by attempting cryptographic verification.
+Each channel is identified on the wire by the first 2 bytes of the 16-byte channel identifier [derived from the channel key](packet-types.md#channel-identifier-derivation). What travels on the wire is a compact hint that allows receivers to quickly identify candidate channels without attempting decryption with every configured key. Like destination hints, it is not cryptographically authoritative — collisions are possible and must be resolved by attempting cryptographic verification. The full identifier is where a collision cannot be tolerated: it names a channel to a management interface without disclosing the key.
 
 ## Encrypted and Unencrypted Modes
 

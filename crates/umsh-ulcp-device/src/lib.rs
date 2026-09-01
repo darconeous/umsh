@@ -33,9 +33,10 @@ pub mod session;
 
 pub use duty::{DutyExceeded, DutyLedger, DutyTracker};
 pub use session::{
-    AlertConfig, BatteryFields, Binding, DEFAULT_IDENT_PRECISION, Effect, GnssConfig,
-    IdentitySource, MAX_CHANNEL_KEYS, MAX_DEV_ADMINS, MAX_DEV_PEERS, MAX_DEVICE_NAME_LEN,
-    MAX_IDENT_PRECISION, MAX_REPEATER_REGIONS, MULTI_MAX, PRIVATE_KEY_LEN, REGION_STRING_MAX_LEN,
-    RadioRxInfo, RadioSettings, SNAPSHOT_MAX, SavedStatus, Session, SessionConfig, SnapshotError,
-    TimeConfig, TxOutcome, TxPower,
+    AlertConfig, BatteryFields, Binding, CHANNEL_TAG_LEN, DEFAULT_IDENT_PRECISION, Effect,
+    GnssConfig, IdentitySource, MAX_CHANNEL_KEYS, MAX_DEV_ADMINS, MAX_DEV_PEERS,
+    MAX_DEVICE_NAME_LEN, MAX_IDENT_PRECISION, MAX_PEER_KEYS, MAX_REPEATER_REGIONS, MULTI_MAX,
+    PRIVATE_KEY_LEN, QueuedClass, QueuedNotice, REGION_STRING_MAX_LEN, RadioRxInfo, RadioSettings,
+    SNAPSHOT_MAX, SavedStatus, Session, SessionConfig, SnapshotError, TimeConfig, TxOutcome,
+    TxPower,
 };

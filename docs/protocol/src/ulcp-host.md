@@ -37,9 +37,9 @@ different host identity takes over the device.
 The host domain is keyed by `PROP_HOST_KEY`. Setting `PROP_HOST_KEY` to a
 value **different** from its current value — including setting it to empty
 — **MUST** atomically reset the entire host domain to defaults: the key
-tables and filter table are cleared, `PROP_HOST_AUTO_ACK` reverts to
-false, and the inbound queue is discarded. Because the host domain is
-never persisted, this is a live-state operation with no durable component:
+tables, filter table, and mute tables are cleared, `PROP_HOST_AUTO_ACK`
+reverts to false, and the inbound queue is discarded. Because the host
+domain is never persisted, this is a live-state operation with no durable component:
 a power cycle cannot resurrect a previous host's provisioning regardless.
 
 Setting `PROP_HOST_KEY` to its current value is idempotent and has no side
@@ -56,7 +56,7 @@ untouched.
 Code | Name                | Requires                             | Grants
 -----|---------------------|--------------------------------------|--------
 32   | `CAP_HOST_FILTER`   | —                                    | `PROP_HOST_KEY`, `PROP_MAC_PROMISCUOUS`, `PROP_HOST_RX_FILTERS`, and the receive-filtering behavior
-33   | `CAP_HOST_RX_QUEUE` | `CAP_HOST_FILTER`                    | The inbound queue, its properties, `CMD_QUEUE_DRAIN`, and the buffered-frame metadata
+33   | `CAP_HOST_RX_QUEUE` | `CAP_HOST_FILTER`                    | The inbound queue, its properties, `CMD_QUEUE_DRAIN`, the buffered-frame metadata, and the mute tables
 34   | `CAP_HOST_KEYS`     | `CAP_HOST_FILTER`                    | `PROP_HOST_CHANNEL_KEYS` and `PROP_HOST_PEER_KEYS`
 35   | `CAP_HOST_AUTO_ACK` | `CAP_HOST_KEYS`, `CAP_HOST_RX_QUEUE` | `PROP_HOST_AUTO_ACK` and acknowledgement delegation
 48   | `CAP_MAC_BACKHAUL`  | `CAP_REPEATER`                       | `PROP_MAC_BACKHAUL` and the point-to-point link to the device's node
@@ -131,6 +131,8 @@ Id  | Mnemonic                      | Commands                 | Description
 101 | `PROP_HOST_RX_QUEUE_COUNT`    | Get                      | Frames currently queued
 102 | `PROP_HOST_RX_QUEUE_CAPACITY` | Get, Set                 | Queue capacity in frames
 103 | `PROP_HOST_RX_QUEUE_DROPPED`  | Get                      | Frames dropped from the queue
+104 | `PROP_HOST_MUTED_CHANNELS`    | Get, Set, Insert, Remove | Channels whose queued frames raise no cue
+105 | `PROP_HOST_MUTED_PEERS`       | Get, Set, Insert, Remove | Peers whose queued frames raise no cue
 
 ### PROP 48: `PROP_MAC_PROMISCUOUS` {#prop-mac-promiscuous}
 
@@ -371,6 +373,62 @@ by the circular queue-full policy or otherwise not retained (see
 [Inbound Queueing](ulcp-host.md#inbound-queueing)) — since the device last reset. A non-zero increase
 across a detached interval tells the host that its view of that interval
 is incomplete. The counter wraps modulo 2^32.
+
+### PROP 104: `PROP_HOST_MUTED_CHANNELS` {#prop-host-muted-channels}
+
+* Type: Multiple-Value, Read-Write
+* Has Item Length Prefix: No
+* Asynchronous Updates: No
+* Required: `CAP_HOST_RX_QUEUE`
+* Item Form: 16 octets (the full
+  [channel identifier](packet-types.md#channel-identifier-derivation))
+* Remove Selector: the item
+* Post-Reset Value: Empty
+
+The channels whose queued frames raise no
+[receipt cue](ulcp-host.md#receipt-cues). A frame matches when the
+provisioned channel key that authenticated it derives a listed identifier;
+the match is made after verification, against the full identifier, never
+against the 2-octet on-wire one, so an identifier collision cannot mute a
+channel the host did not name.
+
+### PROP 105: `PROP_HOST_MUTED_PEERS` {#prop-host-muted-peers}
+
+* Type: Multiple-Value, Read-Write
+* Has Item Length Prefix: No
+* Asynchronous Updates: No
+* Required: `CAP_HOST_RX_QUEUE`
+* Item Form: 32 octets (a peer public key)
+* Remove Selector: the item
+* Post-Reset Value: Empty
+
+The peers whose queued frames raise no
+[receipt cue](ulcp-host.md#receipt-cues). A frame matches when its resolved
+source is a listed key. Items are full public keys rather than 3-byte
+hints: hints collide, and the detached receive path resolves the full key
+already.
+
+## Receipt Cues {#receipt-cues}
+
+A device may indicate locally that it took a frame in for a host that is
+not attached — a sound, a light, a count on a panel. What form the
+indication takes, and whether a device makes one at all, is a property of
+the board rather than of the protocol.
+
+`PROP_HOST_MUTED_CHANNELS` and `PROP_HOST_MUTED_PEERS` name sources whose
+frames are taken in without one. They govern the indication and nothing
+else: a frame from a muted source is filtered, queued, acknowledged, and
+drained exactly as any other, and counts toward
+`PROP_HOST_RX_QUEUE_COUNT` and `PROP_HOST_RX_QUEUE_DROPPED` the same way.
+Indications that describe the queue as a whole rather than one arrival — a
+queued count, a "something is waiting" light — still follow every frame,
+because they describe what a drain will deliver.
+
+The tables are not validated against the key tables. An entry naming a
+source the device holds no key for is simply inert, as an entry in
+`PROP_HOST_RX_FILTERS` is independent of the key tables. A frame accepted
+by an explicit filter alone has no resolved source and therefore matches
+no entry.
 
 ## Receive Filtering {#receive-filtering}
 

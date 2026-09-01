@@ -209,6 +209,12 @@ pub mod prop {
     pub const HOST_RX_QUEUE_CAPACITY: u32 = 102;
     /// Cumulative frames dropped from the queue (`PROP_HOST_RX_QUEUE_DROPPED`).
     pub const HOST_RX_QUEUE_DROPPED: u32 = 103;
+    /// Channels whose queued frames raise no local receipt cue
+    /// (`PROP_HOST_MUTED_CHANNELS`): full 16-octet channel identifiers.
+    pub const HOST_MUTED_CHANNELS: u32 = 104;
+    /// Peers whose queued frames raise no local receipt cue
+    /// (`PROP_HOST_MUTED_PEERS`): 32-octet public keys.
+    pub const HOST_MUTED_PEERS: u32 = 105;
     /// Transmit duty usage over the past hour (`PROP_PHY_DUTY_NOW`).
     pub const PHY_DUTY_NOW: u32 = 4820;
     /// Duty-cycle limit (`PROP_PHY_DUTY_LIMIT`).
@@ -491,6 +497,8 @@ pub fn admin_writable(key: u32) -> bool {
             | prop::HOST_RX_QUEUE_COUNT
             | prop::HOST_RX_QUEUE_CAPACITY
             | prop::HOST_RX_QUEUE_DROPPED
+            | prop::HOST_MUTED_CHANNELS
+            | prop::HOST_MUTED_PEERS
             // Session state: an exchange is not an attach, so there is no
             // session for it to configure. `PROP_MAC_BACKHAUL` is the
             // exception: which side of the radio multiplexer the tethered

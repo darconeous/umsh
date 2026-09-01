@@ -466,10 +466,12 @@ enum SecureRx {
     Plain,
     /// Authenticated and new. `ack` is present when the frame requests
     /// acknowledgement (never for multicast); `identity` keys later
-    /// duplicate coalescing and deferred ack marking.
+    /// duplicate coalescing and deferred ack marking; `muted` says the
+    /// host asked for this source to raise no receipt cue.
     New {
         ack: Option<AckPlan>,
         identity: Option<RxIdentity>,
+        muted: bool,
     },
     /// Authenticated duplicate of a previously accepted frame: it is
     /// coalesced rather than queued again. `ack` is present when the
@@ -480,6 +482,31 @@ enum SecureRx {
         ack: Option<AckPlan>,
         identity: Option<RxIdentity>,
     },
+}
+
+/// What a queued frame is, as far as a receipt cue is concerned: a
+/// conversation with this device's host, or one with a group.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum QueuedClass {
+    /// Unicast or blind unicast addressed to the host.
+    Direct,
+    /// Multicast or broadcast.
+    Group,
+}
+
+/// A frame just entered the inbound queue while the host was detached
+/// (spec §Inbound Queueing). The board decides how to express it; the
+/// session only reports what happened.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct QueuedNotice {
+    /// Which cue the frame calls for.
+    pub class: QueuedClass,
+    /// The frame's source is in a mute table: aggregate indications (a
+    /// queued count, an attention light) still stand, but the frame
+    /// earns no cue of its own.
+    pub muted: bool,
+    /// Frames in the queue after the push.
+    pub depth: usize,
 }
 
 /// Outcome of dispatching a property key for encoding.
@@ -960,6 +987,12 @@ pub const MAX_CHANNEL_KEYS: usize = 8;
 /// Maximum number of `PROP_HOST_PEER_KEYS` entries.
 pub const MAX_PEER_KEYS: usize = 8;
 
+/// Width of a full channel identifier, the item form of
+/// `PROP_HOST_MUTED_CHANNELS`. The on-wire `CHANNEL` field carries its
+/// first two octets; the rest is what tells apart two channels whose
+/// keys derive the same on-wire identifier.
+pub const CHANNEL_TAG_LEN: usize = 16;
+
 /// One provisioned host channel key with its derived channel
 /// identifier (the digest form, and an implicit receive filter).
 #[derive(Clone, Copy)]
@@ -1141,59 +1174,70 @@ pub const MAX_DEV_PEERS: usize = 8;
 /// Maximum number of `PROP_DEV_ADMINS` entries.
 pub const MAX_DEV_ADMINS: usize = 8;
 
-/// An unordered set of public keys held as a device-domain property.
-///
-/// Neither property built on this carries key material, so the digest
-/// form and the remove selector are both the item itself.
+/// An unordered set of fixed-width items held as a property whose
+/// items carry nothing secret, so the digest form and the remove
+/// selector are both the item itself.
 ///
 /// - `PROP_DEV_PEERS`: peers the device identity recognizes. The device
 ///   holds its own private key and performs its own key agreement.
 /// - `PROP_DEV_ADMINS`: nodes authorized to manage this device over the
 ///   mesh.
+/// - `PROP_HOST_MUTED_CHANNELS` / `PROP_HOST_MUTED_PEERS`: sources whose
+///   queued frames raise no receipt cue.
 #[derive(Clone, Copy)]
-struct PublicKeyTable<const N: usize> {
-    entries: [[u8; items::PUBLIC_KEY_LEN]; N],
+struct FixedItemSet<const N: usize, const L: usize> {
+    entries: [[u8; L]; N],
     len: usize,
 }
 
+/// An unordered set of public keys.
+type PublicKeyTable<const N: usize> = FixedItemSet<N, { items::PUBLIC_KEY_LEN }>;
 /// `PROP_DEV_PEERS`.
 type DevPeerTable = PublicKeyTable<MAX_DEV_PEERS>;
 /// `PROP_DEV_ADMINS`.
 type DevAdminTable = PublicKeyTable<MAX_DEV_ADMINS>;
+/// `PROP_HOST_MUTED_CHANNELS`, keyed by full channel identifier.
+type MutedChannelTable = FixedItemSet<MAX_CHANNEL_KEYS, CHANNEL_TAG_LEN>;
+/// `PROP_HOST_MUTED_PEERS`, keyed by peer public key.
+type MutedPeerTable = PublicKeyTable<MAX_PEER_KEYS>;
 
-// `[[u8; 32]; N]` does not derive `Default` for an arbitrary const N.
-impl<const N: usize> Default for PublicKeyTable<N> {
+// `[[u8; L]; N]` does not derive `Default` for arbitrary const parameters.
+impl<const N: usize, const L: usize> Default for FixedItemSet<N, L> {
     fn default() -> Self {
         Self {
-            entries: [[0; items::PUBLIC_KEY_LEN]; N],
+            entries: [[0; L]; N],
             len: 0,
         }
     }
 }
 
-impl<const N: usize> PublicKeyTable<N> {
-    fn iter(&self) -> impl Iterator<Item = &[u8; items::PUBLIC_KEY_LEN]> {
+impl<const N: usize, const L: usize> FixedItemSet<N, L> {
+    fn iter(&self) -> impl Iterator<Item = &[u8; L]> {
         self.entries[..self.len].iter()
     }
 
-    /// Add a key; duplicates fail with `STATUS_ALREADY`, a full table
+    fn contains(&self, item: &[u8; L]) -> bool {
+        self.iter().any(|existing| existing == item)
+    }
+
+    /// Add an item; duplicates fail with `STATUS_ALREADY`, a full table
     /// with `STATUS_NOMEM`.
-    fn insert(&mut self, public_key: [u8; items::PUBLIC_KEY_LEN]) -> Result<(), Status> {
-        if self.iter().any(|existing| *existing == public_key) {
+    fn insert(&mut self, item: [u8; L]) -> Result<(), Status> {
+        if self.contains(&item) {
             return Err(Status::ALREADY);
         }
         if self.len == N {
             return Err(Status::NOMEM);
         }
-        self.entries[self.len] = public_key;
+        self.entries[self.len] = item;
         self.len += 1;
         Ok(())
     }
 
-    /// Remove by public key (the full item is the selector); a missing
-    /// item fails with `STATUS_ITEM_NOT_FOUND`.
-    fn remove(&mut self, public_key: &[u8; items::PUBLIC_KEY_LEN]) -> Result<(), Status> {
-        let Some(index) = self.iter().position(|existing| existing == public_key) else {
+    /// Remove by item (the full item is the selector); a missing item
+    /// fails with `STATUS_ITEM_NOT_FOUND`.
+    fn remove(&mut self, item: &[u8; L]) -> Result<(), Status> {
+        let Some(index) = self.iter().position(|existing| existing == item) else {
             return Err(Status::ITEM_NOT_FOUND);
         };
         self.len -= 1;
@@ -1201,13 +1245,11 @@ impl<const N: usize> PublicKeyTable<N> {
         Ok(())
     }
 
-    /// Parse a whole-table `CMD_PROP_SET` value (fixed 32-octet items)
-    /// into a complete replacement table; duplicate items collapse.
+    /// Parse a whole-table `CMD_PROP_SET` value into a complete
+    /// replacement table; duplicate items collapse.
     fn parse_table(value: &[u8]) -> Result<Self, Status> {
         let mut table = Self::default();
-        for item in items::fixed_items::<{ items::PUBLIC_KEY_LEN }>(value)
-            .map_err(|_| Status::INVALID_ARGUMENT)?
-        {
+        for item in items::fixed_items::<L>(value).map_err(|_| Status::INVALID_ARGUMENT)? {
             match table.insert(*item) {
                 Ok(()) | Err(Status::ALREADY) => {}
                 Err(status) => return Err(status),
@@ -1414,6 +1456,12 @@ struct HostDomain {
     channel_keys: ChannelKeyTable,
     /// `PROP_HOST_PEER_KEYS`.
     peer_keys: PeerKeyTable,
+    /// `PROP_HOST_MUTED_CHANNELS`: channels whose queued frames raise no
+    /// receipt cue.
+    muted_channels: MutedChannelTable,
+    /// `PROP_HOST_MUTED_PEERS`: peers whose queued frames raise no
+    /// receipt cue.
+    muted_peers: MutedPeerTable,
     /// `PROP_HOST_AUTO_ACK`: acknowledge qualifying frames on the
     /// host's behalf while detached.
     auto_ack: bool,
@@ -1435,6 +1483,8 @@ impl HostDomain {
         self.filters = FilterTable::default();
         self.channel_keys = ChannelKeyTable::default();
         self.peer_keys = PeerKeyTable::default();
+        self.muted_channels = MutedChannelTable::default();
+        self.muted_peers = MutedPeerTable::default();
         self.auto_ack = false;
         self.queue.clear();
         self.transmitted_mics = TransmittedMics::default();
@@ -2140,6 +2190,16 @@ impl SavedState {
     }
 }
 
+/// Which receipt cue a queued frame calls for, from its packet type
+/// alone: the class is wanted even for frames no provisioned key
+/// authenticated.
+fn queued_class(data: &[u8]) -> QueuedClass {
+    match PacketHeader::parse(data).map(|header| header.fcf.packet_type()) {
+        Ok(PacketType::Multicast | PacketType::Broadcast) => QueuedClass::Group,
+        _ => QueuedClass::Direct,
+    }
+}
+
 /// A channel-key option value: the raw symmetric key.
 fn channel_key_item(value: &[u8]) -> Result<[u8; items::CHANNEL_KEY_LEN], SnapshotError> {
     value.try_into().map_err(|_| SnapshotError::InvalidValue)
@@ -2266,6 +2326,11 @@ pub struct Session<A: AesProvider, S: Sha256Provider, const TX: usize = 1> {
     /// a new bond, a timeout — and the transport reports every
     /// transition through [`Session::set_ble_pairing`].
     ble_pairing_open: bool,
+    /// The most recent detached frame to enter the inbound queue,
+    /// waiting for the driver to express it. Not state so much as a
+    /// one-shot report: [`Session::take_queued_notice`] clears it, and a
+    /// driver that never asks simply queues frames silently.
+    queued_notice: Option<QueuedNotice>,
     /// A `CMD_PROP_MULTI_GET` or `CMD_PROP_MULTI_SET` part-way through
     /// its entries. Present only between the arrival of that frame and
     /// the `CMD_PROP_ARE` answering it, which is why it belongs to no
@@ -2410,6 +2475,7 @@ impl<A: AesProvider, S: Sha256Provider, const TX: usize> Session<A, S, TX> {
             ble_bond_count: 0,
             ble_link: BleLinkState::None,
             ble_pairing_open: false,
+            queued_notice: None,
             multi: None,
             binding: Binding::Local,
             session_reset_pending: None,
@@ -2470,6 +2536,16 @@ impl<A: AesProvider, S: Sha256Provider, const TX: usize> Session<A, S, TX> {
     /// Number of received frames currently waiting for the host.
     pub fn queued_frame_count(&self) -> usize {
         self.host.queue.len
+    }
+
+    /// Take the pending report of a frame having entered the inbound
+    /// queue, if there is one.
+    ///
+    /// Reported rather than counted: a push into a full queue evicts the
+    /// oldest entry and leaves the count where it was, and that frame
+    /// still arrived.
+    pub fn take_queued_notice(&mut self) -> Option<QueuedNotice> {
+        self.queued_notice.take()
     }
 
     /// Monotonic generation of the device-domain node tables and the
@@ -3044,9 +3120,16 @@ impl<A: AesProvider, S: Sha256Provider, const TX: usize> Session<A, S, TX> {
                     ack.and_then(|plan| self.stage_ack(plan, original, now_ms))
                 }
                 verdict => {
-                    let (ack, identity) = match verdict {
-                        SecureRx::New { ack, identity } => (ack, identity),
-                        _ => (None, None),
+                    // An unauthenticated frame reaches the queue on the
+                    // strength of a receive filter alone, so its source
+                    // is unattributed and no mute can apply to it.
+                    let (ack, identity, muted) = match verdict {
+                        SecureRx::New {
+                            ack,
+                            identity,
+                            muted,
+                        } => (ack, identity, muted),
+                        _ => (None, None, false),
                     };
                     // Entries start unacknowledged: RX_FLAG_ACKED is
                     // earned only when the ack transmission actually
@@ -3054,6 +3137,11 @@ impl<A: AesProvider, S: Sha256Provider, const TX: usize> Session<A, S, TX> {
                     // leaves the frame queued unacked and the sender's
                     // retransmission hits the re-ack window later.
                     let seq = self.host.queue.push(data, info, now_ms, identity);
+                    self.queued_notice = Some(QueuedNotice {
+                        class: queued_class(data),
+                        muted,
+                        depth: self.host.queue.len,
+                    });
                     ack.and_then(|plan| self.stage_ack(plan, Some(seq), now_ms))
                 }
             };
@@ -3225,6 +3313,12 @@ impl<A: AesProvider, S: Sha256Provider, const TX: usize> Session<A, S, TX> {
                     SecureRx::New {
                         ack: None,
                         identity: Some(identity),
+                        // Matched against the key that actually
+                        // authenticated the frame, never against the
+                        // two-octet on-wire identifier: identifiers
+                        // collide, and a collision must not mute the
+                        // wrong channel.
+                        muted: self.channel_muted(&channel_key),
                     }
                 };
             }
@@ -3261,6 +3355,13 @@ impl<A: AesProvider, S: Sha256Provider, const TX: usize> Session<A, S, TX> {
             }
         });
         let identity = RxIdentity::new(counter, mic);
+        let muted = self.host.muted_peers.contains(
+            &self.host.peer_keys.entries[peer_index]
+                .as_ref()
+                .expect("resolved index is populated")
+                .entry
+                .public_key,
+        );
 
         let window = &mut self.host.peer_keys.entries[peer_index]
             .as_mut()
@@ -3272,6 +3373,7 @@ impl<A: AesProvider, S: Sha256Provider, const TX: usize> Session<A, S, TX> {
                 SecureRx::New {
                     ack: plan,
                     identity,
+                    muted,
                 }
             }
             ReplayVerdict::Replay => {
@@ -4692,6 +4794,17 @@ impl<A: AesProvider, S: Sha256Provider, const TX: usize> Session<A, S, TX> {
                 self.host.filters = FilterTable::parse_table(value)?;
                 Ok(false)
             }
+            // Mute tables name sources; they hold nothing secret and are
+            // never validated against the key tables, so an entry naming
+            // a source the device cannot resolve is simply inert.
+            prop::HOST_MUTED_CHANNELS => {
+                self.host.muted_channels = MutedChannelTable::parse_table(value)?;
+                Ok(false)
+            }
+            prop::HOST_MUTED_PEERS => {
+                self.host.muted_peers = MutedPeerTable::parse_table(value)?;
+                Ok(false)
+            }
             // Key-bearing writes require the transport's security
             // binding (spec §Provisioning Security).
             prop::HOST_CHANNEL_KEYS => {
@@ -5007,6 +5120,30 @@ impl<A: AesProvider, S: Sha256Provider, const TX: usize> Session<A, S, TX> {
                     Err(status) => self.complete(tid, status, emit),
                 }
             }
+            // Mute items are reported back verbatim: they name a source,
+            // not a key.
+            prop::HOST_MUTED_CHANNELS => {
+                let result = item
+                    .try_into()
+                    .map_err(|_| Status::INVALID_ARGUMENT)
+                    .and_then(|tag: &[u8; CHANNEL_TAG_LEN]| self.host.muted_channels.insert(*tag));
+                match result {
+                    Ok(()) => self.send_prop_inserted(tid, key, item, emit),
+                    Err(status) => self.complete(tid, status, emit),
+                }
+            }
+            prop::HOST_MUTED_PEERS => {
+                let result = item
+                    .try_into()
+                    .map_err(|_| Status::INVALID_ARGUMENT)
+                    .and_then(|public_key: &[u8; items::PUBLIC_KEY_LEN]| {
+                        self.host.muted_peers.insert(*public_key)
+                    });
+                match result {
+                    Ok(()) => self.send_prop_inserted(tid, key, item, emit),
+                    Err(status) => self.complete(tid, status, emit),
+                }
+            }
             prop::DEV_CHANNEL_KEYS => {
                 let result = self.require_secure_link().and_then(|()| {
                     let key: &[u8; items::CHANNEL_KEY_LEN] =
@@ -5120,6 +5257,29 @@ impl<A: AesProvider, S: Sha256Provider, const TX: usize> Session<A, S, TX> {
                     Err(status) => self.complete(tid, status, emit),
                 }
             }
+            // The mute remove selector is the item itself.
+            prop::HOST_MUTED_CHANNELS => {
+                let result = selector
+                    .try_into()
+                    .map_err(|_| Status::INVALID_ARGUMENT)
+                    .and_then(|tag: &[u8; CHANNEL_TAG_LEN]| self.host.muted_channels.remove(tag));
+                match result {
+                    Ok(()) => self.send_prop_removed(tid, key, selector, emit),
+                    Err(status) => self.complete(tid, status, emit),
+                }
+            }
+            prop::HOST_MUTED_PEERS => {
+                let result = selector
+                    .try_into()
+                    .map_err(|_| Status::INVALID_ARGUMENT)
+                    .and_then(|public_key: &[u8; items::PUBLIC_KEY_LEN]| {
+                        self.host.muted_peers.remove(public_key)
+                    });
+                match result {
+                    Ok(()) => self.send_prop_removed(tid, key, selector, emit),
+                    Err(status) => self.complete(tid, status, emit),
+                }
+            }
             prop::DEV_CHANNEL_KEYS => {
                 let result = selector
                     .try_into()
@@ -5168,6 +5328,20 @@ impl<A: AesProvider, S: Sha256Provider, const TX: usize> Session<A, S, TX> {
             _ if self.known_prop(key) => self.complete(tid, Status::INVALID_ARGUMENT, emit),
             _ => self.complete(tid, Status::PROP_NOT_FOUND, emit),
         }
+    }
+
+    /// Whether a channel the host holds the key for is muted.
+    ///
+    /// The full identifier is derived here rather than stored beside the
+    /// two-octet one: it is wanted only for frames arriving while the
+    /// host is detached and only while a mute table has anything in it,
+    /// which is far too rare to spend sixteen octets an entry on.
+    fn channel_muted(&self, channel_key: &[u8; items::CHANNEL_KEY_LEN]) -> bool {
+        if self.host.muted_channels.len == 0 {
+            return false;
+        }
+        let tag = self.engine.derive_channel_tag(&ChannelKey(*channel_key));
+        self.host.muted_channels.contains(&tag.0)
     }
 
     /// Derive a channel key's identifier (its digest form and implicit
@@ -5394,6 +5568,8 @@ impl<A: AesProvider, S: Sha256Provider, const TX: usize> Session<A, S, TX> {
                 | prop::HOST_RX_FILTERS
                 | prop::HOST_CHANNEL_KEYS
                 | prop::HOST_PEER_KEYS
+                | prop::HOST_MUTED_CHANNELS
+                | prop::HOST_MUTED_PEERS
                 | prop::HOST_AUTO_ACK
                 | prop::HOST_RX_QUEUE_COUNT
                 | prop::HOST_RX_QUEUE_CAPACITY
@@ -5679,6 +5855,22 @@ impl<A: AesProvider, S: Sha256Provider, const TX: usize> Session<A, S, TX> {
                 let mut len = 0;
                 for slot in self.host.peer_keys.iter() {
                     len += put(&mut out[len..], &slot.entry.public_key);
+                }
+                len
+            }
+            // Mute tables report their items verbatim: neither names a
+            // secret.
+            prop::HOST_MUTED_CHANNELS => {
+                let mut len = 0;
+                for tag in self.host.muted_channels.iter() {
+                    len += put(&mut out[len..], tag);
+                }
+                len
+            }
+            prop::HOST_MUTED_PEERS => {
+                let mut len = 0;
+                for public_key in self.host.muted_peers.iter() {
+                    len += put(&mut out[len..], public_key);
                 }
                 len
             }
@@ -11529,6 +11721,145 @@ mod tests {
         for flags in drained_flags(&mut session) {
             assert_eq!(flags, RX_FLAG_BUFFERED, "multicast is never acked");
         }
+    }
+
+    // ─── Mute tables (PROP_HOST_MUTED_CHANNELS / _PEERS) ─────────────
+
+    /// The full identifier of a channel, the item form of
+    /// `PROP_HOST_MUTED_CHANNELS`.
+    fn channel_tag(channel_key: &[u8; 32]) -> [u8; CHANNEL_TAG_LEN] {
+        test_engine()
+            .derive_channel_tag(&ChannelKey(*channel_key))
+            .0
+    }
+
+    #[test]
+    fn mute_tables_hold_their_items_verbatim() {
+        let mut session = test_session();
+        let tag = channel_tag(&[0x42; 32]);
+
+        let (emitted, _) = insert_item(&mut session, prop::HOST_MUTED_CHANNELS, &tag);
+        let (key, reported) = parse_table_notice(&emitted[0], Cmd::PropInserted, 5);
+        assert_eq!(key, prop::HOST_MUTED_CHANNELS);
+        assert_eq!(reported, tag, "a mute item names no secret");
+        assert_eq!(get(&mut session, prop::HOST_MUTED_CHANNELS), tag);
+
+        // A repeat is STATUS_ALREADY; removal takes the item as its
+        // selector, and removing what is not there is ITEM_NOT_FOUND.
+        let (emitted, _) = insert_item(&mut session, prop::HOST_MUTED_CHANNELS, &tag);
+        expect_status(&emitted[0], 5, Status::ALREADY);
+        let (emitted, _) = remove_item(&mut session, prop::HOST_MUTED_CHANNELS, &tag);
+        assert_eq!(parse_table_notice(&emitted[0], Cmd::PropRemoved, 6).1, tag);
+        assert!(get(&mut session, prop::HOST_MUTED_CHANNELS).is_empty());
+        let (emitted, _) = remove_item(&mut session, prop::HOST_MUTED_CHANNELS, &tag);
+        expect_status(&emitted[0], 6, Status::ITEM_NOT_FOUND);
+
+        // Wrong-width items are refused on both tables.
+        let (emitted, _) = insert_item(&mut session, prop::HOST_MUTED_CHANNELS, &[0x11; 15]);
+        expect_status(&emitted[0], 5, Status::INVALID_ARGUMENT);
+        let (emitted, _) = insert_item(&mut session, prop::HOST_MUTED_PEERS, &[0x11; 31]);
+        expect_status(&emitted[0], 5, Status::INVALID_ARGUMENT);
+
+        // Whole-table writes replace, and duplicates in the value
+        // collapse.
+        let mut table = Vec::new();
+        table.extend_from_slice(&PEER_PUB);
+        table.extend_from_slice(&PEER_PUB);
+        table.extend_from_slice(&[0x0B; 32]);
+        set(&mut session, prop::HOST_MUTED_PEERS, &table);
+        assert_eq!(get(&mut session, prop::HOST_MUTED_PEERS).len(), 64);
+    }
+
+    #[test]
+    fn host_replacement_clears_the_mute_tables() {
+        let mut session = test_session();
+        insert_item(&mut session, prop::HOST_MUTED_PEERS, &PEER_PUB);
+        insert_item(
+            &mut session,
+            prop::HOST_MUTED_CHANNELS,
+            &channel_tag(&[0x42; 32]),
+        );
+
+        install_host_key(&mut session, &[0xAA; 32]);
+        assert!(get(&mut session, prop::HOST_MUTED_PEERS).is_empty());
+        assert!(get(&mut session, prop::HOST_MUTED_CHANNELS).is_empty());
+    }
+
+    #[test]
+    fn a_muted_peer_is_queued_and_acked_but_raises_no_cue() {
+        let mut session = auto_ack_session();
+        session.attach(true);
+        insert_item(&mut session, prop::HOST_MUTED_PEERS, &PEER_PUB);
+        session.detach();
+
+        let frame = sealed_unar(1, &test_pairwise(), true);
+        let effect = rx_effect(&mut session, &frame, 0);
+        // Muting is about the operator, not the protocol: the frame is
+        // still queued and still acknowledged on the host's behalf.
+        assert!(effect.is_some(), "a muted frame is still acked");
+        let notice = session.take_queued_notice().expect("the frame was queued");
+        assert_eq!(notice.class, QueuedClass::Direct);
+        assert!(notice.muted);
+        assert_eq!(notice.depth, 1);
+
+        // Un-muting reaches the very next frame.
+        session.attach(true);
+        remove_item(&mut session, prop::HOST_MUTED_PEERS, &PEER_PUB);
+        session.detach();
+        rx_effect(&mut session, &sealed_unar(2, &test_pairwise(), true), 5_000);
+        assert!(!session.take_queued_notice().expect("queued").muted);
+    }
+
+    #[test]
+    fn a_muted_channel_is_matched_by_the_key_that_authenticated_it() {
+        let channel_key = [0x42u8; 32];
+        let other_key = [0x43u8; 32];
+        let mut session = auto_ack_session();
+        session.attach(true);
+        install_channel_key(&mut session, &channel_key);
+        install_channel_key(&mut session, &other_key);
+        // Muting names the full identifier, which is what tells two
+        // channels apart; the two-octet on-wire one cannot.
+        insert_item(
+            &mut session,
+            prop::HOST_MUTED_CHANNELS,
+            &channel_tag(&channel_key),
+        );
+        session.detach();
+
+        rx_effect(&mut session, &sealed_multicast(1, &channel_key, 0x11), 0);
+        let notice = session.take_queued_notice().expect("queued");
+        assert_eq!(notice.class, QueuedClass::Group);
+        assert!(notice.muted);
+
+        rx_effect(&mut session, &sealed_multicast(2, &other_key, 0x11), 0);
+        let notice = session.take_queued_notice().expect("queued");
+        assert!(!notice.muted, "the other channel was never muted");
+    }
+
+    #[test]
+    fn an_unattributed_frame_is_never_muted() {
+        // Accepted by an explicit filter with no key to authenticate it:
+        // there is no source to match a mute entry against, so it
+        // chirps. Muting it would mean muting everything unresolvable.
+        let mut session = test_session();
+        enable(&mut session);
+        insert_item(
+            &mut session,
+            prop::HOST_RX_FILTERS,
+            &[items::FILTER_PKT_TYPE, PacketType::Multicast as u8],
+        );
+        insert_item(
+            &mut session,
+            prop::HOST_MUTED_CHANNELS,
+            &channel_tag(&[0x42; 32]),
+        );
+        session.detach();
+
+        receive_detached(&mut session, &sealed_multicast(9, &[0x42; 32], 0x11), 0);
+        let notice = session.take_queued_notice().expect("queued");
+        assert_eq!(notice.class, QueuedClass::Group);
+        assert!(!notice.muted);
     }
 
     #[test]

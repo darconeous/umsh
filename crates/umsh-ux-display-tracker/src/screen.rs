@@ -386,6 +386,10 @@ pub struct StatusModel<'a> {
     /// report.
     pub battery_mv: Option<u16>,
     pub link: LinkState,
+    /// Frames held for a host that is not attached, or `None` on a board
+    /// with no host-facing queue. Drawn only when there are any: an
+    /// empty queue is the ordinary case and says nothing.
+    pub queued: Option<u16>,
     /// How many companions are bonded. Shown only on the clear-bonds
     /// confirmation, where it says what is about to be destroyed; on the
     /// status page it was a number nobody was deciding anything with.
@@ -705,6 +709,15 @@ where
 
     if let Some(label) = link_label(status.link) {
         draw_row(target, layout, row, label);
+        row += 1;
+    }
+
+    // Above the battery, because mail waiting for a phone that has not
+    // come back is the reason somebody is looking at this screen.
+    if let Some(queued) = status.queued.filter(|queued| *queued > 0) {
+        line.clear();
+        let _ = write!(line, "Queued {queued}");
+        draw_row(target, layout, row, line);
         row += 1;
     }
 
@@ -1511,6 +1524,7 @@ mod tests {
             },
             battery_mv: Some(3_950),
             link: LinkState::Advertising,
+            queued: Some(2),
             bonds: 1,
             pairing: PairingState::Closed,
             stats: StatsModel {

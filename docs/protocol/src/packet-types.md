@@ -77,8 +77,11 @@ Multicast packets carry a 2-byte channel identifier derived from the channel key
 ### Channel Identifier Derivation
 
 ```text
-channel_id = first_2_bytes( HKDF-SHA256(channel_key, salt="UMSH-CHAN-ID", info="", L=2) )
+channel_identifier = HKDF-SHA256(channel_key, salt="UMSH-CHAN-ID", info="", L=16)
+channel_id         = first_2_bytes( channel_identifier )
 ```
+
+The `CHANNEL` field carries `channel_id`. The full 16-byte channel identifier is what names a channel where two channels must be told apart without revealing either key — two keys can derive the same 2-byte `channel_id`, and management interfaces cannot leave that ambiguous.
 
 ### Encrypted Multicast (E = 1)
 

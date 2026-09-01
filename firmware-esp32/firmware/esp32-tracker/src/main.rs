@@ -630,6 +630,10 @@ static VBUS_EDGE: Signal<CriticalSectionRawMutex, ()> = Signal::new();
 /// the battery is sampled on a timer, so a redraw that woke the panel
 /// would keep it lit forever.
 static UI_REFRESH: Signal<CriticalSectionRawMutex, ()> = Signal::new();
+/// How many frames the session is holding for an absent host, for the
+/// status page to draw. This board has no sounder, so the count is the
+/// whole indication.
+static QUEUED_FRAMES: AtomicU16 = AtomicU16::new(0);
 /// The user is here, or wants to be: a button press, a BLE link
 /// transition. Restarts the display-attention timeout and relights a
 /// panel that has gone dark.
@@ -1401,6 +1405,22 @@ impl DeviceEnv for BoardDeviceEnv {
         debug_log(format_args!(
             "proto-store snapshot rejected fell-back={fell_back}"
         ));
+    }
+
+    /// No sounder here, so the queued count on the status page carries
+    /// the whole report and the notice's class and mute have nothing to
+    /// steer.
+    fn frame_queued(&mut self, notice: umsh_ulcp_device::QueuedNotice) {
+        QUEUED_FRAMES.store(
+            notice.depth.min(u16::MAX as usize) as u16,
+            Ordering::Release,
+        );
+        UI_REFRESH.signal(());
+    }
+
+    fn queue_emptied(&mut self) {
+        QUEUED_FRAMES.store(0, Ordering::Release);
+        UI_REFRESH.signal(());
     }
 
     async fn persist_identity(&mut self, bytes: &[u8]) -> Result<(), ()> {
@@ -3075,6 +3095,7 @@ fn ui_status<'a>(name: &'a DeviceName, identity: &'a IdentityText) -> screen::St
         identity: identity.model(),
         battery,
         battery_mv: (mv != 0).then_some(mv),
+        queued: Some(QUEUED_FRAMES.load(Ordering::Acquire)),
         link: match BleLinkState::from_code(BLE_LINK.load(Ordering::Acquire)) {
             Some(BleLinkState::Attached) => screen::LinkState::Attached,
             Some(BleLinkState::Connected) => screen::LinkState::Connected,

@@ -71,6 +71,8 @@ pub const fn property_name(key: u32) -> Option<&'static str> {
         prop::HOST_RX_QUEUE_COUNT => "PROP_HOST_RX_QUEUE_COUNT",
         prop::HOST_RX_QUEUE_CAPACITY => "PROP_HOST_RX_QUEUE_CAPACITY",
         prop::HOST_RX_QUEUE_DROPPED => "PROP_HOST_RX_QUEUE_DROPPED",
+        prop::HOST_MUTED_CHANNELS => "PROP_HOST_MUTED_CHANNELS",
+        prop::HOST_MUTED_PEERS => "PROP_HOST_MUTED_PEERS",
         prop::PHY_DUTY_NOW => "PROP_PHY_DUTY_NOW",
         prop::PHY_DUTY_LIMIT => "PROP_PHY_DUTY_LIMIT",
         prop::STAT_TX_PACKETS => "PROP_STAT_TX_PACKETS",
@@ -158,6 +160,8 @@ pub const PROPERTIES: &[u32] = &[
     prop::HOST_RX_QUEUE_COUNT,
     prop::HOST_RX_QUEUE_CAPACITY,
     prop::HOST_RX_QUEUE_DROPPED,
+    prop::HOST_MUTED_CHANNELS,
+    prop::HOST_MUTED_PEERS,
     prop::PHY_DUTY_NOW,
     prop::PHY_DUTY_LIMIT,
     prop::STAT_TX_PACKETS,
@@ -243,6 +247,8 @@ pub const fn property_type(key: u32) -> Option<PropertyType> {
         | prop::DEV_ADMINS
         | prop::HOST_CHANNEL_KEYS
         | prop::HOST_PEER_KEYS
+        | prop::HOST_MUTED_CHANNELS
+        | prop::HOST_MUTED_PEERS
         | prop::HOST_RX_FILTERS => Bytes,
         // A flags octet followed by whichever components it claims.
         prop::BATTERY => Bytes,

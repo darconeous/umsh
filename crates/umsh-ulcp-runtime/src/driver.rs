@@ -37,7 +37,8 @@ use umsh_radio_loraphy::{
 };
 use umsh_ulcp_device::{
     Effect, IdentitySource, MAX_CHANNEL_KEYS, MAX_DEV_ADMINS, MAX_DEV_PEERS, MAX_REPEATER_REGIONS,
-    REGION_STRING_MAX_LEN, RadioRxInfo, SNAPSHOT_MAX, SavedStatus, Session, TxOutcome, TxPower,
+    QueuedNotice, REGION_STRING_MAX_LEN, RadioRxInfo, SNAPSHOT_MAX, SavedStatus, Session,
+    TxOutcome, TxPower,
 };
 
 /// The session sizes its snapshots and the journal sizes its records
@@ -569,10 +570,14 @@ pub trait DeviceEnv {
         let _ = enabled;
     }
     /// A covered frame was queued for an attached-or-future host
-    /// (T-1000E: request the attention LED).
-    fn request_attention(&mut self) {}
-    /// The host-facing queue drained to empty (T-1000E: clear it).
-    fn clear_attention(&mut self) {}
+    /// (T-1000E: the attention LED, and a chirp the notice's class
+    /// chooses unless the host muted its source).
+    fn frame_queued(&mut self, notice: QueuedNotice) {
+        let _ = notice;
+    }
+    /// The host-facing queue drained to empty (T-1000E: clear the
+    /// attention LED).
+    fn queue_emptied(&mut self) {}
     /// A transmit is about to start; boards with a battery-level
     /// estimator mark the load spike.
     fn note_transmit_load(&mut self) {}
@@ -1026,7 +1031,7 @@ async fn serve_frame<A, S, const TXQ: usize, M, const RX: usize, const TX: usize
                         break;
                     }
                 }
-                env.clear_attention();
+                env.queue_emptied();
             }
             Some(Effect::SaveSnapshot { tid }) => {
                 let result = match session.encode_snapshot(snapshot_buf) {
@@ -1172,7 +1177,7 @@ async fn serve_frame<A, S, const TXQ: usize, M, const RX: usize, const TX: usize
         regenerate_device_identity(session, env).await;
     }
     if session.queued_frame_count() == 0 {
-        env.clear_attention();
+        env.queue_emptied();
     }
 }
 
@@ -1474,7 +1479,6 @@ where
             Either4::Second(RxFrame { data, info }) => {
                 // While detached this may stage a delegated MAC
                 // acknowledgement (Effect::StartTransmit).
-                let queued_before = session.queued_frame_count();
                 let rx_info = match info.origin {
                     RxOrigin::Air => {
                         RadioRxInfo::measured(info.rssi, info.snr.as_centibels(), info.lqi)
@@ -1489,8 +1493,8 @@ where
                     Instant::now().as_millis(),
                     &mut |frame: &[u8]| emitter.push(frame),
                 );
-                if session.queued_frame_count() > queued_before {
-                    env.request_attention();
+                if let Some(notice) = session.take_queued_notice() {
+                    env.frame_queued(notice);
                 }
                 emitter
                     .flush(&mut ReplySink::Transport {

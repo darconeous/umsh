@@ -170,6 +170,39 @@ pub mod melodies {
         },
     ]);
 
+    /// A direct message was taken in for a host that is not here: two
+    /// high pips, the sound of a knock at the door.
+    ///
+    /// Kept to the T1000-E's ~60 ms audible floor and to two notes. A
+    /// radio holding mail chirps on its own schedule — whenever a sender
+    /// happens to reach it — so this has to be something an operator can
+    /// have go off in a pocket all afternoon.
+    pub static QUEUED_DIRECT: Melody = Melody::new(&[
+        Tone {
+            frequency_hz: 2_400,
+            duration: Duration::from_millis(60),
+        },
+        Tone {
+            frequency_hz: 0,
+            duration: Duration::from_millis(60),
+        },
+        Tone {
+            frequency_hz: 2_400,
+            duration: Duration::from_millis(60),
+        },
+    ]);
+
+    /// Group traffic was taken in for an absent host: one low pip.
+    ///
+    /// Told apart from [`QUEUED_DIRECT`] twice over — one note against
+    /// two, and low against high — because the distinction that matters
+    /// is whether someone was addressing *you*, and it has to survive
+    /// being heard from a jacket pocket.
+    pub static QUEUED_GROUP: Melody = Melody::new(&[Tone {
+        frequency_hz: 1_400,
+        duration: Duration::from_millis(80),
+    }]);
+
     /// Bright blip played when the buzzer is un-silenced.
     pub static UNSILENCE: Melody = Melody::new(&[Tone {
         frequency_hz: 2_000,
@@ -822,5 +855,44 @@ mod tests {
             } => {}
             d => panic!("expected 2000 Hz tone, got {:?}", d),
         }
+    }
+
+    #[test]
+    fn the_two_queue_chirps_are_told_apart_by_ear() {
+        let direct = &melodies::QUEUED_DIRECT.notes;
+        let group = &melodies::QUEUED_GROUP.notes;
+        // Two differences, not one: a listener who misses the pitch
+        // still hears the count.
+        assert_ne!(direct.len(), group.len());
+        let pitch = |notes: &[Tone]| {
+            notes
+                .iter()
+                .filter(|note| note.frequency_hz != 0)
+                .map(|note| note.frequency_hz)
+                .max()
+                .expect("a chirp has at least one tone")
+        };
+        assert!(pitch(direct) > pitch(group) + 500);
+    }
+
+    #[test]
+    fn the_queue_chirps_stay_above_the_audible_floor() {
+        // The amplified T1000-E piezo needs ~60 ms a note to sound at
+        // all, and a chirp nobody hears is worse than no chirp.
+        for melody in [&melodies::QUEUED_DIRECT, &melodies::QUEUED_GROUP] {
+            for note in melody.notes {
+                if note.frequency_hz != 0 {
+                    assert!(note.duration >= Duration::from_millis(60));
+                }
+            }
+        }
+    }
+
+    #[test]
+    fn a_queue_chirp_stays_silenced() {
+        let mut e = BuzzerEngine::new();
+        e.set_silenced(true);
+        e.play(&melodies::QUEUED_DIRECT, 0);
+        assert_eq!(e.tick(0), BuzzerDecision::Silent);
     }
 }

@@ -1149,6 +1149,55 @@ mod firmware {
     #[cfg(feature = "has-display")]
     static UI_ALERT_CHANGED: Signal<ThreadModeRawMutex, ()> = Signal::new();
 
+    /// How many frames the session is holding for an absent host, for
+    /// the display task to draw. The session stays authoritative; this
+    /// is the mirror a pull-model renderer can read.
+    static QUEUED_FRAMES: AtomicU16 = AtomicU16::new(0);
+
+    /// Express a frame having been taken in for a host that is not here.
+    ///
+    /// The count and the attention LED report the queue, so they follow
+    /// every frame; the chirp addresses the operator, so it follows what
+    /// the host asked to hear about.
+    fn set_queue_indication(notice: umsh_ulcp_device::QueuedNotice) {
+        QUEUED_FRAMES.store(
+            notice.depth.min(u16::MAX as usize) as u16,
+            Ordering::Release,
+        );
+        #[cfg(feature = "t1000e")]
+        umsh_bsp_t1000e::indicator::request_attention();
+        #[cfg(feature = "has-display")]
+        UI_REFRESH.signal(());
+        if notice.muted {
+            return;
+        }
+        // The engine already declines to play while the operator has the
+        // buzzer silenced, and already yields to the locate alert, so
+        // there is nothing to gate here.
+        #[cfg(any(feature = "t1000e", feature = "cap-buzzer"))]
+        let melody = match notice.class {
+            umsh_ulcp_device::QueuedClass::Direct => {
+                &umsh_ux_tracker::buzzer::melodies::QUEUED_DIRECT
+            }
+            umsh_ulcp_device::QueuedClass::Group => {
+                &umsh_ux_tracker::buzzer::melodies::QUEUED_GROUP
+            }
+        };
+        #[cfg(feature = "t1000e")]
+        umsh_bsp_t1000e::BUZZER_SIGNAL.signal(melody);
+        #[cfg(feature = "cap-buzzer")]
+        umsh_bsp_wio_tracker_l1::buzzer::BUZZER_SIGNAL.signal(melody);
+    }
+
+    /// The queue drained: nothing is waiting for the host any more.
+    fn clear_queue_indication() {
+        QUEUED_FRAMES.store(0, Ordering::Release);
+        #[cfg(feature = "t1000e")]
+        umsh_bsp_t1000e::indicator::clear_attention();
+        #[cfg(feature = "has-display")]
+        UI_REFRESH.signal(());
+    }
+
     /// Apply a `PROP_ALERT` transition to the board's indicators.
     ///
     /// Idempotent — the session emits the effect on every transition,
@@ -1868,14 +1917,12 @@ mod firmware {
             UI_REFRESH.signal(());
         }
 
-        #[cfg(feature = "t1000e")]
-        fn request_attention(&mut self) {
-            umsh_bsp_t1000e::indicator::request_attention();
+        fn frame_queued(&mut self, notice: umsh_ulcp_device::QueuedNotice) {
+            set_queue_indication(notice);
         }
 
-        #[cfg(feature = "t1000e")]
-        fn clear_attention(&mut self) {
-            umsh_bsp_t1000e::indicator::clear_attention();
+        fn queue_emptied(&mut self) {
+            clear_queue_indication();
         }
 
         #[cfg(feature = "cap-battery-saadc")]
@@ -3250,6 +3297,7 @@ mod firmware {
                 _ => screen::LinkState::OffWired,
             },
             stats: ui_stats(),
+            queued: Some(QUEUED_FRAMES.load(Ordering::Acquire)),
             bonds: BLE_BOND_COUNT.load(Ordering::Acquire),
             // Bluetooth off outranks everything — a lockout on a
             // transport that is off is not a state anyone can act on —
