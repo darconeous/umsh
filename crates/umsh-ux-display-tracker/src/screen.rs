@@ -475,35 +475,38 @@ where
     let mut line: String<LINE> = String::new();
     let content_end = match model.page() {
         // The top level is three pages the user walks between, each of
-        // them the whole panel: the highlight names what is being read
-        // and the rows below are the reading. Everything below the top is
+        // them the whole panel: the title names what is being read and
+        // the rows below are the reading. Everything below the top is
         // only meaningful beside its neighbors, so the list it belongs to
         // is the screen and a Select is what opens one of its entries.
+        //
+        // Every page names itself the same way — see `draw_title`. None
+        // of them inverts, because on a page there is no cursor for a bar
+        // to be on.
         Page::Menu(MenuItem::Status) => {
-            draw_row_inverted(target, layout, 1, menu_label(MenuItem::Status));
+            draw_title(target, layout, 1, menu_label(MenuItem::Status));
             draw_status_page(target, layout, model, status, &mut line)
         }
         Page::Menu(MenuItem::Identity) => {
-            draw_row_inverted(target, layout, 1, menu_label(MenuItem::Identity));
+            draw_title(target, layout, 1, menu_label(MenuItem::Identity));
             draw_identity_page(target, layout, status)
         }
         // Settings is a doorway and has nothing of its own to say. A page
         // that listed what was behind it read as the list one Select
-        // away rather than as the way to it — rows of labels and states,
-        // under a bar that looked like a highlight on the first of them.
-        // So: its name, centered, and the hint saying what opens it.
+        // away rather than as the way to it. So: its name, and the hint
+        // saying what opens it.
         Page::Menu(MenuItem::Settings) => {
-            draw_row_centered(target, layout, 1, menu_label(MenuItem::Settings));
+            draw_title(target, layout, 1, menu_label(MenuItem::Settings));
             2
         }
         Page::Detail(MenuItem::Stats) => {
-            draw_row_inverted(target, layout, 1, menu_label(MenuItem::Stats));
+            draw_title(target, layout, 1, menu_label(MenuItem::Stats));
             draw_stats_page(target, layout, status, &mut line)
         }
         // No other entry opens a page yet. Naming it is still better than
         // a blank panel, and better than a list the Select just left.
         Page::Detail(item) => {
-            draw_row_inverted(target, layout, 1, menu_label(item));
+            draw_title(target, layout, 1, menu_label(item));
             2
         }
         Page::Menu(item) => draw_level_list(target, layout, model, status, item),
@@ -1038,6 +1041,47 @@ where
     let _ = Text::with_baseline(text, at, style, Baseline::Top).draw(target);
 }
 
+/// Name a page: its title, centered, in the heaviest weight the panel's
+/// font can be made to carry.
+///
+/// Centering is the signal. Nothing else on any screen is centered except
+/// the message frames, so a centered word at the top of a page is already
+/// unambiguous — which is why a title needs no inversion, and is better
+/// without one. A solid bar means the cursor, and a page is not a list
+/// with its first row picked out.
+///
+/// The weight is synthetic. Neither font in this class has a bold sibling
+/// in `embedded-graphics` — the OLED's 6x10 and the e-paper's 10x20 both
+/// stand alone — so the glyphs are stamped twice, a pixel apart, and every
+/// vertical stroke comes out a pixel thicker. The style carries no
+/// background color, so the second pass only ever adds ink; nothing it
+/// draws over is erased. It costs one extra pass over a short string and
+/// no flash at all, where a real bold face would cost a second font.
+fn draw_title<D>(target: &mut D, layout: &Layout, row: usize, text: &str)
+where
+    D: DrawTarget<Color = BinaryColor>,
+{
+    if row >= layout.rows || text.is_empty() {
+        return;
+    }
+    let advance = layout.font.character_size.width + layout.font.character_spacing;
+    // The smear widens the ink, not the advance, so the last glyph reaches
+    // one pixel past where the text is measured to end. Centering against
+    // the measured width and letting that pixel fall in the right-hand
+    // margin keeps the title on the same grid as everything else.
+    let text = clip(layout, text, layout.size.width.saturating_sub(BOLD_SMEAR));
+    let width = advance.saturating_mul(text.chars().count() as u32);
+    let x = (layout.size.width.saturating_sub(width) / 2) as i32;
+    let top = layout.row_top(row);
+    draw_text(target, layout, Point::new(x, top), text);
+    draw_text(target, layout, Point::new(x + BOLD_SMEAR as i32, top), text);
+}
+
+/// How far the second stamp of a title is offset. One pixel: on the OLED's
+/// 6x10 there is only a pixel of gap between glyph cells to spend, and
+/// spending more would run the letters together.
+const BOLD_SMEAR: u32 = 1;
+
 /// Draw `row` inverted: the panel's foreground and background swap across
 /// the whole width of the row, including the space either side of the
 /// label.
@@ -1048,6 +1092,12 @@ where
 /// bistable panel with no backlight. Filling the band and *then* drawing
 /// the glyphs on their own inverted background is what makes it one solid
 /// bar rather than a row of boxed letters.
+///
+/// It reaches the panel through exactly one caller,
+/// [`draw_row_selectable`], which is what makes a solid bar mean one
+/// thing: the cursor is here. Page titles used to invert as well, and a
+/// title bar with nothing under it read as a list whose first row was
+/// picked out — see [`draw_title`], which centers instead.
 fn draw_row_inverted<D>(target: &mut D, layout: &Layout, row: usize, text: &str)
 where
     D: DrawTarget<Color = BinaryColor>,
@@ -2181,25 +2231,33 @@ mod tests {
             .collect()
     }
 
-    /// The highlight is a solid bar across the whole row, not emphasized
-    /// text — that is what makes it legible on a bistable panel with no
-    /// backlight, and it is the contract Select is drawn against.
+    /// A solid bar means the cursor, and it means nothing else.
     ///
-    /// Settings is the one frame without one. It is a doorway whose whole
-    /// content is its own name, and a bar there had nothing under it to
-    /// mark: it read as a list with its first row highlighted, which is
-    /// exactly what the page is not.
+    /// Inversion across the whole row — not emphasized text — is what
+    /// makes it legible on a bistable panel with no backlight, and it is
+    /// the contract Select is drawn against. So a frame showing a list
+    /// inverts exactly the row the cursor is on, and a frame showing a
+    /// page inverts nothing at all: there is no cursor on a page, and a
+    /// title bar with nothing under it read as a list whose first row had
+    /// been picked out.
     #[test]
-    fn the_highlight_is_a_solid_bar_and_there_is_exactly_one() {
+    fn a_solid_bar_marks_the_cursor_and_only_the_cursor() {
         for layout in layouts() {
             for item in MenuItem::ALL {
                 let mut model = UiModel::new(MenuItems::all());
                 navigate_to(&mut model, item);
                 let rows = inverted_rows(&layout, &model, &demo_status());
-                if item == MenuItem::Settings {
-                    assert!(rows.is_empty(), "the doorway inverted {rows:?}");
+
+                // The top level is pages; everything below it is a list.
+                if item.reads_in_place() {
+                    assert!(
+                        rows.is_empty(),
+                        "the {item:?} page inverted {rows:?} on {:?}",
+                        layout.size
+                    );
                     continue;
                 }
+
                 assert_eq!(
                     rows.len(),
                     1,
@@ -2208,6 +2266,19 @@ mod tests {
                 );
                 // Never the header, which is not a list entry.
                 assert_ne!(rows[0], 0, "{item:?} inverted the header");
+
+                // ...and the page it opens, if it opens one, has no bar
+                // either — the list it was on is gone.
+                if matches!(item.kind(), EntryKind::Reading(_)) {
+                    model.apply(UiInput::Select);
+                    assert!(matches!(model.page(), Page::Detail(_)));
+                    let rows = inverted_rows(&layout, &model, &demo_status());
+                    assert!(
+                        rows.is_empty(),
+                        "the {item:?} page inverted {rows:?} on {:?}",
+                        layout.size
+                    );
+                }
             }
         }
     }

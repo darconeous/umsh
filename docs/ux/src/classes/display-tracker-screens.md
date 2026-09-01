@@ -63,10 +63,18 @@ page.
 
 **A doorway shows nothing but where it goes.** Settings has no content of its
 own, and a page that summarized what was behind it—rows of labels and their
-states, under a bar that looked like a highlight on the first of them—read as
-the list one Select away rather than as the way to it. Its name is centered and
-uninverted for the same reason: a solid bar is the cursor, and on a page whose
-whole content is a title there is nothing for it to be on.
+states—read as the list one Select away rather than as the way to it.
+
+**A page names itself in a centered, bold title.** Centering is what carries
+the distinction: nothing else on any screen is centered, so a centered word at
+the top of a panel is already unmistakably a title rather than a row. Weight
+reinforces it where the panel can render weight; where the font has no bold
+sibling, stamping the glyphs twice a pixel apart thickens every stroke without
+costing a second font.
+
+Titles are never inverted. A solid bar means the cursor, and on a page there is
+no cursor for it to be on—a title bar with nothing under it reads as a list
+whose first row has been picked out, which is exactly what a page is not.
 
 **Reading in place is a property of the level, not of the entry**, and the top
 level is the exception rather than the rule. A submenu that answered a question
@@ -110,10 +118,10 @@ shown at all, rather than opening onto a list containing only Back.
 The highlighted entry is drawn inverted: the panel's foreground and background
 swap across the whole width of the row, including the space either side of the
 label, so the highlight reads as a solid bar rather than as emphasized text.
-Exactly one entry is inverted at any moment, and the two choices on a
-confirmation page use the same inversion. A page with no entry on it—a doorway
-that shows only its own name—inverts nothing, because the bar is the cursor and
-there is nothing there for the cursor to be on.
+A frame showing a list inverts exactly the row the cursor is on, and the two
+choices on a confirmation page use the same inversion. A frame showing a page
+inverts nothing at all. The bar means one thing—the cursor is here—and it is
+worth spending nothing else on, because a second meaning would cost it that one.
 
 Inversion is chosen because it survives everything these panels do badly. It
 needs no color, no second font, and no glyph column stolen from a row that is
