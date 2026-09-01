@@ -846,7 +846,6 @@ struct QueueEntry {
     rssi_dbm: Option<i16>,
     snr_cb: Option<i16>,
     lqi: Option<core::num::NonZeroU8>,
-    self_tx: bool,
     rx_time_ms: u64,
     acked: bool,
     /// Monotonic (wrapping) sequence number: a stable handle that a
@@ -863,7 +862,6 @@ impl QueueEntry {
         rssi_dbm: None,
         snr_cb: None,
         lqi: None,
-        self_tx: false,
         rx_time_ms: 0,
         acked: false,
         seq: 0,
@@ -939,7 +937,6 @@ impl RxQueue {
         entry.rssi_dbm = info.rssi_dbm;
         entry.snr_cb = info.snr_cb;
         entry.lqi = info.lqi;
-        entry.self_tx = info.self_tx;
         entry.rx_time_ms = rx_time_ms;
         entry.acked = false;
         entry.seq = seq;
@@ -1515,12 +1512,37 @@ impl HostDomain {
         self.key.is_some() || !self.filters.is_empty() || self.channel_keys.len != 0
     }
 
+    /// Whether receive filtering accepts this frame for the inbound
+    /// queue, which is narrower than accepting it for live delivery
+    /// twice over.
+    ///
+    /// The compatibility rule is the first difference. Accepting every
+    /// frame when nothing is configured exists so a host using the radio
+    /// as a plain frame pipe sees a filtering device behave like one that
+    /// has no host services at all — an argument about what an *attached*
+    /// host is handed. Queueing has no equivalent: the host domain does
+    /// not survive a power cycle, so between boot and the host's first
+    /// write there is no host key, no filters, and no channel keys, and a
+    /// device that queued on the compatibility rule would spend that
+    /// window recording every frame in earshot on nobody's behalf — its
+    /// own transmissions among them.
+    ///
+    /// The broadcast rule is the second: a broadcast is implicitly
+    /// accepted live because it is addressed to every node, the host
+    /// included, but ambient broadcast traffic must not displace queued
+    /// unicast frames. A detached device queues one only when an explicit
+    /// filter selects it, which is the host having asked.
+    fn accepts_queued_frame(&self, data: &[u8]) -> bool {
+        if !self.filtering_configured() {
+            return false;
+        }
+        self.accepts_frame(data)
+    }
+
     /// Whether receive filtering accepts this frame for live delivery:
     /// a Broadcast packet is addressed to every node — the host
     /// included — so it is implicitly accepted. The broadcast rule is
-    /// live-only: while the host is detached, ambient broadcast
-    /// traffic must not displace queued unicast frames, so the queue
-    /// path uses [`accepts_frame`](Self::accepts_frame) directly.
+    /// live-only; see [`accepts_queued_frame`](Self::accepts_queued_frame).
     fn accepts_live_frame(&self, data: &[u8]) -> bool {
         if PacketHeader::parse(data)
             .is_ok_and(|header| header.fcf.packet_type() == PacketType::Broadcast)
@@ -3106,7 +3128,15 @@ impl<A: AesProvider, S: Sha256Provider, const TX: usize> Session<A, S, TX> {
             return None;
         }
         if !self.attached {
-            if !self.host.accepts_frame(data) {
+            // An echo of our own transmission is never queued. The
+            // loopback exists so an attached host's MAC can watch its own
+            // frame reach the air and stop retransmitting; that is a
+            // statement about right now, and one replayed on the next
+            // drain answers a question the host stopped asking long ago.
+            if info.self_tx {
+                return None;
+            }
+            if !self.host.accepts_queued_frame(data) {
                 return None;
             }
             return match self.evaluate_detached_rx(data, now_ms) {
@@ -4235,9 +4265,9 @@ impl<A: AesProvider, S: Sha256Provider, const TX: usize> Session<A, S, TX> {
                 lqi: entry.lqi,
                 snr_cb: entry.snr_cb,
             },
-            flags: RX_FLAG_BUFFERED
-                | if entry.acked { RX_FLAG_ACKED } else { 0 }
-                | if entry.self_tx { RX_FLAG_SELF_TX } else { 0 },
+            // Never RX_FLAG_SELF_TX: the queue does not take in echoes
+            // of our own transmissions, so nothing it holds can be one.
+            flags: RX_FLAG_BUFFERED | if entry.acked { RX_FLAG_ACKED } else { 0 },
             age_s: u32::try_from(now_ms.saturating_sub(entry.rx_time_ms) / 1000)
                 .unwrap_or(u32::MAX),
         }
@@ -10138,6 +10168,24 @@ mod tests {
         assert!(!delivered_at(session, frame, now_ms));
     }
 
+    /// A detached session whose queue can actually fill.
+    ///
+    /// An explicit packet-type filter for unicast is what makes filtering
+    /// configured — a device with nothing configured queues nothing,
+    /// because there is no host to hold traffic for — and it admits these
+    /// tests' frames whatever destination hint they carry.
+    fn queueing_session() -> TestSession {
+        let mut session = test_session();
+        enable(&mut session);
+        insert_item(
+            &mut session,
+            prop::HOST_RX_FILTERS,
+            &[items::FILTER_PKT_TYPE, PacketType::Unicast as u8],
+        );
+        session.detach();
+        session
+    }
+
     fn queue_count(session: &mut TestSession) -> u16 {
         let raw = get(session, prop::HOST_RX_QUEUE_COUNT);
         u16::from_le_bytes([raw[0], raw[1]])
@@ -10177,8 +10225,15 @@ mod tests {
 
     #[test]
     fn detached_receive_then_attach_count_drain() {
-        let mut session = test_session();
-        enable(&mut session);
+        let mut session = queueing_session();
+        // A broadcast is queued only where the host asked for one, so say
+        // so; the drain then covers two frames of different kinds.
+        session.attach(true);
+        insert_item(
+            &mut session,
+            prop::HOST_RX_FILTERS,
+            &[items::FILTER_PKT_TYPE, PacketType::Broadcast as u8],
+        );
         session.detach();
         receive_detached(&mut session, &unicast_to([1, 2, 3]), 1_000);
         receive_detached(&mut session, &broadcast_frame(), 3_000);
@@ -10210,9 +10265,7 @@ mod tests {
 
     #[test]
     fn queue_overflow_evicts_oldest_and_counts_dropped() {
-        let mut session = test_session();
-        enable(&mut session);
-        session.detach();
+        let mut session = queueing_session();
         // Overfill by three: the queue keeps the most recent traffic.
         for index in 0..(RX_QUEUE_CAPACITY + 3) as u8 {
             receive_detached(&mut session, &unicast_to([index, 0, 0]), 0);
@@ -10266,12 +10319,55 @@ mod tests {
     }
 
     #[test]
-    fn unauthenticated_duplicates_occupy_separate_entries() {
-        // No keys are provisioned before CAP_HOST_KEYS, so no
-        // protocol-defined duplicate detection applies.
+    fn an_unconfigured_host_domain_queues_nothing() {
+        // The state every device boots into: the host domain does not
+        // survive a power cycle, so until the host attaches and claims
+        // the device there is no key, no filter, and no channel. A device
+        // that queued on the compatibility rule would spend that window
+        // recording the whole neighborhood on nobody's behalf.
         let mut session = test_session();
         enable(&mut session);
         session.detach();
+        receive_detached(&mut session, &unicast_to([1, 2, 3]), 0);
+        receive_detached(&mut session, &broadcast_frame(), 0);
+        session.attach(true);
+        assert_eq!(queue_count(&mut session), 0);
+        // Nothing was evicted either — the frames never entered.
+        assert_eq!(
+            get(&mut session, prop::HOST_RX_QUEUE_DROPPED),
+            0u32.to_le_bytes()
+        );
+
+        // Live delivery is unchanged: an unconfigured device is still a
+        // plain frame pipe for an attached host.
+        assert!(delivered(&mut session, &unicast_to([1, 2, 3])));
+    }
+
+    #[test]
+    fn our_own_transmissions_are_never_queued() {
+        // The TX loopback exists so an attached host's MAC can watch its
+        // own frame reach the air. Replayed on a later drain it answers
+        // nothing, and on a board with a sounder it would chirp at its
+        // owner about a message they sent.
+        let mut session = queueing_session();
+        let mut emitted = Vec::new();
+        session.on_radio_rx(
+            &unicast_to([1, 2, 3]),
+            &RadioRxInfo::self_transmitted(),
+            0,
+            &mut |bytes: &[u8]| emitted.push(bytes.to_vec()),
+        );
+        assert!(emitted.is_empty(), "detached receive must not emit");
+        assert!(session.take_queued_notice().is_none(), "and must not chirp");
+        session.attach(true);
+        assert_eq!(queue_count(&mut session), 0);
+    }
+
+    #[test]
+    fn unauthenticated_duplicates_occupy_separate_entries() {
+        // No keys are provisioned before CAP_HOST_KEYS, so no
+        // protocol-defined duplicate detection applies.
+        let mut session = queueing_session();
         let frame = unicast_to([1, 2, 3]);
         receive_detached(&mut session, &frame, 0);
         receive_detached(&mut session, &frame, 0);
@@ -10281,9 +10377,7 @@ mod tests {
 
     #[test]
     fn live_arrivals_interleave_with_a_drain() {
-        let mut session = test_session();
-        enable(&mut session);
-        session.detach();
+        let mut session = queueing_session();
         receive_detached(&mut session, &unicast_to([1, 0, 0]), 0);
         receive_detached(&mut session, &unicast_to([2, 0, 0]), 0);
         session.attach(true);
@@ -10318,9 +10412,7 @@ mod tests {
 
     #[test]
     fn second_drain_while_in_progress_is_busy() {
-        let mut session = test_session();
-        enable(&mut session);
-        session.detach();
+        let mut session = queueing_session();
         receive_detached(&mut session, &unicast_to([1, 0, 0]), 0);
         session.attach(true);
 
@@ -10337,9 +10429,7 @@ mod tests {
 
     #[test]
     fn reset_and_host_replacement_discard_the_queue() {
-        let mut session = test_session();
-        enable(&mut session);
-        session.detach();
+        let mut session = queueing_session();
         for _ in 0..(RX_QUEUE_CAPACITY + 1) {
             receive_detached(&mut session, &unicast_to([1, 2, 3]), 0);
         }
@@ -11058,10 +11148,12 @@ mod tests {
         assert_eq!(get(&mut booted, prop::SAVED), [ids::saved::CURRENT]);
         assert_eq!(get(&mut booted, prop::HOST_KEY), Vec::<u8>::new());
         assert_eq!(get(&mut booted, prop::HOST_AUTO_ACK), [0]);
-        // With no host key and no filters the domain is unprovisioned,
-        // which filters nothing — the frame is queued, but for nobody in
-        // particular, and it was never acknowledged on anyone's behalf.
-        assert_eq!(queue_count(&mut booted), 1);
+        // With no host key and no filters the host domain is
+        // unprovisioned, and the frame is dropped rather than queued.
+        // Accepting everything when nothing is configured is about what a
+        // live host is handed; there is nobody here to hold traffic for,
+        // and the device's own channel keys are not the host's.
+        assert_eq!(queue_count(&mut booted), 0);
 
         // A truncated payload and a foreign format byte are both
         // rejected, and rejection is reported rather than looking like
@@ -12389,9 +12481,7 @@ mod tests {
 
     #[test]
     fn tid_zero_drain_delivers_frames_but_no_completion() {
-        let mut session = test_session();
-        enable(&mut session);
-        session.detach();
+        let mut session = queueing_session();
         receive_detached(&mut session, &unicast_to([1, 2, 3]), 0);
         session.attach(true);
 

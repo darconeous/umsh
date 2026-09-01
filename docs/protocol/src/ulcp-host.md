@@ -485,10 +485,23 @@ filtering matches them.
 **Compatibility rule:** when no host key is configured, no host channel
 keys are provisioned, and the explicit filter table is empty, filtering is
 considered unconfigured and **every** successfully received frame is
-accepted. This is exactly how a device with no host services at all
-behaves, so a host using the radio as a plain frame pipe observes no
-difference on a filtering device in its factory state. As soon as any
-filter (implicit or explicit) exists, only matching frames are accepted.
+accepted **for live delivery**. This is exactly how a device with no host
+services at all behaves, so a host using the radio as a plain frame pipe
+observes no difference on a filtering device in its factory state. As soon
+as any filter (implicit or explicit) exists, only matching frames are
+accepted.
+
+Like the broadcast rule, this one is live-only. A device with filtering
+unconfigured queues nothing while detached: the host domain does not
+survive a power cycle, so every device passes through this state on the
+way from power-on to its host's first write, and a device that queued
+here would fill its queue with whatever was in earshot — its own
+transmissions included — on nobody's behalf.
+
+A device **MUST NOT** queue a frame it transmitted itself. The copy a
+device delivers of its own transmission (`RX_FLAG_SELF_TX`) lets an
+attached host's MAC observe its frame reaching the air; replayed from the
+queue it describes a transmission the host completed long before.
 
 Promiscuous mode (see [`PROP_MAC_PROMISCUOUS`](ulcp-host.md#prop-mac-promiscuous)) bypasses filtering for live
 delivery only.
