@@ -147,6 +147,14 @@ protocol RadioConnection: AnyObject, Sendable {
     /// away. Bookkeeping between the app and its own radio: callers reconcile
     /// on attach and after every membership change, and never surface it.
     func reconcileHostChannels(_ channelKeys: [Data]) async throws
+    /// Make the radio's host peer-key table match `entries` — the pairwise
+    /// keys for the peers whose conversations are open, so the radio can
+    /// verify and acknowledge their unicast traffic while the phone is away.
+    /// Bookkeeping like the channel reconcile above, never surfaced.
+    func reconcileHostPeerKeys(_ entries: [HostPeerKeyEntryRecord]) async throws
+    /// Whether the radio acknowledges queued unicast on the phone's behalf
+    /// while the phone is away, using the peer keys provisioned above.
+    func setHostAutoAcknowledgement(_ enabled: Bool) async throws
     /// Replay every frame the radio queued while the phone was away. The
     /// frames arrive through the ordinary receive path wearing buffered
     /// metadata; completion leaves the radio's queue empty. Callers drain

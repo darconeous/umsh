@@ -326,6 +326,26 @@ actor FakeRadioConnection: RadioConnection {
         publish(updated)
     }
 
+    func reconcileHostPeerKeys(_ entries: [HostPeerKeyEntryRecord]) async throws {
+        guard var provisioning = snapshot.provisioning, provisioning.supportsHostKeys else {
+            return
+        }
+        provisioning.hostPeerCount = min(entries.count, Int(ulcpMaxHostPeers()))
+        var updated = snapshot
+        updated.provisioning = provisioning
+        publish(updated)
+    }
+
+    func setHostAutoAcknowledgement(_ enabled: Bool) async throws {
+        guard var provisioning = snapshot.provisioning,
+              provisioning.autoAcknowledgementEnabled != nil
+        else { return }
+        provisioning.autoAcknowledgementEnabled = enabled
+        var updated = snapshot
+        updated.provisioning = provisioning
+        publish(updated)
+    }
+
     func drainOfflineQueue() async throws {
         guard var provisioning = snapshot.provisioning, provisioning.supportsOfflineQueue else {
             return

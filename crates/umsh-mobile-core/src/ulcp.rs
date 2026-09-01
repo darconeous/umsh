@@ -22,7 +22,9 @@ use umsh_ulcp::{
 
 use crate::{
     MobileError,
-    mobile_mesh::{MobileMeshManagementAnswerRecord, MobileMeshPropertyWriteRecord},
+    mobile_mesh::{
+        HostPeerKeyEntryRecord, MobileMeshManagementAnswerRecord, MobileMeshPropertyWriteRecord,
+    },
 };
 
 /// One header-prefixed ATT value produced by ULCP GATT segmentation.
@@ -718,6 +720,21 @@ enum ExpectedResponse {
     /// buffered metadata; the correlated `PROP_LAST_STATUS` is what
     /// completes the operation.
     QueueDrain,
+    /// One `CMD_PROP_INSERT` in the host peer-key reconciliation, carrying
+    /// the 96-byte entries still to be sent. The device confirms with the
+    /// entry's public key, and a matching key replaces stored key material,
+    /// so there is no `ALREADY` to tolerate.
+    HostPeerInsert(VecDeque<Vec<u8>>),
+    /// One `CMD_PROP_REMOVE` in the same reconciliation, selecting by
+    /// public key, carrying the keys still to be shed and the inserts that
+    /// follow them. `ITEM_NOT_FOUND` asserts the state that was asked for.
+    HostPeerRemove {
+        removals: VecDeque<Vec<u8>>,
+        inserts: VecDeque<Vec<u8>>,
+    },
+    /// The `CMD_PROP_SET` of `PROP_HOST_AUTO_ACK`, answered by the
+    /// device's echo.
+    HostAutoAck,
     /// A `CMD_PROP_GET` issued by a local management fetch. Unlike
     /// `Property`, a refusal is an answer to record, never a stage
     /// failure: the caller asked an open question about one property.
@@ -1475,6 +1492,115 @@ impl MobileUlcpSession {
         Ok(state.update(vec![output]))
     }
 
+    /// Make the radio's host peer-key table (`PROP_HOST_PEER_KEYS`) match
+    /// the supplied entries — the pairwise keys for the peers whose
+    /// conversations are open, so the radio can verify and acknowledge
+    /// their unicast traffic while the phone is away.
+    ///
+    /// The cached digest is one public key per entry, and pairwise keys are
+    /// deterministic per (host identity, peer), so diffing by key is
+    /// sufficient: extra keys are shed one `CMD_PROP_REMOVE` at a time,
+    /// missing entries follow as `CMD_PROP_INSERT`s. Host domain, so
+    /// nothing is saved and reconciling on attach is what makes it stick.
+    /// Requires an attached, otherwise-idle session on a device advertising
+    /// `CAP_HOST_KEYS`. Returns without any frames when the device already
+    /// holds exactly the requested set.
+    pub fn reconcile_host_peer_keys(
+        &self,
+        entries: Vec<HostPeerKeyEntryRecord>,
+    ) -> Result<UlcpSessionUpdateRecord, MobileError> {
+        let mut desired_keys = Vec::with_capacity(entries.len());
+        let mut encoded = Vec::with_capacity(entries.len());
+        for record in entries {
+            let entry = items::PeerKeyEntry {
+                public_key: record
+                    .public_key
+                    .as_slice()
+                    .try_into()
+                    .map_err(|_| MobileError::InvalidUlcpFrame)?,
+                k_enc: record
+                    .k_enc
+                    .as_slice()
+                    .try_into()
+                    .map_err(|_| MobileError::InvalidUlcpFrame)?,
+                k_mic: record
+                    .k_mic
+                    .as_slice()
+                    .try_into()
+                    .map_err(|_| MobileError::InvalidUlcpFrame)?,
+            };
+            let mut wire = [0u8; items::PeerKeyEntry::WIRE_LEN];
+            entry
+                .encode(&mut wire)
+                .map_err(|_| MobileError::InvalidUlcpFrame)?;
+            desired_keys.push(entry.public_key.to_vec());
+            encoded.push(wire.to_vec());
+        }
+
+        let mut state = self.inner.lock().expect("ULCP session mutex poisoned");
+        if state.stage != SessionStage::Attached || !state.expected.is_empty() {
+            return Err(MobileError::InvalidUlcpFrame);
+        }
+        if !state.has_capability(cap::HOST_KEYS)? {
+            return Err(MobileError::UnsupportedCapability);
+        }
+
+        let current: Vec<Vec<u8>> = state
+            .responses
+            .get(&prop::HOST_PEER_KEYS)
+            .map(|entry| entry.value.clone())
+            .unwrap_or_default()
+            .chunks(items::PUBLIC_KEY_LEN)
+            .map(<[u8]>::to_vec)
+            .collect();
+
+        let removals: VecDeque<Vec<u8>> = current
+            .iter()
+            .filter(|key| !desired_keys.contains(key))
+            .cloned()
+            .collect();
+        let inserts: VecDeque<Vec<u8>> = encoded
+            .into_iter()
+            .zip(&desired_keys)
+            .filter(|(_, key)| !current.contains(key))
+            .map(|(wire, _)| wire)
+            .collect();
+
+        match state.next_host_peer_operation(removals, inserts) {
+            Some(frame) => Ok(state.update(vec![frame])),
+            None => Ok(state.update(Vec::new())),
+        }
+    }
+
+    /// Turn the radio's delegated acknowledgement (`PROP_HOST_AUTO_ACK`)
+    /// on or off — whether it acks queued unicast on this host's behalf
+    /// while the host is away, using the peer keys provisioned above.
+    ///
+    /// A no-op update when the cached value already matches, which is what
+    /// makes calling it on every attach cheap. Requires an attached,
+    /// otherwise-idle session on a device advertising `CAP_HOST_AUTO_ACK`.
+    pub fn set_host_auto_ack(&self, enabled: bool) -> Result<UlcpSessionUpdateRecord, MobileError> {
+        let mut state = self.inner.lock().expect("ULCP session mutex poisoned");
+        if state.stage != SessionStage::Attached || !state.expected.is_empty() {
+            return Err(MobileError::InvalidUlcpFrame);
+        }
+        if !state.has_capability(cap::HOST_AUTO_ACK)? {
+            return Err(MobileError::UnsupportedCapability);
+        }
+        let desired = vec![u8::from(enabled)];
+        if state
+            .responses
+            .get(&prop::HOST_AUTO_ACK)
+            .is_some_and(|entry| entry.value == desired)
+        {
+            return Ok(state.update(Vec::new()));
+        }
+        let tid = state.allocate_tid();
+        state.expected.insert(tid, ExpectedResponse::HostAutoAck);
+        let frame = ulcp_prop_set(tid, prop::HOST_AUTO_ACK, desired)?;
+        Ok(state.update(vec![frame]))
+    }
+
     /// Store one peer public key on the radio's device identity
     /// (`PROP_DEV_PEERS`), then persist with a chained `CMD_SAVE` when the
     /// device can.
@@ -1874,6 +2000,70 @@ impl MobileUlcpSession {
                     || response.command != Cmd::PropIs as u8
                 {
                     return Err(MobileError::UlcpMismatchedResponse);
+                }
+                state.refresh_attached_snapshot(None)?;
+            }
+            ExpectedResponse::HostPeerInsert(mut remaining) => {
+                if response.property_id == prop::LAST_STATUS {
+                    operation_error = Some(ulcp_operation_error(
+                        "provision host peer key".to_owned(),
+                        response.value.as_slice(),
+                    )?);
+                    state.refresh_attached_snapshot(None)?;
+                    remaining.clear();
+                } else if response.property_id != prop::HOST_PEER_KEYS
+                    || response.command != Cmd::PropInserted as u8
+                {
+                    return Err(MobileError::UlcpMismatchedResponse);
+                }
+                if let Some(frame) = state.next_host_peer_operation(VecDeque::new(), remaining) {
+                    outbound.push(frame);
+                } else {
+                    state.refresh_attached_snapshot(None)?;
+                }
+            }
+            ExpectedResponse::HostPeerRemove {
+                mut removals,
+                mut inserts,
+            } => {
+                if response.property_id == prop::LAST_STATUS {
+                    let error = ulcp_operation_error(
+                        "shed host peer key".to_owned(),
+                        response.value.as_slice(),
+                    )?;
+                    // ITEM_NOT_FOUND asserts the state that was asked for;
+                    // anything else stops the pass.
+                    if error.status_code != umsh_ulcp::Status::ITEM_NOT_FOUND.0 {
+                        operation_error = Some(error);
+                        state.refresh_attached_snapshot(None)?;
+                        removals.clear();
+                        inserts.clear();
+                    }
+                } else if response.property_id != prop::HOST_PEER_KEYS
+                    || response.command != Cmd::PropRemoved as u8
+                {
+                    return Err(MobileError::UlcpMismatchedResponse);
+                }
+                if let Some(frame) = state.next_host_peer_operation(removals, inserts) {
+                    outbound.push(frame);
+                } else {
+                    state.refresh_attached_snapshot(None)?;
+                }
+            }
+            ExpectedResponse::HostAutoAck => {
+                if response.property_id == prop::LAST_STATUS {
+                    operation_error = Some(ulcp_operation_error(
+                        "set delegated acknowledgement".to_owned(),
+                        response.value.as_slice(),
+                    )?);
+                } else if response.property_id != prop::HOST_AUTO_ACK
+                    || response.command != Cmd::PropIs as u8
+                {
+                    return Err(MobileError::UlcpMismatchedResponse);
+                } else {
+                    state
+                        .responses
+                        .insert(prop::HOST_AUTO_ACK, response.clone());
                 }
                 state.refresh_attached_snapshot(None)?;
             }
@@ -2516,6 +2706,60 @@ impl UlcpSessionState {
             self.push_host_channel_id(&id);
         }
         Some(frame)
+    }
+
+    /// Issue the next step of a host peer-key reconciliation: removals
+    /// first, then inserts, one frame at a time. The cached digest is
+    /// patched as each frame is issued, matching the channel machinery.
+    fn next_host_peer_operation(
+        &mut self,
+        mut removals: VecDeque<Vec<u8>>,
+        mut inserts: VecDeque<Vec<u8>>,
+    ) -> Option<Vec<u8>> {
+        if let Some(selector) = removals.pop_front() {
+            let tid = self.allocate_tid();
+            let frame = ulcp_prop_remove(tid, prop::HOST_PEER_KEYS, &selector).ok()?;
+            self.patch_host_peer_digest(&selector, false);
+            self.expected
+                .insert(tid, ExpectedResponse::HostPeerRemove { removals, inserts });
+            return Some(frame);
+        }
+        let entry = inserts.pop_front()?;
+        let tid = self.allocate_tid();
+        let frame = ulcp_prop_insert(tid, prop::HOST_PEER_KEYS, &entry).ok()?;
+        self.patch_host_peer_digest(&entry[..items::PUBLIC_KEY_LEN], true);
+        self.expected
+            .insert(tid, ExpectedResponse::HostPeerInsert(inserts));
+        Some(frame)
+    }
+
+    /// Patch one public key in or out of the cached `PROP_HOST_PEER_KEYS`
+    /// digest.
+    fn patch_host_peer_digest(&mut self, public_key: &[u8], present: bool) {
+        let entry = self
+            .responses
+            .entry(prop::HOST_PEER_KEYS)
+            .or_insert_with(|| UlcpPropertyFrameRecord {
+                transaction_id: frame::TID_UNSOLICITED,
+                command: Cmd::PropIs as u8,
+                property_id: prop::HOST_PEER_KEYS,
+                value: Vec::new(),
+            });
+        let mut value = Vec::with_capacity(entry.value.len() + public_key.len());
+        let mut found = false;
+        for chunk in entry.value.chunks(items::PUBLIC_KEY_LEN) {
+            if chunk == public_key {
+                found = true;
+                if !present {
+                    continue;
+                }
+            }
+            value.extend_from_slice(chunk);
+        }
+        if present && !found {
+            value.extend_from_slice(public_key);
+        }
+        entry.value = value;
     }
 
     /// Replace the cached `PROP_HOST_CHANNEL_KEYS` digest wholesale.
@@ -4784,6 +5028,16 @@ fn ulcp_prop_remove(
 /// when the list is actually full.
 #[uniffi::export]
 pub fn ulcp_max_dev_peers() -> u8 {
+    8
+}
+
+/// Capacity of the host peer-key table (`PROP_HOST_PEER_KEYS`).
+///
+/// A label constant like [`ulcp_max_dev_peers`]: callers cap what they
+/// offer so an over-full table keeps a deterministic set, and the device's
+/// `NOMEM` stays authoritative.
+#[uniffi::export]
+pub fn ulcp_max_host_peers() -> u8 {
     8
 }
 
@@ -7353,6 +7607,169 @@ mod tests {
         );
         assert_eq!(refused.snapshot.phase, UlcpSessionPhase::Attached);
         assert!(!refused.waiting_for_responses);
+    }
+
+    fn attach_delegated_ack_capable(session: &MobileUlcpSession) -> UlcpSessionUpdateRecord {
+        let mut capabilities = commissionable_capabilities();
+        capabilities.push(cap::HOST_KEYS);
+        capabilities.push(cap::HOST_RX_QUEUE);
+        capabilities.push(cap::HOST_AUTO_ACK);
+        let begin = session.begin(Some(vec![0xAA; 32])).unwrap();
+        drive_reads(
+            session,
+            begin.outbound_frames,
+            move |property| match property {
+                prop::CAPS => (property, encoded_capabilities(&capabilities)),
+                prop::HOST_KEY => (property, vec![0xAA; 32]),
+                prop::HOST_CHANNEL_KEYS | prop::HOST_PEER_KEYS => (property, Vec::new()),
+                prop::HOST_RX_QUEUE_COUNT => (property, 0u16.to_le_bytes().to_vec()),
+                prop::HOST_RX_QUEUE_DROPPED => (property, 0u32.to_le_bytes().to_vec()),
+                prop::HOST_AUTO_ACK => (property, vec![0]),
+                _ => commissionable_value(property),
+            },
+        )
+    }
+
+    fn peer_entry(byte: u8) -> HostPeerKeyEntryRecord {
+        HostPeerKeyEntryRecord {
+            public_key: vec![byte; 32],
+            k_enc: vec![0x11; 32],
+            k_mic: vec![0x22; 32],
+        }
+    }
+
+    #[test]
+    fn host_peer_reconcile_inserts_and_sheds_by_public_key() {
+        let session = MobileUlcpSession::new();
+        attach_delegated_ack_capable(&session);
+
+        // Two entries go on one at a time.
+        let update = session
+            .reconcile_host_peer_keys(vec![peer_entry(0xE1), peer_entry(0xE2)])
+            .unwrap();
+        assert_eq!(update.outbound_frames.len(), 1);
+        let request = Frame::parse(&update.outbound_frames[0]).unwrap();
+        assert_eq!(request.command(), Some(Cmd::PropInsert));
+        let next = session
+            .consume(inserted_response(
+                request.header.tid(),
+                prop::HOST_PEER_KEYS,
+                &[0xE1; 32],
+            ))
+            .unwrap();
+        let request = Frame::parse(&next.outbound_frames[0]).unwrap();
+        let done = session
+            .consume(inserted_response(
+                request.header.tid(),
+                prop::HOST_PEER_KEYS,
+                &[0xE2; 32],
+            ))
+            .unwrap();
+        assert!(done.outbound_frames.is_empty());
+        assert!(!done.waiting_for_responses);
+        assert_eq!(done.operation_error, None);
+        assert_eq!(
+            done.snapshot.provisioning.as_ref().unwrap().host_peer_count,
+            Some(2)
+        );
+
+        // Dropping one conversation sheds exactly its key, selected by the
+        // digest — no whole-table write needed.
+        let update = session
+            .reconcile_host_peer_keys(vec![peer_entry(0xE2)])
+            .unwrap();
+        assert_eq!(update.outbound_frames.len(), 1);
+        let request = Frame::parse(&update.outbound_frames[0]).unwrap();
+        assert_eq!(request.command(), Some(Cmd::PropRemove));
+        let done = session
+            .consume(removed_response(
+                request.header.tid(),
+                prop::HOST_PEER_KEYS,
+                &[0xE1; 32],
+            ))
+            .unwrap();
+        assert!(done.outbound_frames.is_empty());
+        assert!(!done.waiting_for_responses);
+        assert_eq!(
+            done.snapshot.provisioning.as_ref().unwrap().host_peer_count,
+            Some(1)
+        );
+
+        // Reconciling the same set again asks the radio for nothing.
+        let again = session
+            .reconcile_host_peer_keys(vec![peer_entry(0xE2)])
+            .unwrap();
+        assert!(again.outbound_frames.is_empty());
+        assert!(!again.waiting_for_responses);
+    }
+
+    #[test]
+    fn a_full_host_peer_table_reports_status_and_stays_attached() {
+        let session = MobileUlcpSession::new();
+        attach_delegated_ack_capable(&session);
+
+        let update = session
+            .reconcile_host_peer_keys(vec![peer_entry(0xE3), peer_entry(0xE4)])
+            .unwrap();
+        let request = Frame::parse(&update.outbound_frames[0]).unwrap();
+        let full = session
+            .consume(property_response(
+                request.header.tid(),
+                prop::LAST_STATUS,
+                &[umsh_ulcp::Status::NOMEM.0 as u8],
+            ))
+            .unwrap();
+        assert_eq!(
+            full.operation_error,
+            Some(UlcpOperationErrorRecord {
+                operation: "provision host peer key".into(),
+                status_code: umsh_ulcp::Status::NOMEM.0,
+                status_name: "Status::NOMEM".into(),
+            })
+        );
+        // The pass stops; the second entry is not attempted.
+        assert!(full.outbound_frames.is_empty());
+        assert!(!full.waiting_for_responses);
+        assert_eq!(full.snapshot.phase, UlcpSessionPhase::Attached);
+    }
+
+    #[test]
+    fn host_auto_ack_sets_once_and_then_matches() {
+        let session = MobileUlcpSession::new();
+        attach_delegated_ack_capable(&session);
+
+        let update = session.set_host_auto_ack(true).unwrap();
+        assert_eq!(update.outbound_frames.len(), 1);
+        let request = Frame::parse(&update.outbound_frames[0]).unwrap();
+        assert_eq!(request.command(), Some(Cmd::PropSet));
+        let done = session
+            .consume(property_response(
+                request.header.tid(),
+                prop::HOST_AUTO_ACK,
+                &[1],
+            ))
+            .unwrap();
+        assert!(!done.waiting_for_responses);
+        assert_eq!(done.operation_error, None);
+        assert_eq!(
+            done.snapshot.provisioning.as_ref().unwrap().auto_ack,
+            Some(true)
+        );
+
+        // The cached echo makes the next call free.
+        let again = session.set_host_auto_ack(true).unwrap();
+        assert!(again.outbound_frames.is_empty());
+        assert!(!again.waiting_for_responses);
+    }
+
+    #[test]
+    fn host_peer_reconcile_requires_the_capability() {
+        let session = MobileUlcpSession::new();
+        attach_offline_queue_capable(&session);
+        assert_eq!(
+            session.set_host_auto_ack(true),
+            Err(MobileError::UnsupportedCapability)
+        );
     }
 
     #[test]

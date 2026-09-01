@@ -536,10 +536,35 @@ pub struct MobileMeshRxRecord {
     pub age_seconds: u32,
 }
 
+/// One entry for the radio's host peer-key table (`PROP_HOST_PEER_KEYS`):
+/// the peer's public key and the pairwise transport keys this phone shares
+/// with it, derived on demand from the phone identity.
+#[derive(Clone, PartialEq, Eq, uniffi::Record)]
+pub struct HostPeerKeyEntryRecord {
+    pub public_key: Vec<u8>,
+    pub k_enc: Vec<u8>,
+    pub k_mic: Vec<u8>,
+}
+
+/// Debug intentionally omits `k_enc`/`k_mic`: entries must never leak
+/// key material into logs or panic messages.
+impl core::fmt::Debug for HostPeerKeyEntryRecord {
+    fn fmt(&self, formatter: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
+        formatter
+            .debug_struct("HostPeerKeyEntryRecord")
+            .field("public_key", &self.public_key)
+            .finish_non_exhaustive()
+    }
+}
+
 enum WorkerCommand {
     RegisterPeers {
         peers: Vec<PublicKey>,
         response: oneshot::Sender<Result<(), MobileMeshError>>,
+    },
+    ExportHostPeerKeys {
+        peers: Vec<PublicKey>,
+        response: oneshot::Sender<Result<Vec<HostPeerKeyEntryRecord>, MobileMeshError>>,
     },
     RemovePeers {
         peers: Vec<PublicKey>,
@@ -1719,6 +1744,28 @@ impl MobileMeshSession {
                 timestamp,
                 response,
             })
+            .map_err(|_| MobileMeshError::SessionUnavailable)?;
+        result
+            .await
+            .map_err(|_| MobileMeshError::SessionUnavailable)?
+    }
+
+    /// Pairwise key entries for the radio's host peer-key table
+    /// (`PROP_HOST_PEER_KEYS`), one per address, derived from the phone
+    /// identity on demand. Deterministic per (identity, peer), so a caller
+    /// may re-derive freely; the entries carry key material and must go
+    /// straight to the radio, never to storage or logs.
+    pub async fn host_peer_key_entries(
+        &self,
+        peer_addresses: Vec<String>,
+    ) -> Result<Vec<HostPeerKeyEntryRecord>, MobileMeshError> {
+        let peers = peer_addresses
+            .iter()
+            .map(|address| decode_peer(address).map_err(|_| MobileMeshError::InvalidPeer))
+            .collect::<Result<Vec<_>, _>>()?;
+        let (response, result) = oneshot::channel();
+        self.commands
+            .send(WorkerCommand::ExportHostPeerKeys { peers, response })
             .map_err(|_| MobileMeshError::SessionUnavailable)?;
         result
             .await
@@ -3067,6 +3114,24 @@ async fn run_worker(
                                 }
                             }
                             let _ = response.send(result);
+                        }
+                        Some(WorkerCommand::ExportHostPeerKeys { peers, response }) => {
+                            let mut entries = Vec::with_capacity(peers.len());
+                            let mut result = Ok(());
+                            for peer in &peers {
+                                match node.pairwise_keys_for_peer(peer).await {
+                                    Some(keys) => entries.push(HostPeerKeyEntryRecord {
+                                        public_key: peer.0.to_vec(),
+                                        k_enc: keys.k_enc.to_vec(),
+                                        k_mic: keys.k_mic.to_vec(),
+                                    }),
+                                    None => {
+                                        result = Err(MobileMeshError::SendFailed);
+                                        break;
+                                    }
+                                }
+                            }
+                            let _ = response.send(result.map(|()| entries));
                         }
                         Some(WorkerCommand::RemovePeers { peers, response }) => {
                             for peer in peers {

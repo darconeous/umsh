@@ -687,6 +687,18 @@ class UlcpRadioSession: NSObject, @unchecked Sendable {
         }
     }
 
+    func reconcileHostPeerKeys(_ entries: [HostPeerKeyEntryRecord]) async throws {
+        try await performDevicePeerOperation(requiringDeviceIdentity: false) { session in
+            try session.reconcileHostPeerKeys(entries: entries)
+        }
+    }
+
+    func setHostAutoAcknowledgement(_ enabled: Bool) async throws {
+        try await performDevicePeerOperation(requiringDeviceIdentity: false) { session in
+            try session.setHostAutoAck(enabled: enabled)
+        }
+    }
+
     func drainOfflineQueue() async throws {
         try await performDevicePeerOperation(requiringDeviceIdentity: false) { session in
             try session.drainQueue()

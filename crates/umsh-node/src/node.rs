@@ -478,6 +478,20 @@ impl<M: MacBackend> LocalNode<M> {
         self.mac.persisted_frame_counter(self.identity_id).await
     }
 
+    /// Derive the pairwise transport keys this node's identity shares with
+    /// `peer` — what a host exports to a companion radio so it can verify
+    /// and acknowledge unicast traffic while the host is away. Deterministic
+    /// per (identity, peer); the peer need not have exchanged anything yet.
+    /// `None` when the backend cannot derive keys.
+    pub async fn pairwise_keys_for_peer(
+        &self,
+        peer: &PublicKey,
+    ) -> Option<umsh_crypto::PairwiseKeys> {
+        self.mac
+            .pairwise_keys_for_peer(self.identity_id, peer)
+            .await
+    }
+
     /// Invoke `f` for every peer currently registered in the MAC-layer peer registry.
     ///
     /// Covers all known peers, not just those with an active crypto session.

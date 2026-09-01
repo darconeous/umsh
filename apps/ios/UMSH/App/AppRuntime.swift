@@ -293,6 +293,7 @@ final class AppRuntime {
             await synchronizeRadioPeer(from: snapshot)
             await synchronizeRadioChannels(from: snapshot)
             await reconcileHostChannels()
+            await reconcileHostPeers()
             await drainOfflineQueueIfNeeded()
         }
     }
@@ -1207,6 +1208,7 @@ final class AppRuntime {
             // peer and any conversation are already on disk, and an unattached
             // radio must not turn that into a failed import.
             try? await radioConnection.registerChatPeers([identity.canonicalAddress])
+            await reconcileHostPeers()
             return conversations.first { $0.peer.identity.canonicalAddress == identity.canonicalAddress }
         } catch {
             return nil
@@ -1357,6 +1359,7 @@ final class AppRuntime {
     /// `prepareChatState` rebuilds the registry from it on the next attach.
     private func removeMeshPeer(_ peer: PeerSummary) async {
         try? await radioConnection.removeChatPeers([peer.identity.canonicalAddress])
+        await reconcileHostPeers()
     }
 
     /// Add or remove one peer on the radio's device identity. The device is
@@ -1749,6 +1752,45 @@ final class AppRuntime {
             coordinator.lastReconciledHostChannels = keys
         } catch {
             // Retried on the next attach or membership change.
+        }
+    }
+
+    /// Give the radio pairwise keys for the peers of open direct
+    /// conversations, so it can verify and acknowledge their unicast
+    /// traffic while the phone is away, then turn delegated
+    /// acknowledgement on.
+    ///
+    /// Open conversations only — deliberately narrower than the chat
+    /// registry's union with checkpoints: key material leaves the phone
+    /// here, and a conversation the user closed takes its key with it.
+    /// Most recent activity first, capped at the radio's table size, so an
+    /// over-full table keeps the conversations that matter.
+    private func reconcileHostPeers() async {
+        guard radioSnapshot.linkState == .attached || radioSnapshot.linkState == .ready,
+              radioSnapshot.hostState == .matchesCurrentIdentity,
+              radioSnapshot.provisioning?.supportsHostKeys == true
+        else {
+            coordinator.lastReconciledHostPeers = nil
+            return
+        }
+        let addresses = conversations
+            .sorted {
+                ($0.lastMessage?.createdAtMilliseconds ?? $0.createdAtMilliseconds)
+                    > ($1.lastMessage?.createdAtMilliseconds ?? $1.createdAtMilliseconds)
+            }
+            .prefix(Int(ulcpMaxHostPeers()))
+            .map(\.peer.identity.canonicalAddress)
+        guard coordinator.lastReconciledHostPeers != addresses else { return }
+        do {
+            guard let session = try await meshEngine.meshSession() else { return }
+            let entries = try await session.hostPeerKeyEntries(peerAddresses: addresses)
+            try await radioConnection.reconcileHostPeerKeys(entries)
+            coordinator.lastReconciledHostPeers = addresses
+            if radioSnapshot.provisioning?.supportsDelegatedAcknowledgements == true {
+                try await radioConnection.setHostAutoAcknowledgement(true)
+            }
+        } catch {
+            // Retried on the next attach or conversation change.
         }
     }
 
@@ -2786,6 +2828,9 @@ final class AppRuntime {
                 conversationID: conversation.id
             )
             await reloadApplicationState()
+            // The reconcile also sheds the peer's key from the radio: a
+            // closed conversation takes its custody with it.
+            await reconcileHostPeers()
         } catch {
             Self.logger.error("Could not delete conversation \(conversation.id): \(String(describing: error), privacy: .public)")
         }
@@ -2806,6 +2851,7 @@ final class AppRuntime {
             // whole operation would leave a conversation that exists on disk
             // but that nothing ever opens.
             try? await radioConnection.registerChatPeers([peer.identity.canonicalAddress])
+            await reconcileHostPeers()
             return conversations.first {
                 $0.peer.identity.canonicalAddress == peer.identity.canonicalAddress
             }
@@ -3367,6 +3413,7 @@ final class AppRuntime {
             // membership only survives a relaunch by being replayed into it.
             await replayChannelMembership()
             await reconcileHostChannels()
+            await reconcileHostPeers()
         } catch {
             peers = []
             conversations = []
@@ -3659,6 +3706,9 @@ private final class AppStateCoordinator {
     /// The channel keys last provisioned to the radio's host table, so
     /// reconciling is free when nothing has changed.
     var lastReconciledHostChannels: [Data]?
+    /// The peer addresses last provisioned to the radio's host peer-key
+    /// table, gating the same way.
+    var lastReconciledHostPeers: [String]?
     /// Whether this attach's offline queue has been replayed. Cleared when
     /// the link drops so the next attach drains again.
     var drainedOfflineQueue = false

@@ -1566,6 +1566,15 @@ public protocol MobileMeshSessionProtocol: AnyObject, Sendable {
     func failOutboundTransmissions() throws
 
     /**
+     * Pairwise key entries for the radio's host peer-key table
+     * (`PROP_HOST_PEER_KEYS`), one per address, derived from the phone
+     * identity on demand. Deterministic per (identity, peer), so a caller
+     * may re-derive freely; the entries carry key material and must go
+     * straight to the radio, never to storage or logs.
+     */
+    func hostPeerKeyEntries(peerAddresses: [String]) async throws  -> [HostPeerKeyEntryRecord]
+
+    /**
      * This phone's own node public key, which is what a device lists in
      * `PROP_DEV_ADMINS` to let this phone manage it over the mesh.
      *
@@ -2325,6 +2334,29 @@ open func failOutboundTransmissions()throws   {try rustCallWithError(FfiConverte
             self.uniffiCloneHandle(),uniffiCallStatus
     )
 }
+}
+
+    /**
+     * Pairwise key entries for the radio's host peer-key table
+     * (`PROP_HOST_PEER_KEYS`), one per address, derived from the phone
+     * identity on demand. Deterministic per (identity, peer), so a caller
+     * may re-derive freely; the entries carry key material and must go
+     * straight to the radio, never to storage or logs.
+     */
+open func hostPeerKeyEntries(peerAddresses: [String])async throws  -> [HostPeerKeyEntryRecord]  {
+    return
+        try  await uniffiRustCallAsync(
+            rustFutureFunc: {
+                uniffi_umsh_mobile_core_fn_method_mobilemeshsession_host_peer_key_entries(
+                        self.uniffiCloneHandle(),FfiConverterSequenceString.lower(peerAddresses)
+                )
+            },
+            pollFunc: ffi_umsh_mobile_core_rust_future_poll_rust_buffer,
+            completeFunc: ffi_umsh_mobile_core_rust_future_complete_rust_buffer,
+            freeFunc: ffi_umsh_mobile_core_rust_future_free_rust_buffer,
+            liftFunc: FfiConverterSequenceTypeHostPeerKeyEntryRecord.lift,
+            errorHandler: FfiConverterTypeMobileMeshError_lift
+        )
 }
 
     /**
@@ -3472,6 +3504,23 @@ public protocol MobileUlcpSessionProtocol: AnyObject, Sendable {
     func reconcileHostChannelKeys(keys: [Data]) throws  -> UlcpSessionUpdateRecord
 
     /**
+     * Make the radio's host peer-key table (`PROP_HOST_PEER_KEYS`) match
+     * the supplied entries — the pairwise keys for the peers whose
+     * conversations are open, so the radio can verify and acknowledge
+     * their unicast traffic while the phone is away.
+     *
+     * The cached digest is one public key per entry, and pairwise keys are
+     * deterministic per (host identity, peer), so diffing by key is
+     * sufficient: extra keys are shed one `CMD_PROP_REMOVE` at a time,
+     * missing entries follow as `CMD_PROP_INSERT`s. Host domain, so
+     * nothing is saved and reconciling on attach is what makes it stick.
+     * Requires an attached, otherwise-idle session on a device advertising
+     * `CAP_HOST_KEYS`. Returns without any frames when the device already
+     * holds exactly the requested set.
+     */
+    func reconcileHostPeerKeys(entries: [HostPeerKeyEntryRecord]) throws  -> UlcpSessionUpdateRecord
+
+    /**
      * Re-read every capability-gated property represented by the mobile
      * snapshot. The existing snapshot remains usable while the bounded
      * refresh is in flight; authoritative provisioning is published when
@@ -3549,6 +3598,17 @@ public protocol MobileUlcpSessionProtocol: AnyObject, Sendable {
      * deadline, which is how a longer search keeps the alert alive.
      */
     func setAlert(state: UlcpAlertState) throws  -> UlcpSessionUpdateRecord
+
+    /**
+     * Turn the radio's delegated acknowledgement (`PROP_HOST_AUTO_ACK`)
+     * on or off — whether it acks queued unicast on this host's behalf
+     * while the host is away, using the peer keys provisioned above.
+     *
+     * A no-op update when the cached value already matches, which is what
+     * makes calling it on every attach cheap. Requires an attached,
+     * otherwise-idle session on a device advertising `CAP_HOST_AUTO_ACK`.
+     */
+    func setHostAutoAck(enabled: Bool) throws  -> UlcpSessionUpdateRecord
 
     /**
      * Set — or clear — the device's wall clock (`PROP_TIME`).
@@ -4062,6 +4122,31 @@ open func reconcileHostChannelKeys(keys: [Data])throws  -> UlcpSessionUpdateReco
 }
 
     /**
+     * Make the radio's host peer-key table (`PROP_HOST_PEER_KEYS`) match
+     * the supplied entries — the pairwise keys for the peers whose
+     * conversations are open, so the radio can verify and acknowledge
+     * their unicast traffic while the phone is away.
+     *
+     * The cached digest is one public key per entry, and pairwise keys are
+     * deterministic per (host identity, peer), so diffing by key is
+     * sufficient: extra keys are shed one `CMD_PROP_REMOVE` at a time,
+     * missing entries follow as `CMD_PROP_INSERT`s. Host domain, so
+     * nothing is saved and reconciling on attach is what makes it stick.
+     * Requires an attached, otherwise-idle session on a device advertising
+     * `CAP_HOST_KEYS`. Returns without any frames when the device already
+     * holds exactly the requested set.
+     */
+open func reconcileHostPeerKeys(entries: [HostPeerKeyEntryRecord])throws  -> UlcpSessionUpdateRecord  {
+    return try  FfiConverterTypeUlcpSessionUpdateRecord_lift(try rustCallWithError(FfiConverterTypeMobileError_lift) {
+        uniffiCallStatus in
+    uniffi_umsh_mobile_core_fn_method_mobileulcpsession_reconcile_host_peer_keys(
+            self.uniffiCloneHandle(),
+        FfiConverterSequenceTypeHostPeerKeyEntryRecord.lower(entries),uniffiCallStatus
+    )
+})
+}
+
+    /**
      * Re-read every capability-gated property represented by the mobile
      * snapshot. The existing snapshot remains usable while the bounded
      * refresh is in flight; authoritative provisioning is published when
@@ -4189,6 +4274,25 @@ open func setAlert(state: UlcpAlertState)throws  -> UlcpSessionUpdateRecord  {
     uniffi_umsh_mobile_core_fn_method_mobileulcpsession_set_alert(
             self.uniffiCloneHandle(),
         FfiConverterTypeUlcpAlertState_lower(state),uniffiCallStatus
+    )
+})
+}
+
+    /**
+     * Turn the radio's delegated acknowledgement (`PROP_HOST_AUTO_ACK`)
+     * on or off — whether it acks queued unicast on this host's behalf
+     * while the host is away, using the peer keys provisioned above.
+     *
+     * A no-op update when the cached value already matches, which is what
+     * makes calling it on every attach cheap. Requires an attached,
+     * otherwise-idle session on a device advertising `CAP_HOST_AUTO_ACK`.
+     */
+open func setHostAutoAck(enabled: Bool)throws  -> UlcpSessionUpdateRecord  {
+    return try  FfiConverterTypeUlcpSessionUpdateRecord_lift(try rustCallWithError(FfiConverterTypeMobileError_lift) {
+        uniffiCallStatus in
+    uniffi_umsh_mobile_core_fn_method_mobileulcpsession_set_host_auto_ack(
+            self.uniffiCloneHandle(),
+        FfiConverterBool.lower(enabled),uniffiCallStatus
     )
 })
 }
@@ -4477,6 +4581,69 @@ public func FfiConverterTypeGattSegmentRecord_lift(_ buf: RustBuffer) throws -> 
 #endif
 public func FfiConverterTypeGattSegmentRecord_lower(_ value: GattSegmentRecord) -> RustBuffer {
     return FfiConverterTypeGattSegmentRecord.lower(value)
+}
+
+
+/**
+ * One entry for the radio's host peer-key table (`PROP_HOST_PEER_KEYS`):
+ * the peer's public key and the pairwise transport keys this phone shares
+ * with it, derived on demand from the phone identity.
+ */
+public struct HostPeerKeyEntryRecord: Equatable, Hashable {
+    public var publicKey: Data
+    public var kEnc: Data
+    public var kMic: Data
+
+    // Default memberwise initializers are never public by default, so we
+    // declare one manually.
+    public init(publicKey: Data, kEnc: Data, kMic: Data) {
+        self.publicKey = publicKey
+        self.kEnc = kEnc
+        self.kMic = kMic
+    }
+
+
+
+
+}
+
+#if compiler(>=6)
+extension HostPeerKeyEntryRecord: Sendable {}
+#endif
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public struct FfiConverterTypeHostPeerKeyEntryRecord: FfiConverterRustBuffer {
+    public static func read(from buf: inout (data: Data, offset: Data.Index)) throws -> HostPeerKeyEntryRecord {
+        return
+            try HostPeerKeyEntryRecord(
+                publicKey: FfiConverterData.read(from: &buf),
+                kEnc: FfiConverterData.read(from: &buf),
+                kMic: FfiConverterData.read(from: &buf)
+        )
+    }
+
+    public static func write(_ value: HostPeerKeyEntryRecord, into buf: inout [UInt8]) {
+        FfiConverterData.write(value.publicKey, into: &buf)
+        FfiConverterData.write(value.kEnc, into: &buf)
+        FfiConverterData.write(value.kMic, into: &buf)
+    }
+}
+
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public func FfiConverterTypeHostPeerKeyEntryRecord_lift(_ buf: RustBuffer) throws -> HostPeerKeyEntryRecord {
+    return try FfiConverterTypeHostPeerKeyEntryRecord.lift(buf)
+}
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public func FfiConverterTypeHostPeerKeyEntryRecord_lower(_ value: HostPeerKeyEntryRecord) -> RustBuffer {
+    return FfiConverterTypeHostPeerKeyEntryRecord.lower(value)
 }
 
 
@@ -14140,6 +14307,31 @@ fileprivate struct FfiConverterSequenceTypeGattSegmentRecord: FfiConverterRustBu
 #if swift(>=5.8)
 @_documentation(visibility: private)
 #endif
+fileprivate struct FfiConverterSequenceTypeHostPeerKeyEntryRecord: FfiConverterRustBuffer {
+    typealias SwiftType = [HostPeerKeyEntryRecord]
+
+    public static func write(_ value: [HostPeerKeyEntryRecord], into buf: inout [UInt8]) {
+        let len = Int32(value.count)
+        writeInt(&buf, len)
+        for item in value {
+            FfiConverterTypeHostPeerKeyEntryRecord.write(item, into: &buf)
+        }
+    }
+
+    public static func read(from buf: inout (data: Data, offset: Data.Index)) throws -> [HostPeerKeyEntryRecord] {
+        let len: Int32 = try readInt(&buf)
+        var seq = [HostPeerKeyEntryRecord]()
+        seq.reserveCapacity(Int(len))
+        for _ in 0 ..< len {
+            seq.append(try FfiConverterTypeHostPeerKeyEntryRecord.read(from: &buf))
+        }
+        return seq
+    }
+}
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
 fileprivate struct FfiConverterSequenceTypeMobileChatArchiveDeleteRecord: FfiConverterRustBuffer {
     typealias SwiftType = [MobileChatArchiveDeleteRecord]
 
@@ -15355,6 +15547,20 @@ public func ulcpMaxDevPeers() -> UInt8  {
 })
 }
 /**
+ * Capacity of the host peer-key table (`PROP_HOST_PEER_KEYS`).
+ *
+ * A label constant like [`ulcp_max_dev_peers`]: callers cap what they
+ * offer so an over-full table keeps a deterministic set, and the device's
+ * `NOMEM` stays authoritative.
+ */
+public func ulcpMaxHostPeers() -> UInt8  {
+    return try!  FfiConverterUInt8.lift(try! rustCall() {
+        uniffiCallStatus in
+    uniffi_umsh_mobile_core_fn_func_ulcp_max_host_peers(uniffiCallStatus
+    )
+})
+}
+/**
  * Encode a `CMD_PROP_GET` request with the shared ULCP codec.
  */
 public func ulcpPropGet(transactionId: UInt8, propertyId: UInt32)throws  -> Data  {
@@ -15604,6 +15810,9 @@ private let initializationResult: InitializationResult = {
     if (uniffi_umsh_mobile_core_checksum_func_ulcp_max_dev_peers() != 5213) {
         return InitializationResult.apiChecksumMismatch
     }
+    if (uniffi_umsh_mobile_core_checksum_func_ulcp_max_host_peers() != 45637) {
+        return InitializationResult.apiChecksumMismatch
+    }
     if (uniffi_umsh_mobile_core_checksum_func_ulcp_prop_get() != 58684) {
         return InitializationResult.apiChecksumMismatch
     }
@@ -15719,6 +15928,9 @@ private let initializationResult: InitializationResult = {
         return InitializationResult.apiChecksumMismatch
     }
     if (uniffi_umsh_mobile_core_checksum_method_mobilemeshsession_fail_outbound_transmissions() != 10556) {
+        return InitializationResult.apiChecksumMismatch
+    }
+    if (uniffi_umsh_mobile_core_checksum_method_mobilemeshsession_host_peer_key_entries() != 45963) {
         return InitializationResult.apiChecksumMismatch
     }
     if (uniffi_umsh_mobile_core_checksum_method_mobilemeshsession_node_public_key() != 62314) {
@@ -15871,6 +16083,9 @@ private let initializationResult: InitializationResult = {
     if (uniffi_umsh_mobile_core_checksum_method_mobileulcpsession_reconcile_host_channel_keys() != 27528) {
         return InitializationResult.apiChecksumMismatch
     }
+    if (uniffi_umsh_mobile_core_checksum_method_mobileulcpsession_reconcile_host_peer_keys() != 20443) {
+        return InitializationResult.apiChecksumMismatch
+    }
     if (uniffi_umsh_mobile_core_checksum_method_mobileulcpsession_refresh() != 49124) {
         return InitializationResult.apiChecksumMismatch
     }
@@ -15890,6 +16105,9 @@ private let initializationResult: InitializationResult = {
         return InitializationResult.apiChecksumMismatch
     }
     if (uniffi_umsh_mobile_core_checksum_method_mobileulcpsession_set_alert() != 38831) {
+        return InitializationResult.apiChecksumMismatch
+    }
+    if (uniffi_umsh_mobile_core_checksum_method_mobileulcpsession_set_host_auto_ack() != 8568) {
         return InitializationResult.apiChecksumMismatch
     }
     if (uniffi_umsh_mobile_core_checksum_method_mobileulcpsession_set_time() != 36585) {

@@ -267,6 +267,26 @@ impl<
         config.regions.len()
     }
 
+    /// Derive the pairwise transport keys this identity shares with `peer`.
+    ///
+    /// Static-static agreement plus HKDF, so the result is deterministic per
+    /// (identity, peer) and identical to what the MAC installs lazily on
+    /// first secure traffic — the peer need not have exchanged anything yet.
+    /// This is what a host exports to a companion radio so it can verify and
+    /// acknowledge unicast traffic while the host is away; the keys leave
+    /// the MAC, so callers own their custody.
+    pub async fn pairwise_keys_for_peer(
+        &self,
+        identity_id: LocalIdentityId,
+        peer_key: &umsh_core::PublicKey,
+    ) -> Result<umsh_crypto::PairwiseKeys, SendError> {
+        self.mac
+            .borrow()
+            .await
+            .derive_pairwise_keys_for_peer(identity_id, peer_key)
+            .await
+    }
+
     /// Installs pairwise transport keys for one local identity and remote peer.
     ///
     /// This is a crate-internal method. External callers should use the

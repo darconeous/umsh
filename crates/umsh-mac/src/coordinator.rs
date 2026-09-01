@@ -3840,7 +3840,7 @@ impl<
         Ok(receipt)
     }
 
-    async fn derive_pairwise_keys_for_peer(
+    pub(crate) async fn derive_pairwise_keys_for_peer(
         &self,
         local_id: LocalIdentityId,
         peer_key: &PublicKey,

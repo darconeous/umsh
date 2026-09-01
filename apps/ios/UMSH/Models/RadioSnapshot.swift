@@ -455,8 +455,8 @@ struct RadioProvisioningSummary: Equatable, Sendable {
     let droppedFrames: UInt32?
     let filterCount: Int?
     var hostChannelCount: Int?
-    let hostPeerCount: Int?
-    let autoAcknowledgementEnabled: Bool?
+    var hostPeerCount: Int?
+    var autoAcknowledgementEnabled: Bool?
     /// Whether the radio has a device identity domain of its own
     /// (`CAP_DEV_IDENTITY`), including a peer list.
     var supportsDeviceIdentity: Bool = false

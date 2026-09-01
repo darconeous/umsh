@@ -123,6 +123,19 @@ pub trait MacBackend: Clone {
         None
     }
 
+    /// Derive the pairwise transport keys `from` shares with `peer`, when
+    /// the backend can. Deterministic static-static agreement plus HKDF —
+    /// see [`umsh_mac::MacHandle::pairwise_keys_for_peer`]. The keys leave
+    /// the MAC, so callers own their custody.
+    async fn pairwise_keys_for_peer(
+        &self,
+        from: LocalIdentityId,
+        peer: &PublicKey,
+    ) -> Option<umsh_crypto::PairwiseKeys> {
+        let _ = (from, peer);
+        None
+    }
+
     /// Invoke `f` for every peer registered in the MAC-layer peer registry.
     ///
     /// Covers all known peers, not just those with an active crypto session.
@@ -335,6 +348,14 @@ impl<
 
     async fn persisted_frame_counter(&self, from: LocalIdentityId) -> Option<u32> {
         self.persisted_frame_counter(from).await
+    }
+
+    async fn pairwise_keys_for_peer(
+        &self,
+        from: LocalIdentityId,
+        peer: &PublicKey,
+    ) -> Option<umsh_crypto::PairwiseKeys> {
+        self.pairwise_keys_for_peer(from, peer).await.ok()
     }
 
     async fn for_each_peer(&self, f: &mut dyn FnMut(umsh_core::PublicKey)) {
