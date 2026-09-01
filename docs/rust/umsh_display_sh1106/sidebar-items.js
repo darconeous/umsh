@@ -1,1 +1,1 @@
-window.SIDEBAR_ITEMS = {"constant":["ADDR_CANDIDATES","BUF_SIZE","CONTRAST_DIM","CONTRAST_NORMAL","HEIGHT","WIDTH"],"fn":["probe"],"struct":["Sh1106","Sh1106Fb"]};
+window.SIDEBAR_ITEMS = {"constant":["ADDR_CANDIDATES","BUF_SIZE","CONTRAST_DIM","CONTRAST_NORMAL","HEIGHT","WIDTH"],"fn":["contrast_for","probe"],"struct":["Sh1106","Sh1106Fb"]};

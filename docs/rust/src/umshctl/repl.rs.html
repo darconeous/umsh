@@ -232,7 +232,7 @@
 <a href=#232 id=232 data-nosnippet>232</a><span class="kw">fn </span>banner(app: <span class="kw-2">&amp;</span>App) {
 <a href=#233 id=233 data-nosnippet>233</a>    <span class="macro">println!</span>(<span class="string">"umshctl — `help` lists commands, `exit` leaves."</span>);
 <a href=#234 id=234 data-nosnippet>234</a>    <span class="kw">if </span>app.session.is_none() {
-<a href=#235 id=235 data-nosnippet>235</a>        <span class="macro">println!</span>(<span class="string">"not attached: `scan` to look for radios, `connect` to attach."</span>);
+<a href=#235 id=235 data-nosnippet>235</a>        <span class="macro">println!</span>(<span class="string">"not attached: `ble-scan` to look for radios, `connect` to attach."</span>);
 <a href=#236 id=236 data-nosnippet>236</a>    }
 <a href=#237 id=237 data-nosnippet>237</a>}
 <a href=#238 id=238 data-nosnippet>238</a>
@@ -274,7 +274,7 @@
 <a href=#274 id=274 data-nosnippet>274</a>        ReplCommand::Shared(command) =&gt; {
 <a href=#275 id=275 data-nosnippet>275</a>            command.validate()<span class="question-mark">?</span>;
 <a href=#276 id=276 data-nosnippet>276</a>            <span class="kw">if </span>command.needs_device() &amp;&amp; app.session.is_none() {
-<a href=#277 id=277 data-nosnippet>277</a>                <span class="macro">anyhow::bail!</span>(<span class="string">"not attached — try `scan` or `connect`"</span>);
+<a href=#277 id=277 data-nosnippet>277</a>                <span class="macro">anyhow::bail!</span>(<span class="string">"not attached — try `ble-scan` or `connect`"</span>);
 <a href=#278 id=278 data-nosnippet>278</a>            }
 <a href=#279 id=279 data-nosnippet>279</a>            command.run(app).<span class="kw">await</span><span class="question-mark">?</span>;
 <a href=#280 id=280 data-nosnippet>280</a>        }
@@ -285,14 +285,14 @@
 <a href=#285 id=285 data-nosnippet>285</a><span class="doccomment">/// `connect`: rediscover, or attach to the radio the user named.
 <a href=#286 id=286 data-nosnippet>286</a></span><span class="kw">async fn </span>connect(app: <span class="kw-2">&amp;mut </span>App, selector: <span class="prelude-ty">Option</span>&lt;String&gt;, pick: bool) -&gt; <span class="prelude-ty">Result</span>&lt;()&gt; {
 <a href=#287 id=287 data-nosnippet>287</a>    <span class="kw">let </span>target = <span class="kw">match </span>selector {
-<a href=#288 id=288 data-nosnippet>288</a>        <span class="comment">// A bare number refers to the last `scan` listing, which is the
-<a href=#289 id=289 data-nosnippet>289</a>        // whole reason the REPL keeps it.
+<a href=#288 id=288 data-nosnippet>288</a>        <span class="comment">// A bare number refers to the last `ble-scan` listing, which is
+<a href=#289 id=289 data-nosnippet>289</a>        // the whole reason the REPL keeps it.
 <a href=#290 id=290 data-nosnippet>290</a>        </span><span class="prelude-val">Some</span>(selector) =&gt; <span class="kw">match </span>selector.parse::&lt;usize&gt;() {
 <a href=#291 id=291 data-nosnippet>291</a>            <span class="prelude-val">Ok</span>(index) <span class="kw">if </span>(<span class="number">1</span>..=app.last_scan.len()).contains(<span class="kw-2">&amp;</span>index) =&gt; {
 <a href=#292 id=292 data-nosnippet>292</a>                Target::from(<span class="kw-2">&amp;</span>app.last_scan[index - <span class="number">1</span>])
 <a href=#293 id=293 data-nosnippet>293</a>            }
 <a href=#294 id=294 data-nosnippet>294</a>            <span class="prelude-val">Ok</span>(index) =&gt; <span class="macro">anyhow::bail!</span>(
-<a href=#295 id=295 data-nosnippet>295</a>                <span class="string">"no radio {index} in the last scan ({} listed); run `scan` again"</span>,
+<a href=#295 id=295 data-nosnippet>295</a>                <span class="string">"no radio {index} in the last scan ({} listed); run `ble-scan` again"</span>,
 <a href=#296 id=296 data-nosnippet>296</a>                app.last_scan.len()
 <a href=#297 id=297 data-nosnippet>297</a>            ),
 <a href=#298 id=298 data-nosnippet>298</a>            <span class="prelude-val">Err</span>(<span class="kw">_</span>) =&gt; named_target(selector, app.baud)<span class="question-mark">?</span>,
@@ -492,10 +492,10 @@
 <a href=#492 id=492 data-nosnippet>492</a>        <span class="kw">let </span>ctx_history = rustyline::history::DefaultHistory::new();
 <a href=#493 id=493 data-nosnippet>493</a>        <span class="kw">let </span>ctx = Context::new(<span class="kw-2">&amp;</span>ctx_history);
 <a href=#494 id=494 data-nosnippet>494</a>
-<a href=#495 id=495 data-nosnippet>495</a>        <span class="kw">let </span>(<span class="kw">_</span>, pairs) = helper.complete(<span class="string">"provision --"</span>, <span class="number">12</span>, <span class="kw-2">&amp;</span>ctx).unwrap();
+<a href=#495 id=495 data-nosnippet>495</a>        <span class="kw">let </span>(<span class="kw">_</span>, pairs) = helper.complete(<span class="string">"capture --"</span>, <span class="number">10</span>, <span class="kw-2">&amp;</span>ctx).unwrap();
 <a href=#496 id=496 data-nosnippet>496</a>        <span class="kw">let </span>names: Vec&lt;<span class="kw-2">&amp;</span>str&gt; = pairs.iter().map(|pair| pair.display.as_str()).collect();
-<a href=#497 id=497 data-nosnippet>497</a>        <span class="macro">assert!</span>(names.contains(<span class="kw-2">&amp;</span><span class="string">"--host-key"</span>), <span class="string">"{names:?}"</span>);
-<a href=#498 id=498 data-nosnippet>498</a>        <span class="macro">assert!</span>(names.contains(<span class="kw-2">&amp;</span><span class="string">"--force"</span>), <span class="string">"{names:?}"</span>);
+<a href=#497 id=497 data-nosnippet>497</a>        <span class="macro">assert!</span>(names.contains(<span class="kw-2">&amp;</span><span class="string">"--pcap"</span>), <span class="string">"{names:?}"</span>);
+<a href=#498 id=498 data-nosnippet>498</a>        <span class="macro">assert!</span>(names.contains(<span class="kw-2">&amp;</span><span class="string">"--layers"</span>), <span class="string">"{names:?}"</span>);
 <a href=#499 id=499 data-nosnippet>499</a>    }
 <a href=#500 id=500 data-nosnippet>500</a>
 <a href=#501 id=501 data-nosnippet>501</a>    <span class="attr">#[test]

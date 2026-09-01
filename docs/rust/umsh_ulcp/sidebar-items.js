@@ -1,1 +1,1 @@
-window.SIDEBAR_ITEMS = {"mod":["airtime","alert","battery","describe","frame","gatt","gnss","hdlc","host","ids","items","meta","profiles","pui","reply","sint","status"]};
+window.SIDEBAR_ITEMS = {"mod":["airtime","alert","battery","ble","describe","frame","gatt","gnss","hdlc","host","ids","items","meta","profiles","pui","reply","sint","stats","status"]};

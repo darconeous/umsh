@@ -35,7 +35,7 @@
             const path_to_root = "";
             const default_light_theme = "light";
             const default_dark_theme = "ayu";
-            window.path_to_searchindex_js = "searchindex-5a161e7d.js";
+            window.path_to_searchindex_js = "searchindex-5f0d90f9.js";
         </script>
         <!-- Start loading toc.js asap -->
         <script src="toc-438957a9.js"></script>
@@ -182,7 +182,7 @@ transmit duty-cycle budget. Every ULCP device implements it.</p>
 avoided. The properties that any radio has — enable, frequency, transmit
 power, RSSI, MTU — are unconditional; the LoRa modulation parameters are
 gated behind <code>CAP_PHY_LORA</code>, and duty-cycle accounting behind
-<code>CAP_PHY_DUTY_LIMIT</code>.</p>
+<code>CAP_PHY_DUTY_LIMIT</code>. Traffic counters are exposed by <code>CAP_STATS</code>.</p>
 <p>The RF configuration is <a href="ulcp-core.html#device-domain">device-domain</a> state:
 it belongs to the radio rather than to whichever host is attached, it is
 part of a <a href="ulcp-saved-state.html#saved-state">saved snapshot</a>, and it
@@ -195,6 +195,7 @@ survives a change of host.</p>
 </thead>
 <tbody>
 <tr><td>16</td><td><code>CAP_PHY_DUTY_LIMIT</code></td><td>Duty-cycle accounting and enforcement: <code>PROP_PHY_DUTY_NOW</code>, <code>PROP_PHY_DUTY_LIMIT</code>, and <code>STATUS_DUTY_LIMIT</code></td></tr>
+<tr><td>52</td><td><code>CAP_STATS</code></td><td>Radio and forwarding traffic counters: <code>PROP_STAT_*</code></td></tr>
 <tr><td>515</td><td><code>CAP_PHY_LORA</code></td><td>The LoRa modulation parameters: <code>PROP_PHY_LORA_BW</code>, <code>PROP_PHY_LORA_SF</code>, <code>PROP_PHY_LORA_CR</code>, <code>PROP_PHY_LORA_SW</code></td></tr>
 </tbody>
 </table>
@@ -217,6 +218,15 @@ survives a change of host.</p>
 <tr><td>43</td><td><code>PROP_PHY_LORA_SW</code></td><td>Get, Set</td><td>LoRa sync word (16-bit style)</td></tr>
 <tr><td>4820</td><td><code>PROP_PHY_DUTY_NOW</code></td><td>Get</td><td>Current duty usage</td></tr>
 <tr><td>4822</td><td><code>PROP_PHY_DUTY_LIMIT</code></td><td>Get, Set</td><td>Duty-cycle limit</td></tr>
+<tr><td>4832</td><td><code>PROP_STAT_TX_PACKETS</code></td><td>Get, Set</td><td>Packets transmitted over the air</td></tr>
+<tr><td>4833</td><td><code>PROP_STAT_TX_CHANNEL_BUSY</code></td><td>Get, Set</td><td>Transmissions deferred because the channel was busy</td></tr>
+<tr><td>4834</td><td><code>PROP_STAT_RX_PACKETS</code></td><td>Get, Set</td><td>Received packets with a UMSH first-octet pattern</td></tr>
+<tr><td>4835</td><td><code>PROP_STAT_RX_BAD_CRC</code></td><td>Get, Set</td><td>Receptions rejected because of a bad CRC</td></tr>
+<tr><td>4836</td><td><code>PROP_STAT_RX_NON_UMSH</code></td><td>Get, Set</td><td>Received packets without a UMSH first-octet pattern</td></tr>
+<tr><td>4837</td><td><code>PROP_STAT_RX_ACCEPTED</code></td><td>Get, Set</td><td>Received packets accepted by this device’s node</td></tr>
+<tr><td>4838</td><td><code>PROP_STAT_FORWARDED</code></td><td>Get, Set</td><td>Packets this device chose to forward</td></tr>
+<tr><td>4839</td><td><code>PROP_STAT_FORWARD_DROPPED</code></td><td>Get, Set</td><td>Forwarding candidates rejected by policy</td></tr>
+<tr><td>4840</td><td><code>PROP_STAT_FORWARD_CANCELLED</code></td><td>Get, Set</td><td>Queued forwards cancelled after an acknowledgement</td></tr>
 </tbody>
 </table>
 </div>
@@ -376,6 +386,51 @@ be prevented. Packets that are prevented from being sent will be dropped with
 </tbody>
 </table>
 </div>
+<h2 id="statistics"><a class="header" href="#statistics">Statistics</a></h2>
+<p>A device advertising <code>CAP_STATS</code> exposes cumulative <code>UINT32_LE</code> traffic
+counters. Values count since boot or the most recent reset of that counter and
+wrap modulo 2^32. Writing four zero octets resets a counter. A device <strong>MUST</strong>
+reject every other value or length with <code>STATUS_INVALID_ARGUMENT</code>.</p>
+<p>Statistics are live hardware history rather than configuration. They are not
+part of a saved snapshot, and <code>CMD_RST</code> <strong>MUST NOT</strong> clear them. A host can reset
+several counters with <code>CMD_PROP_MULTI_SET</code>, but the individual resets do not
+occur simultaneously: traffic arriving during the write sweep can fall on
+different sides of different counter resets.</p>
+<p><code>PROP_PHY_DUTY_NOW</code> is commonly displayed alongside these counters, but it is a
+rolling regulatory measurement and is not resettable.</p>
+<h3 id="prop-stat-tx-packets"><a class="header" href="#prop-stat-tx-packets">PROP 4832: <code>PROP_STAT_TX_PACKETS</code></a></h3>
+<p>Packets whose transmission completed successfully over the physical radio.
+Requires <code>CAP_STATS</code>.</p>
+<h3 id="prop-stat-tx-channel-busy"><a class="header" href="#prop-stat-tx-channel-busy">PROP 4833: <code>PROP_STAT_TX_CHANNEL_BUSY</code></a></h3>
+<p>Transmission attempts deferred because channel assessment reported the channel
+busy. Such an attempt does not also increment <code>PROP_STAT_TX_PACKETS</code>. Requires
+<code>CAP_STATS</code>.</p>
+<h3 id="prop-stat-rx-packets"><a class="header" href="#prop-stat-rx-packets">PROP 4834: <code>PROP_STAT_RX_PACKETS</code></a></h3>
+<p>Off-air receptions whose first octet carries the UMSH version and valid reserved
+bits. This classification does not require the rest of the packet to parse.
+Requires <code>CAP_STATS</code>.</p>
+<h3 id="prop-stat-rx-bad-crc"><a class="header" href="#prop-stat-rx-bad-crc">PROP 4835: <code>PROP_STAT_RX_BAD_CRC</code></a></h3>
+<p>Receptions the physical radio rejected because their payload CRC was invalid.
+Requires <code>CAP_STATS</code>.</p>
+<h3 id="prop-stat-rx-non-umsh"><a class="header" href="#prop-stat-rx-non-umsh">PROP 4836: <code>PROP_STAT_RX_NON_UMSH</code></a></h3>
+<p>Off-air receptions whose first octet does not carry the UMSH version and valid
+reserved bits. Requires <code>CAP_STATS</code>.</p>
+<h3 id="prop-stat-rx-accepted"><a class="header" href="#prop-stat-rx-accepted">PROP 4837: <code>PROP_STAT_RX_ACCEPTED</code></a></h3>
+<p>Receptions on which this device’s own node acted. Frames addressed to an
+attached host’s identity are not included. Requires <code>CAP_STATS</code> and
+<code>CAP_REPEATER</code>.</p>
+<h3 id="prop-stat-forwarded"><a class="header" href="#prop-stat-forwarded">PROP 4838: <code>PROP_STAT_FORWARDED</code></a></h3>
+<p>Receptions this device’s own node chose to repeat. The counter records the
+forwarding decision; successful physical transmissions are counted separately
+by <code>PROP_STAT_TX_PACKETS</code>. Requires <code>CAP_STATS</code> and <code>CAP_REPEATER</code>.</p>
+<h3 id="prop-stat-forward-dropped"><a class="header" href="#prop-stat-forward-dropped">PROP 4839: <code>PROP_STAT_FORWARD_DROPPED</code></a></h3>
+<p>Packets that were eligible for forwarding but were rejected by the configured
+flood budget, minimum RSSI, minimum SNR, or region policy. Duplicates,
+self-addressed packets, and packets received while forwarding is disabled are
+not included. Requires <code>CAP_STATS</code> and <code>CAP_REPEATER</code>.</p>
+<h3 id="prop-stat-forward-cancelled"><a class="header" href="#prop-stat-forward-cancelled">PROP 4840: <code>PROP_STAT_FORWARD_CANCELLED</code></a></h3>
+<p>Queued forwards cancelled because the destination’s acknowledgement was
+overheard before transmission. Requires <code>CAP_STATS</code> and <code>CAP_REPEATER</code>.</p>
 
                     </main>
 

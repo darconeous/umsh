@@ -35,7 +35,7 @@
             const path_to_root = "";
             const default_light_theme = "light";
             const default_dark_theme = "ayu";
-            window.path_to_searchindex_js = "searchindex-5a161e7d.js";
+            window.path_to_searchindex_js = "searchindex-5f0d90f9.js";
         </script>
         <!-- Start loading toc.js asap -->
         <script src="toc-438957a9.js"></script>
@@ -216,6 +216,9 @@ moment it is installed or generated (see <a href="ulcp-device.html#prop-dev-priv
 changed only by explicit provisioning or <code>CMD_CLEAR</code> — neither
 <code>CMD_RESTORE</code> nor a reboot can revert the device identity to an earlier
 key.</p>
+<p>Traffic statistics (<code>PROP_STAT_*</code>) are also excluded. They are live
+hardware history since boot or the last explicit counter reset, not
+configuration a snapshot can restore.</p>
 <p><a href="ulcp-device.html#prop-time"><code>PROP_TIME</code></a> is excluded for a third reason:
 a stored epoch is wrong by however long the device was off, by an amount
 nothing can bound, so restoring one would be restoring a confidently

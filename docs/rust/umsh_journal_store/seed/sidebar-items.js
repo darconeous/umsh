@@ -1,0 +1,1 @@
+window.SIDEBAR_ITEMS = {"constant":["COMMIT_OFFSET","SLOT_SIZE"],"fn":["consider_record"],"struct":["SeedRecord"]};

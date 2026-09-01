@@ -1,0 +1,1 @@
+window.SIDEBAR_ITEMS = {"constant":["POLL","REQUEST_FRAME"],"enum":["CapFilter","RoleFilter"],"fn":["advertisement","ask","capability_names","describe_ask","discover","explore","report","request_frame","role_name","steer_through"],"struct":["DiscoverArgs"]};

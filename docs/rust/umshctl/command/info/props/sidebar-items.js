@@ -1,0 +1,1 @@
+window.SIDEBAR_ITEMS = {"fn":["batched","fetch"],"struct":["PropSet"]};

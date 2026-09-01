@@ -10,7 +10,7 @@ schematic-confirmed rather than reconstructed from vendor firmware.</p>
 <p>Both are XIAO-pinout carriers around the same Wio SX1262 module, so
 the radio wiring and the battery-sense topology are shared <em>pin for
 pin</em> — the firmware’s SX1262 bring-up block is literally the same code
-for both boards. The <a href="umsh_mac::Platform"><code>Platform</code></a> bundle is a
+for both boards. The <a href="../umsh_mac/trait.Platform.html" title="trait umsh_mac::Platform"><code>Platform</code></a> bundle is a
 verbatim copy. What differs is LED polarity, the charger, the divider
 gating rule, and the complete absence of buttons.</p>
 <h2 id="pin-map-nrf52840-schematic-confirmed"><a class="doc-anchor" href="#pin-map-nrf52840-schematic-confirmed">§</a>Pin map (nRF52840; schematic-confirmed)</h2>
@@ -56,9 +56,9 @@ so does its R2 pull-up</strong>.</p>
 unavailable: no hold-to-power-off, no press-to-wake, no
 hold-at-boot force-pairing ceremony. Configuration and control come
 over USB-CDC (ULCP) or BLE. System OFF is reached only by the
-protective low-battery cutoff, and its only exits are the reset
-button, a USB attach, or a future LPCOMP battery-recovery wake. See
-[<code>shutdown</code>].</p>
+protective low-battery cutoff, and its exits are the reset button, a
+USB attach, and LPCOMP battery-recovery wake — the last of which is
+the only one that needs nobody present. See [<code>shutdown</code>].</p>
 <h3 id="pairing-without-a-button"><a class="doc-anchor" href="#pairing-without-a-button">§</a>Pairing without a button</h3>
 <p>The missing force-pairing gesture is the one absence that would
 otherwise be fatal rather than merely inconvenient: with pairing mode

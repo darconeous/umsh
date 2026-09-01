@@ -1,1 +1,1 @@
-window.SIDEBAR_ITEMS = {"fn":["capability_name","property_name"],"struct":["FrameDescription"]};
+window.SIDEBAR_ITEMS = {"constant":["PROPERTIES"],"enum":["PropertyType"],"fn":["capability_name","property_name","property_type"],"struct":["FrameDescription"]};

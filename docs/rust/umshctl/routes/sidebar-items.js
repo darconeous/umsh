@@ -1,0 +1,1 @@
+window.SIDEBAR_ITEMS = {"constant":["HEADER","ROUTE_TTL"],"fn":["describe","parse_line","parse_pairs","render_pairs","render_route"],"struct":["RouteCache","RouteRecord"]};

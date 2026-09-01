@@ -1,0 +1,42 @@
+<!DOCTYPE html><html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1.0"><meta name="generator" content="rustdoc"><meta name="description" content="Persisted entropy pool: a flash-seeded, hash-ratcheted CSPRNG."><title>umsh_crypto::pool - Rust</title><script>if(window.location.protocol!=="file:")document.head.insertAdjacentHTML("beforeend","SourceSerif4-Regular-6b053e98.ttf.woff2,FiraSans-Italic-81dc35de.woff2,FiraSans-Regular-0fe48ade.woff2,FiraSans-MediumItalic-ccf7e434.woff2,FiraSans-Medium-e1aa3f0a.woff2,SourceCodePro-Regular-8badfe75.ttf.woff2,SourceCodePro-Semibold-aa29a496.ttf.woff2".split(",").map(f=>`<link rel="preload" as="font" type="font/woff2"href="../../static.files/${f}">`).join(""))</script><link rel="stylesheet" href="../../static.files/normalize-9960930a.css"><link rel="stylesheet" href="../../static.files/rustdoc-80aa586b.css"><meta name="rustdoc-vars" data-root-path="../../" data-static-root-path="../../static.files/" data-current-crate="umsh_crypto" data-themes="" data-resource-suffix="" data-rustdoc-version="1.94.0-nightly (fcf67da03 2025-12-18)" data-channel="nightly" data-search-js="search-9e2438ea.js" data-stringdex-js="stringdex-a3946164.js" data-settings-js="settings-c38705f0.js" ><script src="../../static.files/storage-e2aeef58.js"></script><script defer src="../sidebar-items.js"></script><script defer src="../../static.files/main-3e30299d.js"></script><noscript><link rel="stylesheet" href="../../static.files/noscript-ffcac47a.css"></noscript><link rel="alternate icon" type="image/png" href="../../static.files/favicon-32x32-eab170b8.png"><link rel="icon" type="image/svg+xml" href="../../static.files/favicon-044be391.svg"></head><body class="rustdoc mod"><!--[if lte IE 11]><div class="warning">This old browser is unsupported and will most likely display funky things.</div><![endif]--><rustdoc-topbar><h2><a href="#">Module pool</a></h2></rustdoc-topbar><nav class="sidebar"><div class="sidebar-crate"><h2><a href="../../umsh_crypto/index.html">umsh_<wbr>crypto</a><span class="version">0.1.0</span></h2></div><div class="sidebar-elems"><section id="rustdoc-toc"><h2 class="location"><a href="#">Module pool</a></h2><h3><a href="#">Sections</a></h3><ul class="block top-toc"><li><a href="#the-seed-file-protocol-fortunas-with-a-lazy-write" title="The seed-file protocol (Fortuna’s, with a lazy write)">The seed-file protocol (Fortuna’s, with a lazy write)</a></li><li><a href="#mixing" title="Mixing">Mixing</a></li><li><a href="#construction" title="Construction">Construction</a></li></ul><h3><a href="#structs">Module Items</a></h3><ul class="block"><li><a href="#structs" title="Structs">Structs</a></li></ul></section><div id="rustdoc-modnav"><h2 class="in-crate"><a href="../index.html">In crate umsh_<wbr>crypto</a></h2></div></div></nav><div class="sidebar-resizer" title="Drag to resize sidebar"></div><main><div class="width-limiter"><section id="main-content" class="content"><div class="main-heading"><div class="rustdoc-breadcrumbs"><a href="../index.html">umsh_crypto</a></div><h1>Module <span>pool</span>&nbsp;<button id="copy-path" title="Copy item path to clipboard">Copy item path</button></h1><rustdoc-toolbar></rustdoc-toolbar><span class="sub-heading"><a class="src" href="../../src/umsh_crypto/pool.rs.html#1-296">Source</a> </span></div><details class="toggle top-doc" open><summary class="hideme"><span>Expand description</span></summary><div class="docblock"><p>Persisted entropy pool: a flash-seeded, hash-ratcheted CSPRNG.</p>
+<p>The pool exists for platforms whose hardware entropy source is not
+always available — on the ESP32 the TRNG is only trustworthy while
+the RF subsystem is up, which used to chain the RNG’s lifetime to
+the BLE controller’s. A seed stored in flash breaks that chain: the
+pool is cryptographically strong from the first instruction of boot,
+and the hardware source becomes something it <em>harvests</em> when
+available rather than something it dies without.</p>
+<h3 id="the-seed-file-protocol-fortunas-with-a-lazy-write"><a class="doc-anchor" href="#the-seed-file-protocol-fortunas-with-a-lazy-write">§</a>The seed-file protocol (Fortuna’s, with a lazy write)</h3>
+<ol>
+<li>Read the stored seed <code>S</code> and build the pool with
+<a href="struct.EntropyPool.html#method.from_seed" title="associated function umsh_crypto::pool::EntropyPool::from_seed"><code>EntropyPool::from_seed</code></a>. The working key is <code>HKDF(S, salt)</code>
+with per-boot salt (chip id, reset reason) — flash never holds
+the working key, and a flash image taken later reveals nothing
+about this session’s outputs.</li>
+<li>Before the first draw, write <a href="struct.EntropyPool.html#method.next_seed" title="method umsh_crypto::pool::EntropyPool::next_seed"><code>next_seed</code></a>
+to flash and, once the write is confirmed, call
+<a href="struct.EntropyPool.html#method.seed_committed" title="method umsh_crypto::pool::EntropyPool::seed_committed"><code>seed_committed</code></a>.</li>
+<li>Draw. <a href="struct.EntropyPool.html#method.draw" title="method umsh_crypto::pool::EntropyPool::draw"><code>draw</code></a> refuses until step 2 has
+happened — that ordering is the whole crash-safety story. A boot
+that dies before the commit replays a working key that never
+emitted a byte, which is harmless; a boot that dies after it
+ratchets forward next time. No boot counter is needed.</li>
+</ol>
+<p>The write is deliberately <em>lazy</em>: nothing touches flash until
+something actually wants randomness, so a reboot loop that dies
+before its first draw costs zero flash cycles.</p>
+<h3 id="mixing"><a class="doc-anchor" href="#mixing">§</a>Mixing</h3>
+<p><a href="struct.EntropyPool.html#method.mix" title="method umsh_crypto::pool::EntropyPool::mix"><code>mix</code></a> folds harvested entropy into the working
+key whenever a hardware source happens to be live. Mixing is what
+heals a compromised or cloned seed file, so callers should persist a
+fresh <a href="struct.EntropyPool.html#method.next_seed" title="method umsh_crypto::pool::EntropyPool::next_seed"><code>next_seed</code></a> afterwards — but mixing
+never <em>invalidates</em> the commit, because replay safety comes from the
+boot-time ratchet, not from the stored seed tracking the live key.</p>
+<h3 id="construction"><a class="doc-anchor" href="#construction">§</a>Construction</h3>
+<p>Everything is HKDF-SHA256 over the platform’s <a href="../trait.Sha256Provider.html" title="trait umsh_crypto::Sha256Provider"><code>Sha256Provider</code></a>;
+there is no stream cipher because every consumer wants a small seed
+or nonce, not a keystream. Each draw ratchets the working key
+one-way, so compromising the pool later reveals nothing already
+emitted. Domain separation comes from distinct <code>info</code> strings plus
+the caller’s label as HKDF salt.</p>
+</div></details><h2 id="structs" class="section-header">Structs<a href="#structs" class="anchor">§</a></h2><dl class="item-table"><dt><a class="struct" href="struct.DrawBeforeCommit.html" title="struct umsh_crypto::pool::DrawBeforeCommit">Draw<wbr>Before<wbr>Commit</a></dt><dd>A draw was attempted before the next seed was committed to storage.</dd><dt><a class="struct" href="struct.EntropyPool.html" title="struct umsh_crypto::pool::EntropyPool">Entropy<wbr>Pool</a></dt><dd>The pool: a 32-byte working key that only ever moves forward.</dd></dl></section></div></main></body></html>

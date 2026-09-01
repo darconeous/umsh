@@ -56,82 +56,107 @@
 <a href=#56 id=56 data-nosnippet>56</a></span><span class="doccomment">/// ADC channel enables: bit 0 VBAT, 1 TS, 2 VBUS, 3 VSYS, 4 TDIE.
 <a href=#57 id=57 data-nosnippet>57</a></span><span class="kw">pub const </span>ADC_CHANNEL_CTRL: u8 = <span class="number">0x30</span>;
 <a href=#58 id=58 data-nosnippet>58</a><span class="kw">pub const </span>ADC_CH_VBAT: u8 = <span class="number">0</span>;
-<a href=#59 id=59 data-nosnippet>59</a><span class="kw">pub const </span>ADC_CH_VBUS: u8 = <span class="number">2</span>;
-<a href=#60 id=60 data-nosnippet>60</a><span class="kw">pub const </span>ADC_CH_VSYS: u8 = <span class="number">3</span>;
-<a href=#61 id=61 data-nosnippet>61</a>
-<a href=#62 id=62 data-nosnippet>62</a><span class="doccomment">/// VBAT result, high byte. 5 significant bits, then an 8-bit low byte.
-<a href=#63 id=63 data-nosnippet>63</a></span><span class="kw">pub const </span>ADC_VBAT_H: u8 = <span class="number">0x34</span>;
-<a href=#64 id=64 data-nosnippet>64</a><span class="kw">pub const </span>ADC_VBAT_L: u8 = <span class="number">0x35</span>;
-<a href=#65 id=65 data-nosnippet>65</a><span class="doccomment">/// VBUS result, high byte. 6 significant bits.
-<a href=#66 id=66 data-nosnippet>66</a></span><span class="kw">pub const </span>ADC_VBUS_H: u8 = <span class="number">0x38</span>;
-<a href=#67 id=67 data-nosnippet>67</a><span class="kw">pub const </span>ADC_VBUS_L: u8 = <span class="number">0x39</span>;
-<a href=#68 id=68 data-nosnippet>68</a><span class="doccomment">/// VSYS result, high byte. 6 significant bits.
-<a href=#69 id=69 data-nosnippet>69</a></span><span class="kw">pub const </span>ADC_VSYS_H: u8 = <span class="number">0x3A</span>;
-<a href=#70 id=70 data-nosnippet>70</a><span class="kw">pub const </span>ADC_VSYS_L: u8 = <span class="number">0x3B</span>;
-<a href=#71 id=71 data-nosnippet>71</a>
-<a href=#72 id=72 data-nosnippet>72</a><span class="kw">pub const </span>ADC_H5_MASK: u8 = <span class="number">0x1F</span>;
-<a href=#73 id=73 data-nosnippet>73</a><span class="kw">pub const </span>ADC_H6_MASK: u8 = <span class="number">0x3F</span>;
-<a href=#74 id=74 data-nosnippet>74</a>
-<a href=#75 id=75 data-nosnippet>75</a><span class="comment">// ─── Interrupts ───────────────────────────────────────────────────────────
-<a href=#76 id=76 data-nosnippet>76</a>
-<a href=#77 id=77 data-nosnippet>77</a></span><span class="doccomment">/// IRQ enables, one register per IRQ byte.
-<a href=#78 id=78 data-nosnippet>78</a></span><span class="kw">pub const </span>INTEN: [u8; <span class="number">3</span>] = [<span class="number">0x40</span>, <span class="number">0x41</span>, <span class="number">0x42</span>];
-<a href=#79 id=79 data-nosnippet>79</a><span class="doccomment">/// IRQ status, write-1-to-clear, same byte order as [`INTEN`].
-<a href=#80 id=80 data-nosnippet>80</a></span><span class="kw">pub const </span>INTSTS: [u8; <span class="number">3</span>] = [<span class="number">0x48</span>, <span class="number">0x49</span>, <span class="number">0x4A</span>];
+<a href=#59 id=59 data-nosnippet>59</a><span class="kw">pub const </span>ADC_CH_TS: u8 = <span class="number">1</span>;
+<a href=#60 id=60 data-nosnippet>60</a><span class="kw">pub const </span>ADC_CH_VBUS: u8 = <span class="number">2</span>;
+<a href=#61 id=61 data-nosnippet>61</a><span class="kw">pub const </span>ADC_CH_VSYS: u8 = <span class="number">3</span>;
+<a href=#62 id=62 data-nosnippet>62</a>
+<a href=#63 id=63 data-nosnippet>63</a><span class="doccomment">/// VBAT result, high byte. 5 significant bits, then an 8-bit low byte.
+<a href=#64 id=64 data-nosnippet>64</a></span><span class="kw">pub const </span>ADC_VBAT_H: u8 = <span class="number">0x34</span>;
+<a href=#65 id=65 data-nosnippet>65</a><span class="kw">pub const </span>ADC_VBAT_L: u8 = <span class="number">0x35</span>;
+<a href=#66 id=66 data-nosnippet>66</a><span class="doccomment">/// TS (battery thermistor) result, high byte. 6 significant bits.
+<a href=#67 id=67 data-nosnippet>67</a>///
+<a href=#68 id=68 data-nosnippet>68</a>/// Address inferred from the regular two-register-per-channel layout
+<a href=#69 id=69 data-nosnippet>69</a>/// this block follows (VBAT 0x34, TS 0x36, VBUS 0x38, VSYS 0x3A, TDIE
+<a href=#70 id=70 data-nosnippet>70</a>/// 0x3C) rather than read off a datasheet page, and the LSB scaling is
+<a href=#71 id=71 data-nosnippet>71</a>/// **not** the 1 mV/LSB the voltage channels use. Treat the result as
+<a href=#72 id=72 data-nosnippet>72</a>/// raw counts until a board confirms both.
+<a href=#73 id=73 data-nosnippet>73</a></span><span class="kw">pub const </span>ADC_TS_H: u8 = <span class="number">0x36</span>;
+<a href=#74 id=74 data-nosnippet>74</a><span class="kw">pub const </span>ADC_TS_L: u8 = <span class="number">0x37</span>;
+<a href=#75 id=75 data-nosnippet>75</a><span class="doccomment">/// VBUS result, high byte. 6 significant bits.
+<a href=#76 id=76 data-nosnippet>76</a></span><span class="kw">pub const </span>ADC_VBUS_H: u8 = <span class="number">0x38</span>;
+<a href=#77 id=77 data-nosnippet>77</a><span class="kw">pub const </span>ADC_VBUS_L: u8 = <span class="number">0x39</span>;
+<a href=#78 id=78 data-nosnippet>78</a><span class="doccomment">/// VSYS result, high byte. 6 significant bits.
+<a href=#79 id=79 data-nosnippet>79</a></span><span class="kw">pub const </span>ADC_VSYS_H: u8 = <span class="number">0x3A</span>;
+<a href=#80 id=80 data-nosnippet>80</a><span class="kw">pub const </span>ADC_VSYS_L: u8 = <span class="number">0x3B</span>;
 <a href=#81 id=81 data-nosnippet>81</a>
-<a href=#82 id=82 data-nosnippet>82</a><span class="comment">// ─── Charger ──────────────────────────────────────────────────────────────
-<a href=#83 id=83 data-nosnippet>83</a>
-<a href=#84 id=84 data-nosnippet>84</a></span><span class="doccomment">/// Constant-charge current. Bits [4:0]; high bits reserved.
-<a href=#85 id=85 data-nosnippet>85</a></span><span class="kw">pub const </span>ICC_CHG_SET: u8 = <span class="number">0x62</span>;
-<a href=#86 id=86 data-nosnippet>86</a><span class="kw">pub const </span>ICC_CHG_MASK: u8 = <span class="number">0x1F</span>;
-<a href=#87 id=87 data-nosnippet>87</a>
-<a href=#88 id=88 data-nosnippet>88</a><span class="doccomment">/// Charge target voltage. Bits [2:0].
-<a href=#89 id=89 data-nosnippet>89</a></span><span class="kw">pub const </span>CV_CHG_VOL_SET: u8 = <span class="number">0x64</span>;
-<a href=#90 id=90 data-nosnippet>90</a><span class="kw">pub const </span>CV_CHG_MASK: u8 = <span class="number">0x07</span>;
+<a href=#82 id=82 data-nosnippet>82</a><span class="kw">pub const </span>ADC_H5_MASK: u8 = <span class="number">0x1F</span>;
+<a href=#83 id=83 data-nosnippet>83</a><span class="kw">pub const </span>ADC_H6_MASK: u8 = <span class="number">0x3F</span>;
+<a href=#84 id=84 data-nosnippet>84</a>
+<a href=#85 id=85 data-nosnippet>85</a><span class="comment">// ─── Interrupts ───────────────────────────────────────────────────────────
+<a href=#86 id=86 data-nosnippet>86</a>
+<a href=#87 id=87 data-nosnippet>87</a></span><span class="doccomment">/// IRQ enables, one register per IRQ byte.
+<a href=#88 id=88 data-nosnippet>88</a></span><span class="kw">pub const </span>INTEN: [u8; <span class="number">3</span>] = [<span class="number">0x40</span>, <span class="number">0x41</span>, <span class="number">0x42</span>];
+<a href=#89 id=89 data-nosnippet>89</a><span class="doccomment">/// IRQ status, write-1-to-clear, same byte order as [`INTEN`].
+<a href=#90 id=90 data-nosnippet>90</a></span><span class="kw">pub const </span>INTSTS: [u8; <span class="number">3</span>] = [<span class="number">0x48</span>, <span class="number">0x49</span>, <span class="number">0x4A</span>];
 <a href=#91 id=91 data-nosnippet>91</a>
-<a href=#92 id=92 data-nosnippet>92</a><span class="doccomment">/// Charge-LED control. Bits [1:0] select the source, [5:4] the manual
-<a href=#93 id=93 data-nosnippet>93</a>/// pattern (`setChargingLedMode`).
-<a href=#94 id=94 data-nosnippet>94</a></span><span class="kw">pub const </span>CHGLED_SET_CTRL: u8 = <span class="number">0x69</span>;
-<a href=#95 id=95 data-nosnippet>95</a><span class="doccomment">/// Preserved bits when writing a manual LED pattern.
-<a href=#96 id=96 data-nosnippet>96</a></span><span class="kw">pub const </span>CHGLED_MANUAL_KEEP: u8 = <span class="number">0xC8</span>;
-<a href=#97 id=97 data-nosnippet>97</a><span class="doccomment">/// Source select for manual control.
-<a href=#98 id=98 data-nosnippet>98</a></span><span class="kw">pub const </span>CHGLED_MANUAL_CTRL: u8 = <span class="number">0x05</span>;
-<a href=#99 id=99 data-nosnippet>99</a><span class="doccomment">/// Preserved bits when handing the LED back to the charger.
-<a href=#100 id=100 data-nosnippet>100</a></span><span class="kw">pub const </span>CHGLED_CHARGER_KEEP: u8 = <span class="number">0xF9</span>;
-<a href=#101 id=101 data-nosnippet>101</a><span class="doccomment">/// Source select for charger-driven control (type A).
-<a href=#102 id=102 data-nosnippet>102</a></span><span class="kw">pub const </span>CHGLED_CHARGER_CTRL: u8 = <span class="number">0x01</span>;
-<a href=#103 id=103 data-nosnippet>103</a><span class="kw">pub const </span>CHGLED_PATTERN_SHIFT: u8 = <span class="number">4</span>;
-<a href=#104 id=104 data-nosnippet>104</a>
-<a href=#105 id=105 data-nosnippet>105</a><span class="comment">// ─── Rails ────────────────────────────────────────────────────────────────
-<a href=#106 id=106 data-nosnippet>106</a>
-<a href=#107 id=107 data-nosnippet>107</a></span><span class="doccomment">/// DCDC1–5 enables. **Read-only to UMSH**: DCDC1 is the ESP32-S3 core
-<a href=#108 id=108 data-nosnippet>108</a>/// supply on the T-Beam Supreme and writing this register can cut power
-<a href=#109 id=109 data-nosnippet>109</a>/// to the running MCU (hardware doc §5.2, §18.9).
-<a href=#110 id=110 data-nosnippet>110</a></span><span class="kw">pub const </span>DC_ONOFF_DVM_CTRL: u8 = <span class="number">0x80</span>;
-<a href=#111 id=111 data-nosnippet>111</a>
-<a href=#112 id=112 data-nosnippet>112</a><span class="doccomment">/// LDO enables: bit 0 ALDO1, 1 ALDO2, 2 ALDO3, 3 ALDO4, 4 BLDO1,
-<a href=#113 id=113 data-nosnippet>113</a>/// 5 BLDO2.
-<a href=#114 id=114 data-nosnippet>114</a></span><span class="kw">pub const </span>LDO_ONOFF_CTRL0: u8 = <span class="number">0x90</span>;
-<a href=#115 id=115 data-nosnippet>115</a>
-<a href=#116 id=116 data-nosnippet>116</a><span class="doccomment">/// Per-rail voltage registers, in [`LDO_ONOFF_CTRL0`] bit order.
-<a href=#117 id=117 data-nosnippet>117</a></span><span class="kw">pub const </span>ALDO1_VOL: u8 = <span class="number">0x92</span>;
-<a href=#118 id=118 data-nosnippet>118</a><span class="kw">pub const </span>ALDO2_VOL: u8 = <span class="number">0x93</span>;
-<a href=#119 id=119 data-nosnippet>119</a><span class="kw">pub const </span>ALDO3_VOL: u8 = <span class="number">0x94</span>;
-<a href=#120 id=120 data-nosnippet>120</a><span class="kw">pub const </span>ALDO4_VOL: u8 = <span class="number">0x95</span>;
-<a href=#121 id=121 data-nosnippet>121</a><span class="kw">pub const </span>BLDO1_VOL: u8 = <span class="number">0x96</span>;
-<a href=#122 id=122 data-nosnippet>122</a><span class="kw">pub const </span>BLDO2_VOL: u8 = <span class="number">0x97</span>;
-<a href=#123 id=123 data-nosnippet>123</a>
-<a href=#124 id=124 data-nosnippet>124</a><span class="doccomment">/// Voltage field of an A/BLDO voltage register; the top three bits are
-<a href=#125 id=125 data-nosnippet>125</a>/// reserved and preserved on write.
-<a href=#126 id=126 data-nosnippet>126</a></span><span class="kw">pub const </span>LDO_VOL_MASK: u8 = <span class="number">0x1F</span>;
-<a href=#127 id=127 data-nosnippet>127</a>
-<a href=#128 id=128 data-nosnippet>128</a><span class="doccomment">/// A/BLDO output range, in millivolts.
-<a href=#129 id=129 data-nosnippet>129</a></span><span class="kw">pub const </span>LDO_VOL_MIN_MV: u16 = <span class="number">500</span>;
-<a href=#130 id=130 data-nosnippet>130</a><span class="kw">pub const </span>LDO_VOL_MAX_MV: u16 = <span class="number">3500</span>;
-<a href=#131 id=131 data-nosnippet>131</a><span class="kw">pub const </span>LDO_VOL_STEP_MV: u16 = <span class="number">100</span>;
-<a href=#132 id=132 data-nosnippet>132</a>
-<a href=#133 id=133 data-nosnippet>133</a><span class="comment">// ─── Fuel gauge ───────────────────────────────────────────────────────────
+<a href=#92 id=92 data-nosnippet>92</a><span class="comment">// ─── Charger ──────────────────────────────────────────────────────────────
+<a href=#93 id=93 data-nosnippet>93</a>
+<a href=#94 id=94 data-nosnippet>94</a></span><span class="doccomment">/// Constant-charge current. Bits [4:0]; high bits reserved.
+<a href=#95 id=95 data-nosnippet>95</a></span><span class="kw">pub const </span>ICC_CHG_SET: u8 = <span class="number">0x62</span>;
+<a href=#96 id=96 data-nosnippet>96</a><span class="kw">pub const </span>ICC_CHG_MASK: u8 = <span class="number">0x1F</span>;
+<a href=#97 id=97 data-nosnippet>97</a>
+<a href=#98 id=98 data-nosnippet>98</a><span class="doccomment">/// Charge target voltage. Bits [2:0].
+<a href=#99 id=99 data-nosnippet>99</a></span><span class="kw">pub const </span>CV_CHG_VOL_SET: u8 = <span class="number">0x64</span>;
+<a href=#100 id=100 data-nosnippet>100</a><span class="kw">pub const </span>CV_CHG_MASK: u8 = <span class="number">0x07</span>;
+<a href=#101 id=101 data-nosnippet>101</a>
+<a href=#102 id=102 data-nosnippet>102</a><span class="doccomment">/// Charge-LED control. Bits [1:0] select the source, [5:4] the manual
+<a href=#103 id=103 data-nosnippet>103</a>/// pattern (`setChargingLedMode`).
+<a href=#104 id=104 data-nosnippet>104</a></span><span class="kw">pub const </span>CHGLED_SET_CTRL: u8 = <span class="number">0x69</span>;
+<a href=#105 id=105 data-nosnippet>105</a><span class="doccomment">/// Preserved bits when writing a manual LED pattern.
+<a href=#106 id=106 data-nosnippet>106</a></span><span class="kw">pub const </span>CHGLED_MANUAL_KEEP: u8 = <span class="number">0xC8</span>;
+<a href=#107 id=107 data-nosnippet>107</a><span class="doccomment">/// Source select for manual control.
+<a href=#108 id=108 data-nosnippet>108</a></span><span class="kw">pub const </span>CHGLED_MANUAL_CTRL: u8 = <span class="number">0x05</span>;
+<a href=#109 id=109 data-nosnippet>109</a><span class="doccomment">/// Preserved bits when handing the LED back to the charger.
+<a href=#110 id=110 data-nosnippet>110</a></span><span class="kw">pub const </span>CHGLED_CHARGER_KEEP: u8 = <span class="number">0xF9</span>;
+<a href=#111 id=111 data-nosnippet>111</a><span class="doccomment">/// Source select for charger-driven control (type A).
+<a href=#112 id=112 data-nosnippet>112</a></span><span class="kw">pub const </span>CHGLED_CHARGER_CTRL: u8 = <span class="number">0x01</span>;
+<a href=#113 id=113 data-nosnippet>113</a><span class="kw">pub const </span>CHGLED_PATTERN_SHIFT: u8 = <span class="number">4</span>;
+<a href=#114 id=114 data-nosnippet>114</a>
+<a href=#115 id=115 data-nosnippet>115</a><span class="comment">// ─── Rails ────────────────────────────────────────────────────────────────
+<a href=#116 id=116 data-nosnippet>116</a>
+<a href=#117 id=117 data-nosnippet>117</a></span><span class="doccomment">/// DCDC1–5 enables, one bit per converter from bit 0.
+<a href=#118 id=118 data-nosnippet>118</a>///
+<a href=#119 id=119 data-nosnippet>119</a>/// DCDC1's bit is never written: it is the ESP32-S3 core supply on the
+<a href=#120 id=120 data-nosnippet>120</a>/// T-Beam Supreme and clearing it cuts power to the running MCU
+<a href=#121 id=121 data-nosnippet>121</a>/// (hardware doc §5.2, §18.9). The rest are reachable only through
+<a href=#122 id=122 data-nosnippet>122</a>/// [`crate::UnusedOutput`], which has no variant that can name DCDC1.
+<a href=#123 id=123 data-nosnippet>123</a></span><span class="kw">pub const </span>DC_ONOFF_DVM_CTRL: u8 = <span class="number">0x80</span>;
+<a href=#124 id=124 data-nosnippet>124</a>
+<a href=#125 id=125 data-nosnippet>125</a><span class="kw">pub const </span>DCDC1_BIT: u8 = <span class="number">0</span>;
+<a href=#126 id=126 data-nosnippet>126</a><span class="kw">pub const </span>DCDC2_BIT: u8 = <span class="number">1</span>;
+<a href=#127 id=127 data-nosnippet>127</a><span class="kw">pub const </span>DCDC3_BIT: u8 = <span class="number">2</span>;
+<a href=#128 id=128 data-nosnippet>128</a><span class="kw">pub const </span>DCDC4_BIT: u8 = <span class="number">3</span>;
+<a href=#129 id=129 data-nosnippet>129</a><span class="kw">pub const </span>DCDC5_BIT: u8 = <span class="number">4</span>;
+<a href=#130 id=130 data-nosnippet>130</a>
+<a href=#131 id=131 data-nosnippet>131</a><span class="doccomment">/// LDO enables: bit 0 ALDO1, 1 ALDO2, 2 ALDO3, 3 ALDO4, 4 BLDO1,
+<a href=#132 id=132 data-nosnippet>132</a>/// 5 BLDO2, 6 CPUSLDO, 7 DLDO1 (`enableCPUSLDO`/`enableDLDO1`).
+<a href=#133 id=133 data-nosnippet>133</a></span><span class="kw">pub const </span>LDO_ONOFF_CTRL0: u8 = <span class="number">0x90</span>;
 <a href=#134 id=134 data-nosnippet>134</a>
-<a href=#135 id=135 data-nosnippet>135</a></span><span class="doccomment">/// Battery state of charge, whole percent.
-<a href=#136 id=136 data-nosnippet>136</a></span><span class="kw">pub const </span>BAT_PERCENT_DATA: u8 = <span class="number">0xA4</span>;
+<a href=#135 id=135 data-nosnippet>135</a><span class="doccomment">/// Second LDO enable register; bit 0 is DLDO2 (`enableDLDO2`).
+<a href=#136 id=136 data-nosnippet>136</a></span><span class="kw">pub const </span>LDO_ONOFF_CTRL1: u8 = <span class="number">0x91</span>;
+<a href=#137 id=137 data-nosnippet>137</a>
+<a href=#138 id=138 data-nosnippet>138</a><span class="kw">pub const </span>DLDO1_BIT: u8 = <span class="number">7</span>;
+<a href=#139 id=139 data-nosnippet>139</a><span class="kw">pub const </span>DLDO2_BIT: u8 = <span class="number">0</span>;
+<a href=#140 id=140 data-nosnippet>140</a>
+<a href=#141 id=141 data-nosnippet>141</a><span class="doccomment">/// Per-rail voltage registers, in [`LDO_ONOFF_CTRL0`] bit order.
+<a href=#142 id=142 data-nosnippet>142</a></span><span class="kw">pub const </span>ALDO1_VOL: u8 = <span class="number">0x92</span>;
+<a href=#143 id=143 data-nosnippet>143</a><span class="kw">pub const </span>ALDO2_VOL: u8 = <span class="number">0x93</span>;
+<a href=#144 id=144 data-nosnippet>144</a><span class="kw">pub const </span>ALDO3_VOL: u8 = <span class="number">0x94</span>;
+<a href=#145 id=145 data-nosnippet>145</a><span class="kw">pub const </span>ALDO4_VOL: u8 = <span class="number">0x95</span>;
+<a href=#146 id=146 data-nosnippet>146</a><span class="kw">pub const </span>BLDO1_VOL: u8 = <span class="number">0x96</span>;
+<a href=#147 id=147 data-nosnippet>147</a><span class="kw">pub const </span>BLDO2_VOL: u8 = <span class="number">0x97</span>;
+<a href=#148 id=148 data-nosnippet>148</a>
+<a href=#149 id=149 data-nosnippet>149</a><span class="doccomment">/// Voltage field of an A/BLDO voltage register; the top three bits are
+<a href=#150 id=150 data-nosnippet>150</a>/// reserved and preserved on write.
+<a href=#151 id=151 data-nosnippet>151</a></span><span class="kw">pub const </span>LDO_VOL_MASK: u8 = <span class="number">0x1F</span>;
+<a href=#152 id=152 data-nosnippet>152</a>
+<a href=#153 id=153 data-nosnippet>153</a><span class="doccomment">/// A/BLDO output range, in millivolts.
+<a href=#154 id=154 data-nosnippet>154</a></span><span class="kw">pub const </span>LDO_VOL_MIN_MV: u16 = <span class="number">500</span>;
+<a href=#155 id=155 data-nosnippet>155</a><span class="kw">pub const </span>LDO_VOL_MAX_MV: u16 = <span class="number">3500</span>;
+<a href=#156 id=156 data-nosnippet>156</a><span class="kw">pub const </span>LDO_VOL_STEP_MV: u16 = <span class="number">100</span>;
+<a href=#157 id=157 data-nosnippet>157</a>
+<a href=#158 id=158 data-nosnippet>158</a><span class="comment">// ─── Fuel gauge ───────────────────────────────────────────────────────────
+<a href=#159 id=159 data-nosnippet>159</a>
+<a href=#160 id=160 data-nosnippet>160</a></span><span class="doccomment">/// Battery state of charge, whole percent.
+<a href=#161 id=161 data-nosnippet>161</a></span><span class="kw">pub const </span>BAT_PERCENT_DATA: u8 = <span class="number">0xA4</span>;
 </code></pre></div></section></main></body></html>

@@ -235,102 +235,109 @@
 <a href=#235 id=235 data-nosnippet>235</a>///
 <a href=#236 id=236 data-nosnippet>236</a>/// A route learned from inbound traffic tells the sender how far away the peer
 <a href=#237 id=237 data-nosnippet>237</a>/// was, so a unicast that follows it does not need the wide flood budget of a
-<a href=#238 id=238 data-nosnippet>238</a>/// first-contact packet. Sending with exactly the route's own cost would make
-<a href=#239 id=239 data-nosnippet>239</a>/// every stale route fail outright, so sends keep this much extra budget: a
-<a href=#240 id=240 data-nosnippet>240</a>/// path that has grown one hop longer — a repeater moved, a link that now needs
-<a href=#241 id=241 data-nosnippet>241</a>/// one more relay — still gets through and re-teaches the correct route.
-<a href=#242 id=242 data-nosnippet>242</a></span><span class="kw">pub const </span>ESTABLISHED_ROUTE_EXTRA_HOPS: u8 = <span class="number">1</span>;
-<a href=#243 id=243 data-nosnippet>243</a>
-<a href=#244 id=244 data-nosnippet>244</a><span class="doccomment">/// Error returned when a fixed-capacity MAC data structure is full.
-<a href=#245 id=245 data-nosnippet>245</a></span><span class="attr">#[derive(Clone, Copy, Debug, PartialEq, Eq)]
-<a href=#246 id=246 data-nosnippet>246</a></span><span class="kw">pub struct </span>CapacityError;
-<a href=#247 id=247 data-nosnippet>247</a>
-<a href=#248 id=248 data-nosnippet>248</a><span class="doccomment">/// Error returned when adding a peer to the MAC peer registry.
-<a href=#249 id=249 data-nosnippet>249</a></span><span class="attr">#[derive(Clone, Copy, Debug, PartialEq, Eq)]
-<a href=#250 id=250 data-nosnippet>250</a></span><span class="kw">pub enum </span>AddPeerError {
-<a href=#251 id=251 data-nosnippet>251</a>    <span class="doccomment">/// The peer-registry table is full.
-<a href=#252 id=252 data-nosnippet>252</a>    </span>Capacity,
-<a href=#253 id=253 data-nosnippet>253</a>    <span class="doccomment">/// The public-key bytes do not decode to a valid Ed25519 point on the curve.
-<a href=#254 id=254 data-nosnippet>254</a>    </span>InvalidPublicKey,
-<a href=#255 id=255 data-nosnippet>255</a>}
-<a href=#256 id=256 data-nosnippet>256</a>
-<a href=#257 id=257 data-nosnippet>257</a><span class="kw">impl </span>From&lt;CapacityError&gt; <span class="kw">for </span>AddPeerError {
-<a href=#258 id=258 data-nosnippet>258</a>    <span class="kw">fn </span>from(<span class="kw">_</span>: CapacityError) -&gt; <span class="self">Self </span>{
-<a href=#259 id=259 data-nosnippet>259</a>        AddPeerError::Capacity
-<a href=#260 id=260 data-nosnippet>260</a>    }
-<a href=#261 id=261 data-nosnippet>261</a>}
-<a href=#262 id=262 data-nosnippet>262</a>
-<a href=#263 id=263 data-nosnippet>263</a><span class="doccomment">/// Error returned when adding a named channel to the MAC channel table.
-<a href=#264 id=264 data-nosnippet>264</a></span><span class="attr">#[derive(Clone, Copy, Debug, PartialEq, Eq)]
-<a href=#265 id=265 data-nosnippet>265</a></span><span class="kw">pub enum </span>AddChannelError {
-<a href=#266 id=266 data-nosnippet>266</a>    <span class="doccomment">/// The channel table is full.
-<a href=#267 id=267 data-nosnippet>267</a>    </span>Capacity,
-<a href=#268 id=268 data-nosnippet>268</a>    <span class="doccomment">/// The channel name failed canonicalization (non-ASCII or too long).
-<a href=#269 id=269 data-nosnippet>269</a>    </span>InvalidName(umsh_crypto::ChannelNameError),
-<a href=#270 id=270 data-nosnippet>270</a>}
-<a href=#271 id=271 data-nosnippet>271</a>
-<a href=#272 id=272 data-nosnippet>272</a><span class="kw">impl </span>From&lt;CapacityError&gt; <span class="kw">for </span>AddChannelError {
-<a href=#273 id=273 data-nosnippet>273</a>    <span class="kw">fn </span>from(<span class="kw">_</span>: CapacityError) -&gt; <span class="self">Self </span>{
-<a href=#274 id=274 data-nosnippet>274</a>        AddChannelError::Capacity
-<a href=#275 id=275 data-nosnippet>275</a>    }
-<a href=#276 id=276 data-nosnippet>276</a>}
-<a href=#277 id=277 data-nosnippet>277</a>
-<a href=#278 id=278 data-nosnippet>278</a><span class="doccomment">/// Bundle of platform-specific associated types used by the higher layers.
-<a href=#279 id=279 data-nosnippet>279</a></span><span class="kw">pub trait </span>Platform {
-<a href=#280 id=280 data-nosnippet>280</a>    <span class="doccomment">/// Local identity implementation.
-<a href=#281 id=281 data-nosnippet>281</a>    </span><span class="kw">type </span>Identity: umsh_crypto::NodeIdentity;
-<a href=#282 id=282 data-nosnippet>282</a>    <span class="doccomment">/// AES provider implementation.
-<a href=#283 id=283 data-nosnippet>283</a>    </span><span class="kw">type </span>Aes: umsh_crypto::AesProvider;
-<a href=#284 id=284 data-nosnippet>284</a>    <span class="doccomment">/// SHA/HMAC provider implementation.
-<a href=#285 id=285 data-nosnippet>285</a>    </span><span class="kw">type </span>Sha: umsh_crypto::Sha256Provider;
-<a href=#286 id=286 data-nosnippet>286</a>    <span class="doccomment">/// Radio implementation.
-<a href=#287 id=287 data-nosnippet>287</a>    </span><span class="kw">type </span>Radio: umsh_hal::Radio;
-<a href=#288 id=288 data-nosnippet>288</a>    <span class="doccomment">/// Async delay implementation.
-<a href=#289 id=289 data-nosnippet>289</a>    </span><span class="kw">type </span>Delay: DelayNs;
-<a href=#290 id=290 data-nosnippet>290</a>    <span class="doccomment">/// Monotonic clock implementation.
-<a href=#291 id=291 data-nosnippet>291</a>    </span><span class="kw">type </span>Clock: umsh_hal::Clock;
-<a href=#292 id=292 data-nosnippet>292</a>    <span class="doccomment">/// Random-number generator implementation.
-<a href=#293 id=293 data-nosnippet>293</a>    </span><span class="kw">type </span>Rng: rand::CryptoRng;
-<a href=#294 id=294 data-nosnippet>294</a>    <span class="doccomment">/// Persistent frame-counter store implementation.
-<a href=#295 id=295 data-nosnippet>295</a>    </span><span class="kw">type </span>CounterStore: umsh_hal::CounterStore;
-<a href=#296 id=296 data-nosnippet>296</a>    <span class="doccomment">/// General-purpose persistent key-value store implementation.
-<a href=#297 id=297 data-nosnippet>297</a>    </span><span class="kw">type </span>KeyValueStore: umsh_hal::KeyValueStore;
-<a href=#298 id=298 data-nosnippet>298</a>}
-<a href=#299 id=299 data-nosnippet>299</a>
-<a href=#300 id=300 data-nosnippet>300</a><span class="kw">mod </span>cache;
-<a href=#301 id=301 data-nosnippet>301</a><span class="kw">mod </span>coordinator;
-<a href=#302 id=302 data-nosnippet>302</a><span class="kw">pub mod </span>forward_id;
-<a href=#303 id=303 data-nosnippet>303</a><span class="kw">mod </span>handle;
-<a href=#304 id=304 data-nosnippet>304</a><span class="kw">mod </span>observations;
-<a href=#305 id=305 data-nosnippet>305</a><span class="kw">mod </span>peers;
-<a href=#306 id=306 data-nosnippet>306</a><span class="kw">mod </span>send;
-<a href=#307 id=307 data-nosnippet>307</a>
-<a href=#308 id=308 data-nosnippet>308</a><span class="kw">pub use </span>cache::{
-<a href=#309 id=309 data-nosnippet>309</a>    DUP_CACHE_TTL_MS, DupCacheKey, DuplicateCache, RecentMic, ReplayVerdict, ReplayWindow,
-<a href=#310 id=310 data-nosnippet>310</a>};
-<a href=#311 id=311 data-nosnippet>311</a><span class="kw">pub use </span>coordinator::{
-<a href=#312 id=312 data-nosnippet>312</a>    AmateurRadioMode, ChannelPolicy, CounterPersistenceError, IdentitySlot, LocalIdentity,
-<a href=#313 id=313 data-nosnippet>313</a>    LocalIdentityId, Mac, MacCounters, MacError, OperatingPolicy, RepeaterConfig, SendError,
-<a href=#314 id=314 data-nosnippet>314</a>    WakeReason,
-<a href=#315 id=315 data-nosnippet>315</a>};
-<a href=#316 id=316 data-nosnippet>316</a><span class="kw">pub use </span>handle::MacHandle;
-<a href=#317 id=317 data-nosnippet>317</a><span class="kw">pub use </span>observations::{
-<a href=#318 id=318 data-nosnippet>318</a>    MAX_TRANSMITTER_OBSERVATIONS, TransmitterObservation, TransmitterObservations,
-<a href=#319 id=319 data-nosnippet>319</a>};
-<a href=#320 id=320 data-nosnippet>320</a><span class="kw">pub use </span>peers::{
-<a href=#321 id=321 data-nosnippet>321</a>    CachedRoute, ChannelState, ChannelTable, HintReplayState, PeerCryptoMap, PeerCryptoState,
-<a href=#322 id=322 data-nosnippet>322</a>    PeerId, PeerInfo, PeerRegistry, PeerRemoval,
-<a href=#323 id=323 data-nosnippet>323</a>};
-<a href=#324 id=324 data-nosnippet>324</a><span class="kw">pub use </span>send::{
-<a href=#325 id=325 data-nosnippet>325</a>    AckState, ChannelInfoRef, CompletionSignal, MacEventRef, PacketFamily, PendingAck,
-<a href=#326 id=326 data-nosnippet>326</a>    PendingAckError, QueuedTx, ReceivedPacketRef, ResendRecord, RouteHops, RxMetadata, SendOptions,
-<a href=#327 id=327 data-nosnippet>327</a>    SendReceipt, TxPriority, TxQueue,
-<a href=#328 id=328 data-nosnippet>328</a>};
-<a href=#329 id=329 data-nosnippet>329</a><span class="kw">pub use </span>umsh_hal::Snr;
-<a href=#330 id=330 data-nosnippet>330</a>
-<a href=#331 id=331 data-nosnippet>331</a><span class="attr">#[cfg(feature = <span class="string">"std"</span>)]
-<a href=#332 id=332 data-nosnippet>332</a></span><span class="kw">pub mod </span>test_support;
-<a href=#333 id=333 data-nosnippet>333</a>
-<a href=#334 id=334 data-nosnippet>334</a><span class="attr">#[cfg(test)]
-<a href=#335 id=335 data-nosnippet>335</a></span><span class="kw">mod </span>tests;
+<a href=#238 id=238 data-nosnippet>238</a>/// first-contact packet. Slack past that distance buys the send a backstop: a
+<a href=#239 id=239 data-nosnippet>239</a>/// path that has grown one hop longer — a repeater moved, a link that now needs
+<a href=#240 id=240 data-nosnippet>240</a>/// one more relay — still gets through and re-teaches the correct route.
+<a href=#241 id=241 data-nosnippet>241</a>///
+<a href=#242 id=242 data-nosnippet>242</a>/// Zero spends nothing on that backstop. An established route is transmitted as
+<a href=#243 id=243 data-nosnippet>243</a>/// exactly what it costs, and a route that has gone stale is recovered by the
+<a href=#244 id=244 data-nosnippet>244</a>/// ack timeout rather than by a hop bolted onto every packet:
+<a href=#245 id=245 data-nosnippet>245</a>/// route recovery compares what the application asked for against what the MAC
+<a href=#246 id=246 data-nosnippet>246</a>/// narrowed it to, so a peer that moved is re-flooded on retry. A send with no
+<a href=#247 id=247 data-nosnippet>247</a>/// ack coming has no such recovery and no repeat to listen for — that is the
+<a href=#248 id=248 data-nosnippet>248</a>/// reliability this trades away for the airtime.
+<a href=#249 id=249 data-nosnippet>249</a></span><span class="kw">pub const </span>ESTABLISHED_ROUTE_EXTRA_HOPS: u8 = <span class="number">0</span>;
+<a href=#250 id=250 data-nosnippet>250</a>
+<a href=#251 id=251 data-nosnippet>251</a><span class="doccomment">/// Error returned when a fixed-capacity MAC data structure is full.
+<a href=#252 id=252 data-nosnippet>252</a></span><span class="attr">#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+<a href=#253 id=253 data-nosnippet>253</a></span><span class="kw">pub struct </span>CapacityError;
+<a href=#254 id=254 data-nosnippet>254</a>
+<a href=#255 id=255 data-nosnippet>255</a><span class="doccomment">/// Error returned when adding a peer to the MAC peer registry.
+<a href=#256 id=256 data-nosnippet>256</a></span><span class="attr">#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+<a href=#257 id=257 data-nosnippet>257</a></span><span class="kw">pub enum </span>AddPeerError {
+<a href=#258 id=258 data-nosnippet>258</a>    <span class="doccomment">/// The peer-registry table is full.
+<a href=#259 id=259 data-nosnippet>259</a>    </span>Capacity,
+<a href=#260 id=260 data-nosnippet>260</a>    <span class="doccomment">/// The public-key bytes do not decode to a valid Ed25519 point on the curve.
+<a href=#261 id=261 data-nosnippet>261</a>    </span>InvalidPublicKey,
+<a href=#262 id=262 data-nosnippet>262</a>}
+<a href=#263 id=263 data-nosnippet>263</a>
+<a href=#264 id=264 data-nosnippet>264</a><span class="kw">impl </span>From&lt;CapacityError&gt; <span class="kw">for </span>AddPeerError {
+<a href=#265 id=265 data-nosnippet>265</a>    <span class="kw">fn </span>from(<span class="kw">_</span>: CapacityError) -&gt; <span class="self">Self </span>{
+<a href=#266 id=266 data-nosnippet>266</a>        AddPeerError::Capacity
+<a href=#267 id=267 data-nosnippet>267</a>    }
+<a href=#268 id=268 data-nosnippet>268</a>}
+<a href=#269 id=269 data-nosnippet>269</a>
+<a href=#270 id=270 data-nosnippet>270</a><span class="doccomment">/// Error returned when adding a named channel to the MAC channel table.
+<a href=#271 id=271 data-nosnippet>271</a></span><span class="attr">#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+<a href=#272 id=272 data-nosnippet>272</a></span><span class="kw">pub enum </span>AddChannelError {
+<a href=#273 id=273 data-nosnippet>273</a>    <span class="doccomment">/// The channel table is full.
+<a href=#274 id=274 data-nosnippet>274</a>    </span>Capacity,
+<a href=#275 id=275 data-nosnippet>275</a>    <span class="doccomment">/// The channel name failed canonicalization (non-ASCII or too long).
+<a href=#276 id=276 data-nosnippet>276</a>    </span>InvalidName(umsh_crypto::ChannelNameError),
+<a href=#277 id=277 data-nosnippet>277</a>}
+<a href=#278 id=278 data-nosnippet>278</a>
+<a href=#279 id=279 data-nosnippet>279</a><span class="kw">impl </span>From&lt;CapacityError&gt; <span class="kw">for </span>AddChannelError {
+<a href=#280 id=280 data-nosnippet>280</a>    <span class="kw">fn </span>from(<span class="kw">_</span>: CapacityError) -&gt; <span class="self">Self </span>{
+<a href=#281 id=281 data-nosnippet>281</a>        AddChannelError::Capacity
+<a href=#282 id=282 data-nosnippet>282</a>    }
+<a href=#283 id=283 data-nosnippet>283</a>}
+<a href=#284 id=284 data-nosnippet>284</a>
+<a href=#285 id=285 data-nosnippet>285</a><span class="doccomment">/// Bundle of platform-specific associated types used by the higher layers.
+<a href=#286 id=286 data-nosnippet>286</a></span><span class="kw">pub trait </span>Platform {
+<a href=#287 id=287 data-nosnippet>287</a>    <span class="doccomment">/// Local identity implementation.
+<a href=#288 id=288 data-nosnippet>288</a>    </span><span class="kw">type </span>Identity: umsh_crypto::NodeIdentity;
+<a href=#289 id=289 data-nosnippet>289</a>    <span class="doccomment">/// AES provider implementation.
+<a href=#290 id=290 data-nosnippet>290</a>    </span><span class="kw">type </span>Aes: umsh_crypto::AesProvider;
+<a href=#291 id=291 data-nosnippet>291</a>    <span class="doccomment">/// SHA/HMAC provider implementation.
+<a href=#292 id=292 data-nosnippet>292</a>    </span><span class="kw">type </span>Sha: umsh_crypto::Sha256Provider;
+<a href=#293 id=293 data-nosnippet>293</a>    <span class="doccomment">/// Radio implementation.
+<a href=#294 id=294 data-nosnippet>294</a>    </span><span class="kw">type </span>Radio: umsh_hal::Radio;
+<a href=#295 id=295 data-nosnippet>295</a>    <span class="doccomment">/// Async delay implementation.
+<a href=#296 id=296 data-nosnippet>296</a>    </span><span class="kw">type </span>Delay: DelayNs;
+<a href=#297 id=297 data-nosnippet>297</a>    <span class="doccomment">/// Monotonic clock implementation.
+<a href=#298 id=298 data-nosnippet>298</a>    </span><span class="kw">type </span>Clock: umsh_hal::Clock;
+<a href=#299 id=299 data-nosnippet>299</a>    <span class="doccomment">/// Random-number generator implementation.
+<a href=#300 id=300 data-nosnippet>300</a>    </span><span class="kw">type </span>Rng: rand::CryptoRng;
+<a href=#301 id=301 data-nosnippet>301</a>    <span class="doccomment">/// Persistent frame-counter store implementation.
+<a href=#302 id=302 data-nosnippet>302</a>    </span><span class="kw">type </span>CounterStore: umsh_hal::CounterStore;
+<a href=#303 id=303 data-nosnippet>303</a>    <span class="doccomment">/// General-purpose persistent key-value store implementation.
+<a href=#304 id=304 data-nosnippet>304</a>    </span><span class="kw">type </span>KeyValueStore: umsh_hal::KeyValueStore;
+<a href=#305 id=305 data-nosnippet>305</a>}
+<a href=#306 id=306 data-nosnippet>306</a>
+<a href=#307 id=307 data-nosnippet>307</a><span class="kw">mod </span>cache;
+<a href=#308 id=308 data-nosnippet>308</a><span class="kw">mod </span>coordinator;
+<a href=#309 id=309 data-nosnippet>309</a><span class="kw">pub mod </span>forward_id;
+<a href=#310 id=310 data-nosnippet>310</a><span class="kw">mod </span>handle;
+<a href=#311 id=311 data-nosnippet>311</a><span class="kw">mod </span>observations;
+<a href=#312 id=312 data-nosnippet>312</a><span class="kw">mod </span>peers;
+<a href=#313 id=313 data-nosnippet>313</a><span class="kw">mod </span>send;
+<a href=#314 id=314 data-nosnippet>314</a>
+<a href=#315 id=315 data-nosnippet>315</a><span class="kw">pub use </span>cache::{
+<a href=#316 id=316 data-nosnippet>316</a>    DUP_CACHE_TTL_MS, DupCacheKey, DuplicateCache, RecentMic, ReplayVerdict, ReplayWindow,
+<a href=#317 id=317 data-nosnippet>317</a>};
+<a href=#318 id=318 data-nosnippet>318</a><span class="kw">pub use </span>coordinator::{
+<a href=#319 id=319 data-nosnippet>319</a>    AmateurRadioMode, ChannelPolicy, CounterPersistenceError, IdentitySlot, LocalIdentity,
+<a href=#320 id=320 data-nosnippet>320</a>    LocalIdentityId, Mac, MacCounters, MacError, OperatingPolicy, RepeaterConfig, SendError,
+<a href=#321 id=321 data-nosnippet>321</a>    WakeReason,
+<a href=#322 id=322 data-nosnippet>322</a>};
+<a href=#323 id=323 data-nosnippet>323</a><span class="kw">pub use </span>handle::MacHandle;
+<a href=#324 id=324 data-nosnippet>324</a><span class="kw">pub use </span>observations::{
+<a href=#325 id=325 data-nosnippet>325</a>    MAX_TRANSMITTER_OBSERVATIONS, TransmitterObservation, TransmitterObservations,
+<a href=#326 id=326 data-nosnippet>326</a>};
+<a href=#327 id=327 data-nosnippet>327</a><span class="kw">pub use </span>peers::{
+<a href=#328 id=328 data-nosnippet>328</a>    CachedRoute, ChannelState, ChannelTable, HintReplayState, PeerCryptoMap, PeerCryptoState,
+<a href=#329 id=329 data-nosnippet>329</a>    PeerId, PeerInfo, PeerRegistry, PeerRemoval,
+<a href=#330 id=330 data-nosnippet>330</a>};
+<a href=#331 id=331 data-nosnippet>331</a><span class="kw">pub use </span>send::{
+<a href=#332 id=332 data-nosnippet>332</a>    AckState, ChannelInfoRef, CompletionSignal, MacEventRef, PacketFamily, PendingAck,
+<a href=#333 id=333 data-nosnippet>333</a>    PendingAckError, QueuedTx, ReceivedPacketRef, ResendRecord, RouteHops, RxMetadata, SendOptions,
+<a href=#334 id=334 data-nosnippet>334</a>    SendReceipt, TxPriority, TxQueue,
+<a href=#335 id=335 data-nosnippet>335</a>};
+<a href=#336 id=336 data-nosnippet>336</a><span class="kw">pub use </span>umsh_hal::Snr;
+<a href=#337 id=337 data-nosnippet>337</a>
+<a href=#338 id=338 data-nosnippet>338</a><span class="attr">#[cfg(feature = <span class="string">"std"</span>)]
+<a href=#339 id=339 data-nosnippet>339</a></span><span class="kw">pub mod </span>test_support;
+<a href=#340 id=340 data-nosnippet>340</a>
+<a href=#341 id=341 data-nosnippet>341</a><span class="attr">#[cfg(test)]
+<a href=#342 id=342 data-nosnippet>342</a></span><span class="kw">mod </span>tests;
 </code></pre></div></section></main></body></html>

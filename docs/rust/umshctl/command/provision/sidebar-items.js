@@ -1,1 +1,0 @@
-window.SIDEBAR_ITEMS = {"fn":["parse_file","provision","run"],"struct":["ProvisionArgs","Settings"]};

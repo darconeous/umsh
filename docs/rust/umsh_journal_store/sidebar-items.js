@@ -1,1 +1,1 @@
-window.SIDEBAR_ITEMS = {"mod":["ble","counter","proto","record"]};
+window.SIDEBAR_ITEMS = {"mod":["ble","counter","proto","record","seed"]};

@@ -36,7 +36,7 @@
             const path_to_root = "";
             const default_light_theme = "light";
             const default_dark_theme = "ayu";
-            window.path_to_searchindex_js = "searchindex-5a161e7d.js";
+            window.path_to_searchindex_js = "searchindex-5f0d90f9.js";
         </script>
         <!-- Start loading toc.js asap -->
         <script src="toc-438957a9.js"></script>
@@ -4573,7 +4573,7 @@ transmit duty-cycle budget. Every ULCP device implements it.</p>
 avoided. The properties that any radio has — enable, frequency, transmit
 power, RSSI, MTU — are unconditional; the LoRa modulation parameters are
 gated behind <code>CAP_PHY_LORA</code>, and duty-cycle accounting behind
-<code>CAP_PHY_DUTY_LIMIT</code>.</p>
+<code>CAP_PHY_DUTY_LIMIT</code>. Traffic counters are exposed by <code>CAP_STATS</code>.</p>
 <p>The RF configuration is <a href="#device-domain-1">device-domain</a> state:
 it belongs to the radio rather than to whichever host is attached, it is
 part of a <a href="#saved-state-1">saved snapshot</a>, and it
@@ -4586,6 +4586,7 @@ survives a change of host.</p>
 </thead>
 <tbody>
 <tr><td>16</td><td><code>CAP_PHY_DUTY_LIMIT</code></td><td>Duty-cycle accounting and enforcement: <code>PROP_PHY_DUTY_NOW</code>, <code>PROP_PHY_DUTY_LIMIT</code>, and <code>STATUS_DUTY_LIMIT</code></td></tr>
+<tr><td>52</td><td><code>CAP_STATS</code></td><td>Radio and forwarding traffic counters: <code>PROP_STAT_*</code></td></tr>
 <tr><td>515</td><td><code>CAP_PHY_LORA</code></td><td>The LoRa modulation parameters: <code>PROP_PHY_LORA_BW</code>, <code>PROP_PHY_LORA_SF</code>, <code>PROP_PHY_LORA_CR</code>, <code>PROP_PHY_LORA_SW</code></td></tr>
 </tbody>
 </table>
@@ -4608,6 +4609,15 @@ survives a change of host.</p>
 <tr><td>43</td><td><code>PROP_PHY_LORA_SW</code></td><td>Get, Set</td><td>LoRa sync word (16-bit style)</td></tr>
 <tr><td>4820</td><td><code>PROP_PHY_DUTY_NOW</code></td><td>Get</td><td>Current duty usage</td></tr>
 <tr><td>4822</td><td><code>PROP_PHY_DUTY_LIMIT</code></td><td>Get, Set</td><td>Duty-cycle limit</td></tr>
+<tr><td>4832</td><td><code>PROP_STAT_TX_PACKETS</code></td><td>Get, Set</td><td>Packets transmitted over the air</td></tr>
+<tr><td>4833</td><td><code>PROP_STAT_TX_CHANNEL_BUSY</code></td><td>Get, Set</td><td>Transmissions deferred because the channel was busy</td></tr>
+<tr><td>4834</td><td><code>PROP_STAT_RX_PACKETS</code></td><td>Get, Set</td><td>Received packets with a UMSH first-octet pattern</td></tr>
+<tr><td>4835</td><td><code>PROP_STAT_RX_BAD_CRC</code></td><td>Get, Set</td><td>Receptions rejected because of a bad CRC</td></tr>
+<tr><td>4836</td><td><code>PROP_STAT_RX_NON_UMSH</code></td><td>Get, Set</td><td>Received packets without a UMSH first-octet pattern</td></tr>
+<tr><td>4837</td><td><code>PROP_STAT_RX_ACCEPTED</code></td><td>Get, Set</td><td>Received packets accepted by this device’s node</td></tr>
+<tr><td>4838</td><td><code>PROP_STAT_FORWARDED</code></td><td>Get, Set</td><td>Packets this device chose to forward</td></tr>
+<tr><td>4839</td><td><code>PROP_STAT_FORWARD_DROPPED</code></td><td>Get, Set</td><td>Forwarding candidates rejected by policy</td></tr>
+<tr><td>4840</td><td><code>PROP_STAT_FORWARD_CANCELLED</code></td><td>Get, Set</td><td>Queued forwards cancelled after an acknowledgement</td></tr>
 </tbody>
 </table>
 </div>
@@ -4767,6 +4777,51 @@ be prevented. Packets that are prevented from being sent will be dropped with
 </tbody>
 </table>
 </div>
+<h2 id="statistics"><a class="header" href="#statistics">Statistics</a></h2>
+<p>A device advertising <code>CAP_STATS</code> exposes cumulative <code>UINT32_LE</code> traffic
+counters. Values count since boot or the most recent reset of that counter and
+wrap modulo 2^32. Writing four zero octets resets a counter. A device <strong>MUST</strong>
+reject every other value or length with <code>STATUS_INVALID_ARGUMENT</code>.</p>
+<p>Statistics are live hardware history rather than configuration. They are not
+part of a saved snapshot, and <code>CMD_RST</code> <strong>MUST NOT</strong> clear them. A host can reset
+several counters with <code>CMD_PROP_MULTI_SET</code>, but the individual resets do not
+occur simultaneously: traffic arriving during the write sweep can fall on
+different sides of different counter resets.</p>
+<p><code>PROP_PHY_DUTY_NOW</code> is commonly displayed alongside these counters, but it is a
+rolling regulatory measurement and is not resettable.</p>
+<h3 id="prop-stat-tx-packets"><a class="header" href="#prop-stat-tx-packets">PROP 4832: <code>PROP_STAT_TX_PACKETS</code></a></h3>
+<p>Packets whose transmission completed successfully over the physical radio.
+Requires <code>CAP_STATS</code>.</p>
+<h3 id="prop-stat-tx-channel-busy"><a class="header" href="#prop-stat-tx-channel-busy">PROP 4833: <code>PROP_STAT_TX_CHANNEL_BUSY</code></a></h3>
+<p>Transmission attempts deferred because channel assessment reported the channel
+busy. Such an attempt does not also increment <code>PROP_STAT_TX_PACKETS</code>. Requires
+<code>CAP_STATS</code>.</p>
+<h3 id="prop-stat-rx-packets"><a class="header" href="#prop-stat-rx-packets">PROP 4834: <code>PROP_STAT_RX_PACKETS</code></a></h3>
+<p>Off-air receptions whose first octet carries the UMSH version and valid reserved
+bits. This classification does not require the rest of the packet to parse.
+Requires <code>CAP_STATS</code>.</p>
+<h3 id="prop-stat-rx-bad-crc"><a class="header" href="#prop-stat-rx-bad-crc">PROP 4835: <code>PROP_STAT_RX_BAD_CRC</code></a></h3>
+<p>Receptions the physical radio rejected because their payload CRC was invalid.
+Requires <code>CAP_STATS</code>.</p>
+<h3 id="prop-stat-rx-non-umsh"><a class="header" href="#prop-stat-rx-non-umsh">PROP 4836: <code>PROP_STAT_RX_NON_UMSH</code></a></h3>
+<p>Off-air receptions whose first octet does not carry the UMSH version and valid
+reserved bits. Requires <code>CAP_STATS</code>.</p>
+<h3 id="prop-stat-rx-accepted"><a class="header" href="#prop-stat-rx-accepted">PROP 4837: <code>PROP_STAT_RX_ACCEPTED</code></a></h3>
+<p>Receptions on which this device’s own node acted. Frames addressed to an
+attached host’s identity are not included. Requires <code>CAP_STATS</code> and
+<code>CAP_REPEATER</code>.</p>
+<h3 id="prop-stat-forwarded"><a class="header" href="#prop-stat-forwarded">PROP 4838: <code>PROP_STAT_FORWARDED</code></a></h3>
+<p>Receptions this device’s own node chose to repeat. The counter records the
+forwarding decision; successful physical transmissions are counted separately
+by <code>PROP_STAT_TX_PACKETS</code>. Requires <code>CAP_STATS</code> and <code>CAP_REPEATER</code>.</p>
+<h3 id="prop-stat-forward-dropped"><a class="header" href="#prop-stat-forward-dropped">PROP 4839: <code>PROP_STAT_FORWARD_DROPPED</code></a></h3>
+<p>Packets that were eligible for forwarding but were rejected by the configured
+flood budget, minimum RSSI, minimum SNR, or region policy. Duplicates,
+self-addressed packets, and packets received while forwarding is disabled are
+not included. Requires <code>CAP_STATS</code> and <code>CAP_REPEATER</code>.</p>
+<h3 id="prop-stat-forward-cancelled"><a class="header" href="#prop-stat-forward-cancelled">PROP 4840: <code>PROP_STAT_FORWARD_CANCELLED</code></a></h3>
+<p>Queued forwards cancelled because the destination’s acknowledgement was
+overheard before transmission. Requires <code>CAP_STATS</code> and <code>CAP_REPEATER</code>.</p>
 <div style="break-before: page; page-break-before: always;"></div>
 <h1 id="ulcp-frame-transport"><a class="header" href="#ulcp-frame-transport">ULCP: Frame Transport</a></h1>
 <p>Frame transport is the data plane: the host transmits and receives raw,
@@ -6104,6 +6159,9 @@ moment it is installed or generated (see <a href="#prop-dev-private-key"><code>P
 changed only by explicit provisioning or <code>CMD_CLEAR</code> — neither
 <code>CMD_RESTORE</code> nor a reboot can revert the device identity to an earlier
 key.</p>
+<p>Traffic statistics (<code>PROP_STAT_*</code>) are also excluded. They are live
+hardware history since boot or the last explicit counter reset, not
+configuration a snapshot can restore.</p>
 <p><a href="#prop-time"><code>PROP_TIME</code></a> is excluded for a third reason:
 a stored epoch is wrong by however long the device was off, by an amount
 nothing can bound, so restoring one would be restoring a confidently
@@ -6976,9 +7034,11 @@ nothing to apply them to and rejects them under the ordinary property
 rules. <code>CMD_QUEUE_DRAIN</code>, <code>CMD_SAVE</code>, and <code>CMD_RESTORE</code> belong to their
 subsystems’ capabilities and <strong>MUST</strong> fail with <code>STATUS_UNIMPLEMENTED</code>
 when the capability is not advertised, as <strong>MUST</strong>
-<a href="#cmd-reboot"><code>CMD_REBOOT</code></a> without <code>CAP_REBOOT</code>;
-<code>CMD_CLEAR</code> and <code>CMD_FACTORY_RESET</code> are available regardless of
-capabilities (see <a href="#ulcp-saved-state">Saved State</a>).</p>
+<a href="#cmd-reboot"><code>CMD_REBOOT</code></a> without <code>CAP_REBOOT</code> and
+<a href="#cmd-ble-clear-bonds"><code>CMD_BLE_CLEAR_BONDS</code></a> on a device
+that does not manage its own bonds; <code>CMD_CLEAR</code> and <code>CMD_FACTORY_RESET</code>
+are available regardless of capabilities (see
+<a href="#ulcp-saved-state">Saved State</a>).</p>
 <h2 id="properties-5"><a class="header" href="#properties-5">Properties</a></h2>
 <div class="table-wrapper">
 <table>
@@ -7026,7 +7086,7 @@ requires.</p>
 <tr><th>Subsystem</th><th>Capabilities</th></tr>
 </thead>
 <tbody>
-<tr><td><a href="#ulcp-radio-control">Radio Control</a> beyond the required properties</td><td><code>CAP_PHY_LORA</code>, <code>CAP_PHY_DUTY_LIMIT</code></td></tr>
+<tr><td><a href="#ulcp-radio-control">Radio Control</a> beyond the required properties</td><td><code>CAP_PHY_LORA</code>, <code>CAP_PHY_DUTY_LIMIT</code>, <code>CAP_STATS</code></td></tr>
 <tr><td><a href="#ulcp-device-domain">Device Domain</a></td><td><code>CAP_DEV_IDENTITY</code>, <code>CAP_DEV_NAME</code>, <code>CAP_BATTERY</code>, <code>CAP_REPEATER</code>, <code>CAP_IDENT</code>, <code>CAP_ALERT</code>, <code>CAP_TIME</code>, <code>CAP_GNSS</code>, <code>CAP_ADVERT</code>, <code>CAP_ILLUMINANCE</code></td></tr>
 <tr><td><a href="#ulcp-saved-state">Saved State</a></td><td><code>CAP_SAVE</code></td></tr>
 <tr><td><a href="#ulcp-tethered-host-services">Tethered Host Services</a></td><td><code>CAP_HOST_FILTER</code>, <code>CAP_HOST_KEYS</code>, <code>CAP_HOST_RX_QUEUE</code>, <code>CAP_HOST_AUTO_ACK</code>, <code>CAP_MAC_BACKHAUL</code></td></tr>
@@ -7115,13 +7175,14 @@ it can do.</p>
 <tr><td>14</td><td><a href="#cmd-restore"><code>CMD_RESTORE</code></a></td><td>Host-&gt;Device</td><td><code>CAP_SAVE</code></td></tr>
 <tr><td>15</td><td><a href="#cmd-factory-reset"><code>CMD_FACTORY_RESET</code></a></td><td>Host-&gt;Device</td><td>—</td></tr>
 <tr><td>16</td><td><a href="#cmd-reboot"><code>CMD_REBOOT</code></a></td><td>Host-&gt;Device</td><td><code>CAP_REBOOT</code></td></tr>
+<tr><td>17</td><td><a href="#cmd-ble-clear-bonds"><code>CMD_BLE_CLEAR_BONDS</code></a></td><td>Host-&gt;Device</td><td><code>CAP_BLE</code></td></tr>
 <tr><td>21</td><td><a href="#cmd-prop-multi-get"><code>CMD_PROP_MULTI_GET</code></a></td><td>Host-&gt;Device</td><td><code>CAP_CMD_MULTI</code></td></tr>
 <tr><td>22</td><td><a href="#cmd-prop-multi-set"><code>CMD_PROP_MULTI_SET</code></a></td><td>Host-&gt;Device</td><td><code>CAP_CMD_MULTI</code></td></tr>
 <tr><td>23</td><td><a href="#cmd-prop-are"><code>CMD_PROP_ARE</code></a></td><td>Device-&gt;Host</td><td><code>CAP_CMD_MULTI</code></td></tr>
 </tbody>
 </table>
 </div>
-<p>Command identifiers are 7-bit; 17–20 and 24–127 are unassigned.</p>
+<p>Command identifiers are 7-bit; 18–20 and 24–127 are unassigned.</p>
 <h2 id="properties-and-streams-1"><a class="header" href="#properties-and-streams-1">Properties and Streams</a></h2>
 <p>Identifiers are allocated by state class; see
 <a href="#property-allocation">Property Allocation</a>.</p>
@@ -7189,6 +7250,15 @@ it can do.</p>
 <tr><td>113</td><td><a href="#str-radio-raw"><code>STR_PHY_RAW</code></a></td><td>Send, Recv</td><td>—</td></tr>
 <tr><td>4820</td><td><a href="#prop-phy-duty-now"><code>PROP_PHY_DUTY_NOW</code></a></td><td>Get</td><td><code>CAP_PHY_DUTY_LIMIT</code></td></tr>
 <tr><td>4822</td><td><a href="#prop-phy-duty-limit"><code>PROP_PHY_DUTY_LIMIT</code></a></td><td>Get, Set</td><td><code>CAP_PHY_DUTY_LIMIT</code></td></tr>
+<tr><td>4832</td><td><a href="#prop-stat-tx-packets"><code>PROP_STAT_TX_PACKETS</code></a></td><td>Get, Set</td><td><code>CAP_STATS</code></td></tr>
+<tr><td>4833</td><td><a href="#prop-stat-tx-channel-busy"><code>PROP_STAT_TX_CHANNEL_BUSY</code></a></td><td>Get, Set</td><td><code>CAP_STATS</code></td></tr>
+<tr><td>4834</td><td><a href="#prop-stat-rx-packets"><code>PROP_STAT_RX_PACKETS</code></a></td><td>Get, Set</td><td><code>CAP_STATS</code></td></tr>
+<tr><td>4835</td><td><a href="#prop-stat-rx-bad-crc"><code>PROP_STAT_RX_BAD_CRC</code></a></td><td>Get, Set</td><td><code>CAP_STATS</code></td></tr>
+<tr><td>4836</td><td><a href="#prop-stat-rx-non-umsh"><code>PROP_STAT_RX_NON_UMSH</code></a></td><td>Get, Set</td><td><code>CAP_STATS</code></td></tr>
+<tr><td>4837</td><td><a href="#prop-stat-rx-accepted"><code>PROP_STAT_RX_ACCEPTED</code></a></td><td>Get, Set</td><td><code>CAP_STATS</code>, <code>CAP_REPEATER</code></td></tr>
+<tr><td>4838</td><td><a href="#prop-stat-forwarded"><code>PROP_STAT_FORWARDED</code></a></td><td>Get, Set</td><td><code>CAP_STATS</code>, <code>CAP_REPEATER</code></td></tr>
+<tr><td>4839</td><td><a href="#prop-stat-forward-dropped"><code>PROP_STAT_FORWARD_DROPPED</code></a></td><td>Get, Set</td><td><code>CAP_STATS</code>, <code>CAP_REPEATER</code></td></tr>
+<tr><td>4840</td><td><a href="#prop-stat-forward-cancelled"><code>PROP_STAT_FORWARD_CANCELLED</code></a></td><td>Get, Set</td><td><code>CAP_STATS</code>, <code>CAP_REPEATER</code></td></tr>
 <tr><td>4864</td><td><a href="#prop-ble-pairing-pin"><code>PROP_BLE_PAIRING_PIN</code></a></td><td>Set</td><td>BLE transport</td></tr>
 <tr><td>4865</td><td><a href="#prop-dev-admins"><code>PROP_DEV_ADMINS</code></a></td><td>Get, Set, Insert, Remove</td><td><code>CAP_ADMIN</code></td></tr>
 <tr><td>4866</td><td><a href="#prop-time"><code>PROP_TIME</code></a></td><td>Get, Set, Is</td><td><code>CAP_TIME</code></td></tr>
@@ -7197,6 +7267,9 @@ it can do.</p>
 <tr><td>4869</td><td><a href="#prop-gnss-ident-precision"><code>PROP_GNSS_IDENT_PRECISION</code></a></td><td>Get, Set</td><td><code>CAP_GNSS</code></td></tr>
 <tr><td>4870</td><td><a href="#prop-gnss-time-trust"><code>PROP_GNSS_TIME_TRUST</code></a></td><td>Get, Set</td><td><code>CAP_GNSS</code></td></tr>
 <tr><td>4871</td><td><a href="#prop-ble-enabled"><code>PROP_BLE_ENABLED</code></a></td><td>Get, Set, Is</td><td><code>CAP_BLE</code></td></tr>
+<tr><td>4872</td><td><a href="#prop-ble-bond-count"><code>PROP_BLE_BOND_COUNT</code></a></td><td>Get, Is</td><td><code>CAP_BLE</code></td></tr>
+<tr><td>4873</td><td><a href="#prop-ble-link"><code>PROP_BLE_LINK</code></a></td><td>Get, Is</td><td><code>CAP_BLE</code></td></tr>
+<tr><td>4874</td><td><a href="#prop-ble-pairing"><code>PROP_BLE_PAIRING</code></a></td><td>Get, Set, Is</td><td><code>CAP_BLE</code></td></tr>
 </tbody>
 </table>
 </div>
@@ -7231,6 +7304,7 @@ is in <a href="#capabilities-1">Capabilities</a>.</p>
 <tr><td>49</td><td><code>CAP_CMD_MULTI</code></td><td><a href="#cmd-prop-multi-get">Framing and Common Semantics</a></td></tr>
 <tr><td>50</td><td><code>CAP_BLE</code></td><td><a href="#capabilities-8">BLE Binding</a></td></tr>
 <tr><td>51</td><td><code>CAP_REBOOT</code></td><td><a href="#cmd-reboot">Framing and Common Semantics</a></td></tr>
+<tr><td>52</td><td><code>CAP_STATS</code></td><td><a href="#capabilities-2">Radio Control</a></td></tr>
 <tr><td>515</td><td><code>CAP_PHY_LORA</code></td><td><a href="#capabilities-2">Radio Control</a></td></tr>
 </tbody>
 </table>
@@ -7493,7 +7567,7 @@ bonded hosts can reconnect.</p>
 <tr><th>Code</th><th>Name</th><th>Requires</th><th>Grants</th></tr>
 </thead>
 <tbody>
-<tr><td>50</td><td><code>CAP_BLE</code></td><td>—</td><td>A Bluetooth transport whose reachability the device can turn on and off: <code>PROP_BLE_ENABLED</code></td></tr>
+<tr><td>50</td><td><code>CAP_BLE</code></td><td>—</td><td>A Bluetooth transport whose reachability the device can turn on and off, and which reports what is on it: <code>PROP_BLE_ENABLED</code>, <code>PROP_BLE_LINK</code></td></tr>
 </tbody>
 </table>
 </div>
@@ -7501,6 +7575,20 @@ bonded hosts can reconnect.</p>
 advertising it means the transport is always reachable while the device
 is powered, which is what every device did before the capability
 existed; it does not mean the device has no BLE.</p>
+<p><code>CAP_BLE</code> is the only capability this binding defines, and everything
+else about a transport is discovered by asking for it. A device that
+manages its own bonds answers <code>PROP_BLE_BOND_COUNT</code> and the two bond
+commands; one whose bonds are reachable only by a gesture at the device
+itself answers <code>STATUS_PROP_NOT_FOUND</code> to the property and
+<code>STATUS_UNIMPLEMENTED</code> to the commands.</p>
+<p>This is deliberate. A capability is worth a code when a host would
+otherwise have to guess, and here it would not: the refusal is a
+complete answer, arrives in the same exchange the host was already
+making, and is a case the host must handle regardless — any property may
+be refused by firmware older than the host that asks. Splitting the
+transport into finer capabilities would buy a host nothing it cannot
+learn in the reply it is already waiting for, at the cost of a second
+claim that can disagree with the first.</p>
 <h2 id="ble-reachability"><a class="header" href="#ble-reachability">Reachability</a></h2>
 <h3 id="prop-ble-enabled"><a class="header" href="#prop-ble-enabled">PROP 4871: <code>PROP_BLE_ENABLED</code></a></h3>
 <ul>
@@ -7532,6 +7620,135 @@ cleared, is the last thing the attached host hears.</p>
 device that cannot be configured by the host that would make it
 reachable again, and on most hardware the only other way in is the menu
 on the front of it.</p>
+<h3 id="prop-ble-link"><a class="header" href="#prop-ble-link">PROP 4873: <code>PROP_BLE_LINK</code></a></h3>
+<ul>
+<li>Type: Single-Value, Read-Only</li>
+<li>Asynchronous Updates: Yes</li>
+<li>Required: <code>CAP_BLE</code></li>
+<li>Value Type: UINT8</li>
+<li>Post-Reset Value: what the transport is doing</li>
+</ul>
+<div class="table-wrapper">
+<table>
+<thead>
+<tr><th>Value</th><th>Name</th><th>Meaning</th></tr>
+</thead>
+<tbody>
+<tr><td>0</td><td><code>BLE_LINK_NONE</code></td><td>Nothing is connected over Bluetooth</td></tr>
+<tr><td>1</td><td><code>BLE_LINK_CONNECTED</code></td><td>A central holds a connection but has not attached</td></tr>
+<tr><td>2</td><td><code>BLE_LINK_ATTACHED</code></td><td>A host is attached and running ULCP over Bluetooth</td></tr>
+</tbody>
+</table>
+</div>
+<p>How far the transport has got with whoever is on the other end of it. A
+device <strong>MUST</strong> publish the new value when it changes: a host arriving
+or walking away is a transition nobody asked for, and one that a
+watching administrator would otherwise have to poll for.</p>
+<p>Connected and attached are separate values because they are separate
+facts. A central can hold the device’s connection without ever
+subscribing to the ULCP notification characteristic — a stalled pairing,
+an operating system reconnecting a bond in the background, or a host
+that simply occupies the slot — and a device with one peripheral
+connection is unreachable by anyone else while that lasts. Reporting
+that as “nobody is here” would describe a device that is in fact
+unavailable.</p>
+<p>Read over BLE the value is always <code>BLE_LINK_ATTACHED</code>, because the
+session asking is the session it reports. The property earns its keep on
+the other bindings: over a serial transport and over
+<a href="node-mgmt.html">Node Management</a> it is the only way to ask whether
+someone is on the device’s Bluetooth right now.</p>
+<p>Like the bond count, it is live transport state: <strong>NOT</strong> part of the
+saved snapshot, and <code>CMD_RST</code> <strong>MUST NOT</strong> change it. A host does not
+disconnect because a reset was performed on the device it is attached
+to.</p>
+<p>It says what the transport is doing, never with whom. Identifying the
+connected host would leak the same association the
+<a href="#prop-ble-bond-count">bond count</a> withholds.</p>
+<h2 id="bond-management-commands"><a class="header" href="#bond-management-commands">Bond Management Commands</a></h2>
+<h3 id="prop-ble-bond-count"><a class="header" href="#prop-ble-bond-count">PROP 4872: <code>PROP_BLE_BOND_COUNT</code></a></h3>
+<ul>
+<li>Type: Single-Value, Read-Only</li>
+<li>Asynchronous Updates: Yes</li>
+<li>Required: <code>CAP_BLE</code></li>
+<li>Value Type: UINT8</li>
+<li>Post-Reset Value: the number of bonds the device holds</li>
+</ul>
+<p>How many hosts are currently bonded. A device <strong>MUST</strong> report the count
+its durable bond store holds, and <strong>MUST</strong> publish the new value when it
+changes — enrollment and eviction both happen without the host asking,
+so a host that was not told would have to poll.</p>
+<p>A device that does not manage its own bonds answers
+<code>STATUS_PROP_NOT_FOUND</code>, which is how a host learns that the two bond
+commands below will refuse it as well.</p>
+<p>The count is live transport state, not configuration: it is <strong>NOT</strong> part
+of the saved snapshot, and <code>CMD_RST</code> <strong>MUST NOT</strong> change it. A protocol
+reset returns protocol state to its post-reset values, and a bond is
+neither protocol state nor something a reset deletes.</p>
+<p>It says how many hosts are enrolled, never which. A device that named
+its bonded hosts to whoever asked would leak the association the pairing
+ceremony exists to protect, and the count is what an operator deciding
+whether to clear bonds actually needs.</p>
+<h3 id="cmd-ble-clear-bonds"><a class="header" href="#cmd-ble-clear-bonds">CMD 17: (Host -&gt; Device) <code>CMD_BLE_CLEAR_BONDS</code></a></h3>
+<pre><code> 0                   1
+ 0 1 2 3 4 5 6 7 8 9 0 1 2 3 4 5
++-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+
+|1 0| RES | TID |CMD_BLE_CLEAR_B|
++-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+
+</code></pre>
+<p>Figure: Structure of <code>CMD_BLE_CLEAR_BONDS</code></p>
+<p>Delete every stored bond, the pairing PIN, and the pairing failure
+lockout, then enter pairing mode.</p>
+<p>The device <strong>MUST NOT</strong> report success before the deletion is durable,
+and <strong>MUST</strong> drop the deleted bonds from any live in-memory bond table
+as well as from durable storage — a bond forgotten on flash but still
+held in RAM would keep working until the next boot. It <strong>MUST</strong> then
+enter pairing mode: a device that has forgotten every host it trusts and
+is not accepting new ones is reachable by nothing.</p>
+<p>The device answers <code>PROP_LAST_STATUS</code>: <code>STATUS_OK</code> once the deletion is
+durable, <code>STATUS_UNIMPLEMENTED</code> on a device that does not manage its own
+bonds and <code>STATUS_UNIMPLEMENTED</code> without <code>CAP_BLE</code>. Sent over
+BLE, that answer is the last thing the sender hears, because the bond
+that carried it is among the bonds deleted; the reply <strong>MUST</strong> be
+emitted before the connection is dropped.</p>
+<p>Clearing the PIN alongside the bonds is deliberate. A PIN outliving the
+hosts it was set for would leave a device that has forgotten everyone
+still demanding a secret the operator may no longer have, recoverable
+only by a local wipe.</p>
+<p>The command is an ordinary command rather than reset-class: what it did
+is the whole of what it reports, and a caller that heard nothing could
+not tell a device that had cleared its bonds from one that never
+received the request.</p>
+<h3 id="prop-ble-pairing"><a class="header" href="#prop-ble-pairing">PROP 4874: <code>PROP_BLE_PAIRING</code></a></h3>
+<ul>
+<li>Type: Single-Value, Read-Write</li>
+<li>Asynchronous Updates: Yes</li>
+<li>Required: <code>CAP_BLE</code></li>
+<li>Value Type: BOOL</li>
+<li>Post-Reset Value: whether the window is open</li>
+</ul>
+<p>Whether <a href="#pairing-mode">pairing mode</a> is active. Writing <code>1</code> opens a
+window, so an unbonded host may pair without a physical gesture at the
+device; writing <code>0</code> closes one. The window is a property rather than a
+command because it is a state with more ways out than in — the write, a
+timeout, a completed bond — and only a property can be closed again,
+read back, and reported moving on its own.</p>
+<p>The device <strong>MUST</strong> publish the new value on any transition the writer
+did not just command: expiry and a new bond both close the window with
+no host asking, and a physical gesture at the device opens one.</p>
+<p>A write of <code>1</code> answers <code>STATUS_INVALID_STATE</code> when no window can open:
+the device is locked out after repeated pairing failures, or Bluetooth
+is off (<a href="#prop-ble-enabled"><code>PROP_BLE_ENABLED</code></a> is <code>0</code>) — nothing can
+pair through a transport that is down, and a device <strong>MUST NOT</strong> report
+a window nothing can walk through. A full bond store is <strong>NOT</strong> a
+refusal: enrollment at capacity evicts rather than refuses (see
+<a href="#bond-management">Bond Management</a>), so a device with a full store
+opens the window like any other. A write of <code>0</code> <strong>MUST</strong> succeed: there
+is no state in which a window refuses to shut.</p>
+<p>A device that does not manage its own bonds answers
+<code>STATUS_PROP_NOT_FOUND</code>, like the <a href="#prop-ble-bond-count">bond count</a>.</p>
+<p>Like the bond count and the link, the window is live transport state:
+<strong>NOT</strong> part of the saved snapshot, and <code>CMD_RST</code> <strong>MUST NOT</strong> touch
+it.</p>
 <h2 id="ble-security"><a class="header" href="#ble-security">Security</a></h2>
 <p>ULCP is a privileged interface: an attached
 host commands transmission with arbitrary content, timing, and power
@@ -7569,10 +7786,11 @@ requirement.</p>
 automatically at power-on for a short window (15–30 seconds
 <strong>RECOMMENDED</strong>).</li>
 <li>Once the device holds one or more bonds, it <strong>MUST NOT</strong> enter pairing
-mode automatically. Entering pairing mode then requires a deliberate
-physical gesture distinct from normal power-on — for example,
-holding the user button through power-on until the device signals
-that pairing mode is active.</li>
+mode automatically. Entering pairing mode then requires either a
+deliberate physical gesture distinct from normal power-on — for
+example, holding the user button through power-on until the device
+signals that pairing mode is active — or a write of <code>1</code> to
+<a href="#prop-ble-pairing"><code>PROP_BLE_PAIRING</code></a> from an authorized session.</li>
 </ul>
 <p>Pairing mode <strong>MUST</strong> end when any of the following occurs:</p>
 <ul>
@@ -7584,7 +7802,14 @@ that pairing mode is active.</li>
 or display) while pairing mode is active.</p>
 <p>A physical-presence-gated ceremony reduces the pairing trust decision
 to possession of the device — the same property that protects the
-serial transports.</p>
+serial transports. A command from an already-authorized session is the
+same decision made by someone who has already passed that ceremony: an
+attached host holds a bond, and a mesh administrator is listed in
+<code>PROP_DEV_ADMINS</code>, which is itself set through an attached session. What
+the gesture proves about a person standing at the device, authorization
+proves about a party that was admitted earlier; a party that can already
+administer the device gains nothing by opening a window it could open by
+walking over.</p>
 <h3 id="association-models"><a class="header" href="#association-models">Association Models</a></h3>
 <ul>
 <li>Devices with a display and a confirmation input <strong>SHOULD</strong> use an
@@ -7655,9 +7880,12 @@ BLE.</p>
 <h3 id="bond-management"><a class="header" href="#bond-management">Bond Management</a></h3>
 <ul>
 <li>Devices <strong>MUST</strong> provide a local mechanism to delete stored bonds. The
-mechanism is implementation-specific but <strong>MUST NOT</strong> be invocable
-through ULCP itself over an unauthenticated
-path.</li>
+mechanism is implementation-specific. Deletion <strong>MUST NOT</strong> be
+invocable over an unauthenticated path; a device that manages its own
+bonds additionally accepts
+<a href="#cmd-ble-clear-bonds"><code>CMD_BLE_CLEAR_BONDS</code></a>, whose authorization is
+the session’s own (see <a href="#administrative-authorization">Administrative
+Authorization</a>).</li>
 <li>Devices <strong>MAY</strong> limit the number of stored bonds. A full bond store
 <strong>MUST NOT</strong> cause pairing to be refused: when a new bond is enrolled
 while the store is full, the device <strong>MUST</strong> evict the
@@ -7676,9 +7904,12 @@ choice and is the wrong one: it turns a full store into a state from
 which the device can only be recovered by a local wipe, while enrollment
 already requires physical presence and the eviction victim is by
 construction the bond that has gone longest without connecting.</p>
-<p>Removing one specific bond while retaining the others is not currently
-expressible through this protocol; the local mechanism above and
-<code>CMD_FACTORY_RESET</code> are the available paths.</p>
+<p>Removing one specific bond while retaining the others is not expressible
+through this protocol. <code>CMD_BLE_CLEAR_BONDS</code> forgets every host at once,
+which is the operation an operator reaching for it wants: the case that
+motivates it is a device whose paired hosts are no longer trusted or no
+longer known, and enumerating bonds so one could be named would mean
+reporting which hosts a device has met.</p>
 <h3 id="administrative-authorization"><a class="header" href="#administrative-authorization">Administrative Authorization</a></h3>
 <p>Any retained secure bond may administer the device. There is no
 per-host privilege distinction: a host that has completed the pairing

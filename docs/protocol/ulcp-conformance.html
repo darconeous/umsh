@@ -35,7 +35,7 @@
             const path_to_root = "";
             const default_light_theme = "light";
             const default_dark_theme = "ayu";
-            window.path_to_searchindex_js = "searchindex-5a161e7d.js";
+            window.path_to_searchindex_js = "searchindex-5f0d90f9.js";
         </script>
         <!-- Start loading toc.js asap -->
         <script src="toc-438957a9.js"></script>
@@ -218,9 +218,11 @@ nothing to apply them to and rejects them under the ordinary property
 rules. <code>CMD_QUEUE_DRAIN</code>, <code>CMD_SAVE</code>, and <code>CMD_RESTORE</code> belong to their
 subsystems’ capabilities and <strong>MUST</strong> fail with <code>STATUS_UNIMPLEMENTED</code>
 when the capability is not advertised, as <strong>MUST</strong>
-<a href="ulcp-core.html#cmd-reboot"><code>CMD_REBOOT</code></a> without <code>CAP_REBOOT</code>;
-<code>CMD_CLEAR</code> and <code>CMD_FACTORY_RESET</code> are available regardless of
-capabilities (see <a href="ulcp-saved-state.html">Saved State</a>).</p>
+<a href="ulcp-core.html#cmd-reboot"><code>CMD_REBOOT</code></a> without <code>CAP_REBOOT</code> and
+<a href="ulcp-ble.html#cmd-ble-clear-bonds"><code>CMD_BLE_CLEAR_BONDS</code></a> on a device
+that does not manage its own bonds; <code>CMD_CLEAR</code> and <code>CMD_FACTORY_RESET</code>
+are available regardless of capabilities (see
+<a href="ulcp-saved-state.html">Saved State</a>).</p>
 <h2 id="properties"><a class="header" href="#properties">Properties</a></h2>
 <div class="table-wrapper">
 <table>
@@ -268,7 +270,7 @@ requires.</p>
 <tr><th>Subsystem</th><th>Capabilities</th></tr>
 </thead>
 <tbody>
-<tr><td><a href="ulcp-radio.html">Radio Control</a> beyond the required properties</td><td><code>CAP_PHY_LORA</code>, <code>CAP_PHY_DUTY_LIMIT</code></td></tr>
+<tr><td><a href="ulcp-radio.html">Radio Control</a> beyond the required properties</td><td><code>CAP_PHY_LORA</code>, <code>CAP_PHY_DUTY_LIMIT</code>, <code>CAP_STATS</code></td></tr>
 <tr><td><a href="ulcp-device.html">Device Domain</a></td><td><code>CAP_DEV_IDENTITY</code>, <code>CAP_DEV_NAME</code>, <code>CAP_BATTERY</code>, <code>CAP_REPEATER</code>, <code>CAP_IDENT</code>, <code>CAP_ALERT</code>, <code>CAP_TIME</code>, <code>CAP_GNSS</code>, <code>CAP_ADVERT</code>, <code>CAP_ILLUMINANCE</code></td></tr>
 <tr><td><a href="ulcp-saved-state.html">Saved State</a></td><td><code>CAP_SAVE</code></td></tr>
 <tr><td><a href="ulcp-host.html">Tethered Host Services</a></td><td><code>CAP_HOST_FILTER</code>, <code>CAP_HOST_KEYS</code>, <code>CAP_HOST_RX_QUEUE</code>, <code>CAP_HOST_AUTO_ACK</code>, <code>CAP_MAC_BACKHAUL</code></td></tr>
