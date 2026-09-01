@@ -4422,14 +4422,18 @@ mod tests {
         assert_eq!(asked(&crawl).len(), SYNC_BATCH);
         assert_eq!(asked(&crawl), long_list()[..SYNC_BATCH].to_vec());
 
-        // The phone's own relationship with a radio is not an
-        // administrator's business, and asking would spend airtime on a
-        // refusal — so those keys never reach the queue at all.
-        let filtered = FetchCrawl::new(
+        // An administrator reads everything: the host domain and session
+        // state answer over the mesh like any other property, so a fetch
+        // queues what it was given and lets each key fail on its own
+        // terms.
+        let unfiltered = FetchCrawl::new(
             vec![prop::DEV_NAME, prop::HOST_KEY, prop::MAC_PROMISCUOUS],
             true,
         );
-        assert_eq!(filtered.pending, vec![prop::DEV_NAME]);
+        assert_eq!(
+            unfiltered.pending,
+            vec![prop::DEV_NAME, prop::HOST_KEY, prop::MAC_PROMISCUOUS]
+        );
     }
 
     #[test]
