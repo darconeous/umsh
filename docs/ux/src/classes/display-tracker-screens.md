@@ -35,24 +35,63 @@ Status              reads in place; Select checks in
 Identity            reads in place; Select alternates QR code and address text
 Messages            reads in place; Select enters the message list
 Settings            names itself; Select enters
-    Back
-    Bluetooth       Select enters
-        Back
-        Bluetooth       toggle
+    Back                                <
+    Bluetooth       Select enters       >
+        Back                            <
+        Bluetooth       toggle          on / off
         Start pairing   action
-        Clear bonds     action, confirmed
-    GNSS            Select enters
-        Back
-        GNSS            toggle
-        Share location  toggle
-    Radio           Select enters
-        Back
-        Forwarding      toggle
-        Statistics      Select opens
+        Clear bonds     action, confirmed   >
+    GNSS            Select enters       >
+        Back                            <
+        GNSS            toggle          on / off
+        Share location  toggle          on / off
+    Radio           Select enters       >
+        Back                            <
+        Forwarding      toggle          on / off
+        Statistics      Select opens    >
 ```
+
+The third column is what the row shows at its right edge; see
+[The right-hand column](#the-right-hand-column).
 
 Each level is a wrapping list. Next and Previous walk it, and Select does
 whatever the highlighted entry defines.
+
+### The right-hand column
+
+Every row in a list answers, at its right edge, the one question worth asking
+before pressing Select. The answers are right-justified so that they line up
+with each other down the panel: what a switch is set to, and where a press
+would go, are each read by scanning one edge rather than by reading every row
+to its end.
+
+| Right edge | Meaning |
+|---|---|
+| `>` | Select opens another screen; nothing changes yet |
+| `<` | Select leaves this level |
+| `on` / `off` | A switch, and what it is set to |
+| *nothing* | Select performs this now |
+
+**`>` is a promise that nothing has happened yet.** Three different screens sit
+behind it—a submenu's list, a reading page, a destructive action's
+confirmation—and the difference between them does not matter at the moment of
+the press. What matters is that there is another step in which to think better
+of it.
+
+Its absence is the other half of that promise: an action with no mark happens
+on the press. That is the distinction this list actually has to carry, so it is
+the line the mark is drawn along—not the shape of what comes next. Teaching a
+second mark for "a page rather than a list" would spend the user's attention on
+a difference they will see for themselves a moment later, and blur the one they
+need in advance.
+
+A switch shows its state instead, because it goes nowhere and the state is the
+whole reason to walk to it. A board that cannot report one draws nothing rather
+than guessing `off`.
+
+Where a row is too narrow for both, the **name** gives way. A truncated label is
+still recognizable; a missing mark is simply absent, and its absence means
+something specific.
 
 **The top level is a set of pages; every level below it is a list.** At the top
 there is nothing to compare an entry against, so each one takes the whole panel

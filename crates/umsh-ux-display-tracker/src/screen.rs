@@ -865,10 +865,24 @@ where
         (index + 1 - visible).min(count.saturating_sub(visible))
     };
 
+    // How many characters a row has to right-justify inside. A scroll bar
+    // takes its column off the end, so the arrows stop short of it rather
+    // than sitting under it.
+    let advance = layout.font.character_size.width + layout.font.character_spacing;
+    let mut room = layout.size.width.saturating_sub(layout.left.max(0) as u32);
+    if overflows && matches!(layout.overflow, Overflow::ScrollBar) {
+        room = room.saturating_sub(scroll_bar_width(layout));
+    }
+    let columns = if advance == 0 {
+        0
+    } else {
+        (room / advance) as usize
+    };
+
     let mut line: String<LINE> = String::new();
     for (offset, item) in items.entries(level).skip(start).take(visible).enumerate() {
         line.clear();
-        write_entry(&mut line, item, &status.settings);
+        write_entry(&mut line, item, &status.settings, columns);
         draw_row_selectable(target, layout, 1 + offset, &line, item == selected);
     }
 
@@ -881,7 +895,7 @@ where
             let after = start + visible;
             if let Some(item) = items.entries(level).nth(after) {
                 line.clear();
-                write_entry(&mut line, item, &status.settings);
+                write_entry(&mut line, item, &status.settings, columns);
                 draw_clipped_row(target, layout, 1 + visible, &line);
             }
         }
@@ -890,12 +904,81 @@ where
     layout.rows
 }
 
-/// An entry's name and, for a toggle, the state it is in.
-fn write_entry(line: &mut String<LINE>, item: MenuItem, settings: &SettingsModel) {
-    let _ = write!(line, "{}", menu_label(item));
-    let state = toggle_label(item, settings);
-    if !state.is_empty() {
-        let _ = write!(line, "  {state}");
+/// An entry's name at the left, and what Select would make of it at the
+/// right, `columns` characters across.
+///
+/// Right-justifying the second half is what turns a list into two
+/// readable columns: every switch's state lines up under every other, and
+/// so does every arrow, so "what is this set to" and "where does this go"
+/// are each answered by scanning one edge rather than by reading every
+/// row to its end.
+///
+/// The label is what gives way when a row cannot hold both. The affix is
+/// the affordance — which way Select goes, or what the switch is set to —
+/// and a truncated name is still recognizable where a missing arrow is
+/// simply absent.
+fn write_entry(line: &mut String<LINE>, item: MenuItem, settings: &SettingsModel, columns: usize) {
+    let label = menu_label(item);
+    let affix = entry_affix(item, settings);
+    if affix.is_empty() {
+        let _ = write!(line, "{label}");
+        return;
+    }
+    let affix_len = affix.chars().count();
+    let label = truncate_chars(label, columns.saturating_sub(affix_len + 1));
+    let _ = write!(line, "{label}");
+    // At least one space, so a label that fills the row never runs into
+    // the affix even where the arithmetic leaves no gap.
+    let pad = columns
+        .saturating_sub(label.chars().count() + affix_len)
+        .max(1);
+    for _ in 0..pad {
+        let _ = line.push(' ');
+    }
+    let _ = write!(line, "{affix}");
+}
+
+/// What a row shows at its right edge.
+///
+/// **`>` means Select opens another screen before anything happens.** A
+/// submenu opens its list, Statistics opens its page, and Clear bonds
+/// opens its confirmation — three different screens, but one promise, and
+/// it is the promise the user needs before pressing: nothing has changed
+/// yet, and there is another step in which to think better of it.
+///
+/// Its absence is the other half of that promise. Start pairing carries
+/// no mark because Select performs it there and then, and a toggle
+/// carries its state for the same reason — it goes nowhere, and what it
+/// is set to is what the column is worth spending on. The distinction the
+/// user actually needs from this list is between the rows that act on the
+/// press and the rows that ask again, which is exactly the line the mark
+/// is drawn along.
+///
+/// `<` is the one entry that goes back out. (Top-level reading entries
+/// are pages in their own right and never appear in a list.)
+fn entry_affix(item: MenuItem, settings: &SettingsModel) -> &'static str {
+    match item.kind() {
+        EntryKind::Back => "<",
+        EntryKind::Submenu(_) | EntryKind::Reading(_) | EntryKind::Destructive(_) => ">",
+        EntryKind::Toggle(_) => toggle_label(item, settings),
+        EntryKind::Action(_) => "",
+    }
+}
+
+/// The first `max` characters of `text`, cut on a character boundary.
+fn truncate_chars(text: &str, max: usize) -> &str {
+    match text.char_indices().nth(max) {
+        Some((end, _)) => &text[..end],
+        None => text,
+    }
+}
+
+/// Width of the scroll-bar track on a board that draws one.
+const fn scroll_bar_width(layout: &Layout) -> u32 {
+    if layout.battery.border > 2 {
+        layout.battery.border
+    } else {
+        2
     }
 }
 
@@ -929,7 +1012,7 @@ where
     if count == 0 {
         return;
     }
-    let width = layout.battery.border.max(2);
+    let width = scroll_bar_width(layout);
     let x = layout.size.width as i32 - width as i32;
     let top = layout.row_top(1);
     let bottom = layout.size.height as i32;
@@ -995,11 +1078,7 @@ fn clip<'a>(layout: &Layout, text: &'a str, width: u32) -> &'a str {
     if advance == 0 {
         return text;
     }
-    let fits = (width / advance) as usize;
-    match text.char_indices().nth(fits) {
-        Some((end, _)) => &text[..end],
-        None => text,
-    }
+    truncate_chars(text, (width / advance) as usize)
 }
 
 fn draw_row<D>(target: &mut D, layout: &Layout, row: usize, text: &str)
@@ -2083,8 +2162,11 @@ mod tests {
 
             let mut panel = TestPanel::new(layout.size);
             render_frame(&mut panel, &layout, &model, &demo_status());
+            // Just the label: how far the state is pushed to the right
+            // depends on the panel's column count, and this is asking
+            // whether the list is on screen at all.
             assert!(
-                shows_row(&panel, &layout, "Forwarding  on"),
+                shows_row(&panel, &layout, "Forwarding"),
                 "the Radio list is not on screen at {:?}",
                 layout.size
             );
@@ -2374,12 +2456,12 @@ mod tests {
         }
     }
 
-    /// A toggle carries its state beside its name, because the state is
+    /// A toggle carries its state at the right edge, because the state is
     /// the whole reason to walk to it. A board that cannot report one
     /// draws no state rather than guessing "off".
     #[test]
     fn a_toggle_reports_its_state_and_an_unknown_one_reports_nothing() {
-        let mut settings = SettingsModel {
+        let settings = SettingsModel {
             bluetooth: Some(true),
             gnss: Some(false),
             share_location: None,
@@ -2387,22 +2469,69 @@ mod tests {
         };
         let mut line: String<LINE> = String::new();
 
-        write_entry(&mut line, MenuItem::BluetoothToggle, &settings);
-        assert_eq!(line.as_str(), "Bluetooth  on");
+        write_entry(&mut line, MenuItem::BluetoothToggle, &settings, 16);
+        assert_eq!(line.as_str(), "Bluetooth     on");
 
         line.clear();
-        write_entry(&mut line, MenuItem::GnssToggle, &settings);
-        assert_eq!(line.as_str(), "GNSS  off");
+        write_entry(&mut line, MenuItem::GnssToggle, &settings, 16);
+        assert_eq!(line.as_str(), "GNSS         off");
 
+        // A switch the board cannot report shows nothing at all, not an
+        // empty column of padding.
         line.clear();
-        write_entry(&mut line, MenuItem::ShareLocation, &settings);
+        write_entry(&mut line, MenuItem::ShareLocation, &settings, 16);
         assert_eq!(line.as_str(), "Share location");
+    }
 
-        // And a non-toggle never grows one.
+    /// The mark says whether Select acts on the press or asks again.
+    ///
+    /// Three different screens sit behind `>` — a list, a page, and a
+    /// confirmation — but one promise: nothing has changed yet.
+    #[test]
+    fn a_row_says_whether_select_acts_or_asks_again() {
+        let settings = SettingsModel {
+            bluetooth: Some(true),
+            gnss: Some(false),
+            share_location: None,
+            forwarding: Some(true),
+        };
+        let mut line: String<LINE> = String::new();
+
+        // A submenu, a reading page, and a confirmation all point on.
+        for (item, expected) in [
+            (MenuItem::Bluetooth, "Bluetooth      >"),
+            (MenuItem::Stats, "Statistics     >"),
+            (MenuItem::ClearBonds, "Clear bonds    >"),
+        ] {
+            line.clear();
+            write_entry(&mut line, item, &settings, 16);
+            assert_eq!(line.as_str(), expected, "{item:?}");
+        }
+
+        // An action happens on the press, so it promises nothing.
         line.clear();
-        settings.forwarding = Some(false);
-        write_entry(&mut line, MenuItem::StartPairing, &settings);
+        write_entry(&mut line, MenuItem::StartPairing, &settings, 16);
         assert_eq!(line.as_str(), "Start pairing");
+
+        // Back is the one that points outward.
+        line.clear();
+        write_entry(&mut line, MenuItem::RadioBack, &settings, 16);
+        assert_eq!(line.as_str(), "Back           <");
+    }
+
+    /// The affix is the affordance, so a row too narrow for both cuts the
+    /// name rather than dropping the mark.
+    #[test]
+    fn a_narrow_row_gives_way_at_the_label() {
+        let settings = SettingsModel {
+            bluetooth: None,
+            gnss: None,
+            share_location: Some(false),
+            forwarding: None,
+        };
+        let mut line: String<LINE> = String::new();
+        write_entry(&mut line, MenuItem::ShareLocation, &settings, 8);
+        assert_eq!(line.as_str(), "Shar off");
     }
 
     /// Both overflow idioms keep the highlighted entry drawn complete: a
