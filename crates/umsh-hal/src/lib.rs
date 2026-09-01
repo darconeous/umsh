@@ -112,6 +112,21 @@ impl RxOrigin {
     }
 }
 
+/// Buffered-delivery metadata for a frame replayed from a device's inbound
+/// queue rather than received live.
+///
+/// The signal fields in the enclosing [`RxInfo`] are still the measurements
+/// taken when the frame originally arrived off the air; only the delivery is
+/// delayed.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub struct RxBuffered {
+    /// Seconds the frame spent queued before delivery.
+    pub age_s: u32,
+    /// Whether the queueing device already acknowledged the frame on the
+    /// host's behalf.
+    pub acked: bool,
+}
+
 /// Metadata returned with a received frame.
 #[derive(Clone, Copy)]
 pub struct RxInfo {
@@ -125,6 +140,8 @@ pub struct RxInfo {
     pub lqi: Option<NonZeroU8>,
     /// The path this frame took to reach the receiver.
     pub origin: RxOrigin,
+    /// Present when the frame was replayed from an inbound queue.
+    pub buffered: Option<RxBuffered>,
 }
 
 /// Channel-activity-detection (CAD) policy applied before a transmit.

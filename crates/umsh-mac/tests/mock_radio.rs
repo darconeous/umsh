@@ -296,6 +296,7 @@ impl Radio for DummyRadio {
                 snr: Snr::from_decibels(10),
                 lqi: None,
                 origin: RxOrigin::Air,
+                buffered: None,
             }))
         } else {
             Poll::Pending

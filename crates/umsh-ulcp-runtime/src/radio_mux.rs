@@ -274,6 +274,7 @@ fn unmeasured(len: usize, origin: RxOrigin) -> RxInfo {
         snr: Snr::from_centibels(0),
         lqi: None,
         origin,
+        buffered: None,
     }
 }
 
@@ -434,6 +435,7 @@ mod tests {
                 snr: Snr::from_decibels(5),
                 lqi: None,
                 origin: RxOrigin::Air,
+                buffered: None,
             },
         }
     }

@@ -11,7 +11,7 @@ use umsh_core::{
     options::{OptionEncoder, TraceSignalEntry},
 };
 use umsh_crypto::{CryptoEngine, CryptoError, DerivedChannelKeys, NodeIdentity, PairwiseKeys};
-use umsh_hal::{Clock, CounterStore, Radio, RxInfo, RxOrigin, Snr, TxError, TxOptions};
+use umsh_hal::{Clock, CounterStore, Radio, RxBuffered, RxInfo, RxOrigin, Snr, TxError, TxOptions};
 
 use crate::{
     AddPeerError, CapacityError, DEFAULT_ACKS, DEFAULT_CHANNEL_HINT_REPLAY, DEFAULT_CHANNEL_REPLAY,
@@ -83,6 +83,7 @@ struct DeferredCounterResyncFrame<const FRAME: usize> {
     snr: Snr,
     lqi: Option<NonZeroU8>,
     origin: RxOrigin,
+    buffered: Option<RxBuffered>,
     received_at_ms: u64,
 }
 
@@ -544,10 +545,14 @@ struct ForwardPlan {
 /// observations, and reporting the placeholders it carries as readings
 /// would put invented numbers in front of anything that charts them.
 fn rx_metadata(rx: &RxInfo, received_at_ms: u64) -> crate::send::RxMetadata {
-    if rx.origin.is_measured() {
+    let meta = if rx.origin.is_measured() {
         crate::send::RxMetadata::new(Some(rx.rssi), Some(rx.snr), rx.lqi, Some(received_at_ms))
     } else {
         crate::send::RxMetadata::new(None, None, None, Some(received_at_ms))
+    };
+    match rx.buffered {
+        Some(buffered) => meta.with_buffered_age_s(buffered.age_s),
+        None => meta,
     }
 }
 
@@ -2584,7 +2589,13 @@ impl<
         rx: &RxInfo,
         mut on_event: impl FnMut(LocalIdentityId, crate::MacEventRef<'_>),
     ) -> bool {
-        let received_at_ms = self.clock.now_ms();
+        // A frame replayed from a device's inbound queue is backdated by its
+        // reported age so downstream display metadata reflects when it was
+        // actually received off the air.
+        let buffered_offset_ms = rx
+            .buffered
+            .map_or(0, |b| u64::from(b.age_s).saturating_mul(1000));
+        let received_at_ms = self.clock.now_ms().saturating_sub(buffered_offset_ms);
         let mut current_len = frame_len;
         let mut current_rx = RxInfo {
             len: frame_len,
@@ -2592,6 +2603,7 @@ impl<
             snr: rx.snr,
             lqi: rx.lqi,
             origin: rx.origin,
+            buffered: rx.buffered,
         };
         let mut current_received_at_ms = received_at_ms;
         let mut handled_any = false;
@@ -2708,6 +2720,7 @@ impl<
                 snr: deferred.snr,
                 lqi: deferred.lqi,
                 origin: deferred.origin,
+                buffered: deferred.buffered,
             };
             current_received_at_ms = deferred.received_at_ms;
         }
@@ -2793,7 +2806,7 @@ impl<
             // — the trace the peer mirrored onto the ack would arrive and be
             // discarded.
             if let Some((peer_id, _)) = self.peer_registry.lookup_by_key(&target_peer) {
-                self.learn_route_for_peer(peer_id, &buf[..frame_len], header);
+                self.learn_route_for_peer(peer_id, &buf[..frame_len], header, rx);
             }
             on_event(
                 identity_id,
@@ -2839,7 +2852,7 @@ impl<
                     continue;
                 }
                 if header.ack_requested()
-                    && self.should_emit_destination_ack(&buf[..frame_len], header)
+                    && self.should_emit_destination_ack(&buf[..frame_len], header, rx)
                     && self.note_acknowledgeable_unicast_duplicate(
                         local_id,
                         peer_id,
@@ -2856,7 +2869,7 @@ impl<
                     // say so. Composing the re-ack from the stale cache
                     // instead throws that away and re-sends the same
                     // unroutable frame the sender is retrying against.
-                    self.learn_route_for_peer(peer_id, &buf[..frame_len], header);
+                    self.learn_route_for_peer(peer_id, &buf[..frame_len], header, rx);
                     let ack_trailer = self.compute_received_ack_trailer(
                         &buf[..frame_len],
                         header,
@@ -2925,10 +2938,10 @@ impl<
                     }
                     Some(ReplayVerdict::Replay) | None => continue,
                 }
-                self.learn_route_for_peer(peer_id, &buf[..frame_len], header);
+                self.learn_route_for_peer(peer_id, &buf[..frame_len], header, rx);
 
                 if header.ack_requested()
-                    && self.should_emit_destination_ack(&buf[..frame_len], header)
+                    && self.should_emit_destination_ack(&buf[..frame_len], header, rx)
                 {
                     let ack_trailer = self.compute_received_ack_trailer(
                         &buf[..frame_len],
@@ -3029,7 +3042,7 @@ impl<
                                 &buf[..frame_len],
                             );
                             if accepted {
-                                self.learn_route_for_peer(peer_id, &buf[..frame_len], header);
+                                self.learn_route_for_peer(peer_id, &buf[..frame_len], header, rx);
                             }
                             accepted
                         } else {
@@ -3143,7 +3156,7 @@ impl<
                             continue;
                         }
                         if header.ack_requested()
-                            && self.should_emit_destination_ack(&buf[..frame_len], header)
+                            && self.should_emit_destination_ack(&buf[..frame_len], header, rx)
                             && self.note_acknowledgeable_unicast_duplicate(
                                 local_id,
                                 peer_id,
@@ -3154,7 +3167,7 @@ impl<
                             // Same reason as the unicast path: the retry is
                             // what carries the route the first attempt
                             // lacked, and the re-ack is composed from it.
-                            self.learn_route_for_peer(peer_id, &buf[..frame_len], header);
+                            self.learn_route_for_peer(peer_id, &buf[..frame_len], header, rx);
                             let ack_trailer = self.compute_received_ack_trailer(
                                 &buf[..frame_len],
                                 header,
@@ -3216,10 +3229,10 @@ impl<
                             }
                             Some(ReplayVerdict::Replay) | None => continue,
                         }
-                        self.learn_route_for_peer(peer_id, &buf[..frame_len], header);
+                        self.learn_route_for_peer(peer_id, &buf[..frame_len], header, rx);
 
                         if header.ack_requested()
-                            && self.should_emit_destination_ack(&buf[..frame_len], header)
+                            && self.should_emit_destination_ack(&buf[..frame_len], header, rx)
                         {
                             let ack_trailer = self.compute_received_ack_trailer(
                                 &buf[..frame_len],
@@ -4315,6 +4328,7 @@ impl<
             snr: rx.snr,
             lqi: rx.lqi,
             origin: rx.origin,
+            buffered: rx.buffered,
             received_at_ms,
         });
     }
@@ -4719,6 +4733,11 @@ impl<
         if !rx.origin.is_measured() {
             return;
         }
+        // A frame replayed from a device's inbound queue was heard minutes
+        // ago; it must not assert that the transmitter is on the air now.
+        if rx.buffered.is_some() {
+            return;
+        }
         let Ok(header) = PacketHeader::parse(frame) else {
             return;
         };
@@ -4749,7 +4768,18 @@ impl<
             .observe(hint, rx.rssi, rx.snr, now_ms);
     }
 
-    fn learn_route_for_peer(&mut self, peer_id: PeerId, frame: &[u8], header: &PacketHeader) {
+    fn learn_route_for_peer(
+        &mut self,
+        peer_id: PeerId,
+        frame: &[u8],
+        header: &PacketHeader,
+        rx: &RxInfo,
+    ) {
+        // A replayed frame's route and liveness are minutes stale; live
+        // traffic re-teaches whatever is still true.
+        if rx.buffered.is_some() {
+            return;
+        }
         let now_ms = self.clock.now_ms();
         self.peer_registry.touch(peer_id, now_ms);
 
@@ -4873,7 +4903,18 @@ impl<
         Some(route)
     }
 
-    fn should_emit_destination_ack(&self, frame: &[u8], header: &PacketHeader) -> bool {
+    fn should_emit_destination_ack(
+        &self,
+        frame: &[u8],
+        header: &PacketHeader,
+        rx: &RxInfo,
+    ) -> bool {
+        // A frame replayed from a device's inbound queue may have been
+        // acknowledged on our behalf already; emitting another ack would put
+        // a duplicate on the air minutes after the exchange settled.
+        if rx.buffered.is_some_and(|b| b.acked) {
+            return false;
+        }
         let Ok(options) = ParsedOptions::extract(frame, header.options_range.clone()) else {
             return false;
         };

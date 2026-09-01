@@ -23,7 +23,7 @@ use tokio::time::Instant;
 use umsh_core::{ChannelKey, RegionCode};
 use umsh_crypto::CryptoEngine;
 use umsh_crypto::software::{SoftwareAes, SoftwareSha256};
-use umsh_hal::{CadPolicy, Radio, RxInfo, RxOrigin, Snr, TxError, TxOptions};
+use umsh_hal::{CadPolicy, Radio, RxBuffered, RxInfo, RxOrigin, Snr, TxError, TxOptions};
 use umsh_ulcp::Status;
 use umsh_ulcp::airtime::lora_airtime_ms;
 use umsh_ulcp::alert::AlertState;
@@ -37,7 +37,9 @@ use umsh_ulcp::hdlc;
 use umsh_ulcp::host::{PropertyNotification, PropertyNotificationKind, TidAllocator};
 use umsh_ulcp::ids::{self, cap, prop, stream};
 use umsh_ulcp::items;
-use umsh_ulcp::meta::{BufferedRxMeta, RX_FLAG_SELF_TX, RxMeta, TX_FLAG_NOCCA, TxMeta};
+use umsh_ulcp::meta::{
+    BufferedRxMeta, RX_FLAG_ACKED, RX_FLAG_BUFFERED, RX_FLAG_SELF_TX, RxMeta, TX_FLAG_NOCCA, TxMeta,
+};
 use umsh_ulcp::pui;
 
 /// Capacity of the HDLC reassembly buffer (unescaped frame + FCS).
@@ -2835,8 +2837,14 @@ where
         // the link. Calling it `LocalTx` would tell the host's own MAC
         // that its antenna had already sent the frame, and it would
         // refuse to forward it.
-        let self_tx = BufferedRxMeta::decode(&packet.raw_meta)
-            .is_ok_and(|meta| meta.flags & RX_FLAG_SELF_TX != 0);
+        let buffered_meta = BufferedRxMeta::decode(&packet.raw_meta).ok();
+        let self_tx = buffered_meta.is_some_and(|meta| meta.flags & RX_FLAG_SELF_TX != 0);
+        let buffered = buffered_meta
+            .filter(|meta| meta.flags & RX_FLAG_BUFFERED != 0)
+            .map(|meta| RxBuffered {
+                age_s: meta.age_s,
+                acked: meta.flags & RX_FLAG_ACKED != 0,
+            });
         Some(RxInfo {
             len,
             rssi: packet.meta.rssi_dbm.unwrap_or(0),
@@ -2847,6 +2855,7 @@ where
             } else {
                 RxOrigin::Air
             },
+            buffered,
         })
     }
 
@@ -3931,13 +3940,16 @@ mod tests {
         assert_eq!((drained[0].1.age_s, drained[1].1.age_s), (5, 3));
 
         // The frames also surface through the ordinary receive path,
-        // oldest first.
+        // oldest first, wearing their buffered-delivery metadata.
         let mut buf = [0u8; 16];
-        for expected in [0xB0u8, 0xB1] {
+        for (expected, age_s) in [(0xB0u8, 5), (0xB1, 3)] {
             let info = core::future::poll_fn(|cx| radio.poll_receive(cx, &mut buf))
                 .await
                 .unwrap();
             assert_eq!(&buf[..info.len], &[expected]);
+            let buffered = info.buffered.expect("drained frames report as buffered");
+            assert_eq!(buffered.age_s, age_s);
+            assert!(!buffered.acked);
         }
     }
 

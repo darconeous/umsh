@@ -286,6 +286,7 @@ impl SimulatedNetwork {
                 snr: Snr::from_decibels(0),
                 lqi: None,
                 origin: RxOrigin::Air,
+                buffered: None,
             };
         };
         let len = frame.data.len().min(buf.len());
@@ -296,6 +297,7 @@ impl SimulatedNetwork {
             snr: frame.snr,
             lqi: None,
             origin: RxOrigin::Air,
+            buffered: None,
         }
     }
 }
@@ -657,6 +659,7 @@ impl ModeledNetwork {
                 snr: Snr::from_decibels(0),
                 lqi: None,
                 origin: RxOrigin::Air,
+                buffered: None,
             };
         };
         let len = frame.data.len().min(buf.len());
@@ -667,6 +670,7 @@ impl ModeledNetwork {
             snr: frame.snr,
             lqi: None,
             origin: RxOrigin::Air,
+            buffered: None,
         }
     }
 }

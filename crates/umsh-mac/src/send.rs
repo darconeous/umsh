@@ -831,6 +831,7 @@ pub struct RxMetadata {
     snr: Option<Snr>,
     lqi: Option<NonZeroU8>,
     received_at_ms: Option<u64>,
+    buffered_age_s: u32,
 }
 
 impl RxMetadata {
@@ -845,7 +846,15 @@ impl RxMetadata {
             snr,
             lqi,
             received_at_ms,
+            buffered_age_s: 0,
         }
+    }
+
+    /// The same observations for a frame replayed from an inbound queue,
+    /// tagged with the seconds it spent queued before delivery.
+    pub fn with_buffered_age_s(mut self, buffered_age_s: u32) -> Self {
+        self.buffered_age_s = buffered_age_s;
+        self
     }
 
     pub fn rssi(&self) -> Option<i16> {
@@ -862,6 +871,12 @@ impl RxMetadata {
 
     pub fn received_at_ms(&self) -> Option<u64> {
         self.received_at_ms
+    }
+
+    /// Seconds the frame spent queued on a device before delivery; zero for
+    /// a live reception.
+    pub fn buffered_age_s(&self) -> u32 {
+        self.buffered_age_s
     }
 }
 

@@ -329,6 +329,7 @@ where
                                     snr: Snr::from_decibels(status.snr as i8),
                                     lqi: None,
                                     origin: RxOrigin::Air,
+                                    buffered: None,
                                 };
                                 if ch.rx.try_send(RxFrame { data, info }).is_ok() {
                                     ch.rx_waker.wake();
@@ -728,6 +729,7 @@ where
                                         snr: Snr::from_decibels(status.snr as i8),
                                         lqi: None,
                                         origin: RxOrigin::Air,
+                                        buffered: None,
                                     };
                                     if ch.rx.try_send(RxFrame { data, info }).is_ok() {
                                         ch.rx_waker.wake();

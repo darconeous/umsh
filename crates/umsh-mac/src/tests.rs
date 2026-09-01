@@ -20,7 +20,8 @@ use umsh_crypto::{
     Sha256Provider, SharedSecret,
 };
 use umsh_hal::{
-    Clock, CounterStore, KeyValueStore, Radio, RxInfo, RxOrigin, Snr, TxError, TxOptions,
+    Clock, CounterStore, KeyValueStore, Radio, RxBuffered, RxInfo, RxOrigin, Snr, TxError,
+    TxOptions,
 };
 
 /// Helper that produces a 32-byte `PublicKey` test peers can pass to
@@ -2603,6 +2604,177 @@ fn receive_one_delivers_unicast_without_ack_when_not_requested() {
     assert!(handled);
     assert!(seen);
     assert!(mac.tx_queue().is_empty());
+}
+
+#[test]
+fn receive_one_suppresses_ack_for_buffered_frame_already_acked_by_the_device() {
+    let mut mac = make_mac();
+    let local_id = mac.add_identity(DummyIdentity::new([0x10; 32])).unwrap();
+    let remote = DummyIdentity::new([0xAB; 32]);
+    let peer_key = *remote.public_key();
+    let peer_id = mac.add_peer(peer_key).unwrap();
+    let keys = PairwiseKeys {
+        k_enc: [1; 32],
+        k_mic: [2; 32],
+    };
+    mac.install_pairwise_keys(local_id, peer_id, keys.clone())
+        .unwrap();
+    let dst_hint = mac
+        .identity(local_id)
+        .unwrap()
+        .identity()
+        .public_key()
+        .hint();
+
+    mac.radio_mut().rx_buffered = Some(RxBuffered {
+        age_s: 300,
+        acked: true,
+    });
+    mac.radio_mut()
+        .queue_received_unicast(&remote, &keys, &dst_hint, b"hello", true);
+
+    let mut seen = None;
+    let handled = block_on(mac.receive_one(|identity, event| {
+        if let Some(packet) = received_of_type(&event, PacketType::Unicast) {
+            seen = Some((identity, packet.payload_bytes().to_vec()));
+        }
+    }))
+    .unwrap();
+
+    // The frame is delivered, but the device that queued it already put
+    // an ack on the air; emitting another would be a duplicate minutes
+    // after the exchange settled.
+    assert!(handled);
+    assert_eq!(seen, Some((local_id, b"hello".to_vec())));
+    assert!(mac.tx_queue().is_empty());
+}
+
+#[test]
+fn receive_one_still_acks_a_buffered_frame_the_device_left_unacked() {
+    let mut mac = make_mac();
+    let local_id = mac.add_identity(DummyIdentity::new([0x10; 32])).unwrap();
+    let remote = DummyIdentity::new([0xAB; 32]);
+    let peer_key = *remote.public_key();
+    let peer_id = mac.add_peer(peer_key).unwrap();
+    let keys = PairwiseKeys {
+        k_enc: [1; 32],
+        k_mic: [2; 32],
+    };
+    mac.install_pairwise_keys(local_id, peer_id, keys.clone())
+        .unwrap();
+    let dst_hint = mac
+        .identity(local_id)
+        .unwrap()
+        .identity()
+        .public_key()
+        .hint();
+
+    mac.radio_mut().rx_buffered = Some(RxBuffered {
+        age_s: 300,
+        acked: false,
+    });
+    mac.radio_mut()
+        .queue_received_unicast(&remote, &keys, &dst_hint, b"hello", true);
+
+    let handled = block_on(mac.receive_one(|_, _| {})).unwrap();
+
+    // The sender may still be on the retry ladder; the MAC's own
+    // duplicate-ack window governs, exactly as for a live reception.
+    assert!(handled);
+    let queued = mac.tx_queue_mut().pop_next().unwrap();
+    assert_eq!(queued.priority, TxPriority::ImmediateAck);
+    let header = PacketHeader::parse(queued.frame.as_slice()).unwrap();
+    assert_eq!(header.fcf.packet_type(), PacketType::MacAck);
+}
+
+#[test]
+fn receive_one_backdates_a_buffered_frame_by_its_reported_age() {
+    let mut mac = make_mac();
+    let local_id = mac.add_identity(DummyIdentity::new([0x10; 32])).unwrap();
+    let remote = DummyIdentity::new([0xAB; 32]);
+    let peer_key = *remote.public_key();
+    let peer_id = mac.add_peer(peer_key).unwrap();
+    let keys = PairwiseKeys {
+        k_enc: [1; 32],
+        k_mic: [2; 32],
+    };
+    mac.install_pairwise_keys(local_id, peer_id, keys.clone())
+        .unwrap();
+    let dst_hint = mac
+        .identity(local_id)
+        .unwrap()
+        .identity()
+        .public_key()
+        .hint();
+
+    mac.clock().advance_ms(100_000);
+    let now_ms = mac.clock().now_ms();
+    mac.radio_mut().rx_buffered = Some(RxBuffered {
+        age_s: 40,
+        acked: false,
+    });
+    mac.radio_mut()
+        .queue_received_unicast(&remote, &keys, &dst_hint, b"hello", false);
+
+    let mut rx_meta = None;
+    let handled = block_on(mac.receive_one(|_, event| {
+        if let Some(packet) = received_of_type(&event, PacketType::Unicast) {
+            rx_meta = Some(*packet.rx());
+        }
+    }))
+    .unwrap();
+
+    assert!(handled);
+    let rx_meta = rx_meta.unwrap();
+    assert_eq!(rx_meta.received_at_ms(), Some(now_ms - 40_000));
+    assert_eq!(rx_meta.buffered_age_s(), 40);
+}
+
+#[test]
+fn receive_one_does_not_learn_routes_or_observations_from_a_buffered_frame() {
+    let mut mac = make_mac();
+    let local_id = mac.add_identity(DummyIdentity::new([0x10; 32])).unwrap();
+    let remote = DummyIdentity::new([0xAB; 32]);
+    let peer_key = *remote.public_key();
+    let peer_id = mac.add_peer(peer_key).unwrap();
+    let keys = PairwiseKeys {
+        k_enc: [1; 32],
+        k_mic: [2; 32],
+    };
+    mac.install_pairwise_keys(local_id, peer_id, keys.clone())
+        .unwrap();
+    let dst_hint = mac
+        .identity(local_id)
+        .unwrap()
+        .identity()
+        .public_key()
+        .hint();
+    let trace = [RouterHint([0x01, 0x02]), RouterHint([0x03, 0x04])];
+
+    mac.radio_mut().rx_buffered = Some(RxBuffered {
+        age_s: 300,
+        acked: false,
+    });
+    mac.radio_mut().queue_received_unicast_with_route(
+        &remote,
+        &keys,
+        &dst_hint,
+        b"hello",
+        false,
+        7,
+        None,
+        Some(&trace),
+        None,
+    );
+
+    let handled = block_on(mac.receive_one(|_, _| {})).unwrap();
+
+    // A minutes-old frame proves nothing about the mesh as it stands:
+    // the trace's route may be gone, and its transmitter may be off the
+    // air. Live traffic re-teaches whatever is still true.
+    assert!(handled);
+    assert_eq!(mac.peer_registry().get(peer_id).unwrap().route, None);
+    assert!(mac.transmitter_observations().is_empty());
 }
 
 #[test]
@@ -10352,6 +10524,8 @@ struct DummyRadio {
     rx_snr: Snr,
     /// Where every received frame is reported as having come from.
     rx_origin: RxOrigin,
+    /// Buffered-delivery metadata attached to every received frame.
+    rx_buffered: Option<RxBuffered>,
 }
 
 impl DummyRadio {
@@ -10799,6 +10973,7 @@ impl Radio for DummyRadio {
             snr: self.rx_snr,
             lqi: None,
             origin: self.rx_origin,
+            buffered: self.rx_buffered,
         }))
     }
     fn max_frame_size(&self) -> usize {

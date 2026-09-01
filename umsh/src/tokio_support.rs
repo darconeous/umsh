@@ -296,6 +296,7 @@ impl Radio for UdpMulticastRadio {
                 snr: Snr::from_decibels(self.snr),
                 lqi: None,
                 origin: RxOrigin::Air,
+                buffered: None,
             }));
         }
     }

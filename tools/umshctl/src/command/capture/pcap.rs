@@ -423,6 +423,7 @@ mod tests {
             snr: umsh::hal::Snr::from_centibels(snr_centibels),
             lqi: None,
             origin: umsh::hal::RxOrigin::Air,
+            buffered: None,
         }
     }
 

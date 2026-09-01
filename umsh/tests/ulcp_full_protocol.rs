@@ -17,6 +17,7 @@
 use std::collections::VecDeque;
 use std::sync::{Arc, Mutex};
 
+use umsh::hal::Radio as _;
 use umsh::ulcp::{
     FrameLink, HostOwnership, HostProvisioning, SavedSnapshot, UlcpDevice, UlcpDeviceConfig,
     UlcpError, describe_frame,
@@ -585,6 +586,17 @@ async fn full_lifecycle_provision_save_power_cycle_autonomy_reattach_drain() {
         meta.flags & (RX_FLAG_BUFFERED | RX_FLAG_ACKED),
         RX_FLAG_BUFFERED | RX_FLAG_ACKED
     );
+
+    // The same frame surfaces through the ordinary receive path wearing
+    // its buffered-delivery metadata, so a MAC fed from this handle can
+    // suppress the duplicate ack and backdate the reception.
+    let mut rx_buf = [0u8; 256];
+    let info = core::future::poll_fn(|cx| radio.poll_receive(cx, &mut rx_buf))
+        .await
+        .unwrap();
+    assert_eq!(&rx_buf[..info.len], sealed_unicast(6).as_slice());
+    let buffered = info.buffered.expect("a drained frame reports as buffered");
+    assert!(buffered.acked);
 
     // The capture places every full-protocol command on the record.
     let trace = trace.lock().unwrap();
