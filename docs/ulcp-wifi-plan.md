@@ -504,8 +504,8 @@ Value | Name                     | Meaning
 
 `WIFI_LINK_UP` is an 802.11 statement: the station is authenticated and
 associated. Whether the device has an address on the link it is now on
-is a different layer's fact, and belongs to the IP capability that will
-report it.
+is a different layer's fact, and belongs to
+the [family state properties](#ip-connectivity), which report it.
 
 `WIFI_LINK_CONNECTING` is the whole of "trying", including the waits
 between attempts. While the station is enabled and a network is
@@ -660,6 +660,432 @@ that deliver scanned access points live are one item each. The largest
 credential write, a 32-octet SSID with a 128-octet SAE password, is
 under two hundred octets with framing. Everything else is a few.
 
+## IP Connectivity
+
+The layer above the station, as capabilities of its own. Address
+configuration is not a property of Wi-Fi: a wired link, should one ever
+appear, would need exactly the same properties, and a device's IP stack
+is one thing whichever link carries it. Everything here is therefore
+named `IP`, not `WIFI`, and nothing in it knows what the link is.
+
+What a host needs from this layer is small: whether the device can reach
+anything, what it is reachable at, and a way to configure the cases the
+network does not configure for it. Nothing about what the device reaches
+belongs here; a bridge tunnel or a time source reports its own state
+under its own capability.
+
+This revision has one link and one interface. A device with two links
+is a future revision, and the properties are shaped so an interface
+selector could be added without renaming them.
+
+### Capabilities
+
+Code | Name       | Requires | Grants
+-----|------------|----------|--------
+54   | `CAP_IPV4` | —        | An IPv4 stack on the device's link: `PROP_IPV4_STATE`, `PROP_IPV4_CONFIG`, `PROP_IPV4_ADDRESS`, and the shared `PROP_IP_DNS` and `PROP_IP_RESOLVERS`
+55   | `CAP_IPV6` | —        | An IPv6 stack on the device's link: `PROP_IPV6_STATE`, `PROP_IPV6_CONFIG`, `PROP_IPV6_ADDRESSES`, and the same two shared properties
+
+One per family, because the families are peers. The BLE binding's
+argument for a single capability is that a refusal is a complete answer
+about an *extra*, and neither family is an extra to the other: a device
+that speaks only IPv4 is ordinary today, and a device that speaks only
+IPv6 is an ordinary device on a 6 GHz or IPv6-only-preferred network
+tomorrow. Making either the floor would encode which one is normal,
+which is a fact about the year, not the protocol. A device with both
+advertises both; a host that sees either knows the shared properties
+are there. The seam stops here: DHCP versus static, advertisements
+versus DHCPv6, are methods within a family, and a device that lacks one
+refuses the write with `STATUS_UNIMPLEMENTED` as the BLE argument
+intends.
+
+No formal requirement on either, on purpose. A capability's
+requirements are concrete codes, and naming `CAP_WIFI` here would make
+a wired device either lie about having Wi-Fi or invent a second pair
+of IP capabilities. The precondition is stated instead: a device
+advertising either has a stack on one link, and describes that link
+through whatever link capability it also advertises, `CAP_WIFI` today.
+A device that advertises an IP capability and no link capability has a
+link it offers no control over, which is a legal shape for a device
+with a fixed wired port; its family states simply never report
+`IP_NO_LINK` for a reason the host can act on.
+
+### Properties
+
+Allocated in the block after the station's.
+
+Id   | Mnemonic            | Commands                 | Class         | Description
+-----|---------------------|--------------------------|---------------|-------------
+4896 | `PROP_IPV4_STATE`     | Get, Is                  | Live          | IPv4 readiness
+4897 | `PROP_IPV4_CONFIG`    | Get, Set                 | Configuration | How IPv4 is configured
+4898 | `PROP_IPV4_ADDRESS`   | Get, Is                  | Live          | The IPv4 address, prefix, and gateway in effect
+4899 | `PROP_IPV6_STATE`     | Get, Is                  | Live          | IPv6 readiness
+4900 | `PROP_IPV6_CONFIG`    | Get, Set                 | Configuration | How IPv6 is configured
+4901 | `PROP_IPV6_ADDRESSES` | Get, Is                  | Live          | The IPv6 addresses and default routers in effect
+4902 | `PROP_IP_DNS`         | Get, Set, Insert, Remove | Configuration | Configured resolvers, or empty to use what the network provides
+4903 | `PROP_IP_RESOLVERS`   | Get, Is                  | Live          | The resolvers in use
+
+4904–4911 are reserved for this layer.
+
+#### PROP 4896: `PROP_IPV4_STATE`
+
+* Type: Single-Value, Read-Only
+* Asynchronous Updates: Yes
+* Required: `CAP_IPV4`
+* Value Type: UINT8
+* Post-Reset Value: what the family is doing
+
+One octet, from the enumeration both family states share:
+
+Value | Name          | Meaning
+------|---------------|---------
+0     | `IP_DISABLED` | The family is configured off
+1     | `IP_NO_LINK`  | The link is down, so there is nothing to address
+2     | `IP_WAITING`  | The link is up and the family has no usable address yet
+3     | `IP_READY`    | The family holds a usable address
+4     | `IP_CONFLICT` | The configured static address is held by something else
+
+A **usable** address is a unicast host address that is not link-local:
+for IPv4 anything outside `169.254/16` that is neither multicast,
+broadcast, loopback, nor unspecified, and for IPv6 anything outside
+`fe80::/10` under the same exclusions. A self-assigned `169.254` address
+reaches only the link, exactly as `fe80::` does, and a device that fell
+back to one is a device whose DHCP failed, which `IP_WAITING` says and
+`IP_READY` would hide. A device with only
+an IPv6 link-local address is `IP_WAITING`, because it is waiting for
+exactly the advertisement that would give it one. This is the boundary
+readiness is defined on, and the same boundary the static configuration
+is validated against.
+
+This is the property a host watches for its family: it changes when a
+lease is obtained or lost, when a router starts or stops advertising,
+when the link comes and goes, which is a few times in a session rather
+than a few times a minute. The device publishes it on any change and on
+nothing else. The address and resolver properties publish their own
+changes, since those can move while the state stands still.
+
+`IP_WAITING` is this layer's `WIFI_LINK_CONNECTING`: the device is doing
+what its configuration says and the network has not answered. It carries
+no reason, because the reasons are the network's, a DHCP server that
+does not answer, a router that does not advertise, and the fix is on the
+network. `IP_CONFLICT` is the exception that earns its own value: a
+static address that duplicate-address detection or an ARP probe finds
+already in use is a fault in the configuration this protocol wrote, the
+fix is a different address, and a host that could not tell it from an
+ordinary wait would tell the operator to check the router. The device
+keeps probing while in `IP_CONFLICT` and moves to `IP_READY` if the
+other holder goes away. Under `IP_METHOD_AUTO` a conflict is the
+stack's to resolve, by declining the lease and asking again, and the
+family stays `IP_WAITING`. `IP_NO_LINK` is separate so that a host can
+tell "the station is not associated" from "the station is associated and
+nobody is handing out addresses" without reading `PROP_WIFI_LINK` as
+well.
+
+`IP_READY` means an address, not a route. Whether the family also has a
+default route is in the address property, the gateway field for IPv4
+and the router items for IPv6, and a
+device on an isolated network that hands out addresses and no gateway is
+ready by this definition, which is the honest one.
+
+#### PROP 4897: `PROP_IPV4_CONFIG`
+
+* Type: Single-Value, Read-Write
+* Asynchronous Updates: No
+* Required: `CAP_IPV4`
+* Value Type: structure below
+* Post-Reset Value: `IP_METHOD_AUTO`, or restored from saved state
+
+~~~
++--------+---------+--------+---------+
+| METHOD | ADDRESS | PREFIX | GATEWAY |
++--------+---------+--------+---------+
+  1 B      4 B       1 B      4 B
+         (present only when METHOD is IP_METHOD_STATIC)
+~~~
+
+**METHOD**:
+
+Value | Name                 | Meaning
+------|----------------------|---------
+0     | `IP_METHOD_DISABLED` | The family is not used on the link
+1     | `IP_METHOD_AUTO`     | DHCP
+2     | `IP_METHOD_STATIC`   | The address, prefix, and gateway that follow
+
+The default is `IP_METHOD_AUTO` so that a device with nothing configured
+is on the network the moment it is associated; this layer exists for the
+cases where that is not enough. A **PREFIX** above 32, a static form of
+the wrong length, or a static address that is not usable in the sense
+`PROP_IPV4_STATE` defines, `169.254/16` included, is refused with
+`STATUS_INVALID_ARGUMENT`. A **GATEWAY** is either all-zero or a unicast
+address that is not multicast, broadcast, loopback, or link-local, and
+anything else is refused the same way; the IPv6 form relaxes the last
+exclusion, since a router names itself by its link-local address and a
+static IPv6 gateway is usually exactly that. All-zero means
+no default route, which is what a device on a network with no way out
+should be told.
+
+A write takes effect at once. On a device that is `IP_READY` under the
+old configuration, the old address is released and the new one applied,
+and `PROP_IPV4_STATE` reports the transitions like any other. A write
+while the link is down is accepted and waits for it, so a static
+configuration can be staged before the station is enabled.
+
+#### PROP 4898: `PROP_IPV4_ADDRESS`
+
+* Type: Single-Value, Read-Only
+* Asynchronous Updates: Yes
+* Required: `CAP_IPV4`
+* Value Type: 4-octet address, 1-octet prefix, 4-octet gateway; or empty
+* Post-Reset Value: the address in effect; empty when the family is not `IP_READY`
+
+The IPv4 address the interface holds, its prefix length, and the default
+gateway, all-zero when there is none. Whatever the method: under
+`IP_METHOD_AUTO` this is what the lease said, under `IP_METHOD_STATIC`
+it is what was written, once the device holds it.
+
+Published whenever the reported value changes. Mostly that is when
+`PROP_IPV4_STATE` moves, but not only then: a lease renewal can keep the
+address and change the gateway, and a host that read the value once and
+watched only the state would carry the old gateway forever. A renewal
+that changes nothing publishes nothing.
+
+#### PROP 4899: `PROP_IPV6_STATE`
+
+* Type: Single-Value, Read-Only
+* Asynchronous Updates: Yes
+* Required: `CAP_IPV6`
+* Value Type: UINT8
+* Post-Reset Value: what the family is doing
+
+IPv6 readiness, from the enumeration `PROP_IPV4_STATE` defines, with the
+same publication rule and the same meaning for every value. The one
+family-specific note is the link-local boundary: a device holding only
+an `fe80::` address is `IP_WAITING`, because it is waiting for exactly
+the advertisement that would give it a usable one.
+
+Two properties rather than two octets in one, because the capabilities
+are two: a device without `CAP_IPV6` would otherwise carry an octet
+describing a family it does not have, and a property granted by "either
+capability" is a property with two homes. One octet per family costs a
+second notification when a link drop takes both families down, which
+is one small frame at a moment the host is already being told things.
+
+#### PROP 4900: `PROP_IPV6_CONFIG`
+
+* Type: Single-Value, Read-Write
+* Asynchronous Updates: No
+* Required: `CAP_IPV6`
+* Value Type: as `PROP_IPV4_CONFIG` with 16-octet addresses
+* Post-Reset Value: `IP_METHOD_AUTO`, or restored from saved state
+
+The same structure and the same methods, with 16-octet addresses and a
+prefix of at most 128. A static address that is not usable in the sense
+`PROP_IPV6_STATE` defines, link-local, multicast, loopback, or
+unspecified, is refused with `STATUS_INVALID_ARGUMENT`; a static
+address that is usable but already held on the link is accepted and
+reported as `IP_CONFLICT`. `IP_METHOD_AUTO` means router
+advertisements, and DHCPv6 where the router asks for it; which of those
+produced an address is not reported, because a host has nothing to do
+with the difference.
+
+A device **MUST** hold a stable address and report only stable
+addresses. It **MAY** additionally use temporary addresses for the
+traffic it originates, which is the arrangement RFC 8981 describes for
+a host that is reached at one address and reaches out from others, and
+those are never reported: they exist to rotate, and a reported address
+is one somebody wrote down.
+
+#### PROP 4901: `PROP_IPV6_ADDRESSES`
+
+* Type: Multiple-Value, Read-Only
+* Has Item Length Prefix: Yes
+* Asynchronous Updates: Yes
+* Required: `CAP_IPV6`
+* Post-Reset Value: what is in effect; empty when the family is not `IP_READY`
+
+The usable IPv6 addresses the device holds, and the default router it
+has selected. Each item is a kind octet and a kind-defined body:
+
+Kind | Name             | Body
+-----|------------------|------
+0    | `IPV6_ADDRESS`   | 16-octet address, 1-octet prefix length
+1    | `IPV6_ROUTER`    | 16-octet router address
+
+A set rather than one address, because an IPv6 interface normally holds
+several, a global one and a unique-local one from separate prefixes,
+say, and which of them the device uses as a source depends on where the
+packet is going; there is no one answer to "the device's address," only
+"the addresses the device is reachable at," which is what a host
+displaying or dialing it needs. Stable addresses only, per the
+configuration above. The link-local address is not among them, for the
+reason it does not make the family ready. The router items are the
+stack's default router list, every router it currently retains from
+those advertising, and none when there is none; a list rather than one,
+because a stack keeps several and may send to different destinations
+through different ones, so no single router describes the routing.
+
+The prefix length is the one the address's assignment carried: the
+advertised prefix an autoconfigured address was formed from, or the
+prefix written for a static one. An address assigned by DHCPv6 reports
+128, and 128 means the assignment carried none, not that the link is a
+`/128`: DHCPv6 assigns addresses, not prefixes, and the on-link prefixes
+a router advertises alongside are routing state that is not encoded
+here.
+
+A device bounds the set to what its stack holds, which for an embedded
+stack is a few addresses and a few routers, and the bound **MUST** keep
+the complete value inside one frame on every transport the device
+exposes, as every multi-value property here is bounded. Which entries a
+stack keeps once a network offers more than it can hold is the stack's
+business.
+
+Published whenever the reported set changes: a prefix renumbered, a
+router replaced or expired, an address added or withdrawn. Router and
+prefix lifetimes are independent of one another and of the state, so
+this property moves while `PROP_IPV6_STATE` stands still, and a host that
+only watched the state would not learn.
+
+#### PROP 4902: `PROP_IP_DNS`
+
+* Type: Multiple-Value, Read-Write
+* Has Item Length Prefix: Yes
+* Asynchronous Updates: No
+* Required: `CAP_IPV4` or `CAP_IPV6`
+* Item Form: a 4-octet IPv4 or 16-octet IPv6 resolver address
+* Remove Selector: the address
+* Post-Reset Value: Empty, or restored from saved state
+
+The resolvers the device is to use. **Empty**, the default, means the
+ones the network provided, by DHCP or router advertisement. Non-empty,
+these **replace** the network's rather than join them, because a host
+that configured resolvers meant those and a merged set would be neither
+what it wrote nor what the network offered. An item of any other length,
+or one that is not a unicast address, unspecified, multicast, broadcast,
+loopback, is refused with `STATUS_INVALID_ARGUMENT`; an IPv6 resolver
+**MAY** be link-local, as one advertised by a home router commonly is,
+and an IPv4 one **MUST NOT** be. A device bounds the set,
+**SHOULD** hold at least two, and refuses past its capacity with
+`STATUS_NOMEM`.
+
+The set is unordered, as every multi-value property is; a device asks
+whichever it likes first.
+
+Static addressing without this is a device that cannot resolve a name,
+which is why the two are written together.
+
+#### PROP 4903: `PROP_IP_RESOLVERS`
+
+* Type: Multiple-Value, Read-Only
+* Has Item Length Prefix: Yes
+* Asynchronous Updates: Yes
+* Required: `CAP_IPV4` or `CAP_IPV6`
+* Item Form: as `PROP_IP_DNS`
+* Post-Reset Value: the resolvers in use; empty when there are none
+
+What the device is resolving with right now: the configured set when
+`PROP_IP_DNS` is non-empty, otherwise what the network handed it, and
+empty when neither has given it anything. Published whenever the set
+changes, for the same reason the addresses are: a router advertisement
+carries resolvers with lifetimes of their own and can add one, replace
+one, or withdraw one with a zero lifetime, all without the family
+leaving `IP_READY`. Bounded as `PROP_IPV6_ADDRESSES` is, to what the
+stack holds and to one frame; a stack that keeps two or three resolvers
+is the norm, and a network offering more than that is offering more
+than the device will ask.
+
+Chiefly a diagnostic, and the one that distinguishes "the device is on
+the network and cannot resolve the server's name" from every other way a
+tunnel fails to come up.
+
+### Alongside the Station
+
+In practice the two layers meet at exactly one property on each side:
+`PROP_WIFI_LINK` says whether there is a link, and `PROP_IPV4_STATE` and
+`PROP_IPV6_STATE` say what each family has made of it. The address and
+resolver properties are
+read after one of those two has moved and followed thereafter, since
+each publishes its own changes.
+
+**The stack follows the link.** While `PROP_WIFI_LINK` is anything but
+`WIFI_LINK_UP`, every enabled family is `IP_NO_LINK` and both address
+properties are empty. When the link comes up, each enabled family goes
+to `IP_WAITING` and then, as the network answers, to `IP_READY`; a
+static family skips the wait except for the duplicate-address check,
+which ends in `IP_READY` or `IP_CONFLICT`.
+When the link drops, everything goes back to `IP_NO_LINK` and the
+addresses empty with it, learned resolvers included. A roam to another
+access point of the same network is the same link and does not disturb
+the stack; a device **MUST NOT** release its addresses over a roam.
+
+**Publication order** is link first, then stack, in both directions: on
+the way up, `PROP_WIFI_LINK` carrying `WIFI_LINK_UP`, then
+each family's state for each transition as it happens; on the way down,
+`PROP_WIFI_LINK` leaving `WIFI_LINK_UP`, then each family's state
+carrying `IP_NO_LINK`. A host that sees `IP_READY` then reads the addresses it
+wants and keeps them current from their own notifications; one that
+sees `IP_WAITING` persist while the link is up knows the problem is the
+network and not the radio, and one that sees `IP_CONFLICT` knows it is
+the configuration.
+
+**Disabling the station** reports `IP_NO_LINK`, not `IP_DISABLED`. The
+second is the family's own switch, written in its configuration, and a
+host that turned the radio off did not turn IPv6 off.
+
+**Configuration is staged in any order.** The IP configuration properties
+are writable while the link is down and while the station is disabled,
+and they are ordinary `CMD_PROP_SET` targets, so a static commissioning
+is one `CMD_PROP_MULTI_SET` where `CAP_CMD_MULTI` is present:
+`PROP_IPV4_CONFIG`, `PROP_IP_DNS`, `PROP_WIFI_NETWORK`,
+`PROP_WIFI_ENABLED`, in that order, then `CMD_SAVE`. The network insert
+still stands apart, being an insert.
+
+**Synchronizing on attach** adds the family states to the station's
+read: `PROP_WIFI_ENABLED`, `PROP_WIFI_NETWORK`, `PROP_WIFI_LINK`,
+`PROP_IPV4_STATE`, and `PROP_IPV6_STATE`, in one `CMD_PROP_MULTI_GET`,
+where a family the device lacks comes back as the `STATUS_PROP_NOT_FOUND`
+entry the multi-get already provides for. Between them a host knows
+whether the device is configured, associated, and addressed without a
+second round trip.
+
+**Reconfiguring a live device** is a write and a watch: the device
+applies the new configuration at once, the family leaves `IP_READY` and
+arrives wherever the new configuration leads, `IP_READY` again by way of
+`IP_WAITING`, `IP_CONFLICT` for a static address somebody else holds, or
+`IP_DISABLED`, and a host that changed a static address learns the old
+one is gone by the same notification everyone else does.
+
+**The host name** the device presents to DHCP, and to DHCPv6 where it
+runs, **SHOULD** be derived from `PROP_DEV_NAME`, folded to a valid
+label, so the device can be found on a router's client list under the
+name its operator gave it. That is a sentence, not a property, and this
+is where the sentence lives.
+
+**What survives what** extends the station's table by one rule: the
+three configuration properties are saved and revert; the five live ones
+follow. `CMD_RST` on a device whose snapshot matches its live IP
+configuration leaves a lease in place; one that reverts a static address
+releases and re-applies, with the transitions published.
+
+**Over the node management binding,** all eight are device-domain: an
+administrator may read every one and write the three configuration
+properties, the other five being read-only for everybody. That binding
+carries no unsolicited notifications, so the read-then-follow flow above
+does not apply across the mesh: an administrator that wants a current
+view of addresses or resolvers reads them again, and the family states
+tell it when that is likely to be worth doing. An
+administrator who writes a
+static address that is wrong for the network has stranded a bridge just
+as surely as one who disabled the station, and the same warning belongs
+in the same place.
+
+**Not here, and where it went:** a reachability test is command-shaped
+and unnecessary, since a bridge client reports whether its tunnel is up
+and that is the reachability anyone cares about; time from the network
+belongs to the time capability, which would gain a trust switch shaped
+like `PROP_GNSS_TIME_TRUST` if it takes SNTP; a second interface is a
+selector for a later revision; and mDNS, which would let a phone find
+the device by name, is a service the device offers rather than a
+property of its stack, and waits for whatever first needs it.
+
 ## Security
 
 * The passphrase crosses the link once, inbound, over a transport that
@@ -671,8 +1097,8 @@ under two hundred octets with framing. Everything else is a few.
   a downgrade has to be written by the host, not offered by the air.
 * Scan results are what the device heard, and an SSID is what its sender
   chose to call itself. A host displays them as untrusted strings.
-* A device on Wi-Fi is a device on a LAN. This sketch puts it on the
-  link and gives it nothing that listens there. Any service the device later offers
+* A device on Wi-Fi is a device on a LAN. This sketch gives it an
+  address and nothing that listens on one. Any service the device later offers
   over the interface, a ULCP binding over TCP above all, carries the
   full authority of an attached host and needs an admission ceremony of
   its own before it exists; the serial transports' physical-possession
@@ -680,6 +1106,13 @@ under two hundred octets with framing. Everything else is a few.
 * `PROP_WIFI_MAC` and the SSIDs in the table are identifying. They are
   no more so than `PROP_DEV_NAME`, and they are readable only by a party
   that has already been admitted.
+* The IP stack trusts its network the way every client does: a rogue
+  DHCP server or router advertisement on the LAN can hand the device a
+  bad address, a bad route, or a resolver that lies. Nothing at this
+  layer defends against that, and nothing needs to, because what rides
+  on the address authenticates its far end itself: the bridge tunnel
+  pins a key, and a redirected tunnel fails to open rather than opening
+  to the wrong party.
 
 ## Not In This Sketch
 
@@ -704,29 +1137,25 @@ Deliberately absent, with the reason:
   device's region; nothing here decides that.
 * **Power-save mode, PHY rate, band preference.** The device's business.
   A property that exposes them is easy to add and hard to remove.
-* **IP addressing.** Addresses, prefixes, gateways, resolvers, and
-  whether they came from DHCP or were configured are the state of the
-  link layer above this one, and belong to an IPv4/IPv6 capability that
-  does not exist yet. It will require some link capability, of which
-  `CAP_WIFI` is the first. The DHCP host name, which should derive from
-  `PROP_DEV_NAME` so the device can be found on a router's client list,
-  goes there too.
 * **What the connection is for.** Bridge client configuration, a time
   source, a local binding: each is a capability of its own that
-  requires `CAP_WIFI` and is specified when built.
+  requires `CAP_IPV4` or `CAP_IPV6` and is specified when built. IP addressing itself is
+  no longer absent; see [IP Connectivity](#ip-connectivity).
 
 ## Index Additions
 
 For [`ulcp-index.md`](protocol/src/ulcp-index.md) when this lands:
 
-* Capability 53 `CAP_WIFI`.
+* Capabilities 53 `CAP_WIFI`, 54 `CAP_IPV4`, and 55 `CAP_IPV6`.
 * Properties 4880–4887 as tabled above; 4888–4895 reserved.
+  Properties 4896–4903 for IP connectivity; 4904–4911 reserved.
   `PROP_WIFI_SCAN_RESULTS` is the first property to publish
   `CMD_PROP_INSERTED` unsolicited, which the core chapter already
   provides for; its note on "Asynchronous Updates" is phrased around
   `Is` and should say `Inserted` too.
 * Enumerations: security modes (`WIFI_SEC_*`), link states
-  (`WIFI_LINK_*`), link reasons (`WIFI_REASON_*`).
+  (`WIFI_LINK_*`), link reasons (`WIFI_REASON_*`), IP family states
+  (`IP_*`), IP configuration methods (`IP_METHOD_*`), IPv6 address item kinds (`IPV6_*`).
 * No commands and no new status codes. One existing status broadens:
   `STATUS_ITEM_NOT_FOUND` is defined for an unmatched `CMD_PROP_REMOVE`
   and gains the `CMD_PROP_SET` case where a written value names an item
