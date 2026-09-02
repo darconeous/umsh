@@ -807,10 +807,26 @@ mod tests {
         route: Option<&'static [u8]>,
         trace: Option<&'static [u8]>,
     ) -> ReceivedPacketRef<'static> {
+        test_broadcast_packet_with_traces(from, flood_hops, route, trace, None)
+    }
+
+    /// As above, plus the trace signal a requester pairs with the trace route
+    /// when it wants each hop's quality as well as its identity.
+    #[cfg(all(feature = "software-crypto", feature = "unsafe-advanced"))]
+    fn test_broadcast_packet_with_traces(
+        from: PublicKey,
+        flood_hops: Option<u8>,
+        route: Option<&'static [u8]>,
+        trace: Option<&'static [u8]>,
+        signal: Option<&'static [u8]>,
+    ) -> ReceivedPacketRef<'static> {
         let route_len = route.map_or(0, <[u8]>::len);
         let trace_len = trace.map_or(0, <[u8]>::len);
+        let signal_len = signal.map_or(0, <[u8]>::len);
+        let options_len = route_len + trace_len + signal_len;
         let mut bytes = route.map_or_else(Vec::new, <[u8]>::to_vec);
         bytes.extend_from_slice(trace.unwrap_or(&[]));
+        bytes.extend_from_slice(signal.unwrap_or(&[]));
         let wire: &'static [u8] = Box::leak(bytes.into_boxed_slice());
         let mut options = umsh_core::ParsedOptions::default();
         if route.is_some() {
@@ -819,21 +835,24 @@ mod tests {
         if trace.is_some() {
             options.trace_route = Some(route_len..route_len + trace_len);
         }
+        if signal.is_some() {
+            options.trace_signal = Some(route_len + trace_len..options_len);
+        }
         let header = umsh_core::PacketHeader {
             fcf: umsh_core::Fcf::new(umsh_core::PacketType::Broadcast, false, false),
-            options_range: 0..route_len + trace_len,
+            options_range: 0..options_len,
             flood_hops: flood_hops.map(umsh_core::FloodHops),
             dst: None,
             channel: None,
             source: umsh_core::SourceAddrRef::Hint(from.hint()),
             sec_info: None,
-            body_range: route_len + trace_len..wire.len(),
+            body_range: options_len..wire.len(),
             mic_range: wire.len()..wire.len(),
             total_len: wire.len(),
         };
         ReceivedPacketRef::new(
             wire,
-            &wire[route_len + trace_len..],
+            &wire[options_len..],
             header,
             options,
             Some(from),
@@ -1385,6 +1404,11 @@ mod tests {
             unicasts[0].options.tx_delay_ms, None,
             "two bytes name one node, so there is no crowd of replies to spread"
         );
+        assert!(
+            unicasts[0].options.trace_route,
+            "the reply records its own path, or the requester ends the \
+             exchange holding no route back to us"
+        );
 
         // A hint that is a prefix of somebody else's is not a prefix of ours.
         let stranger = crate::mac_command::IdentityRequestBuilder::new()
@@ -1587,6 +1611,82 @@ mod tests {
         assert_eq!(reply.options.flood_hops, None);
     }
 
+    /// A trace on the way in is answered by a trace on the way back
+    /// (beacons.md § Path Discovery, bidirectional establishment). The
+    /// question taught this node a path home; without a trace on the answer
+    /// the requester learns nothing, because a routed reply arrives with its
+    /// Route option consumed and its `FHOPS_ACC` counting only the tail.
+    ///
+    /// The trace signal rides on the same terms, so a requester asking what
+    /// each hop was worth is answered in kind.
+    #[cfg(all(feature = "software-crypto", feature = "unsafe-advanced"))]
+    #[test]
+    fn identity_response_mirrors_the_trace_options_its_request_carried() {
+        let mac = FakeMac::new(vec![[0x00; 32]]);
+        let node = responder_node(&mac);
+        let our_key = PublicKey([0x11; 32]);
+        let requester = PublicKey([0x41; 32]);
+        node.enable_identity_responder_default(test_profile(our_key));
+        let options = crate::mac_command::IdentityRequestBuilder::new()
+            .filter_role(crate::NodeRole::Repeater)
+            .unwrap()
+            .build();
+
+        let steered = test_broadcast_packet_with_traces(
+            requester,
+            Some(0x00),
+            Some(&[]),
+            Some(&[0x12, 0x34]),
+            Some(&[0x5A, 0x00]),
+        );
+        let plan = node
+            .evaluate_identity_request(&steered, requester, &options, 0)
+            .expect("a steered solicitation is answered");
+        block_on_ready(node.send_identity_response(plan));
+
+        let unicasts = mac.take_unicasts();
+        assert_eq!(unicasts.len(), 1);
+        let reply = &unicasts[0];
+        assert!(reply.options.trace_route, "the trace route is mirrored");
+        assert!(reply.options.trace_signal, "the trace signal is mirrored");
+        // The mirror rides alongside the steering rather than replacing it:
+        // the route is how the answer gets home, the trace is what the
+        // requester keeps from it.
+        assert_eq!(
+            reply.options.source_route.as_deref(),
+            Some([umsh_core::RouterHint([0x12, 0x34])].as_slice())
+        );
+    }
+
+    /// A request that asked for no path to be recorded gets none back. The
+    /// responder mirrors what it was sent and invents nothing; whether an
+    /// unrouted reply still earns a trace is the MAC's discovery floor to
+    /// decide, not the responder's.
+    #[cfg(all(feature = "software-crypto", feature = "unsafe-advanced"))]
+    #[test]
+    fn identity_response_to_an_untraced_request_mirrors_nothing() {
+        let mac = FakeMac::new(vec![[0x00; 32]]);
+        let node = responder_node(&mac);
+        let our_key = PublicKey([0x11; 32]);
+        let requester = PublicKey([0x41; 32]);
+        node.enable_identity_responder_default(test_profile(our_key));
+        let options = crate::mac_command::IdentityRequestBuilder::new()
+            .filter_hint(&our_key.hint())
+            .unwrap()
+            .build();
+
+        let packet = test_broadcast_packet(requester, None, None);
+        let plan = node
+            .evaluate_identity_request(&packet, requester, &options, 0)
+            .expect("a hint-filtered solicitation is answered");
+        block_on_ready(node.send_identity_response(plan));
+
+        let unicasts = mac.take_unicasts();
+        assert_eq!(unicasts.len(), 1);
+        assert!(!unicasts[0].options.trace_route);
+        assert!(!unicasts[0].options.trace_signal);
+    }
+
     /// The ordinary in-range case is unchanged: no trace in, no route out,
     /// and above all no empty Route option on the wire.
     #[cfg(all(feature = "software-crypto", feature = "unsafe-advanced"))]
@@ -1711,7 +1811,8 @@ mod tests {
             filters: IdentityRequestFilters::new(&[]),
             rssi: None,
             snr: None,
-            trace_route: &[],
+            trace_route: None,
+            trace_signal: None,
         };
 
         // Authenticated request → sender already holds our key → hint reply.

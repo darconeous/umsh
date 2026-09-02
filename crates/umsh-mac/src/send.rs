@@ -1140,6 +1140,16 @@ impl<'a> ReceivedPacketRef<'a> {
         RouteHops::new(self.trace_route().unwrap_or(&[]))
     }
 
+    /// The packed trace-signal option, when the frame carried one. Entry `N`
+    /// is the signal quality at which the repeater named by trace-route hint
+    /// `N` received the frame, so the two options are read together.
+    pub fn trace_signal(&self) -> Option<&'a [u8]> {
+        self.options
+            .trace_signal
+            .as_ref()
+            .and_then(|range| self.wire.get(range.clone()))
+    }
+
     /// Radio links this frame crossed to reach us, counting the final one into
     /// this node: a frame heard directly from its sender is one hop. `None`
     /// when the frame was source-routed without a trace route — the hops it

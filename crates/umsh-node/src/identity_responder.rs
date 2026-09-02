@@ -198,13 +198,26 @@ pub struct IdentityRequestContext<'a> {
     pub rssi: Option<i16>,
     /// Signal-to-noise ratio of the request, if measured.
     pub snr: Option<Snr>,
-    /// The request's accumulated trace route, as packed option bytes.
+    /// The request's accumulated trace route, as packed option bytes, or
+    /// `None` when the request carried no trace-route option at all.
     ///
     /// Repeaters prepend their hint when forwarding, so this reads
     /// front-to-back as the path *back* to the requester and needs no
     /// reversal. It is the only route home a broadcast solicitation offers:
     /// broadcast reception registers no route with the MAC.
-    pub trace_route: &'a [u8],
+    ///
+    /// Presence is kept distinct from emptiness because the two say different
+    /// things: an empty option is a request that reached us without passing a
+    /// repeater, while no option is a requester that asked for no path to be
+    /// recorded. The reply mirrors the option the request carried, so it is
+    /// the presence — not the hop count — that decides.
+    pub trace_route: Option<&'a [u8]>,
+    /// The request's accumulated trace signal, as packed option bytes, or
+    /// `None` when the request carried no trace-signal option.
+    ///
+    /// Paired with the trace route entry for entry, and mirrored onto the
+    /// reply on the same terms.
+    pub trace_signal: Option<&'a [u8]>,
 }
 
 /// A respond policy's verdict for one Identity Request.
@@ -294,6 +307,25 @@ pub(crate) struct IdentityResponsePlan {
     /// reception left the MAC with no cached route to them. The trace the
     /// request accumulated on the way in is the path home.
     pub(crate) route: Vec<RouterHint>,
+    /// Whether the reply asks the repeaters that carry it to record
+    /// themselves, mirroring the trace-route option the request arrived with.
+    ///
+    /// The request's trace taught this node a path home and taught the
+    /// requester nothing (beacons.md § Path Discovery, bidirectional
+    /// establishment): a broadcast solicitation registers no route with the
+    /// requester's MAC, and the reply's own source route reaches it with every
+    /// hint consumed, so without a trace the requester ends the exchange still
+    /// holding no route back. The MAC's own discovery floor does not cover
+    /// this: it reads a source route as a path already known, which is true of
+    /// a cached route and not of one handed back from a stranger's trace.
+    ///
+    /// A reply no repeater may carry records nothing either way — the MAC
+    /// drops the request on an unrepeatable frame rather than spending an
+    /// option header on it — so a genuinely direct answer stays bare.
+    pub(crate) trace_route: bool,
+    /// Whether the reply also asks for per-hop signal quality, mirroring the
+    /// request's trace-signal option on the same terms.
+    pub(crate) trace_signal: bool,
     /// The channel to answer on, set when the request arrived as a blind
     /// unicast; `None` sends a plain unicast.
     ///
@@ -361,13 +393,18 @@ impl IdentityResponder {
         self.record_answered(requester, nonce, now_ms);
         // Repeaters prepend as they forward, so the accumulated trace already
         // reads as the path back and is copied verbatim rather than reversed.
-        let route = RouteHops::new(ctx.trace_route).collect::<Vec<_>>();
+        let route = RouteHops::new(ctx.trace_route.unwrap_or(&[])).collect::<Vec<_>>();
         Some(IdentityResponsePlan {
             to: ctx.from_key,
             full_source,
             delayed: solicitation && !ctx.filters.hint_names_one_node(),
             no_flood: solicitation && !ctx.filters.hint_filtered(),
             route,
+            // A response mirrors the trace options its request carried,
+            // whatever form the response takes; the MAC does the same for a
+            // MAC ack and an Echo Response.
+            trace_route: ctx.trace_route.is_some(),
+            trace_signal: ctx.trace_signal.is_some(),
             channel: match ctx.family {
                 PacketFamily::BlindUnicast => ctx.channel,
                 _ => None,

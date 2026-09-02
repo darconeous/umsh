@@ -702,7 +702,8 @@ impl<M: MacBackend> LocalNode<M> {
             filters,
             rssi: packet.rssi(),
             snr: packet.snr(),
-            trace_route: packet.trace_route().unwrap_or(&[]),
+            trace_route: packet.trace_route(),
+            trace_signal: packet.trace_signal(),
         };
         self.state
             .borrow_mut()
@@ -771,6 +772,19 @@ impl<M: MacBackend> LocalNode<M> {
                 .try_with_source_route(&plan.route)
                 .unwrap_or_else(|_| unrouted())
         };
+        // Mirror the trace options the request carried. A reply steered down
+        // a trace is the case this exists for: the requester learns a route
+        // home from its own trace and nothing from the answer, since a routed
+        // reply arrives with its source route consumed and teaches the MAC no
+        // path. Asking costs nothing on a reply no repeater may carry — the
+        // MAC drops the request rather than airing an option that could only
+        // arrive empty.
+        if plan.trace_route {
+            options = options.with_trace_route();
+        }
+        if plan.trace_signal {
+            options = options.with_trace_signal();
+        }
         if plan.no_flood {
             // The solicitation named no single node, so it was allowed one hop
             // and no more; the reply carries no FHOPS field so no repeater can
