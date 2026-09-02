@@ -414,7 +414,7 @@ local function dissect_peer_repeater_entry(opts_module, payload, start, entry_le
       local val_tvb = tvb(start - 1 + pos - 1 + consumed - v_len, v_len)
 
       if num == 0 then
-        -- Two bytes when the answering node knows this hop only from a
+        -- Two bytes when the answering node knows this neighbor only from a
         -- route, three when an identity named it.
         local shown
         if v_len == 2 then
@@ -536,7 +536,7 @@ local function dissect_mac_command(payload, subtree, tvb, ctx, pinfo)
             saw_hint_filter = true
             -- The filter matches a leading part of the node hint, so the
             -- value may be shorter than one: two bytes is a router hint,
-            -- which is all a route reveals about the hops it names.
+            -- which is all a route reveals about the repeaters it names.
             local shown
             if v_len == 2 then
               shown = base58.router_hint_full(val) .. " (router hint)"

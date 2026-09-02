@@ -66,8 +66,8 @@ The following terms are used throughout this specification. Definitions are give
 : A monotonically increasing 4-byte value included in every authenticated packet. The receiver tracks recently seen counter values and rejects packets with counters it has already processed, providing replay protection without requiring synchronized clocks. The counter must be persisted across reboots to prevent reuse. See [Security & Cryptography](security.md#frame-counter).
 
 **Hop**
-: One leg of a packet's path through the network — the transmission from one node to an adjacent node within radio range. A packet that travels through two repeaters before reaching its destination has traversed three hops.
-The protocol differentiates between source-routed hops and flood-routed hops.
+: One leg of a packet's path through the network — the transmission from one node to an adjacent node within radio range. A packet that travels through two repeaters before reaching its destination has traversed three hops. A zero-hop message is a message sent to yourself that is never sent over the radio.
+The protocol differentiates between source-routed hops and flood-routed hops. 
 
 **HKDF (HMAC-based Key Derivation Function)**
 : A key derivation function standardized in RFC 5869, composed of two steps: Extract (combining a secret and optional salt into a pseudorandom key) and Expand (stretching that key to the required output length). UMSH uses HKDF-SHA256 with domain-separated labels to derive encryption keys, authentication keys, and channel identifiers from shared secrets and channel keys.

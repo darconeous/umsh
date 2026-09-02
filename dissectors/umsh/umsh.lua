@@ -69,7 +69,7 @@ f.opt_region_code  = ProtoField.string ("umsh.opt.region_code",   "Region Code")
 -- is off by a byte from the hints a reader is looking for.
 f.opt_traceroute   = ProtoField.string ("umsh.opt.trace_route",   "Trace Route")
 f.opt_srcroute     = ProtoField.string ("umsh.opt.source_route",  "Source Route")
-f.opt_route_hop    = ProtoField.string ("umsh.opt.route_hop",     "Router Hint")
+f.opt_router_hint  = ProtoField.string ("umsh.opt.route_repeater","Router Hint")
 f.opt_op_callsign  = ProtoField.string ("umsh.opt.op_callsign",   "Operator Callsign")
 f.opt_sta_callsign = ProtoField.string ("umsh.opt.sta_callsign",  "Station Callsign")
 f.opt_min_rssi     = ProtoField.int8   ("umsh.opt.min_rssi",      "Min RSSI",         base.DEC)
@@ -77,7 +77,7 @@ f.opt_min_snr      = ProtoField.int8   ("umsh.opt.min_snr",       "Min SNR",    
 f.opt_route_retry  = ProtoField.none   ("umsh.opt.route_retry",   "Route Retry")
 f.opt_ack_mic      = ProtoField.bytes  ("umsh.opt.ack_mic",       "Ack MIC")
 f.opt_trace_signal = ProtoField.bytes  ("umsh.opt.trace_signal",  "Trace Signal")
-f.opt_signal_hop   = ProtoField.string ("umsh.opt.signal_hop",    "Signal Quality")
+f.opt_signal_entry = ProtoField.string ("umsh.opt.signal_entry",  "Signal Quality")
 f.opt_unknown      = ProtoField.bytes  ("umsh.opt.unknown",       "Unknown Option")
 -- The piggy-backed ack names the frame it acknowledges, the same way a
 -- standalone MAC ack does.
@@ -146,10 +146,10 @@ f.ack_verified  = ProtoField.bool    ("umsh.ack.verified",      "Keyed ACK Tag V
 umsh.fields = {
   f.fcf, f.fcf_version, f.fcf_type, f.fcf_full_src, f.fcf_reserved, f.fcf_fhops,
   f.fhops, f.fhops_rem, f.fhops_acc,
-  f.options, f.opt_region_code, f.opt_traceroute, f.opt_srcroute, f.opt_route_hop,
+  f.options, f.opt_region_code, f.opt_traceroute, f.opt_srcroute, f.opt_router_hint,
   f.opt_op_callsign, f.opt_sta_callsign, f.opt_min_rssi, f.opt_min_snr,
   f.opt_route_retry, f.opt_ack_mic, f.opt_ack_frame,
-  f.opt_trace_signal, f.opt_signal_hop, f.opt_unknown,
+  f.opt_trace_signal, f.opt_signal_entry, f.opt_unknown,
   f.dst_hint, f.src_hint, f.src_key, f.channel_id, f.ack_mic, f.ack_tag,
   f.src_name, f.dst_name, f.channel_name, f.src_addr, f.dst_addr, f.violation,
   f.secinfo, f.scf, f.scf_enc, f.scf_mic_size, f.scf_salt_bit,
@@ -306,25 +306,26 @@ local function addr_short(s)
   return hint_short(s)
 end
 
--- A route option's hops as canonical router hints, in the order they sit on
--- the wire, joined by an arrow pointing the way the packet travels. This is
+-- A route option's repeaters as canonical router hints, in the order they sit
+-- on the wire, joined by an arrow pointing the way the packet travels. This is
 -- what a route field is worth in a column: the raw bytes there include the
 -- option header and read as noise.
 --
 -- The two route options are written in opposite directions. A repeater
--- prepends itself to a trace route, so hint 0 is the hop nearest the
+-- prepends itself to a trace route, so hint 0 is the repeater nearest the
 -- receiver and the packet moved right to left. A source route names the
 -- next repeater first, so it moves left to right.
 local function route_path(val, arrow)
-  local hops = #val // 2
+  local count = #val // 2
   -- An empty route is a normal state, not a finding: a trace that no
   -- repeater has touched yet, or a source route the last named repeater
-  -- emptied. A dash says so without competing with the rows that carry hops.
-  if hops == 0 then return "—" end
+  -- emptied. A dash says so without competing with the rows that name
+  -- repeaters.
+  if count == 0 then return "—" end
   local out = {}
-  for i = 1, hops do
-    local hop = val:sub(i * 2 - 1, i * 2)
-    out[i] = base58.router_hint(hop) or bytes_to_hex(hop)
+  for i = 1, count do
+    local hint = val:sub(i * 2 - 1, i * 2)
+    out[i] = base58.router_hint(hint) or bytes_to_hex(hint)
   end
   return table.concat(out, arrow)
 end
@@ -562,25 +563,29 @@ local function parse_options(buf, start_off, bound, tree, static_opts_out, pinfo
       elseif num == options.OPT_TRACE_ROUTE or num == options.OPT_SOURCE_ROUTE then
         local is_trace = (num == options.OPT_TRACE_ROUTE)
         local label    = is_trace and "Trace Route" or "Source Route"
-        -- The value is a run of 2-byte router hints, one per hop.
-        local hops  = val_len // 2
-        local extra = val_len % 2
-        local path  = route_path(val, is_trace and " ← " or " → ")
+        -- The value is a run of 2-byte router hints, one per repeater. The
+        -- repeater count is not the hop count: a route naming N repeaters
+        -- describes N+1 transmissions, since the legs into the first
+        -- repeater and out of the last one belong to no hint.
+        local routers = val_len // 2
+        local extra   = val_len % 2
+        local path    = route_path(val, is_trace and " ← " or " → ")
         local item = opts_tree:add(is_trace and f.opt_traceroute or f.opt_srcroute,
                                    buf(opt_off, consumed), path)
         local note = ""
-        if hops > 0 then
-          note = string.format(" (%d hop%s%s)", hops, hops == 1 and "" or "s",
+        if routers > 0 then
+          note = string.format(" (%d repeater%s%s)", routers,
+                               routers == 1 and "" or "s",
                                extra == 1 and ", 1 trailing byte" or "")
         elseif extra == 1 then
           note = " (1 trailing byte)"
         end
         item:set_text(label .. ": " .. path .. note)
-        for i = 1, hops do
-          local hop = val:sub(i * 2 - 1, i * 2)
-          item:add(f.opt_route_hop, buf(val_off + (i - 1) * 2, 2),
-                   base58.router_hint(hop) or ""):set_text(
-            string.format("Hop %d: %s", i, base58.router_hint_full(hop)))
+        for i = 1, routers do
+          local hint = val:sub(i * 2 - 1, i * 2)
+          item:add(f.opt_router_hint, buf(val_off + (i - 1) * 2, 2),
+                   base58.router_hint(hint) or ""):set_text(
+            string.format("Repeater %d: %s", i, base58.router_hint_full(hint)))
         end
 
       elseif num == options.OPT_OP_CALLSIGN then
@@ -639,18 +644,22 @@ local function parse_options(buf, start_off, bound, tree, static_opts_out, pinfo
         if val_len == 0 then
           item:set_text("Trace Signal: (empty)")
         else
-          local hops  = val_len // 2
-          local extra = val_len % 2
-          item:set_text(string.format("Trace Signal: %d hop%s%s", hops,
-                                      hops == 1 and "" or "s",
+          -- One entry per repeater, paired index-for-index with the trace
+          -- route. An entry measures the hop into that repeater; the hop
+          -- out of the last one is measured by nobody, so the entries
+          -- always number one short of the path's hops.
+          local routers = val_len // 2
+          local extra   = val_len % 2
+          item:set_text(string.format("Trace Signal: %d repeater%s%s", routers,
+                                      routers == 1 and "" or "s",
                                       extra == 1 and " + 1 trailing byte" or ""))
-          for i = 1, hops do
+          for i = 1, routers do
             local rssi = val:byte(i * 2 - 1)
             local snr  = val:byte(i * 2)
             if snr >= 128 then snr = snr - 256 end
             local text = string.format("-%d dBm, %.1f dB SNR", rssi, snr / 10)
-            item:add(f.opt_signal_hop, buf(val_off + (i - 1) * 2, 2), text)
-              :set_text(string.format("Hop %d: %s", i, text))
+            item:add(f.opt_signal_entry, buf(val_off + (i - 1) * 2, 2), text)
+              :set_text(string.format("Repeater %d heard: %s", i, text))
           end
         end
 

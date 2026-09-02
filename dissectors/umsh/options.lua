@@ -211,7 +211,7 @@ M.OPT_ROUTE_RETRY      = 6   -- Non-Critical, Dynamic, 0 bytes (flag)
 M.OPT_STATION_CALLSIGN = 7   -- Critical,     Dynamic, ARNCE
 M.OPT_ACK_MIC          = 8   -- Non-Critical, Static,  4 bytes
 M.OPT_MIN_SNR          = 9   -- Critical,     Static,  0-1 bytes
-M.OPT_TRACE_SIGNAL     = 10  -- Non-Critical, Dynamic, 2 bytes per hop
+M.OPT_TRACE_SIGNAL     = 10  -- Non-Critical, Dynamic, 2 bytes per repeater
 M.OPT_REGION_CODE      = 11  -- Critical,     Dynamic, 2 bytes
 
 M.KNOWN_OPTION_NAMES = {
