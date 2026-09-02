@@ -7,9 +7,10 @@ with the connection once it has one (a bridge tunnel, a time source, a
 local ULCP binding) is separate work and gets its own capability when it
 comes.
 
-The shape follows the [BLE binding](protocol/src/ulcp-ble.md): one
-capability, no commands, and every control a property, because every
-control on the list is a state with more than one way out.
+The shape follows the [BLE binding](protocol/src/ulcp-ble.md): a
+capability per thing the hardware can do, no commands, and every
+control a property, because every control on the list is a state with
+more than one way out.
 
 ## Model
 
@@ -41,6 +42,15 @@ saved so the device can carry it out unattended. A device that picks
 networks by itself is a device whose behavior depends on what is in the
 air around it, which is the wrong property for a repeater on a wall.
 
+Not every device that can scan can join. A tracker whose LoRa
+transceiver also sniffs Wi-Fi beacons for geolocation, the LR1110 in
+the T1000-E, hears access points and their signal levels and has no
+station: no MAC of its own, nothing to join with, and nothing to
+configure. What it wants from this surface is the scan and the results,
+handed to whatever resolves a list of access points into a position.
+The scanning half is therefore a capability of its own, and the station
+is built on top of it.
+
 ## Why No Commands
 
 Scan, connect, disconnect, and on/off all describe states that persist
@@ -62,17 +72,22 @@ a corrected passphrase, gets one because replacing the selected entry
 restarts the join. If a reconnect kick ever turns out to be needed, it
 is a command, and it is the only one this surface would have.
 
-## Capability
+## Capabilities
 
-Code | Name       | Requires | Grants
------|------------|----------|--------
-53   | `CAP_WIFI` | —        | A Wi-Fi station the device can enable, scan with, and join networks with: `PROP_WIFI_ENABLED`, `PROP_WIFI_NETWORKS`, `PROP_WIFI_NETWORK`, `PROP_WIFI_SCANNING`, `PROP_WIFI_SCAN_RESULTS`, `PROP_WIFI_LINK`
+Code | Name            | Requires        | Grants
+-----|-----------------|-----------------|--------
+53   | `CAP_WIFI_SCAN` | —               | A Wi-Fi receiver the device can scan with: `PROP_WIFI_SCANNING`, `PROP_WIFI_SCAN_RESULTS`
+54   | `CAP_WIFI`      | `CAP_WIFI_SCAN` | A Wi-Fi station the device can enable and join networks with: `PROP_WIFI_ENABLED`, `PROP_WIFI_NETWORKS`, `PROP_WIFI_NETWORK`, `PROP_WIFI_LINK`
 
-One capability, and everything else discovered by asking. The six
-properties it grants are the ones a host needs to find a network, join
-it, and know whether it did; a device advertising `CAP_WIFI` **MUST**
-serve all six. The other two, `PROP_WIFI_RSSI` and `PROP_WIFI_MAC`,
-report things a stack may not expose, and a device that cannot answers
+Two capabilities, layered, and everything else discovered by asking.
+The scan is the base because it is what every Wi-Fi radio can do,
+including the ones that can do nothing else; a station that can join
+can always scan, so `CAP_WIFI` requiring `CAP_WIFI_SCAN` is a fact
+about hardware and not a policy, and the core rule that a device
+advertises what its capabilities require does the rest. A device
+advertising either **MUST** serve every property it grants. The other
+two, `PROP_WIFI_RSSI` and `PROP_WIFI_MAC`, report things a stack may not
+expose, and a sniffer has neither; a device that cannot answers
 `STATUS_PROP_NOT_FOUND` in the same exchange the host was already
 making, by the argument the BLE binding makes for itself.
 
@@ -328,7 +343,7 @@ snapshot comes up joining what it was joining.
 
 * Type: Single-Value, Read-Write
 * Asynchronous Updates: Yes
-* Required: `CAP_WIFI`
+* Required: `CAP_WIFI_SCAN`
 * Value Type: BOOL
 * Post-Reset Value: whether a scan is running
 
@@ -357,16 +372,28 @@ that ends by itself, and that a device with a screen can enter without
 the host. A device **MUST** bound a scan's duration; a few seconds is
 what the hardware takes.
 
-A write of `1` answers `STATUS_INVALID_STATE` while the station is
-disabled, and **MAY** answer `STATUS_BUSY` while a join is in the middle
-of its handshake, which resolves by itself. Writing `1` during a scan
-succeeds and answers `1`; there is nothing to restart. A write of `0`
-always succeeds.
+On a device with a station, a write of `1` answers `STATUS_INVALID_STATE`
+while the station is disabled, and **MAY** answer `STATUS_BUSY` while a
+join is in the middle of its handshake, which resolves by itself. On a
+device without one there is nothing to enable: the receiver is powered
+for the scan's duration and put back to sleep after, which is the right
+power shape for a tracker that scans a few times an hour. Writing `1`
+during a scan succeeds and answers `1`; there is nothing to restart. A
+write of `0` always succeeds.
 
 A device **MAY** scan while associated, at the cost of the association's
 traffic while it is off-channel. Whether the scan is active or passive,
-and on which channels, is the device's business, except that a hidden
-network in the table is probed by name so it can appear.
+and on which channels, is the device's business, except that a device
+with a station probes by name for a hidden network in its table so it
+can appear.
+
+On a device whose Wi-Fi receiver is its LoRa transceiver, a scan is a
+gap in mesh reception lasting as long as the scan does, up to a few
+seconds, during which nothing on the air is heard and nothing is
+forwarded. The host asked for that, and it is not free: a repeater's
+operator scanning on a schedule is spending the mesh's reliability, and
+a device **MAY** answer `STATUS_BUSY` when a transmission is in
+progress rather than abandon it.
 
 A scan the device starts from its own menu is reported the same way,
 inserts and all. An attached host pays twenty-odd small frames once per
@@ -379,7 +406,7 @@ fills in and a spinner.
 * Type: Multiple-Value, Read-Only
 * Has Item Length Prefix: Yes
 * Asynchronous Updates: Yes (`Is`, `Inserted`)
-* Required: `CAP_WIFI`
+* Required: `CAP_WIFI_SCAN`
 * Post-Reset Value: what the station has found; empty after a power-on
 
 What the scan in progress has found so far, or what the last one found.
@@ -393,7 +420,11 @@ Each item:
 ~~~
 
 **MODES** is a 16-bit little-endian set of the security modes the access
-point offers, bit *n* standing for mode *n* of the enumeration above. A
+point offers, bit *n* standing for mode *n* of the enumeration above,
+and **no bits at all** means the device did not determine them: a
+sniffer that reads beacon headers for their addresses has no reason to
+parse the security elements, and no real access point offers nothing,
+so the empty set is free to mean that. A
 WPA2/WPA3 transition network sets both bits. An OWE transition network
 is two BSSs, a visible open one and a hidden OWE companion that the open
 one's transition element names by BSSID and SSID; the device reads the
@@ -412,9 +443,12 @@ not, and the number follows from the frequency in one line wherever a
 display wants it. The width of the operating channel is not reported:
 the device negotiates it at association, and nothing about it is needed
 to join. **RSSI** is a signed
-dBm. **SSID** is the remainder of the item; empty means the network
-hides its name, and its BSSID is what distinguishes it from the next
-hidden one.
+dBm. **SSID** is the remainder of the item; empty means no name was
+reported, because the network hides it or because the scanner does not
+read names, and the BSSID is what distinguishes one nameless entry from
+the next. A device with a station always reads names, so on such a
+device empty means hidden; a picker treats the two alike in any case,
+since neither can be chosen by name.
 
 One item per access point, keyed by BSSID. The device reports what it
 heard and nothing it inferred: which of several access points make up
@@ -604,6 +638,13 @@ selected the selection empties and the link drops, both published.
 
 **Turn off.** Write `PROP_WIFI_ENABLED` to `0`. Nothing is forgotten.
 
+**Locate.** On a device with `CAP_WIFI_SCAN` and no station, run the
+scan flow and hand the BSSIDs and signal levels to whatever resolves
+them into a position. The item format is already what a geolocation
+resolver consumes, and a phone can pass the list straight through. What
+the device does with its own scan, resolving on board or sending
+access points over the air, is application and is not here.
+
 **Commission for unattended use.** Do any of the above, then `CMD_SAVE`.
 The station comes up and rejoins at every boot after that.
 
@@ -682,8 +723,8 @@ selector could be added without renaming them.
 
 Code | Name       | Requires | Grants
 -----|------------|----------|--------
-54   | `CAP_IPV4` | —        | An IPv4 stack on the device's link: `PROP_IPV4_STATE`, `PROP_IPV4_CONFIG`, `PROP_IPV4_ADDRESS`, and the shared `PROP_IP_DNS` and `PROP_IP_RESOLVERS`
-55   | `CAP_IPV6` | —        | An IPv6 stack on the device's link: `PROP_IPV6_STATE`, `PROP_IPV6_CONFIG`, `PROP_IPV6_ADDRESSES`, and the same two shared properties
+55   | `CAP_IPV4` | —        | An IPv4 stack on the device's link: `PROP_IPV4_STATE`, `PROP_IPV4_CONFIG`, `PROP_IPV4_ADDRESS`, and the shared `PROP_IP_DNS` and `PROP_IP_RESOLVERS`
+56   | `CAP_IPV6` | —        | An IPv6 stack on the device's link: `PROP_IPV6_STATE`, `PROP_IPV6_CONFIG`, `PROP_IPV6_ADDRESSES`, and the same two shared properties
 
 One per family, because the families are peers. The BLE binding's
 argument for a single capability is that a refusal is a complete answer
@@ -1106,6 +1147,11 @@ property of its stack, and waits for whatever first needs it.
 * `PROP_WIFI_MAC` and the SSIDs in the table are identifying. They are
   no more so than `PROP_DEV_NAME`, and they are readable only by a party
   that has already been admitted.
+* A scan result list is a location fingerprint of wherever the device is
+  standing, precise to a building, which is exactly why a tracker wants
+  one. It is readable only by an admitted party, like everything else
+  here, and a device that resolves positions on board treats what it
+  learned the way it treats a fix.
 * The IP stack trusts its network the way every client does: a rogue
   DHCP server or router advertisement on the LAN can hand the device a
   bad address, a bad route, or a resolver that lies. Nothing at this
@@ -1146,7 +1192,8 @@ Deliberately absent, with the reason:
 
 For [`ulcp-index.md`](protocol/src/ulcp-index.md) when this lands:
 
-* Capabilities 53 `CAP_WIFI`, 54 `CAP_IPV4`, and 55 `CAP_IPV6`.
+* Capabilities 53 `CAP_WIFI_SCAN`, 54 `CAP_WIFI`, 55 `CAP_IPV4`, and
+  56 `CAP_IPV6`.
 * Properties 4880–4887 as tabled above; 4888–4895 reserved.
   Properties 4896–4903 for IP connectivity; 4904–4911 reserved.
   `PROP_WIFI_SCAN_RESULTS` is the first property to publish
