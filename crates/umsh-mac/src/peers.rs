@@ -17,13 +17,25 @@ pub enum CachedRoute {
     /// (or an empty traceroute) and `FHOPS_ACC == 0`.
     Direct,
     /// Explicit source route derived by reversing the inbound traceroute.
+    /// Each hint names one repeater; the path is one hop longer than the
+    /// route has hints.
     Source(Vec<RouterHint, 15>),
     /// Flood-delivery parameters learned from an inbound packet.
-    Flood { hops: u8, regions: Vec<[u8; 2], 8> },
+    ///
+    /// `flood_hops` is the `FHOPS_ACC` the peer was last heard at, which is
+    /// also the `FHOPS_REM` budget the next send needs. It is one less than
+    /// the distance in hops: the final transmission of a flood spends no
+    /// budget. Learned only from a packet that carried no source route, so
+    /// that relation holds for it; see [`CachedRoute::hop_count`].
+    Flood {
+        flood_hops: u8,
+        regions: Vec<[u8; 2], 8>,
+    },
 }
 
 impl CachedRoute {
-    /// Maximum hops a source route can name, matching `MAX_SOURCE_ROUTE_HOPS`.
+    /// Maximum router hints a source route can name, matching
+    /// `MAX_SOURCE_ROUTE_HINTS`.
     pub const MAX_HINTS: usize = 15;
     /// Maximum region codes a learned flood route carries.
     pub const MAX_REGIONS: usize = 8;
@@ -38,12 +50,32 @@ impl CachedRoute {
         Vec::from_slice(hints).ok().map(Self::Source)
     }
 
-    /// Build a flood route from `hops` and `regions`, or `None` if there
-    /// are more region codes than one carries.
-    pub fn flood(hops: u8, regions: &[[u8; 2]]) -> Option<Self> {
-        Vec::from_slice(regions)
-            .ok()
-            .map(|regions| Self::Flood { hops, regions })
+    /// Build a flood route from `flood_hops` and `regions`, or `None` if
+    /// there are more region codes than one carries.
+    pub fn flood(flood_hops: u8, regions: &[[u8; 2]]) -> Option<Self> {
+        Vec::from_slice(regions).ok().map(|regions| Self::Flood {
+            flood_hops,
+            regions,
+        })
+    }
+
+    /// The distance to the peer in hops, per the spec's definition: one
+    /// transmission between adjacent nodes.
+    ///
+    /// The counterpart of `ReceivedPacketRef::hop_count` for a cached route,
+    /// so a route and the frame that taught it report the same number. A
+    /// direct peer is one hop away. A source route is one hop longer than it
+    /// has hints, the leg into the first repeater belonging to no hint. A
+    /// flood route is one hop past its `flood_hops`, the final transmission
+    /// spending no budget.
+    pub fn hop_count(&self) -> u8 {
+        match self {
+            Self::Direct => 1,
+            Self::Source(hints) => u8::try_from(hints.len())
+                .unwrap_or(u8::MAX)
+                .saturating_add(1),
+            Self::Flood { flood_hops, .. } => flood_hops.saturating_add(1),
+        }
     }
 }
 
@@ -455,5 +487,34 @@ impl<const N: usize, const RN: usize, const HN: usize> ChannelTable<N, RN, HN> {
         self.channels
             .push(ChannelState::new(key, derived))
             .map_err(|_| CapacityError)
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// The distance a cached route reports agrees with what a received
+    /// frame reports for the same path: a direct peer is one hop, and each
+    /// router hint or flood hop adds one to the leg no count covers.
+    #[test]
+    fn hop_count_is_one_more_than_what_the_route_names() {
+        assert_eq!(CachedRoute::Direct.hop_count(), 1);
+        assert_eq!(CachedRoute::source(&[]).unwrap().hop_count(), 1);
+        assert_eq!(
+            CachedRoute::source(&[RouterHint([1, 2]), RouterHint([3, 4])])
+                .unwrap()
+                .hop_count(),
+            3
+        );
+        assert_eq!(CachedRoute::flood(0, &[]).unwrap().hop_count(), 1);
+        assert_eq!(
+            CachedRoute::flood(2, &[[0x68, 0xAC]]).unwrap().hop_count(),
+            3
+        );
+        assert_eq!(
+            CachedRoute::flood(u8::MAX, &[]).unwrap().hop_count(),
+            u8::MAX
+        );
     }
 }

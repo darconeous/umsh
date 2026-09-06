@@ -234,14 +234,14 @@ struct DiscoverPeersView: View {
     /// peer itself, that rests on it forwarding at all.
     private var vantageFooter: String? {
         guard let vantage else { return nil }
-        let hops = vantage.routers.count == 1 ? "1 hop" : "\(vantage.routers.count) hops"
+        let routers = vantage.routers.count == 1 ? "1 router" : "\(vantage.routers.count) routers"
         switch (vantage.landsAtPeer, vantage.evidence) {
         case (true, .yes):
-            return "Sent \(hops) to \(vantage.peerName), which answers along with whatever else is in range of it—not of this phone."
+            return "Sent via \(routers) to \(vantage.peerName), which answers along with whatever else is in range of it—not of this phone."
         case (true, _):
             // Aimed at the peer on no evidence it repeats. Say so: if it does
             // not forward, the ask simply goes unanswered.
-            return "Sent \(hops) to \(vantage.peerName). This phone has never heard what \(vantage.peerName) is, so this only reaches anything if it forwards traffic; if it does not, nothing answers."
+            return "Sent via \(routers) to \(vantage.peerName). This phone has never heard what \(vantage.peerName) is, so this only reaches anything if it forwards traffic; if it does not, nothing answers."
         case (false, _):
             guard let landing = vantage.landingRouter else { return nil }
             let name = RouterHintNaming.label(landing, among: peerActions.knownPeers)

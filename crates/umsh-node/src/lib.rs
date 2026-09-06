@@ -181,7 +181,7 @@ pub use peer::{PING_MIC_SIZE, PeerConnection};
 pub use peer_repeaters::{
     MAX_PEER_REPEATERS, MergedPeerRepeater, PeerRepeaterRecord, PeerRepeaterTable,
 };
-pub use receive::{ChannelInfoRef, PacketFamily, ReceivedPacketRef, RouteHops, RxMetadata, Snr};
+pub use receive::{ChannelInfoRef, PacketFamily, ReceivedPacketRef, RouterHints, RxMetadata, Snr};
 pub use ticket::{SendProgressTicket, SendToken};
 pub use transport::Transport;
 

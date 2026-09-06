@@ -20,7 +20,7 @@ use alloc::vec::Vec;
 
 use heapless::Deque;
 use umsh_core::{ChannelId, NodeHint, PayloadType, PublicKey, RouterHint};
-use umsh_mac::{PacketFamily, RouteHops, Snr};
+use umsh_mac::{PacketFamily, RouterHints, Snr};
 
 use crate::identity::{NodeCapabilities, NodeIdentityPayload, NodeRole};
 use crate::location::NodeLocation;
@@ -393,7 +393,7 @@ impl IdentityResponder {
         self.record_answered(requester, nonce, now_ms);
         // Repeaters prepend as they forward, so the accumulated trace already
         // reads as the path back and is copied verbatim rather than reversed.
-        let route = RouteHops::new(ctx.trace_route.unwrap_or(&[])).collect::<Vec<_>>();
+        let route = RouterHints::new(ctx.trace_route.unwrap_or(&[])).collect::<Vec<_>>();
         Some(IdentityResponsePlan {
             to: ctx.from_key,
             full_source,

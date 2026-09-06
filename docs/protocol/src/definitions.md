@@ -56,6 +56,9 @@ The following terms are used throughout this specification. Definitions are give
 **Ephemeral Key**
 : A temporary Ed25519 keypair generated for a single PFS session. Unlike a long-term identity keypair, ephemeral keys are never written to persistent storage and are explicitly erased when the session ends, ensuring that compromise of long-term keys cannot retroactively decrypt traffic protected by them. See [Security & Cryptography](security.md#perfect-forward-secrecy-sessions).
 
+**Flood Hop**
+: A hop spent from `FHOPS_REM`: a transmission made with `FHOPS_REM > 0` and no source-route hint left to follow, which is what permits the repeaters that hear it to flood-forward the packet. The final transmission of a flood-routed packet is made with `FHOPS_REM = 0` and is a hop but not a flood hop, and a source-routed hop is not a flood hop either. A path's hop count is its source-routed hops plus its flood hops plus one, so it is one more than `FHOPS_ACC` if and only if no source route was involved. See [Flood Hop Count](packet-structure.md#flood-hop-count).
+
 **Flood Routing**
 : A routing strategy where a packet is forwarded by every eligible repeater within the flood radius, subject to duplicate suppression. Requires no topology state at repeaters. Bounded by the flood hop count field (`FHOPS`). See [Repeater Operation](repeater-operation.md).
 
@@ -67,7 +70,7 @@ The following terms are used throughout this specification. Definitions are give
 
 **Hop**
 : One leg of a packet's path through the network — the transmission from one node to an adjacent node within radio range. A packet that travels through two repeaters before reaching its destination has traversed three hops. A zero-hop message is a message sent to yourself that is never sent over the radio.
-The protocol differentiates between source-routed hops and flood-routed hops. 
+A hop taken by a repeater matching a source-route hint is a source-routed hop and spends no `FHOPS` budget; a hop spent from `FHOPS_REM` is a [flood hop](#flood-hop). Between them the two counts leave exactly one transmission uncounted, so a path always has one more hop than the two counts together.
 
 **HKDF (HMAC-based Key Derivation Function)**
 : A key derivation function standardized in RFC 5869, composed of two steps: Extract (combining a secret and optional salt into a pseudorandom key) and Expand (stretching that key to the required output length). UMSH uses HKDF-SHA256 with domain-separated labels to derive encryption keys, authentication keys, and channel identifiers from shared secrets and channel keys.

@@ -3017,6 +3017,7 @@ final class AppRuntime {
         return PeerRoute(
             kind: kind,
             hints: await renderRouterHints(route.hints),
+            hopCount: route.hopCount,
             floodHops: route.floodHops,
             floodRegions: route.floodRegions
         )

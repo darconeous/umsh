@@ -446,15 +446,28 @@ struct RadioPeerRoute: Equatable, Sendable {
     let kind: MobileMeshRouteKind
     /// Routers named by a source route, in send order.
     let hints: [Data]
+    /// Distance to the peer in hops, the number a ping reply reports.
+    let hopCount: UInt8?
+    /// Flood hops (`FHOPS_ACC`) a flood route was learned at: the raw wire
+    /// value, one less than `hopCount`.
     let floodHops: UInt8?
     /// Two-octet region codes learned with a flood route.
     let floodRegions: [Data]
 
-    static let unknown = RadioPeerRoute(kind: .unknown, hints: [], floodHops: nil, floodRegions: [])
+    static let unknown = RadioPeerRoute(
+        kind: .unknown, hints: [], hopCount: nil, floodHops: nil, floodRegions: []
+    )
 
-    init(kind: MobileMeshRouteKind, hints: [Data], floodHops: UInt8?, floodRegions: [Data]) {
+    init(
+        kind: MobileMeshRouteKind,
+        hints: [Data],
+        hopCount: UInt8?,
+        floodHops: UInt8?,
+        floodRegions: [Data]
+    ) {
         self.kind = kind
         self.hints = hints
+        self.hopCount = hopCount
         self.floodHops = floodHops
         self.floodRegions = floodRegions
     }
@@ -463,6 +476,7 @@ struct RadioPeerRoute: Equatable, Sendable {
         self.init(
             kind: record.kind,
             hints: record.hints,
+            hopCount: record.hopCount,
             floodHops: record.floodHops,
             floodRegions: record.floodRegions
         )

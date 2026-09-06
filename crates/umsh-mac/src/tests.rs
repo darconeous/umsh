@@ -698,7 +698,7 @@ fn send_options_copy_source_route_and_reject_oversize_routes() {
         .unwrap();
     assert_eq!(options.source_route.unwrap().as_slice(), &route);
 
-    let too_long = [RouterHint([9, 9]); crate::MAX_SOURCE_ROUTE_HOPS + 1];
+    let too_long = [RouterHint([9, 9]); crate::MAX_SOURCE_ROUTE_HINTS + 1];
     assert_eq!(
         SendOptions::default().try_with_source_route(&too_long),
         Err(CapacityError)
@@ -2201,7 +2201,7 @@ fn queue_mac_ack_for_peer_uses_cached_flood_route_regions_when_present() {
     mac.peer_registry_mut().update_route(
         peer_id,
         CachedRoute::Flood {
-            hops: 2,
+            flood_hops: 2,
             regions: heapless::Vec::from_slice(&[[0x31, 0xD9], [0x78, 0x53]]).unwrap(),
         },
     );
@@ -4231,7 +4231,7 @@ fn unicast_to_a_flood_distance_peer_still_carries_a_trace_route() {
     mac.peer_registry_mut().update_route(
         peer_id,
         CachedRoute::Flood {
-            hops: 2,
+            flood_hops: 2,
             regions: heapless::Vec::new(),
         },
     );
@@ -4832,8 +4832,8 @@ fn send_unicast_uses_cached_source_route_when_present() {
 ///
 /// Zero slack is not `Some(0)`: a field granting no forward says nothing a
 /// missing field does not, so the send leaves it off.
-const ESTABLISHED_ROUTE_SLACK_FIELD: Option<u8> = if ESTABLISHED_ROUTE_EXTRA_HOPS > 0 {
-    Some(ESTABLISHED_ROUTE_EXTRA_HOPS)
+const ESTABLISHED_ROUTE_SLACK_FIELD: Option<u8> = if ESTABLISHED_ROUTE_EXTRA_FLOOD_HOPS > 0 {
+    Some(ESTABLISHED_ROUTE_EXTRA_FLOOD_HOPS)
 } else {
     None
 };
@@ -4912,14 +4912,14 @@ fn send_unicast_narrows_flood_hops_to_the_learned_flood_distance() {
     mac.peer_registry_mut().update_route(
         peer_id,
         CachedRoute::Flood {
-            hops: 2,
+            flood_hops: 2,
             regions: heapless::Vec::new(),
         },
     );
 
     let hops = queued_unicast_flood_hops(&mut mac, local_id, &peer_key, &SendOptions::default());
 
-    assert_eq!(hops, Some(2 + ESTABLISHED_ROUTE_EXTRA_HOPS));
+    assert_eq!(hops, Some(2 + ESTABLISHED_ROUTE_EXTRA_FLOOD_HOPS));
 }
 
 #[test]
@@ -4928,7 +4928,7 @@ fn send_unicast_treats_a_peer_heard_at_zero_hops_as_direct() {
     mac.peer_registry_mut().update_route(
         peer_id,
         CachedRoute::Flood {
-            hops: 0,
+            flood_hops: 0,
             regions: heapless::Vec::new(),
         },
     );
@@ -4944,7 +4944,7 @@ fn send_unicast_never_raises_flood_hops_above_the_requested_budget() {
     mac.peer_registry_mut().update_route(
         peer_id,
         CachedRoute::Flood {
-            hops: 9,
+            flood_hops: 9,
             regions: heapless::Vec::new(),
         },
     );
@@ -4965,7 +4965,7 @@ fn send_unicast_keeps_flooding_disabled_for_a_routed_peer() {
     mac.peer_registry_mut().update_route(
         peer_id,
         CachedRoute::Flood {
-            hops: 2,
+            flood_hops: 2,
             regions: heapless::Vec::new(),
         },
     );
@@ -5010,7 +5010,7 @@ fn receive_one_learns_flood_hops_for_multicast_sender() {
     assert_eq!(
         mac.peer_registry().get(peer_id).unwrap().route,
         Some(CachedRoute::Flood {
-            hops: 2,
+            flood_hops: 2,
             regions: heapless::Vec::new(),
         })
     );
@@ -5059,7 +5059,7 @@ fn receive_one_learns_flood_hops_and_regions_for_multicast_sender() {
     assert_eq!(
         mac.peer_registry().get(peer_id).unwrap().route,
         Some(CachedRoute::Flood {
-            hops: 2,
+            flood_hops: 2,
             regions: heapless::Vec::from_slice(&[[0x31, 0xD9], [0x78, 0x53]]).unwrap(),
         })
     );
@@ -5981,7 +5981,7 @@ fn repeater_declines_to_forward_an_overgrown_trace_rather_than_panicking() {
 
         let source = DummyIdentity::new([0xAB; 32]);
         let mut buf = [0u8; 256];
-        let oversized = [0x22u8; crate::MAX_SOURCE_ROUTE_HOPS * 2 + 2];
+        let oversized = [0x22u8; crate::MAX_SOURCE_ROUTE_HINTS * 2 + 2];
         let beacon = PacketBuilder::new(&mut buf)
             .broadcast()
             .source_full(source.public_key())
@@ -6849,7 +6849,7 @@ fn modeled_seven_hop_line_learns_and_uses_source_routes_end_to_end() {
 
     let alice = 0usize;
     let bob = scenario.keys.len() - 1;
-    let route_hops = u8::try_from(bob - alice).unwrap();
+    let line_hops = u8::try_from(bob - alice).unwrap();
     let first_receipt = {
         let mut alice_mac = scenario.macs[alice].borrow_mut();
         alice_mac
@@ -6859,7 +6859,7 @@ fn modeled_seven_hop_line_learns_and_uses_source_routes_end_to_end() {
                 b"hello-7hop",
                 &SendOptions::default()
                     .with_ack_requested(true)
-                    .with_flood_hops(route_hops)
+                    .with_flood_hops(line_hops)
                     .with_trace_route(),
             )
             .unwrap()
@@ -8893,12 +8893,12 @@ fn route_retry_preserves_the_authenticated_header() {
 }
 
 /// A peer cached as directly reachable transmits at
-/// `ESTABLISHED_ROUTE_EXTRA_HOPS` no matter how wide a flood the caller asked
+/// `ESTABLISHED_ROUTE_EXTRA_FLOOD_HOPS` no matter how wide a flood the caller asked
 /// for, and carries no option saying so. When it stops answering, the cache
 /// entry is exactly as stale as a dead source-route hint — the retry has to
 /// abandon it and flood at the budget the application actually requested.
 ///
-/// This is the recovery that a zero `ESTABLISHED_ROUTE_EXTRA_HOPS` leans on: no
+/// This is the recovery that a zero `ESTABLISHED_ROUTE_EXTRA_FLOOD_HOPS` leans on: no
 /// hop is spent on the chance that the peer moved, so the ack timeout is what
 /// finds out that it did.
 #[test]
@@ -9558,7 +9558,7 @@ fn an_unencodable_flood_ceiling_still_airs_hops_on_a_tracked_send() {
     mac.peer_registry_mut().update_route(
         peer_id,
         CachedRoute::Flood {
-            hops: MAX_FLOOD_HOPS,
+            flood_hops: MAX_FLOOD_HOPS,
             regions: heapless::Vec::new(),
         },
     );
@@ -10055,8 +10055,8 @@ fn build_received_unicast_frame(
     let builder = if let Some(route) = trace_route {
         let mut encoded = [0u8; 30];
         let mut used = 0usize;
-        for hop in route {
-            encoded[used..used + 2].copy_from_slice(&hop.0);
+        for hint in route {
+            encoded[used..used + 2].copy_from_slice(&hint.0);
             used += 2;
         }
         builder.option(OptionNumber::TraceRoute, &encoded[..used])
@@ -10366,8 +10366,8 @@ fn build_reserved5_frame(
     if let Some(route) = trace_route {
         let mut encoded = [0u8; 30];
         let mut used = 0usize;
-        for hop in route {
-            encoded[used..used + 2].copy_from_slice(&hop.0);
+        for hint in route {
+            encoded[used..used + 2].copy_from_slice(&hint.0);
             used += 2;
         }
         encoder
@@ -10377,8 +10377,8 @@ fn build_reserved5_frame(
     if let Some(route) = source_route {
         let mut encoded = [0u8; 30];
         let mut used = 0usize;
-        for hop in route {
-            encoded[used..used + 2].copy_from_slice(&hop.0);
+        for hint in route {
+            encoded[used..used + 2].copy_from_slice(&hint.0);
             used += 2;
         }
         encoder
@@ -10590,8 +10590,8 @@ impl DummyRadio {
     fn queue_received_mac_ack_with_trace(&mut self, ack_trailer: [u8; 8], trace: &[RouterHint]) {
         let mut encoded = [0u8; 30];
         let mut used = 0usize;
-        for hop in trace {
-            encoded[used..used + 2].copy_from_slice(&hop.0);
+        for hint in trace {
+            encoded[used..used + 2].copy_from_slice(&hint.0);
             used += 2;
         }
         let mut buf = [0u8; 256];
@@ -10714,8 +10714,8 @@ impl DummyRadio {
         let builder = if let Some(route) = trace_route {
             let mut encoded = [0u8; 30];
             let mut used = 0usize;
-            for hop in route {
-                encoded[used..used + 2].copy_from_slice(&hop.0);
+            for hint in route {
+                encoded[used..used + 2].copy_from_slice(&hint.0);
                 used += 2;
             }
             builder.option(OptionNumber::TraceRoute, &encoded[..used])

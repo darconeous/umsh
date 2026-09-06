@@ -585,12 +585,22 @@ struct PeerRoute: Equatable, Sendable {
     let kind: Kind
     /// Routers named by a source route, in send order.
     let hints: [MeshRouterHint]
+    /// Distance to the peer in hops, the same number a ping reply's hop
+    /// count reports: one for a direct peer, routers plus one for a source
+    /// route, flood hops plus one for a flood route.
+    let hopCount: UInt8?
+    /// Flood hops a flood route was learned at, the raw `FHOPS_ACC`; one
+    /// less than `hopCount`.
     let floodHops: UInt8?
     /// Two-octet region codes learned alongside a flood route.
     let floodRegions: [Data]
 
-    static let unknown = PeerRoute(kind: .unknown, hints: [], floodHops: nil, floodRegions: [])
-    static let unavailable = PeerRoute(kind: .unavailable, hints: [], floodHops: nil, floodRegions: [])
+    static let unknown = PeerRoute(
+        kind: .unknown, hints: [], hopCount: nil, floodHops: nil, floodRegions: []
+    )
+    static let unavailable = PeerRoute(
+        kind: .unavailable, hints: [], hopCount: nil, floodHops: nil, floodRegions: []
+    )
 
     /// A source route naming no routers *is* a direct path: the MAC caches the
     /// empty trace a direct reply carried rather than a separate marker.

@@ -793,7 +793,7 @@ mod tests {
             "45",
             "-s",
             "120",
-            "--hops",
+            "--flood-hops",
             "3",
             "--route",
             "a1b2,9b68",
@@ -814,7 +814,7 @@ mod tests {
         };
         assert_eq!((args.count, args.interval, args.timeout), (5, 10, 45));
         assert_eq!(args.size, 120);
-        assert_eq!(args.hops, Some(3));
+        assert_eq!(args.flood_hops, Some(3));
         assert_eq!(args.route.as_ref().unwrap().0.len(), 2);
         assert_eq!(args.channel.as_ref().unwrap().0.name(), "trail");
         assert!(args.full_source && args.salt && args.untraced);
@@ -830,7 +830,10 @@ mod tests {
         // Two bytes of the echo are the nonce that matches the reply.
         assert!(parse(&["ping", KEY, "-s", "1"]).is_err());
         assert!(parse(&["ping", KEY, "-c", "0"]).is_err());
+        assert!(parse(&["ping", KEY, "--flood-hops", "16"]).is_err());
+        // `--hops` is the old spelling of the same flag, still accepted.
         assert!(parse(&["ping", KEY, "--hops", "16"]).is_err());
+        assert!(parse(&["ping", KEY, "--hops", "4"]).is_ok());
         assert!(parse(&["ping", KEY, "--mic", "10"]).is_err());
     }
 

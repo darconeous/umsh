@@ -7,7 +7,8 @@ use umsh_core::{
 use umsh_hal::Snr;
 
 use crate::{
-    CapacityError, LocalIdentityId, MAX_RESEND_FRAME_LEN, MAX_SOURCE_ROUTE_HOPS, cache::DupCacheKey,
+    CapacityError, LocalIdentityId, MAX_RESEND_FRAME_LEN, MAX_SOURCE_ROUTE_HINTS,
+    cache::DupCacheKey,
 };
 
 /// Opaque tracking token returned for ACK-requested transmissions.
@@ -57,7 +58,7 @@ pub struct SendReceipt(pub u32);
 ///   only). `Some(n)` caps the initial `FHOPS_REM` budget; repeaters decrement it and drop
 ///   at zero. For unicast and blind unicast this is a ceiling rather than a fixed value:
 ///   a route already learned for the peer narrows the budget to what that route costs plus
-///   [`ESTABLISHED_ROUTE_EXTRA_HOPS`](crate::ESTABLISHED_ROUTE_EXTRA_HOPS), so an
+///   [`ESTABLISHED_ROUTE_EXTRA_FLOOD_HOPS`](crate::ESTABLISHED_ROUTE_EXTRA_FLOOD_HOPS), so an
 ///   established path does not re-flood the whole mesh. With that slack at zero, a peer
 ///   reached by source route or heard directly is sent no flood-hop field at all. Clear the
 ///   peer's cached route ([`MacHandle::clear_peer_route`](crate::MacHandle::clear_peer_route))
@@ -98,7 +99,7 @@ pub struct SendOptions {
     /// Whether to include a trace-signal option.
     pub trace_signal: bool,
     /// Optional explicit source route.
-    pub source_route: Option<Vec<RouterHint, MAX_SOURCE_ROUTE_HOPS>>,
+    pub source_route: Option<Vec<RouterHint, MAX_SOURCE_ROUTE_HINTS>>,
     /// Optional region-code option.
     pub region_code: Option<[u8; 2]>,
     /// Whether to include a random salt in SECINFO.
@@ -186,8 +187,8 @@ impl SendOptions {
     /// Copy a source route into fixed-capacity storage.
     pub fn try_with_source_route(mut self, route: &[RouterHint]) -> Result<Self, CapacityError> {
         let mut owned = Vec::new();
-        for hop in route {
-            owned.push(*hop).map_err(|_| CapacityError)?;
+        for hint in route {
+            owned.push(*hint).map_err(|_| CapacityError)?;
         }
         self.source_route = Some(owned);
         self.flood_hops
@@ -282,7 +283,7 @@ pub struct ResendRecord<const FRAME: usize = MAX_RESEND_FRAME_LEN> {
     /// Exact sealed frame bytes.
     pub frame: Vec<u8, FRAME>,
     /// Optional source route retained for retransmission.
-    pub source_route: Option<Vec<RouterHint, MAX_SOURCE_ROUTE_HOPS>>,
+    pub source_route: Option<Vec<RouterHint, MAX_SOURCE_ROUTE_HINTS>>,
     /// Flood budget the application originally asked for, before any narrowing
     /// against a cached route. A route-retry rebuild floods with this rather
     /// than the tight budget the failed attempt carried.
@@ -303,8 +304,8 @@ impl<const FRAME: usize> ResendRecord<FRAME> {
         let stored_route = match source_route {
             Some(route) => {
                 let mut owned = Vec::new();
-                for hop in route {
-                    owned.push(*hop).map_err(|_| CapacityError)?;
+                for hint in route {
+                    owned.push(*hint).map_err(|_| CapacityError)?;
                 }
                 Some(owned)
             }
@@ -812,9 +813,11 @@ impl PacketFamily {
     }
 }
 
-/// Iterator over packed two-byte route hops from a source-route or trace-route option.
+/// Iterator over the packed two-byte router hints of a source-route or
+/// trace-route option. Each hint names one repeater, so a route yields one
+/// fewer entry than the path has hops.
 #[derive(Clone, Copy, Debug)]
-pub struct RouteHops<'a> {
+pub struct RouterHints<'a> {
     bytes: &'a [u8],
     cursor: usize,
 }
@@ -880,13 +883,13 @@ impl RxMetadata {
     }
 }
 
-impl<'a> RouteHops<'a> {
+impl<'a> RouterHints<'a> {
     pub fn new(bytes: &'a [u8]) -> Self {
         Self { bytes, cursor: 0 }
     }
 }
 
-impl Iterator for RouteHops<'_> {
+impl Iterator for RouterHints<'_> {
     type Item = RouterHint;
 
     fn next(&mut self) -> Option<Self::Item> {
@@ -1123,9 +1126,10 @@ impl<'a> ReceivedPacketRef<'a> {
             .and_then(|range| self.wire.get(range.clone()))
     }
 
-    /// Iterate decoded source-route hops from the packed option bytes.
-    pub fn source_route_hops(&self) -> RouteHops<'a> {
-        RouteHops::new(self.source_route().unwrap_or(&[]))
+    /// Iterate the router hints of the source-route option, one per
+    /// repeater still to visit.
+    pub fn source_route_hints(&self) -> RouterHints<'a> {
+        RouterHints::new(self.source_route().unwrap_or(&[]))
     }
 
     pub fn trace_route(&self) -> Option<&'a [u8]> {
@@ -1135,9 +1139,10 @@ impl<'a> ReceivedPacketRef<'a> {
             .and_then(|range| self.wire.get(range.clone()))
     }
 
-    /// Iterate decoded trace-route hops from the packed option bytes.
-    pub fn trace_route_hops(&self) -> RouteHops<'a> {
-        RouteHops::new(self.trace_route().unwrap_or(&[]))
+    /// Iterate the router hints of the trace-route option, one per repeater
+    /// the frame passed through, most recent first.
+    pub fn trace_route_hints(&self) -> RouterHints<'a> {
+        RouterHints::new(self.trace_route().unwrap_or(&[]))
     }
 
     /// The packed trace-signal option, when the frame carried one. Entry `N`
@@ -1150,28 +1155,30 @@ impl<'a> ReceivedPacketRef<'a> {
             .and_then(|range| self.wire.get(range.clone()))
     }
 
-    /// Radio links this frame crossed to reach us, counting the final one into
-    /// this node: a frame heard directly from its sender is one hop. `None`
-    /// when the frame was source-routed without a trace route — the hops it
-    /// took are then real but unrecorded, and a count nobody measured is not
-    /// reported.
+    /// Hops this frame took to reach us, a hop being one transmission between
+    /// adjacent nodes: a frame heard directly from its sender is one hop.
+    /// `None` when the frame was source-routed without a trace route — the
+    /// hops it took are then real but unrecorded, and a count nobody measured
+    /// is not reported.
     ///
-    /// The two wire counters answer different questions and are not additive.
-    /// A repeater prepends its hint to the trace route however it forwarded,
-    /// so the trace names every hop the frame took; `FHOPS` accumulates on
-    /// flood forwards only, because a source-routed hop spends no flood budget
-    /// (packet-structure.md § Flood Hop Count). The trace is therefore the
-    /// larger of the two whenever it is present, and the maximum is what
-    /// reads correctly from a frame carrying only one of them.
+    /// A path's hop count is its source-routed hops plus its flood hops plus
+    /// one, and the two wire records count those pieces differently. A
+    /// repeater prepends its hint to the trace route however it forwarded, so
+    /// the trace names every repeater and its hint count covers both kinds of
+    /// hop; `FHOPS_ACC` counts flood hops only, because a source-routed hop
+    /// spends no flood budget (packet-structure.md § Flood Hop Count). The
+    /// trace is therefore the larger of the two whenever it is present, and
+    /// the maximum is what reads correctly from a frame carrying only one of
+    /// them. The added one is the transmission neither count covers.
     ///
     /// Without a trace, the source-route option is what disambiguates: each
     /// repeater consumes its own hint but keeps the option, so a routed frame
     /// arrives carrying it — usually emptied — and its presence is the tell
-    /// that the flood accumulator did not see every hop.
+    /// that `FHOPS_ACC` did not see every hop.
     pub fn hop_count(&self) -> Option<u8> {
         let flooded = self.flood_hops().map(FloodHops::accumulated).unwrap_or(0);
         if self.trace_route().is_some() {
-            let traced = u8::try_from(self.trace_route_hop_count()).unwrap_or(u8::MAX);
+            let traced = u8::try_from(self.trace_route_hint_count()).unwrap_or(u8::MAX);
             Some(traced.max(flooded).saturating_add(1))
         } else if self.source_route().is_some() {
             None
@@ -1180,13 +1187,17 @@ impl<'a> ReceivedPacketRef<'a> {
         }
     }
 
-    pub fn source_route_hop_count(&self) -> usize {
+    /// Router hints left in the source-route option: repeaters still to
+    /// visit, zero for a consumed or absent route.
+    pub fn source_route_hint_count(&self) -> usize {
         self.source_route()
             .map(|route| route.len() / 2)
             .unwrap_or(0)
     }
 
-    pub fn trace_route_hop_count(&self) -> usize {
+    /// Router hints in the trace-route option: repeaters the frame passed
+    /// through, one less than the hops it took.
+    pub fn trace_route_hint_count(&self) -> usize {
         self.trace_route().map(|route| route.len() / 2).unwrap_or(0)
     }
 }

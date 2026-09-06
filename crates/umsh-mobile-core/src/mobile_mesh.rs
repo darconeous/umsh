@@ -268,7 +268,12 @@ pub struct MobileMeshRouteRecord {
     /// Router hints in source-to-destination order. Populated for `Source`
     /// routes only; the two endpoints are not included.
     pub hints: Vec<Vec<u8>>,
-    /// Hop budget carried by a `Flood` route.
+    /// Distance to the peer in hops, the number a ping reply reports: one
+    /// for a direct peer, one more than `hints` for a source route, one more
+    /// than `flood_hops` for a flood route. `None` when nothing is cached.
+    pub hop_count: Option<u8>,
+    /// Flood hops (`FHOPS_ACC`) carried by a `Flood` route, the raw wire
+    /// value; one less than `hop_count`.
     pub flood_hops: Option<u8>,
     /// Two-octet region codes learned with a `Flood` route.
     pub flood_regions: Vec<Vec<u8>>,
@@ -279,6 +284,7 @@ impl MobileMeshRouteRecord {
         Self {
             kind: MobileMeshRouteKind::Unknown,
             hints: Vec::new(),
+            hop_count: None,
             flood_hops: None,
             flood_regions: Vec::new(),
         }
@@ -287,20 +293,27 @@ impl MobileMeshRouteRecord {
 
 impl From<Option<umsh_mac::CachedRoute>> for MobileMeshRouteRecord {
     fn from(route: Option<umsh_mac::CachedRoute>) -> Self {
+        let hop_count = route.as_ref().map(umsh_mac::CachedRoute::hop_count);
         match route {
             None => Self::unknown(),
             Some(umsh_mac::CachedRoute::Direct) => Self {
                 kind: MobileMeshRouteKind::Direct,
+                hop_count,
                 ..Self::unknown()
             },
-            Some(umsh_mac::CachedRoute::Source(hops)) => Self {
+            Some(umsh_mac::CachedRoute::Source(hints)) => Self {
                 kind: MobileMeshRouteKind::Source,
-                hints: hops.iter().map(|hop| hop.0.to_vec()).collect(),
+                hints: hints.iter().map(|hint| hint.0.to_vec()).collect(),
+                hop_count,
                 ..Self::unknown()
             },
-            Some(umsh_mac::CachedRoute::Flood { hops, regions }) => Self {
+            Some(umsh_mac::CachedRoute::Flood {
+                flood_hops,
+                regions,
+            }) => Self {
                 kind: MobileMeshRouteKind::Flood,
-                flood_hops: Some(hops),
+                hop_count,
+                flood_hops: Some(flood_hops),
                 flood_regions: regions.iter().map(|region| region.to_vec()).collect(),
                 ..Self::unknown()
             },
@@ -2985,8 +2998,8 @@ async fn run_worker(
                 lqi: packet.lqi().map(|lqi| lqi.get()),
                 hop_count: packet.hop_count(),
                 route_hints: packet
-                    .trace_route_hops()
-                    .map(|hop| hop.0.to_vec())
+                    .trace_route_hints()
+                    .map(|hint| hint.0.to_vec())
                     .collect(),
                 source_authenticated: packet.source_authenticated(),
                 buffered_age_seconds: packet.rx().buffered_age_s(),

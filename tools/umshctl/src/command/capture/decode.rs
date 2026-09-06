@@ -493,7 +493,7 @@ fn route_text(value: &[u8]) -> String {
     }
     value
         .chunks_exact(2)
-        .map(|hop| RouterHint([hop[0], hop[1]]).to_string())
+        .map(|hint| RouterHint([hint[0], hint[1]]).to_string())
         .collect::<Vec<_>>()
         .join(",")
 }

@@ -16,8 +16,8 @@ use umsh_hal::{Clock, CounterStore, Radio, RxBuffered, RxInfo, RxOrigin, Snr, Tx
 use crate::{
     AddPeerError, CapacityError, DEFAULT_ACKS, DEFAULT_CHANNEL_HINT_REPLAY, DEFAULT_CHANNEL_REPLAY,
     DEFAULT_CHANNELS, DEFAULT_DUP, DEFAULT_IDENTITIES, DEFAULT_PEERS, DEFAULT_TX,
-    ESTABLISHED_ROUTE_EXTRA_HOPS, MAX_CAD_ATTEMPTS, MAX_FLOOD_HOPS, MAX_FORWARD_RETRIES,
-    MAX_RESEND_FRAME_LEN, MAX_SOURCE_ROUTE_HOPS, Platform, ReplayVerdict, ReplayWindow,
+    ESTABLISHED_ROUTE_EXTRA_FLOOD_HOPS, MAX_CAD_ATTEMPTS, MAX_FLOOD_HOPS, MAX_FORWARD_RETRIES,
+    MAX_RESEND_FRAME_LEN, MAX_SOURCE_ROUTE_HINTS, Platform, ReplayVerdict, ReplayWindow,
     cache::{DupCacheKey, DuplicateCache},
     peers::CachedRoute,
     peers::{ChannelTable, PeerCryptoMap, PeerId, PeerRegistry},
@@ -1728,8 +1728,11 @@ impl<
                 Some(CachedRoute::Source(route)) if !route.is_empty() => {
                     builder = builder.source_route(route.as_slice());
                 }
-                Some(CachedRoute::Flood { hops, regions }) => {
-                    builder = builder.flood_hops((*hops).clamp(1, MAX_FLOOD_HOPS));
+                Some(CachedRoute::Flood {
+                    flood_hops,
+                    regions,
+                }) => {
+                    builder = builder.flood_hops((*flood_hops).clamp(1, MAX_FLOOD_HOPS));
                     for region in regions {
                         builder = builder.region_code(*region);
                     }
@@ -3516,7 +3519,7 @@ impl<
                             // before the retry it just scheduled ever aired.
                             let retry_deadline_ms =
                                 not_before_ms.saturating_add(self.forwarded_ack_timeout_ms(
-                                    Self::allowed_hop_distance(rewritten.frame.as_slice()),
+                                    Self::allowed_forward_count(rewritten.frame.as_slice()),
                                 ));
                             if let Some(pending) = self
                                 .identity_mut(identity_id)
@@ -3789,7 +3792,7 @@ impl<
         from: LocalIdentityId,
         peer: PublicKey,
         frame: &[u8],
-        source_route: Option<&Vec<RouterHint, MAX_SOURCE_ROUTE_HOPS>>,
+        source_route: Option<&Vec<RouterHint, MAX_SOURCE_ROUTE_HINTS>>,
         requested_flood_hops: Option<u8>,
     ) -> Result<SendReceipt, SendError> {
         let resend = ResendRecord::try_new(frame, source_route.map(|route| route.as_slice()))
@@ -3867,7 +3870,7 @@ impl<
         &self,
         peer_id: PeerId,
         options: &SendOptions,
-    ) -> Option<Vec<RouterHint, MAX_SOURCE_ROUTE_HOPS>> {
+    ) -> Option<Vec<RouterHint, MAX_SOURCE_ROUTE_HINTS>> {
         // An explicitly supplied route that constrains no hop is the same as
         // no route at all, and must not reach the wire as an empty option.
         if let Some(route) = options.source_route.as_ref() {
@@ -3925,7 +3928,7 @@ impl<
     fn needs_route_discovery(
         &self,
         peer_id: PeerId,
-        source_route: Option<&Vec<RouterHint, MAX_SOURCE_ROUTE_HOPS>>,
+        source_route: Option<&Vec<RouterHint, MAX_SOURCE_ROUTE_HINTS>>,
         flood_hops: Option<u8>,
         ack_requested: bool,
     ) -> bool {
@@ -3972,7 +3975,7 @@ impl<
     ///
     /// `options.flood_hops` is a ceiling, not a target: a learned route only
     /// lowers it, and `no_flood()` still emits no flood-hop field at all. Each
-    /// route form keeps [`ESTABLISHED_ROUTE_EXTRA_HOPS`] of slack beyond the
+    /// route form keeps [`ESTABLISHED_ROUTE_EXTRA_FLOOD_HOPS`] of slack beyond the
     /// flood distance it already covers. A source route covers that distance
     /// without spending flood budget, so its slack is the entire budget.
     ///
@@ -3988,7 +3991,7 @@ impl<
         &self,
         peer_id: PeerId,
         options: &SendOptions,
-        source_route: Option<&Vec<RouterHint, MAX_SOURCE_ROUTE_HOPS>>,
+        source_route: Option<&Vec<RouterHint, MAX_SOURCE_ROUTE_HINTS>>,
     ) -> Option<u8> {
         let requested = options.flood_hops?;
         let cached = self
@@ -4004,16 +4007,16 @@ impl<
             // touch `FHOPS` — so the whole budget is slack past the route's
             // end. Heard directly is the same shape: our own transmission is
             // the delivery, and any slack only buys a repeater backstop.
-            (Some(_), _) | (None, Some(CachedRoute::Direct)) => ESTABLISHED_ROUTE_EXTRA_HOPS,
+            (Some(_), _) | (None, Some(CachedRoute::Direct)) => ESTABLISHED_ROUTE_EXTRA_FLOOD_HOPS,
             // Flooding has to cover the distance the peer was last heard from.
-            (None, Some(CachedRoute::Flood { hops, .. })) => {
-                hops.saturating_add(ESTABLISHED_ROUTE_EXTRA_HOPS)
+            (None, Some(CachedRoute::Flood { flood_hops, .. })) => {
+                flood_hops.saturating_add(ESTABLISHED_ROUTE_EXTRA_FLOOD_HOPS)
             }
             // A cached source route not attached to this send (the caller
             // suppressed it) has to be flooded end to end instead.
             (None, Some(CachedRoute::Source(route))) => u8::try_from(route.len())
                 .unwrap_or(u8::MAX)
-                .saturating_add(ESTABLISHED_ROUTE_EXTRA_HOPS),
+                .saturating_add(ESTABLISHED_ROUTE_EXTRA_FLOOD_HOPS),
             // Nothing known about the peer: first contact floods as asked.
             (None, None) => MAX_FLOOD_HOPS,
         };
@@ -4834,7 +4837,7 @@ impl<
         self.peer_registry.update_route(
             peer_id,
             crate::CachedRoute::Flood {
-                hops: flood_hops.accumulated(),
+                flood_hops: flood_hops.accumulated(),
                 regions,
             },
         );
@@ -4891,7 +4894,7 @@ impl<
     fn source_route_from_trace(
         &self,
         trace_bytes: &[u8],
-    ) -> Option<heapless::Vec<RouterHint, { crate::MAX_SOURCE_ROUTE_HOPS }>> {
+    ) -> Option<heapless::Vec<RouterHint, { crate::MAX_SOURCE_ROUTE_HINTS }>> {
         if trace_bytes.len() % 2 != 0 {
             return None;
         }
@@ -5334,8 +5337,8 @@ impl<
                     // one grown past what the local buffer can extend is
                     // over-limit input to drop, not to index by.
                     OptionNumber::TraceRoute => {
-                        let mut trace = [0u8; crate::MAX_SOURCE_ROUTE_HOPS * 2 + 2];
-                        if value.len() > crate::MAX_SOURCE_ROUTE_HOPS * 2 {
+                        let mut trace = [0u8; crate::MAX_SOURCE_ROUTE_HINTS * 2 + 2];
+                        if value.len() > crate::MAX_SOURCE_ROUTE_HINTS * 2 {
                             return Err(CapacityError);
                         }
                         trace[..2].copy_from_slice(&plan.router_hint.0);
@@ -5348,8 +5351,8 @@ impl<
                     // N of this option is the signal quality at which the
                     // repeater named by hint N received the frame.
                     OptionNumber::TraceSignal => {
-                        let mut trace = [0u8; crate::MAX_SOURCE_ROUTE_HOPS * 2 + 2];
-                        if value.len() > crate::MAX_SOURCE_ROUTE_HOPS * 2 {
+                        let mut trace = [0u8; crate::MAX_SOURCE_ROUTE_HINTS * 2 + 2];
+                        if value.len() > crate::MAX_SOURCE_ROUTE_HINTS * 2 {
                             return Err(CapacityError);
                         }
                         trace[..2].copy_from_slice(&plan.signal.as_bytes());
@@ -5556,7 +5559,7 @@ impl<
         &self,
         peer: &PublicKey,
         header: &PacketHeader,
-        source_route: Option<&heapless::Vec<RouterHint, MAX_SOURCE_ROUTE_HOPS>>,
+        source_route: Option<&heapless::Vec<RouterHint, MAX_SOURCE_ROUTE_HINTS>>,
         requested: Option<u8>,
     ) -> Option<u8> {
         // The failed attempt was narrowed against a route assumption — either
@@ -5576,8 +5579,8 @@ impl<
             .peer_registry
             .lookup_by_key(peer)
             .and_then(|(_, info)| match info.route.as_ref() {
-                Some(crate::CachedRoute::Flood { hops, .. }) => {
-                    Some((*hops).clamp(1, MAX_FLOOD_HOPS))
+                Some(crate::CachedRoute::Flood { flood_hops, .. }) => {
+                    Some((*flood_hops).clamp(1, MAX_FLOOD_HOPS))
                 }
                 _ => None,
             });
@@ -5715,12 +5718,12 @@ impl<
         let mut delay_ms = self.sample_flood_contention_delay_ms(rx, options);
         // The overheard copy may itself elicit an immediate ACK from the
         // destination; give that ACK the same head start as on first receipt.
-        let overheard_has_route_hops = options
+        let overheard_has_route_hints = options
             .source_route
             .as_ref()
             .map(|range| !range.is_empty())
             .unwrap_or(false);
-        if header.ack_requested() && !overheard_has_route_hops {
+        if header.ack_requested() && !overheard_has_route_hints {
             delay_ms = delay_ms.saturating_add(self.ack_guard_delay_ms());
         }
         let _ = self.tx_queue.enqueue_with_state(
@@ -5841,7 +5844,7 @@ impl<
         let sent_ms = self.clock.now_ms();
         let direct_ack_deadline_ms = sent_ms.saturating_add(self.direct_ack_timeout_ms());
         let forwarded_ack_deadline_ms = sent_ms
-            .saturating_add(self.forwarded_ack_timeout_ms(Self::allowed_hop_distance(frame)));
+            .saturating_add(self.forwarded_ack_timeout_ms(Self::allowed_forward_count(frame)));
         let repeat_only_deadline_ms = sent_ms.saturating_add(self.repeat_confirm_timeout_ms());
         let confirm_timeout_ms = self.forward_confirm_timeout_ms();
         let confirm_key = Self::confirmation_key(frame);
@@ -5959,7 +5962,7 @@ impl<
     /// An attached source route is the obvious case: the named path did not
     /// deliver. The subtler one is a flood budget the MAC narrowed on the
     /// sender's behalf. A peer cached as [`CachedRoute::Direct`] transmits at
-    /// [`ESTABLISHED_ROUTE_EXTRA_HOPS`] however wide a flood the application
+    /// [`ESTABLISHED_ROUTE_EXTRA_FLOOD_HOPS`] however wide a flood the application
     /// asked for, so a peer that has since moved out of direct range cannot be
     /// reached by repeating the same frame — and nothing in the options records
     /// that a route was ever assumed. That is the same staleness as a dead
@@ -6016,13 +6019,13 @@ impl<
     ///
     /// The retry ladder covers the first hop — that is the only hop this node
     /// can observe. Everything past it is distance: the packet has to cross
-    /// `hops` forwards to arrive and the ACK has to cross them back, and each
-    /// crossing costs a frame time plus the forwarder's contention window and
-    /// ACK guard. Charging for that distance is what keeps a delivery that
+    /// `forwards` repeaters to arrive and the ACK has to cross them back, and
+    /// each crossing costs a frame time plus the forwarder's contention window
+    /// and ACK guard. Charging for that distance is what keeps a delivery that
     /// genuinely succeeded from reporting a timeout to the application; a
     /// single frame time, which is what this allowed before, only ever
     /// sufficed for a one-hop return.
-    fn forwarded_ack_timeout_ms(&self, hops: u8) -> u64 {
+    fn forwarded_ack_timeout_ms(&self, forwards: u8) -> u64 {
         let t_frame_ms = u64::from(self.radio.t_frame_ms());
         let per_hop_ms = self
             .forward_confirm_timeout_ms()
@@ -6031,30 +6034,31 @@ impl<
         self.repeat_confirm_timeout_ms().saturating_add(
             per_hop_ms
                 .saturating_mul(2)
-                .saturating_mul(u64::from(hops.max(1))),
+                .saturating_mul(u64::from(forwards.max(1))),
         )
     }
 
-    /// Hops the sender allowed this frame, and so the distance its ACK has to
-    /// come back over.
+    /// Repeater forwards the sender allowed this frame, and so the distance
+    /// its ACK has to come back over.
     ///
-    /// A hybrid route spends both budgets in turn, so they add. The floor of
-    /// one keeps a frame whose header cannot be re-read from collapsing the
-    /// return allowance to nothing.
-    fn allowed_hop_distance(frame: &[u8]) -> u8 {
+    /// A hybrid route spends both budgets in turn, so they add: every
+    /// source-route hint names one forward, and every remaining flood hop
+    /// permits one more. The floor of one keeps a frame whose header cannot
+    /// be re-read from collapsing the return allowance to nothing.
+    fn allowed_forward_count(frame: &[u8]) -> u8 {
         let Ok(header) = PacketHeader::parse(frame) else {
             return 1;
         };
-        let mut hops = header
+        let mut forwards = header
             .flood_hops
             .map(|flood_hops| flood_hops.remaining())
             .unwrap_or(0);
         if let Ok(options) = ParsedOptions::extract(frame, header.options_range.clone())
             && let Some(range) = options.source_route
         {
-            hops = hops.saturating_add(u8::try_from(range.len() / 2).unwrap_or(u8::MAX));
+            forwards = forwards.saturating_add(u8::try_from(range.len() / 2).unwrap_or(u8::MAX));
         }
-        hops.max(1)
+        forwards.max(1)
     }
 
     /// How long a send waits to overhear its own packet carried onward before

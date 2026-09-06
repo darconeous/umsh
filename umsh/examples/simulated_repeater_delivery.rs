@@ -150,8 +150,8 @@ async fn async_main() {
     let alice_first = inspect_next_queued_frame(&alice_mac, "alice queued hello")
         .await
         .expect("alice hello should be queued");
-    assert_eq!(alice_first.source_route_hops, 0);
-    assert_eq!(alice_first.trace_route_hops, 0);
+    assert_eq!(alice_first.source_route_hints, 0);
+    assert_eq!(alice_first.trace_route_hints, 0);
     pump_until(
         &mut alice_host,
         &repeater_handle,
@@ -177,7 +177,7 @@ async fn async_main() {
         .await
         .expect("bob reply should be queued");
     assert!(
-        bob_reply.source_route_hops > 0,
+        bob_reply.source_route_hints > 0,
         "bob reply should use a learned source route instead of pure flooding"
     );
     pump_until(
@@ -207,7 +207,7 @@ async fn async_main() {
         .await
         .expect("alice follow-up should be queued");
     assert!(
-        alice_follow_up.source_route_hops > 0,
+        alice_follow_up.source_route_hints > 0,
         "alice follow-up should use a learned source route instead of flooding again"
     );
     pump_until(
@@ -230,7 +230,7 @@ async fn async_main() {
         .await
         .expect("pfs request should be queued");
     assert!(
-        pfs_request.source_route_hops > 0,
+        pfs_request.source_route_hints > 0,
         "pfs request should also use the learned source route"
     );
     let alice_raw_before = *alice_raw_received.borrow();
@@ -434,8 +434,8 @@ struct QueuedFrameSummary {
     encrypted: bool,
     full_source: bool,
     flood_hops: Option<umsh::core::FloodHops>,
-    source_route_hops: usize,
-    trace_route_hops: usize,
+    source_route_hints: usize,
+    trace_route_hints: usize,
 }
 
 async fn inspect_next_queued_frame(
@@ -471,12 +471,12 @@ fn summarize_queued_frame(frame: &[u8]) -> Result<QueuedFrameSummary, umsh::core
             .unwrap_or(false),
         full_source: header.fcf.full_source(),
         flood_hops: header.flood_hops,
-        source_route_hops: options
+        source_route_hints: options
             .source_route
             .as_ref()
             .map(|range| frame[range.clone()].len() / 2)
             .unwrap_or(0),
-        trace_route_hops: options
+        trace_route_hints: options
             .trace_route
             .as_ref()
             .map(|range| frame[range.clone()].len() / 2)
@@ -486,27 +486,27 @@ fn summarize_queued_frame(frame: &[u8]) -> Result<QueuedFrameSummary, umsh::core
 
 fn format_queued_summary(summary: QueuedFrameSummary) -> String {
     format!(
-        "ptype={:?} enc={} full_source={} flood={:?} source_route_hops={} trace_route_hops={}",
+        "ptype={:?} enc={} full_source={} flood={:?} source_route_hints={} trace_route_hints={}",
         summary.packet_type,
         summary.encrypted,
         summary.full_source,
         summary.flood_hops,
-        summary.source_route_hops,
-        summary.trace_route_hops,
+        summary.source_route_hints,
+        summary.trace_route_hints,
     )
 }
 
 fn summarize_received_packet(packet: &umsh::node::ReceivedPacketRef<'_>) -> String {
     format!(
-        "ptype={:?} secure={} enc={} auth={} full_source={} flood={:?} source_route_hops={} trace_route_hops={} rssi={:?} snr={:?}",
+        "ptype={:?} secure={} enc={} auth={} full_source={} flood={:?} source_route_hints={} trace_route_hints={} rssi={:?} snr={:?}",
         packet.packet_type(),
         packet.is_secure(),
         packet.encrypted(),
         packet.source_authenticated(),
         packet.has_full_source(),
         packet.flood_hops(),
-        packet.source_route_hop_count(),
-        packet.trace_route_hop_count(),
+        packet.source_route_hint_count(),
+        packet.trace_route_hint_count(),
         packet.rssi(),
         packet.snr(),
     )
@@ -525,9 +525,12 @@ async fn cached_route_summary(mac: &AsyncRefCell<RepeaterMac>, peer: PublicKey) 
         Some(CachedRoute::Direct) => "direct".to_string(),
         Some(CachedRoute::Source(route)) => format!(
             "source {:?}",
-            route.iter().map(|hop| hop.0).collect::<std::vec::Vec<_>>()
+            route
+                .iter()
+                .map(|hint| hint.0)
+                .collect::<std::vec::Vec<_>>()
         ),
-        Some(CachedRoute::Flood { hops, .. }) => format!("flood hops={hops}"),
+        Some(CachedRoute::Flood { flood_hops, .. }) => format!("flood hops={flood_hops}"),
         None => "none".to_string(),
     }
 }
@@ -612,15 +615,15 @@ where
 fn summarize_mac_event(event: &MacEventRef<'_>) -> String {
     match event {
         MacEventRef::Received(packet) => format!(
-            "received ptype={:?} secure={} enc={} auth={} full_source={} flood={:?} source_route_hops={} trace_route_hops={} rssi={:?} snr={:?}",
+            "received ptype={:?} secure={} enc={} auth={} full_source={} flood={:?} source_route_hints={} trace_route_hints={} rssi={:?} snr={:?}",
             packet.packet_type(),
             packet.is_secure(),
             packet.encrypted(),
             packet.source_authenticated(),
             packet.has_full_source(),
             packet.flood_hops(),
-            packet.source_route_hop_count(),
-            packet.trace_route_hop_count(),
+            packet.source_route_hint_count(),
+            packet.trace_route_hint_count(),
             packet.rssi(),
             packet.snr(),
         ),

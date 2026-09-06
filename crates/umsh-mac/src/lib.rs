@@ -184,7 +184,9 @@ use embedded_hal_async::delay::DelayNs;
 
 #[cfg(test)]
 pub(crate) use umsh_crypto::replay::{RECENT_MIC_CAPACITY, REPLAY_STALE_MS};
-pub(crate) const MAX_SOURCE_ROUTE_HOPS: usize = 15;
+/// Router hints a source route or trace route can name: one per repeater,
+/// so a path one hop longer than this.
+pub(crate) const MAX_SOURCE_ROUTE_HINTS: usize = 15;
 pub(crate) const MAX_RESEND_FRAME_LEN: usize = 256;
 pub(crate) const DEFAULT_DUP_CACHE_SIZE: usize = 64;
 pub(crate) const MAX_FORWARD_RETRIES: u8 = 3;
@@ -246,7 +248,7 @@ pub const MAX_FLOOD_HOPS: u8 = 15;
 /// narrowed it to, so a peer that moved is re-flooded on retry. A send with no
 /// ack coming has no such recovery and no repeat to listen for — that is the
 /// reliability this trades away for the airtime.
-pub const ESTABLISHED_ROUTE_EXTRA_HOPS: u8 = 0;
+pub const ESTABLISHED_ROUTE_EXTRA_FLOOD_HOPS: u8 = 0;
 
 /// Error returned when a fixed-capacity MAC data structure is full.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -330,8 +332,8 @@ pub use peers::{
 };
 pub use send::{
     AckState, ChannelInfoRef, CompletionSignal, MacEventRef, PacketFamily, PendingAck,
-    PendingAckError, QueuedTx, ReceivedPacketRef, ResendRecord, RouteHops, RxMetadata, SendOptions,
-    SendReceipt, TxPriority, TxQueue,
+    PendingAckError, QueuedTx, ReceivedPacketRef, ResendRecord, RouterHints, RxMetadata,
+    SendOptions, SendReceipt, TxPriority, TxQueue,
 };
 pub use umsh_hal::Snr;
 

@@ -33,7 +33,7 @@ use crate::routes::RouteCache;
 ///
 /// The MAC clamps this to a cached route's own distance when it has one,
 /// so this is the budget for a first message into an unmapped mesh.
-const DISCOVERY_HOPS: u8 = 5;
+const DISCOVERY_FLOOD_HOPS: u8 = 5;
 
 #[derive(Debug, clap::Args)]
 pub struct SendArgs {
@@ -143,7 +143,7 @@ where
 
     let options = SendOptions::default()
         .with_ack_requested(!args.no_ack)
-        .with_flood_hops(DISCOVERY_HOPS);
+        .with_flood_hops(DISCOVERY_FLOOD_HOPS);
     // What the radio had already sent, so the wait below can tell this
     // frame's transmission from any that came before it.
     let before = stack.handle.counters().await;

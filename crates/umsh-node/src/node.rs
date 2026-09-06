@@ -1157,7 +1157,7 @@ impl<M: MacBackend> LocalNode<M> {
         if let Some(idx) = idx {
             let ping = state.pending_pings.swap_remove(idx);
             let rtt_ms = now_ms.saturating_sub(ping.sent_at_ms);
-            let route_hints = packet.trace_route_hops().collect::<Vec<_>>();
+            let route_hints = packet.trace_route_hints().collect::<Vec<_>>();
             let metadata = PongMetadata {
                 round_trip_ms: rtt_ms,
                 hop_count: packet.hop_count(),

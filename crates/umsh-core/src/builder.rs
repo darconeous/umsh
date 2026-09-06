@@ -460,16 +460,17 @@ macro_rules! impl_configuring_common {
                 self
             }
 
-            /// Add a source-route option from a router-hint slice.
-            pub fn source_route(mut self, hops: &[crate::RouterHint]) -> Self {
+            /// Add a source-route option from a router-hint slice, one hint
+            /// per repeater in send order.
+            pub fn source_route(mut self, hints: &[crate::RouterHint]) -> Self {
                 let mut encoded = [0u8; 30];
-                let needed = hops.len() * 2;
+                let needed = hints.len() * 2;
                 if needed > encoded.len() {
                     self.option_error = Some(BuildError::BufferTooSmall);
                     return self;
                 }
-                for (index, hop) in hops.iter().enumerate() {
-                    encoded[index * 2..index * 2 + 2].copy_from_slice(&hop.0);
+                for (index, hint) in hints.iter().enumerate() {
+                    encoded[index * 2..index * 2 + 2].copy_from_slice(&hint.0);
                 }
                 self.push_option(OptionNumber::SourceRoute.as_u16(), &encoded[..needed]);
                 self

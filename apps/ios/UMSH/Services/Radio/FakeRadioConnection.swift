@@ -564,6 +564,7 @@ actor FakeRadioConnection: RadioConnection {
             : RadioPeerRoute(
                 kind: .source,
                 hints: [Data([0x12, 0x34])],
+                hopCount: 2,
                 floodHops: nil,
                 floodRegions: []
             )

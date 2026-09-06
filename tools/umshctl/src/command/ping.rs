@@ -58,18 +58,20 @@ pub struct PingArgs {
           conflicts_with = "ack_only", value_parser = clap::value_parser!(u16).range(2..))]
     pub size: u16,
 
-    /// Flood-hop ceiling. `0` sends without a flood budget at all.
-    #[arg(long, value_name = "HOPS", value_parser = clap::value_parser!(u8).range(0..=MAX_FLOOD_HOPS as i64))]
-    pub hops: Option<u8>,
+    /// Flood-hop ceiling (`FHOPS_REM`): repeater forwards the ping may spend,
+    /// one less than the hops it can travel. `0` sends without a flood
+    /// budget at all.
+    #[arg(long, alias = "hops", value_name = "FLOOD_HOPS", value_parser = clap::value_parser!(u8).range(0..=MAX_FLOOD_HOPS as i64))]
+    pub flood_hops: Option<u8>,
 
     /// Flood even where a route to the target is already cached.
     #[arg(long, conflicts_with = "route")]
     pub flood: bool,
 
     /// Steer the ping down an explicit route: a comma-separated list of
-    /// hops, first hop first, each four hex digits of a router hint or a
-    /// full node key.
-    #[arg(long, value_name = "HOP,HOP")]
+    /// routers, first router first, each four hex digits of a router hint
+    /// or a full node key.
+    #[arg(long, value_name = "HINT,HINT")]
     pub route: Option<RouteArg>,
 
     /// Ping inside a channel, as a blind unicast—a channel name, or the
@@ -129,11 +131,12 @@ impl PingArgs {
                 .try_with_source_route(&[])
                 .map_err(|error| anyhow!("{error:?}"))?;
         }
-        // After the route, which fills in a hop budget of its own when
-        // none was set: an explicit `--hops` is the one the caller meant.
-        options = match self.hops {
+        // After the route, which fills in a flood budget of its own when
+        // none was set: an explicit `--flood-hops` is the one the caller
+        // meant.
+        options = match self.flood_hops {
             Some(0) => options.no_flood(),
-            Some(hops) => options.with_flood_hops(hops),
+            Some(flood_hops) => options.with_flood_hops(flood_hops),
             None => options,
         };
         if let Some(region) = self.region {
@@ -389,7 +392,7 @@ fn describe_shape(args: &PingArgs, options: &SendOptions) -> String {
             "route {}",
             route
                 .iter()
-                .map(|hop| hop.to_string())
+                .map(|hint| hint.to_string())
                 .collect::<Vec<_>>()
                 .join(" → ")
         )),
@@ -422,7 +425,7 @@ fn report(seq: u32, args: &PingArgs, reply: &Reply) {
                     metadata
                         .route_hints
                         .iter()
-                        .map(|hop| hop.to_string())
+                        .map(|hint| hint.to_string())
                         .collect::<Vec<_>>()
                         .join(" → ")
                 ));

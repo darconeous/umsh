@@ -82,9 +82,9 @@ Where:
 > flood hop is performed by the *next* repeater, which sees an empty route and
 > pays for it there.
 
-The sum `FHOPS_REM + FHOPS_ACC` is constant across forwarding hops and usually equals the original flood hop limit set by the sender. An exception to this rule is [bridging](routing-overview.md#bridging), which can decrease `FHOPS_REM` unilaterally. The maximum flood radius is 15 hops; longer paths can be achieved by combining source routing with flooding (see [Routing Implications](repeater-operation.md#routing-implications)).
+The sum `FHOPS_REM + FHOPS_ACC` is constant across forwarding hops and usually equals the original flood hop limit set by the sender. An exception to this rule is [bridging](routing-overview.md#bridging), which can decrease `FHOPS_REM` unilaterally. The maximum flood radius is 15 flood hops, which is a path of sixteen hops when no source route is involved; longer paths can be achieved by combining source routing with flooding (see [Routing Implications](repeater-operation.md#routing-implications)).
 
-`FHOPS_ACC` enables the destination to determine how many flood hops the packet traversed, which is used for [MAC ack routing](packet-types.md#mac-ack-packet) when no trace route is available.
+`FHOPS_ACC` enables the destination to determine how many flood hops the packet traversed — one less than the hops it took, unless a source route carried it part of the way — which is used for [MAC ack routing](packet-types.md#mac-ack-packet) when no trace route is available.
 
 ### Options Field
 

@@ -263,8 +263,14 @@ fn render_route(route: &CachedRoute) -> String {
         CachedRoute::Source(hints) => {
             format!("source {}", render_pairs(hints.iter().map(|hint| hint.0)))
         }
-        CachedRoute::Flood { hops, regions } => {
-            format!("flood {hops} {}", render_pairs(regions.iter().copied()))
+        CachedRoute::Flood {
+            flood_hops,
+            regions,
+        } => {
+            format!(
+                "flood {flood_hops} {}",
+                render_pairs(regions.iter().copied())
+            )
         }
     }
 }
@@ -306,8 +312,8 @@ fn parse_line(line: &str) -> Option<([u8; 32], RouteRecord)> {
             CachedRoute::source(&hints)?
         }
         "flood" => {
-            let hops = fields.next()?.parse::<u8>().ok()?;
-            CachedRoute::flood(hops, &parse_pairs(fields.next()?)?)?
+            let flood_hops = fields.next()?.parse::<u8>().ok()?;
+            CachedRoute::flood(flood_hops, &parse_pairs(fields.next()?)?)?
         }
         _ => return None,
     };
@@ -327,10 +333,14 @@ fn parse_line(line: &str) -> Option<([u8; 32], RouteRecord)> {
 }
 
 /// How a route reads in a listing: what it does, not how it is encoded.
+///
+/// A flood route is described by its distance in hops, the number a ping
+/// reply reports, with the wire value beside it: `FHOPS_ACC` is one less,
+/// since the final transmission of a flood spends no budget.
 pub fn describe(route: &CachedRoute) -> String {
     match route {
         CachedRoute::Direct => "direct".to_string(),
-        CachedRoute::Source(hints) if hints.is_empty() => "source route, no hops".to_string(),
+        CachedRoute::Source(hints) if hints.is_empty() => "source route, no routers".to_string(),
         CachedRoute::Source(hints) => format!(
             "via {}",
             hints
@@ -339,17 +349,27 @@ pub fn describe(route: &CachedRoute) -> String {
                 .collect::<Vec<_>>()
                 .join(" > ")
         ),
-        CachedRoute::Flood { hops, regions } if regions.is_empty() => {
-            format!("flood, {hops} hops")
+        CachedRoute::Flood {
+            flood_hops,
+            regions,
+        } => {
+            let hops = route.hop_count();
+            let mut text = format!(
+                "flood, {hops} hop{} ({flood_hops} flood hops)",
+                if hops == 1 { "" } else { "s" }
+            );
+            if !regions.is_empty() {
+                text.push_str(", regions ");
+                text.push_str(
+                    &regions
+                        .iter()
+                        .map(|code| umsh::core::RegionCode::from_bytes(*code).to_string())
+                        .collect::<Vec<_>>()
+                        .join(" "),
+                );
+            }
+            text
         }
-        CachedRoute::Flood { hops, regions } => format!(
-            "flood, {hops} hops, regions {}",
-            regions
-                .iter()
-                .map(|code| umsh::core::RegionCode::from_bytes(*code).to_string())
-                .collect::<Vec<_>>()
-                .join(" ")
-        ),
     }
 }
 
@@ -507,5 +527,26 @@ mod tests {
     fn a_header_only_file_is_an_empty_cache() {
         assert!(RouteCache::parse(&format!("{HEADER}\n")).is_empty());
         assert!(RouteCache::parse("").is_empty());
+    }
+
+    /// A flood route is listed by its distance in hops, the number a ping
+    /// reply shows, not by the wire accumulator it was learned from.
+    #[test]
+    fn a_flood_route_describes_its_distance_in_hops() {
+        assert_eq!(
+            describe(&CachedRoute::flood(2, &[]).unwrap()),
+            "flood, 3 hops (2 flood hops)"
+        );
+        assert_eq!(
+            describe(&CachedRoute::flood(0, &[[0x68, 0xAC]]).unwrap()),
+            format!(
+                "flood, 1 hop (0 flood hops), regions {}",
+                umsh::core::RegionCode::from_bytes([0x68, 0xAC])
+            )
+        );
+        assert_eq!(
+            describe(&CachedRoute::source(&[]).unwrap()),
+            "source route, no routers"
+        );
     }
 }

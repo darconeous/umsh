@@ -259,9 +259,9 @@ where
 
     // Full source lets a stranger unicast an answer back.
     let mut send = SendOptions::default().with_full_source();
-    if let Some(hops) = vantage {
+    if let Some(hints) = vantage {
         send = send
-            .try_with_source_route(hops)
+            .try_with_source_route(hints)
             .map_err(|_| anyhow!("that route is longer than a request can carry"))?
             // The trace the question accumulates is the answering
             // strangers' only path home: a broadcast teaches the MAC no
@@ -616,8 +616,8 @@ mod tests {
         routes.record(&peer, CachedRoute::flood(5, &[]).unwrap());
         assert!(steer_through(&routes, &peer).is_err());
 
-        let hops = [RouterHint([0xa1, 0xb2]), RouterHint([0xc3, 0xd4])];
-        routes.record(&peer, CachedRoute::source(&hops).unwrap());
-        assert_eq!(steer_through(&routes, &peer).unwrap(), hops);
+        let hints = [RouterHint([0xa1, 0xb2]), RouterHint([0xc3, 0xd4])];
+        routes.record(&peer, CachedRoute::source(&hints).unwrap());
+        assert_eq!(steer_through(&routes, &peer).unwrap(), hints);
     }
 }

@@ -71,7 +71,7 @@ pub mod prelude {
     pub use crate::Platform;
 
     pub use umsh_core::{ChannelId, ChannelKey, PayloadType, PublicKey};
-    pub use umsh_mac::{LocalIdentityId, PacketFamily, RouteHops, SendOptions};
+    pub use umsh_mac::{LocalIdentityId, PacketFamily, RouterHints, SendOptions};
     pub use umsh_node::{
         ChannelInfoRef, CommandId, Host, HostError, LocalNode, MacCommand, NodeCapabilities,
         NodeError, NodeIdentityPayload, NodeRole, OwnedMacCommand, PeerConnection,

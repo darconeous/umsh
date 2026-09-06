@@ -902,7 +902,9 @@ struct PeerDetailView: View {
                 ? "Direct (empty source route)"
                 : "Source route · \(route.hints.count) router\(route.hints.count == 1 ? "" : "s")"
         case .flood:
-            route.floodHops.map { "Flood · \($0) hop\($0 == 1 ? "" : "s")" } ?? "Flood"
+            // The distance in hops, not the raw flood-hop accumulator, so it
+            // agrees with the hop count a ping reply shows for the same path.
+            route.hopCount.map { "Flood · \($0) hop\($0 == 1 ? "" : "s")" } ?? "Flood"
         }
     }
 

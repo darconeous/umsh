@@ -129,7 +129,7 @@ A conservative version of this idea would look like:
 
 - only perform exploratory refresh when the sender is believed to be mobile or moving
 - use a normal cached source route, but also include a trace-route option
-- allow only a small flood budget, capped at no more than `source_route_hops + 1`
+- allow only a small flood budget, capped at one flood hop more than the source route has hints
 - perform this no more than occasionally, for example no more than once every `N` successful transmissions and no more than once every `T` minutes, whichever is longer
 
 The intent would be to probe for a slightly better or fresher route without incurring the cost of a full rediscovery flood. A small tail flood could help discover alternate final hops or nearby replacement repeaters when the old route is only partially stale.

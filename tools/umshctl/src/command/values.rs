@@ -345,9 +345,9 @@ impl FromStr for RegionCodeArg {
     }
 }
 
-/// A comma-separated source route, first hop first.
+/// A comma-separated source route, first router first.
 ///
-/// Each hop is either the four hex digits of a router hint, as a capture or
+/// Each router is either the four hex digits of its hint, as a capture or
 /// a trace route renders it, or a full public key to derive the hint from.
 /// An empty route is not a way to say "flood"—`--flood` is—so it is
 /// rejected rather than quietly meaning something else.
@@ -358,38 +358,39 @@ impl FromStr for RouteArg {
     type Err = String;
 
     fn from_str(text: &str) -> Result<Self, Self::Err> {
-        let hops = text
+        let hints = text
             .split(|c: char| c == ',' || c.is_whitespace())
-            .filter(|hop| !hop.is_empty())
-            .map(|hop| {
-                if hop.len() == 4 {
-                    parse_hex::<2>(hop).map(RouterHint)
+            .filter(|hint| !hint.is_empty())
+            .map(|hint| {
+                if hint.len() == 4 {
+                    parse_hex::<2>(hint).map(RouterHint)
                 } else {
-                    parse_key32(hop)
+                    parse_key32(hint)
                         .map(|key| RouterHint::from_public_key(&PublicKey(key)))
                         .map_err(|error| {
-                            format!("hop {hop:?}: 4 hex digits or a full key: {error}")
+                            format!("router {hint:?}: 4 hex digits or a full key: {error}")
                         })
                 }
             })
             .collect::<Result<Vec<_>, String>>()?;
-        if hops.is_empty() {
-            return Err(String::from("a source route needs at least one hop"));
+        if hints.is_empty() {
+            return Err(String::from("a source route needs at least one router"));
         }
         // The MAC rejects a longer route too; catching it here attributes the
         // error to the flag that carried it.
-        if hops.len() > MAX_ROUTE_HOPS {
+        if hints.len() > MAX_ROUTE_HINTS {
             return Err(format!(
-                "a source route carries at most {MAX_ROUTE_HOPS} hops, got {}",
-                hops.len()
+                "a source route names at most {MAX_ROUTE_HINTS} routers, got {}",
+                hints.len()
             ));
         }
-        Ok(Self(hops))
+        Ok(Self(hints))
     }
 }
 
-/// The MAC's ceiling on an explicit source route.
-const MAX_ROUTE_HOPS: usize = 15;
+/// The MAC's ceiling on an explicit source route: router hints, one per
+/// repeater.
+const MAX_ROUTE_HINTS: usize = 15;
 
 /// A channel, named or given by its raw 32-byte key.
 ///

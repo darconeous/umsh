@@ -6441,7 +6441,14 @@ public struct MobileMeshRouteRecord: Equatable, Hashable {
      */
     public var hints: [Data]
     /**
-     * Hop budget carried by a `Flood` route.
+     * Distance to the peer in hops, the number a ping reply reports: one
+     * for a direct peer, one more than `hints` for a source route, one more
+     * than `flood_hops` for a flood route. `None` when nothing is cached.
+     */
+    public var hopCount: UInt8?
+    /**
+     * Flood hops (`FHOPS_ACC`) carried by a `Flood` route, the raw wire
+     * value; one less than `hop_count`.
      */
     public var floodHops: UInt8?
     /**
@@ -6457,13 +6464,20 @@ public struct MobileMeshRouteRecord: Equatable, Hashable {
          * routes only; the two endpoints are not included.
          */hints: [Data],
         /**
-         * Hop budget carried by a `Flood` route.
+         * Distance to the peer in hops, the number a ping reply reports: one
+         * for a direct peer, one more than `hints` for a source route, one more
+         * than `flood_hops` for a flood route. `None` when nothing is cached.
+         */hopCount: UInt8?,
+        /**
+         * Flood hops (`FHOPS_ACC`) carried by a `Flood` route, the raw wire
+         * value; one less than `hop_count`.
          */floodHops: UInt8?,
         /**
          * Two-octet region codes learned with a `Flood` route.
          */floodRegions: [Data]) {
         self.kind = kind
         self.hints = hints
+        self.hopCount = hopCount
         self.floodHops = floodHops
         self.floodRegions = floodRegions
     }
@@ -6486,6 +6500,7 @@ public struct FfiConverterTypeMobileMeshRouteRecord: FfiConverterRustBuffer {
             try MobileMeshRouteRecord(
                 kind: FfiConverterTypeMobileMeshRouteKind.read(from: &buf),
                 hints: FfiConverterSequenceData.read(from: &buf),
+                hopCount: FfiConverterOptionUInt8.read(from: &buf),
                 floodHops: FfiConverterOptionUInt8.read(from: &buf),
                 floodRegions: FfiConverterSequenceData.read(from: &buf)
         )
@@ -6494,6 +6509,7 @@ public struct FfiConverterTypeMobileMeshRouteRecord: FfiConverterRustBuffer {
     public static func write(_ value: MobileMeshRouteRecord, into buf: inout [UInt8]) {
         FfiConverterTypeMobileMeshRouteKind.write(value.kind, into: &buf)
         FfiConverterSequenceData.write(value.hints, into: &buf)
+        FfiConverterOptionUInt8.write(value.hopCount, into: &buf)
         FfiConverterOptionUInt8.write(value.floodHops, into: &buf)
         FfiConverterSequenceData.write(value.floodRegions, into: &buf)
     }
