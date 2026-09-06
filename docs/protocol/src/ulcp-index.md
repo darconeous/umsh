@@ -35,88 +35,108 @@ Command identifiers are 7-bit; 17–20 and 25–127 are unassigned.
 Identifiers are allocated by state class; see
 [Property Allocation](ulcp-core.md#property-allocation).
 
-Id   | Mnemonic                                                                   | Commands                 | Gated by
------|----------------------------------------------------------------------------|--------------------------|----------
-0    | [`PROP_LAST_STATUS`](ulcp-core.md#prop-last-status)                        | Get, Is                  | —
-1    | [`PROP_PROTOCOL_VERSION`](ulcp-core.md#prop-protocol-version)              | Get                      | —
-2    | [`PROP_DEV_VERSION`](ulcp-core.md#prop-dev-version)                        | Get                      | —
-3    | [`PROP_INTERFACE_TYPE`](ulcp-core.md#prop-interface-type)                  | Get                      | —
-4    | [`PROP_DEV_MODEL`](ulcp-core.md#prop-dev-model)                            | Get                      | —
-5    | [`PROP_CAPS`](ulcp-core.md#prop-caps)                                      | Get                      | —
-6    | [`PROP_UPTIME`](ulcp-core.md#prop-uptime)                                  | Get                      | —
-32   | [`PROP_PHY_ENABLED`](ulcp-radio.md#prop-phy-enabled)                       | Get, Set                 | —
-35   | [`PROP_PHY_FREQ`](ulcp-radio.md#prop-phy-freq)                             | Get, Set                 | —
-37   | [`PROP_PHY_TX_POWER`](ulcp-radio.md#prop-phy-tx-power)                     | Get, Set                 | —
-38   | [`PROP_PHY_RSSI`](ulcp-radio.md#prop-phy-rssi)                             | Get                      | —
-39   | [`PROP_PHY_LORA_BW`](ulcp-radio.md#prop-phy-lora-bw)                       | Get, Set                 | `CAP_PHY_LORA`
-40   | [`PROP_PHY_LORA_SF`](ulcp-radio.md#prop-phy-lora-sf)                       | Get, Set                 | `CAP_PHY_LORA`
-41   | [`PROP_PHY_LORA_CR`](ulcp-radio.md#prop-phy-lora-cr)                       | Get, Set                 | `CAP_PHY_LORA`
-42   | [`PROP_PHY_MTU`](ulcp-radio.md#prop-phy-mtu)                               | Get                      | —
-43   | [`PROP_PHY_LORA_SW`](ulcp-radio.md#prop-phy-lora-sw)                       | Get, Set                 | `CAP_PHY_LORA`
-48   | [`PROP_MAC_PROMISCUOUS`](ulcp-host.md#prop-mac-promiscuous)                | Get, Set                 | `CAP_HOST_FILTER`
-49   | [`PROP_SAVED`](ulcp-saved-state.md#prop-saved)                             | Get                      | `CAP_SAVE`
-50   | [`PROP_MAC_BACKHAUL`](ulcp-host.md#prop-mac-backhaul)                      | Get, Set                 | `CAP_MAC_BACKHAUL`
-64   | [`PROP_DEV_KEY`](ulcp-device.md#prop-dev-key)                              | Get                      | `CAP_DEV_IDENTITY`
-65   | [`PROP_DEV_PRIVATE_KEY`](ulcp-device.md#prop-dev-private-key)              | Set                      | `CAP_DEV_IDENTITY`
-66   | [`PROP_DEV_CHANNEL_KEYS`](ulcp-device.md#prop-dev-channel-keys)            | Get, Set, Insert, Remove | `CAP_DEV_IDENTITY`
-67   | [`PROP_DEV_PEERS`](ulcp-device.md#prop-dev-peers)                          | Get, Set, Insert, Remove | `CAP_DEV_IDENTITY`
-68   | [`PROP_DEV_NAME`](ulcp-device.md#prop-dev-name)                            | Get, Set                 | `CAP_DEV_NAME`
-69   | [`PROP_BATTERY`](ulcp-device.md#prop-battery)                              | Get, Is                  | `CAP_BATTERY`
-70   | [`PROP_MAC_REPEATER_ENABLED`](ulcp-device.md#prop-mac-repeater-enabled)    | Get, Set                 | `CAP_REPEATER`
-71   | [`PROP_IDENT`](ulcp-device.md#prop-ident)                                  | Get                      | `CAP_IDENT`
-72   | [`PROP_IDENT_ROLE`](ulcp-device.md#prop-ident-role)                        | Get, Set                 | `CAP_IDENT`
-73   | [`PROP_IDENT_MOBILE`](ulcp-device.md#prop-ident-mobile)                    | Get, Set                 | `CAP_IDENT`
-74   | [`PROP_MAC_REPEATER_REGIONS`](ulcp-device.md#prop-mac-repeater-regions)    | Get, Set                 | `CAP_REPEATER`
-75   | [`PROP_MAC_REPEATER_DEFAULT_REGION`](ulcp-device.md#prop-mac-repeater-default-region) | Get, Set      | `CAP_REPEATER`
-76   | [`PROP_MAC_REPEATER_MIN_RSSI`](ulcp-device.md#prop-mac-repeater-min-rssi)  | Get, Set                 | `CAP_REPEATER`
-77   | [`PROP_MAC_REPEATER_MIN_SNR`](ulcp-device.md#prop-mac-repeater-min-snr)    | Get, Set                 | `CAP_REPEATER`
-78   | [`PROP_DEV_DISCOVERABLE`](ulcp-device.md#prop-dev-discoverable)            | Get, Set                 | `CAP_DEV_IDENTITY`
-79   | [`PROP_ALERT`](ulcp-device.md#prop-alert)                                  | Get, Set, Is             | `CAP_ALERT`
-80   | [`PROP_ADVERT_INTERVAL`](ulcp-device.md#prop-advert-interval)              | Get, Set                 | `CAP_ADVERT`
-81   | [`PROP_BEACON_INTERVAL`](ulcp-device.md#prop-beacon-interval)              | Get, Set                 | `CAP_ADVERT`
-82   | [`PROP_STARTUP_BEACON`](ulcp-device.md#prop-startup-beacon)                | Get, Set                 | `CAP_ADVERT`
-83   | [`PROP_IDENT_LOCATION`](ulcp-device.md#prop-ident-location)                | Get, Set                 | `CAP_IDENT`
-84   | [`PROP_IDENT_ALTITUDE`](ulcp-device.md#prop-ident-altitude)                | Get, Set                 | `CAP_IDENT`
-88   | [`PROP_GNSS_ENABLED`](ulcp-device.md#prop-gnss-enabled)                    | Get, Set                 | `CAP_GNSS`
-89   | [`PROP_GNSS_LOCATION`](ulcp-device.md#prop-gnss-location)                  | Get, Is                  | `CAP_GNSS`
-90   | [`PROP_GNSS_ALTITUDE`](ulcp-device.md#prop-gnss-altitude)                  | Get                      | `CAP_GNSS`
-91   | [`PROP_GNSS_FIX`](ulcp-device.md#prop-gnss-fix)                            | Get, Is                  | `CAP_GNSS`
-92   | [`PROP_GNSS_PRECISION`](ulcp-device.md#prop-gnss-precision)                | Get                      | `CAP_GNSS`
-93   | [`PROP_GNSS_SATELLITES`](ulcp-device.md#prop-gnss-satellites)              | Get                      | `CAP_GNSS`
-94   | [`PROP_ILLUMINANCE`](ulcp-device.md#prop-illuminance)                      | Get                      | `CAP_ILLUMINANCE`
-96   | [`PROP_HOST_KEY`](ulcp-host.md#prop-host-key)                              | Get, Set                 | `CAP_HOST_FILTER`
-97   | [`PROP_HOST_CHANNEL_KEYS`](ulcp-host.md#prop-host-channel-keys)            | Get, Set, Insert, Remove | `CAP_HOST_KEYS`
-98   | [`PROP_HOST_PEER_KEYS`](ulcp-host.md#prop-host-peer-keys)                  | Get, Set, Insert, Remove | `CAP_HOST_KEYS`
-99   | [`PROP_HOST_RX_FILTERS`](ulcp-host.md#prop-host-rx-filters)                | Get, Set, Insert, Remove | `CAP_HOST_FILTER`
-100  | [`PROP_HOST_AUTO_ACK`](ulcp-host.md#prop-host-auto-ack)                    | Get, Set                 | `CAP_HOST_AUTO_ACK`
-101  | [`PROP_HOST_RX_QUEUE_COUNT`](ulcp-host.md#prop-host-rx-queue-count)        | Get                      | `CAP_HOST_RX_QUEUE`
-102  | [`PROP_HOST_RX_QUEUE_CAPACITY`](ulcp-host.md#prop-host-rx-queue-capacity)  | Get, Set                 | `CAP_HOST_RX_QUEUE`
-103  | [`PROP_HOST_RX_QUEUE_DROPPED`](ulcp-host.md#prop-host-rx-queue-dropped)    | Get                      | `CAP_HOST_RX_QUEUE`
-104  | [`PROP_HOST_MUTED_CHANNELS`](ulcp-host.md#prop-host-muted-channels)        | Get, Set, Insert, Remove | `CAP_HOST_RX_QUEUE`
-105  | [`PROP_HOST_MUTED_PEERS`](ulcp-host.md#prop-host-muted-peers)              | Get, Set, Insert, Remove | `CAP_HOST_RX_QUEUE`
-113  | [`STR_PHY_RAW`](ulcp-transport.md#str-radio-raw)                           | Send, Recv               | —
-4820 | [`PROP_PHY_DUTY_NOW`](ulcp-radio.md#prop-phy-duty-now)                     | Get                      | `CAP_PHY_DUTY_LIMIT`
-4822 | [`PROP_PHY_DUTY_LIMIT`](ulcp-radio.md#prop-phy-duty-limit)                 | Get, Set                 | `CAP_PHY_DUTY_LIMIT`
-4832 | [`PROP_STAT_TX_PACKETS`](ulcp-radio.md#prop-stat-tx-packets)               | Get, Set                 | `CAP_STATS`
-4833 | [`PROP_STAT_TX_CHANNEL_BUSY`](ulcp-radio.md#prop-stat-tx-channel-busy)     | Get, Set                 | `CAP_STATS`
-4834 | [`PROP_STAT_RX_PACKETS`](ulcp-radio.md#prop-stat-rx-packets)               | Get, Set                 | `CAP_STATS`
-4835 | [`PROP_STAT_RX_BAD_CRC`](ulcp-radio.md#prop-stat-rx-bad-crc)               | Get, Set                 | `CAP_STATS`
-4836 | [`PROP_STAT_RX_NON_UMSH`](ulcp-radio.md#prop-stat-rx-non-umsh)             | Get, Set                 | `CAP_STATS`
-4837 | [`PROP_STAT_RX_ACCEPTED`](ulcp-radio.md#prop-stat-rx-accepted)             | Get, Set                 | `CAP_STATS`, `CAP_REPEATER`
-4838 | [`PROP_STAT_FORWARDED`](ulcp-radio.md#prop-stat-forwarded)                 | Get, Set                 | `CAP_STATS`, `CAP_REPEATER`
-4839 | [`PROP_STAT_FORWARD_DROPPED`](ulcp-radio.md#prop-stat-forward-dropped)     | Get, Set                 | `CAP_STATS`, `CAP_REPEATER`
-4840 | [`PROP_STAT_FORWARD_CANCELLED`](ulcp-radio.md#prop-stat-forward-cancelled) | Get, Set                 | `CAP_STATS`, `CAP_REPEATER`
-4864 | [`PROP_BLE_PAIRING_PIN`](ulcp-ble.md#prop-ble-pairing-pin)                 | Set                      | BLE transport
-4865 | [`PROP_DEV_ADMINS`](app-node-management.md#prop-dev-admins)                | Get, Set, Insert, Remove | `CAP_ADMIN`
-4866 | [`PROP_TIME`](ulcp-device.md#prop-time)                                    | Get, Set, Is             | `CAP_TIME`
-4867 | [`PROP_TZ_OFFSET`](ulcp-device.md#prop-tz-offset)                          | Get, Set                 | `CAP_TIME`
-4868 | [`PROP_GNSS_IDENT_UPDATE`](ulcp-device.md#prop-gnss-ident-update)          | Get, Set                 | `CAP_GNSS`
-4869 | [`PROP_GNSS_IDENT_PRECISION`](ulcp-device.md#prop-gnss-ident-precision)    | Get, Set                 | `CAP_GNSS`
-4870 | [`PROP_GNSS_TIME_TRUST`](ulcp-device.md#prop-gnss-time-trust)              | Get, Set                 | `CAP_GNSS`
-4871 | [`PROP_BLE_ENABLED`](ulcp-ble.md#prop-ble-enabled)                         | Get, Set, Is             | `CAP_BLE`
-4872 | [`PROP_BLE_BOND_COUNT`](ulcp-ble.md#prop-ble-bond-count)                   | Get, Set, Is             | `CAP_BLE`
-4873 | [`PROP_BLE_LINK`](ulcp-ble.md#prop-ble-link)                               | Get, Is                  | `CAP_BLE`
-4874 | [`PROP_BLE_PAIRING`](ulcp-ble.md#prop-ble-pairing)                         | Get, Set, Is             | `CAP_BLE`
+Id   | Mnemonic                                                                              | Commands                   | Gated by
+-----|---------------------------------------------------------------------------------------|----------------------------|----------
+0    | [`PROP_LAST_STATUS`](ulcp-core.md#prop-last-status)                                   | Get, Is                    | —
+1    | [`PROP_PROTOCOL_VERSION`](ulcp-core.md#prop-protocol-version)                         | Get                        | —
+2    | [`PROP_DEV_VERSION`](ulcp-core.md#prop-dev-version)                                   | Get                        | —
+3    | [`PROP_INTERFACE_TYPE`](ulcp-core.md#prop-interface-type)                             | Get                        | —
+4    | [`PROP_DEV_MODEL`](ulcp-core.md#prop-dev-model)                                       | Get                        | —
+5    | [`PROP_CAPS`](ulcp-core.md#prop-caps)                                                 | Get                        | —
+6    | [`PROP_UPTIME`](ulcp-core.md#prop-uptime)                                             | Get                        | —
+32   | [`PROP_PHY_ENABLED`](ulcp-radio.md#prop-phy-enabled)                                  | Get, Set                   | —
+35   | [`PROP_PHY_FREQ`](ulcp-radio.md#prop-phy-freq)                                        | Get, Set                   | —
+37   | [`PROP_PHY_TX_POWER`](ulcp-radio.md#prop-phy-tx-power)                                | Get, Set                   | —
+38   | [`PROP_PHY_RSSI`](ulcp-radio.md#prop-phy-rssi)                                        | Get                        | —
+39   | [`PROP_PHY_LORA_BW`](ulcp-radio.md#prop-phy-lora-bw)                                  | Get, Set                   | `CAP_PHY_LORA`
+40   | [`PROP_PHY_LORA_SF`](ulcp-radio.md#prop-phy-lora-sf)                                  | Get, Set                   | `CAP_PHY_LORA`
+41   | [`PROP_PHY_LORA_CR`](ulcp-radio.md#prop-phy-lora-cr)                                  | Get, Set                   | `CAP_PHY_LORA`
+42   | [`PROP_PHY_MTU`](ulcp-radio.md#prop-phy-mtu)                                          | Get                        | —
+43   | [`PROP_PHY_LORA_SW`](ulcp-radio.md#prop-phy-lora-sw)                                  | Get, Set                   | `CAP_PHY_LORA`
+48   | [`PROP_MAC_PROMISCUOUS`](ulcp-host.md#prop-mac-promiscuous)                           | Get, Set                   | `CAP_HOST_FILTER`
+49   | [`PROP_SAVED`](ulcp-saved-state.md#prop-saved)                                        | Get                        | `CAP_SAVE`
+50   | [`PROP_MAC_BACKHAUL`](ulcp-host.md#prop-mac-backhaul)                                 | Get, Set                   | `CAP_MAC_BACKHAUL`
+64   | [`PROP_DEV_KEY`](ulcp-device.md#prop-dev-key)                                         | Get                        | `CAP_DEV_IDENTITY`
+65   | [`PROP_DEV_PRIVATE_KEY`](ulcp-device.md#prop-dev-private-key)                         | Set                        | `CAP_DEV_IDENTITY`
+66   | [`PROP_DEV_CHANNEL_KEYS`](ulcp-device.md#prop-dev-channel-keys)                       | Get, Set, Insert, Remove   | `CAP_DEV_IDENTITY`
+67   | [`PROP_DEV_PEERS`](ulcp-device.md#prop-dev-peers)                                     | Get, Set, Insert, Remove   | `CAP_DEV_IDENTITY`
+68   | [`PROP_DEV_NAME`](ulcp-device.md#prop-dev-name)                                       | Get, Set                   | `CAP_DEV_NAME`
+69   | [`PROP_BATTERY`](ulcp-device.md#prop-battery)                                         | Get, Is                    | `CAP_BATTERY`
+70   | [`PROP_MAC_REPEATER_ENABLED`](ulcp-device.md#prop-mac-repeater-enabled)               | Get, Set                   | `CAP_REPEATER`
+71   | [`PROP_IDENT`](ulcp-device.md#prop-ident)                                             | Get                        | `CAP_IDENT`
+72   | [`PROP_IDENT_ROLE`](ulcp-device.md#prop-ident-role)                                   | Get, Set                   | `CAP_IDENT`
+73   | [`PROP_IDENT_MOBILE`](ulcp-device.md#prop-ident-mobile)                               | Get, Set                   | `CAP_IDENT`
+74   | [`PROP_MAC_REPEATER_REGIONS`](ulcp-device.md#prop-mac-repeater-regions)               | Get, Set                   | `CAP_REPEATER`
+75   | [`PROP_MAC_REPEATER_DEFAULT_REGION`](ulcp-device.md#prop-mac-repeater-default-region) | Get, Set                   | `CAP_REPEATER`
+76   | [`PROP_MAC_REPEATER_MIN_RSSI`](ulcp-device.md#prop-mac-repeater-min-rssi)             | Get, Set                   | `CAP_REPEATER`
+77   | [`PROP_MAC_REPEATER_MIN_SNR`](ulcp-device.md#prop-mac-repeater-min-snr)               | Get, Set                   | `CAP_REPEATER`
+78   | [`PROP_DEV_DISCOVERABLE`](ulcp-device.md#prop-dev-discoverable)                       | Get, Set                   | `CAP_DEV_IDENTITY`
+79   | [`PROP_ALERT`](ulcp-device.md#prop-alert)                                             | Get, Set, Is               | `CAP_ALERT`
+80   | [`PROP_ADVERT_INTERVAL`](ulcp-device.md#prop-advert-interval)                         | Get, Set                   | `CAP_ADVERT`
+81   | [`PROP_BEACON_INTERVAL`](ulcp-device.md#prop-beacon-interval)                         | Get, Set                   | `CAP_ADVERT`
+82   | [`PROP_STARTUP_BEACON`](ulcp-device.md#prop-startup-beacon)                           | Get, Set                   | `CAP_ADVERT`
+83   | [`PROP_IDENT_LOCATION`](ulcp-device.md#prop-ident-location)                           | Get, Set                   | `CAP_IDENT`
+84   | [`PROP_IDENT_ALTITUDE`](ulcp-device.md#prop-ident-altitude)                           | Get, Set                   | `CAP_IDENT`
+88   | [`PROP_GNSS_ENABLED`](ulcp-device.md#prop-gnss-enabled)                               | Get, Set                   | `CAP_GNSS`
+89   | [`PROP_GNSS_LOCATION`](ulcp-device.md#prop-gnss-location)                             | Get, Is                    | `CAP_GNSS`
+90   | [`PROP_GNSS_ALTITUDE`](ulcp-device.md#prop-gnss-altitude)                             | Get                        | `CAP_GNSS`
+91   | [`PROP_GNSS_FIX`](ulcp-device.md#prop-gnss-fix)                                       | Get, Is                    | `CAP_GNSS`
+92   | [`PROP_GNSS_PRECISION`](ulcp-device.md#prop-gnss-precision)                           | Get                        | `CAP_GNSS`
+93   | [`PROP_GNSS_SATELLITES`](ulcp-device.md#prop-gnss-satellites)                         | Get                        | `CAP_GNSS`
+94   | [`PROP_ILLUMINANCE`](ulcp-device.md#prop-illuminance)                                 | Get                        | `CAP_ILLUMINANCE`
+96   | [`PROP_HOST_KEY`](ulcp-host.md#prop-host-key)                                         | Get, Set                   | `CAP_HOST_FILTER`
+97   | [`PROP_HOST_CHANNEL_KEYS`](ulcp-host.md#prop-host-channel-keys)                       | Get, Set, Insert, Remove   | `CAP_HOST_KEYS`
+98   | [`PROP_HOST_PEER_KEYS`](ulcp-host.md#prop-host-peer-keys)                             | Get, Set, Insert, Remove   | `CAP_HOST_KEYS`
+99   | [`PROP_HOST_RX_FILTERS`](ulcp-host.md#prop-host-rx-filters)                           | Get, Set, Insert, Remove   | `CAP_HOST_FILTER`
+100  | [`PROP_HOST_AUTO_ACK`](ulcp-host.md#prop-host-auto-ack)                               | Get, Set                   | `CAP_HOST_AUTO_ACK`
+101  | [`PROP_HOST_RX_QUEUE_COUNT`](ulcp-host.md#prop-host-rx-queue-count)                   | Get                        | `CAP_HOST_RX_QUEUE`
+102  | [`PROP_HOST_RX_QUEUE_CAPACITY`](ulcp-host.md#prop-host-rx-queue-capacity)             | Get, Set                   | `CAP_HOST_RX_QUEUE`
+103  | [`PROP_HOST_RX_QUEUE_DROPPED`](ulcp-host.md#prop-host-rx-queue-dropped)               | Get                        | `CAP_HOST_RX_QUEUE`
+104  | [`PROP_HOST_MUTED_CHANNELS`](ulcp-host.md#prop-host-muted-channels)                   | Get, Set, Insert, Remove   | `CAP_HOST_RX_QUEUE`
+105  | [`PROP_HOST_MUTED_PEERS`](ulcp-host.md#prop-host-muted-peers)                         | Get, Set, Insert, Remove   | `CAP_HOST_RX_QUEUE`
+113  | [`STR_PHY_RAW`](ulcp-transport.md#str-radio-raw)                                      | Send, Recv                 | —
+4820 | [`PROP_PHY_DUTY_NOW`](ulcp-radio.md#prop-phy-duty-now)                                | Get                        | `CAP_PHY_DUTY_LIMIT`
+4822 | [`PROP_PHY_DUTY_LIMIT`](ulcp-radio.md#prop-phy-duty-limit)                            | Get, Set                   | `CAP_PHY_DUTY_LIMIT`
+4832 | [`PROP_STAT_TX_PACKETS`](ulcp-radio.md#prop-stat-tx-packets)                          | Get, Set                   | `CAP_STATS`
+4833 | [`PROP_STAT_TX_CHANNEL_BUSY`](ulcp-radio.md#prop-stat-tx-channel-busy)                | Get, Set                   | `CAP_STATS`
+4834 | [`PROP_STAT_RX_PACKETS`](ulcp-radio.md#prop-stat-rx-packets)                          | Get, Set                   | `CAP_STATS`
+4835 | [`PROP_STAT_RX_BAD_CRC`](ulcp-radio.md#prop-stat-rx-bad-crc)                          | Get, Set                   | `CAP_STATS`
+4836 | [`PROP_STAT_RX_NON_UMSH`](ulcp-radio.md#prop-stat-rx-non-umsh)                        | Get, Set                   | `CAP_STATS`
+4837 | [`PROP_STAT_RX_ACCEPTED`](ulcp-radio.md#prop-stat-rx-accepted)                        | Get, Set                   | `CAP_STATS`, `CAP_REPEATER`
+4838 | [`PROP_STAT_FORWARDED`](ulcp-radio.md#prop-stat-forwarded)                            | Get, Set                   | `CAP_STATS`, `CAP_REPEATER`
+4839 | [`PROP_STAT_FORWARD_DROPPED`](ulcp-radio.md#prop-stat-forward-dropped)                | Get, Set                   | `CAP_STATS`, `CAP_REPEATER`
+4840 | [`PROP_STAT_FORWARD_CANCELLED`](ulcp-radio.md#prop-stat-forward-cancelled)            | Get, Set                   | `CAP_STATS`, `CAP_REPEATER`
+4864 | [`PROP_BLE_PAIRING_PIN`](ulcp-ble.md#prop-ble-pairing-pin)                            | Set                        | BLE transport
+4865 | [`PROP_DEV_ADMINS`](app-node-management.md#prop-dev-admins)                           | Get, Set, Insert, Remove   | `CAP_ADMIN`
+4866 | [`PROP_TIME`](ulcp-device.md#prop-time)                                               | Get, Set, Is               | `CAP_TIME`
+4867 | [`PROP_TZ_OFFSET`](ulcp-device.md#prop-tz-offset)                                     | Get, Set                   | `CAP_TIME`
+4868 | [`PROP_GNSS_IDENT_UPDATE`](ulcp-device.md#prop-gnss-ident-update)                     | Get, Set                   | `CAP_GNSS`
+4869 | [`PROP_GNSS_IDENT_PRECISION`](ulcp-device.md#prop-gnss-ident-precision)               | Get, Set                   | `CAP_GNSS`
+4870 | [`PROP_GNSS_TIME_TRUST`](ulcp-device.md#prop-gnss-time-trust)                         | Get, Set                   | `CAP_GNSS`
+4871 | [`PROP_BLE_ENABLED`](ulcp-ble.md#prop-ble-enabled)                                    | Get, Set, Is               | `CAP_BLE`
+4872 | [`PROP_BLE_BOND_COUNT`](ulcp-ble.md#prop-ble-bond-count)                              | Get, Set, Is               | `CAP_BLE`
+4873 | [`PROP_BLE_LINK`](ulcp-ble.md#prop-ble-link)                                          | Get, Is                    | `CAP_BLE`
+4874 | [`PROP_BLE_PAIRING`](ulcp-ble.md#prop-ble-pairing)                                    | Get, Set, Is               | `CAP_BLE`
+4880 | [`PROP_WIFI_ENABLED`](ulcp-wifi.md#prop-wifi-enabled)                                 | Get, Set, Is               | `CAP_WIFI`
+4881 | [`PROP_WIFI_NETWORKS`](ulcp-wifi.md#prop-wifi-networks)                               | Get, Set, Insert, Remove   | `CAP_WIFI`
+4882 | [`PROP_WIFI_NETWORK`](ulcp-wifi.md#prop-wifi-network)                                 | Get, Set, Is               | `CAP_WIFI`
+4883 | [`PROP_WIFI_SCANNING`](ulcp-wifi.md#prop-wifi-scanning)                               | Get, Set, Is               | `CAP_WIFI_SCAN`
+4884 | [`PROP_WIFI_SCAN_RESULTS`](ulcp-wifi.md#prop-wifi-scan-results)                       | Get, Is, Inserted          | `CAP_WIFI_SCAN`
+4885 | [`PROP_WIFI_LINK`](ulcp-wifi.md#prop-wifi-link)                                       | Get, Is                    | `CAP_WIFI`
+4886 | [`PROP_WIFI_RSSI`](ulcp-wifi.md#prop-wifi-rssi)                                       | Get                        | `CAP_WIFI`
+4887 | [`PROP_WIFI_MAC`](ulcp-wifi.md#prop-wifi-mac)                                         | Get                        | `CAP_WIFI`
+4896 | [`PROP_IPV4_STATE`](ulcp-ip.md#prop-ipv4-state)                                       | Get, Is                    | `CAP_IPV4`
+4897 | [`PROP_IPV4_CONFIG`](ulcp-ip.md#prop-ipv4-config)                                     | Get, Set                   | `CAP_IPV4`
+4898 | [`PROP_IPV4_ADDRESS`](ulcp-ip.md#prop-ipv4-address)                                   | Get, Is                    | `CAP_IPV4`
+4899 | [`PROP_IPV6_STATE`](ulcp-ip.md#prop-ipv6-state)                                       | Get, Is                    | `CAP_IPV6`
+4900 | [`PROP_IPV6_CONFIG`](ulcp-ip.md#prop-ipv6-config)                                     | Get, Set                   | `CAP_IPV6`
+4901 | [`PROP_IPV6_ADDRESSES`](ulcp-ip.md#prop-ipv6-addresses)                               | Get, Is                    | `CAP_IPV6`
+4902 | [`PROP_IP_DNS`](ulcp-ip.md#prop-ip-dns)                                               | Get, Set, Insert, Remove   | `CAP_IPV4` or `CAP_IPV6`
+4903 | [`PROP_IP_RESOLVERS`](ulcp-ip.md#prop-ip-resolvers)                                   | Get, Is                    | `CAP_IPV4` or `CAP_IPV6`
+4912 | [`PROP_WIFI_AP_ENABLED`](ulcp-wifi.md#prop-wifi-ap-enabled)                           | Get, Set, Is               | `CAP_WIFI_AP`
+4913 | [`PROP_WIFI_AP_CONFIG`](ulcp-wifi.md#prop-wifi-ap-config)                             | Get, Set                   | `CAP_WIFI_AP`
+4914 | [`PROP_WIFI_AP_STATE`](ulcp-wifi.md#prop-wifi-ap-state)                               | Get, Is                    | `CAP_WIFI_AP`
+4915 | [`PROP_WIFI_AP_CLIENTS`](ulcp-wifi.md#prop-wifi-ap-clients)                           | Get, Is, Inserted, Removed | `CAP_WIFI_AP`
 
 ## Capabilities
 
@@ -148,6 +168,11 @@ Code | Name                      | Defined in
 50   | `CAP_BLE`                 | [BLE Binding](ulcp-ble.md#capabilities)
 51   | `CAP_REBOOT`              | [Framing and Common Semantics](ulcp-core.md#cmd-reboot)
 52   | `CAP_STATS`               | [Radio Control](ulcp-radio.md#capabilities)
+53   | `CAP_WIFI_SCAN`           | [Wi-Fi](ulcp-wifi.md#capabilities)
+54   | `CAP_WIFI`                | [Wi-Fi](ulcp-wifi.md#capabilities)
+55   | `CAP_IPV4`                | [IP Connectivity](ulcp-ip.md#capabilities)
+56   | `CAP_IPV6`                | [IP Connectivity](ulcp-ip.md#capabilities)
+57   | `CAP_WIFI_AP`             | [Wi-Fi](ulcp-wifi.md#capabilities)
 515  | `CAP_PHY_LORA`            | [Radio Control](ulcp-radio.md#capabilities)
 
 ## Status Codes
@@ -194,3 +219,10 @@ Fix quality | 0 none, 1 two-dimensional, 2 three-dimensional | [`PROP_GNSS_FIX`]
 Transmit flags | bit 0 `TX_FLAG_NOCCA`, bit 1 `TX_FLAG_NODUTY` | [`STR_PHY_RAW`](ulcp-transport.md#str-radio-raw)
 Receive flags | bit 0 `RX_FLAG_BUFFERED`, bit 1 `RX_FLAG_ACKED`, bit 2 `RX_FLAG_SELF_TX` | [Extended Recv Metadata](ulcp-transport.md#buffered-metadata)
 Session reset reasons | 0 attached, 1 `CMD_RST`, 2 `CMD_RESTORE` | [`CMD_SESSION_RESET`](ulcp-core.md#cmd-session-reset)
+Wi-Fi security modes | 0 `WIFI_SEC_OPEN`, 1 `WIFI_SEC_OWE`, 2 `WIFI_SEC_WPA2`, 3 `WIFI_SEC_WPA3`, 4 `WIFI_SEC_WPA`, 5 `WIFI_SEC_WEP`, 6 `WIFI_SEC_WPA2_ENT`, 7 `WIFI_SEC_WPA3_ENT`, 8 `WIFI_SEC_WPA3_ENT_192` | [`PROP_WIFI_NETWORKS`](ulcp-wifi.md#prop-wifi-networks)
+Wi-Fi link states | 0 `WIFI_LINK_DOWN`, 1 `WIFI_LINK_CONNECTING`, 2 `WIFI_LINK_UP` | [`PROP_WIFI_LINK`](ulcp-wifi.md#prop-wifi-link)
+Wi-Fi link reasons | 0 `WIFI_REASON_NONE`, 1 `WIFI_REASON_NOT_FOUND`, 2 `WIFI_REASON_AUTH`, 3 `WIFI_REASON_REJECTED`, 4 `WIFI_REASON_LOST`, 5 `WIFI_REASON_OTHER` | [`PROP_WIFI_LINK`](ulcp-wifi.md#prop-wifi-link)
+Access point states | 0 `WIFI_AP_DOWN`, 1 `WIFI_AP_UP` | [`PROP_WIFI_AP_STATE`](ulcp-wifi.md#prop-wifi-ap-state)
+IP family states | 0 `IP_DISABLED`, 1 `IP_NO_LINK`, 2 `IP_WAITING`, 3 `IP_READY`, 4 `IP_CONFLICT` | [`PROP_IPV4_STATE`](ulcp-ip.md#prop-ipv4-state)
+IP configuration methods | 0 `IP_METHOD_DISABLED`, 1 `IP_METHOD_AUTO`, 2 `IP_METHOD_STATIC` | [`PROP_IPV4_CONFIG`](ulcp-ip.md#prop-ipv4-config)
+IPv6 address item kinds | 0 `IPV6_ADDRESS`, 1 `IPV6_ROUTER` | [`PROP_IPV6_ADDRESSES`](ulcp-ip.md#prop-ipv6-addresses)

@@ -95,6 +95,26 @@ pub const fn property_name(key: u32) -> Option<&'static str> {
         prop::BLE_BOND_COUNT => "PROP_BLE_BOND_COUNT",
         prop::BLE_LINK => "PROP_BLE_LINK",
         prop::BLE_PAIRING => "PROP_BLE_PAIRING",
+        prop::WIFI_ENABLED => "PROP_WIFI_ENABLED",
+        prop::WIFI_NETWORKS => "PROP_WIFI_NETWORKS",
+        prop::WIFI_NETWORK => "PROP_WIFI_NETWORK",
+        prop::WIFI_SCANNING => "PROP_WIFI_SCANNING",
+        prop::WIFI_SCAN_RESULTS => "PROP_WIFI_SCAN_RESULTS",
+        prop::WIFI_LINK => "PROP_WIFI_LINK",
+        prop::WIFI_RSSI => "PROP_WIFI_RSSI",
+        prop::WIFI_MAC => "PROP_WIFI_MAC",
+        prop::IPV4_STATE => "PROP_IPV4_STATE",
+        prop::IPV4_CONFIG => "PROP_IPV4_CONFIG",
+        prop::IPV4_ADDRESS => "PROP_IPV4_ADDRESS",
+        prop::IPV6_STATE => "PROP_IPV6_STATE",
+        prop::IPV6_CONFIG => "PROP_IPV6_CONFIG",
+        prop::IPV6_ADDRESSES => "PROP_IPV6_ADDRESSES",
+        prop::IP_DNS => "PROP_IP_DNS",
+        prop::IP_RESOLVERS => "PROP_IP_RESOLVERS",
+        prop::WIFI_AP_ENABLED => "PROP_WIFI_AP_ENABLED",
+        prop::WIFI_AP_CONFIG => "PROP_WIFI_AP_CONFIG",
+        prop::WIFI_AP_STATE => "PROP_WIFI_AP_STATE",
+        prop::WIFI_AP_CLIENTS => "PROP_WIFI_AP_CLIENTS",
         _ => return None,
     })
 }
@@ -184,6 +204,26 @@ pub const PROPERTIES: &[u32] = &[
     prop::BLE_BOND_COUNT,
     prop::BLE_LINK,
     prop::BLE_PAIRING,
+    prop::WIFI_ENABLED,
+    prop::WIFI_NETWORKS,
+    prop::WIFI_NETWORK,
+    prop::WIFI_SCANNING,
+    prop::WIFI_SCAN_RESULTS,
+    prop::WIFI_LINK,
+    prop::WIFI_RSSI,
+    prop::WIFI_MAC,
+    prop::IPV4_STATE,
+    prop::IPV4_CONFIG,
+    prop::IPV4_ADDRESS,
+    prop::IPV6_STATE,
+    prop::IPV6_CONFIG,
+    prop::IPV6_ADDRESSES,
+    prop::IP_DNS,
+    prop::IP_RESOLVERS,
+    prop::WIFI_AP_ENABLED,
+    prop::WIFI_AP_CONFIG,
+    prop::WIFI_AP_STATE,
+    prop::WIFI_AP_CLIENTS,
 ];
 
 /// How a property's octets are meant to be read.
@@ -298,6 +338,27 @@ pub const fn property_type(key: u32) -> Option<PropertyType> {
         prop::GNSS_IDENT_PRECISION => U8,
         prop::GNSS_TIME_TRUST | prop::BLE_ENABLED | prop::BLE_PAIRING => Bool,
         prop::BLE_BOND_COUNT | prop::BLE_LINK => U8,
+        prop::WIFI_ENABLED | prop::WIFI_SCANNING | prop::WIFI_AP_ENABLED => Bool,
+        prop::IPV4_STATE | prop::IPV6_STATE => U8,
+        prop::WIFI_RSSI => I8,
+        // Structures and lists of them: network entries, scan results,
+        // the link, the two IP configurations, the addresses, the
+        // resolvers, and the access point's network and clients. A
+        // scalar reading would misrender every one of them.
+        prop::WIFI_NETWORKS
+        | prop::WIFI_NETWORK
+        | prop::WIFI_SCAN_RESULTS
+        | prop::WIFI_LINK
+        | prop::WIFI_MAC
+        | prop::IPV4_CONFIG
+        | prop::IPV4_ADDRESS
+        | prop::IPV6_CONFIG
+        | prop::IPV6_ADDRESSES
+        | prop::IP_DNS
+        | prop::IP_RESOLVERS
+        | prop::WIFI_AP_CONFIG
+        | prop::WIFI_AP_STATE
+        | prop::WIFI_AP_CLIENTS => Bytes,
         _ => return None,
     })
 }
@@ -329,6 +390,11 @@ pub const fn capability_name(code: u32) -> Option<&'static str> {
         cap::BLE => "BLE",
         cap::REBOOT => "REBOOT",
         cap::STATS => "STATS",
+        cap::WIFI_SCAN => "WIFI_SCAN",
+        cap::WIFI => "WIFI",
+        cap::IPV4 => "IPV4",
+        cap::IPV6 => "IPV6",
+        cap::WIFI_AP => "WIFI_AP",
         _ => return None,
     })
 }
@@ -598,7 +664,7 @@ mod tests {
         assert_eq!(capability_name(cap::BLE), Some("BLE"));
         // One past the last allocated code: an unassigned capability has
         // no name to give, whatever a device claims by advertising it.
-        assert_eq!(capability_name(cap::STATS + 1), None);
+        assert_eq!(capability_name(cap::WIFI_AP + 1), None);
     }
 
     /// The three tables answer for the same set of properties. A name

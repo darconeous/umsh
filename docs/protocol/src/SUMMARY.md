@@ -40,6 +40,8 @@
   - [Device Domain](ulcp-device.md)
   - [Saved State](ulcp-saved-state.md)
   - [Tethered Host Services](ulcp-host.md)
+  - [Wi-Fi](ulcp-wifi.md)
+  - [IP Connectivity](ulcp-ip.md)
   - [Minimum Requirements](ulcp-conformance.md)
   - [Command and Property Index](ulcp-index.md)
   - [ULCP over BLE](ulcp-ble.md)

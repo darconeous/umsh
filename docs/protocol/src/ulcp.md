@@ -17,11 +17,12 @@ side. The protocol itself is specified in the chapters that follow:
 - [Framing and Common Semantics](ulcp-core.md) defines the frame format,
   the command grammar and property model, the classes of state a device
   holds, and the status, reset, and capability registries
-- one chapter per subsystem—[Radio Control](ulcp-radio.md),
+- one chapter per subsystem, each defining its own capabilities,
+  commands, and properties: [Radio Control](ulcp-radio.md),
   [Frame Transport](ulcp-transport.md), [Device Domain](ulcp-device.md),
-  [Saved State](ulcp-saved-state.md), and
-  [Tethered Host Services](ulcp-host.md)—each defining its own
-  capabilities, commands, and properties
+  [Saved State](ulcp-saved-state.md),
+  [Tethered Host Services](ulcp-host.md), [Wi-Fi](ulcp-wifi.md), and
+  [IP Connectivity](ulcp-ip.md)
 - [Minimum Requirements](ulcp-conformance.md) states what a device has to
   implement to be a ULCP device, and the
   [Command and Property Index](ulcp-index.md) locates every numeric
@@ -237,7 +238,7 @@ mechanism and its security consequences.
 
 ## Subsystems
 
-The interface divides into five subsystems, each specified by its own
+The interface divides into seven subsystems, each specified by its own
 chapter and each discoverable through the capabilities it advertises.
 Only the first two are unconditional.
 
@@ -299,6 +300,21 @@ These remain tightly scoped: the device is assisting the host, not
 impersonating it in the general case. Outbound traffic is deliberately **not**
 queued—a transmit either happens or fails while the host is attached to
 observe the result.
+
+### [Wi-Fi](ulcp-wifi.md)
+
+The 802.11 hardware some devices carry alongside the LoRa radio, in
+three functions the host configures separately: scanning for access
+points, joining a network as a station, and offering one as an access
+point. Each is its own capability, because a tracker whose transceiver
+sniffs beacons for geolocation can scan and can do nothing else.
+
+### [IP Connectivity](ulcp-ip.md)
+
+Addressing on whichever link the device has: DHCP or a static
+configuration per family, the addresses and routers in effect, and the
+resolvers. One capability per family, and nothing in it knows what the
+link is.
 
 ## Suggested Capability Matrix
 

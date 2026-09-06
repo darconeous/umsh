@@ -359,6 +359,186 @@ pub mod prop {
     /// Live transport state like the link and the bond count: not part
     /// of the saved snapshot, and untouched by `CMD_RST`.
     pub const BLE_PAIRING: u32 = 4874;
+
+    /// Whether the Wi-Fi station is up (`PROP_WIFI_ENABLED`), BOOL,
+    /// default 0. Requires `CAP_WIFI`.
+    ///
+    /// Cleared, the device drops any association, abandons any scan,
+    /// and powers the station down. Unlike [`BLE_ENABLED`] this does
+    /// promise the hardware is idle: on a battery-powered node a Wi-Fi
+    /// radio that is merely not reporting is still the largest load on
+    /// the board. The known networks and the selection survive both
+    /// directions.
+    pub const WIFI_ENABLED: u32 = 4880;
+    /// The networks the device knows and their credentials
+    /// (`PROP_WIFI_NETWORKS`), multi-value, keyed by SSID. Requires
+    /// `CAP_WIFI`.
+    ///
+    /// Each item is flags, a security mode, and a length-prefixed SSID,
+    /// followed by a credential whose form the mode defines. The
+    /// credential is write-only: the reported form stops at the SSID,
+    /// so replacing an entry is the only way to change one. An insert
+    /// whose SSID matches an existing entry replaces it, which is the
+    /// path for a corrected passphrase.
+    ///
+    /// Saved, credentials included, which is what lets a device rejoin
+    /// unattended.
+    pub const WIFI_NETWORKS: u32 = 4881;
+    /// The selected network (`PROP_WIFI_NETWORK`), an SSID naming one
+    /// entry of [`WIFI_NETWORKS`], or empty. Requires `CAP_WIFI`.
+    ///
+    /// This is connect and disconnect both. An SSID absent from the
+    /// table answers `STATUS_ITEM_NOT_FOUND`; the empty value deselects
+    /// and is a stable state, not a moment. The device never selects a
+    /// network on its own, because a disconnect it undoes by itself is
+    /// not one.
+    pub const WIFI_NETWORK: u32 = 4882;
+    /// Whether a scan is in progress (`PROP_WIFI_SCANNING`), BOOL.
+    /// Requires `CAP_WIFI_SCAN`.
+    ///
+    /// Writing 1 starts one and the device publishes 0 when it
+    /// finishes, so this is a window in the shape of
+    /// [`BLE_PAIRING`]: a state the host enters that ends by itself.
+    /// The frames of a scan are ordered, an empty
+    /// [`WIFI_SCAN_RESULTS`] first and the completion last, so that
+    /// every insert between them lands in a table the host knows.
+    pub const WIFI_SCANNING: u32 = 4883;
+    /// What the current or last scan found (`PROP_WIFI_SCAN_RESULTS`),
+    /// multi-value, read-only, keyed by BSSID. Requires
+    /// `CAP_WIFI_SCAN`.
+    ///
+    /// Each item is a 16-bit set of offered security modes, the primary
+    /// channel frequency in MHz, an RSSI, the BSSID, and the SSID.
+    /// Access points are reported with `CMD_PROP_INSERTED` as they are
+    /// heard. The device retains a bounded strongest-first table and
+    /// never reports an eviction, so a host that followed the inserts
+    /// holds a superset of what a get returns; the two reconcile at the
+    /// clear that starts the next scan.
+    pub const WIFI_SCAN_RESULTS: u32 = 4884;
+    /// What the station is doing (`PROP_WIFI_LINK`), read-only, a state
+    /// octet and a reason octet followed by the association's BSSID and
+    /// frequency when the state is up. Requires `CAP_WIFI`.
+    ///
+    /// Live state: not saved, and reached by `CMD_RST` only through the
+    /// configuration it follows. Published on every change of state or
+    /// reason and on nothing else, so a wrong passphrase reports itself
+    /// once rather than once per retry.
+    pub const WIFI_LINK: u32 = 4885;
+    /// Signal strength of the current association (`PROP_WIFI_RSSI`),
+    /// `INT8` dBm sampled at the read, or empty when the link is not
+    /// up. Requires `CAP_WIFI`; a stack that does not expose it answers
+    /// `STATUS_PROP_NOT_FOUND`.
+    ///
+    /// Kept out of [`WIFI_LINK`] for the reason `PROP_PHY_RSSI` is kept
+    /// out of the radio settings: a value that moves on every beacon
+    /// has no business in a property published on every change.
+    pub const WIFI_RSSI: u32 = 4886;
+    /// The station's MAC address (`PROP_WIFI_MAC`), six octets,
+    /// constant. Requires `CAP_WIFI`; a device that will not report one
+    /// answers `STATUS_PROP_NOT_FOUND`.
+    ///
+    /// Constant because a router's allow list is keyed on it, and a
+    /// device that randomized it would be reporting an address nobody
+    /// can use.
+    pub const WIFI_MAC: u32 = 4887;
+
+    /// IPv4 readiness (`PROP_IPV4_STATE`), `UINT8`, read-only, one of
+    /// [`crate::ip::FamilyState`]. Requires `CAP_IPV4`.
+    ///
+    /// Ready means a usable address, which excludes `169.254/16`: a
+    /// device that fell back to a link-local address is a device whose
+    /// DHCP failed, which waiting says and ready would hide.
+    pub const IPV4_STATE: u32 = 4896;
+    /// How IPv4 is configured (`PROP_IPV4_CONFIG`), a method octet and,
+    /// for the static method, an address, prefix, and gateway. Requires
+    /// `CAP_IPV4`. Defaults to automatic, so a device with nothing
+    /// configured is on the network the moment it is associated.
+    pub const IPV4_CONFIG: u32 = 4897;
+    /// The IPv4 address in effect (`PROP_IPV4_ADDRESS`), read-only:
+    /// address, prefix, and gateway, or empty when the family is not
+    /// ready. Requires `CAP_IPV4`.
+    ///
+    /// Published whenever the reported value changes, which is not only
+    /// when [`IPV4_STATE`] moves: a lease renewal can keep the address
+    /// and change the gateway.
+    pub const IPV4_ADDRESS: u32 = 4898;
+    /// IPv6 readiness (`PROP_IPV6_STATE`), as [`IPV4_STATE`]. Requires
+    /// `CAP_IPV6`.
+    ///
+    /// One state property per family, because the capabilities are two
+    /// and a property granted by either would have two homes.
+    pub const IPV6_STATE: u32 = 4899;
+    /// How IPv6 is configured (`PROP_IPV6_CONFIG`), as
+    /// [`IPV4_CONFIG`] with 16-octet addresses. Requires `CAP_IPV6`.
+    /// Automatic means router advertisements, and DHCPv6 where the
+    /// router asks for it.
+    pub const IPV6_CONFIG: u32 = 4900;
+    /// The IPv6 addresses and default routers in effect
+    /// (`PROP_IPV6_ADDRESSES`), multi-value, read-only, each item a
+    /// kind octet and a kind-defined body. Requires `CAP_IPV6`.
+    ///
+    /// A set rather than one address, because an interface normally
+    /// holds several and which it uses as a source depends on where the
+    /// packet is going. Stable addresses only; temporary ones exist to
+    /// rotate, and a reported address is one somebody wrote down.
+    pub const IPV6_ADDRESSES: u32 = 4901;
+    /// The resolvers the device is to use (`PROP_IP_DNS`),
+    /// multi-value, each item a 4- or 16-octet address. Requires
+    /// `CAP_IPV4` or `CAP_IPV6`.
+    ///
+    /// Empty, the default, means whatever the network provided.
+    /// Non-empty, these replace the network's rather than join them: a
+    /// host that configured resolvers meant those, and a merged set
+    /// would be neither what it wrote nor what the network offered.
+    pub const IP_DNS: u32 = 4902;
+    /// The resolvers actually in use (`PROP_IP_RESOLVERS`),
+    /// multi-value, read-only. Requires `CAP_IPV4` or `CAP_IPV6`.
+    ///
+    /// Chiefly a diagnostic, and the one that distinguishes "on the
+    /// network and cannot resolve the server's name" from every other
+    /// way a tunnel fails to come up.
+    pub const IP_RESOLVERS: u32 = 4903;
+
+    /// Whether the access point is up (`PROP_WIFI_AP_ENABLED`), BOOL,
+    /// default 0. Requires `CAP_WIFI_AP`.
+    ///
+    /// Writing 1 with [`WIFI_AP_CONFIG`] empty answers
+    /// `STATUS_INVALID_STATE`. Between that and the default there is no
+    /// factory network: no default name a stranger can look up, no
+    /// default passphrase, and no open network a device falls back to
+    /// because nobody configured one.
+    pub const WIFI_AP_ENABLED: u32 = 4912;
+    /// The network the device offers (`PROP_WIFI_AP_CONFIG`), or empty.
+    /// Requires `CAP_WIFI_AP`.
+    ///
+    /// Flags, security mode, client cap, preferred frequency, the
+    /// device's own address and prefix on the offered subnet, the SSID,
+    /// and a write-only credential. The subnet lives here rather than
+    /// in the IP properties because it is one the device imposes rather
+    /// than one a network hands it, and because those properties
+    /// describe the interface the device joins a network with.
+    ///
+    /// Saved with the switch, credential included.
+    pub const WIFI_AP_CONFIG: u32 = 4913;
+    /// Whether the access point is beaconing, and where
+    /// (`PROP_WIFI_AP_STATE`), read-only: a state octet followed by the
+    /// frequency in MHz when it is up. Requires `CAP_WIFI_AP`.
+    ///
+    /// The frequency is the field this property exists for. Where the
+    /// station and the access point share one radio the access point
+    /// follows the station's channel, so the configuration says what
+    /// was asked and only this says where the network actually is.
+    pub const WIFI_AP_STATE: u32 = 4914;
+    /// Who is on the access point (`PROP_WIFI_AP_CLIENTS`),
+    /// multi-value, read-only, keyed by MAC, each item a MAC, an RSSI,
+    /// and the IPv4 address the device leased. Requires `CAP_WIFI_AP`.
+    ///
+    /// The one multi-value property here that emits
+    /// `CMD_PROP_REMOVED`. A client leaving is a fact the host wants,
+    /// the list is small and bounded, and the device's view and the
+    /// host's are meant to be the same view, unlike
+    /// [`WIFI_SCAN_RESULTS`].
+    pub const WIFI_AP_CLIENTS: u32 = 4915;
 }
 
 /// `PROP_SAVED` values.
@@ -470,6 +650,50 @@ pub mod cap {
     /// would read as a repeater that has done nothing rather than as no
     /// repeater at all.
     pub const STATS: u32 = 52;
+    /// `CAP_WIFI_SCAN`: the device has a Wi-Fi receiver it can scan
+    /// with (`PROP_WIFI_SCANNING`, `PROP_WIFI_SCAN_RESULTS`).
+    ///
+    /// The base of the Wi-Fi capabilities, because scanning is what
+    /// every Wi-Fi radio can do, including the ones that can do nothing
+    /// else: a tracker whose LoRa transceiver sniffs beacons for
+    /// geolocation has no station, no MAC of its own, and nothing to
+    /// configure, but it can hear access points.
+    pub const WIFI_SCAN: u32 = 53;
+    /// `CAP_WIFI`: the device has a Wi-Fi station it can enable and join
+    /// networks with (`PROP_WIFI_ENABLED`, `PROP_WIFI_NETWORKS`,
+    /// `PROP_WIFI_NETWORK`, `PROP_WIFI_LINK`).
+    ///
+    /// Requires [`WIFI_SCAN`]: a station that can join can always scan,
+    /// so the requirement is a fact about hardware rather than a
+    /// policy. Whether the station also reports its signal or its MAC
+    /// is discovered by asking, as with Bluetooth's bond management.
+    pub const WIFI: u32 = 54;
+    /// `CAP_IPV4`: the device has an IPv4 stack on its link
+    /// (`PROP_IPV4_STATE`, `PROP_IPV4_CONFIG`, `PROP_IPV4_ADDRESS`, and
+    /// the shared resolver properties).
+    ///
+    /// No formal requirement on a link capability, because
+    /// requirements are concrete codes and naming `CAP_WIFI` here would
+    /// make a wired device either lie or invent a second pair of IP
+    /// capabilities.
+    pub const IPV4: u32 = 55;
+    /// `CAP_IPV6`: the device has an IPv6 stack on its link
+    /// (`PROP_IPV6_STATE`, `PROP_IPV6_CONFIG`, `PROP_IPV6_ADDRESSES`,
+    /// and the same shared properties).
+    ///
+    /// A peer of [`IPV4`], not a layer above it. Making either the
+    /// floor would encode which one is normal, which is a fact about
+    /// the year rather than about the protocol.
+    pub const IPV6: u32 = 56;
+    /// `CAP_WIFI_AP`: the device can bring up an access point of its own
+    /// (`PROP_WIFI_AP_ENABLED`, `PROP_WIFI_AP_CONFIG`,
+    /// `PROP_WIFI_AP_STATE`, `PROP_WIFI_AP_CLIENTS`).
+    ///
+    /// Requires [`WIFI_SCAN`] and not [`WIFI`]. Nearly every chip does
+    /// both, but a station and an access point are different functions
+    /// with different state, and a device that has one and not the
+    /// other is describable.
+    pub const WIFI_AP: u32 = 57;
 }
 
 /// Whether a property is writable by a mesh administrator.

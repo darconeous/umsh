@@ -596,6 +596,11 @@ space and are carried by their own commands (see
 > The properties marked as supporting `Is` means that the property may be
 > emitted asynchronously. All properties that support `Get` or `Set` will emit
 > an `Is` to respond with the current/new value of that property.
+>
+> A multi-value property marked as supporting `Inserted` or `Removed` may
+> likewise emit those asynchronously, reporting one item the device added
+> or dropped for its own reasons rather than the whole value. A host that
+> tolerates an unsolicited `Is` must tolerate these as well.
 
 ### Multi-Value Properties {#multi-value-properties}
 
@@ -1109,7 +1114,12 @@ Id | Name
 
 `STATUS_ITEM_NOT_FOUND`
 : The item or selector passed to `CMD_PROP_REMOVE` does not match any item
-  in the property.
+  in the property; or the value written by a `CMD_PROP_SET` names an item
+  of another property that does not exist, as a write of
+  [`PROP_WIFI_NETWORK`](ulcp-wifi.md#prop-wifi-network) names an entry of
+  the known-network table. It is distinct from `STATUS_INVALID_ARGUMENT`
+  because a host acts on it differently: the value is well-formed and the
+  item it names has merely to be created first.
 
 `STATUS_CURSOR_INVALID`
 : The cursor presented in a [Node Management](app-node-management.md#cursors)
@@ -1243,6 +1253,12 @@ Code | Name                      | Requires                             | Define
 49   | `CAP_CMD_MULTI`           | —                                    | [Framing and Common Semantics](ulcp-core.md#cmd-prop-multi-get)
 50   | `CAP_BLE`                 | —                                    | [BLE Binding](ulcp-ble.md#capabilities)
 51   | `CAP_REBOOT`              | —                                    | [Framing and Common Semantics](ulcp-core.md#cmd-reboot)
+52   | `CAP_STATS`               | —                                    | [Radio Control](ulcp-radio.md#capabilities)
+53   | `CAP_WIFI_SCAN`           | —                                    | [Wi-Fi](ulcp-wifi.md#capabilities)
+54   | `CAP_WIFI`                | `CAP_WIFI_SCAN`                      | [Wi-Fi](ulcp-wifi.md#capabilities)
+55   | `CAP_IPV4`                | —                                    | [IP Connectivity](ulcp-ip.md#capabilities)
+56   | `CAP_IPV6`                | —                                    | [IP Connectivity](ulcp-ip.md#capabilities)
+57   | `CAP_WIFI_AP`             | `CAP_WIFI_SCAN`                      | [Wi-Fi](ulcp-wifi.md#capabilities)
 515  | `CAP_PHY_LORA`            | —                                    | [Radio Control](ulcp-radio.md#capabilities)
 
 A device **MUST NOT** advertise a capability without also advertising the

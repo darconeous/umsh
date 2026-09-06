@@ -50,6 +50,20 @@ acknowledging on the host's behalf.
   incorrect clock. A device recovers the time from a real source or
   reports that it does not know it. Its time *zone* is ordinary
   configuration and is saved.
+
+  What a network link is currently doing is excluded on the statistics'
+  reasoning. [`PROP_WIFI_SCANNING`](ulcp-wifi.md#prop-wifi-scanning),
+  [`PROP_WIFI_SCAN_RESULTS`](ulcp-wifi.md#prop-wifi-scan-results),
+  [`PROP_WIFI_LINK`](ulcp-wifi.md#prop-wifi-link),
+  [`PROP_WIFI_RSSI`](ulcp-wifi.md#prop-wifi-rssi),
+  [`PROP_WIFI_AP_STATE`](ulcp-wifi.md#prop-wifi-ap-state),
+  [`PROP_WIFI_AP_CLIENTS`](ulcp-wifi.md#prop-wifi-ap-clients), and every
+  [IP](ulcp-ip.md) property but the two configurations and
+  [`PROP_IP_DNS`](ulcp-ip.md#prop-ip-dns) describe what the device found
+  in front of it, not what its operator asked for. A restored lease or a
+  restored association would be a claim about a network the device may
+  not be near. The Wi-Fi configuration that produces them, credentials
+  included, is saved, which is what lets a device rejoin unattended.
 * At boot, if a snapshot exists, the device **MUST** restore it and resume
   operation accordingly *before* processing any host command: the RF
   configuration is applied and the PHY is re-enabled if it was enabled

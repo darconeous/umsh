@@ -96,6 +96,8 @@ Subsystem | Capabilities
 [Device Domain](ulcp-device.md) | `CAP_DEV_IDENTITY`, `CAP_DEV_NAME`, `CAP_BATTERY`, `CAP_REPEATER`, `CAP_IDENT`, `CAP_ALERT`, `CAP_TIME`, `CAP_GNSS`, `CAP_ADVERT`, `CAP_ILLUMINANCE`
 [Saved State](ulcp-saved-state.md) | `CAP_SAVE`
 [Tethered Host Services](ulcp-host.md) | `CAP_HOST_FILTER`, `CAP_HOST_KEYS`, `CAP_HOST_RX_QUEUE`, `CAP_HOST_AUTO_ACK`, `CAP_MAC_BACKHAUL`
+[Wi-Fi](ulcp-wifi.md) | `CAP_WIFI_SCAN`, `CAP_WIFI`, `CAP_WIFI_AP`
+[IP Connectivity](ulcp-ip.md) | `CAP_IPV4`, `CAP_IPV6`
 
 A device advertising none of them is a transparent radio: it configures
 its PHY, transmits what it is given, and delivers everything it hears.
