@@ -51,7 +51,7 @@ fileprivate extension ForeignBytes {
 // Converter for `&[u8]` / `[ByRef] bytes` arguments.
 //
 // Conforms to `FfiConverter` so the compiler enforces the full converter
-// method set. Only the scope-bound `lower(_:_body:)` overload is sound—
+// method set. Only the scope-bound `lower(_:_body:)` overload is sound —
 // zero-copy byte buffers only flow foreign -> Rust, and only in argument
 // position. The four protocol-witness methods (`lift`, `lower`, `read`,
 // `write`) `fatalError` at runtime if anyone reaches them.
@@ -4492,7 +4492,7 @@ public struct ChannelPreviewRecord: Equatable, Hashable {
     /**
      * Canonicalized (ASCII-lowercased) name for a named channel. The UI
      * should show this when it differs from what the user typed, because it
-     *—not the input—is what determines the key.
+     * —not the input—is what determines the key.
      */
     public var canonicalName: String?
     /**
@@ -4530,7 +4530,7 @@ public struct ChannelPreviewRecord: Equatable, Hashable {
         /**
          * Canonicalized (ASCII-lowercased) name for a named channel. The UI
          * should show this when it differs from what the user typed, because it
-         *—not the input—is what determines the key.
+         * —not the input—is what determines the key.
          */canonicalName: String?,
         /**
          * The 32-octet channel key.
@@ -13626,7 +13626,7 @@ public enum UlcpAlertState: Equatable, Hashable {
     case none
     /**
      * The radio is making itself as conspicuous as its hardware allows
-     *—beeping, flashing, or both, depending on the board.
+     * —beeping, flashing, or both, depending on the board.
      */
     case locate
 
@@ -17119,7 +17119,7 @@ private let initializationResult: InitializationResult = {
     if (uniffi_umsh_mobile_core_checksum_func_channel_conversation_address() != 37) {
         return InitializationResult.apiChecksumMismatch
     }
-    if (uniffi_umsh_mobile_core_checksum_func_channel_identifier() != 35157) {
+    if (uniffi_umsh_mobile_core_checksum_func_channel_identifier() != 29847) {
         return InitializationResult.apiChecksumMismatch
     }
     if (uniffi_umsh_mobile_core_checksum_func_decode_node_identity() != 44653) {
@@ -17128,7 +17128,7 @@ private let initializationResult: InitializationResult = {
     if (uniffi_umsh_mobile_core_checksum_func_derive_channel_id() != 22191) {
         return InitializationResult.apiChecksumMismatch
     }
-    if (uniffi_umsh_mobile_core_checksum_func_derive_channel_tint() != 13219) {
+    if (uniffi_umsh_mobile_core_checksum_func_derive_channel_tint() != 23669) {
         return InitializationResult.apiChecksumMismatch
     }
     if (uniffi_umsh_mobile_core_checksum_func_format_channel_invitation() != 49080) {
@@ -17173,13 +17173,13 @@ private let initializationResult: InitializationResult = {
     if (uniffi_umsh_mobile_core_checksum_func_render_router_hint() != 41050) {
         return InitializationResult.apiChecksumMismatch
     }
-    if (uniffi_umsh_mobile_core_checksum_func_sign_node_identity_bundle() != 18582) {
+    if (uniffi_umsh_mobile_core_checksum_func_sign_node_identity_bundle() != 45133) {
         return InitializationResult.apiChecksumMismatch
     }
-    if (uniffi_umsh_mobile_core_checksum_func_ulcp_device_config_writes() != 29397) {
+    if (uniffi_umsh_mobile_core_checksum_func_ulcp_device_config_writes() != 36349) {
         return InitializationResult.apiChecksumMismatch
     }
-    if (uniffi_umsh_mobile_core_checksum_func_ulcp_records_from_answers() != 41634) {
+    if (uniffi_umsh_mobile_core_checksum_func_ulcp_records_from_answers() != 35471) {
         return InitializationResult.apiChecksumMismatch
     }
     if (uniffi_umsh_mobile_core_checksum_func_describe_ulcp_frame() != 25764) {
@@ -17191,7 +17191,7 @@ private let initializationResult: InitializationResult = {
     if (uniffi_umsh_mobile_core_checksum_func_inspect_ulcp_battery() != 22194) {
         return InitializationResult.apiChecksumMismatch
     }
-    if (uniffi_umsh_mobile_core_checksum_func_inspect_ulcp_device_card() != 37138) {
+    if (uniffi_umsh_mobile_core_checksum_func_inspect_ulcp_device_card() != 61975) {
         return InitializationResult.apiChecksumMismatch
     }
     if (uniffi_umsh_mobile_core_checksum_func_inspect_ulcp_properties() != 60051) {
@@ -17203,7 +17203,7 @@ private let initializationResult: InitializationResult = {
     if (uniffi_umsh_mobile_core_checksum_func_inspect_ulcp_status() != 30949) {
         return InitializationResult.apiChecksumMismatch
     }
-    if (uniffi_umsh_mobile_core_checksum_func_inspect_ulcp_sync() != 54563) {
+    if (uniffi_umsh_mobile_core_checksum_func_inspect_ulcp_sync() != 14194) {
         return InitializationResult.apiChecksumMismatch
     }
     if (uniffi_umsh_mobile_core_checksum_func_inspect_ulcp_wifi_scan_result() != 14372) {
@@ -17212,7 +17212,7 @@ private let initializationResult: InitializationResult = {
     if (uniffi_umsh_mobile_core_checksum_func_region_code_description() != 11282) {
         return InitializationResult.apiChecksumMismatch
     }
-    if (uniffi_umsh_mobile_core_checksum_func_region_code_from_string() != 49569) {
+    if (uniffi_umsh_mobile_core_checksum_func_region_code_from_string() != 51957) {
         return InitializationResult.apiChecksumMismatch
     }
     if (uniffi_umsh_mobile_core_checksum_func_ulcp_card_properties() != 10189) {
@@ -17224,7 +17224,7 @@ private let initializationResult: InitializationResult = {
     if (uniffi_umsh_mobile_core_checksum_func_ulcp_dirty_writes() != 41791) {
         return InitializationResult.apiChecksumMismatch
     }
-    if (uniffi_umsh_mobile_core_checksum_func_ulcp_encode_location() != 15462) {
+    if (uniffi_umsh_mobile_core_checksum_func_ulcp_encode_location() != 22900) {
         return InitializationResult.apiChecksumMismatch
     }
     if (uniffi_umsh_mobile_core_checksum_func_ulcp_factory_reset() != 65397) {
@@ -17233,13 +17233,13 @@ private let initializationResult: InitializationResult = {
     if (uniffi_umsh_mobile_core_checksum_func_ulcp_gatt_segments() != 568) {
         return InitializationResult.apiChecksumMismatch
     }
-    if (uniffi_umsh_mobile_core_checksum_func_ulcp_hdlc_encode() != 61541) {
+    if (uniffi_umsh_mobile_core_checksum_func_ulcp_hdlc_encode() != 26998) {
         return InitializationResult.apiChecksumMismatch
     }
     if (uniffi_umsh_mobile_core_checksum_func_ulcp_inspection_properties() != 61576) {
         return InitializationResult.apiChecksumMismatch
     }
-    if (uniffi_umsh_mobile_core_checksum_func_ulcp_location_cell_meters() != 468) {
+    if (uniffi_umsh_mobile_core_checksum_func_ulcp_location_cell_meters() != 13268) {
         return InitializationResult.apiChecksumMismatch
     }
     if (uniffi_umsh_mobile_core_checksum_func_ulcp_managed_property_ids() != 4167) {
@@ -17251,7 +17251,7 @@ private let initializationResult: InitializationResult = {
     if (uniffi_umsh_mobile_core_checksum_func_ulcp_max_dev_channels() != 32655) {
         return InitializationResult.apiChecksumMismatch
     }
-    if (uniffi_umsh_mobile_core_checksum_func_ulcp_max_dev_peers() != 5213) {
+    if (uniffi_umsh_mobile_core_checksum_func_ulcp_max_dev_peers() != 17613) {
         return InitializationResult.apiChecksumMismatch
     }
     if (uniffi_umsh_mobile_core_checksum_func_ulcp_max_host_muted_channels() != 41393) {
@@ -17269,7 +17269,7 @@ private let initializationResult: InitializationResult = {
     if (uniffi_umsh_mobile_core_checksum_func_ulcp_prop_set() != 24638) {
         return InitializationResult.apiChecksumMismatch
     }
-    if (uniffi_umsh_mobile_core_checksum_func_ulcp_property_record() != 38489) {
+    if (uniffi_umsh_mobile_core_checksum_func_ulcp_property_record() != 53152) {
         return InitializationResult.apiChecksumMismatch
     }
     if (uniffi_umsh_mobile_core_checksum_func_ulcp_radio_presets() != 56599) {
@@ -17311,19 +17311,19 @@ private let initializationResult: InitializationResult = {
     if (uniffi_umsh_mobile_core_checksum_method_mobilemeshsession_apply_chat_archive_result() != 29458) {
         return InitializationResult.apiChecksumMismatch
     }
-    if (uniffi_umsh_mobile_core_checksum_method_mobilemeshsession_begin_management_fetch() != 30118) {
+    if (uniffi_umsh_mobile_core_checksum_method_mobilemeshsession_begin_management_fetch() != 3066) {
         return InitializationResult.apiChecksumMismatch
     }
-    if (uniffi_umsh_mobile_core_checksum_method_mobilemeshsession_begin_management_get() != 32041) {
+    if (uniffi_umsh_mobile_core_checksum_method_mobilemeshsession_begin_management_get() != 32392) {
         return InitializationResult.apiChecksumMismatch
     }
-    if (uniffi_umsh_mobile_core_checksum_method_mobilemeshsession_begin_management_get_many() != 36372) {
+    if (uniffi_umsh_mobile_core_checksum_method_mobilemeshsession_begin_management_get_many() != 53866) {
         return InitializationResult.apiChecksumMismatch
     }
-    if (uniffi_umsh_mobile_core_checksum_method_mobilemeshsession_begin_management_insert() != 54728) {
+    if (uniffi_umsh_mobile_core_checksum_method_mobilemeshsession_begin_management_insert() != 62541) {
         return InitializationResult.apiChecksumMismatch
     }
-    if (uniffi_umsh_mobile_core_checksum_method_mobilemeshsession_begin_management_insert_admin() != 57151) {
+    if (uniffi_umsh_mobile_core_checksum_method_mobilemeshsession_begin_management_insert_admin() != 17442) {
         return InitializationResult.apiChecksumMismatch
     }
     if (uniffi_umsh_mobile_core_checksum_method_mobilemeshsession_begin_management_insert_peer() != 26376) {
@@ -17332,13 +17332,13 @@ private let initializationResult: InitializationResult = {
     if (uniffi_umsh_mobile_core_checksum_method_mobilemeshsession_begin_management_remove() != 52092) {
         return InitializationResult.apiChecksumMismatch
     }
-    if (uniffi_umsh_mobile_core_checksum_method_mobilemeshsession_begin_management_remove_admin() != 27122) {
+    if (uniffi_umsh_mobile_core_checksum_method_mobilemeshsession_begin_management_remove_admin() != 25270) {
         return InitializationResult.apiChecksumMismatch
     }
     if (uniffi_umsh_mobile_core_checksum_method_mobilemeshsession_begin_management_remove_peer() != 6429) {
         return InitializationResult.apiChecksumMismatch
     }
-    if (uniffi_umsh_mobile_core_checksum_method_mobilemeshsession_begin_management_reset() != 26570) {
+    if (uniffi_umsh_mobile_core_checksum_method_mobilemeshsession_begin_management_reset() != 53948) {
         return InitializationResult.apiChecksumMismatch
     }
     if (uniffi_umsh_mobile_core_checksum_method_mobilemeshsession_begin_management_save() != 64563) {
@@ -17347,7 +17347,7 @@ private let initializationResult: InitializationResult = {
     if (uniffi_umsh_mobile_core_checksum_method_mobilemeshsession_begin_management_set() != 3) {
         return InitializationResult.apiChecksumMismatch
     }
-    if (uniffi_umsh_mobile_core_checksum_method_mobilemeshsession_begin_management_set_alert() != 33176) {
+    if (uniffi_umsh_mobile_core_checksum_method_mobilemeshsession_begin_management_set_alert() != 44212) {
         return InitializationResult.apiChecksumMismatch
     }
     if (uniffi_umsh_mobile_core_checksum_method_mobilemeshsession_begin_management_set_many() != 36846) {
@@ -17377,7 +17377,7 @@ private let initializationResult: InitializationResult = {
     if (uniffi_umsh_mobile_core_checksum_method_mobilemeshsession_compose_text() != 46919) {
         return InitializationResult.apiChecksumMismatch
     }
-    if (uniffi_umsh_mobile_core_checksum_method_mobilemeshsession_discover_identities() != 27442) {
+    if (uniffi_umsh_mobile_core_checksum_method_mobilemeshsession_discover_identities() != 34081) {
         return InitializationResult.apiChecksumMismatch
     }
     if (uniffi_umsh_mobile_core_checksum_method_mobilemeshsession_fail_outbound_transmissions() != 10556) {
@@ -17386,7 +17386,7 @@ private let initializationResult: InitializationResult = {
     if (uniffi_umsh_mobile_core_checksum_method_mobilemeshsession_host_peer_key_entries() != 45963) {
         return InitializationResult.apiChecksumMismatch
     }
-    if (uniffi_umsh_mobile_core_checksum_method_mobilemeshsession_node_public_key() != 62314) {
+    if (uniffi_umsh_mobile_core_checksum_method_mobilemeshsession_node_public_key() != 17261) {
         return InitializationResult.apiChecksumMismatch
     }
     if (uniffi_umsh_mobile_core_checksum_method_mobilemeshsession_peer_route() != 15956) {
@@ -17413,13 +17413,13 @@ private let initializationResult: InitializationResult = {
     if (uniffi_umsh_mobile_core_checksum_method_mobilemeshsession_remove_channels() != 26654) {
         return InitializationResult.apiChecksumMismatch
     }
-    if (uniffi_umsh_mobile_core_checksum_method_mobilemeshsession_remove_peers() != 29167) {
+    if (uniffi_umsh_mobile_core_checksum_method_mobilemeshsession_remove_peers() != 28644) {
         return InitializationResult.apiChecksumMismatch
     }
     if (uniffi_umsh_mobile_core_checksum_method_mobilemeshsession_request_identity() != 54447) {
         return InitializationResult.apiChecksumMismatch
     }
-    if (uniffi_umsh_mobile_core_checksum_method_mobilemeshsession_request_identity_by_hint() != 57685) {
+    if (uniffi_umsh_mobile_core_checksum_method_mobilemeshsession_request_identity_by_hint() != 17184) {
         return InitializationResult.apiChecksumMismatch
     }
     if (uniffi_umsh_mobile_core_checksum_method_mobilemeshsession_request_peer_repeaters() != 29496) {
@@ -17434,10 +17434,10 @@ private let initializationResult: InitializationResult = {
     if (uniffi_umsh_mobile_core_checksum_method_mobilemeshsession_send_beacon() != 41898) {
         return InitializationResult.apiChecksumMismatch
     }
-    if (uniffi_umsh_mobile_core_checksum_method_mobilemeshsession_set_advertised_location() != 61213) {
+    if (uniffi_umsh_mobile_core_checksum_method_mobilemeshsession_set_advertised_location() != 2088) {
         return InitializationResult.apiChecksumMismatch
     }
-    if (uniffi_umsh_mobile_core_checksum_method_mobilemeshsession_set_chat_display_name() != 47050) {
+    if (uniffi_umsh_mobile_core_checksum_method_mobilemeshsession_set_chat_display_name() != 37726) {
         return InitializationResult.apiChecksumMismatch
     }
     if (uniffi_umsh_mobile_core_checksum_method_mobilemeshsession_set_discoverable() != 2082) {
@@ -17461,7 +17461,7 @@ private let initializationResult: InitializationResult = {
     if (uniffi_umsh_mobile_core_checksum_method_mobileregiondatabase_lookup() != 22167) {
         return InitializationResult.apiChecksumMismatch
     }
-    if (uniffi_umsh_mobile_core_checksum_method_mobileregiondatabase_propose() != 8942) {
+    if (uniffi_umsh_mobile_core_checksum_method_mobileregiondatabase_propose() != 5002) {
         return InitializationResult.apiChecksumMismatch
     }
     if (uniffi_umsh_mobile_core_checksum_method_mobileregiondatabase_region_count() != 10598) {
@@ -17473,7 +17473,7 @@ private let initializationResult: InitializationResult = {
     if (uniffi_umsh_mobile_core_checksum_method_mobilegattreassembler_reset() != 47215) {
         return InitializationResult.apiChecksumMismatch
     }
-    if (uniffi_umsh_mobile_core_checksum_method_mobilehdlcdecoder_push() != 56894) {
+    if (uniffi_umsh_mobile_core_checksum_method_mobilehdlcdecoder_push() != 62363) {
         return InitializationResult.apiChecksumMismatch
     }
     if (uniffi_umsh_mobile_core_checksum_method_mobilehdlcdecoder_reset() != 13551) {
@@ -17494,10 +17494,10 @@ private let initializationResult: InitializationResult = {
     if (uniffi_umsh_mobile_core_checksum_method_mobileulcpsession_begin_property_items() != 50342) {
         return InitializationResult.apiChecksumMismatch
     }
-    if (uniffi_umsh_mobile_core_checksum_method_mobileulcpsession_begin_property_writes() != 56120) {
+    if (uniffi_umsh_mobile_core_checksum_method_mobileulcpsession_begin_property_writes() != 62813) {
         return InitializationResult.apiChecksumMismatch
     }
-    if (uniffi_umsh_mobile_core_checksum_method_mobileulcpsession_begin_save() != 40209) {
+    if (uniffi_umsh_mobile_core_checksum_method_mobileulcpsession_begin_save() != 35623) {
         return InitializationResult.apiChecksumMismatch
     }
     if (uniffi_umsh_mobile_core_checksum_method_mobileulcpsession_claim() != 28627) {
@@ -17509,10 +17509,10 @@ private let initializationResult: InitializationResult = {
     if (uniffi_umsh_mobile_core_checksum_method_mobileulcpsession_configure_advertising() != 47058) {
         return InitializationResult.apiChecksumMismatch
     }
-    if (uniffi_umsh_mobile_core_checksum_method_mobileulcpsession_configure_device() != 26744) {
+    if (uniffi_umsh_mobile_core_checksum_method_mobileulcpsession_configure_device() != 28904) {
         return InitializationResult.apiChecksumMismatch
     }
-    if (uniffi_umsh_mobile_core_checksum_method_mobileulcpsession_configure_positioning() != 41309) {
+    if (uniffi_umsh_mobile_core_checksum_method_mobileulcpsession_configure_positioning() != 64359) {
         return InitializationResult.apiChecksumMismatch
     }
     if (uniffi_umsh_mobile_core_checksum_method_mobileulcpsession_consume() != 10958) {
@@ -17521,58 +17521,58 @@ private let initializationResult: InitializationResult = {
     if (uniffi_umsh_mobile_core_checksum_method_mobileulcpsession_drain_queue() != 18254) {
         return InitializationResult.apiChecksumMismatch
     }
-    if (uniffi_umsh_mobile_core_checksum_method_mobileulcpsession_factory_reset() != 21547) {
+    if (uniffi_umsh_mobile_core_checksum_method_mobileulcpsession_factory_reset() != 45923) {
         return InitializationResult.apiChecksumMismatch
     }
-    if (uniffi_umsh_mobile_core_checksum_method_mobileulcpsession_insert_device_admin() != 35930) {
+    if (uniffi_umsh_mobile_core_checksum_method_mobileulcpsession_insert_device_admin() != 17769) {
         return InitializationResult.apiChecksumMismatch
     }
-    if (uniffi_umsh_mobile_core_checksum_method_mobileulcpsession_insert_device_channel_key() != 30004) {
+    if (uniffi_umsh_mobile_core_checksum_method_mobileulcpsession_insert_device_channel_key() != 11471) {
         return InitializationResult.apiChecksumMismatch
     }
-    if (uniffi_umsh_mobile_core_checksum_method_mobileulcpsession_insert_device_peer() != 60874) {
+    if (uniffi_umsh_mobile_core_checksum_method_mobileulcpsession_insert_device_peer() != 63433) {
         return InitializationResult.apiChecksumMismatch
     }
     if (uniffi_umsh_mobile_core_checksum_method_mobileulcpsession_reboot() != 35097) {
         return InitializationResult.apiChecksumMismatch
     }
-    if (uniffi_umsh_mobile_core_checksum_method_mobileulcpsession_reconcile_host_channel_keys() != 27528) {
+    if (uniffi_umsh_mobile_core_checksum_method_mobileulcpsession_reconcile_host_channel_keys() != 40741) {
         return InitializationResult.apiChecksumMismatch
     }
-    if (uniffi_umsh_mobile_core_checksum_method_mobileulcpsession_reconcile_host_mutes() != 38069) {
+    if (uniffi_umsh_mobile_core_checksum_method_mobileulcpsession_reconcile_host_mutes() != 39412) {
         return InitializationResult.apiChecksumMismatch
     }
-    if (uniffi_umsh_mobile_core_checksum_method_mobileulcpsession_reconcile_host_peer_keys() != 20443) {
+    if (uniffi_umsh_mobile_core_checksum_method_mobileulcpsession_reconcile_host_peer_keys() != 22702) {
         return InitializationResult.apiChecksumMismatch
     }
     if (uniffi_umsh_mobile_core_checksum_method_mobileulcpsession_refresh() != 49124) {
         return InitializationResult.apiChecksumMismatch
     }
-    if (uniffi_umsh_mobile_core_checksum_method_mobileulcpsession_refresh_positioning() != 7506) {
+    if (uniffi_umsh_mobile_core_checksum_method_mobileulcpsession_refresh_positioning() != 36000) {
         return InitializationResult.apiChecksumMismatch
     }
-    if (uniffi_umsh_mobile_core_checksum_method_mobileulcpsession_remove_device_admin() != 25867) {
+    if (uniffi_umsh_mobile_core_checksum_method_mobileulcpsession_remove_device_admin() != 47192) {
         return InitializationResult.apiChecksumMismatch
     }
     if (uniffi_umsh_mobile_core_checksum_method_mobileulcpsession_remove_device_channel_key() != 59231) {
         return InitializationResult.apiChecksumMismatch
     }
-    if (uniffi_umsh_mobile_core_checksum_method_mobileulcpsession_remove_device_peer() != 27439) {
+    if (uniffi_umsh_mobile_core_checksum_method_mobileulcpsession_remove_device_peer() != 48688) {
         return InitializationResult.apiChecksumMismatch
     }
     if (uniffi_umsh_mobile_core_checksum_method_mobileulcpsession_reset() != 55594) {
         return InitializationResult.apiChecksumMismatch
     }
-    if (uniffi_umsh_mobile_core_checksum_method_mobileulcpsession_set_alert() != 38831) {
+    if (uniffi_umsh_mobile_core_checksum_method_mobileulcpsession_set_alert() != 11892) {
         return InitializationResult.apiChecksumMismatch
     }
-    if (uniffi_umsh_mobile_core_checksum_method_mobileulcpsession_set_host_auto_ack() != 8568) {
+    if (uniffi_umsh_mobile_core_checksum_method_mobileulcpsession_set_host_auto_ack() != 54758) {
         return InitializationResult.apiChecksumMismatch
     }
-    if (uniffi_umsh_mobile_core_checksum_method_mobileulcpsession_set_time() != 36585) {
+    if (uniffi_umsh_mobile_core_checksum_method_mobileulcpsession_set_time() != 47914) {
         return InitializationResult.apiChecksumMismatch
     }
-    if (uniffi_umsh_mobile_core_checksum_method_mobileulcpsession_transmit_raw() != 57973) {
+    if (uniffi_umsh_mobile_core_checksum_method_mobileulcpsession_transmit_raw() != 6208) {
         return InitializationResult.apiChecksumMismatch
     }
     if (uniffi_umsh_mobile_core_checksum_constructor_mobileidentity_unlock() != 33117) {
@@ -17596,7 +17596,7 @@ private let initializationResult: InitializationResult = {
     if (uniffi_umsh_mobile_core_checksum_constructor_mobileulcpsession_administrative() != 16912) {
         return InitializationResult.apiChecksumMismatch
     }
-    if (uniffi_umsh_mobile_core_checksum_constructor_mobileulcpsession_administrative_lazy() != 24644) {
+    if (uniffi_umsh_mobile_core_checksum_constructor_mobileulcpsession_administrative_lazy() != 53801) {
         return InitializationResult.apiChecksumMismatch
     }
     if (uniffi_umsh_mobile_core_checksum_constructor_mobileulcpsession_new() != 48651) {
