@@ -146,7 +146,7 @@ struct RemoteWifiScreen: View {
         default: "Unknown"
         }
         guard let reason = wifiReasonText(link.reason) else { return state }
-        return "\(state) — \(reason)"
+        return "\(state) · \(reason)"
     }
 
     // MARK: - Known networks
@@ -308,7 +308,7 @@ struct RemoteWifiScreen: View {
     // MARK: - Applying
 
     /// Turning the station off can take a link with it, exactly as the
-    /// Bluetooth screen's toggle can — an operator three hops away may be
+    /// Bluetooth screen's toggle can—an operator three hops away may be
     /// turning off the connection a bridge is riding on, and nothing on
     /// this phone can tell whether the device has another way home.
     private var applyWarning: (title: String, message: String)? {

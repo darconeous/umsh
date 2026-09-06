@@ -1321,14 +1321,14 @@ struct FakeManagedDevice: Sendable {
     /// One item of a multiple-value property.
     ///
     /// The length prefix is a packed unsigned integer, which is one octet
-    /// for anything shorter than 128 — and every item this device reports
+    /// for anything shorter than 128—and every item this device reports
     /// is far shorter than that.
     static func item(_ payload: Data) -> Data {
         Data([UInt8(payload.count)]) + payload
     }
 
     /// One known network as a device reports it: flags, mode, the SSID's
-    /// length, and the SSID. Never a credential — the reported form does
+    /// length, and the SSID. Never a credential—the reported form does
     /// not carry one, which is the whole reason the table is edited an
     /// item at a time.
     static func networkEntry(

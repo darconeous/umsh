@@ -564,7 +564,7 @@ final class ManageDeviceModel {
     ///
     /// A `task` modifier is cancelled when its view disappears, and in a
     /// navigation stack pushing a category screen makes the device screen
-    /// disappear — so a subscription held there would be dropped by the
+    /// disappear—so a subscription held there would be dropped by the
     /// very act of opening the screen that most wants it. This one lives
     /// as long as the device is being managed, which is what a device's
     /// running commentary is scoped to.
@@ -678,7 +678,7 @@ final class ManageDeviceModel {
     ///
     /// On a local link the results arrive as the device hears them. Across
     /// the mesh nothing is pushed, so the flag is watched instead and the
-    /// table read once the device says it has stopped — which is the whole
+    /// table read once the device says it has stopped—which is the whole
     /// reason the flag is a property rather than a command.
     func scanForNetworks() async {
         scanResults.removeAll()
