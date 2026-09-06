@@ -29,6 +29,7 @@ pub mod gnss;
 pub mod hdlc;
 pub mod host;
 pub mod ids;
+pub mod ip;
 pub mod items;
 pub mod meta;
 pub mod profiles;
@@ -37,6 +38,7 @@ pub mod reply;
 pub mod sint;
 pub mod stats;
 pub mod status;
+pub mod wifi;
 
 pub use alert::AlertState;
 pub use battery::{BatteryChargeState, BatteryError, BatteryStatus};
