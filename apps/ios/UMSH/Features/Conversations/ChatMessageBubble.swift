@@ -191,9 +191,14 @@ struct ChatMessageBubble: View, @MainActor Equatable {
     /// Where this message sits in its run, which decides the tail, the sender
     /// header, the avatar, and the space above it.
     var presentation = MessagePresentation()
-    /// Quiet states (Delivered/Sent) only annotate the newest outbound
-    /// message; older ones would repeat the same information on every row.
+    /// Settled states (Delivered, or Sent where nothing more is expected)
+    /// only annotate the newest outbound message; older ones would repeat
+    /// the same information on every row.
     var isMostRecentOutbound = false
+    /// Whether the far end answers this message with an acknowledgment. A
+    /// direct message is not done when it leaves the radio; a channel
+    /// message is, since nobody acks a multicast.
+    var expectsAcknowledgment = false
     /// Who sent this, in a group conversation. Absent for a direct chat,
     /// where every inbound bubble has the same sender.
     var senderLabel: String?
@@ -228,6 +233,7 @@ struct ChatMessageBubble: View, @MainActor Equatable {
             && lhs.security == rhs.security
             && lhs.presentation == rhs.presentation
             && lhs.isMostRecentOutbound == rhs.isMostRecentOutbound
+            && lhs.expectsAcknowledgment == rhs.expectsAcknowledgment
             && lhs.senderLabel == rhs.senderLabel
             && lhs.senderHint == rhs.senderHint
             && (lhs.onEdit == nil) == (rhs.onEdit == nil)
@@ -539,7 +545,12 @@ struct ChatMessageBubble: View, @MainActor Equatable {
             // routine "Delivered" which only annotates the newest message.
             if message.isDeliveredLate { return "Delivered Late" }
             return isMostRecentOutbound ? "Delivered" : nil
-        case "sent": return isMostRecentOutbound ? "Sent" : nil
+        case "sent":
+            // Still waiting on the ack: not settled, so every row says so,
+            // just as one says "Sending…". Only where no ack is coming is
+            // "Sent" the last word, and then it is as quiet as Delivered.
+            if expectsAcknowledgment { return "Confirming Delivery…" }
+            return isMostRecentOutbound ? "Sent" : nil
         default: return "Sending…"
         }
     }

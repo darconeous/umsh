@@ -195,6 +195,7 @@ struct ConversationThreadView: View {
                                         security: conversation.security,
                                         presentation: presentation,
                                         isMostRecentOutbound: message.id == lastOutboundID,
+                                        expectsAcknowledgment: !isChannel,
                                         // Only a group message needs to say
                                         // who sent it; a direct one has one
                                         // possible sender.
@@ -538,10 +539,10 @@ struct ConversationThreadView: View {
         // air — never something a stray touch should do. What the tap means
         // depends on the failure's age. A recent one goes out as an edit of
         // itself, invisible to anyone who already has it; an old one can
-        // only go out as a genuinely new message, and says so.
+        // only go out as a genuinely new message.
         .confirmationDialog(
             resendingMessage?.isWithinReviseWindow == false
-                ? "Resend this message?" : "Send this message again?",
+                ? "Resend this message?" : "Retry sending message?",
             isPresented: Binding(
                 get: { resendingMessage != nil },
                 set: { if !$0 { resendingMessage = nil } }
@@ -556,19 +557,13 @@ struct ConversationThreadView: View {
                     }
                 }
             } else {
-                Button("Try Again") {
+                Button("Retry") {
                     if let message = resendingMessage {
                         resendingMessage = nil
                         resend(message)
                     }
                 }
             }
-        } message: {
-            Text(
-                resendingMessage?.isWithinReviseWindow == false
-                    ? "It failed too long ago to retry in place, so it will be sent as a new message."
-                    : "Anyone who already received it will not see it twice."
-            )
         }
     }
 
